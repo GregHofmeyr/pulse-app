@@ -19,7 +19,10 @@
   import { formatMemberSince, formatVoice } from '../lib/profileFormat'
   import BadgeIcon from './BadgeIcon.svelte'
   import { badgeStore, fallbackName } from '../lib/badges.svelte'
-  import { editProfile, openFull, openRename } from '../lib/profileCard.svelte'
+  import { editProfile, openFull } from '../lib/profileCard.svelte'
+  import { menuPoint } from '../lib/participantMenu'
+  import { nickItems } from '../lib/nicknameMenu'
+  import MemberMenu from './MemberMenu.svelte'
   import type { User } from '../lib/protocol/User'
   import type { CardProfile } from '../lib/protocol/CardProfile'
   import type { Badge } from '../lib/protocol/Badge'
@@ -58,9 +61,6 @@
   // them, else their display name; the preview draws the display name being edited. The username
   // shows only as the @handle below it.
   const name = $derived(preview ? baseName(user) : displayName(app.state, serverId, user.id))
-  // Server nicknames live in server right-click menus (#137); your private nickname for someone is here, on their
-  // card (owner, 2026-11-03: it works for people you've never DMed, and stays out of the server menus).
-  const privateNick = $derived(mine ? undefined : app.state.privateNicks[user.id])
   const online = $derived(app.state.people[user.id]?.online ?? null)
   const bioHtml = $derived(card.bio ? renderMarkdown(card.bio, [], app.state.customEmoji) : '')
   // The server voice room they're in, only if it is one of your channels (one you can see); a
@@ -102,13 +102,28 @@
     }
   }
 
+  // Every action between people lives in the right-click menu, never a button on the card (owner, #137): right-click
+  // the card (or ContextMenu / Shift+F10 in it) for the person menu, without View profile since you're on it.
+  let menu = $state<{ x: number; y: number; opener: HTMLElement } | null>(null)
+  const hasMenu = $derived(!preview && nickItems(app.state, serverId, user.id).length > 0)
+  function openMenu(e: MouseEvent | KeyboardEvent) {
+    if (!hasMenu) return
+    e.preventDefault()
+    const card = e.currentTarget as HTMLElement
+    const a = document.activeElement
+    const opener = e instanceof KeyboardEvent && a instanceof HTMLElement && card.contains(a) ? a : card
+    menu = { ...menuPoint(e, opener), opener }
+  }
+
   function viewFull() {
     if (onViewFull) onViewFull()
     else openFull(user.id, serverId)
   }
 </script>
 
-<div class="card" class:full={size === 'full'} {style}>
+<!-- the context menu is a pointer shortcut; the keyboard route is ContextMenu / Shift+F10 inside the card -->
+<div class="card" class:full={size === 'full'} {style} role="presentation" oncontextmenu={openMenu}
+  onkeydown={(e) => { if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) openMenu(e) }}>
   <div class="banner" class:none={!banner}>
     {#if banner}<img src={mediaUrl(bannerStill ?? banner)} alt="" draggable="false" {@attach wireBanner} />{/if}
   </div>
@@ -160,15 +175,15 @@
       <button type="button" class="full-link" onclick={viewFull}>View full profile</button>
     {/if}
     {#if !preview && !mine}
-      <button type="button" class="private-nick" onclick={() => openRename({ kind: 'private', userId: user.id })}>
-        <Icon name="pencil" size={14} /><span>{privateNick ? 'Change private nickname' : 'Set private nickname'}</span>
-      </button>
       <input class="msg" type="text" placeholder="Message @{name}" aria-label="Message @{name}" bind:value={draft} disabled={sending}
         onkeydown={(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); void send() } }} />
       {#if error}<p class="err" role="alert">{error}</p>{/if}
     {/if}
   </div>
 </div>
+{#if menu}
+  {#key menu}<MemberMenu {serverId} userId={user.id} x={menu.x} y={menu.y} opener={menu.opener} fromCard onClose={() => (menu = null)} />{/key}
+{/if}
 
 <style>
   /* Surface: the theme mixed into near-black (white on a light app theme, #139); border: the edge colours; glow: each at
@@ -221,9 +236,6 @@
   .actions span:not(.status) { flex: 1; }
   .status { width: 10px; height: 10px; margin: 0 3px; border-radius: 50%; background: var(--ok); }
   .full-link { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--card-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-  /* a quiet text button above the message box: your private nickname for them */
-  .private-nick { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 2px 0; color: var(--card-text-2); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; opacity: .85; }
-  .private-nick:hover { opacity: 1; text-decoration: underline; }
   .full-link:hover { text-decoration: underline; }
   .msg { height: 36px; border-radius: 10px; border: 1px solid var(--card-edge); background: var(--panel-bottom); color: var(--card-text); padding: 0 12px; font: inherit; font-size: 13px; }
   .msg::placeholder { color: var(--card-text-2); opacity: .75; }

@@ -114,22 +114,24 @@ describe('MemberList row menu (#113)', () => {
     flushSync()
   }
 
-  it('right-click on a row opens its menu: profile, message and Change server nickname (#137)', () => {
+  it('right-click on a row opens its menu: profile, message, server and private nickname (#137)', () => {
     rightClick(row(1))
     expect(menu()).not.toBeNull()
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for Sammy')
-    expect(ids()).toEqual(['profile', 'message', 'nick'])
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick'])
+    expect(label('private-nick')).toBe('Set private nickname')
     expect(label('profile')).toBe('View profile')
     expect(label('message')).toBe('Message')
     expect(label('nick')).toBe('Change server nickname')
     expect(document.activeElement).toBe(items()[0])
   })
 
-  it('no reset, no private nickname items in a server, whatever is set (#137)', () => {
+  it('no reset items; with a private nickname set it says Change (#137)', () => {
     app.state = { ...app.state, privateNicks: { U2: 'Bestie' } }
     flushSync()
     rightClick(row(1))
-    expect(ids()).toEqual(['profile', 'message', 'nick'])
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick'])
+    expect(label('private-nick')).toBe('Change private nickname')
   })
 
   it('your own row: profile and your server nickname, no message', () => {
@@ -141,6 +143,11 @@ describe('MemberList row menu (#113)', () => {
     rightClick(row(1))
     pickItem('nick')
     expect(profileUi.rename).toEqual({ kind: 'server', userId: 'U2', serverId: 'S1' })
+    expect(menu()).toBeNull()
+
+    rightClick(row(1))
+    pickItem('private-nick')
+    expect(profileUi.rename).toEqual({ kind: 'private', userId: 'U2' })
     expect(menu()).toBeNull()
 
     rightClick(row(1))

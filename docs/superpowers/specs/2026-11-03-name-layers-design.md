@@ -71,9 +71,12 @@ design-check page; each decision below is his pick, with his notes folded in.
 - **UI**
   - Settings → Profile: a "Display name" field with a preview in your name style.
   - ~~Profile card / member menu: "Change nickname" (server), "Reset nickname", "Set private nickname…".~~
-    Superseded by #137: right-click menus only. In a server (member list, voice participant, message author):
-    "Change server nickname". In the DM list: "Change nickname" (your private one). Reset / Clear only inside the
-    nickname dialog; the profile card has no nickname buttons.
+    Superseded by #137: right-click menus only (owner: every action between people lives in the right-click menu,
+    never a button on a card). In a server (member list, voice participant, message author, and a right-click on
+    the profile card): "Change server nickname", then "Set private nickname" / "Change private nickname" (your
+    private one, never for yourself). Outside servers (DM list, group call, a card opened outside a server):
+    "Change nickname" (your private one). Reset / Clear only inside the nickname dialog; the profile card has no
+    nickname buttons.
   - Full profile view: the Name Archive list.
 
 ## Migration

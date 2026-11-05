@@ -138,7 +138,7 @@ describe('ParticipantMenu', () => {
     opener.focus()
     key(opener, 'ContextMenu')
     const list = items()
-    expect(list.map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick'])
+    expect(list.map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick'])
     expect(document.activeElement).toBe(list[0])
     for (let i = 1; i < list.length; i++) {
       key(document.activeElement!, 'ArrowDown')
@@ -213,7 +213,7 @@ describe('ParticipantMenu', () => {
     app.state = applyReady(emptyState(), { ...ready, streams: [{ channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false, allow_ghosts: true }, status: 'live', viewers: [], ghosts: 0, started_at: '2026-10-26T10:00:00Z' }] })
     mountPanel()
     rightClick(q('[data-stream="U2"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'watch', 'server-mute', 'server-deafen', 'disconnect', 'nick'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'watch', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick'])
     document.querySelector<HTMLElement>('[data-item="watch"]')!.click()
     await settle()
     expect(invoke).toHaveBeenCalledWith('stream_watch', { channelId: 'V1', streamer: 'U2' })
@@ -228,7 +228,7 @@ describe('ParticipantMenu', () => {
     const occ = [...document.querySelectorAll<HTMLElement>('.occupant')].find((o) => o.textContent?.includes('sam'))!
     expect(occ.tabIndex).toBe(0)
     rightClick(occ)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick'])
     key(menu()!, 'Escape')
     expect(document.activeElement).toBe(occ)
     key(occ, 'F10', { shiftKey: true })
@@ -342,7 +342,7 @@ describe('ParticipantMenu', () => {
   it('the_stream_volume_slider_uses_the_shared_stream_volumes', async () => {
     await watchSam()
     rightClick(q('[data-stream="U2"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'stream-volume', 'stop-watching', 'full-view', 'server-mute', 'server-deafen', 'disconnect', 'nick'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'stream-volume', 'stop-watching', 'full-view', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick'])
     const slider = q('[role=menu] input[aria-label="Stream volume"]') as HTMLInputElement
     slider.focus()
     key(slider, 'ArrowRight')
@@ -519,15 +519,18 @@ describe('ParticipantMenu nicknames (#113, #137)', () => {
     profileUi.rename = null
   })
 
-  it('in a server: Change server nickname after the voice items; no private nickname, no reset', () => {
+  it('in a server: Change server nickname, then your private one, after the voice items; no reset', () => {
     app.state = {
       ...app.state,
       members: { S1: [{ user: me, nickname: null }, { user: sam, nickname: 'Sammy' }] },
       privateNicks: { U2: 'Bestie' },
     }
     openFor('U2')
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick'])
-    expect(labels()).toMatchObject({ nick: 'Change server nickname' })
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick'])
+    expect(labels()).toMatchObject({ nick: 'Change server nickname', 'private-nick': 'Change private nickname' })
+    q('[data-item="private-nick"]')!.click()
+    flushSync()
+    expect(profileUi.rename).toEqual({ kind: 'private', userId: 'U2' })
   })
 
   it('Change server nickname opens the dialog for the server nickname, and the menu closes', () => {
@@ -565,9 +568,10 @@ describe('ParticipantMenu nicknames (#113, #137)', () => {
     const list = items()
     key(document.activeElement!, 'End')
     expect(document.activeElement).toBe(list[list.length - 1])
-    expect((document.activeElement as HTMLElement).dataset.item).toBe('nick')
+    expect((document.activeElement as HTMLElement).dataset.item).toBe('private-nick')
     key(document.activeElement!, 'ArrowDown')
     expect(document.activeElement).toBe(list[0])
+    key(document.activeElement!, 'ArrowUp')
     key(document.activeElement!, 'ArrowUp')
     key(document.activeElement!, 'Enter')
     expect(profileUi.rename).toEqual({ kind: 'server', userId: 'U2', serverId: 'S1' })

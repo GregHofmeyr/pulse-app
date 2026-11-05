@@ -227,29 +227,52 @@ describe('ProfileCard', () => {
       expect(el.querySelector('.msg')!.getAttribute('placeholder')).toBe('Message @Sam 🎸')
     })
 
-    it('offers only your private nickname for someone else (server nicknames live in server menus, #137)', async () => {
-      const { profileUi } = await import('../lib/profileCard.svelte')
-      inServer('Big Dog')
-      for (const serverId of ['S1', null]) {
-        const el = show({ user: named, serverId })
-        const texts = [...el.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '')
-        expect(texts.filter((t) => /nickname/i.test(t))).toEqual(['Set private nickname'])
+    it('no nickname buttons on the card: they live in the right-click menu (#137, owner)', () => {
+      inServer('Big Dog', 'Sammy')
+      for (const [user, serverId] of [[named, 'S1'], [named, null], [alex, 'S1']] as const) {
+        const el = show({ user, serverId })
+        expect([...el.querySelectorAll('button, a')].some((b) => /nickname/i.test(b.textContent ?? ''))).toBe(false)
+        expect(el.querySelector('.private-nick')).toBeNull()
         unmount(cmp!)
         cmp = undefined
       }
-      // with one set, the label says so; it opens the private-nickname dialog
-      inServer('Big Dog', 'Sammy')
+    })
+
+    it('right-click the card: their server nickname and your private one; no View profile or Message, the card is both (#137)', () => {
+      inServer('Big Dog')
       const el = show({ user: named, serverId: 'S1' })
-      const btn = [...el.querySelectorAll<HTMLButtonElement>('button')].find((b) => /nickname/i.test(b.textContent ?? ''))!
-      expect(btn.textContent?.trim()).toBe('Change private nickname')
-      btn.click()
+      const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 40 })
+      el.querySelector('.who')!.dispatchEvent(e)
+      flushSync()
+      expect(e.defaultPrevented).toBe(true)
+      const ids = () => [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')].map((i) => i.dataset.item)
+      expect(ids()).toEqual(['nick', 'private-nick'])
+      const item = document.querySelector<HTMLElement>('[role=menu] [data-item="private-nick"]')!
+      expect(item.textContent).toBe('Set private nickname')
+      item.click()
       flushSync()
       expect(profileUi.rename).toEqual({ kind: 'private', userId: 'U2' })
-      unmount(cmp!)
-      cmp = undefined
-      // never on your own card
-      const own = show({ user: alex, serverId: 'S1' })
-      expect([...own.querySelectorAll('button')].some((b) => /nickname/i.test(b.textContent ?? ''))).toBe(false)
+      expect(document.querySelector('[role=menu]')).toBeNull()
+    })
+
+    it('right-click the card outside servers: Change nickname (your private one)', () => {
+      inServer(null, 'Sammy')
+      const el = show({ user: named, serverId: null })
+      el.querySelector('.who')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      flushSync()
+      const ids = [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')].map((i) => i.dataset.item)
+      expect(ids).toEqual(['private-nick'])
+      expect(document.querySelector('[role=menu] [data-item="private-nick"]')!.textContent).toBe('Change nickname')
+    })
+
+    it('no right-click menu in the preview', () => {
+      inServer('Big Dog')
+      const el = show({ user: named, serverId: 'S1', preview: true })
+      const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+      el.querySelector('.who')!.dispatchEvent(e)
+      flushSync()
+      expect(document.querySelector('[role=menu]')).toBeNull()
+      expect(e.defaultPrevented).toBe(false)
     })
   })
 
