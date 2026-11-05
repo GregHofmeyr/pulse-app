@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { clickOutside, modal } from './actions'
 
 describe('clickOutside', () => {
@@ -19,14 +19,132 @@ describe('clickOutside', () => {
     expect(cb).toHaveBeenCalledTimes(2)
     // consumed: whatever sits under the menu leaves it alone
     expect(esc.defaultPrevented).toBe(true)
-    const toggle = document.createElement('button')
-    toggle.dataset.menuToggle = ''
-    document.body.append(toggle)
-    toggle.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    expect(cb).toHaveBeenCalledTimes(2)
     a.destroy()
     outside.dispatchEvent(new Event('pointerdown', { bubbles: true }))
     expect(cb).toHaveBeenCalledTimes(2)
+  })
+
+  // What WebView2 / Chromium on Windows sends for one press, in order. A right-click's contextmenu comes after the
+  // release there (on Linux it comes after mousedown); either way it's what opens a context menu.
+  const tick = () => new Promise((r) => setTimeout(r, 0))
+  async function press(el: Element, button: 0 | 2 = 0) {
+    const init = { bubbles: true, cancelable: true, composed: true, button }
+    el.dispatchEvent(new MouseEvent('pointerdown', { ...init, buttons: button === 2 ? 2 : 1 }))
+    el.dispatchEvent(new MouseEvent('mousedown', { ...init, buttons: button === 2 ? 2 : 1 }))
+    el.dispatchEvent(new MouseEvent('pointerup', init))
+    el.dispatchEvent(new MouseEvent('mouseup', init))
+    el.dispatchEvent(new MouseEvent(button === 2 ? 'contextmenu' : 'click', init))
+    await tick() // let a menu the press opened arm its outside-press listener
+  }
+  /** A menu as the components build one: opened by `opener`'s click (a toggle: a second click closes it) or by a
+   *  right-click on it, closed by clickOutside. */
+  const closers: (() => void)[] = []
+  afterEach(() => closers.splice(0).forEach((c) => c()))
+  function menuOn(opener: HTMLElement, how: 'click' | 'contextmenu') {
+    const m = { el: null as HTMLElement | null, action: null as { destroy(): void } | null }
+    closers.push(() => close())
+    const close = () => {
+      m.action?.destroy()
+      m.el?.remove()
+      m.el = m.action = null
+    }
+    opener.addEventListener(how, (e) => {
+      e.preventDefault()
+      if (m.el) return close() // a toggle: its own click closes it
+      m.el = document.createElement('div')
+      m.el.innerHTML = '<button>item</button>'
+      document.body.append(m.el)
+      m.action = clickOutside(m.el, close)
+    })
+    return m
+  }
+  function scene() {
+    document.body.innerHTML = ''
+    const bell = document.createElement('button')
+    bell.dataset.menuToggle = ''
+    const other = document.createElement('button')
+    other.dataset.menuToggle = ''
+    const row = document.createElement('div')
+    const chat = document.createElement('div')
+    document.body.append(bell, other, row, chat)
+    return { bell, other, row, chat, bellMenu: menuOn(bell, 'click'), otherMenu: menuOn(other, 'click'), rowMenu: menuOn(row, 'contextmenu') }
+  }
+
+  it('a menu opened by its toggle: the opening click keeps it, a second click on the toggle closes it once', async () => {
+    const s = scene()
+    await press(s.bell)
+    expect(s.bellMenu.el).not.toBeNull()
+    await press(s.bell)
+    expect(s.bellMenu.el).toBeNull()
+    await press(s.bell)
+    expect(s.bellMenu.el).not.toBeNull()
+  })
+
+  it('outside presses (left or right) and Escape close it; presses inside do not', async () => {
+    const s = scene()
+    await press(s.bell)
+    await press(s.bellMenu.el!.querySelector('button')!)
+    expect(s.bellMenu.el).not.toBeNull()
+    await press(s.chat)
+    expect(s.bellMenu.el).toBeNull()
+    await press(s.bell)
+    await press(s.chat, 2)
+    expect(s.bellMenu.el).toBeNull()
+    await press(s.bell)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    expect(s.bellMenu.el).toBeNull()
+  })
+
+  it('a right-click menu (Windows order: contextmenu after the release) stays up, then closes on a press outside', async () => {
+    const s = scene()
+    await press(s.row, 2)
+    expect(s.rowMenu.el).not.toBeNull()
+    await press(s.chat)
+    expect(s.rowMenu.el).toBeNull()
+  })
+
+  // #192: a press on ANY menu toggle was ignored by every open menu, so a person's menu stayed open behind the
+  // bell's menu (and after it), closing only from inside it.
+  it('a press on another menu\'s toggle closes an open right-click menu: one menu at a time', async () => {
+    const s = scene()
+    await press(s.row, 2)
+    await press(s.bell)
+    expect(s.rowMenu.el).toBeNull()
+    expect(s.bellMenu.el).not.toBeNull()
+    await press(s.bell)
+    expect(s.bellMenu.el).toBeNull()
+  })
+
+  it('a press on another toggle closes a toggled menu and opens its own', async () => {
+    const s = scene()
+    await press(s.bell)
+    await press(s.other)
+    expect(s.bellMenu.el).toBeNull()
+    expect(s.otherMenu.el).not.toBeNull()
+    await press(s.chat)
+    expect(s.otherMenu.el).toBeNull()
+  })
+
+  it('a menu opened from the keyboard (Enter clicks the toggle) still treats that toggle as its own', async () => {
+    const s = scene()
+    s.bell.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    s.bell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await tick()
+    expect(s.bellMenu.el).not.toBeNull()
+    await press(s.bell)
+    expect(s.bellMenu.el).toBeNull()
+  })
+
+  it('a menu opened without a click (Shift+F10) after an earlier toggle click doesn\'t inherit that toggle', async () => {
+    const s = scene()
+    await press(s.bell)
+    await press(s.bell) // bell's menu opened and closed again
+    s.row.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true }))
+    s.row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    await tick()
+    expect(s.rowMenu.el).not.toBeNull()
+    await press(s.bell)
+    expect(s.rowMenu.el).toBeNull()
   })
 })
 

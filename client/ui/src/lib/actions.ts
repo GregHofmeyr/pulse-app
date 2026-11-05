@@ -1,12 +1,30 @@
 // Svelte actions shared by popovers and menus.
 
+/** The `[data-menu-toggle]` the current press or click is on (null when it's on none). A key press clears it, so a
+ *  menu a key opens without a click (Shift+F10, ContextMenu) doesn't take the last clicked toggle as its own. */
+let pressedToggle: Element | null = null
+let tracking = false
+function trackToggles() {
+  if (tracking || typeof window === 'undefined') return
+  tracking = true
+  const on = (e: Event) => (pressedToggle = (e.target as Element | null)?.closest?.('[data-menu-toggle]') ?? null)
+  window.addEventListener('pointerdown', on, true)
+  window.addEventListener('click', on, true) // Enter / Space on a toggle clicks it with no press
+  window.addEventListener('keydown', () => (pressedToggle = null), true)
+}
+trackToggles()
+
 /** Calls `onOutside` on any pointer press outside `node` (or Escape), with the event that did it.
- *  Presses on a `[data-menu-toggle]` element are ignored: that button toggles the menu itself. */
+ *  A press on the `[data-menu-toggle]` that opened it is ignored: that button toggles the menu itself. A press on any
+ *  other toggle closes it like any outside press, so only one menu is open at a time (#192). */
 export function clickOutside(node: HTMLElement, onOutside: (e: Event) => void) {
   let cb = onOutside
+  const own = pressedToggle
   const down = (e: PointerEvent) => {
     const t = e.target as Element
-    if (!node.contains(t) && !t.closest?.('[data-menu-toggle]')) cb(e)
+    if (node.contains(t)) return
+    if (own && own.contains(t)) return
+    cb(e)
   }
   const key = (e: KeyboardEvent) => {
     if (e.key !== 'Escape') return
