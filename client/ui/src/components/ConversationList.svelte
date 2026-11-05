@@ -7,7 +7,8 @@
   import { presenceOf } from '../lib/presence'
   import { displayName } from '../lib/selectors'
   import ConversationMenu from './ConversationMenu.svelte'
-  import { conversations, previewText } from '../lib/conversations'
+  import { conversations, previewParts, previewText } from '../lib/conversations'
+  import { mediaUrl } from '../lib/emoji'
 
   let { activeId, onOpen, onNew, onLeft }: {
     activeId: string | null
@@ -55,7 +56,7 @@
         <span class="name">{#if c.channel.kind === 'dm' && people[0]}<Name userId={people[0]} serverId={null} text={c.name} interactive={false} surface="side" />{:else}{c.name}{/if}</span>
         {#if c.latest}
           {@const p = previewText(app.state, c.latest)}
-          <span class="prev" class:sys={p.system}>{p.text}</span>
+          <span class="prev" class:sys={p.system}>{#each previewParts(app.state, p.text) as part, i (i)}{#if 'emoji' in part}<img class="emoji" src={mediaUrl(part.emoji.hash)} alt=":{part.emoji.name}:" draggable="false" />{:else}{part.text}{/if}{/each}</span>
         {/if}
       </span>
       {#if app.state.calls[c.channel.id]}<span class="in-call" role="img" aria-label="In call" data-tip="In call"><Icon name="phone" size={14} /></span>{/if}
@@ -89,6 +90,8 @@
   .row.unread .name { color: var(--text); }
   .prev { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .prev.sys { font-style: italic; }
+  /* a custom emoji in the last message: its still, sized to the line like emoji in messages */
+  .prev .emoji { width: 1.25em; height: 1.25em; vertical-align: -0.3em; object-fit: contain; }
   .stack { position: relative; width: 32px; height: 32px; flex-shrink: 0; }
   .stack .s0 { position: absolute; left: 0; top: 0; }
   .stack .s1 { position: absolute; left: 11px; top: 11px; border-radius: 50%; box-shadow: 0 0 0 2px var(--ring); }

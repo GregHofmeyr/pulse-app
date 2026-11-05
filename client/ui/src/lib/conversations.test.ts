@@ -197,7 +197,7 @@ describe('conversations', () => {
   })
 })
 
-import { previewText, relativeTime } from './conversations'
+import { previewParts, previewText, relativeTime } from './conversations'
 
 describe('home helpers', () => {
   const now = Date.parse('2026-10-08T12:00:00Z')
@@ -215,6 +215,21 @@ describe('home helpers', () => {
     expect(previewText(s, msg('A', 'G1', 'U1', { content: 'hi' }))).toEqual({ text: 'sam: hi', system: false })
     expect(previewText(s, msg('A', 'G1', null, { kind: 'system', content: 'sam added jo' }))).toEqual({ text: 'sam added jo', system: true })
     expect(previewText(s, msg('A', 'DM1', 'U1', { deleted: true, content: '' }))).toEqual({ text: 'message deleted', system: true })
+  })
+
+  it('preview parts: custom emoji show as stills (never animated), unknown or deleted ones as :name:', () => {
+    const H = 'a'.repeat(64), S = 'b'.repeat(64), P = 'c'.repeat(64)
+    const e = (id: string, name: string, hash: string | null, still: string | null, animated: boolean) =>
+      ({ id, server_id: 'S1', name, hash, still_hash: still, animated, added_by: null, created_at: '' })
+    const s = { ...applyReady(emptyState(), ready()), customEmoji: { E1: e('E1', 'morgana', H, S, true), E2: e('E2', 'cat', P, null, false), E3: e('E3', 'gone', null, null, false) } }
+    expect(previewParts(s, 'You: hi <a:morgana:E1> and <:cat:E2><:gone:E3> <:who:E9>!')).toEqual([
+      { text: 'You: hi ' },
+      { emoji: { hash: S, name: 'morgana' } },
+      { text: ' and ' },
+      { emoji: { hash: P, name: 'cat' } },
+      { text: ':gone: :who:!' },
+    ])
+    expect(previewParts(s, 'plain')).toEqual([{ text: 'plain' }])
   })
 })
 

@@ -5,6 +5,7 @@ import type { Message } from './protocol/Message'
 import { displayName } from './selectors'
 import { mentionLookup, showMentions } from './mentionStyles'
 import { callLineText } from './calls'
+import { isMediaHash, TOKEN_RE } from './emoji'
 
 export function isMuted(s: AppState, ch: Channel, nowIso: string): boolean {
   const active = (kind: 'server' | 'channel', id: string | null) =>
@@ -116,6 +117,32 @@ export function previewText(s: AppState, m: Message): { text: string; system: bo
     return { text: `${who}: ${line}`, system: false }
   }
   return { text: line, system: false }
+}
+
+export type PreviewPart = { text: string } | { emoji: { hash: string; name: string } }
+
+/** A preview line in pieces: custom emoji tokens become the emoji's still picture (a sidebar never
+ *  animates), and one the app doesn't know or that was deleted reads `:name:`. Neighbouring text
+ *  joins up. */
+export function previewParts(s: AppState, text: string): PreviewPart[] {
+  const out: PreviewPart[] = []
+  const add = (t: string) => {
+    if (!t) return
+    const last = out[out.length - 1]
+    if (last && 'text' in last) last.text += t
+    else out.push({ text: t })
+  }
+  let at = 0
+  for (const m of text.matchAll(new RegExp(TOKEN_RE, 'g'))) {
+    add(text.slice(at, m.index))
+    at = m.index + m[0].length
+    const e = s.customEmoji[m[3]]
+    const hash = e?.still_hash ?? e?.hash
+    if (hash && isMediaHash(hash)) out.push({ emoji: { hash, name: m[2] } })
+    else add(`:${m[2]}:`)
+  }
+  add(text.slice(at))
+  return out
 }
 
 /** Where the red NEW line goes: the first message after the read point that counts as unread (someone else's message or
