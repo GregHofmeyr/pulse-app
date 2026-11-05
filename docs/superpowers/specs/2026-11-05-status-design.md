@@ -52,7 +52,8 @@ One status per account, set by you and applied everywhere:
 ## Appearing offline to chosen people (owner)
 
 - Right-click a person (member list, DM list, voice row, message author, profile card) and pick
-  **"Appear offline to them"**. To them you now look exactly as if you were Invisible, with the same rules: last seen
+  **"Appear offline to them"**. It's an ordinary item in each person right-click menu, never a button or text link on
+  the profile card or under an avatar **(owner: every action between people lives in the right-click menu)**. To them you now look exactly as if you were Invisible, with the same rules: last seen
   frozen at the moment you hid, and decisive actions still showing. Everyone else sees your real status, DND included.
 - Undo it with the same menu ("Stop appearing offline to them") or from **Settings → Privacy → Appear offline to**,
   a list of everyone you're hidden from, each with a Remove button.
