@@ -74,6 +74,8 @@
   // --- the line menu ---
   let menu = $state<{ line: QuoteLine; x: number; y: number; opener: HTMLElement } | null>(null)
   function openMenu(line: QuoteLine, e: MouseEvent | KeyboardEvent, anchor: HTMLElement) {
+    // a line with nothing to offer (my own picture, say) opens no empty menu
+    if (!hasActions(line)) return
     // clicking the opener again closes its menu
     if (e.type === 'click' && menu?.opener === anchor) menu = null
     else menu = { line, ...menuPoint(e, anchor), opener: anchor }
@@ -93,6 +95,8 @@
     line.speaker_id ? null : speaker(line).userId ? 'unlink' : 'link'
   const toggleAward = (line: QuoteLine) => attempt(() => (line.awarded ? api.takeAward(line.id) : api.giveAward(line.id)))
   const copyable = (line: QuoteLine) => !!(line.text ?? line.caption)
+  /** Whether the line's menu would have anything in it: award, copy, or link. */
+  const hasActions = (line: QuoteLine) => !!awardOf(line) || copyable(line) || !!linkOf(line)
   const copy = (line: QuoteLine) => attempt(() => navigator.clipboard.writeText(line.text ?? line.caption ?? ''))
   const link = (line: QuoteLine, userId: string) => attempt(() => api.linkSpeaker(serverId, { name: line.speaker_name ?? '', user_id: userId }))
   const unlink = (line: QuoteLine) => attempt(() => api.unlinkSpeaker(serverId, nameKey(line.speaker_name ?? '')))
@@ -150,8 +154,10 @@
                     <span class="trophy" aria-hidden="true">🏆 {line.awards}</span>
                     <VoterStack userIds={line.awarders} {nameOf} />
                   {/if}
-                  <button type="button" class="icon-btn icon-btn-xs lbtn" aria-label="Line actions" aria-haspopup="menu" aria-expanded={menu?.line.id === line.id} data-menu-toggle
-                    onclick={(e) => openMenu(line, e, e.currentTarget)}><Icon name="dots" size={16} /></button>
+                  {#if hasActions(line)}
+                    <button type="button" class="icon-btn icon-btn-xs lbtn" aria-label="Line actions" aria-haspopup="menu" aria-expanded={menu?.line.id === line.id} data-menu-toggle
+                      onclick={(e) => openMenu(line, e, e.currentTarget)}><Icon name="dots" size={16} /></button>
+                  {/if}
                 </div>
               </div>
             {/each}

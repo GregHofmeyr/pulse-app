@@ -320,6 +320,17 @@ describe('QuoteItem', () => {
     expect(labels[2]).not.toContain('award')
   })
 
+  it('a line with nothing to do (my own picture, no caption) has no actions button and no menu', () => {
+    show(quote([line({ speaker_id: 'U1', text: null, media: { hash: P, still_hash: null, width: 10, height: 10 } }), line({ id: 'L2' })]))
+    const lines = document.querySelectorAll<HTMLElement>('.line')
+    expect(lines[0].querySelector('button[aria-label="Line actions"]')).toBeNull()
+    expect(lines[1].querySelector('button[aria-label="Line actions"]')).toBeTruthy()
+    lines[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    lines[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true }))
+    flushSync()
+    expect(document.querySelector('[role=menu]')).toBeNull()
+  })
+
   it('the line actions button says whether its menu is open', () => {
     show(quote([line()]))
     const b = document.querySelector<HTMLButtonElement>('button[aria-label="Line actions"]')!
