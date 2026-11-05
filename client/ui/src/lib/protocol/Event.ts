@@ -21,6 +21,7 @@ import type { QotyEvent } from "./QotyEvent";
 import type { RingEndReason } from "./RingEndReason";
 import type { Server } from "./Server";
 import type { ServerId } from "./ServerId";
+import type { ServerLayout } from "./ServerLayout";
 import type { ServerVoiceMod } from "./ServerVoiceMod";
 import type { Sound } from "./Sound";
 import type { SpeakerLink } from "./SpeakerLink";
@@ -47,7 +48,7 @@ flags: VoiceFlags, } } | { "t": "VoiceLeft", "d": { channel_id: ChannelId, user_
 /**
  * Absent from older servers: go by `online` then.
  */
-status: PresenceStatus, } } | { "t": "StatusChanged", "d": { user_id: UserId, status: OwnStatus, } } | { "t": "AppearOfflineChanged", "d": { user_id: UserId, target_id: UserId, hidden: boolean, } } | { "t": "LiveNotifyChanged", "d": { user_id: UserId, target_id: UserId, on: boolean, } } | { "t": "ProfileUpdated", "d": { user: User, card: CardProfile, } } | { "t": "GroupMembersChanged", "d": { channel_id: ChannelId, user_ids: Array<UserId>, } } | { "t": "ChannelUpdated", "d": { channel: Channel, } } | { "t": "ChannelDeleted", "d": { channel_id: ChannelId, server_id: ServerId, } } | { "t": "ChannelRestored", "d": { channel: Channel, } } | { "t": "ChannelRemoved", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "ReadStateUpdated", "d": { user_id: UserId, channel_id: ChannelId, last_read_message_id: MessageId | null, 
+status: PresenceStatus, } } | { "t": "StatusChanged", "d": { user_id: UserId, status: OwnStatus, } } | { "t": "AppearOfflineChanged", "d": { user_id: UserId, target_id: UserId, hidden: boolean, } } | { "t": "LiveNotifyChanged", "d": { user_id: UserId, target_id: UserId, on: boolean, } } | { "t": "ProfileUpdated", "d": { user: User, card: CardProfile, } } | { "t": "GroupMembersChanged", "d": { channel_id: ChannelId, user_ids: Array<UserId>, } } | { "t": "ChannelUpdated", "d": { channel: Channel, } } | { "t": "ChannelDeleted", "d": { channel_id: ChannelId, server_id: ServerId, } } | { "t": "ChannelRestored", "d": { channel: Channel, } } | { "t": "LayoutChanged", "d": { layout: ServerLayout, } } | { "t": "ChannelRemoved", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "ReadStateUpdated", "d": { user_id: UserId, channel_id: ChannelId, last_read_message_id: MessageId | null, 
 /**
  * The user's absolute mention count in the channel after this change (main list and
  * quote replies, as the ready snapshot counts it). Absent from older servers.

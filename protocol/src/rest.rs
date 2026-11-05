@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::ids::{
-    CallId, ChannelId, ClipUploadId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId,
+    CallId, CategoryId, ChannelId, ClipUploadId, GameId, LineId, MessageId, QotyEventId, ServerId,
+    UserId,
 };
 
 /// A `Debug` that names every field but prints the secret ones as `<redacted>`, for types that
@@ -438,8 +439,13 @@ pub struct Channel {
     pub server_id: Option<ServerId>,
     pub kind: ChannelKind,
     pub name: Option<String>,
+    /// Its order inside its category (or among the uncategorised channels), lowest first.
     #[ts(type = "number")]
     pub position: i64,
+    /// The server category it sits in (#54). Absent: uncategorised (and always for DMs and groups).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub category_id: Option<CategoryId>,
     /// A group's own icon (#56): a picture from the avatar upload. Absent: the members' faces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -481,6 +487,82 @@ pub struct CreateServerRequest {
 pub struct CreateChannelRequest {
     pub kind: ChannelKind,
     pub name: String,
+    /// The category to make it in, at the bottom (#54). Absent: uncategorised.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub category_id: Option<CategoryId>,
+}
+
+/// A named group of a server's channels, of any kind, shown as a heading in the list (#54).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Category {
+    pub id: CategoryId,
+    pub server_id: ServerId,
+    /// As typed; the list shows it upper-cased.
+    pub name: String,
+    /// Its order among the server's categories, lowest first.
+    #[ts(type = "number")]
+    pub position: i64,
+    /// The kind a default category was made for (by the update or a new server), so a section
+    /// someone had collapsed before categories stays collapsed. Absent for categories people make.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub default_kind: Option<ChannelKind>,
+}
+
+/// Where one channel sits: its category (none: uncategorised) and its order there.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ChannelPlacement {
+    pub channel_id: ChannelId,
+    pub category_id: Option<CategoryId>,
+    #[ts(type = "number")]
+    pub position: i64,
+}
+
+/// A server's whole channel list layout: its categories in order and where every live channel
+/// sits. `revision` goes up with every change, so a save based on an older one is refused.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ServerLayout {
+    pub server_id: ServerId,
+    #[ts(type = "number")]
+    pub revision: i64,
+    /// In order.
+    pub categories: Vec<Category>,
+    /// Every live channel's placement. Empty in `Ready`, where the channels carry their own.
+    #[serde(default)]
+    pub channels: Vec<ChannelPlacement>,
+}
+
+/// `POST /servers/{id}/categories`: a new category, at the bottom.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CreateCategoryRequest {
+    pub name: String,
+}
+
+/// `PATCH /categories/{id}`: a new name.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct RenameCategoryRequest {
+    pub name: String,
+}
+
+/// `PUT /servers/{id}/layout`: the whole new order of a server's list, based on the layout
+/// `revision` the client last saw.
+/// It must name every live channel exactly once and every category, or it is refused.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct SaveLayoutRequest {
+    #[ts(type = "number")]
+    pub revision: i64,
+    /// The channels outside any category, in order.
+    pub uncategorised: Vec<ChannelId>,
+    /// The categories in order, each with its channels in order.
+    pub categories: Vec<LayoutCategory>,
+}
+
+/// One category in a [`SaveLayoutRequest`] and its channels, in order.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct LayoutCategory {
+    pub id: CategoryId,
+    pub channels: Vec<ChannelId>,
 }
 
 /// One other user → a 1:1 `dm` (reused if it exists); 2..=9 others → a new `group`.
@@ -1776,6 +1858,26 @@ mod tests {
         let json = serde_json::to_value(&e).unwrap();
         assert_eq!(json["provider"], "generic");
         assert_eq!(json["kind"], "card");
+    }
+
+    /// A channel from an older server (no categories yet) parses, and sends no category back.
+    #[test]
+    fn a_channel_without_a_category_parses() {
+        let id = ChannelId::new();
+        let c: Channel = serde_json::from_str(&format!(
+            r#"{{"id":"{id}","server_id":null,"kind":"text","name":"general","position":0}}"#
+        ))
+        .unwrap();
+        assert_eq!(c.category_id, None);
+        assert!(!serde_json::to_string(&c).unwrap().contains("category_id"));
+    }
+
+    /// An older client asking for a channel names no category: it goes uncategorised.
+    #[test]
+    fn create_channel_without_a_category_parses() {
+        let r: CreateChannelRequest =
+            serde_json::from_str(r#"{"kind":"voice","name":"Lounge"}"#).unwrap();
+        assert_eq!(r.category_id, None);
     }
 }
 

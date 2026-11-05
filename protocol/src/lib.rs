@@ -31,6 +31,13 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::DeletedChannel::export_all(&cfg)?;
     rest::CreateServerRequest::export_all(&cfg)?;
     rest::CreateChannelRequest::export_all(&cfg)?;
+    rest::Category::export_all(&cfg)?;
+    rest::ChannelPlacement::export_all(&cfg)?;
+    rest::ServerLayout::export_all(&cfg)?;
+    rest::CreateCategoryRequest::export_all(&cfg)?;
+    rest::RenameCategoryRequest::export_all(&cfg)?;
+    rest::SaveLayoutRequest::export_all(&cfg)?;
+    rest::LayoutCategory::export_all(&cfg)?;
     rest::CreateDmRequest::export_all(&cfg)?;
     rest::SendMessageRequest::export_all(&cfg)?;
     rest::EditMessageRequest::export_all(&cfg)?;

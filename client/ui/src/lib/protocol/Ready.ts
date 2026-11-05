@@ -16,6 +16,7 @@ import type { PrivateNickname } from "./PrivateNickname";
 import type { QotyEvent } from "./QotyEvent";
 import type { ReadState } from "./ReadState";
 import type { Server } from "./Server";
+import type { ServerLayout } from "./ServerLayout";
 import type { ServerMembers } from "./ServerMembers";
 import type { ServerVoiceMod } from "./ServerVoiceMod";
 import type { Sound } from "./Sound";
@@ -123,4 +124,9 @@ calls?: Array<CallInfo>,
 /**
  * Calls ringing you right now (#50).
  */
-ringing?: Array<CallRing>, };
+ringing?: Array<CallRing>, 
+/**
+ * Every server's categories and layout revision (#54). The channels carry their own
+ * placement, so each layout's `channels` is empty here.
+ */
+layouts?: Array<ServerLayout>, };

@@ -55,3 +55,4 @@ id!(QotyEventId);
 id!(GameId);
 id!(ClipUploadId);
 id!(CallId);
+id!(CategoryId);

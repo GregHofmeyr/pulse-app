@@ -29,6 +29,7 @@ pub fn channel_from_row(
             .ok_or_else(|| anyhow::anyhow!("bad channel kind {kind}"))?,
         name,
         position,
+        category_id: None,
         icon_hash,
         icon_still,
     })

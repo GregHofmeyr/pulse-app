@@ -391,6 +391,7 @@ impl Api {
         let body = pulse_protocol::rest::CreateChannelRequest {
             kind,
             name: name.into(),
+            category_id: None,
         };
         Self::parse(
             self.http

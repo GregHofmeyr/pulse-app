@@ -115,6 +115,7 @@ async fn insert_channel(
         kind,
         name: name.map(str::to_string),
         position,
+        category_id: None,
         icon_hash: None,
         icon_still: None,
     })

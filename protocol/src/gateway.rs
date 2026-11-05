@@ -7,7 +7,7 @@ use crate::ids::{CallId, ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game,
     Member, Message, Mute, NotifyLevelPref, OwnStatus, Person, PresenceStatus, PrivateNickname,
-    QotyEvent, ReadState, RingEndReason, Server, ServerVoiceMod, Sound, SpeakerLink,
+    QotyEvent, ReadState, RingEndReason, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink,
     StreamEndReason, StreamInfo, User,
 };
 
@@ -148,6 +148,11 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub ringing: Vec<CallRing>,
+    /// Every server's categories and layout revision (#54). The channels carry their own
+    /// placement, so each layout's `channels` is empty here.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub layouts: Vec<ServerLayout>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -292,6 +297,12 @@ pub enum Event {
     /// follow as `ReadStateUpdated`. A client without this event sees it on its next Ready.
     ChannelRestored {
         channel: Channel,
+    },
+    /// A server's channel list layout changed (#54): a category made, renamed or deleted, a
+    /// channel made, moved, deleted or restored. Carries the whole layout. Everyone, like
+    /// `ChannelDeleted`: server channels and their categories are public.
+    LayoutChanged {
+        layout: ServerLayout,
     },
     /// Only to the removed/leaving user.
     ChannelRemoved {
@@ -538,6 +549,7 @@ impl Event {
             }
             Self::ServerCreated { .. }
             | Self::ChannelDeleted { .. }
+            | Self::LayoutChanged { .. }
             | Self::MemberJoined { .. }
             | Self::MemberUpdated { .. }
             | Self::UserCreated { .. }
@@ -596,7 +608,10 @@ impl Event {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rest::{StreamRole, StreamSettings, StreamStatus};
+    use crate::ids::CategoryId;
+    use crate::rest::{
+        Category, ChannelKind, ChannelPlacement, StreamRole, StreamSettings, StreamStatus,
+    };
 
     /// Debug output can end up in logs: `Hello` never shows the session token.
     #[test]
@@ -704,6 +719,7 @@ mod tests {
             live_notify: vec![],
             calls: vec![],
             ringing: vec![],
+            layouts: vec![],
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");
@@ -786,6 +802,7 @@ mod tests {
             live_notify: vec![],
             calls: vec![],
             ringing: vec![],
+            layouts: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -908,6 +925,7 @@ mod tests {
             live_notify: vec![],
             calls: vec![],
             ringing: vec![],
+            layouts: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -1156,5 +1174,43 @@ mod tests {
             assert_eq!(e.channel_id(), None, "{e:?}");
             assert_eq!(e.only_for(), Some(u), "{e:?}");
         }
+    }
+
+    /// A `Ready` from an older server (no categories yet) parses with no layouts.
+    #[test]
+    fn a_ready_without_layouts_parses() {
+        let u = UserId::new();
+        let ready: Ready = serde_json::from_str(&format!(
+            r#"{{"me":{{"id":"{u}","username":"alex","display_name":"alex",
+            "avatar_hash":null}},"servers":[],"channels":[],"members":[],"dm_members":[],
+            "voice":[],"people":[],"read_states":[],"mutes":[],"hidden":[],"latest":[]}}"#
+        ))
+        .unwrap();
+        assert!(ready.layouts.is_empty());
+    }
+
+    /// A server's layout is public like its channels: everyone hears it, as `ChannelDeleted`.
+    #[test]
+    fn layout_changed_goes_to_everyone() {
+        let server_id = ServerId::new();
+        let e = Event::LayoutChanged {
+            layout: ServerLayout {
+                server_id,
+                revision: 1,
+                categories: vec![Category {
+                    id: CategoryId::new(),
+                    server_id,
+                    name: "Text Channels".into(),
+                    position: 0,
+                    default_kind: Some(ChannelKind::Text),
+                }],
+                channels: vec![ChannelPlacement {
+                    channel_id: ChannelId::new(),
+                    category_id: None,
+                    position: 0,
+                }],
+            },
+        };
+        assert_eq!((e.channel_id(), e.only_for()), (None, None));
     }
 }
