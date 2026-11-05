@@ -32,6 +32,13 @@ impl<V> KeepNewest<V> {
         }
     }
 
+    /// Let go of `channel`'s (a toast taken back, #176).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn remove(&mut self, channel: &str) -> Option<V> {
+        self.order.retain(|c| c != channel);
+        self.by_channel.remove(channel)
+    }
+
     #[cfg(test)]
     fn len(&self) -> usize {
         self.by_channel.len()
@@ -153,6 +160,22 @@ mod tests {
         k.insert("NEW".into(), 0);
         // C1 was the oldest now, not C0
         assert!(k.contains("C0") && !k.contains("C1"));
+    }
+
+    /// #176: a ring's toast taken back is let go, and leaves room (the others stay).
+    #[test]
+    fn a_withdrawn_toast_is_let_go() {
+        let mut k = KeepNewest::default();
+        k.insert("C1".into(), 1);
+        k.insert("call-K1".into(), 2);
+        assert_eq!(k.remove("call-K1"), Some(2));
+        assert_eq!(k.remove("call-K1"), None);
+        assert!(k.contains("C1") && !k.contains("call-K1"));
+        assert_eq!(k.len(), 1);
+        for i in 0..KEEP - 1 {
+            k.insert(format!("D{i}"), i);
+        }
+        assert!(k.contains("C1"), "its place in the order went with it");
     }
 
     #[test]

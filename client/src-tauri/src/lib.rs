@@ -410,6 +410,7 @@ pub fn run() {
             stream::stream_log,
             logging::ui_log,
             notify::notify_message,
+            notify::withdraw_notification,
             stream::stream_picker_window,
             stream::stream_audio_start,
             stream::stream_audio_stop,

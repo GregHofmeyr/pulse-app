@@ -8,7 +8,7 @@
 import { app, clock, onAppEvent, onAppReady, openDm, ui } from './store.svelte'
 import { api } from './tauri'
 import { voiceApi } from './voice.svelte'
-import { ringAlerts, ringPlace } from './calls'
+import { ringAlerts, ringNoticeTag, ringPlace } from './calls'
 import { conversationName } from './conversations'
 import { displayName, userOf } from './selectors'
 import { loadMixer, ringtoneGain } from './mixer'
@@ -22,21 +22,31 @@ import type { Ready } from './protocol/Ready'
 export const calls = $state({ rings: [] as CallRing[] })
 
 const expiry = new Map<string, ReturnType<typeof setTimeout>>()
+/** Calls whose ring showed a desktop notification, to take it back when the ring ends (#176). */
+const notified = new Set<string>()
 
-function drop(pred: (r: CallRing) => boolean) {
+/** Stop the rings matching `pred`. `keep`: calls that ring on (the same ring again, from an event or a Ready), whose
+ * desktop notification stays. */
+function drop(pred: (r: CallRing) => boolean, keep: ReadonlySet<string> = new Set()) {
   const gone = calls.rings.filter(pred)
   if (!gone.length) return
   for (const r of gone) {
     clearTimeout(expiry.get(r.call_id))
     expiry.delete(r.call_id)
+    // however it ended (answered, declined, timed out, call ended, signed out), the notice goes too
+    if (!keep.has(r.call_id) && notified.delete(r.call_id)) void api.withdrawNotification(ringNoticeTag(r.call_id))
   }
   calls.rings = calls.rings.filter((r) => !pred(r))
 }
 
 function add(ring: CallRing) {
-  drop((r) => r.channel_id === ring.channel_id || r.call_id === ring.call_id)
+  drop((r) => r.channel_id === ring.channel_id || r.call_id === ring.call_id, new Set([ring.call_id]))
   const left = Date.parse(ring.expires_at) - Date.now()
-  if (!(left > 0)) return
+  if (!(left > 0)) {
+    // already over (a late Ready): its notice, if one is still up, goes now
+    if (notified.delete(ring.call_id)) void api.withdrawNotification(ringNoticeTag(ring.call_id))
+    return
+  }
   calls.rings = [...calls.rings, ring]
   // the server ends it too; this only covers a missed CallRingEnded (a dropped socket)
   expiry.set(ring.call_id, setTimeout(() => drop((r) => r.call_id === ring.call_id), left))
@@ -65,8 +75,10 @@ function notifyRing(ring: CallRing) {
     title: `${caller} is calling you`,
     body: group ? `Call in ${conversationName(s, ring.channel_id)}` : 'Incoming call',
     channelId: ring.channel_id,
+    tag: ringNoticeTag(ring.call_id),
     ...(avatar ? { avatar } : {}),
   })
+  notified.add(ring.call_id)
 }
 
 export function handleCallEvent(e: Event) {
@@ -91,7 +103,8 @@ export function handleCallEvent(e: Event) {
 }
 
 export function handleCallsReady(r: Ready) {
-  drop(() => true)
+  const still = new Set((r.ringing ?? []).map((x) => x.call_id))
+  drop(() => true, still)
   for (const ring of r.ringing ?? []) add(ring)
 }
 

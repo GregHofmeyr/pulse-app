@@ -9,8 +9,9 @@ import { mentionLookup, showMentions } from './mentionStyles'
 import { TOKEN_RE } from './emoji'
 
 /** What the core shows; a click comes back with `channelId` and `threadId`. `avatar`: the author's
- *  avatar (media hash; an animated one's still), which the core shows beside the text (#73). */
-export type Notice = { title: string; body: string; channelId: string; threadId?: string; avatar?: string }
+ *  avatar (media hash; an animated one's still), which the core shows beside the text (#73). `tag`: the slot it
+ *  replaces and can be taken back by (`withdrawNotification`, #176); missing = the conversation's. */
+export type Notice = { title: string; body: string; channelId: string; threadId?: string; avatar?: string; tag?: string }
 export type NotifyPrefs = { enabled: boolean; showText: boolean }
 
 export const BODY_MAX = 140

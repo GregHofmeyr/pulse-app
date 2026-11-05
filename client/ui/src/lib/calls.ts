@@ -29,6 +29,11 @@ export function callLineText(s: AppState, m: Message): string {
   return `${who} started a call · ${callDuration(m.created_at, call.ended_at)}`
 }
 
+/** The "is calling you" desktop notification's tag (#176): the call's own slot, so it never replaces (or is replaced by)
+ * that conversation's message notifications, and can be taken back when the ring ends. A ULID makes 31 characters,
+ * well inside Windows' 64. */
+export const ringNoticeTag = (callId: string): string => `call-${callId}`
+
 /** Inside the conversation the ring shows in its call band (no popover); anywhere else, as a popover. */
 export function ringPlace(ring: CallRing, openChannelId: string | null): 'band' | 'popover' {
   return ring.channel_id === openChannelId ? 'band' : 'popover'

@@ -220,9 +220,9 @@ describe('the OS notification', () => {
   it('unfocused: "sam is calling you", and a click opens the conversation', () => {
     windowFocus.focused = false
     ringing(ring())
-    expect(cmds('notify_message')).toEqual([['notify_message', { notice: { title: 'sam is calling you', body: 'Incoming call', channelId: 'DM1' } }]])
+    expect(cmds('notify_message')).toEqual([['notify_message', { notice: { title: 'sam is calling you', body: 'Incoming call', channelId: 'DM1', tag: 'call-C1' } }]])
     ringing(ring('G1', 'C2'))
-    expect(cmds('notify_message')[1][1]).toEqual({ notice: { title: 'sam is calling you', body: 'Call in Friends', channelId: 'G1' } })
+    expect(cmds('notify_message')[1][1]).toEqual({ notice: { title: 'sam is calling you', body: 'Call in Friends', channelId: 'G1', tag: 'call-C2' } })
   })
   it('focused, or with notifications off: none', () => {
     ringing(ring())
@@ -230,5 +230,59 @@ describe('the OS notification', () => {
     setNotificationsEnabled(false)
     ringing(ring('G1', 'C2'))
     expect(cmds('notify_message')).toEqual([])
+  })
+})
+
+describe('taking the OS notification back when the ring ends (#176)', () => {
+  const withdrawn = () => cmds('withdraw_notification').map(([, a]) => a)
+  beforeEach(() => {
+    windowFocus.focused = false
+    ringing(ring())
+    expect(cmds('notify_message')).toHaveLength(1)
+  })
+
+  it('answered or declined on another device', () => {
+    handleCallEvent({ t: 'CallRingEnded', d: { channel_id: 'DM1', call_id: 'C1', user_id: 'U1', reason: 'answered' } })
+    expect(withdrawn()).toEqual([{ tag: 'call-C1' }])
+  })
+  it('declined here', async () => {
+    await declineCall('DM1')
+    expect(withdrawn()).toEqual([{ tag: 'call-C1' }])
+  })
+  it('joined here', async () => {
+    await joinCall('DM1')
+    expect(withdrawn()).toEqual([{ tag: 'call-C1' }])
+  })
+  it('timed out, even with the server event missed', () => {
+    vi.advanceTimersByTime(30_001)
+    expect(withdrawn()).toEqual([{ tag: 'call-C1' }])
+  })
+  it('the call ended', () => {
+    handleCallEvent({ t: 'CallEnded', d: { channel_id: 'DM1', call_id: 'C1' } })
+    expect(withdrawn()).toEqual([{ tag: 'call-C1' }])
+  })
+  it('once only, and never for a ring that showed no notification', () => {
+    handleCallEvent({ t: 'CallEnded', d: { channel_id: 'DM1', call_id: 'C1' } })
+    handleCallEvent({ t: 'CallEnded', d: { channel_id: 'DM1', call_id: 'C1' } })
+    expect(withdrawn()).toHaveLength(1)
+    windowFocus.focused = true
+    ringing(ring('G1', 'C2'))
+    handleCallEvent({ t: 'CallEnded', d: { channel_id: 'G1', call_id: 'C2' } })
+    expect(withdrawn()).toHaveLength(1)
+  })
+  it("someone else's ring ending leaves mine alone", () => {
+    handleCallEvent({ t: 'CallRingEnded', d: { channel_id: 'DM1', call_id: 'C1', user_id: 'U3', reason: 'declined' } })
+    expect(withdrawn()).toEqual([])
+  })
+  it('a reconnect whose Ready still has the ring keeps the notice; one without it takes it back', () => {
+    handleReady(ready({ ringing: [ring()] }))
+    handleCallEvent({ t: 'CallRinging', d: { ring: ring() } })
+    expect(withdrawn()).toEqual([])
+    handleReady(ready())
+    expect(withdrawn()).toEqual([{ tag: 'call-C1' }])
+  })
+  it('signing out takes it back too', () => {
+    resetCalls()
+    expect(withdrawn()).toEqual([{ tag: 'call-C1' }])
   })
 })

@@ -58,6 +58,62 @@ pub struct Notice {
     /// That avatar as a local PNG, filled in by the core (never from the page).
     #[serde(skip)]
     pub image: Option<PathBuf>,
+    /// The slot this notice replaces, and can be taken back by ([`Notifier::withdraw`], #176).
+    /// Missing: the conversation's (`channel_id`), so a chat's messages replace each other. A
+    /// call's ring has its own (`call-<id>`), apart from that chat's messages.
+    #[serde(default)]
+    pub tag: Option<String>,
+}
+
+impl Notice {
+    /// The slot: Windows' toast tag, the Linux notification the next one replaces.
+    pub fn key(&self) -> &str {
+        self.tag.as_deref().unwrap_or(&self.channel_id)
+    }
+}
+
+/// What the worker thread does: show a notice, or take back the one in a slot.
+#[derive(Debug, PartialEq)]
+enum Job {
+    Show(Notice),
+    Withdraw(String),
+}
+
+/// A system's notifications, as the worker drives them (one backend per platform).
+trait Sink {
+    fn show(&mut self, n: &Notice) -> Result<(), Failure>;
+    /// Take back what's in slot `key`, if anything of ours is (best effort: a service that can't
+    /// is left alone).
+    fn withdraw(&mut self, key: &str);
+}
+
+impl Sink for Backend {
+    fn show(&mut self, n: &Notice) -> Result<(), Failure> {
+        Backend::show(self, n)
+    }
+    fn withdraw(&mut self, key: &str) {
+        Backend::withdraw(self, key)
+    }
+}
+
+/// The worker: every job in order, until the sender goes.
+fn serve(rx: mpsc::Receiver<Job>, sink: &mut impl Sink) {
+    for job in rx {
+        match job {
+            Job::Show(n) => {
+                if let Err(f) = show_with_fallback(&n, |n| sink.show(n)) {
+                    log_failure(&f);
+                }
+            }
+            Job::Withdraw(key) => sink.withdraw(&key),
+        }
+    }
+}
+
+/// A slot key from the page: an id-like string (what [`clean`] keeps), or nothing.
+fn clean_key(key: &str) -> Option<String> {
+    (!key.is_empty() && key.len() <= ID_MAX && !key.chars().any(char::is_control))
+        .then(|| key.to_string())
 }
 
 /// Where a clicked notification leads: the page opens that conversation (and the quote's replies).
@@ -104,6 +160,8 @@ fn clean(n: Notice) -> Option<Notice> {
         channel_id: n.channel_id,
         avatar: n.avatar.filter(|h| crate::media::is_hash(h)),
         image: n.image,
+        // a tag that can't be one: the notice goes in its conversation's slot
+        tag: n.tag.as_deref().and_then(clean_key),
     })
 }
 
@@ -180,22 +238,15 @@ fn log_failure(f: &Failure) {
 
 /// Hands notices to the worker thread; never blocks.
 pub struct Notifier {
-    tx: mpsc::Sender<Notice>,
+    tx: mpsc::Sender<Job>,
 }
 
 impl Notifier {
     pub fn new(app_id: String, on_click: OnClick) -> Self {
-        let (tx, rx) = mpsc::channel::<Notice>();
+        let (tx, rx) = mpsc::channel::<Job>();
         let spawned = std::thread::Builder::new()
             .name("pulse-notify".into())
-            .spawn(move || {
-                let mut backend = Backend::new(app_id, on_click);
-                for n in rx {
-                    if let Err(f) = show_with_fallback(&n, |n| backend.show(n)) {
-                        log_failure(&f);
-                    }
-                }
-            });
+            .spawn(move || serve(rx, &mut Backend::new(app_id, on_click)));
         if let Err(e) = spawned {
             tracing::warn!(error = %e, "notifications: no worker thread");
         }
@@ -204,7 +255,15 @@ impl Notifier {
 
     pub fn send(&self, n: Notice) {
         if let Some(n) = clean(n) {
-            let _ = self.tx.send(n);
+            let _ = self.tx.send(Job::Show(n));
+        }
+    }
+
+    /// Take back the notice in slot `key` (a [`Notice::tag`]), if one of ours is up: after
+    /// anything sent before it, so a show and its withdraw can't cross.
+    pub fn withdraw(&self, key: &str) {
+        if let Some(key) = clean_key(key) {
+            let _ = self.tx.send(Job::Withdraw(key));
         }
     }
 }
@@ -228,6 +287,13 @@ pub async fn notify_message(
     Ok(())
 }
 
+/// Take back a notification shown with `tag` (#176: "sam is calling you", once the ring ends),
+/// where the system allows it: Windows removes the toast from Action Center, Linux closes it.
+#[tauri::command]
+pub fn withdraw_notification(notifier: tauri::State<'_, Notifier>, tag: String) {
+    notifier.withdraw(&tag);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,6 +313,7 @@ mod tests {
                 thread_id: Some("Q1".into()),
                 avatar: None,
                 image: None,
+                tag: None,
             }
         );
         let n: Notice =
@@ -281,6 +348,7 @@ mod tests {
             thread_id: None,
             avatar: None,
             image: Some(PathBuf::from("/x/a.png")),
+            tag: None,
         };
         let mut tried = Vec::new();
         let r = show_with_fallback(&n, |n| {
@@ -336,6 +404,7 @@ mod tests {
             thread_id: Some("Q1".into()),
             avatar: None,
             image: None,
+            tag: None,
         })
         .unwrap();
         assert!(!n.title.contains('\u{202E}'));
@@ -355,6 +424,7 @@ mod tests {
             thread_id: None,
             avatar: None,
             image: None,
+            tag: None,
         })
         .unwrap();
         assert_eq!(n.body, body);
@@ -370,6 +440,7 @@ mod tests {
             thread_id: None,
             avatar: None,
             image: None,
+            tag: None,
         })
         .unwrap();
         assert_eq!(n.body.chars().count(), BODY_MAX);
@@ -387,6 +458,7 @@ mod tests {
             thread_id: None,
             avatar: None,
             image: None,
+            tag: None,
         };
         assert!(clean(base.clone()).is_none());
         assert!(
@@ -404,6 +476,108 @@ mod tests {
         })
         .unwrap();
         assert_eq!(n.thread_id, None);
+    }
+
+    fn notice(channel: &str, tag: Option<&str>) -> Notice {
+        Notice {
+            title: "sam is calling you".into(),
+            body: "Incoming call".into(),
+            channel_id: channel.into(),
+            thread_id: None,
+            avatar: None,
+            image: None,
+            tag: tag.map(Into::into),
+        }
+    }
+
+    /// #176: a ring's notice has its own slot, apart from its conversation's messages.
+    #[test]
+    fn a_tag_is_the_notices_slot_and_without_one_the_conversation_is() {
+        let n: Notice = serde_json::from_str(
+            r#"{"title":"sam is calling you","body":"Incoming call","channelId":"C1","tag":"call-K1"}"#,
+        )
+        .unwrap();
+        assert_eq!(n.tag.as_deref(), Some("call-K1"));
+        assert_eq!(n.key(), "call-K1");
+        assert_eq!(notice("C1", None).key(), "C1");
+    }
+
+    #[test]
+    fn a_tag_that_cant_be_one_falls_back_to_the_conversation() {
+        for bad in ["", &"x".repeat(65), "call-\u{7}K1"] {
+            let n = clean(notice("C1", Some(bad))).unwrap();
+            assert_eq!(n.tag, None, "{bad:?}");
+            assert_eq!(n.key(), "C1");
+        }
+        let n = clean(notice("C1", Some("call-K1"))).unwrap();
+        assert_eq!(n.key(), "call-K1");
+        assert_eq!(clean_key("call-K1").as_deref(), Some("call-K1"));
+        assert_eq!(clean_key(""), None);
+        assert_eq!(clean_key(&"x".repeat(65)), None);
+    }
+
+    /// What the worker did, in order.
+    #[derive(Default)]
+    struct Fake {
+        log: Vec<String>,
+        refuse_images: bool,
+    }
+
+    impl Sink for Fake {
+        fn show(&mut self, n: &Notice) -> Result<(), Failure> {
+            if self.refuse_images && n.image.is_some() {
+                return Err(Failure::BadNotice("no image".into()));
+            }
+            self.log.push(format!("show {}", n.key()));
+            Ok(())
+        }
+        fn withdraw(&mut self, key: &str) {
+            self.log.push(format!("withdraw {key}"));
+        }
+    }
+
+    #[test]
+    fn the_worker_shows_and_withdraws_in_the_order_asked() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(Job::Show(notice("C1", Some("call-K1")))).unwrap();
+        tx.send(Job::Show(notice("C1", None))).unwrap();
+        tx.send(Job::Withdraw("call-K1".into())).unwrap();
+        drop(tx);
+        let mut fake = Fake::default();
+        serve(rx, &mut fake);
+        // the message notice in the same conversation is left alone
+        assert_eq!(fake.log, ["show call-K1", "show C1", "withdraw call-K1"]);
+    }
+
+    #[test]
+    fn the_worker_still_falls_back_without_the_avatar() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(Job::Show(Notice {
+            image: Some(PathBuf::from("/x/a.png")),
+            ..notice("C1", Some("call-K1"))
+        }))
+        .unwrap();
+        drop(tx);
+        let mut fake = Fake {
+            refuse_images: true,
+            ..Fake::default()
+        };
+        serve(rx, &mut fake);
+        assert_eq!(fake.log, ["show call-K1"]);
+    }
+
+    #[test]
+    fn withdraw_sends_only_a_usable_key() {
+        let (tx, rx) = mpsc::channel();
+        let n = Notifier { tx };
+        n.withdraw("call-K1");
+        n.withdraw("");
+        n.withdraw(&"x".repeat(65));
+        drop(n);
+        assert_eq!(
+            rx.iter().collect::<Vec<_>>(),
+            [Job::Withdraw("call-K1".into())]
+        );
     }
 
     #[test]

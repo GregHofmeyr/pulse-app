@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, countsAsUnread, emptyState } from './state'
-import { callDuration, callLineText, ringAlerts, ringPlace } from './calls'
+import { callDuration, callLineText, ringAlerts, ringNoticeTag, ringPlace } from './calls'
 import { testReady } from './testReady'
 import type { Message } from './protocol/Message'
 import type { CallRing } from './protocol/CallRing'
@@ -102,5 +102,14 @@ describe('ringing', () => {
     const muted = { ...s, mutes: [{ target_kind: 'channel' as const, target_id: 'DM1', until: null }] }
     expect(ringAlerts(muted, ring(), now)).toBe(false)
     expect(ringAlerts(muted, ring('G1'), now)).toBe(true)
+  })
+})
+
+describe('the ring notification tag (#176)', () => {
+  it("is the call's own, apart from the conversation's message notifications, and fits a Windows tag", () => {
+    const id = '01JC0000000000000000000000'
+    expect(ringNoticeTag(id)).toBe(`call-${id}`)
+    expect(ringNoticeTag(id)).not.toBe('G1')
+    expect(ringNoticeTag(id).length).toBeLessThanOrEqual(64)
   })
 })

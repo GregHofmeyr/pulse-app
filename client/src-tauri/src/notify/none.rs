@@ -12,4 +12,6 @@ impl Backend {
     pub fn show(&mut self, _n: &Notice) -> Result<(), Failure> {
         Ok(())
     }
+
+    pub fn withdraw(&mut self, _key: &str) {}
 }

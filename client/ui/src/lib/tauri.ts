@@ -208,6 +208,8 @@ export const api = {
   uiLog: (line: string, level: 'warn' | 'info' = 'warn') => invoke<void>('ui_log', { line, info: level === 'info' }).catch(() => {}),
   /** A desktop notification (lib/notify.ts decided it); best effort, a refusal only dings. */
   notifyMessage: (notice: Notice) => invoke<void>('notify_message', { notice }).catch(() => {}),
+  /** Take back a desktop notification shown with `tag` (#176), where the system allows it; best effort. */
+  withdrawNotification: (tag: string) => invoke<void>('withdraw_notification', { tag }).catch(() => {}),
   /** `emoji`: a Unicode emoji or `custom:<id>`. */
   addReaction: (messageId: string, emoji: string) => invoke<void>('add_reaction', { messageId, emoji }),
   removeReaction: (messageId: string, emoji: string) => invoke<void>('remove_reaction', { messageId, emoji }),

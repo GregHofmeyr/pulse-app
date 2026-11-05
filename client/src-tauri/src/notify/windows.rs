@@ -1,5 +1,7 @@
-//! Windows: WinRT toasts. Each conversation's toast carries its channel id as the tag (group
-//! "pulse"), so a new one replaces the last in Action Center instead of piling up.
+//! Windows: WinRT toasts. Each toast carries its slot as the tag (group "pulse"): the channel id
+//! for a conversation's messages, so a new one replaces the last in Action Center instead of
+//! piling up, and its own for a call's ring ([`Notice::key`]), which is removed from Action Center
+//! by tag when the ring ends (#176).
 //!
 //! Built on the `windows` crate rather than tauri-winrt-notification: that wrapper has no tag or
 //! group, and replacing needs both. It is the same handful of WinRT calls.
@@ -51,8 +53,20 @@ impl Backend {
         notifier
             .Show(&toast)
             .map_err(|e| Failure::Refused(e.to_string()))?;
-        self.shown.insert(n.channel_id.clone(), toast);
+        self.shown.insert(n.key().to_string(), toast);
         Ok(())
+    }
+
+    /// Remove the toast in slot `key` from Action Center (and the screen, if it's still up). One
+    /// already gone, or a history Windows won't hand over, is nothing to do.
+    pub fn withdraw(&mut self, key: &str) {
+        self.shown.remove(key);
+        let removed = ToastNotificationManager::History().and_then(|h| {
+            h.RemoveGroupedTagWithId(&HSTRING::from(key), &HSTRING::from(GROUP), &self.app_id)
+        });
+        if let Err(e) = removed {
+            tracing::debug!(error = %e, "notifications: couldn't remove a toast");
+        }
     }
 
     fn build(&self, n: &Notice) -> windows::core::Result<ToastNotification> {
@@ -64,7 +78,7 @@ impl Backend {
             image.as_deref(),
         )))?;
         let toast = ToastNotification::CreateToastNotification(&doc)?;
-        toast.SetTag(&HSTRING::from(n.channel_id.as_str()))?;
+        toast.SetTag(&HSTRING::from(n.key()))?;
         toast.SetGroup(&HSTRING::from(GROUP))?;
         let click = Click {
             channel_id: n.channel_id.clone(),
