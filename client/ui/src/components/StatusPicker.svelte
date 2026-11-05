@@ -6,6 +6,7 @@
   import { app, clock, ui } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import { clickOutside } from '../lib/actions'
+  import { closeTimer } from '../lib/hoverIntent'
   import { DND_FOR, dndUntil, ownStatus, type DndChoice } from '../lib/status'
   import Icon from './Icon.svelte'
   import type { Status } from '../lib/protocol/Status'
@@ -65,7 +66,11 @@
       focusSub(0)
     }
   }
+  // hover intent (#173): another item hovered closes the flyout after a short wait, cancelled by coming back
+  const later = closeTimer()
+  $effect(() => later.cancel)
   function closeSub(refocus: boolean) {
+    later.cancel()
     if (!subOpen) return
     subOpen = false
     if (refocus) dndEl?.focus()
@@ -129,17 +134,17 @@
   onpointerover={(e) => {
     // another of the menu's own items under the pointer closes the flyout
     const t = (e.target as Element).closest?.('[data-item]')
-    if (t && t.parentElement === el && t !== dndEl) closeSub(!!sub?.contains(document.activeElement))
+    if (t && t.parentElement === el && t !== dndEl && subOpen) later.schedule(() => closeSub(!!sub?.contains(document.activeElement)))
   }}>
   {#each STATUSES as s (s.id)}
     {#if s.id === 'dnd'}
       <button bind:this={dndEl} type="button" class="menu-item has-sub" class:hi={subOpen} role="menuitemradio" aria-checked={current === 'dnd'} data-item="dnd"
-        aria-haspopup="menu" aria-expanded={subOpen} aria-controls={subOpen ? flyoutId : undefined} onpointerenter={() => openSub(false)} onclick={() => openSub(true)}>
+        aria-haspopup="menu" aria-expanded={subOpen} aria-controls={subOpen ? flyoutId : undefined} onpointerenter={() => { later.cancel(); openSub(false) }} onclick={() => openSub(true)}>
         <span class="dot dnd" aria-hidden="true"></span><span class="grow">{s.label}</span>
         {#if current === 'dnd'}<Icon name="check" size={14} />{/if}<Icon name="chevronRight" size={14} />
       </button>
       {#if subOpen}
-        <div bind:this={sub} id={flyoutId} class="flyout menu-surface" role="menu" aria-label="Do Not Disturb for" tabindex="-1" style:top="{subTop}px" onkeydown={subKeydown}>
+        <div bind:this={sub} id={flyoutId} class="flyout menu-surface" role="menu" aria-label="Do Not Disturb for" tabindex="-1" style:top="{subTop}px" onkeydown={subKeydown} onpointerenter={later.cancel}>
           {#each DND_FOR as d (d.label)}
             <button type="button" class="menu-item" role="menuitem" onclick={() => setDnd(d)}>{d.label}</button>
           {/each}

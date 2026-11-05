@@ -2,6 +2,7 @@
 // The right-click menu on a sidebar channel row (ChannelList + ChannelMenu + DeleteChannelDialog).
 import { flushSync, mount, tick, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { SUBMENU_CLOSE_DELAY } from '../lib/hoverIntent'
 
 const invoke = vi.fn()
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a) }))
@@ -265,7 +266,8 @@ describe('the mute flyout', () => {
     expect(flyout()).toBeNull()
   })
 
-  it('hovering_it_opens_the_durations_to_the_left_and_another_item_closes_them', () => {
+  it('hovering_it_opens_the_durations_to_the_left_and_another_item_closes_them_after_a_short_wait', () => {
+    vi.useFakeTimers()
     rightClick('general', 600)
     hover(muteItem())
     expect(muteItem().getAttribute('aria-expanded')).toBe('true')
@@ -275,8 +277,24 @@ describe('the mute flyout', () => {
     // hover only: focus stays where it was
     expect(flyout()!.contains(document.activeElement)).toBe(false)
     hover(item('Rename channel…')!)
+    // hover intent (#173): crossing another item on the way to the flyout doesn't close it at once
+    expect(flyout()).not.toBeNull()
+    vi.advanceTimersByTime(SUBMENU_CLOSE_DELAY); flushSync()
     expect(flyout()).toBeNull()
     expect(muteItem().getAttribute('aria-expanded')).toBe('false')
+    vi.useRealTimers()
+  })
+
+  it('crossing_another_item_into_the_flyout_keeps_it_open', () => {
+    vi.useFakeTimers()
+    rightClick('general', 600)
+    hover(muteItem())
+    hover(item('Rename channel…')!)
+    vi.advanceTimersByTime(SUBMENU_CLOSE_DELAY / 2)
+    flyout()!.dispatchEvent(new Event('pointerenter'))
+    vi.advanceTimersByTime(SUBMENU_CLOSE_DELAY * 2); flushSync()
+    expect(flyout()).not.toBeNull()
+    vi.useRealTimers()
   })
 
   it('near_the_left_edge_it_opens_to_the_right', () => {
@@ -332,10 +350,13 @@ describe('the mute flyout', () => {
   })
 
   it('hovering_another_item_while_focus_is_in_the_flyout_keeps_focus_in_the_menu', () => {
+    vi.useFakeTimers()
     rightClick('general')
     muteItem().focus()
     key(muteItem(), 'ArrowRight')
     hover(item('Rename channel…')!)
+    vi.advanceTimersByTime(SUBMENU_CLOSE_DELAY); flushSync()
+    vi.useRealTimers()
     expect(flyout()).toBeNull()
     expect(document.activeElement).toBe(muteItem())
   })

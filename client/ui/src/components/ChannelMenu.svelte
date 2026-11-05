@@ -108,7 +108,7 @@
     // another of the menu's own items under the pointer closes the flyout
     const t = (e.target as Element).closest?.('[data-item]')
     // (focus in the flyout goes back to Mute channel rather than falling out of the menu)
-    if (t && t.parentElement === el && t !== flyout?.trigger()) closeSub('if-inside')
+    if (t && t.parentElement === el && t !== flyout?.trigger()) flyout?.closeSoon()
   }}>
   {#if isVoice}
     {#if inCall}
