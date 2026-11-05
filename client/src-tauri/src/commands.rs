@@ -4,14 +4,16 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use pulse_protocol::gateway::ClientFrame;
-use pulse_protocol::ids::{ChannelId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId};
+use pulse_protocol::ids::{
+    CategoryId, ChannelId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId,
+};
 use pulse_protocol::rest::{
-    BadgeCatalogue, Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji,
+    BadgeCatalogue, Category, Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji,
     DeletedChannel, EditClipRequest, EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest,
     MediaInfo, Member, Message, MuteTarget, NameArchivePage, NotifyLevel, PostQuoteRequest,
-    Profile, QotyEvent, RecoveryCodesResponse, SearchRequest, SearchResults, Server,
-    SetMuteRequest, SetNotifyLevelRequest, Sound, StartQotyRequest, TwoFactorEnabledResponse,
-    TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
+    Profile, QotyEvent, RecoveryCodesResponse, SaveLayoutRequest, SearchRequest, SearchResults,
+    Server, ServerLayout, SetMuteRequest, SetNotifyLevelRequest, Sound, StartQotyRequest,
+    TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -1082,12 +1084,60 @@ pub async fn create_channel(
     server_id: ServerId,
     kind: pulse_protocol::rest::ChannelKind,
     name: String,
+    category_id: Option<CategoryId>,
 ) -> Result<Channel, ApiError> {
     let (api, token) = core.current()?;
     core.check(
         &app,
-        api.create_channel(&token, server_id, kind, &name).await,
+        api.create_channel_in(&token, server_id, kind, &name, category_id)
+            .await,
     )
+}
+
+/// A new category at the bottom of the server's channel list (#54).
+#[tauri::command]
+pub async fn create_category(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    name: String,
+) -> Result<Category, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.create_category(&token, server_id, &name).await)
+}
+
+#[tauri::command]
+pub async fn rename_category(
+    app: AppHandle,
+    core: State<'_, Core>,
+    category_id: CategoryId,
+    name: String,
+) -> Result<Category, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.rename_category(&token, category_id, &name).await)
+}
+
+#[tauri::command]
+pub async fn delete_category(
+    app: AppHandle,
+    core: State<'_, Core>,
+    category_id: CategoryId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_category(&token, category_id).await)
+}
+
+/// Saves a whole new order of the server's channel list (#55); a stale one is refused in the
+/// server's words.
+#[tauri::command]
+pub async fn save_layout(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    layout: SaveLayoutRequest,
+) -> Result<ServerLayout, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.save_layout(&token, server_id, &layout).await)
 }
 
 #[tauri::command]

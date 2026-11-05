@@ -3,24 +3,25 @@
 use std::time::Duration;
 
 use pulse_protocol::ids::{
-    ChannelId, ClipUploadId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId,
+    CategoryId, ChannelId, ClipUploadId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId,
 };
 use pulse_protocol::rest::{
-    AddGameRequest, AddMembersRequest, AddQotyOptionRequest, BadgeCatalogue, ChangePasswordRequest,
-    Channel, ChannelKind, ClipFacets, ClipStorage, ClipUpload, ClipUploadRequest, ClipUrl,
-    ClipView, ConfirmClipRequest, CreateDmRequest, CreateEmojiRequest, CreateSoundRequest,
-    CustomEmoji, DeletedChannel, EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest,
-    Game, GoLiveRequest, HideEmbedRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest,
-    LoginRequest, MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired,
-    MuteTarget, NameArchivePage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest,
-    RecoveryCodesResponse, RegisterRequest, RenameChannelRequest, RenameEmojiRequest,
-    ReopenQotyRequest, SearchRequest, SearchResults, SendMessageRequest, Server, ServerVoiceMod,
-    SessionResponse, SetClipViewRequest, SetMuteRequest, SetNicknameRequest, SetNotifyLevelRequest,
-    SetServerVoiceRequest, SetShowcaseRequest, SetStatusRequest, Sound, StartQotyRequest, Status,
-    StreamInfo, StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest,
-    TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse,
-    TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User, VoiceTokenResponse,
-    WatchRequest,
+    AddGameRequest, AddMembersRequest, AddQotyOptionRequest, BadgeCatalogue, Category,
+    ChangePasswordRequest, Channel, ChannelKind, ClipFacets, ClipStorage, ClipUpload,
+    ClipUploadRequest, ClipUrl, ClipView, ConfirmClipRequest, CreateCategoryRequest,
+    CreateDmRequest, CreateEmojiRequest, CreateSoundRequest, CustomEmoji, DeletedChannel,
+    EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest, Game, GoLiveRequest,
+    HideEmbedRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest, LoginRequest,
+    MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired, MuteTarget,
+    NameArchivePage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse,
+    RegisterRequest, RenameCategoryRequest, RenameChannelRequest, RenameEmojiRequest,
+    ReopenQotyRequest, SaveLayoutRequest, SearchRequest, SearchResults, SendMessageRequest, Server,
+    ServerLayout, ServerVoiceMod, SessionResponse, SetClipViewRequest, SetMuteRequest,
+    SetNicknameRequest, SetNotifyLevelRequest, SetServerVoiceRequest, SetShowcaseRequest,
+    SetStatusRequest, Sound, StartQotyRequest, Status, StreamInfo, StreamRole, StreamSettings,
+    StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
+    TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest,
+    UpdateSoundRequest, User, VoiceTokenResponse, WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -388,16 +389,96 @@ impl Api {
         kind: ChannelKind,
         name: &str,
     ) -> Result<Channel, ApiError> {
+        self.create_channel_in(token, server, kind, name, None)
+            .await
+    }
+
+    /// A new channel at the bottom of `category` (#54), or uncategorised (`None`).
+    pub async fn create_channel_in(
+        &self,
+        token: &str,
+        server: ServerId,
+        kind: ChannelKind,
+        name: &str,
+        category: Option<CategoryId>,
+    ) -> Result<Channel, ApiError> {
         let body = pulse_protocol::rest::CreateChannelRequest {
             kind,
             name: name.into(),
-            category_id: None,
+            category_id: category,
         };
         Self::parse(
             self.http
                 .post(format!("{}/servers/{server}/channels", self.base))
                 .bearer_auth(token)
                 .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A new category at the bottom of `server`'s list (#54).
+    pub async fn create_category(
+        &self,
+        token: &str,
+        server: ServerId,
+        name: &str,
+    ) -> Result<Category, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/servers/{server}/categories", self.base))
+                .bearer_auth(token)
+                .json(&CreateCategoryRequest { name: name.into() })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn rename_category(
+        &self,
+        token: &str,
+        category: CategoryId,
+        name: &str,
+    ) -> Result<Category, ApiError> {
+        Self::parse(
+            self.http
+                .patch(format!("{}/categories/{category}", self.base))
+                .bearer_auth(token)
+                .json(&RenameCategoryRequest { name: name.into() })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Deletes a category; its channels move to the uncategorised top of the list.
+    pub async fn delete_category(&self, token: &str, category: CategoryId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/categories/{category}", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Saves a whole new order of `server`'s list (#55). A save based on an old revision (someone
+    /// else's landed first) is a 409, which arrives as [`ApiError::Rejected`] in the server's
+    /// words, for the UI to show as its draft snaps back.
+    pub async fn save_layout(
+        &self,
+        token: &str,
+        server: ServerId,
+        layout: &SaveLayoutRequest,
+    ) -> Result<ServerLayout, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/servers/{server}/layout", self.base))
+                .bearer_auth(token)
+                .json(layout)
                 .send()
                 .await,
         )
@@ -2426,6 +2507,62 @@ mod tests {
                 .is_empty()
         );
         assert!(api.restore_channel(&alex, g.id).await.is_err(), "gone");
+    }
+
+    #[tokio::test]
+    async fn categories_round_trip_through_the_core() {
+        use pulse_protocol::rest::{LayoutCategory, SaveLayoutRequest, ServerLayout};
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let made = api.create_category(&alex, s.id, "Gaming").await.unwrap();
+        assert_eq!((made.name.as_str(), made.server_id), ("Gaming", s.id));
+        let renamed = api.rename_category(&alex, made.id, "Games").await.unwrap();
+        assert_eq!((renamed.id, renamed.name.as_str()), (made.id, "Games"));
+        let ch = api
+            .create_channel_in(&alex, s.id, ChannelKind::Text, "speedruns", Some(made.id))
+            .await
+            .unwrap();
+        assert_eq!(ch.category_id, Some(made.id));
+        // Move it out to the top, keeping everything else where it is.
+        let base: ServerLayout = {
+            let mut c = app.db.acquire().await.unwrap();
+            pulse_server::servers::categories::layout_of(&mut c, s.id)
+                .await
+                .unwrap()
+        };
+        let request = SaveLayoutRequest {
+            revision: base.revision,
+            uncategorised: vec![ch.id],
+            categories: base
+                .categories
+                .iter()
+                .map(|cat| LayoutCategory {
+                    id: cat.id,
+                    channels: base
+                        .channels
+                        .iter()
+                        .filter(|p| p.category_id == Some(cat.id) && p.channel_id != ch.id)
+                        .map(|p| p.channel_id)
+                        .collect(),
+                })
+                .collect(),
+        };
+        let saved = api.save_layout(&alex, s.id, &request).await.unwrap();
+        assert_eq!(saved.revision, base.revision + 1);
+        let moved = saved.channels.iter().find(|p| p.channel_id == ch.id);
+        assert_eq!(moved.map(|p| p.category_id), Some(None));
+        // The same save again is based on an old revision: refused in the server's words.
+        match api.save_layout(&alex, s.id, &request).await {
+            Err(ApiError::Rejected(m)) => assert!(m.contains("order changed"), "{m}"),
+            other => panic!("a stale save should be refused, got {other:?}"),
+        }
+        api.delete_category(&alex, made.id).await.unwrap();
+        assert!(
+            api.rename_category(&alex, made.id, "Again").await.is_err(),
+            "deleted"
+        );
     }
 
     #[tokio::test]
