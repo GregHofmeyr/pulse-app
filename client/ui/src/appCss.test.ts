@@ -168,6 +168,20 @@ describe('shared surfaces', () => {
     expect(appearance).not.toMatch(/input\[role='switch'\]/)
   })
 
+  it('no settings pane shows a native tick box: every checkbox there is the switch (#167)', () => {
+    const dir = resolve(__dirname, 'components')
+    const panes = readdirSync(dir).filter((f) => /Settings\.svelte$/.test(f))
+    expect(panes).toContain('AdvancedSettings.svelte')
+    for (const f of panes) {
+      const src = readFileSync(resolve(dir, f), 'utf8')
+      for (const tag of src.match(/<input[^>]*type="checkbox"[^>]*>/g) ?? [])
+        expect(tag, `${f}: ${tag}`).toMatch(/role="switch" class="switch"/)
+    }
+    // a switch that can't be changed yet looks it, and doesn't offer a pointer
+    expect(rule('.switch:disabled').getPropertyValue('opacity')).toBe('0.5')
+    expect(rule('input.switch:disabled').getPropertyValue('cursor')).toBe('default')
+  })
+
   it('dialogs are a bg-2 panel with a drop shadow', () => {
     const modal = rule('.modal')
     expect(modal.getPropertyValue('background')).toBe('var(--bg-2)')
