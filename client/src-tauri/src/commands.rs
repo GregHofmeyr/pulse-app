@@ -1462,7 +1462,9 @@ pub async fn play_sound(
         |n| tracing::warn!("sound: {n} lines dropped (too many)"),
     );
     if name == "ringing" {
-        let id = ringtone.as_deref().unwrap_or(crate::sounds::DEFAULT_RINGTONE);
+        let id = ringtone
+            .as_deref()
+            .unwrap_or(crate::sounds::DEFAULT_RINGTONE);
         crate::sounds::play_ringtone_once(id, crate::sounds::gain(volume), output);
     } else {
         crate::sounds::play(set, &name, crate::sounds::gain(volume), output);
@@ -1475,7 +1477,9 @@ pub async fn play_sound(
 #[tauri::command]
 pub async fn start_ringtone(volume: Option<f32>, output: Option<String>, ringtone: Option<String>) {
     tracing::info!("ringtone: start");
-    let id = ringtone.as_deref().unwrap_or(crate::sounds::DEFAULT_RINGTONE);
+    let id = ringtone
+        .as_deref()
+        .unwrap_or(crate::sounds::DEFAULT_RINGTONE);
     crate::sounds::ring::start(id, crate::sounds::gain(volume), output);
 }
 
