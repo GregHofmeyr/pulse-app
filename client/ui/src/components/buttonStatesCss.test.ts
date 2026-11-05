@@ -96,7 +96,8 @@ describe('text fields', () => {
       ['LineMenu.svelte', 'input input-sm find'],
       ['TextChannel.svelte', 'input input-sm rename'],
       ['PeoplePicker.svelte', 'input search'],
-      ['EmojiPicker.svelte', 'search'],
+      ['EmojiPicker.svelte', 'search input input-sm'],
+      ['Soundboard.svelte', 'search input input-sm'],
     ]
     for (const [file, cls] of fields) {
       const s = scoped(file)
@@ -108,7 +109,7 @@ describe('text fields', () => {
       // the probe matches what the template renders
       expect(source(file), file).toContain(`class="${cls}"`)
       // jsdom drops a border shorthand that holds a var(), so the accent border is checked in the source
-      const own = cls.split(' ').at(-1)
+      const own = cls.split(' ').find((c) => !['input', 'input-sm'].includes(c)) ?? cls
       expect(source(file), file).not.toMatch(new RegExp(`\\.${own}(:focus)? \\{[^}]*(var\\(--accent\\)|outline: none)`))
     }
   })

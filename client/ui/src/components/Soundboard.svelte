@@ -120,7 +120,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="board" bind:this={root} role="dialog" aria-label="Soundboard" tabindex="-1" onkeydown={onKey}>
   <div class="top">
-    <input bind:this={searchEl} bind:value={query} class="search" type="text" placeholder="Find a sound" aria-label="Find a sound" autocomplete="off" spellcheck="false" />
+    <input bind:this={searchEl} bind:value={query} class="search input input-sm" type="text" placeholder="Find a sound" aria-label="Find a sound" autocomplete="off" spellcheck="false" />
     <button class="vol-btn" class:on={showVolume} type="button" aria-label="Soundboard volume" aria-expanded={showVolume} onclick={() => (showVolume = !showVolume)}>
       <Icon name={soundboard.volume_pct === 0 ? 'speakerOff' : 'volume'} size={18} />
     </button>
@@ -203,9 +203,12 @@
 </div>
 
 <style>
-  .board { position: relative; width: 440px; height: 460px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-2); overflow: hidden; color: var(--text); outline: none; }
+  /* the menus' frame (#173: .menu-surface's border, radius and shadow) round a bg-2 panel: its tiles, rail and footer
+     are drawn for bg-2, so the fill stays */
+  .board { position: relative; width: 440px; height: 460px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line-menu); border-radius: var(--radius-lg); box-shadow: var(--shadow-3); overflow: hidden; color: var(--text); outline: none; }
   .top { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
-  .search { flex: 1; min-width: 0; background: var(--bg-0); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; }
+  /* the shared small field (.input .input-sm) */
+  .search { flex: 1; min-width: 0; }
   .vol-btn { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); padding: 0; cursor: pointer; }
   .vol-btn:hover, .vol-btn.on { background: var(--bg-3); color: var(--text); }
   .vol-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--bg-1); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--text-2); }
@@ -231,7 +234,7 @@
   .preview:hover { background: var(--bg-2); color: var(--text); }
   .add-tile { height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 1px dashed var(--line); border-radius: 10px; background: transparent; color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; }
   .add-tile:hover { background: var(--bg-3); color: var(--text); }
-  .none { color: var(--text-3); text-align: center; margin: 24px 0; }
+  .none { color: var(--text-3); font-size: 13px; text-align: center; margin: 24px 0; }
   .ctx { position: absolute; z-index: 5; min-width: 150px; gap: 2px; font-size: 13px; --pop-origin: top left; }
   .scrim { position: absolute; inset: 0; z-index: 6; display: grid; place-items: center; background: var(--scrim); }
   .ask { width: 240px; padding: 12px; gap: 10px; }
