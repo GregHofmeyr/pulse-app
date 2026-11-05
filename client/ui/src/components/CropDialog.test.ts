@@ -101,12 +101,12 @@ describe('CropDialog', () => {
     at('pointerup', 104)
     flushSync()
     apply().click()
-    // dragged right by ~3.6 px (1 source px per screen px here): the crop moves left as much
-    expect(onApply.mock.lastCall![0]).toEqual({ x: 96, y: 0, w: 600, h: 600 })
+    // dragged right by ~3.6 px (1 source px per screen px here): the circle follows the pointer right
+    expect(onApply.mock.lastCall![0]).toEqual({ x: 104, y: 0, w: 600, h: 600 })
     at('pointermove', 50) // no longer dragging
     flushSync()
     apply().click()
-    expect(onApply.mock.lastCall![0].x).toBe(96)
+    expect(onApply.mock.lastCall![0].x).toBe(104)
   })
 
   it('the mask is round for an avatar, square for a banner; a banner applies its own aspect', async () => {

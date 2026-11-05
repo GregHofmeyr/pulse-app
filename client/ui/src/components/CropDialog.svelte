@@ -69,7 +69,8 @@
   function move(e: PointerEvent) {
     if (!drag || !crop) return
     const r = ratio()
-    crop = panCrop(crop, natW, natH, -(e.clientX - drag.x) * r, -(e.clientY - drag.y) * r)
+    // the picture stays put and the crop box moves over it, so the box follows the pointer
+    crop = panCrop(crop, natW, natH, (e.clientX - drag.x) * r, (e.clientY - drag.y) * r)
     drag = { x: e.clientX, y: e.clientY }
   }
   const up = () => (drag = null)
