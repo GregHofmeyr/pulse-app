@@ -152,3 +152,54 @@ describe('installTooltips', () => {
     expect(tip.textContent).toBe('Hide members')
   })
 })
+
+// #173: the reaction chips' reactor names used their own tip (no delay, a "…" that resized, its own look). A live
+// target now goes through this one: the same delay and look, its text shown when it arrives.
+describe('installTooltips: a live tip whose text arrives later', () => {
+  const tip = () => document.querySelector('.pulse-tooltip')!
+  const settle = () => new Promise((r) => queueMicrotask(() => r(undefined)))
+  const liveChip = (text: string) => {
+    const chip = document.createElement('button')
+    chip.textContent = text
+    chip.setAttribute('data-tip-live', '')
+    document.body.append(chip)
+    return chip
+  }
+
+  it('waits the delay, then shows the text as soon as it is set, and follows changes', async () => {
+    vi.useFakeTimers()
+    try {
+      off = installTooltips()
+      const chip = liveChip('👍 2')
+      chip.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+      vi.advanceTimersByTime(400)
+      expect(tip().classList.contains('show')).toBe(false)
+      chip.setAttribute('data-tip', 'sam and kim')
+      await settle()
+      expect(tip().classList.contains('show')).toBe(true)
+      expect(tip().textContent).toBe('sam and kim')
+      chip.setAttribute('data-tip', 'sam, kim and jo')
+      await settle()
+      expect(tip().textContent).toBe('sam, kim and jo')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('text that arrives before the delay is over still waits for it', async () => {
+    vi.useFakeTimers()
+    try {
+      off = installTooltips()
+      const chip = liveChip('👍 1')
+      chip.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+      chip.setAttribute('data-tip', 'alex')
+      await settle()
+      expect(tip().classList.contains('show')).toBe(false)
+      vi.advanceTimersByTime(400)
+      expect(tip().classList.contains('show')).toBe(true)
+      expect(tip().textContent).toBe('alex')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

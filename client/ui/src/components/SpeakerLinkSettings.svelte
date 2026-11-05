@@ -55,9 +55,9 @@
   {#if links.length === 0}
     <p class="empty">No names are linked yet. Link one from a quote line's menu.</p>
   {:else}
-    <ul>
+    <ul class="settings-list">
       {#each links as l (l.name_key)}
-        <li class="link">
+        <li class="link settings-list-item">
           <div class="meta">
             <span><span class="name">{l.name}</span> → {nameOf(l.user_id)}</span>
             <small>linked by {nameOf(l.linked_by)}</small>
@@ -90,8 +90,8 @@
   .hint { margin: -12px 0 0; color: var(--text-3); font-size: 12px; }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .empty { margin: 0; color: var(--text-3); }
-  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-  li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--bg-0); flex-wrap: wrap; }
+  /* the list is the shared .settings-list (app.css) */
+  li { flex-wrap: wrap; }
   .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .name { font-weight: 600; }
   small { color: var(--text-3); }

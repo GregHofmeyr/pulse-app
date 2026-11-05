@@ -43,7 +43,7 @@
 
   <!-- in-app toasts (#166): their own prefs, apart from desktop notifications -->
   <div class="settings-field">
-    <h3>In-app toasts</h3>
+    <h3 class="settings-section-title">In-app toasts</h3>
     <label class="row">
       <input type="checkbox" role="switch" class="switch" checked={toastPrefs.enabled} onchange={(e) => setToastPref('enabled', e.currentTarget.checked)} />
       <span>Show in-app toasts</span>
@@ -60,12 +60,12 @@
   </div>
 
   <div class="settings-field">
-    <h3>Go-live notifications</h3>
+    <h3 class="settings-section-title">Go-live notifications</h3>
     <small>When one of these people goes live anywhere you can see, you get a notification and the live toast. Do Not Disturb holds them back.</small>
     {#if following.length}
-      <ul class="follow-list">
+      <ul class="follow-list settings-list">
         {#each following as p (p.id)}
-          <li>
+          <li class="settings-list-item">
             <Avatar id={p.id} name={p.name} size={28} />
             <span class="who">{p.name}</span>
             <button type="button" class="btn btn-secondary" aria-label="Stop notifying me when {p.name} goes live" onclick={() => unfollow(p.id)}>Remove</button>
@@ -81,13 +81,11 @@
 
 <style>
   .row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
-  h3 { margin: 8px 0 2px; font-size: 15px; }
   /* under the master switch, indented to its label */
   .kinds { display: flex; flex-direction: column; gap: 10px; margin-left: 54px; }
   .kinds .row { font-weight: 500; }
-  .empty { margin: 0; color: var(--text-2); font-size: 13px; }
-  .follow-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-  .follow-list li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; background: var(--bg-2); }
+  .empty { margin: 0; color: var(--text-3); font-size: 13px; }
+  /* the list is the shared .settings-list (app.css) */
   .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
 </style>

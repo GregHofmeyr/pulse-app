@@ -22,14 +22,14 @@
 {/if}
 {#if unsentReplies > 0}
   <button type="button" class="unsent-reply" onclick={onOpenReplies}>
-    <Icon name="reply" size={13} />{unsentReplies === 1 ? 'Unsent reply' : `${unsentReplies} unsent replies`}
+    <Icon name="reply" size={14} />{unsentReplies === 1 ? 'Unsent reply' : `${unsentReplies} unsent replies`}
   </button>
 {/if}
 
 <style>
   .replies { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--accent-text); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
   .replies:hover { text-decoration: underline; }
-  .new { padding: 0 6px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+  .new { padding: 0 6px; border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent); font-size: 10px; font-weight: 700; text-transform: uppercase; }
   .unsent-reply { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--danger-text); font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
   .unsent-reply:hover { text-decoration: underline; }
 </style>

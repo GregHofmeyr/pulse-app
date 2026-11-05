@@ -61,10 +61,11 @@ export const ACCENT_PRESETS: { label: string; color: string }[] = [
 /** The dark text on a light accent (today's --on-accent). */
 export const DARK_INK = '#141519'
 
-export type AccentTokens = Record<'--accent' | '--accent-soft' | '--accent-faint' | '--focus-soft' | '--focus-ring' | '--on-accent' | '--accent-text', string>
+export type AccentTokens = Record<'--accent' | '--accent-soft' | '--accent-faint' | '--accent-mid' | '--accent-strong' | '--focus-soft' | '--focus-ring' | '--on-accent' | '--accent-text', string>
 
 /**
- * Everything accent-coloured, from one colour: the translucent tints (mentions and chips, a mention's row, the message
+ * Everything accent-coloured, from one colour: the translucent tints (mentions and chips, a mention's row, a pressed
+ * toggle and a jumped-to message (mid, strong on hover), the message
  * box's focus edge), the focus ring (3:1 on the theme's surfaces), the text on an accent button (dark ink or white,
  * whichever reads better) and accent-coloured text (4.5:1 on the theme's surfaces).
  */
@@ -78,6 +79,8 @@ export function deriveAccent(hex: string, s: Surfaces, light: boolean): AccentTo
     '--accent': hex,
     '--accent-soft': rgba(hex, light ? 0.14 : 0.15),
     '--accent-faint': rgba(hex, light ? 0.07 : 0.08),
+    '--accent-mid': rgba(hex, 0.22),
+    '--accent-strong': rgba(hex, 0.3),
     '--focus-soft': rgba(hex, light ? 0.55 : 0.45),
     '--focus-ring': readable(hex, bgs, 3),
     '--on-accent': on,

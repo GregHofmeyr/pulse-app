@@ -220,7 +220,7 @@
   {#if collapsed}
     <button type="button" class="mag" aria-label="Search" onclick={() => input.focus()}><Icon name="search" size={16} /></button>
   {:else}
-    <Icon name="search" size={15} />
+    <Icon name="search" size={16} />
   {/if}
   {#each chips as c, i (chipText(c))}
     <span class="chip">{chipText(c)}<button type="button" tabindex="-1" aria-label="Remove {chipText(c)}" onclick={() => removeChip(i)}><Icon name="x" size={11} /></button></span>
@@ -264,18 +264,18 @@
   .search.collapsed .field { position: absolute; width: 1px; min-width: 0; opacity: 0; pointer-events: none; }
   .search.floating { position: absolute; top: 0; right: 0; z-index: 21; width: min(320px, 70vw); box-shadow: var(--shadow-2); }
   .search.floating.focused { width: min(320px, 70vw); }
-  .mag { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); }
+  .mag { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); }
   .mag:hover { background: var(--bg-3); color: var(--text); }
   /* the shared .input look, holding chips beside the text */
-  .search { position: relative; width: 240px; min-width: 0; height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--bg-4); border-radius: 8px; background: var(--bg-1); color: var(--text-3); transition: width var(--dur) var(--ease); }
+  .search { position: relative; width: 240px; min-width: 0; height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--bg-4); border-radius: var(--radius-sm); background: var(--bg-1); color: var(--text-3); }
   .search:hover { border-color: var(--line-menu); }
   .search.focused { width: 320px; outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .field { flex: 1; min-width: 60px; height: 100%; padding: 0; border: 0; background: none; color: var(--text); font-size: 13px; outline: none; text-overflow: ellipsis; }
   .field::placeholder { color: var(--text-3); }
-  .chip { flex-shrink: 0; display: inline-flex; align-items: center; gap: 2px; height: 22px; padding: 0 2px 0 7px; border-radius: 6px; background: var(--accent-soft); color: var(--text); font-size: 12px; white-space: nowrap; }
+  .chip { flex-shrink: 0; display: inline-flex; align-items: center; gap: 2px; height: 22px; padding: 0 2px 0 7px; border-radius: var(--radius-xs); background: var(--accent-soft); color: var(--text); font-size: 12px; white-space: nowrap; }
   .chip button { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--text-2); }
   .chip button:hover { background: var(--bg-4); color: var(--text); }
-  .list { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: 320px; max-height: 320px; overflow-y: auto; }
+  .list { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: 320px; max-height: 320px; overflow-y: auto; --pop-origin: top right; }
   .list .menu-item { cursor: pointer; }
   .hint { position: absolute; top: calc(100% + 4px); left: 0; z-index: 19; margin: 0; font-size: 12px; color: var(--text-3); white-space: nowrap; pointer-events: none; }
   .hint:empty { display: none; }

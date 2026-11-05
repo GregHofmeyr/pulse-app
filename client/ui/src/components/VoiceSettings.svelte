@@ -113,7 +113,7 @@
     </div>
     <!-- the slider sits ON the level meter, so its thumb is the threshold marker -->
     <div class="sens">
-      <div class="meter" aria-hidden="true"><div class="fill" class:over={cfg.auto_sensitivity ? voice.gateOpen : voice.levels.mic >= cfg.sensitivity} style:width="{Math.min(100, (voice.levels.mic / SENS_MAX) * 100)}%"></div></div>
+      <div class="meter" aria-hidden="true"><div class="fill" class:over={cfg.auto_sensitivity ? voice.gateOpen : voice.levels.mic >= cfg.sensitivity} style:transform="scaleX({Math.min(1, voice.levels.mic / SENS_MAX)})"></div></div>
       {#if !cfg.auto_sensitivity}
         <input type="range" min="0" max={SENS_MAX} step="0.002" bind:value={cfg.sensitivity} onchange={apply} aria-label="Sensitivity threshold" />
       {/if}
@@ -161,13 +161,14 @@
   input[type='range'] { accent-color: var(--accent); }
   .hint { margin: -8px 0 0; font-size: 12px; color: var(--text-3); }
   .sens { position: relative; height: 22px; display: flex; align-items: center; }
-  .meter { position: absolute; left: 0; right: 0; height: 12px; border-radius: 6px; background: var(--line); overflow: hidden; }
-  .fill { height: 100%; background: var(--ok-deep); transition: width .1s linear; }
+  .meter { position: absolute; left: 0; right: 0; height: 12px; border-radius: var(--radius-xs); background: var(--line); overflow: hidden; }
+  /* scaled, not sized, and not eased: a level event moves it at once without a layout (#173) */
+  .fill { width: 100%; height: 100%; background: var(--ok-deep); transform-origin: left; }
   .fill.over { background: var(--ok); }
   .sens input[type='range'] { position: relative; width: 100%; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; height: 22px; }
   .sens input[type='range']::-webkit-slider-runnable-track { background: transparent; height: 22px; }
   .sens input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 6px; height: 22px; border-radius: 3px; background: var(--text); box-shadow: 0 0 0 2px var(--ring); }
-  .warn { margin: -8px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn-text); font-size: 13px; }
+  .warn { margin: -8px 0 0; padding: 10px 12px; border-radius: var(--radius-md); background: var(--warn-soft); color: var(--warn-text); font-size: 13px; }
   .check { display: flex; align-items: center; gap: 12px; padding: 16px; background: var(--bg-2); border-radius: 14px; }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .toggles { display: flex; flex-direction: column; }

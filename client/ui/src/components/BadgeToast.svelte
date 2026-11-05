@@ -5,6 +5,7 @@
   // unless motion is off (lib/animate.svelte.ts: reduced motion, live, or "Animate emoji" on never).
   import { untrack } from 'svelte'
   import Icon from './Icon.svelte'
+  import { exitFade } from '../lib/exit'
   import BadgeIcon from './BadgeIcon.svelte'
   import { badgeStore, openOwnCase, rarityLabel, rarityVar } from '../lib/badges.svelte'
   import { motion, shouldCelebrate, watchMotion } from '../lib/animate.svelte'
@@ -47,7 +48,7 @@
 <div class="stack" aria-live="polite">
   {#each badgeStore.toasts as t (t.id)}
     <!-- the item is the stacking context (no background of its own), so the confetti paints under the toast -->
-    <div class="item" style:--ring-color={rarityVar(t.rarity)}>
+    <div class="item" style:--ring-color={rarityVar(t.rarity)} out:exitFade>
     {#if celebrate(t.id)}
       <span class="confetti" aria-hidden="true">
         {#each PIECES as p, i (i)}<i style:--dx={p.dx} style:--dy={p.dy} style:--spin={p.spin} style:--c={p.color} style:animation-delay={p.delay}></i>{/each}
@@ -70,7 +71,7 @@
           <small>{rarityLabel(t.rarity)}{t.tier > 1 ? ` · tier ${t.tier}` : ''}</small>
         </span>
       </button>
-      <button type="button" class="x" aria-label="Dismiss" onclick={() => badgeStore.dismiss(t.id)}><Icon name="x" size={14} /></button>
+      <button type="button" class="icon-btn icon-btn-xs" aria-label="Dismiss" onclick={() => badgeStore.dismiss(t.id)}><Icon name="x" size={14} /></button>
     </div>
     </div>
   {/each}
@@ -79,12 +80,11 @@
 <style>
   .stack { position: fixed; left: 18px; top: 62px; z-index: 40; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
   .item { position: relative; isolation: isolate; }
-  .toast { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-left: 3px solid var(--ring-color); border-radius: 12px; box-shadow: var(--shadow-2); font-size: 13px; }
+  /* the shared .toast (app.css), with the badge's rarity as its left edge */
+  .toast { position: relative; border-left: 3px solid var(--ring-color); }
   .open { display: flex; align-items: center; gap: 10px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
   .text { display: flex; flex-direction: column; gap: 1px; }
   small { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ring-color); }
-  .x { width: 24px; height: 24px; flex-shrink: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
-  .x:hover { background: var(--bg-4); color: var(--text); }
   /* behind the toast (z -1 in the item's stacking context; the toast is positioned at z auto above it): the
      pieces start hidden under it and fly out past its edges */
   .confetti { position: absolute; inset: 0; z-index: -1; pointer-events: none; }

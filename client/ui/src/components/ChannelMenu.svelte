@@ -108,7 +108,7 @@
     // another of the menu's own items under the pointer closes the flyout
     const t = (e.target as Element).closest?.('[data-item]')
     // (focus in the flyout goes back to Mute channel rather than falling out of the menu)
-    if (t && t.parentElement === el && t !== flyout?.trigger()) closeSub('if-inside')
+    if (t && t.parentElement === el && t !== flyout?.trigger()) flyout?.closeSoon()
   }}>
   {#if isVoice}
     {#if inCall}
@@ -133,6 +133,6 @@
 </div>
 
 <style>
-  .menu { position: fixed; z-index: 60; min-width: 220px; max-width: 280px; gap: 2px; outline: none; }
+  .menu { position: fixed; z-index: 60; width: max-content; min-width: 220px; max-width: 280px; gap: 2px; outline: none; --pop-origin: top left; }
   .menu-item:disabled { color: var(--text-3); cursor: default; }
 </style>

@@ -5,7 +5,7 @@
   import { app, clock } from '../lib/store.svelte'
   import { displayName } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
-  import { LOADING_DELAY_MS } from '../lib/loading'
+  import Loading from './Loading.svelte'
   import type { Server } from '../lib/protocol/Server'
   import type { Channel } from '../lib/protocol/Channel'
   import type { DeletedChannel } from '../lib/protocol/DeletedChannel'
@@ -14,7 +14,6 @@
 
   let items = $state<DeletedChannel[] | null>(null)
   let error = $state('')
-  let slow = $state(false)
   // The server's live channels: a delete or restore elsewhere changes them, and the list reloads.
   const live = $derived(
     Object.values(app.state.channels)
@@ -27,14 +26,12 @@
     const id = server.id
     void live
     error = ''
-    slow = false
     let stale = false
-    const timer = setTimeout(() => (slow = true), LOADING_DELAY_MS)
     api.listDeletedChannels(id).then(
       (list) => { if (!stale) items = list },
       (e) => { if (!stale) error = errorText(e) },
     )
-    return () => { stale = true; clearTimeout(timer) }
+    return () => { stale = true }
   })
 
   const KIND: Record<string, string> = { text: 'Text', voice: 'Voice', quotes: 'Quotes', clips: 'Clips' }
@@ -68,13 +65,13 @@
   <p class="hint">Deleted channels stay here for 7 days, with everything in them, then go for good. The server owner, or whoever deleted one, can restore it.</p>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if !items}
-    {#if slow && !error}<p class="loading">Loading…</p>{/if}
+    {#if !error}<Loading />{/if}
   {:else if items.length === 0}
     <p class="empty">No deleted channels.</p>
   {:else}
-    <ul>
+    <ul class="settings-list">
       {#each items as d (d.channel.id)}
-        <li>
+        <li class="settings-list-item">
           <div class="info">
             <span class="name">{label(d.channel)}</span>
             <small>{KIND[d.channel.kind] ?? d.channel.kind} · Deleted by {d.deleted_by ? displayName(app.state, server.id, d.deleted_by) : 'someone'} · {when(d.deleted_at)}</small>
@@ -101,9 +98,8 @@
 <style>
   .hint { margin: -12px 0 0; color: var(--text-3); font-size: 12px; }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
-  .empty, .loading { margin: 0; color: var(--text-3); }
-  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-  li { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--bg-2); }
+  .empty { margin: 0; color: var(--text-3); }
+  /* the list is the shared .settings-list (app.css) */
   .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .name { font-weight: 600; overflow-wrap: anywhere; }
   small { color: var(--text-3); font-size: 12px; }

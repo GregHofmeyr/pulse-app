@@ -7,7 +7,7 @@
   import { nameOfIn } from '../lib/selectors'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
-  import { LOADING_DELAY_MS } from '../lib/loading'
+  import Loading from './Loading.svelte'
   import type { Leaderboard } from '../lib/protocol/Leaderboard'
   import type { Message } from '../lib/protocol/Message'
   import type { QuoteSpeaker } from '../lib/protocol/QuoteSpeaker'
@@ -22,12 +22,6 @@
 
   let board = $state<Leaderboard | null>(null)
   let error = $state('')
-  // "Loading…" only once the board is slow to come, so a quick one doesn't flash it
-  let slow = $state(false)
-  $effect(() => {
-    const timer = setTimeout(() => (slow = true), LOADING_DELAY_MS)
-    return () => clearTimeout(timer)
-  })
   $effect(() => {
     const id = serverId
     api.leaderboard(id).then(
@@ -81,7 +75,7 @@
   {#if error}
     <p class="error" role="alert">{error}</p>
   {:else if !board}
-    {#if slow}<p class="none">Loading…</p>{/if}
+    <Loading />
   {:else if empty}
     <p class="none">No quotes yet. Post one and get the board going.</p>
   {:else}
@@ -120,7 +114,7 @@
   h2 { margin: 0 0 8px; font-size: 15px; }
   section + section { margin-top: 12px; }
   h3 { margin: 0 0 4px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--quote-green-text); }
-  .entry { width: 100%; display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; min-width: 0; }
+  .entry { width: 100%; display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; min-width: 0; }
   .entry:hover, .entry:focus-visible { background: var(--bg-4); }
   .gone:hover { background: transparent; }
   .gone .said { color: var(--text-3); font-style: italic; }
@@ -130,7 +124,7 @@
   .note { flex-shrink: 0; color: var(--text-3); font-size: 12px; }
   .win { display: flex; align-items: center; gap: 6px; }
   .win .entry { flex: 1; }
-  .year { flex-shrink: 0; padding: 1px 7px; border-radius: 10px; background: var(--quote-green); color: var(--on-quote-green); font-size: 11px; font-weight: 700; }
+  .year { flex-shrink: 0; padding: 1px 7px; border-radius: var(--radius-md); background: var(--quote-green); color: var(--on-quote-green); font-size: 11px; font-weight: 700; }
   .person { display: flex; justify-content: space-between; gap: 8px; padding: 4px 8px; font-size: 13px; }
   .none { margin: 2px 8px; color: var(--text-3); font-size: 13px; }
   .error { margin: 2px 8px; color: var(--danger-text); font-size: 13px; }

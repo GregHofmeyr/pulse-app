@@ -6,7 +6,7 @@
   import ProfileCard from './ProfileCard.svelte'
   import { app, loadProfile, revalidateProfile } from '../lib/store.svelte'
   import { displayName, userOf } from '../lib/selectors'
-  import { DEFAULT_THEME } from '../lib/cardTheme'
+  import { SKELETON_THEME } from '../lib/cardTheme'
   import { errorText } from '../lib/tauri'
   import { closeCard, openFull, profileUi } from '../lib/profileCard.svelte'
   import type { CardProfile } from '../lib/protocol/CardProfile'
@@ -19,7 +19,7 @@
   const target = $derived(profileUi.card)
   const cached = $derived(target ? app.state.profiles[target.userId] : undefined)
   const user = $derived(target ? (userOf(app.state, target.userId) ?? cached?.user ?? null) : null)
-  const PLACEHOLDER: CardProfile = { banner_hash: null, banner_still: null, theme_top: DEFAULT_THEME.top, theme_bottom: DEFAULT_THEME.bottom, pronouns: null, bio: null }
+  const PLACEHOLDER: CardProfile = { banner_hash: null, banner_still: null, theme_top: SKELETON_THEME.top, theme_bottom: SKELETON_THEME.bottom, pronouns: null, bio: null }
   let failed = $state<string | null>(null)
   /** The card's measured height: it grows when the skeleton becomes the loaded card. */
   let height = $state(0)
@@ -119,5 +119,5 @@
      isn't a target, so a press there is outside the card */
   .pop { position: fixed; z-index: 55; outline: none; max-height: calc(100vh - 16px + 52px); overflow: auto; padding: 26px; margin: -26px; pointer-events: none; }
   .pop > :global(*) { pointer-events: auto; }
-  .err { margin: 6px 0 0; padding: 6px 10px; border-radius: 8px; background: var(--bg-3); color: var(--text-2); font-size: 12px; max-width: 300px; }
+  .err { margin: 6px 0 0; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--bg-3); color: var(--text-2); font-size: 12px; max-width: 300px; }
 </style>

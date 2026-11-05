@@ -84,7 +84,7 @@
           inputmode="text" autocapitalize="off" spellcheck="false" />
       </label>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <button class="primary" disabled={busy}>{busy ? '…' : 'Verify'}</button>
+      <button class="primary btn-primary" disabled={busy}>{busy ? '…' : 'Verify'}</button>
       <button type="button" class="link" disabled={busy} onclick={() => back()}>Back</button>
     {:else}
       <label>Server <input class="input" bind:value={serverUrl} required autocomplete="url" /></label>
@@ -98,7 +98,7 @@
       </label>
 
       {#if error}<p class="error" role="alert">{error}</p>{/if}
-      <button class="primary" disabled={busy}>{busy ? '…' : mode === 'login' ? 'Log in' : 'Create account'}</button>
+      <button class="primary btn-primary" disabled={busy}>{busy ? '…' : mode === 'login' ? 'Log in' : 'Create account'}</button>
       <button type="button" class="link" onclick={() => { mode = mode === 'login' ? 'register' : 'login'; error = '' }}>
         {mode === 'login' ? 'Got an invite? Create an account' : 'Already have an account? Log in'}
       </button>
@@ -111,17 +111,18 @@
 <style>
   main { height: 100%; display: grid; place-items: center; align-content: center; gap: 14px; background: var(--bg-0); }
   .card {
-    width: 360px; padding: 28px; border-radius: 16px; background: var(--bg-2);
+    width: 360px; padding: 28px; border-radius: var(--radius-xl); background: var(--bg-2);
     border: 1px solid var(--line); display: flex; flex-direction: column; gap: 14px;
   }
   .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
-  .logo { width: 34px; height: 34px; border-radius: 10px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
+  .logo { width: 34px; height: 34px; border-radius: var(--radius-md); background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
   h1 { margin: 0; font-size: 20px; font-weight: 600; }
   label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
   /* the sign-in card's bigger size, beside its 42px button */
   /* :global: the password field's input lives inside PasswordInput */
   input, label :global(input) { height: 40px; }
-  .primary { height: 42px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; margin-top: 4px; }
+  /* .btn-primary's colours and hover, at the sign-in card's size */
+  .primary { height: 42px; border: 0; border-radius: var(--radius-md); background: var(--accent); color: var(--on-accent); font-weight: 600; margin-top: 4px; }
   .primary:disabled { opacity: .6; }
   .link { background: none; border: 0; color: var(--text-3); font-size: 13px; }
   .link:hover { color: var(--text); }

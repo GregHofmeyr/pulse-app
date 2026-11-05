@@ -166,7 +166,7 @@
 <style>
   .empty { margin: 0 0 10px; color: var(--card-text-2); }
   .grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
-  .tile { display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center; padding: 12px 8px 10px; border-radius: 10px; background: var(--panel-bottom); }
+  .tile { display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center; padding: 12px 8px 10px; border-radius: var(--radius-md); background: var(--panel-bottom); }
   .tile :global(.badge-icon) { margin-bottom: 6px; }
   .locked { opacity: .55; filter: grayscale(.7); }
   .nm { font-weight: 600; color: var(--card-text); }
@@ -179,7 +179,7 @@
   progress::-webkit-progress-bar { background: var(--panel-top); }
   progress::-webkit-progress-value { background: var(--ring-color); }
   progress::-moz-progress-bar { background: var(--ring-color); }
-  .pick { margin-top: 6px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--bg-4); background: var(--bg-2); color: var(--text); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
+  .pick { margin-top: 6px; padding: 3px 8px; border-radius: var(--radius-xs); border: 1px solid var(--bg-4); background: var(--bg-2); color: var(--text); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
   .pick[aria-pressed='true'] { border-color: var(--focus-ring); color: var(--accent-text); }
   .showcase-edit { margin: 0 0 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
   .hint { margin: 0; font-size: 12px; color: var(--card-text-2); }

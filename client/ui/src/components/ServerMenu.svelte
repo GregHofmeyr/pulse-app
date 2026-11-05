@@ -80,7 +80,7 @@
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}
   onpointerover={(e) => {
     const t = (e.target as Element).closest?.('[data-item]')
-    if (t && t.parentElement === el && t !== flyout?.trigger()) flyout?.close('if-inside')
+    if (t && t.parentElement === el && t !== flyout?.trigger()) flyout?.closeSoon()
   }}>
   <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onSettings)}>Server settings</button>
   {#if muted}
@@ -92,5 +92,5 @@
 </div>
 
 <style>
-  .menu { position: fixed; z-index: 60; min-width: 210px; max-width: 280px; gap: 2px; outline: none; }
+  .menu { position: fixed; z-index: 60; width: max-content; min-width: 220px; max-width: 280px; gap: 2px; outline: none; --pop-origin: top left; }
 </style>

@@ -10,6 +10,7 @@ import ReactionRow from './ReactionRow.svelte'
 import MessageItem from './MessageItem.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { tipTiming } from '../lib/tooltip'
 
 const msg = (over: Partial<Message> = {}): Message => ({
   id: 'M1', channel_id: 'C1', author_id: 'U2', kind: 'normal', content: 'hi',
@@ -29,10 +30,14 @@ function show(m: Message) {
   cmp = mount(ReactionRow, { target: document.body, props: { message: app.state.messages['C1'][0], meId: 'U1', nameOf: (id: string | null) => id ?? '', onError } })
   flushSync()
 }
+const TIP_DELAY = tipTiming.delay
 beforeEach(() => {
   invoke.mockReset(); invoke.mockResolvedValue(undefined); onError.mockClear()
   Element.prototype.scrollIntoView = () => {}
+  // the shared hover delay is its own test below; the rest hover with none
+  tipTiming.delay = 0
 })
+afterEach(() => void (tipTiming.delay = TIP_DELAY))
 const settle = () => new Promise((r) => setTimeout(r, 0))
 function deferred<T = unknown>() {
   let resolve!: (v: T) => void
@@ -418,6 +423,44 @@ describe('toggle interleavings', () => {
 })
 
 describe('reactor tooltip', () => {
+  it('a hover waits the shared tooltip delay before asking, so sweeping across chips asks nothing (#173)', async () => {
+    tipTiming.delay = TIP_DELAY
+    vi.useFakeTimers()
+    try {
+      invoke.mockResolvedValue(['U2', 'U3'])
+      show(msg({ reactions: [{ emoji: '👍', count: 2, me: false }, { emoji: '🎉', count: 1, me: false }] }))
+      const [a, b] = chips()
+      a.dispatchEvent(new Event('pointerenter'))
+      vi.advanceTimersByTime(TIP_DELAY / 2)
+      a.dispatchEvent(new Event('pointerleave'))
+      b.dispatchEvent(new Event('pointerenter'))
+      vi.advanceTimersByTime(TIP_DELAY / 2)
+      b.dispatchEvent(new Event('pointerleave'))
+      vi.advanceTimersByTime(TIP_DELAY * 2)
+      expect(calls('list_reactors')).toHaveLength(0)
+      a.dispatchEvent(new Event('pointerenter'))
+      vi.advanceTimersByTime(TIP_DELAY)
+      expect(calls('list_reactors')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('hands its text to the shared tooltip (data-tip), only once the names are in: no "…" placeholder', async () => {
+    const names = deferred<string[]>()
+    invoke.mockReturnValueOnce(names.promise)
+    show(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))
+    const c = chips()[0]
+    expect(c.hasAttribute('data-tip-live')).toBe(true)
+    c.dispatchEvent(new FocusEvent('focus'))
+    flushSync()
+    expect(c.getAttribute('data-tip')).toBeNull()
+    names.resolve(['U2', 'U3'])
+    await settle()
+    flushSync()
+    expect(c.getAttribute('data-tip')).toBe('U2 and U3')
+  })
+
   it('shows on keyboard focus, described by the chip, and hides on blur', async () => {
     invoke.mockResolvedValue(['U2', 'U3'])
     show(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))

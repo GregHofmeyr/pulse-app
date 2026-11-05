@@ -22,6 +22,8 @@
   let drag = $state<null | { x: number; w: number; last: number; moved: boolean }>(null)
   const clamp = (v: number) => Math.max(min, Math.min(max, Math.round(v)))
 
+  // One width a frame (#173): the pointer moves faster than the screen draws, and every width lays the chat out again.
+  let frame = 0
   function move(e: MouseEvent) {
     if (!drag) return
     const dx = e.clientX - drag.x
@@ -29,7 +31,10 @@
     if (w === drag.last && !drag.moved) return
     drag.last = w
     drag.moved = true
-    onResize(w, false)
+    if (!frame) frame = requestAnimationFrame(() => {
+      frame = 0
+      if (drag) onResize(drag.last, false)
+    })
   }
   function end() {
     if (!drag) return
@@ -39,6 +44,8 @@
     if (moved || last !== w) onResize(last, true)
   }
   function stop() {
+    if (frame) cancelAnimationFrame(frame)
+    frame = 0
     drag = null
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', end)
@@ -68,14 +75,14 @@
 <!-- a focusable separator is a widget (it has a value the keys change): the linter takes every separator as static -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div class="handle" class:dragging={!!drag} data-side={side} role="separator" tabindex="0" aria-orientation="vertical" aria-label={label}
-  aria-controls={controls} aria-valuenow={width} aria-valuemin={min} aria-valuemax={max} title="Drag to resize · double-click to reset"
+  aria-controls={controls} aria-valuenow={width} aria-valuemin={min} aria-valuemax={max} data-tip="Drag to resize · double-click to reset"
   onpointerdown={start} onkeydown={keydown} ondblclick={onReset}></div>
 
 <style>
   /* In the body's gap: 8px wide, with -8px margins so the row's spacing is as it was without it. */
   .handle { position: relative; z-index: 2; flex: 0 0 8px; width: 8px; margin: 0 -8px; cursor: col-resize; touch-action: none; outline: none; }
   /* the line: drawn only while it's being used */
-  .handle::after { content: ''; position: absolute; top: 12px; bottom: 12px; left: 3px; width: 2px; border-radius: 1px; background: transparent; transition: background .12s; }
+  .handle::after { content: ''; position: absolute; top: 12px; bottom: 12px; left: 3px; width: 2px; border-radius: 1px; background: transparent; transition: background-color var(--dur-fast) var(--ease); }
   .handle:hover::after { background: var(--line); }
   .handle.dragging::after, .handle:focus-visible::after { background: var(--focus-ring); }
 </style>

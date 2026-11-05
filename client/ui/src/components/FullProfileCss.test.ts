@@ -22,7 +22,9 @@ const rule = (sel: string) => {
 describe('the full profile right column', () => {
   it('rounds the scroll edge with the board radius, at the boards, not past the scrollbar', () => {
     const board = rule(`.board.${scope}`)!
-    const radius = board.match(/border-radius:\s*(\d+px)/)![1]
+    // the radius token (#173), whose value the mask's corners repeat (a mask's gradient can't take a var() radius here)
+    const token = board.match(/border-radius:\s*var\((--radius-\w+)\)/)![1]
+    const radius = new RegExp(`${token}: (\\d+px);`).exec(readFileSync(resolve(__dirname, '../app.css'), 'utf8'))![1]
     expect(rule(`.right.${scope}`)).toMatch(/overflow-y:\s*auto/)
     // only where the gutter can be kept (older WebKit: no mask, rather than a cut past the boards)
     const supports = css.slice(css.indexOf('@supports (scrollbar-gutter: stable)'))

@@ -151,7 +151,7 @@
                     <VoterStack userIds={line.awarders} {nameOf} />
                   {/if}
                   <button type="button" class="icon-btn icon-btn-xs lbtn" aria-label="Line actions" aria-haspopup="menu" aria-expanded={menu?.line.id === line.id} data-menu-toggle
-                    onclick={(e) => openMenu(line, e, e.currentTarget)}><Icon name="dots" size={15} /></button>
+                    onclick={(e) => openMenu(line, e, e.currentTarget)}><Icon name="dots" size={16} /></button>
                 </div>
               </div>
             {/each}
@@ -170,16 +170,16 @@
         {/if}
         {#if unsentReplies > 0 && onOpenReplies && !compact}
           <button type="button" class="unsent-reply" onclick={onOpenReplies}>
-            <Icon name="reply" size={13} />{unsentReplies === 1 ? 'Unsent reply' : `${unsentReplies} unsent replies`}
+            <Icon name="reply" size={14} />{unsentReplies === 1 ? 'Unsent reply' : `${unsentReplies} unsent replies`}
           </button>
         {/if}
         {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
       </div>
       {#if !message.deleted && !compact}
         <div class="actions" class:open={picking || focusIn}>
-          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={15} /></button>
-          {#if onReply}<button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>{/if}
-          {#if mine && onEdit}<button aria-label="Edit" onclick={onEdit}><Icon name="pencil" size={15} /></button>{/if}
+          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={16} /></button>
+          {#if onReply}<button aria-label="Reply" onclick={onReply}><Icon name="reply" size={16} /></button>{/if}
+          {#if mine && onEdit}<button aria-label="Edit" onclick={onEdit}><Icon name="pencil" size={16} /></button>{/if}
           {#if mine && onDelete}<DeleteButton what="quote" note="Its replies go too." onConfirm={() => void attempt(onDelete)} />{/if}
         </div>
         {#if picking && smileBtn}
@@ -201,7 +201,7 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="lightbox" role="dialog" aria-modal="true" aria-label={open.caption ?? 'Quoted image'} tabindex="-1" use:modal={() => (open = null)} onclick={() => (open = null)}>
       <QuoteImage media={open.media} caption={open.caption} full />
-      <button type="button" class="close" aria-label="Close" onclick={() => (open = null)}><Icon name="x" size={18} /></button>
+      <button type="button" class="close icon-btn round modal-close" aria-label="Close" onclick={() => (open = null)}><Icon name="x" size={16} /></button>
     </div>
   {/if}
 {/if}
@@ -218,7 +218,7 @@
   .time { font-size: 11px; color: var(--text-3); }
   .deleted { margin: 0; font-style: italic; color: var(--text-3); }
   .lines { display: flex; flex-direction: column; gap: 2px; border-left: 3px solid var(--quote-green-deep); padding-left: 10px; }
-  .line { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 2px 6px; margin-left: -6px; border-radius: 8px; outline: none; }
+  .line { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 2px 6px; margin-left: -6px; border-radius: var(--radius-sm); outline: none; }
   .line:hover, .line:focus-visible, .line:focus-within { background: var(--hover-tint-strong); }
   .line:focus-visible { box-shadow: 0 0 0 2px var(--focus-ring); }
   .said { min-width: 0; color: var(--text-body); line-height: 1.5; overflow-wrap: anywhere; }
@@ -227,21 +227,22 @@
   .trophy { color: var(--quote-green-text); font-size: 12px; font-weight: 600; }
   .lbtn { opacity: 0; }
   .line:hover .lbtn, .line:focus-within .lbtn { opacity: 1; }
-  .picbtn { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 8px; }
+  .picbtn { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: var(--radius-sm); }
   .caption { margin: 4px 0 0; font-size: 13px; color: var(--text-2); }
-  .win { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: 10px; background: var(--quote-green); color: var(--on-quote-green); font-size: 11px; font-weight: 700; }
+  .win { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: var(--radius-md); background: var(--quote-green); color: var(--on-quote-green); font-size: 11px; font-weight: 700; }
   .edited { font-size: 11px; color: var(--text-3); }
   .replies { margin-top: 4px; padding: 0; border: 0; background: none; color: var(--accent-text); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
   .replies:hover { text-decoration: underline; }
-  .new { padding: 0 6px; border-radius: 8px; background: var(--quote-green); color: var(--on-quote-green); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+  .new { padding: 0 6px; border-radius: var(--radius-sm); background: var(--quote-green); color: var(--on-quote-green); font-size: 10px; font-weight: 700; text-transform: uppercase; }
   .unsent-reply { margin: 4px 0 0 10px; padding: 0; border: 0; background: none; color: var(--danger-text); font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
   .unsent-reply:hover { text-decoration: underline; }
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger-text); }
-  .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: 8px; transition: opacity var(--dur) var(--ease); }
-  .quote:hover .actions, .actions.open { opacity: 1; pointer-events: auto; }
-  .actions button { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }
-  .actions button:hover { color: var(--text); }
+  .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: var(--radius-sm); will-change: opacity; }
+  /* fades in, hides at once (#173): sweeping down a channel never leaves half-faded bars behind */
+  .quote:hover .actions, .actions.open { opacity: 1; pointer-events: auto; transition: opacity var(--dur) var(--ease); }
+  .actions button { width: 30px; height: 28px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-2); display: grid; place-items: center; }
+  .actions button:hover { background: var(--bg-4); color: var(--text); }
   .lightbox { position: fixed; inset: 0; z-index: 70; background: var(--scrim-strong); display: grid; place-items: center; cursor: zoom-out; outline: none; }
-  .close { position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border: 0; border-radius: 10px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
-  .close:hover { background: var(--bg-4); color: var(--text); }
+  /* the dialogs' round close X, in the corner of the lightbox */
+  .close { position: absolute; top: 16px; right: 16px; }
 </style>

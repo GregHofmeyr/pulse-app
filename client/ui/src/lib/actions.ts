@@ -136,7 +136,8 @@ export function narrowerThan(node: HTMLElement, opts: { px: number; set: (narrow
     o.set(false)
     return { update: (n: typeof opts) => (o = n), destroy() {} }
   }
-  o.set(node.clientWidth > 0 && node.clientWidth < o.px)
+  // No synchronous clientWidth read here: it forced a layout on every channel switch (#173). A ResizeObserver reports
+  // a newly observed element's size before the next paint, so the first frame is already right.
   const ro = new ResizeObserver((entries) => {
     const w = entries[entries.length - 1]?.contentRect.width ?? 0
     o.set(w > 0 && w < o.px)

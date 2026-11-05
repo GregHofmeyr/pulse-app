@@ -166,7 +166,7 @@
   .timeline { padding: 0 8px; }
   .ticks { position: relative; height: 16px; font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
   .ticks span { position: absolute; top: 0; padding-top: 3px; border-left: 1px solid var(--line); padding-left: 3px; }
-  .track { position: relative; height: 72px; border-radius: 6px; background-color: var(--bg-0); background-size: 100% 100%; background-repeat: no-repeat; overflow: hidden; touch-action: none; }
+  .track { position: relative; height: 72px; border-radius: var(--radius-xs); background-color: var(--bg-0); background-size: 100% 100%; background-repeat: no-repeat; overflow: hidden; touch-action: none; }
   .piece { position: absolute; top: 0; bottom: 0; padding: 0; border: 0; border-right: 1px solid rgba(0, 0, 0, 0.5); background: transparent; cursor: pointer; }
   .piece.dropped { background: repeating-linear-gradient(45deg, var(--danger-hatch) 0 6px, rgba(0, 0, 0, 0.6) 6px 12px); }
   .piece.selected { outline: 2px solid var(--focus-ring); outline-offset: -2px; z-index: 1; }

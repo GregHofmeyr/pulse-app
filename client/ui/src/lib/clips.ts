@@ -81,3 +81,14 @@ export function gameName(s: AppState, serverId: string, m: Message): string | nu
   const id = m.clip?.game_id
   return id ? ((s.games[serverId] ?? []).find((g) => g.id === id)?.name ?? null) : null
 }
+
+/**
+ * The height a clip's row is laid out at before it has been drawn (`contain-intrinsic-size`, #173): its player at
+ * `playerWidth` and the clip's own shape (capped as ClipPlayer caps it), plus the row around it. WebKit has no scroll
+ * anchoring, so an older clip whose guess was wrong moved the view as it scrolled into sight; a guess from its real
+ * shape keeps the error small. `auto` in the CSS then remembers the drawn height.
+ */
+export function clipRowEstimate(clip: { width: number; height: number } | null, playerWidth: number, maxPlayerHeight: number, chrome: number): number {
+  const ratio = clip && clip.width > 0 && clip.height > 0 ? clip.height / clip.width : 9 / 16
+  return Math.round(Math.min(playerWidth * ratio, maxPlayerHeight) + chrome)
+}

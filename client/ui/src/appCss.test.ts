@@ -78,11 +78,11 @@ describe('the global scrollbar', () => {
 })
 
 describe('motion', () => {
-  it('buttons ease colours and opacity only, never a property that moves layout', () => {
-    const button = styleRules(sheet.cssRules).filter((r) => r.selectorText === 'button').map((r) => r.style.getPropertyValue('transition')).find(Boolean)
+  it('buttons ease colours, opacity and filter only, never a property that moves layout', () => {
+    const button = styleRules(sheet.cssRules).filter((r) => r.selectorText.split(',').map((s) => s.trim()).includes('button')).map((r) => r.style.getPropertyValue('transition')).find(Boolean)
     expect(button).toBeDefined()
     const props = button!.split(',').map((t) => t.trim().split(/\s+/)[0])
-    expect(props.sort()).toEqual(['background-color', 'border-color', 'color', 'opacity'])
+    expect(props.sort()).toEqual(['background-color', 'border-color', 'color', 'filter', 'opacity'])
   })
 
   it('reduced motion finishes animations and transitions at once, but leaves the spinners to slow down', () => {
@@ -125,7 +125,7 @@ describe('motion', () => {
 
   it('the stream toast, which shows while you are in a game, uses the shared entrance (so it is exempt)', () => {
     const toast = readFileSync(resolve(__dirname, 'components/StreamToast.svelte'), 'utf8')
-    expect(toast.match(/class="toast fade-in"/g)).toHaveLength(2)
+    expect(toast.match(/class="toast (notice )?fade-in"/g)).toHaveLength(2)
     expect(toast).not.toMatch(/animation:/)
   })
 })

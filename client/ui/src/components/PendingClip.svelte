@@ -73,7 +73,7 @@
       {#if job.error}<p class="why">{job.error}</p>{/if}
     {:else if status}
       <p class="status" role="status">{status}</p>
-      {#if job.stage === 'preparing' || job.stage === 'uploading'}<div class="bar" aria-hidden="true"><span style:width="{percent}%"></span></div>{/if}
+      {#if job.stage === 'preparing' || job.stage === 'uploading'}<div class="bar" aria-hidden="true"><span style:transform="scaleX({percent / 100})"></span></div>{/if}
     {/if}
     {#if problem}<p class="why">{problem}</p>{/if}
     {#if job.stage !== 'done'}
@@ -83,21 +83,21 @@
 </article>
 
 <style>
-  .pending-clip { min-width: 0; display: flex; flex-direction: column; border-radius: 12px; background: var(--bg-2); border: 1px dashed var(--bg-3); }
-  .media { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: 12px 12px 0 0; overflow: hidden; }
+  .pending-clip { min-width: 0; display: flex; flex-direction: column; border-radius: var(--radius-lg); background: var(--bg-2); border: 1px dashed var(--bg-3); }
+  .media { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: var(--radius-lg) 12px 0 0; overflow: hidden; }
   .media img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .75; }
   .ph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-3); }
-  .duration { position: absolute; right: 8px; bottom: 8px; padding: 1px 6px; border-radius: 6px; background: rgba(0, 0, 0, .75); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .duration { position: absolute; right: 8px; bottom: 8px; padding: 1px 6px; border-radius: var(--radius-xs); background: rgba(0, 0, 0, .75); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; }
   .info { padding: 8px 10px 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
   .caption { margin: 0; font-size: 13px; overflow-wrap: anywhere; white-space: pre-wrap; }
-  .game { padding: 1px 8px; border-radius: 10px; background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .game { padding: 1px 8px; border-radius: var(--radius-md); background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; white-space: nowrap; }
   .status { margin: 0; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
   .bar { align-self: stretch; height: 4px; border-radius: 2px; background: var(--bg-3); overflow: hidden; }
-  .bar span { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+  .bar span { display: block; height: 100%; background: var(--accent); transform-origin: left; transition: transform var(--dur-slow) var(--ease); }
   .failed { margin: 0; font-size: 12px; color: var(--danger-text); }
   .why { margin: 0; font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
   .actions { align-self: stretch; display: flex; justify-content: flex-end; }
-  .cancel { padding: 4px 10px; border: 0; border-radius: 8px; background: var(--bg-3); color: var(--text-2); font-size: 12px; }
+  .cancel { padding: 4px 10px; border: 0; border-radius: var(--radius-sm); background: var(--bg-3); color: var(--text-2); font-size: 12px; }
   .cancel:hover:not(:disabled) { color: var(--text); }
   .cancel:disabled, .link-btn:disabled { opacity: .5; }
 </style>

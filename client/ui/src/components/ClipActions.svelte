@@ -63,7 +63,7 @@
 
 <div class="clip-actions">
   <button bind:this={opener} type="button" class="icon-btn icon-btn-sm" aria-label="Clip actions" aria-haspopup="menu" aria-expanded={menu} data-menu-toggle
-    onclick={() => (menu = !menu)}><Icon name="dots" size={15} /></button>
+    onclick={() => (menu = !menu)}><Icon name="dots" size={16} /></button>
   {#if menu}
     <div class="menu menu-surface pop-in" role="menu" use:clickOutside={closeMenu}>
       <button type="button" class="menu-item" role="menuitem" onclick={startEdit}><Icon name="pencil" size={14} />Edit</button>
@@ -98,13 +98,14 @@
 
 <style>
   .clip-actions { position: relative; }
-  .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 140px; }
+  .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 140px; --pop-origin: top right; }
   .ask { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: 240px; padding: 10px; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
   .ask p { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--text); }
   .ask .err { margin: 4px 0 0; color: var(--danger-text); }
   .overlay { position: fixed; inset: 0; z-index: 30; }
   .modal { width: min(420px, 100%); }
   textarea { resize: vertical; min-height: 64px; }
-  .err { margin: 0; font-size: 12px; color: var(--danger-text); }
+  /* a dialog's error line, as in every other dialog */
+  .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .foot { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

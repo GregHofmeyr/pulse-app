@@ -82,7 +82,7 @@
   <div class="vc" bind:this={box}>
     {#if failed}
       <span class="vc-bars warn"><span></span><span></span><span></span></span>
-      <span class="vc-text"><strong class="bad">Couldn't connect</strong><small title={failed.error}>{failed.error}</small></span>
+      <span class="vc-text"><strong class="bad">Couldn't connect</strong><small data-tip={failed.error}>{failed.error}</small></span>
       <button class="btn btn-primary" onclick={() => voiceApi.retry()}>Retry</button>
       <button class="icon-btn icon-btn-sm" aria-label="Dismiss" onclick={() => voiceApi.dismissFailure()}><Icon name="x" size={14} /></button>
     {:else}
@@ -118,7 +118,7 @@
   .vc-text small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 8px; background: var(--surface-menu); color: var(--danger); display: grid; place-items: center; }
   .vc-leave:hover { background: var(--bg-4); }
-  .vc-note { margin: 0 8px 6px; padding: 8px 12px; border-radius: 10px; background: color-mix(in srgb, var(--danger) 14%, transparent); font-size: 12px; line-height: 1.4; color: var(--danger-text); display: flex; align-items: flex-start; gap: 8px; }
+  .vc-note { margin: 0 8px 6px; padding: 8px 12px; border-radius: 10px; background: var(--danger-soft); font-size: 12px; line-height: 1.4; color: var(--danger-text); display: flex; align-items: flex-start; gap: 8px; }
   .vc-note span { flex: 1; min-width: 0; }
   .vc-note :global(svg) { flex-shrink: 0; margin-top: 2px; }
   .vc-kicked { align-items: center; }

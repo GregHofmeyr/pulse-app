@@ -16,6 +16,10 @@ export const THEME_PRESETS: ThemePreset[] = [
 
 export const DEFAULT_THEME = THEME_PRESETS[4]
 
+/** A card still loading (#173): flat neutral grey, not anyone's colours (nor the default theme's), so nothing recolours
+ *  when the person's own theme arrives except into it. */
+export const SKELETON_THEME = { top: '#4a4d55', bottom: '#4a4d55' }
+
 export const CARD_MIX = 0.3
 export const PANEL_MIX = 0.18
 export const NEAR_BLACK = '#0d0e12'

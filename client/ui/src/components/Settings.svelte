@@ -119,7 +119,7 @@
   .modal { width: min(940px, calc(100vw - 32px)); height: min(720px, calc(100vh - 64px)); flex-direction: row; gap: 0; padding: 0; background: var(--bg-1); overflow: hidden; }
   nav { width: 200px; flex-shrink: 0; padding: 24px 12px; background: var(--bg-0); display: flex; flex-direction: column; gap: 2px; }
   h1 { margin: 0 10px 12px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
-  nav button { text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font-weight: 600; }
+  nav button { text-align: left; padding: 8px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); font-weight: 600; }
   nav button:hover { background: var(--bg-2); color: var(--text); }
   nav button.on { background: var(--bg-3); color: var(--text); }
   /* Log out (#168): set apart under the last section, in the danger colour */
@@ -128,7 +128,7 @@
   nav button.danger:hover { color: var(--danger-text); }
   /* --settings-pad-y: the profile editor's sticky footer sits flush with the bottom through it */
   .content { --settings-pad-y: 28px; position: relative; flex: 1; min-width: 0; overflow-y: auto; padding: var(--settings-pad-y) 32px; }
-  .confirm { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 48px 16px 0; padding: 10px 14px; border-radius: 12px; background: var(--bg-3); border: 1px solid var(--warn); font-weight: 600; }
+  .confirm { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 48px 16px 0; padding: 10px 14px; border-radius: var(--radius-lg); background: var(--bg-3); border: 1px solid var(--warn); font-weight: 600; }
   .confirm span { margin-right: auto; }
   .confirm.saving { border-color: var(--bg-4); color: var(--text-2); }
   /* the way out that waits for a Save */

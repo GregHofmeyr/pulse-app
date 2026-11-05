@@ -3,6 +3,7 @@
   // newest first, each a compact card that shows the message where it lives when clicked.
   import Avatar from './Avatar.svelte'
   import Icon from './Icon.svelte'
+  import Loading from './Loading.svelte'
   import Name from './Name.svelte'
   import { app, clock } from '../lib/store.svelte'
   import { closeSearch, loadMore, openHit, retrySearch, search } from '../lib/search.svelte'
@@ -48,7 +49,7 @@
 <section class="search-results" aria-label="Search results" onkeydown={keydown}>
   <header>
     <span class="count" aria-live="polite">{search.status === 'loading' ? 'Searching…' : count}</span>
-    <button type="button" class="icon-btn icon-btn-sm" aria-label="Close search" data-tip="Close (Esc)" onclick={closeSearch}><Icon name="x" size={15} /></button>
+    <button type="button" class="icon-btn icon-btn-sm" aria-label="Close search" data-tip="Close (Esc)" onclick={closeSearch}><Icon name="x" size={16} /></button>
   </header>
   <div class="body">
     {#if search.status === 'error'}
@@ -85,7 +86,7 @@
           </span>
         </button>
       {/each}
-      {#if search.status === 'loading'}<p class="state">Searching…</p>{/if}
+      {#if search.status === 'loading'}<div class="state"><Loading label="Searching…" /></div>{/if}
       {#if search.error && search.status === 'done'}<p class="state err" role="alert">{search.error}</p>{/if}
       {#if search.nextCursor}
         <button type="button" class="btn btn-quiet more" disabled={search.loadingMore} onclick={() => void loadMore()}>{search.loadingMore ? 'Loading…' : 'Load more'}</button>
@@ -99,7 +100,7 @@
   header { height: 52px; flex-shrink: 0; padding: 0 10px 0 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-soft); }
   .count { font-size: 13px; font-weight: 600; color: var(--text-2); }
   .body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
-  .result { display: flex; gap: 10px; width: 100%; padding: 8px; border: 0; border-radius: 10px; background: transparent; color: inherit; font: inherit; text-align: left; }
+  .result { display: flex; gap: 10px; width: 100%; padding: 8px; border: 0; border-radius: var(--radius-md); background: transparent; color: inherit; font: inherit; text-align: left; }
   .result:hover { background: var(--bg-3); }
   .av-gap { width: 28px; flex-shrink: 0; }
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
@@ -109,14 +110,14 @@
   .text { font-size: 13px; color: var(--text-body); white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
   .text.one-line { -webkit-line-clamp: 1; line-clamp: 1; }
   mark { background: var(--accent-soft); color: var(--text); border-radius: 3px; box-shadow: 0 0 0 1px var(--accent-soft); }
-  .thumb { width: 120px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: var(--bg-3); }
+  .thumb { width: 120px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius-xs); background: var(--bg-3); }
   /* a quote's image line: the picture whole, small */
-  .line-thumb { max-width: 120px; max-height: 90px; object-fit: contain; border-radius: 6px; background: var(--bg-3); }
+  .line-thumb { max-width: 120px; max-height: 90px; object-fit: contain; border-radius: var(--radius-xs); background: var(--bg-3); }
   .state { padding: 24px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--text-3); font-size: 13px; text-align: center; margin: 0; }
   .state p { margin: 0; }
   .state.err { padding: 8px; color: var(--danger-text); }
   .state [role='alert'] { color: var(--danger-text); }
   .filters { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
-  .pill { padding: 2px 8px; border-radius: 6px; background: var(--bg-3); color: var(--text-2); font-size: 12px; }
+  .pill { padding: 2px 8px; border-radius: var(--radius-xs); background: var(--bg-3); color: var(--text-2); font-size: 12px; }
   .more { align-self: center; margin: 6px 0; }
 </style>

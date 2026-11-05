@@ -39,7 +39,7 @@
   {#each sections as g (g.key)}
   <div class="label">{g.label} — {g.list.length}</div>
   {#each g.list as p (p.user.id)}
-    <div class="row" class:off={g.key === 'offline'} data-section={g.key} role="presentation" onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}>
+    <div class="row hover-row" class:off={g.key === 'offline'} data-section={g.key} role="presentation" onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}>
       <Avatar id={p.user.id} name={p.name} size={32} presence={presenceOf(app.state, p.user.id, clock.nowIso)} interactive serverId={null} hovered={() => hovered === p.user.id} />
       <span class="who"><Name userId={p.user.id} serverId={null} text={p.name} surface="side" />{#if p.user.id === app.state.me?.id}<small> (you)</small>{/if}</span>
       {#if p.user.id !== app.state.me?.id}
@@ -54,7 +54,7 @@
 <style>
   .members { width: var(--right-w, 220px); flex-shrink: 0; background: var(--bg-1); border-radius: var(--radius); padding: 8px; overflow-y: auto; }
   .label { padding: 14px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
-  .row { height: 44px; padding: 0 10px; border-radius: 10px; display: flex; align-items: center; gap: 10px; }
+  .row { height: 44px; padding: 0 10px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 10px; }
   .row:hover { background: var(--bg-2); --ring: var(--bg-2); }
   /* offline (#170): dimmed slightly, as on Discord; back to full while hovered */
   .row.off { opacity: .55; }
@@ -63,8 +63,9 @@
   .row :global(.pres) { width: 12px; height: 12px; min-width: 0; min-height: 0; right: -1px; bottom: -1px; }
   .who { flex: 1; min-width: 0; font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .who small { color: var(--text-3); font-weight: 400; }
-  .x { width: 26px; height: 26px; border: 0; border-radius: 8px; background: var(--bg-4); color: var(--text-2); display: grid; place-items: center; opacity: 0; }
-  .x:hover { color: var(--text); }
+  /* a row's revealed action: the same as the server member list's Message (#173) */
+  .x { width: 28px; height: 28px; flex-shrink: 0; border: 0; border-radius: var(--radius-sm); background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; opacity: 0; }
+  .x:hover { background: var(--bg-4); color: var(--text); }
   .row:hover .x, .x:focus-visible { opacity: 1; }
-  .err { margin: 8px 10px; font-size: 12px; color: var(--danger-text); }
+  .err { margin: 8px 10px; font-size: 13px; color: var(--danger-text); }
 </style>

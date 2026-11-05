@@ -17,7 +17,8 @@
   import NicknameDialog from '../components/NicknameDialog.svelte'
   import ServerMenu from '../components/ServerMenu.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
-  import { clickOutside, narrowerThan } from '../lib/actions'
+  import { clickOutside, modal, narrowerThan } from '../lib/actions'
+  import { exitFade } from '../lib/exit'
   import { NARROW_BODY, searchMakesRoom } from '../lib/layout'
   import { COLUMNS, fitColumns, RIGHT_DEFAULT } from '../lib/columns'
   import { columns, resetColumn, setColumn } from '../lib/columns.svelte'
@@ -511,11 +512,11 @@
         <button class="tab" class:active={activeServerId === s.id} onclick={() => selectServer(s.id)}
           oncontextmenu={(e) => { e.preventDefault(); serverMenu = { id: s.id, x: e.clientX, y: e.clientY, opener: e.currentTarget } }}>
           <span class="chip" style:background={avatarColor(s.id)}>{initial(s.name)}</span>{s.name}
-          {#if talking > 0}<span class="invc" aria-label="{talking} in voice" data-tip="{talking} in voice"><Icon name="speaker" size={13} /></span>{/if}
+          {#if talking > 0}<span class="invc" aria-label="{talking} in voice" data-tip="{talking} in voice"><Icon name="speaker" size={14} /></span>{/if}
           {#if badge.mentions > 0}<span class="pill">{badge.mentions}</span>{:else if badge.dot}<span class="dot" aria-label="new messages"></span>{/if}
         </button>
       {/each}
-      <button class="add" aria-label="Create a server" title="Create a server" onclick={() => (creating = true)}><Icon name="plus" size={16} /></button>
+      <button class="add" aria-label="Create a server" onclick={() => (creating = true)}><Icon name="plus" size={16} /></button>
     </nav>
     <div class="grow" data-tauri-drag-region></div>
     {#if connDown && connShown}
@@ -529,9 +530,9 @@
       <span class="conn auto-report" role="status">Something went wrong in Pulse last time, so we sent Greg a report. <button aria-label="Dismiss" onclick={() => (ui.autoReported = false)}>×</button></span>
     {/if}
     <!-- #155: icon only; the app-wide tooltip reads its aria-label -->
-    <button class="win report" aria-label="Report a bug" onclick={() => (reportOpen = true)}><Icon name="bug" size={15} /></button>
+    <button class="win report" aria-label="Report a bug" onclick={() => (reportOpen = true)}><Icon name="bug" size={16} /></button>
     <button class="win" aria-label="Minimise" onclick={() => win.minimize()}><Icon name="min" size={14} /></button>
-    <button class="win" aria-label="Maximise" onclick={() => win.toggleMaximize()}><Icon name="square" size={13} /></button>
+    <button class="win" aria-label="Maximise" onclick={() => win.toggleMaximize()}><Icon name="square" size={14} /></button>
     <button class="win" aria-label="Close" onclick={() => win.close()}><Icon name="x" size={14} /></button>
   </header>
 
@@ -631,8 +632,8 @@
 {#if profileUi.rename}<NicknameDialog target={profileUi.rename} onClose={closeRename} />{/if}
 {#if creating}
   <div class="overlay modal-overlay fade-in">
-  <div class="backdrop modal-backdrop" role="presentation" onclick={() => (creating = false)}></div>
-  <form class="modal dialog pop-in" onsubmit={createServer} aria-label="Create a server">
+  <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={() => (creating = false)}></div>
+  <div class="modal dialog pop-in" role="dialog" aria-modal="true" aria-label="Create a server" tabindex="-1" use:modal={() => (creating = false)}><form class="dialog-form" onsubmit={createServer}>
     <h2 class="modal-title">Create a server</h2>
     <label>NAME <input class="input" bind:value={newName} maxlength="64" required placeholder="Game Night" /></label>
     {#if createError}<p class="error">{createError}</p>{/if}
@@ -640,7 +641,7 @@
       <button type="button" class="btn btn-lg btn-secondary" onclick={() => (creating = false)}>Cancel</button>
       <button class="btn btn-lg btn-primary" disabled={!newName.trim()}>Create</button>
     </div>
-  </form>
+  </form></div>
   </div>
 {/if}
 
@@ -655,7 +656,7 @@
   <PeoplePicker title="Add people" fixed={pickerOthers} hint="They'll see the group's history." action="Add"
     onDone={pickerDone} onClose={() => (picker = null)} />
 {/if}
-{#if notice}<div class="notice fade-in" role="status">{notice}</div>{/if}
+{#if notice}<div class="toast notice fade-in" role="status" out:exitFade>{notice}</div>{/if}
 {#if serverMenu}
   {@const m = serverMenu}
   {@const srv = app.state.servers.find((x) => x.id === m.id)}
@@ -668,6 +669,8 @@
 {/if}
 
 <style>
+  /* the dialog box is the div (role=dialog); the form inside lays out as its children */
+  .dialog-form { display: contents; }
   .app { height: 100%; display: flex; flex-direction: column; background: var(--bg-0); }
   header { height: 52px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 10px 0 12px; }
   .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; margin-right: 8px; }
@@ -697,7 +700,7 @@
   .head-btn { flex: 1; min-width: 0; height: 40px; margin: 0 -8px; padding: 0 8px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
   .head-btn:hover { background: var(--bg-2); }
   /* two classes: .menu (declared below) must not win `bottom` back */
-  .menu.head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; }
+  .menu.head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; --pop-origin: top; }
   .me { padding: 10px 10px 10px 12px; background: var(--bg-inset); display: flex; align-items: center; gap: 10px; }
   .who { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
   .who small { font-size: 12px; font-weight: 400; color: var(--text-3); }
@@ -731,5 +734,7 @@
   .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-grid; place-items: center; }
   .tab .invc { color: var(--accent-text); display: grid; margin-left: -2px; }
   .tab .dot { margin-left: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); display: inline-block; }
-  .notice { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 40; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: var(--shadow-2); }
+  /* the shared .toast look, under the channel header (it covered the search box there), centred by margins, not a
+     transform (WebKitGTK blurs transformed text) */
+  .notice { position: fixed; top: 112px; left: 0; right: 0; z-index: 40; width: max-content; max-width: min(520px, 80vw); margin: 0 auto; }
 </style>

@@ -59,7 +59,7 @@
     {#if preview}<img src={preview} alt="Stream preview" />{:else}<div class="none">No preview yet</div>{/if}
     <div class="meta">
       <span>{info.settings.height}p{info.settings.fps}</span>
-      <span>{info.viewers.length} watching{#if ghosts} · <span title="Ghost viewers: people in the server outside this call">{ghosts}</span>{/if}</span>
+      <span>{info.viewers.length} watching{#if ghosts} · <span data-tip="Ghost viewers: people in the server outside this call">{ghosts}</span>{/if}</span>
     </div>
     {#if !mine}
       <!-- aria-disabled, not disabled: a disabled button swallows the hover that shows the reason -->
@@ -71,7 +71,7 @@
 
 <style>
   .pop { position: fixed; z-index: 30; width: 280px; padding: 10px; gap: 8px; font-size: 13px; }
-  img, .none { width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; background: var(--bg-1); object-fit: cover; }
+  img, .none { width: 100%; aspect-ratio: 16 / 9; border-radius: var(--radius-sm); background: var(--bg-1); object-fit: cover; }
   .none { display: grid; place-items: center; background: var(--bg-4); color: var(--text-2); }
   .meta { display: flex; justify-content: space-between; color: var(--text-2); }
   small { color: var(--text-3); text-align: center; }

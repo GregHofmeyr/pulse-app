@@ -49,12 +49,13 @@
 
 <style>
   .select { position: relative; }
-  .trigger { width: 100%; height: 42px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--line-soft); color: var(--text); display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 400; letter-spacing: 0; text-align: left; }
-  .trigger:hover { border-color: var(--line-strong); }
+  /* the text fields' look (.input: 36px on bg-1), so a dropdown in Settings sits level with the fields beside it (#173) */
+  .trigger { width: 100%; height: 36px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: var(--radius-md); background: var(--bg-1); color: var(--text); display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 400; letter-spacing: 0; text-align: left; }
+  .trigger:hover { border-color: var(--line-menu); }
   /* its options keep the trigger's 14px */
-  .list { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; max-height: 240px; overflow-y: auto; }
-  .select[data-drop='up'] .list { top: auto; bottom: calc(100% + 4px); }
-  li { padding: 9px 10px; border-radius: 8px; font-size: 14px; font-weight: 400; letter-spacing: 0; color: var(--text-2); cursor: pointer; }
+  .list { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; max-height: 240px; overflow-y: auto; --pop-origin: top; }
+  .select[data-drop='up'] .list { top: auto; bottom: calc(100% + 4px); --pop-origin: bottom; }
+  li { padding: 9px 10px; border-radius: var(--radius-sm); font-size: 14px; font-weight: 400; letter-spacing: 0; color: var(--text-2); cursor: pointer; }
   li.active { background: var(--bg-4); color: var(--text); }
   li[aria-selected='true'] { color: var(--text); font-weight: 600; }
 </style>

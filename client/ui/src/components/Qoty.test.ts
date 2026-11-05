@@ -645,9 +645,22 @@ describe('Quote of the Year winner card', () => {
 })
 
 describe('Quote of the Year motion', () => {
+  it('a fresh card pours in once: switching away and back (a remount) shows it still (#173)', () => {
+    const fresh = card({ id: 'QONCE', created_at: new Date().toISOString() })
+    mounted.push(mount(QotyCard, { target: document.body, props: { message: fresh, serverId: 'S1', quote: quote('Q1', 'first one') } }))
+    flushSync()
+    expect(document.querySelector('.qoty-card.reveal')).toBeTruthy()
+    unmount(mounted.pop()!)
+    mounted.push(mount(QotyCard, { target: document.body, props: { message: fresh, serverId: 'S1', quote: quote('Q1', 'first one') } }))
+    flushSync()
+    expect(document.querySelector('.qoty-card')).toBeTruthy()
+    expect(document.querySelector('.qoty-card.reveal')).toBeNull()
+    unmount(mounted.pop()!)
+  })
+
   it('no animation classes under reduced motion', async () => {
-    // a fresh winner card animates in; one from earlier doesn't
-    mounted.push(mount(QotyCard, { target: document.body, props: { message: card({ created_at: new Date().toISOString() }), serverId: 'S1', quote: quote('Q1', 'first one') } }))
+    // a fresh winner card animates in; one from earlier doesn't (new ids: a card pours in once a session)
+    mounted.push(mount(QotyCard, { target: document.body, props: { message: card({ id: 'QFRESH', created_at: new Date().toISOString() }), serverId: 'S1', quote: quote('Q1', 'first one') } }))
     flushSync()
     expect(document.querySelector('.qoty-card.reveal')).toBeTruthy()
     unmount(mounted.pop()!)
@@ -657,7 +670,7 @@ describe('Quote of the Year motion', () => {
     unmount(mounted.pop()!)
 
     motion.reducedMotion = true
-    mounted.push(mount(QotyCard, { target: document.body, props: { message: card({ created_at: new Date().toISOString() }), serverId: 'S1', quote: quote('Q1', 'first one') } }))
+    mounted.push(mount(QotyCard, { target: document.body, props: { message: card({ id: 'QREDUCED', created_at: new Date().toISOString() }), serverId: 'S1', quote: quote('Q1', 'first one') } }))
     flushSync()
     expect(document.querySelector('.qoty-card')).toBeTruthy()
     expect(document.querySelector('.qoty-card.reveal')).toBeNull()

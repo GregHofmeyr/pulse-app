@@ -67,7 +67,7 @@ const ALLOWED: Record<string, { literals: string[]; reason: string }[]> = {
   'components/PendingClip.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .75)'], reason: VIDEO }],
   'components/FullView.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .5)'], reason: VIDEO }],
   'components/StreamTile.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .5)', 'rgba(0, 0, 0, .55)', 'rgba(0, 0, 0, .75)', 'rgba(255, 255, 255, .16)'], reason: VIDEO }],
-  'components/MiniPreview.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .55)', 'rgba(0, 0, 0, .6)'], reason: VIDEO }],
+  'components/MiniPreview.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .55)'], reason: VIDEO }],
   'components/LiveCard.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .55)', 'rgba(0, 0, 0, .7)', 'rgba(255, 255, 255, .4)', 'rgba(255, 255, 255, .8)'], reason: VIDEO }],
   'components/GoLiveDialog.svelte': [{ literals: ['#000'], reason: VIDEO + ' (the preview)' }],
   'components/CropDialog.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .6)'], reason: VIDEO + ' (the image being cropped, its mask and crop box)' }],

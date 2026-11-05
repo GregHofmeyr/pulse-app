@@ -103,7 +103,7 @@
   <div class="tile idle" class:blocked={!!reason} data-stream={streamer} bind:this={tile} tabindex={windows ? -1 : 0} onclick={clicked} oncontextmenu={contextMenu} onkeydown={menuKey}>
     <div class="backdrop" style:background={avatarColor(streamer)}></div>
     <span class="live-tag">LIVE</span>
-    {#if viewers > 0 || ghosts}<span class="viewers">{#if viewers > 0}<Icon name="eye" size={14} label="Viewers" /> {viewers}{/if}{#if ghosts}<span title="Ghost viewers">{ghosts}</span>{/if}</span>{/if}
+    {#if viewers > 0 || ghosts}<span class="viewers">{#if viewers > 0}<Icon name="eye" size={14} label="Viewers" /> {viewers}{/if}{#if ghosts}<span data-tip="Ghost viewers">{ghosts}</span>{/if}</span>{/if}
     <Avatar id={streamer} {name} size={64} />
     <div class="who">{name}</div>
     {#if windows && mode === 'self'}
@@ -121,8 +121,10 @@
 {/if}
 
 <style>
-  .tile { position: relative; aspect-ratio: 16 / 9; min-width: 0; border-radius: 16px; overflow: hidden; background: var(--bg-1); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+  .tile { position: relative; aspect-ratio: 16 / 9; min-width: 0; border-radius: var(--radius-xl); overflow: hidden; background: var(--bg-1); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+  /* the keyboard sees where it is (#173): the shared ring, drawn inside (the tile clips what's outside it) */
   .tile:focus { outline: none; }
+  .tile:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
   .idle { cursor: pointer; }
   .idle.blocked { cursor: default; }
   .backdrop { position: absolute; inset: 0; opacity: .22; }
@@ -135,8 +137,8 @@
   .host { position: absolute; inset: 0; cursor: zoom-in; }
   .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .5); color: #fff; font-size: 16px; font-weight: 600; pointer-events: none; }
-  .name-tag { position: absolute; left: 10px; bottom: 8px; padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; transition: opacity .12s; }
-  .toolbar { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 10px; display: flex; align-items: center; gap: 10px; background: linear-gradient(transparent, rgba(0, 0, 0, .75)); opacity: 0; transition: opacity .12s; }
+  .name-tag { position: absolute; left: 10px; bottom: 8px; padding: 2px 8px; border-radius: var(--radius-xs); background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; transition: opacity var(--dur-fast) var(--ease); }
+  .toolbar { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 10px; display: flex; align-items: center; gap: 10px; background: linear-gradient(transparent, rgba(0, 0, 0, .75)); opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
   .watching:hover .toolbar, .watching:focus-within .toolbar { opacity: 1; }
   .watching:hover .name-tag, .watching:focus-within .name-tag { opacity: 0; }
   .spacer { flex: 1; }
@@ -145,6 +147,6 @@
   .pct { min-width: 38px; }
   .quality { width: 120px; }
   .quality :global(.trigger) { height: 30px; font-size: 12px; }
-  .tb { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: rgba(255, 255, 255, .16); color: #fff; font-size: 12px; font-weight: 600; }
+  .tb { height: 30px; padding: 0 12px; border: 0; border-radius: var(--radius-sm); background: rgba(255, 255, 255, .16); color: #fff; font-size: 12px; font-weight: 600; }
   .tb.stop { background: var(--danger); }
 </style>

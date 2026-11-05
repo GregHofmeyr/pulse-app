@@ -51,7 +51,7 @@
       <span class="settings-label">TINT</span>
       <div class="swatches" role="group" aria-label="Tint">
         {#each TINTS as n (n.key)}
-          <button type="button" class="tint" aria-pressed={theme.tint === n.key} onclick={() => setTint(n.key)}>
+          <button type="button" class="tint toggle-chip" aria-pressed={theme.tint === n.key} onclick={() => setTint(n.key)}>
             <span class="dot" data-theme="light" data-tint={n.key} aria-hidden="true"></span>{n.label}
           </button>
         {/each}
@@ -63,7 +63,7 @@
   <div class="settings-field">
     <span class="settings-label">ACCENT</span>
     <div class="swatches" role="group" aria-label="Accent">
-      <button type="button" class="default" aria-pressed={theme.accent === null} onclick={() => setAccent(null)}>
+      <button type="button" class="default toggle-chip" aria-pressed={theme.accent === null} onclick={() => setAccent(null)}>
         <span class="chip" style:background={current.accent} aria-hidden="true"></span>Theme default
       </button>
       {#each ACCENT_PRESETS as p (p.color)}
@@ -107,11 +107,11 @@
 
   /* Theme cards: a small live slice of each theme (its own data-theme, so its own tokens). */
   .themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
-  .theme { display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 2px solid transparent; border-radius: 12px; background: transparent; color: var(--text-2); text-align: left; }
+  .theme { display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 2px solid transparent; border-radius: var(--radius-lg); background: transparent; color: var(--text-2); text-align: left; }
   .theme:hover { background: var(--bg-3); color: var(--text); }
   .theme[aria-pressed='true'] { border-color: var(--focus-ring); color: var(--text); }
   .t-label { font-size: 13px; font-weight: 600; padding: 0 2px 2px; }
-  .preview { display: grid; grid-template-columns: 34% 1fr; gap: 4px; height: 72px; padding: 4px; border-radius: 8px; background: var(--bg-0); border: 1px solid var(--line); overflow: hidden; }
+  .preview { display: grid; grid-template-columns: 34% 1fr; gap: 4px; height: 72px; padding: 4px; border-radius: var(--radius-sm); background: var(--bg-0); border: 1px solid var(--line); overflow: hidden; }
   .preview i { display: block; height: 5px; border-radius: 3px; }
   .p-side { display: flex; flex-direction: column; gap: 5px; padding: 6px 5px; border-radius: 5px; background: var(--bg-1); }
   .p-side i { background: var(--text-3); opacity: .55; }
@@ -123,9 +123,8 @@
   .p-btn { position: absolute; right: 6px; bottom: 6px; width: 26px; height: 10px; border-radius: 4px; background: var(--accent); }
 
   .swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  .tint, .default { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 8px; border: 2px solid var(--line); border-radius: 16px; background: transparent; color: var(--text-2); font-size: 13px; font-weight: 600; }
-  .tint:hover, .default:hover { color: var(--text); }
-  .tint[aria-pressed='true'], .default[aria-pressed='true'] { border-color: var(--focus-ring); color: var(--text); }
+  /* the tints and Theme default are the shared .toggle-chip (app.css), with a swatch inside */
+  .tint, .default { padding-left: 6px; }
   /* the tint's own ground (a preview of Light with that tint) */
   .tint .dot { width: 16px; height: 16px; border-radius: 50%; background: var(--bg-0); border: 1px solid var(--line-strong); }
   .chip { display: block; width: 18px; height: 18px; border-radius: 50%; }
@@ -134,12 +133,12 @@
   .chip-btn:hover { border-color: var(--line-strong); }
   .chip-btn[aria-pressed='true'] { border-color: var(--text); }
   .custom { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text-2); cursor: pointer; }
-  .custom input { width: 32px; height: 32px; padding: 0; border: 2px solid var(--line); border-radius: 8px; background: transparent; cursor: pointer; }
+  .custom input { width: 32px; height: 32px; padding: 0; border: 2px solid var(--line); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
 
   .level { display: flex; flex-direction: column; gap: 4px; max-width: 320px; }
   .level input { width: 100%; margin: 0; accent-color: var(--accent); }
   .ticks { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-3); }
   .ticks .on { color: var(--text); font-weight: 600; }
-  .sample { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); font-weight: 600; font-size: 15px; }
+  .sample { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-2); font-weight: 600; font-size: 15px; }
   .sample .name { display: inline-block; font-size: calc(1em * var(--name-scale, 1)); line-height: calc(1.4em / var(--name-scale, 1)); }
 </style>

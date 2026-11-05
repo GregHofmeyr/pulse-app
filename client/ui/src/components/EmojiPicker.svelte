@@ -183,7 +183,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="picker" bind:this={root} role="dialog" aria-label="Emoji picker" tabindex="-1" onkeydown={onKey}>
   <div class="top">
-    <input bind:this={searchEl} bind:value={query} class="search" type="text" placeholder="Search emoji" aria-label="Search emoji" autocomplete="off" spellcheck="false" />
+    <input bind:this={searchEl} bind:value={query} class="search input input-sm" type="text" placeholder="Search emoji" aria-label="Search emoji" autocomplete="off" spellcheck="false" />
     <div class="tones" role="group" aria-label="Skin tone">
       {#each TONES as t (t)}
         <button class="tone" class:on={tone === t} type="button" aria-label={t === 0 ? 'Default skin tone' : `Skin tone ${t}`} aria-pressed={tone === t} style:background={TONE_COLORS[t]} onclick={() => setTone(t)}></button>
@@ -193,7 +193,7 @@
   <div class="body">
     <nav class="rail" aria-label="Emoji sections">
       {#each sections as s (s.id)}
-        <button class="rail-btn" type="button" title={s.label} aria-label={s.label} data-rail={s.id} onclick={() => jump(s.id)}>
+        <button class="rail-btn" type="button" aria-label={s.label} data-rail={s.id} onclick={() => jump(s.id)}>
           {#if s.id === 'frequent'}
             <Icon name="clock" size={18} />
           {:else if s.server}
@@ -225,7 +225,9 @@
             </button>
             {#if !collapsed[s.id]}
               {@const base = startIndex(s)}
-              <div class="cells">
+              <!-- drawn only near the view (#173): ~1.9k twemoji drawn at once cost seconds of frames on open and
+                   scroll. Until then a section is laid out at its real height (34px rows of 9). -->
+              <div class="cells lazy" style:contain-intrinsic-size="auto {Math.ceil(s.items.length / 9) * 34}px">
                 {#each s.items as e, i (keyOf(e))}{@render cell(e, base + i)}{/each}
               </div>
             {/if}
@@ -246,28 +248,32 @@
 </div>
 
 <style>
-  .picker { width: 360px; height: 420px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-2); overflow: hidden; color: var(--text); outline: none; }
+  /* the menus' frame (#173: .menu-surface's border, radius and shadow) round a bg-2 panel: its tiles, rail and footer
+     are drawn for bg-2, so the fill stays */
+  .picker { width: 360px; height: 420px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line-menu); border-radius: var(--radius-lg); box-shadow: var(--shadow-3); overflow: hidden; color: var(--text); outline: none; }
   .top { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
-  .search { flex: 1; min-width: 0; background: var(--bg-0); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; }
+  /* the shared small field (.input .input-sm) */
+  .search { flex: 1; min-width: 0; }
   .tones { display: flex; gap: 3px; }
   .tone { width: 14px; height: 14px; padding: 0; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
   .tone.on { border-color: var(--focus-ring); }
   .body { flex: 1; min-height: 0; display: flex; }
   .rail { display: flex; flex-direction: column; gap: 4px; padding: 6px; background: var(--bg-1); border-right: 1px solid var(--line); overflow-y: auto; }
-  .rail-btn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); cursor: pointer; padding: 0; }
+  .rail-btn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); cursor: pointer; padding: 0; }
   .rail-btn:hover { background: var(--bg-3); color: var(--text); }
   .grp { width: 20px; height: 20px; }
   .srv { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
   .init { display: grid; place-items: center; background: var(--bg-4); color: var(--text); font-size: 12px; font-weight: 700; }
   .grid { flex: 1; min-width: 0; overflow-y: auto; padding: 0 8px 8px; }
   .head { position: sticky; top: 0; z-index: 1; width: 100%; display: flex; align-items: center; gap: 4px; padding: 8px 2px 4px; background: var(--bg-2); border: 0; color: var(--text-3); font: inherit; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; cursor: pointer; text-align: left; }
-  .caret { display: inline-flex; transition: transform 0.12s; }
+  .caret { display: inline-flex; transition: transform var(--dur) var(--ease); }
   .caret.shut { transform: rotate(-90deg); }
   .cells { display: grid; grid-template-columns: repeat(9, 1fr); gap: 2px; }
-  .cell { aspect-ratio: 1; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; padding: 0; cursor: pointer; }
+  .cells.lazy { content-visibility: auto; }
+  .cell { aspect-ratio: 1; display: grid; place-items: center; border: 0; border-radius: var(--radius-xs); background: transparent; padding: 0; cursor: pointer; }
   .cell img { width: 24px; height: 24px; object-fit: contain; }
   .cell:hover, .cell.active { background: var(--bg-4); }
-  .none { color: var(--text-3); text-align: center; margin: 24px 0; }
+  .none { color: var(--text-3); font-size: 13px; text-align: center; margin: 24px 0; }
   .foot { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-top: 1px solid var(--line); background: var(--bg-1); }
   .big { width: 28px; height: 28px; object-fit: contain; }
   .nm { color: var(--text-2); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

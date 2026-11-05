@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import Icon from './Icon.svelte'
+  import { modal } from '../lib/actions'
   import { StreamRoom, type Picked } from '../lib/stream/room'
   import { resolutionsFor, type Fps } from '../lib/stream/encodings'
   import { clampGoLive, loadGoLive, saveGoLive } from '../lib/stream/prefs'
@@ -78,18 +79,16 @@
   }
 </script>
 
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); cancel() } }} />
-
 <div class="overlay modal-overlay fade-in">
-  <div class="backdrop modal-backdrop" role="presentation" onclick={cancel}></div>
-  <div class="modal pop-in" role="dialog" aria-label="Go Live">
+  <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={cancel}></div>
+  <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Go Live" tabindex="-1" use:modal={cancel}>
     <div class="top">
       <h1 class="modal-title">Go Live</h1>
-      <button type="button" class="icon-btn round modal-close" aria-label="Cancel" disabled={busy} onclick={cancel}><Icon name="x" /></button>
+      <button type="button" class="icon-btn round modal-close" aria-label="Cancel" disabled={busy} onclick={cancel}><Icon name="x" size={16} /></button>
     </div>
     <video bind:this={video} muted autoplay playsinline></video>
     <div class="source">
-      <span class="label" title={picked.label}>{picked.label}</span>
+      <span class="label" data-tip={picked.label}>{picked.label}</span>
       <button type="button" class="btn btn-secondary" disabled={busy} onclick={changeSource}>Change source</button>
     </div>
 
@@ -120,7 +119,7 @@
   .overlay { position: fixed; inset: 0; z-index: 30; }
   .modal { width: min(480px, 100%); }
   .top { display: flex; align-items: center; justify-content: space-between; }
-  video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; object-fit: contain; }
+  video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: var(--radius-md); object-fit: contain; }
   .source { display: flex; align-items: center; gap: 10px; }
   .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-size: 13px; }
   fieldset { margin: 0; padding: 0; border: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }

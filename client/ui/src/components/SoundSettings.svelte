@@ -31,7 +31,7 @@
   }
 </script>
 
-<h3 class="settings-label heading">Sounds</h3>
+<h3 class="settings-section-title">Sounds</h3>
 <div class="settings-field">
   <div class="sets" role="radiogroup" aria-label="Sound set">
     {#each SOUND_SETS as s, i (s.id)}
@@ -42,7 +42,7 @@
           <strong>{s.label}</strong>
           <small id="sound-set-{s.id}-blurb">{s.blurb}</small>
         </div>
-        <button class="play" aria-label="Preview {s.label}" title="Preview" onclick={() => previewSet(s.id)}><Icon name="play" size={14} /></button>
+        <button class="play btn-primary" aria-label="Preview {s.label}" data-tip="Preview" onclick={() => previewSet(s.id)}><Icon name="play" size={14} /></button>
       </div>
     {/each}
   </div>
@@ -51,11 +51,10 @@
 <small class="hint">How loud each sound plays is in the Volume mixer below.</small>
 
 <style>
-  .heading { margin: 0; text-transform: uppercase; }
   .sets { display: flex; flex-direction: column; gap: 8px; }
-  .set { display: flex; align-items: center; gap: 8px; padding-right: 12px; background: var(--bg-2); border: 1px solid transparent; border-radius: 12px; }
+  .set { display: flex; align-items: center; gap: 8px; padding-right: 12px; background: var(--bg-2); border: 1px solid transparent; border-radius: var(--radius-lg); }
   .set.selected { border-color: var(--focus-ring); }
-  .pick { flex: 1; display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 12px; cursor: pointer; }
+  .pick { flex: 1; display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: var(--radius-lg); cursor: pointer; }
   .set.selected .pick strong { color: var(--accent-text); }
   .play { width: 32px; height: 32px; flex-shrink: 0; border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
   .hint { margin-top: -8px; font-size: 12px; color: var(--text-3); }

@@ -1,3 +1,8 @@
+<script module lang="ts">
+  /** The cards that have poured in already, this session. */
+  const revealed = new Set<string>()
+</script>
+
 <script lang="ts">
   // A Quote of the Year result (a system message carrying `qoty_card`, spec §5.3): the winner card
   // (big green quote mark, the quote, who said it, the year, the votes and who cast them, how it
@@ -66,8 +71,10 @@
   const speakers = $derived(
     card.speakers.length ? snapshotSpeakers(app.state, serverId, card.speakers) : shown && lines ? speakersOf(app.state, serverId, shown) : '',
   )
-  // A card that just arrived animates in once (not every time the channel is opened).
-  const reveal = untrack(() => Date.now() - Date.parse(message.created_at) < 60_000 && !motion.reducedMotion)
+  // A card that just arrived animates in once: not every time the channel is opened, and not again when the channel
+  // is switched away from and back within the minute (Shell remounts it, #173).
+  const reveal = untrack(() => !revealed.has(message.id) && Date.now() - Date.parse(message.created_at) < 60_000 && !motion.reducedMotion)
+  untrack(() => revealed.add(message.id))
   let reopening = $state(false)
 </script>
 
@@ -115,7 +122,7 @@
   .time { font-size: 11px; color: var(--text-3); }
   .link { margin-left: 6px; padding: 0; border: 0; background: none; color: var(--quote-green-text); font-size: 13px; font-weight: 600; }
   .link:hover { text-decoration: underline; }
-  .qoty-card { position: relative; overflow: hidden; margin: 8px 18px; padding: 96px 16px 18px; border-radius: 14px; color: var(--island-text); background: var(--quote-surface); border: 1px solid color-mix(in srgb, var(--quote-green) 35%, transparent); display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+  .qoty-card { position: relative; overflow: hidden; margin: 8px 18px; padding: 96px 16px 18px; border-radius: 14px; color: var(--island-text); background: var(--quote-surface); border: 1px solid var(--quote-green-line); display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
   .qoty-card :global(.pixel-spill) { position: absolute; left: 0; top: 0; width: 100%; height: 90px; }
   .big, .q, .who, .tally, .reopen { position: relative; } /* over the spill */
   .big { font-size: 56px; line-height: .5; color: var(--quote-green); text-shadow: 0 3px 0 var(--quote-green-deep); }
