@@ -13,6 +13,7 @@
     fixed = [],
     disabled = [],
     max = 10,
+    only,
     action,
     onDone,
     onClose,
@@ -23,8 +24,10 @@
     fixed?: string[]
     /** Shown dimmed as "already here". */
     disabled?: string[]
-    /** Total people including you. */
+    /** Total people including you; Infinity for no limit (no count shown). */
     max?: number
+    /** Offer only these people (e.g. the ones you could appear offline to, #188); omitted: everyone. */
+    only?: string[]
     action: string
     onDone: (ids: string[]) => void
     onClose: () => void
@@ -40,7 +43,7 @@
   const full = $derived(total >= max)
   const people = $derived(
     Object.values(app.state.people)
-      .filter((p) => p.user.id !== me && !fixed.includes(p.user.id))
+      .filter((p) => p.user.id !== me && !fixed.includes(p.user.id) && (!only || only.includes(p.user.id)))
       // found by any name they have for you (#47); listed by the one you see
       .filter((p) => [p.user.username, ...namesOf(app.state, null, p.user.id)].some((n) => n.toLowerCase().includes(q.trim().toLowerCase())))
       .map((p) => ({ ...p, name: displayName(app.state, null, p.user.id) }))
@@ -84,7 +87,7 @@
       {/each}
     </div>
     <div class="foot">
-      <span class="hint">{total} of {max} people</span>
+      <span class="hint">{#if Number.isFinite(max)}{total} of {max} people{/if}</span>
       <button class="btn btn-lg btn-secondary" onclick={onClose}>Cancel</button>
       <button class="btn btn-lg btn-primary" disabled={!picked.length} onclick={() => onDone(picked)}>{action}</button>
     </div>

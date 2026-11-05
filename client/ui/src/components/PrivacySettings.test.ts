@@ -79,6 +79,62 @@ describe('PrivacySettings', () => {
     expect(document.querySelector('.empty')!.textContent).toContain("You don't appear offline to anyone")
   })
 
+  describe('Add person (#188)', () => {
+    const jo = user('U4', 'jo')
+    const addBtn = () => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === 'Add person')
+    const picker = () => document.querySelector<HTMLElement>('[role=dialog][aria-label="Appear offline to"]')
+    const offered = () => [...document.querySelectorAll<HTMLElement>('[role=dialog] .pick')].map((b) => b.querySelector('.nm')!.textContent?.trim())
+    const setup = (over: object) => {
+      app.state = {
+        ...app.state,
+        people: { ...app.state.people, U4: { user: jo, online: true, last_seen_at: null, status: 'online' } },
+        appearOfflineTo: ['U3'],
+        ...over,
+      } as never
+      cmp = mount(PrivacySettings, { target: document.body })
+      flushSync()
+    }
+
+    it('opens the people picker with anyone sharing a DM or group with you, never yourself or anyone already hidden', () => {
+      // sam shares a DM, kim (hidden) a group, jo nothing
+      setup({ dmMembers: { D1: ['U1', 'U2'], G1: ['U1', 'U3'] } })
+      expect(picker()).toBeNull()
+      addBtn()!.click()
+      flushSync()
+      expect(picker()).not.toBeNull()
+      expect(offered()).toEqual(['sam'])
+    })
+
+    it('offers people sharing a server with you', () => {
+      setup({ members: { S1: [{ user: alex, nickname: null }, { user: jo, nickname: null }] } })
+      addBtn()!.click()
+      flushSync()
+      expect(offered()).toEqual(['jo'])
+    })
+
+    it('picking people hides you from each of them, then the picker closes', async () => {
+      setup({ dmMembers: { D1: ['U1', 'U2'] }, members: { S1: [{ user: alex, nickname: null }, { user: jo, nickname: null }] } })
+      addBtn()!.click()
+      flushSync()
+      for (const n of ['jo', 'sam']) {
+        ;[...document.querySelectorAll<HTMLButtonElement>('[role=dialog] .pick')].find((b) => b.textContent?.includes(n))!.click()
+        flushSync()
+      }
+      ;[...document.querySelectorAll<HTMLButtonElement>('[role=dialog] .foot button')].find((b) => b.textContent?.trim() === 'Appear offline')!.click()
+      flushSync()
+      expect(picker()).toBeNull()
+      await vi.waitFor(() => expect(invoke.mock.calls.filter(([c]) => c === 'set_appear_offline').map(([, a]) => a))
+        .toEqual([{ userId: 'U4', hidden: true }, { userId: 'U2', hidden: true }]))
+    })
+
+    it('no people count in the picker: there is no limit', () => {
+      setup({ dmMembers: { D1: ['U1', 'U2'] } })
+      addBtn()!.click()
+      flushSync()
+      expect(document.querySelector('[role=dialog] .foot')!.textContent).not.toMatch(/of \d+ people/)
+    })
+  })
+
   it('is a section of Settings', () => {
     cmp = mount(Settings, { target: document.body, props: { onClose: () => {}, section: 'privacy' } })
     flushSync()
