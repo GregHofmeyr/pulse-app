@@ -64,6 +64,20 @@ describe('VoiceSettings noise suppression', () => {
   })
 })
 
+describe('VoiceSettings helper text (#163)', () => {
+  it('input gain, input sensitivity and noise suppression keep their labels and controls but no description', () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    flushSync()
+    const text = document.body.textContent ?? ''
+    for (const gone of ['boosts your voice', 'hears you speaking', 'right of the handle', 'to see the bar move', 'to see your level', 'your mic as it is', 'removes fans', 'Uses more CPU'])
+      expect(text).not.toContain(gone)
+    for (const kept of ['INPUT GAIN', 'INPUT SENSITIVITY', 'NOISE SUPPRESSION', 'Automatically determine sensitivity']) expect(text).toContain(kept)
+    expect(document.querySelector('[role=radiogroup][aria-label="Noise suppression"]')).not.toBeNull()
+    unmount(c)
+    document.body.innerHTML = ''
+  })
+})
+
 describe('VoiceSettings sounds', () => {
   it('renders the Sounds section', () => {
     const c = mount(VoiceSettings, { target: document.body })

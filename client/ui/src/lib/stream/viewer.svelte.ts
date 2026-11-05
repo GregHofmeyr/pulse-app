@@ -5,6 +5,7 @@ import { app } from '../store.svelte'
 import { voice, voiceApi } from '../voice.svelte'
 import { streamApi } from './stream.svelte'
 import { dropToast, pushToast, TOAST_MS, watchMode, type Toast, type WatchKey } from './viewer'
+import { toastShown } from '../toastPrefs.svelte'
 
 export type { WatchKey } from './viewer'
 
@@ -26,6 +27,7 @@ const timers = new Map<string, ReturnType<typeof setTimeout>>()
 const key = (channelId: string, streamer: string) => `${channelId}/${streamer}`
 
 export function showToast(t: Toast) {
+  if (!toastShown('live')) return
   const k = key(t.channelId, t.streamer)
   clearTimeout(timers.get(k))
   toasts.list = pushToast(toasts.list, t)

@@ -14,9 +14,13 @@
   import Settings, { type Section } from '../components/Settings.svelte'
   import FullProfile from '../components/FullProfile.svelte'
   import NicknameDialog from '../components/NicknameDialog.svelte'
+  import ServerMenu from '../components/ServerMenu.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
   import { clickOutside, narrowerThan } from '../lib/actions'
   import { NARROW_BODY, searchMakesRoom } from '../lib/layout'
+  import { COLUMNS, fitColumns, RIGHT_DEFAULT } from '../lib/columns'
+  import { columns, resetColumn, setColumn } from '../lib/columns.svelte'
+  import ColumnHandle from '../components/ColumnHandle.svelte'
   import ReportBug from '../components/ReportBug.svelte'
   import CrashReportPrompt from '../components/CrashReportPrompt.svelte'
   import ConversationList from '../components/ConversationList.svelte'
@@ -53,7 +57,6 @@
   import { keybindsApi } from '../lib/keybinds'
   import { watchWindowFocus } from '../lib/windowFocus.svelte'
   import type { User } from '../lib/protocol/User'
-  import { MUTE_FOR, muteUntil } from '../lib/muteDurations'
 
   let { user, onLogout }: { user: User; onLogout: () => void } = $props()
   // rings in the voice list: who's talking, plus whose soundboard sound is playing (render only: never voice.speaking)
@@ -174,12 +177,14 @@
     serverMenuOpen = false
     if (e instanceof KeyboardEvent) serverToggle?.focus()
   }
-  let serverSettingsOpen = $state(false)
+  // The server whose settings are open: the active one (sidebar header menu), or any tab's (its right-click menu, #161).
+  let serverSettingsId = $state<string | null>(null)
+  const settingsServer = $derived(serverSettingsId ? (app.state.servers.find((s) => s.id === serverSettingsId) ?? null) : null)
   // Both belong to the server they were opened on.
   $effect(() => {
     void activeServerId
     serverMenuOpen = false
-    serverSettingsOpen = false
+    serverSettingsId = null
   })
   let creating = $state(false)
   let newName = $state('')
@@ -241,19 +246,8 @@
   })
   const home = $derived(homeBadge(app.state, nowIso))
 
-  // Right-click a server tab: mute/unmute the whole server.
-  let serverMenu = $state<null | { id: string; x: number; y: number }>(null)
-  const serverMuted = (id: string) =>
-    app.state.mutes.some((m) => m.target_kind === 'server' && m.target_id === id && (m.until === null || m.until > nowIso))
-  async function muteServer(id: string, minutes: number | null | 'off') {
-    serverMenu = null
-    try {
-      if (minutes === 'off') await api.clearMute('server', id)
-      else await api.setMute('server', id, muteUntil(minutes))
-    } catch (e) {
-      error = errorText(e)
-    }
-  }
+  // Right-click a server tab (#161): its settings, and mute/unmute the whole server (ServerMenu).
+  let serverMenu = $state<null | { id: string; x: number; y: number; opener: HTMLElement }>(null)
 
   // Removed from (or left) the open conversation: step back to Home and say why. The open server
   // channel was deleted: go to another of the server's channels. Only fires when a channel we had
@@ -344,6 +338,23 @@
   const activeServer = $derived(servers.find((s) => s.id === activeServerId) ?? null)
   const member = $derived(activeServerId ? isMember(app.state, activeServerId) : false)
   const activeChannel = $derived(activeChannelId ? app.state.channels[activeChannelId] : null)
+  // Resizable side columns (#160). What the right column holds sets its default; a column that isn't showing (full
+  // view, the narrow-window search hand-off, Home with nothing on the right) has no handle and takes no room. Saved
+  // widths are fitted to the body's width, so a shrinking window narrows them (lib/columns.ts).
+  const rightKind = $derived<keyof typeof RIGHT_DEFAULT | null>(
+    search.open ? 'search' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
+  const showLeft = $derived(!hideLeft)
+  const showRight = $derived(!hideRight && rightKind !== null)
+  let bodyEl = $state<HTMLElement>()
+  let bodyWidth = $state(0)
+  $effect(() => {
+    if (!bodyEl || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver((entries) => (bodyWidth = entries[entries.length - 1]?.contentRect.width ?? 0))
+    ro.observe(bodyEl)
+    return () => ro.disconnect()
+  })
+  const fitted = $derived(fitColumns({ saved: columns, body: bodyWidth, left: showLeft, right: showRight, rightDefault: RIGHT_DEFAULT[rightKind ?? 'members'] }))
+  const rightLabel = $derived(rightKind === 'search' ? 'Resize the search results' : 'Resize the members list')
   // The channel views below take their id from activeChannelId (a plain string), never activeChannel.id: for the
   // moment a channel leaves the data before its view goes (a sign-out's reset, a delete), activeChannel is undefined,
   // and reading .id there threw and left the window blank after a sign-in (2026-11-03).
@@ -494,7 +505,7 @@
         {@const badge = serverBadge(app.state, s.id, nowIso)}
         {@const talking = inVoice(app.state, s.id)}
         <button class="tab" class:active={activeServerId === s.id} onclick={() => selectServer(s.id)}
-          oncontextmenu={(e) => { e.preventDefault(); serverMenu = { id: s.id, x: e.clientX, y: e.clientY } }}>
+          oncontextmenu={(e) => { e.preventDefault(); serverMenu = { id: s.id, x: e.clientX, y: e.clientY, opener: e.currentTarget } }}>
           <span class="chip" style:background={avatarColor(s.id)}>{initial(s.name)}</span>{s.name}
           {#if talking > 0}<span class="invc" aria-label="{talking} in voice" data-tip="{talking} in voice"><Icon name="speaker" size={13} /></span>{/if}
           {#if badge.mentions > 0}<span class="pill">{badge.mentions}</span>{:else if badge.dot}<span class="dot" aria-label="new messages"></span>{/if}
@@ -520,15 +531,15 @@
     <button class="win" aria-label="Close" onclick={() => win.close()}><Icon name="x" size={14} /></button>
   </header>
 
-  <div class="body" use:narrowerThan={{ px: NARROW_BODY, set: (v) => (narrowBody = v) }}>
-    <aside id={PANEL_ID.left} class="panel side" hidden={hideLeft} bind:this={sidePanel}>
+  <div class="body" bind:this={bodyEl} use:narrowerThan={{ px: NARROW_BODY, set: (v) => (narrowBody = v) }}>
+    <aside id={PANEL_ID.left} class="panel side" hidden={hideLeft} bind:this={sidePanel} style:width="{fitted.left}px">
       <div class="panel-head">
         {#if activeServer}
           <button bind:this={serverToggle} class="head-btn" data-menu-toggle aria-haspopup="menu" aria-expanded={serverMenuOpen}
             onclick={() => (serverMenuOpen = !serverMenuOpen)}>{activeServer.name}<Icon name="chevron" size={14} /></button>
           {#if serverMenuOpen}
             <div class="menu head-menu menu-surface pop-in" role="menu" use:clickOutside={closeServerMenu}>
-              <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsOpen = true }}>Server settings</button>
+              <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsId = activeServerId }}>Server settings</button>
             </div>
           {/if}
         {:else}Direct messages{/if}
@@ -567,6 +578,10 @@
         {/if}
       </div>
     </aside>
+    {#if showLeft}
+      <ColumnHandle side="left" width={fitted.left} min={COLUMNS.left.min} max={fitted.maxLeft} controls={PANEL_ID.left}
+        label="Resize the channel list" onResize={(w, done) => setColumn('left', w, done)} onReset={() => resetColumn('left')} />
+    {/if}
 
     <main class="panel content">
       {#if activeServerId && member && !fullShown}<QotyBanner serverId={activeServerId} />{/if}
@@ -592,13 +607,18 @@
       {#each mini ? [mini] : [] as m (m.key)}<MiniPreview channelId={m.channelId} streamer={m.streamer} />{/each}
     </main>
 
-    <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap -->
-    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel}>{#if search.open}<SearchResults />{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} />{/if}</div>
+    {#if showRight}
+      <ColumnHandle side="right" width={fitted.right} min={COLUMNS.right.min} max={fitted.maxRight} controls={PANEL_ID.right}
+        label={rightLabel} onResize={(w, done) => setColumn('right', w, done)} onReset={() => resetColumn('right')} />
+    {/if}
+    <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap. A saved
+         width reaches the list as --right-w; unsaved, each list keeps its own default. -->
+    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={columns.right === null ? null : `${fitted.right}px`}>{#if search.open}<SearchResults />{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} />{/if}</div>
   </div>
 </div>
 <StreamToast />
 <BadgeToast />
-{#if serverSettingsOpen && activeServer}<ServerSettings server={activeServer} onClose={() => (serverSettingsOpen = false)} />{/if}
+{#if settingsServer}<ServerSettings server={settingsServer} onClose={() => (serverSettingsId = null)} />{/if}
 {#if settingsOpen}<Settings section={settingsSection} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if qotyStart}<QotyStart serverId={qotyStart} onClose={() => (qotyStart = null)} />{/if}
@@ -635,18 +655,14 @@
 {/if}
 {#if notice}<div class="notice fade-in" role="status">{notice}</div>{/if}
 {#if serverMenu}
-  {@const id = serverMenu.id}
-  <div class="ctx-backdrop" role="presentation" onclick={() => (serverMenu = null)}></div>
-  <div class="ctx menu-surface pop-in" role="menu" use:clickOutside={() => (serverMenu = null)} style:left="{serverMenu.x}px" style:top="{serverMenu.y}px">
-    {#if serverMuted(id)}
-      <button class="menu-item" role="menuitem" onclick={() => muteServer(id, 'off')}>Unmute server</button>
-    {:else}
-      <span class="menu-label">Mute server</span>
-      {#each MUTE_FOR as d (d.label)}
-        <button class="menu-item" role="menuitem" onclick={() => muteServer(id, d.minutes)}>{d.label}</button>
-      {/each}
-    {/if}
-  </div>
+  {@const m = serverMenu}
+  {@const srv = app.state.servers.find((x) => x.id === m.id)}
+  {#if srv}
+    {#key m}
+      <ServerMenu serverId={m.id} name={srv.name} x={m.x} y={m.y} opener={m.opener} onClose={() => (serverMenu = null)}
+        onSettings={() => (serverSettingsId = m.id)} onError={(msg) => (error = msg)} />
+    {/key}
+  {/if}
 {/if}
 
 <style>
@@ -713,6 +729,4 @@
   .tab .invc { color: var(--accent-text); display: grid; margin-left: -2px; }
   .tab .dot { margin-left: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); display: inline-block; }
   .notice { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 40; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: var(--shadow-2); }
-  .ctx-backdrop { position: fixed; inset: 0; z-index: 44; }
-  .ctx { position: fixed; z-index: 45; width: 210px; }
 </style>

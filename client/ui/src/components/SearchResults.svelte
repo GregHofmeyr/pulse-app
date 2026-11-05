@@ -95,7 +95,7 @@
 </section>
 
 <style>
-  .search-results { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-radius: var(--radius); background: var(--bg-1); }
+  .search-results { width: var(--right-w, 340px); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-radius: var(--radius); background: var(--bg-1); }
   header { height: 52px; flex-shrink: 0; padding: 0 10px 0 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-soft); }
   .count { font-size: 13px; font-weight: 600; color: var(--text-2); }
   .body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }

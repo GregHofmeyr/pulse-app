@@ -44,7 +44,7 @@
 </aside>
 
 <style>
-  .members { width: 220px; flex-shrink: 0; background: var(--bg-1); border-radius: var(--radius); padding: 8px; overflow-y: auto; }
+  .members { width: var(--right-w, 220px); flex-shrink: 0; background: var(--bg-1); border-radius: var(--radius); padding: 8px; overflow-y: auto; }
   .label { padding: 14px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); }
   .row { height: 44px; padding: 0 10px; border-radius: 10px; display: flex; align-items: center; gap: 10px; }
   .row:hover { background: var(--bg-2); }

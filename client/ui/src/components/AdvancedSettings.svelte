@@ -54,7 +54,7 @@
   <h2>Advanced</h2>
   <div class="settings-field">
     <label class="row">
-      <input type="checkbox" checked={diagUi.on} onchange={(e) => setDiagOverlay(e.currentTarget.checked)} />
+      <input type="checkbox" role="switch" class="switch" checked={diagUi.on} onchange={(e) => setDiagOverlay(e.currentTarget.checked)} />
       <span>Stream diagnostics</span>
     </label>
     <p class="hint">Shows live numbers on streams you share or watch. They are always written to the log for bug reports.</p>
@@ -62,7 +62,7 @@
 
   <div class="settings-field">
     <label class="row">
-      <input type="checkbox" checked={autoSend ?? false} disabled={autoSend === null}
+      <input type="checkbox" role="switch" class="switch" checked={autoSend ?? false} disabled={autoSend === null}
         onchange={(e) => setAutoSend(e.currentTarget.checked)} />
       <span>Send crash reports automatically</span>
     </label>
@@ -94,11 +94,11 @@
   /* the pane's 20px gap plus this: the 28px between sections it had */
   h3 { margin: 8px 0 10px; font-size: 15px; }
   .row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
-  /* under the checkbox's label, not the box */
-  .hint { margin: -2px 0 0 26px; font-size: 12px; color: var(--text-3); }
+  /* under the switch's label, not the switch (44px wide, then the row's 10px gap) */
+  .hint { margin: -2px 0 0 54px; font-size: 12px; color: var(--text-3); }
   .q { margin: 0 0 10px; font-size: 13px; color: var(--text-2); }
   .actions { display: flex; gap: 8px; }
   .ok { margin: 10px 0 0; font-size: 13px; color: var(--text-2); }
   .err { margin: 2px 0 0; font-size: 13px; color: var(--danger-text); }
-  .settings-field .err { margin: 0 0 0 26px; }
+  .settings-field .err { margin: 0 0 0 54px; }
 </style>

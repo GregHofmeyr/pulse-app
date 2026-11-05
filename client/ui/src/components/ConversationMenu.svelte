@@ -6,14 +6,17 @@
   import type { Channel } from '../lib/protocol/Channel'
   import { MUTE_FOR, muteUntil } from '../lib/muteDurations'
   import { openRename } from '../lib/profileCard.svelte'
+  import { onMount } from 'svelte'
 
-  let { channel, muted, show, at = null, onClose, onRename, onLeft }: {
+  let { channel, muted, show, at = null, anchor = null, onClose, onRename, onLeft }: {
     channel: Channel
     muted: boolean
     /** 'mute' = the bell's popover, 'manage' = the ⋯ menu, 'all' = right-click on a conversation. */
     show: 'mute' | 'manage' | 'all'
     /** Pointer position for a context menu; omitted = anchored under the channel header. */
     at?: { x: number; y: number } | null
+    /** The header button it opened from (#162): the menu opens under it, its right edge on the button's. */
+    anchor?: HTMLElement | null
     onClose: () => void
     onRename?: () => void
     /** Called after leaving or closing the conversation (the view should move away). */
@@ -40,10 +43,28 @@
     }
   }
   const muteFor = (minutes: number | null) => run(() => api.setMute('channel', channel.id, muteUntil(minutes)))
+
+  // By its button: under it, lined up on its right edge, kept 8px inside the window; above it when there's no room
+  // below. The layout size (offsetWidth): the .pop-in entrance scales the box while it runs.
+  const EDGE = 8
+  const GAP = 4
+  let el = $state<HTMLElement>()
+  let pos = $state<{ left: number; top: number } | null>(null)
+  onMount(() => {
+    if (!anchor || !el) return
+    const r = anchor.getBoundingClientRect()
+    const w = el.offsetWidth
+    const h = el.offsetHeight
+    const left = Math.max(EDGE, Math.min(r.right - w, window.innerWidth - w - EDGE))
+    const below = r.bottom + GAP
+    const top = below + h > window.innerHeight - EDGE ? Math.max(EDGE, r.top - GAP - h) : below
+    pos = { left, top }
+  })
+  const place = $derived(at ? { left: at.x, top: at.y } : pos)
 </script>
 
-<div class="menu menu-surface pop-in" class:ctx={!!at} role="menu" use:clickOutside={onClose}
-  style:left={at ? `${at.x}px` : null} style:top={at ? `${at.y}px` : null}>
+<div bind:this={el} class="menu menu-surface pop-in" class:ctx={!!at} class:anchored={!at && !!anchor} role="menu" use:clickOutside={onClose}
+  style:left={place ? `${place.left}px` : null} style:top={place ? `${place.top}px` : null}>
   {#if confirmLeave}
     <p class="q">Leave {conversationName(app.state, channel.id)}? You'll lose access to its history.</p>
     <div class="row">
@@ -83,7 +104,9 @@
 
 <style>
   .menu { position: absolute; top: 46px; right: 12px; z-index: 10; width: 230px; }
-  .menu.ctx { position: fixed; right: auto; z-index: 45; }
+  .menu.ctx, .menu.anchored { position: fixed; right: auto; z-index: 45; }
+  /* the pop-in grows from the button's corner */
+  .menu.anchored { transform-origin: top right; }
   .q { margin: 6px 8px; font-size: 13px; color: var(--text-2); }
   .row { display: flex; gap: 4px; }
   .err { margin: 6px 8px 2px; font-size: 12px; color: var(--danger-text); }

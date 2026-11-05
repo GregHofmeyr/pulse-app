@@ -271,6 +271,49 @@ describe('ProfileSettings', () => {
     expect(state.dirty).toBe(true)
   })
 
+  describe('name colour Default and Custom (#165)', () => {
+    it('Default is a swatch-style "none" chip and Custom a labelled icon button, neither with text', async () => {
+      await open()
+      const def = option('Name colour', 'Default')
+      const custom = option('Name colour', 'Custom')
+      expect(def.classList.contains('swatch')).toBe(true)
+      expect(def.classList.contains('none')).toBe(true)
+      expect(def.textContent!.trim()).toBe('')
+      expect(custom.classList.contains('swatch')).toBe(true)
+      expect(custom.querySelector('svg')).not.toBeNull()
+      expect(custom.textContent!.trim()).toBe('')
+      expect(custom.title).toBe('Custom colour')
+    })
+
+    it('clicking Custom opens the colour picker', async () => {
+      await open()
+      const opened: HTMLInputElement[] = []
+      const spy = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (this: HTMLInputElement) { opened.push(this) })
+      try {
+        click(option('Name colour', 'Custom'))
+        expect(opened).toEqual([document.querySelector('.colour input[type=color]')])
+      } finally {
+        spy.mockRestore()
+      }
+    })
+
+    it('arrowing onto Custom selects it without popping the picker open', async () => {
+      await open()
+      const opened: HTMLInputElement[] = []
+      const spy = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (this: HTMLInputElement) { opened.push(this) })
+      try {
+        const def = option('Name colour', 'Default')
+        def.focus()
+        def.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+        flushSync()
+        expect(option('Name colour', 'Custom').getAttribute('aria-checked')).toBe('true')
+        expect(opened).toEqual([])
+      } finally {
+        spy.mockRestore()
+      }
+    })
+  })
+
   describe('display name (#47)', () => {
     const nameBox = () => document.querySelector<HTMLInputElement>('input[aria-label="Display name"]')!
     beforeEach(() => { try { localStorage.clear() } catch { /* none */ } })

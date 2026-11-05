@@ -41,6 +41,7 @@ import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
 import { callView, joinAndWatch, openFull, showToast, watchStream } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 import Waiting from './Waiting.svelte'
+import { reloadColumns } from '../lib/columns.svelte'
 import { closeCard, editProfile, profileUi } from '../lib/profileCard.svelte'
 
 let cmp: ReturnType<typeof mount> | undefined
@@ -289,11 +290,27 @@ describe('account menu', () => {
     const tab = [...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Alpha'))!
     tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
     flushSync()
-    expect(document.querySelector('.ctx[role=menu]')).not.toBeNull()
+    expect(document.querySelector('[role=menu][aria-label="Actions for Alpha"]')).not.toBeNull()
     await new Promise((r) => setTimeout(r, 0))
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
     flushSync()
-    expect(document.querySelector('.ctx[role=menu]')).toBeNull()
+    expect(document.querySelector('[role=menu][aria-label="Actions for Alpha"]')).toBeNull()
+  })
+
+  it('the_server_tab_menu_opens_that_servers_settings (#161)', async () => {
+    app.state = { ...emptyState(), servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }, { id: 'S2', name: 'Beta', icon_hash: null }] }
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
+    flushSync()
+    const tab = [...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Beta'))!
+    tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
+    flushSync()
+    const menu = document.querySelector<HTMLElement>('[role=menu][aria-label="Actions for Beta"]')!
+    expect([...menu.querySelectorAll(':scope > [role=menuitem]')].map((b) => b.textContent?.trim())).toEqual(['Server settings', 'Mute server'])
+    ;[...menu.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find((b) => b.textContent?.trim() === 'Server settings')!.click()
+    flushSync()
+    expect(document.querySelector('[role=menu][aria-label="Actions for Beta"]')).toBeNull()
+    expect(document.querySelector('[role=dialog][aria-label="Server settings"]')).not.toBeNull()
+    expect(document.querySelector('[role=dialog][aria-label="Server settings"]')!.textContent).toContain('Beta')
   })
 })
 
@@ -928,5 +945,67 @@ describe('signing out with a channel open', () => {
     } finally {
       window.removeEventListener('error', onError)
     }
+  })
+})
+
+describe('resizable columns (#160)', () => {
+  const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+  const handle = (label: string) => document.querySelector<HTMLElement>(`[role=separator][aria-label="${label}"]`)
+  const key = (el: Element, k: string) => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+    flushSync()
+  }
+  const showServer = () => {
+    app.state = { ...emptyState(), me: alex, servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }] }
+    cmp = mount(Shell, { target: document.body, props: { user: alex, onLogout: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Alpha'))!.click()
+    flushSync()
+  }
+  beforeEach(() => {
+    localStorage.removeItem('pulse.columns')
+    reloadColumns()
+  })
+
+  it('a handle sits on each side of the main area, controlling its column', () => {
+    showServer()
+    const left = handle('Resize the channel list')!
+    const right = handle('Resize the members list')!
+    expect(left.getAttribute('aria-controls')).toBe(document.querySelector('aside.side')!.id)
+    expect(right.getAttribute('aria-controls')).toBe(document.querySelector('.right-panel')!.id)
+    expect(left.getAttribute('aria-valuenow')).toBe('264')
+    expect(right.getAttribute('aria-valuenow')).toBe('240')
+    // the handles sit between the panels, in the body's row
+    const row = [...document.querySelector('.body')!.children]
+    expect(row.indexOf(left)).toBe(row.indexOf(document.querySelector('aside.side')!) + 1)
+    expect(row.indexOf(right)).toBe(row.indexOf(document.querySelector('.right-panel')!) - 1)
+  })
+
+  it('resizing the channel list widens it and is remembered; a double-click puts the default back', () => {
+    showServer()
+    const side = document.querySelector<HTMLElement>('aside.side')!
+    key(handle('Resize the channel list')!, 'ArrowRight')
+    expect(side.style.width).toBe('280px')
+    expect(JSON.parse(localStorage.getItem('pulse.columns')!).left).toBe(280)
+    handle('Resize the channel list')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    flushSync()
+    expect(side.style.width).toBe('264px')
+    expect(JSON.parse(localStorage.getItem('pulse.columns')!).left).toBeNull()
+  })
+
+  it('a resized members list reaches the list; unsaved, the list keeps its own default', () => {
+    showServer()
+    const panel = document.querySelector<HTMLElement>('.right-panel')!
+    expect(panel.style.getPropertyValue('--right-w')).toBe('')
+    key(handle('Resize the members list')!, 'ArrowLeft')
+    expect(panel.style.getPropertyValue('--right-w')).toBe('256px')
+  })
+
+  it('Home has no right column, so no right handle', () => {
+    app.state = { ...emptyState(), me: alex }
+    cmp = mount(Shell, { target: document.body, props: { user: alex, onLogout: () => {} } })
+    flushSync()
+    expect(handle('Resize the channel list')).not.toBeNull()
+    expect(handle('Resize the members list')).toBeNull()
   })
 })

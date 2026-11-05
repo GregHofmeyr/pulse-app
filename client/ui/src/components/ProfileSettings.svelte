@@ -2,7 +2,8 @@
   // Settings → Profile (spec §4): settings on the left, a live preview on the right. Everything,
   // uploads included, is staged in the draft until Save sends it in one request; the store isn't
   // touched before then, so leaving without saving leaves you exactly as you were.
-  import { onDestroy, untrack } from 'svelte'
+  import { flushSync, onDestroy, untrack } from 'svelte'
+  import Icon from './Icon.svelte'
   import ProfileCard from './ProfileCard.svelte'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
@@ -183,9 +184,24 @@
     customColour = custom
     draft.colors = [...colors]
   }
+  // Custom (#165) opens the colour picker at once, but not when the arrow keys move onto it (radioKeys clicks the
+  // radio it lands on): a native picker popping up mid-arrowing would trap the keys.
+  let arrowing = false
+  let colourField = $state<HTMLElement>()
+  function colourKeys(e: KeyboardEvent & { currentTarget: EventTarget & HTMLElement }) {
+    arrowing = true
+    try {
+      radioKeys(e)
+    } finally {
+      arrowing = false
+    }
+  }
   function pickCustomColour() {
     if (!draft) return
     setColours(draft.colors.length ? draft.colors : ['#ffffff'], true)
+    if (arrowing) return
+    flushSync()
+    colourField?.querySelector<HTMLInputElement>('input[type=color]')?.click()
   }
   function setCustomCount(kind: 'solid' | 'gradient') {
     if (!draft) return
@@ -313,10 +329,11 @@
           </div>
         </div>
 
-        <div class="settings-field colour">
+        <div class="settings-field colour" bind:this={colourField}>
           <span class="settings-label">Name colour</span>
-          <div class="swatches" role="radiogroup" aria-label="Name colour" tabindex="-1" onkeydown={radioKeys}>
-            <button type="button" role="radio" class="chip" aria-checked={colourKey === 'default'} tabindex={colourKey === 'default' ? 0 : -1} onclick={() => setColours([])}>Default</button>
+          <div class="swatches" role="radiogroup" aria-label="Name colour" tabindex="-1" onkeydown={colourKeys}>
+            <!-- no colour: a struck-through swatch, sized like the presets beside it -->
+            <button type="button" role="radio" class="swatch round none" aria-label="Default" title="Default colour" aria-checked={colourKey === 'default'} tabindex={colourKey === 'default' ? 0 : -1} onclick={() => setColours([])}></button>
             {#each NAME_SOLIDS as p (p.key)}
               <button type="button" role="radio" class="swatch round" aria-label={p.label} title={p.label} aria-checked={colourKey === `solid:${p.key}`} tabindex={colourKey === `solid:${p.key}` ? 0 : -1}
                 style:background={p.colors[0]} onclick={() => setColours(p.colors)}></button>
@@ -325,7 +342,7 @@
               <button type="button" role="radio" class="swatch round" aria-label="{p.label} gradient" title="{p.label} gradient" aria-checked={colourKey === `gradient:${p.key}`} tabindex={colourKey === `gradient:${p.key}` ? 0 : -1}
                 style:background="linear-gradient(135deg, {p.colors[0]}, {p.colors[1]})" onclick={() => setColours(p.colors)}></button>
             {/each}
-            <button type="button" role="radio" class="chip" aria-checked={colourKey === 'custom'} tabindex={colourKey === 'custom' ? 0 : -1} onclick={pickCustomColour}>Custom</button>
+            <button type="button" role="radio" class="swatch round pick" aria-label="Custom" title="Custom colour" aria-checked={colourKey === 'custom'} tabindex={colourKey === 'custom' ? 0 : -1} onclick={pickCustomColour}><Icon name="eyedropper" size={14} /></button>
           </div>
           {#if colourKey === 'custom'}
             <Segmented label="Custom colour" value={draft.colors.length >= 2 ? 'gradient' : 'solid'} onchange={setCustomCount}
@@ -402,6 +419,11 @@
   .swatch { width: 40px; height: 28px; border-radius: 8px; border: 2px solid transparent; padding: 0; cursor: pointer; }
   .swatch.round { width: 28px; border-radius: 50%; }
   .swatch[aria-checked='true'] { border-color: var(--text); box-shadow: 0 0 0 2px var(--ring) inset; }
+  /* Default (no colour) and Custom: swatch-sized, drawn in the theme's own greys */
+  .swatch.none { border-color: var(--bg-4); background: linear-gradient(135deg, transparent calc(50% - 1px), var(--text-3) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px)); }
+  .swatch.pick { border-color: var(--bg-4); background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; }
+  .swatch.pick:hover { color: var(--text); }
+  .swatch.none[aria-checked='true'], .swatch.pick[aria-checked='true'] { border-color: var(--text); }
   .chip { height: 30px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 15px; background: transparent; color: var(--text-2); cursor: pointer; }
   .chip[aria-checked='true'] { background: var(--bg-3); border-color: var(--focus-ring); color: var(--text); }
   input[type='color'] { width: 44px; height: 30px; padding: 0 2px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; cursor: pointer; }
