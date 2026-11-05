@@ -1,6 +1,7 @@
 // Badges (#49, docs/superpowers/specs/2026-11-03-badges-design.md): the catalogue (fetched once per
 // account, again after an unlock), the unseen count behind [NEW] and the avatar dot, the unlock
 // toasts, the logo egg, and the text the trophy case shows.
+import { toastShown } from './toastPrefs.svelte'
 import { api } from './tauri'
 import { app, loadProfile, onAppEvent } from './store.svelte'
 import { setProfile } from './state'
@@ -127,6 +128,7 @@ class BadgeStore {
   }
 
   pushToast(t: Omit<BadgeToastItem, 'id'>) {
+    if (!toastShown('badge')) return
     const id = this.#nextToast++
     this.toasts = [...this.toasts, { ...t, id }]
     this.#timers.set(id, { timer: null, due: 0, left: TOAST_MS, held: new Set() })

@@ -5,10 +5,12 @@
   import { voice } from '../lib/voice.svelte'
   import { stream } from '../lib/stream/stream.svelte'
   import Icon from './Icon.svelte'
+  import { toastShown } from '../lib/toastPrefs.svelte'
 
   // Neutral one-liners from the stream store ("<name> stopped streaming", watch errors) fade after a few seconds.
+  // The one-liners follow the "Stream updates" toast switch (#166); a watch error always shows.
   const MESSAGE_MS = 4_000
-  const message = $derived(stream.watchError || stream.notice)
+  const message = $derived(stream.watchError || (toastShown('stream') ? stream.notice : ''))
   const windows = isWindows()
   $effect(() => {
     if (!message) return
