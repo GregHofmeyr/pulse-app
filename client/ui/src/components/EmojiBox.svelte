@@ -70,7 +70,11 @@
     pressed = false
     if (byClick) return
     queueMicrotask(() => {
-      if (document.activeElement === box) placeCaret(sel.start)
+      // Not while a keystroke is landing: WebKitGTK fires the focus of a click that activated the
+      // window late, when the window activation reaches the page, which can be after a key's text
+      // is in the box but before its input event. `sel` is from before that key, and putting the
+      // caret back there sends everything typed next in front of it ("who is this" -> "ho is thisw").
+      if (document.activeElement === box && serialize(box) === text) placeCaret(sel.start)
     })
   }
   /** The box's own undo history: the browser's can't follow a box we rebuild. */

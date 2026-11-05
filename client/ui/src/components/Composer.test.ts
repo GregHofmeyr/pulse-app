@@ -385,6 +385,37 @@ describe('Composer emoji', () => {
     expect(caret(box)).toBe(3)
   })
 
+  it('a focus event that lands mid-keystroke leaves the caret where typing put it', async () => {
+    // WebKitGTK: a click that activates the window moves focus into the box silently and fires
+    // its focus event only once the window activation reaches the page, which can be after a
+    // key's text is in the box but before that key's input event (seen on a real WebKitGTK 2.54)
+    const box = show()
+    ;(document.querySelector('[aria-label="Emoji"]') as HTMLButtonElement).focus()
+    /** A key as the browser types it: its text goes in at the caret, then `between`, then input. */
+    const key = async (ch: string, between?: () => void) => {
+      const s = getSelection()!
+      if (!s.rangeCount || !box.contains(s.anchorNode)) caretAt(box, 0)
+      const r = s.getRangeAt(0)
+      box.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: ch }))
+      const t = document.createTextNode(ch)
+      r.insertNode(t)
+      r.setStartAfter(t)
+      r.collapse(true)
+      s.removeAllRanges()
+      s.addRange(r)
+      box.normalize()
+      between?.()
+      await Promise.resolve() // the focus handler's work, before the input event
+      box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch }))
+      flushSync()
+    }
+    getSelection()!.removeAllRanges()
+    const typed = 'who is this'
+    for (const [i, ch] of [...typed].entries()) await key(ch, i === 0 ? () => box.focus() : undefined)
+    await tick()
+    expect(value(box)).toBe(typed)
+  })
+
   it('a re-render while focus is elsewhere does not move where the next pick goes', async () => {
     const box = show()
     type(box, 'ab')
