@@ -6,6 +6,10 @@ type Size = { width: number; height: number }
 const GAP = 8
 const MARGIN = 8
 const DELAY_MS = 350
+/** How long a tip outlives the pointer leaving its target, for the next target to take it over. */
+const HANDOFF_MS = 100
+/** How long after a tip closes the next one shows without the delay. */
+const WARM_MS = 300
 
 /** Above the target, centred; below if there's no room; always inside the viewport. */
 export function placeTip(target: Rect, tip: Size, viewport: Size): { left: number; top: number; below: boolean } {
@@ -29,10 +33,16 @@ export function installTooltips(): () => void {
   tip.setAttribute('role', 'tooltip')
   document.body.appendChild(tip)
   let timer: ReturnType<typeof setTimeout> | undefined
+  let hideTimer: ReturnType<typeof setTimeout> | undefined
   let current: Element | null = null
+  /** Until when a new tip skips the delay: a tip was just up (#159). */
+  let warmUntil = 0
+  const shown = () => tip.classList.contains('show')
 
   const hide = () => {
     clearTimeout(timer)
+    clearTimeout(hideTimer)
+    if (shown()) warmUntil = Date.now() + WARM_MS
     current = null
     tip.classList.remove('show')
   }
@@ -54,12 +64,21 @@ export function installTooltips(): () => void {
   const enter = (e: Event) => {
     if (e.type === 'focusin' && pressing) return
     const el = (e.target as Element | null)?.closest?.('[data-tip], button[aria-label]')
-    if (!el || el === current) return
+    if (el && el === current) {
+      clearTimeout(hideTimer) // back on it within the grace: it stays
+      return
+    }
+    if (!el) return
     const text = labelFor(el)
     if (!text) return
-    hide()
+    clearTimeout(timer)
+    clearTimeout(hideTimer)
     current = el
-    timer = setTimeout(() => current === el && show(el, text), e.type === 'focusin' ? 0 : DELAY_MS)
+    // An open tip hands over: new text and place, no fade out and back in (#159: across a message's
+    // quick actions every crossing flashed it). One that just closed comes back without the delay.
+    if (shown()) return show(el, text)
+    const delay = e.type === 'focusin' || Date.now() < warmUntil ? 0 : DELAY_MS
+    timer = setTimeout(() => current === el && show(el, text), delay)
   }
   // A click from the keyboard (Enter, Space) leaves the tip up: a toggle's label that changes with it
   // ("Show members" → "Hide members") is read again once the click is handled. A mouse press hid it.
@@ -70,8 +89,13 @@ export function installTooltips(): () => void {
       if (text) show(el, text)
     }, 0)
   }
+  // Leaving waits a moment, so the button the pointer lands on next takes the tip over (its mouseover
+  // comes right after this mouseout) instead of it fading out first.
   const leave = (e: Event) => {
-    if (current && !(current as Element).contains((e as MouseEvent).relatedTarget as Node | null)) hide()
+    if (!current || (current as Element).contains((e as MouseEvent).relatedTarget as Node | null)) return
+    clearTimeout(timer)
+    clearTimeout(hideTimer)
+    hideTimer = setTimeout(hide, HANDOFF_MS)
   }
 
   document.addEventListener('mouseover', enter)
