@@ -379,7 +379,7 @@ describe('account menu', () => {
     tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
     flushSync()
     const menu = document.querySelector<HTMLElement>('[role=menu][aria-label="Actions for Beta"]')!
-    expect([...menu.querySelectorAll(':scope > [role=menuitem]')].map((b) => b.textContent?.trim())).toEqual(['Server settings', 'Mute server'])
+    expect([...menu.querySelectorAll(':scope > [role=menuitem]')].map((b) => b.textContent?.trim())).toEqual(['Server settings', 'Mute server', 'Notifications'])
     ;[...menu.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find((b) => b.textContent?.trim() === 'Server settings')!.click()
     flushSync()
     expect(document.querySelector('[role=menu][aria-label="Actions for Beta"]')).toBeNull()

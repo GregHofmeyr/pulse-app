@@ -1,11 +1,15 @@
 <script lang="ts">
-  // The right-click menu on a server tab (#161): Server settings (as the sidebar header's menu opens them), and Mute
-  // server as a durations flyout, the channel menu's (#131), or Unmute server. Keyboard as in the channel menu.
+  // The right-click menu on a server tab (#161): Server settings (as the sidebar header's menu opens them), Mute
+  // server as a durations flyout, the channel menu's (#131), or Unmute server, and Notifications: the server's level
+  // as a flyout with yours ticked (#195). Keyboard as in the channel menu.
   import { onMount, untrack } from 'svelte'
   import { app, clock } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import { clickOutside } from '../lib/actions'
   import { muteUntil } from '../lib/muteDurations'
+  import { serverLevel } from '../lib/conversations'
+  import { NOTIFY_LEVELS } from '../lib/notifyLevels'
+  import MenuFlyout from './MenuFlyout.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
 
   let { serverId, name, x, y, opener, onClose, onSettings, onError }: {
@@ -30,6 +34,12 @@
   let top = $state(untrack(() => y))
   let closed = false
   let flyout = $state<ReturnType<typeof MuteFlyout>>()
+  let levelFlyout = $state<ReturnType<typeof MenuFlyout>>()
+  const flyouts = () => [flyout, levelFlyout]
+  const level = $derived(serverLevel(app.state, serverId))
+  const levelChoices = $derived(NOTIFY_LEVELS.map((l) => ({ label: l.label, checked: l.level === level })))
+  // All messages is a server's default: picking it puts the default back
+  const pickLevel = (i: number) => pick(report(() => api.setNotifyLevel('server', serverId, NOTIFY_LEVELS[i].level === 'all' ? null : NOTIFY_LEVELS[i].level)))
 
   onMount(() => {
     if (!el) return
@@ -62,9 +72,10 @@
   function keydown(e: KeyboardEvent) {
     const list = items()
     const at = list.indexOf(document.activeElement as HTMLButtonElement)
-    if (e.key === 'ArrowLeft') { e.preventDefault(); flyout?.close(false); return }
-    if (e.key === 'Escape' && flyout?.isOpen()) { e.preventDefault(); e.stopPropagation(); flyout.close(false); return }
-    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) flyout?.close(false)
+    if (e.key === 'ArrowLeft') { e.preventDefault(); for (const f of flyouts()) f?.close(false); return }
+    const open = flyouts().find((f) => f?.isOpen())
+    if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); open.close(false); return }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) for (const f of flyouts()) f?.close(false)
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); focusItem(at + 1); break
       case 'ArrowUp': e.preventDefault(); focusItem(at < 0 ? -1 : at - 1); break
@@ -80,7 +91,7 @@
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}
   onpointerover={(e) => {
     const t = (e.target as Element).closest?.('[data-item]')
-    if (t && t.parentElement === el && t !== flyout?.trigger()) flyout?.closeSoon()
+    if (t && t.parentElement === el) for (const f of flyouts()) if (t !== f?.trigger()) f?.closeSoon()
   }}>
   <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onSettings)}>Server settings</button>
   {#if muted}
@@ -89,6 +100,8 @@
     <MuteFlyout bind:this={flyout} label="Mute server" flyoutLabel="Mute {name} for" menuLeft={left} menuTop={top}
       onPick={(m) => pick(report(() => api.setMute('server', serverId, muteUntil(m))))} />
   {/if}
+  <MenuFlyout bind:this={levelFlyout} label="Notifications" flyoutLabel="Notifications for {name}" menuLeft={left} menuTop={top}
+    choices={levelChoices} onPick={pickLevel} />
 </div>
 
 <style>

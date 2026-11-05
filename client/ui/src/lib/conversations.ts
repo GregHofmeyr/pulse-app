@@ -1,7 +1,8 @@
-// Pure conversation logic: names, ordering, unread badges, mutes, read rule, sound decision.
+// Pure conversation logic: names, ordering, unread badges, mutes, notification levels, read rule, sound decision.
 import { countsAsUnread, type AppState } from './state'
 import type { Channel } from './protocol/Channel'
 import type { Message } from './protocol/Message'
+import type { NotifyLevel } from './protocol/NotifyLevel'
 import { displayName } from './selectors'
 import { mentionLookup, showMentions } from './mentionStyles'
 import { callLineText } from './calls'
@@ -11,6 +12,23 @@ export function isMuted(s: AppState, ch: Channel, nowIso: string): boolean {
   const active = (kind: 'server' | 'channel', id: string | null) =>
     !!id && s.mutes.some((m) => m.target_kind === kind && m.target_id === id && (m.until === null || m.until > nowIso))
   return active('channel', ch.id) || active('server', ch.server_id)
+}
+
+/** Your level for a server (#195): All messages unless you picked another. */
+export function serverLevel(s: AppState, serverId: string): NotifyLevel {
+  return s.notifyLevels.find((l) => l.target_kind === 'server' && l.target_id === serverId)?.level ?? 'all'
+}
+
+/** A channel's own level, or null when it follows its server (#195). */
+export function channelLevel(s: AppState, channelId: string): NotifyLevel | null {
+  return s.notifyLevels.find((l) => l.target_kind === 'channel' && l.target_id === channelId)?.level ?? null
+}
+
+/** The level a server channel's messages alert at: its own, else its server's (#195). DMs and groups have none
+ *  (`all`: every message alerts, subject to the mute). */
+export function notifyLevel(s: AppState, ch: Channel): NotifyLevel {
+  if (!ch.server_id) return 'all'
+  return channelLevel(s, ch.id) ?? serverLevel(s, ch.server_id)
 }
 
 export function conversationName(s: AppState, channelId: string): string {
@@ -71,13 +89,16 @@ export const onScreen = (v: { message: Message; open: boolean; openThread: strin
 
 export type AlertInput = {
   message: Message; me: string; channel: Channel; open: boolean; openThread: string | null; focused: boolean; muted: boolean
+  /** The channel's notification level (#195, `notifyLevel`); a DM or group ignores it. */
+  level: NotifyLevel
   /** Do Not Disturb is on (#45): nothing alerts, mentions included; unread and mention counts still count. */
   dnd?: boolean
 }
 
 /** Whether a new message is worth alerting you to (the message sound and the desktop notification):
- *  someone else's message in a DM or group, or one mentioning you anywhere, unless you're reading it
- *  in the focused window. A mute lets only mentions through; Do Not Disturb lets nothing through. */
+ *  someone else's message in a DM or group, or in a server channel as its level says (#195: All messages, Only
+ *  @mentions, or Nothing, not even mentions), unless you're reading it in the focused window. A mute lets only
+ *  mentions through; Do Not Disturb lets nothing through. */
 export function shouldAlert(v: AlertInput): boolean {
   if (v.dnd) return false
   const m = v.message
@@ -85,7 +106,7 @@ export function shouldAlert(v: AlertInput): boolean {
   if (onScreen(v) && v.focused) return false
   const mentioned = m.mentions.includes(v.me)
   const isPrivate = v.channel.server_id === null
-  if (!isPrivate && !mentioned) return false
+  if (!isPrivate && (v.level === 'nothing' || (v.level === 'mentions' && !mentioned))) return false
   if (v.muted && !mentioned) return false
   return true
 }

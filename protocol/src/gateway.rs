@@ -6,9 +6,9 @@ use ts_rs::TS;
 use crate::ids::{CallId, ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game,
-    Member, Message, Mute, NotifyLevelPref, OwnStatus, Person, PresenceStatus, PrivateNickname, QotyEvent,
-    ReadState, RingEndReason, Server, ServerVoiceMod, Sound, SpeakerLink, StreamEndReason,
-    StreamInfo, User,
+    Member, Message, Mute, NotifyLevelPref, OwnStatus, Person, PresenceStatus, PrivateNickname,
+    QotyEvent, ReadState, RingEndReason, Server, ServerVoiceMod, Sound, SpeakerLink,
+    StreamEndReason, StreamInfo, User,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.

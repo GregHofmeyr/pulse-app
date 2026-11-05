@@ -54,13 +54,7 @@ async fn next_levels(ws: &mut Socket) -> Option<Vec<NotifyLevelPref>> {
     }
 }
 
-async fn set_level(
-    app: &TestApp,
-    token: &str,
-    kind: &str,
-    id: &str,
-    level: Option<&str>,
-) -> u16 {
+async fn set_level(app: &TestApp, token: &str, kind: &str, id: &str, level: Option<&str>) -> u16 {
     app.http
         .put(app.url("/notify-levels"))
         .bearer_auth(token)
@@ -114,15 +108,24 @@ async fn levels_are_set_read_back_and_private() {
     let gid = g.id.to_string();
 
     let (_ws, ready) = hello(&app, &a).await;
-    assert!(ready.notify_levels.is_empty(), "everyone starts on the defaults");
+    assert!(
+        ready.notify_levels.is_empty(),
+        "everyone starts on the defaults"
+    );
 
     let (mut ws, _) = hello(&app, &a).await;
-    assert_eq!(set_level(&app, &a, "server", &sid, Some("mentions")).await, 204);
+    assert_eq!(
+        set_level(&app, &a, "server", &sid, Some("mentions")).await,
+        204
+    );
     assert_eq!(
         next_levels(&mut ws).await.unwrap(),
         vec![pref(MuteTarget::Server, &sid, NotifyLevel::Mentions)]
     );
-    assert_eq!(set_level(&app, &a, "channel", &gid, Some("nothing")).await, 204);
+    assert_eq!(
+        set_level(&app, &a, "channel", &gid, Some("nothing")).await,
+        204
+    );
     let levels = next_levels(&mut ws).await.unwrap();
     assert_eq!(levels.len(), 2);
     assert!(levels.contains(&pref(MuteTarget::Channel, &gid, NotifyLevel::Nothing)));
@@ -130,7 +133,10 @@ async fn levels_are_set_read_back_and_private() {
     let (_ws, ready) = hello(&app, &a).await;
     assert_eq!(ready.notify_levels.len(), 2, "follows alex to every device");
     let (mut ws_b, ready_b) = hello(&app, &b).await;
-    assert!(ready_b.notify_levels.is_empty(), "sam never sees alex's levels");
+    assert!(
+        ready_b.notify_levels.is_empty(),
+        "sam never sees alex's levels"
+    );
 
     // back to the defaults
     assert_eq!(set_level(&app, &a, "channel", &gid, None).await, 204);
@@ -154,9 +160,15 @@ async fn a_servers_all_messages_is_its_default() {
     let (_, a) = register(&app, "alex").await;
     let s = create_server(&app, &a, "Main").await;
     let g = general(&app, &a, s.id).await;
-    assert_eq!(set_level(&app, &a, "server", &s.id.to_string(), Some("all")).await, 204);
+    assert_eq!(
+        set_level(&app, &a, "server", &s.id.to_string(), Some("all")).await,
+        204
+    );
     // a channel's All is an override of its server, so it is kept
-    assert_eq!(set_level(&app, &a, "channel", &g.id.to_string(), Some("all")).await, 204);
+    assert_eq!(
+        set_level(&app, &a, "channel", &g.id.to_string(), Some("all")).await,
+        204
+    );
     let (_ws, ready) = hello(&app, &a).await;
     assert_eq!(
         ready.notify_levels,
@@ -171,7 +183,10 @@ async fn levels_and_mutes_live_side_by_side() {
     let s = create_server(&app, &a, "Main").await;
     let sid = s.id.to_string();
     assert_eq!(mute(&app, &a, "server", &sid).await, 204);
-    assert_eq!(set_level(&app, &a, "server", &sid, Some("nothing")).await, 204);
+    assert_eq!(
+        set_level(&app, &a, "server", &sid, Some("nothing")).await,
+        204
+    );
     let (_ws, ready) = hello(&app, &a).await;
     assert_eq!(ready.mutes.len(), 1, "setting a level keeps the mute");
     assert_eq!(ready.notify_levels.len(), 1);
@@ -199,13 +214,37 @@ async fn only_servers_and_their_channels_take_a_level() {
     let (b_id, b) = register(&app, "sam").await;
     let dm = create_dm(&app, &a, &[b_id]).await;
     let unknown = pulse_protocol::ids::ChannelId::new().to_string();
-    assert_eq!(set_level(&app, &a, "server", "01J00000000000000000000000", Some("all")).await, 404);
-    assert_eq!(set_level(&app, &a, "channel", &unknown, Some("all")).await, 404);
-    assert_eq!(set_level(&app, &a, "channel", &dm.id.to_string(), Some("nothing")).await, 400, "a DM always alerts");
+    assert_eq!(
+        set_level(
+            &app,
+            &a,
+            "server",
+            "01J00000000000000000000000",
+            Some("all")
+        )
+        .await,
+        404
+    );
+    assert_eq!(
+        set_level(&app, &a, "channel", &unknown, Some("all")).await,
+        404
+    );
+    assert_eq!(
+        set_level(&app, &a, "channel", &dm.id.to_string(), Some("nothing")).await,
+        400,
+        "a DM always alerts"
+    );
     // a conversation you're not in is as unknown as one that doesn't exist
     let (_, k) = register(&app, "kim").await;
-    assert_eq!(set_level(&app, &k, "channel", &dm.id.to_string(), Some("all")).await, 404);
-    assert_eq!(set_level(&app, &b, "server", "x", Some("loud")).await, 422, "no such level");
+    assert_eq!(
+        set_level(&app, &k, "channel", &dm.id.to_string(), Some("all")).await,
+        404
+    );
+    assert_eq!(
+        set_level(&app, &b, "server", "x", Some("loud")).await,
+        422,
+        "no such level"
+    );
 }
 
 #[tokio::test]
@@ -222,7 +261,10 @@ async fn a_restored_channel_brings_its_level_back() {
     .await;
     assert_eq!(r.status(), 200);
     let ch: pulse_protocol::rest::Channel = r.json().await.unwrap();
-    assert_eq!(set_level(&app, &a, "channel", &ch.id.to_string(), Some("nothing")).await, 204);
+    assert_eq!(
+        set_level(&app, &a, "channel", &ch.id.to_string(), Some("nothing")).await,
+        204
+    );
     let del = app
         .http
         .delete(app.url(&format!("/channels/{}", ch.id)))
@@ -232,7 +274,13 @@ async fn a_restored_channel_brings_its_level_back() {
         .unwrap();
     assert_eq!(del.status(), 204);
     let (mut ws, _) = hello(&app, &a).await;
-    let restore = post_json(&app, &a, &format!("/channels/{}/restore", ch.id), serde_json::json!({})).await;
+    let restore = post_json(
+        &app,
+        &a,
+        &format!("/channels/{}/restore", ch.id),
+        serde_json::json!({}),
+    )
+    .await;
     assert_eq!(restore.status(), 200);
     assert_eq!(
         next_levels(&mut ws).await.unwrap(),

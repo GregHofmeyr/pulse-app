@@ -15,11 +15,12 @@ use pulse_protocol::rest::{
     MuteTarget, NameArchivePage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest,
     RecoveryCodesResponse, RegisterRequest, RenameChannelRequest, RenameEmojiRequest,
     ReopenQotyRequest, SearchRequest, SearchResults, SendMessageRequest, Server, ServerVoiceMod,
-    SessionResponse, SetClipViewRequest, SetMuteRequest, SetNicknameRequest, SetServerVoiceRequest,
-    SetShowcaseRequest, SetStatusRequest, Sound, StartQotyRequest, Status, StreamInfo, StreamRole,
-    StreamSettings, StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest,
-    TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus,
-    UpdateProfileRequest, UpdateSoundRequest, User, VoiceTokenResponse, WatchRequest,
+    SessionResponse, SetClipViewRequest, SetMuteRequest, SetNicknameRequest, SetNotifyLevelRequest,
+    SetServerVoiceRequest, SetShowcaseRequest, SetStatusRequest, Sound, StartQotyRequest, Status,
+    StreamInfo, StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest,
+    TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse,
+    TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User, VoiceTokenResponse,
+    WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -553,6 +554,23 @@ impl Api {
         Self::ok_empty(
             self.http
                 .put(format!("{}/mutes", self.base))
+                .bearer_auth(token)
+                .json(req)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Your notification level for a server or one of its channels (#195); `level: None` = the default.
+    pub async fn set_notify_level(
+        &self,
+        token: &str,
+        req: &SetNotifyLevelRequest,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .put(format!("{}/notify-levels", self.base))
                 .bearer_auth(token)
                 .json(req)
                 .send()
@@ -2283,6 +2301,7 @@ fn preview_type(bytes: &[u8]) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pulse_protocol::rest::NotifyLevel;
     use pulse_server::testing;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -4056,6 +4075,28 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn notify_levels_round_trip_through_the_core() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let server = api.create_server(&alex, "Main").await.unwrap();
+        let req = |level| SetNotifyLevelRequest {
+            target_kind: MuteTarget::Server,
+            target_id: server.id.to_string(),
+            level,
+        };
+        api.set_notify_level(&alex, &req(Some(NotifyLevel::Nothing)))
+            .await
+            .unwrap();
+        api.set_notify_level(&alex, &req(None)).await.unwrap();
+        let unknown = SetNotifyLevelRequest {
+            target_id: UserId::new().to_string(),
+            ..req(Some(NotifyLevel::All))
+        };
+        assert!(api.set_notify_level(&alex, &unknown).await.is_err());
     }
 
     #[tokio::test]

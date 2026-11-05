@@ -65,6 +65,36 @@ describe('message notifications', () => {
     expect(notified()).toEqual([{ title: 'sam', body: 'hello', channelId: 'DM1' }])
   })
 
+  it('a server message follows the notification level (#195): All by default, then Only @mentions, then Nothing', () => {
+    const sounds = () => vi.mocked(invoke).mock.calls.filter(([c, a]) => c === 'play_sound' && (a as { name: string }).name === 'message')
+    const level = (lv: 'mentions' | 'nothing' | null) =>
+      (app.state = { ...app.state, notifyLevels: lv ? [{ target_kind: 'server', target_id: 'S1', level: lv }] : [] })
+    // past the message sound's gap from earlier tests (module state)
+    vi.setSystemTime(Date.now() + 60_000)
+    maybeAlert(created('Q1', 'hi all'))
+    expect(notified()).toEqual([{ title: 'sam in #quotes (Main)', body: 'hi all', channelId: 'Q1' }])
+    expect(sounds()).toHaveLength(1)
+    vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
+    vi.setSystemTime(Date.now() + 10_000)
+    level('mentions')
+    maybeAlert(created('Q1', 'just chatting'))
+    expect(notified()).toHaveLength(1)
+    maybeAlert(created('Q1', 'hey @alex', { mentions: ['ME'] }))
+    expect(notified()).toHaveLength(2)
+    expect(sounds()).toHaveLength(2)
+    vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
+    vi.setSystemTime(Date.now() + 10_000)
+    level('nothing')
+    maybeAlert(created('Q1', 'hey @alex', { mentions: ['ME'] }))
+    vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
+    expect(notified()).toHaveLength(2)
+    expect(sounds()).toHaveLength(2)
+    // a channel's own level wins over its server's
+    app.state = { ...app.state, notifyLevels: [...app.state.notifyLevels, { target_kind: 'channel', target_id: 'Q1', level: 'all' }] }
+    maybeAlert(created('Q1', 'and again'))
+    expect(notified()).toHaveLength(3)
+  })
+
   it('none while the window is focused', () => {
     windowFocus.focused = true
     flushSync()

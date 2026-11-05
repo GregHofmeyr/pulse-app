@@ -29,7 +29,7 @@ const msg = (channel: string, over: Partial<Message> = {}): Message => ({
 const DM = { id: 'DM1', server_id: null, kind: 'dm' as const, name: null, position: 0 }
 const TEXT = { id: 'T1', server_id: 'S1', kind: 'text' as const, name: 'general', position: 0 }
 const input = (m: Message, over: Partial<AlertInput> = {}): AlertInput => ({
-  message: m, me: 'U1', channel: m.channel_id === 'DM1' ? DM : TEXT, open: false, openThread: null, focused: false, muted: false, ...over,
+  message: m, me: 'U1', channel: m.channel_id === 'DM1' ? DM : TEXT, open: false, openThread: null, focused: false, muted: false, level: 'mentions', ...over,
 })
 
 describe('shouldAlert under DND', () => {

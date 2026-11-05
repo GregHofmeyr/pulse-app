@@ -35,7 +35,7 @@ function ready(): Ready {
 const s = applyReady(emptyState(), ready())
 const on = { enabled: true, showText: true }
 const v = (m: Message, over: Partial<{ open: boolean; focused: boolean; muted: boolean; openThread: string | null }> = {}) =>
-  ({ message: m, me: 'ME', channel: s.channels[m.channel_id], open: false, openThread: null, focused: false, muted: false, ...over })
+  ({ message: m, me: 'ME', channel: s.channels[m.channel_id], open: false, openThread: null, focused: false, muted: false, level: 'mentions' as const, ...over })
 
 describe('notifyMessage: the decision', () => {
   it('a DM from someone else while the window is unfocused notifies', () => {

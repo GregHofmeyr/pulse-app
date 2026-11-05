@@ -10,6 +10,7 @@ import type { Event } from './protocol/Event'
 import type { Game } from './protocol/Game'
 import type { Member } from './protocol/Member'
 import type { Message } from './protocol/Message'
+import type { NotifyLevelPref } from './protocol/NotifyLevelPref'
 import type { Mute } from './protocol/Mute'
 import type { Person } from './protocol/Person'
 import type { OwnStatus } from './protocol/OwnStatus'
@@ -76,6 +77,8 @@ export type AppState = {
   privateNicks: Record<string, string>
   reads: Record<string, ReadState> // channelId -> your private read point + counts
   mutes: Mute[]
+  /** Your notification levels (#195): only the ones you picked (lib/conversations.ts `notifyLevel`). */
+  notifyLevels: NotifyLevelPref[]
   hidden: Record<string, true> // closed conversations
   latest: Record<string, Message> // DM/group channelId -> newest message
   streams: Record<string, Record<string, StreamInfo>> // channelId -> userId -> live stream
@@ -126,7 +129,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -176,6 +179,8 @@ export function applyReady(s: AppState, r: Ready): AppState {
     privateNicks: Object.fromEntries((r.private_nicknames ?? []).map((p) => [p.user_id, p.nickname])),
     reads: Object.fromEntries(r.read_states.map((x) => [x.channel_id, x])),
     mutes: r.mutes,
+    // absent from older servers: every level at its default
+    notifyLevels: r.notify_levels ?? [],
     hidden: Object.fromEntries(r.hidden.map((id) => [id, true as const])),
     latest: Object.fromEntries(r.latest.map((m) => [m.channel_id, m])),
     streams: r.streams.reduce<AppState['streams']>((acc, x) => withStream(acc, x), {}),
@@ -825,12 +830,18 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return dropChannel(s, e.d.channel_id)
     case 'ChannelDeleted': {
       // Its call and streams too: their own events about it can't reach us any more (the channel is
-      // gone when they'd be sent). A mute of it would never match again.
+      // gone when they'd be sent). A mute or a notification level of it would never match again (a restore sends
+      // them back).
       const c = e.d.channel_id
       const { [c]: _v, ...voice } = s.voice
       const { [c]: _st, ...streams } = s.streams
       const mutes = s.mutes.filter((m) => !(m.target_kind === 'channel' && m.target_id === c))
-      return { ...dropChannel(s, c), voice, streams, mutes: mutes.length === s.mutes.length ? s.mutes : mutes }
+      const levels = s.notifyLevels.filter((l) => !(l.target_kind === 'channel' && l.target_id === c))
+      return {
+        ...dropChannel(s, c), voice, streams,
+        mutes: mutes.length === s.mutes.length ? s.mutes : mutes,
+        notifyLevels: levels.length === s.notifyLevels.length ? s.notifyLevels : levels,
+      }
     }
     case 'ReadStateUpdated': {
       const c = e.d.channel_id
@@ -852,6 +863,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     }
     case 'MutesChanged':
       return { ...s, mutes: e.d.mutes }
+    case 'NotifyLevelsChanged':
+      return { ...s, notifyLevels: e.d.levels }
     case 'FrequentEmoji':
       return { ...s, frequentEmoji: e.d.frequent_emoji }
     case 'QuoteAwardChanged':

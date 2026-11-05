@@ -17,11 +17,12 @@ let onClose = vi.fn()
 let onSettings = vi.fn()
 let onError = vi.fn()
 
-function render(muted = false) {
+function render(muted = false, levels: { target_kind: 'server' | 'channel'; target_id: string; level: 'all' | 'mentions' | 'nothing' }[] = []) {
   app.state = {
     ...emptyState(),
     servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }],
     mutes: muted ? [{ target_kind: 'server', target_id: 'S1', until: null }] : [],
+    notifyLevels: levels,
   } as never
   opener = document.createElement('button')
   document.body.append(opener)
@@ -57,7 +58,7 @@ afterEach(() => {
 describe('ServerMenu', () => {
   it('lists Server settings and one Mute server item, focus on the first', () => {
     render()
-    expect(labels()).toEqual(['Server settings', 'Mute server'])
+    expect(labels()).toEqual(['Server settings', 'Mute server', 'Notifications'])
     expect(item('Mute server').getAttribute('aria-haspopup')).toBe('menu')
     expect(flyout()).toBeNull()
     expect(document.activeElement).toBe(item('Server settings'))
@@ -100,7 +101,7 @@ describe('ServerMenu', () => {
 
   it('a muted server offers Unmute server instead', async () => {
     render(true)
-    expect(labels()).toEqual(['Server settings', 'Unmute server'])
+    expect(labels()).toEqual(['Server settings', 'Unmute server', 'Notifications'])
     item('Unmute server').click()
     await Promise.resolve()
     expect(invoke).toHaveBeenCalledWith('clear_mute', { targetKind: 'server', targetId: 'S1' })
@@ -111,6 +112,64 @@ describe('ServerMenu', () => {
     invoke.mockRejectedValueOnce('no network')
     hover(item('Mute server'))
     flyoutItem('For 1 hour')!.click()
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith('no network'))
+  })
+})
+
+describe('ServerMenu notifications (#195)', () => {
+  const levels = () => document.querySelector<HTMLElement>('[role=menu][aria-label="Notifications for Alpha"]')
+  const choices = () => [...(levels()?.querySelectorAll<HTMLButtonElement>('[role=menuitemradio]') ?? [])]
+  const choice = (label: string) => choices().find((b) => b.textContent?.trim() === label)!
+  const ticked = () => choices().filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.textContent?.trim())
+
+  it('All messages is ticked by default; a picked level is ticked instead', () => {
+    render()
+    expect(item('Notifications').getAttribute('aria-haspopup')).toBe('menu')
+    hover(item('Notifications'))
+    expect(choices().map((b) => b.textContent?.trim())).toEqual(['All messages', 'Only @mentions', 'Nothing'])
+    expect(ticked()).toEqual(['All messages'])
+    expect(levels()!.dataset.side).toBe('right')
+    unmount(cmp!)
+    cmp = undefined
+    document.body.innerHTML = ''
+    render(false, [{ target_kind: 'server', target_id: 'S1', level: 'mentions' }])
+    hover(item('Notifications'))
+    expect(ticked()).toEqual(['Only @mentions'])
+  })
+
+  it('picking a level sets it; All messages puts the default back', async () => {
+    render(false, [{ target_kind: 'server', target_id: 'S1', level: 'nothing' }])
+    hover(item('Notifications'))
+    choice('Only @mentions').click()
+    await Promise.resolve()
+    expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'server', targetId: 'S1', level: 'mentions' })
+    expect(onClose).toHaveBeenCalled()
+    unmount(cmp!)
+    cmp = undefined
+    document.body.innerHTML = ''
+    render(false, [{ target_kind: 'server', target_id: 'S1', level: 'nothing' }])
+    hover(item('Notifications'))
+    choice('All messages').click()
+    await Promise.resolve()
+    expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'server', targetId: 'S1', level: null })
+  })
+
+  it('is offered while the server is muted too, and the keyboard reaches it', () => {
+    render(true)
+    key(item('Server settings'), 'End')
+    expect(document.activeElement).toBe(item('Notifications'))
+    key(item('Notifications'), 'ArrowRight')
+    expect(document.activeElement).toBe(choice('All messages'))
+    key(document.activeElement!, 'ArrowLeft')
+    expect(levels()).toBeNull()
+    expect(document.activeElement).toBe(item('Notifications'))
+  })
+
+  it('a failed pick is handed back once the menu has gone', async () => {
+    render()
+    invoke.mockRejectedValueOnce('no network')
+    hover(item('Notifications'))
+    choice('Nothing').click()
     await vi.waitFor(() => expect(onError).toHaveBeenCalledWith('no network'))
   })
 })

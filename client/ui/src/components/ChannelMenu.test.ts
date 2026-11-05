@@ -79,7 +79,7 @@ describe('a text channel', () => {
   it('right_click_opens_its_menu_at_the_pointer_with_read_mute_rename_and_delete', () => {
     rightClick('old-stuff')
     expect(menu()?.getAttribute('aria-label')).toBe('Actions for #old-stuff')
-    expect(labels()).toEqual(['Mark as read', 'Mute channel', 'Rename channel…', 'Delete channel…'])
+    expect(labels()).toEqual(['Mark as read', 'Mute channel', 'Notifications', 'Rename channel…', 'Delete channel…'])
     expect(menu()!.style.left).toBe('40px')
   })
 
@@ -377,7 +377,7 @@ describe('the mute flyout', () => {
     hover(muteItem())
     muteItem().focus()
     key(muteItem(), 'ArrowDown')
-    expect(document.activeElement).toBe(item('Rename channel…'))
+    expect(document.activeElement).toBe(item('Notifications'))
     expect(flyout()).toBeNull()
   })
 })
@@ -418,6 +418,74 @@ describe('a voice channel', () => {
     item('Delete channel…')!.click()
     flushSync()
     expect(document.querySelector('[role=dialog]')?.textContent).toContain('Delete Lounge? Anyone in it is disconnected. It moves to Recently deleted for 7 days')
+  })
+})
+
+describe('the notifications flyout (#195)', () => {
+  const levels = () => document.querySelector<HTMLElement>('[role=menu][aria-label^="Notifications for "]')
+  const choices = () => [...(levels()?.querySelectorAll<HTMLButtonElement>('[role=menuitemradio]') ?? [])]
+  const choice = (label: string) => choices().find((b) => b.textContent?.trim() === label)!
+  const ticked = () => choices().filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.textContent?.trim())
+
+  it('follows_its_server_by_default_and_the_pick_is_ticked', () => {
+    rightClick('general', 600)
+    hover(item('Notifications')!)
+    expect(levels()!.getAttribute('aria-label')).toBe('Notifications for #general')
+    expect(choices().map((b) => b.textContent?.trim())).toEqual(['Follow server', 'All messages', 'Only @mentions', 'Nothing'])
+    expect(ticked()).toEqual(['Follow server'])
+    expect(choice('Follow server').querySelector('svg')).not.toBeNull()
+    expect(choice('Nothing').querySelector('svg')).toBeNull()
+
+    render({ ...unread, notify_levels: [{ target_kind: 'channel', target_id: 'T1', level: 'nothing' }] })
+    rightClick('general', 600)
+    hover(item('Notifications')!)
+    expect(ticked()).toEqual(['Nothing'])
+  })
+
+  it('picking_a_level_sets_it_and_follow_server_clears_it', async () => {
+    rightClick('general', 600)
+    hover(item('Notifications')!)
+    choice('Only @mentions').click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'channel', targetId: 'T1', level: 'mentions' })
+    expect(menu()).toBeNull()
+    rightClick('general', 600)
+    hover(item('Notifications')!)
+    choice('Follow server').click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'channel', targetId: 'T1', level: null })
+  })
+
+  it('sits_under_mute_in_quotes_too_but_not_in_voice', () => {
+    rightClick('quotes')
+    expect(labels()).toContain('Notifications')
+    rightClick('Lounge')
+    expect(labels()).not.toContain('Notifications')
+  })
+
+  it('opening_one_flyout_closes_the_other_after_the_hover_wait', () => {
+    vi.useFakeTimers()
+    rightClick('general', 600)
+    hover(muteItem())
+    hover(item('Notifications')!)
+    expect(levels()).not.toBeNull()
+    vi.advanceTimersByTime(SUBMENU_CLOSE_DELAY); flushSync()
+    expect(flyout()).toBeNull()
+    expect(levels()).not.toBeNull()
+    vi.useRealTimers()
+  })
+
+  it('the_keyboard_opens_it_and_arrow_down_leaves_it', () => {
+    rightClick('general', 600)
+    key(muteItem(), 'ArrowDown')
+    expect(document.activeElement).toBe(item('Notifications'))
+    key(item('Notifications')!, 'ArrowRight')
+    expect(document.activeElement).toBe(choice('Follow server'))
+    key(document.activeElement!, 'ArrowDown')
+    expect(document.activeElement).toBe(choice('All messages'))
+    key(document.activeElement!, 'Escape')
+    expect(levels()).toBeNull()
+    expect(document.activeElement).toBe(item('Notifications'))
   })
 })
 

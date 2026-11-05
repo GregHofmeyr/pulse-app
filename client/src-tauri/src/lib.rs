@@ -307,6 +307,7 @@ pub fn run() {
             commands::mark_read,
             commands::set_mute,
             commands::clear_mute,
+            commands::set_notify_level,
             commands::close_conversation,
             commands::upload_emoji_media,
             commands::get_profile,

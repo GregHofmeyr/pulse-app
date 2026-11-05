@@ -8,10 +8,10 @@ use pulse_protocol::ids::{ChannelId, GameId, LineId, MessageId, QotyEventId, Ser
 use pulse_protocol::rest::{
     BadgeCatalogue, Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji,
     DeletedChannel, EditClipRequest, EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest,
-    MediaInfo, Member, Message, MuteTarget, NameArchivePage, PostQuoteRequest, Profile, QotyEvent,
-    RecoveryCodesResponse, SearchRequest, SearchResults, Server, SetMuteRequest, Sound,
-    StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest,
-    UpdateSoundRequest, User,
+    MediaInfo, Member, Message, MuteTarget, NameArchivePage, NotifyLevel, PostQuoteRequest,
+    Profile, QotyEvent, RecoveryCodesResponse, SearchRequest, SearchResults, Server,
+    SetMuteRequest, SetNotifyLevelRequest, Sound, StartQotyRequest, TwoFactorEnabledResponse,
+    TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -1633,6 +1633,24 @@ pub async fn set_mute(
         until,
     };
     core.check(&app, api.set_mute(&token, &req).await)
+}
+
+/// Your notification level for a server or a server channel (#195); `level: None` = back to the default.
+#[tauri::command]
+pub async fn set_notify_level(
+    app: AppHandle,
+    core: State<'_, Core>,
+    target_kind: MuteTarget,
+    target_id: String,
+    level: Option<NotifyLevel>,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    let req = SetNotifyLevelRequest {
+        target_kind,
+        target_id,
+        level,
+    };
+    core.check(&app, api.set_notify_level(&token, &req).await)
 }
 
 #[tauri::command]

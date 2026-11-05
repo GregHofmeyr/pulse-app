@@ -38,6 +38,7 @@ import type { ClipStorage } from './protocol/ClipStorage'
 import type { SearchRequest } from './protocol/SearchRequest'
 import type { SearchResults } from './protocol/SearchResults'
 import type { Sound } from './protocol/Sound'
+import type { NotifyLevel } from './protocol/NotifyLevel'
 import type { Notice } from './notify'
 import type { EmbedProvider } from './protocol/EmbedProvider'
 
@@ -119,6 +120,9 @@ export const api = {
   markRead: (channelId: string, messageId: string) => invoke<void>('mark_read', { channelId, messageId }),
   setMute: (targetKind: 'server' | 'channel', targetId: string, until: string | null) => invoke<void>('set_mute', { targetKind, targetId, until }),
   clearMute: (targetKind: 'server' | 'channel', targetId: string) => invoke<void>('clear_mute', { targetKind, targetId }),
+  /** Your notification level for a server or a server channel (#195); null = back to the default. */
+  setNotifyLevel: (targetKind: 'server' | 'channel', targetId: string, level: NotifyLevel | null) =>
+    invoke<void>('set_notify_level', { targetKind, targetId, level }),
   closeConversation: (channelId: string) => invoke<void>('close_conversation', { channelId }),
   login: (serverUrl: string, username: string, password: string) =>
     invoke<LoginResult>('login', { serverUrl, username, password }),

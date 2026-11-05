@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState } from './state'
-import { conversationName, conversations, homeBadge, inVoice, isMuted, messageSound, serverBadge, shouldAlert, shouldMarkRead } from './conversations'
+import { channelLevel, conversationName, conversations, homeBadge, inVoice, isMuted, messageSound, notifyLevel, serverBadge, serverLevel, shouldAlert, shouldMarkRead } from './conversations'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 
@@ -135,7 +135,7 @@ describe('conversations', () => {
 
   it('sound: DMs, groups and mentions; never own/system/open-and-focused/muted (mentions ping through mute); 2 s limit', () => {
     const s = applyReady(emptyState(), ready())
-    const base = { me: 'ME', open: false, openThread: null, focused: true, muted: false, lastPlayedAt: 0, now: 10_000 }
+    const base = { me: 'ME', open: false, openThread: null, focused: true, muted: false, level: 'mentions' as const, lastPlayedAt: 0, now: 10_000 }
     const dm = s.channels['DM1'], text = s.channels['T1']
     expect(messageSound({ ...base, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(true)
     expect(messageSound({ ...base, message: msg('A', 'T1', 'U1'), channel: text })).toBe(false)
@@ -153,7 +153,7 @@ describe('conversations', () => {
 
   it('alert (sound or notification, no gap): DMs, groups and mentions; never own/system/deleted/open-and-focused/muted', () => {
     const s = applyReady(emptyState(), ready())
-    const base = { me: 'ME', open: false, openThread: null, focused: true, muted: false }
+    const base = { me: 'ME', open: false, openThread: null, focused: true, muted: false, level: 'mentions' as const }
     const dm = s.channels['DM1'], text = s.channels['T1'], group = s.channels['G1']
     expect(shouldAlert({ ...base, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(true)
     expect(shouldAlert({ ...base, message: msg('A', 'G1', 'U1'), channel: group })).toBe(true)
@@ -171,9 +171,60 @@ describe('conversations', () => {
     expect(shouldAlert({ ...base, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(true)
   })
 
+  it('notification levels (#195): All alerts every server message, Only @mentions only mentions, Nothing never', () => {
+    const s = applyReady(emptyState(), ready())
+    const base = { me: 'ME', open: false, openThread: null, focused: true, muted: false }
+    const text = s.channels['T1'], dm = s.channels['DM1']
+    const plain = msg('A', 'T1', 'U1'), mention = msg('A', 'T1', 'U1', { mentions: ['ME'] })
+    const alert = (over: Partial<Parameters<typeof shouldAlert>[0]> & { level: 'all' | 'mentions' | 'nothing' }, m = plain) =>
+      shouldAlert({ ...base, message: m, channel: text, ...over })
+    expect(alert({ level: 'all' })).toBe(true)
+    expect(alert({ level: 'all' }, mention)).toBe(true)
+    expect(alert({ level: 'mentions' })).toBe(false)
+    expect(alert({ level: 'mentions' }, mention)).toBe(true)
+    expect(alert({ level: 'nothing' })).toBe(false)
+    expect(alert({ level: 'nothing' }, mention)).toBe(false)
+    // a mute still lets only mentions through, whatever the level; Nothing stays nothing
+    expect(alert({ level: 'all', muted: true })).toBe(false)
+    expect(alert({ level: 'all', muted: true }, mention)).toBe(true)
+    expect(alert({ level: 'nothing', muted: true }, mention)).toBe(false)
+    // DND silences All too; reading it in the focused window too; your own message too
+    expect(alert({ level: 'all', dnd: true }, mention)).toBe(false)
+    expect(alert({ level: 'all', open: true })).toBe(false)
+    expect(alert({ level: 'all', open: true, focused: false })).toBe(true)
+    expect(alert({ level: 'all' }, msg('A', 'T1', 'ME'))).toBe(false)
+    // a DM or group has no level: a stray one changes nothing
+    expect(shouldAlert({ ...base, level: 'nothing', message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(true)
+    // the sound is the same rule, with its gap
+    expect(messageSound({ ...base, level: 'all', message: plain, channel: text, lastPlayedAt: 0, now: 10_000 })).toBe(true)
+  })
+
+  it('a channel follows its server unless it has its own level; a server is on All messages by default (#195)', () => {
+    let s = applyReady(emptyState(), ready())
+    const text = s.channels['T1']
+    expect(serverLevel(s, 'S1')).toBe('all')
+    expect(channelLevel(s, 'T1')).toBeNull()
+    expect(notifyLevel(s, text)).toBe('all')
+    s = applyEvent(s, { t: 'NotifyLevelsChanged', d: { user_id: 'ME', levels: [{ target_kind: 'server', target_id: 'S1', level: 'mentions' }] } }, 0)
+    expect(serverLevel(s, 'S1')).toBe('mentions')
+    expect(notifyLevel(s, text)).toBe('mentions')
+    s = applyEvent(s, { t: 'NotifyLevelsChanged', d: { user_id: 'ME', levels: [
+      { target_kind: 'server', target_id: 'S1', level: 'nothing' }, { target_kind: 'channel', target_id: 'T1', level: 'all' },
+    ] } }, 0)
+    expect(channelLevel(s, 'T1')).toBe('all')
+    expect(notifyLevel(s, text)).toBe('all')
+    // from Ready, and an older server's Ready has none
+    const r = applyReady(emptyState(), ready({ notify_levels: [{ target_kind: 'channel', target_id: 'T1', level: 'nothing' }] }))
+    expect(notifyLevel(r, r.channels['T1'])).toBe('nothing')
+    expect(applyReady(emptyState(), ready()).notifyLevels).toEqual([])
+    // a deleted channel takes its own level with it, not its server's
+    s = applyEvent(s, { t: 'ChannelDeleted', d: { channel_id: 'T1', server_id: 'S1' } }, 0)
+    expect(s.notifyLevels).toEqual([{ target_kind: 'server', target_id: 'S1', level: 'nothing' }])
+  })
+
   it('no sound for a reply while its panel is open and focused', () => {
     const s = applyReady(emptyState(), ready())
-    const base = { me: 'ME', open: false, openThread: null, focused: true, muted: false, lastPlayedAt: 0, now: 10_000 }
+    const base = { me: 'ME', open: false, openThread: null, focused: true, muted: false, level: 'mentions' as const, lastPlayedAt: 0, now: 10_000 }
     const text = s.channels['T1']
     const reply = msg('R', 'T1', 'U1', { mentions: ['ME'], thread_root_id: 'Q1' })
     expect(messageSound({ ...base, message: reply, channel: text })).toBe(true)

@@ -10,7 +10,7 @@ import type { ReportKind } from './protocol/ReportKind'
 import { addPending, applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, setProfile, type AppState, type ConnState } from './state'
 import { api } from './tauri'
 import { loadUnsent, saveUnsent } from './unsent'
-import { isMuted, messageSound, onScreen, SOUND_GAP_MS } from './conversations'
+import { isMuted, messageSound, notifyLevel, onScreen, SOUND_GAP_MS } from './conversations'
 import { dndActive } from './status'
 import { notifyMessage, NotifyThrottle } from './notify'
 import { notifyPrefs } from './notifyPrefs.svelte'
@@ -62,7 +62,8 @@ setInterval(() => (clock.nowIso = new Date().toISOString()), 30_000)
 let lastPlayedAt = 0
 
 /**
- * For a message that could ding (someone else's, in a DM/group or mentioning you), one line saying
+ * For a message that could ding (someone else's, in a DM/group, mentioning you, or in a server channel on All
+ * messages), one line saying
  * why it did or didn't: only flags, never who, where or what. Skipped because you're reading that
  * conversation in the focused window (every message while you chat): only if the OS says the
  * window isn't focused after all, which is the case worth knowing about.
@@ -71,11 +72,11 @@ function logSoundDecision(v: Parameters<typeof messageSound>[0], play: boolean) 
   const m = v.message
   const isPrivate = v.channel.server_id === null
   const mentioned = m.mentions.includes(v.me)
-  if (m.kind !== 'normal' || m.author_id === v.me || !(isPrivate || mentioned)) return
+  if (m.kind !== 'normal' || m.author_id === v.me || !(isPrivate || mentioned || v.level === 'all')) return
   const gapOk = v.now - v.lastPlayedAt >= SOUND_GAP_MS
   // turned to 0 % in the volume mixer looks nothing like a sound that got lost
   const prefs = soundGain(loadMixer(), 'message') > 0 ? 'on' : 'off'
-  const line = `sound: message private=${isPrivate} mentioned=${mentioned} open=${v.open} thread=${m.thread_root_id ?? '-'} open_thread=${v.openThread ?? '-'} focused=${v.focused} muted=${v.muted} gap_ok=${gapOk} sound=${prefs} play=${play}`
+  const line = `sound: message private=${isPrivate} mentioned=${mentioned} open=${v.open} thread=${m.thread_root_id ?? '-'} open_thread=${v.openThread ?? '-'} focused=${v.focused} muted=${v.muted} level=${isPrivate ? '-' : v.level} gap_ok=${gapOk} sound=${prefs} play=${play}`
   if (play || !onScreen(v) || !v.focused) return void api.uiLog(line, 'info')
   getCurrentWindow().isFocused().then(
     (f) => {
@@ -106,6 +107,7 @@ export function maybeAlert(e: Event) {
     openThread: ui.openThreadId,
     focused: windowFocus.focused,
     muted: isMuted(app.state, ch, nowIso),
+    level: notifyLevel(app.state, ch),
     // the real time, not the clock: a DND timer ends exactly when it ends
     dnd: dndActive(app.state, nowIso),
     lastPlayedAt,

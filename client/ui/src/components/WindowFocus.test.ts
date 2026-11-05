@@ -101,7 +101,7 @@ describe('one window-focus source', () => {
     listeners.get('pulse://event')!({ payload: event('M11') })
     await settle()
     expect(logs().map((l) => l.line)).toEqual([
-      'sound: message private=true mentioned=false open=true thread=- open_thread=- focused=true muted=false gap_ok=true sound=on play=false; the OS says focused=false',
+      'sound: message private=true mentioned=false open=true thread=- open_thread=- focused=true muted=false level=- gap_ok=true sound=on play=false; the OS says focused=false',
     ])
     expect(logs().every((l) => l.info)).toBe(true)
     // nothing about who or what
@@ -114,7 +114,7 @@ describe('one window-focus source', () => {
     localStorage.setItem('pulse.mixer', JSON.stringify(mix))
     invoke.mockClear()
     listeners.get('pulse://event')!({ payload: event('M12') })
-    expect(logs().map((l) => l.line)).toEqual(['sound: message private=true mentioned=false open=true thread=- open_thread=- focused=false muted=false gap_ok=true sound=off play=true'])
+    expect(logs().map((l) => l.line)).toEqual(['sound: message private=true mentioned=false open=true thread=- open_thread=- focused=false muted=false level=- gap_ok=true sound=off play=true'])
     localStorage.removeItem('pulse.mixer')
     tauriFocus!({ payload: true })
   }, 10_000)

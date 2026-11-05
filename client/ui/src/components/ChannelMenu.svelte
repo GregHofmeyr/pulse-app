@@ -1,6 +1,7 @@
 <script lang="ts">
   // The right-click menu on a sidebar channel row (or Shift+F10 / the menu key on it). Text, quotes
-  // and clips: mark as read and mute (a flyout of durations, #131); voice: join or leave. Anyone in the server may rename and
+  // and clips: mark as read, mute (a flyout of durations, #131) and notifications (its level or following its server,
+  // a flyout with yours ticked, #195); voice: join or leave. Anyone in the server may rename and
   // delete (v1 trust model); those two are handed back to the list, which edits in the row and asks
   // in a dialog.
   import { onMount, untrack } from 'svelte'
@@ -8,6 +9,9 @@
   import { api, errorText } from '../lib/tauri'
   import { clickOutside } from '../lib/actions'
   import { muteUntil } from '../lib/muteDurations'
+  import { channelLevel } from '../lib/conversations'
+  import { CHANNEL_LEVELS } from '../lib/notifyLevels'
+  import MenuFlyout from './MenuFlyout.svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
   import type { Channel } from '../lib/protocol/Channel'
@@ -57,9 +61,14 @@
     if (list.length) list[(i + list.length) % list.length].focus()
   }
 
-  // The mute flyout (#131; shared with the server tab's menu, #161)
+  // The mute flyout (#131; shared with the server tab's menu, #161) and the notifications one (#195)
   let flyout = $state<ReturnType<typeof MuteFlyout>>()
-  const closeSub = (refocus: boolean | 'if-inside') => flyout?.close(refocus)
+  let levelFlyout = $state<ReturnType<typeof MenuFlyout>>()
+  const flyouts = () => [flyout, levelFlyout]
+  const closeSub = (refocus: boolean | 'if-inside') => { for (const f of flyouts()) f?.close(refocus) }
+  const level = $derived(channelLevel(app.state, channel.id))
+  const levelChoices = $derived(CHANNEL_LEVELS.map((l) => ({ label: l.label, checked: l.level === level })))
+  const pickLevel = (i: number) => pick(report(() => api.setNotifyLevel('channel', channel.id, CHANNEL_LEVELS[i].level)))
 
   function close(restoreFocus: boolean) {
     if (closed) return
@@ -89,7 +98,7 @@
     const at = list.indexOf(document.activeElement as HTMLButtonElement)
     if (e.key === 'ArrowLeft') { e.preventDefault(); closeSub(false); return }
     // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
-    if (e.key === 'Escape' && flyout?.isOpen()) { e.preventDefault(); e.stopPropagation(); closeSub(false); return }
+    if (e.key === 'Escape' && flyouts().some((f) => f?.isOpen())) { e.preventDefault(); e.stopPropagation(); closeSub(false); return }
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) closeSub(false)
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); focusItem(at + 1); break
@@ -107,8 +116,8 @@
   onpointerover={(e) => {
     // another of the menu's own items under the pointer closes the flyout
     const t = (e.target as Element).closest?.('[data-item]')
-    // (focus in the flyout goes back to Mute channel rather than falling out of the menu)
-    if (t && t.parentElement === el && t !== flyout?.trigger()) flyout?.closeSoon()
+    // (focus in a flyout goes back to its item rather than falling out of the menu)
+    if (t && t.parentElement === el) for (const f of flyouts()) if (t !== f?.trigger()) f?.closeSoon()
   }}>
   {#if isVoice}
     {#if inCall}
@@ -124,6 +133,8 @@
       <MuteFlyout bind:this={flyout} label="Mute channel" flyoutLabel="Mute {label} for" menuLeft={left} menuTop={top}
         onPick={(m) => pick(report(() => api.setMute('channel', channel.id, muteUntil(m))))} />
     {/if}
+    <MenuFlyout bind:this={levelFlyout} label="Notifications" flyoutLabel="Notifications for {label}" menuLeft={left} menuTop={top}
+      choices={levelChoices} onPick={pickLevel} />
   {/if}
   {#if member}
     <span class="menu-sep"></span>
