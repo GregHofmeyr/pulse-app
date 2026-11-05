@@ -89,6 +89,30 @@ Copyright 2022 The Bricolage Grotesque Project Authors (https://github.com/ateli
 
 Copyright 2018 The Orbitron Project Authors (https://github.com/theleagueof/orbitron). SIL Open Font License 1.1. Bundled: weight 600 of the latin woff2 files only, unmodified.
 
+### Bungee (`@fontsource/bungee` 5.3.0)
+
+Copyright 2023 The Bungee Project Authors (https://github.com/djrrb/Bungee). SIL Open Font License 1.1. Bundled: weight 400 of the latin and latin-ext woff2 files only, unmodified.
+
+### Silkscreen (`@fontsource/silkscreen` 5.3.0)
+
+Copyright 2001 The Silkscreen Project Authors (https://github.com/googlefonts/silkscreen). SIL Open Font License 1.1. Bundled: weight 400 of the latin and latin-ext woff2 files only, unmodified.
+
+### Audiowide (`@fontsource/audiowide` 5.3.0)
+
+Copyright (c) 2012 by Brian J. Bonislawsky DBA Astigmatic (AOETI), with Reserved Font Name "Audiowide". SIL Open Font License 1.1. Bundled: weight 400 of the latin and latin-ext woff2 files only, unmodified.
+
+### Righteous (`@fontsource/righteous` 5.3.0)
+
+Copyright (c) 2011 by Brian J. Bonislawsky DBA Astigmatic (AOETI), with Reserved Font Name "Righteous". SIL Open Font License 1.1. Bundled: weight 400 of the latin and latin-ext woff2 files only, unmodified.
+
+### Kaushan Script (`@fontsource/kaushan-script` 5.3.0)
+
+Copyright (c) 2011, Pablo Impallari (www.impallari.com), Copyright (c) 2011, Igino Marini (www.ikern.com), with Reserved Font Name Kaushan Script. SIL Open Font License 1.1. Bundled: weight 400 of the latin and latin-ext woff2 files only, unmodified.
+
+### Black Ops One (`@fontsource/black-ops-one` 5.3.0)
+
+Copyright 2022 The PinyonScript Project Authors (https://github.com/SorkinType/Black-Ops) (the notice as upstream ships it). SIL Open Font License 1.1. Bundled: weight 400 of the latin and latin-ext woff2 files only, unmodified.
+
 ### SIL Open Font License 1.1 (applies to every font above)
 
 ```text

@@ -12,12 +12,27 @@ const SERVER_KEYS = [
   'space-grotesk',
   'bricolage-grotesque',
   'orbitron',
+  'bungee',
+  'silkscreen',
+  'audiowide',
+  'righteous',
+  'kaushan-script',
+  'black-ops-one',
 ]
 
 describe('name fonts', () => {
-  it('eight fonts with unique keys', () => {
-    expect(NAME_FONTS).toHaveLength(8)
-    expect(new Set(NAME_FONTS.map((f) => f.key)).size).toBe(8)
+  it('fourteen fonts with unique keys and labels', () => {
+    expect(NAME_FONTS).toHaveLength(14)
+    expect(new Set(NAME_FONTS.map((f) => f.key)).size).toBe(14)
+    expect(new Set(NAME_FONTS.map((f) => f.label)).size).toBe(14)
+    expect(NAME_FONTS.some((f) => f.label === 'Default')).toBe(false)
+  })
+
+  it('every size factor is a sane number (names line up, none tiny or huge)', () => {
+    for (const f of NAME_FONTS) {
+      expect(f.scale, f.key).toBeGreaterThanOrEqual(0.6)
+      expect(f.scale, f.key).toBeLessThanOrEqual(1.3)
+    }
   })
 
   it('keys match the server list', () => {
@@ -34,7 +49,15 @@ describe('name fonts', () => {
       ['Grotesque', 600, 1.0],
       ['Quirky', 600, 1.0],
       ['Techy', 600, 0.86],
+      // #142: starting points from each face's cap and x-height (and width) against Onest
+      ['Bold', 400, 0.82],
+      ['8-bit', 400, 0.85],
+      ['Racing', 400, 0.92],
+      ['Retro', 400, 1.0],
+      ['Brush', 400, 1.1],
+      ['Stencil', 400, 0.92],
     ])
+    expect(fontByKey('black-ops-one')?.family).toBe("'Black Ops One', 'Onest', system-ui, sans-serif")
     expect(fontByKey('pacifico')?.family).toBe("'Pacifico', 'Onest', system-ui, sans-serif")
   })
 

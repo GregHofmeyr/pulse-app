@@ -19,6 +19,13 @@ const FONTS = [
   ['space-grotesk', 'Space Grotesk', 600, ['latin', 'latin-ext']],
   ['bricolage-grotesque', 'Bricolage Grotesque', 600, ['latin', 'latin-ext']],
   ['orbitron', 'Orbitron', 600, ['latin']],
+  // #142
+  ['bungee', 'Bungee', 400, ['latin', 'latin-ext']],
+  ['silkscreen', 'Silkscreen', 400, ['latin', 'latin-ext']],
+  ['audiowide', 'Audiowide', 400, ['latin', 'latin-ext']],
+  ['righteous', 'Righteous', 400, ['latin', 'latin-ext']],
+  ['kaushan-script', 'Kaushan Script', 400, ['latin', 'latin-ext']],
+  ['black-ops-one', 'Black Ops One', 400, ['latin', 'latin-ext']],
 ] as const
 
 const faces = (css: string) =>
@@ -38,7 +45,7 @@ describe('bundled name fonts', () => {
   })
 
   it('one weight per family, woff2 only, latin and latin-ext only', () => {
-    expect(ours).toHaveLength(15)
+    expect(ours).toHaveLength(FONTS.reduce((n, f) => n + f[3].length, 0))
     for (const [pkg, family, weight, subsets] of FONTS) {
       const mine = ours.filter((f) => f.family === family)
       expect(mine, family).toHaveLength(subsets.length)

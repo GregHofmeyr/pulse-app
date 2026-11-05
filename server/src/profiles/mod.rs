@@ -129,8 +129,8 @@ pub async fn load_profile(
     }))
 }
 
-/// The bundled name fonts (plan reconciliation 9).
-pub const NAME_FONTS: [&str; 8] = [
+/// The bundled name fonts (plan reconciliation 9; the last six from #142).
+pub const NAME_FONTS: [&str; 14] = [
     "cormorant-garamond",
     "fredoka",
     "press-start-2p",
@@ -139,6 +139,12 @@ pub const NAME_FONTS: [&str; 8] = [
     "space-grotesk",
     "bricolage-grotesque",
     "orbitron",
+    "bungee",
+    "silkscreen",
+    "audiowide",
+    "righteous",
+    "kaushan-script",
+    "black-ops-one",
 ];
 
 const PRONOUNS_MAX: usize = 40;
@@ -270,6 +276,12 @@ mod name_font_tests {
                 "space-grotesk",
                 "bricolage-grotesque",
                 "orbitron",
+                "bungee",
+                "silkscreen",
+                "audiowide",
+                "righteous",
+                "kaushan-script",
+                "black-ops-one",
             ]
         );
     }

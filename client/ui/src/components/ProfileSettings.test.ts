@@ -150,7 +150,7 @@ describe('ProfileSettings', () => {
   it('picking a font and gradient restyles the preview name', async () => {
     await open()
     const fonts = [...group('Name font').querySelectorAll<HTMLButtonElement>('[role=radio]')]
-    expect(fonts.map((b) => b.textContent!.trim())).toEqual(['Default', 'Elegant', 'Rounded', 'Pixel', 'Script', 'Handwritten', 'Grotesque', 'Quirky', 'Techy'])
+    expect(fonts.map((b) => b.textContent!.trim())).toEqual(['Default', 'Elegant', 'Rounded', 'Pixel', 'Script', 'Handwritten', 'Grotesque', 'Quirky', 'Techy', 'Bold', '8-bit', 'Racing', 'Retro', 'Brush', 'Stencil'])
     // each label is drawn in its own face
     expect(fonts[3].getAttribute('style')).toContain('Press Start 2P')
     click(option('Name font', 'Techy'))

@@ -8,7 +8,16 @@ importers:
 
   .:
     dependencies:
+      '@fontsource/audiowide':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@fontsource/black-ops-one':
+        specifier: 5.3.0
+        version: 5.3.0
       '@fontsource/bricolage-grotesque':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@fontsource/bungee':
         specifier: 5.3.0
         version: 5.3.0
       '@fontsource/caveat':
@@ -18,6 +27,9 @@ importers:
         specifier: 5.3.0
         version: 5.3.0
       '@fontsource/fredoka':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@fontsource/kaushan-script':
         specifier: 5.3.0
         version: 5.3.0
       '@fontsource/onest':
@@ -30,6 +42,12 @@ importers:
         specifier: 5.3.0
         version: 5.3.0
       '@fontsource/press-start-2p':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@fontsource/righteous':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@fontsource/silkscreen':
         specifier: 5.3.0
         version: 5.3.0
       '@fontsource/space-grotesk':
@@ -147,8 +165,17 @@ packages:
       '@noble/hashes':
         optional: true
 
+  '@fontsource/audiowide@5.3.0':
+    resolution: {integrity: sha512-ECBdWgQPaCSuwlFyeXzV0i2DAGq0SKID7jxD1oHhYTObx3wz26YKs3F9Ic/EO369Anzld9IqxflRukJm6nVxpw==}
+
+  '@fontsource/black-ops-one@5.3.0':
+    resolution: {integrity: sha512-kDqkJFtvMErjajEeMXv6nyIW3t6UKb5usW+1/sQox9vA5q8dyMpAdAW9tU6+aIWo6xIQlatqNrfUlrBdJu6D4A==}
+
   '@fontsource/bricolage-grotesque@5.3.0':
     resolution: {integrity: sha512-MdOVb/5in11IfN/IQJOExMuu6AroCIQbirl0yX7NUvKk+h0HYIKfGaVAXRS/gCPil4aFxWhjZnOw28tUwv7tFw==}
+
+  '@fontsource/bungee@5.3.0':
+    resolution: {integrity: sha512-vKwbDE7yMrqfGxgFan+diPLwgWp9j4FGYaLm+OhUoqYO6Pr02QIi/p0KiTW0E/7uiXqfTd6cMj+/E4h2sc3Ocg==}
 
   '@fontsource/caveat@5.3.0':
     resolution: {integrity: sha512-eHTfzQxFSW9ABERRLNruHoNJmKed2J7pqTUc5lp4a4POMgXGKpxmWj3d9Hz10kmAg6iuTTLe6UagbA4bnsmfQw==}
@@ -158,6 +185,9 @@ packages:
 
   '@fontsource/fredoka@5.3.0':
     resolution: {integrity: sha512-s2IhjQ50wDnKkkaKmjhtL0rxQg6ITsVusiipM3m7zUwVZZbbCKsscNDkngwp28xVzfIt7neWrkgU1qKqyTycQg==}
+
+  '@fontsource/kaushan-script@5.3.0':
+    resolution: {integrity: sha512-Kdcvr76wOGp2jgKkkmAOETmPcw/a34RU/qcGW2+gSKzkKyr03vEaLWSbSABoVKWuyuoqWoulcmC4571vq3BYvg==}
 
   '@fontsource/onest@5.3.1':
     resolution: {integrity: sha512-2uA9HUzQHBB8H7T2R6inmrnqPofB6+svATHM/huIG640duJr4rm+uanmAIheTTlbZvRC0ujMtf2T4U4RX51oEQ==}
@@ -170,6 +200,12 @@ packages:
 
   '@fontsource/press-start-2p@5.3.0':
     resolution: {integrity: sha512-gxWFxdeDglPhEYSwEeooomcaFK8kSQYLQwVxfnOJeYRj2sPEHXjpVtFgEaYfqzOjuAJGrIcJOipu2KY5YkbyuQ==}
+
+  '@fontsource/righteous@5.3.0':
+    resolution: {integrity: sha512-xr3w0E1jtc7xoXLfgJrcaKqWjvh5XiAAthVLrl9v9HKC7TfwMy3nARytetfi2GIgo51+aWsEJ51Uyd3XEXbj/A==}
+
+  '@fontsource/silkscreen@5.3.0':
+    resolution: {integrity: sha512-M1NQ3LQH0LFNvyFPd/piHEGMImPPtpLglNnLC6Vdcq9kL0jNIOtTQmksAWCc4enbDnw1OnIpZtjNEfRqYm/QmA==}
 
   '@fontsource/space-grotesk@5.3.0':
     resolution: {integrity: sha512-ksnGizDPXIDuvqcTYTSrmZ+evx9sDlS8rp7+42BQ7wU+spt3twEoXfbJz672C+5CLg6VeUQwRy5RXshWb67LcQ==}
@@ -979,13 +1015,21 @@ snapshots:
 
   '@exodus/bytes@1.16.0': {}
 
+  '@fontsource/audiowide@5.3.0': {}
+
+  '@fontsource/black-ops-one@5.3.0': {}
+
   '@fontsource/bricolage-grotesque@5.3.0': {}
+
+  '@fontsource/bungee@5.3.0': {}
 
   '@fontsource/caveat@5.3.0': {}
 
   '@fontsource/cormorant-garamond@5.3.0': {}
 
   '@fontsource/fredoka@5.3.0': {}
+
+  '@fontsource/kaushan-script@5.3.0': {}
 
   '@fontsource/onest@5.3.1': {}
 
@@ -994,6 +1038,10 @@ snapshots:
   '@fontsource/pacifico@5.3.0': {}
 
   '@fontsource/press-start-2p@5.3.0': {}
+
+  '@fontsource/righteous@5.3.0': {}
+
+  '@fontsource/silkscreen@5.3.0': {}
 
   '@fontsource/space-grotesk@5.3.0': {}
 

@@ -1,4 +1,4 @@
-// The eight bundled name fonts (plan reconciliation 9). `key` equals the server's NAME_FONTS;
+// The bundled name fonts (plan reconciliation 9, six more in #142). `key` equals the server's NAME_FONTS;
 // `scale` is the per-font size factor so names line up. A null key means the app font.
 export type NameFont = { key: string; label: string; family: string; weight: number; scale: number }
 
@@ -13,6 +13,13 @@ export const NAME_FONTS: NameFont[] = [
   { key: 'space-grotesk', label: 'Grotesque', family: stack('Space Grotesk'), weight: 600, scale: 1.0 },
   { key: 'bricolage-grotesque', label: 'Quirky', family: stack('Bricolage Grotesque'), weight: 600, scale: 1.0 },
   { key: 'orbitron', label: 'Techy', family: stack('Orbitron'), weight: 600, scale: 0.86 },
+  // #142. Scales: starting points from each face's cap and x-height (and width) against Onest's.
+  { key: 'bungee', label: 'Bold', family: stack('Bungee'), weight: 400, scale: 0.82 },
+  { key: 'silkscreen', label: '8-bit', family: stack('Silkscreen'), weight: 400, scale: 0.85 },
+  { key: 'audiowide', label: 'Racing', family: stack('Audiowide'), weight: 400, scale: 0.92 },
+  { key: 'righteous', label: 'Retro', family: stack('Righteous'), weight: 400, scale: 1.0 },
+  { key: 'kaushan-script', label: 'Brush', family: stack('Kaushan Script'), weight: 400, scale: 1.1 },
+  { key: 'black-ops-one', label: 'Stencil', family: stack('Black Ops One'), weight: 400, scale: 0.92 },
 ]
 
 export function fontByKey(key: string | null): NameFont | null {
