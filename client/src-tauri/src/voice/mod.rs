@@ -4,6 +4,7 @@ pub mod backlog;
 pub mod controls;
 pub mod denoise;
 pub mod devices;
+pub mod echo;
 pub mod gate;
 pub mod linkstats;
 pub mod meter;

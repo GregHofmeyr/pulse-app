@@ -181,25 +181,29 @@ function save(key: string, value: unknown) {
   }
 }
 
+/** Echo cancellation (#76): Auto turns it off when the output is headphones or a headset (the core decides, per device). */
+export type EchoMode = 'auto' | 'on' | 'off'
 export type AudioConfig = {
   input: string | null
   output: string | null
   input_gain_pct: number
   sensitivity: number
-  echo_cancel: boolean
+  echo_mode: EchoMode
   noise_suppression: NsLevel
   auto_sensitivity: boolean
   auto_gain: boolean
 }
 export const defaultAudioConfig: AudioConfig = {
-  input: null, output: null, input_gain_pct: 100, sensitivity: 0.02, echo_cancel: true,
+  input: null, output: null, input_gain_pct: 100, sensitivity: 0.02, echo_mode: 'auto',
   noise_suppression: 'strong', auto_sensitivity: true, auto_gain: false,
 }
-/** Settings saved before levels existed carried `noise_suppress: boolean`. */
+/** Settings saved before levels existed carried `noise_suppress: boolean`; before #76, `echo_cancel: boolean` (off by
+ *  hand stays Off, the old default on becomes Auto). */
 export function migrateAudioConfig(raw: Record<string, unknown>): AudioConfig {
-  const { noise_suppress, ...rest } = raw
+  const { noise_suppress, echo_cancel, ...rest } = raw
   const c = { ...defaultAudioConfig, ...rest } as AudioConfig
   if (raw.noise_suppression === undefined && noise_suppress === false) c.noise_suppression = 'off'
+  if (raw.echo_mode === undefined && echo_cancel === false) c.echo_mode = 'off'
   return c
 }
 export const loadAudioConfig = () => migrateAudioConfig(load<Record<string, unknown>>('pulse.audio', {}))

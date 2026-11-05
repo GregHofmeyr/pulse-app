@@ -64,6 +64,33 @@ describe('VoiceSettings noise suppression', () => {
   })
 })
 
+describe('VoiceSettings echo cancellation (#76)', () => {
+  beforeEach(() => {
+    invoke.mockClear()
+    localStorage.clear()
+  })
+
+  it('Auto / On / Off, Auto by default; choosing one applies it', async () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    flushSync()
+    const radios = () => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Echo cancellation"] [role=radio]')]
+    expect(radios().map((r) => r.textContent)).toEqual(['Auto', 'On', 'Off'])
+    expect(radios().map((r) => r.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false'])
+    expect(document.body.textContent).toContain('Auto turns it off on headphones and headsets')
+    // no on/off switch for it any more
+    expect(document.querySelector('button.switch[aria-label="Echo cancellation"]')).toBeNull()
+    radios()[2].click()
+    flushSync()
+    await Promise.resolve()
+    expect(radios().map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'false', 'true'])
+    const applied = invoke.mock.calls.filter(([cmd]) => cmd === 'set_audio_config').at(-1)?.[1]
+    expect(JSON.stringify(applied)).toContain('"echo_mode":"off"')
+    expect(JSON.stringify(applied)).not.toContain('echo_cancel')
+    unmount(c)
+    document.body.innerHTML = ''
+  })
+})
+
 describe('VoiceSettings helper text (#163)', () => {
   it('input gain, input sensitivity and noise suppression keep their labels and controls but no description', () => {
     const c = mount(VoiceSettings, { target: document.body })
