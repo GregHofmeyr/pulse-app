@@ -66,7 +66,7 @@ One status per account, set by you and applied everywhere:
 
 - Click your own avatar at the bottom of the sidebar to open a small menu with the three statuses, each with its dot,
   and the DND timers as a submenu. The current status is ticked, and the avatar shows your status dot.
-- Invisible shows on your own avatar as a hollow grey dot, so you always know you're hidden. Others never see that dot.
+- Invisible shows on your own avatar as the plain grey offline dot (#171: the owner found a hollow dot inconsistent); the status picker and the line under your name say Invisible. Others never see an Invisible dot.
 - Settings → Privacy holds the "Appear offline to" list.
 
 ## How it gets made (builder's call where not stated)

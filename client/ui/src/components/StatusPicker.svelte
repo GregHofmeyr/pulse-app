@@ -170,7 +170,7 @@
   .dot { position: relative; flex-shrink: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--ok); }
   .dot.dnd { background: var(--danger); }
   .dot.dnd::after { content: ''; position: absolute; left: 18%; right: 18%; top: 50%; height: 26%; transform: translateY(-50%); border-radius: 999px; background: var(--surface-menu); }
-  .dot.invisible { background: radial-gradient(circle, var(--surface-menu) 0 34%, var(--presence-off) 36%); }
+  .dot.invisible { background: var(--presence-off); }
   /* beside the menu, past its 1px border, with a small gap the pointer crosses without closing it */
   .flyout { position: absolute; z-index: 1; left: calc(100% + 4px + 1px); width: 210px; gap: 2px; outline: none; }
 </style>

@@ -256,7 +256,7 @@ describe('account menu', () => {
     expect(document.querySelector('[role=dialog][aria-label="Report a bug"]')).not.toBeNull()
   })
 
-  it('your avatar shows your status dot, hollow when Invisible; the line under your name says it (#45)', () => {
+  it('your avatar shows your status dot (Invisible as the grey offline dot, #171); the line under your name says it (#45)', () => {
     const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
     app.state = { ...emptyState(), me, conn: 'connected', myStatus: { status: 'invisible', dnd_until: null } }
     cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })

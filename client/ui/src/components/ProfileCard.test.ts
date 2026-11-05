@@ -422,6 +422,21 @@ describe('ProfileCard', () => {
     expect(document.querySelector('.ring .pres')!.classList.contains('invisible')).toBe(true)
   })
 
+  it("someone else's card never draws the Invisible dot, whatever the server says of them (#171)", () => {
+    // the server sends an Invisible person as offline; even a stray 'invisible' must draw as offline
+    for (const status of ['offline', 'invisible']) {
+      app.state = { ...app.state, people: { ...app.state.people, U2: { user: sam, online: false, last_seen_at: null, status } } } as never
+      show()
+      const dot = document.querySelector('.ring .pres')!
+      expect(dot.classList.contains('offline')).toBe(true)
+      expect(dot.classList.contains('invisible')).toBe(false)
+      expect(dot.getAttribute('aria-label')).toBe('Offline')
+      expect(document.querySelector('.invisible')).toBeNull()
+      unmount(cmp!)
+      cmp = undefined
+    }
+  })
+
   it('your full card keeps Edit profile and status, without Badges (the trophy case is beside it)', () => {
     const rows = [...show({ user: alex, size: 'full' }).querySelectorAll('.actions button')].map((b) => b.textContent?.trim())
     expect(rows).toEqual(['Edit profile', 'Online'])

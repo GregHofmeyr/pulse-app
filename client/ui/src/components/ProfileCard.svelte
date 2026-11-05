@@ -63,7 +63,7 @@
   // them, else their display name; the preview draws the display name being edited. The username
   // shows only as the @handle below it.
   const name = $derived(preview ? baseName(user) : displayName(app.state, serverId, user.id))
-  // no dot for someone we know nothing of; yours shows your own status (hollow grey when Invisible)
+  // no dot for someone we know nothing of; yours shows your own status (Invisible: the grey offline dot, #171)
   const presence = $derived(mine || app.state.people[user.id] ? presenceOf(app.state, user.id, clock.nowIso) : null)
   const bioHtml = $derived(card.bio ? renderMarkdown(card.bio, [], app.state.customEmoji) : '')
   // The server voice room they're in, only if it is one of your channels (one you can see); a
@@ -247,7 +247,7 @@
   .status { position: relative; width: 10px; height: 10px; margin: 0 3px; border-radius: 50%; background: var(--ok); }
   .status.dnd { background: var(--danger); }
   .status.dnd::after { content: ''; position: absolute; left: 18%; right: 18%; top: 50%; height: 26%; transform: translateY(-50%); border-radius: 999px; background: var(--panel-top); }
-  .status.invisible { background: radial-gradient(circle, var(--panel-top) 0 34%, var(--presence-off) 36%); }
+  .status.invisible { background: var(--presence-off); }
   .full-link { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--card-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
   .full-link:hover { text-decoration: underline; }
   .msg { height: 36px; border-radius: 10px; border: 1px solid var(--card-edge); background: var(--panel-bottom); color: var(--card-text); padding: 0 12px; font: inherit; font-size: 13px; }
