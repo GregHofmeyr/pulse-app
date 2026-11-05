@@ -1364,6 +1364,22 @@ impl Api {
         Self::ok_empty(req.bearer_auth(token).send().await).await
     }
 
+    /// Get a notification when `user` goes live (`on`), or stop (#60).
+    pub async fn set_live_notify(
+        &self,
+        token: &str,
+        user: UserId,
+        on: bool,
+    ) -> Result<(), ApiError> {
+        let url = self.url(&["me", "live-notify", &user.to_string()])?;
+        let req = if on {
+            self.http.put(url)
+        } else {
+            self.http.delete(url)
+        };
+        Self::ok_empty(req.bearer_auth(token).send().await).await
+    }
+
     /// A page of someone's Name Archive in a server (`cursor`: the last page's `next_cursor`).
     pub async fn name_archive(
         &self,
@@ -3941,6 +3957,22 @@ mod tests {
         api.set_appear_offline(&alex, sam_id, true).await.unwrap();
         api.set_appear_offline(&alex, sam_id, false).await.unwrap();
         assert!(api.set_appear_offline(&alex, alex_id, true).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn live_notify_round_trips_through_the_core() {
+        let app = testing::spawn().await;
+        let (alex_id, alex) = testing::register(&app, "alex").await;
+        let (sam_id, _) = testing::register(&app, "sam").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        api.set_live_notify(&alex, sam_id, true).await.unwrap();
+        api.set_live_notify(&alex, sam_id, false).await.unwrap();
+        assert!(api.set_live_notify(&alex, alex_id, true).await.is_err());
+        assert!(
+            api.set_live_notify(&alex, UserId::new(), true)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

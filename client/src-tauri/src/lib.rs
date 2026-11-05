@@ -315,6 +315,7 @@ pub fn run() {
             commands::set_private_nickname,
             commands::set_status,
             commands::set_appear_offline,
+            commands::set_live_notify,
             commands::name_archive,
             commands::upload_avatar_media,
             commands::upload_banner_media,

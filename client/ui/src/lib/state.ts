@@ -65,6 +65,8 @@ export type AppState = {
   myStatus: OwnStatus
   /** The people you appear offline to (#45), yours only. */
   appearOfflineTo: string[]
+  /** The people whose going live you're notified of (#60), yours only, in the order you added them. */
+  liveNotify: string[]
   profiles: Record<string, Profile> // userId -> opened profile (cache)
   roleColors: Record<string, Record<string, string>> // serverId -> userId -> role colour (empty until the roles push)
   /** userId -> the name you gave them that only you see (from Ready and your own events; never anyone else's). */
@@ -121,7 +123,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -164,6 +166,7 @@ export function applyReady(s: AppState, r: Ready): AppState {
     // absent from older servers: online, hidden from nobody
     myStatus: r.status ?? { status: 'online', dnd_until: null },
     appearOfflineTo: r.appear_offline_to ?? [],
+    liveNotify: r.live_notify ?? [],
     // absent from older servers
     privateNicks: Object.fromEntries((r.private_nicknames ?? []).map((p) => [p.user_id, p.nickname])),
     reads: Object.fromEntries(r.read_states.map((x) => [x.channel_id, x])),
@@ -792,6 +795,12 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       if (e.d.user_id !== s.me?.id) return s
       const rest = s.appearOfflineTo.filter((id) => id !== e.d.target_id)
       return { ...s, appearOfflineTo: e.d.hidden ? [...rest, e.d.target_id] : rest }
+    }
+    case 'LiveNotifyChanged': {
+      if (e.d.user_id !== s.me?.id) return s
+      const has = s.liveNotify.includes(e.d.target_id)
+      if (e.d.on) return has ? s : { ...s, liveNotify: [...s.liveNotify, e.d.target_id] }
+      return has ? { ...s, liveNotify: s.liveNotify.filter((id) => id !== e.d.target_id) } : s
     }
     case 'ProfileUpdated':
       return profileUpdated(s, e.d)

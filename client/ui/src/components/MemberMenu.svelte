@@ -9,6 +9,7 @@
   import { openCard } from '../lib/profileCard.svelte'
   import NicknameItems from './NicknameItems.svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
+  import LiveNotifyItem from './LiveNotifyItem.svelte'
 
   let { serverId, userId, x, y, opener, onClose, onMessage, fromCard = false }: {
     /** The server it opens in, or null (a card opened outside servers). */
@@ -92,6 +93,7 @@
     <button type="button" class="menu-item" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>
   {/if}
   <NicknameItems {serverId} {userId} {pick} />
+  <LiveNotifyItem {userId} {pick} />
   <AppearOfflineItem {userId} {pick} />
 </div>
 

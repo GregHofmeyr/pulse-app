@@ -132,6 +132,9 @@ pub struct Ready {
     /// The people you appear offline to (#45). Yours only; nobody else ever receives it.
     #[serde(default)]
     pub appear_offline_to: Vec<UserId>,
+    /// The people whose going live you get a notification for (#60). Yours only.
+    #[serde(default)]
+    pub live_notify: Vec<UserId>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -245,6 +248,13 @@ pub enum Event {
         user_id: UserId,
         target_id: UserId,
         hidden: bool,
+    },
+    /// Only to the owner's own sessions: they started (`on`) or stopped getting a notification when
+    /// `target_id` goes live (#60). The target is never told.
+    LiveNotifyChanged {
+        user_id: UserId,
+        target_id: UserId,
+        on: bool,
     },
     /// Someone saved their profile; goes to everyone, like presence.
     ProfileUpdated {
@@ -510,6 +520,7 @@ impl Event {
             | Self::ServerVoiceChanged { .. }
             | Self::StatusChanged { .. }
             | Self::AppearOfflineChanged { .. }
+            | Self::LiveNotifyChanged { .. }
             | Self::BadgeEarned { .. } => None,
         }
     }
@@ -528,6 +539,7 @@ impl Event {
             | Self::PrivateNicknameChanged { user_id, .. }
             | Self::StatusChanged { user_id, .. }
             | Self::AppearOfflineChanged { user_id, .. }
+            | Self::LiveNotifyChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
             | Self::BadgeEarned { user_id, .. } => Some(*user_id),
@@ -643,6 +655,7 @@ mod tests {
             server_voice: vec![],
             status: Default::default(),
             appear_offline_to: vec![],
+            live_notify: vec![],
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");
@@ -721,6 +734,7 @@ mod tests {
             server_voice: vec![],
             status: Default::default(),
             appear_offline_to: vec![],
+            live_notify: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -839,6 +853,7 @@ mod tests {
             server_voice: vec![],
             status: Default::default(),
             appear_offline_to: vec![],
+            live_notify: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();

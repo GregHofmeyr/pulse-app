@@ -1735,6 +1735,18 @@ pub async fn set_appear_offline(
     core.check(&app, api.set_appear_offline(&token, user_id, hidden).await)
 }
 
+/// Get a notification when someone goes live (`on`), or stop (#60).
+#[tauri::command]
+pub async fn set_live_notify(
+    app: AppHandle,
+    core: State<'_, Core>,
+    user_id: UserId,
+    on: bool,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_live_notify(&token, user_id, on).await)
+}
+
 #[tauri::command]
 pub async fn name_archive(
     app: AppHandle,

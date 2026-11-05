@@ -48,7 +48,7 @@ describe('matchesFilter', () => {
 describe('clipView / isNewClip', () => {
   it('defaults to wall', () => expect(clipView(emptyState(), 'K1')).toBe('wall'))
   it('is new when after the read point', () => {
-    let s = applyReady(emptyState(), { me: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, servers: [], channels: [], members: [], dm_members: [], voice: [], people: [], read_states: [{ channel_id: 'K1', last_read_message_id: 'M5', unread: 0, mentions: 0 }], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [] })
+    let s = applyReady(emptyState(), { me: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, servers: [], channels: [], members: [], dm_members: [], voice: [], people: [], read_states: [{ channel_id: 'K1', last_read_message_id: 'M5', unread: 0, mentions: 0 }], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [], live_notify: [] })
     expect(isNewClip(s, 'K1', 'M6')).toBe(true)
     expect(isNewClip(s, 'K1', 'M5')).toBe(false)
     expect(isNewClip(s, 'K1', 'M6', 'M9')).toBe(false)

@@ -8,6 +8,7 @@
   import { openRename } from '../lib/profileCard.svelte'
   import { onMount } from 'svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
+  import LiveNotifyItem from './LiveNotifyItem.svelte'
 
   let { channel, muted, show, at = null, anchor = null, onClose, onRename, onLeft }: {
     channel: Channel
@@ -91,6 +92,7 @@
       {/if}
       {#if dmWith}
         <button class="menu-item" role="menuitem" onclick={() => { openRename({ kind: 'private', userId: dmWith }); onClose() }}>Change nickname</button>
+        <LiveNotifyItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
         <AppearOfflineItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
       {/if}
       {#if isPrivate}

@@ -1,7 +1,25 @@
 <script lang="ts">
   import { notifyPrefs, setNotificationsEnabled, setNotificationText } from '../lib/notifyPrefs.svelte'
   import { setToastPref, TOAST_KINDS, toastPrefs } from '../lib/toastPrefs.svelte'
+  import Avatar from './Avatar.svelte'
+  import { app } from '../lib/store.svelte'
+  import { api, errorText } from '../lib/tauri'
+  import { displayName } from '../lib/selectors'
   const uid = $props.id()
+
+  // "Notify me when they go live" (#60): the people you follow, by the name you see them by, in the order you added
+  // them. Adding someone is in their right-click menu; the list is on your account, so every device shows it.
+  const following = $derived(app.state.liveNotify.map((id) => ({ id, name: displayName(app.state, null, id) })))
+  let followError = $state('')
+  async function unfollow(id: string) {
+    followError = ''
+    try {
+      // the LiveNotifyChanged that follows takes them off the list
+      await api.setLiveNotify(id, false)
+    } catch (e) {
+      followError = errorText(e)
+    }
+  }
 </script>
 
 <section class="settings-pane">
@@ -40,6 +58,25 @@
       {/each}
     </div>
   </div>
+
+  <div class="settings-field">
+    <h3>Go-live notifications</h3>
+    <small>When one of these people goes live anywhere you can see, you get a notification and the live toast. Do Not Disturb holds them back.</small>
+    {#if following.length}
+      <ul class="follow-list">
+        {#each following as p (p.id)}
+          <li>
+            <Avatar id={p.id} name={p.name} size={28} />
+            <span class="who">{p.name}</span>
+            <button type="button" class="btn btn-secondary" aria-label="Stop notifying me when {p.name} goes live" onclick={() => unfollow(p.id)}>Remove</button>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="empty">Nobody yet. Right-click someone and pick "Notify me when they go live".</p>
+    {/if}
+    {#if followError}<p class="error" role="alert">{followError}</p>{/if}
+  </div>
 </section>
 
 <style>
@@ -48,4 +85,9 @@
   /* under the master switch, indented to its label */
   .kinds { display: flex; flex-direction: column; gap: 10px; margin-left: 54px; }
   .kinds .row { font-weight: 500; }
+  .empty { margin: 0; color: var(--text-2); font-size: 13px; }
+  .follow-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .follow-list li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; background: var(--bg-2); }
+  .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .error { margin: 0; color: var(--danger-text); font-size: 13px; }
 </style>

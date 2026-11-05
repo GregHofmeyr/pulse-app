@@ -118,7 +118,7 @@ describe('MemberList row menu (#113)', () => {
     rightClick(row(1))
     expect(menu()).not.toBeNull()
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for Sammy')
-    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'appear-offline'])
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'appear-offline'])
     expect(label('private-nick')).toBe('Set private nickname')
     expect(label('profile')).toBe('View profile')
     expect(label('message')).toBe('Message')
@@ -130,8 +130,22 @@ describe('MemberList row menu (#113)', () => {
     app.state = { ...app.state, privateNicks: { U2: 'Bestie' } }
     flushSync()
     rightClick(row(1))
-    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'appear-offline'])
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'appear-offline'])
     expect(label('private-nick')).toBe('Change private nickname')
+  })
+
+  it('Notify me when they go live, and back (#60)', () => {
+    rightClick(row(1))
+    expect(label('live-notify')).toBe('Notify me when they go live')
+    pickItem('live-notify')
+    expect(invoke.mock.calls.filter(([c]) => c === 'set_live_notify').map(([, a]) => a)).toEqual([{ userId: 'U2', on: true }])
+    expect(menu()).toBeNull()
+    app.state = { ...app.state, liveNotify: ['U2'] }
+    flushSync()
+    rightClick(row(1))
+    expect(label('live-notify')).toBe('Stop notifying me when they go live')
+    pickItem('live-notify')
+    expect(invoke.mock.calls.filter(([c]) => c === 'set_live_notify').at(-1)![1]).toEqual({ userId: 'U2', on: false })
   })
 
   it('Appear offline to them, and back (#45)', () => {

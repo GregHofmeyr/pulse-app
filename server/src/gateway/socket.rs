@@ -243,6 +243,7 @@ async fn ready_for(
             .map(|x| x.own(&now()))
             .unwrap_or_default(),
         appear_offline_to: crate::presence::hidden_list(db, me).await?,
+        live_notify: crate::streams::notify::list(db, me).await?,
     })
 }
 

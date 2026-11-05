@@ -25,7 +25,7 @@
 <div class="stack" aria-live="polite">
   {#each toasts.list as t (t.channelId + t.streamer)}
     <div class="toast fade-in" role="status">
-      <span><strong>{t.name}</strong> is live</span>
+      <span><strong>{t.name}</strong> is live{#if t.where} in {t.where}{/if}</span>
       {#if !windows}
         <!-- aria-disabled, not disabled: a disabled button swallows the hover that shows the reason -->
         <button type="button" class="btn btn-primary watch off" aria-disabled="true" data-tip={watchDisabledReason({ windows, voiceChannelId: voice.channelId, channelId: t.channelId })}>Watch</button>

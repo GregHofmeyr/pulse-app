@@ -104,4 +104,8 @@ status: OwnStatus,
 /**
  * The people you appear offline to (#45). Yours only; nobody else ever receives it.
  */
-appear_offline_to: Array<UserId>, };
+appear_offline_to: Array<UserId>, 
+/**
+ * The people whose going live you get a notification for (#60). Yours only.
+ */
+live_notify: Array<UserId>, };

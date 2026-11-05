@@ -29,7 +29,7 @@ describe('TextChannel: leaving while an older page is loading', () => {
       me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
       channels: [{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }],
       members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online' as const, dnd_until: null }, appear_offline_to: [],
+      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online' as const, dnd_until: null }, appear_offline_to: [], live_notify: [],
     })
     app.state = markHistory(addHistory(s, 'C1', page(100, 200)), 'C1', false) // M0100..M0299
     const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
@@ -62,7 +62,7 @@ describe('TextChannel: unsent messages', () => {
     me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
     channels: [{ id: 'C1', server_id: 'S1', kind: 'text' as const, name: 'general', position: 0 }],
     members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online' as const, dnd_until: null }, appear_offline_to: [],
+    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online' as const, dnd_until: null }, appear_offline_to: [], live_notify: [],
   }
   const unsent = (nonce: string, status: 'pending' | 'failed', content = 'hello **world**') =>
     ({ nonce, content, reply_to_id: null, thread_root_id: null, status, created_at: '2026-10-01T00:00:00.000Z' })
@@ -163,7 +163,7 @@ describe('TextChannel: a failed delete', () => {
       me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
       channels: [{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }],
       members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online' as const, dnd_until: null }, appear_offline_to: [],
+      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online' as const, dnd_until: null }, appear_offline_to: [], live_notify: [],
     })
     app.state = markHistory(addHistory(app.state, 'C1', [{ ...msg(1), author_id: 'U1' }]), 'C1', true)
     const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
@@ -192,7 +192,7 @@ describe('TextChannel: the edit box', () => {
       me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
       channels: [{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }],
       members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online' as const, dnd_until: null }, appear_offline_to: [],
+      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online' as const, dnd_until: null }, appear_offline_to: [], live_notify: [],
     })
     app.state = markHistory(addHistory(s, 'C1', [{ ...msg(1), author_id: 'U1' }]), 'C1', true)
     const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
@@ -228,7 +228,7 @@ describe('TextChannel: quotes channel', () => {
     me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
     channels: [{ id: 'C1', server_id: 'S1', kind, name: 'quotes', position: 0 }],
     members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online' as const, dnd_until: null }, appear_offline_to: [],
+    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online' as const, dnd_until: null }, appear_offline_to: [], live_notify: [],
   })
   const quoteMsg: Message = {
     ...msg(1), author_id: 'U1', content: '“hi” — alex',
@@ -627,7 +627,7 @@ describe('TextChannel: coming back to a channel', () => {
     me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
     channels: [{ id: 'C1', server_id: 'S1', kind: 'text' as const, name: 'general', position: 0 }],
     members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online' as const, dnd_until: null }, appear_offline_to: [],
+    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online' as const, dnd_until: null }, appear_offline_to: [], live_notify: [],
   }
   // jsdom has no layout (every height 0 reads as "at the bottom"): give the list a real one, a long
   // history in a short window, opened at the top as a fresh element is.

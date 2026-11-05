@@ -27,7 +27,7 @@ const ready = (over: Partial<Ready> = {}): Ready => ({
   me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }], channels: [{ id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 0 }],
   members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: 'Big Dog' }] }],
   dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [],
-  qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [], ...over,
+  qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [], live_notify: [], ...over,
 })
 
 describe('text helpers', () => {
