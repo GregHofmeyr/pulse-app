@@ -4,6 +4,7 @@
   import { tick, untrack } from 'svelte'
   import { getCurrentWebview } from '@tauri-apps/api/webview'
   import ClipEditor from './ClipEditor.svelte'
+  import { exitFade } from '../lib/exit'
   import ClipFeed from './ClipFeed.svelte'
   import ClipsHeader from './ClipsHeader.svelte'
   import RepliesPanel from './RepliesPanel.svelte'
@@ -231,7 +232,7 @@
     {/key}
   {/if}
   {#if dragging}<div class="drop-zone" aria-hidden="true"><span>Drop a video to share it</span></div>{/if}
-  {#if notice.text}<p class="notice fade-in" role="status">{notice.text}</p>{/if}
+  {#if notice.text}<p class="toast notice fade-in" role="status" out:exitFade>{notice.text}</p>{/if}
 </div>
 <div class="editor-host" bind:this={editorHost}>
   {#if source}
@@ -249,5 +250,6 @@
   .editor-host { display: contents; }
   .drop-zone { position: absolute; inset: 8px; z-index: 4; display: grid; place-items: center; border: 2px dashed var(--focus-ring); border-radius: 14px; background: var(--veil); pointer-events: none; }
   .drop-zone span { padding: 8px 16px; border-radius: 10px; background: var(--bg-2); color: var(--text); font-size: 15px; font-weight: 600; }
-  .notice { position: absolute; left: 50%; bottom: 72px; transform: translateX(-50%); z-index: 5; margin: 0; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: var(--shadow-2); max-width: 80%; }
+  /* the shared .toast look; centred by margins, not a transform (WebKitGTK blurs transformed text) */
+  .notice { position: absolute; left: 0; right: 0; bottom: 72px; z-index: 5; width: max-content; max-width: 80%; margin: 0 auto; }
 </style>

@@ -428,6 +428,8 @@
   .chip { height: 30px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 15px; background: transparent; color: var(--text-2); cursor: pointer; }
   .chip[aria-checked='true'] { background: var(--bg-3); border-color: var(--focus-ring); color: var(--text); }
   input[type='color'] { width: 44px; height: 30px; padding: 0 2px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; cursor: pointer; }
+  /* the shared field ring (EmojiBox turns the box's own outline off) */
+  .settings-field :global(.bio:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .settings-field :global(.bio) { min-height: 72px; max-height: 160px; overflow-y: auto; padding: 8px 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--bg-1); white-space: pre-wrap; }
   .counter { align-self: flex-end; }
   .nudge { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); color: var(--text); font-size: 13px; }

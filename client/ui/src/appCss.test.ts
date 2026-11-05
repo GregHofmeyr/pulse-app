@@ -125,7 +125,7 @@ describe('motion', () => {
 
   it('the stream toast, which shows while you are in a game, uses the shared entrance (so it is exempt)', () => {
     const toast = readFileSync(resolve(__dirname, 'components/StreamToast.svelte'), 'utf8')
-    expect(toast.match(/class="toast fade-in"/g)).toHaveLength(2)
+    expect(toast.match(/class="toast (notice )?fade-in"/g)).toHaveLength(2)
     expect(toast).not.toMatch(/animation:/)
   })
 })

@@ -122,7 +122,9 @@
 
 <style>
   .tile { position: relative; aspect-ratio: 16 / 9; min-width: 0; border-radius: 16px; overflow: hidden; background: var(--bg-1); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+  /* the keyboard sees where it is (#173): the shared ring, drawn inside (the tile clips what's outside it) */
   .tile:focus { outline: none; }
+  .tile:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
   .idle { cursor: pointer; }
   .idle.blocked { cursor: default; }
   .backdrop { position: absolute; inset: 0; opacity: .22; }
