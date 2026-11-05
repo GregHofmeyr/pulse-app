@@ -78,6 +78,7 @@ pub fn test_config() -> Config {
         clips: None, // `spawn_in` points it at a fake S3 unless the test set it
         embeds: crate::config::EmbedConfig::default(),
         launch_date: None,
+        calls: crate::config::CallTimings::default(),
     }
 }
 

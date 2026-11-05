@@ -45,7 +45,8 @@ pub async fn advance(
     Ok(r.rows_affected() > 0)
 }
 
-/// Unread = others' normal, non-deleted main-list messages after the point (replies never count);
+/// Unread = others' normal, non-deleted main-list messages after the point, and call lines of calls others
+/// started (#50) (replies never count);
 /// mentions = your mentions in the main list after it, plus those in a quote's replies after your
 /// seen point for that quote.
 /// Channels without a point (never joined/initialised) are reported as fully read.
@@ -119,8 +120,11 @@ async fn read_states(
     let sql = format!(
         "SELECT rs.channel_id, rs.last_read_message_id,
             (SELECT COUNT(*) FROM messages m WHERE m.channel_id = rs.channel_id
-               AND m.id > COALESCE(rs.last_read_message_id, '') AND m.kind = 'normal'
-               AND m.deleted_at IS NULL AND m.thread_root_id IS NULL AND COALESCE(m.author_id, '') != rs.user_id),
+               AND m.id > COALESCE(rs.last_read_message_id, '')
+               AND m.deleted_at IS NULL AND m.thread_root_id IS NULL
+               AND (m.kind = 'normal' AND COALESCE(m.author_id, '') != rs.user_id
+                    OR m.kind = 'system' AND json_extract(m.system_payload, '$.type') = 'call'
+                       AND COALESCE(json_extract(m.system_payload, '$.started_by'), '') != rs.user_id)),
             (SELECT COUNT(*) FROM mentions mn JOIN messages m ON m.id = mn.message_id
                WHERE mn.user_id = rs.user_id AND m.channel_id = rs.channel_id
                AND m.deleted_at IS NULL AND m.thread_root_id IS NULL

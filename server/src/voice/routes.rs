@@ -187,6 +187,8 @@ async fn webhook(
             if record {
                 crate::streams::ghosts::joined_voice(&s, channel_id, user_id).await;
             }
+            // a DM or group: the call starts (or carries on), and this person's ring is answered
+            crate::calls::joined(&s, &ch, user_id).await;
             if let Some((server, id, at)) = opened {
                 crate::badges::voice::opened(&s, server, user_id, &id, at).await;
             }
@@ -248,6 +250,10 @@ async fn webhook(
                         },
                     )
                     .await;
+            }
+            // a DM or group's room now empty: its call waits a moment, then ends
+            if in_memory {
+                crate::calls::left(&s, &ch).await;
             }
             // Badge bookkeeping last, once everything above is committed and published.
             crate::badges::voice::closed(&s, channel_id, &sessions).await;

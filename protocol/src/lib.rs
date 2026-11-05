@@ -41,6 +41,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::Status::export_all(&cfg)?;
     rest::OwnStatus::export_all(&cfg)?;
     rest::SetStatusRequest::export_all(&cfg)?;
+    rest::StartCallResponse::export_all(&cfg)?;
     rest::ReadState::export_all(&cfg)?;
     rest::Mute::export_all(&cfg)?;
     rest::MuteTarget::export_all(&cfg)?;

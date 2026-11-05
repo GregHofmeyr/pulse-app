@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::ids::{
-    ChannelId, ClipUploadId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId,
+    CallId, ChannelId, ClipUploadId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId,
 };
 
 /// A `Debug` that names every field but prints the secret ones as `<redacted>`, for types that
@@ -510,6 +510,67 @@ pub struct Message {
     /// after the send; the sender can hide them).
     #[serde(default)]
     pub embeds: Vec<LinkEmbed>,
+    /// Set on a DM or group's call line (#50): who started it, when it ended, who joined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub call: Option<CallLine>,
+}
+
+/// A call line's metadata (#50). Each member's client renders it: "sam started a call", "· 12 min"
+/// once `ended_at` is set, and "Missed call from sam" for a member who isn't in `joined` (and didn't
+/// start it).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct CallLine {
+    pub call_id: CallId,
+    /// `None` once the starter's account is gone.
+    #[serde(default)]
+    pub started_by: Option<UserId>,
+    #[serde(default)]
+    pub ended_at: Option<String>,
+    /// Members who were in the call at some point; filled in when it ends.
+    #[serde(default)]
+    pub joined: Vec<UserId>,
+}
+
+/// A call in progress in a DM or group (#50). It started when the room went from empty to occupied
+/// and lasts until the room has been empty for 30 s.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct CallInfo {
+    pub id: CallId,
+    pub channel_id: ChannelId,
+    pub started_by: Option<UserId>,
+    pub started_at: String,
+    /// The call's line in the conversation.
+    pub line_id: Option<MessageId>,
+}
+
+/// You are being rung (#50): the call, who rang, and when the ring gives up.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct CallRing {
+    pub call_id: CallId,
+    pub channel_id: ChannelId,
+    pub caller_id: UserId,
+    pub expires_at: String,
+}
+
+/// Why your ring stopped (#50). The caller is never told any of these.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum RingEndReason {
+    /// You joined the call (on this device or another).
+    Answered,
+    /// You declined (on this device or another).
+    Declined,
+    TimedOut,
+    CallEnded,
+}
+
+/// `POST /calls/{channel}`: the call you started or joined; `rang` is false when one was already
+/// going (joining it rings nobody).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct StartCallResponse {
+    pub call: CallInfo,
+    pub rang: bool,
 }
 
 /// One emoji on a message: a Unicode emoji or `custom:<id>`.

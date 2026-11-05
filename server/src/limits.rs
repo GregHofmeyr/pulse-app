@@ -113,6 +113,8 @@ pub struct LimitsConfig {
     pub rename_user: Rate,
     /// Status changes and appear-offline toggles per person (#45): generous, like renames.
     pub status_user: Rate,
+    /// Calls started per person (#50): stops ring spam, not normal use. Joining a call already going counts too.
+    pub call_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -155,6 +157,8 @@ impl Default for LimitsConfig {
             link_thumb_user: Rate::per_hour(60),
             rename_user: Rate::per_minute(30),
             status_user: Rate::per_minute(30),
+            // six at once, then one every 20 s
+            call_user: Rate::new(6, 0.05),
         }
     }
 }
@@ -191,6 +195,7 @@ impl LimitsConfig {
             link_thumb_user: r,
             rename_user: r,
             status_user: r,
+            call_user: r,
         }
     }
 }
@@ -340,6 +345,7 @@ pub struct Limits {
     pub link_thumb_user: Limiter,
     pub rename_user: Limiter,
     pub status_user: Limiter,
+    pub call_user: Limiter,
 }
 
 impl Limits {
@@ -372,6 +378,7 @@ impl Limits {
             link_thumb_user: Limiter::new(c.link_thumb_user),
             rename_user: Limiter::new(c.rename_user),
             status_user: Limiter::new(c.status_user),
+            call_user: Limiter::new(c.call_user),
         }
     }
 }

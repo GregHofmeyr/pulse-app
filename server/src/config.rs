@@ -38,12 +38,14 @@ pub struct Config {
     /// Launch day (South African), for Early Adopter: everyone who joined in the week from it.
     /// `None` (`PULSE_LAUNCH_DATE` unset) = nobody gets it yet.
     pub launch_date: Option<chrono::NaiveDate>,
+    /// How long a call rings and how long an empty call waits before it ends (#50).
+    pub calls: CallTimings,
 }
 
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
     limits, stream_media_timeout, media_dir, media_min_free_bytes, totp_key, clips, embeds,
-    launch_date ;
+    launch_date, calls ;
     livekit_secret
 });
 
@@ -86,6 +88,7 @@ impl Config {
                 ..EmbedConfig::default()
             },
             launch_date: launch_date(std::env::var("PULSE_LAUNCH_DATE").ok().as_deref())?,
+            calls: CallTimings::default(),
         })
     }
 }
@@ -134,6 +137,23 @@ fn clip_store(get: impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<Cli
         key_id,
         secret,
     }))
+}
+
+/// Call timing (#50): 30 s of ringing, and 30 s for an empty call to wait for someone to come back
+/// (everyone dropping and reconnecting carries on the same call). Tests shorten them.
+#[derive(Clone, Copy, Debug)]
+pub struct CallTimings {
+    pub ring: Duration,
+    pub grace: Duration,
+}
+
+impl Default for CallTimings {
+    fn default() -> Self {
+        Self {
+            ring: Duration::from_secs(30),
+            grace: Duration::from_secs(30),
+        }
+    }
 }
 
 /// Link previews. Nothing secret in here.
@@ -331,6 +351,7 @@ mod tests {
             clips: None,
             embeds: EmbedConfig::default(),
             launch_date: None,
+            calls: CallTimings::default(),
         };
         let d = format!("{cfg:?}");
         assert!(!d.contains("SECRET"), "{d}");
