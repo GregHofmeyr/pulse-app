@@ -229,6 +229,26 @@ describe('account menu', () => {
     expect(profileUi.card).toBeNull()
   })
 
+  // #155: Report a bug is a bug icon in the title bar, just left of Minimise, not an account menu item.
+  it('Report a bug is the title bar icon left of Minimise, and it opens the report dialog', () => {
+    const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    app.state = { ...emptyState(), me }
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+    flushSync()
+    const bar = [...document.querySelectorAll<HTMLButtonElement>('header > button')]
+    const bug = bar.find((b) => b.getAttribute('aria-label') === 'Report a bug')!
+    expect(bug).toBeDefined()
+    expect(bug.textContent?.trim()).toBe('') // icon only: the tooltip comes from its aria-label
+    expect(bug.querySelector('svg')).not.toBeNull()
+    expect(bar[bar.indexOf(bug) + 1].getAttribute('aria-label')).toBe('Minimise')
+    document.querySelector<HTMLButtonElement>('.who-btn')!.click()
+    flushSync()
+    expect(document.querySelector('.me [role=menu]')!.textContent).not.toContain('Report a bug')
+    bug.click()
+    flushSync()
+    expect(document.querySelector('[role=dialog][aria-label="Report a bug"]')).not.toBeNull()
+  })
+
   it('Edit profile on your card opens Settings on Profile', () => {
     const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
     app.state = { ...emptyState(), me }

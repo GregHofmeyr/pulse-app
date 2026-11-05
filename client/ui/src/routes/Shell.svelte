@@ -513,6 +513,8 @@
     {#if ui.autoReported}
       <span class="conn auto-report" role="status">Something went wrong in Pulse last time, so we sent Greg a report. <button aria-label="Dismiss" onclick={() => (ui.autoReported = false)}>×</button></span>
     {/if}
+    <!-- #155: icon only; the app-wide tooltip reads its aria-label -->
+    <button class="win report" aria-label="Report a bug" onclick={() => (reportOpen = true)}><Icon name="bug" size={15} /></button>
     <button class="win" aria-label="Minimise" onclick={() => win.minimize()}><Icon name="min" size={14} /></button>
     <button class="win" aria-label="Maximise" onclick={() => win.toggleMaximize()}><Icon name="square" size={13} /></button>
     <button class="win" aria-label="Close" onclick={() => win.close()}><Icon name="x" size={14} /></button>
@@ -560,7 +562,6 @@
         {#if menuOpen}
           <div class="menu menu-surface pop-in" role="menu" use:clickOutside={closeAccountMenu}>
             <button class="menu-item" role="menuitem" onclick={() => { menuOpen = false; openSettings() }}>Settings</button>
-            <button class="menu-item warn" role="menuitem" onclick={() => { menuOpen = false; reportOpen = true }}>Report a bug</button>
             <button class="menu-item danger" role="menuitem" onclick={logout}>Log out</button>
           </div>
         {/if}
@@ -663,6 +664,8 @@
   .conn { font-size: 12px; font-weight: 600; color: var(--warn-text); padding: 4px 10px; border-radius: 12px; background: var(--warn-soft); margin-right: 6px; }
   .win { width: 32px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .win:hover { background: var(--bg-2); color: var(--text); }
+  /* Report a bug (#155): the warn colour it had in the account menu, on hover */
+  .win.report:hover, .win.report:focus-visible { color: var(--warn-text); }
   .body { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 0 8px 8px; }
   .panel { border-radius: var(--radius); overflow: hidden; }
   .side { width: 264px; flex-shrink: 0; background: var(--bg-1); display: flex; flex-direction: column; }
@@ -692,7 +695,6 @@
   .menu { position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 10; min-width: 200px; }
   /* not the bold of the header it can sit under */
   .menu button { font-weight: 400; }
-  .menu .warn { color: var(--warn-text); }
   .auto-report button { border: 0; background: none; color: inherit; font-size: 15px; line-height: 1; padding: 0 0 0 6px; }
   .auto-report button.link { font-size: inherit; font-weight: 600; text-decoration: underline; padding: 0 2px; }
   .overlay { position: fixed; inset: 0; z-index: 20; }

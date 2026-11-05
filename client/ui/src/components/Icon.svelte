@@ -27,6 +27,8 @@
     pencil: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
     trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
     x: 'M6 6l12 12M18 6 6 18',
+    // a beetle: round body with a centre seam, head, antennae, three legs a side (Report a bug)
+    bug: 'M8 10a4 4 0 0 1 8 0v4a4 4 0 0 1-8 0zM12 10v8M9.5 6.5 8 4M14.5 6.5 16 4M8 11H4M8 15H4.5M16 11h4M16 15h3.5M8.5 18 6 20M15.5 18 18 20',
     image: 'M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3M21 15l-5-5L5 21',
     min: 'M5 12h14',
     square: 'M4 4h16v16H4z',
