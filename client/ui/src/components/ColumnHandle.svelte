@@ -22,6 +22,8 @@
   let drag = $state<null | { x: number; w: number; last: number; moved: boolean }>(null)
   const clamp = (v: number) => Math.max(min, Math.min(max, Math.round(v)))
 
+  // One width a frame (#173): the pointer moves faster than the screen draws, and every width lays the chat out again.
+  let frame = 0
   function move(e: MouseEvent) {
     if (!drag) return
     const dx = e.clientX - drag.x
@@ -29,7 +31,10 @@
     if (w === drag.last && !drag.moved) return
     drag.last = w
     drag.moved = true
-    onResize(w, false)
+    if (!frame) frame = requestAnimationFrame(() => {
+      frame = 0
+      if (drag) onResize(drag.last, false)
+    })
   }
   function end() {
     if (!drag) return
@@ -39,6 +44,8 @@
     if (moved || last !== w) onResize(last, true)
   }
   function stop() {
+    if (frame) cancelAnimationFrame(frame)
+    frame = 0
     drag = null
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', end)

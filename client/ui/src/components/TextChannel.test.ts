@@ -50,6 +50,47 @@ describe('TextChannel: leaving while an older page is loading', () => {
   })
 })
 
+describe('TextChannel: an older page keeps the view still (#173)', () => {
+  it('the message on screen stays where it was, whatever the scroll did meanwhile', async () => {
+    const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    const s = applyReady(emptyState(), {
+      me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
+      channels: [{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }],
+      members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
+      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online' as const, dnd_until: null }, appear_offline_to: [], live_notify: [],
+    })
+    Element.prototype.scrollTo = () => {}
+    app.state = markHistory(addHistory(s, 'C1', page(100, 50)), 'C1', false)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    const list = document.querySelector<HTMLElement>('.list')!
+    // jsdom has no layout: the first message sits 40px down, and 640px down once 10 older ones are drawn above it
+    const first = () => document.querySelector<HTMLElement>('[data-message-id="M0100"]')!
+    const rect = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      if (this.dataset.messageId === 'M0100') {
+        const y = document.querySelector('[data-message-id="M0090"]') ? 640 : 40
+        return { top: y, bottom: y + 20, left: 0, right: 0, width: 0, height: 20, x: 0, y, toJSON() {} } as DOMRect
+      }
+      return rect.call(this)
+    }
+    try {
+      list.scrollTop = 0
+      list.dispatchEvent(new Event('scroll'))
+      expect(first()).not.toBeNull()
+      releaseOlder(page(90, 10))
+      await tick()
+      await new Promise((r) => setTimeout(r, 0))
+      flushSync()
+      expect(list.scrollTop).toBe(600)
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = rect
+      unmount(c)
+      document.body.innerHTML = ''
+    }
+  })
+})
+
 describe('TextChannel: unsent messages', () => {
   beforeEach(() => {
     Element.prototype.scrollTo = () => {} // jsdom has none

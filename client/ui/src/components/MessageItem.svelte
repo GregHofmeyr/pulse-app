@@ -313,7 +313,7 @@
   .reply strong { color: var(--text-2); }
   .hook { width: 28px; height: 10px; margin-top: 10px; border-left: 2px solid var(--bg-4); border-top: 2px solid var(--bg-4); border-top-left-radius: 6px; flex-shrink: 0; }
   .snippet { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: var(--radius-sm); }
+  .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: var(--radius-sm); will-change: opacity; }
   /* fades in, hides at once (#173): sweeping down a channel never leaves half-faded bars behind */
   .msg:hover .actions, .actions.open { opacity: 1; pointer-events: auto; transition: opacity var(--dur) var(--ease); }
   .actions button { width: 30px; height: 28px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-2); display: grid; place-items: center; }

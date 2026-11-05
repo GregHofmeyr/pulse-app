@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The drag handle between a side column and the main area (#160).
 import { flushSync, mount, unmount } from 'svelte'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ColumnHandle from './ColumnHandle.svelte'
 import type { Side } from '../lib/columns'
 
@@ -26,6 +26,32 @@ const key = (el: Element, k: string, shiftKey = false) => {
   flushSync()
   return e
 }
+
+// a frame at once (the coalescing has its own test below); 0: nothing left pending
+beforeEach(() => void vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => (cb(0), 0)))
+afterEach(() => void vi.unstubAllGlobals())
+
+describe('a drag is one update a frame (#173)', () => {
+  it('moves within a frame become one resize, with the latest width; release saves at once', () => {
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
+    vi.stubGlobal('cancelAnimationFrame', () => void frames.splice(0))
+    const h = show('left')
+    pointer(h, 'pointerdown', 300)
+    pointer(window, 'pointermove', 310)
+    pointer(window, 'pointermove', 320)
+    pointer(window, 'pointermove', 330)
+    expect(onResize).not.toHaveBeenCalled()
+    expect(frames).toHaveLength(1)
+    frames.shift()!(0)
+    expect(onResize).toHaveBeenCalledTimes(1)
+    expect(onResize).toHaveBeenLastCalledWith(294, false)
+    pointer(window, 'pointermove', 340)
+    pointer(window, 'pointerup', 340)
+    expect(onResize).toHaveBeenLastCalledWith(304, true)
+    expect(frames).toHaveLength(0)
+  })
+})
 
 afterEach(() => {
   if (cmp) unmount(cmp)

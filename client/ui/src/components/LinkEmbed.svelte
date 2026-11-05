@@ -154,7 +154,8 @@
   .play :global(svg) { fill: currentColor; }
   .hide {
     width: 24px; height: 24px; border: 0; border-radius: 6px; padding: 0; background: transparent; color: var(--text-3);
-    display: grid; place-items: center; opacity: 0; transition: opacity var(--dur) var(--ease);
+    /* its own layer for good, as the entrances (#103): a fade that makes and drops one flashes on WebKitGTK */
+    display: grid; place-items: center; opacity: 0; transition: opacity var(--dur-fast) var(--ease); will-change: opacity;
   }
   .wrap:hover .hide, .hide:focus-visible, .wrap:focus-within .hide { opacity: 1; }
   .hide:hover { color: var(--text); background: var(--bg-3); }

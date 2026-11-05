@@ -148,7 +148,7 @@ describe('modal', () => {
 })
 
 describe('narrowerThan (#97)', () => {
-  it('reports whether the element is narrower than the limit, now and on every resize, and stops when removed', async () => {
+  it('reports whether the element is narrower than the limit on every resize (the first before paint), and stops when removed', async () => {
     const { narrowerThan } = await import('./actions')
     let fire: (w: number) => void = () => {}
     let disconnected = false
@@ -158,10 +158,15 @@ describe('narrowerThan (#97)', () => {
       disconnect() { disconnected = true }
     })
     const el = document.createElement('div')
-    Object.defineProperty(el, 'clientWidth', { value: 500 })
+    let read = false
+    Object.defineProperty(el, 'clientWidth', { get: () => ((read = true), 500) })
     const seen: boolean[] = []
     const a = narrowerThan(el, { px: 600, set: (v) => seen.push(v) })
-    expect(seen).toEqual([true]) // measured at once
+    // no synchronous layout read (#173): the observer's first report, before paint, says it
+    expect(read).toBe(false)
+    expect(seen).toEqual([])
+    fire(500)
+    expect(seen).toEqual([true])
     fire(800)
     fire(590)
     expect(seen).toEqual([true, false, true])

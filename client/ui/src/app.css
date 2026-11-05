@@ -831,6 +831,8 @@ button, .menu-item, [role='option'], .hover-row { transition: background-color v
 .settings-pane small { font-size: 12px; font-weight: 400; color: var(--text-3); letter-spacing: 0; }
 /* Dragging a column's edge (#160): the resize cursor everywhere, and no text selected on the way. */
 html.resizing-columns, html.resizing-columns * { cursor: col-resize !important; user-select: none; }
+/* and nothing under the pointer reacts on the way (hover fades, action bars): the handle listens on the window */
+html.resizing-columns body * { pointer-events: none; }
 /* The on/off switch used across settings panes. */
 .switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; border: 0; border-radius: var(--radius-lg); padding: 0; background: var(--bg-4); }
 .switch span { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--text-2); transition: transform var(--dur) var(--ease), background-color var(--dur) var(--ease); }

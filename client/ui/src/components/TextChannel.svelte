@@ -112,13 +112,19 @@
   async function maybeLoadOlder() {
     if (loadingOlder || reachedStart || list.scrollTop > 60 || !messages.length) return
     loadingOlder = true
-    const before = list.scrollHeight
     try {
       const oldest = messages[0].id
       const page = await api.listMessages(channelId, oldest)
+      // Keep the view still (unless we left): the oldest message stays where it is on screen once the page is drawn
+      // above it, measured after the wait so a scroll meanwhile counts, and whether or not the engine anchors
+      // scrolling itself (WebKitGTK doesn't; #173).
+      const anchor = list?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(oldest)}"]`)
+      const y0 = anchor?.getBoundingClientRect().top ?? 0
+      const before = list?.scrollHeight ?? 0
       app.state = addOlder(app.state, channelId, oldest, page)
       await tick()
-      if (list) list.scrollTop = list.scrollHeight - before // keep the view where it was (unless we left)
+      if (list && anchor?.isConnected) list.scrollTop += anchor.getBoundingClientRect().top - y0
+      else if (list) list.scrollTop += list.scrollHeight - before // no element to hold on to: by the height added
     } catch (e) {
       error = errorText(e)
     } finally {
