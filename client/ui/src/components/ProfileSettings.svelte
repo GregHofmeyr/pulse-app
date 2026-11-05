@@ -20,6 +20,7 @@
   import { lightenForName, NAME_GRADIENTS, NAME_SOLIDS, type NamePreset } from '../lib/nameStyle'
   import type { CropRect } from '../lib/crop'
   import type { Profile } from '../lib/protocol/Profile'
+  import Loading from './Loading.svelte'
 
   let { dirty = $bindable(false), settling = $bindable(null) }: {
     /** Unsaved changes, an upload still in flight included: leaving would lose them. */
@@ -281,7 +282,7 @@
   {#if loadError}
     <p class="error" role="alert">{loadError} <button type="button" class="btn btn-secondary retry" onclick={() => me && load(me.id)}>Retry</button></p>
   {:else if !draft || !me || !pu || !pc || !profile}
-    <p class="muted">Loading…</p>
+    <Loading />
   {:else}
     <div class="layout">
       <div class="settings">
@@ -305,10 +306,10 @@
           <span class="settings-label">Card theme</span>
           <div class="swatches" role="radiogroup" aria-label="Card theme" tabindex="-1" onkeydown={radioKeys}>
             {#each THEME_PRESETS as p (p.key)}
-              <button type="button" role="radio" class="swatch" aria-label={p.label} title={p.label} aria-checked={themeKey === p.key} tabindex={themeKey === p.key ? 0 : -1}
+              <button type="button" role="radio" class="swatch" aria-label={p.label} aria-checked={themeKey === p.key} tabindex={themeKey === p.key ? 0 : -1}
                 style:background="linear-gradient({p.top}, {p.bottom})" onclick={() => setTheme(p.top, p.bottom)}></button>
             {/each}
-            <button type="button" role="radio" class="chip" aria-checked={themeKey === null} tabindex={themeKey === null ? 0 : -1} onclick={() => (customTheme = true)}>Custom</button>
+            <button type="button" role="radio" class="chip toggle-chip" aria-checked={themeKey === null} tabindex={themeKey === null ? 0 : -1} onclick={() => (customTheme = true)}>Custom</button>
           </div>
           {#if themeKey === null}
             <div class="row">
@@ -321,9 +322,9 @@
         <div class="settings-field">
           <span class="settings-label">Name font</span>
           <div class="chips" role="radiogroup" aria-label="Name font" tabindex="-1" onkeydown={radioKeys}>
-            <button type="button" role="radio" class="chip" aria-checked={draft.font === null} tabindex={fontKnown ? (draft.font === null ? 0 : -1) : 0} onclick={() => (draft!.font = null)}>Default</button>
+            <button type="button" role="radio" class="chip toggle-chip" aria-checked={draft.font === null} tabindex={fontKnown ? (draft.font === null ? 0 : -1) : 0} onclick={() => (draft!.font = null)}>Default</button>
             {#each NAME_FONTS as f (f.key)}
-              <button type="button" role="radio" class="chip" aria-checked={draft.font === f.key} tabindex={draft.font === f.key ? 0 : -1}
+              <button type="button" role="radio" class="chip toggle-chip" aria-checked={draft.font === f.key} tabindex={draft.font === f.key ? 0 : -1}
                 style="font-family: {f.family}; font-weight: {f.weight}; font-size: calc(13px * {f.scale})" onclick={() => (draft!.font = f.key)}>{f.label}</button>
             {/each}
           </div>
@@ -333,16 +334,16 @@
           <span class="settings-label">Name colour</span>
           <div class="swatches" role="radiogroup" aria-label="Name colour" tabindex="-1" onkeydown={colourKeys}>
             <!-- no colour: a struck-through swatch, sized like the presets beside it -->
-            <button type="button" role="radio" class="swatch round none" aria-label="Default" title="Default colour" aria-checked={colourKey === 'default'} tabindex={colourKey === 'default' ? 0 : -1} onclick={() => setColours([])}></button>
+            <button type="button" role="radio" class="swatch round none" aria-label="Default" data-tip="Default colour" aria-checked={colourKey === 'default'} tabindex={colourKey === 'default' ? 0 : -1} onclick={() => setColours([])}></button>
             {#each NAME_SOLIDS as p (p.key)}
-              <button type="button" role="radio" class="swatch round" aria-label={p.label} title={p.label} aria-checked={colourKey === `solid:${p.key}`} tabindex={colourKey === `solid:${p.key}` ? 0 : -1}
+              <button type="button" role="radio" class="swatch round" aria-label={p.label} aria-checked={colourKey === `solid:${p.key}`} tabindex={colourKey === `solid:${p.key}` ? 0 : -1}
                 style:background={p.colors[0]} onclick={() => setColours(p.colors)}></button>
             {/each}
             {#each NAME_GRADIENTS as p (p.key)}
-              <button type="button" role="radio" class="swatch round" aria-label="{p.label} gradient" title="{p.label} gradient" aria-checked={colourKey === `gradient:${p.key}`} tabindex={colourKey === `gradient:${p.key}` ? 0 : -1}
+              <button type="button" role="radio" class="swatch round" aria-label="{p.label} gradient" aria-checked={colourKey === `gradient:${p.key}`} tabindex={colourKey === `gradient:${p.key}` ? 0 : -1}
                 style:background="linear-gradient(135deg, {p.colors[0]}, {p.colors[1]})" onclick={() => setColours(p.colors)}></button>
             {/each}
-            <button type="button" role="radio" class="swatch round pick" aria-label="Custom" title="Custom colour" aria-checked={colourKey === 'custom'} tabindex={colourKey === 'custom' ? 0 : -1} onclick={pickCustomColour}><Icon name="eyedropper" size={14} /></button>
+            <button type="button" role="radio" class="swatch round pick" aria-label="Custom" data-tip="Custom colour" aria-checked={colourKey === 'custom'} tabindex={colourKey === 'custom' ? 0 : -1} onclick={pickCustomColour}><Icon name="eyedropper" size={14} /></button>
           </div>
           {#if colourKey === 'custom'}
             <Segmented label="Custom colour" value={draft.colors.length >= 2 ? 'gradient' : 'solid'} onchange={setCustomCount}
@@ -416,7 +417,7 @@
   .upload.disabled { opacity: .5; cursor: default; }
   .file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   .swatches, .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  .swatch { width: 40px; height: 28px; border-radius: 8px; border: 2px solid transparent; padding: 0; cursor: pointer; }
+  .swatch { width: 40px; height: 28px; border-radius: var(--radius-sm); border: 2px solid transparent; padding: 0; cursor: pointer; }
   .swatch.round { width: 28px; border-radius: 50%; }
   .swatch[aria-checked='true'] { border-color: var(--text); box-shadow: 0 0 0 2px var(--ring) inset; }
   /* Default (no colour) and Custom: swatch-sized, drawn in the theme's own greys */
@@ -424,15 +425,17 @@
   .swatch.pick { border-color: var(--bg-4); background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; }
   .swatch.pick:hover { color: var(--text); }
   .swatch.none[aria-checked='true'], .swatch.pick[aria-checked='true'] { border-color: var(--text); }
-  .chip { height: 30px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 15px; background: transparent; color: var(--text-2); cursor: pointer; }
-  .chip[aria-checked='true'] { background: var(--bg-3); border-color: var(--focus-ring); color: var(--text); }
-  input[type='color'] { width: 44px; height: 30px; padding: 0 2px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; cursor: pointer; }
-  .settings-field :global(.bio) { min-height: 72px; max-height: 160px; overflow-y: auto; padding: 8px 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--bg-1); white-space: pre-wrap; }
+  /* the shared .toggle-chip (app.css); a font's name keeps the body size, so the sample reads */
+  .chip { font-size: 14px; font-weight: 400; }
+  input[type='color'] { width: 44px; height: 30px; padding: 0 2px; border: 1px solid var(--bg-4); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
+  /* the shared field ring (EmojiBox turns the box's own outline off) */
+  .settings-field :global(.bio:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .settings-field :global(.bio) { min-height: 72px; max-height: 160px; overflow-y: auto; padding: 8px 12px; border: 1px solid var(--bg-4); border-radius: var(--radius-md); background: var(--bg-1); white-space: pre-wrap; }
   .counter { align-self: flex-end; }
-  .nudge { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); color: var(--text); font-size: 13px; }
+  .nudge { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--accent-soft); color: var(--text); font-size: 13px; }
   .nudge span { flex: 1; }
   .counter.over { color: var(--danger-text); font-weight: 600; }
-  .line { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 12px; background: var(--bg-2); }
+  .line { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: var(--radius-lg); background: var(--bg-2); }
   .said { min-width: 0; display: flex; flex-direction: column; font-weight: 600; }
   .said p { margin: 2px 0 0; font-weight: 400; color: var(--text); }
   /* flush with the bottom of Settings' scrolling content, whatever its padding */

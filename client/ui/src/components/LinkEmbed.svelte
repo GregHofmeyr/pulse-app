@@ -94,11 +94,11 @@
         {/if}
         {#if canPlay}
           {#if pops || origin.origin}
-            <button class="play" aria-label="Play {embed.title ?? label}" title={pops ? `Open in a ${label.split(' ')[0]} window` : 'Play'} onclick={() => void start()}>
+            <button class="play" aria-label="Play {embed.title ?? label}" data-tip={pops ? `Open in a ${label.split(' ')[0]} window` : 'Play'} onclick={() => void start()}>
               <Icon name="play" size={big ? 22 : 14} />
             </button>
           {:else}
-            <a class="play" href={embed.url} target="_blank" rel="noopener noreferrer" aria-label="Play {embed.title ?? label} (opens in your browser)" title="Open in your browser">
+            <a class="play" href={embed.url} target="_blank" rel="noopener noreferrer" aria-label="Play {embed.title ?? label} (opens in your browser)" data-tip="Open in your browser">
               <Icon name="play" size={big ? 22 : 14} />
             </a>
           {/if}
@@ -107,7 +107,7 @@
     {/if}
   </div>
   {#if mine}
-    <button class="hide" aria-label="Remove preview" title="Remove preview" onclick={() => void hide()}><Icon name="x" size={14} /></button>
+    <button class="hide" aria-label="Remove preview" onclick={() => void hide()}><Icon name="x" size={14} /></button>
   {/if}
 </div>
 
@@ -116,7 +116,7 @@
   .embed {
     position: relative; flex: 0 1 432px; min-width: 0; box-sizing: border-box;
     display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; align-items: start;
-    padding: 10px 12px 12px 14px; border-radius: 6px; background: var(--bg-2); border: 1px solid var(--line-soft);
+    padding: 10px 12px 12px 14px; border-radius: var(--radius-xs); background: var(--bg-2); border: 1px solid var(--line-soft);
     box-shadow: inset 4px 0 0 var(--brand);
   }
   .text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -132,12 +132,12 @@
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
   }
   /* generic cards, audio and Instagram: a small thumbnail at the side */
-  .media { position: relative; width: 80px; height: 80px; border-radius: 6px; overflow: hidden; background: var(--bg-3); }
+  .media { position: relative; width: 80px; height: 80px; border-radius: var(--radius-xs); overflow: hidden; background: var(--bg-3); }
   .media img { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* video players: the thumbnail fills the card's width, at the player's shape, so the swap doesn't jump */
   .big .media, .frame { grid-column: 1 / -1; width: 100%; height: auto; }
   .big .media.vertical, .frame.vertical { width: min(300px, 100%); }
-  .frame { border-radius: 6px; overflow: hidden; background: #000; }
+  .frame { border-radius: var(--radius-xs); overflow: hidden; background: #000; }
   .frame.audio { background: transparent; }
   .frame iframe { display: block; width: 100%; height: 100%; border: 0; }
   .ph {
@@ -153,8 +153,9 @@
   .play:hover, .play:focus-visible { background: rgba(10, 11, 13, .82); transform: scale(1.06); }
   .play :global(svg) { fill: currentColor; }
   .hide {
-    width: 24px; height: 24px; border: 0; border-radius: 6px; padding: 0; background: transparent; color: var(--text-3);
-    display: grid; place-items: center; opacity: 0; transition: opacity var(--dur) var(--ease);
+    width: 24px; height: 24px; border: 0; border-radius: var(--radius-xs); padding: 0; background: transparent; color: var(--text-3);
+    /* its own layer for good, as the entrances (#103): a fade that makes and drops one flashes on WebKitGTK */
+    display: grid; place-items: center; opacity: 0; transition: opacity var(--dur-fast) var(--ease); will-change: opacity;
   }
   .wrap:hover .hide, .hide:focus-visible, .wrap:focus-within .hide { opacity: 1; }
   .hide:hover { color: var(--text); background: var(--bg-3); }

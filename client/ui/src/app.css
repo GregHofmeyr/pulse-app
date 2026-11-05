@@ -40,6 +40,9 @@
   --accent-soft: rgba(139, 156, 255, .15);
   --accent-faint: rgba(139, 156, 255, .08);
   --focus-soft: rgba(139, 156, 255, .45);
+  /* --accent at 22% (a pressed panel toggle, a jumped-to message) and 30% (that toggle hovered). */
+  --accent-mid: rgba(139, 156, 255, .22);
+  --accent-strong: rgba(139, 156, 255, .3);
   /* Danger, warn and ok as fills; their -text twins as text (moved toward readable on a theme's surfaces). */
   --danger: #d93a42;
   /* Error and danger text: lighter than --danger, which is for fills. */
@@ -48,6 +51,9 @@
   --on-danger: #fff;
   /* the dropped pieces' hatching on the clip timeline: --danger at 55% */
   --danger-hatch: rgba(217, 58, 66, .55);
+  /* --danger behind danger text (a voice notice), and --danger 55% over --bg-0 (a red button's pressed edge). */
+  --danger-soft: rgba(217, 58, 66, .14);
+  --danger-deep: #802930;
   --warn: #e8b04a;
   --warn-text: var(--warn);
   --warn-soft: rgba(232, 176, 74, .12);
@@ -63,6 +69,8 @@
   /* Row hover on a message, quote or clip, and a quote line's (a touch stronger). */
   --hover-tint: rgba(255, 255, 255, .02);
   --hover-tint-strong: rgba(255, 255, 255, .03);
+  /* --bg-1 at 80%: a panel laid over content that should still show through (the clip drop zone). */
+  --veil: rgba(27, 28, 33, .8);
   /* Elevation: 1 small things that float (the jump-to-latest pill), 2 popups and notices (tooltip, toasts, notices,
      the emoji picker, the mini preview), 3 menus and dialogs. */
   --shadow-1: 0 4px 14px rgba(0, 0, 0, .35);
@@ -82,6 +90,9 @@
   --quote-green-deep: #14713f;
   --on-quote-green: #0b1f14;
   --quote-green-text: var(--quote-green);
+  /* the green as a Quote of the Year border, and as a soft fill (a vote's bar) */
+  --quote-green-line: rgba(57, 217, 138, .35);
+  --quote-green-soft: rgba(57, 217, 138, .12);
   /* the near-black the spill pours into (banner, winner card): an island, the same in every theme */
   --quote-surface: #0e1013;
   /* Text on that island (Pulse Dark's --text, --text-2, --text-3): fixed, so it reads on --quote-surface in every
@@ -89,6 +100,12 @@
   --island-text: #e8e9ed;
   --island-text-2: #b9bcc6;
   --island-text-3: #8e92a0;
+  /* --island-text at 35%: the LIVE chip's fill on the island */
+  --island-line: rgba(232, 233, 237, .35);
+  /* Buttons and labels over video, frames and thumbnails (.icon-btn-overlay): dark glass and white, every theme. */
+  --video-chrome: rgba(0, 0, 0, .55);
+  --video-chrome-strong: rgba(0, 0, 0, .75);
+  --on-video: #fff;
   /* Badges (#49): the ring and label colour of each rarity (bright enough to read as text on the
      theme's surfaces; the light themes darken them), the first earner's gold and its glow, and the [NEW] tag. */
   --rarity-common: #9aa0ab;
@@ -132,10 +149,14 @@
   --accent-soft: rgba(139, 156, 255, .15);
   --accent-faint: rgba(139, 156, 255, .08);
   --focus-soft: rgba(139, 156, 255, .45);
+  --accent-mid: rgba(139, 156, 255, .22);
+  --accent-strong: rgba(139, 156, 255, .3);
   --danger: #d93a42;
   --danger-text: #f2616b;
   --on-danger: #fff;
   --danger-hatch: rgba(217, 58, 66, .55);
+  --danger-soft: rgba(217, 58, 66, .14);
+  --danger-deep: #7c262d;
   --warn: #e8b04a;
   --warn-text: #e8b04a;
   --warn-soft: rgba(232, 176, 74, .12);
@@ -147,6 +168,7 @@
   --ring: var(--bg-1);
   --hover-tint: rgba(160, 180, 255, .03);
   --hover-tint-strong: rgba(160, 180, 255, .045);
+  --veil: rgba(17, 20, 30, .8);
   --shadow-1: 0 4px 14px rgba(0, 0, 0, .45);
   --shadow-2: 0 8px 24px rgba(0, 0, 0, .5);
   --shadow-3: 0 18px 48px rgba(0, 0, 0, .6);
@@ -159,10 +181,16 @@
   --quote-green-deep: #14713f;
   --on-quote-green: #0b1f14;
   --quote-green-text: #39d98a;
+  --quote-green-line: rgba(57, 217, 138, .35);
+  --quote-green-soft: rgba(57, 217, 138, .12);
   --quote-surface: #0e1013;
   --island-text: #e8e9ed;
   --island-text-2: #b9bcc6;
   --island-text-3: #8e92a0;
+  --island-line: rgba(232, 233, 237, .35);
+  --video-chrome: rgba(0, 0, 0, .55);
+  --video-chrome-strong: rgba(0, 0, 0, .75);
+  --on-video: #fff;
   --scrollbar-thumb: rgb(129 137 166 / .32);
   --scrollbar-thumb-hover: rgb(129 137 166 / .55);
   /* Badges (#49): as Pulse Dark. */
@@ -203,10 +231,14 @@
   --accent-soft: rgba(139, 156, 255, .15);
   --accent-faint: rgba(139, 156, 255, .08);
   --focus-soft: rgba(139, 156, 255, .45);
+  --accent-mid: rgba(139, 156, 255, .22);
+  --accent-strong: rgba(139, 156, 255, .3);
   --danger: #d93a42;
   --danger-text: #f2616b;
   --on-danger: #fff;
   --danger-hatch: rgba(217, 58, 66, .55);
+  --danger-soft: rgba(217, 58, 66, .14);
+  --danger-deep: #772024;
   --warn: #e8b04a;
   --warn-text: #e8b04a;
   --warn-soft: rgba(232, 176, 74, .12);
@@ -218,6 +250,7 @@
   --ring: var(--bg-1);
   --hover-tint: rgba(255, 255, 255, .035);
   --hover-tint-strong: rgba(255, 255, 255, .05);
+  --veil: rgba(0, 0, 0, .8);
   --shadow-1: 0 4px 14px rgba(0, 0, 0, .6);
   --shadow-2: 0 8px 24px rgba(0, 0, 0, .7);
   --shadow-3: 0 18px 48px rgba(0, 0, 0, .8);
@@ -230,10 +263,16 @@
   --quote-green-deep: #14713f;
   --on-quote-green: #0b1f14;
   --quote-green-text: #39d98a;
+  --quote-green-line: rgba(57, 217, 138, .35);
+  --quote-green-soft: rgba(57, 217, 138, .12);
   --quote-surface: #0e1013;
   --island-text: #e8e9ed;
   --island-text-2: #b9bcc6;
   --island-text-3: #8e92a0;
+  --island-line: rgba(232, 233, 237, .35);
+  --video-chrome: rgba(0, 0, 0, .55);
+  --video-chrome-strong: rgba(0, 0, 0, .75);
+  --on-video: #fff;
   --scrollbar-thumb: rgb(135 138 151 / .32);
   --scrollbar-thumb-hover: rgb(135 138 151 / .55);
   /* Badges (#49): as Pulse Dark. */
@@ -274,10 +313,14 @@
   --accent-soft: rgba(255, 138, 107, .15);
   --accent-faint: rgba(255, 138, 107, .08);
   --focus-soft: rgba(255, 138, 107, .45);
+  --accent-mid: rgba(255, 138, 107, .22);
+  --accent-strong: rgba(255, 138, 107, .3);
   --danger: #d93a42;
   --danger-text: #ff7474;
   --on-danger: #fff;
   --danger-hatch: rgba(217, 58, 66, .55);
+  --danger-soft: rgba(217, 58, 66, .14);
+  --danger-deep: #84282d;
   --warn: #f2b94f;
   --warn-text: #f2b94f;
   --warn-soft: rgba(242, 185, 79, .12);
@@ -289,6 +332,7 @@
   --ring: var(--bg-1);
   --hover-tint: rgba(255, 200, 190, .03);
   --hover-tint-strong: rgba(255, 200, 190, .045);
+  --veil: rgba(35, 23, 26, .8);
   --shadow-1: 0 4px 14px rgba(10, 4, 5, .4);
   --shadow-2: 0 8px 24px rgba(10, 4, 5, .45);
   --shadow-3: 0 18px 48px rgba(10, 4, 5, .55);
@@ -301,10 +345,16 @@
   --quote-green-deep: #14713f;
   --on-quote-green: #0b1f14;
   --quote-green-text: #39d98a;
+  --quote-green-line: rgba(57, 217, 138, .35);
+  --quote-green-soft: rgba(57, 217, 138, .12);
   --quote-surface: #0e1013;
   --island-text: #e8e9ed;
   --island-text-2: #b9bcc6;
   --island-text-3: #8e92a0;
+  --island-line: rgba(232, 233, 237, .35);
+  --video-chrome: rgba(0, 0, 0, .55);
+  --video-chrome-strong: rgba(0, 0, 0, .75);
+  --on-video: #fff;
   --scrollbar-thumb: rgb(176 149 140 / .32);
   --scrollbar-thumb-hover: rgb(176 149 140 / .55);
   /* Badges (#49): as Pulse Dark. */
@@ -343,10 +393,14 @@
   --accent-soft: rgba(255, 164, 92, .15);
   --accent-faint: rgba(255, 164, 92, .08);
   --focus-soft: rgba(255, 164, 92, .45);
+  --accent-mid: rgba(255, 164, 92, .22);
+  --accent-strong: rgba(255, 164, 92, .3);
   --danger: #d93a42;
   --danger-text: #ff7474;
   --on-danger: #fff;
   --danger-hatch: rgba(217, 58, 66, .55);
+  --danger-soft: rgba(217, 58, 66, .14);
+  --danger-deep: #82292c;
   --warn: #f2b94f;
   --warn-text: #f2b94f;
   --warn-soft: rgba(242, 185, 79, .12);
@@ -358,6 +412,7 @@
   --ring: var(--bg-1);
   --hover-tint: rgba(255, 225, 200, .03);
   --hover-tint-strong: rgba(255, 225, 200, .045);
+  --veil: rgba(30, 26, 23, .8);
   --shadow-1: 0 4px 14px rgba(8, 6, 4, .4);
   --shadow-2: 0 8px 24px rgba(8, 6, 4, .45);
   --shadow-3: 0 18px 48px rgba(8, 6, 4, .55);
@@ -370,10 +425,16 @@
   --quote-green-deep: #14713f;
   --on-quote-green: #0b1f14;
   --quote-green-text: #39d98a;
+  --quote-green-line: rgba(57, 217, 138, .35);
+  --quote-green-soft: rgba(57, 217, 138, .12);
   --quote-surface: #0e1013;
   --island-text: #e8e9ed;
   --island-text-2: #b9bcc6;
   --island-text-3: #8e92a0;
+  --island-line: rgba(232, 233, 237, .35);
+  --video-chrome: rgba(0, 0, 0, .55);
+  --video-chrome-strong: rgba(0, 0, 0, .75);
+  --on-video: #fff;
   --scrollbar-thumb: rgb(168 154 142 / .32);
   --scrollbar-thumb-hover: rgb(168 154 142 / .55);
   /* Badges (#49): as Pulse Dark. */
@@ -412,10 +473,14 @@
   --accent-soft: rgba(255, 127, 176, .15);
   --accent-faint: rgba(255, 127, 176, .08);
   --focus-soft: rgba(255, 127, 176, .45);
+  --accent-mid: rgba(255, 127, 176, .22);
+  --accent-strong: rgba(255, 127, 176, .3);
   --danger: #d93a42;
   --danger-text: #ff7474;
   --on-danger: #fff;
   --danger-hatch: rgba(217, 58, 66, .55);
+  --danger-soft: rgba(217, 58, 66, .14);
+  --danger-deep: #832830;
   --warn: #f2b94f;
   --warn-text: #f2b94f;
   --warn-soft: rgba(242, 185, 79, .12);
@@ -427,6 +492,7 @@
   --ring: var(--bg-1);
   --hover-tint: rgba(255, 215, 245, .03);
   --hover-tint-strong: rgba(255, 215, 245, .045);
+  --veil: rgba(33, 23, 31, .8);
   --shadow-1: 0 4px 14px rgba(8, 4, 8, .4);
   --shadow-2: 0 8px 24px rgba(8, 4, 8, .45);
   --shadow-3: 0 18px 48px rgba(8, 4, 8, .55);
@@ -439,10 +505,16 @@
   --quote-green-deep: #14713f;
   --on-quote-green: #0b1f14;
   --quote-green-text: #39d98a;
+  --quote-green-line: rgba(57, 217, 138, .35);
+  --quote-green-soft: rgba(57, 217, 138, .12);
   --quote-surface: #0e1013;
   --island-text: #e8e9ed;
   --island-text-2: #b9bcc6;
   --island-text-3: #8e92a0;
+  --island-line: rgba(232, 233, 237, .35);
+  --video-chrome: rgba(0, 0, 0, .55);
+  --video-chrome-strong: rgba(0, 0, 0, .75);
+  --on-video: #fff;
   --scrollbar-thumb: rgb(179 152 172 / .32);
   --scrollbar-thumb-hover: rgb(179 152 172 / .55);
   /* Badges (#49): as Pulse Dark. */
@@ -483,10 +555,14 @@
   --accent-soft: rgba(180, 140, 242, .14);
   --accent-faint: rgba(180, 140, 242, .07);
   --focus-soft: rgba(180, 140, 242, .55);
+  --accent-mid: rgba(180, 140, 242, .22);
+  --accent-strong: rgba(180, 140, 242, .3);
   --danger: #d93a42;
   --danger-text: #b8263a;
   --on-danger: #fff;
   --danger-hatch: rgba(217, 58, 66, .45);
+  --danger-soft: rgba(217, 58, 66, .12);
+  --danger-deep: #e08492;
   --warn: #f2a65a;
   --warn-text: #8a4f00;
   --warn-soft: rgba(242, 166, 90, .18);
@@ -498,6 +574,7 @@
   --ring: var(--bg-1);
   --hover-tint: rgba(110, 50, 140, .035);
   --hover-tint-strong: rgba(110, 50, 140, .055);
+  --veil: rgba(244, 235, 246, .8);
   --shadow-1: 0 2px 8px rgba(80, 40, 110, .12);
   --shadow-2: 0 6px 20px rgba(80, 40, 110, .14);
   --shadow-3: 0 14px 40px rgba(80, 40, 110, .18);
@@ -510,10 +587,16 @@
   --quote-green-deep: #14713f;
   --on-quote-green: #0b1f14;
   --quote-green-text: #136b3f;
+  --quote-green-line: rgba(57, 217, 138, .35);
+  --quote-green-soft: rgba(57, 217, 138, .12);
   --quote-surface: #0e1013;
   --island-text: #e8e9ed;
   --island-text-2: #b9bcc6;
   --island-text-3: #8e92a0;
+  --island-line: rgba(232, 233, 237, .35);
+  --video-chrome: rgba(0, 0, 0, .55);
+  --video-chrome-strong: rgba(0, 0, 0, .75);
+  --on-video: #fff;
   --scrollbar-thumb: rgb(106 92 128 / .3);
   --scrollbar-thumb-hover: rgb(106 92 128 / .5);
   /* Badges (#49): the rarities darkened to read on light surfaces. */
@@ -555,10 +638,14 @@
   --accent-soft: rgba(76, 91, 212, .14);
   --accent-faint: rgba(76, 91, 212, .07);
   --focus-soft: rgba(76, 91, 212, .55);
+  --accent-mid: rgba(76, 91, 212, .22);
+  --accent-strong: rgba(76, 91, 212, .3);
   --danger: #d93a42;
   --danger-text: #c0262f;
   --on-danger: #fff;
   --danger-hatch: rgba(217, 58, 66, .45);
+  --danger-soft: rgba(217, 58, 66, .12);
+  --danger-deep: #e0898f;
   --warn: #e3a12f;
   --warn-text: #8a5a00;
   --warn-soft: rgba(227, 161, 47, .16);
@@ -570,6 +657,7 @@
   --ring: var(--bg-1);
   --hover-tint: rgba(20, 24, 40, .035);
   --hover-tint-strong: rgba(20, 24, 40, .055);
+  --veil: rgba(244, 244, 246, .8);
   --shadow-1: 0 2px 8px rgba(20, 24, 40, .12);
   --shadow-2: 0 6px 20px rgba(20, 24, 40, .14);
   --shadow-3: 0 14px 40px rgba(20, 24, 40, .18);
@@ -582,10 +670,16 @@
   --quote-green-deep: #14713f;
   --on-quote-green: #0b1f14;
   --quote-green-text: #136b3f;
+  --quote-green-line: rgba(57, 217, 138, .35);
+  --quote-green-soft: rgba(57, 217, 138, .12);
   --quote-surface: #0e1013;
   --island-text: #e8e9ed;
   --island-text-2: #b9bcc6;
   --island-text-3: #8e92a0;
+  --island-line: rgba(232, 233, 237, .35);
+  --video-chrome: rgba(0, 0, 0, .55);
+  --video-chrome-strong: rgba(0, 0, 0, .75);
+  --on-video: #fff;
   --scrollbar-thumb: rgb(92 97 110 / .3);
   --scrollbar-thumb-hover: rgb(92 97 110 / .5);
   /* Badges (#49): the rarities darkened to read on light surfaces. */
@@ -654,10 +748,27 @@
 
 /* Not colours: the same in every theme. */
 :root {
+  /* Corner radii (#173): 6 small chips and pills' insides, 8 buttons, fields and menu rows, 10 large fields and
+     cards, 12 menus and popovers, 16 dialogs. --radius (14) is the big panels and frames. */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
   --radius: 14px;
-  /* Hover and press feedback. */
+  /* Motion (#173): every transition and entrance takes one of these, never a raw duration. --dur-fast is hover and
+     press feedback, --dur entrances (menus, popovers, dialogs, toasts), --dur-slow the few larger moves (a dragged
+     preview settling into its corner). Exits are quicker than entrances and ease in. The Quote of the Year and
+     badge flourishes keep their own stepped timings: they are celebrations, not UI motion. */
+  --dur-fast: 100ms;
   --dur: 140ms;
+  --dur-slow: 200ms;
+  --dur-exit: 100ms;
   --ease: cubic-bezier(.2, .8, .2, 1);
+  --ease-exit: cubic-bezier(.4, 0, 1, 1);
+  /* Where a menu or popover grows from: each placement sets its own (a cursor menu its top-left, a drop-down its
+     top edge, an upward list its bottom edge). */
+  --pop-origin: center;
   font-family: 'Onest', system-ui, sans-serif;
   /* Onest's contextual alternates swap some letters (e.g. t → t2.alt) inside repeated runs, so
      "tttt" renders with an odd, bigger t. Same glyph for the same letter, always. */
@@ -671,9 +782,11 @@
 html, body, #app { margin: 0; height: 100%; overflow: hidden; }
 button, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
-/* Hover and press ease in on every button that doesn't set its own transition. Colours and
-   opacity only: nothing that moves layout. Under .streaming / .unfocused (below) it snaps. */
-button { transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease), opacity var(--dur) var(--ease); }
+/* Hover and press ease in on every button, menu item, list option and hoverable row (.hover-row) that doesn't set its
+   own transition: the same fade whether it's a <button> or a <div>, so the two autocompletes and the member lists feel
+   alike (#173). Colours, opacity and filter only (the accent buttons' hover is a brightness filter): nothing that moves
+   layout. Under .streaming / .unfocused (below) it snaps. */
+button, .menu-item, [role='option'], .hover-row { transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease), filter var(--dur-fast) var(--ease); }
 /* Reduced motion: animations and transitions finish at once. The joining spinners are left out:
    they slow down instead (their own rule), so they still show something is happening. */
 @media (prefers-reduced-motion: reduce) {
@@ -697,13 +810,15 @@ button { transition: background-color var(--dur) var(--ease), color var(--dur) v
 
 .pulse-tooltip {
   position: fixed; z-index: 100; pointer-events: none; max-width: 260px;
-  padding: 6px 10px; border-radius: 8px; background: var(--tooltip-bg); color: var(--tooltip-text);
-  font-size: 12px; font-weight: 600; line-height: 1.3; box-shadow: var(--shadow-2);
-  opacity: 0; transition: opacity .12s; left: -9999px; top: -9999px;
+  padding: 6px 10px; border-radius: var(--radius-sm); background: var(--tooltip-bg); color: var(--tooltip-text);
+  font-size: 12px; font-weight: 600; line-height: 1.3; box-shadow: var(--shadow-2); white-space: pre-line;
+  opacity: 0; transition: opacity var(--dur-fast) var(--ease); left: -9999px; top: -9999px;
   /* its own layer for good: showing it never makes or drops one (#103, see the entrances below) */
   will-change: opacity;
 }
 .pulse-tooltip.show { opacity: 1; }
+/* Read by a screen reader, not shown (a live tip's text, which .pulse-tooltip shows). */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 /* While you stream, the UI stops animating so it doesn't cost game frames (spec 3.3). */
 .streaming *, .streaming *::before, .streaming *::after,
@@ -716,29 +831,32 @@ button { transition: background-color var(--dur) var(--ease), color var(--dur) v
 .settings-pane small { font-size: 12px; font-weight: 400; color: var(--text-3); letter-spacing: 0; }
 /* Dragging a column's edge (#160): the resize cursor everywhere, and no text selected on the way. */
 html.resizing-columns, html.resizing-columns * { cursor: col-resize !important; user-select: none; }
+/* and nothing under the pointer reacts on the way (hover fades, action bars): the handle listens on the window */
+html.resizing-columns body * { pointer-events: none; }
 /* The on/off switch used across settings panes. */
-.switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; border: 0; border-radius: 12px; padding: 0; background: var(--bg-4); }
-.switch span { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--text-2); transition: left .12s; }
+.switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; border: 0; border-radius: var(--radius-lg); padding: 0; background: var(--bg-4); }
+.switch span { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--text-2); transition: transform var(--dur) var(--ease), background-color var(--dur) var(--ease); }
 .switch.on { background: var(--accent); }
-.switch.on span { left: 23px; background: var(--on-accent); }
+/* the knob slides with a transform, not `left`: the compositor moves it without a layout per frame (#173) */
+.switch.on span { transform: translateX(20px); background: var(--on-accent); }
 .switch:disabled { opacity: .5; }
 /* The same switch as a checkbox (role="switch"), where a form control fits better than a button. */
 input.switch { appearance: none; margin: 0; cursor: pointer; }
-input.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--text-2); transition: left .12s; }
+input.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--text-2); transition: transform var(--dur) var(--ease), background-color var(--dur) var(--ease); }
 input.switch:checked { background: var(--accent); }
-input.switch:checked::after { left: 23px; background: var(--on-accent); }
+input.switch:checked::after { transform: translateX(20px); background: var(--on-accent); }
 input.switch:disabled { cursor: default; }
 /* Quote of the Year: the filled green button, the big quote mark and the LIVE chip, shared by the
    banner, voting window, voice strip, winner card and start dialog (each sets its own size). */
-.qoty-btn { height: 32px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--quote-green); color: var(--on-quote-green); font-size: 13px; font-weight: 700; white-space: nowrap; box-shadow: 0 2px 0 var(--quote-green-deep); }
+.qoty-btn { height: 32px; padding: 0 14px; border: 0; border-radius: var(--radius-sm); background: var(--quote-green); color: var(--on-quote-green); font-size: 13px; font-weight: 700; white-space: nowrap; box-shadow: 0 2px 0 var(--quote-green-deep); }
 .qoty-btn:disabled { opacity: .6; }
 .qoty-mark { font-family: Georgia, serif; font-weight: 700; line-height: .6; }
 .qoty-live { font: 700 10px/1 ui-monospace, monospace; letter-spacing: .12em; color: var(--on-quote-green); border-radius: 4px; padding: 3px 5px; }
 
 /* Buttons: .btn is the 32px inline size, .btn-lg the 36px dialog-footer size. Every main action is
    the accent (no green go/live buttons). Login and the voice dock keep their own, bigger, sizes. */
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text); font-size: 13px; font-weight: 600; white-space: nowrap; }
-.btn-lg { height: 36px; padding: 0 16px; border-radius: 10px; font-size: 14px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.btn-lg { height: 36px; padding: 0 16px; border-radius: var(--radius-md); font-size: 14px; }
 .btn:disabled { opacity: .5; cursor: default; }
 /* aria-disabled, not disabled, where a tooltip must still show the reason on hover */
 .btn[aria-disabled='true'] { opacity: .5; cursor: not-allowed; }
@@ -755,12 +873,18 @@ input.switch:disabled { cursor: default; }
 
 /* Icon-only buttons: 32px, or -sm 28px, or -xs 24px. The hover is one step up from the bg-0 to bg-2
    surfaces they sit on. */
-.icon-btn { width: 32px; height: 32px; flex-shrink: 0; padding: 0; display: inline-grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); }
+.icon-btn { width: 32px; height: 32px; flex-shrink: 0; padding: 0; display: inline-grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); }
 .icon-btn-sm { width: 28px; height: 28px; }
-.icon-btn-xs { width: 24px; height: 24px; border-radius: 6px; }
+.icon-btn-xs { width: 24px; height: 24px; border-radius: var(--radius-xs); }
 .icon-btn.round { border-radius: 50%; }
 .icon-btn:hover:not(:disabled), .icon-btn[aria-expanded='true'] { background: var(--bg-3); color: var(--text); }
 .icon-btn:disabled { opacity: .5; cursor: default; }
+/* On a menu or toast (--surface-menu), bg-3 is darker than the surface: the hover is bg-4, as a menu item's. */
+.menu-surface .icon-btn:hover:not(:disabled), .toast .icon-btn:hover:not(:disabled) { background: var(--bg-4); color: var(--text); }
+/* Over video, frames and thumbnails (#173): dark glass with a white glyph in every theme, darker on hover. Add to
+   .icon-btn (any size, .round for a circle). */
+.icon-btn.icon-btn-overlay { background: var(--video-chrome); color: var(--on-video); }
+.icon-btn.icon-btn-overlay:hover:not(:disabled) { background: var(--video-chrome-strong); color: var(--on-video); }
 /* a dialog's X: class="icon-btn round modal-close" */
 .modal-close { background: var(--bg-3); color: var(--text-2); }
 .modal-close:hover:not(:disabled) { background: var(--bg-4); color: var(--text); }
@@ -770,13 +894,14 @@ input.switch:disabled { cursor: default; }
    z-index` on the overlay (stacking.test.ts reads them there) and sets the panel's width. */
 .modal-overlay { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; }
 .modal-backdrop { position: absolute; inset: 0; background: var(--scrim); }
-.modal { position: relative; max-height: calc(100vh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--bg-2); box-shadow: var(--shadow-3); outline: none; }
+.modal { position: relative; max-height: calc(100vh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 22px; border: 1px solid var(--line); border-radius: var(--radius-xl); background: var(--bg-2); box-shadow: var(--shadow-3); outline: none; }
 .modal-title { margin: 0; font-size: 18px; font-weight: 600; }
 
 /* Menus and popovers (owner pick 3, family A): a raised surface, a hover that lightens to bg-4.
    Each component keeps its own position, width and z-index. */
-.menu-surface { padding: 6px; display: flex; flex-direction: column; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 12px; box-shadow: var(--shadow-3); }
-.menu-item { height: 32px; flex-shrink: 0; padding: 0 10px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; }
+.menu-surface { padding: 6px; display: flex; flex-direction: column; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: var(--radius-lg); box-shadow: var(--shadow-3); }
+/* min-height, not height: a long item wraps inside its row instead of spilling out of it */
+.menu-item { min-height: 32px; flex-shrink: 0; padding: 6px 10px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; }
 .menu-item:hover:not(:disabled), .menu-item:focus-visible, .menu-item.hi { background: var(--bg-4); }
 .menu-item.danger { color: var(--danger-text); }
 .menu-label { padding: 6px 10px 2px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
@@ -784,10 +909,10 @@ input.switch:disabled { cursor: default; }
 
 /* Text fields: 36px, or -sm 32px. Keyboard focus is the global outline ring above (owner pick 6),
    the same on every field: no accent border, and no field turns the ring off. */
-.input { height: 36px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--bg-1); color: var(--text); font: inherit; font-size: 14px; font-weight: 400; letter-spacing: 0; }
+.input { height: 36px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: var(--radius-md); background: var(--bg-1); color: var(--text); font: inherit; font-size: 14px; font-weight: 400; letter-spacing: 0; }
 .input:hover:not(:disabled) { border-color: var(--line-menu); }
 .input:disabled { opacity: .6; }
-.input-sm { height: 32px; padding: 0 10px; border-radius: 8px; font-size: 13px; }
+.input-sm { height: 32px; padding: 0 10px; border-radius: var(--radius-sm); font-size: 13px; }
 textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
 
 /* Entrances (owner pick 7): menus, popovers and dialogs fade and grow in (.pop-in), overlays and
@@ -801,7 +926,9 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
    scroll. The scale runs on the same layer. */
 @keyframes pop-in { from { opacity: 0; transform: scale(.96); } }
 @keyframes fade-in { from { opacity: 0; } }
-.pop-in { animation: pop-in var(--dur) var(--ease); will-change: opacity; }
+/* --pop-origin: where it grows from (#173). A cursor menu sets `top left` (or the corner nearest the cursor once
+   flipped), a drop-down `top`, a list that opens upward `bottom`; centred is the default (dialogs). */
+.pop-in { animation: pop-in var(--dur) var(--ease); will-change: opacity; transform-origin: var(--pop-origin); }
 .fade-in { animation: fade-in var(--dur) var(--ease); will-change: opacity; }
 /* Off, not paused: the pause above would hold them on their first, invisible frame (a stream
    toast arrives while you're in a game). */
@@ -813,3 +940,26 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
 /* A button that reads as a link. */
 .link-btn { padding: 0; border: 0; background: none; color: var(--accent-text); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .link-btn:hover { text-decoration-thickness: 2px; }
+
+/* Shared pieces (#173): one look for each thing that appears in several places. */
+
+/* A choice chip: the clip filters, the name font and card theme pickers, Light's tints. One size, one hover and one
+   selected look (a soft accent fill inside a focus-ring border), whether it is pressed or checked. (Other `.chip`
+   classes in components are their own things: reaction counts, search tokens, people.) */
+.toggle-chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 14px; background: transparent; color: var(--text-2); font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.toggle-chip:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
+.toggle-chip[aria-pressed='true'], .toggle-chip[aria-checked='true'] { background: var(--accent-soft); border-color: var(--focus-ring); color: var(--text); }
+
+/* A toast or notice: a menu-surface card with the popup shadow. Each stack keeps its own place on screen and its own
+   z-index; a dismiss button is `icon-btn icon-btn-xs`. */
+.toast { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 14px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: var(--radius-lg); box-shadow: var(--shadow-2); color: var(--text); font-size: 13px; }
+/* a notice with no buttons: even padding */
+.toast.notice { padding: 8px 14px; }
+
+/* Settings: a heading inside a pane (above a group of fields), and a list of items (emoji, sounds, people, links). */
+.settings-section-title { margin: 0 0 8px; font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: 0; }
+.settings-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.settings-list-item { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 10px; border-radius: var(--radius-md); background: var(--bg-2); }
+
+/* A load in progress (components/Loading.svelte) and an empty list: quiet, left-aligned, the same size. */
+.loading, .empty-note { margin: 0; color: var(--text-3); font-size: 13px; }

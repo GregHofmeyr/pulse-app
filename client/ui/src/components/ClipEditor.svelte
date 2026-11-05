@@ -225,10 +225,10 @@
   <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Share a clip" tabindex="-1" use:modal={close}>
     <header>
       <div class="file">
-        <strong title={source.file_name}>{source.file_name}</strong>
+        <strong data-tip={source.file_name}>{source.file_name}</strong>
         <span>{formatDuration(source.duration_ms)} · {source.width}×{source.height} · {fpsText} · {formatBytes(source.size)}</span>
       </div>
-      <button type="button" class="icon-btn round modal-close" aria-label="Close" disabled={sending} onclick={close}><Icon name="x" /></button>
+      <button type="button" class="icon-btn round modal-close" aria-label="Close" disabled={sending} onclick={close}><Icon name="x" size={16} /></button>
     </header>
 
     <div class="body">
@@ -327,14 +327,14 @@
   .file span { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
   .body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; padding: 16px 18px 18px; }
   .stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-  .screen { position: relative; background: #000; border-radius: 10px; aspect-ratio: 16 / 9; max-height: 52vh; width: 100%; display: grid; place-items: center; overflow: hidden; }
+  .screen { position: relative; background: #000; border-radius: var(--radius-md); aspect-ratio: 16 / 9; max-height: 52vh; width: 100%; display: grid; place-items: center; overflow: hidden; }
   video { width: 100%; height: 100%; object-fit: contain; display: block; }
   .status, .problem { margin: 0; color: var(--text-2); font-size: 14px; }
   .problem { position: absolute; inset: auto 12px 12px; text-align: center; color: var(--warn); }
   .controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-  .ico { width: 32px; height: 32px; border-radius: 8px; border: 0; background: var(--bg-3); color: var(--text); display: grid; place-items: center; cursor: pointer; }
+  .ico { width: 32px; height: 32px; border-radius: var(--radius-sm); border: 0; background: var(--bg-3); color: var(--text); display: grid; place-items: center; cursor: pointer; }
   .ico:hover { background: var(--bg-4); }
-  .act { height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font: inherit; font-size: 13px; }
+  .act { height: 32px; padding: 0 10px; border-radius: var(--radius-sm); border: 1px solid var(--bg-4); background: transparent; color: var(--text); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font: inherit; font-size: 13px; }
   .act:disabled { opacity: 0.45; cursor: default; }
   .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
   .grow { flex: 1; }
@@ -345,7 +345,7 @@
   .field > span, legend { font-size: 12px; font-weight: 600; color: var(--text-2); padding: 0; }
   textarea { resize: none; }
   small { align-self: flex-end; color: var(--text-3); font-size: 11px; }
-  .preset { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bg-4); font-size: 14px; cursor: pointer; font-variant-numeric: tabular-nums; }
+  .preset { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--bg-4); font-size: 14px; cursor: pointer; font-variant-numeric: tabular-nums; }
   .preset.on { border-color: var(--focus-ring); }
   input[type='radio'] { accent-color: var(--accent); }
   .send { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }

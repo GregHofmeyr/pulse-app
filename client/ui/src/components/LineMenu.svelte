@@ -136,7 +136,7 @@
 </div>
 
 <style>
-  .menu { position: fixed; z-index: 60; min-width: 200px; max-width: 280px; gap: 2px; font-size: 13px; outline: none; }
+  .menu { position: fixed; z-index: 60; width: max-content; min-width: 220px; max-width: 280px; gap: 2px; font-size: 13px; outline: none; --pop-origin: top left; }
   .find { margin-bottom: 2px; }
   [role='group'] { display: flex; flex-direction: column; gap: 2px; }
   .none { padding: 6px 10px; color: var(--text-3); }

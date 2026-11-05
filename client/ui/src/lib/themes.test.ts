@@ -82,6 +82,8 @@ describe('deriveAccent', () => {
       '--accent': '#8b9cff',
       '--accent-soft': 'rgba(139, 156, 255, .15)',
       '--accent-faint': 'rgba(139, 156, 255, .08)',
+      '--accent-mid': 'rgba(139, 156, 255, .22)',
+      '--accent-strong': 'rgba(139, 156, 255, .3)',
       '--focus-soft': 'rgba(139, 156, 255, .45)',
       '--focus-ring': '#8b9cff',
       '--on-accent': DARK_INK,

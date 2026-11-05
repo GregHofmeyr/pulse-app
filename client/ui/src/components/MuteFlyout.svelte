@@ -6,6 +6,7 @@
   // ArrowRight or Enter opens it with focus on its first duration; ArrowLeft or Escape closes just it, back on the item.
   import { flushSync } from 'svelte'
   import { MUTE_FOR } from '../lib/muteDurations'
+  import { closeTimer } from '../lib/hoverIntent'
   import Icon from './Icon.svelte'
 
   let { label, flyoutLabel, menuLeft, menuTop, onPick }: {
@@ -49,12 +50,21 @@
     }
   }
 
+  // hover intent (#173): another item hovered closes it after a short wait, cancelled by coming back
+  const later = closeTimer()
+  $effect(() => later.cancel)
+
   /** Closes the flyout. `refocus`: focus goes back to the item ('if-inside': only if focus was in the flyout). */
   export function close(refocus: boolean | 'if-inside') {
+    later.cancel()
     if (!subOpen) return
     const back = refocus === 'if-inside' ? !!sub?.contains(document.activeElement) : refocus
     subOpen = false
     if (back) muteEl?.focus()
+  }
+  /** The pointer is over another of the menu's items: close after the hover-intent wait, unless it comes back. */
+  export function closeSoon() {
+    if (subOpen) later.schedule(() => close('if-inside'))
   }
   export function isOpen(): boolean {
     return subOpen
@@ -90,12 +100,12 @@
 </script>
 
 <button bind:this={muteEl} type="button" class="menu-item has-sub" class:hi={subOpen} role="menuitem" data-item aria-haspopup="menu" aria-expanded={subOpen}
-  aria-controls={subOpen ? flyoutId : undefined} onpointerenter={() => openSub(false)} onclick={() => openSub(true)} onkeydown={triggerKeydown}>
+  aria-controls={subOpen ? flyoutId : undefined} onpointerenter={() => { later.cancel(); openSub(false) }} onclick={() => openSub(true)} onkeydown={triggerKeydown}>
   <span class="grow">{label}</span><Icon name={subSide === 'right' ? 'chevronRight' : 'chevronLeft'} size={14} />
 </button>
 {#if subOpen}
   <div bind:this={sub} id={flyoutId} class="flyout menu-surface" data-side={subSide} role="menu" aria-label={flyoutLabel} tabindex="-1"
-    style:top="{subTop}px" onkeydown={subKeydown}>
+    style:top="{subTop}px" onkeydown={subKeydown} onpointerenter={later.cancel}>
     {#each MUTE_FOR as d (d.label)}
       <button type="button" class="menu-item" role="menuitem" onclick={() => onPick(d.minutes)}>{d.label}</button>
     {/each}

@@ -260,7 +260,7 @@
         <input class="input" aria-label="Name" placeholder="Name" bind:value={name} disabled={busy} />
         {#if nameProblem}<p class="err" role="alert">{nameProblem}</p>{/if}
         <div class="emoji-row">
-          <button type="button" class="btn btn-secondary emoji-btn" aria-label="Choose emoji" title="Choose emoji" data-menu-toggle
+          <button type="button" class="btn btn-secondary emoji-btn" aria-label="Choose emoji" data-menu-toggle
             bind:this={emojiBtn} disabled={busy} onclick={() => (picking = !picking)}>
             <SoundEmoji {emoji} {emojiId} size={20} />
           </button>
@@ -281,9 +281,9 @@
           {#if clip}
             <div class="prev">
               {#if playing}
-                <button type="button" class="btn btn-lg btn-secondary icon" aria-label="Pause" title="Pause" onclick={pause}><Icon name="pause" size={16} /></button>
+                <button type="button" class="btn btn-lg btn-secondary icon" aria-label="Pause" onclick={pause}><Icon name="pause" size={16} /></button>
               {:else}
-                <button type="button" class="btn btn-lg btn-secondary icon" aria-label="Play selection" title="Play selection" disabled={busy || starting} onclick={play}><Icon name="play" size={16} /></button>
+                <button type="button" class="btn btn-lg btn-secondary icon" aria-label="Play selection" disabled={busy || starting} onclick={play}><Icon name="play" size={16} /></button>
               {/if}
               <button type="button" class="btn btn-lg btn-secondary" disabled={busy} onclick={preview}>Preview</button>
             </div>
@@ -305,7 +305,7 @@
   .err { font-size: 13px; color: var(--danger-text); }
   .file { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .path { font-size: 13px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .wave { width: 100%; height: 72px; background: var(--bg-inset); border-radius: 10px; touch-action: none; }
+  .wave { width: 100%; height: 72px; background: var(--bg-inset); border-radius: var(--radius-md); touch-action: none; }
   .bar { fill: var(--text-3); }
   .bar.on { fill: var(--accent); }
   .handle { cursor: ew-resize; outline: none; }

@@ -212,7 +212,7 @@
   {#if message.call}
     <!-- a call line (#50) reads per member: "Missed call from sam" for those who never joined -->
     {@const text = callLineText(app.state, message)}
-    <div class="system call-line" class:missed={text.startsWith('Missed')} data-message-id={message.id}><Icon name="phone" size={13} /> {text} <span class="time">{time}</span></div>
+    <div class="system call-line" class:missed={text.startsWith('Missed')} data-message-id={message.id}><Icon name="phone" size={14} /> {text} <span class="time">{time}</span></div>
   {:else}
   <div class="system" data-message-id={message.id}>{message.content} <span class="time">{time}</span></div>
   {/if}
@@ -255,11 +255,11 @@
       </div>
       {#if !pending && !message.deleted && !editing}
         <div class="actions" class:open={picking || focusIn}>
-          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={15} /></button>
-          <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>
+          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={16} /></button>
+          <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={16} /></button>
           {#if mine}
-            <button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={15} /></button>
-            {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={15} /></button>{/if}
+            <button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>
+            {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
             <DeleteButton what={message.thread_root_id ? 'reply' : 'message'} onConfirm={() => void del()} />
           {/if}
         </div>
@@ -309,8 +309,8 @@
   .time { font-size: 11px; color: var(--text-3); }
   .content { color: var(--text-body); line-height: 1.5; overflow-wrap: anywhere; }
   .content :global(p) { margin: 0; }
-  .content :global(code) { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; background: var(--bg-inset); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
-  .content :global(pre) { background: var(--bg-inset); border-radius: 8px; padding: 10px; overflow-x: auto; }
+  .content :global(code) { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; background: var(--bg-inset); border: 1px solid var(--line); border-radius: var(--radius-xs); padding: 1px 6px; }
+  .content :global(pre) { background: var(--bg-inset); border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; }
   .content :global(pre code) { border: 0; padding: 0; }
   .content :global(a) { color: var(--accent-text); }
   .content :global(blockquote) { margin: 4px 0; padding-left: 10px; border-left: 3px solid var(--bg-4); color: var(--text-2); }
@@ -320,12 +320,13 @@
   .reply strong { color: var(--text-2); }
   .hook { width: 28px; height: 10px; margin-top: 10px; border-left: 2px solid var(--bg-4); border-top: 2px solid var(--bg-4); border-top-left-radius: 6px; flex-shrink: 0; }
   .snippet { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: 8px; transition: opacity var(--dur) var(--ease); }
-  .msg:hover .actions, .actions.open { opacity: 1; pointer-events: auto; }
-  .actions button { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }
-  .actions button:hover { color: var(--text); }
+  .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: var(--radius-sm); will-change: opacity; }
+  /* fades in, hides at once (#173): sweeping down a channel never leaves half-faded bars behind */
+  .msg:hover .actions, .actions.open { opacity: 1; pointer-events: auto; transition: opacity var(--dur) var(--ease); }
+  .actions button { width: 30px; height: 28px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-2); display: grid; place-items: center; }
+  .actions button:hover { background: var(--bg-4); color: var(--text); }
   /* about two lines to start, grows with what's in it (images included) up to 200px, then scrolls */
-  .body :global(.edit) { min-height: 58px; max-height: 200px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; }
+  .body :global(.edit) { min-height: 58px; max-height: 200px; border-radius: var(--radius-sm); border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; }
   .body :global(.edit:focus) { border-color: var(--focus-soft); }
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger-text); }
   .hint { font-size: 11px; color: var(--text-3); }

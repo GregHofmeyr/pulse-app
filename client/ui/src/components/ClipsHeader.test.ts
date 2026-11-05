@@ -208,13 +208,14 @@ describe('ClipsHeader', () => {
   it('"Share a clip" is the accent button the rest of the app uses, not a native one', () => {
     header()
     const share = button('Share a clip')
+    // the shared classes (#173: it had its own copy, without their hover)
+    expect(share.classList.contains('btn')).toBe(true)
+    expect(share.classList.contains('btn-primary')).toBe(true)
     const hash = [...share.classList].find((c) => c.startsWith('svelte-'))!
     const src = readFileSync(resolve(__dirname, 'ClipsHeader.svelte'), 'utf8')
     const css = compile(src, { filename: 'ClipsHeader.svelte', css: 'external', cssHash: () => hash }).css!.code
     const rule = css.match(/\.share\.[\w-]+\s*\{([^}]*)\}/)?.[1] ?? ''
-    expect(rule).toMatch(/background: ?var\(--accent\)/)
-    expect(rule).toMatch(/color: ?var\(--on-accent\)/)
-    expect(rule).toMatch(/border: ?0/)
+    expect(rule).not.toMatch(/background|border-radius/)
   })
 })
 

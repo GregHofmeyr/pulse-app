@@ -83,11 +83,11 @@
   .label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text); }
   .band.ringing .label { color: var(--ok-text); }
   .grow { flex: 1; }
-  .ctl { width: 36px; height: 36px; border: 0; border-radius: 10px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
+  .ctl { width: 36px; height: 36px; border: 0; border-radius: var(--radius-md); background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
   .ctl:hover { background: var(--bg-4); }
   .ctl.on { background: var(--danger); color: var(--on-danger); }
-  .leave { width: 48px; height: 36px; border: 0; border-radius: 10px; background: var(--danger); color: var(--on-danger); display: grid; place-items: center; }
-  .join { height: 34px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; display: flex; align-items: center; gap: 6px; }
-  .decline { height: 34px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--danger); color: var(--on-danger); font-weight: 600; }
+  .leave { width: 48px; height: 36px; border: 0; border-radius: var(--radius-md); background: var(--danger); color: var(--on-danger); display: grid; place-items: center; }
+  .join { height: 34px; padding: 0 14px; border: 0; border-radius: var(--radius-md); background: var(--accent); color: var(--on-accent); font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .decline { height: 34px; padding: 0 14px; border: 0; border-radius: var(--radius-md); background: var(--danger); color: var(--on-danger); font-weight: 600; }
   .join:hover, .decline:hover, .leave:hover, .ctl.on:hover { filter: brightness(1.1); }
 </style>

@@ -118,8 +118,9 @@
 <style>
   .menu { position: absolute; top: 46px; right: 12px; z-index: 10; width: 230px; }
   .menu.ctx, .menu.anchored { position: fixed; right: auto; z-index: 45; }
-  /* the pop-in grows from the button's corner */
-  .menu.anchored { transform-origin: top right; }
+  /* the pop-in grows from the button's corner, or from the cursor (#173) */
+  .menu.anchored { --pop-origin: top right; }
+  .menu.ctx { --pop-origin: top left; }
   .q { margin: 6px 8px; font-size: 13px; color: var(--text-2); }
   .row { display: flex; gap: 4px; }
   .err { margin: 6px 8px 2px; font-size: 12px; color: var(--danger-text); }

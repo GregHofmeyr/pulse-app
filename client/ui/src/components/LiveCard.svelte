@@ -49,8 +49,8 @@
       </div>
     {/if}
     <p class="viewers">
-      {#if viewers.length}Watching: {viewers.map((u) => displayName(app.state, serverId, u)).join(', ')}{#if ghosts}<span class="ghosts" title="Ghost viewers: people in the server outside this call"> · {ghosts}</span>{/if}
-      {:else if ghosts}Watching: <span class="ghosts" title="Ghost viewers: people in the server outside this call">{ghosts}</span>
+      {#if viewers.length}Watching: {viewers.map((u) => displayName(app.state, serverId, u)).join(', ')}{#if ghosts}<span class="ghosts" data-tip="Ghost viewers: people in the server outside this call"> · {ghosts}</span>{/if}
+      {:else if ghosts}Watching: <span class="ghosts" data-tip="Ghost viewers: people in the server outside this call">{ghosts}</span>
       {:else}Nobody is watching yet{/if}
     </p>
     {#if live.encoderWarning}<p class="warn" role="status">Your GPU encoder isn't being used, so this will cost game FPS</p>{/if}
@@ -77,7 +77,7 @@
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); }
   .meta { color: var(--text-3); font-size: 12px; }
   .preview { position: relative; }
-  video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; object-fit: contain; }
+  video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: var(--radius-md); object-fit: contain; }
   .viewers { margin: 0; font-size: 13px; color: var(--text-2); }
   .allow { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); }
   .allow input { accent-color: var(--accent); }

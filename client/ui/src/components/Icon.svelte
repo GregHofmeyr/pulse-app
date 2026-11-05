@@ -65,6 +65,10 @@
     unlink: 'M18.84 12.25l1.72-1.71a5 5 0 0 0-7.07-7.07l-1.72 1.71M5.17 11.75l-1.71 1.71a5 5 0 0 0 7.07 7.07l1.71-1.71M8 2v3M2 8h3M16 19v3M19 16h3',
   } satisfies Record<string, string>
   export type IconName = keyof typeof paths
+
+  /** Icon sizes by role (#173): 14 inline with text and in menu rows, 16 on icon buttons and action bars, 18 in
+   *  navigation and headers (the default). Smaller only inside a chip; larger only as artwork. */
+  export const ICON_SIZE = { inline: 14, button: 16, nav: 18 } as const
 </script>
 
 <script lang="ts">

@@ -150,9 +150,9 @@
   {#if emoji.length === 0}
     <p class="empty">No custom emoji yet.</p>
   {:else}
-    <ul>
+    <ul class="settings-list">
       {#each emoji as e (e.id)}
-        <li>
+        <li class="settings-list-item">
           <img src={mediaUrl(e.still_hash ?? e.hash!)} alt={e.name} width="32" height="32" />
           <div class="meta">
             {#if renaming?.id === e.id}
@@ -189,11 +189,11 @@
   .hint { margin: -12px 0 0; color: var(--text-3); font-size: 12px; }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .empty { margin: 0; color: var(--text-3); }
-  .file { display: inline-flex; align-items: center; height: 36px; padding: 0 16px; align-self: flex-start; border-radius: 8px; background: var(--bg-3); font-weight: 600; font-size: 13px; cursor: pointer; }
+  .file { display: inline-flex; align-items: center; height: 36px; padding: 0 16px; align-self: flex-start; border-radius: var(--radius-sm); background: var(--bg-3); font-weight: 600; font-size: 13px; cursor: pointer; }
   .file.off { opacity: .5; cursor: default; }
   .file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
   .file:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .add { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--bg-4); border-radius: 12px; }
+  .add { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--bg-4); border-radius: var(--radius-lg); }
   .previews { display: flex; align-items: flex-end; gap: 16px; }
   .add label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }
   .row { display: flex; gap: 8px; }
@@ -201,8 +201,7 @@
   /* empty but kept (a live region must exist before its text): take back the flex gap */
   .add .name-hint:empty { margin-top: -12px; }
   .full { margin: -12px 0 0; color: var(--text-3); font-size: 13px; }
-  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-  li { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; background: var(--bg-0); }
+  /* the list is the shared .settings-list (app.css) */
   li img { object-fit: contain; }
   .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .name { font-weight: 600; }

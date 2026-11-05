@@ -71,7 +71,7 @@
   </div>
 
   <div>
-    <h3>Sessions</h3>
+    <h3 class="settings-section-title">Sessions</h3>
     {#if confirming}
       <p class="q">Are you sure? Every other device signed in to this account goes back to the login screen. This one stays signed in.</p>
       <div class="actions">
@@ -92,7 +92,6 @@
 
 <style>
   /* the pane's 20px gap plus this: the 28px between sections it had */
-  h3 { margin: 8px 0 10px; font-size: 15px; }
   .row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
   /* under the switch's label, not the switch (44px wide, then the row's 10px gap) */
   .hint { margin: -2px 0 0 54px; font-size: 12px; color: var(--text-3); }

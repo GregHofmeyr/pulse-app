@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
+  import { modal } from '../lib/actions'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import { app, clock } from '../lib/store.svelte'
@@ -53,8 +54,8 @@
 </script>
 
 <div class="overlay modal-overlay fade-in">
-  <div class="backdrop modal-backdrop" role="presentation" onclick={onClose}></div>
-  <div class="modal pop-in" role="dialog" aria-label={title}>
+  <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={onClose}></div>
+  <div class="modal pop-in" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" use:modal={onClose}>
     <h2 class="modal-title">{title}</h2>
     {#if hint}<p class="hint">{hint}</p>{/if}
     {#if fixed.length || picked.length}
@@ -97,7 +98,7 @@
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { padding: 3px 10px 3px 3px; border: 0; border-radius: 20px; background: var(--bg-3); color: var(--text); font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
   .list { overflow-y: auto; min-height: 120px; max-height: 320px; display: flex; flex-direction: column; gap: 2px; }
-  .pick { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); text-align: left; }
+  .pick { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-2); text-align: left; }
   .pick:hover:not(:disabled) { background: var(--bg-3); }
   .pick.sel { background: var(--bg-4); color: var(--text); }
   .pick:disabled { opacity: .45; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clipFilter, feedKey, formatBytes, formatDuration, matchesFilter, clipView, isNewClip, matchGame, hasNewClipReplies, gameName } from './clips'
+import { clipFilter, clipRowEstimate, feedKey, formatBytes, formatDuration, matchesFilter, clipView, isNewClip, matchGame, hasNewClipReplies, gameName } from './clips'
 import type { Game } from './protocol/Game'
 import { applyEvent, applyReady, emptyState } from './state'
 import type { Message } from './protocol/Message'
@@ -96,5 +96,19 @@ describe('hasNewClipReplies / gameName', () => {
     expect(gameName(s, 'S1', clip('G1'))).toBe('Apex')
     expect(gameName(s, 'S1', clip('G9'))).toBeNull()
     expect(gameName(s, 'S1', clip(null))).toBeNull()
+  })
+})
+
+describe('clipRowEstimate (#173: a clip row is laid out near its real height before it is drawn)', () => {
+  it('follows the clip\'s own shape: a vertical clip is taller than a wide one', () => {
+    expect(clipRowEstimate({ width: 1920, height: 1080 }, 640, 700, 140)).toBe(360 + 140)
+    expect(clipRowEstimate({ width: 1080, height: 1920 }, 640, 2000, 140)).toBe(Math.round(640 * 16 / 9) + 140)
+  })
+  it('caps the player as ClipPlayer does (70% of the window)', () => {
+    expect(clipRowEstimate({ width: 1080, height: 1920 }, 640, 600, 140)).toBe(740)
+  })
+  it('without a usable size, guesses 16:9', () => {
+    expect(clipRowEstimate(null, 320, 700, 0)).toBe(180)
+    expect(clipRowEstimate({ width: 0, height: 0 }, 320, 700, 0)).toBe(180)
   })
 })

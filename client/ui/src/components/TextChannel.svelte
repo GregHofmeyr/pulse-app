@@ -25,7 +25,7 @@
   import { addHistory, addOlder, appendNewer, markHistory, reachLatest, PAGE, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
   import { liveQoty } from '../lib/quotes'
-  import { displayName, groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor, nextTypingExpiry, typingNames } from '../lib/selectors'
+  import { displayName, groupedPending, groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor, nextTypingExpiry, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -45,6 +45,7 @@
   const channel = $derived(app.state.channels[channelId])
   const messages = $derived(app.state.messages[channelId] ?? [])
   const pending = $derived((app.state.pending[channelId] ?? []).filter((p) => !p.thread_root_id)) // a reply's pending shows in its thread
+  const pendingMessages = $derived(pending.map((p) => pendingMessage(p, channelId, app.state.me?.id ?? '')))
   const byId = $derived(new Map(messages.map((m) => [m.id, m])))
   let now = $state(Date.now())
   const typers = $derived(typingNames(app.state, serverId, channelId, now))
@@ -116,13 +117,19 @@
   async function maybeLoadOlder() {
     if (loadingOlder || reachedStart || list.scrollTop > 60 || !messages.length) return
     loadingOlder = true
-    const before = list.scrollHeight
     try {
       const oldest = messages[0].id
       const page = await api.listMessages(channelId, oldest)
+      // Keep the view still (unless we left): the oldest message stays where it is on screen once the page is drawn
+      // above it, measured after the wait so a scroll meanwhile counts, and whether or not the engine anchors
+      // scrolling itself (WebKitGTK doesn't; #173).
+      const anchor = list?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(oldest)}"]`)
+      const y0 = anchor?.getBoundingClientRect().top ?? 0
+      const before = list?.scrollHeight ?? 0
       app.state = addOlder(app.state, channelId, oldest, page)
       await tick()
-      if (list) list.scrollTop = list.scrollHeight - before // keep the view where it was (unless we left)
+      if (list && anchor?.isConnected) list.scrollTop += anchor.getBoundingClientRect().top - y0
+      else if (list) list.scrollTop += list.scrollHeight - before // no element to hold on to: by the height added
     } catch (e) {
       error = errorText(e)
     } finally {
@@ -217,7 +224,7 @@
     if (atBottom) void maybeLoadNewer()
   }
   function jump() {
-    list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' })
+    list.scrollTo({ top: list.scrollHeight, behavior: motion.reducedMotion ? 'auto' : 'smooth' })
   }
 
   // --- jump to a message (lib/jump.ts sets `ui.jump`): scroll it to the middle and flash it. A
@@ -535,8 +542,9 @@
         onDelete={() => api.deleteMessage(m.id)} onEditClosed={() => composer?.focus()} />
       {/if}
     {/each}
-    {#each pending as p (p.nonce)}
-      <MessageItem message={pendingMessage(p, channelId, app.state.me?.id ?? '')} {serverId} name={nameOf(app.state.me?.id ?? null)} {nameOf} grouped={false}
+    {#each pendingMessages as pm, i (pm.id)}
+      {@const p = pending[i]}
+      <MessageItem message={pm} {serverId} name={nameOf(app.state.me?.id ?? null)} {nameOf} grouped={groupedPending(messages, pendingMessages, i)}
         replyTo={p.reply_to_id ? (byId.get(p.reply_to_id) ?? null) : null} mine
         {mentionNames} meId={app.state.me?.id ?? ''} pending={p} onReply={() => {}} onEdit={async () => {}} onDelete={async () => {}}
         onRetry={() => retry(p.nonce)} onDiscard={() => (app.state = removePending(app.state, channelId, p.nonce))} />
@@ -602,7 +610,7 @@
   .list :global(.jump-flash) { animation: jump-flash 2s ease-out; }
   .list :global(.jump-flash.still) { animation: none; outline: 2px solid var(--focus-ring); outline-offset: -2px; }
   @keyframes jump-flash {
-    0%, 30% { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+    0%, 30% { background: var(--accent-mid); }
     100% { background: transparent; }
   }
   .jump-notice { margin: 0 18px 4px; color: var(--text-3); font-size: 13px; }

@@ -21,6 +21,7 @@ import { badgeStore } from '../lib/badges.svelte'
 import type { User } from '../lib/protocol/User'
 import type { CardProfile } from '../lib/protocol/CardProfile'
 import type { ProfileStats } from '../lib/protocol/ProfileStats'
+import { DEFAULT_THEME, SKELETON_THEME } from '../lib/cardTheme'
 
 const BANNER = 'c'.repeat(64)
 const sam: User = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -493,6 +494,18 @@ describe('ProfileCardPopover', () => {
     flushSync()
     expect(document.querySelector('.card .name')!.textContent).toBe('sam')
     expect(document.querySelector('.skeleton')).not.toBeNull()
+  })
+
+  it('the loading card has the loaded shape and no one\'s colours: a full banner, a stats placeholder, neutral greys (#173)', () => {
+    vi.mocked(invoke).mockImplementation((() => new Promise(() => {})) as never)
+    cmp = mount(ProfileCardPopover, { target: document.body })
+    openCard('U2', null, document.body)
+    flushSync()
+    const banner = document.querySelector('.card .banner')!
+    expect(banner.classList.contains('none')).toBe(false)
+    expect(document.querySelectorAll('.skeleton')).toHaveLength(2)
+    expect((document.querySelector('.card') as HTMLElement).style.getPropertyValue('--glow-top')).toBe(SKELETON_THEME.top)
+    expect(SKELETON_THEME.top).not.toBe(DEFAULT_THEME.top)
   })
 
   it('Escape closes and returns focus', async () => {

@@ -85,12 +85,12 @@
     <span class="title-text">{channel?.name ?? ''}</span><span class="caret" class:up={shown}><Icon name="chevron" size={14} /></span>
   </button>
   <div class="chips" role="group" aria-label="Filter clips">
-    {#if shown}<button type="button" class="chip" aria-pressed={!filter.game && !filter.author} onclick={() => onFilter({})}>All</button>{/if}
+    {#if shown}<button type="button" class="chip toggle-chip" aria-pressed={!filter.game && !filter.author} onclick={() => onFilter({})}>All</button>{/if}
     {#each shown ? rowGames : gameChips as g (g.id)}
-      {#if shown || filter.game === g.id}<button type="button" class="chip" aria-pressed={filter.game === g.id} onclick={() => pickGame(g.id)}>{g.name}</button>{/if}
+      {#if shown || filter.game === g.id}<button type="button" class="chip toggle-chip" aria-pressed={filter.game === g.id} onclick={() => pickGame(g.id)}>{g.name}</button>{/if}
     {/each}
     {#if shown && moreGames.length}<div class="more">
-      <button type="button" class="chip" aria-haspopup="menu" aria-expanded={more} data-menu-toggle onclick={() => (more = !more)}>+{moreGames.length} more</button>
+      <button type="button" class="chip toggle-chip" aria-haspopup="menu" aria-expanded={more} data-menu-toggle onclick={() => (more = !more)}>+{moreGames.length} more</button>
       {#if more}
         <div class="menu menu-surface pop-in" role="menu" aria-label="More games" use:clickOutside={() => (more = false)}>
           {#each moreGames as g (g.id)}
@@ -100,7 +100,7 @@
       {/if}
     </div>{/if}
     {#if shown || filter.author}<div class="person">
-      <button type="button" class="chip" aria-pressed={!!filter.author} aria-haspopup="menu" aria-expanded={people} data-menu-toggle
+      <button type="button" class="chip toggle-chip" aria-pressed={!!filter.author} aria-haspopup="menu" aria-expanded={people} data-menu-toggle
         onclick={() => (people = !people)}>{personLabel}</button>
       {#if people}
         <div class="menu menu-surface pop-in" role="menu" aria-label="By person" use:clickOutside={() => (people = false)}>
@@ -120,33 +120,31 @@
     <button type="button" class="tbtn" aria-label="List view" data-tip="List" aria-pressed={view === 'list'} onclick={() => setView('list')}><Icon name="list" size={16} /></button>
     <button type="button" class="tbtn" aria-label="Wall view" data-tip="Wall" aria-pressed={view === 'wall'} onclick={() => setView('wall')}><Icon name="grid" size={16} /></button>
   </div>
-  <button type="button" class="share" onclick={onShare}>Share a clip</button>
+  <button type="button" class="share btn btn-primary" onclick={onShare}>Share a clip</button>
   <SearchBox {serverId} {channelId} compact={narrow} />
 </div>
 
 <style>
   .head { min-height: 52px; flex-shrink: 0; padding: 8px 18px; box-sizing: border-box; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--text-3); }
   .ico { display: flex; }
-  .title { display: flex; align-items: center; gap: 4px; max-width: 240px; padding: 2px 6px; margin-left: -6px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 15px; font-weight: 600; }
+  .title { display: flex; align-items: center; gap: 4px; max-width: 240px; padding: 2px 6px; margin-left: -6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: 15px; font-weight: 600; }
   .title:hover { background: var(--bg-3); }
   .title-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .caret { display: flex; flex-shrink: 0; color: var(--text-3); transition: transform var(--dur) var(--ease); }
   .caret.up { transform: rotate(180deg); }
   .chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-left: 6px; }
-  .chip { height: 28px; padding: 0 11px; border-radius: 14px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; font-weight: 600; white-space: nowrap; }
-  .chip:hover { background: var(--bg-3); color: var(--text); }
-  .chip[aria-pressed='true'] { background: var(--accent); border-color: var(--focus-ring); color: var(--on-accent); }
+  /* the filters are the shared .toggle-chip (app.css) */
   .person, .more { position: relative; }
-  .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; }
+  .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; --pop-origin: top left; }
   .menu-item[aria-checked='true'] { color: var(--accent-text); }
   .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
   .grow { flex: 1; }
   .err { color: var(--danger-text); font-size: 12px; }
-  .toggle { display: flex; padding: 2px; border-radius: 10px; background: var(--bg-2); }
-  .tbtn { width: 30px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .toggle { display: flex; padding: 2px; border-radius: var(--radius-md); background: var(--bg-2); }
+  .tbtn { width: 30px; height: 28px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .tbtn:hover { color: var(--text); }
   .tbtn[aria-pressed='true'] { background: var(--bg-4); color: var(--text); }
-  /* the app's accent button (as Save in Settings → Profile), at the header's 32 px */
-  .share { height: 32px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 600; white-space: nowrap; }
+  /* the app's accent button (.btn .btn-primary), at the header's 32 px */
+  .share { padding: 0 14px; }
 </style>

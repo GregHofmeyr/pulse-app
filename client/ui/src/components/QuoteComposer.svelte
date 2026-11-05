@@ -390,7 +390,7 @@
         {/if}
         <div class="picker">
           {#if r.speaker}
-            <button type="button" class="chip" title="Change who said it" onclick={() => clearSpeaker(r)}>— {r.speaker.name}</button>
+            <button type="button" class="chip" data-tip="Change who said it" onclick={() => clearSpeaker(r)}>— {r.speaker.name}</button>
           {:else}
             <input class="who" type="text" role="combobox" aria-expanded={r.open} aria-controls="opts-{r.key}" aria-activedescendant={r.open ? `opt-${r.key}-${r.hi}` : undefined}
               aria-autocomplete="list" aria-label="Who said it?" placeholder="who said it?" autocomplete="off" bind:value={r.query}
@@ -405,7 +405,7 @@
             {/if}
           {/if}
         </div>
-        <button type="button" class="ibtn" title="Add an image" aria-label="Add image" onclick={() => rowEl(r.key)?.querySelector<HTMLInputElement>('input[type=file]')?.click()}><Icon name="image" size={16} /></button>
+        <button type="button" class="ibtn" aria-label="Add image" onclick={() => rowEl(r.key)?.querySelector<HTMLInputElement>('input[type=file]')?.click()}><Icon name="image" size={16} /></button>
         <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onchange={(e) => onPick(e, r)} />
         {#if rows.length > 1}
           <button type="button" class="ibtn" aria-label="Remove line" onclick={() => removeLine(r.key)}><Icon name="x" size={14} /></button>
@@ -434,26 +434,26 @@
 </div>
 
 <style>
-  .qc { flex-shrink: 0; margin: 0 18px 16px; padding: 8px; background: var(--bg-3); border-radius: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .qc { flex-shrink: 0; margin: 0 18px 16px; padding: 8px; background: var(--bg-3); border-radius: var(--radius-lg); display: flex; flex-direction: column; gap: 6px; }
   .row { display: flex; align-items: center; gap: 8px; }
-  .qline { border-radius: 10px; }
+  .qline { border-radius: var(--radius-md); }
   .qline.drop { outline: 2px dashed var(--focus-ring); outline-offset: 2px; }
-  .qtext, .caption, .who { min-width: 0; flex: 1; padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; background: var(--bg-2); color: var(--text); font: inherit; resize: none; field-sizing: content; max-height: 140px; }
+  .qtext, .caption, .who { min-width: 0; flex: 1; padding: 7px 10px; border: 1px solid transparent; border-radius: var(--radius-sm); background: var(--bg-2); color: var(--text); font: inherit; resize: none; field-sizing: content; max-height: 140px; }
   .picker { position: relative; width: 170px; flex-shrink: 0; }
   .who { width: 100%; flex: none; }
-  .chip { max-width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--quote-green-deep); color: var(--text); font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .opts { position: absolute; bottom: calc(100% + 4px); left: 0; right: 0; z-index: 20; gap: 2px; }
-  .ibtn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); cursor: pointer; }
+  .chip { max-width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: var(--quote-green-deep); color: var(--text); font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .opts { position: absolute; bottom: calc(100% + 4px); left: 0; right: 0; z-index: 20; gap: 2px; --pop-origin: bottom; }
+  .ibtn { width: 28px; height: 28px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); cursor: pointer; }
   .ibtn:hover { background: var(--bg-4); color: var(--text); }
   .pic { position: relative; flex-shrink: 0; }
-  .thumb { display: block; width: 44px; height: 44px; object-fit: cover; border-radius: 8px; }
+  .thumb { display: block; width: 44px; height: 44px; object-fit: cover; border-radius: var(--radius-sm); }
   .x { position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--bg-1); color: var(--text); }
   .foot { display: flex; align-items: center; gap: 8px; }
   .spacer { flex: 1; }
-  .foot button, .warn button { height: 28px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--bg-2); color: var(--text); font: inherit; font-size: 13px; }
+  .foot button, .warn button { height: 28px; padding: 0 12px; border: 0; border-radius: var(--radius-sm); background: var(--bg-2); color: var(--text); font: inherit; font-size: 13px; }
   .foot .post { background: var(--quote-green); color: var(--on-quote-green); font-weight: 700; }
   .foot .post:disabled { opacity: .5; }
-  .warn { padding: 8px 10px; border-radius: 8px; background: var(--bg-2); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+  .warn { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg-2); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
   .warn p { flex-basis: 100%; margin: 0; }
   .note { margin: 0; font-size: 12px; color: var(--text-3); }
   .err { margin: 0; font-size: 12px; color: var(--danger-text); }

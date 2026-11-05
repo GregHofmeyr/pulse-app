@@ -133,6 +133,14 @@ export function groupedWith(list: Message[], i: number): boolean {
     && new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() < 5 * 60_000
 }
 
+/** Whether pending message `i` continues the group before it: the same rule as `groupedWith`, against the confirmed
+ *  messages followed by the pending ones, so a sent message doesn't show its own header for a round trip and then
+ *  collapse once it's confirmed (#173). */
+export function groupedPending(confirmed: Message[], pending: Message[], i: number): boolean {
+  const prev = i > 0 ? pending[i - 1] : confirmed[confirmed.length - 1]
+  return prev ? groupedWith([prev, pending[i]], 1) : false
+}
+
 /** Every name someone can be found by in `serverId`'s views (or outside a server): display name,
  *  server nickname, your private nickname for them, without repeats. Not the username. */
 export function namesOf(s: AppState, serverId: string | null, userId: string): string[] {

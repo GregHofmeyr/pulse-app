@@ -124,7 +124,7 @@
   }
 </script>
 
-<h3>Two-factor authentication</h3>
+<h3 class="settings-section-title">Two-factor authentication</h3>
 
 {#if view === 'status' && !status && error}
   <p class="err" role="alert">{error}</p>
@@ -201,7 +201,6 @@
 {#if view !== 'status' && error}<p class="err" role="alert">{error}</p>{/if}
 
 <style>
-  h3 { margin: 8px 0 10px; font-size: 15px; }
   form { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
   label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text-2); }
   /* :global: the password field's input lives inside PasswordInput */
@@ -210,7 +209,7 @@
   form .q { margin: 0; }
   .hint { margin: 6px 0 0; font-size: 13px; color: var(--text-3); }
   .actions { display: flex; gap: 8px; }
-  .qr { display: block; border-radius: 6px; }
+  .qr { display: block; border-radius: var(--radius-xs); }
   .key { margin: 0; font-size: 13px; }
   .key code, .codes code { font-family: ui-monospace, monospace; letter-spacing: .04em; }
   .codes { list-style: none; margin: 0 0 10px; padding: 0; display: grid; grid-template-columns: repeat(2, max-content); gap: 4px 24px; font-size: 13px; }

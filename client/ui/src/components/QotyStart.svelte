@@ -76,7 +76,7 @@
     <div class="top">
       <span class="qoty-mark mark" aria-hidden="true">“</span>
       <h1 class="modal-title">{title}</h1>
-      <button type="button" class="icon-btn round modal-close" aria-label="Cancel" disabled={busy} onclick={cancel}><Icon name="x" /></button>
+      <button type="button" class="icon-btn round modal-close" aria-label="Cancel" disabled={busy} onclick={cancel}><Icon name="x" size={16} /></button>
     </div>
     {#if !reopen}
       <label class="field">
@@ -121,5 +121,5 @@
   .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
   /* the Quote of the Year green, at the dialog-footer size */
-  .go { height: 36px; padding: 0 16px; border-radius: 10px; font-size: 14px; }
+  .go { height: 36px; padding: 0 16px; border-radius: var(--radius-md); font-size: 14px; }
 </style>

@@ -7,6 +7,7 @@
   import { isNotFound, tidyCandidates } from '../lib/soundboard'
   import { app } from '../lib/store.svelte'
   import { errorText, soundboardCmd } from '../lib/tauri'
+  import Loading from './Loading.svelte'
 
   let { serverId, onClose }: { serverId: string; onClose: () => void } = $props()
 
@@ -43,7 +44,7 @@
     <h1 class="modal-title">Tidy up</h1>
     <p>The least-played sounds here. Delete any you don't need to make room.</p>
     {#if shown === null}
-      <p class="hint">Loading…</p>
+      <Loading />
     {:else}
       <ul>
         {#each shown as s (s.id)}
@@ -67,7 +68,6 @@
   .overlay { position: fixed; inset: 0; z-index: 30; }
   .modal { width: min(460px, 100%); }
   p { margin: 0; font-size: 14px; color: var(--text-2); }
-  .hint { color: var(--text-3); }
   .err { font-size: 13px; color: var(--danger-text); }
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   li { display: flex; align-items: center; gap: 10px; min-width: 0; }

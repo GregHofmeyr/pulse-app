@@ -37,7 +37,7 @@ describe('VoiceSettings meter subscription', () => {
     try {
       flushSync()
       const fill = document.querySelector<HTMLElement>('.meter .fill')!
-      expect(fill.style.width).toBe('0%')
+      expect(fill.style.transform).toBe('scaleX(0)')
       expect(fill.classList.contains('over')).toBe(false)
     } finally {
       unmount(c)

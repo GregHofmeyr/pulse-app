@@ -77,7 +77,7 @@
   </div>
   {#if mutedForMe}
     <!-- the text names it; the icon alone (compact strip) carries the label -->
-    <span class="for-me" data-tip="Muted for you (they don't know)"><Icon name="speakerOff" size={compact ? 11 : 13} label={compact ? 'Muted for you' : undefined} />{#if !compact}Muted for you{/if}</span>
+    <span class="for-me" data-tip="Muted for you (they don't know)"><Icon name="speakerOff" size={compact ? 12 : 14} label={compact ? 'Muted for you' : undefined} />{#if !compact}Muted for you{/if}</span>
   {:else if !entry.pending && volume !== 100}<span class="vol">{volumeLabel(volume)}</span>{/if}
 </div>
 
@@ -87,7 +87,6 @@
   .tile.pending { opacity: .6; }
   .avatar-btn { position: relative; border: 0; padding: 0; background: none; border-radius: 50%; }
   .avatar-btn[aria-disabled='true'] { cursor: default; }
-  .avatar-btn :global(.av) { transition: box-shadow .12s; }
   .tile.speaking :global(.av) { box-shadow: 0 0 0 4px var(--ring), 0 0 0 7px var(--ok); }
   .badge { position: absolute; right: -4px; bottom: -4px; width: 28px; height: 28px; border-radius: 50%; background: var(--danger); color: var(--on-danger); border: 4px solid var(--ring); display: grid; place-items: center; }
   /* the server's mute (#140), not theirs: squared, with a second ring */
@@ -103,7 +102,7 @@
   .bar.on { background: var(--ok); }
   .vol { position: absolute; top: 10px; right: 12px; font-size: 11px; color: var(--text-3); }
   /* amber, a speaker crossed out: not their red mute badge */
-  .for-me { position: absolute; top: 8px; right: 10px; display: flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn-text); font-size: 11px; font-weight: 600; }
+  .for-me { position: absolute; top: 8px; right: 10px; display: flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--warn-text); font-size: 11px; font-weight: 600; }
   .compact .for-me { top: 4px; right: 6px; padding: 2px 4px; }
   .compact { gap: 4px; border-radius: 10px; }
   .compact.speaking :global(.av) { box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--ok); }
