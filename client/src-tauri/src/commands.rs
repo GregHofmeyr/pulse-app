@@ -1441,13 +1441,15 @@ pub fn hotkey(app: &AppHandle, c: crate::ipc::Command) {
 static SOUND_LOG_BUDGET: std::sync::Mutex<Option<crate::logging::LineBudget>> =
     std::sync::Mutex::new(None);
 
-/// UI sound, played natively (see sounds.rs for why not in the webview).
+/// UI sound, played natively (see sounds.rs for why not in the webview). `ringing` is one cycle of
+/// `ringtone` (#174; missing = Classic), whatever the set.
 #[tauri::command]
 pub async fn play_sound(
     name: String,
     set: Option<String>,
     volume: Option<f32>,
     output: Option<String>,
+    ringtone: Option<String>,
 ) {
     let set = set.as_deref().unwrap_or(crate::sounds::DEFAULT_SET);
     // with `window focus`, shows whether a message sound was asked for (a name from a fixed list);
@@ -1459,15 +1461,22 @@ pub async fn play_sound(
         || tracing::info!(name = %crate::logging::one_line(&name, 32), "sound"),
         |n| tracing::warn!("sound: {n} lines dropped (too many)"),
     );
-    crate::sounds::play(set, &name, crate::sounds::gain(volume), output);
+    if name == "ringing" {
+        let id = ringtone.as_deref().unwrap_or(crate::sounds::DEFAULT_RINGTONE);
+        crate::sounds::play_ringtone_once(id, crate::sounds::gain(volume), output);
+    } else {
+        crate::sounds::play(set, &name, crate::sounds::gain(volume), output);
+    }
 }
 
 /// The incoming-call ringtone, on loop until [`stop_ringtone`] (#50). The UI decides when (DND,
-/// muted conversations); a second start replaces the first.
+/// muted conversations); a second start replaces the first. `ringtone` is the one picked in
+/// Settings (#174; missing or unknown = Classic).
 #[tauri::command]
-pub async fn start_ringtone(volume: Option<f32>, output: Option<String>) {
+pub async fn start_ringtone(volume: Option<f32>, output: Option<String>, ringtone: Option<String>) {
     tracing::info!("ringtone: start");
-    crate::sounds::ring::start(crate::sounds::gain(volume), output);
+    let id = ringtone.as_deref().unwrap_or(crate::sounds::DEFAULT_RINGTONE);
+    crate::sounds::ring::start(id, crate::sounds::gain(volume), output);
 }
 
 #[tauri::command]

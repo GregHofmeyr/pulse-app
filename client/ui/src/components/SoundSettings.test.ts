@@ -6,7 +6,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: unknown) => invoke(cmd, args) }))
 
 import SoundSettings from './SoundSettings.svelte'
-import { SOUND_SETS } from '../lib/voiceui'
+import { RINGTONES, SOUND_SETS } from '../lib/voiceui'
 
 const LABELS = ['Classic', 'Two-step · Bright', 'Two-step · Warm', 'Two-step · Deep', 'Minimal · Soft', 'Minimal · Wood', 'Minimal · Glass', 'Goofy']
 let cmp: ReturnType<typeof mount> | undefined
@@ -147,5 +147,53 @@ describe('SoundSettings', () => {
     const desc = document.getElementById(r.getAttribute('aria-describedby')!)
     expect(desc?.textContent).toBe(SOUND_SETS.find((s) => s.id === 'goofy')!.blurb)
     expect(new Set(radios().map((x) => x.getAttribute('aria-describedby'))).size).toBe(8)
+  })
+})
+
+describe('SoundSettings: ringtone (#174)', () => {
+  const tones = () => [...document.querySelectorAll<HTMLElement>('[role=radiogroup][aria-label="Ringtone"] [role=radio]')]
+  const tone = (label: string) => tones().find((r) => r.getAttribute('aria-label') === label)!
+
+  it('lists the four ringtones under their own heading, Classic checked by default', () => {
+    show()
+    expect(tones().map((r) => r.getAttribute('aria-label'))).toEqual(RINGTONES.map((r) => r.label))
+    expect(tones().map((r) => r.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false', 'false'])
+    expect([...document.querySelectorAll('h3')].map((h) => h.textContent)).toEqual(['Sounds', 'Ringtone'])
+    expect(radios()).toHaveLength(8)
+  })
+
+  it('choosing one saves it on this device and leaves the sound set alone', () => {
+    show()
+    radio('Goofy').click()
+    flushSync()
+    tone('Chiptune').click()
+    flushSync()
+    expect(tone('Chiptune').getAttribute('aria-checked')).toBe('true')
+    expect(stored()).toMatchObject({ set: 'goofy', ringtone: 'chiptune' })
+    expect(radio('Goofy').getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('arrow keys move through the ringtones, wrapping, with one tab stop', () => {
+    show()
+    expect(tones().filter((r) => r.tabIndex === 0)).toEqual([tone('Classic')])
+    tone('Classic').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    flushSync()
+    expect(stored().ringtone).toBe('phone')
+    expect(document.activeElement).toBe(tone('Classic phone'))
+  })
+
+  it('▶ plays one ring of that ringtone without choosing it', () => {
+    show()
+    document.querySelector<HTMLButtonElement>('button[aria-label="Preview ringtone Marimba"]')!.click()
+    expect(plays()).toEqual([expect.objectContaining({ name: 'ringing', ringtone: 'marimba' })])
+    flushSync()
+    expect(tone('Classic').getAttribute('aria-checked')).toBe('true')
+    expect(stored()).toBeNull()
+  })
+
+  it('a ringtone saved before stays checked', () => {
+    localStorage.setItem('pulse.sounds', JSON.stringify({ set: 'classic', ringtone: 'marimba' }))
+    show()
+    expect(tone('Marimba').getAttribute('aria-checked')).toBe('true')
   })
 })

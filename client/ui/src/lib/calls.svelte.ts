@@ -12,7 +12,7 @@ import { ringAlerts, ringPlace } from './calls'
 import { conversationName } from './conversations'
 import { displayName, userOf } from './selectors'
 import { loadMixer, ringtoneGain } from './mixer'
-import { loadAudioConfig } from './voiceui'
+import { loadAudioConfig, loadSoundPrefs } from './voiceui'
 import { notifyPrefs } from './notifyPrefs.svelte'
 import { windowFocus } from './windowFocus.svelte'
 import type { CallRing } from './protocol/CallRing'
@@ -135,7 +135,7 @@ $effect.root(() => {
     const on = calls.rings.some((r) => ringAlerts(app.state, r, new Date().toISOString()))
     if (on === ringtoneOn) return
     ringtoneOn = on
-    if (on) void api.startRingtone(ringtoneGain(loadMixer()), loadAudioConfig().output ?? null)
+    if (on) void api.startRingtone(ringtoneGain(loadMixer()), loadAudioConfig().output ?? null, loadSoundPrefs().ringtone)
     else void api.stopRingtone()
   })
 })

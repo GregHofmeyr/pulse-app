@@ -110,7 +110,7 @@ describe('VolumeMixer', () => {
     move('Call sounds volume', 50)
     move('Ringing', 120)
     button('Test Ringing').click()
-    expect(calls('play_sound')).toEqual([{ name: 'ringing', set: 'classic', volume: mixGain(50, 120), output: null }])
+    expect(calls('play_sound')).toEqual([{ name: 'ringing', set: 'classic', volume: mixGain(50, 120), output: null, ringtone: 'classic' }])
   })
 
   it('a test button is disabled while its level is off', () => {

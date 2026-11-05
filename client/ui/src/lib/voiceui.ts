@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { loadMixer, soundGain, soundMasterGain } from './mixer'
+import { loadMixer, ringtoneGain, soundGain, soundMasterGain } from './mixer'
 // Pure helpers for the voice UI (tested in voiceui.test.ts).
 
 /** Your own mute / deafen, and (from the core) the server's of you (#140), which the core adds. */
@@ -38,9 +38,20 @@ export const SOUND_SETS: readonly { id: SoundSetId; label: string; blurb: string
   { id: 'goofy', label: 'Goofy', blurb: "Playful bleeps and zaps from Kenney's free packs." },
 ]
 
-/** `volume_pct` and `off` are from before the volume mixer: read only to migrate them (lib/mixer.ts). */
-export type SoundPrefs = { set: SoundSetId; volume_pct: number; off: SoundName[] }
-export const defaultSoundPrefs: SoundPrefs = { set: 'classic', volume_pct: 100, off: [] }
+/** The incoming-call ringtones (#174), one wav each in `src-tauri/ringtone` (Classic is `ring.wav`). Not part of a
+ * sound set: the one you pick rings whatever the set. */
+export type RingtoneId = 'classic' | 'marimba' | 'chiptune' | 'phone'
+export const RINGTONES: readonly { id: RingtoneId; label: string; blurb: string }[] = [
+  { id: 'classic', label: 'Classic', blurb: 'Two soft rising trills, the original ring.' },
+  { id: 'marimba', label: 'Marimba', blurb: 'A gentle wooden mallet figure, up and back down.' },
+  { id: 'chiptune', label: 'Chiptune', blurb: 'A quick retro arpeggio, like an old handheld.' },
+  { id: 'phone', label: 'Classic phone', blurb: 'The two-tone ring-ring of an old desk phone.' },
+]
+
+/** `volume_pct` and `off` are from before the volume mixer: read only to migrate them (lib/mixer.ts). `ringtone` is
+ * the one incoming calls ring with (#174), on this device. */
+export type SoundPrefs = { set: SoundSetId; volume_pct: number; off: SoundName[]; ringtone: RingtoneId }
+export const defaultSoundPrefs: SoundPrefs = { set: 'classic', volume_pct: 100, off: [], ringtone: 'classic' }
 
 /** Clean whatever is in storage: anything unexpected falls back to the default for that field. */
 export function normalizeSoundPrefs(raw: unknown): SoundPrefs {
@@ -52,7 +63,8 @@ export function normalizeSoundPrefs(raw: unknown): SoundPrefs {
       ? Math.round(Math.min(100, Math.max(0, r.volume_pct)))
       : defaultSoundPrefs.volume_pct
   const off = Array.isArray(r.off) ? SOUND_NAMES.filter((n) => (r.off as unknown[]).includes(n)) : []
-  return { set, volume_pct, off }
+  const ringtone = RINGTONES.find((t) => t.id === r.ringtone)?.id ?? defaultSoundPrefs.ringtone
+  return { set, volume_pct, off, ringtone }
 }
 export function loadSoundPrefs(): SoundPrefs {
   try {
@@ -143,11 +155,21 @@ export function playSoundAt(name: SoundName, gain: number) {
   invokeSound(name, loadSoundPrefs().set, gain)
 }
 
-/** One ring of the incoming-call ringtone at a given linear gain (the mixer's Ringing ▶, #50). The core plays the
- * looping ringtone itself while a call rings (`start_ringtone`); this is a single cycle of it. */
-export function playRingingAt(gain: number) {
+function invokeRinging(ringtone: RingtoneId, gain: number) {
   if (!(gain > 0)) return
-  void invoke('play_sound', { name: 'ringing', set: loadSoundPrefs().set, volume: gain, output: loadAudioConfig().output }).catch(() => {})
+  const { set } = loadSoundPrefs()
+  void invoke('play_sound', { name: 'ringing', set, volume: gain, output: loadAudioConfig().output, ringtone }).catch(() => {})
+}
+
+/** One ring of the chosen ringtone at a given linear gain (the mixer's Ringing ▶, #50). The core plays the looping
+ * ringtone itself while a call rings (`start_ringtone`); this is a single cycle of it. */
+export function playRingingAt(gain: number) {
+  invokeRinging(loadSoundPrefs().ringtone, gain)
+}
+
+/** The ringtone picker's ▶ (#174): one ring of `id` at Call sounds × Ringing, without choosing it. */
+export function previewRingtone(id: RingtoneId) {
+  invokeRinging(id, ringtoneGain(loadMixer()))
 }
 
 /** What "Preview" plays: a few events, in a row. */

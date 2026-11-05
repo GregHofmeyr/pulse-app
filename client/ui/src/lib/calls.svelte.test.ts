@@ -97,6 +97,17 @@ describe('the ringtone', () => {
     expect(calls.rings).toEqual([])
     localStorage.removeItem('pulse.mixer')
   })
+  it('rings the ringtone picked in Settings (#174), Classic when none is', () => {
+    ringing(ring())
+    expect(cmds('start_ringtone')[0][1]).toMatchObject({ ringtone: 'classic' })
+    resetCalls()
+    flushSync()
+    vi.mocked(invoke).mockClear()
+    localStorage.setItem('pulse.sounds', JSON.stringify({ set: 'goofy', ringtone: 'chiptune' }))
+    ringing(ring())
+    expect(cmds('start_ringtone')[0][1]).toMatchObject({ ringtone: 'chiptune' })
+    localStorage.removeItem('pulse.sounds')
+  })
   it('stops when the ring ends on another device, and only for my own ring end', () => {
     ringing(ring())
     handleCallEvent({ t: 'CallRingEnded', d: { channel_id: 'DM1', call_id: 'C1', user_id: 'U3', reason: 'answered' } })

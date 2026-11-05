@@ -176,11 +176,85 @@ def ringtone():
     cycle = trill + [0.0] * int(RATE * 0.2) + trill + [0.0] * int(RATE * 1.2)
     return normalise(cycle, active_rms(CLASSIC["join"]))
 
+# The other ringtones you can pick (#174). Each is one cycle the client loops, ending in a pause, normalised to
+# Classic's join like the original (which stays `ring.wav`, the "classic" ringtone).
+
+def _mix(length_s, notes):
+    """Sum `(start s, samples)` into a buffer `length_s` long (notes ring over each other)."""
+    out = [0.0] * int(RATE * length_s)
+    for start, samples in notes:
+        at = int(RATE * start)
+        for i, v in enumerate(samples[: len(out) - at]):
+            out[at + i] += v
+    return out
+
+def ring_marimba():
+    """Soft mallets: a rising-and-falling pentatonic figure (G4 C5 E5 G5 E5 C5), played twice, each note a warm wooden
+    strike (fundamental plus the marimba's 4th partial, quick decay) that rings into the next."""
+    notes = [392, 523, 659, 784, 659, 523]
+    step = 0.14
+    phrase = [(i * step, _note(f, 0.45, [(1, 1.0), (4, 0.18), (10, 0.03)], 0.003, release=0.05,
+                               decay=[0.18, 0.05, 0.015])) for i, f in enumerate(notes)]
+    second = [(s + 0.95, n) for s, n in phrase]
+    cycle = _mix(2.95, phrase + second)
+    return normalise(cycle, active_rms(CLASSIC["join"]))
+
+def _pulse(freq, dur, harmonics=(1, 3, 5, 7), vol=1.0):
+    """A soft square: the first few odd harmonics only (no aliasing fizz), clean attack and release."""
+    n = int(RATE * dur)
+    out = []
+    for i in range(n):
+        t = i / RATE
+        v = sum(math.sin(2 * math.pi * freq * k * t) / k for k in harmonics if freq * k < RATE / 2.5)
+        env = min(1.0, t / 0.004) * min(1.0, (dur - t) / 0.012)
+        out.append(v * env * vol)
+    return out
+
+def ring_chiptune():
+    """Retro handheld: a quick square-wave arpeggio up a major chord (C5 E5 G5 C6), twice, then a bright answer
+    (G5 C6) and a pause. Odd harmonics only, so it stays round rather than buzzy on loop."""
+    up = [523, 659, 784, 1047]
+    notes, t = [], 0.0
+    for _ in range(2):
+        for f in up:
+            notes.append((t, _pulse(f, 0.065)))
+            t += 0.075
+        t += 0.06
+    t += 0.08
+    for f in (784, 1047):
+        notes.append((t, _pulse(f, 0.12)))
+        t += 0.14
+    cycle = _mix(t + 0.9, notes)
+    return normalise(cycle, active_rms(CLASSIC["join"]))
+
+def ring_phone():
+    """The two-tone classic phone: two tones together (400 + 450 Hz, the old double ring), ring-ring, then a pause.
+    Soft edges and a light 3rd harmonic so it reads as a bell-less desk phone rather than a test tone."""
+    def burst(dur):
+        n = int(RATE * dur)
+        out = []
+        for i in range(n):
+            t = i / RATE
+            v = 0.0
+            for f in (400, 450):
+                v += math.sin(2 * math.pi * f * t) + 0.15 * math.sin(2 * math.pi * 3 * f * t)
+            env = min(1.0, t / 0.015) * min(1.0, (dur - t) / 0.03)
+            out.append(v * env)
+        return out
+    cycle = _mix(2.4, [(0.0, burst(0.4)), (0.6, burst(0.4))])
+    return normalise(cycle, active_rms(CLASSIC["join"]))
+
+RINGTONE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "client/src-tauri/ringtone")
+# ringtone id -> generator; "classic" is ring.wav (above)
+RINGTONES = {"marimba": ring_marimba, "chiptune": ring_chiptune, "phone": ring_phone}
+
 def main():
     for set_id, sounds in SETS.items():
         for name, samples in sounds.items():
             write_wav(f"{OUT}/{set_id}/{name}.wav", samples)
     write_wav(RING_OUT, ringtone())
+    for ring_id, make in RINGTONES.items():
+        write_wav(f"{RINGTONE_DIR}/{ring_id}.wav", make())
     print("ok")
 
 if __name__ == "__main__":

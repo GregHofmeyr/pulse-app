@@ -184,8 +184,10 @@ export const api = {
   startCall: (channelId: string) => invoke<StartCallResponse>('start_call', { channelId }),
   /** Stop a call ringing you, on all your devices; the caller isn't told (#50). */
   declineCall: (channelId: string) => invoke<void>('decline_call', { channelId }),
-  /** The incoming-call ringtone on loop (#50), at a linear gain on the chosen output, until `stopRingtone`. */
-  startRingtone: (volume: number, output: string | null) => invoke<void>('start_ringtone', { volume, output }).catch(() => {}),
+  /** The incoming-call ringtone on loop (#50), the one picked in Settings (#174), at a linear gain on the chosen output,
+   * until `stopRingtone`. */
+  startRingtone: (volume: number, output: string | null, ringtone: string) =>
+    invoke<void>('start_ringtone', { volume, output, ringtone }).catch(() => {}),
   stopRingtone: () => invoke<void>('stop_ringtone').catch(() => {}),
   /** Appear offline to one person, or stop (#45). An AppearOfflineChanged follows to your sessions. */
   setAppearOffline: (userId: string, hidden: boolean) => invoke<void>('set_appear_offline', { userId, hidden }),

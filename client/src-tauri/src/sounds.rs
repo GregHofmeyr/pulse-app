@@ -102,15 +102,37 @@ pub fn decode_wav(b: &[u8]) -> Option<Sound> {
 /// hundred ms to wake, and would swallow the short ping otherwise.
 pub const LEAD_IN_MS: u32 = 450;
 
-/// One cycle of the incoming-call ringtone (#50), generated like the sets (`scripts/gen_sounds.py`).
-/// One for every set; [`ring`] loops it while a call rings.
-pub const RINGTONE: &[u8] = include_bytes!("../ringtone/ring.wav");
+/// The incoming-call ringtones you can pick in Settings (#50, #174), one cycle each, generated like
+/// the sets (`scripts/gen_sounds.py`); [`ring`] loops the chosen one while a call rings. They don't
+/// belong to a sound set. Classic is the original `ring.wav`.
+pub const RINGTONES: &[(&str, &[u8])] = &[
+    ("classic", include_bytes!("../ringtone/ring.wav")),
+    ("marimba", include_bytes!("../ringtone/marimba.wav")),
+    ("chiptune", include_bytes!("../ringtone/chiptune.wav")),
+    ("phone", include_bytes!("../ringtone/phone.wav")),
+];
+
+pub const DEFAULT_RINGTONE: &str = "classic";
+
+/// A ringtone's file; an unknown id is [`DEFAULT_RINGTONE`].
+pub fn ringtone(id: &str) -> &'static [u8] {
+    RINGTONES
+        .iter()
+        .find(|(i, _)| *i == id)
+        .unwrap_or(&RINGTONES[0])
+        .1
+}
+
+/// One cycle of a ringtone (an unknown id is Classic).
+pub fn load_ringtone(id: &str) -> Option<Sound> {
+    decode_wav(ringtone(id))
+}
 
 /// An unknown set plays as `DEFAULT_SET`; an unknown name is `None`. `ringing` is one cycle of the
-/// ringtone (the volume mixer's ▶), whatever the set.
+/// default ringtone, whatever the set ([`play_ringtone_once`] plays a chosen one).
 pub fn load(set: &str, name: &str) -> Option<Sound> {
     if name == "ringing" {
-        return decode_wav(RINGTONE);
+        return load_ringtone(DEFAULT_RINGTONE);
     }
     let mut s = bytes(set, name)
         .or_else(|| bytes(DEFAULT_SET, name))
@@ -185,6 +207,18 @@ pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
         crate::logging::one_line(name, 32),
         None,
     );
+}
+
+/// One cycle of ringtone `id` (an unknown id is Classic), like [`play`]: the mixer's Ringing ▶
+/// and the ringtone picker's preview (#174).
+pub fn play_ringtone_once(id: &str, volume: f32, output: Option<String>) {
+    let volume = gain(Some(volume));
+    if volume <= 0.0 {
+        return;
+    }
+    if let Some(sound) = load_ringtone(id) {
+        spawn_play(sound, VOLUME * volume, output, "ringing".to_string(), None);
+    }
 }
 
 /// Play a soundboard sample on the output device when no call is running (in a call it goes
@@ -295,8 +329,8 @@ fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32, stop: &StopFlag) -> b
     true
 }
 
-/// The incoming-call ringtone (#50): [`RINGTONE`] on loop through the chosen output, until
-/// [`stop`]. One at a time: starting again replaces it.
+/// The incoming-call ringtone (#50): one of [`RINGTONES`] on loop through the chosen output,
+/// until [`stop`]. One at a time: starting again replaces it.
 pub mod ring {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
@@ -310,14 +344,14 @@ pub mod ring {
 
     static CURRENT: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 
-    /// Ring at the final linear gain `volume` (0 rings nothing) on `output` (a device name from
-    /// settings; missing or unplugged = the system default).
-    pub fn start(volume: f32, output: Option<String>) {
+    /// Ring ringtone `id` (unknown = Classic) at the final linear gain `volume` (0 rings nothing)
+    /// on `output` (a device name from settings; missing or unplugged = the system default).
+    pub fn start(id: &str, volume: f32, output: Option<String>) {
         stop();
         if volume <= 0.0 || volume.is_nan() {
             return;
         }
-        let Some(sound) = super::decode_wav(super::RINGTONE) else {
+        let Some(sound) = super::load_ringtone(id) else {
             return;
         };
         let flag = Arc::new(AtomicBool::new(false));
@@ -764,30 +798,79 @@ mod tests {
         assert!(decode_wav(b"not a wav file at all, definitely not").is_none());
     }
 
-    /// One cycle of the ringtone (#50), looped while a call rings: our format, a couple of seconds,
-    /// ending in a pause (so the loop breathes), as loud as Classic's join.
+    /// Every ringtone (#50, #174) is one cycle, looped while a call rings: our format, a couple of
+    /// seconds, ending in a pause (so the loop breathes), as loud as Classic's join.
     #[test]
-    fn the_ringtone_is_a_loopable_cycle() {
-        assert_eq!(wav_format(RINGTONE), Some((1, 22_050, 16)));
-        let s = decode_wav(RINGTONE).unwrap();
-        let secs = s.samples.len() as f32 / s.rate as f32;
-        assert!((1.5..=3.0).contains(&secs), "{secs} s");
-        let tail = &s.samples[s.samples.len() - s.rate as usize / 2..];
-        assert!(
-            tail.iter().all(|v| v.abs() < 0.001),
-            "the last 0.5 s is quiet"
-        );
-        let d = db(active_rms(&s.samples), active_rms(&raw("classic", "join")));
-        assert!(d.abs() <= 3.0, "{d:.1} dB from Classic's join");
-        assert!(RINGTONE.len() < 200_000);
+    fn every_ringtone_is_a_loopable_cycle() {
+        for (id, bytes) in RINGTONES {
+            assert_eq!(wav_format(bytes), Some((1, 22_050, 16)), "{id}");
+            let s = decode_wav(bytes).unwrap();
+            let secs = s.samples.len() as f32 / s.rate as f32;
+            assert!((1.5..=3.0).contains(&secs), "{id}: {secs} s");
+            let tail = &s.samples[s.samples.len() - s.rate as usize / 2..];
+            assert!(
+                tail.iter().all(|v| v.abs() < 0.001),
+                "{id}: the last 0.5 s is quiet"
+            );
+            let d = db(active_rms(&s.samples), active_rms(&raw("classic", "join")));
+            assert!(d.abs() <= 1.5, "{id}: {d:.1} dB from Classic's join");
+            let peak = s.samples.iter().fold(0f32, |m, v| m.max(v.abs()));
+            assert!(peak <= 0.98, "{id} peaks at {peak}");
+            assert!(bytes.len() < 200_000, "{id}");
+        }
     }
 
-    /// The mixer's Ringing ▶ plays one cycle through `play_sound("ringing")`, whatever the set.
+    /// A handful to pick from, each its own sound; Classic (the original `ring.wav`) is first and
+    /// the default.
     #[test]
-    fn ringing_plays_one_cycle_for_the_mixer_test() {
-        let one = decode_wav(RINGTONE).unwrap();
+    fn the_ringtones_are_distinct_and_classic_is_the_original() {
+        let ids: Vec<&str> = RINGTONES.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, ["classic", "marimba", "chiptune", "phone"]);
+        assert_eq!(DEFAULT_RINGTONE, "classic");
+        assert_eq!(
+            ringtone("classic"),
+            include_bytes!("../ringtone/ring.wav") as &[u8]
+        );
+        for (i, (a, x)) in RINGTONES.iter().enumerate() {
+            for (b, y) in &RINGTONES[i + 1..] {
+                assert_ne!(x, y, "{a} and {b} are the same file");
+            }
+        }
+        // the files on disk are exactly the table (a new wav can't be left out)
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/ringtone");
+        let mut on_disk: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|f| f.unwrap().file_name().into_string().unwrap())
+            .collect();
+        on_disk.sort();
+        assert_eq!(
+            on_disk,
+            ["chiptune.wav", "marimba.wav", "phone.wav", "ring.wav"]
+        );
+    }
+
+    #[test]
+    fn an_unknown_ringtone_rings_classic() {
+        assert_eq!(ringtone("nope"), ringtone("classic"));
+        assert_eq!(ringtone(""), ringtone("classic"));
+        assert_ne!(ringtone("marimba"), ringtone("classic"));
+    }
+
+    /// The mixer's Ringing ▶ and the picker's ▶ play one cycle of the chosen ringtone, whatever
+    /// the set.
+    #[test]
+    fn ringing_plays_one_cycle_of_the_chosen_ringtone() {
+        for (id, bytes) in RINGTONES {
+            let one = decode_wav(bytes).unwrap();
+            assert_eq!(load_ringtone(id).unwrap().samples, one.samples, "{id}");
+        }
+        let classic = decode_wav(ringtone("classic")).unwrap();
         for set in SETS {
-            assert_eq!(load(set, "ringing").unwrap().samples, one.samples, "{set}");
+            assert_eq!(
+                load(set, "ringing").unwrap().samples,
+                classic.samples,
+                "{set}"
+            );
         }
         assert!(!NAMES.contains(&"ringing"), "not an event of the sets");
     }

@@ -4,7 +4,7 @@ import {
   soundFor, volumeLabel, clampVolume, migrateAudioConfig, defaultAudioConfig, playSound,
   SOUND_NAMES, SOUND_SETS, SOUND_LABELS, PREVIEW, PREVIEW_GAP_MS, defaultSoundPrefs,
   normalizeSoundPrefs, loadSoundPrefs, saveSoundPrefs, previewSet, stopPreview,
-  playSoundAt,
+  playSoundAt, playRingingAt, previewRingtone, RINGTONES,
 } from './voiceui'
 import { defaultMixer, mixGain, type MixerPrefs } from './mixer'
 
@@ -176,7 +176,7 @@ describe('sound prefs', () => {
   afterEach(() => vi.unstubAllGlobals())
 
   it('defaults', () => {
-    expect(defaultSoundPrefs).toEqual({ set: 'classic', volume_pct: 100, off: [] })
+    expect(defaultSoundPrefs).toEqual({ set: 'classic', volume_pct: 100, off: [], ringtone: 'classic' })
     expect(normalizeSoundPrefs(undefined)).toEqual(defaultSoundPrefs)
     expect(normalizeSoundPrefs(null)).toEqual(defaultSoundPrefs)
     expect(normalizeSoundPrefs('goofy')).toEqual(defaultSoundPrefs)
@@ -210,7 +210,7 @@ describe('sound prefs', () => {
 
   it('round-trips through localStorage', () => {
     stubStorage()
-    const p = { set: 'twostep-warm' as const, volume_pct: 30, off: ['message' as const] }
+    const p = { set: 'twostep-warm' as const, volume_pct: 30, off: ['message' as const], ringtone: 'chiptune' as const }
     saveSoundPrefs(p)
     expect(loadSoundPrefs()).toEqual(p)
   })
@@ -219,7 +219,53 @@ describe('sound prefs', () => {
     stubStorage({ 'pulse.sounds': '{not json' })
     expect(loadSoundPrefs()).toEqual(defaultSoundPrefs)
     stubStorage({ 'pulse.sounds': JSON.stringify({ set: 'goofy', off: ['x', 'join'], extra: 1 }) })
-    expect(loadSoundPrefs()).toEqual({ set: 'goofy', volume_pct: 100, off: ['join'] })
+    expect(loadSoundPrefs()).toEqual({ set: 'goofy', volume_pct: 100, off: ['join'], ringtone: 'classic' })
+  })
+
+  it('an unknown ringtone falls back to classic (#174)', () => {
+    expect(normalizeSoundPrefs({ ringtone: 'nope' }).ringtone).toBe('classic')
+    expect(normalizeSoundPrefs({ ringtone: 3 }).ringtone).toBe('classic')
+    expect(normalizeSoundPrefs({ ringtone: 'marimba' }).ringtone).toBe('marimba')
+    // choosing a ringtone leaves the set alone, and the other way round
+    expect(normalizeSoundPrefs({ set: 'goofy', ringtone: 'phone' })).toMatchObject({ set: 'goofy', ringtone: 'phone' })
+  })
+})
+
+describe('ringtones (#174)', () => {
+  const ringtoneDir = new URL('../../../src-tauri/ringtone/', import.meta.url)
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('the list, Classic first, each with a name and a blurb, one wav each on disk', () => {
+    expect(RINGTONES.map((r) => r.id)).toEqual(['classic', 'marimba', 'chiptune', 'phone'])
+    for (const r of RINGTONES) {
+      expect(r.label.length).toBeGreaterThan(2)
+      expect(r.blurb.length).toBeGreaterThan(10)
+    }
+    // Classic is the original ring.wav; the rest are named by id
+    const files = readdirSync(ringtoneDir).map((f) => f.replace(/\.wav$/, '')).sort()
+    expect(files).toEqual(['chiptune', 'marimba', 'phone', 'ring'])
+  })
+
+  it("the mixer's Ringing ▶ plays the chosen ringtone", async () => {
+    const calls = await captureInvokes()
+    stubStorage({ 'pulse.sounds': JSON.stringify({ set: 'goofy', ringtone: 'marimba' }) })
+    playRingingAt(0.5)
+    playRingingAt(0)
+    expect(calls).toEqual([['play_sound', { name: 'ringing', set: 'goofy', volume: 0.5, output: null, ringtone: 'marimba' }]])
+  })
+
+  it('a preview plays one cycle of that ringtone at Call sounds × Ringing, not the chosen one', async () => {
+    const calls = await captureInvokes()
+    stubStorage({
+      'pulse.sounds': JSON.stringify({ ringtone: 'classic' }),
+      'pulse.mixer': mixerWith((p) => { p.callSounds.master = 50; p.callSounds.ringing = 120 }),
+    })
+    previewRingtone('phone')
+    expect(calls).toEqual([['play_sound', { name: 'ringing', set: 'classic', volume: mixGain(50, 120), output: null, ringtone: 'phone' }]])
+    calls.length = 0
+    stubStorage({ 'pulse.mixer': mixerWith((p) => { p.callSounds.ringing = 0 }) })
+    previewRingtone('phone')
+    expect(calls, 'Ringing at 0 % previews nothing').toEqual([])
   })
 })
 
