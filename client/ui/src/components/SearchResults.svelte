@@ -3,6 +3,7 @@
   // newest first, each a compact card that shows the message where it lives when clicked.
   import Avatar from './Avatar.svelte'
   import Icon from './Icon.svelte'
+  import Loading from './Loading.svelte'
   import Name from './Name.svelte'
   import { app, clock } from '../lib/store.svelte'
   import { closeSearch, loadMore, openHit, retrySearch, search } from '../lib/search.svelte'
@@ -85,7 +86,7 @@
           </span>
         </button>
       {/each}
-      {#if search.status === 'loading'}<p class="state">Searching…</p>{/if}
+      {#if search.status === 'loading'}<div class="state"><Loading label="Searching…" /></div>{/if}
       {#if search.error && search.status === 'done'}<p class="state err" role="alert">{search.error}</p>{/if}
       {#if search.nextCursor}
         <button type="button" class="btn btn-quiet more" disabled={search.loadingMore} onclick={() => void loadMore()}>{search.loadingMore ? 'Loading…' : 'Load more'}</button>

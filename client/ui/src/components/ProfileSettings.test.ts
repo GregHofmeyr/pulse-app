@@ -687,7 +687,8 @@ describe('ProfileSettings', () => {
     app.state = emptyState()
     cmp = mount(ProfileSettings, { target: document.body, props: {} })
     flushSync()
-    expect(document.body.textContent).toContain('Loading…')
+    // waiting (#173): "Loading…" only once the load is slow (components/Loading.svelte), so nothing flashes
+    expect(document.body.textContent).not.toContain('Loading…')
     expect(calls('get_profile')).toHaveLength(0)
     app.state = { ...emptyState(), me: alex, people: { U1: { user: alex, online: true, last_seen_at: null } } } as never
     await vi.waitFor(() => {

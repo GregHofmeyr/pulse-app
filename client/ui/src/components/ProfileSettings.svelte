@@ -20,6 +20,7 @@
   import { lightenForName, NAME_GRADIENTS, NAME_SOLIDS, type NamePreset } from '../lib/nameStyle'
   import type { CropRect } from '../lib/crop'
   import type { Profile } from '../lib/protocol/Profile'
+  import Loading from './Loading.svelte'
 
   let { dirty = $bindable(false), settling = $bindable(null) }: {
     /** Unsaved changes, an upload still in flight included: leaving would lose them. */
@@ -281,7 +282,7 @@
   {#if loadError}
     <p class="error" role="alert">{loadError} <button type="button" class="btn btn-secondary retry" onclick={() => me && load(me.id)}>Retry</button></p>
   {:else if !draft || !me || !pu || !pc || !profile}
-    <p class="muted">Loading…</p>
+    <Loading />
   {:else}
     <div class="layout">
       <div class="settings">
