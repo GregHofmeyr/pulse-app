@@ -2,7 +2,7 @@
 
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId};
-use pulse_protocol::rest::{Message, MessageKind, QotyCard};
+use pulse_protocol::rest::{CallLine, Message, MessageKind, QotyCard};
 use sqlx::SqliteConnection;
 
 use crate::AppState;
@@ -57,6 +57,7 @@ pub async fn insert(
         quote: None,
         clip: None,
         embeds: vec![],
+        call: call_line(&stored),
         qoty_card: qoty_card(&stored),
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
@@ -81,6 +82,25 @@ pub fn qoty_card_payload(card: &QotyCard) -> AppResult<serde_json::Value> {
 pub fn qoty_card(payload: &str) -> Option<QotyCard> {
     let v: serde_json::Value = serde_json::from_str(payload).ok()?;
     if v.get("type")?.as_str()? != QOTY_CARD {
+        return None;
+    }
+    serde_json::from_value(v).ok()
+}
+
+/// The payload `type` of a DM or group's call line (#50).
+pub const CALL_LINE: &str = "call";
+
+/// A call line's stored payload.
+pub fn call_line_payload(line: &CallLine) -> AppResult<serde_json::Value> {
+    let mut v = serde_json::to_value(line).map_err(anyhow::Error::from)?;
+    v["type"] = CALL_LINE.into();
+    Ok(v)
+}
+
+/// The call line in a stored payload, if it is one.
+pub fn call_line(payload: &str) -> Option<CallLine> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    if v.get("type")?.as_str()? != CALL_LINE {
         return None;
     }
     serde_json::from_value(v).ok()

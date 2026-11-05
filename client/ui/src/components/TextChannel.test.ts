@@ -13,7 +13,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 
 import TextChannel from './TextChannel.svelte'
 import { app, handleReady, resetState, ui } from '../lib/store.svelte'
-import { testQoty } from '../lib/testReady'
+import { testQoty, testReady } from '../lib/testReady'
 import { addHistory, applyEvent, applyReady, emptyState, markHistory, trimHistory } from '../lib/state'
 
 const msg = (n: number): Message => ({
@@ -686,6 +686,48 @@ describe('TextChannel: coming back to a channel', () => {
     tops.length = 0
     jumpBtn()!.click()
     expect(tops).toContain(5000)
+    unmount(c)
+  })
+})
+
+describe('TextChannel: the phone button (#50)', () => {
+  const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+  const sam = { ...me, id: 'U2', username: 'sam', display_name: 'sam' }
+  const DM = { id: 'DM1', server_id: null, kind: 'dm' as const, name: null, position: 0 }
+  const phone = () => document.querySelector<HTMLButtonElement>('.head button[aria-label="Start a call"], .head button[aria-label="Join call"]')
+  beforeEach(() => {
+    resetState()
+    app.state = markHistory(addHistory(applyReady(emptyState(), testReady([DM], {
+      me, dm_members: [{ channel_id: 'DM1', user_ids: ['U1', 'U2'] }],
+      people: [{ user: me, online: true, last_seen_at: null, status: 'online' }, { user: sam, online: true, last_seen_at: null, status: 'online' }],
+    })), 'DM1', []), 'DM1', true)
+    invoke.mockClear()
+  })
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('starts the call in a DM and connects to it; a call going on reads "Join call"', async () => {
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'DM1', serverId: null } })
+    flushSync()
+    expect(phone()!.getAttribute('aria-label')).toBe('Start a call')
+    phone()!.click()
+    await vi.waitFor(() => expect(invoke.mock.calls.some(([cmd]) => cmd === 'join_voice')).toBe(true))
+    expect(invoke.mock.calls.find(([cmd]) => cmd === 'start_call')?.[1]).toEqual({ channelId: 'DM1' })
+    unmount(c)
+    app.state = { ...app.state, calls: { DM1: { id: 'C1', channel_id: 'DM1', started_by: 'U2', started_at: '2026-11-05T10:00:00.000Z', line_id: null } } }
+    const again = mount(TextChannel, { target: document.body, props: { channelId: 'DM1', serverId: null } })
+    flushSync()
+    expect(document.querySelector('.band')).not.toBeNull()
+    unmount(again)
+  })
+  it('server channels have no phone button and no band', () => {
+    const withText = { ...app.state, channels: { ...app.state.channels, T1: { id: 'T1', server_id: 'S1', kind: 'text' as const, name: 'general', position: 0 } } }
+    app.state = markHistory(addHistory(withText, 'T1', []), 'T1', true)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'T1', serverId: 'S1' } })
+    flushSync()
+    expect(phone()).toBeNull()
+    expect(document.querySelector('.band')).toBeNull()
     unmount(c)
   })
 })

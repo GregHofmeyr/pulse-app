@@ -35,6 +35,8 @@ pub struct VoiceState {
     /// the snapshot may still list. `None` the rest of the time, so nothing piles up. Locked
     /// after `rooms`.
     left_since_snapshot: Arc<Mutex<Option<HashSet<String>>>>,
+    /// Calls going on in DMs and groups, and who is being rung (#50).
+    pub calls: crate::calls::CallState,
 }
 
 /// Records leaves from [`VoiceState::snapshot`] until dropped.

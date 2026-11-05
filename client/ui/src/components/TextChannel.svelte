@@ -12,6 +12,9 @@
   import Name from './Name.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
   import GroupIcon from './GroupIcon.svelte'
+  import CallBand from './CallBand.svelte'
+  import { startCall } from '../lib/calls.svelte'
+  import { voice } from '../lib/voice.svelte'
   import SearchBox from './SearchBox.svelte'
   import { narrowerThan } from '../lib/actions'
   import { app, clock, queueMessage, ui } from '../lib/store.svelte'
@@ -26,7 +29,9 @@
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
-  let { channelId, serverId, onAddPeople = () => {}, onLeft = () => {}, onStartQoty = () => {} }: {
+  let { channelId, serverId, onAddPeople = () => {}, onLeft = () => {}, onStartQoty = () => {}, onVoiceSettings = () => {} }: {
+    /** DMs/groups: the call band's person menu has Voice settings (#50). */
+    onVoiceSettings?: () => void
     channelId: string
     serverId: string | null
     /** DMs/groups: open the people picker. */
@@ -137,6 +142,17 @@
   const title = $derived(isPrivate ? conversationName(app.state, channelId) : (channel?.name ?? ''))
   const others = $derived((app.state.dmMembers[channelId] ?? []).filter((u) => u !== app.state.me?.id))
   const muted = $derived(channel ? isMuted(app.state, channel, clock.nowIso) : false)
+  // the phone button (#50): start this conversation's call (ringing the others), or join the one going on
+  const callGoing = $derived(!!app.state.calls[channelId])
+  const inThisCall = $derived(voice.channelId === channelId || voice.joining === channelId)
+  async function call() {
+    error = ''
+    try {
+      await startCall(channelId)
+    } catch (e) {
+      error = errorText(e)
+    }
+  }
   let menu = $state<null | 'mute' | 'manage'>(null)
   // the buttons the menu opens by (#162)
   let muteBtn = $state<HTMLButtonElement>()
@@ -473,6 +489,9 @@
       {#if !qotyLive}<button class="qoty-btn qoty" onclick={onStartQoty}>Start Quote of the Year</button>{/if}
     {/if}
     {#if isPrivate}
+      {#if !inThisCall}
+        <button class="icon-btn" aria-label={callGoing ? 'Join call' : 'Start a call'} data-tip={callGoing ? 'Join call' : 'Start a call'} onclick={call}><Icon name="phone" size={17} /></button>
+      {/if}
       <button class="icon-btn" aria-label="Add people" data-tip="Add people" onclick={onAddPeople}><Icon name="userPlus" size={17} /></button>
     {/if}
     <button bind:this={muteBtn} class="icon-btn hbtn" class:on={muted} aria-label={muted ? 'Unmute' : 'Mute'} data-tip={muted ? 'Muted — click to unmute' : 'Mute'} data-menu-toggle
@@ -490,6 +509,7 @@
       <ConversationMenu {channel} {muted} show={menu} anchor={menu === 'manage' ? moreBtn : muteBtn} onClose={() => (menu = null)} onRename={startRename} {onLeft} />
     {/if}
   </div>
+  {#if isPrivate}<CallBand {channelId} {onVoiceSettings} />{/if}
   <!-- tabindex -1: a place to put the focus back when nothing better is left (not a tab stop) -->
   <div class="list" tabindex="-1" bind:this={list} onscroll={onScroll}>
     {#if reachedStart}<div class="start">

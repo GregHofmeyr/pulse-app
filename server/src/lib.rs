@@ -1,6 +1,7 @@
 pub mod access;
 pub mod auth;
 pub mod badges;
+pub mod calls;
 pub mod clips;
 pub mod config;
 pub mod db;
@@ -50,6 +51,7 @@ pub fn router(state: AppState) -> Router {
         .merge(qoty::router())
         .merge(dms::routes::router())
         .merge(voice::routes::router())
+        .merge(calls::routes::router())
         .merge(streams::routes::router())
         .merge(streams::notify::router())
         .merge(reports::routes::router())

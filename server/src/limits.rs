@@ -115,6 +115,8 @@ pub struct LimitsConfig {
     pub status_user: Rate,
     /// "Notify me when they go live" toggles per person (#60): generous, like renames.
     pub live_notify_user: Rate,
+    /// Calls started per person (#50): stops ring spam, not normal use. Joining a call already going counts too.
+    pub call_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -158,6 +160,8 @@ impl Default for LimitsConfig {
             rename_user: Rate::per_minute(30),
             status_user: Rate::per_minute(30),
             live_notify_user: Rate::per_minute(30),
+            // six at once, then one every 20 s
+            call_user: Rate::new(6, 0.05),
         }
     }
 }
@@ -195,6 +199,7 @@ impl LimitsConfig {
             rename_user: r,
             status_user: r,
             live_notify_user: r,
+            call_user: r,
         }
     }
 }
@@ -345,6 +350,7 @@ pub struct Limits {
     pub rename_user: Limiter,
     pub status_user: Limiter,
     pub live_notify_user: Limiter,
+    pub call_user: Limiter,
 }
 
 impl Limits {
@@ -378,6 +384,7 @@ impl Limits {
             rename_user: Limiter::new(c.rename_user),
             status_user: Limiter::new(c.status_user),
             live_notify_user: Limiter::new(c.live_notify_user),
+            call_user: Limiter::new(c.call_user),
         }
     }
 }

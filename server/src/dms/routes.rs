@@ -294,6 +294,8 @@ async fn remove_member(
             )
             .await;
     }
+    // Out of its call's ring too, and the call starts its wait if they were the last one in it.
+    crate::calls::member_removed(&s, id, user).await;
     // Committed: the rest only tells people. A failure there is logged, not returned: the removal
     // stands, and the client's retry would only get a 404.
     if let Err(e) = announce_removal(&s, me, id, user, unmuted > 0, remaining == 0).await {

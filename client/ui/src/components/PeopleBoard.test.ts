@@ -11,6 +11,7 @@ vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 import PeopleBoard from './PeopleBoard.svelte'
 import { app, clock, resetState } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { invoke } from '@tauri-apps/api/core'
 
 const user = (id: string, name: string) => ({ id, username: name, display_name: name, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 let cmp: ReturnType<typeof mount> | undefined
@@ -46,5 +47,20 @@ describe('PeopleBoard', () => {
     expect(card('sam').querySelector('.status')!.textContent?.trim()).toBe('online')
     expect(card('jo').querySelector('.pres')!.classList.contains('offline')).toBe(true)
     expect(card('jo').querySelector('.status')!.textContent?.trim()).toBe('last seen 3h ago')
+  })
+
+  it('Call (#50) is enabled: it opens your DM with them and starts its call', async () => {
+    const dm = { id: 'DM2', server_id: null, kind: 'dm' as const, name: null, position: 0 }
+    vi.mocked(invoke).mockImplementation(async (c) => (c === 'create_dm' ? dm : undefined) as never)
+    const card = [...document.querySelectorAll<HTMLElement>('.card')].find((c) => c.textContent?.includes('sam'))!
+    const btn = [...card.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.includes('Call'))!
+    expect(btn.disabled).toBe(false)
+    btn.click()
+    await vi.waitFor(() => expect(vi.mocked(invoke).mock.calls.some(([c]) => c === 'join_voice')).toBe(true))
+    const names = vi.mocked(invoke).mock.calls.map(([c]) => c)
+    expect(names.indexOf('create_dm')).toBeLessThan(names.indexOf('start_call'))
+    expect(names.indexOf('start_call')).toBeLessThan(names.indexOf('join_voice'))
+    expect(vi.mocked(invoke).mock.calls.find(([c]) => c === 'start_call')![1]).toEqual({ channelId: 'DM2' })
+    vi.mocked(invoke).mockImplementation(async () => undefined)
   })
 })

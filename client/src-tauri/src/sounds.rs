@@ -102,8 +102,16 @@ pub fn decode_wav(b: &[u8]) -> Option<Sound> {
 /// hundred ms to wake, and would swallow the short ping otherwise.
 pub const LEAD_IN_MS: u32 = 450;
 
-/// An unknown set plays as `DEFAULT_SET`; an unknown name is `None`.
+/// One cycle of the incoming-call ringtone (#50), generated like the sets (`scripts/gen_sounds.py`).
+/// One for every set; [`ring`] loops it while a call rings.
+pub const RINGTONE: &[u8] = include_bytes!("../ringtone/ring.wav");
+
+/// An unknown set plays as `DEFAULT_SET`; an unknown name is `None`. `ringing` is one cycle of the
+/// ringtone (the volume mixer's ▶), whatever the set.
 pub fn load(set: &str, name: &str) -> Option<Sound> {
+    if name == "ringing" {
+        return decode_wav(RINGTONE);
+    }
     let mut s = bytes(set, name)
         .or_else(|| bytes(DEFAULT_SET, name))
         .and_then(decode_wav)?;
@@ -285,6 +293,113 @@ fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32, stop: &StopFlag) -> b
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     true
+}
+
+/// The incoming-call ringtone (#50): [`RINGTONE`] on loop through the chosen output, until
+/// [`stop`]. One at a time: starting again replaces it.
+pub mod ring {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    use cpal::traits::{DeviceTrait, StreamTrait};
+
+    /// A ring longer than this stops by itself: the UI ends it at 30 s, so this only matters if
+    /// its stop never came.
+    const MAX: Duration = Duration::from_secs(45);
+
+    static CURRENT: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+
+    /// Ring at the final linear gain `volume` (0 rings nothing) on `output` (a device name from
+    /// settings; missing or unplugged = the system default).
+    pub fn start(volume: f32, output: Option<String>) {
+        stop();
+        if volume <= 0.0 || volume.is_nan() {
+            return;
+        }
+        let Some(sound) = super::decode_wav(super::RINGTONE) else {
+            return;
+        };
+        let flag = Arc::new(AtomicBool::new(false));
+        *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = Some(flag.clone());
+        let _ = std::thread::Builder::new()
+            .name("pulse-ring".into())
+            .spawn(move || {
+                use crate::voice::devices::find_device;
+                let named = output
+                    .as_deref()
+                    .and_then(|n| find_device(false, Some(n)).ok());
+                let played = named.is_some_and(|d| play(&d, &sound, volume, &flag))
+                    || find_device(false, None).is_ok_and(|d| play(&d, &sound, volume, &flag));
+                if !played {
+                    tracing::warn!("ringtone: no output device would play it");
+                }
+            });
+    }
+
+    /// Stop the ring, if one is playing; whether one was.
+    pub fn stop() -> bool {
+        match CURRENT.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            Some(flag) => {
+                flag.store(true, Ordering::Relaxed);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// `cycle` over and over, one sample per call, until `stop` is set.
+    pub fn looping(cycle: Vec<f32>, stop: Arc<AtomicBool>) -> impl FnMut() -> Option<f32> {
+        let mut pos = 0usize;
+        move || {
+            if stop.load(Ordering::Relaxed) || cycle.is_empty() {
+                return None;
+            }
+            let v = cycle[pos];
+            pos = (pos + 1) % cycle.len();
+            Some(v)
+        }
+    }
+
+    /// `sound` at `rate`, by linear interpolation (once, before looping).
+    fn resample(sound: &super::Sound, rate: u32) -> Vec<f32> {
+        let step = sound.rate as f64 / rate as f64;
+        let n = (sound.samples.len() as f64 / step) as usize;
+        let s = &sound.samples;
+        (0..n)
+            .map(|i| {
+                let src = i as f64 * step;
+                let (j, frac) = (src.floor() as usize, src.fract() as f32);
+                let a = s[j.min(s.len() - 1)];
+                let b = s[(j + 1).min(s.len() - 1)];
+                a + (b - a) * frac
+            })
+            .collect()
+    }
+
+    /// Ring on `dev` until stopped or [`MAX`] (blocking). False if the device wouldn't open.
+    fn play(dev: &cpal::Device, sound: &super::Sound, volume: f32, stop: &Arc<AtomicBool>) -> bool {
+        let Ok(cfg) = dev.default_output_config() else {
+            return false;
+        };
+        let ch = cfg.channels() as usize;
+        let mut next = looping(resample(sound, cfg.sample_rate()), stop.clone());
+        let gain = super::VOLUME * volume;
+        let stream = crate::voice::devices::build_output(dev, &cfg, move |d: &mut [f32], _| {
+            for f in d.chunks_mut(ch) {
+                f.fill(next().map_or(0.0, |x| super::shape(x, gain)));
+            }
+        });
+        let Ok(stream) = stream else { return false };
+        if stream.play().is_err() {
+            return false;
+        }
+        let end = Instant::now() + MAX;
+        while Instant::now() < end && !stop.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        true
+    }
 }
 
 #[cfg(test)]
@@ -647,5 +762,43 @@ mod tests {
     #[test]
     fn rejects_non_wav() {
         assert!(decode_wav(b"not a wav file at all, definitely not").is_none());
+    }
+
+    /// One cycle of the ringtone (#50), looped while a call rings: our format, a couple of seconds,
+    /// ending in a pause (so the loop breathes), as loud as Classic's join.
+    #[test]
+    fn the_ringtone_is_a_loopable_cycle() {
+        assert_eq!(wav_format(RINGTONE), Some((1, 22_050, 16)));
+        let s = decode_wav(RINGTONE).unwrap();
+        let secs = s.samples.len() as f32 / s.rate as f32;
+        assert!((1.5..=3.0).contains(&secs), "{secs} s");
+        let tail = &s.samples[s.samples.len() - s.rate as usize / 2..];
+        assert!(
+            tail.iter().all(|v| v.abs() < 0.001),
+            "the last 0.5 s is quiet"
+        );
+        let d = db(active_rms(&s.samples), active_rms(&raw("classic", "join")));
+        assert!(d.abs() <= 3.0, "{d:.1} dB from Classic's join");
+        assert!(RINGTONE.len() < 200_000);
+    }
+
+    /// The mixer's Ringing ▶ plays one cycle through `play_sound("ringing")`, whatever the set.
+    #[test]
+    fn ringing_plays_one_cycle_for_the_mixer_test() {
+        let one = decode_wav(RINGTONE).unwrap();
+        for set in SETS {
+            assert_eq!(load(set, "ringing").unwrap().samples, one.samples, "{set}");
+        }
+        assert!(!NAMES.contains(&"ringing"), "not an event of the sets");
+    }
+
+    #[test]
+    fn a_ring_loops_until_stopped() {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut next = ring::looping(vec![0.5f32, -0.5, 0.25], stop.clone());
+        let got: Vec<f32> = (0..7).map(|_| next().unwrap()).collect();
+        assert_eq!(got, [0.5, -0.5, 0.25, 0.5, -0.5, 0.25, 0.5]);
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(next(), None);
     }
 }

@@ -264,6 +264,10 @@ pub async fn sync(s: &AppState, started_at: &str, budget: Duration) -> anyhow::R
                 },
             )
             .await;
+        // a DM or group call carries on (or starts, if it began while we were down): no ring
+        if let Ok(Some(ch)) = load_channel(&s.db, p.channel).await {
+            crate::calls::joined(s, &ch, p.user).await;
+        }
     }
     Ok(added.len())
 }
@@ -271,7 +275,15 @@ pub async fn sync(s: &AppState, started_at: &str, budget: Duration) -> anyhow::R
 /// Boot: one quick try before serving (so the first Ready after a deploy is right). If LiveKit
 /// can't be reached, close old sessions as before, start empty, and keep trying in the background.
 pub async fn on_startup(s: &AppState, started_at: &str) -> anyhow::Result<()> {
-    match sync(s, started_at, BOOT_BUDGET).await {
+    // DM and group calls left open (#50) first, so the people restored below carry them on.
+    let calls = crate::calls::load_open(s).await?;
+    if calls > 0 {
+        tracing::info!(calls, "open calls picked back up");
+    }
+    let synced = sync(s, started_at, BOOT_BUDGET).await;
+    // Whatever LiveKit said: a call nobody is in waits its 30 s, then ends.
+    crate::calls::arm_empty_calls(s).await;
+    match synced {
         Ok(n) => {
             tracing::info!(restored = n, "voice presence restored from LiveKit");
             Ok(())

@@ -7,6 +7,7 @@
   import MemberList from '../components/MemberList.svelte'
   import MiniPreview from '../components/MiniPreview.svelte'
   import StreamToast from '../components/StreamToast.svelte'
+  import CallRingPopover from '../components/CallRingPopover.svelte'
   import VoiceStatus from '../components/VoiceStatus.svelte'
   import VoicePanel from '../components/VoicePanel.svelte'
   import TextChannel from '../components/TextChannel.svelte'
@@ -597,7 +598,7 @@
       {:else if activeChannel && activeChannelId}
         {#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId}
           onAddPeople={() => activeChannelId && (picker = { mode: 'add', channelId: activeChannelId })}
-          onLeft={() => (activeChannelId = null)} onStartQoty={() => (qotyStart = activeServerId)} />{/key}
+          onLeft={() => (activeChannelId = null)} onStartQoty={() => (qotyStart = activeServerId)} onVoiceSettings={() => openSettings('voice')} />{/key}
       {:else if activeServerId === null}
         <PeopleBoard onOpen={openConversation} onJoinVoice={(ch, srv) => { selectServer(srv); activeChannelId = ch; if (voice.channelId !== ch) void voiceApi.join(ch) }} />
       {:else}
@@ -616,6 +617,7 @@
   </div>
 </div>
 <StreamToast />
+<CallRingPopover />
 <BadgeToast />
 <GroupIconCrop />
 {#if settingsServer}<ServerSettings server={settingsServer} onClose={() => (serverSettingsId = null)} />{/if}

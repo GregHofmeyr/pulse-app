@@ -143,6 +143,13 @@ export function playSoundAt(name: SoundName, gain: number) {
   invokeSound(name, loadSoundPrefs().set, gain)
 }
 
+/** One ring of the incoming-call ringtone at a given linear gain (the mixer's Ringing ▶, #50). The core plays the
+ * looping ringtone itself while a call rings (`start_ringtone`); this is a single cycle of it. */
+export function playRingingAt(gain: number) {
+  if (!(gain > 0)) return
+  void invoke('play_sound', { name: 'ringing', set: loadSoundPrefs().set, volume: gain, output: loadAudioConfig().output }).catch(() => {})
+}
+
 /** What "Preview" plays: a few events, in a row. */
 export const PREVIEW: readonly SoundName[] = ['join', 'mute', 'unmute', 'live', 'leave']
 export const PREVIEW_GAP_MS = 450

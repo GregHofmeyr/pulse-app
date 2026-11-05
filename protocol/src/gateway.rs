@@ -3,11 +3,12 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
+use crate::ids::{CallId, ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
-    Badge, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game, Member, Message, Mute,
-    OwnStatus, Person, PresenceStatus, PrivateNickname, QotyEvent, ReadState, Server,
-    ServerVoiceMod, Sound, SpeakerLink, StreamEndReason, StreamInfo, User,
+    Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game,
+    Member, Message, Mute, OwnStatus, Person, PresenceStatus, PrivateNickname, QotyEvent,
+    ReadState, RingEndReason, Server, ServerVoiceMod, Sound, SpeakerLink, StreamEndReason,
+    StreamInfo, User,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -135,6 +136,14 @@ pub struct Ready {
     /// The people whose going live you get a notification for (#60). Yours only.
     #[serde(default)]
     pub live_notify: Vec<UserId>,
+    /// Calls going on in your DMs and groups (#50).
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub calls: Vec<CallInfo>,
+    /// Calls ringing you right now (#50).
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub ringing: Vec<CallRing>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -459,6 +468,26 @@ pub enum Event {
         user_id: UserId,
         by: UserId,
     },
+    /// A call began in a DM or group (#50): to its members.
+    CallStarted {
+        call: CallInfo,
+    },
+    /// The call ended (its room was empty for 30 s): to its members. Its line's update follows.
+    CallEnded {
+        channel_id: ChannelId,
+        call_id: CallId,
+    },
+    /// You are being rung (#50). Sent only to the members being rung, never the caller.
+    CallRinging {
+        ring: CallRing,
+    },
+    /// Only to the rung user's own sessions: their ring stopped, so every device of theirs stops.
+    CallRingEnded {
+        channel_id: ChannelId,
+        call_id: CallId,
+        user_id: UserId,
+        reason: RingEndReason,
+    },
 }
 
 impl Event {
@@ -479,7 +508,11 @@ impl Event {
             | Self::ThreadSeen { channel_id, .. }
             | Self::ClipViewChanged { channel_id, .. }
             | Self::SoundPlayed { channel_id, .. }
-            | Self::VoiceDisconnected { channel_id, .. } => Some(*channel_id),
+            | Self::VoiceDisconnected { channel_id, .. }
+            | Self::CallEnded { channel_id, .. }
+            | Self::CallRingEnded { channel_id, .. } => Some(*channel_id),
+            Self::CallStarted { call } => Some(call.channel_id),
+            Self::CallRinging { ring } => Some(ring.channel_id),
             Self::ChannelCreated { channel } => Some(channel.id),
             Self::GroupMembersChanged { channel_id, .. }
             | Self::ChannelRemoved { channel_id, .. }
@@ -542,6 +575,7 @@ impl Event {
             | Self::LiveNotifyChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
+            | Self::CallRingEnded { user_id, .. }
             | Self::BadgeEarned { user_id, .. } => Some(*user_id),
             _ => None,
         }
@@ -656,6 +690,8 @@ mod tests {
             status: Default::default(),
             appear_offline_to: vec![],
             live_notify: vec![],
+            calls: vec![],
+            ringing: vec![],
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");
@@ -735,6 +771,8 @@ mod tests {
             status: Default::default(),
             appear_offline_to: vec![],
             live_notify: vec![],
+            calls: vec![],
+            ringing: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -854,6 +892,8 @@ mod tests {
             status: Default::default(),
             appear_offline_to: vec![],
             live_notify: vec![],
+            calls: vec![],
+            ringing: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -1016,6 +1056,60 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(r.display_name, None);
+    }
+
+    #[test]
+    fn call_events_are_scoped() {
+        use crate::rest::{CallInfo, CallRing, RingEndReason};
+        let (c, u, id) = (ChannelId::new(), UserId::new(), CallId::new());
+        let call = CallInfo {
+            id,
+            channel_id: c,
+            started_by: Some(u),
+            started_at: "2026-11-05T10:00:00.000Z".into(),
+            line_id: None,
+        };
+        let ring = CallRing {
+            call_id: id,
+            channel_id: c,
+            caller_id: u,
+            expires_at: "2026-11-05T10:00:30.000Z".into(),
+        };
+        for e in [
+            Event::CallStarted { call },
+            Event::CallEnded {
+                channel_id: c,
+                call_id: id,
+            },
+            Event::CallRinging { ring },
+        ] {
+            assert_eq!((e.channel_id(), e.only_for()), (Some(c), None), "{e:?}");
+        }
+        let ended = Event::CallRingEnded {
+            channel_id: c,
+            call_id: id,
+            user_id: u,
+            reason: RingEndReason::Declined,
+        };
+        assert_eq!((ended.channel_id(), ended.only_for()), (Some(c), Some(u)));
+        assert_eq!(
+            serde_json::to_string(&RingEndReason::TimedOut).unwrap(),
+            "\"timed_out\""
+        );
+    }
+
+    /// A message without a call (every message from an older server) parses, and sends none back.
+    #[test]
+    fn a_message_without_a_call_parses() {
+        let (c, m_id) = (ChannelId::new(), MessageId::new());
+        let m: Message = serde_json::from_str(&format!(
+            r#"{{"id":"{m_id}","channel_id":"{c}","author_id":null,"kind":"system",
+            "content":"hi","reply_to_id":null,"created_at":"2026-11-05T00:00:00.000Z",
+            "edited_at":null,"deleted":false}}"#
+        ))
+        .unwrap();
+        assert!(m.call.is_none());
+        assert!(!serde_json::to_string(&m).unwrap().contains("\"call\""));
     }
 
     #[test]

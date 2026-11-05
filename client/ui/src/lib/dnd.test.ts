@@ -150,12 +150,13 @@ describe('badges under DND', () => {
 describe('what DND touches', () => {
   // The sounds of a call you're in (join / leave, mute / deafen, soundboard, live_end) and unread counts never ask:
   // only the alerts above do. A new caller of dndActive is a new thing silenced, so it's a choice made here.
-  it('only the message alerts, the live toast and the badge sound check it', () => {
+  it('only the message alerts, the live toast, the badge sound and call ringing check it', () => {
     const src = resolve(__dirname, '..')
     const callers = (readdirSync(src, { recursive: true }) as string[])
       .filter((f) => /\.(ts|svelte)$/.test(f) && !/\.test\.ts$/.test(f) && f !== 'lib/status.ts')
       .filter((f) => /\bdndActive\(/.test(readFileSync(resolve(src, f), 'utf8')))
       .sort()
-    expect(callers).toEqual(['lib/badges.svelte.ts', 'lib/store.svelte.ts', 'lib/stream/stream.svelte.ts'])
+    // lib/calls.ts: ringing for incoming calls (#50: no popover, ringtone or notification under DND; calls.svelte.test.ts)
+    expect(callers).toEqual(['lib/badges.svelte.ts', 'lib/calls.ts', 'lib/store.svelte.ts', 'lib/stream/stream.svelte.ts'])
   })
 })

@@ -25,6 +25,7 @@
   import { mentionLookup, mentionName, showMentions, styleMentions } from '../lib/mentionStyles'
   import { nameCss, resolveNameStyle } from '../lib/nameStyle'
   import { displayName, roleColorFor, userOf } from '../lib/selectors'
+  import { callLineText } from '../lib/calls'
   import { appearance } from '../lib/appearance.svelte'
   import { openCard } from '../lib/profileCard.svelte'
   import MemberMenu from './MemberMenu.svelte'
@@ -208,7 +209,13 @@
 
 {#snippet item()}
 {#if message.kind === 'system'}
+  {#if message.call}
+    <!-- a call line (#50) reads per member: "Missed call from sam" for those who never joined -->
+    {@const text = callLineText(app.state, message)}
+    <div class="system call-line" class:missed={text.startsWith('Missed')} data-message-id={message.id}><Icon name="phone" size={13} /> {text} <span class="time">{time}</span></div>
+  {:else}
   <div class="system" data-message-id={message.id}>{message.content} <span class="time">{time}</span></div>
+  {/if}
 {:else}
   <!-- focus anywhere inside shows the action bar (hover alone left keyboard users without it) -->
   <div class="msg" data-message-id={message.id} {...actionBarFocus((v) => (focusIn = v))} class:grouped class:mentioned={!!meId && message.mentions.includes(meId)}
@@ -323,6 +330,8 @@
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger-text); }
   .hint { font-size: 11px; color: var(--text-3); }
   .system { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }
+  .call-line { display: flex; align-items: center; gap: 6px; }
+  .call-line.missed { color: var(--danger-text); }
   .msg.mentioned { background: var(--accent-faint); box-shadow: inset 2px 0 0 var(--focus-ring); }
   .content :global(img.emoji) { width: 1.375em; height: 1.375em; vertical-align: -0.3em; object-fit: contain; }
   .content :global(img.emoji.big) { width: 48px; height: 48px; }

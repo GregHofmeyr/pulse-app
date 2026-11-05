@@ -87,6 +87,10 @@ fn from_row(r: Row) -> AppResult<Message> {
         quote: None,
         clip: None,
         embeds: vec![],
+        call: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => super::system::call_line(p),
+            _ => None,
+        },
         qoty_card: match system_payload {
             Some(p) if system && deleted_at.is_none() => super::system::qoty_card(&p),
             _ => None,
@@ -346,6 +350,7 @@ async fn send(
         quote: None,
         clip: None,
         embeds: vec![],
+        call: None,
         qoty_card: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
@@ -725,6 +730,7 @@ mod tests {
             quote: None,
             clip: None,
             embeds: vec![],
+            call: None,
             qoty_card: None,
         }
     }

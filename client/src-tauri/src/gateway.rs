@@ -1047,6 +1047,8 @@ mod tests {
                         status: Default::default(),
                         appear_offline_to: vec![],
                         live_notify: vec![],
+                        calls: vec![],
+                        ringing: vec![],
                     });
                     ws.send(tokio_tungstenite::tungstenite::Message::text(
                         serde_json::to_string(&ready).unwrap(),

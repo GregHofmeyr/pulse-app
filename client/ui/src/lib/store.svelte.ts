@@ -252,6 +252,14 @@ export function handleReady(r: Ready) {
   }
   app.state = next
   void streamApi.onReady(r, before)
+  for (const hook of readyHooks) hook(r)
+}
+
+/** Called with each Ready after it is applied (the call store's rings, #50), like [onAppEvent]. */
+const readyHooks = new Set<(r: Ready) => void>()
+export function onAppReady(hook: (r: Ready) => void): () => void {
+  readyHooks.add(hook)
+  return () => void readyHooks.delete(hook)
 }
 
 /** Called with each live event after it is applied. Modules that react to events register here

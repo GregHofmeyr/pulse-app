@@ -721,6 +721,35 @@ impl Api {
         .await
     }
 
+    /// Start a call in a DM or group, ringing everyone else, or join the one going on (#50:
+    /// `rang` false). The caller then joins the room with [`Self::voice_token`] as usual.
+    pub async fn start_call(
+        &self,
+        token: &str,
+        channel: ChannelId,
+    ) -> Result<pulse_protocol::rest::StartCallResponse, ApiError> {
+        Self::parse(
+            self.http
+                .post(self.url(&["calls", &channel.to_string()])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Stop the ringing for a call in `channel` on all your devices; the caller isn't told (#50).
+    pub async fn decline_call(&self, token: &str, channel: ChannelId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(self.url(&["calls", &channel.to_string(), "decline"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// A stream-room ticket; `ghost` for watching from outside the voice channel (an anonymous,
     /// subscribe-only identity).
     pub async fn stream_ticket(
@@ -3949,6 +3978,24 @@ mod tests {
             api.disconnect_voice(&sam, server.id, sam_id).await.is_err(),
             "not on yourself"
         );
+    }
+
+    #[tokio::test]
+    async fn calls_round_trip_through_the_core() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (sam_id, sam) = testing::register(&app, "sam").await;
+        let (_, kim) = testing::register(&app, "kim").await;
+        let dm = testing::create_dm(&app, &alex, &[sam_id]).await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let first = api.start_call(&alex, dm.id).await.unwrap();
+        assert!(first.rang);
+        let again = api.start_call(&sam, dm.id).await.unwrap();
+        assert!(!again.rang, "joining a call going on rings nobody");
+        assert_eq!(again.call.id, first.call.id);
+        api.decline_call(&sam, dm.id).await.unwrap();
+        assert!(api.start_call(&kim, dm.id).await.is_err(), "not kim's DM");
+        assert!(api.decline_call(&kim, dm.id).await.is_err());
     }
 
     #[tokio::test]

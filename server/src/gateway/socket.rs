@@ -213,7 +213,11 @@ async fn ready_for(
             live.push(stream);
         }
     }
+    // Calls in your own conversations only (#50), and the rings that are yours.
+    let (calls, ringing) = voice_state.calls.for_ready(me, &visible).await;
     Ok(Ready {
+        calls,
+        ringing,
         me: load_user(db, me).await?,
         servers,
         channels,

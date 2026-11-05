@@ -7,7 +7,7 @@ export const MIXER_KEY = 'pulse.mixer'
 export type MixerPrefs = {
   v: 1
   calls: { master: number; voices: number; streams: number; soundboard: number }
-  callSounds: { master: number; join: number; leave: number; mute: number; unmute: number; deafen: number; undeafen: number }
+  callSounds: { master: number; join: number; leave: number; mute: number; unmute: number; deafen: number; undeafen: number; ringing: number }
   streamSounds: { master: number; live: number; live_end: number }
   notifications: { master: number; message: number; badge: number }
   /** No master: one notch. A `<video>` can't play above its own full volume, so Clips stops at 100. */
@@ -20,7 +20,7 @@ export type Notch = {
   label: string
   max: number
   /** What its ▶ plays: one of the UI sounds, or a soundboard sound. */
-  test?: 'sound' | 'soundboard'
+  test?: 'sound' | 'soundboard' | 'ring'
 }
 export type MixerSection = { id: SectionId; label: string; master: boolean; notches: Notch[] }
 
@@ -32,7 +32,7 @@ export const MIXER_SECTIONS: readonly MixerSection[] = [
   {
     id: 'callSounds', label: 'Call sounds', master: true,
     notches: [n('join', 'Join', 'sound'), n('leave', 'Leave', 'sound'), n('mute', 'Mute', 'sound'), n('unmute', 'Unmute', 'sound'),
-      n('deafen', 'Deafen', 'sound'), n('undeafen', 'Undeafen', 'sound')],
+      n('deafen', 'Deafen', 'sound'), n('undeafen', 'Undeafen', 'sound'), n('ringing', 'Ringing', 'ring')],
   },
   { id: 'streamSounds', label: 'Stream sounds', master: true, notches: [n('live', 'Someone goes live', 'sound'), n('live_end', 'A stream ends', 'sound')] },
   { id: 'notifications', label: 'Notifications', master: true, notches: [n('message', 'Message ding', 'sound'), n('badge', 'Badge unlocked', 'sound')] },
@@ -43,7 +43,7 @@ export function defaultMixer(): MixerPrefs {
   return {
     v: 1,
     calls: { master: 100, voices: 100, streams: 100, soundboard: 100 },
-    callSounds: { master: 100, join: 100, leave: 100, mute: 100, unmute: 100, deafen: 100, undeafen: 100 },
+    callSounds: { master: 100, join: 100, leave: 100, mute: 100, unmute: 100, deafen: 100, undeafen: 100, ringing: 100 },
     streamSounds: { master: 100, live: 100, live_end: 100 },
     notifications: { master: 100, message: 100, badge: 100 },
     media: { clips: 100, clipsMuted: false },
@@ -83,6 +83,8 @@ const notch = (p: MixerPrefs, name: SoundName): number => (p[SOUND_SECTION[name]
 
 /** A UI sound's gain: its section master × its own notch. */
 export const soundGain = (p: MixerPrefs, name: SoundName): number => mixGain(p[SOUND_SECTION[name]].master, notch(p, name))
+/** The incoming-call ringtone's gain (#50): Call sounds master × Ringing. Not part of a sound set: one ringtone. */
+export const ringtoneGain = (p: MixerPrefs): number => mixGain(p.callSounds.master, p.callSounds.ringing)
 /** Just the section master (a sound set's Preview ignores the per-sound notches). */
 export const soundMasterGain = (p: MixerPrefs, name: SoundName): number => mixGain(p[SOUND_SECTION[name]].master)
 

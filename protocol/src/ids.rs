@@ -54,3 +54,4 @@ id!(LineId);
 id!(QotyEventId);
 id!(GameId);
 id!(ClipUploadId);
+id!(CallId);

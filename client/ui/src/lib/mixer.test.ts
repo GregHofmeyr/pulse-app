@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   MAX_GAIN, MIXER_KEY, MIXER_SECTIONS, defaultMixer, gainToPercent, loadMixer, migrateMixer, mixGain, normalizeMixer,
-  percentToGain, resetSection, saveMixer, soundGain, soundMasterGain, soundSectionOf,
+  percentToGain, resetSection, saveMixer, soundGain, soundMasterGain, soundSectionOf, ringtoneGain,
 } from './mixer'
 import { SOUND_NAMES } from './voiceui'
 
@@ -41,7 +41,7 @@ describe('sections', () => {
     expect(MIXER_SECTIONS.map((s) => s.label)).toEqual(['Calls', 'Call sounds', 'Stream sounds', 'Notifications', 'Media'])
     expect(MIXER_SECTIONS.map((s) => s.notches.map((n) => n.label))).toEqual([
       ['Voices', 'Streams', 'Soundboard'],
-      ['Join', 'Leave', 'Mute', 'Unmute', 'Deafen', 'Undeafen'],
+      ['Join', 'Leave', 'Mute', 'Unmute', 'Deafen', 'Undeafen', 'Ringing'],
       ['Someone goes live', 'A stream ends'],
       ['Message ding', 'Badge unlocked'],
       ['Clips'],
@@ -61,7 +61,7 @@ describe('prefs', () => {
     expect(d).toEqual({
       v: 1,
       calls: { master: 100, voices: 100, streams: 100, soundboard: 100 },
-      callSounds: { master: 100, join: 100, leave: 100, mute: 100, unmute: 100, deafen: 100, undeafen: 100 },
+      callSounds: { master: 100, join: 100, leave: 100, mute: 100, unmute: 100, deafen: 100, undeafen: 100, ringing: 100 },
       streamSounds: { master: 100, live: 100, live_end: 100 },
       notifications: { master: 100, message: 100, badge: 100 },
       media: { clips: 100, clipsMuted: false },
@@ -178,5 +178,28 @@ describe('resetSection', () => {
     expect(r.calls.voices).toBe(20)
     expect(r.media).toEqual({ clips: 30, clipsMuted: true })
     expect(resetSection(r, 'media').media).toEqual({ clips: 100, clipsMuted: false })
+  })
+})
+
+describe('the Ringing notch (#50)', () => {
+  beforeEach(() => localStorage.clear())
+  it('sits under Call sounds and scales the ringtone with that master', () => {
+    const section = MIXER_SECTIONS.find((s) => s.id === 'callSounds')!
+    expect(section.notches.at(-1)).toMatchObject({ key: 'ringing', label: 'Ringing', test: 'ring', max: 200 })
+    const p = defaultMixer()
+    expect(ringtoneGain(p)).toBe(1)
+    p.callSounds.ringing = 50
+    expect(ringtoneGain(p)).toBeCloseTo(percentToGain(50), 6)
+    p.callSounds.master = 200
+    expect(ringtoneGain(p)).toBeCloseTo(percentToGain(200) * percentToGain(50), 6)
+    p.callSounds.ringing = 0
+    expect(ringtoneGain(p)).toBe(0)
+  })
+  it('a record saved before it existed rings at 100 %', () => {
+    const { ringing: _r, ...before } = defaultMixer().callSounds
+    localStorage.setItem(MIXER_KEY, JSON.stringify({ ...defaultMixer(), callSounds: { ...before, master: 40 } }))
+    const p = loadMixer()
+    expect(p.callSounds.ringing).toBe(100)
+    expect(p.callSounds.master).toBe(40)
   })
 })
