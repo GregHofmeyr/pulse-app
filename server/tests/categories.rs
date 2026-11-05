@@ -126,7 +126,7 @@ async fn placement(pool: &SqlitePool, channel: &str) -> (Option<String>, i64) {
 }
 
 #[tokio::test]
-async fn migration_0023_puts_every_channel_in_its_default_category_in_order() {
+async fn migration_0024_puts_every_channel_in_its_default_category_in_order() {
     let (_dir, pool, migrator) = before_categories().await;
     add_server(&pool, MAIN, "Main").await;
     add_server(&pool, SIDE, "Side").await;

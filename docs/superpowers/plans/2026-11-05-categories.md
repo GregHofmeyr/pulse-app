@@ -25,7 +25,7 @@ transforms only).
   Nothing transitions layout properties or box-shadow; drag moves with `transform` only.
 - Protocol additions are `serde(default)`; optional TS fields `#[ts(optional)]` (Vec in Ready:
   `#[ts(as = "Option<_>", optional)]`), so old clients and existing fixtures keep working.
-- Migration number **0023** (`server/migrations/0023_categories.sql`).
+- Migration number **0024** (`server/migrations/0024_categories.sql`; first planned as 0023, renumbered because #195 takes 0023 on main).
 - Default category names exactly: "Text Channels", "Quotes", "Clips", "Voice Channels", in that order.
 - Category names 1–64 chars via `clean_name`; cap **50** categories per server (`caps::CATEGORIES_PER_SERVER`).
 - Who may change: server members only (403 otherwise); non-members see categories, cannot drag or open menus.
@@ -59,7 +59,7 @@ transforms only).
 | `protocol/src/ids.rs` | `CategoryId` |
 | `protocol/src/rest.rs` | `Category`, `ChannelPlacement`, `ServerLayout`, `CreateCategoryRequest`, `RenameCategoryRequest`, `SaveLayoutRequest`, `LayoutCategory`; `Channel.category_id`; `CreateChannelRequest.category_id` |
 | `protocol/src/gateway.rs` | `Ready.layouts`; `Event::LayoutChanged { layout }` |
-| `server/migrations/0023_categories.sql` | table, columns, defaults for existing servers |
+| `server/migrations/0024_categories.sql` | table, columns, defaults for existing servers |
 | `server/src/servers/categories.rs` | layout read/bump/publish, category routes, layout route |
 | `server/src/servers/{routes,channels}.rs`, `server/src/access.rs` | category_id in rows; defaults for new servers; create in a category; bumps on create/delete/restore |
 | `server/src/limits.rs`, `gateway/socket.rs` | `layout_user` rate, cap; Ready layouts |
@@ -106,9 +106,9 @@ transforms only).
   `only_for()` are `None`), `create_channel_without_a_category_parses`.
 - [ ] Fail → implement → pass; export bindings; fix literals (`category_id: None`, `layouts: vec![]`); commit.
 
-### Task 2: Migration 0023 and default categories for new servers
+### Task 2: Migration 0024 and default categories for new servers
 
-**Files:** Create `server/migrations/0023_categories.sql`, `server/tests/categories.rs`. Modify
+**Files:** Create `server/migrations/0024_categories.sql`, `server/tests/categories.rs`. Modify
 `server/src/access.rs` (`CHANNEL_COLS` + `ChannelRow` + `channel_from_row` gain `category_id`; also the
 `DeletedRow` users in `servers/channels.rs`), `server/src/servers/routes.rs` (`create_server`, `insert_channel`).
 
@@ -144,7 +144,7 @@ Data, in the same file:
 "Voice Channels" (voice, position 1) holding `Lounge`. `insert_channel` gains `category: Option<CategoryId>`.
 
 - [ ] Tests in `server/tests/categories.rs` (migration in the `names.rs` style: run migrations `< 23`, seed, run all):
-  - `migration_0023_puts_every_channel_in_its_default_category_in_order` — two servers: "Main" with text
+  - `migration_0024_puts_every_channel_in_its_default_category_in_order` — two servers: "Main" with text
     `general`(0) `memes`(1) `news`(2, inserted before memes to prove ordering is by position), quotes `quotes`,
     clips `clips`, voice `Lounge`(0) `Games`(1), and a soft-deleted text `old`; "Side" with only text `chat` and
     voice `Hangout`. After: Main has 4 categories named and ordered as above with `default_kind`s, Side has 2
@@ -333,10 +333,27 @@ click and right-click behave as before. Reduced motion: the global rule in `app.
   above another (each calls `saveOrder` with the expected order); under 4px it is a click (`onSelect` called, no
   save); Escape cancels (no save); non-members can't drag. Guard tests stay green. Commit.
 
+### As built (2026-11-05)
+
+- Migration renumbered **0024** (#195 takes 0023 on main). Rehearsed with `sqlite3` on a seeded DB (three servers,
+  every kind, gaps in positions, soft-deleted text/voice/quotes, a DM and a group): integrity ok, no FK violations,
+  17/17 channels kept, 7 default categories, every live channel in its kind's category in the old order.
+- Restore puts a channel at the bottom of its category (or of the uncategorised area if the category is gone), not
+  at its old position: positions are per category now, so the old one can collide.
+- New servers publish `LayoutChanged` right after `ServerCreated`, so connected clients know the categories before
+  the channels that sit in them.
+- Layout saves are serialised per server on the client: a move made while one is in flight waits as the draft and is
+  sent on the revision the first returns (two quick Alt+Downs no longer refuse each other). A drag cancels if the
+  shown order changes under it (a friend's move); drops and keyboard moves carry the revision they were based on.
+- `Shell.selectServer` opens the first text channel in sidebar order (positions are per category now).
+- A collapsed section keeps the open channel whatever its kind (the spec's rule applied to every row).
+- Deferred: edge auto-scroll while dragging (#193), screen-reader announcements of moves (#197), the double motion
+  when a refusal beats the other change's event (#198). Already tracked: #79/#80 (permissions), #184, #185, #55 icons.
+
 ### Task 8: Verify, rehearse, issues, as-built notes
 
-- [ ] Rehearse 0023 on a realistic file DB with `sqlite3` (migrations 0001–0022, seeded servers with text, quotes,
-  clips, voice and a soft-deleted channel; then 0023; `pragma integrity_check`, `pragma foreign_key_check`, per
+- [ ] Rehearse 0024 on a realistic file DB with `sqlite3` (migrations 0001–0022, seeded servers with text, quotes,
+  clips, voice and a soft-deleted channel; then 0024; `pragma integrity_check`, `pragma foreign_key_check`, per
   channel category and order vs before).
 - [ ] fmt, clippy `-D warnings`, `cargo xwin clippy -p pulse-client --target x86_64-pc-windows-msvc --all-targets --
   -D warnings`, server + protocol + client tests, bindings check, `pnpm check`, `pnpm test`.

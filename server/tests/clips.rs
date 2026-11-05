@@ -277,7 +277,7 @@ async fn migration_keeps_every_channel_row() {
     assert_eq!(count("channel_members").await, 2);
     assert_eq!(count("dm_hidden").await, 1);
     assert_eq!(count("voice_sessions").await, 1);
-    // Copied values survive, and the rebuilt table keeps its index. (0023, #54, then numbers
+    // Copied values survive, and the rebuilt table keeps its index. (0024, #54, then numbers
     // positions inside each category: the quotes channel is the first in its "Quotes".)
     let (mode, position): (String, i64) =
         sqlx::query_as("SELECT reaction_mode, position FROM channels WHERE id = ?")
