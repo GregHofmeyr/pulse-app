@@ -1655,9 +1655,14 @@ pub async fn set_badge_showcase(
 }
 
 #[tauri::command]
-pub async fn mark_badges_seen(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiError> {
+pub async fn mark_badges_seen(
+    app: AppHandle,
+    core: State<'_, Core>,
+    badges: Vec<pulse_protocol::rest::SeenBadge>,
+) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
-    core.check(&app, api.badges_seen(&token).await)
+    let req = pulse_protocol::rest::MarkBadgesSeenRequest { badges };
+    core.check(&app, api.badges_seen(&token, &req).await)
 }
 
 #[tauri::command]

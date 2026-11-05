@@ -260,11 +260,63 @@ async fn seen_marks_all() {
     let (_, p) = profile(&app, &sam, alex_id).await;
     assert!(p.badges.iter().all(|b| b.seen), "sam sees alex's [NEW]");
 
-    let r = post_json(&app, &alex, "/me/badges/seen", serde_json::json!({})).await;
+    // An older client posts no body: everything is seen, as before (#129).
+    let r = app
+        .http
+        .post(app.url("/me/badges/seen"))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 204);
     let (_, p) = profile(&app, &alex, alex_id).await;
     assert_eq!(p.badges.len(), 2);
     assert!(p.badges.iter().all(|b| b.seen));
+}
+
+/// #129: the case says which badges (at which tier) it showed; one earned after it loaded, or a
+/// tier reached since, stays [NEW].
+#[tokio::test]
+async fn seen_marks_only_what_the_case_showed() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    grant(&app, alex_id, "night_owl", 1).await;
+    grant(&app, alex_id, "the_yapper", 1).await;
+    let (_, shown) = profile(&app, &alex, alex_id).await;
+
+    // While the case is open: a new badge, and a tier up of one it shows.
+    grant(&app, alex_id, "ghost", 1).await;
+    grant(&app, alex_id, "the_yapper", 2).await;
+
+    let badges: Vec<_> = shown
+        .badges
+        .iter()
+        .map(|b| serde_json::json!({ "key": b.key, "tier": b.tier }))
+        .collect();
+    let r = post_json(
+        &app,
+        &alex,
+        "/me/badges/seen",
+        serde_json::json!({ "badges": badges }),
+    )
+    .await;
+    assert_eq!(r.status(), 204);
+
+    let (_, p) = profile(&app, &alex, alex_id).await;
+    let seen = |key: &str| p.badges.iter().find(|b| b.key == key).unwrap().seen;
+    assert!(seen("night_owl"));
+    assert!(!seen("ghost"), "earned after the case loaded");
+    assert!(!seen("the_yapper"), "tier II was never shown");
+
+    // Only your own badges: naming one you don't hold changes nothing and isn't an error.
+    let r = post_json(
+        &app,
+        &alex,
+        "/me/badges/seen",
+        serde_json::json!({ "badges": [{ "key": "founder", "tier": 1 }] }),
+    )
+    .await;
+    assert_eq!(r.status(), 204);
 }
 
 #[tokio::test]

@@ -2,6 +2,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { User } from './protocol/User'
 import type { Profile } from './protocol/Profile'
+import type { SeenBadge } from './protocol/SeenBadge'
 import type { UpdateProfileRequest } from './protocol/UpdateProfileRequest'
 import type { NameArchivePage } from './protocol/NameArchivePage'
 import type { BadgeCatalogue } from './protocol/BadgeCatalogue'
@@ -161,8 +162,8 @@ export const api = {
   getBadgeCatalogue: () => invoke<BadgeCatalogue>('get_badge_catalogue'),
   /** Up to 5 of your badges for your card, in order; empty goes back to the rarest five. */
   setBadgeShowcase: (keys: string[]) => invoke<void>('set_badge_showcase', { keys }),
-  /** You opened your trophy case: nothing of yours is [NEW] now. */
-  markBadgesSeen: () => invoke<void>('mark_badges_seen'),
+  /** Your trophy case showed these [NEW] (at these tiers): they aren't now. */
+  markBadgesSeen: (badges: SeenBadge[]) => invoke<void>('mark_badges_seen', { badges }),
   /** The "you're muted" detector fired (the server decides whether it counts). */
   reportMutedTalk: () => invoke<void>('report_muted_talk'),
   /** You found a hidden egg (`'logo'`). */

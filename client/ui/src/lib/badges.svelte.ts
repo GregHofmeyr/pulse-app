@@ -116,14 +116,17 @@ class BadgeStore {
     return this.catalogue?.badges.find((d) => d.key === key)
   }
 
-  /** You opened your trophy case: everything is seen, here and on the server. */
-  markSeen() {
+  /** Your trophy case showed these [NEW]: they're seen, here and on the server. Only these, at the
+   * tier shown: one earned (or a tier reached) after the case loaded stays [NEW] (#129). */
+  markSeen(shown: Badge[]) {
     this.bumped = 0
     this.#bumpedOn = undefined
+    if (shown.length === 0) return
+    const was = (b: Badge) => shown.some((s) => s.key === b.key && s.tier === b.tier)
     const me = app.state.me
     const own = me ? app.state.profiles[me.id] : undefined
-    if (own?.badges.some((b) => !b.seen)) app.state = setProfile(app.state, { ...own, badges: own.badges.map((b) => ({ ...b, seen: true })) })
-    void api.markBadgesSeen().catch(() => {})
+    if (own?.badges.some((b) => !b.seen && was(b))) app.state = setProfile(app.state, { ...own, badges: own.badges.map((b) => (was(b) ? { ...b, seen: true } : b)) })
+    void api.markBadgesSeen(shown.map((b) => ({ key: b.key, tier: b.tier }))).catch(() => {})
   }
 
   pushToast(t: Omit<BadgeToastItem, 'id'>) {

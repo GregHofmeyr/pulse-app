@@ -42,11 +42,11 @@
   let fresh = $state<string[]>([])
   $effect(() => {
     if (!mine) return
-    const unseen = badges.filter((b) => !b.seen).map((b) => b.key)
+    const unseen = badges.filter((b) => !b.seen)
     untrack(() => {
       if (unseen.length === 0 && badgeStore.bumped === 0) return
-      fresh = [...new Set([...fresh, ...unseen])]
-      badgeStore.markSeen()
+      fresh = [...new Set([...fresh, ...unseen.map((b) => b.key)])]
+      badgeStore.markSeen(unseen)
     })
   })
 

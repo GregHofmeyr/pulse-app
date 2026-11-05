@@ -94,13 +94,34 @@ describe('badgeStore', () => {
     expect(calls('get_badge_catalogue')).toHaveLength(2)
   })
 
-  it('markSeen clears the unseen count and tells the server', async () => {
+  it('markSeen clears the unseen count and tells the server what was shown', async () => {
     badgeStore.reset()
     badgeStore.bumped = 2
     expect(badgeStore.unseen).toBe(2)
-    badgeStore.markSeen()
+    badgeStore.markSeen([{ ...badge('the_yapper', 'common', '2026-11-03T00:00:00Z'), tier: 2, seen: false }])
     expect(badgeStore.unseen).toBe(0)
-    expect(calls('mark_badges_seen')).toHaveLength(1)
+    expect(calls('mark_badges_seen')).toEqual([['mark_badges_seen', { badges: [{ key: 'the_yapper', tier: 2 }] }]])
+  })
+
+  it('markSeen marks only the shown badges seen in your cached profile (#129)', () => {
+    badgeStore.reset()
+    app.state = { ...emptyState(), me: alex } as never
+    const shown = { ...badge('night_owl', 'rare', '2026-11-01T00:00:00Z'), seen: false }
+    const later = { ...badge('ghost', 'rare', '2026-11-02T00:00:00Z'), seen: false }
+    app.state = setProfile(app.state, ownProfile([shown, later]))
+    badgeStore.markSeen([shown])
+    const own = app.state.profiles['U1']!.badges
+    expect(own.find((b) => b.key === 'night_owl')!.seen).toBe(true)
+    expect(own.find((b) => b.key === 'ghost')!.seen).toBe(false)
+    expect(badgeStore.unseen).toBe(1)
+    expect(calls('mark_badges_seen')).toEqual([['mark_badges_seen', { badges: [{ key: 'night_owl', tier: 1 }] }]])
+  })
+
+  it('markSeen with nothing shown tells the server nothing', () => {
+    badgeStore.reset()
+    badgeStore.bumped = 1
+    badgeStore.markSeen([])
+    expect(calls('mark_badges_seen')).toHaveLength(0)
   })
 
   it('a catalogue that answers after sign-out is dropped', async () => {

@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::Utc;
-use pulse_protocol::rest::{BadgeCatalogue, EggRequest, SetShowcaseRequest};
+use pulse_protocol::rest::{BadgeCatalogue, EggRequest, MarkBadgesSeenRequest, SetShowcaseRequest};
 
 use super::catalogue::stat;
 use super::time::{doos_counts, sast_day};
@@ -87,15 +87,44 @@ async fn set_showcase(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `POST /me/badges/seen`: the caller opened their trophy case; nothing of theirs is [NEW] now.
-async fn seen(State(s): State<AppState>, AuthUser(me): AuthUser) -> AppResult<StatusCode> {
+/// Most badges one request marks seen (the catalogue is far smaller).
+const SEEN_MAX: usize = 200;
+
+/// `POST /me/badges/seen`: the caller's trophy case showed these badges, at these tiers; they
+/// aren't [NEW] now. A badge earned or a tier reached since stays [NEW] (#129). No body (an older
+/// client) marks everything seen.
+async fn seen(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    req: Option<Json<MarkBadgesSeenRequest>>,
+) -> AppResult<StatusCode> {
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
-    sqlx::query("UPDATE user_badges SET seen = 1 WHERE user_id = ? AND seen = 0")
-        .bind(me.to_string())
-        .execute(&s.db)
+    let id = me.to_string();
+    let Some(Json(req)) = req else {
+        sqlx::query("UPDATE user_badges SET seen = 1 WHERE user_id = ? AND seen = 0")
+            .bind(&id)
+            .execute(&s.db)
+            .await?;
+        return Ok(StatusCode::NO_CONTENT);
+    };
+    if req.badges.len() > SEEN_MAX {
+        return Err(AppError::BadRequest("Too many badges.".into()));
+    }
+    let mut tx = begin_write(&s.db).await?;
+    for b in &req.badges {
+        sqlx::query(
+            "UPDATE user_badges SET seen = 1 \
+             WHERE user_id = ? AND badge_key = ? AND tier = ? AND seen = 0",
+        )
+        .bind(&id)
+        .bind(&b.key)
+        .bind(b.tier)
+        .execute(&mut *tx)
         .await?;
+    }
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

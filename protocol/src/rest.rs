@@ -196,6 +196,21 @@ pub struct SetShowcaseRequest {
     pub keys: Vec<String>,
 }
 
+/// One badge, at the tier the trophy case showed it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SeenBadge {
+    pub key: String,
+    pub tier: u8,
+}
+
+/// `POST /me/badges/seen`: the badges your trophy case showed [NEW]. Only those, at those tiers,
+/// stop being [NEW]: one earned (or a tier reached) after the case loaded stays [NEW] (#129).
+/// No body at all (older clients) marks everything seen.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MarkBadgesSeenRequest {
+    pub badges: Vec<SeenBadge>,
+}
+
 /// `POST /me/badges/egg`: the client found a hidden egg (`"logo"`: the logo-click one).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct EggRequest {

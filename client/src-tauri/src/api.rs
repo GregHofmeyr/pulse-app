@@ -11,15 +11,15 @@ use pulse_protocol::rest::{
     ClipView, ConfirmClipRequest, CreateDmRequest, CreateEmojiRequest, CreateSoundRequest,
     CustomEmoji, DeletedChannel, EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest,
     Game, GoLiveRequest, HideEmbedRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest,
-    LoginRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired, MuteTarget,
-    NameArchivePage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse,
-    RegisterRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest, SearchRequest,
-    SearchResults, SendMessageRequest, Server, ServerVoiceMod, SessionResponse, SetClipViewRequest,
-    SetMuteRequest, SetNicknameRequest, SetServerVoiceRequest, SetShowcaseRequest, Sound,
-    StartQotyRequest, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
-    ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
-    TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
-    VoiceTokenResponse, WatchRequest,
+    LoginRequest, MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired,
+    MuteTarget, NameArchivePage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest,
+    RecoveryCodesResponse, RegisterRequest, RenameChannelRequest, RenameEmojiRequest,
+    ReopenQotyRequest, SearchRequest, SearchResults, SendMessageRequest, Server, ServerVoiceMod,
+    SessionResponse, SetClipViewRequest, SetMuteRequest, SetNicknameRequest, SetServerVoiceRequest,
+    SetShowcaseRequest, Sound, StartQotyRequest, StreamInfo, StreamRole, StreamSettings,
+    StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
+    TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest,
+    UpdateSoundRequest, User, VoiceTokenResponse, WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -1205,12 +1205,17 @@ impl Api {
         .await
     }
 
-    /// You opened your trophy case: nothing of yours is [NEW] now.
-    pub async fn badges_seen(&self, token: &str) -> Result<(), ApiError> {
+    /// Your trophy case showed these badges [NEW]: they aren't now (anything since stays [NEW]).
+    pub async fn badges_seen(
+        &self,
+        token: &str,
+        req: &MarkBadgesSeenRequest,
+    ) -> Result<(), ApiError> {
         Self::ok_empty(
             self.http
                 .post(self.url(&["me", "badges", "seen"])?)
                 .bearer_auth(token)
+                .json(req)
                 .send()
                 .await,
         )
@@ -3816,7 +3821,20 @@ mod tests {
         )
         .await
         .unwrap();
-        api.badges_seen(&token).await.unwrap();
+        let shown: Vec<_> = api
+            .profile(&token, me)
+            .await
+            .unwrap()
+            .badges
+            .iter()
+            .map(|b| pulse_protocol::rest::SeenBadge {
+                key: b.key.clone(),
+                tier: b.tier,
+            })
+            .collect();
+        api.badges_seen(&token, &MarkBadgesSeenRequest { badges: shown })
+            .await
+            .unwrap();
         // not in a voice channel: accepted, quietly not counted
         api.muted_talk(&token).await.unwrap();
         let read = api.profile(&token, me).await.unwrap();

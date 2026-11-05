@@ -150,8 +150,9 @@ describe('TrophyCase', () => {
   })
 
   it('opening your own case marks badges seen, keeping [NEW] while open', async () => {
-    await show({ badges: [badge('the_yapper', { seen: false }), badge('night_owl', { rarity: 'rare' })], mine: true })
-    expect(calls('mark_badges_seen')).toHaveLength(1)
+    await show({ badges: [badge('the_yapper', { seen: false, tier: 2 }), badge('night_owl', { rarity: 'rare' })], mine: true })
+    // Only what this case showed [NEW], at the tier shown (#129).
+    expect(calls('mark_badges_seen')).toEqual([['mark_badges_seen', { badges: [{ key: 'the_yapper', tier: 2 }] }]])
     expect(tile('The Yapper')!.querySelector('.new')).not.toBeNull()
     expect(tile('Night Owl')!.querySelector('.new')).toBeNull()
   })
