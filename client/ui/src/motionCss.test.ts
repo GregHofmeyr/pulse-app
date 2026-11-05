@@ -140,7 +140,7 @@ describe('context menus', () => {
   // Measured at the click point, a fixed menu's shrink-to-fit width is capped by the room to its right: it measured
   // narrow, clamped, then grew past the window edge with its items wrapping (runtime audit). max-content measures its
   // real width wherever it starts.
-  it.each(['MemberMenu', 'ServerMenu', 'ChannelMenu', 'LineMenu', 'ParticipantMenu', 'StatusPicker'])('%s sizes to its content', (name) => {
+  it.each(['MemberMenu', 'ServerMenu', 'ChannelMenu', 'CategoryMenu', 'LineMenu', 'ParticipantMenu', 'StatusPicker'])('%s sizes to its content', (name) => {
     const css = cssOf(resolve(__dirname, `components/${name}.svelte`))
     expect(css).toMatch(/\.(menu|status-menu) \{[^}]*position: fixed;[^}]*width: max-content;/)
   })

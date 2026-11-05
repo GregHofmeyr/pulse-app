@@ -17,9 +17,10 @@
   import NicknameDialog from '../components/NicknameDialog.svelte'
   import ServerMenu from '../components/ServerMenu.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
+  import { requestCreateCategory } from '../lib/categoryUi.svelte'
   import { clickOutside, modal, narrowerThan } from '../lib/actions'
   import { exitFade } from '../lib/exit'
-  import { NARROW_BODY, searchMakesRoom } from '../lib/layout'
+  import { NARROW_BODY, searchMakesRoom, sidebarLayout } from '../lib/layout'
   import { COLUMNS, fitColumns, RIGHT_DEFAULT } from '../lib/columns'
   import { columns, resetColumn, setColumn } from '../lib/columns.svelte'
   import ColumnHandle from '../components/ColumnHandle.svelte'
@@ -480,10 +481,9 @@
 
   function selectServer(id: string) {
     activeServerId = id
-    // the top text channel, as the sidebar lists them
-    const general = Object.values(app.state.channels)
-      .filter((c) => c.server_id === id && c.kind === 'text')
-      .sort((a, b) => a.position - b.position || (a.id < b.id ? -1 : 1))[0]
+    // the top text channel, as the sidebar lists them (positions count within a category, #54)
+    const l = sidebarLayout(app.state, id)
+    const general = [...l.top, ...l.sections.flatMap((x) => x.channels)].find((c) => c.kind === 'text')
     activeChannelId = general?.id ?? null
   }
 
@@ -555,6 +555,9 @@
           {#if serverMenuOpen}
             <div class="menu head-menu menu-surface pop-in" role="menu" use:clickOutside={closeServerMenu}>
               <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsId = activeServerId }}>Server settings</button>
+              {#if member && activeServerId && app.state.layouts[activeServerId]}
+                <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; if (activeServerId) requestCreateCategory(activeServerId) }}>Create category</button>
+              {/if}
             </div>
           {/if}
         {:else}Direct messages{/if}
@@ -674,7 +677,8 @@
   {#if srv}
     {#key m}
       <ServerMenu serverId={m.id} name={srv.name} x={m.x} y={m.y} opener={m.opener} onClose={() => (serverMenu = null)}
-        onSettings={() => (serverSettingsId = m.id)} onError={(msg) => (error = msg)} />
+        onSettings={() => (serverSettingsId = m.id)} onError={(msg) => (error = msg)}
+        onCreateCategory={() => { if (activeServerId !== m.id) selectServer(m.id); requestCreateCategory(m.id) }} />
     {/key}
   {/if}
 {/if}

@@ -14,10 +14,17 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 import ChannelList from './ChannelList.svelte'
 import { app } from '../lib/store.svelte'
-import { applyEvent, applyReady, emptyState } from '../lib/state'
+import { applyEvent, applyLayout, applyReady, emptyState } from '../lib/state'
 import { startVoiceListening, voice, voiceApi } from '../lib/voice.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 import { HOVER_DELAY_MS } from '../lib/hoverPrefetch'
+import { categoryUi, requestCreateCategory } from '../lib/categoryUi.svelte'
+import { drafts } from '../lib/layoutDraft.svelte'
+import { testReady } from '../lib/testReady'
+import type { Category } from '../lib/protocol/Category'
+import type { Channel } from '../lib/protocol/Channel'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -300,7 +307,7 @@ describe('ChannelList quotes group', () => {
       props: { serverId: 'S1', activeChannelId: null, voiceChannelId: null, speaking: new Set<string>(), onSelect, onJoinVoice: () => {}, onMessage: () => {}, onVoiceSettings: () => {} },
     })
     flushSync()
-    expect([...document.querySelectorAll('.label')].map((l) => l.textContent?.trim())).toContain('QUOTES')
+    expect([...document.querySelectorAll('.label')].map((l) => l.textContent?.trim())).toContain('Quotes')
     document.querySelector<HTMLButtonElement>('button[aria-label="Create quotes channel"]')!.click()
     await tick()
     const input = document.querySelector<HTMLInputElement>('input[aria-label="New quotes channel name"]')!
@@ -334,8 +341,8 @@ describe('ChannelList clips group', () => {
     })
     flushSync()
     const labels = [...document.querySelectorAll('.label')].map((l) => l.textContent?.trim())
-    expect(labels).toContain('CLIPS')
-    expect(labels.indexOf('CLIPS')).toBe(labels.indexOf('QUOTES') + 1)
+    expect(labels).toContain('Clips')
+    expect(labels.indexOf('Clips')).toBe(labels.indexOf('Quotes') + 1)
     expect([...document.querySelectorAll('.row')].some((r) => r.textContent?.includes('highlights'))).toBe(true)
     const add = document.querySelector<HTMLButtonElement>('button[aria-label="Create clips channel"]')!
     expect(add.querySelector('path')?.getAttribute('d')).toContain('M4 4h16v16H4z') // the film icon
@@ -371,5 +378,306 @@ describe('voice occupant names', () => {
     flushSync()
     expect(img.getAttribute('src')).toBe(`pulse-media://localhost/${A}`)
     expect(occ.getAttribute('aria-label')).toBe('sam')
+  })
+})
+
+// ---- By categories (#54) ----
+
+const cat = (id: string, name: string, position: number, extra: Partial<Category> = {}): Category => ({ id, server_id: 'S1', name, position, ...extra })
+const cats: Category[] = [cat('C1', 'Text Channels', 0, { default_kind: 'text' }), cat('C2', 'Gaming', 1), cat('C3', 'Voice Channels', 2, { default_kind: 'voice' })]
+const live: Channel[] = [
+  { id: 'T0', server_id: 'S1', kind: 'text', name: 'welcome', position: 0 },
+  { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0, category_id: 'C1' },
+  { id: 'T2', server_id: 'S1', kind: 'text', name: 'memes', position: 1, category_id: 'C1' },
+  { id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 0, category_id: 'C2' },
+  { id: 'V2', server_id: 'S1', kind: 'voice', name: 'Games', position: 1, category_id: 'C2' },
+  { id: 'V1', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 0, category_id: 'C3' },
+]
+const layouts = [{ server_id: 'S1', revision: 3, categories: cats, channels: [] }]
+
+function showLive(over: { member?: boolean; onSelect?: (id: string) => void } = {}) {
+  if (cmp) unmount(cmp)
+  document.body.innerHTML = ''
+  drafts.byServer = {}
+  app.state = applyReady(emptyState(), testReady(live, { layouts, ...(over.member === false ? { members: [] } : {}) }))
+  cmp = mount(ChannelList, {
+    target: document.body,
+    props: { serverId: 'S1', activeChannelId: null, voiceChannelId: null, speaking: new Set<string>(), onSelect: over.onSelect ?? (() => {}), onJoinVoice: () => {}, onMessage: () => {}, onVoiceSettings: () => {} },
+  })
+  flushSync()
+}
+const headings = () => [...document.querySelectorAll<HTMLButtonElement>('button.section')]
+const headingOf = (id: string) => document.querySelector<HTMLButtonElement>(`.cat[data-category="${id}"] > .label button.section`)!
+const rowNames = (root: ParentNode = document) => [...root.querySelectorAll('.row .grow')].map((e) => e.textContent?.trim())
+const rowOf = (id: string) => document.querySelector<HTMLElement>(`.row[data-channel="${id}"]`)!
+const press = (el: Element, k: string, init: KeyboardEventInit = {}) => {
+  const e = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init })
+  el.dispatchEvent(e)
+  flushSync()
+  return e
+}
+const menuItems = () => [...document.querySelectorAll<HTMLButtonElement>('[role=menu] > [role=menuitem]')]
+const menuItem = (label: string) => menuItems().find((b) => b.textContent?.trim() === label)!
+const rightClick = (el: Element) => {
+  el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 50 }))
+  flushSync()
+}
+const type = (input: HTMLInputElement, value: string) => {
+  input.value = value
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+}
+const savedLayout = () => invoke.mock.calls.filter(([c]) => c === 'save_layout').map(([, a]) => (a as { layout: unknown }).layout)
+const flush = async () => {
+  for (let i = 0; i < 4; i++) await tick()
+  flushSync()
+}
+
+describe('ChannelList by categories', () => {
+  beforeEach(() => {
+    // a save stays in flight: the draft keeps showing
+    invoke.mockImplementation((c: string) => (c === 'save_layout' ? new Promise(() => {}) : Promise.resolve(undefined)))
+  })
+  afterEach(() => {
+    drafts.byServer = {}
+    categoryUi.create = null
+  })
+
+  it('shows the uncategorised channels on top, then each category in order with its channels', () => {
+    showLive()
+    expect(headings().map((h) => h.textContent?.trim())).toEqual(['Text Channels', 'Gaming', 'Voice Channels'])
+    expect(rowNames(document.querySelector('.cat.top')!)).toEqual(['welcome'])
+    expect(rowNames(document.querySelector('.cat[data-category="C1"]')!)).toEqual(['general', 'memes'])
+    expect(rowNames(document.querySelector('.cat[data-category="C2"]')!)).toEqual(['quotes', 'Games'])
+    expect(rowNames(document.querySelector('.cat[data-category="C3"]')!)).toEqual(['Lounge'])
+    // each section is its heading then its rows
+    expect(document.querySelector('.cat[data-category="C2"] > .label')).toBe(document.querySelector('.cat[data-category="C2"]')!.firstElementChild)
+  })
+
+  it('a heading shows the name as stored; CSS upper-cases it', () => {
+    showLive()
+    expect(headingOf('C2').textContent?.trim()).toBe('Gaming')
+    const css = readFileSync(resolve(__dirname, 'ChannelList.svelte'), 'utf8').match(/<style>([\s\S]*)<\/style>/)![1]
+    expect(css).toMatch(/\.label \{[^}]*text-transform: uppercase/)
+  })
+
+  it.each([
+    ['Text', 'text', 'Hall Of Fame', 'hall-of-fame'],
+    ['Quotes', 'quotes', 'Best Lines', 'best-lines'],
+    ['Clips', 'clips', 'Best Plays', 'best-plays'],
+    ['Voice', 'voice', 'Raid Room', 'Raid Room'],
+  ])('+ creates a %s channel inside its category', async (label, kind, typed, name) => {
+    const onSelect = vi.fn()
+    showLive({ onSelect })
+    invoke.mockImplementation(async (c: string) => (c === 'create_channel' ? { id: 'N1', server_id: 'S1', kind, name, position: 2, category_id: 'C2' } : undefined))
+    document.querySelector<HTMLButtonElement>('button.add[aria-label="Create channel in Gaming"]')!.click()
+    flushSync()
+    const picker = document.querySelector<HTMLElement>('[role=radiogroup][aria-label="Channel kind"]')!
+    const radios = [...picker.querySelectorAll<HTMLButtonElement>('[role=radio]')]
+    expect(radios.map((r) => r.getAttribute('aria-label'))).toEqual(['Text', 'Quotes', 'Clips', 'Voice'])
+    expect(radios.map((r) => r.dataset.tip)).toEqual(['Text', 'Quotes', 'Clips', 'Voice'])
+    expect(radios.find((r) => r.getAttribute('aria-checked') === 'true')?.getAttribute('aria-label')).toBe('Text')
+    radios.find((r) => r.getAttribute('aria-label') === label)!.click()
+    flushSync()
+    expect(radios.find((r) => r.getAttribute('aria-checked') === 'true')?.getAttribute('aria-label')).toBe(label)
+    // the field sits in the category, under its heading
+    const input = document.querySelector<HTMLInputElement>('.cat[data-category="C2"] input[aria-label="New channel name"]')!
+    expect(input.classList.contains('input-sm')).toBe(true)
+    type(input, typed)
+    press(input, 'Enter')
+    await flush()
+    expect(invoke).toHaveBeenCalledWith('create_channel', { serverId: 'S1', kind, name, categoryId: 'C2' })
+    expect(document.querySelector('input[aria-label="New channel name"]')).toBeNull()
+    if (kind === 'voice') expect(onSelect).not.toHaveBeenCalled()
+    else expect(onSelect).toHaveBeenCalledWith('N1')
+  })
+
+  it('the arrow keys move between kinds; Escape or focus leaving the field cancels', () => {
+    showLive()
+    document.querySelector<HTMLButtonElement>('button.add[aria-label="Create channel in Gaming"]')!.click()
+    flushSync()
+    const input = () => document.querySelector<HTMLInputElement>('input[aria-label="New channel name"]')
+    const radio = (l: string) => document.querySelector<HTMLButtonElement>(`[role=radio][aria-label="${l}"]`)!
+    press(radio('Text'), 'ArrowRight')
+    expect(radio('Quotes').getAttribute('aria-checked')).toBe('true')
+    expect(document.activeElement).toBe(radio('Quotes'))
+    // focus moving within the field and its picker keeps it
+    input()!.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: radio('Clips') }))
+    flushSync()
+    expect(input()).not.toBeNull()
+    press(input()!, 'Escape')
+    expect(input()).toBeNull()
+    document.querySelector<HTMLButtonElement>('button.add[aria-label="Create channel in Gaming"]')!.click()
+    flushSync()
+    input()!.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body }))
+    flushSync()
+    expect(input()).toBeNull()
+    expect(invoke.mock.calls.some(([c]) => c === 'create_channel')).toBe(false)
+  })
+
+  it("a category's menu creates a channel in it, renames it in its heading and deletes it", async () => {
+    showLive()
+    rightClick(headingOf('C2'))
+    expect(menuItems().map((b) => b.textContent?.trim())).toEqual(['Create channel', 'Rename category…', 'Delete category', 'Move up', 'Move down'])
+    menuItem('Create channel').click()
+    flushSync()
+    expect(document.querySelector('.cat[data-category="C2"] input[aria-label="New channel name"]')).not.toBeNull()
+    press(document.querySelector('input[aria-label="New channel name"]')!, 'Escape')
+
+    rightClick(headingOf('C2'))
+    menuItem('Rename category…').click()
+    flushSync()
+    const field = document.querySelector<HTMLInputElement>('.cat[data-category="C2"] > .label input[aria-label="Rename category Gaming"]')!
+    expect(field.value).toBe('Gaming')
+    invoke.mockRejectedValueOnce('That name is too long')
+    type(field, 'Games')
+    press(field, 'Enter')
+    await flush()
+    expect(invoke).toHaveBeenCalledWith('rename_category', { categoryId: 'C2', name: 'Games' })
+    expect(document.querySelector('.cat[data-category="C2"] .err')?.textContent).toBe('That name is too long')
+    invoke.mockResolvedValueOnce(cat('C2', 'Games', 1))
+    press(field, 'Enter')
+    await flush()
+    expect(document.querySelector('input[aria-label="Rename category Gaming"]')).toBeNull()
+    expect(document.activeElement).toBe(headingOf('C2'))
+
+    rightClick(headingOf('C2'))
+    menuItem('Delete category').click()
+    await flush()
+    expect(invoke).toHaveBeenCalledWith('delete_category', { categoryId: 'C2' })
+  })
+
+  it('Escape leaves a rename without saving', () => {
+    showLive()
+    rightClick(headingOf('C1'))
+    menuItem('Rename category…').click()
+    flushSync()
+    const field = document.querySelector<HTMLInputElement>('input[aria-label="Rename category Text Channels"]')!
+    type(field, 'Chat')
+    press(field, 'Escape')
+    expect(document.querySelector('input[aria-label="Rename category Text Channels"]')).toBeNull()
+    expect(invoke.mock.calls.some(([c]) => c === 'rename_category')).toBe(false)
+  })
+
+  it('a category deleted meanwhile closes its menu and its rename', () => {
+    showLive()
+    rightClick(headingOf('C2'))
+    expect(menuItems().length).toBeGreaterThan(0)
+    app.state = applyLayout(app.state, { server_id: 'S1', revision: 4, categories: [cats[0], cats[2]], channels: [] })
+    flushSync()
+    expect(document.querySelector('[role=menu]')).toBeNull()
+    rightClick(headingOf('C1'))
+    menuItem('Rename category…').click()
+    flushSync()
+    app.state = applyLayout(app.state, { server_id: 'S1', revision: 5, categories: [cats[2]], channels: [] })
+    flushSync()
+    expect(document.querySelector('input[aria-label^="Rename category"]')).toBeNull()
+  })
+
+  it("Move up / Move down in a category's menu reorder the categories (disabled at the ends)", async () => {
+    showLive()
+    rightClick(headingOf('C1'))
+    expect(menuItem('Move up').disabled).toBe(true)
+    menuItem('Move down').click()
+    await flush()
+    expect(savedLayout()).toEqual([{ revision: 3, uncategorised: ['T0'], categories: [{ id: 'C2', channels: ['Q1', 'V2'] }, { id: 'C1', channels: ['T1', 'T2'] }, { id: 'C3', channels: ['V1'] }] }])
+    // the draft shows at once
+    expect(headings().map((h) => h.textContent?.trim())).toEqual(['Gaming', 'Text Channels', 'Voice Channels'])
+    rightClick(headingOf('C3'))
+    expect(menuItem('Move down').disabled).toBe(true)
+  })
+
+  it('Alt+Down on a channel moves it, into the next category at the edge; focus stays on it', async () => {
+    showLive()
+    rowOf('T2').focus()
+    press(rowOf('T2'), 'ArrowDown', { altKey: true })
+    await flush()
+    expect(savedLayout()).toEqual([{ revision: 3, uncategorised: ['T0'], categories: [{ id: 'C1', channels: ['T1'] }, { id: 'C2', channels: ['T2', 'Q1', 'V2'] }, { id: 'C3', channels: ['V1'] }] }])
+    expect(rowNames(document.querySelector('.cat[data-category="C2"]')!)).toEqual(['memes', 'quotes', 'Games'])
+    expect(document.activeElement).toBe(rowOf('T2'))
+    // up out of the first category into the top area
+    rowOf('T1').focus()
+    press(rowOf('T1'), 'ArrowUp', { altKey: true })
+    await flush()
+    expect(rowNames(document.querySelector('.cat.top')!)).toEqual(['welcome', 'general'])
+    expect(document.activeElement).toBe(rowOf('T1'))
+    // a voice row moves too
+    press(rowOf('V1'), 'ArrowUp', { altKey: true })
+    await flush()
+    expect(rowNames(document.querySelector('.cat[data-category="C2"]')!)).toEqual(['memes', 'quotes', 'Games', 'Lounge'])
+    // at the very top nothing moves
+    const before = savedLayout().length
+    press(rowOf('T0'), 'ArrowUp', { altKey: true })
+    expect(savedLayout().length).toBe(before)
+  })
+
+  it('Alt+Up on a heading moves the category; focus stays on its heading', async () => {
+    showLive()
+    headingOf('C3').focus()
+    press(headingOf('C3'), 'ArrowUp', { altKey: true })
+    await flush()
+    expect(headings().map((h) => h.textContent?.trim())).toEqual(['Text Channels', 'Voice Channels', 'Gaming'])
+    expect(document.activeElement).toBe(headingOf('C3'))
+  })
+
+  it("Move up / Move down in a channel's menu", async () => {
+    showLive()
+    rightClick(rowOf('Q1'))
+    expect(menuItems().map((b) => b.textContent?.trim()).slice(-2)).toEqual(['Move up', 'Move down'])
+    menuItem('Move up').click()
+    await flush()
+    expect(savedLayout()).toEqual([{ revision: 3, uncategorised: ['T0'], categories: [{ id: 'C1', channels: ['T1', 'T2', 'Q1'] }, { id: 'C2', channels: ['V2'] }, { id: 'C3', channels: ['V1'] }] }])
+    rightClick(rowOf('T0'))
+    expect(menuItem('Move up').disabled).toBe(true)
+    expect(menuItem('Move down').disabled).toBe(false)
+  })
+
+  it('outside the server: no +, no category menu, no moves', () => {
+    showLive({ member: false })
+    expect(document.querySelector('button.add')).toBeNull()
+    rightClick(headingOf('C2'))
+    expect(document.querySelector('[role=menu]')).toBeNull()
+    press(headingOf('C2'), 'F10', { shiftKey: true })
+    expect(document.querySelector('[role=menu]')).toBeNull()
+    press(rowOf('T1'), 'ArrowDown', { altKey: true })
+    press(headingOf('C1'), 'ArrowDown', { altKey: true })
+    expect(savedLayout()).toEqual([])
+    rightClick(rowOf('T1'))
+    expect(menuItems().map((b) => b.textContent?.trim())).not.toContain('Move up')
+  })
+
+  it('Create category opens a heading-styled field at the end of the list', async () => {
+    showLive()
+    requestCreateCategory('S2') // another server's: not this list's
+    flushSync()
+    expect(document.querySelector('input[aria-label="New category name"]')).toBeNull()
+    requestCreateCategory('S1')
+    flushSync()
+    expect(categoryUi.create).toBeNull()
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="New category name"]')!
+    expect(input.closest('.label')).not.toBeNull()
+    expect(input.closest('.list')!.lastElementChild!.contains(input)).toBe(true)
+    expect(document.activeElement).toBe(input)
+    invoke.mockResolvedValueOnce(cat('C9', 'Raid Night', 3))
+    type(input, '  Raid Night ')
+    press(input, 'Enter')
+    await flush()
+    expect(invoke).toHaveBeenCalledWith('create_category', { serverId: 'S1', name: 'Raid Night' })
+    expect(document.querySelector('input[aria-label="New category name"]')).toBeNull()
+    requestCreateCategory('S1')
+    flushSync()
+    press(document.querySelector('input[aria-label="New category name"]')!, 'Escape')
+    expect(document.querySelector('input[aria-label="New category name"]')).toBeNull()
+  })
+
+  it('without layouts (an older server) the four kind sections stay, each with its own +', () => {
+    showLive()
+    app.state = applyReady(emptyState(), testReady(live.map(({ category_id: _, ...c }) => c)))
+    flushSync()
+    expect(headings().map((h) => h.textContent?.trim())).toEqual(['Text Channels', 'Quotes', 'Clips', 'Voice Channels'])
+    expect([...document.querySelectorAll('button.add')].map((b) => b.getAttribute('aria-label')))
+      .toEqual(['Create text channel', 'Create quotes channel', 'Create clips channel', 'Create voice channel'])
+    expect(document.querySelector('[data-category]')).toBeNull()
+    rightClick(headings()[0])
+    expect(document.querySelector('[role=menu]')).toBeNull()
   })
 })

@@ -11,8 +11,9 @@
   import { NOTIFY_LEVELS } from '../lib/notifyLevels'
   import MenuFlyout from './MenuFlyout.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
+  import { isMember } from '../lib/selectors'
 
-  let { serverId, name, x, y, opener, onClose, onSettings, onError }: {
+  let { serverId, name, x, y, opener, onClose, onSettings, onCreateCategory, onError }: {
     serverId: string
     name: string
     x: number
@@ -21,6 +22,8 @@
     opener: HTMLElement
     onClose: () => void
     onSettings: () => void
+    /** Create category (#54): members of a server with categories; the channel list opens the field. */
+    onCreateCategory?: () => void
     /** An action failed after the menu had gone. */
     onError: (message: string) => void
   } = $props()
@@ -28,6 +31,8 @@
   const muted = $derived(
     app.state.mutes.some((m) => m.target_kind === 'server' && m.target_id === serverId && (m.until === null || m.until > clock.nowIso)),
   )
+  // an older server has no categories to add to
+  const canCreateCategory = $derived(!!onCreateCategory && isMember(app.state, serverId) && !!app.state.layouts[serverId])
 
   let el = $state<HTMLElement>()
   let left = $state(untrack(() => x))
@@ -94,6 +99,9 @@
     if (t && t.parentElement === el) for (const f of flyouts()) if (t !== f?.trigger()) f?.closeSoon()
   }}>
   <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onSettings)}>Server settings</button>
+  {#if canCreateCategory && onCreateCategory}
+    <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onCreateCategory)}>Create category</button>
+  {/if}
   {#if muted}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(report(() => api.clearMute('server', serverId)))}>Unmute server</button>
   {:else}

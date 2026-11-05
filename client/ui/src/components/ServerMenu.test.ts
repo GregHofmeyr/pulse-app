@@ -17,10 +17,16 @@ let onClose = vi.fn()
 let onSettings = vi.fn()
 let onError = vi.fn()
 
-function render(muted = false, levels: { target_kind: 'server' | 'channel'; target_id: string; level: 'all' | 'mentions' | 'nothing' }[] = []) {
+let onCreateCategory = vi.fn()
+const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+
+function render(muted = false, levels: { target_kind: 'server' | 'channel'; target_id: string; level: 'all' | 'mentions' | 'nothing' }[] = [], { member = false, live = true } = {}) {
   app.state = {
     ...emptyState(),
+    me,
     servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }],
+    members: member ? { S1: [{ user: me, nickname: null }] } : {},
+    layouts: live ? { S1: { revision: 1, categories: [] } } : {},
     mutes: muted ? [{ target_kind: 'server', target_id: 'S1', until: null }] : [],
     notifyLevels: levels,
   } as never
@@ -29,7 +35,8 @@ function render(muted = false, levels: { target_kind: 'server' | 'channel'; targ
   onClose = vi.fn()
   onSettings = vi.fn()
   onError = vi.fn()
-  cmp = mount(ServerMenu, { target: document.body, props: { serverId: 'S1', name: 'Alpha', x: 20, y: 50, opener, onClose, onSettings, onError } })
+  onCreateCategory = vi.fn()
+  cmp = mount(ServerMenu, { target: document.body, props: { serverId: 'S1', name: 'Alpha', x: 20, y: 50, opener, onClose, onSettings, onCreateCategory, onError } })
   flushSync()
 }
 const menu = () => document.querySelector<HTMLElement>('[role=menu][aria-label="Actions for Alpha"]')!
@@ -113,6 +120,23 @@ describe('ServerMenu', () => {
     hover(item('Mute server'))
     flyoutItem('For 1 hour')!.click()
     await vi.waitFor(() => expect(onError).toHaveBeenCalledWith('no network'))
+  })
+
+  it('members get Create category (#54), which hands back to the shell and closes', () => {
+    render(false, [], { member: true })
+    expect(labels()).toEqual(['Server settings', 'Create category', 'Mute server', 'Notifications'])
+    item('Create category').click()
+    flushSync()
+    expect(onCreateCategory).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('no Create category outside the server, or on a server without categories', () => {
+    render(false, [], { member: false })
+    expect(labels()).toEqual(['Server settings', 'Mute server', 'Notifications'])
+    unmount(cmp!)
+    render(false, [], { member: true, live: false })
+    expect(labels()).toEqual(['Server settings', 'Mute server', 'Notifications'])
   })
 })
 

@@ -55,26 +55,81 @@ afterEach(() => {
 describe('collapsible sidebar sections', () => {
   it('a heading collapses its section, keeping the open channel and unread ones', () => {
     show({ activeChannelId: 'T1' })
-    expect(heading('TEXT CHANNELS').getAttribute('aria-expanded')).toBe('true')
-    heading('TEXT CHANNELS').click()
+    expect(heading('Text Channels').getAttribute('aria-expanded')).toBe('true')
+    heading('Text Channels').click()
     flushSync()
-    expect(heading('TEXT CHANNELS').getAttribute('aria-expanded')).toBe('false')
+    expect(heading('Text Channels').getAttribute('aria-expanded')).toBe('false')
     expect(names()).toEqual(['general', 'news', 'Lounge', 'Games'])
-    heading('TEXT CHANNELS').click()
+    heading('Text Channels').click()
     flushSync()
     expect(names()).toEqual(['general', 'memes', 'news', 'Lounge', 'Games'])
   })
 
   it('collapsed voice keeps the channel you are in; the choice is remembered on this device', () => {
     show({ voiceChannelId: 'V2' })
-    heading('VOICE CHANNELS').click()
+    heading('Voice Channels').click()
     flushSync()
     expect(names()).toEqual(['general', 'memes', 'news', 'Games'])
     unmount(cmp!)
     cmp = undefined
     resetCollapsed() // as after a restart: read back from storage
     show({ voiceChannelId: null })
-    expect(heading('VOICE CHANNELS').getAttribute('aria-expanded')).toBe('false')
+    expect(heading('Voice Channels').getAttribute('aria-expanded')).toBe('false')
     expect(names()).toEqual(['general', 'memes', 'news'])
+  })
+})
+
+describe('collapsible categories (#54)', () => {
+  // Gaming holds every kind: what a collapsed section keeps applies to each row, whatever its kind.
+  const cat = (id: string, name: string, position: number) => ({ id, server_id: 'S1', name, position })
+  const live: Ready = {
+    ...ready,
+    channels: [
+      { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0, category_id: 'C1' },
+      { id: 'G1', server_id: 'S1', kind: 'text', name: 'lfg', position: 0, category_id: 'C2' },
+      { id: 'G2', server_id: 'S1', kind: 'quotes', name: 'lines', position: 1, category_id: 'C2' },
+      { id: 'G3', server_id: 'S1', kind: 'clips', name: 'plays', position: 2, category_id: 'C2' },
+      { id: 'G4', server_id: 'S1', kind: 'voice', name: 'Squad', position: 3, category_id: 'C2' },
+      { id: 'G5', server_id: 'S1', kind: 'voice', name: 'Raid', position: 4, category_id: 'C2' },
+      { id: 'G6', server_id: 'S1', kind: 'voice', name: 'Duo', position: 5, category_id: 'C2' },
+    ],
+    members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: { ...me, id: 'U2', username: 'sam', display_name: 'sam' }, nickname: null }] }],
+    // you're in Squad; sam is in Raid
+    voice: [{ channel_id: 'G4', members: [{ user_id: 'U1', flags: { muted: false, deafened: false } }] }, { channel_id: 'G5', members: [{ user_id: 'U2', flags: { muted: false, deafened: false } }] }],
+    read_states: [{ channel_id: 'G2', last_read_message_id: null, unread: 4, mentions: 0 }],
+    layouts: [{ server_id: 'S1', revision: 1, categories: [cat('C1', 'Text Channels', 0), cat('C2', 'Gaming', 1)], channels: [] }],
+  }
+  const gaming = () => document.querySelector<HTMLButtonElement>('.cat[data-category="C2"] > .label button.section')!
+  const inGaming = () => [...document.querySelectorAll('.cat[data-category="C2"] .row .grow')].map((e) => e.textContent?.trim())
+  const occupants = () => [...document.querySelectorAll<HTMLElement>('.cat[data-category="C2"] .occupant')].map((o) => o.dataset.user)
+
+  beforeEach(() => {
+    app.state = applyReady(emptyState(), live)
+  })
+
+  it('a collapsed category keeps the open channel, unread ones and the voice channel you are in with who is there', () => {
+    show({ activeChannelId: 'G3', voiceChannelId: 'G4' })
+    expect(inGaming()).toEqual(['lfg', 'lines', 'plays', 'Squad', 'Raid', 'Duo'])
+    expect(occupants()).toEqual(['U1', 'U2'])
+    gaming().click()
+    flushSync()
+    expect(gaming().getAttribute('aria-expanded')).toBe('false')
+    expect(inGaming()).toEqual(['lines', 'plays', 'Squad'])
+    expect(occupants()).toEqual(['U1'])
+    // the other category is untouched
+    expect(document.querySelector('.cat[data-category="C1"] .row')?.textContent).toContain('general')
+  })
+
+  it('collapsed is remembered per category on this device', () => {
+    show()
+    gaming().click()
+    flushSync()
+    unmount(cmp!)
+    cmp = undefined
+    resetCollapsed()
+    show()
+    expect(gaming().getAttribute('aria-expanded')).toBe('false')
+    expect(inGaming()).toEqual(['lines'])
+    expect(JSON.parse(localStorage.getItem('pulse.collapsedSections')!)).toEqual(['cat:C2'])
   })
 })

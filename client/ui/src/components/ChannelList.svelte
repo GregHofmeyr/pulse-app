@@ -1,17 +1,26 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  // A server's channel list (#54): the uncategorised channels on top (no heading), then each category with its
+  // heading. An older server without categories shows today's four kind sections, each with its own +.
+  // Structure (the drag action, #55, relies on it): `.list` > `.cat.top` (rows) and one `.cat[data-category=<id>]`
+  // per category (legacy sections: `.cat` without data-category), each `.label` heading then its rows `[data-channel]`.
+  import { tick, untrack } from 'svelte'
   import Icon, { type IconName } from './Icon.svelte'
   import type { Channel } from '../lib/protocol/Channel'
+  import type { Category } from '../lib/protocol/Category'
   import { app, clock } from '../lib/store.svelte'
-  import { callRoster, channelsFor, isMember, serverVoiceTip, type Occupant } from '../lib/selectors'
+  import { callRoster, isMember, serverVoiceTip, type Occupant } from '../lib/selectors'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import { api, errorText } from '../lib/tauri'
   import { isMuted } from '../lib/conversations'
-  import { isCollapsed, toggleSection } from '../lib/sidebarSections.svelte'
+  import { isCollapsed, setCollapsed, toggleSection } from '../lib/sidebarSections.svelte'
+  import { applyOrder, orderOf, sidebarLayout, stepCategory, stepChannel, type Order, type Section } from '../lib/layout'
+  import { drafts, saveOrder } from '../lib/layoutDraft.svelte'
+  import { categoryUi } from '../lib/categoryUi.svelte'
   import LiveBadge from './LiveBadge.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
   import ChannelMenu from './ChannelMenu.svelte'
+  import CategoryMenu from './CategoryMenu.svelte'
   import DeleteChannelDialog from './DeleteChannelDialog.svelte'
   import { menuPoint } from '../lib/participantMenu'
   import { selfVoice, voice, voiceApi } from '../lib/voice.svelte'
@@ -37,10 +46,30 @@
     onVoiceSettings: () => void
   } = $props()
 
+  type Kind = 'text' | 'quotes' | 'clips' | 'voice'
+  const ICON: Record<string, IconName> = { text: 'hash', quotes: 'quote', clips: 'film', voice: 'speaker' }
+  /** The kind picker in a category's new-channel field. */
+  const KINDS: { kind: Kind; label: string }[] = [
+    { kind: 'text', label: 'Text' }, { kind: 'quotes', label: 'Quotes' }, { kind: 'clips', label: 'Clips' }, { kind: 'voice', label: 'Voice' },
+  ]
+  const PLACEHOLDER: Record<Kind, string> = { text: 'new-channel', quotes: 'new-quotes', clips: 'new-clips', voice: 'Channel name' }
+  /** An older server's kind sections: each + makes its own kind. */
+  const LEGACY_ADD: Record<Kind, { icon: IconName; label: string }> = {
+    text: { icon: 'plus', label: 'text' }, quotes: { icon: 'quote', label: 'quotes' }, clips: { icon: 'film', label: 'clips' }, voice: { icon: 'plus', label: 'voice' },
+  }
+
   const self = $derived(selfVoice())
-  const lists = $derived(channelsFor(app.state, serverId))
+  // A reorder being saved shows at once, drawn over the server's layout.
+  const layout = $derived.by(() => {
+    const l = sidebarLayout(app.state, serverId)
+    const draft = drafts.byServer[serverId]
+    return draft && l.live ? applyOrder(l, draft) : l
+  })
   // Who's in voice is only shown to people who've joined the server.
   const member = $derived(isMember(app.state, serverId))
+  /** Members of a server with categories may reorder and manage them. */
+  const arrange = $derived(member && layout.live)
+  const order = (): Order => orderOf(layout)
 
   // Join tokens are fetched when the pointer rests on a voice channel, not while it sweeps past.
   const prefetch = hoverPrefetch((id) => voiceApi.prefetch(id))
@@ -56,29 +85,51 @@
   // the voice occupant under the pointer: its avatar animates
   let hoveredOccupant = $state<string | null>(null)
 
-  // inline "new channel" field
-  let adding = $state<'text' | 'quotes' | 'clips' | 'voice' | null>(null)
+  // inline "new channel" field, under a section's heading: a category's has a kind picker, a legacy section's makes
+  // its own kind
+  let adding = $state<{ key: string; category: string | null } | null>(null)
+  let addKind = $state<Kind>('text')
   let draft = $state('')
   let addError = $state('')
 
-  function startAdd(kind: 'text' | 'quotes' | 'clips' | 'voice') {
-    adding = kind
+  function startAdd(key: string, category: Category | null, kind: Kind | null) {
+    adding = { key, category: category?.id ?? null }
+    addKind = kind ?? 'text'
     draft = ''
     addError = ''
   }
   async function submitAdd(e: KeyboardEvent) {
     if (e.key === 'Escape') adding = null
     if (e.key !== 'Enter' || !adding) return
-    const kind = adding
+    const { category } = adding
+    const kind = addKind
     const name = tidyName(kind, draft)
     if (!name) return
     try {
-      const c = await api.createChannel(serverId, kind, name)
+      const c = category ? await api.createChannel(serverId, kind, name, category) : await api.createChannel(serverId, kind, name)
       adding = null
       if (kind !== 'voice') onSelect(c.id)
     } catch (err) {
       addError = errorText(err)
     }
+  }
+  /** Focus leaving the field and its kind picker cancels it. */
+  function addFocusOut(e: FocusEvent) {
+    if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) adding = null
+  }
+  /** The kind picker is a radio group: the arrow keys choose and move along it. */
+  function kindKey(e: KeyboardEvent, i: number) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      adding = null
+      return
+    }
+    const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
+    if (!step) return
+    e.preventDefault()
+    const j = (i + step + KINDS.length) % KINDS.length
+    addKind = KINDS[j].kind
+    ;(e.currentTarget as HTMLElement).parentElement?.querySelectorAll<HTMLElement>('[role=radio]')[j]?.focus()
   }
   const focus = (el: HTMLInputElement) => el.focus()
   /** Text, quotes and clips names read nicer as lower-case-with-dashes, like Discord; voice keeps its case. */
@@ -92,10 +143,133 @@
     // outside the server a voice channel has nothing to offer
     chanMenu = c.kind === 'voice' && !member ? null : { channel: c, ...menuPoint(e, anchor), opener: anchor }
   }
+  /** Alt+Up / Alt+Down: -1 / 1, else 0. */
+  const altStep = (e: KeyboardEvent) => (!e.altKey ? 0 : e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0)
   function rowKey(e: KeyboardEvent, c: Channel) {
     if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
       e.preventDefault()
       openChanMenu(c, e, e.currentTarget as HTMLElement)
+    }
+    const dir = altStep(e)
+    if (dir && arrange) {
+      e.preventDefault()
+      moveChannel(c.id, dir)
+    }
+  }
+
+  // Moving with the keyboard or the menus (dragging's other way, #54): the order is saved for everyone, shown at once
+  // as a draft; focus stays on what moved (its element is new once it's in another section).
+  async function refocus(selector: string) {
+    await tick()
+    listEl?.querySelector<HTMLElement>(selector)?.focus()
+  }
+  const headingSelector = (categoryId: string) => `.cat[data-category="${categoryId}"] > .label button.section`
+  function moveChannel(id: string, dir: -1 | 1) {
+    const o = order()
+    const next = stepChannel(o, id, dir)
+    if (!next) return
+    // into a collapsed category: it opens, so the row doesn't vanish from under you
+    const from = o.cats.find((c) => c.channels.includes(id))?.id
+    const to = next.cats.find((c) => c.channels.includes(id))?.id
+    if (to && to !== from) setCollapsed(`cat:${to}`, false)
+    void saveOrder(serverId, next)
+    void refocus(`.row[data-channel="${id}"]`)
+  }
+  function moveCategory(id: string, dir: -1 | 1) {
+    const next = stepCategory(order(), id, dir)
+    if (!next) return
+    void saveOrder(serverId, next)
+    void refocus(headingSelector(id))
+  }
+
+  // a category heading's menu (members, categories only): right-click, or Shift+F10 / the menu key on the heading
+  let catMenu = $state<{ category: Category; x: number; y: number; opener: HTMLElement } | null>(null)
+  function headingKey(e: KeyboardEvent, sec: Section) {
+    if (!arrange || !sec.category) return
+    if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+      e.preventDefault()
+      chanError = ''
+      catMenu = { category: sec.category, ...menuPoint(e, e.currentTarget as HTMLElement), opener: e.currentTarget as HTMLElement }
+    }
+    const dir = altStep(e)
+    if (dir) {
+      e.preventDefault()
+      moveCategory(sec.category.id, dir)
+    }
+  }
+  function headingMenu(e: MouseEvent, sec: Section) {
+    if (!arrange || !sec.category) return
+    e.preventDefault()
+    chanError = ''
+    catMenu = { category: sec.category, ...menuPoint(e, e.currentTarget as HTMLElement), opener: e.currentTarget as HTMLElement }
+  }
+
+  // renaming a category happens in its heading, as a channel's does in its row
+  let renamingCat = $state<string | null>(null)
+  let catValue = $state('')
+  let catError = $state('')
+  let catSaving = false
+  function startCatRename(c: Category) {
+    renamingCat = c.id
+    catValue = c.name
+    catError = ''
+  }
+  async function endCatRename(id: string, refocusHeading: boolean) {
+    if (renamingCat !== id) return
+    renamingCat = null
+    if (refocusHeading) await refocus(headingSelector(id))
+  }
+  /** Enter saves (and keeps the field if refused); leaving the field saves too, unless it was refused. */
+  async function saveCatRename(c: Category, fromKey: boolean) {
+    if (renamingCat !== c.id || catSaving) return
+    if (!fromKey && catError) return void endCatRename(c.id, false)
+    const name = catValue.trim()
+    if (!name || name === c.name) return void endCatRename(c.id, fromKey)
+    catSaving = true
+    try {
+      await api.renameCategory(c.id, name)
+      await endCatRename(c.id, fromKey)
+    } catch (err) {
+      catError = errorText(err)
+    } finally {
+      catSaving = false
+    }
+  }
+  function catRenameKey(e: KeyboardEvent, c: Category) {
+    if (e.key === 'Enter') void saveCatRename(c, true)
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      void endCatRename(c.id, true)
+    }
+  }
+
+  // "Create category" (the server menus): a heading-styled field at the end of the list
+  let newCat = $state<{ serverId: string } | null>(null)
+  let catDraft = $state('')
+  let newCatError = $state('')
+  $effect(() => {
+    const asked = categoryUi.create
+    if (!asked || asked.serverId !== serverId) return
+    untrack(() => {
+      newCat = { serverId }
+      catDraft = ''
+      newCatError = ''
+      categoryUi.create = null
+    })
+  })
+  async function newCatKey(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      newCat = null
+    }
+    if (e.key !== 'Enter') return
+    const name = catDraft.trim()
+    if (!name) return
+    try {
+      await api.createCategory(serverId, name)
+      newCat = null
+    } catch (err) {
+      newCatError = errorText(err)
     }
   }
 
@@ -110,12 +284,10 @@
     renameError = ''
   }
   /** Back to the row; from the keyboard, focus goes back to it too (the field it had is gone). */
-  async function endRename(id: string, refocus: boolean) {
+  async function endRename(id: string, refocusRow: boolean) {
     if (renaming !== id) return
     renaming = null
-    if (!refocus) return
-    await tick()
-    listEl?.querySelector<HTMLElement>(`.row[data-channel="${id}"]`)?.focus()
+    if (refocusRow) await refocus(`.row[data-channel="${id}"]`)
   }
   /** Enter saves (and keeps the field if refused); leaving the field saves too, unless it was refused. */
   async function saveRename(c: Channel, fromKey: boolean) {
@@ -142,12 +314,16 @@
   }
   let deleting = $state<Channel | null>(null)
   let listEl = $state<HTMLElement>()
-  // Deleted meanwhile (by anyone): its menu, rename or dialog has nothing left to act on.
+  // Deleted meanwhile (by anyone): its menu, rename, field or dialog has nothing left to act on.
   $effect(() => {
     const has = (id: string) => !!app.state.channels[id]
     if (chanMenu && !has(chanMenu.channel.id)) chanMenu = null
     if (deleting && !has(deleting.id)) deleting = null
     if (renaming && !has(renaming)) renaming = null
+    const cats = new Set((app.state.layouts[serverId]?.categories ?? []).map((c) => c.id))
+    if (catMenu && !cats.has(catMenu.category.id)) catMenu = null
+    if (renamingCat && !cats.has(renamingCat)) renamingCat = null
+    if (adding?.category && !cats.has(adding.category)) adding = null
   })
 
   // the participant menu for someone in a voice channel (right-click, click, or the menu key on the focused row)
@@ -164,16 +340,56 @@
       openMenu(channelId, p.userId, e, e.currentTarget as HTMLElement)
     }
   }
-  /** In a collapsed section only these rows stay: the channel you're on, and unread ones. */
-  const keep = (c: Channel, kind: string) =>
-    !isCollapsed(`${serverId}:${kind}`) || c.id === activeChannelId || ((app.state.reads[c.id]?.unread ?? 0) > 0 && !isMuted(app.state, c, clock.nowIso))
+  /** In a collapsed section only these rows stay: the channel you're on, unread unmuted ones, and the voice channel
+   *  you're in. The top area has no heading, so it never collapses. */
+  const shown = (c: Channel, key: string | null) =>
+    !key || !isCollapsed(key) || c.id === activeChannelId ||
+    (c.kind === 'voice' ? c.id === voiceChannelId : (app.state.reads[c.id]?.unread ?? 0) > 0 && !isMuted(app.state, c, clock.nowIso))
 </script>
 
-{#snippet heading(kind: string, text: string)}
-  {@const open = !isCollapsed(`${serverId}:${kind}`)}
-  <button type="button" class="section" aria-expanded={open} onclick={() => toggleSection(`${serverId}:${kind}`)}>
-    <span class="caret" class:shut={!open}><Icon name="chevron" size={11} /></span>{text}
-  </button>
+{#snippet heading(sec: Section, first: boolean)}
+  {@const open = !isCollapsed(sec.key)}
+  {#if sec.category && renamingCat === sec.category.id}
+    {@const cat = sec.category}
+    <div class="label renaming" class:first>
+      <input class="input input-sm grow" use:focus bind:value={catValue} maxlength="64" aria-label="Rename category {cat.name}"
+        onkeydown={(e) => catRenameKey(e, cat)} onblur={() => void saveCatRename(cat, false)} />
+    </div>
+    {#if catError}<small class="err" role="alert">{catError}</small>{/if}
+  {:else}
+    <div class="label" class:first>
+      <button type="button" class="section" aria-expanded={open} aria-haspopup={arrange && sec.category ? 'menu' : undefined}
+        onclick={() => toggleSection(sec.key)} oncontextmenu={(e) => headingMenu(e, sec)} onkeydown={(e) => headingKey(e, sec)}>
+        <span class="caret" class:shut={!open}><Icon name="chevron" size={11} /></span>{sec.name}
+      </button>
+      {#if member && sec.kind}
+        {@const k = sec.kind as Kind}
+        <button class="add" aria-label="Create {LEGACY_ADD[k].label} channel" onclick={() => startAdd(sec.key, null, k)}><Icon name={LEGACY_ADD[k].icon} size={14} /></button>
+      {:else if arrange && sec.category}
+        {@const cat = sec.category}
+        <button class="add" aria-label="Create channel in {sec.name}" onclick={() => startAdd(sec.key, cat, null)}><Icon name="plus" size={14} /></button>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet addField(sec: Section)}
+  {#if sec.kind}
+    <!-- an older server's section: one kind, as before categories -->
+    <input class="input input-sm new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder={PLACEHOLDER[sec.kind as Kind]} maxlength="64" aria-label="New {sec.kind} channel name" />
+  {:else}
+    <div class="new new-row" onfocusout={addFocusOut}>
+      <input class="input input-sm grow" use:focus bind:value={draft} onkeydown={submitAdd} placeholder={PLACEHOLDER[addKind]} maxlength="64" aria-label="New channel name" />
+      <div class="kinds" role="radiogroup" aria-label="Channel kind">
+        {#each KINDS as k, i (k.kind)}
+          <!-- a press keeps focus in the name field (it would leave the field and cancel it) -->
+          <button type="button" class="add" role="radio" aria-checked={addKind === k.kind} aria-label={k.label} data-tip={k.label} tabindex={addKind === k.kind ? 0 : -1}
+            onmousedown={(e) => e.preventDefault()} onclick={() => (addKind = k.kind)} onkeydown={(e) => kindKey(e, i)}><Icon name={ICON[k.kind]} size={14} /></button>
+        {/each}
+      </div>
+    </div>
+  {/if}
+  {#if addError}<small class="err">{addError}</small>{/if}
 {/snippet}
 
 {#snippet renameField(c: Channel, icon: IconName)}
@@ -200,86 +416,82 @@
   </button>
   {/if}
 {/snippet}
-<div class="list" bind:this={listEl}>
-  <div class="label">{@render heading('text', 'TEXT CHANNELS')}
-    {#if member}<button class="add" aria-label="Create text channel" onclick={() => startAdd('text')}><Icon name="plus" size={14} /></button>{/if}
-  </div>
-  {#if adding === 'text'}
-    <input class="input input-sm new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-channel" maxlength="64" aria-label="New text channel name" />
-    {#if addError}<small class="err">{addError}</small>{/if}
-  {/if}
-  {#each lists.text as c (c.id)}{#if keep(c, 'text')}{@render channelRow(c, "hash")}{/if}{/each}
 
-  <div class="label voice">{@render heading('quotes', 'QUOTES')}
-    {#if member}<button class="add" aria-label="Create quotes channel" onclick={() => startAdd('quotes')}><Icon name="quote" size={14} /></button>{/if}
-  </div>
-  {#if adding === 'quotes'}
-    <input class="input input-sm new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-quotes" maxlength="64" aria-label="New quotes channel name" />
-    {#if addError}<small class="err">{addError}</small>{/if}
+{#snippet voiceRow(c: Channel)}
+  {@const people = member ? callRoster(app.state, serverId, c.id, self) : []}
+  {#if renaming === c.id}
+    {@render renameField(c, 'speaker')}
+  {:else}
+  <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId} aria-haspopup={member ? 'menu' : undefined} data-channel={c.id}
+    data-tip={c.id === voiceChannelId ? 'You’re here' : `Join ${c.name}`}
+    onmouseenter={() => restOn(c.id)} onfocus={() => restOn(c.id)}
+    onmouseleave={() => prefetch.leave(c.id)} onblur={() => prefetch.leave(c.id)}
+    onclick={() => { prefetch.cancel(); onJoinVoice(c.id) }} ondblclick={() => onSelect(c.id)}
+    oncontextmenu={(e) => { e.preventDefault(); openChanMenu(c, e, e.currentTarget) }} onkeydown={(e) => rowKey(e, c)}>
+    <span class="ico"><Icon name="speaker" size={17} /></span><span class="grow">{c.name}</span>
+    {#if people.length}<span class="count">{people.length}</span>{/if}
+  </button>
   {/if}
-  {#each lists.quotes as c (c.id)}{#if keep(c, 'quotes')}{@render channelRow(c, "quote")}{/if}{/each}
-
-  <div class="label voice">{@render heading('clips', 'CLIPS')}
-    {#if member}<button class="add" aria-label="Create clips channel" onclick={() => startAdd('clips')}><Icon name="film" size={14} /></button>{/if}
-  </div>
-  {#if adding === 'clips'}
-    <input class="input input-sm new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-clips" maxlength="64" aria-label="New clips channel name" />
-    {#if addError}<small class="err">{addError}</small>{/if}
-  {/if}
-  {#each lists.clips as c (c.id)}{#if keep(c, 'clips')}{@render channelRow(c, "film")}{/if}{/each}
-
-  <div class="label voice">{@render heading('voice', 'VOICE CHANNELS')}
-    {#if member}<button class="add" aria-label="Create voice channel" onclick={() => startAdd('voice')}><Icon name="plus" size={14} /></button>{/if}
-  </div>
-  {#if adding === 'voice'}
-    <input class="input input-sm new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="Channel name" maxlength="64" aria-label="New voice channel name" />
-    {#if addError}<small class="err">{addError}</small>{/if}
-  {/if}
-  {#each lists.voice as c (c.id)}
-    {#if !isCollapsed(`${serverId}:voice`) || c.id === voiceChannelId}
-    {@const people = member ? callRoster(app.state, serverId, c.id, self) : []}
-    {#if renaming === c.id}
-      {@render renameField(c, 'speaker')}
-    {:else}
-    <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId} aria-haspopup={member ? 'menu' : undefined} data-channel={c.id}
-      data-tip={c.id === voiceChannelId ? 'You’re here' : `Join ${c.name}`}
-      onmouseenter={() => restOn(c.id)} onfocus={() => restOn(c.id)}
-      onmouseleave={() => prefetch.leave(c.id)} onblur={() => prefetch.leave(c.id)}
-      onclick={() => { prefetch.cancel(); onJoinVoice(c.id) }} ondblclick={() => onSelect(c.id)}
-      oncontextmenu={(e) => { e.preventDefault(); openChanMenu(c, e, e.currentTarget) }} onkeydown={(e) => rowKey(e, c)}>
-      <span class="ico"><Icon name="speaker" size={17} /></span><span class="grow">{c.name}</span>
-      {#if people.length}<span class="count">{people.length}</span>{/if}
-    </button>
-    {/if}
-    {#each people as p (p.userId)}
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="occupant" class:pending={p.pending} role="button" tabindex="0" data-menu-toggle aria-haspopup="menu" aria-label={occupantLabel(p)} data-user={p.userId}
-        oncontextmenu={(e) => { e.preventDefault(); if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
-        onclick={(e) => { if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
-        onkeydown={(e) => occupantKey(e, c.id, p)}
-        onpointerenter={() => (hoveredOccupant = p.userId)} onpointerleave={() => { if (hoveredOccupant === p.userId) hoveredOccupant = null }}>
-        <span class="ring" class:speaking={speaking.has(p.userId)}><Avatar id={p.userId} name={p.name} size={22} hovered={() => hoveredOccupant === p.userId} /></span>
-        <span class="grow"><Name userId={p.userId} {serverId} interactive={false} surface="side" /></span>
-        {#if p.pending}
-          <span class="joining">Joining…</span><span class="spinner" role="progressbar" aria-label="Joining"></span>
-        {:else}
-          <LiveBadge channelId={c.id} userId={p.userId} />
-          <!-- the row's label says these (a button's content isn't read): the icons are decoration -->
-          {#if mutedForMe(p.userId)}<span class="flag for-me" data-tip="Muted for you (they don't know)"><Icon name="speakerOff" size={14} /></span>{/if}
-          {#if serverVoiceTip(app.state, serverId, p)}<span class="flag server" data-tip={serverVoiceTip(app.state, serverId, p)}><Icon name={p.serverDeafenedBy ? 'headphonesOff' : 'micOff'} size={12} /></span>
-          {:else if p.deafened}<span class="flag" data-tip="Deafened"><Icon name="headphonesOff" size={14} /></span>
-          {:else if p.muted}<span class="flag" data-tip="Muted"><Icon name="micOff" size={14} /></span>{/if}
-        {/if}
-      </div>
-    {/each}
-    {/if}
+  {#each people as p (p.userId)}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="occupant" class:pending={p.pending} role="button" tabindex="0" data-menu-toggle aria-haspopup="menu" aria-label={occupantLabel(p)} data-user={p.userId}
+      oncontextmenu={(e) => { e.preventDefault(); if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
+      onclick={(e) => { if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
+      onkeydown={(e) => occupantKey(e, c.id, p)}
+      onpointerenter={() => (hoveredOccupant = p.userId)} onpointerleave={() => { if (hoveredOccupant === p.userId) hoveredOccupant = null }}>
+      <span class="ring" class:speaking={speaking.has(p.userId)}><Avatar id={p.userId} name={p.name} size={22} hovered={() => hoveredOccupant === p.userId} /></span>
+      <span class="grow"><Name userId={p.userId} {serverId} interactive={false} surface="side" /></span>
+      {#if p.pending}
+        <span class="joining">Joining…</span><span class="spinner" role="progressbar" aria-label="Joining"></span>
+      {:else}
+        <LiveBadge channelId={c.id} userId={p.userId} />
+        <!-- the row's label says these (a button's content isn't read): the icons are decoration -->
+        {#if mutedForMe(p.userId)}<span class="flag for-me" data-tip="Muted for you (they don't know)"><Icon name="speakerOff" size={14} /></span>{/if}
+        {#if serverVoiceTip(app.state, serverId, p)}<span class="flag server" data-tip={serverVoiceTip(app.state, serverId, p)}><Icon name={p.serverDeafenedBy ? 'headphonesOff' : 'micOff'} size={12} /></span>
+        {:else if p.deafened}<span class="flag" data-tip="Deafened"><Icon name="headphonesOff" size={14} /></span>
+        {:else if p.muted}<span class="flag" data-tip="Muted"><Icon name="micOff" size={14} /></span>{/if}
+      {/if}
+    </div>
   {/each}
+{/snippet}
+
+{#snippet chan(c: Channel)}
+  {#if c.kind === 'voice'}{@render voiceRow(c)}{:else}{@render channelRow(c, ICON[c.kind] ?? 'hash')}{/if}
+{/snippet}
+
+<div class="list" bind:this={listEl}>
+  <div class="cat top">
+    {#each layout.top as c (c.id)}{@render chan(c)}{/each}
+  </div>
+  {#each layout.sections as sec, i (sec.key)}
+    <div class="cat" data-category={sec.category?.id}>
+      {@render heading(sec, i === 0 && layout.top.length === 0)}
+      {#if adding?.key === sec.key}{@render addField(sec)}{/if}
+      {#each sec.channels as c (c.id)}{#if shown(c, sec.key)}{@render chan(c)}{/if}{/each}
+    </div>
+  {/each}
+  {#if newCat?.serverId === serverId}
+    <div class="label new-cat" class:first={layout.top.length === 0 && layout.sections.length === 0}>
+      <input class="input input-sm grow" use:focus bind:value={catDraft} maxlength="64" placeholder="New category" aria-label="New category name"
+        onkeydown={newCatKey} onblur={() => (newCat = null)} />
+    </div>
+    {#if newCatError}<small class="err" role="alert">{newCatError}</small>{/if}
+  {/if}
   {#if chanError}<small class="err" role="alert">{chanError}</small>{/if}
 </div>
 {#if chanMenu}
   {@const c = chanMenu.channel}
   {#key chanMenu}<ChannelMenu channel={c} {member} x={chanMenu.x} y={chanMenu.y} opener={chanMenu.opener} onClose={() => (chanMenu = null)}
-    onRename={() => startRename(c)} onDelete={() => (deleting = c)} onJoin={() => onJoinVoice(c.id)} onError={(m) => (chanError = m)} />{/key}
+    onRename={() => startRename(c)} onDelete={() => (deleting = c)} onJoin={() => onJoinVoice(c.id)} onError={(m) => (chanError = m)}
+    onMoveUp={arrange ? () => moveChannel(c.id, -1) : undefined} onMoveDown={arrange ? () => moveChannel(c.id, 1) : undefined}
+    canMoveUp={arrange && !!stepChannel(order(), c.id, -1)} canMoveDown={arrange && !!stepChannel(order(), c.id, 1)} />{/key}
+{/if}
+{#if catMenu}
+  {@const cat = catMenu.category}
+  {#key catMenu}<CategoryMenu category={cat} x={catMenu.x} y={catMenu.y} opener={catMenu.opener} onClose={() => (catMenu = null)}
+    canMoveUp={!!stepCategory(order(), cat.id, -1)} canMoveDown={!!stepCategory(order(), cat.id, 1)}
+    onCreateChannel={() => startAdd(`cat:${cat.id}`, cat, null)} onRename={() => startCatRename(cat)}
+    onMoveUp={() => moveCategory(cat.id, -1)} onMoveDown={() => moveCategory(cat.id, 1)} onError={(m) => (chanError = m)} />{/key}
 {/if}
 {#if deleting}
   <DeleteChannelDialog channel={deleting} onClose={() => (deleting = null)} />
@@ -290,17 +502,24 @@
 
 <style>
   .list { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
-  .label { padding: 12px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); }
+  /* a section: its heading, then its rows (the top area has no heading, and nothing to show when empty) */
+  .cat { display: flex; flex-direction: column; gap: 2px; }
+  .cat.top:empty { display: none; }
+  .label { padding: 16px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); text-transform: uppercase; }
   .label { display: flex; align-items: center; justify-content: space-between; }
-  .label.voice { padding-top: 16px; }
-  /* the heading's name hides and shows the section */
-  .section { display: flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; cursor: pointer; }
+  .label.first { padding-top: 12px; }
+  .label.renaming, .label.new-cat { padding-left: 4px; padding-right: 4px; }
+  /* the heading's name hides and shows the section; shown upper-case, stored as typed */
+  .section { display: flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
   .section:hover { color: var(--text-2); }
   .caret { display: flex; transition: transform var(--dur) var(--ease); }
   .caret.shut { transform: rotate(-90deg); }
-  .add { width: 20px; height: 20px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-3); display: grid; place-items: center; padding: 0; }
+  .add { width: 20px; height: 20px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-3); display: grid; place-items: center; padding: 0; flex-shrink: 0; }
   .add:hover { color: var(--text); background: var(--bg-2); }
+  .add[aria-checked='true'] { background: var(--bg-3); color: var(--text); }
   .new { margin: 2px 4px; }
+  .new-row { display: flex; align-items: center; gap: 4px; }
+  .kinds { display: flex; gap: 2px; }
   .row.renaming { padding-right: 4px; }
   .row.renaming:hover { background: transparent; }
   .err { padding: 0 10px; color: var(--danger-text); font-size: 12px; }

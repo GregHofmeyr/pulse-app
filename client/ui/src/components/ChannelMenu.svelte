@@ -16,7 +16,7 @@
   import MuteFlyout from './MuteFlyout.svelte'
   import type { Channel } from '../lib/protocol/Channel'
 
-  let { channel, member, x, y, opener, onClose, onRename, onDelete, onJoin, onError }: {
+  let { channel, member, x, y, opener, onClose, onRename, onDelete, onJoin, onError, onMoveUp, onMoveDown, canMoveUp = false, canMoveDown = false }: {
     channel: Channel
     /** You're in the channel's server: you may rename, delete and join. */
     member: boolean
@@ -30,6 +30,12 @@
     onJoin: () => void
     /** An action failed after the menu had gone: the list says why. */
     onError: (message: string) => void
+    /** Move up / Move down (#54), the keyboard's way to drag: given only to members on a server with categories. */
+    onMoveUp?: () => void
+    onMoveDown?: () => void
+    /** False at the very top / bottom of the list: that move is shown, disabled. */
+    canMoveUp?: boolean
+    canMoveDown?: boolean
   } = $props()
 
   const isVoice = $derived(channel.kind === 'voice')
@@ -140,6 +146,11 @@
     <span class="menu-sep"></span>
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onRename)}>Rename channel…</button>
     <button type="button" class="menu-item danger" role="menuitem" data-item onclick={() => pick(onDelete)}>Delete channel…</button>
+    {#if onMoveUp && onMoveDown}
+      <span class="menu-sep"></span>
+      <button type="button" class="menu-item" role="menuitem" data-item disabled={!canMoveUp} onclick={() => pick(onMoveUp)}>Move up</button>
+      <button type="button" class="menu-item" role="menuitem" data-item disabled={!canMoveDown} onclick={() => pick(onMoveDown)}>Move down</button>
+    {/if}
   {/if}
 </div>
 

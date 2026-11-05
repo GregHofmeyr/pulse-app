@@ -386,6 +386,48 @@ describe('account menu', () => {
     expect(document.querySelector('[role=dialog][aria-label="Server settings"]')).not.toBeNull()
     expect(document.querySelector('[role=dialog][aria-label="Server settings"]')!.textContent).toContain('Beta')
   })
+
+  describe('Create category (#54)', () => {
+    const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    function world() {
+      app.state = {
+        ...emptyState(),
+        me: alex,
+        servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }, { id: 'S2', name: 'Beta', icon_hash: null }],
+        members: { S1: [{ user: alex, nickname: null }], S2: [{ user: alex, nickname: null }] },
+        layouts: { S1: { revision: 1, categories: [] }, S2: { revision: 1, categories: [] } },
+      }
+      cmp = mount(Shell, { target: document.body, props: { user: alex, onLogout: () => {} } })
+      flushSync()
+    }
+    const tab = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes(name))!
+    const field = () => document.querySelector<HTMLInputElement>('.list input[aria-label="New category name"]')
+
+    it('the sidebar header menu opens the new category field in the list', () => {
+      world()
+      tab('Alpha').click()
+      flushSync()
+      document.querySelector<HTMLButtonElement>('.head-btn')!.click()
+      flushSync()
+      ;[...document.querySelectorAll<HTMLButtonElement>('.head-menu [role=menuitem]')].find((b) => b.textContent === 'Create category')!.click()
+      flushSync()
+      expect(document.querySelector('.head-menu')).toBeNull()
+      expect(field()).not.toBeNull()
+    })
+
+    it("a tab's menu switches to that server and opens the field there", () => {
+      world()
+      tab('Alpha').click()
+      flushSync()
+      tab('Beta').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
+      flushSync()
+      const menu = document.querySelector<HTMLElement>('[role=menu][aria-label="Actions for Beta"]')!
+      ;[...menu.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find((b) => b.textContent?.trim() === 'Create category')!.click()
+      flushSync()
+      expect(document.querySelector('.head-btn')!.textContent).toContain('Beta')
+      expect(field()).not.toBeNull()
+    })
+  })
 })
 
 describe('watching from anywhere', () => {
