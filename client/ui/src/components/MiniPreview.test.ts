@@ -282,6 +282,27 @@ describe('mini-preview', () => {
     expect(q('.mini-preview')!.classList.contains('tl')).toBe(true)
   })
 
+  it('the_drop_glides_from_where_it_was_let_go_into_its_corner', async () => {
+    await streamApi.watch('V1', 'U2')
+    mountMini()
+    area()
+    const { mini, open } = box()
+    const animate = vi.fn()
+    mini.animate = animate as never
+    // drawn where the pointer left it (translated), then laid out in its new corner
+    const rects = [{ left: 104, top: 50 }, { left: 16, top: 68 }]
+    vi.spyOn(mini, 'getBoundingClientRect').mockImplementation(() => (rects.shift() ?? { left: 16, top: 68 }) as DOMRect)
+    open.dispatchEvent(ptr('pointerdown', 900, 550))
+    mini.dispatchEvent(ptr('pointermove', 400, 300))
+    mini.dispatchEvent(ptr('pointermove', 120, 80))
+    mini.dispatchEvent(ptr('pointerup', 120, 80))
+    flushSync()
+    expect(mini.classList.contains('tl')).toBe(true)
+    expect(mini.style.translate).toBe('')
+    expect(animate).toHaveBeenCalledTimes(1)
+    expect(animate.mock.calls[0][0]).toEqual([{ translate: '88px -18px' }, { translate: '0px 0px' }])
+  })
+
   it('a_cancelled_drag_goes_back_and_saves_nothing', async () => {
     await streamApi.watch('V1', 'U2')
     mountMini()

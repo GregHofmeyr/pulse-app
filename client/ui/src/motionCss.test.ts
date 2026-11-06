@@ -49,6 +49,17 @@ describe('motion', () => {
     expect(offenders).toEqual([])
   })
 
+  // The same for keyframes (#181): the vote pop's ring fades a pseudo-element instead of growing a box-shadow.
+  it('no keyframes animate layout properties or box-shadow', () => {
+    const offenders: string[] = []
+    for (const f of ALL) {
+      for (const k of cssOf(f).matchAll(/@keyframes\s+([\w-]+)\s*\{((?:[^{}]*\{[^}]*\})*)[^{}]*\}/g)) {
+        for (const d of decls(k[2], /./)) if (LAYOUT.test(d.prop)) offenders.push(`${rel(f)}: @keyframes ${k[1]}: ${d.prop}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
   // The celebrations keep their own stepped timings (they are flourishes, not UI motion), and a spinner its own speed.
   const OWN_TIMING: Record<string, RegExp> = {
     'components/QotyCard.svelte': /^qoty-/,
@@ -145,6 +156,13 @@ describe('context menus', () => {
   it.each(['MemberMenu', 'ServerMenu', 'ChannelMenu', 'CategoryMenu', 'LineMenu', 'ParticipantMenu', 'StatusPicker'])('%s sizes to its content', (name) => {
     const css = cssOf(resolve(__dirname, `components/${name}.svelte`))
     expect(css).toMatch(/\.(menu|status-menu) \{[^}]*position: fixed;[^}]*width: max-content;/)
+  })
+
+  // A menu an edge pushed back over the cursor grows from its corner nearest the cursor, not its top left (#181).
+  it.each(['MemberMenu', 'ServerMenu', 'ChannelMenu', 'CategoryMenu', 'LineMenu', 'ParticipantMenu'])('%s grows from the corner nearest the cursor', (name) => {
+    const src = readFileSync(resolve(__dirname, `components/${name}.svelte`), 'utf8')
+    expect(src).toMatch(/\(\{ left, top, origin \} = placeMenu\(/)
+    expect(src).toMatch(/class="menu menu-surface pop-in"[^>]*style:--pop-origin=\{origin\}/)
   })
 })
 

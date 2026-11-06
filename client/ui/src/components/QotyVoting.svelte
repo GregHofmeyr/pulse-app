@@ -219,6 +219,8 @@
   .opt { position: relative; overflow: hidden; display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: var(--radius-lg); background: var(--bg-2); border: 1px solid var(--line); }
   .opt.mine { border-color: var(--quote-green); }
   .fill { position: absolute; inset: 0; background: var(--quote-green-soft); pointer-events: none; transform-origin: left; }
+  /* the vote pop's ring (#181): drawn once, still, on a pseudo-element; the pop only fades and grows it */
+  .opt::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 2px var(--quote-green); opacity: 0; pointer-events: none; }
   .said, .tally { position: relative; }
   .said { flex: 1; min-width: 0; }
   .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--text-3); }
@@ -245,12 +247,12 @@
 
   /* motion (off under reduced motion: no .animated, no .popped) */
   .animated .fill { transition: transform .35s steps(7, end); }
-  .animated .opt.popped { animation: qoty-pop .45s steps(5, end); }
+  .animated .opt.popped::after { animation: qoty-pop .45s steps(5, end); }
   .animated .opt.popped .count { animation: qoty-count .45s steps(4, end); }
   @keyframes qoty-pop {
-    0% { box-shadow: 0 0 0 0 var(--quote-green); }
-    40% { box-shadow: 0 0 0 4px var(--quote-green); }
-    100% { box-shadow: 0 0 0 10px transparent; }
+    0% { opacity: 0; transform: scale(.96); }
+    40% { opacity: 1; transform: scale(1); }
+    100% { opacity: 0; transform: scale(1); }
   }
   @keyframes qoty-count {
     0% { transform: translateY(0); }

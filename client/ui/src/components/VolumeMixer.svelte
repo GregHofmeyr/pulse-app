@@ -56,7 +56,8 @@
         {/if}
         <button class="btn btn-quiet reset" aria-label="Reset {s.label} to defaults" data-tip="Reset to defaults" onclick={() => resetMixerSection(s.id)}>Reset</button>
       </div>
-      <div class="rows" id="mix-{s.id}-rows" hidden={shut}>
+      <!-- folds with a height animation (#181); closed, its rows are out of reach (inert) and hidden -->
+      <div class="rows" class:shut id="mix-{s.id}-rows" inert={shut}><div class="fold-inner">
       {#each s.notches as n (n.key)}
         <div class="row">
           <span class="name">{n.label}</span>
@@ -71,7 +72,7 @@
           {/if}
         </div>
       {/each}
-      </div>
+      </div></div>
     </section>
   {/each}
 </div>
@@ -90,7 +91,11 @@
   .fold.shut :global(svg) { transform: rotate(-90deg); }
   .fold .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .solo { grid-column: 2 / 4; font-size: 12px; color: var(--text-3); }
-  .rows[hidden] { display: none; }
+  /* the fold (#181): the one height animation, a grid row going 1fr to 0fr (a few rows, in Settings only). Once
+     closed the rows are hidden too, so nothing in them is read out or tabbed to. */
+  .rows { display: grid; grid-template-rows: 1fr; transition: grid-template-rows var(--dur) var(--ease), visibility var(--dur) step-start; }
+  .rows.shut { grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows var(--dur) var(--ease), visibility var(--dur) step-end; }
+  .fold-inner { min-height: 0; overflow: hidden; }
   .head .reset { grid-column: 4; padding: 4px 10px; font-size: 12px; }
   .row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5em 28px; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line-soft); }
   .name { font-size: 13px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

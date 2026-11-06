@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { untrack } from 'svelte'
+  import { flushSync, untrack } from 'svelte'
   import Icon from './Icon.svelte'
+  import { glideFrom } from '../lib/flip'
   import { app } from '../lib/store.svelte'
   import { displayName } from '../lib/selectors'
   import { loadMiniCorner, saveMiniCorner, type Corner } from '../lib/stream/prefs'
@@ -55,8 +56,9 @@
   function up(e: PointerEvent) {
     if (!press) return
     const panel = box?.parentElement?.getBoundingClientRect()
-    if (offset && panel) {
-      // snap to the corner nearest where it was let go
+    if (offset && panel && box) {
+      // snap to the corner nearest where it was let go, gliding there from where it was let go (#181)
+      const from = box.getBoundingClientRect()
       const v = e.clientY < panel.top + panel.height / 2 ? 't' : 'b'
       const h = e.clientX < panel.left + panel.width / 2 ? 'l' : 'r'
       corner = `${v}${h}` as Corner
@@ -64,6 +66,11 @@
       dragged = true
       // released off the open button, no click follows: don't swallow a later one
       setTimeout(() => (dragged = false))
+      press = null
+      offset = null
+      flushSync()
+      glideFrom(box, from, box.getBoundingClientRect())
+      return
     }
     press = null
     offset = null

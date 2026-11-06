@@ -5,6 +5,7 @@
   // Keyboard and focus as in the channel menu.
   import { onMount, untrack } from 'svelte'
   import { api, errorText } from '../lib/tauri'
+  import { placeMenu } from '../lib/menuPlace'
   import { clickOutside } from '../lib/actions'
   import type { Category } from '../lib/protocol/Category'
 
@@ -29,13 +30,14 @@
   let el = $state<HTMLElement>()
   let left = $state(untrack(() => x))
   let top = $state(untrack(() => y))
+  /** where its pop-in grows from: the corner nearest the cursor (#181) */
+  let origin = $state('top left')
   let closed = false
 
   onMount(() => {
     if (!el) return
     // the layout size: the .pop-in entrance scales the box while it runs
-    left = Math.max(8, Math.min(x, window.innerWidth - el.offsetWidth - 8))
-    top = Math.max(8, Math.min(y, window.innerHeight - el.offsetHeight - 8))
+    ;({ left, top, origin } = placeMenu(x, y, el.offsetWidth, el.offsetHeight))
     focusItem(0)
   })
 
@@ -74,7 +76,7 @@
   }
 </script>
 
-<div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Actions for {category.name}" tabindex="-1" style:left="{left}px" style:top="{top}px"
+<div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Actions for {category.name}" tabindex="-1" style:left="{left}px" style:top="{top}px" style:--pop-origin={origin}
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
   <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onCreateChannel)}>Create channel</button>
   <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onRename)}>Rename category…</button>

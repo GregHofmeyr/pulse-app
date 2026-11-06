@@ -5,6 +5,7 @@
   // (#45), and in a DM muting it (the DM list's flyout, #190). Keyboard and focus work as in the voice participant menu.
   import { onMount, untrack } from 'svelte'
   import { app, clock, ui } from '../lib/store.svelte'
+  import { placeMenu } from '../lib/menuPlace'
   import { api, errorText } from '../lib/tauri'
   import { muteUntil } from '../lib/muteDurations'
   import { displayName } from '../lib/selectors'
@@ -44,13 +45,14 @@
   let el = $state<HTMLElement>()
   let left = $state(untrack(() => x))
   let top = $state(untrack(() => y))
+  /** where its pop-in grows from: the corner nearest the cursor (#181) */
+  let origin = $state('top left')
   let closed = false
 
   onMount(() => {
     if (!el) return
     const r = { width: el.offsetWidth, height: el.offsetHeight }
-    left = Math.max(8, Math.min(x, window.innerWidth - r.width - 8))
-    top = Math.max(8, Math.min(y, window.innerHeight - r.height - 8))
+    ;({ left, top, origin } = placeMenu(x, y, r.width, r.height))
     focusItem(0)
   })
 
@@ -101,7 +103,7 @@
   }
 </script>
 
-<div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Actions for {name}" tabindex="-1" style:left="{left}px" style:top="{top}px"
+<div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Actions for {name}" tabindex="-1" style:left="{left}px" style:top="{top}px" style:--pop-origin={origin}
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}
   onpointerover={(e) => {
     // another of the menu's own items under the pointer closes the flyout

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
   import { app } from '../lib/store.svelte'
+  import { placeMenu } from '../lib/menuPlace'
   import { displayName, liveIn } from '../lib/selectors'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { clampVolume, volumeLabel } from '../lib/voiceui'
@@ -81,14 +82,15 @@
   // seeded once, then clamped into the window once it has a size
   let left = $state(untrack(() => x))
   let top = $state(untrack(() => y))
+  /** where its pop-in grows from: the corner nearest the cursor (#181) */
+  let origin = $state('top left')
   let closed = false
 
   onMount(() => {
     if (!el) return
     // the layout size: the .pop-in entrance scales the box while it runs
     const r = { width: el.offsetWidth, height: el.offsetHeight }
-    left = Math.max(8, Math.min(x, window.innerWidth - r.width - 8))
-    top = Math.max(8, Math.min(y, window.innerHeight - r.height - 8))
+    ;({ left, top, origin } = placeMenu(x, y, r.width, r.height))
     focusItem(0)
   })
 
@@ -151,7 +153,7 @@
   }
 </script>
 
-<div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Actions for {name}" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px"
+<div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Actions for {name}" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px" style:--pop-origin={origin}
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
   <!-- the card opens beside the row or tile the menu came from -->
   <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>

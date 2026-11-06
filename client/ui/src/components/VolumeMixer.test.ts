@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { flushSync, mount, unmount } from 'svelte'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Sound } from '../lib/protocol/Sound'
 
@@ -188,7 +190,7 @@ describe('VolumeMixer collapsible sections (#164)', () => {
     for (const t of ['Calls', 'Call sounds', 'Stream sounds', 'Notifications', 'Media']) {
       expect(toggle(t).getAttribute('aria-expanded'), t).toBe('true')
       expect(toggle(t).querySelector('svg'), t).not.toBeNull()
-      expect(body(t).hidden, t).toBe(false)
+      expect(body(t).inert, t).toBe(false)
     }
   })
 
@@ -197,14 +199,25 @@ describe('VolumeMixer collapsible sections (#164)', () => {
     toggle('Calls').click()
     flushSync()
     expect(toggle('Calls').getAttribute('aria-expanded')).toBe('false')
-    expect(body('Calls').hidden).toBe(true)
+    expect(body('Calls').inert).toBe(true)
     expect(body('Calls').contains(slider('Voices'))).toBe(true)
-    expect(slider('Calls volume').closest('[hidden]')).toBeNull()
-    expect(button('Reset Calls to defaults').closest('[hidden]')).toBeNull()
-    expect(body('Call sounds').hidden).toBe(false)
+    expect(slider('Calls volume').closest('[inert]')).toBeNull()
+    expect(button('Reset Calls to defaults').closest('[inert]')).toBeNull()
+    expect(body('Call sounds').inert).toBe(false)
     toggle('Calls').click()
     flushSync()
-    expect(body('Calls').hidden).toBe(false)
+    expect(body('Calls').inert).toBe(false)
+  })
+
+  it('a section folds with a height animation (#181): its rows close to nothing, then hide from everyone', () => {
+    const css = readFileSync(resolve(__dirname, 'VolumeMixer.svelte'), 'utf8')
+    expect(css).toMatch(/\.rows \{[^}]*display: grid;[^}]*grid-template-rows: 1fr;[^}]*transition: grid-template-rows var\(--dur\) var\(--ease\)/)
+    expect(css).toMatch(/\.rows\.shut \{[^}]*grid-template-rows: 0fr;[^}]*visibility: hidden;[^}]*visibility var\(--dur\) step-end/)
+    expect(css).toMatch(/\.fold-inner \{[^}]*min-height: 0;[^}]*overflow: hidden;/)
+    show()
+    toggle('Calls').click()
+    flushSync()
+    expect(body('Calls').classList.contains('shut')).toBe(true)
   })
 
   it('remembers which sections are closed on this device', () => {
@@ -216,15 +229,15 @@ describe('VolumeMixer collapsible sections (#164)', () => {
     cmp = undefined
     reloadMixerCollapsed()
     show()
-    expect(body('Media').hidden).toBe(true)
-    expect(body('Stream sounds').hidden).toBe(true)
-    expect(body('Calls').hidden).toBe(false)
+    expect(body('Media').inert).toBe(true)
+    expect(body('Stream sounds').inert).toBe(true)
+    expect(body('Calls').inert).toBe(false)
   })
 
   it('a garbled saved value opens everything', () => {
     localStorage.setItem('pulse.mixerCollapsed', '{nope')
     reloadMixerCollapsed()
     show()
-    expect(body('Calls').hidden).toBe(false)
+    expect(body('Calls').inert).toBe(false)
   })
 })
