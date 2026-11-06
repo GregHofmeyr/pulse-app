@@ -29,6 +29,7 @@
   import PatchNotes from '../components/PatchNotes.svelte'
   import { patchNotes } from '../patchNotes'
   import { markPatchNotesSeen, patchNotesSeen } from '../lib/patchNotesSeen.svelte'
+  import { installUpdate, restartBlocked, updates } from '../lib/updates.svelte'
   import CrashReportPrompt from '../components/CrashReportPrompt.svelte'
   import ConversationList from '../components/ConversationList.svelte'
   import GoLiveDialog from '../components/GoLiveDialog.svelte'
@@ -130,6 +131,13 @@
   function openPatchNotes() {
     notesOpen = true
     markPatchNotesSeen(patchNotes.id)
+  }
+  // #82: a newer version, found while running. Never during a call (the core refuses too); never by itself.
+  const updateBlocked = $derived(restartBlocked())
+  function restartToUpdate() {
+    if (updateBlocked || updates.installing) return
+    // a failure is logged and shown nowhere else: the button stays, try again later
+    installUpdate(true).catch(() => {})
   }
   /** Your avatar and name (#168): one control, opening your own card (status and Settings are on it). */
   let meButton = $state<HTMLButtonElement>()
@@ -577,6 +585,10 @@
       <span class="conn auto-report" role="status">Something went wrong in Pulse last time, so we sent Greg a report. <button aria-label="Dismiss" onclick={() => (ui.autoReported = false)}>×</button></span>
     {/if}
     <!-- #155: icon only; the app-wide tooltip reads its aria-label -->
+    <!-- #82: a newer Pulse is ready; aria-disabled, not disabled, in a call: a disabled button swallows the hover that shows the tooltip -->
+    {#if updates.offer}
+      <button class="win update" class:off={updateBlocked} aria-disabled={updateBlocked} data-tip={updateBlocked ? 'Finish your call first' : undefined} onclick={restartToUpdate}>Restart to update</button>
+    {/if}
     <!-- #207: what's new; a dot until this release's notes are opened once on this device -->
     <button class="win notes" aria-label="Patch notes" onclick={openPatchNotes}><Icon name="scroll" size={16} />{#if patchNotesSeen.id !== patchNotes.id}<span class="new-dot" aria-hidden="true"></span>{/if}</button>
     <button class="win report" aria-label="Report a bug or suggest an idea" onclick={() => (reportOpen = true)}><Icon name="bug" size={16} /></button>
@@ -750,6 +762,10 @@
   .win.notes { position: relative; --ring: var(--bg-0); }
   .win.notes:hover { --ring: var(--bg-2); }
   .win.notes .new-dot { top: 3px; right: 6px; width: 8px; height: 8px; }
+  /* Restart to update (#82): the same quiet title bar button, with words; dimmed (no hover) while in a call */
+  .win.update { width: auto; padding: 0 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .win.update.off { opacity: .5; cursor: not-allowed; }
+  .win.update.off:hover { background: transparent; color: var(--text-3); }
   .body { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 0 8px 8px; }
   .panel { border-radius: var(--radius); overflow: hidden; }
   .side { width: 264px; flex-shrink: 0; background: var(--bg-1); display: flex; flex-direction: column; }

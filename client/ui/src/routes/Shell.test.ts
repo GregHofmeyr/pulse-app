@@ -48,6 +48,7 @@ import { ui } from '../lib/store.svelte'
 import { editProfile, openCardSettings, profileUi } from '../lib/profileCard.svelte'
 import { reloadPatchNotesSeen } from '../lib/patchNotesSeen.svelte'
 import { patchNotes } from '../patchNotes'
+import { startUpdateListening, updates } from '../lib/updates.svelte'
 
 let cmp: ReturnType<typeof mount> | undefined
 let offs: (() => void)[] = []
@@ -282,6 +283,79 @@ describe('account menu', () => {
     bug.click()
     flushSync()
     expect(document.querySelector('[role=dialog][aria-label="Report a bug"]')).not.toBeNull()
+  })
+
+  // #82: a newer version while running: "Restart to update" left of Patch notes, never during a call.
+  describe('Restart to update', () => {
+    const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    const open = async () => {
+      app.state = { ...emptyState(), me }
+      offs.push(await startUpdateListening())
+      cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+      flushSync()
+    }
+    const button = () => [...document.querySelectorAll<HTMLButtonElement>('header > button')].find((b) => b.textContent?.trim() === 'Restart to update')
+    const offered = () => {
+      handlers.get('pulse://update')!({ payload: { version: '0.2.1' } })
+      flushSync()
+    }
+    afterEach(() => {
+      updates.offer = null
+      updates.installing = false
+      updates.error = null
+      voice.channelId = null
+    })
+
+    it('no offer, no button; an offer shows it just left of Patch notes', async () => {
+      await open()
+      expect(button()).toBeUndefined()
+      offered()
+      const bar = [...document.querySelectorAll<HTMLButtonElement>('header > button')]
+      const b = button()!
+      expect(b).toBeDefined()
+      expect(b.classList.contains('win')).toBe(true)
+      expect(bar[bar.indexOf(b) + 1].getAttribute('aria-label')).toBe('Patch notes')
+      expect(b.getAttribute('aria-disabled')).not.toBe('true')
+    })
+
+    it('in a call the button is disabled, with the tooltip, and a click does nothing; leaving the call enables it', async () => {
+      await open()
+      offered()
+      voice.channelId = 'c1'
+      flushSync()
+      const b = button()!
+      expect(b.getAttribute('aria-disabled')).toBe('true')
+      expect(b.hasAttribute('disabled')).toBe(false) // hoverable, so the tooltip shows
+      expect(b.getAttribute('data-tip')).toBe('Finish your call first')
+      b.click()
+      flushSync()
+      expect(invoke).not.toHaveBeenCalledWith('update_install', expect.anything())
+      expect(document.querySelector('.updating')).toBeNull()
+      voice.channelId = null
+      flushSync()
+      expect(button()!.getAttribute('aria-disabled')).not.toBe('true')
+      expect(button()!.hasAttribute('data-tip')).toBe(false)
+    })
+
+    it('click installs with restart; a failure goes back to the shell with the button still there, and is logged', async () => {
+      let fail: (e: unknown) => void = () => {}
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'update_install') return new Promise((_, reject) => (fail = reject))
+        return cmd === 'list_messages' ? [] : undefined
+      })
+      await open()
+      offered()
+      button()!.click()
+      flushSync()
+      expect(invoke).toHaveBeenCalledWith('update_install', { restart: true })
+      expect(updates.installing).toBe(true)
+      fail('no network')
+      await vi.waitFor(() => expect(updates.installing).toBe(false))
+      flushSync()
+      expect(button()).toBeDefined()
+      expect(document.querySelector('header')).not.toBeNull()
+      expect(invoke).toHaveBeenCalledWith('ui_log', expect.objectContaining({ line: expect.stringContaining('no network') }))
+    })
   })
 
   // #207: Patch notes sit just left of Report a bug, with a dot until this release's notes are opened once here.
