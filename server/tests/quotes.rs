@@ -308,7 +308,8 @@ async fn migration_keeps_every_channel_row() {
         .await
         .unwrap();
     assert_eq!(count("messages").await, 0, "ON DELETE CASCADE still works");
-    assert_eq!(count("read_states").await, 0);
+    // the voice channel's read point (0026, #226) stays with its channel
+    assert_eq!(count("read_states").await, 1);
     for (child, of) in [("dm_hidden", dm), ("voice_sessions", voice)] {
         sqlx::query("DELETE FROM channels WHERE id = ?")
             .bind(of)
