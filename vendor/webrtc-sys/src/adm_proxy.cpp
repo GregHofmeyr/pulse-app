@@ -351,8 +351,15 @@ int32_t AdmProxy::RegisterAudioCallback(webrtc::AudioTransport* transport) {
 }
 
 int32_t AdmProxy::Init() {
-  // Init is a no-op - the sub ADMs are initialized at creation time
-  return 0;
+  // Pulse (#216): WebRTC terminates the ADM when the last PeerConnection goes
+  // (ConnectionContext::ReleaseMediaEngine -> WebRtcVoiceEngine::Terminate) and
+  // calls Init for the next one. Terminate takes the synthetic ADM's 10 ms pump
+  // with it, so Init must bring it back (SyntheticAudioDevice::Init is
+  // idempotent). Upstream: livekit/rust-sdks#1468.
+  return RunOnWorker([this] {
+    RTC_DCHECK_RUN_ON(worker_thread_);
+    return synthetic_adm_ ? synthetic_adm_->Init() : 0;
+  });
 }
 
 int32_t AdmProxy::Terminate() {

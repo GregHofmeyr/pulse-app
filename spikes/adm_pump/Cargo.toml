@@ -1,0 +1,19 @@
+[package]
+name = "adm-pump-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# #216: does remote audio survive the last PeerConnection in the process closing?
+# An in-process PeerConnection pair on one factory: no server, no audio devices.
+
+[workspace]
+
+[dependencies]
+libwebrtc = "=0.3.55"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+
+# Same patched webrtc-sys as the app (see the root Cargo.toml).
+[patch.crates-io]
+webrtc-sys = { path = "../../vendor/webrtc-sys" }
