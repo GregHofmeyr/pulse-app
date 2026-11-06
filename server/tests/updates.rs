@@ -4,12 +4,27 @@ mod common;
 use common::*;
 use pulse_server::updates::installer_name_ok;
 
-/// A server whose updates dir is a temp dir the test fills.
-async fn app_with_updates() -> (TestApp, tempfile::TempDir) {
-    let dir = tempfile::tempdir().unwrap();
+/// The updates dir the test fills: `updates/` inside a temp dir (so its parent, which a `..` would reach, is the
+/// test's own too).
+struct UpdatesDir {
+    _root: tempfile::TempDir,
+    updates: std::path::PathBuf,
+}
+
+impl UpdatesDir {
+    fn path(&self) -> &std::path::Path {
+        &self.updates
+    }
+}
+
+/// A server whose updates dir the test fills.
+async fn app_with_updates() -> (TestApp, UpdatesDir) {
+    let root = tempfile::tempdir().unwrap();
+    let updates = root.path().join("updates");
+    std::fs::create_dir(&updates).unwrap();
     let mut cfg = test_config();
-    cfg.updates_dir = dir.path().to_path_buf();
-    (spawn_with(cfg).await, dir)
+    cfg.updates_dir = updates.clone();
+    (spawn_with(cfg).await, UpdatesDir { _root: root, updates })
 }
 
 async fn get(app: &TestApp, path: &str, token: Option<&str>) -> reqwest::Response {
@@ -28,7 +43,12 @@ async fn manifest_needs_a_session() {
     let (_, token) = register(&app, "alex").await;
 
     assert_eq!(get(&app, "/updates/latest.json", None).await.status(), 401);
-    assert_eq!(get(&app, "/updates/latest.json", Some("not-a-token")).await.status(), 401);
+    assert_eq!(
+        get(&app, "/updates/latest.json", Some("not-a-token"))
+            .await
+            .status(),
+        401
+    );
 
     let r = get(&app, "/updates/latest.json", Some(&token)).await;
     assert_eq!(r.status(), 200);
@@ -57,11 +77,16 @@ async fn installer_is_streamed_to_signed_in_people() {
 #[tokio::test]
 async fn only_installer_names_are_served() {
     let (app, dir) = app_with_updates().await;
-    for name in ["latest.json.tmp", "Pulse_0.2.0_x64-setup.exe.sig", "pulse.exe", "pulse.db"] {
+    for name in [
+        "latest.json.tmp",
+        "Pulse_0.2.0_x64-setup.exe.sig",
+        "pulse.exe",
+        "pulse.db",
+    ] {
         std::fs::write(dir.path().join(name), b"secret").unwrap();
     }
     // a file beside the updates dir, which a `..` would reach
-    std::fs::write(dir.path().parent().unwrap().join("pulse.db"), b"secret").ok();
+    std::fs::write(dir.path().parent().unwrap().join("pulse.db"), b"secret").unwrap();
     let (_, token) = register(&app, "kim").await;
     for path in [
         "/updates/..%2Fpulse.db",
@@ -82,7 +107,12 @@ async fn only_installer_names_are_served() {
 async fn no_manifest_is_404() {
     let (app, _dir) = app_with_updates().await;
     let (_, token) = register(&app, "jo").await;
-    assert_eq!(get(&app, "/updates/latest.json", Some(&token)).await.status(), 404);
+    assert_eq!(
+        get(&app, "/updates/latest.json", Some(&token))
+            .await
+            .status(),
+        404
+    );
     // a listed name that isn't there yet
     let r = get(&app, "/updates/Pulse_0.2.9_x64-setup.exe", Some(&token)).await;
     assert_eq!(r.status(), 404);
