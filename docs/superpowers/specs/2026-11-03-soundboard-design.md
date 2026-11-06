@@ -43,6 +43,10 @@ On Discord the soundboard is one of the group's most used features. Pulse has no
 - **No slot limit.** Past 24 sounds in a server, the server's section shows a gentle "Tidy up?" that lists the
   least-played sounds with a one-click delete. Plays are counted per sound for this.
 - **Playing:** anyone in a call, any sound from any server they're in. No cooldown; sounds may overlap.
+- **DM and group calls (#183):** the same rule. A sound from a server only the player is in is heard by everyone in
+  the call (the relay carries the file's hash, and anyone signed in can fetch it), as custom emoji are seen by people
+  outside their server. Only playing, favouriting or editing it needs the server; the listener's own popover never
+  offers it.
 - **Hearing:** each listener has a Soundboard volume (0 = off), saved per device, and can mute one person's sounds from
   that person's menu. Ties into per-category volume (#44).
 - **Favourites and frequently used** are per user, synced across their devices.

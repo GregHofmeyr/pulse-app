@@ -968,3 +968,41 @@ async fn played_carries_the_length() {
         other => panic!("{other:?}"),
     }
 }
+
+/// #183: in a DM or group call, a sound from a server only the player is in still reaches everyone
+/// in the call, and each of them can fetch its file (the relay names it by hash), as custom emoji
+/// are seen by people outside their server. Only playing it needs the server.
+#[tokio::test]
+async fn a_group_call_hears_sounds_from_servers_not_everyone_is_in() {
+    let (app, [alex, sam, _], _, s) = soundboard().await;
+    let jo = register(&app, "jo").await;
+    let group = create_dm(&app, &alex.1, &[sam.0, jo.0]).await;
+    for (id, pa) in [(alex.0, "PA_a"), (sam.0, "PA_s"), (jo.0, "PA_j")] {
+        app.state().voice.join(group.id, id, pa);
+    }
+    let (mut j_ws, _) = hello(&app, &jo.1).await;
+    let (mut s_ws, _) = hello(&app, &sam.1).await;
+
+    assert_eq!(play(&app, &alex.1, &s.id).await.status(), 204);
+    for ws in [&mut j_ws, &mut s_ws] {
+        match next_event(ws).await {
+            Event::SoundPlayed {
+                channel_id,
+                media_hash,
+                ..
+            } => assert_eq!((channel_id, media_hash), (group.id, s.media_hash.clone())),
+            other => panic!("{other:?}"),
+        }
+    }
+    let r = app
+        .http
+        .get(app.url(&format!("/media/{}", s.media_hash)))
+        .bearer_auth(&jo.1)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "jo fetches the file to play it");
+    assert_eq!(r.headers()["content-type"], "audio/ogg");
+    // hearing it is not using it: jo still can't play it into the call
+    assert_eq!(play(&app, &jo.1, &s.id).await.status(), 403);
+}

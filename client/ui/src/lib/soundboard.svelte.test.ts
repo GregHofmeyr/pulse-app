@@ -85,6 +85,12 @@ describe('soundboard listener', () => {
     expect(play).toHaveBeenCalledTimes(1)
     setSoundMute('U2', false)
   })
+  it("a sound from a server I'm not in plays in my DM call from the relay alone (#183)", () => {
+    store.app.state = { ...emptyState(), servers: [], sounds: { A: snd('A', 'S9') } }
+    voiceState.channelId = 'DM1'
+    hooks[0](played('U2', 'DM1'))
+    expect(play).toHaveBeenCalledWith('hA', 100, 100, 80, null, 'A', 'U2')
+  })
 })
 
 describe('who played it', () => {
