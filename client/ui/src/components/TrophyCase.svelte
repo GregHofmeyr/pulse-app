@@ -30,7 +30,7 @@
 
   const nameOf = (b: Badge, d: BadgeDef | undefined) => d?.name ?? (b.hidden ? '???' : fallbackName(b.key))
   const iconOf = (b: Badge, d: BadgeDef | undefined) => d?.icon ?? '🏆'
-  const share = (d: BadgeDef | undefined, tier: number) => (cat && d?.tiers[tier - 1] ? shareText(d.tiers[tier - 1].holders, cat.people) : '')
+  const share = (d: BadgeDef | undefined, tier: number) => (cat && d?.tiers[tier - 1] ? shareText(d.tiers[tier - 1].holders, cat.people, d.one_of_a_kind) : '')
   /** The bar toward the next tier: your own case, a counter badge, a tier still to reach. */
   const progressOf = (d: BadgeDef | undefined, tier: number) => {
     if (!mine || !d || d.progress === null || d.hand_given || tier >= d.tiers.length) return null

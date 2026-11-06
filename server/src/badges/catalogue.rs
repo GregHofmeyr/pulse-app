@@ -145,8 +145,9 @@ pub enum Rule {
     HiddenCount { tiers: &'static [(i64, Rarity)] },
     /// Badges with two or more tiers held at their top tier, this one excluded.
     Perfectionist { tiers: &'static [(i64, Rarity)] },
-    /// Only ever given by the owner with the admin command.
-    HandGiven { rarity: Rarity },
+    /// Only ever given by the owner with the admin command. `one_of_a_kind`: only one person is
+    /// ever meant to have it, so its share reads "1 of 1" (#239).
+    HandGiven { rarity: Rarity, one_of_a_kind: bool },
     /// No trigger yet: only the admin command can give it.
     Never { rarity: Rarity },
 }
@@ -175,7 +176,7 @@ impl Def {
             | Rule::HiddenCount { tiers }
             | Rule::Perfectionist { tiers } => tiers.to_vec(),
             Rule::Combo { tiers } => (1..).zip(tiers.iter()).map(|(n, (_, r))| (n, *r)).collect(),
-            Rule::HandGiven { rarity } | Rule::Never { rarity } => vec![(1, *rarity)],
+            Rule::HandGiven { rarity, .. } | Rule::Never { rarity } => vec![(1, *rarity)],
         }
     }
 
@@ -209,6 +210,17 @@ impl Def {
     /// Whether [`evaluate`] can award it (hand-given and never-earned badges it can't).
     pub fn earnable(&self) -> bool {
         !matches!(self.rule, Rule::HandGiven { .. } | Rule::Never { .. })
+    }
+
+    /// A hand-given badge only one person is ever meant to have (#239).
+    pub fn one_of_a_kind(&self) -> bool {
+        matches!(
+            self.rule,
+            Rule::HandGiven {
+                one_of_a_kind: true,
+                ..
+            }
+        )
     }
 
     /// A raw stat value in the badge's unit (whole hours for `Unit::Hours`).
@@ -587,7 +599,10 @@ pub static HAND_GIVEN: &[Def] = &[
         hidden: false,
         stacking: false,
         unit: Unit::Count,
-        rule: Rule::HandGiven { rarity: Mythical },
+        rule: Rule::HandGiven {
+            rarity: Mythical,
+            one_of_a_kind: true,
+        },
     },
     Def {
         key: "partner",
@@ -598,7 +613,10 @@ pub static HAND_GIVEN: &[Def] = &[
         hidden: false,
         stacking: false,
         unit: Unit::Count,
-        rule: Rule::HandGiven { rarity: Mythical },
+        rule: Rule::HandGiven {
+            rarity: Mythical,
+            one_of_a_kind: true,
+        },
     },
     Def {
         key: "patient_zero",
@@ -608,7 +626,10 @@ pub static HAND_GIVEN: &[Def] = &[
         hidden: false,
         stacking: false,
         unit: Unit::Count,
-        rule: Rule::HandGiven { rarity: Mythical },
+        rule: Rule::HandGiven {
+            rarity: Mythical,
+            one_of_a_kind: true,
+        },
     },
 ];
 

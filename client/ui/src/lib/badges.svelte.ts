@@ -220,8 +220,10 @@ export const rarityLabel = (r: BadgeRarity) => r[0].toUpperCase() + r.slice(1)
 export const rarityVar = (r: BadgeRarity) => `var(--rarity-${r})`
 export const rarityRank = (r: BadgeRarity) => RARITIES.indexOf(r)
 
-/** "2 of 8 have this". */
-export function shareText(holders: number, people: number): string {
+/** "2 of 8 have this"; a one-of-a-kind badge (#239, the catalogue's `one_of_a_kind`) reads "1 of 1",
+ * so nobody takes it for one they could still get. */
+export function shareText(holders: number, people: number, oneOfAKind = false): string {
+  if (oneOfAKind) return '1 of 1'
   return `${holders} of ${people} ${holders === 1 ? 'has' : 'have'} this`
 }
 

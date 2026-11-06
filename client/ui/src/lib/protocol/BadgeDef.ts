@@ -11,7 +11,11 @@ export type BadgeDef = { key: string, name: string, description: string, icon: s
 /**
  * Only ever given by hand with the admin command.
  */
-hand_given: boolean, stacking: boolean, unit: BadgeUnit, tiers: Array<BadgeTier>, 
+hand_given: boolean, 
+/**
+ * A hand-given badge only one person can ever have (#239): its share reads "1 of 1".
+ */
+one_of_a_kind: boolean, stacking: boolean, unit: BadgeUnit, tiers: Array<BadgeTier>, 
 /**
  * The viewer's own value in the badge's unit; `None` when masked, hand-given or not one
  * number (Combo: see `parts`).

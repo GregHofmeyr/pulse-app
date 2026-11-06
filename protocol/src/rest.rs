@@ -170,6 +170,9 @@ pub struct BadgeDef {
     /// Only ever given by hand with the admin command.
     #[serde(default)]
     pub hand_given: bool,
+    /// A hand-given badge only one person can ever have (#239): its share reads "1 of 1".
+    #[serde(default)]
+    pub one_of_a_kind: bool,
     #[serde(default)]
     pub stacking: bool,
     #[serde(default)]
@@ -1685,6 +1688,24 @@ mod tests {
         };
         let json = serde_json::to_value(&with).unwrap();
         assert_eq!(json["art"], hash);
+        assert_eq!(serde_json::from_value::<BadgeDef>(json).unwrap(), with);
+    }
+
+    /// One of a kind (#239): an older server sends no flag, which reads as not unique; the flag
+    /// round-trips.
+    #[test]
+    fn badge_def_carries_one_of_a_kind() {
+        let older = serde_json::json!({
+            "key": "founder", "name": "Founder", "description": "Made Pulse.", "icon": "👑"
+        });
+        let d: BadgeDef = serde_json::from_value(older).unwrap();
+        assert!(!d.one_of_a_kind);
+        let with = BadgeDef {
+            one_of_a_kind: true,
+            ..d
+        };
+        let json = serde_json::to_value(&with).unwrap();
+        assert_eq!(json["one_of_a_kind"], true);
         assert_eq!(serde_json::from_value::<BadgeDef>(json).unwrap(), with);
     }
 

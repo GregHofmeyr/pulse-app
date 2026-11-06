@@ -15,7 +15,7 @@ import type { BadgeDef } from '../lib/protocol/BadgeDef'
 
 const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const def = (key: string, over: Partial<BadgeDef> = {}): BadgeDef => ({
-  key, name: key, description: `How to earn ${key}.`, icon: '⭐', hidden: false, hand_given: false, stacking: false, unit: 'count',
+  key, name: key, description: `How to earn ${key}.`, icon: '⭐', hidden: false, hand_given: false, one_of_a_kind: false, stacking: false, unit: 'count',
   tiers: [{ threshold: 1, rarity: 'common', holders: 0 }], progress: null, parts: [], art: null, hint: null, ...over,
 })
 const CATALOGUE: BadgeCatalogue = {
@@ -26,7 +26,7 @@ const CATALOGUE: BadgeCatalogue = {
     def('quote_of_the_year', { name: 'Quote of the Year', icon: '🏆', stacking: true, tiers: [{ threshold: 1, rarity: 'legendary', holders: 1 }], progress: 2 }),
     def('night_owl', { name: 'Night Owl', icon: '🦉', tiers: [{ threshold: 1, rarity: 'rare', holders: 0 }], progress: 0 }),
     def('hidden:0', { name: '???', description: '', icon: '❔', hidden: true, hint: 'The logo up top is ticklish. Keep at it.', tiers: [{ threshold: 0, rarity: 'epic', holders: 1 }] }),
-    def('founder', { name: 'Founder', icon: '👑', hand_given: true, tiers: [{ threshold: 1, rarity: 'mythical', holders: 1 }] }),
+    def('founder', { name: 'Founder', icon: '👑', hand_given: true, one_of_a_kind: true, tiers: [{ threshold: 1, rarity: 'mythical', holders: 1 }] }),
   ],
 }
 const badge = (key: string, over: Partial<Badge> = {}): Badge => ({ key, earned_at: '2026-10-03T00:00:00Z', first_earner: false, tier: 1, rarity: 'common', first_tiers: [], count: 0, hidden: false, seen: true, ...over })
@@ -67,6 +67,12 @@ describe('TrophyCase', () => {
     expect(t.textContent).toContain('Oct 3, 2026')
     expect(t.textContent).toContain('First!')
     expect(t.textContent).toContain('1 of 8 has this')
+  })
+
+  it('a one-of-a-kind badge reads "1 of 1", not "1 of 8" (#239)', async () => {
+    await show({ badges: [badge('founder', { rarity: 'mythical' }), badge('the_yapper')] })
+    expect(tile('Founder')!.querySelector('.share')!.textContent).toBe('1 of 1')
+    expect(tile('The Yapper')!.querySelector('.share')!.textContent).toBe('2 of 8 have this')
   })
 
   it('hidden badges not yet earned ("???") come last, after earned and locked; the rest keep their order (#131)', async () => {

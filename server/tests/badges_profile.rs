@@ -388,3 +388,19 @@ async fn hand_given_defs_are_listed_but_never_hidden() {
     // Skill Issue has no trigger yet but isn't hand-given.
     assert!(c.badges.iter().filter(|d| d.hand_given).count() == 3);
 }
+
+/// #239: the one-of-a-kind hand-given badges are flagged so the trophy case reads "1 of 1";
+/// nothing else is.
+#[tokio::test]
+async fn only_the_one_of_a_kind_badges_are_flagged() {
+    let app = spawn().await;
+    let (_, sam) = register(&app, "sam").await;
+    let (_, c) = catalogue(&app, &sam).await;
+    let unique: Vec<_> = c
+        .badges
+        .iter()
+        .filter(|d| d.one_of_a_kind)
+        .map(|d| d.key.as_str())
+        .collect();
+    assert_eq!(unique, ["founder", "partner", "patient_zero"]);
+}

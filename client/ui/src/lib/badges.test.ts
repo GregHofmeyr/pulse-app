@@ -12,7 +12,7 @@ import type { Profile } from './protocol/Profile'
 import type { BadgeDef } from './protocol/BadgeDef'
 
 const def = (over: Partial<BadgeDef> = {}): BadgeDef => ({
-  key: 'the_yapper', name: 'The Yapper', description: 'Send messages.', icon: '💬', hidden: false, hand_given: false, stacking: false, unit: 'count',
+  key: 'the_yapper', name: 'The Yapper', description: 'Send messages.', icon: '💬', hidden: false, hand_given: false, one_of_a_kind: false, stacking: false, unit: 'count',
   tiers: [{ threshold: 100, rarity: 'common', holders: 3 }, { threshold: 500, rarity: 'uncommon', holders: 1 }], progress: 412, parts: [], art: null, hint: null, ...over,
 })
 const badge = (key: string, rarity: Badge['rarity'], earned_at: string): Badge => ({ key, earned_at, first_earner: false, tier: 1, rarity, first_tiers: [], count: 0, hidden: false, seen: true })
@@ -38,6 +38,11 @@ describe('badge text', () => {
   it('shares read "2 of 8 have this"', () => {
     expect(shareText(2, 8)).toBe('2 of 8 have this')
     expect(shareText(1, 8)).toBe('1 of 8 has this')
+  })
+
+  it('a one-of-a-kind badge reads "1 of 1", whoever else there is (#239)', () => {
+    expect(shareText(1, 4, true)).toBe('1 of 1')
+    expect(shareText(1, 4, false)).toBe('1 of 4 has this')
   })
 
   it('progress counts toward the next tier, with the thing counted', () => {
