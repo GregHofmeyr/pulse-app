@@ -19,6 +19,7 @@
   } = $props()
 
   const SKIP_S = 5
+  const VOL_STEP = 5 // percent, for the arrow keys on the compact player's speaker (#208)
 
   let box: HTMLElement | undefined = $state()
   let el: HTMLVideoElement | undefined = $state()
@@ -119,6 +120,20 @@
     e.preventDefault()
   }
 
+  /** The shared Clips volume; moving it while muted unmutes. */
+  function changeVolume(pct: number) {
+    setVolume(Math.min(100, Math.max(0, pct)))
+    if (playback.muted) setMuted(false)
+  }
+
+  // The compact speaker's own keys: its pop-up slider is vertical, so up/right is louder and down/left quieter.
+  function onSpeakerKey(e: KeyboardEvent) {
+    const step = e.key === 'ArrowUp' || e.key === 'ArrowRight' ? VOL_STEP : e.key === 'ArrowDown' || e.key === 'ArrowLeft' ? -VOL_STEP : 0
+    if (!step) return
+    e.preventDefault()
+    changeVolume(playback.volume + step)
+  }
+
   function toggleFullscreen() {
     if (document.fullscreenElement === box) void document.exitFullscreen()?.catch(() => {})
     else void box?.requestFullscreen()?.catch(() => {})
@@ -188,9 +203,17 @@
     <button class="ico" aria-label={playing || loading ? 'Pause' : 'Play'} onclick={toggle}><Icon name={playing || loading ? 'pause' : 'play'} /></button>
     <input class="seek" type="range" aria-label="Seek" min="0" max={total || 1} step="0.1" value={cur} disabled={!el} oninput={(e) => seek(Number(e.currentTarget.value))} />
     <span class="time">{formatDuration(cur * 1000)} / {formatDuration(total * 1000)}</span>
-    {#if !compact}
+    {#if compact}
+      <!-- #208: the wall card has no room for the slider, so it pops up above the speaker on hover or focus -->
+      <div class="vol-wrap">
+        <button class="ico" aria-label={playback.muted ? 'Unmute' : 'Mute'} onclick={() => setMuted(!playback.muted)} onkeydown={onSpeakerKey}><Icon name={playback.muted || playback.volume === 0 ? 'speakerOff' : 'speaker'} /></button>
+        <div class="vol-pop">
+          <input type="range" aria-label="Volume" aria-orientation="vertical" aria-valuetext="{playback.volume}%" min="0" max="100" step="1" value={playback.volume} oninput={(e) => changeVolume(Number(e.currentTarget.value))} />
+        </div>
+      </div>
+    {:else}
       <button class="ico" aria-label={playback.muted ? 'Unmute' : 'Mute'} onclick={() => setMuted(!playback.muted)}><Icon name={playback.muted || playback.volume === 0 ? 'speakerOff' : 'speaker'} /></button>
-      <input class="vol" type="range" aria-label="Volume" aria-valuetext="{playback.volume}%" min="0" max="100" step="1" value={playback.volume} oninput={(e) => { setVolume(Number(e.currentTarget.value)); if (playback.muted) setMuted(false) }} />
+      <input class="vol" type="range" aria-label="Volume" aria-valuetext="{playback.volume}%" min="0" max="100" step="1" value={playback.volume} oninput={(e) => changeVolume(Number(e.currentTarget.value))} />
     {/if}
     <button class="ico" aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} onclick={toggleFullscreen}><Icon name="fullscreen" /></button>
   </div>
@@ -218,4 +241,11 @@
   .clip:hover :global(.clip-dl) { opacity: 1; }
   .clip:fullscreen :global(.clip-dl) { display: none; }
   .compact .bar { padding: 4px 6px; gap: 4px; }
+  /* the compact speaker's vertical volume (#208): the bar's own look, straight above the speaker with no gap so the
+     hover carries from one to the other; short enough to stay clear of the download icon at the top right */
+  .vol-wrap { position: relative; display: grid; }
+  .vol-pop { position: absolute; z-index: 2; bottom: 100%; left: 50%; width: 28px; height: 96px; margin-left: -14px; border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: rgba(0, 0, 0, 0.85); visibility: hidden; opacity: 0; transition: opacity var(--dur) var(--ease), visibility var(--dur) var(--ease); }
+  .vol-wrap:hover .vol-pop, .vol-wrap:focus-within .vol-pop { visibility: visible; opacity: 1; }
+  /* rotated rather than writing-mode, which older WebKitGTK builds don't apply to range inputs */
+  .vol-pop input { position: absolute; left: 50%; top: 50%; width: 76px; margin: 0 0 0 -38px; transform: translateY(-50%) rotate(-90deg); accent-color: var(--accent); }
 </style>

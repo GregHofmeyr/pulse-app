@@ -337,6 +337,71 @@ describe('ClipPlayer', () => {
     expect(invoke).toHaveBeenLastCalledWith('set_fullscreen', { on: false })
   })
 
+  describe('compact (the clips wall, #208)', () => {
+    const vol = (r: Element) => r.querySelector<HTMLInputElement>('input[aria-label="Volume"]')!
+
+    it('shows the speaker; clicking it toggles the shared mute', async () => {
+      const r = show('M1', { compact: true })
+      await start(r)
+      await press(r, 'Mute')
+      expect(playback.muted).toBe(true)
+      expect(video(r)!.muted).toBe(true)
+      await press(r, 'Unmute')
+      expect(playback.muted).toBe(false)
+    })
+
+    it('has a vertical volume slider beside the speaker, on the same volume as the full player', async () => {
+      const full = show('M1')
+      const r = show('M2', { compact: true })
+      await start(r)
+      const slider = vol(r)
+      expect(slider.closest('.vol-wrap')?.querySelector('button[aria-label="Mute"]')).not.toBeNull()
+      expect(slider.closest('.vol-pop')).not.toBeNull()
+      expect(slider.getAttribute('aria-orientation')).toBe('vertical')
+      slider.value = '85'
+      slider.dispatchEvent(new Event('input', { bubbles: true }))
+      flushSync()
+      expect(playback.volume).toBe(85)
+      expect(video(r)!.volume).toBeCloseTo(0.5, 2)
+      expect(vol(full).value).toBe('85')
+    })
+
+    it('moving the slider while muted unmutes', () => {
+      const r = show('M1', { compact: true })
+      playback.muted = true
+      flushSync()
+      const slider = vol(r)
+      slider.value = '40'
+      slider.dispatchEvent(new Event('input', { bubbles: true }))
+      flushSync()
+      expect(playback.muted).toBe(false)
+      expect(playback.volume).toBe(40)
+    })
+
+    it('arrow keys on the speaker adjust the volume, without seeking', async () => {
+      const r = show('M1', { compact: true })
+      await start(r)
+      const v = video(r)!
+      v._d = 41; v._t = 10
+      playback.volume = 50
+      flushSync()
+      const speaker = btn(r, 'Mute')
+      const key = (k: string) => { speaker.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })); flushSync() }
+      key('ArrowUp')
+      expect(playback.volume).toBe(55)
+      key('ArrowDown'); key('ArrowDown')
+      expect(playback.volume).toBe(45)
+      key('ArrowRight')
+      expect(playback.volume).toBe(50)
+      key('ArrowLeft')
+      expect(playback.volume).toBe(45)
+      expect(v.currentTime).toBe(10)
+      playback.volume = 98; flushSync()
+      key('ArrowUp')
+      expect(playback.volume).toBe(100) // clamped
+    })
+  })
+
   it('autoplay starts on mount', async () => {
     const r = show('M1', { autoplay: true })
     await settle(); flushSync()
