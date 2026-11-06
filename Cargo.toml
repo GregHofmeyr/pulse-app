@@ -5,7 +5,7 @@ exclude = ["spikes", "vendor/webrtc-sys"]
 
 [workspace.package]
 edition = "2024"
-version = "0.2.0"
+version = "0.2.1"
 license = "MIT"
 publish = false
 

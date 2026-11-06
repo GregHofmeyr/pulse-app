@@ -24,6 +24,39 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.1',
+  version: '0.2.1',
+  date: '6 November 2026',
+  new: [
+    "Notification settings now also live in Server settings, and in each channel's bell",
+    "Save quote pictures: the download icon on the picture, or Save image in the line's menu",
+    'Missed the last patch notes? They\'re now tucked under "Previous update" at the bottom',
+  ],
+  fixes: [
+    'Badge progress in your trophy case now updates every time you open it (Ghost was counting the whole time, promise)',
+    'One-of-a-kind badges now say 1 of 1, because they are',
+    'On narrower windows, the hover bar on messages no longer covers the line above',
+  ],
+  qol: [
+    'Drag a channel to the top or bottom of the list and it scrolls with you',
+    'Smoother motion all round: the stream mini preview glides into its corner, sections fold smoothly, and menus grow from where you clicked',
+    "Profile cards don't flash in early anymore, and a member's card sits beside them instead of covering faces",
+    'The emoji picker opens quicker',
+    'Voice chat tidy-ups: the Chat button shows unreads, and your search results wait for you while the chat is open',
+    'Go Live and the Soundboard are now tidy icon buttons (hover for their names)',
+  ],
+  soon: [
+    'More fresh and reworked designs on the way, hopefully with more taste!',
+    'Pinned messages',
+    'Polls',
+    'A random picker wheel 🌈',
+    'Streaming in DM and group calls',
+  ],
+  message: "If you're reading this, Pulse just updated itself. No zip files were harmed 💜\n…and the Doos is a slow burn on purpose. Patience, doos.",
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '2026-11-06',
   version: '0.2.0',
   date: '6 November 2026',
@@ -57,34 +90,4 @@ export const patchNotes: PatchNotes = {
     'Streaming in DM and group calls',
   ],
   message: "Another day, another pile of fixes straight from your reports 💜 Keep them coming, and try the new Idea tab.\n…and yes, the Zalgo thing is real. He comes.",
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '2026-11-05',
-  version: '0.1.0',
-  date: '5 November 2026',
-  new: [
-    'Channel categories: group text and voice channels, and drag channels and categories into any order',
-    'Notification settings for each server and channel: All messages, Only @mentions or Nothing',
-    "Download clips, from the clip's menu or the icon on the video",
-    'Patch notes, right here 👋',
-  ],
-  fixes: [
-    'Dragging the crop circle on a new avatar moved it the wrong way',
-    'Menus now close when you open another one or click away',
-    'Typing fast no longer sends your first letter to the end',
-    'Numbers in the red unread badges sit dead centre',
-    'Quote lines with nothing to do no longer open an empty menu',
-    'Custom emoji show properly in the DM list preview',
-  ],
-  qol: [
-    "Right-click someone's name in a DM or group for their menu",
-    'Add people straight from Settings → Privacy → Appear offline to',
-    'Mute times open as a hover list in DM menus',
-    'The Combo badge shows clear progress toward your next tier',
-    'Clicking a channel or DM puts you straight in the message box',
-  ],
-  soon: [],
-  message: "Thanks for poking at everything and sending in reports, it's already made Pulse so much better 💜\n…thanks for testing, doos.",
 }
