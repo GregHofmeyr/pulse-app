@@ -36,6 +36,35 @@ export function providerLabel(e: LinkEmbed): string {
   return e.site_name?.trim() || host(e.url)
 }
 
+type SpotifyKind = 'track' | 'album' | 'playlist' | 'episode' | 'show' | 'artist' | 'jam'
+
+/** Each Spotify kind's name on the card (a show is a podcast to people). */
+const SPOTIFY_KINDS: Record<SpotifyKind, string> = {
+  track: 'Track', album: 'Album', playlist: 'Playlist', episode: 'Episode', show: 'Podcast', artist: 'Artist', jam: 'Jam',
+}
+
+/** The Jam card's subtitle: Pulse's words, not the link's (a Jam's page gives none, #196). */
+export const JAM_SUBTITLE = 'Listen together in Spotify: one shared queue, everyone hears it live.'
+
+export type SpotifyCard = {
+  kind: SpotifyKind | null
+  /** "Track", "Podcast"…; `null` for a kind this build doesn't know. */
+  label: string | null
+  /** The link-out's wording, one of Spotify's approved labels for third-party apps. */
+  action: 'Listen on Spotify' | 'Open Spotify'
+  /** A Jam invite (`jam:<id>`): a fixed "Join the Jam" card, no player. */
+  jam: boolean
+}
+
+/** How a Spotify link's card reads, from its id's kind; `null` when it isn't a Spotify link. */
+export function spotifyCard(e: LinkEmbed): SpotifyCard | null {
+  if (e.provider !== 'spotify') return null
+  const k = e.provider_id?.split(':')[0] ?? ''
+  const kind = Object.hasOwn(SPOTIFY_KINDS, k) ? (k as SpotifyKind) : null
+  const listen = kind !== null && kind !== 'artist' && kind !== 'jam'
+  return { kind, label: kind && SPOTIFY_KINDS[kind], action: listen ? 'Listen on Spotify' : 'Open Spotify', jam: kind === 'jam' }
+}
+
 /** A player this build knows, with its id: gets a play button. Any other kind (`unknown` too) is a card. */
 export function playable(e: LinkEmbed): boolean {
   return e.kind === 'player' && isPlayerProvider(e.provider) && !!e.provider_id

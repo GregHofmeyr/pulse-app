@@ -4,9 +4,10 @@
   // card app-wide, and only ever loads our own embed page.
   import { onDestroy } from 'svelte'
   import Icon from './Icon.svelte'
+  import SpotifyIcon from './SpotifyIcon.svelte'
   import { api, errorText } from '../lib/tauri'
   import { isMediaHash, mediaUrl } from '../lib/emoji'
-  import { aspect, audioHeight, playable, playerSrc, popsOut, providerLabel, sandboxFor } from '../lib/embeds'
+  import { aspect, audioHeight, JAM_SUBTITLE, playable, playerSrc, popsOut, providerLabel, sandboxFor, spotifyCard } from '../lib/embeds'
   import { embed as origin, loadEmbedOrigin, play, player, playerKey, stop } from '../lib/linkPreviews.svelte'
   import type { LinkEmbed } from '../lib/protocol/LinkEmbed'
 
@@ -36,6 +37,10 @@
   // Video players show a large thumbnail; generic cards, audio and Instagram a small one at the side.
   const big = $derived(canPlay && !pops && shape !== 'audio')
   const hasMedia = $derived(!!thumbSrc || canPlay)
+  // Spotify's own card (#196): their attribution and link-out wording, artwork left as it is.
+  const sp = $derived(spotifyCard(embed))
+  const spTitle = $derived(sp?.jam ? 'Join the Jam' : (embed.title ?? embed.url))
+  const spSub = $derived(sp?.jam ? JAM_SUBTITLE : (embed.author ?? embed.description))
 
   async function start() {
     if (pops) {
@@ -71,7 +76,43 @@
   onDestroy(() => stop(key))
 </script>
 
+{#snippet frame()}
+  <div class="frame" class:vertical={shape === '9 / 16'} class:audio={shape === 'audio'}
+    style:aspect-ratio={shape === 'audio' ? undefined : shape} style:height={shape === 'audio' ? `${audioHeight(embed)}px` : undefined}>
+    <iframe src={playerSrc(origin.origin!, embed)} title={embed.title ? `${label}: ${embed.title}` : `${label} player`}
+      sandbox={sandboxFor(embed)} allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+      referrerpolicy="strict-origin-when-cross-origin"></iframe>
+  </div>
+{/snippet}
+
 <div class="wrap">
+  {#if sp}
+  <div class="embed spotify" class:playing={active} bind:this={root} style:--brand={BRAND.spotify}>
+    <div class="text">
+      <span class="label sp-label"><SpotifyIcon /><span class="sp-kind">{sp.label ? `Spotify · ${sp.label}` : 'Spotify'}</span></span>
+      <a class="title" href={embed.url} target="_blank" rel="noopener noreferrer" data-tip={spTitle}>{spTitle}</a>
+      {#if spSub}<p class="sub" data-tip={spSub}>{spSub}</p>{/if}
+      <div class="actions">
+        {#if canPlay && origin.origin && !active}
+          <button class="btn btn-quiet sp-play" onclick={() => play(key)}><Icon name="play" size={14} />Play</button>
+        {/if}
+        <a class="btn {sp.jam ? 'btn-primary' : 'btn-secondary'} sp-open" href={embed.url} target="_blank" rel="noopener noreferrer">{sp.action}</a>
+      </div>
+    </div>
+    {#if active}
+      {@render frame()}
+    {:else}
+      <!-- Spotify's artwork as they give it: uncropped, 4px corners, nothing over it -->
+      <div class="art" class:tile={!thumbSrc}>
+        {#if thumbSrc}
+          <img src={thumbSrc} alt="" loading="lazy" width={embed.thumb!.width} height={embed.thumb!.height} />
+        {:else}
+          <Icon name="headphones" size={28} />
+        {/if}
+      </div>
+    {/if}
+  </div>
+  {:else}
   <div class="embed" class:big class:playing={active} bind:this={root} style:--brand={BRAND[embed.provider] ?? 'var(--bg-4)'}>
     <div class="text">
       <span class="label">{label}{#if embed.author}<span class="by"> · {embed.author}</span>{/if}</span>
@@ -79,12 +120,7 @@
       {#if embed.description}<p class="desc">{embed.description}</p>{/if}
     </div>
     {#if active}
-      <div class="frame" class:vertical={shape === '9 / 16'} class:audio={shape === 'audio'}
-        style:aspect-ratio={shape === 'audio' ? undefined : shape} style:height={shape === 'audio' ? `${audioHeight(embed)}px` : undefined}>
-        <iframe src={playerSrc(origin.origin!, embed)} title={embed.title ? `${label}: ${embed.title}` : `${label} player`}
-          sandbox={sandboxFor(embed)} allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-          referrerpolicy="strict-origin-when-cross-origin"></iframe>
-      </div>
+      {@render frame()}
     {:else if hasMedia}
       <div class="media" class:vertical={big && shape === '9 / 16'} style:aspect-ratio={big ? shape : undefined}>
         {#if thumbSrc}
@@ -106,6 +142,7 @@
       </div>
     {/if}
   </div>
+  {/if}
   {#if mine}
     <button class="hide" aria-label="Remove preview" onclick={() => void hide()}><Icon name="x" size={14} /></button>
   {/if}
@@ -152,6 +189,21 @@
   .big .play { width: 56px; height: 56px; padding-left: 3px; }
   .play:hover, .play:focus-visible { background: rgba(10, 11, 13, .82); transform: scale(1.06); }
   .play :global(svg) { fill: currentColor; }
+  /* Spotify (#196): a row of the icon and the kind, the title, the artist or show, and the actions */
+  .sp-label { display: flex; align-items: center; gap: 6px; color: var(--text-2); }
+  .sp-kind { overflow: hidden; text-overflow: ellipsis; }
+  .sub {
+    margin: 0; font-size: 13px; line-height: 1.4; color: var(--text-2); overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+  }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .actions .btn { height: 28px; padding: 0 10px; font-size: 12px; text-decoration: none; }
+  .sp-play :global(svg) { fill: currentColor; }
+  /* Spotify's rules: 4px corners, never cropped (contain), nothing on top */
+  .art { width: 96px; height: 96px; border-radius: 4px; overflow: hidden; display: grid; place-items: center; }
+  .art img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; display: block; border-radius: 4px; }
+  .art.tile { color: var(--text-3); background: linear-gradient(135deg, var(--bg-3), var(--bg-4)); }
+  .spotify .frame { grid-column: 1 / -1; }
   .hide {
     width: 24px; height: 24px; border: 0; border-radius: var(--radius-xs); padding: 0; background: transparent; color: var(--text-3);
     /* its own layer for good, as the entrances (#103): a fade that makes and drops one flashes on WebKitGTK */

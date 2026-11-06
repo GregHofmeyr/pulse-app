@@ -10,6 +10,10 @@
 //! - Spotify `https://open.spotify.com/<type>/<id>`, SoundCloud `https://soundcloud.com/<path>`,
 //!   Instagram `https://www.instagram.com/<p|reel>/<code>/`.
 //!
+//! A Spotify Jam invite (`open.spotify.com/socialsession/<id>`, or a `spotify.link` short link
+//! that resolves to one) fetches nothing: its page gives a preview fetcher nothing usable, so its
+//! card is fixed text built from the link.
+//!
 //! Twitch has no tokenless oEmbed, so a clip's card is its page's OpenGraph, read from the link
 //! as sent (`clips.twitch.tv/<slug>` and `twitch.tv/<user>/clip/<slug>` both carry it).
 
@@ -71,6 +75,9 @@ pub(super) async fn run(
         found = providers::detect(&link);
     }
     let (d, text) = match found {
+        // A Jam's page says nothing useful to a preview fetcher: its card is built from the
+        // link alone, and nothing is fetched (#196).
+        Detection::Known(d) if providers::is_jam(d.provider, &d.id) => return Some(jam(d)),
         Detection::Known(d) => {
             let text = match d.provider {
                 EmbedProvider::Twitch => {
@@ -144,6 +151,23 @@ pub(super) async fn run(
             vertical: false,
         },
     })
+}
+
+/// A Spotify Jam invite's card: fixed text, no thumbnail. A card, not a player (there is none),
+/// so a client that doesn't know Jams shows it as a plain Spotify card.
+fn jam(d: Detected) -> Unfurled {
+    Unfurled {
+        provider: d.provider,
+        kind: EmbedKind::Card,
+        provider_id: Some(d.id),
+        title: Some("Join the Jam".into()),
+        description: None,
+        site_name: Some(name(d.provider).into()),
+        author: None,
+        thumb: None,
+        start: None,
+        vertical: false,
+    }
 }
 
 /// A provider's name, for a card whose oEmbed didn't give one.

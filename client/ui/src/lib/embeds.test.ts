@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aspect, audioHeight, playable, playerSrc, popsOut, providerLabel, SANDBOX } from './embeds'
+import { aspect, audioHeight, JAM_SUBTITLE, playable, playerSrc, popsOut, providerLabel, SANDBOX, spotifyCard } from './embeds'
 import type { LinkEmbed } from './protocol/LinkEmbed'
 
 const ORIGIN = 'https://pulsechat.co.za'
@@ -83,5 +83,28 @@ describe('aspect and sandbox', () => {
   it('Instagram pops out', () => {
     expect(popsOut(e({ provider: 'instagram', provider_id: 'p:Abc' }))).toBe(true)
     expect(popsOut(e())).toBe(false)
+  })
+})
+
+describe('spotifyCard', () => {
+  const sp = (provider_id: string | null, over: Partial<LinkEmbed> = {}) =>
+    e({ url: 'https://open.spotify.com/x', provider: 'spotify', provider_id, ...over })
+  it('plays-on-Spotify wording for what you listen to (Spotify\'s approved labels)', () => {
+    for (const [kind, label] of [['track', 'Track'], ['album', 'Album'], ['playlist', 'Playlist'], ['episode', 'Episode'], ['show', 'Podcast']]) {
+      expect(spotifyCard(sp(`${kind}:4uLU6hMCjMI75M1A2tKUQC`))).toEqual({ kind, label, action: 'Listen on Spotify', jam: false })
+    }
+  })
+  it('“Open Spotify” for an artist and a Jam', () => {
+    expect(spotifyCard(sp('artist:4uLU6hMCjMI75M1A2tKUQC'))).toEqual({ kind: 'artist', label: 'Artist', action: 'Open Spotify', jam: false })
+    expect(spotifyCard(sp('jam:ABC123abc123', { kind: 'card' }))).toEqual({ kind: 'jam', label: 'Jam', action: 'Open Spotify', jam: true })
+  })
+  it('anything else is no Spotify card', () => {
+    expect(spotifyCard(e())).toBeNull()
+    expect(spotifyCard(sp(null))).toEqual({ kind: null, label: null, action: 'Open Spotify', jam: false })
+    expect(spotifyCard(sp('user:abc'))).toEqual({ kind: null, label: null, action: 'Open Spotify', jam: false })
+    expect(spotifyCard(e({ provider: 'generic', kind: 'card', provider_id: 'jam:ABC123abc123' }))).toBeNull()
+  })
+  it('the Jam card has Pulse\'s own subtitle', () => {
+    expect(JAM_SUBTITLE).toMatch(/together/i)
   })
 })

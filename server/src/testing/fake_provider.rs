@@ -9,6 +9,7 @@
 //!   metadata; `/held` answers like `/page` once [`FakeProvider::release`] is called.
 //! - `http://www.twitch.tv:<port>/<user>/clip/<slug>`: a clip page's OpenGraph.
 //! - `http://www.tiktok.com:<port>/t/<code>/`: a short link redirecting to [`TIKTOK_URL`].
+//! - `http://spotify.link:<port>/<code>`: a short link redirecting to [`SPOTIFY_JAM_URL`].
 //! - `/thumb.png`: a 1280×720 PNG.
 
 use std::collections::HashMap;
@@ -31,10 +32,14 @@ pub const TIKTOK_ID: &str = "7000000000000000001";
 /// Where the fake's TikTok short link leads (not requested: the id is all the unfurler needs).
 pub const TIKTOK_URL: &str = "https://www.tiktok.com/@alex/video/7000000000000000001";
 pub const SPOTIFY_ID: &str = "4uLU6hMCjMI75M1A2tKUQC";
+pub const SPOTIFY_JAM_ID: &str = "ABC123abc123ABC123abc123";
+/// Where the fake's `spotify.link` short link leads: a Jam invite (never requested).
+pub const SPOTIFY_JAM_URL: &str = "https://open.spotify.com/socialsession/ABC123abc123ABC123abc123";
 
 /// The fake's names, all answered with 127.0.0.1.
-pub const HOSTS: [&str; 5] = [
+pub const HOSTS: [&str; 6] = [
     "oembed.test",
+    "spotify.link",
     "site.test",
     "www.tiktok.com",
     "www.twitch.tv",
@@ -85,6 +90,8 @@ impl FakeProvider {
                 "/t/{code}/",
                 get(|| async { (StatusCode::FOUND, [(header::LOCATION, TIKTOK_URL)]) }),
             )
+            // spotify.link's short links are one segment; any other host's are not found.
+            .route("/{code}", get(spotify_short))
             .route(
                 "/thumb.png",
                 get(|State(s): State<Shared>| async move {
@@ -229,4 +236,17 @@ pub fn png(w: u32, h: u32) -> Vec<u8> {
     let mut out = Cursor::new(Vec::new());
     img.write_to(&mut out, image::ImageFormat::Png).unwrap();
     out.into_inner()
+}
+
+async fn spotify_short(req: Request) -> Response {
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+    if host.split(':').next() == Some("spotify.link") {
+        (StatusCode::FOUND, [(header::LOCATION, SPOTIFY_JAM_URL)]).into_response()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
 }

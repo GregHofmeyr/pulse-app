@@ -27,8 +27,16 @@ pub enum Detection {
 }
 
 /// What `url` links to, by its host (exactly one of the provider's own, so lookalikes such as
-/// `youtube.com.example.com` are unknown) and path. Scheme and port don't matter.
+/// `youtube.com.example.com` are unknown) and path. Scheme and port don't matter, except that Spotify's app
+/// URI for a Jam (`spotify:socialsession:<id>`) is known too.
 pub fn detect(url: &Url) -> Detection {
+    // Spotify's app URI for a Jam, `spotify:socialsession:<id>` (no host).
+    if url.scheme() == "spotify" {
+        return match url.path().split(':').collect::<Vec<_>>()[..] {
+            ["socialsession", id] => known(jam(id)),
+            _ => Detection::Unknown,
+        };
+    }
     let Some(host) = url.host_str() else {
         return Detection::Unknown;
     };
@@ -67,10 +75,28 @@ pub fn detect(url: &Url) -> Detection {
         }
         _ => None,
     };
-    match found {
-        Some(d) if valid_id(d.provider, &d.id) => Detection::Known(d),
-        _ => Detection::Unknown,
+    found.map_or(Detection::Unknown, known)
+}
+
+fn known(d: Detected) -> Detection {
+    if valid_id(d.provider, &d.id) {
+        Detection::Known(d)
+    } else {
+        Detection::Unknown
     }
+}
+
+/// A Spotify Jam invite (#196): a card built from the link alone, never a player.
+fn jam(id: &str) -> Detected {
+    plain(EmbedProvider::Spotify, format!("{JAM}:{id}"))
+}
+
+/// The kind a Spotify Jam's id carries (`jam:<session id>`).
+const JAM: &str = "jam";
+
+/// Whether `p`'s `id` is a Spotify Jam invite: no player and nothing to fetch.
+pub fn is_jam(p: EmbedProvider, id: &str) -> bool {
+    p == EmbedProvider::Spotify && id.split_once(':').is_some_and(|(kind, _)| kind == JAM)
 }
 
 fn plain(provider: EmbedProvider, id: String) -> Detected {
@@ -159,6 +185,8 @@ fn spotify(mut segs: &[&str]) -> Option<Detected> {
         segs = &segs[1..];
     }
     match *segs {
+        // A Jam invite: `open.spotify.com/socialsession/<id>`.
+        ["socialsession", id] => Some(jam(id)),
         [kind, id] => Some(plain(EmbedProvider::Spotify, format!("{kind}:{id}"))),
         _ => None,
     }
@@ -241,6 +269,10 @@ pub fn valid_id(p: EmbedProvider, id: &str) -> bool {
         EmbedProvider::Youtube => chars(id, 11, 11, slug_char),
         EmbedProvider::Tiktok => chars(id, 5, 25, |b| b.is_ascii_digit()),
         EmbedProvider::Spotify => id.split_once(':').is_some_and(|(kind, id)| {
+            if kind == JAM {
+                // Spotify doesn't document a session id's shape: a URL-safe slug of sane length.
+                return chars(id, 8, 64, slug_char);
+            }
             SPOTIFY_TYPES.contains(&kind) && chars(id, 22, 22, |b| b.is_ascii_alphanumeric())
         }),
         EmbedProvider::Soundcloud => {
@@ -274,7 +306,7 @@ pub fn player_url(
     start: Option<u32>,
     parent_host: &str,
 ) -> Option<String> {
-    if !valid_id(p, id) {
+    if !valid_id(p, id) || is_jam(p, id) {
         return None;
     }
     let url = match p {
@@ -487,6 +519,43 @@ mod tests {
         ] {
             assert_eq!(det(&u), Detection::Unknown, "{u}");
         }
+    }
+
+    #[test]
+    fn spotify_jam_forms() {
+        const JAM: &str = "ABC123abc123ABC123abc123";
+        let jam = known(Spotify, &format!("jam:{JAM}"), None, false);
+        for u in [
+            format!("https://open.spotify.com/socialsession/{JAM}"),
+            format!("https://open.spotify.com/socialsession/{JAM}?si=x&dlsi=y"),
+            format!("https://open.spotify.com/intl-de/socialsession/{JAM}"),
+            format!("spotify:socialsession:{JAM}"),
+            format!("SPOTIFY:socialsession:{JAM}"),
+        ] {
+            assert_eq!(det(&u), jam, "{u}");
+        }
+        for u in [
+            "https://open.spotify.com/socialsession/".to_string(),
+            "https://open.spotify.com/socialsession/short".to_string(),
+            format!("https://open.spotify.com/socialsession/{JAM}/extra"),
+            format!("https://open.spotify.com/socialsession/{}", "a".repeat(65)),
+            "https://open.spotify.com/socialsession/abc-def%2Fghi".to_string(),
+            format!("https://spotify.com/socialsession/{JAM}"),
+            format!("spotify:track:{JAM}"),
+            format!("spotify:socialsession:{JAM}:x"),
+            "spotify:socialsession:a/b/c/d/e/f/g".to_string(),
+        ] {
+            assert_eq!(det(&u), Detection::Unknown, "{u}");
+        }
+        // A Jam has no player: the embed page refuses it.
+        assert!(valid_id(Spotify, &format!("jam:{JAM}")));
+        assert!(is_jam(Spotify, &format!("jam:{JAM}")));
+        assert!(!is_jam(Spotify, &format!("track:{SP}")));
+        assert!(!is_jam(Generic, &format!("jam:{JAM}")));
+        assert_eq!(
+            player_url(Spotify, &format!("jam:{JAM}"), None, "pulse.example.com"),
+            None
+        );
     }
 
     #[test]

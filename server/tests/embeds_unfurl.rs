@@ -10,7 +10,7 @@ use pulse_server::embeds::{self, Unfurled};
 use pulse_server::limits::{LimitsConfig, Rate};
 use pulse_server::media;
 use pulse_server::testing::fake_provider::{
-    FakeProvider, SPOTIFY_ID, TIKTOK_ID, TIKTOK_URL, YOUTUBE_ID,
+    FakeProvider, SPOTIFY_ID, SPOTIFY_JAM_ID, TIKTOK_ID, TIKTOK_URL, YOUTUBE_ID,
 };
 
 const OLD: &str = "2020-01-01T00:00:00.000Z";
@@ -202,6 +202,44 @@ async fn spotify_soundcloud_and_twitch_cards() {
             .await,
         None
     );
+}
+
+/// A Jam invite's card, built from its link alone (#196).
+fn jam_card() -> Unfurled {
+    Unfurled {
+        provider: EmbedProvider::Spotify,
+        kind: EmbedKind::Card,
+        provider_id: Some(format!("jam:{SPOTIFY_JAM_ID}")),
+        title: Some("Join the Jam".into()),
+        description: None,
+        site_name: Some("Spotify".into()),
+        author: None,
+        thumb: None,
+        start: None,
+        vertical: false,
+    }
+}
+
+#[tokio::test]
+async fn spotify_jam_is_a_fixed_card_that_fetches_nothing() {
+    let env = setup().await;
+    let u = env
+        .unfurl(&format!(
+            "https://open.spotify.com/socialsession/{SPOTIFY_JAM_ID}?si=x"
+        ))
+        .await;
+    assert_eq!(u, Some(jam_card()));
+    // Neither the Jam's page nor an oEmbed is asked: nothing at all.
+    assert_eq!(env.fake.hits(), 0, "{:?}", env.fake.requests());
+}
+
+#[tokio::test]
+async fn spotify_short_link_to_a_jam_is_a_jam_card() {
+    let env = setup().await;
+    let u = env.unfurl(&env.fake.url("spotify.link", "/JamCode1")).await;
+    assert_eq!(u, Some(jam_card()));
+    // Only the short link itself was requested; its target was read, not fetched.
+    assert_eq!(env.fake.requests(), ["/JamCode1"]);
 }
 
 #[tokio::test]

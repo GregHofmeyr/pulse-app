@@ -169,6 +169,87 @@ describe('LinkEmbed', () => {
     expect(player.active).toBeNull()
   })
 
+  describe('Spotify', () => {
+    const SP = '4uLU6hMCjMI75M1A2tKUQC'
+    const sp = (over: Partial<Embed> = {}): Embed => yt({
+      url: `https://open.spotify.com/track/${SP}`, provider: 'spotify', provider_id: `track:${SP}`, title: 'A song',
+      description: null, author: 'alex', site_name: 'Spotify', ...over,
+    })
+    const jam = (): Embed => sp({
+      url: 'https://open.spotify.com/socialsession/ABC123abc123', kind: 'card', provider_id: 'jam:ABC123abc123',
+      title: 'Join the Jam', author: null, thumb: null,
+    })
+    const link = (host: HTMLElement, text: string) => [...host.querySelectorAll('a')].find((a) => a.textContent?.trim() === text)
+
+    it('a track: kind, title, artist, uncovered artwork and “Listen on Spotify”', async () => {
+      const host = show(sp())
+      await settle()
+      expect(host.querySelector('.label')!.textContent).toContain('Spotify · Track')
+      expect(host.textContent).toContain('A song')
+      expect(host.querySelector('.sub')!.textContent).toBe('alex')
+      const open = link(host, 'Listen on Spotify')!
+      expect(open.getAttribute('href')).toBe(`https://open.spotify.com/track/${SP}`)
+      expect(open.getAttribute('target')).toBe('_blank')
+      expect(open.getAttribute('rel')).toBe('noopener noreferrer')
+      // Spotify's rules: nothing drawn over the artwork.
+      const art = host.querySelector('.art')!
+      expect(art.querySelector('img')!.getAttribute('src')).toContain(HASH)
+      expect(art.querySelector('.play, svg')).toBeNull()
+    })
+
+    it('the attribution is the single-colour Spotify icon', async () => {
+      const host = show(sp())
+      await settle()
+      const icon = host.querySelector('.label svg[role="img"]')!
+      expect(icon.getAttribute('aria-label')).toBe('Spotify')
+      expect(icon.querySelector('path')!.getAttribute('fill')).toBe('currentColor')
+      expect(Number(icon.getAttribute('width'))).toBeGreaterThanOrEqual(21)
+    })
+
+    it('“Play” starts the inline player through our embed page', async () => {
+      const host = show(sp())
+      await settle()
+      const play = [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Play')!
+      play.click()
+      flushSync()
+      expect(iframes().map((f) => f.getAttribute('src'))).toEqual([`https://pulsechat.co.za/embed/spotify/track%3A${SP}`])
+      expect(link(host, 'Listen on Spotify')).toBeDefined()
+    })
+
+    it('without an embed origin there is no Play, only the link out', async () => {
+      origin = null
+      const host = show(sp())
+      await settle()
+      expect([...host.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Play')).toBe(false)
+      expect(link(host, 'Listen on Spotify')).toBeDefined()
+    })
+
+    it('an artist says “Open Spotify”; a podcast is named so', async () => {
+      const a = show(sp({ url: `https://open.spotify.com/artist/${SP}`, provider_id: `artist:${SP}` }))
+      const p = show(sp({ url: `https://open.spotify.com/show/${SP}`, provider_id: `show:${SP}` }), { messageId: 'M2' })
+      await settle()
+      expect(link(a, 'Open Spotify')).toBeDefined()
+      expect(link(a, 'Listen on Spotify')).toBeUndefined()
+      expect(p.querySelector('.label')!.textContent).toContain('Spotify · Podcast')
+      expect(link(p, 'Listen on Spotify')).toBeDefined()
+    })
+
+    it('a Jam: “Join the Jam”, our subtitle, “Open Spotify” and no player', async () => {
+      const host = show(jam())
+      await settle()
+      expect(host.querySelector('.label')!.textContent).toContain('Spotify · Jam')
+      expect(host.querySelector('.title')!.textContent).toBe('Join the Jam')
+      expect(host.querySelector('.sub')!.textContent).toMatch(/together/i)
+      const open = link(host, 'Open Spotify')!
+      expect(open.getAttribute('href')).toBe('https://open.spotify.com/socialsession/ABC123abc123')
+      expect(open.getAttribute('target')).toBe('_blank')
+      expect(host.querySelector('.play')).toBeNull()
+      expect([...host.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Play')).toBe(false)
+      expect(iframes()).toHaveLength(0)
+      expect(host.querySelector('img')).toBeNull()
+    })
+  })
+
   it('asks the core for the embed origin once', async () => {
     show(yt())
     show(yt(), { messageId: 'M2' })

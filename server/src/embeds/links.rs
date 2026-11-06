@@ -3,7 +3,8 @@
 /// Most links one message gets previews for.
 pub const MAX_LINKS: usize = 3;
 
-/// The first [`MAX_LINKS`] distinct `http`/`https` links in `content`, normalised. Links in
+/// The first [`MAX_LINKS`] distinct `http`/`https` links in `content`, normalised (a Spotify Jam's
+/// `spotify:socialsession:<id>` counts as its `https://open.spotify.com/…` link). Links in
 /// code (inline or fenced) and links wrapped as `<https://…>` (no preview, as on Discord) are
 /// skipped. Trailing punctuation and an unbalanced `)` or `]` aren't part of a link, so one at the
 /// end of a sentence, in parentheses or in a markdown link comes out right.
@@ -11,7 +12,9 @@ pub fn extract(content: &str) -> Vec<String> {
     let mut out = Vec::new();
     for part in outside_code(content) {
         for raw in candidates(part) {
-            let Some(url) = normalise(raw) else { continue };
+            let Some(url) = jam_uri(raw).or_else(|| normalise(raw)) else {
+                continue;
+            };
             if !out.contains(&url) {
                 out.push(url);
                 if out.len() == MAX_LINKS {
@@ -72,17 +75,38 @@ fn outside_code(content: &str) -> Vec<&str> {
     parts
 }
 
-/// The raw links in `text` (no code in it), trimmed but not yet parsed.
+/// Spotify's app URI for a Jam invite, which people paste too (#196).
+const JAM_URI: &str = "spotify:socialsession:";
+
+/// A Jam's app URI as its web link, which is what gets previewed and stored. `None` for anything
+/// else, including an id the web link couldn't carry as it is.
+fn jam_uri(raw: &str) -> Option<String> {
+    let id = raw.get(JAM_URI.len()..)?;
+    let ok = raw[..JAM_URI.len()].eq_ignore_ascii_case(JAM_URI)
+        && (8..=64).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    ok.then(|| format!("https://open.spotify.com/socialsession/{id}"))
+}
+
+/// The raw links in `text` (no code in it), trimmed but not yet parsed: `http(s)://…`, and
+/// Spotify Jam URIs.
 fn candidates(text: &str) -> Vec<&str> {
     // ASCII lowercasing keeps every byte where it was.
     let lower = text.to_ascii_lowercase();
     let mut out = Vec::new();
     let mut i = 0;
-    while let Some(n) = lower[i..].find("http") {
+    loop {
+        let next = [lower[i..].find("http"), lower[i..].find(JAM_URI)];
+        let Some(n) = next.into_iter().flatten().min() else {
+            break;
+        };
         let at = i + n;
-        i = at + "http".len();
         let rest = &lower[at..];
-        if !rest.starts_with("http://") && !rest.starts_with("https://") {
+        let jam = rest.starts_with(JAM_URI);
+        i = at + if jam { JAM_URI.len() } else { "http".len() };
+        if !jam && !rest.starts_with("http://") && !rest.starts_with("https://") {
             continue;
         }
         // A link starts a word: `xhttps://` isn't one.
@@ -225,6 +249,21 @@ mod tests {
         assert!(ex("javascript:alert(1)").is_empty());
         // A scheme with nothing after it.
         assert!(ex("https:// and http://").is_empty());
+    }
+
+    #[test]
+    fn spotify_jam_uris_become_their_web_link() {
+        let web = "https://open.spotify.com/socialsession/ABC123abc123";
+        assert_eq!(ex("join spotify:socialsession:ABC123abc123 now"), [web]);
+        assert_eq!(ex("(SPOTIFY:socialsession:ABC123abc123)."), [web]);
+        // The same Jam as a web link counts once.
+        assert_eq!(ex(&format!("{web} spotify:socialsession:ABC123abc123")), [web]);
+        // In code, glued to a word, or not a Jam: no preview.
+        assert!(ex("`spotify:socialsession:ABC123abc123`").is_empty());
+        assert!(ex("xspotify:socialsession:ABC123abc123").is_empty());
+        assert!(ex("spotify:track:4uLU6hMCjMI75M1A2tKUQC").is_empty());
+        assert!(ex("spotify:socialsession:").is_empty());
+        assert!(ex("spotify:socialsession:a/../b?c").is_empty());
     }
 
     #[test]

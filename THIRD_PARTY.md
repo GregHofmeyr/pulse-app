@@ -18,6 +18,13 @@ The Goofy UI sounds are clips from Kenney's [Digital Audio](https://kenney.nl/as
 Both are released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain dedication).
 The clips were trimmed, resampled to 22 050 Hz mono and normalised in loudness; `scripts/import_goofy.py` rebuilds them.
 
+## Spotify icon
+
+Spotify cards attribute their content with the Spotify icon (`client/ui/src/components/SpotifyIcon.svelte`), drawn as
+Spotify's [Design Guidelines](https://developer.spotify.com/documentation/design) allow for third-party apps: at least
+21px, single-colour, never over artwork. The path is the one in [Simple Icons](https://simpleicons.org) (CC0 1.0).
+Spotify and its logo are trademarks of Spotify AB; Pulse isn't affiliated with or endorsed by Spotify.
+
 ## FFmpeg (Windows installer only)
 
 The Windows installer ships `ffmpeg.exe`, `ffprobe.exe` and their DLLs (libavcodec, libavformat, libavfilter,
