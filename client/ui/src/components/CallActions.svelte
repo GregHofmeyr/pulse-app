@@ -44,12 +44,13 @@
 </script>
 
 <div class="call-actions" role="group" aria-label="Call actions">
+  <!-- icon-only (owner, 2026-11-06): the name is the button's label and its tooltip -->
   {#if live}
-    <button type="button" class="btn btn-primary" aria-label="Stop streaming" data-tip="Stop streaming" onclick={() => streamApi.stop()}><Icon name="screen" size={16} /> Stop</button>
+    <button type="button" class="btn btn-primary" aria-label="Stop streaming" data-tip="Stop streaming" onclick={() => streamApi.stop()}><Icon name="screen" size={16} /></button>
   {:else}
-    <button type="button" class="btn btn-quiet" aria-disabled={off ? 'true' : undefined} data-tip={off ?? undefined} onclick={() => { if (!off) void pickSource(channelId) }}><Icon name="screen" size={16} /> Go Live</button>
+    <button type="button" class="btn btn-quiet" aria-label="Go Live" aria-disabled={off ? 'true' : undefined} data-tip={off ?? 'Go Live'} onclick={() => { if (!off) void pickSource(channelId) }}><Icon name="screen" size={16} /></button>
   {/if}
-  <button bind:this={sbBtn} type="button" class="btn btn-quiet" class:open={sbOpen} aria-haspopup="dialog" aria-expanded={sbOpen} data-menu-toggle onclick={() => (sbOpen = !sbOpen)}><Icon name="soundboard" size={16} /> Soundboard</button>
+  <button bind:this={sbBtn} type="button" class="btn btn-quiet" class:open={sbOpen} aria-label="Soundboard" data-tip="Soundboard" aria-haspopup="dialog" aria-expanded={sbOpen} data-menu-toggle onclick={() => (sbOpen = !sbOpen)}><Icon name="soundboard" size={16} /></button>
 </div>
 
 {#if sbOpen && sbBtn}
@@ -70,7 +71,7 @@
 
 <style>
   .call-actions { display: flex; gap: 8px; }
-  /* two equal halves; a narrow column trims the label rather than wrapping */
+  /* two equal halves, icons only: a wide target that never wraps */
   .call-actions .btn { flex: 1 1 0; min-width: 0; padding: 0 8px; }
   .call-actions .btn.open { background: var(--bg-4); color: var(--text); }
 </style>

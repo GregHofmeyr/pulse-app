@@ -366,7 +366,7 @@ describe('the action row', () => {
     const [details, actions] = [...card.children]
     expect(details.classList.contains('vc')).toBe(true)
     expect(actions.classList.contains('call-actions')).toBe(true)
-    expect([...actions.querySelectorAll('button')].map((b) => b.textContent?.trim())).toEqual(['Go Live', 'Soundboard'])
+    expect([...actions.querySelectorAll('button')].map((b) => b.getAttribute('aria-label'))).toEqual(['Go Live', 'Soundboard'])
   })
 
   it('a failed join has no actions', () => {

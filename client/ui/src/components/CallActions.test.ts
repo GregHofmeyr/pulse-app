@@ -19,7 +19,7 @@ import { testReady } from '../lib/testReady'
 
 const DM = { id: 'DM1', server_id: null, kind: 'dm' as const, name: null, position: 0 }
 const LOUNGE = { id: 'V1', server_id: 'S1', kind: 'voice' as const, name: 'Lounge', position: 0 }
-const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('.call-actions button')].find((b) => b.textContent?.trim() === label)
+const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('.call-actions button')].find((b) => b.getAttribute('aria-label') === label)
 const ua = navigator.userAgent
 
 let cmp: ReturnType<typeof mount> | undefined
@@ -51,9 +51,12 @@ describe('CallActions', () => {
     show('V1')
     const row = document.querySelector('.call-actions')!
     expect(row.getAttribute('role')).toBe('group')
-    expect([...row.querySelectorAll('button')].map((b) => b.textContent?.trim())).toEqual(['Go Live', 'Soundboard'])
+    // icon-only buttons (owner, 2026-11-06): the name is the label and the tooltip, no visible words
+    expect([...row.querySelectorAll('button')].map((b) => b.getAttribute('aria-label'))).toEqual(['Go Live', 'Soundboard'])
     for (const b of row.querySelectorAll('button')) {
       expect(b.classList.contains('btn')).toBe(true)
+      expect(b.textContent?.trim()).toBe('')
+      expect(b.dataset.tip).toBeTruthy()
       expect(b.querySelector('svg')!.getAttribute('width')).toBe('16')
     }
   })
@@ -84,8 +87,9 @@ describe('CallActions', () => {
     onWindows(true)
     stream.live = { channelId: 'V1' } as never
     show('V1')
-    const stop = button('Stop')!
-    expect(stop.getAttribute('aria-label')).toBe('Stop streaming')
+    const stop = button('Stop streaming')!
+    expect(stop.textContent?.trim()).toBe('')
+    expect(stop.dataset.tip).toBe('Stop streaming')
     expect(button('Go Live')).toBeUndefined()
   })
 
