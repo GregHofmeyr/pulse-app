@@ -257,7 +257,10 @@ mod tests {
         assert_eq!(ex("join spotify:socialsession:ABC123abc123 now"), [web]);
         assert_eq!(ex("(SPOTIFY:socialsession:ABC123abc123)."), [web]);
         // The same Jam as a web link counts once.
-        assert_eq!(ex(&format!("{web} spotify:socialsession:ABC123abc123")), [web]);
+        assert_eq!(
+            ex(&format!("{web} spotify:socialsession:ABC123abc123")),
+            [web]
+        );
         // In code, glued to a word, or not a Jam: no preview.
         assert!(ex("`spotify:socialsession:ABC123abc123`").is_empty());
         assert!(ex("xspotify:socialsession:ABC123abc123").is_empty());
