@@ -343,7 +343,7 @@ async fn hand_given_defs_are_listed_but_never_hidden() {
     let app = spawn().await;
     let (_, sam) = register(&app, "sam").await;
     let (_, c) = catalogue(&app, &sam).await;
-    for key in ["founder", "partner"] {
+    for key in ["founder", "partner", "patient_zero"] {
         let d = def(&c, key);
         assert!(d.hand_given && !d.hidden, "{d:?}");
         assert_ne!(d.name, "???");
@@ -352,5 +352,5 @@ async fn hand_given_defs_are_listed_but_never_hidden() {
         assert_eq!(d.tiers[0].rarity, BadgeRarity::Mythical);
     }
     // Skill Issue has no trigger yet but isn't hand-given.
-    assert!(c.badges.iter().filter(|d| d.hand_given).count() == 2);
+    assert!(c.badges.iter().filter(|d| d.hand_given).count() == 3);
 }

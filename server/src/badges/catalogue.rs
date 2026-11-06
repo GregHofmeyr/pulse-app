@@ -553,9 +553,20 @@ pub static HAND_GIVEN: &[Def] = &[
     },
     Def {
         key: "partner",
-        name: "Unnamed",
-        description: "Name and icon to come.",
-        icon: "❔",
+        name: "alienussy",
+        description: "One of a kind, for a special someone.",
+        // shown by clients without its picture (#225), and until one is uploaded
+        icon: "💚",
+        hidden: false,
+        stacking: false,
+        unit: Unit::Count,
+        rule: Rule::HandGiven { rarity: Mythical },
+    },
+    Def {
+        key: "patient_zero",
+        name: "Patient Zero",
+        description: "One of a kind: the first soul brave enough to test Pulse.",
+        icon: "🧪",
         hidden: false,
         stacking: false,
         unit: Unit::Count,
@@ -783,7 +794,7 @@ mod tests {
             .collect();
         let got = evaluate(&s, &HashMap::new());
         assert!(!got.is_empty());
-        for key in ["skill_issue", "founder", "partner"] {
+        for key in ["skill_issue", "founder", "partner", "patient_zero"] {
             assert!(!got.contains_key(key), "{key} was evaluated");
         }
     }
@@ -819,9 +830,28 @@ mod tests {
         keys.dedup();
         assert_eq!(keys.len(), n, "duplicate badge keys");
         let given: Vec<_> = HAND_GIVEN.iter().map(|d| d.key).collect();
-        assert!(given.contains(&"founder") && given.contains(&"partner"));
+        assert_eq!(given, ["founder", "partner", "patient_zero"]);
         assert!(HAND_GIVEN.iter().all(|d| !d.hidden && !d.earnable()));
         assert_eq!(find("partner").unwrap().max_tier(), 1);
+    }
+
+    #[test]
+    fn the_one_of_a_kind_badges_are_named_and_keep_an_emoji() {
+        use Rarity::*;
+        let partner = find("partner").unwrap();
+        assert_eq!(partner.name, "alienussy");
+        assert_eq!(partner.description, "One of a kind, for a special someone.");
+        assert_eq!(partner.icon, "💚");
+        let zero = find("patient_zero").unwrap();
+        assert_eq!(zero.name, "Patient Zero");
+        assert_eq!(
+            zero.description,
+            "One of a kind: the first soul brave enough to test Pulse."
+        );
+        assert_eq!(zero.icon, "🧪");
+        for def in HAND_GIVEN {
+            assert_eq!(def.tiers(), [(1, Mythical)], "{}", def.key);
+        }
     }
 
     #[test]

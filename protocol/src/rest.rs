@@ -185,6 +185,10 @@ pub struct BadgeDef {
     /// reached, the viewer's own. Empty for other badges, when masked and once all are reached.
     #[serde(default)]
     pub parts: Vec<BadgeProgressPart>,
+    /// The badge's picture (#225), a media hash (a still WebP), drawn inside its rarity ring
+    /// instead of `icon`; `None` (and never when masked) for a badge that keeps its emoji.
+    #[serde(default)]
+    pub art: Option<String>,
 }
 
 /// One stat of a badge that needs several at once (Combo, #191), toward its next tier.
@@ -1650,6 +1654,25 @@ pub struct SearchResults {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Badge art (#225): an older server sends no `art`, which reads as none; a picture's hash
+    /// round-trips.
+    #[test]
+    fn badge_def_carries_optional_art() {
+        let older = serde_json::json!({
+            "key": "founder", "name": "Founder", "description": "Made Pulse.", "icon": "👑"
+        });
+        let d: BadgeDef = serde_json::from_value(older).unwrap();
+        assert_eq!(d.art, None);
+        let hash = "ab".repeat(32);
+        let with = BadgeDef {
+            art: Some(hash.clone()),
+            ..d
+        };
+        let json = serde_json::to_value(&with).unwrap();
+        assert_eq!(json["art"], hash);
+        assert_eq!(serde_json::from_value::<BadgeDef>(json).unwrap(), with);
+    }
 
     /// Debug output can end up in logs, so it never shows passwords, codes or tickets.
     #[test]

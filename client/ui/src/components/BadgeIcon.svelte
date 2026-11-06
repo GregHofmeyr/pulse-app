@@ -1,28 +1,38 @@
 <script lang="ts">
-  // A badge's placeholder art (#49; final art is its own design job): the emoji in a ring of its
-  // rarity's colour, the tier as a numeral on a badge with tiers, a gold border, glow and ✦ for the
-  // first earner, "???" for a hidden one, and the NEW tag until you've seen it.
+  // A badge's icon (#49): the emoji, or the badge's picture when it has one (#225), in a ring of its rarity's
+  // colour, the tier as a numeral on a badge with tiers, a gold border, glow and ✦ for the first earner, "???" for
+  // a hidden one, and the NEW tag until you've seen it. A picture is clipped round and fitted whole (a wide one
+  // isn't cropped) on a neutral background.
   import { rarityVar, romanTier } from '../lib/badges.svelte'
+  import { isMediaHash, mediaUrl } from '../lib/emoji'
   import type { BadgeRarity } from '../lib/protocol/BadgeRarity'
 
-  let { icon, rarity, tier = 1, tiers = 1, first = false, hidden = false, size = 'case', isNew = false, label }: {
+  let { icon, art = null, rarity, tier = 1, tiers = 1, first = false, hidden = false, size = 'case', isNew = false, label }: {
     icon: string
+    /** The badge's picture, a media hash; the emoji shows without one. */
+    art?: string | null
     rarity: BadgeRarity
     tier?: number
     /** How many tiers the badge has: the numeral shows only when there's more than one. */
     tiers?: number
     first?: boolean
     hidden?: boolean
-    /** `case`: a trophy case tile; `show`: the smaller showcase on the card. */
+    /** `case`: a trophy case tile; `show`: the smaller showcase on the card (and the unlock toast). */
     size?: 'case' | 'show'
     isNew?: boolean
     label?: string
   } = $props()
+
+  const picture = $derived(!hidden && art && isMediaHash(art) ? art : null)
 </script>
 
 <!-- Without a label it's decoration (the text next to it names the badge), so it's hidden from screen readers. -->
-<span class="badge-icon {rarity} {size}" class:first class:hidden style:--ring-color={rarityVar(rarity)} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : 'true'} data-tip={label}>
-  <span class="glyph" aria-hidden="true">{hidden ? '???' : icon}</span>
+<span class="badge-icon {rarity} {size}" class:first class:hidden class:has-art={picture} style:--ring-color={rarityVar(rarity)} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : 'true'} data-tip={label}>
+  {#if picture}
+    <img class="art" src={mediaUrl(picture)} alt="" draggable="false" />
+  {:else}
+    <span class="glyph" aria-hidden="true">{hidden ? '???' : icon}</span>
+  {/if}
   {#if tiers > 1 && !hidden}<span class="tier" aria-hidden="true">{romanTier(tier)}</span>{/if}
   {#if first}<span class="spark" aria-hidden="true">✦</span>{/if}
   {#if isNew}<span class="new">NEW</span>{/if}
@@ -35,6 +45,8 @@
   .show .glyph { font-size: 14px; }
   .hidden .glyph { font-size: 13px; font-weight: 800; letter-spacing: .04em; color: var(--ring-color); }
   .show.hidden .glyph { font-size: 8px; }
+  /* the picture fills the inside of the ring, clipped round, fitted whole on a neutral background */
+  .art { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: contain; background: var(--bg-3); user-select: none; }
   /* the first earner: a gold outer ring and its glow around the rarity ring */
   .first { box-shadow: 0 0 0 2px var(--first-gold), 0 0 12px 2px var(--first-gold-soft); }
   .show.first { box-shadow: 0 0 0 1px var(--first-gold), 0 0 6px 1px var(--first-gold-soft); }

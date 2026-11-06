@@ -1,7 +1,7 @@
 # Badges
 
 Issue #49. Owner's picks from the design-check page (2026-11-03), summarised on the issue. The v1 design (§9) set the
-basics; this replaces it where they differ. **Status: approved by the owner 2026-11-03** (Skill Issue's trigger and the partner badge's name to come).
+basics; this replaces it where they differ. **Status: approved by the owner 2026-11-03** (Skill Issue's trigger to come; the partner badge named 2026-11-06, #126).
 
 ## Why
 
@@ -109,7 +109,10 @@ Rarity in brackets (tiered badges: per tier, tuned on the badge page). ⓗ = hid
 
 **Hand-given** (unique, awarded by the owner with the admin command; never earnable, never "???"):
 - **Founder** [Mythical, one of a kind] — the owner.
-- **The owner's partner's badge** [Mythical, one of a kind] — name and icon TBD by the owner.
+- **alienussy** (`partner`) [Mythical, one of a kind] — "One of a kind, for a special someone." (#126); 💚 until its picture is uploaded.
+- **Patient Zero** (`patient_zero`) [Mythical, one of a kind] — "One of a kind: the first soul brave enough to test Pulse."; 🧪 until its picture is uploaded.
+
+The one-of-a-kind badges have pictures (#225), kept only on the server (never in this public repo): `just badge-art <key> <file>` stores one in the media store (`badge_art` table, a still fitted within 256 px) and the badge's definition carries its hash as `art`; clients draw it round inside the rarity ring, fitted whole, and fall back to the emoji.
 
 **Parked:** 3 am quote ("get quoted for something said after 02:00").
 

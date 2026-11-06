@@ -72,6 +72,14 @@ enum BadgeCmd {
         stat: String,
         value: i64,
     },
+    /// Give a badge a picture (PNG, JPEG, GIF or WebP; a still, fitted within 256 px), replacing
+    /// any it had; it shows instead of the emoji on the next catalogue load
+    Art {
+        key: String,
+        path: std::path::PathBuf,
+    },
+    /// Take a badge's picture away: it shows its emoji again
+    ClearArt { key: String },
 }
 
 #[tokio::main]
@@ -150,6 +158,11 @@ async fn main() -> anyhow::Result<()> {
                     stat,
                     value,
                 } => vec![admin::set_stat(&db, &username, &stat, value).await?],
+                BadgeCmd::Art { key, path } => {
+                    pulse_server::media::writes_ok(&cfg)?;
+                    vec![admin::set_art(&db, &cfg.media_dir, &key, &path).await?]
+                }
+                BadgeCmd::ClearArt { key } => vec![admin::clear_art(&db, &key).await?],
             };
             for l in lines {
                 println!("{l}");

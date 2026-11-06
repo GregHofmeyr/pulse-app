@@ -21,4 +21,9 @@ progress: number | null,
  * Combo's progress (#191): each of its stats against the next tier the viewer hasn't
  * reached, the viewer's own. Empty for other badges, when masked and once all are reached.
  */
-parts: Array<BadgeProgressPart>, };
+parts: Array<BadgeProgressPart>, 
+/**
+ * The badge's picture (#225), a media hash (a still WebP), drawn inside its rarity ring
+ * instead of `icon`; `None` (and never when masked) for a badge that keeps its emoji.
+ */
+art: string | null, };

@@ -150,7 +150,7 @@
       <div class="badges">
         {#each shown as b (b.key)}
           {@const d = badgeStore.def(b.key)}
-          <BadgeIcon icon={d?.icon ?? '🏆'} rarity={b.rarity} tier={b.tier} tiers={d?.tiers.length ?? 1} first={b.first_earner} hidden={b.hidden} size="show"
+          <BadgeIcon icon={d?.icon ?? '🏆'} art={d?.art} rarity={b.rarity} tier={b.tier} tiers={d?.tiers.length ?? 1} first={b.first_earner} hidden={b.hidden} size="show"
             label={d?.name ?? (b.hidden ? '???' : fallbackName(b.key))} />
         {/each}
       </div>

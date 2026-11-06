@@ -29,6 +29,7 @@ pub async fn catalogue(conn: &mut SqliteConnection, viewer: UserId) -> AppResult
     .await?;
     let viewer_held = engine::tiers_held(conn, viewer).await?;
     let viewer_stats = stats::all(conn, viewer).await?;
+    let art = super::art::all(conn).await?;
     let held_defs: HashMap<&'static str, u8> = viewer_held
         .iter()
         .filter_map(|(k, t)| Some((find(k)?.key, *t)))
@@ -72,6 +73,7 @@ pub async fn catalogue(conn: &mut SqliteConnection, viewer: UserId) -> AppResult
                     tiers,
                     progress: None,
                     parts: Vec::new(),
+                    art: None,
                 },
                 None => BadgeDef {
                     key: def.key.into(),
@@ -93,6 +95,7 @@ pub async fn catalogue(conn: &mut SqliteConnection, viewer: UserId) -> AppResult
                             target,
                         })
                         .collect(),
+                    art: art.get(def.key).cloned(),
                 },
             }
         })

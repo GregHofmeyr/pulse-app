@@ -65,7 +65,7 @@
     >
       <button type="button" class="open" onclick={() => { badgeStore.dismiss(t.id); openOwnCase() }}>
         <!-- no label: the text beside it says it -->
-        <BadgeIcon icon={t.icon} rarity={t.rarity} size="show" />
+        <BadgeIcon icon={t.icon} art={t.art} rarity={t.rarity} size="show" />
         <span class="text">
           <span><strong>Badge unlocked:</strong> {t.name}</span>
           <small>{rarityLabel(t.rarity)}{t.tier > 1 ? ` · tier ${t.tier}` : ''}</small>

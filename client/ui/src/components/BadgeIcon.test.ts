@@ -2,6 +2,7 @@
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, describe, expect, it } from 'vitest'
 import BadgeIcon from './BadgeIcon.svelte'
+import { mediaUrl } from '../lib/emoji'
 
 let cmp: ReturnType<typeof mount> | undefined
 function show(props: Record<string, unknown>) {
@@ -44,6 +45,42 @@ describe('BadgeIcon', () => {
     expect(el.textContent).toContain('???')
     expect(el.textContent).not.toContain('💬')
     expect(el.querySelector('.new')!.textContent).toBe('NEW')
+  })
+
+  it('without art it draws the emoji and no picture', () => {
+    const el = show({ art: null })
+    expect(el.querySelector('img')).toBeNull()
+    expect(el.querySelector('.glyph')!.textContent).toBe('💬')
+  })
+
+  it('with art it draws the picture inside the ring instead of the emoji, at every size', () => {
+    const hash = 'ab'.repeat(32)
+    for (const size of ['case', 'show'] as const) {
+      const el = show({ art: hash, size, rarity: 'mythical' })
+      const img = el.querySelector('img.art') as HTMLImageElement
+      expect(img).not.toBeNull()
+      expect(img.getAttribute('src')).toBe(mediaUrl(hash))
+      // decoration: the badge's label (or the text beside it) names it
+      expect(img.getAttribute('alt')).toBe('')
+      expect(el.querySelector('.glyph')).toBeNull()
+      expect(el.textContent).not.toContain('💬')
+      expect(el.classList.contains('has-art')).toBe(true)
+      expect(el.style.getPropertyValue('--ring-color')).toBe('var(--rarity-mythical)')
+      unmount(cmp!)
+      cmp = undefined
+    }
+  })
+
+  it('a hidden badge never shows art', () => {
+    const el = show({ art: 'ab'.repeat(32), hidden: true })
+    expect(el.querySelector('img')).toBeNull()
+    expect(el.textContent).toContain('???')
+  })
+
+  it('a malformed art hash falls back to the emoji', () => {
+    const el = show({ art: '../x' })
+    expect(el.querySelector('img')).toBeNull()
+    expect(el.textContent).toContain('💬')
   })
 
   it('the showcase size is smaller', () => {

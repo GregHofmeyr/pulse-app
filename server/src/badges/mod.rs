@@ -4,6 +4,7 @@
 //! keeps that forever.
 
 pub mod admin;
+pub mod art;
 pub mod catalogue;
 pub mod engine;
 pub mod hooks;

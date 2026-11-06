@@ -16,7 +16,7 @@ import type { BadgeDef } from '../lib/protocol/BadgeDef'
 const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const def = (key: string, over: Partial<BadgeDef> = {}): BadgeDef => ({
   key, name: key, description: `How to earn ${key}.`, icon: '⭐', hidden: false, hand_given: false, stacking: false, unit: 'count',
-  tiers: [{ threshold: 1, rarity: 'common', holders: 0 }], progress: null, parts: [], ...over,
+  tiers: [{ threshold: 1, rarity: 'common', holders: 0 }], progress: null, parts: [], art: null, ...over,
 })
 const CATALOGUE: BadgeCatalogue = {
   people: 8,

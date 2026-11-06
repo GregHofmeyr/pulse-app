@@ -60,6 +60,10 @@ pub const LINK_THUMB_MAX_INPUT: usize = 8 * 1024 * 1024;
 pub const LINK_THUMB_SIDE: u32 = 480;
 pub const LINK_THUMB_MAX_OUTPUT: usize = 256 * 1024;
 
+/// Badge art (#225): a still fitted within this square on its long side.
+pub const BADGE_ART_SIDE: u32 = 256;
+pub const BADGE_ART_MAX_OUTPUT: usize = 256 * 1024;
+
 /// Largest Go Live preview upload accepted.
 pub const PREVIEW_MAX_INPUT: usize = 100 * 1024;
 /// Box a preview is fitted into (the client sends exactly this).
@@ -322,7 +326,35 @@ pub fn banner(input: &[u8], crop: Option<Crop>) -> Result<Processed, ProcessErro
 /// only, fitted within [`LINK_THUMB_SIDE`]² (aspect kept, never enlarged) and re-encoded as a
 /// still WebP. Same decode bounds as uploads. CPU-bound: call it off the async runtime.
 pub fn link_thumb(input: &[u8]) -> Result<Processed, ProcessError> {
-    if input.len() > LINK_THUMB_MAX_INPUT {
+    first_frame_fitted(
+        input,
+        LINK_THUMB_MAX_INPUT,
+        LINK_THUMB_SIDE,
+        LINK_THUMB_MAX_OUTPUT,
+    )
+}
+
+/// Process a badge's picture (#225, from the admin command only): as [`link_thumb`], the first
+/// frame fitted within [`BADGE_ART_SIDE`]² (aspect kept, so a wide one shows whole; never
+/// enlarged) and re-encoded as a still WebP. CPU-bound: call it off the async runtime.
+pub fn badge_art(input: &[u8]) -> Result<Processed, ProcessError> {
+    first_frame_fitted(
+        input,
+        PROFILE_MAX_INPUT,
+        BADGE_ART_SIDE,
+        BADGE_ART_MAX_OUTPUT,
+    )
+}
+
+/// PNG, JPEG, GIF or WebP up to `max_input` bytes, the first frame of an animation only, fitted
+/// within `side`² on its long side and re-encoded as a still WebP of at most `max_output` bytes.
+fn first_frame_fitted(
+    input: &[u8],
+    max_input: usize,
+    side: u32,
+    max_output: usize,
+) -> Result<Processed, ProcessError> {
+    if input.len() > max_input {
         return Err(ProcessError::ProfileTooBig);
     }
     let format = image::guess_format(input).map_err(|_| ProcessError::UnsupportedType)?;
@@ -362,10 +394,10 @@ pub fn link_thumb(input: &[u8]) -> Result<Processed, ProcessError> {
             img.into_rgba8()
         }
     };
-    let fitted = fit_long_side(&img, LINK_THUMB_SIDE);
+    let fitted = fit_long_side(&img, side);
     let (width, height) = fitted.dimensions();
     let webp = encode(&[(fitted, 0)])?;
-    if webp.len() > LINK_THUMB_MAX_OUTPUT {
+    if webp.len() > max_output {
         return Err(ProcessError::QuoteOutputTooBig);
     }
     Ok(Processed {

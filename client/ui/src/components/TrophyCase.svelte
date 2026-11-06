@@ -108,7 +108,7 @@
           {@const b = held.get(key)!}
           {@const d = badgeStore.def(key)}
           <li data-key={key}>
-            <BadgeIcon icon={iconOf(b, d)} rarity={b.rarity} tier={b.tier} tiers={d?.tiers.length ?? 1} first={b.first_earner} hidden={b.hidden} size="show" label={nameOf(b, d)} />
+            <BadgeIcon icon={iconOf(b, d)} art={d?.art} rarity={b.rarity} tier={b.tier} tiers={d?.tiers.length ?? 1} first={b.first_earner} hidden={b.hidden} size="show" label={nameOf(b, d)} />
             <button type="button" class="mini" aria-label={`Move ${nameOf(b, d)} left`} disabled={i === 0} onclick={() => move(i, -1)}>‹</button>
             <button type="button" class="mini" aria-label={`Move ${nameOf(b, d)} right`} disabled={i === chosen.length - 1} onclick={() => move(i, 1)}>›</button>
           </li>
@@ -138,7 +138,7 @@
       {@const p = progressOf(d, b.tier)}
       {@const at = chosen.indexOf(b.key)}
       <li class="tile" style:--ring-color={rarityVar(b.rarity)}>
-        <BadgeIcon icon={iconOf(b, d)} rarity={b.rarity} tier={b.tier} tiers={d?.tiers.length ?? 1} first={b.first_earner} hidden={b.hidden} isNew={fresh.includes(b.key)} label={nameOf(b, d)} />
+        <BadgeIcon icon={iconOf(b, d)} art={d?.art} rarity={b.rarity} tier={b.tier} tiers={d?.tiers.length ?? 1} first={b.first_earner} hidden={b.hidden} isNew={fresh.includes(b.key)} label={nameOf(b, d)} />
         <span class="nm">{nameOf(b, d)}</span>
         <span class="rar">{rarityLabel(b.rarity)}{#if b.count > 1}<span class="stack"> ×{b.count}</span>{/if}</span>
         {#if b.first_earner}<span class="first">First!</span>{/if}
@@ -156,7 +156,7 @@
     {#each locked as d (d.key)}
       {@const p = progressOf(d, 0)}
       <li class="tile locked" style:--ring-color={rarityVar(d.tiers[0]?.rarity ?? 'common')}>
-        <BadgeIcon icon={d.icon} rarity={d.tiers[0]?.rarity ?? 'common'} hidden={masked(d)} label={d.name} />
+        <BadgeIcon icon={d.icon} art={d.art} rarity={d.tiers[0]?.rarity ?? 'common'} hidden={masked(d)} label={d.name} />
         <span class="nm">{d.name}</span>
         <span class="rar">{rarityLabel(d.tiers[0]?.rarity ?? 'common')}</span>
         <span class="desc">{d.description || 'Hidden until earned'}</span>

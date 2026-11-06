@@ -239,6 +239,32 @@ reports:
 report id *flags:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server report {{id}} {{flags}}'
 
+# give a user a badge on the live server, e.g. a hand-given one (`just badge-award alex patient_zero`); no toast, it shows [NEW] on their next profile load
+badge-award $username $key:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "$username" =~ ^[A-Za-z0-9_.]{2,32}$ ]] || { echo "badge-award: username must be 2-32 characters of letters, digits, _ or ." >&2; exit 1; }
+    [[ "$key" =~ ^[a-z0-9_]{1,64}$ ]] || { echo "badge-award: a badge key is lowercase letters, digits and _" >&2; exit 1; }
+    ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server badge award '"$username"' '"$key"
+
+# give a badge its picture on the live server (#225): PATH is a local PNG, JPEG, GIF or WebP, copied up, stored in the media store and removed again (pictures never go in the repo); shows on the next catalogue load
+badge-art $key $path:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "$key" =~ ^[a-z0-9_]{1,64}$ ]] || { echo "badge-art: a badge key is lowercase letters, digits and _" >&2; exit 1; }
+    [[ -f "$path" && -r "$path" ]] || { echo "badge-art: no readable file at $path" >&2; exit 1; }
+    # /srv/pulse/data is the container's /data; the name is ours, so nothing typed reaches the remote shell but the key
+    name=".badge-art-$(date +%s)-$$.upload"
+    scp -q "$path" {{prod}}:/srv/pulse/data/"$name" || { ssh {{prod}} "rm -f /srv/pulse/data/$name"; exit 1; }
+    ssh {{prod}} 'cd /srv/pulse && trap "rm -f data/'"$name"'" EXIT && docker compose exec -T pulse-server pulse-app-server badge art '"$key"' /data/'"$name"
+
+# take a badge's picture away on the live server: it shows its emoji again
+badge-art-clear $key:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "$key" =~ ^[a-z0-9_]{1,64}$ ]] || { echo "badge-art-clear: a badge key is lowercase letters, digits and _" >&2; exit 1; }
+    ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server badge clear-art '"$key"
+
 # run a backup right now
 backup-now:
     ssh {{prod}} '/srv/pulse/backup.sh run'

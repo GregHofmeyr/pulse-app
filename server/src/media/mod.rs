@@ -38,6 +38,8 @@ pub enum MediaKind {
     LinkThumb,
     /// A soundboard sound: an Ogg Opus file on disk.
     Sound,
+    /// A badge's picture (#225), from the admin command: on disk, always a still.
+    BadgeArt,
 }
 
 /// Where a media row's bytes live.
@@ -67,6 +69,7 @@ impl MediaKind {
             Self::Banner => "banner",
             Self::LinkThumb => "link_thumb",
             Self::Sound => "sound",
+            Self::BadgeArt => "badge_art",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -79,6 +82,7 @@ impl MediaKind {
             "banner" => Some(Self::Banner),
             "link_thumb" => Some(Self::LinkThumb),
             "sound" => Some(Self::Sound),
+            "badge_art" => Some(Self::BadgeArt),
             _ => None,
         }
     }
@@ -91,7 +95,8 @@ impl MediaKind {
             | Self::Avatar
             | Self::Banner
             | Self::LinkThumb
-            | Self::Sound => Location::Disk,
+            | Self::Sound
+            | Self::BadgeArt => Location::Disk,
         }
     }
 }
@@ -152,6 +157,18 @@ pub async fn put(
     kind: MediaKind,
     meta: &Processed,
     by: UserId,
+) -> AppResult<MediaInfo> {
+    put_by(db, dir, kind, meta, Some(by)).await
+}
+
+/// [`put`] with no uploader for what no one uploads through the app (badge art, from the admin
+/// command).
+pub async fn put_by(
+    db: &SqlitePool,
+    dir: &Path,
+    kind: MediaKind,
+    meta: &Processed,
+    by: Option<UserId>,
 ) -> AppResult<MediaInfo> {
     let mut still_hash = None;
     if let Some(still) = &meta.still {
@@ -227,7 +244,7 @@ async fn put_one(
     meta: &Processed,
     frames: u32,
     still_hash: Option<&str>,
-    by: UserId,
+    by: Option<UserId>,
 ) -> AppResult<String> {
     let hash = hex::encode(Sha256::digest(bytes));
     let path = path_for(dir, &hash).expect("a SHA-256 hex digest is a valid hash");
@@ -248,7 +265,7 @@ async fn put_one(
     .bind(meta.height)
     .bind(frames)
     .bind(still_hash)
-    .bind(by.to_string())
+    .bind(by.map(|u| u.to_string()))
     .bind(crate::db::now())
     .execute(db)
     .await?;
@@ -352,6 +369,7 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
            AND hash NOT IN (SELECT banner_hash FROM users WHERE banner_hash IS NOT NULL)
            AND hash NOT IN (SELECT icon_hash FROM channels WHERE icon_hash IS NOT NULL)
            AND hash NOT IN (SELECT thumb_hash FROM link_embeds WHERE thumb_hash IS NOT NULL)
+           AND hash NOT IN (SELECT media_hash FROM badge_art)
            AND hash NOT IN (SELECT p.still_hash FROM media p
                             WHERE p.still_hash IS NOT NULL
                               AND (p.created_at > ?1
@@ -365,7 +383,8 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
                                    OR p.hash IN (SELECT banner_hash FROM users
                                                   WHERE banner_hash IS NOT NULL)
                                    OR p.hash IN (SELECT icon_hash FROM channels
-                                                  WHERE icon_hash IS NOT NULL)))
+                                                  WHERE icon_hash IS NOT NULL)
+                                   OR p.hash IN (SELECT media_hash FROM badge_art)))
          RETURNING hash",
     )
     .bind(&cutoff)

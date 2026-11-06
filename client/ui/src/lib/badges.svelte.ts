@@ -21,7 +21,8 @@ export const SHOWCASE_MAX = 5
 /** How long an unlock toast stays up. */
 export const TOAST_MS = 6_000
 
-export type BadgeToastItem = { id: number; name: string; icon: string; rarity: BadgeRarity; tier: number }
+/** `art`: the badge's picture (#225), from the catalogue when it's loaded; the emoji shows otherwise. */
+export type BadgeToastItem = { id: number; name: string; icon: string; art?: string | null; rarity: BadgeRarity; tier: number }
 
 class BadgeStore {
   /** The catalogue as `owner` may see it (hidden badges are masked per viewer). */
@@ -197,7 +198,7 @@ export function handleBadgeEvent(e: Event) {
   if (e.t !== 'BadgeEarned') return
   const me = app.state.me
   if (!me || e.d.user_id !== me.id) return
-  badgeStore.pushToast({ name: e.d.name, icon: e.d.icon, rarity: e.d.badge.rarity, tier: e.d.badge.tier })
+  badgeStore.pushToast({ name: e.d.name, icon: e.d.icon, art: badgeStore.def(e.d.badge.key)?.art, rarity: e.d.badge.rarity, tier: e.d.badge.tier })
   // Do Not Disturb (#45): the toast shows quietly
   if (!dndActive(app.state, new Date().toISOString())) playSound('badge')
   badgeStore.bump()
