@@ -89,6 +89,22 @@ export function nameProblem(name: string): string | null {
   return null
 }
 
+/** Combining marks stacked on one character that make a name Zalgo (#209, #210). */
+export const ZALGO_MARKS = 3
+
+/** Whether a name is Zalgo: some character carries ZALGO_MARKS or more combining marks (variation selectors,
+ *  an emoji's text or picture form, aren't counted). The server's `is_zalgo` (server/src/profiles/names.rs) is the
+ *  same rule: here it's the "Zalgo? Really?" hint while typing; there, on save, it earns the hidden badge. */
+export function isZalgo(name: string): boolean {
+  let run = 0
+  for (const c of name) {
+    if (/[\u{fe00}-\u{fe0f}\u{e0100}-\u{e01ef}]/u.test(c)) continue
+    run = /\p{M}/u.test(c) ? run + 1 : 0
+    if (run >= ZALGO_MARKS) return true
+  }
+  return false
+}
+
 /** Most characters in pronouns and a bio, and most line breaks in a bio (the server's limits). */
 export const PRONOUNS_MAX = 40
 export const BIO_MAX = 190

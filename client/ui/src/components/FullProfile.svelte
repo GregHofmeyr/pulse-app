@@ -129,7 +129,7 @@
             <ul class="archive">
               {#each serverArchive.entries as e, i (`${i}\t${e.changed_at}\t${e.changed_by}`)}
                 <li>
-                  {#if e.name}<strong>{e.name}</strong>{:else}<strong class="reset">Reset</strong>{/if}
+                  {#if e.name}<strong class="name-clip">{e.name}</strong>{:else}<strong class="reset">Reset</strong>{/if}
                   <span>by <Name userId={e.changed_by} {serverId} interactive={false} bg={boardBg} /></span>
                   <time datetime={e.changed_at}>{formatMemberSince(e.changed_at)}</time>
                 </li>
@@ -145,7 +145,7 @@
           <ul class="archive">
             {#each archive as e, i (`${i}\t${e.changed_at}\t${e.name}\t${e.server_id}\t${e.changed_by}`)}
               <li>
-                <strong>{e.name}</strong>
+                <strong class="name-clip">{e.name}</strong>
                 <span>{serverName(e.server_id)}</span>
                 <span>by <Name userId={e.changed_by} serverId={e.server_id} interactive={false} bg={boardBg} /></span>
                 <time datetime={e.changed_at}>{formatMemberSince(e.changed_at)}</time>

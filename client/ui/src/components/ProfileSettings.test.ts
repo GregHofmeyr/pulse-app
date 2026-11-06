@@ -342,6 +342,22 @@ describe('ProfileSettings', () => {
       expect(button('Save').disabled).toBe(false)
     })
 
+    it('a Zalgo name gets a soft "Zalgo? Really?" and still saves (#209)', async () => {
+      await open()
+      const zalgo = 'Z\u{335}\u{352}\u{316}alex'
+      type(nameBox(), zalgo)
+      const hint = document.querySelector('.name-field .zalgo')!
+      expect(hint.textContent).toBe('Zalgo? Really?')
+      expect(hint.getAttribute('role')).not.toBe('alert')
+      expect(document.querySelector('.name-field [role=alert]')).toBeNull()
+      expect(nameBox().getAttribute('aria-invalid')).toBe('false')
+      expect(button('Save').disabled).toBe(false)
+      click(button('Save'))
+      expect((calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request.display_name).toBe(zalgo)
+      type(nameBox(), 'alex')
+      expect(document.querySelector('.name-field .zalgo')).toBeNull()
+    })
+
     it('nudges once while your name is still your username, until dismissed', async () => {
       await open()
       expect(document.querySelector('.nudge')!.textContent).toContain('Pick how your name looks')

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { charCount, draftFrom, editsSince, isDirty, nameProblem, normalBio, previewCard, previewUser, toRequest, type Draft } from './profileDraft'
+import { ZALGO_MARKS, charCount, draftFrom, editsSince, isDirty, isZalgo, nameProblem, normalBio, previewCard, previewUser, toRequest, type Draft } from './profileDraft'
 import type { Profile } from './protocol/Profile'
 import type { User } from './protocol/User'
 
@@ -104,5 +104,31 @@ describe('profileDraft', () => {
     // the card: the theme as picked (a custom pair is accepted as is), empty text shows nothing
     const c = previewCard({ ...d, themeTop: '#FFFFFF', themeBottom: '#ffff00' })
     expect(c).toEqual({ banner_hash: 'b1', banner_still: null, theme_top: '#ffffff', theme_bottom: '#ffff00', pronouns: null, bio: null })
+  })
+})
+
+// A literal copy of ZALGO_CASES in server/src/profiles/names.rs (`is_zalgo`): change one side and both tests fail.
+const ZALGO_CASES: [string, boolean][] = [
+  ['alex', false],
+  ['\u{dc}n\u{ef}c\u{f8}d\u{e9} \u{f1}ame', false],
+  ['e\u{301}\u{302}', false],
+  ['Vie\u{323}\u{302}t', false],
+  ['a\u{301} b\u{302}\u{303}', false],
+  ['\u{2764}\u{fe0f}\u{fe0f}\u{fe0f}', false],
+  ['1\u{fe0f}\u{20e3}', false],
+  ['Z\u{335}\u{352}\u{316}', true],
+  ['Z\u{335}\u{fe0f}\u{352}\u{316}', true],
+  ['kim\u{300}\u{301}\u{302}\u{303}\u{304}\u{305}', true],
+  [' \u{300}\u{301}\u{302}', true],
+  ['\u{300}\u{301}\u{302}', true],
+]
+
+describe('isZalgo (#209)', () => {
+  it('is three marks on one character, the server rule', () => {
+    expect(ZALGO_MARKS).toBe(3)
+    for (const [name, want] of ZALGO_CASES) expect(isZalgo(name), JSON.stringify(name)).toBe(want)
+  })
+  it('a Zalgo name is still a name', () => {
+    expect(nameProblem('Z\u{335}\u{352}\u{316}a\u{334}\u{30d}\u{323}')).toBeNull()
   })
 })

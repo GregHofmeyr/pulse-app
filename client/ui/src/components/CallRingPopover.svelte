@@ -21,9 +21,9 @@
       <span class="text">
         {#if group}
           <strong>{conversationName(app.state, r.channel_id)}</strong>
-          <small>{caller} is calling</small>
+          <small><span class="name-clip">{caller}</span> is calling</small>
         {:else}
-          <strong>{caller}</strong>
+          <strong class="name-clip">{caller}</strong>
           <small>is calling you</small>
         {/if}
       </span>

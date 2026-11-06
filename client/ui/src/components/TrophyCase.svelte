@@ -139,7 +139,7 @@
       {@const at = chosen.indexOf(b.key)}
       <li class="tile" style:--ring-color={rarityVar(b.rarity)}>
         <BadgeIcon icon={iconOf(b, d)} art={d?.art} rarity={b.rarity} tier={b.tier} tiers={d?.tiers.length ?? 1} first={b.first_earner} hidden={b.hidden} isNew={fresh.includes(b.key)} label={nameOf(b, d)} />
-        <span class="nm">{nameOf(b, d)}</span>
+        <span class="nm name-clip">{nameOf(b, d)}</span>
         <span class="rar">{rarityLabel(b.rarity)}{#if b.count > 1}<span class="stack"> ×{b.count}</span>{/if}</span>
         {#if b.first_earner}<span class="first">First!</span>{/if}
         {#if d?.description}<span class="desc">{d.description}</span>{/if}
@@ -157,7 +157,7 @@
       {@const p = progressOf(d, 0)}
       <li class="tile locked" style:--ring-color={rarityVar(d.tiers[0]?.rarity ?? 'common')}>
         <BadgeIcon icon={d.icon} art={d.art} rarity={d.tiers[0]?.rarity ?? 'common'} hidden={masked(d)} label={d.name} />
-        <span class="nm">{d.name}</span>
+        <span class="nm name-clip">{d.name}</span>
         <span class="rar">{rarityLabel(d.tiers[0]?.rarity ?? 'common')}</span>
         <span class="desc">{d.description || 'Hidden until earned'}</span>
         {#if p}<progress max={p.max} value={p.value} aria-label={p.label}></progress><span class="prog">{p.text}</span>{/if}

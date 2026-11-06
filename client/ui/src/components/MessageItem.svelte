@@ -341,7 +341,7 @@
   .content :global(img.emoji.big) { width: 48px; height: 48px; }
   .content :global(.emoji-gone) { color: var(--text-3); background: var(--bg-3); border-radius: 4px; padding: 0 4px; font-size: .9em; }
   .content :global(.emoji-gone.big) { font-size: 1.25em; }
-  .content :global(.mention) { color: var(--accent-text); background: var(--accent-soft); border-radius: 4px; padding: 0 3px; font-weight: 600; font-size: calc(1em * var(--name-scale, 1)); line-height: calc(1.5em / var(--name-scale, 1)); vertical-align: baseline; cursor: pointer; }
+  .content :global(.mention) { color: var(--accent-text); background: var(--accent-soft); border-radius: 4px; padding: 0 3px; font-weight: 600; font-size: calc(1em * var(--name-scale, 1)); line-height: calc(1.5em / var(--name-scale, 1)); vertical-align: baseline; cursor: pointer; clip-path: var(--name-clip); }
   /* a gradient name clips its background to the text: the pill background is on this wrapper instead */
   /* a thin gap between the @ and the name (#137) */
   .content :global(.mention .at) { margin-right: .15em; }

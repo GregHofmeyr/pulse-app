@@ -149,7 +149,7 @@
                 </div>
                 <div class="by">
                   <!-- a member (or a name linked to one) is styled and opens their card; a plain name stays text -->
-                  <span class="speaker">{#if who.userId}<Name userId={who.userId} serverId={sid} text={who.name} />{:else}{who.name}{/if}</span>
+                  <span class="speaker">{#if who.userId}<Name userId={who.userId} serverId={sid} text={who.name} />{:else}<span class="name-clip">{who.name}</span>{/if}</span>
                   {#if line.awards > 0}
                     <span class="trophy" aria-hidden="true">🏆 {line.awards}</span>
                     <VoterStack userIds={line.awarders} {nameOf} />

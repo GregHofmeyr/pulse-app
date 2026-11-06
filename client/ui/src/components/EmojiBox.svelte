@@ -338,5 +338,5 @@
   .box :global(img.emoji) { width: 22px; height: 22px; vertical-align: -5px; margin: 0 1px; object-fit: contain; }
   /* a mention: one piece, showing the name that applies (its text is the username) */
   .box :global(.mention-chip .at) { margin-right: .15em; }
-  .box :global(.mention-chip) { color: var(--accent-text); background: var(--accent-soft); border-radius: 4px; padding: 0 3px; font-weight: 600; white-space: nowrap; user-select: all; }
+  .box :global(.mention-chip) { color: var(--accent-text); background: var(--accent-soft); border-radius: 4px; padding: 0 3px; font-weight: 600; white-space: nowrap; user-select: all; clip-path: var(--name-clip); }
 </style>

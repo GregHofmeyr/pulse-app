@@ -7,7 +7,7 @@
   import { app } from '../lib/store.svelte'
   import { baseName, serverNick, userOf } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
-  import { nameProblem } from '../lib/profileDraft'
+  import { isZalgo, nameProblem } from '../lib/profileDraft'
   import type { RenameTarget } from '../lib/profileCard.svelte'
 
   let { target, onClose }: { target: RenameTarget; onClose: () => void } = $props()
@@ -64,7 +64,7 @@
     <form onsubmit={(e) => { e.preventDefault(); void save(value) }}>
       <!-- svelte-ignore a11y_autofocus -->
       <input class="input" aria-label="Nickname" aria-invalid={!!problem} bind:value placeholder={without} autofocus disabled={busy} />
-      {#if problem}<p class="err" role="alert">{problem}</p>{:else if error}<p class="err" role="alert">{error}</p>{/if}
+      {#if problem}<p class="err" role="alert">{problem}</p>{:else if error}<p class="err" role="alert">{error}</p>{:else if isZalgo(value)}<p class="zalgo" role="status">Zalgo? Really?</p>{/if}
       <div class="actions">
         {#if current}<button type="button" class="btn btn-lg btn-secondary reset" disabled={busy} onclick={() => save(null)}>{target.kind === 'private' ? 'Clear' : 'Reset'}</button>{/if}
         <button type="button" class="btn btn-lg btn-secondary" disabled={busy} onclick={cancel}>Cancel</button>
@@ -81,6 +81,8 @@
   form { display: flex; flex-direction: column; gap: 12px; }
   p { margin: 0; font-size: 14px; color: var(--text-2); overflow-wrap: anywhere; }
   .err { font-size: 13px; color: var(--danger-text); }
+  /* the Zalgo easter egg (#209): where an error would be, but soft; the name still saves */
+  .zalgo { font-size: 13px; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
   .reset { margin-right: auto; }
 </style>

@@ -13,7 +13,7 @@
   import { app, loadProfile } from '../lib/store.svelte'
   import { setProfile } from '../lib/state'
   import { api, errorText } from '../lib/tauri'
-  import { BIO_LINE_BREAKS_MAX, BIO_MAX, charCount, draftFrom, editsSince, isDirty, nameProblem, normalBio, previewCard, previewUser, PRONOUNS_MAX, toRequest, type Draft } from '../lib/profileDraft'
+  import { BIO_LINE_BREAKS_MAX, BIO_MAX, charCount, draftFrom, editsSince, isDirty, isZalgo, nameProblem, normalBio, previewCard, previewUser, PRONOUNS_MAX, toRequest, type Draft } from '../lib/profileDraft'
   import { radioKeys } from '../lib/actions'
   import { presetFor, THEME_PRESETS } from '../lib/cardTheme'
   import { NAME_FONTS } from '../lib/nameFonts'
@@ -296,7 +296,8 @@
           <span class="settings-label">Display name</span>
           <!-- counted in characters, as the server counts -->
           <input class="input text" type="text" aria-label="Display name" aria-invalid={!!nameError} bind:value={draft.displayName} />
-          {#if nameError}<p class="error" role="alert">{nameError}</p>{:else}<small>How your name shows everywhere. Not unique: your @{me.username} tells you apart.</small>{/if}
+          <!-- the Zalgo easter egg (#209): a soft nudge, not an error; it still saves -->
+          {#if nameError}<p class="error" role="alert">{nameError}</p>{:else if isZalgo(draft.displayName)}<small class="zalgo" role="status">Zalgo? Really?</small>{:else}<small>How your name shows everywhere. Not unique: your @{me.username} tells you apart.</small>{/if}
         </div>
 
         {@render picture('avatar', 'Avatar', draft.avatarHash)}

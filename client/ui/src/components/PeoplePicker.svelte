@@ -63,9 +63,9 @@
     {#if hint}<p class="hint">{hint}</p>{/if}
     {#if fixed.length || picked.length}
       <div class="chips">
-        {#each fixed as id (id)}<span class="chip"><Avatar {id} name={nameOf(id)} size={16} />{nameOf(id)}</span>{/each}
+        {#each fixed as id (id)}<span class="chip"><Avatar {id} name={nameOf(id)} size={16} /><span class="name-clip">{nameOf(id)}</span></span>{/each}
         {#each picked as id (id)}
-          <button class="chip" aria-label="Remove {nameOf(id)}" onclick={() => toggle(id)}><Avatar {id} name={nameOf(id)} size={16} />{nameOf(id)} <Icon name="x" size={11} /></button>
+          <button class="chip" aria-label="Remove {nameOf(id)}" onclick={() => toggle(id)}><Avatar {id} name={nameOf(id)} size={16} /><span class="name-clip">{nameOf(id)}</span> <Icon name="x" size={11} /></button>
         {/each}
       </div>
     {/if}

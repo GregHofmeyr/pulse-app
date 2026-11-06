@@ -591,7 +591,7 @@
   {:else if farUp}<button class="jump" onclick={jump}>Jump to present</button>{/if}
   {#if jumpNotice}<p class="jump-notice" role="status">{jumpNotice}</p>{/if}
   <div class="typing" aria-live="polite">
-    {#if typers.length}<strong>{typers.join(', ')}</strong> {typers.length > 1 ? 'are' : 'is'} typing…{/if}
+    {#if typers.length}<strong class="name-clip">{typers.join(', ')}</strong> {typers.length > 1 ? 'are' : 'is'} typing…{/if}
   </div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if isQuotes}

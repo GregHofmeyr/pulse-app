@@ -67,7 +67,7 @@
         <!-- no label: the text beside it says it -->
         <BadgeIcon icon={t.icon} art={t.art} rarity={t.rarity} size="show" />
         <span class="text">
-          <span><strong>Badge unlocked:</strong> {t.name}</span>
+          <span><strong>Badge unlocked:</strong> <span class="name-clip">{t.name}</span></span>
           <small>{rarityLabel(t.rarity)}{t.tier > 1 ? ` · tier ${t.tier}` : ''}</small>
         </span>
       </button>

@@ -45,7 +45,7 @@
     <div class="row hover-row" class:off={g.key === 'offline'} data-section={g.key} role="presentation" onpointerenter={() => (hovered = m.user.id)} onpointerleave={() => { if (hovered === m.user.id) hovered = null }}
       oncontextmenu={(e) => { e.preventDefault(); openMenu(m.user.id, e, e.currentTarget) }} onkeydown={(e) => rowKey(m.user.id, e)}>
       <Avatar id={m.user.id} {name} size={32} presence={presenceOf(app.state, m.user.id, clock.nowIso)} interactive {serverId} hovered={() => hovered === m.user.id} />
-      <span class="who"><Name userId={m.user.id} {serverId} text={name} surface="side" />{#if name !== base}<small>{base}</small>{/if}</span>
+      <span class="who"><Name userId={m.user.id} {serverId} text={name} surface="side" />{#if name !== base}<small class="name-clip">{base}</small>{/if}</span>
       {#if onMessage && m.user.id !== app.state.me?.id}
         <button class="msg" aria-label="Message {name}" data-tip="Message" onclick={() => onMessage(m.user.id)}><Icon name="message" size={16} /></button>
       {/if}

@@ -55,6 +55,19 @@ describe('NicknameDialog (#48)', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it('a Zalgo nickname gets a soft "Zalgo? Really?" and still saves (#209)', async () => {
+    show({ kind: 'private', userId: 'U2' })
+    type('sam\u{300}\u{301}\u{302}')
+    const hint = document.querySelector('.zalgo')!
+    expect(hint.textContent).toBe('Zalgo? Really?')
+    expect(document.querySelector('[role=alert]')).toBeNull()
+    expect(button('Save')!.disabled).toBe(false)
+    await submit()
+    expect(calls('set_private_nickname')).toEqual([['set_private_nickname', { userId: 'U2', nickname: 'sam\u{300}\u{301}\u{302}' }]])
+    type('sam')
+    expect(document.querySelector('.zalgo')).toBeNull()
+  })
+
   it('Reset (or a blank Save) removes it', async () => {
     show({ kind: 'server', userId: 'U2', serverId: 'S1' }, 'Big Dog')
     expect(input().value).toBe('Big Dog')
