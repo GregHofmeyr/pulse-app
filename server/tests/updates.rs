@@ -24,7 +24,13 @@ async fn app_with_updates() -> (TestApp, UpdatesDir) {
     std::fs::create_dir(&updates).unwrap();
     let mut cfg = test_config();
     cfg.updates_dir = updates.clone();
-    (spawn_with(cfg).await, UpdatesDir { _root: root, updates })
+    (
+        spawn_with(cfg).await,
+        UpdatesDir {
+            _root: root,
+            updates,
+        },
+    )
 }
 
 async fn get(app: &TestApp, path: &str, token: Option<&str>) -> reqwest::Response {

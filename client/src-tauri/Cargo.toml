@@ -67,11 +67,6 @@ image = { version = "0.25", default-features = false, features = ["png", "webp"]
 # App updates (updater.rs, #82): comparing the offered version with ours (the updater's own semver).
 semver = "1"
 
-# App updates (updater.rs, #82), driven from Rust only (no webview permission is granted). 2.14.1 needs tauri ^2.12
-# (the lockfile's 2.12.2). Without the default `zip` (macOS/Linux bundles) and `system-proxy`: Windows NSIS only.
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["rustls-tls"] }
-
 [features]
 # Strong uses DeepFilterNet3's low-latency model (36 MB) instead of the normal one (8 MB).
 dfn-ll = ["deep_filter/default-model-ll"]
@@ -145,3 +140,9 @@ windows-core = "0.62"
 # Stream audio: WASAPI process loopback (stream/loopback.rs). 0.26.0 depends on windows/windows-core
 # ^0.62.2, the versions in Cargo.lock.
 wasapi = "0.26"
+# App updates (updater.rs, #82), driven from Rust only (no webview permission is granted); only the Windows app
+# updates itself. 2.14.1 needs tauri ^2.12 (the lockfile's 2.12.2). Without the default `zip` (macOS/Linux bundles)
+# and `system-proxy`. TLS through Windows' own (native-tls = SChannel): its `rustls-tls` turns on reqwest 0.13's
+# `rustls-no-provider` for every reqwest 0.13 in the build (tauri's, livekit-api's), whose clients then panic without
+# a process-wide crypto provider.
+tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["native-tls"] }

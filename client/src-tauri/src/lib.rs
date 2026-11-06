@@ -124,10 +124,13 @@ pub fn run() {
             bring_to_front(app)
         }));
     }
+    // App updates (updater.rs, #82), Windows only: driven from Rust, so no webview permission is granted.
+    #[cfg(windows)]
+    {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
     builder
         .plugin(tauri_plugin_dialog::init())
-        // App updates (updater.rs, #82): driven from Rust only, so no webview permission is granted.
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             use tauri::Manager;
             let profile = std::env::var("PULSE_PROFILE").ok();

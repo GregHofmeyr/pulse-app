@@ -101,11 +101,13 @@ pub async fn wait_launch(rx: &mut watch::Receiver<LaunchCheck>, wait: Duration) 
 pub struct Updates {
     launch: watch::Sender<LaunchCheck>,
     /// The newest update a check found, ready to install.
+    #[cfg(windows)]
     found: Mutex<Option<tauri_plugin_updater::Update>>,
     installing: AtomicBool,
     /// The login whose first Ready was checked already (its token): one check per login.
     checked_login: Mutex<Option<String>>,
     /// Runs just before the installer takes over and the process ends (Windows): crash marker, log flush.
+    #[cfg_attr(not(windows), allow(dead_code))]
     before_exit: Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -113,6 +115,7 @@ impl Updates {
     pub fn new(before_exit: Arc<dyn Fn() + Send + Sync>) -> Self {
         Self {
             launch: watch::channel(LaunchCheck::Pending).0,
+            #[cfg(windows)]
             found: Mutex::new(None),
             installing: AtomicBool::new(false),
             checked_login: Mutex::new(None),
@@ -130,19 +133,28 @@ impl Updates {
         if !updates_enabled() {
             return Ok(None);
         }
-        let found = check_server(app, server, token, self.before_exit.clone()).await?;
-        let offer = found.as_ref().map(|u| Offer {
-            version: u.version.clone(),
-        });
-        if let Some(u) = found {
-            tracing::info!(version = %u.version, "update: a newer version is available");
-            *self.found.lock().unwrap() = Some(u);
+        #[cfg(windows)]
+        {
+            let found = check_server(app, server, token, self.before_exit.clone()).await?;
+            let offer = found.as_ref().map(|u| Offer {
+                version: u.version.clone(),
+            });
+            if let Some(u) = found {
+                tracing::info!(version = %u.version, "update: a newer version is available");
+                *self.found.lock().unwrap() = Some(u);
+            }
+            Ok(offer)
         }
-        Ok(offer)
+        #[cfg(not(windows))]
+        {
+            let _ = (app, server, token);
+            Ok(None)
+        }
     }
 }
 
 /// One check against `server`: `Ok(None)` = nothing newer (or no manifest, or not signed in there any more).
+#[cfg(windows)]
 async fn check_server(
     app: &AppHandle,
     server: &str,
@@ -303,19 +315,26 @@ pub async fn update_install(app: AppHandle, restart: bool) -> Result<(), String>
         let in_call = voice.current_channel().await.is_some() || voice.rejoining().is_some();
         may_restart(in_call).map_err(|e| e.to_string())?;
     }
-    let updates = app.state::<Updates>();
-    let Some(update) = updates.found.lock().unwrap().clone() else {
-        return Err("there's no update to install".into());
-    };
-    if updates.installing.swap(true, Ordering::SeqCst) {
-        return Err("already updating".into());
+    #[cfg(windows)]
+    {
+        let updates = app.state::<Updates>();
+        let Some(update) = updates.found.lock().unwrap().clone() else {
+            return Err("there's no update to install".into());
+        };
+        if updates.installing.swap(true, Ordering::SeqCst) {
+            return Err("already updating".into());
+        }
+        tracing::info!(version = %update.version, restart, "update: downloading");
+        let result = download_and_install(&app, &update).await;
+        updates.installing.store(false, Ordering::SeqCst);
+        result.inspect_err(|e| tracing::warn!(error = %e, version = %update.version, "update: install failed; staying on this version"))
     }
-    tracing::info!(version = %update.version, restart, "update: downloading");
-    let result = download_and_install(&app, &update).await;
-    updates.installing.store(false, Ordering::SeqCst);
-    result.inspect_err(|e| tracing::warn!(error = %e, version = %update.version, "update: install failed; staying on this version"))
+    // Only the Windows app updates itself (its checks never offer anything elsewhere).
+    #[cfg(not(windows))]
+    Err("there's no update to install".into())
 }
 
+#[cfg(windows)]
 async fn download_and_install(
     app: &AppHandle,
     update: &tauri_plugin_updater::Update,
@@ -344,6 +363,7 @@ async fn download_and_install(
         .install(bytes)
         .map_err(|e| format!("the install failed: {e}"))
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
