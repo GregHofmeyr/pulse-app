@@ -270,3 +270,189 @@ async fn short_ids_are_plain_letters_and_digits() {
         );
     }
 }
+
+// #218: feature requests are their own kind, with no log or diagnostics attached.
+#[tokio::test]
+async fn an_idea_is_stored_as_its_own_kind_and_listed_as_one() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let body = json!({ "kind": "idea", "text": "Let me pin a clip\nto the top of the wall", "meta": {}, "log": "" });
+    let r = post_json(&app, &token, "/reports", body).await;
+    assert_eq!(r.status(), 200);
+    let id = r.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    file(&app, &token, "bug", "voice cut out", json!({})).await;
+    let list = store::list(&app.db, 20).await.unwrap();
+    let idea = list.iter().find(|l| l.id == id).unwrap();
+    assert_eq!(idea.kind, "idea");
+    assert_eq!(idea.headline, "Let me pin a clip");
+    let full = store::find(&app.db, &store::short(&id)).await.unwrap();
+    assert_eq!((full.log.as_str(), full.meta.clone()), ("", json!({})));
+}
+
+#[tokio::test]
+async fn an_idea_needs_text_and_carries_no_log_or_diagnostics() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let idea = |text: &str, meta: serde_json::Value, log: &str| json!({ "kind": "idea", "text": text, "meta": meta, "log": log });
+    for (body, why) in [
+        (idea("   ", json!({}), ""), "empty text"),
+        (idea("x", json!({}), "a log line\n"), "a log"),
+        (idea("x", json!({ "os": "Windows 11" }), ""), "diagnostics"),
+    ] {
+        assert_eq!(
+            post_json(&app, &token, "/reports", body).await.status(),
+            400,
+            "{why}"
+        );
+    }
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bug_reports")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+const OLD_USER: &str = "01J0000000000000000000USER";
+const OLD_TS: &str = "2026-11-01T00:00:00.000Z";
+
+async fn insert_report(pool: &sqlx::SqlitePool, id: &str, kind: &str) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO bug_reports (id, user_id, created_at, kind, text, meta, log) VALUES (?, ?, ?, ?, 't', '{\"os\":\"x\"}', 'log\n')",
+    )
+    .bind(id)
+    .bind(OLD_USER)
+    .bind(OLD_TS)
+    .bind(kind)
+    .execute(pool)
+    .await
+    .map(|_| ())
+}
+
+#[tokio::test]
+async fn migration_0027_keeps_every_report_and_allows_ideas() {
+    use sqlx::sqlite::SqliteConnectOptions;
+    use std::borrow::Cow;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    let opts = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .foreign_keys(false);
+    let pool = sqlx::SqlitePool::connect_with(opts).await.unwrap();
+
+    // A database as the previous release left it: migrations up to 0026 only.
+    let mut migrator = sqlx::migrate::Migrator::new(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
+    )
+    .await
+    .unwrap();
+    assert!(
+        migrator.migrations.iter().any(|m| m.version == 27),
+        "0027 exists"
+    );
+    migrator.migrations = Cow::Owned(
+        migrator
+            .migrations
+            .iter()
+            .filter(|m| m.version <= 26)
+            .cloned()
+            .collect(),
+    );
+    migrator.run(&pool).await.unwrap();
+
+    sqlx::query(&format!(
+        "INSERT INTO users (id, username, password_hash, created_at) VALUES ('{OLD_USER}', 'alex', 'x', '{OLD_TS}')"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (id, kind) in [
+        ("01J00000000000000000BUG001", "bug"),
+        ("01J00000000000000000CRASH1", "crash"),
+        ("01J00000000000000000EXIT01", "unexpected-exit"),
+    ] {
+        insert_report(&pool, id, kind).await.unwrap();
+    }
+    sqlx::query("UPDATE bug_reports SET seen_at = ? WHERE kind = 'bug'")
+        .bind(OLD_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        insert_report(&pool, "01J0000000000000000IDEA00", "idea")
+            .await
+            .is_err(),
+        "the old CHECK refuses an idea"
+    );
+    pool.close().await;
+
+    // Upgrade the way the server does at startup.
+    let pool = pulse_server::db::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    type Row = (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+    );
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT id, user_id, created_at, kind, meta, log, seen_at FROM bug_reports ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.3.as_str()).collect::<Vec<_>>(),
+        ["bug", "crash", "unexpected-exit"]
+    );
+    assert!(
+        rows.iter()
+            .all(|r| r.1 == OLD_USER && r.2 == OLD_TS && r.4 == "{\"os\":\"x\"}" && r.5 == "log\n")
+    );
+    assert_eq!(rows[0].6.as_deref(), Some(OLD_TS), "seen survives");
+    insert_report(&pool, "01J0000000000000000IDEA00", "idea")
+        .await
+        .unwrap();
+    assert!(
+        insert_report(&pool, "01J0000000000000000NOPE00", "nope")
+            .await
+            .is_err(),
+        "unknown kinds are still refused"
+    );
+    let idx: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'bug_reports_created'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(idx, 1, "the listing index is back");
+    let ok: String = sqlx::query_scalar("PRAGMA integrity_check")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ok, "ok");
+    let broken: Vec<(String, Option<i64>, String, i64)> =
+        sqlx::query_as("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(broken.is_empty(), "{broken:?}");
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(OLD_USER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bug_reports")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "reports still go with their user");
+}

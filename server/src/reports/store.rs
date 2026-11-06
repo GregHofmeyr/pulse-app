@@ -14,6 +14,15 @@ pub fn validate(req: &CreateReportRequest) -> AppResult<()> {
     if req.kind == ReportKind::Bug && req.text.trim().is_empty() {
         return bad("say what happened");
     }
+    if req.kind == ReportKind::Idea {
+        if req.text.trim().is_empty() {
+            return bad("say what the idea is");
+        }
+        // #218: an idea is only what the person wrote
+        if !req.log.is_empty() || req.meta.as_object().is_none_or(|m| !m.is_empty()) {
+            return bad("an idea carries no log or diagnostics");
+        }
+    }
     if req.text.chars().count() > MAX_TEXT_CHARS {
         return bad("report text is too long (4000 characters max)");
     }

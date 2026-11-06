@@ -51,6 +51,7 @@ pub fn file_text(kind: ReportKind, text: &str, meta: &serde_json::Value, log: &s
         ReportKind::Bug => "Pulse bug report",
         ReportKind::Crash => "Pulse crash report",
         ReportKind::UnexpectedExit => "Pulse unexpected-exit report",
+        ReportKind::Idea => "Pulse idea",
     };
     format!(
         "{title}\n\n{}\n\n{}\n\n----- app log -----\n{log}",
@@ -201,6 +202,35 @@ pub async fn submit_report(app: AppHandle, text: String) -> Result<String, ApiEr
     Ok(short(&r.id))
 }
 
+/// An idea (#218): only what the person wrote. No log, no diagnostics.
+pub fn idea_request(text: String) -> CreateReportRequest {
+    CreateReportRequest {
+        kind: ReportKind::Idea,
+        text,
+        meta: serde_json::json!({}),
+        log: String::new(),
+    }
+}
+
+#[tauri::command]
+pub async fn submit_idea(app: AppHandle, text: String) -> Result<String, ApiError> {
+    let (api, token) = app.state::<Core>().current()?;
+    let req = idea_request(text);
+    let r = match send_with_retry(|| api.create_report(&token, &req), Duration::from_secs(2)).await
+    {
+        // as for a report: say so and keep the dialog (and the words) open; an idea has no file to save to
+        Err(ApiError::Unauthorized) => {
+            return Err(ApiError::Rejected(
+                "Your session has expired, so this can't be sent. Copy your idea, then log in again."
+                    .into(),
+            ));
+        }
+        r => app.state::<Core>().check(&app, r)?,
+    };
+    tracing::info!(id = %r.id, "idea sent");
+    Ok(short(&r.id))
+}
+
 #[tauri::command]
 pub async fn save_report(
     app: AppHandle,
@@ -348,6 +378,17 @@ mod tests {
         assert!(t.contains("voice cut out"));
         assert!(t.contains("\"os\": \"Windows 11\""));
         assert!(t.ends_with("----- app log -----\nlog line\n"), "{t}");
+    }
+
+    #[test]
+    fn an_idea_carries_only_its_text() {
+        let r = idea_request("pin clips to the wall".into());
+        assert_eq!(r.kind, ReportKind::Idea);
+        assert_eq!(r.text, "pin clips to the wall");
+        assert_eq!(r.meta, serde_json::json!({}));
+        assert!(r.log.is_empty());
+        let wire = serde_json::to_value(&r).unwrap();
+        assert_eq!(wire["kind"], "idea");
     }
 
     #[test]

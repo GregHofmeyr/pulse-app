@@ -567,7 +567,7 @@
     <!-- #155: icon only; the app-wide tooltip reads its aria-label -->
     <!-- #207: what's new; a dot until this release's notes are opened once on this device -->
     <button class="win notes" aria-label="Patch notes" onclick={openPatchNotes}><Icon name="scroll" size={16} />{#if patchNotesSeen.id !== patchNotes.id}<span class="new-dot" aria-hidden="true"></span>{/if}</button>
-    <button class="win report" aria-label="Report a bug" onclick={() => (reportOpen = true)}><Icon name="bug" size={16} /></button>
+    <button class="win report" aria-label="Report a bug or suggest an idea" onclick={() => (reportOpen = true)}><Icon name="bug" size={16} /></button>
     <button class="win" aria-label="Minimise" onclick={() => win.minimize()}><Icon name="min" size={14} /></button>
     <button class="win" aria-label="Maximise" onclick={() => win.toggleMaximize()}><Icon name="square" size={14} /></button>
     <button class="win" aria-label="Close" onclick={() => win.close()}><Icon name="x" size={14} /></button>

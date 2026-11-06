@@ -232,6 +232,8 @@ export const api = {
   listReactors: (messageId: string, emoji: string) => invoke<string[]>('list_reactors', { messageId, emoji }),
   /** Returns the report's short id. */
   submitReport: (text: string) => invoke<string>('submit_report', { text }),
+  /** An idea (#218): only the text, no log or diagnostics. Returns its short id. */
+  submitIdea: (text: string) => invoke<string>('submit_idea', { text }),
   /** Writes a .txt to Downloads; returns its path. `serverUrl` when not signed in. */
   saveReport: (text: string, serverUrl: string | null) => invoke<string>('save_report', { text, serverUrl }),
   /** "Send" on last session's held crash report; returns its short id. Fails (and keeps it) if not sent. */

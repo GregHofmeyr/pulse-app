@@ -6,12 +6,13 @@ export type ReportState = { step: ReportStep; message: string }
 /** The Rust side already retried once on a network blip; a failure here is final. */
 export async function submitFlow(
   text: string,
-  deps: { submit: (t: string) => Promise<string>; onStep: (s: ReportState) => void },
+  /** `noun`: what the thanks calls it ("Report", or "Idea" for #218). */
+  deps: { submit: (t: string) => Promise<string>; onStep: (s: ReportState) => void; noun?: string },
 ): Promise<ReportState> {
   deps.onStep({ step: 'sending', message: '' })
   try {
     const short = await deps.submit(text)
-    return { step: 'sent', message: `Thanks! Report #${short} sent.` }
+    return { step: 'sent', message: `Thanks! ${deps.noun ?? 'Report'} #${short} sent.` }
   } catch (e) {
     const msg = errorText(e)
     const unreachable = msg.startsWith("can't reach the server") || msg.startsWith('the server is having trouble')

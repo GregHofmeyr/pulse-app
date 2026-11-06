@@ -231,7 +231,7 @@ revoke-sessions $username:
     [[ "$username" =~ ^[A-Za-z0-9_.]{2,32}$ ]] || { echo "revoke-sessions: username must be 2-32 characters of letters, digits, _ or ." >&2; exit 1; }
     ssh {{prod}} 'cd /srv/pulse && docker compose run --rm --no-deps -T pulse-server revoke-sessions '"$username"
 
-# newest bug/crash reports on the live server (`new` = not looked at yet)
+# newest bug/crash reports and ideas on the live server (`new` = not looked at yet)
 reports:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server reports'
 

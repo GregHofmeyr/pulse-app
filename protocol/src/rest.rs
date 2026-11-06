@@ -1012,6 +1012,8 @@ pub enum ReportKind {
     Bug,
     Crash,
     UnexpectedExit,
+    /// A feature request (#218): the person's words only, no log or diagnostics.
+    Idea,
 }
 
 impl ReportKind {
@@ -1020,6 +1022,7 @@ impl ReportKind {
             Self::Bug => "bug",
             Self::Crash => "crash",
             Self::UnexpectedExit => "unexpected-exit",
+            Self::Idea => "idea",
         }
     }
 }

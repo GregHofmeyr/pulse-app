@@ -9,6 +9,11 @@ describe('report flow', () => {
     expect(s).toEqual({ step: 'sent', message: 'Thanks! Report #TVWXYZ sent.' })
   })
 
+  it('an idea is thanked as one (#218)', async () => {
+    const s = await submitFlow('pin clips', { submit: async () => 'TVWXYZ', onStep: () => {}, noun: 'Idea' })
+    expect(s).toEqual({ step: 'sent', message: 'Thanks! Idea #TVWXYZ sent.' })
+  })
+
   it('unreachable: offers saving', async () => {
     const s = await submitFlow('x', { submit: async () => { throw "can't reach the server: dns error" }, onStep: () => {} })
     expect(s).toEqual({ step: 'failed', message: "Couldn't reach the server." })

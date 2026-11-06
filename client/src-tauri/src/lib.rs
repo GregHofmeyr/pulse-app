@@ -400,6 +400,7 @@ pub fn run() {
             keybinds::set_keybinds_enabled,
             keybinds::pause_keybinds,
             reports::submit_report,
+            reports::submit_idea,
             reports::save_report,
             reports::crash::send_held_report,
             reports::crash::discard_held_report,

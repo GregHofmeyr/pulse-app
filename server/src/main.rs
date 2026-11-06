@@ -31,7 +31,7 @@ enum Cmd {
     ResetPassword { username: String },
     /// Sign a user out everywhere: delete all of their sessions
     RevokeSessions { username: String },
-    /// List the newest bug/crash reports
+    /// List the newest bug/crash reports and ideas
     Reports {
         #[arg(long, default_value_t = 20)]
         limit: i64,

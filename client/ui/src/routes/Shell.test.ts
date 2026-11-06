@@ -267,14 +267,14 @@ describe('account menu', () => {
     expect(invoke.mock.calls.some(([cmd]) => cmd === 'logout')).toBe(true)
   })
 
-  // #155: Report a bug is a bug icon in the title bar, just left of Minimise, not an account menu item.
+  // #155: Report a bug is a bug icon in the title bar, just left of Minimise, not an account menu item. #218: it takes ideas too.
   it('Report a bug is the title bar icon left of Minimise, and it opens the report dialog', () => {
     const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
     app.state = { ...emptyState(), me }
     cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
     flushSync()
     const bar = [...document.querySelectorAll<HTMLButtonElement>('header > button')]
-    const bug = bar.find((b) => b.getAttribute('aria-label') === 'Report a bug')!
+    const bug = bar.find((b) => b.getAttribute('aria-label') === 'Report a bug or suggest an idea')!
     expect(bug).toBeDefined()
     expect(bug.textContent?.trim()).toBe('') // icon only: the tooltip comes from its aria-label
     expect(bug.querySelector('svg')).not.toBeNull()
@@ -305,7 +305,7 @@ describe('account menu', () => {
       expect(b).toBeDefined()
       expect(b.textContent?.trim()).toBe('') // icon only: the tooltip comes from its aria-label
       expect(b.querySelector('svg')).not.toBeNull()
-      expect(bar[bar.indexOf(b) + 1].getAttribute('aria-label')).toBe('Report a bug')
+      expect(bar[bar.indexOf(b) + 1].getAttribute('aria-label')).toBe('Report a bug or suggest an idea')
       b.click()
       flushSync()
       expect(document.querySelector('[role=dialog][aria-label="Patch notes"]')).not.toBeNull()
