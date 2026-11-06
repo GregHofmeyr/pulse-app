@@ -35,6 +35,7 @@
     speaking,
     onSelect,
     onJoinVoice,
+    onOpenChat = () => {},
     onMessage,
     onVoiceSettings,
   }: {
@@ -44,6 +45,8 @@
     speaking: Set<string>
     onSelect: (id: string) => void
     onJoinVoice: (id: string) => void
+    /** A voice channel's chat icon (#226): its stage with the chat open. */
+    onOpenChat?: (id: string) => void
     onMessage: (userId: string) => void
     onVoiceSettings: () => void
   } = $props()
@@ -409,7 +412,7 @@
    *  you're in. The top area has no heading, so it never collapses. */
   const shown = (c: Channel, key: string | null) =>
     !key || !isCollapsed(key) || c.id === activeChannelId ||
-    (c.kind === 'voice' ? c.id === voiceChannelId : (app.state.reads[c.id]?.unread ?? 0) > 0 && !isMuted(app.state, c, clock.nowIso))
+    (c.kind === 'voice' && c.id === voiceChannelId) || ((app.state.reads[c.id]?.unread ?? 0) > 0 && !isMuted(app.state, c, clock.nowIso))
 </script>
 
 {#snippet heading(sec: Section, first: boolean)}
@@ -484,10 +487,12 @@
 
 {#snippet voiceRow(c: Channel)}
   {@const people = member ? callRoster(app.state, serverId, c.id, self) : []}
+  {@const read = app.state.reads[c.id]}
+  {@const chatUnread = (read?.unread ?? 0) > 0 && !isMuted(app.state, c, clock.nowIso)}
   {#if renaming === c.id}
     {@render renameField(c, 'speaker')}
   {:else}
-  <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId} aria-haspopup={member ? 'menu' : undefined} data-channel={c.id}
+  <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId} class:with-chat={member} aria-haspopup={member ? 'menu' : undefined} data-channel={c.id}
     data-tip={c.id === voiceChannelId ? 'You’re here' : `Join ${c.name}`}
     onmouseenter={() => restOn(c.id)} onfocus={() => restOn(c.id)}
     onmouseleave={() => prefetch.leave(c.id)} onblur={() => prefetch.leave(c.id)}
@@ -496,6 +501,16 @@
     <span class="ico"><Icon name="speaker" size={17} /></span><span class="grow">{c.name}</span>
     {#if people.length}<span class="count">{people.length}</span>{/if}
   </button>
+  {#if member}
+    <!-- its chat (#226): beside the row, not in it (a button can't hold one); drawn over the row's end, and it moves
+         with the row in a drag (lib/drag.ts, .row-side). Unreads show here, not on the name (that's who's in it). -->
+    {@const label = `Open chat for ${c.name}` + (read?.mentions ? `, ${read.mentions} mention${read.mentions > 1 ? 's' : ''}` : chatUnread ? ', unread messages' : '')}
+    <button type="button" class="chat-btn row-side" class:lit={!!read?.mentions || chatUnread} aria-label={label} data-tip="Open chat"
+      onclick={() => onOpenChat(c.id)}>
+      <Icon name="message" size={14} />
+      {#if read?.mentions}<span class="pill chat-pill">{read.mentions}</span>{:else if chatUnread}<span class="chat-dot"></span>{/if}
+    </button>
+  {/if}
   {/if}
   {#each people as p (p.userId)}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -606,6 +621,17 @@
   .ico { color: var(--text-3); display: flex; }
   .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { font-size: 11px; color: var(--text-3); }
+  /* a voice channel's chat icon (#226): over the row's end (its 34px, less 4px each side), shown while the row is
+     hovered, focused or open, and always while its chat has something new */
+  .row.with-chat { padding-right: 38px; }
+  .chat-btn { position: relative; z-index: 1; align-self: flex-end; width: 26px; height: 26px; margin: -32px 6px 4px 0; padding: 0; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-3); display: grid; place-items: center; opacity: 0; --ring: var(--bg-1); }
+  .row:hover + .chat-btn, .row:focus-visible + .chat-btn, .row.active + .chat-btn, .chat-btn:hover, .chat-btn:focus-visible, .chat-btn.lit { opacity: 1; }
+  .row:hover + .chat-btn { --ring: var(--bg-2); }
+  .row.active + .chat-btn { --ring: var(--bg-3); }
+  .chat-btn:hover { color: var(--text); background: var(--bg-3); --ring: var(--bg-3); }
+  .chat-btn.lit { color: var(--text-2); }
+  .chat-dot { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 2px var(--ring); }
+  .chat-pill { position: absolute; top: -4px; right: -6px; box-shadow: 0 0 0 2px var(--ring); }
   .occupant { cursor: default; border-radius: var(--radius-sm); height: 30px; padding: 0 8px 0 38px; display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); }
   /* the ring snaps with speaking, as the voice tile's border does (no box-shadow transition: a repaint per frame) */
   .ring { display: flex; flex-shrink: 0; border-radius: 50%; }

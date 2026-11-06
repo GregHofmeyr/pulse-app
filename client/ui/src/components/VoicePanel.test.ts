@@ -30,6 +30,7 @@ import { mediaUrl } from '../lib/emoji'
 import type { Ready } from '../lib/protocol/Ready'
 import { motion } from '../lib/animate.svelte'
 import { stageLayout, tileScale } from '../lib/stagelayout'
+import { reloadVoiceChat, takeChatFocus, voiceChat } from '../lib/voiceChat.svelte'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -580,5 +581,28 @@ describe('the stage layout (#222)', () => {
     expect(q('.slot [data-user="U2"] .badge')).not.toBeNull()
     expect(q('.slot [data-user="U2"]')!.closest('.slot')).toBe(sams)
     expect(slots().some((s) => s.classList.contains('fade-in'))).toBe(false)
+  })
+})
+
+describe('the chat toggle (#226)', () => {
+  it('top right of the stage header: it toggles the chat panel, pressed while open, and a click asks for the focus', () => {
+    reloadVoiceChat()
+    mountPanel()
+    const toggle = q('#voice-chat-toggle')!
+    expect(toggle.closest('.head')).not.toBeNull()
+    expect(toggle.parentElement!.lastElementChild).toBe(toggle)
+    expect(toggle.getAttribute('aria-label')).toBe('Chat')
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(toggle.getAttribute('aria-controls')).toBe('members-panel')
+    toggle.click()
+    flushSync()
+    expect(voiceChat.open).toBe(true)
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    expect(toggle.dataset.tip).toBe('Hide chat')
+    expect(takeChatFocus()).toBe(true)
+    toggle.click()
+    flushSync()
+    expect(voiceChat.open).toBe(false)
+    expect(takeChatFocus()).toBe(false)
   })
 })

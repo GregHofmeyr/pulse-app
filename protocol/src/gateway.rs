@@ -877,6 +877,15 @@ mod tests {
     }
 
     #[test]
+    fn voice_has_a_chat_but_is_no_message_only_kind() {
+        use crate::rest::ChannelKind;
+        assert!(ChannelKind::Voice.has_chat() && !ChannelKind::Voice.is_server_chat());
+        assert!(ChannelKind::Text.has_chat() && ChannelKind::Quotes.has_chat());
+        assert!(ChannelKind::Clips.has_chat());
+        assert!(!ChannelKind::Dm.has_chat() && !ChannelKind::Group.has_chat());
+    }
+
+    #[test]
     fn clips_is_a_server_chat_kind() {
         use crate::rest::ChannelKind;
         assert_eq!(ChannelKind::parse("clips"), Some(ChannelKind::Clips));

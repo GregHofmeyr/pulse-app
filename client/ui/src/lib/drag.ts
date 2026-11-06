@@ -1,6 +1,7 @@
 // Drag to reorder the channel list (#55, #54), hand-built on pointer events. It reads the DOM ChannelList renders:
 // `.list` > `.cat.top` (rows) and `.cat[data-category]` (a `.label` heading, then rows); a row is
-// `.row[data-channel]`, and a voice row's `.occupant`s after it move with it.
+// `.row[data-channel]`, and what follows it as its own (a voice row's chat icon, `.row-side`, and its `.occupant`s) moves
+// with it.
 //
 // Smooth under load (#103): every box is measured once when the drag starts (and once more if a hovered section
 // opens); each frame then only writes `transform`s, so nothing re-runs layout while the pointer moves. The drop
@@ -124,7 +125,7 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
       let cur: Entry | null = null
       for (const k of children(el)) {
         if (k.matches('.row[data-channel]')) out.push((cur = entry([k], 'item', cat, k.dataset.channel!)))
-        else if (k.matches('.occupant') && cur) cur.els.push(k)
+        else if (k.matches('.occupant, .row-side') && cur) cur.els.push(k)
         else {
           cur = null
           const head = cat && k.matches('.label')
@@ -373,7 +374,7 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
     const row = list.querySelector<HTMLElement>(`.row[data-channel="${CSS.escape(id)}"]`)
     if (!row) return []
     const out = [row]
-    for (let el = row.nextElementSibling; el?.classList.contains('occupant'); el = el.nextElementSibling) out.push(el as HTMLElement)
+    for (let el = row.nextElementSibling; el?.matches('.occupant, .row-side'); el = el.nextElementSibling) out.push(el as HTMLElement)
     return out
   }
 
@@ -425,7 +426,7 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
     stopSwallowing()
     if (e.button !== 0 || press || drag || !o.enabled()) return
     const t = e.target as Element | null
-    if (!t || t.closest('.add, input, textarea, select, [contenteditable], .occupant')) return
+    if (!t || t.closest('.add, input, textarea, select, [contenteditable], .occupant, .row-side')) return
     const row = t.closest<HTMLElement>('.row[data-channel]')
     const section = row?.closest('.cat')
     if (row && section && list.contains(row) && (section.matches('.top') || section.matches('[data-category]'))) {

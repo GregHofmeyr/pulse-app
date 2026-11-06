@@ -279,14 +279,10 @@ async fn send(
     }
     crate::media::writes_ok(&s.cfg)?;
     let ch = channel_for(&s.db, me, id).await?;
+    // A voice channel's chat (#226) takes messages as a text channel does.
     match (ch.kind, ch.server_id) {
-        (ChannelKind::Voice, _) => {
-            return Err(AppError::BadRequest(
-                "voice channels have no messages".into(),
-            ));
-        }
         (kind, Some(server))
-            if kind.is_server_chat() && !is_server_member(&s.db, server, me).await? =>
+            if kind.has_chat() && !is_server_member(&s.db, server, me).await? =>
         {
             return Err(AppError::Forbidden);
         }

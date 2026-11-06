@@ -9,12 +9,12 @@ beforeEach(() => {
 
 describe('saved column widths (#160)', () => {
   it('nothing stored: both default', () => {
-    expect({ ...columns }).toEqual({ left: null, right: null })
+    expect({ ...columns }).toEqual({ left: null, right: null, chat: null })
   })
 
   it('a width is remembered on this device', () => {
     setColumn('right', 312.4)
-    expect(JSON.parse(localStorage.getItem('pulse.columns')!)).toEqual({ left: null, right: 312 })
+    expect(JSON.parse(localStorage.getItem('pulse.columns')!)).toEqual({ left: null, right: 312, chat: null })
     columns.right = null
     reloadColumns()
     expect(columns.right).toBe(312)
@@ -28,6 +28,16 @@ describe('saved column widths (#160)', () => {
     expect(JSON.parse(localStorage.getItem('pulse.columns')!).left).toBe(300)
   })
 
+  it("a voice channel's chat keeps its own width (#226): the members list's is left alone", () => {
+    setColumn('right', 250)
+    setColumn('chat', 420)
+    reloadColumns()
+    expect({ ...columns }).toEqual({ left: null, right: 250, chat: 420 })
+    resetColumn('chat')
+    reloadColumns()
+    expect({ ...columns }).toEqual({ left: null, right: 250, chat: null })
+  })
+
   it('reset puts the default back and remembers that', () => {
     setColumn('left', 300)
     resetColumn('left')
@@ -38,9 +48,9 @@ describe('saved column widths (#160)', () => {
   it('garbled or nonsense values are the defaults', () => {
     localStorage.setItem('pulse.columns', '{"left":"wide","right":-5}')
     reloadColumns()
-    expect({ ...columns }).toEqual({ left: null, right: null })
+    expect({ ...columns }).toEqual({ left: null, right: null, chat: null })
     localStorage.setItem('pulse.columns', 'nope')
     reloadColumns()
-    expect({ ...columns }).toEqual({ left: null, right: null })
+    expect({ ...columns }).toEqual({ left: null, right: null, chat: null })
   })
 })

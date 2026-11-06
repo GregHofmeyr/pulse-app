@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Drag to reorder the channel list (#55, #54): pointer events on rows and category headings, with a stubbed layout
 // (jsdom lays nothing out): every row 34px, every heading 30px, every voice occupant 30px, stacked without gaps from
-// the list's top at 0.
+// the list's top at 0. A voice row's chat icon (#226) is drawn over its row: it takes no room of its own.
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -30,7 +30,7 @@ const REST: Channel[] = [
 ]
 
 // ---- a layout for jsdom ----
-const HEIGHT = (el: Element) => (el.matches('.row') ? 34 : el.matches('.label') ? 30 : el.matches('.occupant') ? 30 : 20)
+const HEIGHT = (el: Element) => (el.matches('.row') ? 34 : el.matches('.label') ? 30 : el.matches('.occupant') ? 30 : el.matches('.row-side') ? 0 : 20)
 const translateY = (el: Element) => Number(/translate3d\(0(?:px)?, (-?[\d.]+)px/.exec((el as HTMLElement).style?.transform ?? '')?.[1] ?? 0)
 /** Each element's untransformed box: the list's children (and a section's children) stacked in order. */
 function layoutTable(): Map<Element, { top: number; height: number }> {
@@ -207,6 +207,10 @@ describe('dragging a channel', () => {
     move(260)
     expect(occupant.style.transform).toBe(rowOf('V2').style.transform)
     expect(occupant.classList.contains('lifted')).toBe(true)
+    // and its chat icon (#226)
+    const chat = rowOf('V2').nextElementSibling as HTMLElement
+    expect(chat.matches('.chat-btn')).toBe(true)
+    expect(chat.style.transform).toBe(rowOf('V2').style.transform)
     up(260)
   })
 

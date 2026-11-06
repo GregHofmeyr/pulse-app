@@ -23,6 +23,7 @@
   import { NARROW_BODY, searchMakesRoom, sidebarLayout } from '../lib/layout'
   import { COLUMNS, fitColumns, RIGHT_DEFAULT } from '../lib/columns'
   import { columns, resetColumn, setColumn } from '../lib/columns.svelte'
+  import { CHAT_TOGGLE_ID, setVoiceChat, voiceChat } from '../lib/voiceChat.svelte'
   import ColumnHandle from '../components/ColumnHandle.svelte'
   import ReportBug from '../components/ReportBug.svelte'
   import PatchNotes from '../components/PatchNotes.svelte'
@@ -174,6 +175,7 @@
     get right() { return panels.right },
     get leftName() { return leftName },
     get hasRight() { return !!(search.open || activeServerId || activeChannel?.kind === 'group') },
+    get rightName() { return rightKind === 'chat' ? 'Chat' : 'Members' },
     toggle: (side) => (panels[side] = !panels[side]),
   })
   let serverMenuOpen = $state(false)
@@ -238,8 +240,10 @@
       for (const t of timers) clearTimeout(t)
     }
   })
+  // The channel whose messages are on screen (the alert rule and jumps go by it): a voice channel's only while its
+  // chat panel shows (#226); its stage alone shows none.
   $effect(() => {
-    ui.openChannelId = activeChannelId
+    ui.openChannelId = activeChannel?.kind === 'voice' ? (chatOnScreen ? activeChannelId : null) : activeChannelId
   })
   // Leaving a channel trims it to its newest messages (scrolling up there fetches older ones again).
   // Done when the next channel opens, not in a teardown: a teardown on the shell going away (sign-out)
@@ -347,10 +351,15 @@
   // Resizable side columns (#160). What the right column holds sets its default; a column that isn't showing (full
   // view, the narrow-window search hand-off, Home with nothing on the right) has no handle and takes no room. Saved
   // widths are fitted to the body's width, so a shrinking window narrows them (lib/columns.ts).
+  // A voice channel's chat (#226) takes the members list's place beside its stage while it's open, with its own width.
+  const chatOpen = $derived(!!activeChannelId && activeChannel?.kind === 'voice' && !!activeServerId && member && voiceChat.open)
   const rightKind = $derived<keyof typeof RIGHT_DEFAULT | null>(
-    search.open ? 'search' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
+    search.open ? 'search' : chatOpen ? 'chat' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
   const showLeft = $derived(!hideLeft)
   const showRight = $derived(!hideRight && rightKind !== null)
+  const chatOnScreen = $derived(showRight && rightKind === 'chat')
+  const rightColumn = $derived(rightKind === 'chat' ? 'chat' : 'right')
+  const rightSaved = $derived(columns[rightColumn])
   let bodyEl = $state<HTMLElement>()
   let bodyWidth = $state(0)
   $effect(() => {
@@ -359,8 +368,15 @@
     ro.observe(bodyEl)
     return () => ro.disconnect()
   })
-  const fitted = $derived(fitColumns({ saved: columns, body: bodyWidth, left: showLeft, right: showRight, rightDefault: RIGHT_DEFAULT[rightKind ?? 'members'] }))
-  const rightLabel = $derived(rightKind === 'search' ? 'Resize the search results' : 'Resize the members list')
+  const fitted = $derived(fitColumns({ saved: { left: columns.left, right: rightSaved }, body: bodyWidth, left: showLeft, right: showRight, rightDefault: RIGHT_DEFAULT[rightKind ?? 'members'] }))
+  const rightLabel = $derived(rightKind === 'search' ? 'Resize the search results' : rightKind === 'chat' ? 'Resize the chat' : 'Resize the members list')
+  /** The chat's close button: the panel goes, and the focus it had goes to the stage's toggle. */
+  function closeChat() {
+    const at = document.activeElement
+    const inside = !at || at === document.body || !!rightPanel?.contains(at)
+    setVoiceChat(false)
+    if (inside) void tick().then(() => document.getElementById(CHAT_TOGGLE_ID)?.focus())
+  }
   // The channel views below take their id from activeChannelId (a plain string), never activeChannel.id: for the
   // moment a channel leaves the data before its view goes (a sign-out's reset, a delete), activeChannel is undefined,
   // and reading .id there threw and left the window blank after a sign-in (2026-11-03).
@@ -429,6 +445,8 @@
     if (!id) return
     untrack(() => {
       showChannel(id)
+      // a jump or a notification into a voice channel's chat (#226): its panel opens to show it
+      if (app.state.channels[id]?.kind === 'voice') setVoiceChat(true)
       ui.goTo = null
     })
   })
@@ -566,6 +584,7 @@
         <ChannelList serverId={activeServerId} {activeChannelId} voiceChannelId={voice.channelId} speaking={ringing}
           onSelect={(id) => (activeChannelId = id)}
           onJoinVoice={(id) => { activeChannelId = id; if (voice.channelId !== id && member) void voiceApi.join(id) }}
+          onOpenChat={(id) => { activeChannelId = id; setVoiceChat(true, true) }}
           onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />
       {:else}
         <ConversationList activeId={activeChannelId} onOpen={openConversation} onNew={() => (picker = { mode: 'new' })}
@@ -623,11 +642,11 @@
 
     {#if showRight}
       <ColumnHandle side="right" width={fitted.right} min={COLUMNS.right.min} max={fitted.maxRight} controls={PANEL_ID.right}
-        label={rightLabel} onResize={(w, done) => setColumn('right', w, done)} onReset={() => resetColumn('right')} />
+        label={rightLabel} onResize={(w, done) => setColumn(rightColumn, w, done)} onReset={() => resetColumn(rightColumn)} />
     {/if}
     <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap. A saved
          width reaches the list as --right-w; unsaved, each list keeps its own default. -->
-    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={columns.right === null ? null : `${fitted.right}px`}>{#if search.open}<SearchResults />{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} />{/if}</div>
+    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={rightSaved === null ? null : `${fitted.right}px`}>{#if search.open}<SearchResults />{:else if chatOpen && activeChannelId}<aside class="voice-chat fade-in" aria-label="Chat">{#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId} panel={{ onClose: closeChat, shown: chatOnScreen }} />{/key}</aside>{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} />{/if}</div>
   </div>
 </div>
 <StreamToast />
@@ -714,6 +733,9 @@
   /* a real box (aria-controls points at it; a display:contents one leaves the accessibility tree) */
   .right-panel { display: flex; flex-shrink: 0; min-height: 0; }
   .right-panel[hidden], .right-panel:empty { display: none; }
+  /* a voice channel's chat (#226): a right column like the search results, holding the channel view; it fades in
+     (.fade-in: not under reduced motion, while streaming or unfocused) and goes at once, as the members list comes */
+  .voice-chat { width: var(--right-w, 360px); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-radius: var(--radius); background: var(--bg-1); overflow: hidden; }
   .panel-head { position: relative; height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid var(--line-soft); }
   /* the hover is a rounded pill inside the header, with the text where the padding put it */
   .head-btn { flex: 1; min-width: 0; height: 40px; margin: 0 -8px; padding: 0 8px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }

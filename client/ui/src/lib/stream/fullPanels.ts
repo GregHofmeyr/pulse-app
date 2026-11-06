@@ -12,6 +12,8 @@ export interface FullPanels {
   readonly leftName: string
   /** There's a member list to show (a server, or a group conversation). */
   readonly hasRight: boolean
+  /** What the right panel holds: 'Chat' beside a voice stage with its chat open (#226); else (or unset) 'Members'. */
+  readonly rightName?: string
   toggle(side: PanelSide): void
 }
 

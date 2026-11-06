@@ -113,6 +113,19 @@ describe('full view', () => {
     expect(toggled).toEqual(['left'])
   })
 
+  it('the_right_toggle_is_named_for_the_voice_chat_when_that_is_what_the_right_panel_holds', async () => {
+    // #226: beside a voice stage with its chat open, the right panel is the chat
+    const panels = { left: false, right: false, leftName: 'Channels', hasRight: true, rightName: 'Chat', toggle: () => {} }
+    cmp = mount(VoicePanel, { target: document.body, context: fullPanelsContext(panels),
+      props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
+    await streamApi.watch('V1', 'U2')
+    openFull(SAM)
+    await settle()
+    const right = q('.full-view .panel-toggle#full-toggle-members')!
+    expect(right.getAttribute('aria-label')).toBe('Chat')
+    expect(right.dataset.tip).toBe('Show chat')
+  })
+
   it('back_and_esc_return_to_the_grid_and_keep_watching', async () => {
     await fullOnSam()
     button('Back')!.click()

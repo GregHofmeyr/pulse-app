@@ -216,7 +216,7 @@ async fn empty_or_too_long_400() {
 }
 
 #[tokio::test]
-async fn cannot_post_in_voice_channel_400() {
+async fn posting_in_a_voice_channel_is_its_chat() {
     let (app, a, _, g) = setup().await;
     let chans: Vec<pulse_protocol::rest::Channel> = get_json(
         &app,
@@ -237,7 +237,8 @@ async fn cannot_post_in_voice_channel_400() {
         )
         .await
         .status(),
-        400
+        200,
+        "#226: voice channels have a chat (more in tests/voice_chat.rs)"
     );
 }
 

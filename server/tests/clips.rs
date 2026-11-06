@@ -296,7 +296,8 @@ async fn migration_keeps_every_channel_row() {
     assert_eq!(count("messages").await, 2);
     assert_eq!(count("reactions").await, 1);
     assert_eq!(count("quotes").await, 1);
-    assert_eq!(count("read_states").await, 1);
+    // and 0026 (#226) gives the member a read point in the voice channel's chat
+    assert_eq!(count("read_states").await, 2);
     assert_eq!(count("server_members").await, 1);
     let broken: Vec<(String, i64, String, i64)> = sqlx::query_as("PRAGMA foreign_key_check")
         .fetch_all(&pool)

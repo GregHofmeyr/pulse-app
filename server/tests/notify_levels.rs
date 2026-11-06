@@ -246,8 +246,8 @@ async fn only_servers_and_their_channels_take_a_level() {
     let v: pulse_protocol::rest::Channel = r.json().await.unwrap();
     assert_eq!(
         set_level(&app, &a, "channel", &v.id.to_string(), Some("all")).await,
-        400,
-        "a voice channel has no messages to alert"
+        204,
+        "a voice channel's chat alerts like a text channel (#226)"
     );
     // a conversation you're not in is as unknown as one that doesn't exist
     let (_, k) = register(&app, "kim").await;

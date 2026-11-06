@@ -24,6 +24,8 @@
   import { isWindows } from '../lib/stream/platform'
   import { findWatch, stream } from '../lib/stream/stream.svelte'
   import { callView, openFull } from '../lib/stream/viewer.svelte'
+  import { PANEL_ID } from '../lib/stream/fullPanels'
+  import { CHAT_TOGGLE_ID, toggleVoiceChat, voiceChat } from '../lib/voiceChat.svelte'
 
   let { channelId, serverId, onMessage, onVoiceSettings }: {
     channelId: string
@@ -197,6 +199,10 @@
     <button type="button" class="icon-btn eye" aria-pressed={showEveryone} aria-label="Show non-streaming participants" data-tip="Show non-streaming participants" onclick={() => setShowEveryone(!showEveryone)}>
       <Icon name={showEveryone ? 'eye' : 'eyeOff'} size={18} />
     </button>
+    <!-- its chat (#226): the panel on the right; a click opens it with the message box focused (#202) -->
+    <button type="button" id={CHAT_TOGGLE_ID} class="icon-btn chat" aria-pressed={voiceChat.open} aria-controls={PANEL_ID.right} aria-label="Chat" data-tip={voiceChat.open ? 'Hide chat' : 'Show chat'} onclick={() => toggleVoiceChat(true)}>
+      <Icon name="message" size={18} />
+    </button>
   </div>
 
   {#if voice.error}<p class="error" role="alert">{voice.error}</p>{/if}
@@ -283,7 +289,7 @@
   .status { font-size: 12px; font-weight: 600; color: var(--ok-text); padding: 4px 10px; border-radius: 12px; background: var(--ok-soft); }
   .status.warn { color: var(--warn-text); background: var(--warn-soft); }
   .error { margin: 12px 18px 0; color: var(--danger-text); font-size: 13px; }
-  .eye[aria-pressed='true'] { color: var(--text); }
+  .eye[aria-pressed='true'], .chat[aria-pressed='true'] { color: var(--text); }
   /* the stage (#222): stageLayout places each slot (its 20px padding and 14px gap are the grid's were); a crowd too
      big for it scrolls */
   .grid-wrap { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; }

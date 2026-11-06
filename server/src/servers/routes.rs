@@ -218,6 +218,7 @@ async fn create_server(
     )
     .await?;
     crate::reads::init_point(&mut tx, me, general.id).await?;
+    crate::reads::init_point(&mut tx, me, lounge.id).await?;
     tx.commit().await?;
 
     let server = Server {
@@ -298,7 +299,7 @@ async fn join(
     if added > 0 {
         // Start at "all read": no wall of old unreads in a server you just joined.
         let chat: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM channels WHERE server_id = ? AND kind IN ('text', 'quotes', 'clips')",
+            "SELECT id FROM channels WHERE server_id = ? AND kind IN ('text', 'quotes', 'clips', 'voice')",
         )
         .bind(id.to_string())
         .fetch_all(&mut *tx)
@@ -434,7 +435,7 @@ async fn create_channel(
     )
     .await?;
     bump(&mut tx, id).await?;
-    if req.kind.is_server_chat() {
+    if req.kind.has_chat() {
         // Everyone in the server starts at "all read" (the channel is empty).
         let members: Vec<String> =
             sqlx::query_scalar("SELECT user_id FROM server_members WHERE server_id = ?")

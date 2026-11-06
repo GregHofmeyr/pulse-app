@@ -1,21 +1,25 @@
-// The side columns' chosen widths (#160), on this device. null: the default.
+// The side columns' chosen widths (#160), on this device. null: the default. `chat`: the right column while it holds a
+// voice channel's chat (#226), which keeps its own width (the members list's stays as it was).
 import type { SavedWidths, Side } from './columns'
 
 const KEY = 'pulse.columns'
 
+export type Column = Side | 'chat'
+export type StoredWidths = SavedWidths & { chat: number | null }
+
 const width = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : null)
 
-function saved(): SavedWidths {
+function saved(): StoredWidths {
   try {
     const v: unknown = JSON.parse(localStorage.getItem(KEY) ?? '{}')
     const o = v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
-    return { left: width(o.left), right: width(o.right) }
+    return { left: width(o.left), right: width(o.right), chat: width(o.chat) }
   } catch {
-    return { left: null, right: null }
+    return { left: null, right: null, chat: null }
   }
 }
 
-export const columns = $state<SavedWidths>(saved())
+export const columns = $state<StoredWidths>(saved())
 
 function store() {
   try {
@@ -26,13 +30,13 @@ function store() {
 }
 
 /** A drag or key moved a column. `save`: write it down (a drag saves once, when it ends). */
-export function setColumn(side: Side, w: number, save = true): void {
+export function setColumn(side: Column, w: number, save = true): void {
   columns[side] = Math.round(w)
   if (save) store()
 }
 
 /** Back to the default (a double-click on its handle). */
-export function resetColumn(side: Side): void {
+export function resetColumn(side: Column): void {
   columns[side] = null
   store()
 }

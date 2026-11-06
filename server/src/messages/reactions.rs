@@ -211,7 +211,7 @@ pub async fn toggle(
     let channel_id = ch.id;
     match (ch.kind, ch.server_id) {
         (kind, Some(server))
-            if kind.is_server_chat() && !is_server_member(&s.db, server, me).await? =>
+            if kind.has_chat() && !is_server_member(&s.db, server, me).await? =>
         {
             return Err(AppError::Forbidden);
         }

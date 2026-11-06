@@ -42,6 +42,9 @@ import { callView, joinAndWatch, openFull, showToast, watchStream } from '../lib
 import type { Ready } from '../lib/protocol/Ready'
 import Waiting from './Waiting.svelte'
 import { reloadColumns } from '../lib/columns.svelte'
+import { reloadVoiceChat, voiceChat } from '../lib/voiceChat.svelte'
+import { testMe, testReady } from '../lib/testReady'
+import { ui } from '../lib/store.svelte'
 import { editProfile, openCardSettings, profileUi } from '../lib/profileCard.svelte'
 import { reloadPatchNotesSeen } from '../lib/patchNotesSeen.svelte'
 import { patchNotes } from '../patchNotes'
@@ -1123,5 +1126,83 @@ describe('resizable columns (#160)', () => {
     flushSync()
     expect(handle('Resize the channel list')).not.toBeNull()
     expect(handle('Resize the members list')).toBeNull()
+  })
+})
+
+describe('voice channel chat (#226)', () => {
+  const handle = (label: string) => document.querySelector<HTMLElement>(`[role=separator][aria-label="${label}"]`)
+  const q = (sel: string) => document.querySelector<HTMLElement>(sel)
+  const show = () => {
+    app.state = applyReady(emptyState(), testReady([
+      { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },
+      { id: 'V1', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 1 },
+    ]))
+    cmp = mount(Shell, { target: document.body, props: { user: testMe, onLogout: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Main'))!.click()
+    flushSync()
+  }
+  beforeEach(() => {
+    localStorage.removeItem('pulse.columns')
+    localStorage.removeItem('pulse.voiceChat')
+    reloadColumns()
+    reloadVoiceChat()
+  })
+
+  it("the row's chat icon opens the stage with the chat beside it, in the members list's place, without joining", async () => {
+    show()
+    q('.chat-btn')!.click()
+    flushSync()
+    await tick()
+    expect(q('.content .head .title')?.textContent).toBe('Lounge')
+    const panel = q('.right-panel aside.voice-chat')!
+    expect(panel.getAttribute('aria-label')).toBe('Chat')
+    expect(panel.classList.contains('fade-in')).toBe(true)
+    expect(q('.right-panel aside.members')).toBeNull()
+    expect(ui.openChannelId).toBe('V1')
+    expect(invoke.mock.calls.some((c) => c[0] === 'join_voice')).toBe(false)
+    expect(voiceChat.open).toBe(true)
+  })
+
+  it('the stage toggle and the close button both close it; the members list comes back and the focus goes to the toggle', async () => {
+    show()
+    q('.chat-btn')!.click()
+    flushSync()
+    await tick()
+    q('[aria-label="Close chat"]')!.focus()
+    q('[aria-label="Close chat"]')!.click()
+    flushSync()
+    await tick()
+    expect(q('aside.voice-chat')).toBeNull()
+    expect(q('.right-panel aside.members')).not.toBeNull()
+    expect(document.activeElement).toBe(q('#voice-chat-toggle'))
+    expect(ui.openChannelId).toBeNull()
+    q('#voice-chat-toggle')!.click()
+    flushSync()
+    expect(q('aside.voice-chat')).not.toBeNull()
+    q('#voice-chat-toggle')!.click()
+    flushSync()
+    expect(q('aside.voice-chat')).toBeNull()
+  })
+
+  it('it keeps its own width, apart from the members list, and stays open for the next stage', async () => {
+    show()
+    q('.chat-btn')!.click()
+    flushSync()
+    const h = handle('Resize the chat')!
+    expect(h.getAttribute('aria-valuenow')).toBe('360')
+    h.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(JSON.parse(localStorage.getItem('pulse.columns')!)).toEqual({ left: null, right: null, chat: 376 })
+    expect(q('.right-panel')!.style.getPropertyValue('--right-w')).toBe('376px')
+    // a text channel shows the members list at its own width
+    q('.row[data-channel="T1"]')!.click()
+    flushSync()
+    expect(q('.right-panel')!.style.getPropertyValue('--right-w')).toBe('')
+    expect(handle('Resize the members list')).not.toBeNull()
+    // back on the stage (a double-click on the row opens it), the chat is still open
+    q('.row[data-channel="V1"]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    flushSync()
+    expect(q('aside.voice-chat')).not.toBeNull()
   })
 })

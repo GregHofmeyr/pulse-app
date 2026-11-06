@@ -131,8 +131,9 @@
       </div>
     </div>
     {#if panels?.hasRight}
-      <button type="button" class="panel-toggle" id={PANEL_TOGGLE_ID.right} aria-label="Members" aria-controls={PANEL_ID.right} aria-pressed={panels.right}
-        data-tip="{panels.right ? 'Hide' : 'Show'} members" onclick={() => panels.toggle('right')}><Icon name="panelRight" size={18} /></button>
+      {@const name = panels.rightName ?? 'Members'}
+      <button type="button" class="panel-toggle" id={PANEL_TOGGLE_ID.right} aria-label={name} aria-controls={PANEL_ID.right} aria-pressed={panels.right}
+        data-tip="{panels.right ? 'Hide' : 'Show'} {name.toLowerCase()}" onclick={() => panels.toggle('right')}><Icon name="panelRight" size={18} /></button>
     {/if}
   </div>
   <!-- focusable from script only: the stream's menu hands focus back here when it closes -->

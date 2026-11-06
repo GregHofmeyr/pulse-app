@@ -431,9 +431,16 @@ impl ChannelKind {
         matches!(self, Self::Dm | Self::Group)
     }
 
-    /// Kinds that hold messages and belong to a server: its members may read and post.
+    /// Server kinds that hold nothing but messages (no call): text, quotes and clips. A voice
+    /// channel isn't one, though it has a chat too ([`Self::has_chat`]).
     pub fn is_server_chat(self) -> bool {
         matches!(self, Self::Text | Self::Quotes | Self::Clips)
+    }
+
+    /// Server kinds with a chat its members may read and post in: the message-only kinds, and a
+    /// voice channel's chat beside its call (#226).
+    pub fn has_chat(self) -> bool {
+        self.is_server_chat() || self == Self::Voice
     }
 }
 

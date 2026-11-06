@@ -45,7 +45,8 @@ const rows = (ch: string) => {
   const all = [...document.querySelectorAll('.row')]
   const start = all.findIndex((r) => r.textContent?.includes(ch))
   const out: Element[] = []
-  for (let el = all[start]?.nextElementSibling; el && el.classList.contains('occupant'); el = el.nextElementSibling) out.push(el)
+  // the row's chat icon (#226) sits between it and its occupants
+  for (let el = all[start]?.nextElementSibling; el && el.matches('.occupant, .row-side'); el = el.nextElementSibling) if (el.matches('.occupant')) out.push(el)
   return out
 }
 

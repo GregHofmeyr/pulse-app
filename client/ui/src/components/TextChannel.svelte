@@ -29,8 +29,12 @@
   import { displayName, groupedPending, groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor, nextTypingExpiry, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
+  import { takeChatFocus, voiceChat } from '../lib/voiceChat.svelte'
 
-  let { channelId, serverId, onAddPeople = () => {}, onLeft = () => {}, onStartQoty = () => {}, onVoiceSettings = () => {} }: {
+  let { channelId, serverId, panel = null, onAddPeople = () => {}, onLeft = () => {}, onStartQoty = () => {}, onVoiceSettings = () => {} }: {
+    /** A voice channel's chat (#226), as the panel beside its stage: a Chat header with a close button, no search.
+     *  `shown`: false while the column is hidden (full view, a narrow window's search), when nothing is marked read. */
+    panel?: { onClose: () => void; shown: boolean } | null
     /** DMs/groups: the call band's person menu has Voice settings (#50). */
     onVoiceSettings?: () => void
     channelId: string
@@ -108,7 +112,9 @@
   // Opened with the pointer (a click on the channel or conversation): you're here to write, so the
   // message box takes the focus, the caret after any draft. Not from the keyboard (arrows or Enter in
   // a list keep you in the list), and not under an open dialog or menu.
-  onMount(() => {
+  // The voice chat panel doesn't: showing the stage brings it back open, and that's no click on the chat. Its own
+  // openers (the row's chat icon, the stage's toggle) ask for the focus instead, below.
+  function focusOnClick() {
     if (lastInput() !== 'pointer' || document.querySelector('[aria-modal="true"], [role="dialog"], [role="menu"]')) return
     void tick().then(() => {
       if (!chan?.isConnected) return
@@ -117,6 +123,13 @@
       q?.focus()
       q?.setSelectionRange(q.value.length, q.value.length)
     })
+  }
+  onMount(() => {
+    if (!panel) focusOnClick()
+  })
+  $effect(() => {
+    void voiceChat.focusWanted
+    if (panel && untrack(takeChatFocus)) focusOnClick()
   })
 
   // stick to the bottom when new messages arrive and we were already near it
@@ -161,6 +174,7 @@
 
   // --- DM/group header ---
   const isPrivate = $derived(channel?.server_id === null)
+  const isVoice = $derived(channel?.kind === 'voice')
   const title = $derived(isPrivate ? conversationName(app.state, channelId) : (channel?.name ?? ''))
   const others = $derived((app.state.dmMembers[channelId] ?? []).filter((u) => u !== app.state.me?.id))
   const muted = $derived(channel ? isMuted(app.state, channel, clock.nowIso) : false)
@@ -222,7 +236,7 @@
   $effect(() => {
     const newest = messages.at(-1)?.id
     const read = app.state.reads[channelId]?.last_read_message_id ?? null
-    const want = shouldMarkRead({ open: true, focused: windowFocus.focused, atBottom })
+    const want = shouldMarkRead({ open: panel?.shown ?? true, focused: windowFocus.focused, atBottom })
     // The bottom of a detached window isn't the latest: only reaching the latest marks it read.
     if (!newest || !want || detached || (read !== null && newest <= read)) return
     if (markTimer) clearTimeout(markTimer)
@@ -480,9 +494,11 @@
   let narrowHead = $state(false)
 </script>
 
-<div class="chan" class:with-replies={!!repliesRoot} bind:this={chan}>
+<div class="chan" class:panel={!!panel} class:with-replies={!!repliesRoot} bind:this={chan}>
   <div class="head" use:narrowerThan={{ px: NARROW_HEAD, set: (v) => (narrowHead = v) }}>
-    {#if isPrivate && channel?.kind === 'dm' && others[0]}
+    {#if panel}
+      <Icon name="message" size={16} /><span class="title">Chat</span>
+    {:else if isPrivate && channel?.kind === 'dm' && others[0]}
       <Avatar id={others[0]} name={title} size={26} presence={presenceOf(app.state, others[0], clock.nowIso)} interactive serverId={null} />
       <span class="title"><Name userId={others[0]} serverId={null} text={title} /></span>
     {:else if isPrivate}
@@ -523,7 +539,11 @@
       <button bind:this={moreBtn} class="icon-btn" aria-label="More" aria-haspopup="menu" aria-expanded={menu === 'manage'} data-tip="More" data-menu-toggle
         onclick={() => (menu = menu === 'manage' ? null : 'manage')}><Icon name="dots" size={17} /></button>
     {/if}
-    <SearchBox {serverId} {channelId} compact={narrowHead} />
+    {#if panel}
+      <button class="icon-btn" aria-label="Close chat" data-tip="Close" onclick={panel.onClose}><Icon name="x" size={16} /></button>
+    {:else}
+      <SearchBox {serverId} {channelId} compact={narrowHead} />
+    {/if}
     {#if leaderboardOpen && serverId}
       <Leaderboard {serverId} onOpen={openLeaderboardEntry} onClose={() => (leaderboardOpen = false)} />
     {/if}
@@ -537,6 +557,7 @@
     {#if reachedStart}<div class="start">
       {#if channel?.kind === 'dm'}This is the start of your conversation with {title}.
       {:else if channel?.kind === 'group'}This is the start of {title}.
+      {:else if isVoice}This is the start of {title}'s chat.
       {:else}This is the start of #{title}.{/if}
     </div>{/if}
     {#each messages as m, i (m.id)}
@@ -584,7 +605,7 @@
       {/key}
     {/if}
   {:else}
-  <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
+  <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate || isVoice ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
     onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} />
   {/if}
   {#if repliesRoot}
@@ -601,6 +622,8 @@
   .chan.with-replies { padding-right: var(--replies-w); }
   .head { height: 52px; flex-shrink: 0; padding: 0 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--text-3); }
   .head { position: relative; }
+  /* as the voice chat panel (#226): the replies panel's header, a close button at its end */
+  .chan.panel .head { padding: 0 12px 0 18px; gap: 8px; }
   .title { color: var(--text); font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .editable { border: 0; background: none; padding: 2px 4px; margin-left: -4px; border-radius: 6px; font: inherit; font-size: 15px; font-weight: 600; color: var(--text); }
   .editable:hover { background: var(--bg-3); }

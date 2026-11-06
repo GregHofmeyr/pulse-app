@@ -110,7 +110,7 @@ pub async fn readable_server_channels(
     let mut out = Vec::new();
     for ch in rows.into_iter().map(channel_from_row) {
         let ch = ch?;
-        if ch.kind.is_server_chat() && can_read(db, user, &ch).await? {
+        if ch.kind.has_chat() && can_read(db, user, &ch).await? {
             out.push(ch);
         }
     }
