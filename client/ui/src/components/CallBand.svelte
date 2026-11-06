@@ -2,15 +2,12 @@
   // The call at the top of a DM or group (#50): who's in it (speaking ring, mute / deafen), and Join, or the usual
   // controls once you're in. While it rings you it says so, statically, with Join / Decline: no modal, no popover
   // here (the ringtone is the call store's). Right-click a person for their volume and the rest of the person menu.
-  // Once you're in, the soundboard is the voice panel's own popover and dialogs (#175): it plays into whatever call
-  // you're in, and each person's "Mute soundboard" (their right-click menu) holds here too.
+  // Once you're in, Go Live and Soundboard are the voice panel's action row (#175, #221): the soundboard plays into
+  // whatever call you're in, and each person's "Mute soundboard" (their right-click menu) holds here too.
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
-  import SoundboardPopover from './SoundboardPopover.svelte'
-  import SoundDialog from './SoundDialog.svelte'
-  import SoundTidy from './SoundTidy.svelte'
-  import type { Sound } from '../lib/protocol/Sound'
+  import CallActions from './CallActions.svelte'
   import { app, openDm, ui } from '../lib/store.svelte'
   import { selfVoice, voice, voiceApi } from '../lib/voice.svelte'
   import { callRoster, displayName } from '../lib/selectors'
@@ -40,22 +37,6 @@
   async function message(userId: string) {
     ui.goTo = await openDm(userId)
   }
-
-  let sbOpen = $state(false)
-  let sbBtn = $state<HTMLButtonElement>()
-  // as in the voice panel: the dialogs live outside the popover (its click-outside would close it under them)
-  let sbDialog = $state<{ kind: 'add'; serverId: string } | { kind: 'edit'; sound: Sound } | { kind: 'tidy'; serverId: string } | null>(null)
-  const openDialog = (d: NonNullable<typeof sbDialog>) => {
-    sbOpen = false
-    sbDialog = d
-  }
-  // leaving the call takes the button away, and the popover with it
-  $effect(() => {
-    if (!inHere) {
-      sbOpen = false
-      sbDialog = null
-    }
-  })
 </script>
 
 {#if shown}
@@ -76,14 +57,12 @@
     <span class="label"><Icon name="phone" size={14} /> {label}</span>
     <span class="grow"></span>
     {#if inHere}
+      <CallActions {channelId} />
       <button class="ctl" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label={voice.controls.muted ? 'Unmute' : 'Mute'} onclick={() => voiceApi.toggleMute()}>
         <Icon name={voice.controls.muted ? 'micOff' : 'mic'} size={17} />
       </button>
       <button class="ctl" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label={voice.controls.deafened ? 'Undeafen' : 'Deafen'} onclick={() => voiceApi.toggleDeafen()}>
         <Icon name={voice.controls.deafened ? 'headphonesOff' : 'headphones'} size={17} />
-      </button>
-      <button bind:this={sbBtn} class="ctl" class:open={sbOpen} aria-label="Soundboard" aria-haspopup="dialog" aria-expanded={sbOpen} data-tip="Soundboard" data-menu-toggle onclick={() => (sbOpen = !sbOpen)}>
-        <Icon name="soundboard" size={17} />
       </button>
       <button class="leave" aria-label="Leave call" onclick={() => voiceApi.leave()}><Icon name="hangup" size={18} /></button>
     {:else}
@@ -91,22 +70,6 @@
       {#if ring}<button class="decline" onclick={() => declineCall(channelId)}>Decline</button>{/if}
     {/if}
   </div>
-{/if}
-
-{#if sbOpen && sbBtn}
-  <SoundboardPopover
-    anchor={sbBtn}
-    onClose={() => (sbOpen = false)}
-    onAdd={(serverId) => openDialog({ kind: 'add', serverId })}
-    onEdit={(sound) => openDialog({ kind: 'edit', sound })}
-    onTidy={(serverId) => openDialog({ kind: 'tidy', serverId })}
-  />
-{/if}
-
-{#if sbDialog?.kind === 'tidy'}
-  <SoundTidy serverId={sbDialog.serverId} onClose={() => (sbDialog = null)} />
-{:else if sbDialog}
-  <SoundDialog mode={sbDialog} onClose={() => (sbDialog = null)} />
 {/if}
 
 {#if menu}
@@ -125,7 +88,7 @@
   .band.ringing .label { color: var(--ok-text); }
   .grow { flex: 1; }
   .ctl { width: 36px; height: 36px; border: 0; border-radius: var(--radius-md); background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
-  .ctl:hover, .ctl.open { background: var(--bg-4); }
+  .ctl:hover { background: var(--bg-4); }
   .ctl.on { background: var(--danger); color: var(--on-danger); }
   .leave { width: 48px; height: 36px; border: 0; border-radius: var(--radius-md); background: var(--danger); color: var(--on-danger); display: grid; place-items: center; }
   .join { height: 34px; padding: 0 14px; border: 0; border-radius: var(--radius-md); background: var(--accent); color: var(--on-accent); font-weight: 600; display: flex; align-items: center; gap: 6px; }

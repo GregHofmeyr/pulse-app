@@ -12,8 +12,11 @@
     hangup: 'M3 15c5-5 13-5 18 0l-2.5 2.5-3-1.5v-2.5a10 10 0 0 0-7 0V16l-3 1.5z',
     home: 'M3 11 12 4l9 7M5 10v10h14V10',
     plus: 'M12 5v14M5 12h14',
-    // soundboard: equaliser bars; star: favourites; volume: a speaker with one wave (the level slider)
-    soundboard: 'M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4',
+    // soundboard: an air horn with sound bursting from its mouth (#221: not the speaker, which is voice); star:
+    // favourites; volume: a speaker with one wave (the level slider)
+    soundboard: 'M3 10.5v3h3l8 4.5V6l-8 4.5zM7 13.5V17a1.5 1.5 0 0 0 3 0v-1.8M17.5 8.5l2-2M18 12h3M17.5 15.5l2 2',
+    // a screen: Go Live (#221)
+    screen: 'M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM8 21h8M12 17v4',
     star: 'm12 3 2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.2 6.5 20.2l1-6.2L3 9.6l6.2-.9z',
     volume: 'M11 5 6 9H3v6h3l5 4V5zM15.5 8.5a5 5 0 0 1 0 7',
     clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2',

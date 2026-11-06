@@ -64,7 +64,7 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-const trigger = () => document.querySelector<HTMLButtonElement>('button[aria-haspopup=dialog]')
+const trigger = () => document.querySelector<HTMLButtonElement>('button[data-voice-status-trigger]')
 
 async function open() {
   connect()
@@ -353,6 +353,27 @@ describe('VoiceStatus panel behaviour', () => {
     flushSync()
     expect(voice.joinFailed).toBeNull()
     expect(document.querySelector('.vc')).toBeNull()
+  })
+})
+
+// #221: Go Live and Soundboard as a row in the voice panel, between the connection details and mute / deafen (the
+// account row under this block)
+describe('the action row', () => {
+  it('is in the panel once you are in a call, under the connection details', () => {
+    expect(document.querySelector('.call-actions')).toBeNull()
+    connect()
+    const card = document.querySelector('.vc-card')!
+    const [details, actions] = [...card.children]
+    expect(details.classList.contains('vc')).toBe(true)
+    expect(actions.classList.contains('call-actions')).toBe(true)
+    expect([...actions.querySelectorAll('button')].map((b) => b.textContent?.trim())).toEqual(['Go Live', 'Soundboard'])
+  })
+
+  it('a failed join has no actions', () => {
+    voice.joinFailed = { channelId: 'V1', error: 'x' }
+    flushSync()
+    expect(document.querySelector('.vc')).not.toBeNull()
+    expect(document.querySelector('.call-actions')).toBeNull()
   })
 })
 

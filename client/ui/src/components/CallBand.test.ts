@@ -108,7 +108,9 @@ describe('CallBand', () => {
       inCall()
       show(CallBand, { channelId: 'DM1' })
       const sb = button('Soundboard')!
-      expect(sb.classList.contains('ctl')).toBe(true)
+      // #221: in the call's action row, beside Go Live, as in the voice panel
+      expect(sb.closest('.call-actions')).not.toBeNull()
+      expect(button('Go Live')!.closest('.call-actions')).toBe(sb.closest('.call-actions'))
       expect(sb.getAttribute('aria-haspopup')).toBe('dialog')
       expect(sb.getAttribute('aria-expanded')).toBe('false')
       expect(popover()).toBeNull()

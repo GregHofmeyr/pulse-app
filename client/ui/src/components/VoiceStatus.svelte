@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
   import LinkStatsPanel from './LinkStatsPanel.svelte'
+  import CallActions from './CallActions.svelte'
   import { app } from '../lib/store.svelte'
   import { displayName } from '../lib/selectors'
   import { conversationName } from '../lib/conversations'
@@ -79,6 +80,9 @@
       Check it isn't muted on the headset{isWindows() ? ", and that Windows lets apps use the microphone (Settings → Privacy → Microphone)" : ''}.
     </p>
   {/if}
+  <!-- the call card: its connection details, then (in a call) Go Live and Soundboard (#221), right above the account
+       row's mute and deafen -->
+  <div class="vc-card">
   <div class="vc" bind:this={box}>
     {#if failed}
       <span class="vc-bars warn"><span></span><span></span><span></span></span>
@@ -101,10 +105,14 @@
     {/if}
     {#if open && clickable}<LinkStatsPanel {channelName} onClose={close} triggerSelector={TRIGGER} />{/if}
   </div>
+  {#if voice.channelId && !failed}<CallActions channelId={voice.channelId} />{/if}
+  </div>
 {/if}
 
 <style>
-  .vc { position: relative; margin: 0 8px 8px; padding: 10px 10px 10px 14px; background: var(--bg-2); border-radius: 12px; display: flex; align-items: center; gap: 10px; }
+  .vc-card { margin: 0 8px 8px; background: var(--bg-2); border-radius: var(--radius-lg); }
+  .vc { position: relative; padding: 10px 10px 10px 14px; display: flex; align-items: center; gap: 10px; }
+  .vc-card > :global(.call-actions) { padding: 0 10px 10px; }
   .vc-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
   button.vc-main { cursor: pointer; }
   .vc-bars { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
