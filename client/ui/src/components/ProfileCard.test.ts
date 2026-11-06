@@ -144,8 +144,8 @@ describe('ProfileCard', () => {
     vi.mocked(invoke).mockImplementation((async (cmd: string) =>
       cmd === 'get_badge_catalogue'
         ? { people: 4, badges: [
-            { key: 'ghost', name: 'Ghost', description: '', icon: '👻', hidden: false, hand_given: false, stacking: false, unit: 'count', tiers: [{ threshold: 10, rarity: 'rare', holders: 1 }], progress: null, parts: [], art: null },
-            { key: 'night_owl', name: 'Night Owl', description: '', icon: '🦉', hidden: false, hand_given: false, stacking: false, unit: 'count', tiers: [{ threshold: 1, rarity: 'epic', holders: 1 }], progress: null, parts: [], art: null },
+            { key: 'ghost', name: 'Ghost', description: '', icon: '👻', hidden: false, hand_given: false, stacking: false, unit: 'count', tiers: [{ threshold: 10, rarity: 'rare', holders: 1 }], progress: null, parts: [], art: null, hint: null },
+            { key: 'night_owl', name: 'Night Owl', description: '', icon: '🦉', hidden: false, hand_given: false, stacking: false, unit: 'count', tiers: [{ threshold: 1, rarity: 'epic', holders: 1 }], progress: null, parts: [], art: null, hint: null },
           ] }
         : undefined) as never)
     const held = (key: string) => ({ key, earned_at: '2026-10-03T00:00:00Z', first_earner: false, tier: 1, rarity: 'rare' as const, first_tiers: [], count: 0, hidden: false, seen: true })

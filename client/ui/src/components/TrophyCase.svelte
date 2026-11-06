@@ -1,6 +1,6 @@
 <script lang="ts">
   // The trophy case panel's body (#49, spec "Showing badges"): earned badges first (rarest first), then
-  // the locked ones greyed with how to earn them; hidden ones you don't hold are "???" with their rarity, last,
+  // the locked ones greyed with how to earn them; hidden ones you don't hold are "???" with their rarity (in your own, a hint, #211), last,
   // hand-given ones show only when held. Progress is the viewer's own, so only your own case has bars.
   // Your own case also edits the showcase, and opening it marks your badges seen ([NEW] stays while open).
   import { untrack } from 'svelte'
@@ -159,7 +159,8 @@
         <BadgeIcon icon={d.icon} art={d.art} rarity={d.tiers[0]?.rarity ?? 'common'} hidden={masked(d)} label={d.name} />
         <span class="nm name-clip">{d.name}</span>
         <span class="rar">{rarityLabel(d.tiers[0]?.rarity ?? 'common')}</span>
-        <span class="desc">{d.description || 'Hidden until earned'}</span>
+        <!-- your own "???" tile: its riddle (#211); anyone else's: nothing to go on -->
+        <span class="desc">{d.description || (mine && d.hint) || 'Hidden until earned'}</span>
         {#if p}<progress max={p.max} value={p.value} aria-label={p.label}></progress><span class="prog">{p.text}</span>{/if}
         {@render parts(d)}
         {#if share(d, 1)}<span class="share">{share(d, 1)}</span>{/if}

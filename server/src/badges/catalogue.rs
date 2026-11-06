@@ -70,6 +70,31 @@ pub mod stat {
     ];
 }
 
+/// Hints for the hidden badges (#211), by key: shown, in place of the description, on the "???"
+/// tile in your own trophy case until you earn it. Every hidden badge has one. A riddle, not the
+/// answer: point the right way, never name the badge or say what it's for. Tweak freely here.
+pub static HINTS: &[(&str, &str)] = &[
+    ("zalgo", "I wonder what happens if you typed a weird name?"),
+    (
+        "friendly_fire",
+        "Who better to put your words on the record than you?",
+    ),
+    (
+        "highlight_reel",
+        "Share a moment so good the whole crowd has to react.",
+    ),
+    ("logo_egg", "The logo up top is ticklish. Keep at it."),
+    (
+        "skill_issue",
+        "Do something so bad the group never lets you forget it.",
+    ),
+];
+
+/// The hint for hidden badge `key` (see [`HINTS`]).
+pub fn hint(key: &str) -> Option<&'static str> {
+    HINTS.iter().find(|(k, _)| *k == key).map(|(_, h)| *h)
+}
+
 /// Ascending: `Mythical` is the rarest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Rarity {
@@ -915,5 +940,43 @@ mod tests {
         let s = stats(&[(stat::ZALGO_NAME, 1)]);
         assert_eq!(evaluate(&s, &HashMap::new()).get("zalgo"), Some(&1));
         assert_eq!(evaluate(&stats(&[]), &HashMap::new()).get("zalgo"), None);
+    }
+
+    #[test]
+    fn every_hidden_badge_has_one_hint_that_gives_nothing_away() {
+        let hidden: Vec<_> = CATALOGUE
+            .iter()
+            .chain(HAND_GIVEN)
+            .filter(|d| d.hidden)
+            .collect();
+        for def in &hidden {
+            let hint = hint(def.key).unwrap_or_else(|| panic!("{} has no hint", def.key));
+            assert!(!hint.trim().is_empty());
+            let lower = hint.to_lowercase();
+            for secret in [def.key, def.name, def.description] {
+                assert!(
+                    !lower.contains(&secret.to_lowercase()),
+                    "{}'s hint gives away {secret:?}",
+                    def.key
+                );
+            }
+        }
+        for (key, _) in HINTS {
+            assert!(
+                find(key).is_some_and(|d| d.hidden),
+                "{key} isn't a hidden badge"
+            );
+            assert_eq!(
+                HINTS.iter().filter(|(k, _)| k == key).count(),
+                1,
+                "{key} twice"
+            );
+        }
+        assert_eq!(HINTS.len(), hidden.len());
+        assert_eq!(
+            hint("zalgo"),
+            Some("I wonder what happens if you typed a weird name?")
+        );
+        assert_eq!(hint("the_yapper"), None);
     }
 }

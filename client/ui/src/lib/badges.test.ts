@@ -13,7 +13,7 @@ import type { BadgeDef } from './protocol/BadgeDef'
 
 const def = (over: Partial<BadgeDef> = {}): BadgeDef => ({
   key: 'the_yapper', name: 'The Yapper', description: 'Send messages.', icon: '💬', hidden: false, hand_given: false, stacking: false, unit: 'count',
-  tiers: [{ threshold: 100, rarity: 'common', holders: 3 }, { threshold: 500, rarity: 'uncommon', holders: 1 }], progress: 412, parts: [], art: null, ...over,
+  tiers: [{ threshold: 100, rarity: 'common', holders: 3 }, { threshold: 500, rarity: 'uncommon', holders: 1 }], progress: 412, parts: [], art: null, hint: null, ...over,
 })
 const badge = (key: string, rarity: Badge['rarity'], earned_at: string): Badge => ({ key, earned_at, first_earner: false, tier: 1, rarity, first_tiers: [], count: 0, hidden: false, seen: true })
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)

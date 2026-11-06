@@ -26,4 +26,9 @@ parts: Array<BadgeProgressPart>,
  * The badge's picture (#225), a media hash (a still WebP), drawn inside its rarity ring
  * instead of `icon`; `None` (and never when masked) for a badge that keeps its emoji.
  */
-art: string | null, };
+art: string | null, 
+/**
+ * A hidden badge's riddle (#211), masked or not: the trophy case shows it on your own "???"
+ * tile until you earn the badge. `None` for every other badge.
+ */
+hint: string | null, };

@@ -9,7 +9,7 @@ use pulse_protocol::rest::{
 };
 use sqlx::SqliteConnection;
 
-use super::catalogue::{CATALOGUE, Def, HAND_GIVEN, Rule, Unit, find};
+use super::catalogue::{CATALOGUE, Def, HAND_GIVEN, Rule, Unit, find, hint};
 use super::{engine, mask, stats};
 use crate::error::AppResult;
 
@@ -74,6 +74,7 @@ pub async fn catalogue(conn: &mut SqliteConnection, viewer: UserId) -> AppResult
                     progress: None,
                     parts: Vec::new(),
                     art: None,
+                    hint: hint(def.key).map(Into::into),
                 },
                 None => BadgeDef {
                     key: def.key.into(),
@@ -96,6 +97,7 @@ pub async fn catalogue(conn: &mut SqliteConnection, viewer: UserId) -> AppResult
                         })
                         .collect(),
                     art: art.get(def.key).cloned(),
+                    hint: hint(def.key).map(Into::into),
                 },
             }
         })

@@ -16,7 +16,7 @@ import type { BadgeDef } from '../lib/protocol/BadgeDef'
 const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const def = (key: string, over: Partial<BadgeDef> = {}): BadgeDef => ({
   key, name: key, description: `How to earn ${key}.`, icon: '⭐', hidden: false, hand_given: false, stacking: false, unit: 'count',
-  tiers: [{ threshold: 1, rarity: 'common', holders: 0 }], progress: null, parts: [], art: null, ...over,
+  tiers: [{ threshold: 1, rarity: 'common', holders: 0 }], progress: null, parts: [], art: null, hint: null, ...over,
 })
 const CATALOGUE: BadgeCatalogue = {
   people: 8,
@@ -25,7 +25,7 @@ const CATALOGUE: BadgeCatalogue = {
     def('the_regular', { name: 'The Regular', icon: '🎧', unit: 'hours', tiers: [{ threshold: 10, rarity: 'common', holders: 3 }, { threshold: 50, rarity: 'uncommon', holders: 0 }], progress: 12 }),
     def('quote_of_the_year', { name: 'Quote of the Year', icon: '🏆', stacking: true, tiers: [{ threshold: 1, rarity: 'legendary', holders: 1 }], progress: 2 }),
     def('night_owl', { name: 'Night Owl', icon: '🦉', tiers: [{ threshold: 1, rarity: 'rare', holders: 0 }], progress: 0 }),
-    def('hidden:0', { name: '???', description: '', icon: '❔', hidden: true, tiers: [{ threshold: 0, rarity: 'epic', holders: 1 }] }),
+    def('hidden:0', { name: '???', description: '', icon: '❔', hidden: true, hint: 'The logo up top is ticklish. Keep at it.', tiers: [{ threshold: 0, rarity: 'epic', holders: 1 }] }),
     def('founder', { name: 'Founder', icon: '👑', hand_given: true, tiers: [{ threshold: 1, rarity: 'mythical', holders: 1 }] }),
   ],
 }
@@ -188,6 +188,20 @@ describe('TrophyCase', () => {
     cmp = undefined
     await show({ badges: [badge('founder', { rarity: 'mythical' })] })
     expect(tile('Founder')).not.toBeUndefined()
+  })
+
+  it('your own "???" tile shows its hint, styled as any description; nothing else gives it away (#211)', async () => {
+    await show({ badges: [], mine: true })
+    const masked = tile('???')!
+    const desc = masked.querySelector('.desc')!
+    expect(desc.textContent).toBe('The logo up top is ticklish. Keep at it.')
+    expect(masked.className).toBe(tile('Night Owl')!.className)
+    expect(masked.querySelector('.nm')!.textContent).toBe('???')
+  })
+
+  it("someone else's case keeps the hint to you: Hidden until earned", async () => {
+    await show({ badges: [] })
+    expect(tile('???')!.querySelector('.desc')!.textContent).toBe('Hidden until earned')
   })
 
   it('opening your own case marks badges seen, keeping [NEW] while open', async () => {

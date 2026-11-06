@@ -100,6 +100,36 @@ async fn hidden_badges_never_leak_in_the_catalogue() {
 }
 
 #[tokio::test]
+async fn masked_badges_carry_their_hint_and_nothing_else_does() {
+    use pulse_server::badges::catalogue::hint;
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (_, c) = catalogue(&app, &alex).await;
+    // Zalgo is the first hidden badge, Friendly Fire the second (#210, #211).
+    assert_eq!(def(&c, "hidden:0").hint.as_deref(), hint("zalgo"));
+    assert_eq!(
+        def(&c, "hidden:0").hint.as_deref(),
+        Some("I wonder what happens if you typed a weird name?")
+    );
+    assert_eq!(def(&c, "hidden:1").hint.as_deref(), hint("friendly_fire"));
+    let masked = c.badges.iter().filter(|d| d.key.starts_with("hidden:"));
+    assert!(masked.clone().count() >= 5);
+    assert!(masked.clone().all(|d| d.hint.is_some()), "{c:?}");
+    assert!(
+        c.badges
+            .iter()
+            .filter(|d| !d.hidden)
+            .all(|d| d.hint.is_none())
+    );
+    // Earned, it's the badge itself (the hint rides along, unused).
+    grant(&app, alex_id, "zalgo", 1).await;
+    let (body, c) = catalogue(&app, &alex).await;
+    let z = def(&c, "zalgo");
+    assert_eq!(z.description, "Saved a name in Zalgo. He comes.");
+    assert!(body.contains("Z\u{335}\u{352}\u{316}a"));
+}
+
+#[tokio::test]
 async fn hidden_badges_never_leak_through_someone_elses_profile() {
     let app = spawn().await;
     let (alex_id, alex) = register(&app, "alex").await;

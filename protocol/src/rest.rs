@@ -189,6 +189,10 @@ pub struct BadgeDef {
     /// instead of `icon`; `None` (and never when masked) for a badge that keeps its emoji.
     #[serde(default)]
     pub art: Option<String>,
+    /// A hidden badge's riddle (#211), masked or not: the trophy case shows it on your own "???"
+    /// tile until you earn the badge. `None` for every other badge.
+    #[serde(default)]
+    pub hint: Option<String>,
 }
 
 /// One stat of a badge that needs several at once (Combo, #191), toward its next tier.
@@ -1681,6 +1685,24 @@ mod tests {
         };
         let json = serde_json::to_value(&with).unwrap();
         assert_eq!(json["art"], hash);
+        assert_eq!(serde_json::from_value::<BadgeDef>(json).unwrap(), with);
+    }
+
+    /// Hidden-badge hints (#211): an older server sends no `hint`, which reads as none; a hint
+    /// round-trips.
+    #[test]
+    fn badge_def_carries_optional_hint() {
+        let older = serde_json::json!({
+            "key": "hidden:0", "name": "???", "description": "", "icon": "❔", "hidden": true
+        });
+        let d: BadgeDef = serde_json::from_value(older).unwrap();
+        assert_eq!(d.hint, None);
+        let with = BadgeDef {
+            hint: Some("Keep at it.".into()),
+            ..d
+        };
+        let json = serde_json::to_value(&with).unwrap();
+        assert_eq!(json["hint"], "Keep at it.");
         assert_eq!(serde_json::from_value::<BadgeDef>(json).unwrap(), with);
     }
 

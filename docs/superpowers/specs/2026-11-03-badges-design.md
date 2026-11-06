@@ -40,7 +40,8 @@ awards a badge (`user_badges` is never written).
   live share "2 of 8 have this". **Static badges have one rarity; tiered badges have a rarity per tier** (owner,
   2026-11-03: renamed 10× is common, 50× epic, 100× legendary), so a higher tier is also a rarer badge. The ring, the
   sort order ("rarest first") and the showcase default all use the rarity of the tier reached. Hidden badges show as
-  "???" with their rarity until earned.
+  "???" with their rarity until earned; in your own trophy case each also shows a riddle-like hint (#211), kept in
+  `HINTS` in server/src/badges/catalogue.rs.
 - **Client-reported events.** One badge ("The Doos") needs a signal only the app sees: speaking into a muted mic. The
   client reports it as an event; the server counts it with a rate limit and caps. It's spoofable, which is acceptable
   among friends; no other badge relies on the client.
