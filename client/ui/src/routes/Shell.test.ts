@@ -1230,3 +1230,43 @@ describe('voice channel chat (#226)', () => {
     expect(q('aside.voice-chat')).not.toBeNull()
   })
 })
+
+// #220: which call you're in shows from anywhere: its server's tab (or Home, for a DM or group call) wears the
+// accent ring and a speaker badge
+describe('the call you are in', () => {
+  const mountIn = async (channelId: string | null) => {
+    const { testReady } = await import('../lib/testReady')
+    app.state = applyReady(emptyState(), testReady([
+      { id: 'V1', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 0 },
+      { id: 'D1', server_id: null, kind: 'dm', name: null, position: 0 },
+    ], { servers: [{ id: 'S1', name: 'Main', icon_hash: null }, { id: 'S2', name: 'Other', icon_hash: null }] }))
+    voice.channelId = channelId
+    voice.connection = channelId ? 'connected' : 'disconnected'
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
+    flushSync()
+  }
+  const tab = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes(name))!
+  afterEach(() => {
+    voice.channelId = null
+    voice.connection = 'disconnected'
+  })
+
+  it('a server call badges that server\'s tab, and only it', async () => {
+    await mountIn('V1')
+    expect(tab('Main').querySelector('.call-here .call-badge svg')).not.toBeNull()
+    expect(tab('Main').getAttribute('aria-label')).toBe('Main (you\'re in a call here)')
+    expect(tab('Other').querySelector('.call-here')).toBeNull()
+    expect(tab('Home').querySelector('.call-here')).toBeNull()
+  })
+
+  it('a DM or group call badges Home', async () => {
+    await mountIn('D1')
+    expect(tab('Home').querySelector('.call-here .call-badge svg')).not.toBeNull()
+    expect(tab('Main').querySelector('.call-here')).toBeNull()
+  })
+
+  it('no call, no badge', async () => {
+    await mountIn(null)
+    expect(document.querySelector('.call-here')).toBeNull()
+  })
+})

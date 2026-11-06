@@ -12,6 +12,7 @@ import ConversationList from './ConversationList.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { profileUi } from '../lib/profileCard.svelte'
+import { voice } from '../lib/voice.svelte'
 
 const user = (id: string, name: string) => ({ id, username: name, display_name: name, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const alex = user('U1', 'alex')
@@ -133,5 +134,28 @@ describe('Mute in the DM list menu (#190): a durations flyout, as the channel me
     rightClick(rowFor('sam'))
     expect(item('Unmute conversation')).toBeDefined()
     expect(item('Mute conversation')).toBeUndefined()
+  })
+})
+
+// #220: the conversation whose call you're in wears the same mark as a server's tab: the accent ring and speaker
+// badge on its picture, and the in-call marker as the accent speaker
+describe('the call you are in', () => {
+  const callIn = (id: string) => ({ channel_id: id, started_by: 'U2', started_at: '2026-11-06T10:00:00Z', ringing: [] })
+  afterEach(() => {
+    voice.channelId = null
+    voice.connection = 'disconnected'
+  })
+
+  it('your call\'s row is marked as yours; another call in progress keeps the phone', async () => {
+    app.state = { ...app.state, calls: { D1: callIn('D1'), G1: callIn('G1') } } as never
+    voice.channelId = 'D1'
+    voice.connection = 'connected'
+    flushSync()
+    const mine = rowFor('sam')
+    expect(mine.querySelector('.call-here .call-badge svg')).not.toBeNull()
+    expect(mine.querySelector('.in-call.mine')?.getAttribute('aria-label')).toBe('You\'re in this call')
+    const other = rowFor('squad')
+    expect(other.querySelector('.call-here')).toBeNull()
+    expect(other.querySelector('.in-call:not(.mine)')?.getAttribute('aria-label')).toBe('In call')
   })
 })

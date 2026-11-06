@@ -937,6 +937,13 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
   .pop-in, .fade-in { animation: none !important; }
 }
 
+/* The call you're in (#220), seen from anywhere: a brand-accent ring round its place's picture (a server's chip, the
+   Home icon, a conversation's avatar) and a speaker badge on the corner. --call-gap is the surface behind it (the
+   ring's inner gap), --ring unless the place sets its own. The voice channel itself is bold with an accent speaker. */
+.call-here { position: relative; display: inline-grid; flex-shrink: 0; border-radius: var(--radius-xs); box-shadow: 0 0 0 2px var(--call-gap, var(--ring)), 0 0 0 4px var(--focus-ring); }
+.call-here.round { border-radius: 50%; }
+.call-badge { position: absolute; right: -7px; bottom: -7px; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); box-shadow: 0 0 0 2px var(--call-gap, var(--ring)); }
+
 /* A button that reads as a link. */
 .link-btn { padding: 0; border: 0; background: none; color: var(--accent-text); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .link-btn:hover { text-decoration-thickness: 2px; }

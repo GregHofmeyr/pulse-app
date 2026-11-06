@@ -529,7 +529,7 @@
   {#if renaming === c.id}
     {@render renameField(c, 'speaker')}
   {:else}
-  <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId} class:with-chat={member} aria-haspopup={member ? 'menu' : undefined} data-channel={c.id}
+  <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId} class:with-chat={member} aria-current={c.id === voiceChannelId ? 'true' : undefined} aria-haspopup={member ? 'menu' : undefined} data-channel={c.id}
     data-tip={c.id === voiceChannelId ? 'You’re here' : `Join ${c.name}`}
     onmouseenter={() => restOn(c.id)} onfocus={() => restOn(c.id)}
     onmouseleave={() => prefetch.leave(c.id)} onblur={() => prefetch.leave(c.id)}
@@ -655,7 +655,9 @@
   .row:hover { background: var(--bg-2); color: var(--text); }
   /* background and colour only: a bolder weight would widen the name */
   .row.active { background: var(--bg-3); color: var(--text); }
-  .row.live .ico { color: var(--ok-text); }
+  /* the voice channel you're in (#220): bold, its speaker in the brand accent (the tab and Home carry .call-here) */
+  .row.live { color: var(--text); font-weight: 600; }
+  .row.live .ico { color: var(--accent-text); }
   .ico { color: var(--text-3); display: flex; }
   .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { font-size: 11px; color: var(--text-3); }

@@ -160,6 +160,29 @@ describe('arrivals', () => {
   })
 })
 
+// #220: the voice channel you're in reads at a glance: its name bold, its speaker in the brand accent
+describe('the channel you are in', () => {
+  it('is bold with an accent speaker', () => {
+    const css = readFileSync(resolve(__dirname, 'ChannelList.svelte'), 'utf8').match(/<style>([\s\S]*)<\/style>/)![1]
+    expect(css).toMatch(/\.row\.live \.ico \{ color: var\(--accent-text\); \}/)
+    expect(css).toMatch(/\.row\.live \{[^}]*font-weight: 600/)
+  })
+
+  it('says so to screen readers', () => {
+    if (cmp) unmount(cmp)
+    document.body.innerHTML = ''
+    cmp = mount(ChannelList, {
+      target: document.body,
+      props: { serverId: 'S1', activeChannelId: null, voiceChannelId: 'V1', speaking: new Set<string>(), onSelect: () => {}, onJoinVoice: () => {}, onMessage: () => {}, onVoiceSettings: () => {} },
+    })
+    flushSync()
+    const row = document.querySelector<HTMLElement>('.row[data-channel="V1"]')!
+    expect(row.classList.contains('live')).toBe(true)
+    expect(row.getAttribute('aria-current')).toBe('true')
+    expect(document.querySelector('.row[data-channel="V2"]')!.hasAttribute('aria-current')).toBe(false)
+  })
+})
+
 describe('ChannelList joining', () => {
   it('joining_shows_a_greyed_entry_with_spinner_at_once', async () => {
     invoke.mockReturnValue(new Promise(() => {}))

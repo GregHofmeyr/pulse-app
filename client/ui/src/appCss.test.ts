@@ -188,3 +188,12 @@ describe('shared surfaces', () => {
     expect(modal.getPropertyValue('box-shadow')).toBe('var(--shadow-3)')
   })
 })
+
+// #220: one mark for "the call you're in", on a server tab, Home and a conversation row
+describe('the call-here mark', () => {
+  const css = readFileSync(resolve(__dirname, 'app.css'), 'utf8')
+  it('is an accent ring with a speaker badge, on tokens', () => {
+    expect(css).toMatch(/\.call-here \{[^}]*box-shadow: 0 0 0 2px var\(--call-gap, var\(--ring\)\), 0 0 0 4px var\(--focus-ring\)/)
+    expect(css).toMatch(/\.call-badge \{[^}]*background: var\(--accent\);[^}]*color: var\(--on-accent\)/)
+  })
+})

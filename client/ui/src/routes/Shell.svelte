@@ -255,6 +255,11 @@
     if (left && left !== shown) untrack(() => (app.state = trimHistory(app.state, left)))
   })
   const home = $derived(homeBadge(app.state, nowIso))
+  /** Where the call you're in lives (#220): its server's id, 'home' for a DM or group call, or null. */
+  const callAt = $derived.by(() => {
+    const ch = voice.channelId ? app.state.channels[voice.channelId] : undefined
+    return !ch ? null : (ch.server_id ?? 'home')
+  })
 
   // Right-click a server tab (#161): its settings, and mute/unmute the whole server (ServerMenu).
   let serverMenu = $state<null | { id: string; x: number; y: number; opener: HTMLElement }>(null)
@@ -529,6 +534,8 @@
   }
 </script>
 
+{#snippet callBadge()}<span class="call-badge" aria-hidden="true"><Icon name="speaker" size={10} /></span>{/snippet}
+
 <div class="app">
   <header data-tauri-drag-region>
     <!-- the logo egg (#49): 7 quick clicks; hidden on purpose, so no button or keyboard path -->
@@ -537,17 +544,22 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" /></svg>
     </span>
     <nav aria-label="Servers">
-      <button class="tab" class:active={activeServerId === null} onclick={() => { activeServerId = null; activeChannelId = null }}>
-        <Icon name="home" size={16} /> Home{#if home > 0}<span class="pill">{home > 99 ? '99+' : home}</span>{/if}
+      <button class="tab" class:active={activeServerId === null} aria-label={callAt === 'home' ? "Home (you're in a call here)" : undefined} onclick={() => { activeServerId = null; activeChannelId = null }}>
+        {#if callAt === 'home'}<span class="call-here call-home"><Icon name="home" size={16} />{@render callBadge()}</span>{:else}<Icon name="home" size={16} />{/if} Home{#if home > 0}<span class="pill">{home > 99 ? '99+' : home}</span>{/if}
       </button>
       <span class="sep"></span>
       {#each servers as s (s.id)}
         {@const badge = serverBadge(app.state, s.id, nowIso)}
         {@const talking = inVoice(app.state, s.id)}
-        <button class="tab" class:active={activeServerId === s.id} onclick={() => selectServer(s.id)}
+        <button class="tab" class:active={activeServerId === s.id} aria-label={callAt === s.id ? `${s.name} (you're in a call here)` : undefined} onclick={() => selectServer(s.id)}
           oncontextmenu={(e) => { e.preventDefault(); serverMenu = { id: s.id, x: e.clientX, y: e.clientY, opener: e.currentTarget } }}>
-          <span class="chip" style:background={avatarColor(s.id)}>{initial(s.name)}</span>{s.name}
-          {#if talking > 0}<span class="invc" aria-label="{talking} in voice" data-tip="{talking} in voice"><Icon name="speaker" size={14} /></span>{/if}
+          {#if callAt === s.id}
+            <span class="chip call-here" style:background={avatarColor(s.id)}>{initial(s.name)}{@render callBadge()}</span>{s.name}
+          {:else}
+            <span class="chip" style:background={avatarColor(s.id)}>{initial(s.name)}</span>{s.name}
+          {/if}
+          <!-- the badge already says it for your own call's server -->
+          {#if talking > 0 && callAt !== s.id}<span class="invc" aria-label="{talking} in voice" data-tip="{talking} in voice"><Icon name="speaker" size={14} /></span>{/if}
           {#if badge.mentions > 0}<span class="pill">{badge.mentions}</span>{:else if badge.dot}<span class="dot" aria-label="new messages"></span>{/if}
         </button>
       {/each}
@@ -715,7 +727,11 @@
   /* the dialog box is the div (role=dialog); the form inside lays out as its children */
   .dialog-form { display: contents; }
   .app { height: 100%; display: flex; flex-direction: column; background: var(--bg-0); }
-  header { height: 52px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 10px 0 12px; }
+  header { height: 52px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 10px 0 12px; --call-gap: var(--bg-0); }
+  /* Home's icon in your call's ring (#220): a little room inside, like a server's chip */
+  .tab .call-home { padding: 3px; margin: -3px; }
+  .tab:hover { --call-gap: var(--bg-2); }
+  .tab.active { --call-gap: var(--bg-3); }
   .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; margin-right: 8px; }
   nav { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
   .tab { height: 36px; padding: 0 12px 0 10px; border-radius: 10px; border: 1px solid transparent; background: transparent; color: var(--text-2); display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; white-space: nowrap; }
