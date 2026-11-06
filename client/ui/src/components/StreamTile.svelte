@@ -8,6 +8,7 @@
   import { displayName, liveIn } from '../lib/selectors'
   import { avatarColor } from '../lib/avatar'
   import { volumeLabel } from '../lib/voiceui'
+  import { tileScale } from '../lib/stagelayout'
   import { voice } from '../lib/voice.svelte'
   import { isWindows } from '../lib/stream/platform'
   import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
@@ -22,6 +23,7 @@
     mine,
     onMenu,
     onFull,
+    height,
   }: {
     channelId: string
     serverId: string | null
@@ -29,6 +31,8 @@
     mine: boolean
     onMenu: (e: MouseEvent | KeyboardEvent, anchor: HTMLElement) => void
     onFull: (k: { channelId: string; streamer: string }) => void
+    /** On the stage (#222): the tile's height, which a not-watched tile's avatar grows with, like a person's. */
+    height?: number
   } = $props()
 
   const windows = isWindows()
@@ -104,7 +108,7 @@
     <div class="backdrop" style:background={avatarColor(streamer)}></div>
     <span class="live-tag">LIVE</span>
     {#if viewers > 0 || ghosts}<span class="viewers">{#if viewers > 0}<Icon name="eye" size={14} label="Viewers" /> {viewers}{/if}{#if ghosts}<span data-tip="Ghost viewers">{ghosts}</span>{/if}</span>{/if}
-    <Avatar id={streamer} {name} size={64} />
+    <Avatar id={streamer} {name} size={height === undefined ? 64 : tileScale(height).avatar} />
     <div class="who">{name}</div>
     {#if windows && mode === 'self'}
       <button type="button" class="btn btn-lg btn-primary watch" aria-label="Watch {name}'s stream">Watch</button>

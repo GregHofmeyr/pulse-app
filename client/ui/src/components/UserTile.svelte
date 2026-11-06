@@ -7,11 +7,13 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import { volumeLabel } from '../lib/voiceui'
+  import { tileScale } from '../lib/stagelayout'
 
   let {
     entry,
     serverId = null,
     compact = false,
+    height,
     onMenu,
   }: {
     entry: RosterEntry
@@ -19,6 +21,8 @@
     serverId?: string | null
     /** The small tile in the full view's strip. */
     compact?: boolean
+    /** On the stage (#222): the tile's height, which its avatar, name and mute badge grow with. */
+    height?: number
     onMenu: (e: MouseEvent | KeyboardEvent, anchor: HTMLElement) => void
   } = $props()
 
@@ -34,6 +38,8 @@
   })
   // the avatar button is what has focus, so it's what the menu opens from and hands focus back to
   let avatar = $state<HTMLElement>()
+  const scale = $derived(height === undefined ? null : tileScale(height))
+  const badgeIcon = $derived(scale ? scale.icon : compact ? 11 : 14)
   // a joining entry (yours) has no menu yet
   const locked = $derived(entry.pending)
   // the avatar animates while the pointer is over the tile
@@ -56,16 +62,16 @@
 
 <!-- the context menu is a pointer shortcut; the keyboard route is the avatar button's ContextMenu / Shift+F10 -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="tile" class:compact class:pending={entry.pending} class:speaking={voice.speaking.has(entry.userId) || soundboard.playing.has(entry.userId)} data-user={entry.userId} oncontextmenu={contextMenu}
+<div class="tile" class:compact class:pending={entry.pending} class:speaking={voice.speaking.has(entry.userId) || soundboard.playing.has(entry.userId)} data-user={entry.userId} style:--badge={scale ? `${scale.badge}px` : undefined} oncontextmenu={contextMenu}
   onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}>
   <button bind:this={avatar} type="button" class="avatar-btn" data-menu-toggle aria-disabled={locked} aria-haspopup="menu" aria-label={entry.name} data-tip={isMe ? undefined : `Options for ${entry.name}`}
     onkeydown={key} onclick={ask}>
-    <Avatar id={entry.userId} name={entry.name} size={compact ? 36 : 84} hovered={() => over} />
-    {#if serverTip}<span class="badge server" data-tip={serverTip}><Icon name={entry.serverDeafenedBy ? 'headphonesOff' : 'micOff'} size={compact ? 11 : 14} label={serverTip} /></span>
-    {:else if entry.deafened}<span class="badge"><Icon name="headphonesOff" size={compact ? 11 : 14} label="Deafened" /></span>
-    {:else if entry.muted}<span class="badge"><Icon name="micOff" size={compact ? 11 : 14} label="Muted" /></span>{/if}
+    <Avatar id={entry.userId} name={entry.name} size={scale ? scale.avatar : compact ? 36 : 84} hovered={() => over} />
+    {#if serverTip}<span class="badge server" data-tip={serverTip}><Icon name={entry.serverDeafenedBy ? 'headphonesOff' : 'micOff'} size={badgeIcon} label={serverTip} /></span>
+    {:else if entry.deafened}<span class="badge"><Icon name="headphonesOff" size={badgeIcon} label="Deafened" /></span>
+    {:else if entry.muted}<span class="badge"><Icon name="micOff" size={badgeIcon} label="Muted" /></span>{/if}
   </button>
-  <div class="name">
+  <div class="name" style:font-size={scale ? `${scale.font}px` : undefined}>
     <span class="text"><Name userId={entry.userId} {serverId} text={entry.name} surface="side" /></span>
     {#if entry.pending}
       <span class="joining">Joining…</span><span class="spinner" role="progressbar" aria-label="Joining"></span>
@@ -88,7 +94,7 @@
   .avatar-btn { position: relative; border: 0; padding: 0; background: none; border-radius: 50%; }
   .avatar-btn[aria-disabled='true'] { cursor: default; }
   .tile.speaking :global(.av) { box-shadow: 0 0 0 4px var(--ring), 0 0 0 7px var(--ok); }
-  .badge { position: absolute; right: -4px; bottom: -4px; width: 28px; height: 28px; border-radius: 50%; background: var(--danger); color: var(--on-danger); border: 4px solid var(--ring); display: grid; place-items: center; }
+  .badge { position: absolute; right: -4px; bottom: -4px; width: var(--badge, 28px); height: var(--badge, 28px); border-radius: 50%; background: var(--danger); color: var(--on-danger); border: 4px solid var(--ring); display: grid; place-items: center; }
   /* the server's mute (#140), not theirs: squared, with a second ring */
   .badge.server { border-radius: 8px; box-shadow: 0 0 0 2px var(--danger); }
   .name { display: flex; align-items: center; gap: 8px; font-weight: 600; max-width: 90%; }

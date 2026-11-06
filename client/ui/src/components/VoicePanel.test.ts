@@ -28,6 +28,8 @@ import { diag, diagUi } from '../lib/stream/diag.svelte'
 import { testQoty } from '../lib/testReady'
 import { mediaUrl } from '../lib/emoji'
 import type { Ready } from '../lib/protocol/Ready'
+import { motion } from '../lib/animate.svelte'
+import { stageLayout, tileScale } from '../lib/stagelayout'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -468,5 +470,115 @@ describe('Quote of the Year', () => {
     // under the tiles, above the call controls
     expect(q('.grid-wrap')!.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(strip.compareDocumentPosition(q('.bar-wrap')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
+
+describe('the stage layout (#222)', () => {
+  const W = 1200
+  const H = 700
+  beforeEach(() => {
+    motion.reducedMotion = false
+    motion.streaming = false
+    vi.stubGlobal('ResizeObserver', class {
+      cb: () => void
+      constructor(cb: () => void) { this.cb = cb }
+      observe() { this.cb() }
+      disconnect() {}
+    })
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('grid-wrap') ? W : 0 })
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('grid-wrap') ? H : 0 })
+    // a slot is drawn where its style puts it (the stage's own box is at 0, 0)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const px = (v: string) => parseFloat(v) || 0
+      const s = this.style
+      return { x: px(s.left), y: px(s.top), left: px(s.left), top: px(s.top), width: px(s.width), height: px(s.height), right: 0, bottom: 0, toJSON() {} } as DOMRect
+    })
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    motion.reducedMotion = false
+  })
+  const slots = () => [...document.querySelectorAll<HTMLElement>('.stage .slot')]
+  const box = (el: HTMLElement) => ({ x: parseFloat(el.style.left), y: parseFloat(el.style.top), w: parseFloat(el.style.width), h: parseFloat(el.style.height) })
+  /** Watches a slot's style: the transforms it was given on the way (the FLIP start is set and cleared in one go). */
+  const transforms = (el: HTMLElement) => {
+    const mo = new MutationObserver(() => {})
+    mo.observe(el, { attributes: true, attributeFilter: ['style'], attributeOldValue: true })
+    return () => {
+      const seen = mo.takeRecords().map((r) => r.oldValue ?? '')
+      mo.disconnect()
+      return seen.filter((s) => /translate\(/.test(s))
+    }
+  }
+  const toggleEveryone = () => {
+    button('Show non-streaming participants')!.click()
+    flushSync()
+  }
+
+  it('tiles fill the stage as the layout says: you, sam and sam’s stream make a pyramid', () => {
+    mountPanel()
+    const want = stageLayout({ count: 3, width: W, height: H }).rects
+    const got = slots().map(box)
+    expect(got).toHaveLength(3)
+    got.forEach((g, i) => {
+      expect(g.x).toBeCloseTo(want[i].x)
+      expect(g.y).toBeCloseTo(want[i].y)
+      expect(g.w).toBeCloseTo(want[i].w)
+      expect(g.h).toBeCloseTo(want[i].h)
+    })
+    // the stream shares the layout: it is the third slot
+    expect(slots()[2].querySelector('[data-stream="U2"]')).not.toBeNull()
+  })
+
+  it('a user tile’s avatar grows with the tile', () => {
+    mountPanel()
+    const h = box(slots()[0]).h
+    expect(q('.slot [data-user="U1"] .av')!.style.width).toBe(`${tileScale(h).avatar}px`)
+  })
+
+  it('so does a not-watched stream tile’s', () => {
+    mountPanel()
+    const h = box(slots()[2]).h
+    expect(q('.slot [data-stream="U2"] .av')!.style.width).toBe(`${tileScale(h).avatar}px`)
+  })
+
+  it('when tiles leave, the one that stays glides from where it was', () => {
+    mountPanel()
+    const streamSlot = slots()[2]
+    const seen = transforms(streamSlot)
+    toggleEveryone()
+    expect(slots()).toHaveLength(1)
+    expect(seen().length).toBeGreaterThan(0)
+    // and ends where the layout puts it, untransformed
+    expect(streamSlot.style.transform).toBe('')
+  })
+
+  it('under reduced motion it moves at once', () => {
+    motion.reducedMotion = true
+    mountPanel()
+    const seen = transforms(slots()[2])
+    toggleEveryone()
+    expect(slots()).toHaveLength(1)
+    expect(seen()).toEqual([])
+  })
+
+  it('a tile that arrives fades in; the first ones on screen do not', () => {
+    mountPanel()
+    expect(slots().some((s) => s.classList.contains('fade-in'))).toBe(false)
+    toggleEveryone()
+    toggleEveryone()
+    const users = slots().filter((s) => s.querySelector('[data-user]'))
+    expect(users).toHaveLength(2)
+    expect(users.every((s) => s.classList.contains('fade-in'))).toBe(true)
+  })
+
+  it('a tile that changes (sam mutes) does not fade in again', () => {
+    mountPanel()
+    const sams = q('.slot [data-user="U2"]')!.closest<HTMLElement>('.slot')!
+    app.state = applyEvent(app.state, { t: 'VoiceStateChanged', d: { channel_id: 'V1', user_id: 'U2', flags: { muted: true, deafened: false } } }, Date.now())
+    flushSync()
+    expect(q('.slot [data-user="U2"] .badge')).not.toBeNull()
+    expect(q('.slot [data-user="U2"]')!.closest('.slot')).toBe(sams)
+    expect(slots().some((s) => s.classList.contains('fade-in'))).toBe(false)
   })
 })

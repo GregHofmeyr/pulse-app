@@ -1,11 +1,14 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
+  import type { Attachment } from 'svelte/attachments'
   import Icon from './Icon.svelte'
   import { app } from '../lib/store.svelte'
   import { myServerTips, selfVoice, voice, voiceApi } from '../lib/voice.svelte'
   import { callRoster, liveIn } from '../lib/selectors'
   import { gridTiles, nobodyStreaming } from '../lib/callgrid'
   import { stageLabel } from '../lib/voicestage'
+  import { flipInverse, stageLayout, type Rect } from '../lib/stagelayout'
+  import { motion, watchMotion } from '../lib/animate.svelte'
   import FullView from './FullView.svelte'
   import QotyStrip from './QotyStrip.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
@@ -42,6 +45,95 @@
   let menu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
   const myLive = $derived(stream.live?.channelId === channelId)
   const tiles = $derived(gridTiles({ roster, streams: liveIn(app.state, channelId), meId, showEveryone, myLive }))
+
+  const tileKey = (t: (typeof tiles)[number]) => (t.kind === 'user' ? `u:${t.entry.userId}` : `s:${t.streamer}`)
+
+  // The stage (#222): every tile, a person's or a stream's, sized and placed by stageLayout to fill it.
+  let stageEl = $state<HTMLElement>()
+  let innerEl = $state<HTMLElement>()
+  let stageW = $state(0)
+  let stageH = $state(0)
+  $effect(() => {
+    const el = stageEl
+    if (!el) return
+    const measure = () => {
+      stageW = el.clientWidth
+      stageH = el.clientHeight
+    }
+    measure()
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null
+    ro?.observe(el)
+    return () => ro?.disconnect()
+  })
+  // until it's measured the tiles stay hidden: they'd show at the smallest size for a frame, then jump
+  const measured = $derived(stageW > 0 && stageH > 0)
+  const layout = $derived(stageLayout({ count: tiles.length, width: stageW, height: stageH }))
+
+  // FLIP when tiles join, leave or the stage resizes: each slot is put at its new place, drawn back where it was by a
+  // transform, then let go to glide in on the stylesheet's transition (motion tokens). One measure before the change
+  // and one after, transforms only in between: nothing re-lays out per frame.
+  watchMotion()
+  const slots = new Map<string, HTMLElement>()
+  // not $state: the first layout on screen doesn't animate, and the tiles that arrive after it fade in
+  let ready = false
+  let before: Map<string, Rect> | null = null
+  const animates = () => ready && !motion.reducedMotion && !motion.streaming
+  // This reruns when a tile's entry changes (someone mutes): only a slot new to its key is an arrival. Keys that left
+  // are pruned after each layout, below.
+  const slot = (key: string): Attachment<HTMLElement> => (el) => {
+    if (slots.get(key) === el) return
+    slots.set(key, el)
+    if (ready && animates()) el.classList.add('fade-in')
+  }
+  $effect.pre(() => {
+    void layout
+    untrack(() => {
+      if (!animates()) {
+        before = null
+        return
+      }
+      before = new Map()
+      for (const [k, el] of slots) {
+        const r = el.getBoundingClientRect()
+        before.set(k, { x: r.left, y: r.top, w: r.width, h: r.height })
+      }
+    })
+  })
+  $effect(() => {
+    const { rects } = layout
+    const keys = tiles.map(tileKey)
+    untrack(() => {
+      for (const [k, el] of slots) if (!keys.includes(k) || !el.isConnected) slots.delete(k)
+      if (!measured || !innerEl) return
+      const from = before
+      before = null
+      if (!ready) {
+        ready = true
+        return
+      }
+      if (!from) return
+      const origin = innerEl.getBoundingClientRect()
+      const moves: [HTMLElement, string][] = []
+      keys.forEach((k, i) => {
+        const el = slots.get(k)
+        const was = from.get(k)
+        const to = rects[i]
+        if (!el || !was || !to) return
+        const inv = flipInverse(was, { x: origin.left + to.x, y: origin.top + to.y, w: to.w, h: to.h })
+        if (inv) moves.push([el, `translate(${inv.dx}px, ${inv.dy}px) scale(${inv.sx}, ${inv.sy})`])
+      })
+      if (!moves.length) return
+      for (const [el, t] of moves) {
+        el.classList.add('snap')
+        el.style.transform = t
+      }
+      void innerEl.offsetWidth // the one reflow: the drawn-back place is where the glide starts
+      for (const [el] of moves) {
+        el.classList.remove('snap')
+        el.style.transform = ''
+      }
+    })
+  })
 
   function setShowEveryone(on: boolean) {
     showEveryone = on
@@ -113,19 +205,22 @@
   {#if fullStreamer}
     {#key fullStreamer}<FullView {channelId} streamer={fullStreamer} {serverId} {onMessage} {onVoiceSettings} />{/key}
   {:else}
-    <div class="grid-wrap">
+    <div class="grid-wrap" bind:this={stageEl}>
       {#if nobodyStreaming(tiles, showEveryone)}
         <p class="empty">Nobody's streaming — <button type="button" class="link-btn" onclick={() => setShowEveryone(true)}>show everyone</button></p>
+      {:else if !tiles.length}
+        <p class="empty">Nobody's here yet.</p>
       {:else}
-        <div class="grid">
-          {#each tiles as t (t.kind === 'user' ? `u:${t.entry.userId}` : `s:${t.streamer}`)}
-            {#if t.kind === 'user'}
-              <UserTile entry={t.entry} {serverId} onMenu={(e, a) => openMenu(t.entry.userId, e, a)} />
-            {:else}
-              <StreamTile {channelId} {serverId} streamer={t.streamer} mine={t.mine} onMenu={(e, a) => openMenu(t.streamer, e, a)} onFull={openFull} />
-            {/if}
-          {:else}
-            <p class="empty">Nobody's here yet.</p>
+        <div class="stage" class:measuring={!measured} bind:this={innerEl} style:height="{layout.height}px">
+          {#each tiles as t, i (tileKey(t))}
+            {@const r = layout.rects[i]}
+            <div class="slot" style:left="{r.x}px" style:top="{r.y}px" style:width="{r.w}px" style:height="{r.h}px" {@attach slot(tileKey(t))}>
+              {#if t.kind === 'user'}
+                <UserTile entry={t.entry} {serverId} height={r.h} onMenu={(e, a) => openMenu(t.entry.userId, e, a)} />
+              {:else}
+                <StreamTile {channelId} {serverId} streamer={t.streamer} mine={t.mine} onMenu={(e, a) => openMenu(t.streamer, e, a)} onFull={openFull} height={r.h} />
+              {/if}
+            </div>
           {/each}
         </div>
       {/if}
@@ -189,10 +284,15 @@
   .status.warn { color: var(--warn-text); background: var(--warn-soft); }
   .error { margin: 12px 18px 0; color: var(--danger-text); font-size: 13px; }
   .eye[aria-pressed='true'] { color: var(--text); }
-  .grid-wrap { flex: 1; min-height: 0; overflow-y: auto; container-type: inline-size; }
-  .grid { padding: 20px; display: grid; grid-template-columns: 1fr; align-items: start; gap: 14px; }
-  @container (min-width: 560px) { .grid { grid-template-columns: repeat(2, 1fr); } }
-  @container (min-width: 900px) { .grid { grid-template-columns: repeat(3, 1fr); } }
+  /* the stage (#222): stageLayout places each slot (its 20px padding and 14px gap are the grid's were); a crowd too
+     big for it scrolls */
+  .grid-wrap { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; }
+  .stage { position: relative; }
+  .stage.measuring { visibility: hidden; }
+  .slot { position: absolute; transform-origin: 0 0; transition: transform var(--dur-slow) var(--ease); }
+  /* set from script for the FLIP start, so global (Svelte would drop it as unused) */
+  .slot:global(.snap) { transition: none; }
+  .slot > :global(.tile) { width: 100%; height: 100%; }
   .empty { margin: 20px; color: var(--text-3); }
   .bar-wrap { height: 84px; flex-shrink: 0; display: grid; place-items: center; }
   .controls { padding: 8px; background: var(--bg-inset); border-radius: 16px; display: flex; gap: 8px; }
