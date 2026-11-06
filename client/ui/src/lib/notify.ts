@@ -4,7 +4,7 @@ import type { AppState } from './state'
 import type { Channel } from './protocol/Channel'
 import type { Message } from './protocol/Message'
 import { conversationName, shouldAlert, type AlertInput } from './conversations'
-import { displayName, userOf } from './selectors'
+import { channelLabel, displayName, userOf } from './selectors'
 import { mentionLookup, showMentions } from './mentionStyles'
 import { TOKEN_RE } from './emoji'
 
@@ -46,7 +46,7 @@ export function notificationTitle(s: AppState, m: Message, channel: Channel, mor
   let where = ''
   if (channel.server_id) {
     const server = s.servers.find((x) => x.id === channel.server_id)
-    where = ` in #${channel.name ?? ''}${server ? ` (${server.name})` : ''}`
+    where = ` in ${channelLabel(channel)}${server ? ` (${server.name})` : ''}`
   } else if (channel.kind === 'group') {
     where = ` in ${conversationName(s, channel.id)}`
   }
@@ -68,14 +68,14 @@ export function notificationBody(m: Message, me: string, showText: boolean): str
   return 'New message'
 }
 
-/** Where a stream is, as live notices name it (#60): "#gaming", or a conversation's name. */
+/** Where a stream is, as live notices name it (#60): its voice channel bare ("Lounge", #230), or a conversation's name. */
 export function liveWhere(s: AppState, channelId: string): string {
   const channel = s.channels[channelId]
   if (!channel) return ''
-  return channel.server_id ? `#${channel.name ?? ''}` : conversationName(s, channelId)
+  return channel.server_id ? channelLabel(channel) : conversationName(s, channelId)
 }
 
-/** "sam went live in #gaming" (#60), the server's name underneath; a click opens that channel. */
+/** "sam went live in Lounge" (#60), the server's name underneath; a click opens that channel. */
 export function liveNotice(s: AppState, channelId: string, streamer: string): Notice {
   const serverId = s.channels[channelId]?.server_id ?? null
   const server = serverId ? s.servers.find((x) => x.id === serverId) : undefined

@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { COLUMNS, fitColumns, keyWidth, MAIN_MIN, RIGHT_DEFAULT, type FitInput } from './columns'
+import { COLUMNS, fitColumns, keyWidth, MAIN_MIN, RIGHT_DEFAULT, RIGHT_MIN, type FitInput } from './columns'
 
 // the minimum window (900px) less the body's 8px side padding
 const MIN_BODY = 900 - 16
 const fit = (over: Partial<FitInput>) => fitColumns({ saved: { left: null, right: null }, body: 1400, left: true, right: true, rightDefault: RIGHT_DEFAULT.members, ...over })
+
+describe("the voice chat's own minimum (#230)", () => {
+  it('the chat keeps its composer usable at 280px; the other right columns keep 180px', () => {
+    expect(RIGHT_MIN).toEqual({ members: 180, group: 180, search: 180, chat: 280 })
+    const chat = { rightDefault: RIGHT_DEFAULT.chat, rightMin: RIGHT_MIN.chat }
+    expect(fit({ ...chat, saved: { left: null, right: 10 } }).right).toBe(280)
+    // a shrinking window narrows it to its own minimum, not the members list's
+    expect(fit({ ...chat, saved: { left: null, right: 480 }, body: 860 }).right).toBe(280)
+    expect(fit({ ...chat, body: 700 }).maxRight).toBe(280)
+    expect(fit({ saved: { left: null, right: 10 } }).right).toBe(180)
+  })
+
+  it('the smallest window still fits the channel list, the chat at its minimum and the main area', () => {
+    expect(COLUMNS.left.def + RIGHT_MIN.chat + MAIN_MIN + 16).toBeLessThanOrEqual(MIN_BODY)
+  })
+})
 
 describe('column widths (#160)', () => {
   it('unsaved columns are their defaults', () => {

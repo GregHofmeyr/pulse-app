@@ -13,6 +13,9 @@ export const COLUMNS = {
 /** The right column's default width, by what it holds (`chat`: a voice channel's chat, #226). */
 export const RIGHT_DEFAULT = { members: 240, group: 220, search: 340, chat: 360 } as const
 
+/** The right column's least width, by what it holds: a voice channel's chat keeps its composer usable (#230). */
+export const RIGHT_MIN = { members: COLUMNS.right.min, group: COLUMNS.right.min, search: COLUMNS.right.min, chat: 280 } as const
+
 /** The main area's least width. With the defaults it fits the smallest window (900px) with room to spare. */
 export const MAIN_MIN = 320
 
@@ -30,15 +33,17 @@ export type FitInput = {
   left: boolean
   right: boolean
   rightDefault: number
+  /** The right column's least width (RIGHT_MIN); the shared one when left out. */
+  rightMin?: number
 }
 
 export type Fitted = { left: number; right: number; maxLeft: number; maxRight: number }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
-export function fitColumns({ saved, body, left: showLeft, right: showRight, rightDefault }: FitInput): Fitted {
+export function fitColumns({ saved, body, left: showLeft, right: showRight, rightDefault, rightMin = COLUMNS.right.min }: FitInput): Fitted {
   let left = clamp(Math.round(saved.left ?? COLUMNS.left.def), COLUMNS.left.min, COLUMNS.left.max)
-  let right = clamp(Math.round(saved.right ?? rightDefault), COLUMNS.right.min, COLUMNS.right.max)
+  let right = clamp(Math.round(saved.right ?? rightDefault), rightMin, COLUMNS.right.max)
   if (body <= 0) return { left, right, maxLeft: COLUMNS.left.max, maxRight: COLUMNS.right.max }
 
   const shownLeft = () => (showLeft ? left : 0)
@@ -55,11 +60,11 @@ export function fitColumns({ saved, body, left: showLeft, right: showRight, righ
   }
   give('right', Math.min(right, rightDefault))
   give('left', Math.min(left, COLUMNS.left.def))
-  give('right', COLUMNS.right.min)
+  give('right', rightMin)
   give('left', COLUMNS.left.min)
 
   const maxLeft = clamp(room - shownRight(), COLUMNS.left.min, COLUMNS.left.max)
-  const maxRight = clamp(room - shownLeft(), COLUMNS.right.min, COLUMNS.right.max)
+  const maxRight = clamp(room - shownLeft(), rightMin, COLUMNS.right.max)
   return { left, right, maxLeft, maxRight }
 }
 

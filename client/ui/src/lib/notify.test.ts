@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyReady, emptyState } from './state'
-import { NOTIFY_WINDOW_MS, NotifyThrottle, notificationBody, notificationTitle, notifyMessage, type Notice } from './notify'
+import { NOTIFY_WINDOW_MS, NotifyThrottle, liveWhere, notificationBody, notificationTitle, notifyMessage, type Notice } from './notify'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 
@@ -96,6 +96,19 @@ describe('notificationTitle', () => {
   it('"and N more" after the name', () => {
     expect(notificationTitle(s, msg('T1', 'U1'), s.channels['T1'], 3)).toBe('sam and 3 more in #general (Main)')
     expect(notificationTitle(s, msg('DM1', 'U1'), s.channels['DM1'], 1)).toBe('sam and 1 more')
+  })
+  it('a voice channel\'s chat: its name bare, as the rest of the UI writes voice channels (#230)', () => {
+    const lounge = { id: 'V1', server_id: 'S1', kind: 'voice' as const, name: 'Lounge', position: 2 }
+    expect(notificationTitle(s, msg('V1', 'U1'), lounge, 0)).toBe('sam in Lounge (Main)')
+  })
+})
+
+describe('liveWhere (#230)', () => {
+  it('a stream in a voice channel is named bare; a conversation by its name', () => {
+    const withVoice = { ...s, channels: { ...s.channels, V1: { id: 'V1', server_id: 'S1', kind: 'voice' as const, name: 'Lounge', position: 2 } } }
+    expect(liveWhere(withVoice, 'V1')).toBe('Lounge')
+    expect(liveWhere(withVoice, 'G1')).toBe('Friends')
+    expect(liveWhere(withVoice, 'T1')).toBe('#general')
   })
 })
 

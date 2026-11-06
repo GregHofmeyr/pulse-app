@@ -1247,6 +1247,42 @@ describe('voice channel chat (#226)', () => {
     expect(scrolled).toHaveBeenCalled()
   })
 
+  // #230: the results wait behind the chat instead of closing
+  it('the results it replaced come back when the chat closes; a new search takes the column back', async () => {
+    const { runSearch, search } = await import('../lib/search.svelte')
+    const { jumpTo } = await import('../lib/jump')
+    const hit = { id: 'M9', channel_id: 'V1', author_id: 'U1', kind: 'normal', content: 'pineapple', reply_to_id: null, created_at: '2026-11-06T10:00:00Z', edited_at: null, deleted: false, reactions: [], mentions: [], embeds: [] }
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'search_messages' ? { hits: [{ message: hit, text: 'pineapple', highlights: [], root: null }], total: 1, next_cursor: null }
+        : cmd === 'list_messages_around' ? [hit] : cmd === 'list_messages' ? [] : undefined)
+    Element.prototype.scrollIntoView = vi.fn()
+    show()
+    await runSearch({ kind: 'server', serverId: 'S1' }, 'pineapple', [])
+    flushSync()
+    await jumpTo('V1', 'M9')
+    flushSync()
+    await tick()
+    expect(q('.right-panel aside.voice-chat')).not.toBeNull()
+    expect(q('.right-panel .search-results')).toBeNull()
+    expect(search.open, 'kept, not closed').toBe(true)
+    expect(handle('Resize the chat')).not.toBeNull()
+    q('[aria-label="Close chat"]')!.click()
+    flushSync()
+    await tick()
+    expect(q('aside.voice-chat')).toBeNull()
+    expect(q('.right-panel .search-results')?.textContent).toContain('1 result')
+    // again, then a new search: the results take the column back, the chat stays open behind them
+    await jumpTo('V1', 'M9')
+    flushSync()
+    await tick()
+    expect(q('.right-panel aside.voice-chat')).not.toBeNull()
+    await runSearch({ kind: 'server', serverId: 'S1' }, 'mango', [])
+    flushSync()
+    expect(q('.right-panel .search-results')).not.toBeNull()
+    expect(q('aside.voice-chat')).toBeNull()
+    expect(voiceChat.open).toBe(true)
+  })
+
   it("the row's chat icon opens the stage with the chat beside it, in the members list's place, without joining", async () => {
     show()
     q('.chat-btn')!.click()

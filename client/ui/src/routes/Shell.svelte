@@ -21,7 +21,7 @@
   import { clickOutside, modal, narrowerThan } from '../lib/actions'
   import { exitFade } from '../lib/exit'
   import { NARROW_BODY, searchMakesRoom, sidebarLayout } from '../lib/layout'
-  import { COLUMNS, fitColumns, RIGHT_DEFAULT } from '../lib/columns'
+  import { COLUMNS, fitColumns, RIGHT_DEFAULT, RIGHT_MIN } from '../lib/columns'
   import { columns, resetColumn, setColumn } from '../lib/columns.svelte'
   import { CHAT_TOGGLE_ID, setVoiceChat, voiceChat } from '../lib/voiceChat.svelte'
   import ColumnHandle from '../components/ColumnHandle.svelte'
@@ -162,7 +162,9 @@
   const hideLeft = $derived(fullShown && !panels.left)
   // A narrow window shows one side panel: a replies panel opened from search hides the results meanwhile (#97).
   let narrowBody = $state(false)
-  const searchAside = $derived(searchMakesRoom({ narrow: narrowBody, searchOpen: search.open, threadOpen: !!ui.openThreadId }))
+  // search results kept behind a voice channel's chat (#230) don't show meanwhile
+  const searchShown = $derived(search.open && !search.behindChat)
+  const searchAside = $derived(searchMakesRoom({ narrow: narrowBody, searchOpen: searchShown, threadOpen: !!ui.openThreadId }))
   const hideRight = $derived((fullShown && !panels.right) || searchAside)
   let sidePanel = $state<HTMLElement>()
   let rightPanel = $state<HTMLElement>()
@@ -366,8 +368,12 @@
   // widths are fitted to the body's width, so a shrinking window narrows them (lib/columns.ts).
   // A voice channel's chat (#226) takes the members list's place beside its stage while it's open, with its own width.
   const chatOpen = $derived(!!activeChannelId && activeChannel?.kind === 'voice' && !!activeServerId && member && voiceChat.open)
+  // the results kept behind a voice channel's chat (#230) come back once it's gone (closed, or another channel)
+  $effect(() => {
+    if (search.behindChat && !chatOpen) search.behindChat = false
+  })
   const rightKind = $derived<keyof typeof RIGHT_DEFAULT | null>(
-    search.open ? 'search' : chatOpen ? 'chat' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
+    searchShown ? 'search' : chatOpen ? 'chat' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
   const showLeft = $derived(!hideLeft)
   const showRight = $derived(!hideRight && rightKind !== null)
   const chatOnScreen = $derived(showRight && rightKind === 'chat')
@@ -386,7 +392,8 @@
     ro.observe(bodyEl)
     return () => ro.disconnect()
   })
-  const fitted = $derived(fitColumns({ saved: { left: columns.left, right: rightSaved }, body: bodyWidth, left: showLeft, right: showRight, rightDefault: RIGHT_DEFAULT[rightKind ?? 'members'] }))
+  const rightMin = $derived(RIGHT_MIN[rightKind ?? 'members'])
+  const fitted = $derived(fitColumns({ saved: { left: columns.left, right: rightSaved }, body: bodyWidth, left: showLeft, right: showRight, rightDefault: RIGHT_DEFAULT[rightKind ?? 'members'], rightMin }))
   const rightLabel = $derived(rightKind === 'search' ? 'Resize the search results' : rightKind === 'chat' ? 'Resize the chat' : 'Resize the members list')
   /** The chat's close button: the panel goes, and the focus it had goes to the stage's toggle. */
   function closeChat() {
@@ -464,9 +471,9 @@
     untrack(() => {
       showChannel(id)
       // a jump or a notification into a voice channel's chat (#226): its panel opens to show it, in the right column
-      // search results would otherwise keep (a search hit there closes them, as a reply's panel does when narrow)
+      // search results would otherwise hold; a search hit there keeps them behind the chat, to come back to (#230)
       if (app.state.channels[id]?.kind === 'voice') {
-        if (search.open) closeSearch()
+        if (search.open) search.behindChat = true
         setVoiceChat(true)
       }
       ui.goTo = null
@@ -674,12 +681,12 @@
     </main>
 
     {#if showRight}
-      <ColumnHandle side="right" width={fitted.right} min={COLUMNS.right.min} max={fitted.maxRight} controls={PANEL_ID.right}
+      <ColumnHandle side="right" width={fitted.right} min={rightMin} max={fitted.maxRight} controls={PANEL_ID.right}
         label={rightLabel} onResize={(w, done) => setColumn(rightColumn, w, done)} onReset={() => resetColumn(rightColumn)} />
     {/if}
     <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap. A saved
          width reaches the list as --right-w; unsaved, each list keeps its own default. -->
-    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={rightSaved === null ? null : `${fitted.right}px`}>{#if search.open}<SearchResults />{:else if chatOpen && activeChannelId}<aside class="voice-chat fade-in" aria-label="Chat" onanimationend={(e) => e.currentTarget.classList.remove('fade-in')}>{#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId} panel={{ onClose: closeChat, shown: chatOnScreen }} />{/key}</aside>{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} />{/if}</div>
+    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={rightSaved === null ? null : `${fitted.right}px`}>{#if searchShown}<SearchResults />{:else if chatOpen && activeChannelId}<aside class="voice-chat fade-in" aria-label="Chat" onanimationend={(e) => e.currentTarget.classList.remove('fade-in')} out:exitFade onoutrostart={(e) => e.currentTarget.classList.add('leaving')}>{#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId} panel={{ onClose: closeChat, shown: chatOnScreen }} />{/key}</aside>{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} />{/if}</div>
   </div>
 </div>
 <StreamToast />
@@ -772,12 +779,14 @@
   /* hidden, not removed: what the panels hold (an open menu, a draft) survives full view */
   .side[hidden] { display: none; }
   /* a real box (aria-controls points at it; a display:contents one leaves the accessibility tree) */
-  .right-panel { display: flex; flex-shrink: 0; min-height: 0; }
+  .right-panel { position: relative; display: flex; flex-shrink: 0; min-height: 0; }
   .right-panel[hidden], .right-panel:empty { display: none; }
   /* a voice channel's chat (#226): a right column like the search results, holding the channel view; it fades in
      (.fade-in, dropped once done so its will-change doesn't hold a layer: not under reduced motion, while streaming or
-     unfocused) and goes at once, as the members list comes */
+     unfocused) and fades out (exitFade, under the same rules, #230) laid over the column, so what takes its place
+     (the members list, the search results) is already there underneath, at its own width */
   .voice-chat { width: var(--right-w, 360px); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-radius: var(--radius); background: var(--bg-1); overflow: hidden; }
+  .voice-chat:global(.leaving) { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 1; width: auto; pointer-events: none; }
   .panel-head { position: relative; height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid var(--line-soft); }
   /* the hover is a rounded pill inside the header, with the text where the padding put it */
   .head-btn { flex: 1; min-width: 0; height: 40px; margin: 0 -8px; padding: 0 8px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }

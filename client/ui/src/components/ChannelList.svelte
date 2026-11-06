@@ -13,7 +13,7 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import { api, errorText } from '../lib/tauri'
-  import { isMuted } from '../lib/conversations'
+  import { chatBadge, isMuted } from '../lib/conversations'
   import { isCollapsed, setCollapsed, toggleSection } from '../lib/sidebarSections.svelte'
   import { applyOrder, moveCategory as placeCategory, moveChannel as placeChannel, orderOf, sidebarLayout, stepCategory, stepChannel, type Order, type Section } from '../lib/layout'
   import { cancelDrag, sortableList, type Drop } from '../lib/drag'
@@ -90,6 +90,8 @@
 
   // the voice occupant under the pointer: its avatar animates
   let hoveredOccupant = $state<string | null>(null)
+  /** The voice row whose chat icon is under the pointer (#230): its row keeps the hover look (they're siblings). */
+  let chatHover = $state<string | null>(null)
 
   // Who just came into a voice channel (#219): their row slides in with a brief highlight (a leaver's fades out,
   // out:exitFade). Only a change to a roster already on screen counts, so opening a server doesn't flash everyone
@@ -524,12 +526,11 @@
 
 {#snippet voiceRow(c: Channel)}
   {@const people = member ? callRoster(app.state, serverId, c.id, self) : []}
-  {@const read = app.state.reads[c.id]}
-  {@const chatUnread = (read?.unread ?? 0) > 0 && !isMuted(app.state, c, clock.nowIso)}
+  {@const badge = chatBadge(app.state, c, clock.nowIso)}
   {#if renaming === c.id}
     {@render renameField(c, 'speaker')}
   {:else}
-  <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId} class:with-chat={member} aria-current={c.id === voiceChannelId ? 'true' : undefined} aria-haspopup={member ? 'menu' : undefined} data-channel={c.id}
+  <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId} class:with-chat={member} class:hover={chatHover === c.id} aria-current={c.id === voiceChannelId ? 'true' : undefined} aria-haspopup={member ? 'menu' : undefined} data-channel={c.id}
     data-tip={c.id === voiceChannelId ? 'You’re here' : `Join ${c.name}`}
     onmouseenter={() => restOn(c.id)} onfocus={() => restOn(c.id)}
     onmouseleave={() => prefetch.leave(c.id)} onblur={() => prefetch.leave(c.id)}
@@ -542,11 +543,11 @@
   {#if member}
     <!-- its chat (#226): beside the row, not in it (a button can't hold one); drawn over the row's end, and it moves
          with the row in a drag (lib/drag.ts, .row-side). Unreads show here, not on the name (that's who's in it). -->
-    {@const label = `Open chat for ${c.name}` + (read?.mentions ? `, ${read.mentions} mention${read.mentions > 1 ? 's' : ''}` : chatUnread ? ', unread messages' : '')}
-    <button type="button" class="chat-btn row-side" class:lit={!!read?.mentions || chatUnread} aria-label={label} data-tip="Open chat"
+    <button type="button" class="chat-btn row-side" class:lit={badge.mentions > 0 || badge.unread} aria-label="Open chat for {c.name}{badge.label}" data-tip="Open chat"
+      onpointerenter={() => (chatHover = c.id)} onpointerleave={() => { if (chatHover === c.id) chatHover = null }}
       onclick={() => onOpenChat(c.id)}>
       <Icon name="message" size={14} />
-      {#if read?.mentions}<span class="pill chat-pill">{read.mentions}</span>{:else if chatUnread}<span class="chat-dot"></span>{/if}
+      {#if badge.mentions}<span class="pill chat-pill">{badge.mentions}</span>{:else if badge.unread}<span class="chat-dot"></span>{/if}
     </button>
   {/if}
   {/if}
@@ -652,7 +653,7 @@
   .row.renaming:hover { background: transparent; }
   .err { padding: 0 10px; color: var(--danger-text); font-size: 12px; }
   .row { height: 34px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-row); display: flex; align-items: center; gap: 8px; text-align: left; font-size: 14px; }
-  .row:hover { background: var(--bg-2); color: var(--text); }
+  .row:hover, .row.hover { background: var(--bg-2); color: var(--text); }
   /* background and colour only: a bolder weight would widen the name */
   .row.active { background: var(--bg-3); color: var(--text); }
   /* the voice channel you're in (#220): bold, its speaker in the brand accent (the tab and Home carry .call-here) */
@@ -665,7 +666,7 @@
      hovered, focused or open, and always while its chat has something new */
   .row.with-chat { padding-right: 38px; }
   .chat-btn { position: relative; z-index: 1; align-self: flex-end; width: 26px; height: 26px; margin: -32px 6px 4px 0; padding: 0; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-3); display: grid; place-items: center; opacity: 0; --ring: var(--bg-1); }
-  .row:hover + .chat-btn, .row:focus-visible + .chat-btn, .row.active + .chat-btn, .chat-btn:hover, .chat-btn:focus-visible, .chat-btn.lit { opacity: 1; }
+  .row:hover + .chat-btn, .row.hover + .chat-btn, .row:focus-visible + .chat-btn, .row.active + .chat-btn, .chat-btn:hover, .chat-btn:focus-visible, .chat-btn.lit { opacity: 1; }
   .row:hover + .chat-btn { --ring: var(--bg-2); }
   .row.active + .chat-btn { --ring: var(--bg-3); }
   .chat-btn:hover { color: var(--text); background: var(--bg-3); --ring: var(--bg-3); }

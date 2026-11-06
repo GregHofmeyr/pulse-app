@@ -34,6 +34,11 @@ export function serverNick(s: AppState, serverId: string | null, userId: string)
   return (s.members[serverId] ?? []).find((x) => x.user.id === userId)?.nickname ?? null
 }
 
+/** A server channel as the UI writes it: "#general", but a voice channel bare ("Lounge", #230). */
+export function channelLabel(ch: Pick<Channel, 'kind' | 'name'>): string {
+  return ch.kind === 'voice' ? (ch.name ?? '') : `#${ch.name ?? ''}`
+}
+
 /** THE name shown for a person (#47, #48), used wherever one renders. Inside a server: their
  *  nickname there, else the private nickname you gave them, else their display name. Everywhere
  *  else (`serverId` null): your private nickname for them, else their display name. The username is

@@ -73,6 +73,12 @@ describe('SearchResults', () => {
     expect([...c.querySelectorAll('mark')].map((m) => m.textContent)).toEqual(['pizza'])
   })
 
+  it("a voice channel's chat is named bare, as the rest of the UI writes voice channels (#230)", () => {
+    app.state = { ...app.state, channels: { ...app.state.channels, V1: { id: 'V1', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 3 } } }
+    show({ hits: [hit(msg('M1', 'V1'))], total: 1 })
+    expect(cards()[0].querySelector('.where')!.textContent).toBe('Lounge')
+  })
+
   it('an image quote line shows its picture, not "[image]"', () => {
     const line = (over: object) => ({ id: 'L1', speaker_id: 'U2', speaker_name: null, text: null, media: null, caption: null, awards: 0, awarders: [], ...over })
     const q = msg('M9', 'Q1', {

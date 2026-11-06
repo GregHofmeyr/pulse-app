@@ -81,6 +81,17 @@ describe('the voice row chat icon (#226)', () => {
     expect(chat()!.querySelector('.chat-pill')?.textContent).toBe('1')
   })
 
+  it("hovering the icon keeps its row's hover highlight (#230)", () => {
+    show()
+    expect(voiceRow().classList.contains('hover')).toBe(false)
+    chat()!.dispatchEvent(new Event('pointerenter'))
+    flushSync()
+    expect(voiceRow().classList.contains('hover')).toBe(true)
+    chat()!.dispatchEvent(new Event('pointerleave'))
+    flushSync()
+    expect(voiceRow().classList.contains('hover')).toBe(false)
+  })
+
   it('people not in the server have none', () => {
     show([], { member: false })
     expect(chat()).toBeNull()

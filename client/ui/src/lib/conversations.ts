@@ -14,6 +14,16 @@ export function isMuted(s: AppState, ch: Channel, nowIso: string): boolean {
   return active('channel', ch.id) || active('server', ch.server_id)
 }
 
+/** A voice channel's chat badge (#226), on its row's chat icon and the stage's Chat toggle (#230): its mentions as a
+ *  count, else its unreads as a dot (none while muted). `label`: what a screen reader hears after the button's name. */
+export function chatBadge(s: AppState, ch: Channel, nowIso: string): { mentions: number; unread: boolean; label: string } {
+  const read = s.reads[ch.id]
+  const mentions = read?.mentions ?? 0
+  const unread = !mentions && (read?.unread ?? 0) > 0 && !isMuted(s, ch, nowIso)
+  const label = mentions ? `, ${mentions} mention${mentions > 1 ? 's' : ''}` : unread ? ', unread messages' : ''
+  return { mentions, unread, label }
+}
+
 /** Your level for a server (#195): All messages unless you picked another. */
 export function serverLevel(s: AppState, serverId: string): NotifyLevel {
   return s.notifyLevels.find((l) => l.target_kind === 'server' && l.target_id === serverId)?.level ?? 'all'

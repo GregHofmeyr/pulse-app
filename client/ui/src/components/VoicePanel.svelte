@@ -2,7 +2,8 @@
   import { tick, untrack } from 'svelte'
   import type { Attachment } from 'svelte/attachments'
   import Icon from './Icon.svelte'
-  import { app } from '../lib/store.svelte'
+  import { app, clock } from '../lib/store.svelte'
+  import { chatBadge } from '../lib/conversations'
   import { myServerTips, selfVoice, voice, voiceApi } from '../lib/voice.svelte'
   import { callRoster, liveIn } from '../lib/selectors'
   import { gridTiles, nobodyStreaming } from '../lib/callgrid'
@@ -35,6 +36,8 @@
   } = $props()
 
   const channel = $derived(app.state.channels[channelId])
+  // the chat's unreads and mentions, as on its row's chat icon, while the panel is closed (#230)
+  const badge = $derived(channel && !voiceChat.open ? chatBadge(app.state, channel, clock.nowIso) : null)
   const inHere = $derived(voice.channelId === channelId)
   const tips = $derived(myServerTips())
   const meId = $derived(app.state.me?.id ?? '')
@@ -200,8 +203,9 @@
       <Icon name={showEveryone ? 'eye' : 'eyeOff'} size={18} />
     </button>
     <!-- its chat (#226): the panel on the right; a click opens it with the message box focused (#202) -->
-    <button type="button" id={CHAT_TOGGLE_ID} class="icon-btn chat" aria-pressed={voiceChat.open} aria-controls={PANEL_ID.right} aria-label="Chat" data-tip={voiceChat.open ? 'Hide chat' : 'Show chat'} onclick={() => toggleVoiceChat(true)}>
+    <button type="button" id={CHAT_TOGGLE_ID} class="icon-btn chat" aria-pressed={voiceChat.open} aria-controls={PANEL_ID.right} aria-label="Chat{badge?.label ?? ''}" data-tip={voiceChat.open ? 'Hide chat' : 'Show chat'} onclick={() => toggleVoiceChat(true)}>
       <Icon name="message" size={18} />
+      {#if badge?.mentions}<span class="pill chat-pill">{badge.mentions}</span>{:else if badge?.unread}<span class="chat-dot"></span>{/if}
     </button>
   </div>
 
@@ -290,6 +294,12 @@
   .status.warn { color: var(--warn-text); background: var(--warn-soft); }
   .error { margin: 12px 18px 0; color: var(--danger-text); font-size: 13px; }
   .eye[aria-pressed='true'], .chat[aria-pressed='true'] { color: var(--text); }
+  /* the chat's dot and count (#230): the row's chat icon's (ChannelList.svelte), ringed in the header's colour */
+  .chat { position: relative; --ring: var(--bg-2); }
+  .chat:hover { --ring: var(--bg-3); }
+  .chat-dot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 2px var(--ring); }
+  .pill { min-width: 16px; height: 16px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-block; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((16px - 1cap) / 2) 4px; }
+  .chat-pill { position: absolute; top: -2px; right: -4px; box-shadow: 0 0 0 2px var(--ring); }
   /* the stage (#222): stageLayout places each slot (its 20px padding and 14px gap are the grid's were); a crowd too
      big for it scrolls */
   .grid-wrap { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; }

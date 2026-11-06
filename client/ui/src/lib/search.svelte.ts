@@ -12,6 +12,9 @@ export type SearchScope = { kind: 'server'; serverId: string } | { kind: 'conver
 class SearchStore {
   /** The results panel is showing. */
   open = $state(false)
+  /** Kept behind a voice channel's chat (#230): a hit there opened the chat in the right column, and closing it
+   *  brings the results back. A new search (or closing it) clears this. */
+  behindChat = $state(false)
   scope = $state.raw<SearchScope | null>(null)
   /** What the shown results were searched for. */
   words = $state('')
@@ -33,7 +36,7 @@ const scopeArgs = (s: SearchScope) => (s.kind === 'server' ? { serverId: s.serve
 
 export async function runSearch(scope: SearchScope, words: string, chips: Chip[]): Promise<void> {
   const mine = ++seq
-  Object.assign(search, { open: true, scope, words, chips, status: 'loading', hits: [], total: null, nextCursor: null, error: '', loadingMore: false })
+  Object.assign(search, { open: true, behindChat: false, scope, words, chips, status: 'loading', hits: [], total: null, nextCursor: null, error: '', loadingMore: false })
   try {
     const r = await api.searchMessages(scopeArgs(scope), toRequest(words, chips))
     if (mine !== seq) return
@@ -68,7 +71,7 @@ export async function loadMore(): Promise<void> {
 
 export function closeSearch(): void {
   seq++
-  Object.assign(search, { open: false, scope: null, words: '', chips: [], status: 'idle', hits: [], total: null, nextCursor: null, error: '', loadingMore: false })
+  Object.assign(search, { open: false, behindChat: false, scope: null, words: '', chips: [], status: 'idle', hits: [], total: null, nextCursor: null, error: '', loadingMore: false })
 }
 
 /** Show a result where it lives; the results stay open for the next one. A clips channel has no

@@ -10,7 +10,7 @@
   import { chipText } from '../lib/searchQuery'
   import { lineWithHit, segments } from '../lib/highlight'
   import { relativeTime } from '../lib/conversations'
-  import { displayName } from '../lib/selectors'
+  import { channelLabel, displayName } from '../lib/selectors'
   import { mediaUrl } from '../lib/emoji'
   import type { SearchHit } from '../lib/protocol/SearchHit'
 
@@ -76,7 +76,7 @@
           <span class="main">
             <span class="meta">
               {#if h.message.author_id}<Name userId={h.message.author_id} {serverId} text={author(h)} interactive={false} />{:else}<strong>Pulse</strong>{/if}
-              {#if serverId && where?.name}<span class="where">#{where.name}</span>{/if}
+              {#if serverId && where?.name}<span class="where">{channelLabel(where)}</span>{/if}
               <span class="when">{relativeTime(h.message.created_at, nowMs)}</span>
             </span>
             {#if tag}<span class="label">{tag}</span>{/if}

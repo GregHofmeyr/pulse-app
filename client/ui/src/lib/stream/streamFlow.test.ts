@@ -837,8 +837,8 @@ describe('notify me when they go live (#60)', () => {
   it('someone you follow going live elsewhere: a desktop notification and the live toast, no live sound', async () => {
     const { streamApi, toasts } = await following(['sam'])
     streamApi.onEvent(started('sam'))
-    expect(notices()).toEqual([{ title: 'sam went live in #gaming', body: 'Main', channelId: 'c2', avatar: 'ab'.repeat(32) }])
-    expect(toasts.list).toEqual([{ channelId: 'c2', streamer: 'sam', name: 'sam', where: '#gaming' }])
+    expect(notices()).toEqual([{ title: 'sam went live in gaming', body: 'Main', channelId: 'c2', avatar: 'ab'.repeat(32) }])
+    expect(toasts.list).toEqual([{ channelId: 'c2', streamer: 'sam', name: 'sam', where: 'gaming' }])
     expect(played('live')).toEqual([])
   })
 
@@ -846,7 +846,7 @@ describe('notify me when they go live (#60)', () => {
     const { streamApi, toasts } = await following(['sam'])
     streamApi.onEvent(started('sam', 'c1'))
     expect(notices()).toHaveLength(1)
-    expect(notices()[0].title).toBe('sam went live in #lounge')
+    expect(notices()[0].title).toBe('sam went live in lounge')
     expect(toasts.list).toEqual([{ channelId: 'c1', streamer: 'sam', name: 'sam' }])
     expect(played('live')).toHaveLength(1)
   })

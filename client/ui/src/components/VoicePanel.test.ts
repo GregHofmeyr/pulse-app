@@ -605,4 +605,37 @@ describe('the chat toggle (#226)', () => {
     expect(voiceChat.open).toBe(false)
     expect(takeChatFocus()).toBe(false)
   })
+
+  // #230: the row's chat icon's dot and count, on the toggle too, while the panel is closed
+  it("carries the chat's unreads (a dot) and mentions (a count) while the panel is closed", () => {
+    reloadVoiceChat()
+    const withReads = (unread: number, mentions: number, muted = false) => {
+      app.state = applyReady(emptyState(), {
+        ...ready, read_states: [{ channel_id: 'V1', unread, mentions, last_read_message_id: null }],
+        mutes: muted ? [{ target_kind: 'channel', target_id: 'V1', until: null }] : [],
+      })
+      flushSync()
+    }
+    withReads(3, 0)
+    mountPanel()
+    const toggle = q('#voice-chat-toggle')!
+    expect(toggle.querySelector('.chat-dot')).not.toBeNull()
+    expect(toggle.getAttribute('aria-label')).toBe('Chat, unread messages')
+    toggle.click()
+    flushSync()
+    expect(toggle.querySelector('.chat-dot'), 'open: the chat itself shows them').toBeNull()
+    expect(toggle.getAttribute('aria-label')).toBe('Chat')
+    toggle.click()
+    withReads(3, 2)
+    expect(toggle.querySelector('.chat-pill')?.textContent).toBe('2')
+    expect(toggle.querySelector('.chat-dot')).toBeNull()
+    expect(toggle.getAttribute('aria-label')).toBe('Chat, 2 mentions')
+    // muted: no dot, mentions still count, as on the row
+    withReads(3, 0, true)
+    expect(toggle.querySelector('.chat-dot')).toBeNull()
+    withReads(3, 1, true)
+    expect(toggle.querySelector('.chat-pill')?.textContent).toBe('1')
+    withReads(0, 0)
+    expect(toggle.querySelector('.chat-dot, .chat-pill')).toBeNull()
+  })
 })

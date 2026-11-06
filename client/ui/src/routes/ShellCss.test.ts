@@ -52,3 +52,16 @@ describe('the side panels in full view', () => {
     expect(getComputedStyle(el('<div><div data-probe class="right-panel $s"></div></div>')).display).toBe('none')
   })
 })
+
+// #230: the voice chat fades out as it fades in, over what takes its place in the column, for a moment
+describe('the voice chat panel leaving', () => {
+  it('fades out (exitFade: none under reduced motion), laid over the column rather than beside what replaces it', () => {
+    expect(src).toContain("classList.remove('fade-in')} out:exitFade onoutrostart={(e) => e.currentTarget.classList.add('leaving')}>")
+    expect(getComputedStyle(el('<div><div data-probe class="right-panel $s"><aside></aside></div></div>')).position).toBe('relative')
+    const leaving = getComputedStyle(el('<div class="right-panel $s"><aside data-probe class="voice-chat leaving $s"></aside></div>'))
+    expect([leaving.position, leaving.top, leaving.right, leaving.bottom, leaving.left, leaving.width]).toEqual(['absolute', '0px', '0px', '0px', '0px', 'auto'])
+    expect(leaving.pointerEvents).toBe('none')
+    // not leaving: a column like the others
+    expect(getComputedStyle(el('<div class="right-panel $s"><aside data-probe class="voice-chat $s"></aside></div>')).position).toBe('static')
+  })
+})
