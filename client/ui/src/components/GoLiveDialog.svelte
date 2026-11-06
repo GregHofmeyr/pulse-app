@@ -31,17 +31,21 @@
     const window = { hwnd: picked.hwnd ?? null, title: picked.label }
     probe = null
     let gone = false
+    let t: ReturnType<typeof setTimeout> | undefined
+    // one probe at a time (each walks every process): the next is asked for once this one answers
     const ask = async () => {
       const p = await streamCmd.audioProbe(window).catch(() => null)
-      if (gone || !p) return
-      probe = p
-      if (!p.identified && sound === 'app') sound = 'everything'
+      if (gone) return
+      if (p) {
+        probe = p
+        if (!p.identified && sound === 'app') sound = 'everything'
+      }
+      t = setTimeout(ask, PROBE_EVERY_MS)
     }
     void ask()
-    const t = setInterval(ask, PROBE_EVERY_MS)
     return () => {
       gone = true
-      clearInterval(t)
+      clearTimeout(t)
     }
   })
 
@@ -173,7 +177,8 @@
   label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
   input { accent-color: var(--accent); }
   .unknown { opacity: .5; cursor: not-allowed; }
-  .hint { color: var(--text-3); font-size: 12px; }
+  /* wide enough for either hint, so the choices don't shift when playback starts or stops */
+  .hint { min-width: 150px; color: var(--text-3); font-size: 12px; }
   .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

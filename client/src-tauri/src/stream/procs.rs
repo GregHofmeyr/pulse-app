@@ -3,7 +3,7 @@
 
 use super::plan::Proc;
 #[cfg(windows)]
-use super::plan::title_owner;
+use super::plan::{is_frame_host, title_owner};
 
 /// The main Pulse processes (exe name equals ours, own included).
 pub fn pulse_roots() -> Vec<u32> {
@@ -62,7 +62,11 @@ pub fn resolve_window(
     {
         let by_handle = hwnd.and_then(|h| win::window_owner(h, procs));
         choose(by_handle, pulse, || match title {
-            Some(t) => title_owner(&win::windows_titled(t), t, pulse, procs),
+            // a UWP frame found by title is its host, not the app: not identified
+            Some(t) => title_owner(&win::windows_titled(t), t, pulse, procs)
+                .into_iter()
+                .filter(|o| !procs.iter().any(|p| p.pid == *o && is_frame_host(&p.exe)))
+                .collect(),
             None => Vec::new(),
         })
     }
@@ -73,14 +77,18 @@ pub fn resolve_window(
     }
 }
 
-/// The handle's owner when it is not Pulse; otherwise whatever the title finds.
+/// `by_handle`: the owner of the handle's window, `Some(0)` when it is a window whose app can't
+/// be told (an unresolved UWP frame), `None` when there is no such window. A live window's
+/// answer is final (Pulse's own is not identified); only without one does the title count.
 fn choose(
     by_handle: Option<u32>,
     pulse: &[u32],
     by_title: impl FnOnce() -> Vec<u32>,
 ) -> (Vec<u32>, How) {
-    if let Some(p) = by_handle.filter(|p| *p != 0 && !pulse.contains(p)) {
-        return (vec![p], How::Handle);
+    match by_handle {
+        Some(p) if p != 0 && !pulse.contains(&p) => return (vec![p], How::Handle),
+        Some(_) => return (Vec::new(), How::None),
+        None => {}
     }
     let t = by_title();
     let how = if t.is_empty() { How::None } else { How::Title };
@@ -114,7 +122,7 @@ fn pulse_tree(procs: &[(u32, u32, String)], exe: &str) -> (Vec<u32>, Vec<u32>) {
 #[cfg(windows)]
 mod win {
     use super::Proc;
-    use crate::stream::plan::frame_host_app;
+    use crate::stream::plan::{frame_host_app, is_frame_host};
     use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
@@ -194,7 +202,8 @@ mod win {
     }
 
     /// The process owning top-level window `hwnd`, if it is still a window. For a UWP window
-    /// (ApplicationFrameHost's), the app behind the frame.
+    /// (ApplicationFrameHost's), the app behind the frame, or `Some(0)` when the frame has none
+    /// (minimised): a window, but no app to follow (see `choose`).
     pub fn window_owner(hwnd: u64, procs: &[Proc]) -> Option<u32> {
         let h = HWND(hwnd as usize as *mut core::ffi::c_void);
         unsafe {
@@ -207,12 +216,12 @@ mod win {
                 return None;
             }
             let exe = procs.iter().find(|p| p.pid == pid).map(|p| p.exe.as_str());
-            if let Some(exe) = exe
-                && let Some(app) = frame_host_app(pid, exe, &child_window_pids(h))
-            {
-                return Some(app);
+            match exe {
+                Some(exe) if is_frame_host(exe) => {
+                    Some(frame_host_app(pid, exe, &child_window_pids(h)).unwrap_or(0))
+                }
+                _ => Some(pid),
             }
-            Some(pid)
         }
     }
 
@@ -357,8 +366,14 @@ mod tests {
     }
 
     #[test]
-    fn a_pulse_or_missing_handle_falls_back_to_the_title() {
-        assert_eq!(choose(Some(10), &[10], || vec![50]), (vec![50], How::Title));
+    fn a_live_window_without_an_app_is_final() {
+        // Pulse's own window, or a UWP frame with no app behind it: not another app by title
+        assert_eq!(choose(Some(10), &[10], || vec![50]), (vec![], How::None));
+        assert_eq!(choose(Some(0), &[10], || vec![50]), (vec![], How::None));
+    }
+
+    #[test]
+    fn no_window_for_the_handle_falls_back_to_the_title() {
         assert_eq!(
             choose(None, &[10], || vec![50, 51]),
             (vec![50, 51], How::Title)

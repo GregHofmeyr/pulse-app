@@ -224,16 +224,34 @@ fn sorted(mut plan: Vec<Capture>) -> Vec<Capture> {
     plan
 }
 
-/// Each non-Pulse audio process, minus the always-on apps when `skip`.
+/// Each non-Pulse audio process, minus the always-on apps when `skip`. A capture takes the
+/// whole tree, so a process whose tree holds Pulse (or, when `skip`, an always-on app) is left
+/// out too: it would bring them back in.
 fn per_session(i: &PlanInput, skip: bool) -> Vec<Capture> {
     sorted(
         i.session_pids
             .iter()
             .filter(|p| !i.pulse_pids.contains(p))
             .filter(|&&p| !(skip && always_on(p, i.procs)))
+            .filter(|&&p| {
+                let tree = trees(&[p], i.procs);
+                !tree.iter().any(|t| {
+                    i.pulse_pids.contains(t) || (skip && is_named(*t, i.procs, SKIP_ALWAYS_ON))
+                })
+            })
             .map(|&p| Capture::Include(p))
             .collect(),
     )
+}
+
+/// `pid`'s exe is one of `list`.
+fn is_named(pid: u32, procs: &[Proc], list: &[&str]) -> bool {
+    procs.iter().any(|p| p.pid == pid && named_in(&p.exe, list))
+}
+
+/// UWP windows' host: an owner that is it was not resolved to the app behind the frame.
+pub fn is_frame_host(exe: &str) -> bool {
+    named_in(exe, &[FRAME_HOST])
 }
 
 fn everything(i: &PlanInput) -> Vec<Capture> {
@@ -247,7 +265,7 @@ fn everything(i: &PlanInput) -> Vec<Capture> {
 }
 
 /// The window's owners, Pulse left out.
-fn owners<'a>(i: &'a PlanInput) -> Vec<u32> {
+fn owners(i: &PlanInput) -> Vec<u32> {
     match &i.source {
         Source::Window(o) => o
             .iter()
@@ -258,10 +276,30 @@ fn owners<'a>(i: &'a PlanInput) -> Vec<u32> {
     }
 }
 
+/// An owner's parent counts as its launcher only when capturing it (a capture takes the whole
+/// tree) brings in nothing else: not a shell or system host, not an always-on app, and nothing
+/// in its tree outside the owners' trees but itself and processes of its own or the owners' exe
+/// (no sibling app, no Pulse).
+fn launcher_ok(parent: &Proc, i: &PlanInput, own: &HashSet<u32>, owner_procs: &[&Proc]) -> bool {
+    if named_in(&parent.exe, NOT_A_LAUNCHER)
+        || named_in(&parent.exe, SKIP_ALWAYS_ON)
+        || i.pulse_pids.contains(&parent.pid)
+    {
+        return false;
+    }
+    let ours = |exe: &str| {
+        exe.eq_ignore_ascii_case(&parent.exe)
+            || owner_procs.iter().any(|o| o.exe.eq_ignore_ascii_case(exe))
+    };
+    trees(&[parent.pid], i.procs)
+        .iter()
+        .filter(|t| **t != parent.pid && !own.contains(t))
+        .all(|t| !i.pulse_pids.contains(t) && i.procs.iter().any(|p| p.pid == *t && ours(&p.exe)))
+}
+
 /// Audio processes of the owners' family, when the owners' own trees are silent: processes of
 /// the same exe and their descendants (a browser's other processes), and an owner's parent (its
-/// launcher) unless that is a shell or system host. A launcher is captured as a tree, so what it
-/// started plays too; siblings never count as family by themselves.
+/// launcher) when `launcher_ok`.
 fn related(i: &PlanInput, owners: &[u32]) -> Vec<u32> {
     let own = trees(owners, i.procs);
     if i.session_pids.iter().any(|p| own.contains(p)) {
@@ -281,7 +319,7 @@ fn related(i: &PlanInput, owners: &[u32]) -> Vec<u32> {
     let mut family = trees(&same, i.procs);
     for o in &owner_procs {
         if let Some(parent) = i.procs.iter().find(|p| p.pid == o.parent && p.pid != 0)
-            && !named_in(&parent.exe, NOT_A_LAUNCHER)
+            && launcher_ok(parent, i, &own, &owner_procs)
         {
             family.insert(parent.pid);
         }
@@ -354,9 +392,9 @@ mod tests {
     }
 
     /// A machine: explorer (2) started a browser (40, with audio helper 41), a launcher (50)
-    /// started a game (51) and a second game (52), Spotify (60, helper 61), a second browser
-    /// window process of the same exe (45, a sibling under explorer, with its own helper 46),
-    /// and Pulse (10, WebView2 11).
+    /// that started one game (51), a store (55) that started two games (56, 57), Spotify (60,
+    /// helper 61), a second browser window process of the same exe (45, a sibling under
+    /// explorer, with its own helper 46), a video player (70), and Pulse (10, WebView2 11).
     fn machine() -> Vec<Proc> {
         vec![
             p(2, 1, r"C:\Windows\explorer.exe"),
@@ -368,7 +406,9 @@ mod tests {
             p(46, 45, r"C:\Firefox\firefox.exe"),
             p(50, 2, r"C:\Launcher\launcher.exe"),
             p(51, 50, r"C:\Games\game.exe"),
-            p(52, 50, r"C:\Games\other.exe"),
+            p(55, 2, r"C:\Store\store.exe"),
+            p(56, 55, r"C:\Games\shared.exe"),
+            p(57, 55, r"C:\Games\other.exe"),
             p(60, 2, r"C:\Spotify\Spotify.exe"),
             p(61, 60, r"C:\Spotify\Spotify.exe"),
             p(70, 2, r"C:\Video\player.exe"),
@@ -451,11 +491,54 @@ mod tests {
 
     #[test]
     fn related_never_takes_a_sibling_by_itself() {
-        // the launcher's other game is not the shared game's family
-        let c = Case::new(&[52]);
+        // the store's other game is not the shared game's family
+        let c = Case::new(&[57]);
+        assert_eq!(
+            c.plan(window(&[56]), Sound::App),
+            (vec![Include(56)], Tier::App)
+        );
+    }
+
+    #[test]
+    fn a_launcher_with_another_app_under_it_is_not_family() {
+        // capturing the store's tree would take the other game too
+        let c = Case::new(&[55]);
+        assert_eq!(
+            c.plan(window(&[56]), Sound::App),
+            (vec![Include(56)], Tier::App)
+        );
+    }
+
+    #[test]
+    fn a_launcher_that_started_pulse_is_not_family() {
+        // its tree would carry the call's own voices to the viewers
+        let mut c = Case::new(&[50]);
+        c.procs.iter_mut().find(|p| p.pid == 10).unwrap().parent = 50;
         assert_eq!(
             c.plan(window(&[51]), Sound::App),
             (vec![Include(51)], Tier::App)
+        );
+    }
+
+    #[test]
+    fn an_always_on_app_is_never_a_launcher() {
+        let mut c = Case::new(&[90]);
+        c.procs.push(p(90, 2, r"C:\Discord\Discord.exe"));
+        c.procs.push(p(91, 90, r"C:\Games\activity.exe"));
+        assert_eq!(
+            c.plan(window(&[91]), Sound::App),
+            (vec![Include(91)], Tier::App)
+        );
+    }
+
+    #[test]
+    fn last_resort_leaves_out_a_session_whose_tree_holds_pulse_or_music() {
+        // explorer's tree is Pulse's and Spotify's too; the store's is not
+        let mut c = Case::new(&[2, 55, 70]);
+        c.procs.push(p(62, 55, r"C:\Spotify\Spotify.exe"));
+        assert_eq!(
+            c.plan(window(&[]), Sound::App),
+            (vec![Include(70)], Tier::LastResort)
         );
     }
 
@@ -610,7 +693,7 @@ mod tests {
             row("Other", 70, true),
             row("Game", 51, true),
             row("Game", 51, true),
-            row("Game - Settings", 52, true),
+            row("Game - Settings", 57, true),
             row("Game", 60, false), // hidden windows don't count
         ];
         assert_eq!(title_owner(&rows, "Game", &[10], &procs), vec![51]);
@@ -619,7 +702,7 @@ mod tests {
 
     #[test]
     fn title_owner_is_none_for_two_different_apps() {
-        let rows = [row("Game", 51, true), row("Game", 52, true)];
+        let rows = [row("Game", 51, true), row("Game", 57, true)];
         assert!(title_owner(&rows, "Game", &[10], &machine()).is_empty());
     }
 

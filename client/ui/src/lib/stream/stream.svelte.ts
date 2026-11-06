@@ -664,9 +664,16 @@ export const streamApi = {
   async switchSound(sound: Sound) {
     const live = stream.live
     if (!live?.audio || live.sound === sound) return
+    const was = live.sound
     live.sound = sound
     streamCmd.log({ ev: 'sound_switch', sound })
-    await streamCmd.audioSound(sound).catch(logError('audio_sound_error'))
+    try {
+      await streamCmd.audioSound(sound)
+    } catch (e) {
+      // Rust kept the old source: so does an audio restart
+      if (live.sound === sound) live.sound = was
+      logError('audio_sound_error')(e)
+    }
     const s = await streamCmd.audioStatus().catch(() => null)
     if (stream.live === live) stream.sound = s
   },

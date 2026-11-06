@@ -20,9 +20,7 @@ use serde_json::json;
 use tokio::task::JoinHandle;
 
 use super::loopback::Engine;
-use super::plan::{
-    Capture, PlanInput, Proc, Sound, Source, Tier, app_name, capture_plan, playing,
-};
+use super::plan::{Capture, PlanInput, Proc, Sound, Source, Tier, app_name, capture_plan, playing};
 use super::procs;
 use crate::api::{Api, ApiError};
 use crate::voice::devices::INTERNAL_RATE;
@@ -582,6 +580,28 @@ struct Capturing<E: Rescan> {
     stop: tokio::sync::oneshot::Sender<()>,
     ticker: JoinHandle<()>,
     engine: Option<Arc<E>>,
+    /// Held across planning and applying, by the rescans and a switch alike: a rescan that
+    /// planned for the old source can't apply after a switch has.
+    applying: Arc<Mutex<()>>,
+}
+
+/// Plans and applies, under `applying`, on a blocking thread, awaited to the end (so
+/// `Capturing::stop` never races it). Apply can block while stopped captures wind down.
+async fn rescan_now<E: Rescan>(
+    applying: Arc<Mutex<()>>,
+    engine: Option<Arc<E>>,
+    counts: Arc<OutCounts>,
+    planner: Planner,
+) {
+    let _ = tokio::task::spawn_blocking(move || {
+        let _held = applying.lock().unwrap();
+        let plan = planner();
+        counts.captures.store(plan.len(), Ordering::Relaxed);
+        if let Some(e) = engine {
+            e.apply(plan);
+        }
+    })
+    .await;
 }
 
 impl<E: Rescan> Capturing<E> {
@@ -592,33 +612,27 @@ impl<E: Rescan> Capturing<E> {
         rescan_every: Option<Duration>,
     ) -> Self {
         let engine = engine.map(Arc::new);
+        let applying = Arc::new(Mutex::new(()));
         let (stop, stopped) = tokio::sync::oneshot::channel();
         let ticker = tokio::spawn(run_ticker(
             counts,
             engine.clone(),
             planner,
             rescan_every,
+            applying.clone(),
             stopped,
         ));
         Capturing {
             stop,
             ticker,
             engine,
+            applying,
         }
     }
 
-    /// Moves the engine to `planner`'s plan now (the sharer switched source), on a blocking
-    /// thread, awaited to the end so `stop` never races it.
+    /// Moves the engine to `planner`'s plan now (the sharer switched source).
     async fn replan(&self, counts: Arc<OutCounts>, planner: Planner) {
-        let engine = self.engine.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            let plan = planner();
-            counts.captures.store(plan.len(), Ordering::Relaxed);
-            if let Some(e) = engine {
-                e.apply(plan);
-            }
-        })
-        .await;
+        rescan_now(self.applying.clone(), self.engine.clone(), counts, planner).await;
     }
 
     /// Stops the ticker (letting a rescan in flight finish), then the capture, on a blocking
@@ -638,6 +652,7 @@ async fn run_ticker<E: Rescan>(
     engine: Option<Arc<E>>,
     planner: Planner,
     rescan_every: Option<Duration>,
+    applying: Arc<Mutex<()>>,
     mut stopped: tokio::sync::oneshot::Receiver<()>,
 ) {
     let mut log_tick = tokio::time::interval(LOG_EVERY);
@@ -656,17 +671,7 @@ async fn run_ticker<E: Rescan>(
                 "silentChunks": counts.silent.swap(0, Ordering::Relaxed),
             })),
             _ = scan_tick.tick(), if rescan => {
-                let (engine, counts, planner) = (engine.clone(), counts.clone(), planner.clone());
-                // apply can block while stopped captures wind down; awaited to the end, so
-                // `Capturing::stop` never races it
-                let _ = tokio::task::spawn_blocking(move || {
-                    let plan = planner();
-                    counts.captures.store(plan.len(), Ordering::Relaxed);
-                    if let Some(e) = engine {
-                        e.apply(plan);
-                    }
-                })
-                .await;
+                rescan_now(applying.clone(), engine.clone(), counts.clone(), planner.clone()).await;
             }
         }
     }
@@ -807,6 +812,8 @@ impl StreamAudio {
         p.capturing
             .replan(state.counts.clone(), Arc::new(move || s2.plan()))
             .await;
+        // what the old source sent while the switch applied is not this source being heard
+        state.switch(sound);
     }
 
     /// The published stream's source and whether it has been heard; `None` when not publishing.

@@ -314,6 +314,15 @@ describe('stream sound source (#215)', () => {
   })
 })
 
+describe('stream sound switch failing', () => {
+  it('a_failed_switch_keeps_the_old_source_for_a_restart', async () => {
+    core.handlers.stream_audio_sound = () => Promise.reject('no')
+    const { streamApi, stream } = await goneLive(true, 'window')
+    await streamApi.switchSound('everything')
+    expect(stream.live!.sound).toBe('app')
+  })
+})
+
 describe('stream audio closed by LiveKit', () => {
   it('restarts_stream_audio_with_the_same_window_and_mute', async () => {
     const { streamApi } = await goneLive(true, 'window')
