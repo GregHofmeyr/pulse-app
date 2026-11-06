@@ -107,7 +107,19 @@ async fn save(
     .bind(me.to_string())
     .execute(&mut *tx)
     .await?;
+    // A Zalgo display name earns the hidden Zalgo badge (#210).
+    let zalgo = v
+        .display_name
+        .as_deref()
+        .is_some_and(super::names::is_zalgo);
+    if zalgo {
+        let stat = crate::badges::catalogue::stat::ZALGO_NAME;
+        crate::badges::stats::set_max(&mut tx, me, stat, 1).await?;
+    }
     tx.commit().await?;
+    if zalgo {
+        crate::badges::engine::after(&s, &[me]).await;
+    }
 
     let profile = load_profile(&s.db, me, me)
         .await?

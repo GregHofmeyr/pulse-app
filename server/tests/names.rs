@@ -679,3 +679,67 @@ async fn quote_search_finds_display_names_and_nicknames() {
         assert_eq!(found.len(), 1, "{q}");
     }
 }
+
+/// Whether `user` holds the hidden Zalgo badge (#210).
+async fn has_zalgo(app: &TestApp, user: UserId) -> bool {
+    let mut conn = app.db.acquire().await.unwrap();
+    pulse_server::badges::engine::tiers_held(&mut conn, user)
+        .await
+        .unwrap()
+        .contains_key("zalgo")
+}
+
+const ZALGO: &str = "Z\u{335}\u{352}\u{316}alex";
+
+#[tokio::test]
+async fn saving_a_zalgo_display_name_earns_the_zalgo_badge() {
+    let c = crew().await;
+    // Plain names and a couple of accents don't.
+    for name in ["Alex", "Vie\u{323}\u{302}t"] {
+        let r = put_profile(&c.app, &c.alex.1, &profile_request(Some(name))).await;
+        assert_eq!(r.status(), 200);
+    }
+    assert!(!has_zalgo(&c.app, c.alex.0).await);
+    // Zalgo is allowed, saved as typed, and earns it, toast and all.
+    let (mut ws, _) = hello(&c.app, &c.alex.1).await;
+    let r = put_profile(&c.app, &c.alex.1, &profile_request(Some(ZALGO))).await;
+    assert_eq!(r.status(), 200);
+    let p: Profile = r.json().await.unwrap();
+    assert_eq!(p.user.display_name, ZALGO);
+    let got = events_until(&mut ws, |e| matches!(e, Event::BadgeEarned { .. })).await;
+    let Some((Event::BadgeEarned { badge, .. }, _)) = got.last() else {
+        unreachable!()
+    };
+    assert_eq!(badge.key, "zalgo");
+    assert!(has_zalgo(&c.app, c.alex.0).await);
+    // One-off: saving it again changes nothing.
+    let r = put_profile(&c.app, &c.alex.1, &profile_request(Some(ZALGO))).await;
+    assert_eq!(r.status(), 200);
+    let mut conn = c.app.db.acquire().await.unwrap();
+    let held = pulse_server::badges::engine::tiers_held(&mut conn, c.alex.0)
+        .await
+        .unwrap();
+    assert_eq!(held.get("zalgo"), Some(&1));
+}
+
+#[tokio::test]
+async fn a_zalgo_server_nickname_earns_it_for_whoever_saved_it() {
+    let c = crew().await;
+    let r = rename(&c.app, &c.kim.1, c.server, c.sam.0, Some(ZALGO)).await;
+    assert_eq!(r.status(), 200);
+    assert!(has_zalgo(&c.app, c.kim.0).await);
+    assert!(!has_zalgo(&c.app, c.sam.0).await);
+    // your own nickname counts too
+    let r = rename(&c.app, &c.jo.1, c.server, c.jo.0, Some(ZALGO)).await;
+    assert_eq!(r.status(), 200);
+    assert!(has_zalgo(&c.app, c.jo.0).await);
+}
+
+#[tokio::test]
+async fn a_private_zalgo_nickname_earns_nothing() {
+    // Private activity never earns a badge (badges design, non-goals).
+    let c = crew().await;
+    let r = private_nick(&c.app, &c.alex.1, c.sam.0, Some(ZALGO)).await;
+    assert_eq!(r.status(), 204);
+    assert!(!has_zalgo(&c.app, c.alex.0).await);
+}

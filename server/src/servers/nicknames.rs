@@ -88,6 +88,13 @@ async fn rename(
         let stat = crate::badges::catalogue::stat::RENAMED_BY_OTHERS;
         crate::badges::stats::add(&mut tx, target, stat, 1).await?;
     }
+    // Whoever saves a Zalgo nickname earns the hidden Zalgo badge (#210). Private nicknames
+    // don't: private activity never earns a badge.
+    let zalgo = nickname.as_deref().is_some_and(names::is_zalgo);
+    if zalgo {
+        let stat = crate::badges::catalogue::stat::ZALGO_NAME;
+        crate::badges::stats::set_max(&mut tx, me, stat, 1).await?;
+    }
     tx.commit().await?;
 
     let member = member_of(&s.db, server, target).await?;
@@ -100,9 +107,11 @@ async fn rename(
             },
         )
         .await;
-    if renamed {
-        crate::badges::engine::after(&s, &[target]).await;
-    }
+    let check: Vec<UserId> = [(renamed, target), (zalgo, me)]
+        .into_iter()
+        .filter_map(|(yes, who)| yes.then_some(who))
+        .collect();
+    crate::badges::engine::after(&s, &check).await;
     Ok(Json(member))
 }
 

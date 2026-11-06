@@ -50,6 +50,31 @@ fn invisible(c: char) -> bool {
     )
 }
 
+/// Combining marks stacked on one character that make a name Zalgo (#209, #210).
+pub const ZALGO_MARKS: usize = 3;
+
+/// Whether `name` is Zalgo: some character carries [`ZALGO_MARKS`] or more combining marks.
+/// Variation selectors (an emoji's text or picture form) aren't counted. The client's `isZalgo`
+/// (client/ui/src/lib/profileDraft.ts) is the same rule, for the "Zalgo? Really?" hint while
+/// typing; this one, on save, earns the hidden badge.
+pub fn is_zalgo(name: &str) -> bool {
+    let mut run = 0;
+    for c in name.chars() {
+        if matches!(c, '\u{fe00}'..='\u{fe0f}' | '\u{e0100}'..='\u{e01ef}') {
+            continue;
+        }
+        run = if unicode_normalization::char::is_combining_mark(c) {
+            run + 1
+        } else {
+            0
+        };
+        if run >= ZALGO_MARKS {
+            return true;
+        }
+    }
+    false
+}
+
 /// A nickname to set: blank (or none) is a reset, anything else must be a [`clean`] name.
 pub fn clean_nickname(s: Option<&str>) -> AppResult<Option<String>> {
     match s.map(str::trim).filter(|s| !s.is_empty()) {
@@ -124,5 +149,35 @@ mod tests {
             Some("Kim")
         );
         assert!(clean_nickname(Some(&"k".repeat(33))).is_err());
+    }
+
+    /// A literal copy of the cases in client/ui/src/lib/profileDraft.test.ts (`isZalgo`): change
+    /// one side and both tests fail.
+    const ZALGO_CASES: &[(&str, bool)] = &[
+        ("alex", false),
+        ("\u{dc}n\u{ef}c\u{f8}d\u{e9} \u{f1}ame", false),
+        ("e\u{301}\u{302}", false),
+        ("Vie\u{323}\u{302}t", false),
+        ("a\u{301} b\u{302}\u{303}", false),
+        ("\u{2764}\u{fe0f}\u{fe0f}\u{fe0f}", false),
+        ("1\u{fe0f}\u{20e3}", false),
+        ("Z\u{335}\u{352}\u{316}", true),
+        ("Z\u{335}\u{fe0f}\u{352}\u{316}", true),
+        ("kim\u{300}\u{301}\u{302}\u{303}\u{304}\u{305}", true),
+        (" \u{300}\u{301}\u{302}", true),
+        ("\u{300}\u{301}\u{302}", true),
+    ];
+
+    #[test]
+    fn zalgo_is_three_marks_on_one_character() {
+        assert_eq!(ZALGO_MARKS, 3);
+        for (name, want) in ZALGO_CASES {
+            assert_eq!(is_zalgo(name), *want, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn zalgo_names_are_still_allowed() {
+        assert!(clean("Z\u{335}\u{352}\u{316}a\u{334}\u{30d}\u{323}").is_ok());
     }
 }

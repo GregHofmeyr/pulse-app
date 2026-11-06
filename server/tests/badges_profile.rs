@@ -21,6 +21,10 @@ const LEAKS: &[&str] = &[
     "highlight_reel",
     "Highlight Reel",
     "good at games",
+    "\"zalgo\"",
+    "zalgo_name",
+    "He comes",
+    "Z\u{335}\u{352}\u{316}a",
 ];
 
 async fn raw(app: &TestApp, token: &str, path: &str) -> String {
@@ -89,8 +93,8 @@ async fn hidden_badges_never_leak_in_the_catalogue() {
         assert!(d.description.is_empty() && d.progress.is_none() && d.parts.is_empty());
         assert!(!d.tiers.is_empty() && d.tiers.iter().all(|t| t.threshold == 0));
     }
-    // Rarity and share stay visible: Friendly Fire is the first hidden badge.
-    let ff = def(&c, "hidden:0");
+    // Rarity and share stay visible: Friendly Fire is the second hidden badge (after Zalgo).
+    let ff = def(&c, "hidden:1");
     assert_eq!(ff.tiers[0].rarity, BadgeRarity::Uncommon);
     assert_eq!(ff.tiers[0].holders, 1);
 }
@@ -108,7 +112,7 @@ async fn hidden_badges_never_leak_through_someone_elses_profile() {
     assert_no_leaks(&body);
     let hidden: Vec<_> = p.badges.iter().filter(|b| b.hidden).collect();
     assert_eq!(hidden.len(), 1);
-    assert_eq!(hidden[0].key, "hidden:0");
+    assert_eq!(hidden[0].key, "hidden:1");
     assert_eq!(hidden[0].rarity, BadgeRarity::Uncommon);
     assert_eq!(hidden[0].count, 0);
     // alex was first to it, and when: neither shows through the mask.
@@ -117,7 +121,7 @@ async fn hidden_badges_never_leak_through_someone_elses_profile() {
     assert!(!hidden[0].first_earner);
     assert!(hidden[0].first_tiers.is_empty());
     assert!(p.badges.iter().any(|b| b.key == "night_owl"));
-    assert_eq!(p.showcase, ["hidden:0"]);
+    assert_eq!(p.showcase, ["hidden:1"]);
 
     // The owner always sees their own.
     let (_, own) = profile(&app, &alex, alex_id).await;

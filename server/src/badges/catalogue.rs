@@ -22,6 +22,8 @@ pub mod stat {
     pub const DOOS_DAY: &str = "doos_day";
     pub const DOOS_DAY_COUNT: &str = "doos_day_count";
     pub const RENAMED_BY_OTHERS: &str = "renamed_by_others";
+    /// Saved a Zalgo display name or server nickname (#210).
+    pub const ZALGO_NAME: &str = "zalgo_name";
     pub const REACTIONS_RECEIVED: &str = "reactions_received";
     pub const EMOJI_SMITH: &str = "emoji_smith";
     /// `emoji_uses:<emoji id>`: uses by others of one of the uploader's emoji.
@@ -52,6 +54,7 @@ pub mod stat {
         DOOS_DAY,
         DOOS_DAY_COUNT,
         RENAMED_BY_OTHERS,
+        ZALGO_NAME,
         REACTIONS_RECEIVED,
         EMOJI_SMITH,
         QUOTE_AWARDS,
@@ -348,6 +351,16 @@ pub static CATALOGUE: &[Def] = &[
         stat::RENAMED_BY_OTHERS,
         &[(10, Common), (25, Uncommon), (50, Epic), (100, Legendary)],
     ),
+    // Its name is itself Zalgo (#210): a fixed, moderate one, three marks a letter, so the name
+    // clipping (#209) shows it whole. Earned by saving a Zalgo name (`names::is_zalgo`).
+    hidden(counter(
+        "zalgo",
+        "Z\u{335}\u{352}\u{316}a\u{334}\u{30d}\u{323}l\u{336}\u{346}\u{32d}g\u{337}\u{33e}\u{347}o\u{335}\u{352}\u{317}",
+        "Saved a name in Zalgo. He comes.",
+        "👁️",
+        stat::ZALGO_NAME,
+        &[(1, Rare)],
+    )),
     // Chat
     counter(
         "the_yapper",
@@ -485,7 +498,7 @@ pub static CATALOGUE: &[Def] = &[
         hidden: false,
         stacking: false,
         unit: Unit::Count,
-        // Three: only Friendly Fire, Highlight Reel and Egg Hunter can be earned so far.
+        // Three of the four hidden badges that can be earned (Skill Issue is only ever given).
         rule: Rule::HiddenCount {
             tiers: &[(3, Epic)],
         },
@@ -808,7 +821,8 @@ mod tests {
             .iter()
             .filter(|d| d.hidden && d.earnable())
             .count();
-        assert_eq!(earnable_hidden, 3);
+        // Four can be earned now (Zalgo joined, #210); any three will do.
+        assert_eq!(earnable_hidden, 4);
         let mut s = stats(&[(stat::FRIENDLY_FIRE, 1), (stat::HIGHLIGHT_REEL, 1)]);
         assert_eq!(evaluate(&s, &HashMap::new()).get(def.key), None);
         s.insert(stat::LOGO_EGG.into(), 1);
@@ -855,7 +869,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_set_is_friendly_fire_highlight_reel_logo_egg_skill_issue() {
+    fn hidden_set_is_zalgo_friendly_fire_highlight_reel_logo_egg_skill_issue() {
         let hidden: Vec<_> = CATALOGUE
             .iter()
             .chain(HAND_GIVEN)
@@ -864,7 +878,42 @@ mod tests {
             .collect();
         assert_eq!(
             hidden,
-            ["friendly_fire", "highlight_reel", "logo_egg", "skill_issue"]
+            [
+                "zalgo",
+                "friendly_fire",
+                "highlight_reel",
+                "logo_egg",
+                "skill_issue"
+            ]
         );
+    }
+
+    #[test]
+    fn the_zalgo_badge_is_hidden_one_off_and_named_in_zalgo() {
+        use Rarity::*;
+        let def = find("zalgo").unwrap();
+        assert!(def.hidden && def.earnable() && !def.stacking);
+        assert_eq!(def.stat(), Some(stat::ZALGO_NAME));
+        assert_eq!(def.tiers(), [(1, Rare)]);
+        assert_eq!(def.icon, "👁️");
+        // Its name is Zalgo by the same rule that earns it, and a name anyone could choose.
+        assert!(crate::profiles::names::is_zalgo(def.name), "{:?}", def.name);
+        assert_eq!(crate::profiles::names::clean(def.name).unwrap(), def.name);
+        assert!(def.name.chars().count() <= crate::profiles::names::NAME_MAX);
+        // Moderate: the plain word underneath, at most three marks on any letter (#209's clip shows it).
+        let base: String = def
+            .name
+            .chars()
+            .filter(|c| !unicode_normalization::char::is_combining_mark(*c))
+            .collect();
+        assert_eq!(base, "Zalgo");
+        assert!(
+            def.name
+                .split(|c: char| !unicode_normalization::char::is_combining_mark(c))
+                .all(|marks| marks.chars().count() <= 3)
+        );
+        let s = stats(&[(stat::ZALGO_NAME, 1)]);
+        assert_eq!(evaluate(&s, &HashMap::new()).get("zalgo"), Some(&1));
+        assert_eq!(evaluate(&stats(&[]), &HashMap::new()).get("zalgo"), None);
     }
 }
