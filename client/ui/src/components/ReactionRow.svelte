@@ -185,7 +185,8 @@
   .chip.locked { cursor: default; opacity: .7; }
   .chip.locked:hover { border-color: var(--bg-4); }
   .chip.mine { border-color: var(--focus-ring); background: var(--accent-soft); color: var(--text); }
-  .chip img { width: 16px; height: 16px; }
+  /* light themes edge emoji so white details show on the chip (#182; --emoji-edge is transparent on dark ones) */
+  .chip img { width: 16px; height: 16px; filter: drop-shadow(0 0 1px var(--emoji-edge)); }
   .gone { color: var(--text-3); font-size: 12px; }
   .suggest { opacity: .45; padding: 0 6px; }
   .suggest:hover, .suggest:focus-visible { opacity: .9; }

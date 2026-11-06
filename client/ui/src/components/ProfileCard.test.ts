@@ -9,7 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) })
 
 import { invoke } from '@tauri-apps/api/core'
 import ProfileCard from './ProfileCard.svelte'
-import ProfileCardPopover from './ProfileCardPopover.svelte'
+import ProfileCardPopover, { CARD_HOLD_MS } from './ProfileCardPopover.svelte'
 import { app, noteProfileUpdate, PROFILE_STALE_MS, resetState, ui } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
 import { closeCard, closeFull, openCard, profileUi } from '../lib/profileCard.svelte'
@@ -494,6 +494,55 @@ describe('ProfileCardPopover', () => {
     flushSync()
     expect(document.querySelector('.card .name')!.textContent).toBe('sam')
     expect(document.querySelector('.skeleton')).not.toBeNull()
+  })
+
+  it('an uncached card holds its pop-in a moment (#182): a quick load shows the real card, never a skeleton that then grows', async () => {
+    vi.useFakeTimers()
+    try {
+      let answer: (v: unknown) => void = () => {}
+      vi.mocked(invoke).mockImplementation(((cmd: string) => (cmd === 'get_profile' ? new Promise((r) => (answer = r)) : Promise.resolve())) as never)
+      cmp = mount(ProfileCardPopover, { target: document.body })
+      openCard('U2', null, document.body)
+      flushSync()
+      const pop = () => document.querySelector<HTMLElement>('.pop')!
+      expect(pop().classList.contains('held')).toBe(true)
+      expect(pop().classList.contains('pop-in')).toBe(false)
+      answer(profile(sam, card({ bio: 'quick' })))
+      await vi.advanceTimersByTimeAsync(20)
+      flushSync()
+      expect(pop().classList.contains('held')).toBe(false)
+      expect(pop().classList.contains('pop-in')).toBe(true)
+      expect(pop().querySelector('.skeleton')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a slow load shows the skeleton after the hold', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(invoke).mockImplementation((() => new Promise(() => {})) as never)
+      cmp = mount(ProfileCardPopover, { target: document.body })
+      openCard('U2', null, document.body)
+      flushSync()
+      expect(document.querySelector('.pop')!.classList.contains('held')).toBe(true)
+      await vi.advanceTimersByTimeAsync(CARD_HOLD_MS)
+      flushSync()
+      expect(document.querySelector('.pop')!.classList.contains('held')).toBe(false)
+      expect(document.querySelector('.pop')!.classList.contains('pop-in')).toBe(true)
+      expect(document.querySelector('.skeleton')).not.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a cached card is never held', () => {
+    app.state = { ...app.state, profiles: { ...app.state.profiles, U2: { user: sam, card: card(), stats, badges: [], showcase: [], name_archive: [], fetchedAt: Date.now() } as never } }
+    vi.mocked(invoke).mockImplementation((async () => undefined) as never)
+    cmp = mount(ProfileCardPopover, { target: document.body })
+    openCard('U2', null, document.body)
+    flushSync()
+    expect(document.querySelector('.pop')!.classList.contains('held')).toBe(false)
   })
 
   it('the loading card has the loaded shape and no one\'s colours: a full banner, a stats placeholder, neutral greys (#173)', () => {

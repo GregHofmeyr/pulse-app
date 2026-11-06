@@ -20,11 +20,12 @@ export function closeRename(): void {
   profileUi.rename = null
 }
 
-/** Opens the quick card for `userId` next to `el`; the same name or avatar again closes it. */
+/** Opens the quick card for `userId` next to `el`; the same name or avatar again closes it. Inside a
+ *  `[data-card-anchor]` (a member row, #182) it sits beside that instead, so it never covers the row's avatar. */
 export function openCard(userId: string, serverId: string | null, el: Element): void {
   const open = profileUi.card
   if (open && open.userId === userId && open.opener === el) profileUi.card = null
-  else profileUi.card = { userId, serverId, anchor: el.getBoundingClientRect(), opener: el }
+  else profileUi.card = { userId, serverId, anchor: (el.closest('[data-card-anchor]') ?? el).getBoundingClientRect(), opener: el }
 }
 
 export function openFull(userId: string, serverId: string | null): void {

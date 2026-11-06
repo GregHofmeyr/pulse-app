@@ -104,6 +104,7 @@
   --island-line: rgba(232, 233, 237, .35);
   /* Buttons and labels over video, frames and thumbnails (.icon-btn-overlay): dark glass and white, every theme. */
   --video-chrome: rgba(0, 0, 0, .55);
+  --emoji-edge: transparent;
   --video-chrome-strong: rgba(0, 0, 0, .75);
   --on-video: #fff;
   /* Badges (#49): the ring and label colour of each rarity (bright enough to read as text on the
@@ -189,6 +190,7 @@
   --island-text-3: #8e92a0;
   --island-line: rgba(232, 233, 237, .35);
   --video-chrome: rgba(0, 0, 0, .55);
+  --emoji-edge: transparent;
   --video-chrome-strong: rgba(0, 0, 0, .75);
   --on-video: #fff;
   --scrollbar-thumb: rgb(129 137 166 / .32);
@@ -271,6 +273,7 @@
   --island-text-3: #8e92a0;
   --island-line: rgba(232, 233, 237, .35);
   --video-chrome: rgba(0, 0, 0, .55);
+  --emoji-edge: transparent;
   --video-chrome-strong: rgba(0, 0, 0, .75);
   --on-video: #fff;
   --scrollbar-thumb: rgb(135 138 151 / .32);
@@ -353,6 +356,7 @@
   --island-text-3: #8e92a0;
   --island-line: rgba(232, 233, 237, .35);
   --video-chrome: rgba(0, 0, 0, .55);
+  --emoji-edge: transparent;
   --video-chrome-strong: rgba(0, 0, 0, .75);
   --on-video: #fff;
   --scrollbar-thumb: rgb(176 149 140 / .32);
@@ -433,6 +437,7 @@
   --island-text-3: #8e92a0;
   --island-line: rgba(232, 233, 237, .35);
   --video-chrome: rgba(0, 0, 0, .55);
+  --emoji-edge: transparent;
   --video-chrome-strong: rgba(0, 0, 0, .75);
   --on-video: #fff;
   --scrollbar-thumb: rgb(168 154 142 / .32);
@@ -513,6 +518,7 @@
   --island-text-3: #8e92a0;
   --island-line: rgba(232, 233, 237, .35);
   --video-chrome: rgba(0, 0, 0, .55);
+  --emoji-edge: transparent;
   --video-chrome-strong: rgba(0, 0, 0, .75);
   --on-video: #fff;
   --scrollbar-thumb: rgb(179 152 172 / .32);
@@ -595,6 +601,8 @@
   --island-text-3: #8e92a0;
   --island-line: rgba(232, 233, 237, .35);
   --video-chrome: rgba(0, 0, 0, .55);
+  /* a faint edge round emoji on light chips, so white details (the eyes in 👀) still show (#182) */
+  --emoji-edge: rgba(0, 0, 0, .35);
   --video-chrome-strong: rgba(0, 0, 0, .75);
   --on-video: #fff;
   --scrollbar-thumb: rgb(106 92 128 / .3);
@@ -678,6 +686,8 @@
   --island-text-3: #8e92a0;
   --island-line: rgba(232, 233, 237, .35);
   --video-chrome: rgba(0, 0, 0, .55);
+  /* a faint edge round emoji on light chips, so white details (the eyes in 👀) still show (#182) */
+  --emoji-edge: rgba(0, 0, 0, .35);
   --video-chrome-strong: rgba(0, 0, 0, .75);
   --on-video: #fff;
   --scrollbar-thumb: rgb(92 97 110 / .3);

@@ -44,6 +44,40 @@ afterEach(() => {
 })
 const row = (n: number) => document.querySelectorAll<HTMLElement>('.members .row')[n]
 
+describe('MemberList: the card (#182)', () => {
+  const samRow = () => [...document.querySelectorAll<HTMLElement>('.members .row')].find((r) => r.textContent?.includes('Sammy'))!
+  const ROW = { left: 800, right: 1000, top: 100, bottom: 144, width: 200, height: 44, x: 800, y: 100, toJSON() {} } as DOMRect
+
+  it('a click on the row background opens their card, as the name and avatar do; again closes it', () => {
+    samRow().click()
+    flushSync()
+    expect(profileUi.card?.userId).toBe('U2')
+    samRow().click()
+    flushSync()
+    expect(profileUi.card).toBeNull()
+  })
+
+  it("a click on the row's message button doesn't", () => {
+    samRow().querySelector<HTMLButtonElement>('button.msg')!.click()
+    flushSync()
+    expect(profileUi.card).toBeNull()
+    expect(onMessage).toHaveBeenCalledWith('U2')
+  })
+
+  it('opened from the name or avatar, the card sits beside the whole row, not over the avatar column', () => {
+    samRow().getBoundingClientRect = () => ROW
+    samRow().querySelector<HTMLButtonElement>('.who button.name')!.click()
+    flushSync()
+    expect(profileUi.card?.anchor).toEqual(ROW)
+    // the name is still what it toggles on and gives focus back to
+    expect(profileUi.card?.opener).toBe(samRow().querySelector('.who button.name'))
+    closeCard()
+    samRow().querySelector<HTMLButtonElement>('button.avbtn')!.click()
+    flushSync()
+    expect(profileUi.card?.anchor).toEqual(ROW)
+  })
+})
+
 describe('MemberList', () => {
   it('rows use Name and Avatar', () => {
     const r = row(1)

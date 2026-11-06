@@ -1,3 +1,9 @@
+<script module lang="ts">
+  /** How long an uncached card waits, unseen, for its profile before showing the loading skeleton (#182): a quick
+   *  load then pops in as the real card, instead of a skeleton that grows (and, low in the window, moves). */
+  export const CARD_HOLD_MS = 150
+</script>
+
 <script lang="ts">
   // The quick card next to the name or avatar that opened it (profileUi.card). The person comes from
   // the store and the card from the profile cache, so a ProfileUpdated restyles an open card without
@@ -36,6 +42,21 @@
   })
 
   const has = $derived(!!cached)
+  /** Opened uncached, and neither loaded nor CARD_HOLD_MS gone yet: in place and focused, but not shown. */
+  let held = $state(false)
+  $effect(() => {
+    const t = target
+    if (!t || untrack(() => has)) return
+    held = true
+    const timer = setTimeout(() => (held = false), CARD_HOLD_MS)
+    return () => {
+      clearTimeout(timer)
+      held = false
+    }
+  })
+  $effect(() => {
+    if (has || failed) held = false
+  })
   // On each open: fetch when there is nothing cached (shared with any load already in flight), else
   // show the cached card and refresh it in the background if it is over 5 minutes old.
   $effect(() => {
@@ -106,7 +127,7 @@
 <svelte:window onkeydown={onKey} onpointerdowncapture={onDown} onresize={() => target && closeCard()} />
 
 {#if target && user}
-  <div bind:this={pop} class="pop pop-in" role="dialog" aria-label="Profile of {displayName(app.state, target.serverId, user.id)}" tabindex="-1" {@attach opened} style:left="{pos.left}px" style:top="{pos.top}px">
+  <div bind:this={pop} class="pop" class:pop-in={!held} class:held role="dialog" aria-label="Profile of {displayName(app.state, target.serverId, user.id)}" tabindex="-1" {@attach opened} style:left="{pos.left}px" style:top="{pos.top}px">
     <ProfileCard {user} card={cached?.card ?? PLACEHOLDER} badges={cached?.badges ?? []} showcase={cached?.showcase ?? []} stats={cached?.stats ?? null} serverId={target.serverId}
       loading={!cached && !failed} onViewFull={viewFull} onClose={closeCard} />
     {#if failed && !cached}<p class="err" role="alert">{failed}</p>{/if}
@@ -119,5 +140,8 @@
      isn't a target, so a press there is outside the card */
   .pop { position: fixed; z-index: 55; outline: none; max-height: calc(100vh - 16px + 52px); overflow: auto; padding: 26px; margin: -26px; pointer-events: none; }
   .pop > :global(*) { pointer-events: auto; }
+  /* held (CARD_HOLD_MS): there and focused but not seen; its pop-in plays once it shows */
+  .pop.held { opacity: 0; }
+  .pop.held > :global(*) { pointer-events: none; }
   .err { margin: 6px 0 0; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--bg-3); color: var(--text-2); font-size: 12px; max-width: 300px; }
 </style>

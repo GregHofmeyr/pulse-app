@@ -7,6 +7,7 @@
   import MemberMenu from './MemberMenu.svelte'
   import { baseName, displayName } from '../lib/selectors'
   import { menuPoint } from '../lib/participantMenu'
+  import { openCard } from '../lib/profileCard.svelte'
 
   let { serverId, onMessage }: { serverId: string; onMessage?: (userId: string) => void } = $props()
   const members = $derived(app.state.members[serverId] ?? [])
@@ -41,8 +42,11 @@
   {#each g.list as m (m.user.id)}
     {@const name = displayName(app.state, serverId, m.user.id)}
     {@const base = baseName(m.user)}
-    <!-- the context menu is a pointer shortcut; the keyboard route is ContextMenu / Shift+F10 on the row's buttons -->
-    <div class="row hover-row" class:off={g.key === 'offline'} data-section={g.key} role="presentation" onpointerenter={() => (hovered = m.user.id)} onpointerleave={() => { if (hovered === m.user.id) hovered = null }}
+    <!-- the context menu and a click on the row (their card, #182) are pointer shortcuts; the keyboard route is the
+         row's buttons (Enter on the name, ContextMenu / Shift+F10) -->
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="row hover-row" class:off={g.key === 'offline'} data-section={g.key} data-card-anchor role="presentation"
+      onclick={(e) => { if (!(e.target as Element).closest('button')) openCard(m.user.id, serverId, e.currentTarget) }} onpointerenter={() => (hovered = m.user.id)} onpointerleave={() => { if (hovered === m.user.id) hovered = null }}
       oncontextmenu={(e) => { e.preventDefault(); openMenu(m.user.id, e, e.currentTarget) }} onkeydown={(e) => rowKey(m.user.id, e)}>
       <Avatar id={m.user.id} {name} size={32} presence={presenceOf(app.state, m.user.id, clock.nowIso)} interactive {serverId} hovered={() => hovered === m.user.id} />
       <span class="who"><Name userId={m.user.id} {serverId} text={name} surface="side" />{#if name !== base}<small class="name-clip">{base}</small>{/if}</span>
@@ -60,7 +64,7 @@
 <style>
   .members { width: var(--right-w, 240px); flex-shrink: 0; background: var(--bg-1); border-radius: var(--radius); padding: 8px; overflow-y: auto; }
   .label { padding: 14px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
-  .row { height: 44px; padding: 0 10px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 10px; }
+  .row { cursor: pointer; height: 44px; padding: 0 10px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 10px; }
   /* 15 px: a styled name font (script, pixel) blurs at smaller sizes */
   .who { display: flex; flex-direction: column; font-size: 15px; font-weight: 500; min-width: 0; }
   .who small { font-size: 11px; color: var(--text-3); font-weight: 400; }

@@ -65,6 +65,17 @@ describe('theme blocks', () => {
     for (const n of TINTS.filter((n) => n.key !== 'plain')) expect(names(block('light', n.key)), n.key).toEqual(TINT_TOKENS)
   })
 
+  // White emoji details (the eyes in 👀) vanish on a light chip: light themes give emoji a faint dark edge (#182)
+  it('emoji get an edge on light themes only', () => {
+    for (const t of THEMES) {
+      const edge = block(t.key).getPropertyValue('--emoji-edge').trim()
+      if (t.light) expect(edge, t.key).toMatch(/^rgba\(0, ?0, ?0, ?\.?\d+\)$/)
+      else expect(edge, t.key).toBe('transparent')
+    }
+    const chip = readFileSync(resolve(__dirname, 'components/ReactionRow.svelte'), 'utf8')
+    expect(chip).toMatch(/\.chip img \{[^}]*filter: drop-shadow\(0 0 1px var\(--emoji-edge\)\)/)
+  })
+
   it('color-scheme follows light and dark', () => {
     for (const t of THEMES) expect(block(t.key).getPropertyValue('color-scheme'), t.key).toBe(t.light ? 'light' : 'dark')
   })
