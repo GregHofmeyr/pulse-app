@@ -7,7 +7,7 @@ import { displayName, type SelfVoice } from './selectors'
 import { app, onAppEvent } from './store.svelte'
 import { api } from './tauri'
 import { pushCallMixQuietly } from './mixer.svelte'
-import { loadAudioConfig, loadLocalMutes, loadVolumes, playSound, saveLocalMutes, saveVolumes, transitionSounds, type AudioConfig, type Connection, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
+import { loadAudioConfig, loadLocalMutes, loadVolumes, peerCallSound, playSound, saveLocalMutes, saveVolumes, transitionSounds, type AudioConfig, type Connection, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
 import { isJoining, reduceStage, type StageState } from './voicestage'
 
 export const voice = $state({
@@ -114,6 +114,11 @@ function leaveIfRemoved(e: AppEvent) {
 export async function startVoiceListening() {
   const offApp = onAppEvent(leaveIfRemoved)
   const offDisconnect = onAppEvent(noteDisconnect)
+  // someone else joining or leaving your call (#219)
+  const offPeers = onAppEvent((e) => {
+    const snd = peerCallSound(e, { myId: app.state.me?.id, channelId: voice.channelId, connection: voice.connection })
+    if (snd) playSound(snd)
+  })
   const offVoice = await listen<VoiceEvent>('voice://event', ({ payload: e }) => {
     voice.stage = reduceStage(voice.stage, e)
     switch (e.kind) {
@@ -173,6 +178,7 @@ export async function startVoiceListening() {
   return () => {
     offApp()
     offDisconnect()
+    offPeers()
     offVoice()
   }
 }

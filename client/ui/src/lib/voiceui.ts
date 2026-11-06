@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { loadMixer, ringtoneGain, soundGain, soundMasterGain } from './mixer'
+import type { Event as AppEvent } from './protocol/Event'
 // Pure helpers for the voice UI (tested in voiceui.test.ts).
 
 /** Your own mute / deafen, and (from the core) the server's of you (#140), which the core adds. */
@@ -136,6 +137,15 @@ export function transitionSounds(prev: VoiceSnap, next: VoiceSnap): SoundName[] 
   const c = soundFor(prev.controls, next.controls)
   if (c) out.push(c)
   return out
+}
+
+/** Someone else joining or leaving the call you're in (#219): the same join and leave chirps (and mixer notches) as
+ * your own. Yours come from the connection (`transitionSounds`), so your own events are left out here; mid-join or
+ * reconnecting you hear nothing, as the roster settles. */
+export function peerCallSound(e: AppEvent, me: { myId: string | undefined; channelId: string | null; connection: Connection }): SoundName | null {
+  if (e.t !== 'VoiceJoined' && e.t !== 'VoiceLeft') return null
+  if (!me.channelId || me.connection !== 'connected' || e.d.channel_id !== me.channelId || e.d.user_id === me.myId) return null
+  return e.t === 'VoiceJoined' ? 'join' : 'leave'
 }
 
 function invokeSound(name: SoundName, set: SoundSetId, gain: number) {

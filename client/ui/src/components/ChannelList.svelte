@@ -25,6 +25,7 @@
   import CategoryMenu from './CategoryMenu.svelte'
   import DeleteChannelDialog from './DeleteChannelDialog.svelte'
   import { menuPoint } from '../lib/participantMenu'
+  import { exitFade } from '../lib/exit'
   import { selfVoice, voice, voiceApi } from '../lib/voice.svelte'
   import { hoverPrefetch } from '../lib/hoverPrefetch'
 
@@ -89,6 +90,42 @@
 
   // the voice occupant under the pointer: its avatar animates
   let hoveredOccupant = $state<string | null>(null)
+
+  // Who just came into a voice channel (#219): their row slides in with a brief highlight (a leaver's fades out,
+  // out:exitFade). Only a change to a roster already on screen counts, so opening a server doesn't flash everyone
+  // already in its calls. Keys are `channel:user`; the class goes once the entrance has played.
+  const ARRIVAL_MS = 1500
+  let arrived = $state<Record<string, true>>({})
+  const seen = new Map<string, Set<string>>()
+  const rosters = $derived(
+    member
+      ? Object.values(app.state.channels).filter((c) => c.server_id === serverId && c.kind === 'voice').map((c) => [c.id, callRoster(app.state, serverId, c.id, self).map((p) => p.userId)] as const)
+      : [],
+  )
+  $effect(() => {
+    const now = rosters
+    untrack(() => {
+      // another server's channels are off screen: coming back to them is a fresh look, not a run of arrivals
+      const shown = new Set(now.map(([c]) => c))
+      for (const c of [...seen.keys()]) if (!shown.has(c)) seen.delete(c)
+      for (const [channel, ids] of now) {
+        const before = seen.get(channel)
+        if (before) for (const u of ids) if (!before.has(u)) markArrived(`${channel}:${u}`)
+        seen.set(channel, new Set(ids))
+      }
+    })
+  })
+  const arrivalTimers = new Set<ReturnType<typeof setTimeout>>()
+  function markArrived(key: string) {
+    arrived = { ...arrived, [key]: true }
+    const t = setTimeout(() => {
+      arrivalTimers.delete(t)
+      const { [key]: _done, ...rest } = arrived
+      arrived = rest
+    }, ARRIVAL_MS)
+    arrivalTimers.add(t)
+  }
+  $effect(() => () => arrivalTimers.forEach(clearTimeout))
 
   // inline "new channel" field, under a section's heading: a category's has a kind picker, a legacy section's makes
   // its own kind
@@ -515,7 +552,7 @@
   {/if}
   {#each people as p (p.userId)}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="occupant" class:pending={p.pending} role="button" tabindex="0" data-menu-toggle aria-haspopup="menu" aria-label={occupantLabel(p)} data-user={p.userId}
+    <div class="occupant" out:exitFade class:arrived={arrived[`${c.id}:${p.userId}`]} class:pending={p.pending} role="button" tabindex="0" data-menu-toggle aria-haspopup="menu" aria-label={occupantLabel(p)} data-user={p.userId}
       oncontextmenu={(e) => { e.preventDefault(); if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
       onclick={(e) => { if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
       onkeydown={(e) => occupantKey(e, c.id, p)}
@@ -638,6 +675,17 @@
   .ring { display: flex; flex-shrink: 0; border-radius: 50%; }
   .ring.speaking { box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--ok); }
   .occupant:hover { background: var(--bg-2); }
+  /* someone just joined (#219): the row slides in and fades up, and a soft accent wash behind it fades away. The
+     wash is its own layer whose opacity fades (no background repaint per frame); the row's own paint stays on top. */
+  .occupant { position: relative; isolation: isolate; }
+  .occupant::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--accent-soft); opacity: 0; pointer-events: none; }
+  .occupant.arrived { animation: occupant-in var(--dur-slow) var(--ease); will-change: opacity; }
+  .occupant.arrived::before { background: var(--accent-soft); animation: occupant-glow calc(var(--dur-slow) * 6) var(--ease-exit); }
+  @keyframes occupant-in { from { opacity: 0; transform: translateX(-6px); } }
+  @keyframes occupant-glow { from { opacity: 1; } }
+  /* a paused window or a stream would hold the row on its invisible first frame: it just appears */
+  :global(.streaming) .occupant.arrived, :global(.streaming) .occupant.arrived::before, :global(.unfocused) .occupant.arrived, :global(.unfocused) .occupant.arrived::before { animation: none; }
+  @media (prefers-reduced-motion: reduce) { .occupant.arrived, .occupant.arrived::before { animation: none; } }
   .occupant.pending { opacity: .6; }
   .joining { font-size: 11px; color: var(--text-2); }
   .spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--text-3); border-top-color: transparent; animation: spin .8s linear infinite; }

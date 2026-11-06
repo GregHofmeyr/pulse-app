@@ -778,6 +778,33 @@ mod tests {
         }
     }
 
+    /// #219: a join is the sound you most need to notice, so Classic's join and leave (the level
+    /// every set but Goofy is normalised to) are its loudest events.
+    #[test]
+    fn join_and_leave_are_classics_loudest_events() {
+        for loud in ["join", "leave"] {
+            let l = active_rms(&raw("classic", loud));
+            for other in NAMES.iter().filter(|n| !["join", "leave"].contains(n)) {
+                let d = db(l, active_rms(&raw("classic", other)));
+                assert!(d >= 1.0, "classic/{loud} is only {d:.2} dB over {other}");
+            }
+        }
+    }
+
+    /// #219: a leave is not a join played backwards: it drops into a lower register, so the two
+    /// tell apart at a glance (Goofy's are their own sounds).
+    #[test]
+    fn leave_sits_well_below_join() {
+        for set in SETS.iter().filter(|s| **s != "goofy") {
+            let (j, l) = (raw(set, "join"), raw(set, "leave"));
+            let (j, l) = (zcr(active(&j)), zcr(active(&l)));
+            assert!(
+                l < j * 0.8,
+                "{set}: leave ({l}) should sit well below join ({j})"
+            );
+        }
+    }
+
     #[test]
     fn no_two_events_in_a_set_are_identical() {
         for set in SETS {
@@ -798,8 +825,12 @@ mod tests {
         assert!(decode_wav(b"not a wav file at all, definitely not").is_none());
     }
 
+    /// The ringtones' level: Classic's join when they were made (#50, #174), before #219 lifted
+    /// join and leave above it (`scripts/gen_sounds.py` RING_RMS).
+    const RING_RMS: f32 = 0.1936;
+
     /// Every ringtone (#50, #174) is one cycle, looped while a call rings: our format, a couple of
-    /// seconds, ending in a pause (so the loop breathes), as loud as Classic's join.
+    /// seconds, ending in a pause (so the loop breathes), at the ring level.
     #[test]
     fn every_ringtone_is_a_loopable_cycle() {
         for (id, bytes) in RINGTONES {
@@ -812,8 +843,8 @@ mod tests {
                 tail.iter().all(|v| v.abs() < 0.001),
                 "{id}: the last 0.5 s is quiet"
             );
-            let d = db(active_rms(&s.samples), active_rms(&raw("classic", "join")));
-            assert!(d.abs() <= 1.5, "{id}: {d:.1} dB from Classic's join");
+            let d = db(active_rms(&s.samples), RING_RMS);
+            assert!(d.abs() <= 1.5, "{id}: {d:.1} dB from the ring level");
             let peak = s.samples.iter().fold(0f32, |m, v| m.max(v.abs()));
             assert!(peak <= 0.98, "{id} peaks at {peak}");
             assert!(bytes.len() < 200_000, "{id}");

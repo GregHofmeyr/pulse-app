@@ -106,6 +106,60 @@ describe('muted for you', () => {
   })
 })
 
+// #219: a joiner's row arrives with a brief highlight, a leaver's fades out
+describe('arrivals', () => {
+  const lounge = () => Object.values(app.state.channels).find((c) => c.kind === 'voice')!
+  const ev = (t: string, u: string) => {
+    app.state = applyEvent(app.state, { t, d: { channel_id: lounge().id, user_id: u, flags: { muted: false, deafened: false } } } as never, Date.now())
+    flushSync()
+  }
+  const row = (u: string) => document.querySelector<HTMLElement>(`.occupant[data-user="${u}"]`)
+
+  it('someone_joining_a_channel_already_on_screen_arrives_with_the_highlight', () => {
+    ev('VoiceJoined', 'U2')
+    expect(row('U2')!.classList.contains('arrived')).toBe(true)
+  })
+
+  it('people_already_there_when_the_list_opens_do_not_flash', () => {
+    if (cmp) unmount(cmp)
+    document.body.innerHTML = ''
+    app.state = applyEvent(app.state, { t: 'VoiceJoined', d: { channel_id: lounge().id, user_id: 'U2', flags: { muted: false, deafened: false } } } as never, Date.now())
+    cmp = mount(ChannelList, {
+      target: document.body,
+      props: { serverId: 'S1', activeChannelId: null, voiceChannelId: null, speaking: new Set<string>(), onSelect: () => {}, onJoinVoice: () => {}, onMessage: () => {}, onVoiceSettings: () => {} },
+    })
+    flushSync()
+    expect(row('U2')!.classList.contains('arrived')).toBe(false)
+  })
+
+  it('the_highlight_goes_once_it_has_played', () => {
+    vi.useFakeTimers()
+    try {
+      ev('VoiceJoined', 'U2')
+      vi.advanceTimersByTime(5000)
+      flushSync()
+      expect(row('U2')!.classList.contains('arrived')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('the_entrance_slides_and_fades_on_the_motion_tokens_and_reduced_motion_or_a_paused_window_skips_it', () => {
+    const css = readFileSync(resolve(__dirname, 'ChannelList.svelte'), 'utf8').match(/<style>([\s\S]*)<\/style>/)![1]
+    expect(css).toMatch(/\.occupant\.arrived \{[^}]*animation: occupant-in var\(--dur-slow\) var\(--ease\)/)
+    expect(css).toMatch(/@keyframes occupant-in \{ from \{ opacity: 0; transform: translateX\(/)
+    // the highlight is a layer whose opacity fades, not a repainted background
+    expect(css).toMatch(/\.occupant\.arrived::before \{[^}]*background: var\(--accent-soft\)[^}]*animation: occupant-glow/)
+    expect(css).toMatch(/:global\(\.streaming\) \.occupant\.arrived[^{]*:global\(\.unfocused\) \.occupant\.arrived[^{]*\{[^}]*animation: none/)
+    expect(css).toMatch(/prefers-reduced-motion: reduce\) \{[^}]*\.occupant\.arrived[^}]*animation: none/)
+  })
+
+  it('a_leavers_row_fades_out', () => {
+    const src = readFileSync(resolve(__dirname, 'ChannelList.svelte'), 'utf8')
+    expect(src).toMatch(/<div class="occupant"[^>]*out:exitFade/)
+  })
+})
+
 describe('ChannelList joining', () => {
   it('joining_shows_a_greyed_entry_with_spinner_at_once', async () => {
     invoke.mockReturnValue(new Promise(() => {}))

@@ -37,7 +37,7 @@ describe('voice ui helpers', () => {
   })
 })
 
-import { transitionSounds } from './voiceui'
+import { peerCallSound, transitionSounds } from './voiceui'
 
 describe('transitionSounds', () => {
   const off = { muted: false, deafened: false }
@@ -58,6 +58,29 @@ describe('transitionSounds', () => {
   })
   it('mute toggles still sound', () => {
     expect(transitionSounds(at('V1', 'connected'), at('V1', 'connected', { muted: true, deafened: false }))).toEqual(['mute'])
+  })
+})
+
+// #219: someone else joining or leaving the call you're in chirps too, so a join is noticed
+describe('peerCallSound', () => {
+  const ev = (t: 'VoiceJoined' | 'VoiceLeft', user = 'U2', channel = 'V1') =>
+    ({ t, d: { channel_id: channel, user_id: user, flags: { muted: false, deafened: false } } }) as never
+  const ctx = { myId: 'U1', channelId: 'V1', connection: 'connected' as const }
+  it('someone joining your call plays join, leaving it plays leave', () => {
+    expect(peerCallSound(ev('VoiceJoined'), ctx)).toBe('join')
+    expect(peerCallSound(ev('VoiceLeft'), ctx)).toBe('leave')
+  })
+  it('your own join and leave are left to the connection (they sound once)', () => {
+    expect(peerCallSound(ev('VoiceJoined', 'U1'), ctx)).toBeNull()
+    expect(peerCallSound(ev('VoiceLeft', 'U1'), ctx)).toBeNull()
+  })
+  it('another channel, or no call of yours, is silent', () => {
+    expect(peerCallSound(ev('VoiceJoined', 'U2', 'V2'), ctx)).toBeNull()
+    expect(peerCallSound(ev('VoiceJoined'), { ...ctx, channelId: null })).toBeNull()
+    expect(peerCallSound(ev('VoiceJoined'), { ...ctx, connection: 'connecting' })).toBeNull()
+  })
+  it('other events are silent', () => {
+    expect(peerCallSound({ t: 'Typing', d: { channel_id: 'V1', user_id: 'U2' } } as never, ctx)).toBeNull()
   })
 })
 

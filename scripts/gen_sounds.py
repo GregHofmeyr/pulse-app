@@ -6,8 +6,9 @@ import math, os, struct, wave
 RATE = 22050
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "client/src-tauri/sounds")
 
-def tone(freqs, dur, gap=0.0, vol=0.22):
-    """Notes in sequence; each note glides from f0 to f1 with a soft envelope."""
+def tone(freqs, dur, gap=0.0, vol=0.22, bright=0.0):
+    """Notes in sequence; each note glides from f0 to f1 with a soft envelope. `bright`: a 2nd harmonic at that
+    fraction of the note, which carries better on small speakers."""
     out = []
     for f0, f1 in freqs:
         n = int(RATE * dur)
@@ -17,7 +18,7 @@ def tone(freqs, dur, gap=0.0, vol=0.22):
             f = f0 + (f1 - f0) * t
             phase += 2 * math.pi * f / RATE
             env = min(1.0, i / (RATE * 0.008)) * min(1.0, (n - i) / (RATE * 0.04))
-            out.append(math.sin(phase) * env * vol)
+            out.append((math.sin(phase) + bright * math.sin(2 * phase)) * env * vol)
         out += [0.0] * int(RATE * gap)
     return out
 
@@ -56,9 +57,15 @@ def normalise(samples, target_rms, peak=0.98):
         k *= peak / top
     return [s * k for s in samples]
 
+# Classic's join before #219: the ringtones are made at its level (sounds.rs RING_RMS checks it).
+RING_RMS = active_rms(tone([(523, 523), (784, 784)], 0.09, vol=0.34))
+# Join and leave are the events you most need to notice (#219): the loudest of the set, a little brighter, and no
+# longer mirror images: join climbs high (E5 -> B5), leave drops into a low register (B4 -> E4).
+JOIN_LEAVE_RMS = 0.27
+
 CLASSIC = {
-    "join": tone([(523, 523), (784, 784)], 0.09, vol=0.34),
-    "leave": tone([(784, 784), (523, 523)], 0.09, vol=0.34),
+    "join": normalise(tone([(659, 659), (988, 988)], 0.09, vol=0.34, bright=0.25), JOIN_LEAVE_RMS),
+    "leave": normalise(tone([(494, 494), (330, 330)], 0.1, vol=0.34, bright=0.25), JOIN_LEAVE_RMS),
     "mute": tone([(440, 330)], 0.08),
     "unmute": tone([(330, 440)], 0.08),
     "deafen": tone([(392, 294), (330, 247)], 0.07, gap=0.02),
@@ -99,7 +106,8 @@ TWOSTEP = {
 }
 # event -> (first, second) multiples of the base, note length scale (None: MESSAGE_NOTE)
 TWOSTEP_PAIRS = {
-    "join": ((1, 1.5), 1.0), "leave": ((1.5, 1), 1.0),
+    # leave falls from the base into the register below, not back down join's notes (#219)
+    "join": ((1, 1.5), 1.0), "leave": ((1, 0.6667), 1.0),
     "unmute": ((1, 1.25), 0.8), "mute": ((1.25, 1), 0.8),
     "undeafen": ((0.5, 0.6667), 1.0), "deafen": ((0.6667, 0.5), 1.0),
     "live": ((1, 1.6667), 1.0), "live_end": ((1.6667, 1), 1.0),
@@ -168,13 +176,13 @@ RING_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "clien
 
 def ringtone():
     """The incoming-call ring (#50): one cycle, which the client loops. Classic's soft sines: two quick trills of a
-    rising pair (E5-A5), a short breath between them, then a pause before the next cycle. Normalised to Classic's
-    join, so it sits with the set; the volume mixer's Ringing notch takes it from there. One ringtone for every set."""
+    rising pair (E5-A5), a short breath between them, then a pause before the next cycle. Normalised to RING_RMS
+    (Classic's join as it was), so it sits with the set; the volume mixer's Ringing notch takes it from there. One ringtone for every set."""
     trill = []
     for _ in range(4):
         trill += tone([(659, 659)], 0.09) + tone([(880, 880)], 0.09)
     cycle = trill + [0.0] * int(RATE * 0.2) + trill + [0.0] * int(RATE * 1.2)
-    return normalise(cycle, active_rms(CLASSIC["join"]))
+    return normalise(cycle, RING_RMS)
 
 # The other ringtones you can pick (#174). Each is one cycle the client loops, ending in a pause, normalised to
 # Classic's join like the original (which stays `ring.wav`, the "classic" ringtone).
@@ -197,7 +205,7 @@ def ring_marimba():
                                decay=[0.18, 0.05, 0.015])) for i, f in enumerate(notes)]
     second = [(s + 0.95, n) for s, n in phrase]
     cycle = _mix(2.95, phrase + second)
-    return normalise(cycle, active_rms(CLASSIC["join"]))
+    return normalise(cycle, RING_RMS)
 
 def _pulse(freq, dur, harmonics=(1, 3, 5, 7), vol=1.0):
     """A soft square: the first few odd harmonics only (no aliasing fizz), clean attack and release."""
@@ -225,7 +233,7 @@ def ring_chiptune():
         notes.append((t, _pulse(f, 0.12)))
         t += 0.14
     cycle = _mix(t + 0.9, notes)
-    return normalise(cycle, active_rms(CLASSIC["join"]))
+    return normalise(cycle, RING_RMS)
 
 def ring_phone():
     """The two-tone classic phone: two tones together (400 + 450 Hz, the old double ring), ring-ring, then a pause.
@@ -242,7 +250,7 @@ def ring_phone():
             out.append(v * env)
         return out
     cycle = _mix(2.4, [(0.0, burst(0.4)), (0.6, burst(0.4))])
-    return normalise(cycle, active_rms(CLASSIC["join"]))
+    return normalise(cycle, RING_RMS)
 
 RINGTONE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "client/src-tauri/ringtone")
 # ringtone id -> generator; "classic" is ring.wav (above)
