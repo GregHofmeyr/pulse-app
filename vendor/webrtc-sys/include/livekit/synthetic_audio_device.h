@@ -23,6 +23,7 @@
 #include "modules/audio_device/include/audio_device.h"
 #include "rtc_base/synchronization/mutex.h"
 #include "rtc_base/task_utils/repeating_task.h"
+#include "rtc_base/thread_annotations.h"
 
 namespace livekit_ffi {
 
@@ -117,13 +118,22 @@ class SyntheticAudioDevice : public webrtc::AudioDeviceModule {
   int32_t SetObserver(webrtc::AudioDeviceObserver* sink) override;
 
  private:
+  // Pulse (#216): Init and Terminate may now alternate for the device's whole
+  // life (WebRTC terminates the ADM with the last PeerConnection and inits it
+  // for the next), so the state below is guarded and the 10 ms pump (the task
+  // on audio_queue_) is recreated by every Init. Init, Terminate and the
+  // destructor must run on one thread (the worker: AdmProxy marshals them),
+  // as TaskQueueBase::Delete requires. Upstream: livekit/rust-sdks#1468.
   mutable webrtc::Mutex mutex_;
-  std::vector<int16_t> data_;
-  std::unique_ptr<webrtc::TaskQueueBase, webrtc::TaskQueueDeleter> audio_queue_;
-  webrtc::RepeatingTaskHandle audio_task_;
-  webrtc::AudioTransport* audio_transport_;
-  const webrtc::Environment& env_;
-  bool playing_{false};
-  bool initialized_{false};
+  std::vector<int16_t> data_ RTC_GUARDED_BY(mutex_);
+  std::unique_ptr<webrtc::TaskQueueBase, webrtc::TaskQueueDeleter> audio_queue_
+      RTC_GUARDED_BY(mutex_);
+  webrtc::RepeatingTaskHandle audio_task_ RTC_GUARDED_BY(mutex_);
+  webrtc::AudioTransport* audio_transport_ RTC_GUARDED_BY(mutex_) = nullptr;
+  // Pulse: a copy, not a reference to the creator's (Init uses its task queue
+  // factory long after construction).
+  const webrtc::Environment env_;
+  bool playing_ RTC_GUARDED_BY(mutex_) = false;
+  bool initialized_ RTC_GUARDED_BY(mutex_) = false;
 };
 }  // namespace livekit_ffi

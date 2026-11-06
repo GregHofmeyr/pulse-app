@@ -350,9 +350,38 @@ int32_t AdmProxy::RegisterAudioCallback(webrtc::AudioTransport* transport) {
   });
 }
 
+// Pulse (#216): upstream's Init was a no-op ("the sub ADMs are initialized at
+// creation time"), but WebRTC terminates the ADM when the process's last
+// PeerConnection is released (ConnectionContext::ReleaseMediaEngine ->
+// WebRtcVoiceEngine::Terminate -> Terminate below) and calls Init for the next
+// one. Terminate takes the synthetic ADM's 10 ms pump with it, so with a no-op
+// Init every later call got RTP but never pulled it: remote audio was silent
+// until the factory was rebuilt. Init brings the sub ADMs back; both Inits are
+// idempotent, so the first Init (after the constructor's) changes nothing.
+// Upstream: livekit/rust-sdks#1468.
 int32_t AdmProxy::Init() {
-  // Init is a no-op - the sub ADMs are initialized at creation time
-  return 0;
+  return RunOnWorker([this] {
+    RTC_DCHECK_RUN_ON(worker_thread_);
+    int32_t result = 0;
+    if (synthetic_adm_) {
+      result = synthetic_adm_->Init();
+      if (result != 0) {
+        RTC_LOG(LS_ERROR) << "AdmProxy: Failed to initialize synthetic ADM";
+      }
+    }
+    // A platform ADM, once created, stays for the proxy's life: one terminated
+    // with the engine must be initialized again before the next InitPlayout or
+    // InitRecording.
+    if (platform_adm_ && !platform_adm_->Initialized()) {
+      int32_t platform_result = platform_adm_->Init();
+      if (platform_result != 0) {
+        RTC_LOG(LS_ERROR) << "AdmProxy: Platform ADM Init() failed with error="
+                          << platform_result;
+      }
+      if (result == 0) result = platform_result;
+    }
+    return result;
+  });
 }
 
 int32_t AdmProxy::Terminate() {
@@ -366,6 +395,12 @@ int32_t AdmProxy::Terminate() {
       int32_t platform_result = platform_adm_->Terminate();
       if (result == 0) result = platform_result;
     }
+    // Pulse (#216): terminated means stopped (the voice engine stops playout and
+    // recording first anyway). A stale `playing_`/`recording_` would make a
+    // mode switch (SwitchPlayoutMode, SwitchRecordingAdm) start a device that
+    // WebRTC never started; the next StartPlayout/StartRecording sets them.
+    playing_ = false;
+    recording_ = false;
     return result;
   });
 }

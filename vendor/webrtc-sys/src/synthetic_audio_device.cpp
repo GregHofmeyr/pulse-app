@@ -42,6 +42,11 @@ int32_t SyntheticAudioDevice::RegisterAudioCallback(webrtc::AudioTransport* tran
   return 0;
 }
 
+// Pulse (#216): Init after Terminate starts a fresh queue and pump. WebRTC
+// terminates the ADM when the last PeerConnection goes and inits it again for
+// the next one (AdmProxy::Init now forwards that here), so a device lives
+// through any number of Init/Terminate pairs. Init is idempotent: a second
+// Init without a Terminate keeps the running pump (no double start).
 int32_t SyntheticAudioDevice::Init() {
   webrtc::MutexLock lock(&mutex_);
   if (initialized_)
@@ -51,11 +56,16 @@ int32_t SyntheticAudioDevice::Init() {
       env_.task_queue_factory().CreateTaskQueue(
           "SyntheticAudioDevice", webrtc::TaskQueueFactory::Priority::NORMAL);
 
+  // `this` outlives the task: Terminate (also run by the destructor) deletes
+  // the queue, which waits out a running pump and drops the pending one.
   audio_task_ =
       webrtc::RepeatingTaskHandle::Start(audio_queue_.get(), [this]() {
         webrtc::MutexLock lock(&mutex_);
 
-        if (playing_) {
+        // Pulse: also needs a transport. The voice engine unregisters it
+        // (RegisterAudioCallback(nullptr)) before Terminate and registers its
+        // new one only after Init, so either may be missing for a moment.
+        if (playing_ && audio_transport_) {
           int64_t elapsed_time_ms = -1;
           int64_t ntp_time_ms = -1;
           size_t n_samples_out = 0;
@@ -76,14 +86,26 @@ int32_t SyntheticAudioDevice::Init() {
 }
 
 int32_t SyntheticAudioDevice::Terminate() {
+  std::unique_ptr<webrtc::TaskQueueBase, webrtc::TaskQueueDeleter> queue;
   {
     webrtc::MutexLock lock(&mutex_);
     if (!initialized_)
       return 0;
 
     initialized_ = false;
+    // Pulse: a terminated device doesn't play (as a platform ADM); playout
+    // starts again with the next StartPlayout. The voice engine stops playout
+    // before it terminates anyway.
+    playing_ = false;
+    // Pulse: taken under the lock (upstream reset it unguarded, racing a
+    // concurrent Init's new queue); the handle only refers to the old queue.
+    queue = std::move(audio_queue_);
+    audio_task_ = webrtc::RepeatingTaskHandle();
   }
-  audio_queue_ = nullptr;
+  // Outside the lock: deleting the queue waits for a pump task that is running
+  // right now, and that task takes the lock. Once this returns no pump of the
+  // old queue runs or will run.
+  queue = nullptr;
   return 0;
 }
 

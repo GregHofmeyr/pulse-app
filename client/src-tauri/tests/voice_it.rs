@@ -1263,8 +1263,9 @@ async fn a_silent_mic_is_reported_and_muting_clears_it() {
 /// never heard them (WebRTC never pulled their track). The field sequence, as far as it can be
 /// played here: the peer is already talking when we join, talks in bursts (jitter), hangs up a
 /// moment before we do, and is back talking when we rejoin. sam is a bare SDK client that
-/// subscribes to nothing, so alex's are the only receivers in this process. Passes on Linux: the
-/// field failure (Windows) is not reproduced by this sequence.
+/// subscribes to nothing, so alex's are the only receivers in this process. This sequence never
+/// reproduced it: one of the two in-process Rooms always stays alive, so libwebrtc never
+/// terminates the voice engine (the cause; see the next test).
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn hears_a_peer_again_after_leaving_and_rejoining() {
@@ -1374,5 +1375,95 @@ async fn hears_a_peer_again_after_leaving_and_rejoining() {
         tokio::time::sleep(Duration::from_millis(600)).await;
         vm.leave().await;
         assert!(heard, "round {round}: sam is never heard");
+    }
+}
+
+/// #216, the field sequence the test above can't reach: between calls *nothing* WebRTC is left in
+/// the process. The peer (the lk bot, in its own process, as a real peer is) talks and hangs up
+/// first; alex sees them go and leaves, LiveKit lists nobody in the room, and alex's
+/// PeerConnection has had time to be released, so libwebrtc terminates the voice engine. The next
+/// join must still hear the peer. Before the fix (vendor/webrtc-sys `AdmProxy::Init`) round 1
+/// heard the bot and rounds 2 and 3 never did: the synthetic ADM's 10 ms pull died with the engine
+/// and never came back. tests/webrtc_adm_restart.rs is the same without a server.
+///
+/// Why the peer can't be an SDK Room in this process (as in the test above): livekit 0.9.7 keeps
+/// a Room's engine, and with it its PeerConnection, alive for good when the Room is closed while
+/// a remote participant with a publication is still in it (the publication's mute handler holds
+/// the participant, which holds the engine; only that participant leaving breaks it). Of two
+/// in-process Rooms the first to close always keeps one alive, so the engine is never terminated.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn hears_a_peer_after_every_connection_in_the_process_has_gone() {
+    let _turn = livekit_turn().await;
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("info,libwebrtc=warn")
+        .try_init();
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = dev_livekit("ws");
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, alex) = testing::register(&app, "alex").await;
+    let s = testing::create_server(&app, &alex, "Main").await;
+    let api = Api::new(&format!("http://{}", app.addr));
+    let lounge = api
+        .channels(&alex, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+    let room = lounge.id.to_string();
+    let lk = livekit_api::services::room::RoomClient::with_api_key(
+        &dev_livekit("http"),
+        "devkey",
+        DEV_SECRET,
+    );
+
+    let vm = VoiceManager::new(Arc::new(|_| {}));
+    for round in 1..=3 {
+        vm.join(
+            &api,
+            &alex,
+            lounge.id,
+            AudioConfig::default(),
+            AudioMode::Null(48_000),
+        )
+        .await
+        .unwrap();
+        // the bot joins, talks for 8 s and hangs up
+        let r = room.clone();
+        let bot = tokio::task::spawn_blocking(move || bot_publishes_tone(&r));
+        vm.mixer_levels().await;
+        let heard = eventually(Duration::from_secs(20), || async {
+            vm.mixer_levels().await.iter().any(|(_, l)| *l > 0.01)
+        })
+        .await;
+        println!(
+            "round {round}: heard {heard}, pushed {}, rx {}",
+            vm.mixer_pushed().await,
+            vm.rx_len().await
+        );
+        bot.await.unwrap();
+        // alex sees the bot go (its participant, and with it the engine's last holder, is
+        // removed), then leaves
+        let bot_gone =
+            eventually(Duration::from_secs(10), || async { vm.rx_len().await == 0 }).await;
+        assert!(bot_gone, "round {round}: alex never saw the bot leave");
+        vm.leave().await;
+        let empty = eventually(Duration::from_secs(10), || async {
+            lk.list_participants(&room)
+                .await
+                .map(|p| p.is_empty())
+                .unwrap_or(true)
+        })
+        .await;
+        assert!(
+            empty,
+            "round {round}: LiveKit still lists someone in the room"
+        );
+        // nothing holds a Room any more: give libwebrtc time to release the PeerConnection,
+        // which terminates the voice engine (the field: leave, join again later)
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert!(heard, "round {round}: the bot is never heard");
     }
 }

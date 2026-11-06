@@ -88,9 +88,14 @@ strip = true
 # archive against pinned SHA-256s before extracting it (libwebrtc_download.rs, called from build.rs;
 # upstream extracts it unverified). And its PeerConnection wrapper closes the PeerConnection before
 # releasing it (src/peer_connection.cpp, ~PeerConnection): dropped mid-SetRemoteDescription, the
-# upstream one aborts the process with a pure virtual call (tests/webrtc_teardown.rs). Those are the
-# only three changes. Drop the log change when upstream makes the severity follow log::max_level(),
-# the close once upstream's destructor closes; keep the verification while we patch.
+# upstream one aborts the process with a pure virtual call (tests/webrtc_teardown.rs). And its ADM
+# proxy re-initialises the synthetic audio device on Init (src/adm_proxy.cpp `AdmProxy::Init`,
+# src/synthetic_audio_device.cpp): libwebrtc terminates the ADM with the process's last
+# PeerConnection and inits it for the next, and upstream's no-op Init left the 10 ms playout pump
+# dead, so every call after the first was silent (#216, livekit/rust-sdks#1468;
+# tests/webrtc_adm_restart.rs). Those are the only four changes. Drop the log change when upstream
+# makes the severity follow log::max_level(), the close once upstream's destructor closes, the ADM
+# change once upstream's Init restarts the pump (#1468 fixed); keep the verification while we patch.
 # Side effects of the log change: libwebrtc's info/verbose lines are gone at the source, so seeing
 # them (a WebRTC deep-dive) needs a build with the stock severity in src/webrtc.cpp. And the
 # libwebrtc crate logs every line at debug whatever its severity, so even its warnings and errors
