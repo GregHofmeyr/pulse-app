@@ -8,7 +8,12 @@
 // renders the new order and clears the transforms in the same frame (`settling` turns transitions off for it), so
 // nothing jumps; the dropped item then glides from where it was let go into its place. A drop that changes nothing,
 // and a cancel (Escape, or the list changing under the drag: `cancelDrag`), ease everything back instead.
+//
+// Near the list's top or bottom edge the list scrolls (#193): a frame loop of its own, its speed in proportion to how
+// close the pointer is, eased in and out (straight to speed under reduced motion). Each of its frames is one
+// scrollTop write plus the usual transforms; the dragged item keeps to the pointer. A drop or Escape stops it.
 import { flushSync } from 'svelte'
+import { motion } from './animate.svelte'
 
 export type Drop =
   | { kind: 'channel'; id: string; to: { category: string | null; index: number } }
@@ -21,6 +26,36 @@ export type Rect = { top: number; height: number }
 export const DRAG_THRESHOLD = 4
 /** Hovering a collapsed section this long while dragging a channel opens it. */
 export const HOVER_OPEN_MS = 600
+
+/** How close to the list's top or bottom edge, in pixels, the pointer starts it scrolling while dragging (#193). */
+export const EDGE_ZONE = 48
+/** The edge scroll's top speed, in pixels per millisecond (with the pointer on or past the edge). */
+export const EDGE_MAX_SPEED = 1.2
+/** How quickly the edge scroll eases to a new speed (time constants, ms): a gentle start, a quick stop, so it barely
+ *  coasts once the pointer leaves the edge. */
+const EDGE_EASE_IN_MS = 90
+const EDGE_EASE_OUT_MS = 30
+
+/** How fast the list scrolls with the pointer at `y` (from the top of its `view`-high visible box), in pixels per
+ *  millisecond: up (negative) in the top edge zone, down in the bottom one, in proportion to how far into the zone
+ *  the pointer is, at full speed on or past the edge. A short list keeps a still middle (the zones never overlap). */
+export function edgeSpeed(y: number, view: number): number {
+  const zone = Math.min(EDGE_ZONE, view / 3)
+  if (zone <= 0) return 0
+  const into = (d: number) => Math.min(1, Math.max(0, (zone - d) / zone))
+  const up = into(y)
+  if (up > 0) return -EDGE_MAX_SPEED * up
+  return EDGE_MAX_SPEED * into(view - y)
+}
+
+/** The next frame's speed: eased from `v` toward `target` over `dt` ms, or straight to it under reduced motion
+ *  (it still scrolls, without the ramp). Small enough is a stop. */
+export function easeSpeed(v: number, target: number, dt: number, reduced: boolean): number {
+  if (reduced) return target
+  const tau = Math.abs(target) < Math.abs(v) || Math.sign(target) !== Math.sign(v) ? EDGE_EASE_OUT_MS : EDGE_EASE_IN_MS
+  const next = v + (target - v) * (1 - Math.exp(-dt / tau))
+  return Math.abs(next - target) < 0.005 ? target : next
+}
 
 /** The slot the pointer at `y` is over: how many of `items` have their middle above it. */
 export function slotFor(items: Rect[], y: number): number {
@@ -84,6 +119,13 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
     y: number
     origin: number
     scroll: number
+    /** the list's visible height, and how far it can scroll (measured with nothing moved) */
+    view: number
+    maxScroll: number
+    /** the room below the last item (padding), measured once */
+    extra: number
+    /** the edge scroll's speed now, px/ms */
+    v: number
     line: HTMLElement
     dest: { list: string | null; index: number; slot: number } | null
     hover: { id: string; timer: ReturnType<typeof setTimeout> } | null
@@ -143,6 +185,11 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
     d.scroll = list.scrollTop
     d.entries = readEntries(d.kind)
     for (const e of d.entries) Object.assign(e, boxOf(e.els, d.origin, d.scroll))
+    // how far the edge scroll may go, from the untransformed boxes: transforms could stretch scrollHeight mid-drag
+    d.view = list.clientHeight
+    const bottom = d.entries.reduce((m, e) => Math.max(m, e.top + e.height), 0)
+    if (drag !== d) d.extra = Math.max(0, list.scrollHeight - bottom)
+    d.maxScroll = Math.max(0, bottom + d.extra - d.view)
     // measured again mid-drag (a hovered section opened): the rows that just appeared ease like the rest
     if (drag === d) for (const e of d.entries) for (const el of e.els) el.classList.add('shift')
     d.from =d.entries.findIndex((e) => (d.kind === 'channel' ? e.kind === 'item' : e.kind === 'cat') && e.id === d.id)
@@ -224,6 +271,44 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
     })
   }
 
+  // ---- near an edge, the list scrolls (#193) ----
+
+  let edgeRaf = 0
+  let edgeT = 0
+
+  /** Start the edge scroll if the pointer is in an edge zone (or it is still easing to a stop). */
+  function edge(): void {
+    const d = drag
+    if (!d || edgeRaf) return
+    if (!d.v && !edgeSpeed(d.y - d.origin, d.view)) return
+    edgeT = 0
+    edgeRaf = requestAnimationFrame(edgeFrame)
+  }
+
+  function edgeFrame(t: number): void {
+    edgeRaf = 0
+    const d = drag
+    if (!d) return
+    const dt = edgeT ? Math.min(32, Math.max(0, t - edgeT)) : 16
+    edgeT = t
+    d.v = easeSpeed(d.v, edgeSpeed(d.y - d.origin, d.view), dt, motion.reducedMotion)
+    if (!d.v) return
+    const step = d.v * dt
+    const next = Math.min(d.maxScroll, Math.max(0, d.scroll + (Math.abs(step) < 1 ? Math.sign(step) : step)))
+    // at the end it goes: stop (the next pointer move starts it again if there's room)
+    if (next === d.scroll) {
+      d.v = 0
+      return
+    }
+    list.scrollTop = next
+    d.scroll = next
+    // this frame's transforms, for the new scroll (instead of a second pass for its scroll event)
+    if (raf) cancelAnimationFrame(raf)
+    raf = 0
+    frame()
+    if (drag === d) edgeRaf = requestAnimationFrame(edgeFrame)
+  }
+
   // ---- hovering a collapsed section opens it ----
 
   function hoverSection(d: NonNullable<typeof drag>, cat: string | null): void {
@@ -259,7 +344,7 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
     line.setAttribute('aria-hidden', 'true')
     const d: NonNullable<typeof drag> = {
       kind: p.kind, id: p.id, pointerId: p.pointerId, entries: [], from: -1, h: 0, grab: 0, y: e.clientY,
-      origin: 0, scroll: 0, line, dest: null, hover: null,
+      origin: 0, scroll: 0, view: 0, maxScroll: 0, extra: 0, v: 0, line, dest: null, hover: null,
     }
     measure(d)
     const me = d.entries[d.from]
@@ -287,6 +372,8 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
     if (d.hover) clearTimeout(d.hover.timer)
     if (raf) cancelAnimationFrame(raf)
     raf = 0
+    if (edgeRaf) cancelAnimationFrame(edgeRaf)
+    edgeRaf = 0
     drag = null
     d.line.remove()
     list.classList.remove('dragging')
@@ -445,14 +532,17 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
       if (e.pointerId !== drag.pointerId) return
       drag.y = e.clientY
       schedule()
+      edge()
       return
     }
     if (!press || e.pointerId !== press.pointerId) return
     if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_THRESHOLD) return
     const p = press
     press = null
-    if (start(p, e)) schedule()
-    else listen(false)
+    if (start(p, e)) {
+      schedule()
+      edge()
+    } else listen(false)
   }
 
   function onUp(e: PointerEvent): void {
