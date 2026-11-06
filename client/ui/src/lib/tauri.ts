@@ -101,7 +101,11 @@ export type ClipSupport = { can_send: boolean; reason: string | null }
 export type TwoFactorSetup = { secret: string; qr: QrMatrix }
 
 /** What startup found: signed in, show login, or signed in but the server refused the connection. */
-export type Restored = { status: 'ready'; user: User } | { status: 'logged_out' } | { status: 'refused' }
+/** A newer Pulse the core can install (#82). */
+export type UpdateOffer = { version: string }
+/** How far the installer download is (`pulse://update-progress`); `total` null = the size isn't known. */
+export type UpdateProgress = { downloaded: number; total: number | null }
+export type Restored ={ status: 'ready'; user: User } | { status: 'logged_out' } | { status: 'refused' }
 
 function uploadProfileMedia(cmd: string, bytes: Uint8Array, crop: CropRect | null) {
   if (!crop) return invoke<MediaInfo>(cmd, bytes)
@@ -220,6 +224,13 @@ export const api = {
     invoke<CustomEmoji>('create_emoji', { serverId, name, mediaHash }),
   renameEmoji: (id: string, name: string) => invoke<CustomEmoji>('rename_emoji', { id, name }),
   deleteEmoji: (id: string) => invoke<void>('delete_emoji', { id }),
+  /** App updates (#82): what the check that started with the app found (it waits up to 4 s for it); null = none. */
+  updateLaunch: () => invoke<UpdateOffer | null>('update_launch'),
+  /** A fresh check against the signed-in server now; null = no newer version (or signed out). */
+  updateCheck: () => invoke<UpdateOffer | null>('update_check'),
+  /** Download and install the offer: Pulse closes and reopens on the new version. `restart` = asked for from the
+   *  title bar, which the core refuses during a call. Rejects with why, and Pulse carries on as it was. */
+  updateInstall: (restart: boolean) => invoke<void>('update_install', { restart }),
   /** One line in the app log (what happened and why, never what the user typed); best effort. A failure is `warn`. */
   uiLog: (line: string, level: 'warn' | 'info' = 'warn') => invoke<void>('ui_log', { line, info: level === 'info' }).catch(() => {}),
   /** A desktop notification (lib/notify.ts decided it); best effort, a refusal only dings. */

@@ -15,7 +15,9 @@
   import Shell from './routes/Shell.svelte'
   import UpdateRequired from './routes/UpdateRequired.svelte'
   import Waiting from './routes/Waiting.svelte'
+  import Updating from './routes/Updating.svelte'
   import { screenFor } from './lib/screen'
+  import { installUpdate, startUpdateListening, updates } from './lib/updates.svelte'
 
   let user = $state<User | null>(null)
   let booting = $state(true)
@@ -46,14 +48,27 @@
   onMount(() => {
     let off: (() => void) | undefined
     // Listen before restoring so the first Ready can't slip past us.
-    Promise.all([startListening(), startVoiceListening()]).then(async ([unlisten, unlistenVoice]) => {
+    Promise.all([startListening(), startVoiceListening(), startUpdateListening()]).then(async ([unlisten, unlistenVoice, unlistenUpdates]) => {
       const unlistenBadges = startBadgeListening()
       const unlistenSounds = startSoundboardListening()
       off = () => {
         unlisten()
         unlistenVoice()
+        unlistenUpdates()
         unlistenBadges()
         unlistenSounds()
+      }
+      // A newer Pulse (#82): the check started with the app; install it now ("Updating Pulse…", then Pulse reopens
+      // on it). No offer, or a failed install, boots as usual on this version.
+      const offer = await api.updateLaunch().catch(() => null)
+      if (offer) {
+        updates.offer = offer
+        try {
+          await installUpdate(false)
+          return // Pulse is closing for the installer
+        } catch {
+          // logged by installUpdate; carry on as this version
+        }
       }
       try {
         const r = await api.restoreSession()
@@ -113,6 +128,8 @@
 {:else}
   <Login notice={bootError} onAuthed={(u) => { bootError = ''; restoreRefused = false; user = u }} />
 {/if}
+<!-- #82: over everything, so a failed install leaves the screen beneath exactly as it was -->
+{#if updates.installing}<Updating />{/if}
 
 <style>
   .boot { height: 100%; background: var(--bg-0); }

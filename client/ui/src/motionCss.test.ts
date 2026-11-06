@@ -57,6 +57,8 @@ describe('motion', () => {
     // the joining spinners, and their slower turn under reduced motion
     'components/ChannelList.svelte': /^(spin |2\.4s$)/,
     'components/UserTile.svelte': /^(spin |2\.4s$)/,
+    // the update download whose size isn't known (#82): a bar that slides at its own speed, like a spinner
+    'routes/Updating.svelte': /^slide /,
     // the jumped-to message's highlight fades over two seconds, long enough to find it
     'components/TextChannel.svelte': /^jump-flash /,
     // reduced motion: everything finishes at once

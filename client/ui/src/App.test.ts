@@ -2,10 +2,19 @@
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const h = vi.hoisted(() => ({ restore: { status: 'refused' } as unknown, handlers: {} as Record<string, (e: { payload: unknown }) => void>, calls: [] as string[] }))
+const h = vi.hoisted(() => ({
+  restore: { status: 'refused' } as unknown,
+  handlers: {} as Record<string, (e: { payload: unknown }) => void>,
+  calls: [] as string[],
+  args: {} as Record<string, unknown>,
+  /** Commands answered by the test (#82: update_launch, update_install). */
+  respond: {} as Record<string, (args: unknown) => Promise<unknown>>,
+}))
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (cmd: string) => {
+  invoke: async (cmd: string, args?: unknown) => {
     h.calls.push(cmd)
+    h.args[cmd] = args
+    if (h.respond[cmd]) return h.respond[cmd](args)
     return cmd === 'restore_session' ? h.restore : undefined
   },
   convertFileSrc: (s: string) => s,
@@ -42,6 +51,8 @@ async function start(restore: unknown) {
 beforeEach(() => {
   h.handlers = {}
   h.calls = []
+  h.args = {}
+  h.respond = {}
 })
 afterEach(() => {
   if (cmp) unmount(cmp)
@@ -167,5 +178,58 @@ describe('animation freeze', () => {
     window.dispatchEvent(new Event('focus'))
     flushSync()
     expect(document.body.classList.contains('unfocused')).toBe(false)
+  })
+})
+
+describe('App: an update at launch (#82)', () => {
+  const updating = () => document.querySelector('.updating')
+
+  it('an update at launch shows Updating and installs', async () => {
+    h.respond.update_launch = async () => ({ version: '0.2.1' })
+    h.respond.update_install = () => new Promise(() => {}) // Pulse closes and reopens: install never comes back
+    h.restore = { status: 'ready', user: alex }
+    app.state = emptyState()
+    cmp = mount(App, { target: document.body })
+    await vi.waitFor(() => expect(updating()).not.toBeNull())
+    expect(text()).toContain('Updating Pulse…')
+    expect(h.calls).toContain('update_install')
+    expect(h.args.update_install).toEqual({ restart: false })
+    expect(h.calls).not.toContain('restore_session')
+  })
+
+  it('a failed launch update boots normally', async () => {
+    h.respond.update_launch = async () => ({ version: '0.2.1' })
+    h.respond.update_install = async () => {
+      throw 'signature mismatch'
+    }
+    await start({ status: 'ready', user: alex })
+    await vi.waitFor(() => expect(document.querySelector('nav')).not.toBeNull())
+    expect(h.calls).toContain('update_install')
+    expect(h.calls).toContain('restore_session')
+    expect(updating()).toBeNull()
+  })
+
+  it('unauthorized_check_boots_normally: no offer (a 401, signed out, no update) means no Updating screen', async () => {
+    h.respond.update_launch = async () => null
+    await start({ status: 'ready', user: alex })
+    await vi.waitFor(() => expect(document.querySelector('nav')).not.toBeNull())
+    expect(h.calls).toContain('update_launch')
+    expect(h.calls).not.toContain('update_install')
+    expect(updating()).toBeNull()
+  })
+
+  it('a launch check that fails outright boots normally too', async () => {
+    h.respond.update_launch = async () => {
+      throw 'no core'
+    }
+    await start({ status: 'logged_out' })
+    expect(document.querySelector('form')).not.toBeNull()
+    expect(updating()).toBeNull()
+  })
+
+  it('asks for the launch update before restoring the session', async () => {
+    await start({ status: 'logged_out' })
+    expect(h.calls.indexOf('update_launch')).toBeGreaterThanOrEqual(0)
+    expect(h.calls.indexOf('update_launch')).toBeLessThan(h.calls.indexOf('restore_session'))
   })
 })
