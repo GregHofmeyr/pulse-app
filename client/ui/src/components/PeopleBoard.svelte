@@ -116,7 +116,7 @@
   .head { height: 52px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid var(--bg-3); margin: 0 -18px 4px; padding: 0 18px; }
   .lbl { padding: 14px 2px 8px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
-  .card { background: var(--bg-2); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .card { background: var(--bg-2); border-radius: var(--radius-lg); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
   /* unread as the channel and DM lists show it (bright, bold text), not an accent ring that reads as keyboard focus */
   .card.unread .status { color: var(--text); font-weight: 600; }
   .card.away { opacity: .6; }

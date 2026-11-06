@@ -625,7 +625,7 @@
   /* as the voice chat panel (#226): the replies panel's header, a close button at its end */
   .chan.panel .head { padding: 0 12px 0 18px; gap: 8px; }
   .title { color: var(--text); font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .editable { border: 0; background: none; padding: 2px 4px; margin-left: -4px; border-radius: 6px; font: inherit; font-size: 15px; font-weight: 600; color: var(--text); }
+  .editable { border: 0; background: none; padding: 2px 4px; margin-left: -4px; border-radius: var(--radius-xs); font: inherit; font-size: 15px; font-weight: 600; color: var(--text); }
   .editable:hover { background: var(--bg-3); }
   .rename { min-width: 220px; font-weight: 600; }
   .pile { display: flex; }
@@ -637,7 +637,7 @@
   .qoty { height: 30px; padding: 0 12px; }
   .newline { display: flex; align-items: center; gap: 8px; margin: 6px 18px; color: var(--danger); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
   .newline::before, .newline::after { content: ''; flex: 1; height: 1px; background: var(--danger); opacity: .6; }
-  .jump { align-self: center; margin-top: -40px; position: relative; z-index: 2; padding: 6px 12px; border: 0; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; box-shadow: var(--shadow-1); }
+  .jump { align-self: center; margin-top: -40px; position: relative; z-index: 2; padding: 6px 12px; border: 0; border-radius: var(--radius-xl); background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; box-shadow: var(--shadow-1); }
   .list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 0 8px; display: flex; flex-direction: column; }
   .list:focus { outline: none; } /* focused only from code, as a fallback: no ring */
   .start { padding: 16px 18px; color: var(--text-3); font-size: 13px; }

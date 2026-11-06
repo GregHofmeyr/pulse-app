@@ -290,7 +290,7 @@
   .panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   .head { height: 52px; flex-shrink: 0; padding: 0 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--ok-text); }
   .title { color: var(--text); font-size: 15px; font-weight: 600; flex: 1; }
-  .status { font-size: 12px; font-weight: 600; color: var(--ok-text); padding: 4px 10px; border-radius: 12px; background: var(--ok-soft); }
+  .status { font-size: 12px; font-weight: 600; color: var(--ok-text); padding: 4px 10px; border-radius: var(--radius-lg); background: var(--ok-soft); }
   .status.warn { color: var(--warn-text); background: var(--warn-soft); }
   .error { margin: 12px 18px 0; color: var(--danger-text); font-size: 13px; }
   .eye[aria-pressed='true'], .chat[aria-pressed='true'] { color: var(--text); }
@@ -311,7 +311,7 @@
   .slot > :global(.tile) { width: 100%; height: 100%; }
   .empty { margin: 20px; color: var(--text-3); }
   .bar-wrap { height: 84px; flex-shrink: 0; display: grid; place-items: center; }
-  .controls { padding: 8px; background: var(--bg-inset); border-radius: 16px; display: flex; gap: 8px; }
+  .controls { padding: 8px; background: var(--bg-inset); border-radius: var(--radius-xl); display: flex; gap: 8px; }
   .ctl { width: 48px; height: 48px; border: 0; border-radius: 14px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
   .ctl:hover { background: var(--bg-4); }
   .ctl.open { background: var(--bg-4); }
@@ -322,6 +322,6 @@
   .golive { height: 48px; padding: 0 16px; border: 0; border-radius: 14px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
   .golive.off { opacity: .5; cursor: not-allowed; }
   .ctl.on:hover, .leave:hover, .golive:not(.off):hover { filter: brightness(1.1); }
-  .primary { height: 44px; padding: 0 22px; border: 0; border-radius: 12px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .primary { height: 44px; padding: 0 22px; border: 0; border-radius: var(--radius-lg); background: var(--accent); color: var(--on-accent); font-weight: 600; }
   .primary:hover { filter: brightness(1.08); }
 </style>

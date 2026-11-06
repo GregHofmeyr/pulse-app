@@ -79,11 +79,11 @@
 <style>
   .lede { margin: -8px 0 0; font-size: 12px; color: var(--text-3); }
   .sections { display: flex; flex-direction: column; gap: 12px; }
-  .mix-section { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; background: var(--bg-2); border-radius: 12px; }
+  .mix-section { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; background: var(--bg-2); border-radius: var(--radius-lg); }
   .head { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5em auto; align-items: center; gap: 10px; padding-bottom: 6px; }
   .head h4 { margin: 0; font-size: 14px; font-weight: 700; color: var(--text); grid-column: 1; min-width: 0; }
   /* one line, whatever the width: "Stream sounds" wrapped and made its row taller than the rest (#173) */
-  .fold { display: flex; align-items: center; gap: 6px; max-width: 100%; white-space: nowrap; margin: -4px -6px; padding: 4px 6px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .fold { display: flex; align-items: center; gap: 6px; max-width: 100%; white-space: nowrap; margin: -4px -6px; padding: 4px 6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
   .fold:hover { background: var(--bg-3); }
   .fold:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .fold :global(svg) { flex-shrink: 0; color: var(--text-3); transition: transform var(--dur) var(--ease); }

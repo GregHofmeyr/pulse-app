@@ -92,7 +92,7 @@
 <style>
   .new { margin: 4px 8px 8px; font-size: 13px; }
   .list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px; display: flex; flex-direction: column; gap: 1px; }
-  .row { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text-row); text-align: left; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-row); text-align: left; }
   .row:hover { background: var(--bg-2); }
   .row.active { background: var(--bg-3); color: var(--text); }
   .row.muted { opacity: .5; }
@@ -115,6 +115,6 @@
   .row:hover { --call-gap: var(--bg-2); }
   .row.active { --call-gap: var(--bg-3); }
   /* the unread pill of the channel list and server tabs (#173) */
-  .pill { min-width: 16px; height: 16px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-block; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((16px - 1cap) / 2) 4px; }
+  .pill { min-width: 16px; height: 16px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-block; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((16px - 1cap) / 2) 4px; }
   .empty { padding: 12px 10px; font-size: 13px; color: var(--text-3); }
 </style>

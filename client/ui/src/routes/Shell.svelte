@@ -751,17 +751,17 @@
   .tab .call-home { padding: 3px; margin: -3px; }
   .tab:hover { --call-gap: var(--bg-2); }
   .tab.active { --call-gap: var(--bg-3); }
-  .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; margin-right: 8px; }
+  .logo { width: 30px; height: 30px; border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent); display: grid; place-items: center; margin-right: 8px; }
   nav { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
-  .tab { height: 36px; padding: 0 12px 0 10px; border-radius: 10px; border: 1px solid transparent; background: transparent; color: var(--text-2); display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; white-space: nowrap; }
+  .tab { height: 36px; padding: 0 12px 0 10px; border-radius: var(--radius-md); border: 1px solid transparent; background: transparent; color: var(--text-2); display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; white-space: nowrap; }
   .tab:hover { background: var(--bg-2); }
   /* background and colour only: a bolder weight would widen the tab and nudge the ones after it */
   .tab.active { background: var(--bg-3); border-color: var(--bg-4); color: var(--text); }
-  .chip { width: 22px; height: 22px; border-radius: 6px; color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+  .chip { width: 22px; height: 22px; border-radius: var(--radius-xs); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
   .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
   .grow { flex: 1; align-self: stretch; }
-  .conn { font-size: 12px; font-weight: 600; color: var(--warn-text); padding: 4px 10px; border-radius: 12px; background: var(--warn-soft); margin-right: 6px; }
-  .win { width: 32px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .conn { font-size: 12px; font-weight: 600; color: var(--warn-text); padding: 4px 10px; border-radius: var(--radius-lg); background: var(--warn-soft); margin-right: 6px; }
+  .win { width: 32px; height: 28px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .win:hover { background: var(--bg-2); color: var(--text); }
   /* Report a bug (#155): the warn colour it had in the account menu, on hover */
   .win.report:hover, .win.report:focus-visible { color: var(--warn-text); }
@@ -789,21 +789,21 @@
   .voice-chat:global(.leaving) { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 1; width: auto; pointer-events: none; }
   .panel-head { position: relative; height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid var(--line-soft); }
   /* the hover is a rounded pill inside the header, with the text where the padding put it */
-  .head-btn { flex: 1; min-width: 0; height: 40px; margin: 0 -8px; padding: 0 8px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+  .head-btn { flex: 1; min-width: 0; height: 40px; margin: 0 -8px; padding: 0 8px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
   .head-btn:hover { background: var(--bg-2); }
   /* two classes: .menu (declared below) must not win `bottom` back */
   .menu.head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; --pop-origin: top; }
   .me { padding: 10px 10px 10px 12px; background: var(--bg-inset); display: flex; align-items: center; gap: 10px; }
   .who { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
   .who small { font-size: 12px; font-weight: 400; color: var(--text-3); }
-  .add { width: 36px; height: 36px; flex-shrink: 0; border: 1px dashed var(--bg-4); border-radius: 10px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .add { width: 36px; height: 36px; flex-shrink: 0; border: 1px dashed var(--bg-4); border-radius: var(--radius-md); background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .add:hover { color: var(--text); border-color: var(--text-3); }
   .me { position: relative; }
   .me-avatar { position: relative; flex-shrink: 0; display: flex; border-radius: 50%; }
   /* unseen badges (#49): a small dot until you open your trophy case */
   .new-dot { position: absolute; top: -1px; right: -1px; width: 10px; height: 10px; border-radius: 50%; background: var(--badge-new); box-shadow: 0 0 0 2px var(--ring); }
   /* the avatar sits in the button's hover pill with the name (#168); the negative margin keeps it where it was */
-  .who-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; margin-left: -6px; padding: 4px 6px; border: 0; border-radius: 10px; background: transparent; color: inherit; text-align: left; }
+  .who-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; margin-left: -6px; padding: 4px 6px; border: 0; border-radius: var(--radius-md); background: transparent; color: inherit; text-align: left; }
   .who-btn:hover { background: var(--bg-2); }
   .who-btn .who { overflow: hidden; }
   .menu { position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 10; min-width: 200px; }
@@ -823,7 +823,7 @@
   .empty { margin: auto; color: var(--text-3); }
   .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .error { color: var(--danger-text); }
-  .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-block; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((16px - 1cap) / 2) 4px; }
+  .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-block; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((16px - 1cap) / 2) 4px; }
   .tab .invc { color: var(--accent-text); display: grid; margin-left: -2px; }
   .tab .dot { margin-left: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); display: inline-block; }
   /* the shared .toast look, under the channel header (it covered the search box there), centred by margins, not a

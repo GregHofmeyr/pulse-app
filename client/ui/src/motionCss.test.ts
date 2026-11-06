@@ -159,19 +159,15 @@ describe('icon sizes by role', () => {
 })
 
 describe('radii', () => {
-  // app.css's shared classes use the radius tokens; components still being moved over are listed (#173 follow-up).
+  // app.css's shared classes and every component use the radius tokens (#173, #179).
   it('app.css writes no raw 6/8/10/12/16px radius (they are --radius-xs … --radius-xl)', () => {
     const offenders = decls(cssOf(resolve(__dirname, 'app.css')), /^border-radius$/).filter((d) => /\b(6|8|10|12|16)px\b/.test(d.value))
     expect(offenders).toEqual([])
   })
 
-  // Being reworked by the DM calls work as this landed: they move over once it merges (#179).
-  const LATER = ['components/TextChannel.svelte', 'components/VoicePanel.svelte', 'components/VolumeMixer.svelte', 'components/PeopleBoard.svelte',
-    'components/ConversationList.svelte', 'components/ConversationMenu.svelte', 'routes/Shell.svelte', 'components/VoiceStatus.svelte', 'components/UserTile.svelte']
   it('components write a single 6/8/10/12/16px radius as its token', () => {
     const offenders: string[] = []
     for (const f of files) {
-      if (LATER.includes(rel(f))) continue
       for (const d of decls(cssOf(f), /^border-radius$/)) if (/^(6|8|10|12|16)px$/.test(d.value)) offenders.push(`${rel(f)}: ${d.value}`)
     }
     expect(offenders).toEqual([])
