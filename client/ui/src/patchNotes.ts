@@ -10,6 +10,8 @@ export type PatchNotes = {
   new: string[]
   fixes: string[]
   qol: string[]
+  /** Coming soon (#224): a light roadmap, not a promise. Up to 5 bullets; more are cut off. Optional, hidden when empty. */
+  soon?: string[]
   /** The sign-off at the bottom; may hold a line break. */
   message: string
 }
@@ -38,5 +40,6 @@ export const patchNotes: PatchNotes = {
     'The Combo badge shows clear progress toward your next tier',
     'Clicking a channel or DM puts you straight in the message box',
   ],
+  soon: [],
   message: "Thanks for poking at everything and sending in reports, it's already made Pulse so much better 💜\n…thanks for testing, doos.",
 }

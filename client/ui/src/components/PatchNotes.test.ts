@@ -2,7 +2,7 @@
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import PatchNotes from './PatchNotes.svelte'
-import type { PatchNotes as Notes } from '../patchNotes'
+import { patchNotes, type PatchNotes as Notes } from '../patchNotes'
 
 const notes: Notes = {
   id: 't1',
@@ -10,6 +10,7 @@ const notes: Notes = {
   new: ['A shiny thing', 'Another'],
   fixes: ['A broken thing works'],
   qol: [],
+  soon: [],
   message: 'Thanks, all\nsee you soon',
 }
 
@@ -44,6 +45,35 @@ describe('PatchNotes (#207)', () => {
   it('hides empty sections', () => {
     show({ ...notes, new: [], fixes: [], qol: ['Nicer'] })
     expect(headings()).toEqual(['Quality of life'])
+  })
+
+  it('shows Coming soon after Quality of life and before the sign-off, as a softer section (#224)', () => {
+    show({ ...notes, qol: ['Nicer'], soon: ['A roadmap thing', 'Another one'] })
+    expect(headings()).toEqual(['New', 'Bug fixes', 'Quality of life', 'Coming soon'])
+    const soon = [...dialog().querySelectorAll('section')].at(-1)!
+    expect(soon.classList.contains('soon')).toBe(true)
+    expect([...soon.querySelectorAll('li')].map((l) => l.textContent)).toEqual(['A roadmap thing', 'Another one'])
+    // The sign-off still comes last.
+    expect(soon.compareDocumentPosition(dialog().querySelector('.message')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('hides Coming soon when it is empty or left out (#224)', () => {
+    show({ ...notes, soon: [] })
+    expect(headings()).not.toContain('Coming soon')
+    unmount(cmp!)
+    const { soon: _soon, ...withoutSoon } = notes
+    show(withoutSoon)
+    expect(headings()).not.toContain('Coming soon')
+  })
+
+  it('shows at most five Coming soon bullets (#224)', () => {
+    show({ ...notes, soon: ['1', '2', '3', '4', '5', '6', '7'] })
+    const soon = [...dialog().querySelectorAll('section')].at(-1)!
+    expect([...soon.querySelectorAll('li')].map((l) => l.textContent)).toEqual(['1', '2', '3', '4', '5'])
+  })
+
+  it('the current notes keep Coming soon to five bullets or fewer (#224)', () => {
+    expect((patchNotes.soon ?? []).length).toBeLessThanOrEqual(5)
   })
 
   it('Close closes it', () => {
