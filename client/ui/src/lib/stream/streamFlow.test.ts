@@ -59,7 +59,8 @@ function fakeRoom() {
 function fakeTrack(surface: 'monitor' | 'window' = 'monitor') {
   const media = Object.assign(new EventTarget(), {
     readyState: 'live',
-    getSettings: () => ({ displaySurface: surface }),
+    // Chromium's capture source id: a window's carries its native handle
+    getSettings: () => ({ displaySurface: surface, deviceId: surface === 'window' ? 'window:1312:0' : 'screen:0:0' }),
   })
   return {
     mediaStreamTrack: media,
@@ -81,7 +82,7 @@ async function until(done: () => boolean, what: string, max = 500) {
   }
   throw new Error(`still waiting for ${what} after ${max} settles`)
 }
-const settings = (audio: boolean, allowGhosts = true) => ({ res: 720 as const, fps: 60 as const, audio, allowGhosts })
+const settings = (audio: boolean, allowGhosts = true, sound: 'app' | 'everything' = 'app') => ({ res: 720 as const, fps: 60 as const, audio, allowGhosts, sound })
 
 async function load() {
   vi.resetModules()
@@ -168,7 +169,7 @@ describe('stream audio mute', () => {
     await streamApi.goLive('c1', fakeTrack() as never, 'Game', settings(true))
     expect(stream.live?.audioMuted).toBe(true)
     // published muted from the start: not a moment of audio before a separate mute
-    expect(calls('stream_audio_start')).toEqual([{ channelId: 'c1', windowTitle: null, muted: true }])
+    expect(calls('stream_audio_start')).toEqual([{ channelId: 'c1', window: null, sound: 'app', muted: true }])
     expect(calls('stream_audio_mute')).toEqual([])
   })
 
@@ -283,13 +284,43 @@ describe('streams back after a server restart', () => {
   })
 })
 
+describe('stream sound source (#215)', () => {
+  it('a_no_sound_share_starts_no_stream_audio', async () => {
+    const { streamApi } = await goneLive(false, 'window')
+    expect(calls('stream_audio_start')).toEqual([])
+    await streamApi.stop()
+  })
+
+  it('the_source_is_polled_while_live_and_cleared_after', async () => {
+    const status = { tier: 'app', app: 'Game', heard: false, ms: 0 }
+    core.handlers.stream_audio_status = async () => status
+    const { streamApi, stream } = await goneLive(true, 'window')
+    await until(() => stream.sound !== null, 'the first status')
+    expect(stream.sound).toEqual(status)
+    await streamApi.stop()
+    expect(stream.sound).toBeNull()
+  })
+
+  it('switching_the_source_tells_rust_and_survives_an_audio_restart', async () => {
+    const { streamApi, stream } = await goneLive(true, 'window')
+    await streamApi.switchSound('everything')
+    expect(calls('stream_audio_sound')).toEqual([{ sound: 'everything' }])
+    expect(stream.live!.sound).toBe('everything')
+    await streamApi.switchSound('everything') // already: nothing to do
+    expect(calls('stream_audio_sound')).toHaveLength(1)
+    core.calls = []
+    await streamApi.onAudioClosed('c1')
+    expect(calls('stream_audio_start')).toEqual([{ channelId: 'c1', window: { hwnd: 1312, title: 'Game' }, sound: 'everything', muted: false }])
+  })
+})
+
 describe('stream audio closed by LiveKit', () => {
   it('restarts_stream_audio_with_the_same_window_and_mute', async () => {
     const { streamApi } = await goneLive(true, 'window')
     await streamApi.setAudioMuted(true)
     core.calls = []
     await streamApi.onAudioClosed('c1')
-    expect(calls('stream_audio_start')).toEqual([{ channelId: 'c1', windowTitle: 'Game', muted: true }])
+    expect(calls('stream_audio_start')).toEqual([{ channelId: 'c1', window: { hwnd: 1312, title: 'Game' }, sound: 'app', muted: true }])
     expect(calls('stream_audio_mute')).toEqual([])
   })
 
@@ -331,7 +362,7 @@ describe('stream audio closed by LiveKit', () => {
     restarted.resolve(undefined) // the old window's restart lands now and replaced the new track
     await closed
     expect(calls('stream_audio_stop')).toEqual([])
-    expect(calls('stream_audio_start')).toEqual([{ channelId: 'c1', windowTitle: null, muted: true }])
+    expect(calls('stream_audio_start')).toEqual([{ channelId: 'c1', window: null, sound: 'app', muted: true }])
     expect(stream.live?.label).toBe('Screen')
   })
 

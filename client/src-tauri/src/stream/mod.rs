@@ -297,16 +297,17 @@ async fn close_own_speakers_if_idle(app: &AppHandle, audio: &StreamAudio) {
     }
 }
 
-/// Connects `#a` to the stream room (if it isn't) and publishes stream audio: `window_title`'s
-/// app for a window share (none when no single app owns it), everything but Pulse otherwise;
-/// `muted` from the first frame.
+/// Connects `#a` to the stream room (if it isn't) and publishes stream audio: `sound` from
+/// `window`'s app (`None`: a screen share, everything but Pulse); `muted` from the first frame.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn stream_audio_start(
     app: AppHandle,
     core: State<'_, Core>,
     audio: State<'_, StreamAudio>,
     channel_id: ChannelId,
-    window_title: Option<String>,
+    window: Option<audio::WindowRef>,
+    sound: plan::Sound,
     muted: bool,
 ) -> Result<(), StreamAudioError> {
     let (api, token) = core.current()?;
@@ -314,7 +315,33 @@ pub async fn stream_audio_start(
         .ensure_connected(&api, &token, channel_id, false, app_mixer(&app))
         .await;
     audio_check(&app, &core, r)?;
-    Ok(audio.start_publishing(window_title, muted).await?)
+    Ok(audio.start_publishing(window, sound, muted).await?)
+}
+
+/// While choosing: can the picked window's app be told apart, and is it playing now.
+#[tauri::command]
+pub async fn stream_audio_probe(window: audio::WindowRef) -> Result<audio::Probe, String> {
+    tokio::task::spawn_blocking(move || audio::probe(&window))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Switches the live stream's sound source, without republishing.
+#[tauri::command]
+pub async fn stream_audio_sound(
+    audio: State<'_, StreamAudio>,
+    sound: plan::Sound,
+) -> Result<(), String> {
+    audio.set_sound(sound).await;
+    Ok(())
+}
+
+/// The live stream's sound source and whether it has been heard (`None`: not publishing).
+#[tauri::command]
+pub async fn stream_audio_status(
+    audio: State<'_, StreamAudio>,
+) -> Result<Option<audio::SoundStatus>, String> {
+    Ok(audio.sound_status().await)
 }
 
 /// A dead login (401) while `#a` connects logs out, as it does for every other command.

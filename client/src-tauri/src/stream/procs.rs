@@ -1,6 +1,10 @@
 //! Which processes are Pulse, which are playing audio, and who owns a window. Windows only: every
 //! function returns empty / `None` elsewhere.
 
+use super::plan::Proc;
+#[cfg(windows)]
+use super::plan::title_owner;
+
 /// The main Pulse processes (exe name equals ours, own included).
 pub fn pulse_roots() -> Vec<u32> {
     #[cfg(windows)]
@@ -26,35 +30,61 @@ pub fn audio_session_pids() -> Vec<u32> {
     Vec::new()
 }
 
-/// The one process, not one of `pulse`, owning a visible top-level window titled exactly
-/// `title`; `None` when there is none or more than one (see `unique_owner`).
-pub fn window_pid(title: &str, pulse: &[u32]) -> Option<u32> {
+/// Every process, with its image path where it can be read (else its exe name).
+pub fn processes() -> Vec<Proc> {
     #[cfg(windows)]
-    return unique_owner(&win::windows_titled(title), title, pulse);
+    return win::processes_with_paths();
+    #[cfg(not(windows))]
+    Vec::new()
+}
+
+/// How the shared window's app was found (logged; never the title itself).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum How {
+    /// By the window's own handle, from the capture source.
+    Handle,
+    /// By its title (no usable handle).
+    Title,
+    /// Not identified.
+    None,
+}
+
+/// The processes owning the shared window: by `hwnd` (the picker's capture source) when it is
+/// still a window, else by `title` (see `plan::title_owner`). Empty when nobody can be told apart.
+pub fn resolve_window(
+    hwnd: Option<u64>,
+    title: Option<&str>,
+    pulse: &[u32],
+    procs: &[Proc],
+) -> (Vec<u32>, How) {
+    #[cfg(windows)]
+    {
+        let by_handle = hwnd.and_then(|h| win::window_owner(h, procs));
+        choose(by_handle, pulse, || match title {
+            Some(t) => title_owner(&win::windows_titled(t), t, pulse, procs),
+            None => Vec::new(),
+        })
+    }
     #[cfg(not(windows))]
     {
-        let _ = (title, pulse);
-        None
+        let _ = (hwnd, title, procs);
+        choose(None, pulse, Vec::new)
     }
 }
 
-/// From (title, pid, visible) rows for top-level windows: the pid owning a visible window titled
-/// exactly `title`, if exactly one process outside `pulse` does. Hidden windows don't count,
-/// and two processes with the same title are ambiguous: guessing could capture the wrong app.
-#[cfg_attr(not(windows), allow(dead_code))]
-fn unique_owner(rows: &[(String, u32, bool)], title: &str, pulse: &[u32]) -> Option<u32> {
-    let mut owner = None;
-    for &(_, pid, _) in rows
-        .iter()
-        .filter(|r| r.2 && r.0 == title && !pulse.contains(&r.1))
-    {
-        match owner {
-            None => owner = Some(pid),
-            Some(p) if p != pid => return None,
-            Some(_) => {}
-        }
+/// The handle's owner when it is not Pulse; otherwise whatever the title finds.
+fn choose(
+    by_handle: Option<u32>,
+    pulse: &[u32],
+    by_title: impl FnOnce() -> Vec<u32>,
+) -> (Vec<u32>, How) {
+    if let Some(p) = by_handle.filter(|p| *p != 0 && !pulse.contains(p)) {
+        return (vec![p], How::Handle);
     }
-    owner
+    let t = by_title();
+    let how = if t.is_empty() { How::None } else { How::Title };
+    (t, how)
 }
 
 /// (roots, roots plus all their descendants) from (pid, parent pid, exe name) rows. Exe names
@@ -83,15 +113,22 @@ fn pulse_tree(procs: &[(u32, u32, String)], exe: &str) -> (Vec<u32>, Vec<u32>) {
 
 #[cfg(windows)]
 mod win {
+    use super::Proc;
+    use crate::stream::plan::frame_host_app;
     use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
         TH32CS_SNAPPROCESS,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        QueryFullProcessImageNameW,
     };
-    use windows::core::BOOL;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumChildWindows, EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
+        IsWindowVisible,
+    };
+    use windows::core::{BOOL, PWSTR};
 
     /// (pid, parent pid, exe name) for every process.
     fn processes() -> Vec<(u32, u32, String)> {
@@ -122,6 +159,81 @@ mod win {
                 }
             }
             let _ = CloseHandle(snap);
+        }
+        out
+    }
+
+    /// `pid`'s image path, when we may read it (not for elevated or protected processes).
+    fn image_path(pid: u32) -> Option<String> {
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let r = QueryFullProcessImageNameW(
+                h,
+                PROCESS_NAME_WIN32,
+                PWSTR(buf.as_mut_ptr()),
+                &mut len,
+            );
+            let _ = CloseHandle(h);
+            r.ok()?;
+            Some(String::from_utf16_lossy(&buf[..len as usize]))
+        }
+    }
+
+    /// Every process, with its image path where readable (two apps can share an exe name).
+    pub fn processes_with_paths() -> Vec<Proc> {
+        processes()
+            .into_iter()
+            .map(|(pid, parent, name)| Proc {
+                pid,
+                parent,
+                exe: image_path(pid).unwrap_or(name),
+            })
+            .collect()
+    }
+
+    /// The process owning top-level window `hwnd`, if it is still a window. For a UWP window
+    /// (ApplicationFrameHost's), the app behind the frame.
+    pub fn window_owner(hwnd: u64, procs: &[Proc]) -> Option<u32> {
+        let h = HWND(hwnd as usize as *mut core::ffi::c_void);
+        unsafe {
+            if !IsWindow(Some(h)).as_bool() {
+                return None;
+            }
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(h, Some(&mut pid));
+            if pid == 0 {
+                return None;
+            }
+            let exe = procs.iter().find(|p| p.pid == pid).map(|p| p.exe.as_str());
+            if let Some(exe) = exe
+                && let Some(app) = frame_host_app(pid, exe, &child_window_pids(h))
+            {
+                return Some(app);
+            }
+            Some(pid)
+        }
+    }
+
+    /// The owners of `parent`'s child windows.
+    fn child_window_pids(parent: HWND) -> Vec<u32> {
+        unsafe extern "system" fn each(hwnd: HWND, lp: LPARAM) -> BOOL {
+            let out = unsafe { &mut *(lp.0 as *mut Vec<u32>) };
+            let mut pid = 0u32;
+            unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+            if !out.contains(&pid) {
+                out.push(pid);
+            }
+            BOOL(1)
+        }
+        let mut out: Vec<u32> = Vec::new();
+        unsafe {
+            let _ = EnumChildWindows(
+                Some(parent),
+                Some(each),
+                LPARAM(&mut out as *mut Vec<u32> as isize),
+            );
         }
         out
     }
@@ -236,44 +348,22 @@ mod tests {
         assert_eq!(all, vec![10, 11]);
     }
 
-    fn win(title: &str, pid: u32, visible: bool) -> (String, u32, bool) {
-        (title.to_string(), pid, visible)
+    #[test]
+    fn the_handle_wins_over_the_title() {
+        assert_eq!(
+            choose(Some(40), &[10], || vec![50]),
+            (vec![40], How::Handle)
+        );
     }
 
     #[test]
-    fn unique_owner_finds_the_one_visible_match() {
-        let rows = [
-            win("Other", 30, true),
-            win("Game", 40, true),
-            win("Game", 40, true), // a second window of the same process
-            win("Game - Settings", 50, true),
-        ];
-        assert_eq!(unique_owner(&rows, "Game", &[10]), Some(40));
-        assert_eq!(unique_owner(&rows, "Nope", &[10]), None);
-    }
-
-    #[test]
-    fn unique_owner_skips_invisible_windows() {
-        let rows = [win("Game", 66, false), win("Game", 40, true)];
-        assert_eq!(unique_owner(&rows, "Game", &[10]), Some(40));
-        assert_eq!(unique_owner(&[win("Game", 66, false)], "Game", &[10]), None);
-    }
-
-    #[test]
-    fn unique_owner_is_none_when_two_processes_share_the_title() {
-        let rows = [win("Game", 66, true), win("Game", 40, true)];
-        assert_eq!(unique_owner(&rows, "Game", &[10]), None);
-    }
-
-    #[test]
-    fn unique_owner_ignores_pulse_windows() {
-        let rows = [
-            win("Game", 10, true),
-            win("Game", 11, true),
-            win("Game", 40, true),
-        ];
-        assert_eq!(unique_owner(&rows, "Game", &[10, 11]), Some(40));
-        assert_eq!(unique_owner(&rows[..2], "Game", &[10, 11]), None);
+    fn a_pulse_or_missing_handle_falls_back_to_the_title() {
+        assert_eq!(choose(Some(10), &[10], || vec![50]), (vec![50], How::Title));
+        assert_eq!(
+            choose(None, &[10], || vec![50, 51]),
+            (vec![50, 51], How::Title)
+        );
+        assert_eq!(choose(None, &[10], Vec::new), (vec![], How::None));
     }
 
     #[cfg(windows)]
@@ -290,6 +380,10 @@ mod tests {
         assert!(pulse_roots().is_empty());
         assert!(pulse_pids().is_empty());
         assert!(audio_session_pids().is_empty());
-        assert_eq!(window_pid("anything", &[]), None);
+        assert!(processes().is_empty());
+        assert_eq!(
+            resolve_window(Some(1), Some("anything"), &[], &[]),
+            (vec![], How::None)
+        );
     }
 }

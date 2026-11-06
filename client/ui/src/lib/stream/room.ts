@@ -18,11 +18,13 @@ import { diag } from './diag.svelte'
 import { encodingFor, LOW_LAYER, type Fps, type Res } from './encodings'
 import { withDeadline } from './frames'
 import { installRtxTime } from './sdp'
+import { windowHandle } from './sound'
 
 export const STREAM_UNAVAILABLE = "Streaming isn't available on this server"
 const DEADLINE_MS = 15_000
 
-export type Picked = { track: LocalVideoTrack; label: string; surface: string; width: number; height: number }
+/** `hwnd`: a window's own handle, from the capture source's id, where the webview gives one (stream sound, #215). */
+export type Picked = { track: LocalVideoTrack; label: string; surface: string; width: number; height: number; hwnd?: number | null }
 
 type Watched = {
   streamer: string
@@ -144,6 +146,7 @@ export class StreamRoom {
       surface: s.displaySurface ?? 'monitor',
       width: s.width ?? 0,
       height: s.height ?? 0,
+      hwnd: s.displaySurface === 'window' ? windowHandle(s.deviceId) : null,
     }
   }
 

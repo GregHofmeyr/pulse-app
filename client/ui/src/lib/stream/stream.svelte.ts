@@ -22,8 +22,10 @@ import { dndActive } from '../status'
 import { liveNotice, liveWhere } from '../notify'
 import { notifyPrefs } from '../notifyPrefs.svelte'
 import { windowFocus } from '../windowFocus.svelte'
+import { windowHandle, type Sound, type SoundStatus, type WindowRef } from './sound'
 
-type Live = { channelId: string; res: Res; fps: Fps; audio: boolean; allowGhosts: boolean; audioMuted: boolean; label: string; encoderWarning: boolean }
+/** `sound`: where stream audio comes from while `audio` is on (switchable live; unset reads as This app). */
+type Live = { channelId: string; res: Res; fps: Fps; audio: boolean; allowGhosts: boolean; audioMuted: boolean; label: string; encoderWarning: boolean; sound?: Sound }
 /** `ghost`: watched from outside that voice channel, under an anonymous identity (counted, never named). */
 export type Watching = { channelId: string; streamer: string; quality: Quality; view: View; ghost?: boolean }
 
@@ -44,7 +46,11 @@ export const stream = $state({
   stopping: null as string | null,
   /** Stream playback volume per streamer (percent), remembered on this device: tiles and full view read it. */
   volumes: loadStreamVolumes() as Record<string, number>,
+  /** While live with stream audio: the source heard and whether it has been (from Rust, every `SOUND_POLL_MS`). */
+  sound: null as SoundStatus | null,
 })
+
+const SOUND_POLL_MS = 2_000
 
 /** After a server restart Ready lacks our stream (streams live in server memory): announce it again. */
 export function needsReannounce(meId: string, live: { channelId: string } | null, readyStreams: StreamInfo[]): boolean {
@@ -90,8 +96,20 @@ const VOICE_ONLY = (name: string) => `${name} switched to voice-only`
 /** A ghost who joined the call waits this long for it to connect before watching as themselves. */
 const UPGRADE_WAIT_MS = 15_000
 let liveTrack: LocalVideoTrack | null = null
-/** The shared window's title while live with stream audio (`null`: a screen), for an audio restart. */
-let liveWindowTitle: string | null = null
+/** The shared window while live with stream audio (`null`: a screen), for an audio restart. */
+let liveWindow: WindowRef | null = null
+let stopSoundPoll: (() => void) | null = null
+
+/** Keeps `stream.sound` current for `live` until stopped (or that share is over). */
+function startSoundPoll(live: Live): () => void {
+  const poll = async () => {
+    const s = await streamCmd.audioStatus().catch(() => null)
+    if (stream.live === live) stream.sound = s
+  }
+  void poll()
+  const t = setInterval(poll, SOUND_POLL_MS)
+  return () => clearInterval(t)
+}
 /** When LiveKit last closed `#a` under us, within `AUDIO_RECONNECT_WINDOW_MS`. */
 let audioClosedAt: number[] = []
 /** Streams we knew that the last Ready left out (`channel/user` → when): a server restart. */
@@ -297,6 +315,9 @@ async function endLive(announce: boolean) {
   track?.mediaStreamTrack.removeEventListener('ended', onTrackEnded)
   stopOutDiag?.()
   stopOutDiag = null
+  stopSoundPoll?.()
+  stopSoundPoll = null
+  stream.sound = null
   stopPreview?.()
   stopPreview = null
   if (live.audio) await streamCmd.audioStop().catch(logError('audio_stop_error'))
@@ -521,16 +542,19 @@ async function goLive(token: number, channelId: string, track: LocalVideoTrack, 
   audioClosedAt = [] // a new share gets its own reconnects
   // muted stays muted from the last Go Live
   const audioMuted = audio && loadAudioMuted()
-  stream.live = { channelId, res, fps, audio, allowGhosts, audioMuted, label, encoderWarning: false }
-  streamCmd.log({ ev: 'live', res, fps, audio, allowGhosts })
+  const sound: Sound = settings.sound ?? 'app'
+  stream.live = { channelId, res, fps, audio, allowGhosts, audioMuted, label, encoderWarning: false, sound }
+  stream.sound = null
+  streamCmd.log({ ev: 'live', res, fps, audio, allowGhosts, ...(audio ? { sound } : {}) })
   // the shared window closed (or the capture otherwise ended); it may already have, before we listened
   track.mediaStreamTrack.addEventListener('ended', onTrackEnded)
   if (ended()) return onTrackEnded()
   if (audio) {
-    const windowTitle = track.mediaStreamTrack.getSettings().displaySurface === 'window' ? label : null
-    liveWindowTitle = windowTitle
+    const s = track.mediaStreamTrack.getSettings()
+    // the capture source's own window handle where the webview gives one; the title is the fallback
+    liveWindow = s.displaySurface === 'window' ? { hwnd: windowHandle(s.deviceId), title: label } : null
     // Video carries on without it; Rust retries the capture itself.
-    await streamCmd.audioStart(channelId, windowTitle, audioMuted).catch(logError('audio_start_error'))
+    await streamCmd.audioStart(channelId, liveWindow, sound, audioMuted).catch(logError('audio_start_error'))
     if (liveTrack !== track) {
       // stopped meanwhile: that stop's audio_stop ran before this start landed
       await streamCmd.audioStop().catch(logError('audio_stop_error'))
@@ -539,6 +563,10 @@ async function goLive(token: number, channelId: string, track: LocalVideoTrack, 
     // a mute clicked while starting reached Rust before there was a track to mute
     const muted = stream.live?.audioMuted ?? audioMuted
     if (muted !== audioMuted) await streamCmd.audioMute(muted).catch(logError('audio_mute_error'))
+    if (stream.live) {
+      stopSoundPoll?.()
+      stopSoundPoll = startSoundPoll(stream.live)
+    }
   }
   stopPreview = startPreview(channelId, track.mediaStreamTrack)
   const r = room
@@ -632,6 +660,17 @@ export const streamApi = {
     }
   },
 
+  /** The live stream's sound now comes from `sound` (the "no sound yet" note's one click); kept for an audio restart. */
+  async switchSound(sound: Sound) {
+    const live = stream.live
+    if (!live?.audio || live.sound === sound) return
+    live.sound = sound
+    streamCmd.log({ ev: 'sound_switch', sound })
+    await streamCmd.audioSound(sound).catch(logError('audio_sound_error'))
+    const s = await streamCmd.audioStatus().catch(() => null)
+    if (stream.live === live) stream.sound = s
+  },
+
   async setAudioMuted(muted: boolean) {
     if (!stream.live?.audio) return
     stream.live.audioMuted = muted
@@ -671,7 +710,7 @@ export const streamApi = {
     if (live?.channelId === channelId && live.audio) {
       const muted = live.audioMuted
       try {
-        await streamCmd.audioStart(channelId, liveWindowTitle, muted)
+        await streamCmd.audioStart(channelId, liveWindow, live.sound ?? 'app', muted)
         const now = stream.live
         if (!now?.audio) {
           // stopped (or live again without audio) meanwhile: that stop's audio_stop ran before this start landed
@@ -679,7 +718,7 @@ export const streamApi = {
         } else if (now !== live) {
           // stopped and live again with audio: this start may have replaced the new share's
           // (another window, another mute), so start that one again
-          await streamCmd.audioStart(now.channelId, liveWindowTitle, now.audioMuted).catch(logError('audio_start_error'))
+          await streamCmd.audioStart(now.channelId, liveWindow, now.sound ?? 'app', now.audioMuted).catch(logError('audio_start_error'))
         } else if (live.audioMuted !== muted) {
           await streamCmd.audioMute(live.audioMuted).catch(logError('audio_mute_error'))
         }

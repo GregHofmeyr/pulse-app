@@ -20,7 +20,9 @@ use serde_json::json;
 use tokio::task::JoinHandle;
 
 use super::loopback::Engine;
-use super::plan::{Capture, PlanInput, Source, capture_plan};
+use super::plan::{
+    Capture, PlanInput, Proc, Sound, Source, Tier, app_name, capture_plan, playing,
+};
 use super::procs;
 use crate::api::{Api, ApiError};
 use crate::voice::devices::INTERNAL_RATE;
@@ -127,6 +129,8 @@ struct Publishing {
     track: LocalAudioTrack,
     sid: TrackSid,
     capturing: Capturing<Engine>,
+    /// What the sharer chose and where it stands (`None` for the raw test track).
+    sound: Option<SoundState>,
 }
 
 /// Counts for the `audio_out` line.
@@ -135,6 +139,119 @@ struct OutCounts {
     captures: AtomicUsize,
     chunks: AtomicU64,
     silent: AtomicU64,
+    /// Chunks with sound in them since the source last changed (the "no sound yet" note).
+    audible: AtomicU64,
+}
+
+/// A window share's identity from the page: the capture source's window handle, when the
+/// webview gave one, and the title it showed.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowRef {
+    pub hwnd: Option<u64>,
+    pub title: String,
+}
+
+/// What is being shared, resolved once when sharing starts.
+#[derive(Clone, Debug, Default)]
+struct Target {
+    window: bool,
+    /// The window's owners; empty when nobody could be identified (or a screen share).
+    owners: Vec<u32>,
+    /// The app's name for the controls ("Firefox").
+    app: Option<String>,
+}
+
+impl Target {
+    fn source(&self) -> Source {
+        if self.window {
+            Source::Window(self.owners.clone())
+        } else {
+            Source::Screen
+        }
+    }
+}
+
+/// Before going live: can the window's app be told apart, and is it playing now.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Probe {
+    pub identified: bool,
+    pub app: Option<String>,
+    pub playing: bool,
+}
+
+/// While live: which source is heard, and whether anything has been since it began.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SoundStatus {
+    pub tier: Tier,
+    pub app: Option<String>,
+    /// Anything audible since this source began.
+    pub heard: bool,
+    /// Since this source began.
+    pub ms: u64,
+}
+
+struct Choice {
+    sound: Sound,
+    tier: Tier,
+    since: Instant,
+}
+
+/// The sharer's choice, shared with the rescans.
+#[derive(Clone)]
+struct SoundState {
+    target: Arc<Target>,
+    choice: Arc<Mutex<Choice>>,
+    counts: Arc<OutCounts>,
+}
+
+impl SoundState {
+    fn new(target: Target, sound: Sound, tier: Tier, counts: Arc<OutCounts>) -> Self {
+        SoundState {
+            target: Arc::new(target),
+            choice: Arc::new(Mutex::new(Choice {
+                sound,
+                tier,
+                since: Instant::now(),
+            })),
+            counts,
+        }
+    }
+
+    /// A new source: it starts unheard.
+    fn switch(&self, sound: Sound) {
+        let mut c = self.choice.lock().unwrap();
+        c.sound = sound;
+        c.since = Instant::now();
+        self.counts.audible.store(0, Ordering::Relaxed);
+    }
+
+    fn status(&self) -> SoundStatus {
+        let c = self.choice.lock().unwrap();
+        SoundStatus {
+            tier: c.tier,
+            app: match c.tier {
+                Tier::App | Tier::Related => self.target.app.clone(),
+                Tier::Everything | Tier::LastResort => None,
+            },
+            heard: self.counts.audible.load(Ordering::Relaxed) > 0,
+            ms: c.since.elapsed().as_millis() as u64,
+        }
+    }
+
+    /// Plans for the choice now and records its tier, logging a change.
+    fn plan(&self) -> Vec<Capture> {
+        let sound = self.choice.lock().unwrap().sound;
+        let (plan, tier) = plan_now(&self.target, sound);
+        let mut c = self.choice.lock().unwrap();
+        if c.tier != tier {
+            log(json!({"ev": "audio_tier", "tier": tier}));
+            c.tier = tier;
+        }
+        plan
+    }
 }
 
 /// Where published stream audio goes in: 10 ms chunks of interleaved stereo i16.
@@ -151,6 +268,8 @@ impl Outlet {
         self.counts.chunks.fetch_add(1, Ordering::Relaxed);
         if chunk.iter().all(|s| *s == 0) {
             self.counts.silent.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.counts.audible.fetch_add(1, Ordering::Relaxed);
         }
         let frame = AudioFrame {
             samples_per_channel: (chunk.len() / OUT_CHANNELS as usize) as u32,
@@ -375,23 +494,72 @@ async fn run_events(
     }
 }
 
-/// The capture plan for now, and whether it should be rescanned (not when it follows a window).
-fn plan_now(window_title: Option<&str>) -> (Vec<Capture>, bool) {
+/// Who owns the shared window (`None`: a screen share), and how they were found. Blocking.
+fn resolve(window: Option<&WindowRef>) -> (Target, procs::How) {
+    let Some(w) = window else {
+        return (Target::default(), procs::How::None);
+    };
+    target_for(w, &procs::pulse_pids(), &procs::processes())
+}
+
+/// `w`'s owners among `all`, Pulse (`pulse`) left out, with the app's name.
+fn target_for(w: &WindowRef, pulse: &[u32], all: &[Proc]) -> (Target, procs::How) {
+    let (owners, how) = procs::resolve_window(w.hwnd, Some(&w.title), pulse, all);
+    let app = owners
+        .first()
+        .and_then(|o| all.iter().find(|p| p.pid == *o))
+        .map(|p| app_name(&p.exe))
+        .filter(|n| !n.is_empty());
+    let target = Target {
+        window: true,
+        owners,
+        app,
+    };
+    (target, how)
+}
+
+/// The capture plan for `target` and `sound` now, and its tier. Blocking.
+fn plan_now(target: &Target, sound: Sound) -> (Vec<Capture>, Tier) {
     let pulse_pids = procs::pulse_pids();
     let pulse_roots = procs::pulse_roots();
     let session_pids = procs::audio_session_pids();
-    let source = match window_title {
-        Some(t) => Source::Window(procs::window_pid(t, &pulse_pids)),
-        None => Source::Screen,
+    // the process table (one open per process) only where a tier reads it
+    let all = if target.window && sound == Sound::App {
+        procs::processes()
+    } else {
+        Vec::new()
     };
-    let plan = capture_plan(&PlanInput {
+    capture_plan(&PlanInput {
         own_pid: std::process::id(),
         pulse_pids: &pulse_pids,
         pulse_roots: &pulse_roots,
         session_pids: &session_pids,
-        source,
+        procs: &all,
+        source: target.source(),
+        sound,
+    })
+}
+
+/// Whether the window's app can be told apart, and is playing now (the picker's hint). Blocking.
+pub fn probe(window: &WindowRef) -> Probe {
+    let pulse_pids = procs::pulse_pids();
+    let all = procs::processes();
+    let (target, _) = target_for(window, &pulse_pids, &all);
+    let session_pids = procs::audio_session_pids();
+    let playing = playing(&PlanInput {
+        own_pid: std::process::id(),
+        pulse_pids: &pulse_pids,
+        pulse_roots: &[],
+        session_pids: &session_pids,
+        procs: &all,
+        source: target.source(),
+        sound: Sound::App,
     });
-    (plan, source == Source::Screen)
+    Probe {
+        identified: !target.owners.is_empty(),
+        app: target.app,
+        playing,
+    }
 }
 
 /// What the ticker rescans: the capture engine (a fake in tests). Dropping it stops capture
@@ -437,6 +605,20 @@ impl<E: Rescan> Capturing<E> {
             ticker,
             engine,
         }
+    }
+
+    /// Moves the engine to `planner`'s plan now (the sharer switched source), on a blocking
+    /// thread, awaited to the end so `stop` never races it.
+    async fn replan(&self, counts: Arc<OutCounts>, planner: Planner) {
+        let engine = self.engine.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let plan = planner();
+            counts.captures.store(plan.len(), Ordering::Relaxed);
+            if let Some(e) = engine {
+                e.apply(plan);
+            }
+        })
+        .await;
     }
 
     /// Stops the ticker (letting a rescan in flight finish), then the capture, on a blocking
@@ -568,13 +750,14 @@ impl StreamAudio {
         self.state.lock().await.conn.as_ref().map(|c| c.channel)
     }
 
-    /// Publishes this machine's stream audio: for a window share (`window_title`), that window's
-    /// process, or nothing when it can't be told apart (`procs::window_pid`); for a screen share,
-    /// everything but Pulse. Replaces a stream already publishing. `muted` holds from the first
-    /// frame.
+    /// Publishes this machine's stream audio, `sound` from `window` (`None`: a screen share,
+    /// always everything but Pulse); see `plan::capture_plan` for the tiers. Rescanned every
+    /// `RESCAN_EVERY` for every share, so sound that starts later is picked up. Replaces a
+    /// stream already publishing. `muted` holds from the first frame.
     pub async fn start_publishing(
         &self,
-        window_title: Option<String>,
+        window: Option<WindowRef>,
+        sound: Sound,
         muted: bool,
     ) -> Result<(), String> {
         let mut st = self.state.lock().await;
@@ -582,34 +765,57 @@ impl StreamAudio {
         if st.conn.is_none() {
             return Err("stream audio isn't connected".into());
         }
-        let title = window_title.clone();
-        let (plan, rescan) = tokio::task::spawn_blocking(move || plan_now(title.as_deref()))
-            .await
-            .map_err(|e| e.to_string())?;
-        if window_title.is_some() && plan.is_empty() {
-            // no title: titles are never logged
-            tracing::warn!(target: "share", "share: no single process owns the shared window; no stream audio");
-            return Ok(());
-        }
+        let (target, how, plan, tier) = tokio::task::spawn_blocking(move || {
+            let (target, how) = resolve(window.as_ref());
+            let (plan, tier) = plan_now(&target, sound);
+            (target, how, plan, tier)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        // never the title: titles are never logged
+        log(
+            json!({"ev": "audio_source", "sound": sound, "window": target.window.then_some(how), "tier": tier}),
+        );
         let (track, sid, outlet, counts) = Self::publish_locked(&st).await?;
         if muted {
             track.mute(); // before any capture feeds it
         }
         counts.captures.store(plan.len(), Ordering::Relaxed);
+        let state = SoundState::new(target, sound, tier, counts.clone());
         let engine = Engine::start(plan, move |c| outlet.send(c));
-        let planner: Planner = Arc::new(move || plan_now(window_title.as_deref()).0);
-        let capturing = Capturing::start(
-            counts,
-            Some(engine),
-            planner,
-            rescan.then_some(RESCAN_EVERY),
-        );
+        let s2 = state.clone();
+        let planner: Planner = Arc::new(move || s2.plan());
+        let capturing = Capturing::start(counts, Some(engine), planner, Some(RESCAN_EVERY));
         st.publishing = Some(Publishing {
             track,
             sid,
             capturing,
+            sound: Some(state),
         });
         Ok(())
+    }
+
+    /// Switches the published stream's source now, without republishing (the "no sound yet"
+    /// note's one click). Nothing happens when nothing is publishing.
+    pub async fn set_sound(&self, sound: Sound) {
+        let st = self.state.lock().await;
+        let Some(p) = &st.publishing else { return };
+        let Some(state) = p.sound.clone() else { return };
+        state.switch(sound);
+        log(json!({"ev": "audio_switch", "sound": sound}));
+        let s2 = state.clone();
+        p.capturing
+            .replan(state.counts.clone(), Arc::new(move || s2.plan()))
+            .await;
+    }
+
+    /// The published stream's source and whether it has been heard; `None` when not publishing.
+    pub async fn sound_status(&self) -> Option<SoundStatus> {
+        let st = self.state.lock().await;
+        st.publishing
+            .as_ref()
+            .and_then(|p| p.sound.as_ref())
+            .map(SoundState::status)
     }
 
     /// Publishes the stream-audio track with no capture behind it and hands back its input.
@@ -623,6 +829,7 @@ impl StreamAudio {
             track,
             sid,
             capturing: Capturing::start(counts, None, Arc::new(Vec::new), None),
+            sound: None,
         });
         Ok(outlet)
     }
@@ -919,6 +1126,47 @@ mod tests {
             seen[2].1,
             std::thread::current().id(),
             "dropped on the async worker"
+        );
+    }
+
+    #[test]
+    fn a_switch_resets_heard_and_the_app_shows_only_for_its_tiers() {
+        let counts = Arc::new(OutCounts::default());
+        let target = Target {
+            window: true,
+            owners: vec![40],
+            app: Some("Firefox".into()),
+        };
+        let s = SoundState::new(target, Sound::App, Tier::App, counts.clone());
+        let st = s.status();
+        assert_eq!(
+            (st.tier, st.app.as_deref(), st.heard),
+            (Tier::App, Some("Firefox"), false)
+        );
+        counts.audible.store(3, Ordering::Relaxed);
+        assert!(s.status().heard);
+        std::thread::sleep(Duration::from_millis(5));
+        let before = s.status().ms;
+        s.switch(Sound::Everything);
+        assert!(!s.status().heard, "a new source starts unheard");
+        assert!(s.status().ms < before.max(5));
+        s.choice.lock().unwrap().tier = Tier::Everything;
+        assert_eq!(s.status().app, None);
+    }
+
+    #[test]
+    fn a_window_ref_reads_the_page_shape() {
+        let w: WindowRef = serde_json::from_str(r#"{"hwnd":1312,"title":"Game"}"#).unwrap();
+        assert_eq!((w.hwnd, w.title.as_str()), (Some(1312), "Game"));
+        let w: WindowRef = serde_json::from_str(r#"{"hwnd":null,"title":"Game"}"#).unwrap();
+        assert_eq!(w.hwnd, None);
+        assert_eq!(
+            serde_json::to_string(&Tier::LastResort).unwrap(),
+            r#""lastResort""#
+        );
+        assert_eq!(
+            serde_json::from_str::<Sound>(r#""everything""#).unwrap(),
+            Sound::Everything
         );
     }
 

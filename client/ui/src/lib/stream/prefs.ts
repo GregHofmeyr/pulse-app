@@ -1,4 +1,5 @@
 import { resolutionsFor, type Fps, type Res } from './encodings'
+import type { Sound } from './sound'
 
 // Per-device preferences: guarded localStorage, same pattern as lib/voiceui.ts.
 function load<T>(key: string, fallback: T): T {
@@ -17,9 +18,10 @@ function save(key: string, value: unknown) {
   }
 }
 
-/** `allowGhosts`: server members outside the call may watch, counted but never named. */
-export type GoLive = { res: Res; fps: Fps; audio: boolean; allowGhosts: boolean }
-const GO_LIVE_DEFAULT: GoLive = { res: 720, fps: 60, audio: true, allowGhosts: true }
+/** `allowGhosts`: server members outside the call may watch, counted but never named. `sound`: where stream
+ *  audio comes from when `audio` is on (No sound is `audio` off). */
+export type GoLive = { res: Res; fps: Fps; audio: boolean; allowGhosts: boolean; sound: Sound }
+const GO_LIVE_DEFAULT: GoLive = { res: 720, fps: 60, audio: true, allowGhosts: true, sound: 'app' }
 
 export const loadGoLive = (): GoLive => load('pulse.golive', GO_LIVE_DEFAULT)
 export const saveGoLive = (v: GoLive) => save('pulse.golive', v)
@@ -34,7 +36,8 @@ export function clampGoLive(stored: GoLive, sourceHeight: number): GoLive {
   const fps = FPS.includes(stored.fps) ? stored.fps : GO_LIVE_DEFAULT.fps
   const audio = typeof stored.audio === 'boolean' ? stored.audio : GO_LIVE_DEFAULT.audio
   const allowGhosts = typeof stored.allowGhosts === 'boolean' ? stored.allowGhosts : GO_LIVE_DEFAULT.allowGhosts
-  return { res, fps, audio, allowGhosts }
+  const sound: Sound = stored.sound === 'everything' || stored.sound === 'app' ? stored.sound : GO_LIVE_DEFAULT.sound
+  return { res, fps, audio, allowGhosts, sound }
 }
 
 export const loadHidePreview = (): boolean => load<{ on: boolean }>('pulse.stream.hidepreview', { on: false }).on

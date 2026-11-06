@@ -4,8 +4,14 @@
 import { flushSync, mount, unmount } from 'svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const live = vi.hoisted(() => ({ goLive: null as null | (() => Promise<void>), settings: [] as unknown[] }))
-vi.mock('@tauri-apps/api/core', () => ({ invoke: async () => undefined }))
+const live = vi.hoisted(() => ({ goLive: null as null | (() => Promise<void>), settings: [] as unknown[], probe: null as unknown, probed: [] as unknown[] }))
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: async (cmd: string, args: { window?: unknown }) => {
+    if (cmd !== 'stream_audio_probe') return undefined
+    live.probed.push(args.window)
+    return live.probe
+  },
+}))
 vi.mock('../lib/stream/stream.svelte', () => ({
   stream: { error: '' },
   streamApi: {
@@ -85,6 +91,86 @@ describe('GoLiveDialog capture ownership', () => {
     flushSync()
     expect(box().checked).toBe(false) // the last choice, per device
     unmount(c)
+  })
+
+  describe('sound choice', () => {
+    const settle = async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve()
+      flushSync()
+    }
+    const radios = () => [...document.querySelectorAll<HTMLInputElement>('input[name="sound"]')]
+    const text = (r: HTMLInputElement) => r.closest('label')!.textContent!.replace(/\s+/g, ' ').trim()
+    const labels = () => radios().map(text)
+    const choice = (t: string) => radios().find((r) => text(r).startsWith(t))!
+    const open = (p: object = picked()) => mount(GoLiveDialog, { target: document.body, props: { channelId: 'c1', picked: p as never, onClose: () => {} } })
+
+    beforeEach(() => {
+      localStorage.clear()
+      live.settings = []
+      live.probed = []
+      live.goLive = async () => {}
+    })
+
+    it('a_window_share_offers_this_app_everything_and_no_sound_defaulting_to_this_app', async () => {
+      live.probe = { identified: true, app: 'Game', playing: false }
+      const c = open({ ...picked(), hwnd: 1312 })
+      await settle()
+      expect(document.querySelector('fieldset:has(input[name="sound"]) legend')!.textContent).toBe('Sound')
+      expect(labels()).toEqual(['This app Not playing sound right now', 'Everything except Pulse', 'No sound'])
+      expect(choice('This app').checked).toBe(true)
+      expect(choice('This app').disabled).toBe(false)
+      expect(live.probed[0]).toEqual({ hwnd: 1312, title: 'Game' })
+      unmount(c)
+    })
+
+    it('a_playing_app_says_so', async () => {
+      live.probe = { identified: true, app: 'Game', playing: true }
+      const c = open()
+      await settle()
+      expect(labels()[0]).toBe('This app Playing sound')
+      unmount(c)
+    })
+
+    it('this_app_is_greyed_out_only_when_its_app_cannot_be_identified', async () => {
+      live.probe = { identified: false, app: null, playing: false }
+      const c = open()
+      await settle()
+      const app = choice('This app')
+      expect(app.disabled).toBe(true)
+      expect(app.closest('label')!.getAttribute('data-tip')).toBe("Can't tell which app owns this window")
+      expect(choice('Everything except Pulse').checked).toBe(true)
+      unmount(c)
+    })
+
+    it('a_screen_share_offers_everything_and_no_sound', async () => {
+      const c = open({ ...picked(), surface: 'monitor' })
+      await settle()
+      expect(labels()).toEqual(['Everything except Pulse', 'No sound'])
+      expect(choice('Everything except Pulse').checked).toBe(true)
+      expect(live.probed).toEqual([]) // nothing to identify
+      unmount(c)
+    })
+
+    it('the_choice_goes_with_go_live', async () => {
+      live.probe = { identified: true, app: 'Game', playing: false }
+      const c = open()
+      await settle()
+      choice('No sound').click()
+      flushSync()
+      ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Go Live')!.click()
+      await settle()
+      expect(live.settings).toEqual([expect.objectContaining({ audio: false, sound: 'app' })])
+      unmount(c)
+      const c2 = open()
+      await settle()
+      expect(choice('No sound').checked).toBe(true) // remembered
+      choice('Everything except Pulse').click()
+      flushSync()
+      ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Go Live')!.click()
+      await settle()
+      expect(live.settings[1]).toEqual(expect.objectContaining({ audio: true, sound: 'everything' }))
+      unmount(c2)
+    })
   })
 
   it('esc_cancels_and_is_marked_handled', () => {

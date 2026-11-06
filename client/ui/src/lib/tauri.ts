@@ -44,6 +44,7 @@ import type { Sound } from './protocol/Sound'
 import type { NotifyLevel } from './protocol/NotifyLevel'
 import type { Notice } from './notify'
 import type { EmbedProvider } from './protocol/EmbedProvider'
+import type { Sound as StreamSound, SoundProbe, SoundStatus, WindowRef } from './stream/sound'
 
 /** `login` / `login_mfa`: signed in, waiting for the second step, or (second step only) the ticket is gone. */
 export type LoginResult = { status: 'ready'; user: User } | { status: 'mfa_required' } | { status: 'expired' }
@@ -355,7 +356,14 @@ export const streamCmd = {
   log: (line: object) => invoke<void>('stream_log', { line: JSON.stringify(line) }).catch(() => {}),
   pickerWindow: (open: boolean) => invoke<void>('stream_picker_window', { open }),
   /** Publishes `muted` from the first frame (a separate mute would let a moment through). */
-  audioStart: (channelId: string, windowTitle: string | null, muted: boolean) => invoke<void>('stream_audio_start', { channelId, windowTitle, muted }),
+  /** `window`: the shared window (`null`: a screen, always everything but Pulse); `sound` where it comes from. */
+  audioStart: (channelId: string, window: WindowRef | null, sound: StreamSound, muted: boolean) => invoke<void>('stream_audio_start', { channelId, window, sound, muted }),
+  /** While choosing: can the window's app be told apart, and is it playing now. */
+  audioProbe: (window: WindowRef) => invoke<SoundProbe>('stream_audio_probe', { window }),
+  /** Switches the live stream's source without republishing. */
+  audioSound: (sound: StreamSound) => invoke<void>('stream_audio_sound', { sound }),
+  /** The live stream's source, `null` when nothing is published. */
+  audioStatus: () => invoke<SoundStatus | null>('stream_audio_status'),
   audioStop: () => invoke<void>('stream_audio_stop'),
   /** `#a` leaves unless it is in `keep` (the voice channel now; `null` = no voice). */
   audioLeave: (keep: string | null) => invoke<void>('stream_audio_leave', { keep }),

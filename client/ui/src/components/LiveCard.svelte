@@ -5,6 +5,7 @@
   import { loadHidePreview, saveHidePreview } from '../lib/stream/prefs'
   import { liveMediaTrack, stream, streamApi } from '../lib/stream/stream.svelte'
   import { ghostCount } from '../lib/stream/viewer'
+  import { LAST_RESORT_TIP, showNoSoundYet, soundLabel } from '../lib/stream/sound'
 
   /** `tile`: fills a 16:9 grid tile, the preview behind a compact overlay of the controls. */
   let { channelId, serverId, tile = false }: { channelId: string; serverId: string | null; tile?: boolean } = $props()
@@ -13,6 +14,8 @@
   const mine = $derived(liveIn(app.state, channelId)[app.state.me?.id ?? ''])
   const viewers = $derived(mine?.viewers ?? [])
   const ghosts = $derived(ghostCount(mine?.ghosts))
+  const sound = $derived(live ? soundLabel(live.audio, stream.sound) : '')
+  const noSoundYet = $derived(!!live?.audio && showNoSoundYet(stream.sound))
   let hidden = $state(loadHidePreview())
   let video = $state<HTMLVideoElement>()
 
@@ -38,7 +41,7 @@
     <div class="row">
       <span class="dot"></span>
       <strong>You're live</strong>
-      <span class="meta">{live.res}p{live.fps}</span>
+      <span class="meta">{live.res}p{live.fps}{#if sound}{' · '}<span data-tip={stream.sound?.tier === 'lastResort' && live.audio ? LAST_RESORT_TIP : undefined}>{sound}</span>{/if}</span>
       <span class="spacer"></span>
       <button type="button" class="btn btn-secondary ghost" onclick={toggleHidden}>{hidden ? 'Show preview' : 'Hide preview'}</button>
     </div>
@@ -54,6 +57,14 @@
       {:else}Nobody is watching yet{/if}
     </p>
     {#if live.encoderWarning}<p class="warn" role="status">Your GPU encoder isn't being used, so this will cost game FPS</p>{/if}
+    {#if noSoundYet}
+      <!-- informational: the switch is theirs to make, never made for them -->
+      <div class="row note" role="status" data-note="no-sound">
+        <span>No sound from this app yet</span>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-secondary ghost" onclick={() => streamApi.switchSound('everything')}>Use everything except Pulse</button>
+      </div>
+    {/if}
     <div class="row">
       {#if live.audio}
         <button type="button" class="btn btn-secondary ghost" aria-pressed={live.audioMuted} onclick={() => streamApi.setAudioMuted(!live.audioMuted)}>
@@ -75,7 +86,8 @@
   .row { display: flex; align-items: center; gap: 10px; }
   .spacer { flex: 1; }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); }
-  .meta { color: var(--text-3); font-size: 12px; }
+  .meta { color: var(--text-3); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .note { font-size: 13px; color: var(--text-2); }
   .preview { position: relative; }
   video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: var(--radius-md); object-fit: contain; }
   .viewers { margin: 0; font-size: 13px; color: var(--text-2); }
