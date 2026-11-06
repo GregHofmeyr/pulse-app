@@ -234,8 +234,9 @@ installer quietly and reopens. While it runs it checks again after each login an
 "Restart to update" in the title bar (never during a call). The files live in `/srv/pulse/data/updates` (the
 container's `/data/updates`, outside the media backups).
 
-1. `just bump-version 0.2.N` (the one version, `[workspace.package]` in `Cargo.toml`, plus `patchNotes.ts`), then
-   give `client/ui/src/patchNotes.ts` a new `id`, date and notes; merge to `main`.
+1. In `client/ui/src/patchNotes.ts`, move the current notes to `previousPatchNotes` (they stay in the dialog, collapsed,
+   #235). Then `just bump-version 0.2.N` (the one version, `[workspace.package]` in `Cargo.toml`, plus `patchNotes`'s),
+   give `patchNotes` a new `id`, date and notes; merge to `main`.
 2. `just deploy` (the server first: the route has to exist before any app asks). Raise `MIN_CLIENT_VERSION`
    (`server/src/gateway/socket.rs`) only when the release truly needs it, and then publish (step 4) right away:
    forced clients sit on the "plz update :)" screen re-checking every minute until the update is there.
