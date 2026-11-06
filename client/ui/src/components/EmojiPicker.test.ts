@@ -24,9 +24,21 @@ const scrollIntoView = vi.fn()
 const onPick = vi.fn()
 const onClose = vi.fn()
 
-function open(memberOf = new Set(['S1'])) {
+/** Frames asked for (the picker mounts most of its cells a frame after it opens, #180). */
+let frames: FrameRequestCallback[] = []
+function runFrames() {
+  for (let i = 0; i < 5 && frames.length; i++) {
+    const fs = frames
+    frames = []
+    for (const f of fs) f(0)
+  }
+  flushSync()
+}
+/** Opens the picker with all its cells mounted, unless `settle` is false (just opened). */
+function open(memberOf = new Set(['S1']), settle = true) {
   cmp = mount(EmojiPicker, { target: document.body, props: { onPick, onClose, servers, memberOf } })
   flushSync()
+  if (settle) runFrames()
 }
 const key = (el: Element, k: string) => {
   el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
@@ -43,6 +55,9 @@ const cells = () => [...document.querySelectorAll('.cell')]
 beforeEach(() => {
   app.state = emptyState()
   Element.prototype.scrollIntoView = scrollIntoView
+  frames = []
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
+  vi.stubGlobal('cancelAnimationFrame', () => {})
   localStorage.clear()
   onPick.mockClear(); onClose.mockClear(); scrollIntoView.mockClear()
 })
@@ -50,6 +65,7 @@ afterEach(() => {
   if (cmp) unmount(cmp)
   cmp = undefined
   document.body.innerHTML = ''
+  vi.unstubAllGlobals()
 })
 
 describe('EmojiPicker', () => {
@@ -256,6 +272,32 @@ describe('EmojiPicker', () => {
     expect(search().value).toBe('')
     expect(document.querySelector('[data-section="group:objects"] .cell')).not.toBeNull()
     expect(scrollIntoView.mock.contexts.at(-1)).toBe(document.querySelector('[data-section="group:objects"]'))
+  })
+
+  it('opens_with_only_the_first_sections_cells_and_mounts_the_rest_after_its_first_frames', () => {
+    open(undefined, false)
+    const first = cells().length
+    expect(first).toBeGreaterThan(0)
+    expect(first).toBeLessThan(standard.length / 4)
+    // the rest keep their height meanwhile, so the scrollbar and the rail's jumps are right from the start
+    const later = document.querySelector<HTMLElement>('[data-section="group:objects"] .cells')!
+    expect(later.classList.contains('pending')).toBe(true)
+    expect(later.style.height).toMatch(/^\d+px$/)
+    runFrames()
+    expect(cells().length).toBe(standard.length)
+    expect(document.querySelector('.cells.pending')).toBeNull()
+  })
+
+  it('a key or a rail jump before those frames mounts everything at once', async () => {
+    open(undefined, false)
+    key(search(), 'ArrowDown')
+    expect(cells().length).toBe(standard.length)
+    unmount(cmp!); cmp = undefined; document.body.innerHTML = ''
+    open(undefined, false)
+    document.querySelector<HTMLButtonElement>('[data-rail="group:objects"]')!.click()
+    flushSync()
+    await tick()
+    expect(document.querySelector('[data-section="group:objects"] .cell')).not.toBeNull()
   })
 
   it('renders_every_standard_emoji_with_lazy_images', () => {

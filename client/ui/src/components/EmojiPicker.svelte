@@ -99,6 +99,20 @@
     searchEl?.focus()
   })
 
+  // Opening cheaply (#180): the sections that start in the first ~13 rows mount their cells with the picker; the
+  // rest (most of ~1.9k) a frame after its pop-in has begun, holding their height until then. Anything that could
+  // reach them sooner (a key, a rail jump) mounts them at once.
+  const FIRST_CELLS = 120
+  let all = $state(false)
+  $effect(() => {
+    let second = 0
+    const first = requestAnimationFrame(() => (second = requestAnimationFrame(() => (all = true))))
+    return () => {
+      cancelAnimationFrame(first)
+      cancelAnimationFrame(second)
+    }
+  })
+
   // A custom emoji starts on its still frame; `animatedEmoji` plays it when the rule allows.
   const imgSrc = (e: Item) => (isCustom(e) ? stillSrc(e) : twemojiUrl(withSkin(e, tone)))
   const nameOf = (e: Item) => (isCustom(e) ? e.name : e.n)
@@ -110,6 +124,7 @@
   }
 
   function jump(id: string) {
+    all = true
     query = '' // the sections are hidden while a search is showing
     collapsed[id] = false
     void tick().then(() => root.querySelector(`[data-section="${id}"]`)?.scrollIntoView({ block: 'start' }))
@@ -124,6 +139,7 @@
   }
 
   function onKey(ev: KeyboardEvent) {
+    all = true
     if (ev.key === 'Escape') {
       ev.preventDefault()
       onClose()
@@ -227,9 +243,13 @@
               {@const base = startIndex(s)}
               <!-- drawn only near the view (#173): ~1.9k twemoji drawn at once cost seconds of frames on open and
                    scroll. Until then a section is laid out at its real height (34px rows of 9). -->
-              <div class="cells lazy" style:contain-intrinsic-size="auto {Math.ceil(s.items.length / 9) * 34}px">
-                {#each s.items as e, i (keyOf(e))}{@render cell(e, base + i)}{/each}
-              </div>
+              {#if all || base < FIRST_CELLS}
+                <div class="cells lazy" style:contain-intrinsic-size="auto {Math.ceil(s.items.length / 9) * 34}px">
+                  {#each s.items as e, i (keyOf(e))}{@render cell(e, base + i)}{/each}
+                </div>
+              {:else}
+                <div class="cells pending" style:height="{Math.ceil(s.items.length / 9) * 34}px"></div>
+              {/if}
             {/if}
           </section>
         {/each}

@@ -36,8 +36,14 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = () => {}
   // the shared hover delay is its own test below; the rest hover with none
   tipTiming.delay = 0
+  // frames run at once: the emoji picker mounts all its cells as it opens (its deferral is EmojiPicker.test.ts's)
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => (cb(0), 0))
+  vi.stubGlobal('cancelAnimationFrame', () => {})
 })
-afterEach(() => void (tipTiming.delay = TIP_DELAY))
+afterEach(() => {
+  tipTiming.delay = TIP_DELAY
+  vi.unstubAllGlobals()
+})
 const settle = () => new Promise((r) => setTimeout(r, 0))
 function deferred<T = unknown>() {
   let resolve!: (v: T) => void
