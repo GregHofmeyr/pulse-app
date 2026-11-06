@@ -114,6 +114,7 @@ deploy-check:
     docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh
     bash deploy/deploy-selftest.sh
     bash deploy/backup-selftest.sh
+    bash deploy/publish-update-selftest.sh
 
 # --- production (pulsechat.co.za); see deploy/README.md ---
 prod := "pulse@pulse"
@@ -188,6 +189,11 @@ _ship $tag $pin:
     ssh {{prod}} 'bash -s -- --check-env' < deploy/deploy.sh
     scp deploy/compose.yml deploy/Caddyfile deploy/livekit.yaml deploy/backup.sh deploy/deploy.sh {{prod}}:/srv/pulse/
     ssh {{prod}} "/srv/pulse/deploy.sh $tag $pin"
+
+# publish release-windows run RUN_ID as the app update everyone gets (#82): checks the run and the installer's
+# signature, uploads it, writes latest.json last and keeps two versions. After `just deploy`; see deploy/README.md.
+publish-update $run_id:
+    bash deploy/publish-update.sh "$run_id"
 
 # outside-in checks of the live server
 smoke:
@@ -288,6 +294,19 @@ restore-media name:
 # live server logs
 logs service="pulse-server":
     ssh {{prod}} 'cd /srv/pulse && docker compose logs --tail 100 -f {{service}}'
+
+# Set the app version for a release (#82): the one place is `[workspace.package] version` in Cargo.toml (Tauri, the
+# installer name and every crate read it), and the patch notes show it. Then write the notes and merge.
+bump-version $version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bump-version: a version is X.Y.Z (digits only), got '$version'" >&2; exit 1; }
+    sed -i -E '/^\[workspace\.package\]/,/^\[/ s/^version = "[^"]*"/version = "'"$version"'"/' Cargo.toml
+    sed -i -E "s/^  version: '[^']*',/  version: '$version',/" client/ui/src/patchNotes.ts
+    grep -q "^version = \"$version\"" Cargo.toml || { echo "bump-version: Cargo.toml wasn't updated" >&2; exit 1; }
+    grep -q "^  version: '$version'," client/ui/src/patchNotes.ts || { echo "bump-version: patchNotes.ts wasn't updated" >&2; exit 1; }
+    cargo update -w --offline
+    echo "version $version: now give patchNotes.ts a new id, date and notes"
 
 # dependency policy: advisories, licences, bans, sources (needs `cargo install cargo-deny --locked`)
 deny:

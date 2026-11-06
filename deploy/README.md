@@ -206,8 +206,8 @@ or call that is already open stays up until it drops. To close those at once, re
 - LiveKit lives in two places that move together: `deploy/compose.yml` (production) and the root
   `docker-compose.yml` (dev and `just voice-it`; same `image:` line, so the tests run what ships). Dependabot bumps
   both in one PR. `deploy-selftest.sh` (CI and `just deploy-check`) fails if the two image lines differ.
-- Order for a release: deploy the server first, then send friends the new installer. Clients older than the
-  server see "plz update :)".
+- Order for a release: deploy the server first, then publish the app update (below). Clients older than the
+  server's minimum see "plz update :)", which now installs the update by itself once it's published.
 - Building a branch: running `release-server` by hand (workflow dispatch) on a branch other than `main` tags
   only `:<sha7>`. `:latest` moves only on a `main` build (after CI passes on `main`, or a manual run on `main`).
   Deploy a branch build as `just deploy-branch <sha7>`: `just deploy` only accepts builds run from `main`.
@@ -225,6 +225,36 @@ or call that is already open stays up until it drops. To close those at once, re
 - After changing `livekit.yaml`: `just deploy`, then `ssh pulse@pulse 'cd /srv/pulse && docker compose restart livekit'`.
   (A changed `LIVEKIT_NODE_IP` needs no restart: `just deploy` recreates LiveKit with it.)
   The codec list needs a LiveKit restart to apply; `just deploy` copies the file but does not restart LiveKit.
+
+### Releasing an app update
+
+Pulse updates itself (#82): on launch it asks the signed-in server for `/updates/latest.json` (with the session token;
+the route answers 401 without one) and, when that names a newer version, shows "Updating Pulse…", installs the signed
+installer quietly and reopens. While it runs it checks again after each login and every 30 minutes and offers
+"Restart to update" in the title bar (never during a call). The files live in `/srv/pulse/data/updates` (the
+container's `/data/updates`, outside the media backups).
+
+1. `just bump-version 0.2.N` (the one version, `[workspace.package]` in `Cargo.toml`, plus `patchNotes.ts`), then
+   give `client/ui/src/patchNotes.ts` a new `id`, date and notes; merge to `main`.
+2. `just deploy` (the server first: the route has to exist before any app asks). Raise `MIN_CLIENT_VERSION`
+   (`server/src/gateway/socket.rs`) only when the release truly needs it, and then publish (step 4) right away:
+   forced clients sit on the "plz update :)" screen re-checking every minute until the update is there.
+3. Build Windows: push the tag `v0.2.N` (or `gh workflow run release-windows.yml` on `main`) and wait for green. CI
+   signs the installer with the updater key (`TAURI_SIGNING_PRIVATE_KEY` and `_PASSWORD` repo secrets); the
+   `pulse-windows-installer` artifact carries `Pulse_0.2.N_x64-setup.exe` and its `.sig`.
+4. `just publish-update <run-id>` (`gh run list -w release-windows` shows the id). It refuses, before uploading
+   anything, a run that isn't a green release-windows on `main` or a `v*` tag, a signature that doesn't verify against
+   the public key in `tauri.conf.json` (needs `minisign`), a version that isn't newer than the one served, and a server
+   whose route isn't live. Then it uploads the installer, writes `latest.json` last, keeps that installer and the one
+   before it, checks the server's copy and the route, and prints `published 0.2.N`.
+5. Rolling back = publishing a higher version with the fix: the updater never downgrades. The previous installer stays
+   in `/srv/pulse/data/updates` for anyone who needs it by hand.
+
+The updater key: the public half is `plugins.updater.pubkey` in `client/src-tauri/tauri.conf.json`; the private half and
+its password are the two repo secrets plus one password-manager copy. Lost = no new update can be signed for installed
+apps (make a new key, ship a build with the new public key, everyone installs that one by hand once). Without the
+secrets `release-windows` fails at the build: there are no unsigned releases. People who are signed out update after
+they log in.
 
 ### Patching and reboots
 

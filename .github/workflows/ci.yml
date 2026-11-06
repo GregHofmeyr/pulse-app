@@ -180,6 +180,12 @@ jobs:
         run: bash deploy/deploy-selftest.sh
       - name: backup.sh self-test
         run: bash deploy/backup-selftest.sh
+      # minisign checks update signatures; the Tauri-signer case skips here (no client/ui/node_modules)
+      - name: publish-update.sh self-test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
+          bash deploy/publish-update-selftest.sh
       - name: fetch-ffmpeg.sh self-test
         run: bash scripts/fetch-ffmpeg-test.sh
 
