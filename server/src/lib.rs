@@ -25,6 +25,7 @@ pub mod servers;
 pub mod sounds;
 pub mod state;
 pub mod streams;
+pub mod updates;
 pub mod voice;
 
 #[cfg(feature = "testing")]
@@ -68,6 +69,7 @@ pub fn router(state: AppState) -> Router {
         .merge(search::routes::router())
         .merge(embeds::routes::router())
         .merge(embeds::page::router())
+        .merge(updates::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
@@ -89,6 +91,14 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
             error = %e,
             dir = %cfg.media_dir.display(),
             "media dir unavailable, so emoji uploads will fail: set PULSE_MEDIA_DIR to a writable directory (`just dev-server` uses data/media)"
+        );
+    }
+    // App updates (#82): `just publish-update` fills it; until then the route answers 404 ("no update").
+    if let Err(e) = std::fs::create_dir_all(&cfg.updates_dir) {
+        tracing::warn!(
+            error = %e,
+            dir = %cfg.updates_dir.display(),
+            "updates dir unavailable, so app updates can't be served: set PULSE_UPDATES_DIR to a writable directory"
         );
     }
     media::spawn_cleanup(db.clone(), cfg.media_dir.clone());

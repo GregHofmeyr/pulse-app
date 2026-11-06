@@ -74,6 +74,7 @@ pub fn test_config() -> Config {
         stream_media_timeout: Duration::from_millis(300),
         media_dir: Default::default(), // under the test's temp dir unless a test sets one
         media_min_free_bytes: 0,
+        updates_dir: Default::default(), // under the test's temp dir unless a test sets one
         totp_key: Some(crate::auth::totp::TotpKey::parse(&"42".repeat(32)).unwrap()),
         clips: None, // `spawn_in` points it at a fake S3 unless the test set it
         embeds: crate::config::EmbedConfig::default(),
@@ -128,6 +129,9 @@ async fn spawn_inner(mut cfg: Config, dir: tempfile::TempDir, with_clips: bool) 
     cfg.db_url = format!("sqlite://{}", dir.path().join("test.db").display());
     if cfg.media_dir.as_os_str().is_empty() {
         cfg.media_dir = dir.path().join("media");
+    }
+    if cfg.updates_dir.as_os_str().is_empty() {
+        cfg.updates_dir = dir.path().join("updates");
     }
     let db = db::connect(&cfg.db_url).await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -28,6 +28,9 @@ pub struct Config {
     pub media_dir: PathBuf,
     /// Uploads are refused when the media filesystem has less free space than this.
     pub media_min_free_bytes: u64,
+    /// Where app updates live (#82): `latest.json` and the signed installers `just publish-update` puts there.
+    /// Outside the media dir, so media backups don't carry installers.
+    pub updates_dir: PathBuf,
     /// Encrypts TOTP secrets at rest. `None` = two-factor can't be set up (`PULSE_TOTP_KEY` unset).
     pub totp_key: Option<TotpKey>,
     /// Where clip videos live (S3-compatible, Cloudflare R2). `None` = clips storage isn't set up
@@ -44,7 +47,7 @@ pub struct Config {
 
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
-    limits, stream_media_timeout, media_dir, media_min_free_bytes, totp_key, clips, embeds,
+    limits, stream_media_timeout, media_dir, media_min_free_bytes, updates_dir, totp_key, clips, embeds,
     launch_date, calls ;
     livekit_secret
 });
@@ -81,6 +84,7 @@ impl Config {
             stream_media_timeout: Duration::from_secs(60),
             media_dir: var("PULSE_MEDIA_DIR", "/data/media").into(),
             media_min_free_bytes: 2 * 1024 * 1024 * 1024,
+            updates_dir: var("PULSE_UPDATES_DIR", "/data/updates").into(),
             totp_key: totp_key(std::env::var("PULSE_TOTP_KEY").ok().as_deref())?,
             clips: ClipStoreConfig::from_env()?,
             embeds: EmbedConfig {
@@ -347,6 +351,7 @@ mod tests {
             stream_media_timeout: Duration::from_secs(60),
             media_dir: "/data/media".into(),
             media_min_free_bytes: 1,
+            updates_dir: "/data/updates".into(),
             totp_key: Some(TotpKey::parse(&"ab".repeat(32)).unwrap()),
             clips: None,
             embeds: EmbedConfig::default(),
