@@ -90,6 +90,31 @@ fn bring_to_front(app: &tauri::AppHandle) {
     }
 }
 
+/// Leave voice and stream audio and stop clip work (no ffmpeg keeps running, or holding its files, after Pulse): on
+/// quit, and before an update's installer takes over (#82: its exit skips `RunEvent::Exit`, and the installer has
+/// to replace the bundled ffmpeg).
+pub(crate) async fn wind_down(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let voice = app.state::<voice::VoiceManager>();
+    let stream_audio = app.state::<stream::audio::StreamAudio>();
+    let core = app.state::<commands::Core>();
+    // side by side: one slow close must not use up the other's budget
+    let leave = async {
+        tokio::join!(stream_audio.leave(), voice.leave());
+    };
+    let budget = std::time::Duration::from_secs(2);
+    let (left, stopped) = tokio::join!(
+        tokio::time::timeout(budget, leave),
+        tokio::time::timeout(budget, core.stop_clips()),
+    );
+    if left.is_err() {
+        tracing::warn!("voice: leave on exit timed out");
+    }
+    if stopped.is_err() {
+        tracing::warn!("clips: stopping on exit timed out");
+    }
+}
+
 pub fn run() {
     startup::begin();
     let mut builder = tauri::Builder::default();
@@ -457,26 +482,7 @@ pub fn run() {
             // It also stops clip work, so no ffmpeg keeps running (and holding its files) after Pulse.
             if let tauri::RunEvent::Exit = event {
                 use tauri::Manager;
-                let voice = app.state::<voice::VoiceManager>();
-                let stream_audio = app.state::<stream::audio::StreamAudio>();
-                let core = app.state::<commands::Core>();
-                tauri::async_runtime::block_on(async {
-                    // side by side: one slow close must not use up the other's budget
-                    let leave = async {
-                        tokio::join!(stream_audio.leave(), voice.leave());
-                    };
-                    let budget = std::time::Duration::from_secs(2);
-                    let (left, stopped) = tokio::join!(
-                        tokio::time::timeout(budget, leave),
-                        tokio::time::timeout(budget, core.stop_clips()),
-                    );
-                    if left.is_err() {
-                        tracing::warn!("voice: leave on exit timed out");
-                    }
-                    if stopped.is_err() {
-                        tracing::warn!("clips: stopping on exit timed out");
-                    }
-                });
+                tauri::async_runtime::block_on(wind_down(app));
                 reports::crash::clear_running(&app.state::<reports::LogDir>().0);
             }
         });

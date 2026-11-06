@@ -23,6 +23,8 @@ pub const LAUNCH_WAIT: Duration = Duration::from_secs(4);
 /// How long one check (the manifest request) may take. Never the updater's own `.timeout()`: that bounds the
 /// installer download too.
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(4);
+/// The longest the installer download may go without receiving anything before it fails.
+pub const DOWNLOAD_STALL: Duration = Duration::from_secs(30);
 /// While running, how often to look again.
 pub const RECHECK_EVERY: Duration = Duration::from_secs(30 * 60);
 /// A running check found a newer version: [`Offer`].
@@ -158,6 +160,9 @@ async fn check_server(
         .and_then(|b| b.header("Authorization", format!("Bearer {token}")))
         .map_err(|e| format!("updater setup: {e}"))?
         .version_comparator(|current, release| should_offer(&current, &release.version))
+        // A download that stalls fails (and Pulse carries on) instead of leaving "Updating Pulse…" up for good; a
+        // per-read limit, so a slow but moving download of any size still finishes.
+        .configure_client(|c| c.read_timeout(DOWNLOAD_STALL))
         .on_before_exit(move || before_exit())
         .build()
         .map_err(|e| format!("updater setup: {e}"))?;
@@ -333,6 +338,8 @@ async fn download_and_install(
         .await
         .map_err(|e| format!("the download failed: {e}"))?;
     tracing::info!(version = %update.version, "update: installing; Pulse will close and reopen");
+    // The installer's exit skips RunEvent::Exit: wind down now, so no ffmpeg holds the files it replaces.
+    crate::wind_down(app).await;
     update
         .install(bytes)
         .map_err(|e| format!("the install failed: {e}"))

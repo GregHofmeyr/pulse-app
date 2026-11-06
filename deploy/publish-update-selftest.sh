@@ -228,6 +228,35 @@ artifact 0.2.2
 cp "$FAKE_ARTIFACT/Pulse_0.2.2_x64-setup.exe" "$FAKE_ARTIFACT/Pulse_0.2.3_x64-setup.exe"
 [ "$(publish)" = refused ] && pass "two installers refused" || fail "published from two installers"
 
+# --- corrupt_upload_never_goes_live: the server's copy of the installer differs (a cut-off scp) → refused before the
+# manifest names it; the old version stays served and nothing new is left in place
+cat >"$tmp/bin/badcp" <<'EOF'
+#!/usr/bin/env bash
+# copies only the first 1000 bytes of an installer (any other file whole)
+case "$1" in *.exe) head -c 1000 "$1" >"$2" ;; *) cp "$1" "$2" ;; esac
+EOF
+chmod +x "$tmp/bin/badcp"
+serve 0.2.0 0.2.1
+artifact 0.2.2
+export PUBLISH_UPDATE_CP=badcp
+[ "$(publish)" = refused ] && pass "corrupt_upload_never_goes_live: refused" || fail "published a corrupt upload: $(cat "$tmp/out")"
+export PUBLISH_UPDATE_CP=cp
+[ "$(served_version)" = 0.2.1 ] && pass "the old version stays served" || fail "served after a corrupt upload: $(served_version)"
+[ "$(files)" = "Pulse_0.2.0_x64-setup.exe Pulse_0.2.1_x64-setup.exe latest.json " ] && pass "nothing new left, nothing pruned" || fail "after a corrupt upload: $(files)"
+
+# --- failed_manifest_move_refused: the manifest can't be moved into place → refused, and the new installer isn't pruned
+cat >"$tmp/bin/mv" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in *latest.json.tmp*) echo "mv: read-only" >&2; exit 1 ;; *) exec /usr/bin/mv "$@" ;; esac
+EOF
+chmod +x "$tmp/bin/mv"
+serve 0.2.1
+artifact 0.2.2
+[ "$(publish)" = refused ] && pass "failed_manifest_move_refused" || fail "a failed manifest move passed: $(cat "$tmp/out")"
+rm "$tmp/bin/mv"
+[ "$(served_version)" = 0.2.1 ] && pass "the old manifest stays" || fail "manifest after a failed move: $(served_version)"
+[ -f "$srv/Pulse_0.2.1_x64-setup.exe" ] && pass "the served installer is kept" || fail "pruned the served installer: $(files)"
+
 # --- the route must be live and guarded
 serve 0.2.1
 artifact 0.2.2

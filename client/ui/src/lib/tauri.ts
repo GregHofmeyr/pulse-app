@@ -105,7 +105,7 @@ export type TwoFactorSetup = { secret: string; qr: QrMatrix }
 export type UpdateOffer = { version: string }
 /** How far the installer download is (`pulse://update-progress`); `total` null = the size isn't known. */
 export type UpdateProgress = { downloaded: number; total: number | null }
-export type Restored ={ status: 'ready'; user: User } | { status: 'logged_out' } | { status: 'refused' }
+export type Restored = { status: 'ready'; user: User } | { status: 'logged_out' } | { status: 'refused' }
 
 function uploadProfileMedia(cmd: string, bytes: Uint8Array, crop: CropRect | null) {
   if (!crop) return invoke<MediaInfo>(cmd, bytes)

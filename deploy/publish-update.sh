@@ -89,7 +89,8 @@ remote() {
 # upload LOCAL NAME: copies LOCAL to NAME in the server's updates dir
 upload() {
   if [ -n "${PUBLISH_UPDATE_DIR:-}" ]; then
-    cp "$1" "$PUBLISH_UPDATE_DIR/$2"
+    # the self-test can swap the copy for one that cuts the file short
+    "${PUBLISH_UPDATE_CP:-cp}" "$1" "$PUBLISH_UPDATE_DIR/$2"
   else
     scp -q "$1" "$prod:$srv_updates/$2"
   fi
@@ -168,17 +169,24 @@ publish_main() {
   newer_than "$version" "$served" || refuse "$version isn't newer than the $served the server offers now (the updater never downgrades: publish a higher version)"
 
   echo "publishing $version (run $run_id; the server offers ${served:-nothing} now)"
+  local_sha=$(sha256sum "$exe" | cut -d' ' -f1)
   remote 'mkdir -p .incoming'
-  upload "$exe" ".incoming/$name"
+  upload "$exe" ".incoming/$name" || { remote "rm -f .incoming/$name"; refuse "couldn't upload $name"; }
+  # the server's copy is checked while it's still in .incoming: a cut-off upload never goes live
+  remote_sha=$(remote "sha256sum .incoming/$name" | cut -d' ' -f1)
+  if [ "$local_sha" != "$remote_sha" ]; then
+    remote "rm -f .incoming/$name"
+    refuse "the server's copy of $name doesn't match the download (sha256 ${remote_sha:-none}); nothing changed"
+  fi
   remote "mv -f .incoming/$name $name"
   write_manifest "$version" "https://$PULSE_DOMAIN/updates/$name" "$sig" "Pulse $version" "$dl/latest.json"
-  upload "$dl/latest.json" latest.json.tmp
-  remote 'mv -f latest.json.tmp latest.json && rmdir .incoming 2>/dev/null || true'
+  upload "$dl/latest.json" latest.json.tmp || refuse "couldn't upload latest.json; the server still offers ${served:-nothing}"
+  remote 'mv -f latest.json.tmp latest.json' || refuse "couldn't put latest.json in place; the server still offers ${served:-nothing}"
+  remote 'rmdir .incoming 2>/dev/null || true'
+  # prune only once the server really offers this version (it keeps this installer and the one before)
+  [ "$(served_version)" = "$version" ] || refuse "the server's latest.json doesn't offer $version after the move; nothing was pruned"
   prune
 
-  local_sha=$(sha256sum "$exe" | cut -d' ' -f1)
-  remote_sha=$(remote "sha256sum $name" | cut -d' ' -f1)
-  [ "$local_sha" = "$remote_sha" ] || refuse "the server's $name doesn't match the download (sha256 $remote_sha)"
   remote 'cat latest.json' | jq -e '.platforms["windows-x86_64"].signature | length > 0' >/dev/null ||
     refuse "the server's latest.json doesn't parse"
   code=$(route_code)
