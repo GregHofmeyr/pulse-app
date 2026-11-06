@@ -93,6 +93,8 @@ pub struct StreamAudio {
     /// Stream volume per person (percent), kept with no connection so a slider set early applies.
     volumes: Arc<Mutex<HashMap<String, u16>>>,
     on_closed: Option<OnClosed>,
+    /// The channel our share is live in, audio or not (`set_live`).
+    live: Mutex<Option<ChannelId>>,
 }
 
 #[derive(Default)]
@@ -554,6 +556,19 @@ impl StreamAudio {
         Ok(())
     }
 
+    /// Our share went live in `channel` (`Some`) or stopped (`None`).
+    pub fn set_live(&self, channel: Option<ChannelId>) {
+        *self.live.lock().unwrap() = channel;
+    }
+
+    /// Whether this machine shares or watches a stream now: a share live, or `#a` connected
+    /// (stream audio out, or a watch). Busy (`#a` connecting or leaving) counts as yes. A voice
+    /// self-heal holds back for it (#217): its rejoin would end them.
+    pub fn in_use(&self) -> bool {
+        self.live.lock().unwrap().is_some()
+            || self.state.try_lock().map_or(true, |st| st.conn.is_some())
+    }
+
     /// Whether `#a` is in a stream room as a ghost, and watching anyone.
     pub async fn ghost_watching(&self) -> (bool, bool) {
         let st = self.state.lock().await;
@@ -768,6 +783,13 @@ impl StreamAudio {
 
     /// Leaves unless connected to `keep` (the voice channel we are in now, if any).
     pub async fn leave_unless_in(&self, keep: Option<ChannelId>) {
+        {
+            // a share never outlives its voice channel
+            let mut live = self.live.lock().unwrap();
+            if *live != keep {
+                *live = None;
+            }
+        }
         let mut st = self.state.lock().await;
         if st.conn.as_ref().is_some_and(|c| Some(c.channel) == keep) {
             return;

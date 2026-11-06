@@ -127,11 +127,16 @@ pub async fn stream_ticket(
 pub async fn stream_go_live(
     app: AppHandle,
     core: State<'_, Core>,
+    audio: State<'_, StreamAudio>,
     channel_id: ChannelId,
     settings: StreamSettings,
 ) -> Result<StreamInfo, ApiError> {
     let (api, token) = core.current()?;
-    core.check(&app, api.go_live(&token, channel_id, settings).await)
+    let r = core.check(&app, api.go_live(&token, channel_id, settings).await);
+    if r.is_ok() {
+        audio.set_live(Some(channel_id));
+    }
+    r
 }
 
 /// After a server restart: announce our stream again, retrying while the server catches up.
@@ -153,10 +158,15 @@ pub async fn stream_reannounce(
 pub async fn stream_stop(
     app: AppHandle,
     core: State<'_, Core>,
+    audio: State<'_, StreamAudio>,
     channel_id: ChannelId,
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
-    core.check(&app, api.stop_live(&token, channel_id).await)
+    let r = core.check(&app, api.stop_live(&token, channel_id).await);
+    if r.is_ok() {
+        audio.set_live(None);
+    }
+    r
 }
 
 #[tauri::command]

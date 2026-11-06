@@ -6,6 +6,7 @@ pub mod denoise;
 pub mod devices;
 pub mod echo;
 pub mod gate;
+pub mod heal;
 pub mod linkstats;
 pub mod meter;
 pub mod micsilence;
@@ -43,6 +44,62 @@ use controls::Controls;
 use devices::{AudioConfig, AudioIo, INTERNAL_RATE, Shared, Sides};
 use mixer::{SourceKind, percent_to_gain};
 use rx::RxTasks;
+
+/// Whether a stream is shared or watched right now (the app asks `StreamAudio`). A heal's rejoin
+/// leaves the voice room for a moment, and the server ends shares and watches on a voice leave.
+pub type StreamsInUse = Arc<dyn Fn() -> bool + Send + Sync>;
+type LkRuntime = livekit::rtc_engine::lk_runtime::LkRuntime;
+/// How long a heal waits for the old runtime's last users (the closed room's tasks) to let go.
+const RUNTIME_RELEASE_WAIT: Duration = Duration::from_secs(3);
+
+/// A stalled track a probe says to heal (`heal::watch_stall`), for the rejoin loop.
+struct HealRequest {
+    epoch: u64,
+    channel: ChannelId,
+    peer: String,
+    track: String,
+    /// Frames the track's receive task had before it stalled.
+    frames: u64,
+    stalled_at: Instant,
+    evidence: heal::Evidence,
+}
+
+/// An automatic rejoin of join `epoch`; `rebuild_runtime` for a self-heal (#217).
+#[derive(Clone, Copy)]
+struct Rejoin {
+    epoch: u64,
+    rebuild_runtime: bool,
+}
+
+/// What a voice room's receive tasks need for the self-heal.
+#[derive(Clone)]
+struct HealWiring {
+    tx: Option<mpsc::UnboundedSender<HealRequest>>,
+    healer: Arc<Mutex<heal::Healer<ChannelId>>>,
+    /// Tests: 1 drops every voice frame until the runtime is rebuilt, 2 on every runtime.
+    dead_receive: Arc<std::sync::atomic::AtomicU8>,
+}
+
+/// A track's receive counters, from its own stats.
+fn inbound_counters(stats: &[livekit::webrtc::stats::RtcStats]) -> Option<heal::Counters> {
+    stats.iter().find_map(|s| match s {
+        livekit::webrtc::stats::RtcStats::InboundRtp(r) if r.stream.kind == "audio" => {
+            Some(heal::Counters {
+                packets: r.received.packets_received,
+                neteq_samples: r.inbound.total_samples_received,
+            })
+        }
+        _ => None,
+    })
+}
+
+/// Build WebRTC's runtime if needed, and keep it in `lk`.
+fn keep(lk: &Mutex<Option<Arc<LkRuntime>>>) {
+    let mut lk = lk.lock().unwrap();
+    if lk.is_none() {
+        *lk = Some(LkRuntime::instance());
+    }
+}
 
 /// Max audio buffered per peer before the oldest is dropped (bounds latency).
 const PEER_BUFFER_MS: u32 = 200;
@@ -865,6 +922,13 @@ impl<R: CloseRoom> Session<R> {
     /// the next room: its devices stay open.
     async fn detach(self) -> Arc<Pipeline> {
         tracing::info!(channel = %self.channel, "voice: leaving for another channel");
+        let (pipeline, room) = self.detach_parts().await;
+        close_in_background(room, None);
+        pipeline
+    }
+
+    /// `detach`, but the room is handed back for the caller to close (a heal waits for it).
+    async fn detach_parts(self) -> (Arc<Pipeline>, Arc<R>) {
         self.alive.store(false, Ordering::SeqCst);
         let pipeline = self.pipeline.clone();
         pipeline.shared.set_mic_sink(None);
@@ -878,8 +942,7 @@ impl<R: CloseRoom> Session<R> {
         let room = self.room.clone();
         // its tasks stop here: our own close must not look like LiveKit dropping us (a rejoin)
         drop(self);
-        close_in_background(room, None);
-        pipeline
+        (pipeline, room)
     }
 
     /// Tear this session down for good: out of its room, devices closed, the pipeline with it.
@@ -966,7 +1029,20 @@ pub struct VoiceManager {
     tokens: tokens::TokenCache,
     /// WebRTC's runtime (peer-connection factory and its threads), kept for the app's life:
     /// LiveKit only holds it weakly, so it was rebuilt on every join after a leave.
-    lk: Arc<std::sync::OnceLock<Arc<livekit::rtc_engine::lk_runtime::LkRuntime>>>,
+    /// Taken (and so rebuilt by the next join) only by a self-heal (#217).
+    lk: Arc<Mutex<Option<Arc<LkRuntime>>>>,
+    /// Set while a heal lets the old runtime go: a hover mustn't warm (keep) it meanwhile.
+    releasing: Arc<AtomicBool>,
+    /// Runtimes a heal let go of for good (tests, diagnostics).
+    rebuilds: AtomicU32,
+    /// Self-heal (#217): heals so far, the rate limit and whether the last one helped.
+    healer: Arc<Mutex<heal::Healer<ChannelId>>>,
+    /// Stalled tracks to heal → `run_rejoins` (None until that loop runs: no heals).
+    heal_tx: Mutex<Option<mpsc::UnboundedSender<HealRequest>>>,
+    heal_count: AtomicU32,
+    /// Shared or watched streams hold a heal back (`set_streams_in_use`).
+    streams_in_use: Mutex<Option<StreamsInUse>>,
+    dead_receive: Arc<std::sync::atomic::AtomicU8>,
     /// Bumped by every user join/leave: a rejoin for an older one stands down.
     epoch: std::sync::atomic::AtomicU64,
     /// What the user last joined (the rejoin target); cleared on Leave.
@@ -1008,6 +1084,13 @@ impl VoiceManager {
             live: Mutex::new(None),
             tokens: Default::default(),
             lk: Default::default(),
+            releasing: Default::default(),
+            rebuilds: Default::default(),
+            healer: Default::default(),
+            heal_tx: Mutex::new(None),
+            heal_count: Default::default(),
+            streams_in_use: Mutex::new(None),
+            dead_receive: Default::default(),
             epoch: Default::default(),
             last_join: Mutex::new(None),
             dropped_tx: Mutex::new(None),
@@ -1043,19 +1126,83 @@ impl VoiceManager {
 
     /// Build WebRTC's runtime if needed, and keep it.
     pub fn keep_runtime(&self) {
-        self.lk
-            .get_or_init(livekit::rtc_engine::lk_runtime::LkRuntime::instance);
+        keep(&self.lk);
     }
 
     /// Same, on the blocking pool (it takes tens of ms): for a hover, ahead of the click.
     pub fn warm_runtime(&self) {
-        if self.lk.get().is_some() {
-            return; // already warm: every hover after the first lands here
+        if self.lk.lock().unwrap().is_some() || self.releasing.load(Ordering::SeqCst) {
+            return; // already warm (every hover after the first), or a heal is letting it go
         }
-        let lk = self.lk.clone();
+        let (lk, releasing) = (self.lk.clone(), self.releasing.clone());
         tokio::task::spawn_blocking(move || {
-            lk.get_or_init(livekit::rtc_engine::lk_runtime::LkRuntime::instance);
+            if !releasing.load(Ordering::SeqCst) {
+                keep(&lk);
+            }
         });
+    }
+
+    /// Self-heal (#217): let WebRTC's runtime go, so the next join builds a new one, as an app
+    /// restart does. Its rooms must be closed first; their tasks let go of it shortly after.
+    /// True once it is gone (false: something still holds it, and the next join reuses it).
+    async fn release_runtime(&self) -> bool {
+        self.releasing.store(true, Ordering::SeqCst);
+        let old = self.lk.lock().unwrap().take();
+        let weak = old.as_ref().map(Arc::downgrade);
+        // the last handle may be this one: its factory's threads are joined on drop
+        let _ = tokio::task::spawn_blocking(move || drop(old)).await;
+        let t = Instant::now();
+        let released = loop {
+            let gone = weak.as_ref().is_none_or(|w| w.strong_count() == 0);
+            if gone || t.elapsed() >= RUNTIME_RELEASE_WAIT {
+                break gone;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        self.releasing.store(false, Ordering::SeqCst);
+        let waited_ms = t.elapsed().as_millis() as u64;
+        if released {
+            self.rebuilds.fetch_add(1, Ordering::Relaxed);
+            // tests: a dead receive that a rebuild fixes ends here
+            let _ = self
+                .dead_receive
+                .compare_exchange(1, 0, Ordering::SeqCst, Ordering::SeqCst);
+            tracing::info!(waited_ms, "voice: self-heal: the old audio runtime is gone");
+        } else {
+            tracing::warn!(
+                waited_ms,
+                "voice: self-heal: the old audio runtime is still in use; rejoining on it"
+            );
+        }
+        released
+    }
+
+    /// Asked before a heal: is a stream shared or watched (its rejoin would end it)?
+    pub fn set_streams_in_use(&self, f: StreamsInUse) {
+        *self.streams_in_use.lock().unwrap() = Some(f);
+    }
+
+    /// Self-heals started so far (#217).
+    pub fn heals(&self) -> u32 {
+        self.heal_count.load(Ordering::Relaxed)
+    }
+
+    /// Runtimes a heal let go of (#217).
+    pub fn runtime_rebuilds(&self) -> u32 {
+        self.rebuilds.load(Ordering::Relaxed)
+    }
+
+    /// A heal didn't help, so this run heals no more.
+    pub fn self_heal_given_up(&self) -> bool {
+        self.healer.lock().unwrap().given_up()
+    }
+
+    /// Tests: WebRTC stops handing over voice frames (#216) until the runtime is rebuilt, or for
+    /// good (`for_good`). Packets keep arriving.
+    #[doc(hidden)]
+    pub fn simulate_dead_receive(&self, for_good: bool) {
+        self.dead_receive
+            .store(if for_good { 2 } else { 1 }, Ordering::SeqCst);
     }
 
     /// Signed out: no token of this session may be used by the next.
@@ -1109,16 +1256,16 @@ impl VoiceManager {
         channel: ChannelId,
         cfg: AudioConfig,
         mode: AudioMode,
-        rejoin_of: Option<u64>,
+        rejoin_of: Option<Rejoin>,
     ) -> Result<(), VoiceError> {
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
         let id = self.join_seq.fetch_add(1, Ordering::Relaxed) + 1;
         {
             let mut pending = self.pending_join.lock().unwrap();
-            if let Some(e) = rejoin_of {
+            if let Some(r) = rejoin_of {
                 // stale (the user acted since), or a join of the user's is still going: stand
                 // down, never cancel it
-                if e != self.epoch.load(Ordering::SeqCst) || pending.is_some() {
+                if r.epoch != self.epoch.load(Ordering::SeqCst) || pending.is_some() {
                     return Err(VoiceError::Cancelled);
                 }
             }
@@ -1128,17 +1275,23 @@ impl VoiceManager {
             }
         }
         let _op = self.op.lock().await;
-        if rejoin_of.is_some_and(|e| e != self.epoch.load(Ordering::SeqCst)) {
+        if rejoin_of.is_some_and(|r| r.epoch != self.epoch.load(Ordering::SeqCst)) {
             self.clear_pending_join(id);
             return Err(VoiceError::Cancelled); // the user left or switched while we waited
         }
         // a switch carries the devices, processor and noise model over to the next room
-        let kept = if rejoin_of.is_some() {
-            // the dead session's devices are opened again next: wait until they're closed
-            self.leave_locked(false).await;
-            None
-        } else {
-            self.detach_locked().await
+        let kept = match rejoin_of {
+            // a heal: the room closed and the runtime let go, the devices kept
+            Some(Rejoin {
+                rebuild_runtime: true,
+                ..
+            }) => self.detach_for_rebuild().await,
+            Some(_) => {
+                // the dead session's devices are opened again next: wait until they're closed
+                self.leave_locked(false).await;
+                None
+            }
+            None => self.detach_locked().await,
         };
         tracing::info!(%channel, rejoin = rejoin_of.is_some(), "voice: joining");
         let trying = if rejoin_of.is_some() {
@@ -1201,12 +1354,139 @@ impl VoiceManager {
 
     /// Brings voice back after LiveKit gives up: rejoins the same channel with backoff until it
     /// works, the user leaves or switches, or `rejoin::MAX_ATTEMPTS` fail. Runs for the app's life.
+    /// Self-heals (#217) take turns with them here.
     pub async fn run_rejoins(&self) {
         let (tx, mut rx) = mpsc::unbounded_channel();
         *self.dropped_tx.lock().unwrap() = Some(tx);
-        while let Some(epoch) = rx.recv().await {
-            self.rejoin(epoch).await;
+        let (heal_tx, mut heals) = mpsc::unbounded_channel();
+        *self.heal_tx.lock().unwrap() = Some(heal_tx);
+        loop {
+            tokio::select! {
+                Some(epoch) = rx.recv() => self.rejoin(epoch).await,
+                Some(h) = heals.recv() => self.heal(h).await,
+                else => break,
+            }
         }
+    }
+
+    /// A subscribed track stalled with its packets still arriving (#216): rebuild WebRTC's
+    /// runtime and rejoin the same channel, keeping the devices, mute, deafen and volumes. At
+    /// most once per channel per `heal::HEAL_EVERY`, and never again in this run once one didn't
+    /// help. Not while a stream is shared or watched: rejoining would end it.
+    async fn heal(&self, h: HealRequest) {
+        let args = self.last_join.lock().unwrap().clone();
+        let Some(a) =
+            args.filter(|a| a.channel == h.channel && self.epoch.load(Ordering::SeqCst) == h.epoch)
+        else {
+            return; // the user left or switched since
+        };
+        let (peer, track) = (h.peer.as_str(), h.track.as_str());
+        let probe = self.streams_in_use.lock().unwrap().clone();
+        if probe.is_some_and(|in_use| in_use()) {
+            tracing::warn!(%peer, %track, "voice: self-heal: not rebuilding the audio runtime while a stream is shared or watched (rejoining voice would end it)");
+            return;
+        }
+        let now = tokio::time::Instant::now();
+        let gate = self.healer.lock().unwrap().request(h.channel, peer, now);
+        match gate {
+            heal::Gate::Go => {}
+            heal::Gate::RateLimited { ago } => {
+                tracing::info!(%peer, %track, healed_s_ago = ago.as_secs(), "voice: self-heal: this channel was healed recently; not again yet");
+                return;
+            }
+            heal::Gate::DidntHelp => {
+                tracing::warn!(%peer, %track, "voice: self-heal: didn't help (the track stalled again on the new runtime); not trying again in this run");
+                return;
+            }
+            heal::Gate::GaveUp => {
+                tracing::info!(%peer, %track, "voice: self-heal: a heal didn't help earlier in this run; not trying again");
+                return;
+            }
+        }
+        let e = h.evidence;
+        tracing::warn!(
+            %peer,
+            %track,
+            channel = %h.channel,
+            packets_in = e.packets_in,
+            pps = e.pps.round() as u64,
+            neteq_ms = e.neteq_ms.round() as u64,
+            window_ms = e.window.as_millis() as u64,
+            frames_before = h.frames,
+            stalled_ms = h.stalled_at.elapsed().as_millis() as u64,
+            "voice: self-heal: rebuilding the audio runtime after a stalled track"
+        );
+        self.heal_count.fetch_add(1, Ordering::Relaxed);
+        // the token round trip overlaps the teardown
+        self.tokens
+            .prefetch(&a.api, &a.token, a.channel, Instant::now());
+        let (started, rebuilds) = (Instant::now(), self.runtime_rebuilds());
+        *self.rejoining.lock().unwrap() = Some(a.channel);
+        let r = self
+            .join_inner(
+                &a.api,
+                &a.token,
+                a.channel,
+                a.cfg.clone(),
+                a.mode,
+                Some(Rejoin {
+                    epoch: h.epoch,
+                    rebuild_runtime: true,
+                }),
+            )
+            .await;
+        *self.rejoining.lock().unwrap() = None;
+        let gap_ms = started.elapsed().as_millis() as u64;
+        match r {
+            Ok(()) => tracing::info!(
+                %peer,
+                gap_ms,
+                new_runtime = self.runtime_rebuilds() > rebuilds,
+                "voice: self-heal: rejoined; waiting for frames from the peer"
+            ),
+            Err(VoiceError::Cancelled) => {
+                self.healer.lock().unwrap().rejoin_failed();
+                tracing::info!(
+                    gap_ms,
+                    "voice: self-heal: the user left or switched meanwhile"
+                );
+            }
+            Err(err) => {
+                self.healer.lock().unwrap().rejoin_failed();
+                tracing::warn!(error = %err, gap_ms, "voice: self-heal: the rejoin failed; rejoining as after a lost connection");
+                self.emit_state(Some(a.channel), Connection::Reconnecting);
+                self.rejoin(h.epoch).await;
+            }
+        }
+    }
+
+    /// A heal's teardown: the session's room closed (waited for, so its runtime handle goes),
+    /// a connect still in flight finished, then the runtime let go. The pipeline is kept: the
+    /// devices stay open and nothing is reloaded.
+    async fn detach_for_rebuild(&self) -> Option<Arc<Pipeline>> {
+        self.link.clear();
+        let s = self.session.lock().await.take();
+        let pipeline = match s {
+            Some(s) => {
+                tracing::info!(channel = %s.channel, "voice: self-heal: leaving the room to rebuild");
+                let (pipeline, room) = s.detach_parts().await;
+                if tokio::time::timeout(CLOSE_TIMEOUT, room.close_room())
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!("voice: self-heal: room close timed out; dropping it");
+                }
+                drop(room);
+                Some(pipeline)
+            }
+            None => None,
+        };
+        let previous = self.connecting.lock().unwrap().clone();
+        if let Some(previous) = previous {
+            previous.finished().await;
+        }
+        self.release_runtime().await;
+        pipeline
     }
 
     async fn rejoin(&self, epoch: u64) {
@@ -1248,7 +1528,10 @@ impl VoiceManager {
                     a.channel,
                     a.cfg.clone(),
                     a.mode,
-                    Some(epoch),
+                    Some(Rejoin {
+                        epoch,
+                        rebuild_runtime: false,
+                    }),
                 )
                 .await
             {
@@ -1547,6 +1830,12 @@ impl VoiceManager {
             let (controls, io, alive) = (self.controls.clone(), io.clone(), alive.clone());
             let (shared, pipeline_alive) = (shared.clone(), pipeline_alive.clone());
             let mut give_up = rejoin::GiveUpTimer::new(self.reconnect_give_up);
+            let heal = HealWiring {
+                tx: self.heal_tx.lock().unwrap().clone(),
+                healer: self.healer.clone(),
+                dead_receive: self.dead_receive.clone(),
+            };
+            let heal_room = room.clone();
             // for publishing the mic again once a server mute is undone (#140)
             let (mic_room, mic_track, mic_out) = (room.clone(), track.clone(), mic_out.clone());
             tasks.push(tokio::spawn(async move {
@@ -1613,11 +1902,42 @@ impl VoiceManager {
                                 since_join_ms = started.elapsed().as_millis() as u64,
                                 "voice: subscribed"
                             );
+                            // #217: a stall with packets arriving heals; probed from here
+                            let (heal, probe_room) = (heal.clone(), heal_room.clone());
+                            let (track_rx, publication_rx) = (t.clone(), publication.clone());
                             let task = tokio::spawn(async move {
+                                use futures::StreamExt as _;
+                                let dead = heal.dead_receive.clone();
                                 let stream =
-                                    NativeAudioStream::new(t.rtc_track(), INTERNAL_RATE as i32, 1);
+                                    NativeAudioStream::new(t.rtc_track(), INTERNAL_RATE as i32, 1)
+                                        // tests: WebRTC not handing frames over (#216)
+                                        .filter(move |_| {
+                                            std::future::ready(
+                                                kind != SourceKind::Voice
+                                                    || dead.load(Ordering::Relaxed) == 0,
+                                            )
+                                        });
                                 let mut heard = false;
+                                let mut first = true;
+                                let healer = heal.healer.clone();
                                 let on_frame = |f: livekit::webrtc::audio_frame::AudioFrame| {
+                                    if first {
+                                        first = false;
+                                        // the first frame since a heal waiting for this peer
+                                        let back = healer.lock().unwrap().frames_from(
+                                            channel,
+                                            &peer,
+                                            tokio::time::Instant::now(),
+                                        );
+                                        if let Some(after) = back {
+                                            tracing::info!(
+                                                %peer,
+                                                track = %src,
+                                                after_heal_ms = after.as_millis() as u64,
+                                                "voice: self-heal: frames resumed from the stalled peer"
+                                            );
+                                        }
+                                    }
                                     // WebRTC hands over (silent) frames before any packet arrives:
                                     // the first one with sound is when they're really audible
                                     if !heard && f.data.iter().any(|s| *s != 0) {
@@ -1633,25 +1953,89 @@ impl VoiceManager {
                                     }
                                     m.push_in(mix_gen, &src, &f.data);
                                 };
+                                let (stall_tx, stall_rx) = tokio::sync::watch::channel(false);
+                                // (frames before it, since when) of the stall going on
+                                let stall = Arc::new(Mutex::new((0u64, Instant::now())));
+                                let stall_in = stall.clone();
                                 // #216: a track WebRTC stops (or never starts) handing frames to
                                 let on_flow = |flow| match flow {
-                                    rx::Flow::Stalled { frames } => tracing::warn!(
-                                        %peer,
-                                        track = %src,
-                                        ?kind,
-                                        frames,
-                                        since_subscribed_ms =
-                                            subscribed.elapsed().as_millis() as u64,
-                                        "voice: no audio frames from a subscribed track"
-                                    ),
-                                    rx::Flow::Resumed { after } => tracing::info!(
-                                        %peer,
-                                        track = %src,
-                                        after_ms = after.as_millis() as u64,
-                                        "voice: audio frames resumed"
-                                    ),
+                                    rx::Flow::Stalled { frames } => {
+                                        tracing::warn!(
+                                            %peer,
+                                            track = %src,
+                                            ?kind,
+                                            frames,
+                                            since_subscribed_ms =
+                                                subscribed.elapsed().as_millis() as u64,
+                                            "voice: no audio frames from a subscribed track"
+                                        );
+                                        *stall_in.lock().unwrap() =
+                                            (frames, Instant::now() - rx::STALL_AFTER);
+                                        stall_tx.send_replace(true);
+                                    }
+                                    rx::Flow::Resumed { after } => {
+                                        tracing::info!(
+                                            %peer,
+                                            track = %src,
+                                            after_ms = after.as_millis() as u64,
+                                            "voice: audio frames resumed"
+                                        );
+                                        stall_tx.send_replace(false);
+                                    }
                                 };
-                                rx::receive(stream, rx::STALL_AFTER, on_frame, on_flow).await;
+                                let probe = || {
+                                    let (t, publication, room) = (
+                                        track_rx.clone(),
+                                        publication_rx.clone(),
+                                        probe_room.clone(),
+                                    );
+                                    let (peer, src) = (peer.clone(), src.clone());
+                                    async move {
+                                        let counters = match t.get_stats().await {
+                                            Ok(s) => inbound_counters(&s),
+                                            Err(_) => None,
+                                        };
+                                        let present = room
+                                            .remote_participants()
+                                            .iter()
+                                            .find(|(id, _)| id.to_string() == peer)
+                                            .is_some_and(|(_, p)| {
+                                                p.track_publications()
+                                                    .keys()
+                                                    .any(|sid| sid.to_string() == src)
+                                            });
+                                        heal::Probe {
+                                            present,
+                                            muted: t.is_muted() || publication.is_muted(),
+                                            counters,
+                                        }
+                                    }
+                                };
+                                let on_heal = |evidence| {
+                                    let (frames, stalled_at) = *stall.lock().unwrap();
+                                    if kind != SourceKind::Voice {
+                                        return;
+                                    }
+                                    if let Some(tx) = &heal.tx {
+                                        let _ = tx.send(HealRequest {
+                                            epoch,
+                                            channel,
+                                            peer: peer.clone(),
+                                            track: src.clone(),
+                                            frames,
+                                            stalled_at,
+                                            evidence,
+                                        });
+                                    }
+                                };
+                                let probing = async {
+                                    heal::watch_stall(stall_rx, probe, on_heal).await;
+                                    std::future::pending::<()>().await
+                                };
+                                tokio::select! {
+                                    _ = rx::receive(stream, rx::STALL_AFTER, on_frame, on_flow) => {}
+                                    _ = probing => {}
+                                }
                             });
                             rx.lock().unwrap().replace(source, owner, task);
                         }
@@ -2908,8 +3292,8 @@ mod tests {
         );
         // Other tests' rooms may hold the runtime at the same time, which would keep it up on
         // its own: check that what keeps it up is our handle on the very runtime LiveKit uses.
-        let ours = vm.lk.get().expect("no handle kept");
-        assert!(Arc::ptr_eq(ours, &LkRuntime::instance()));
+        let ours = vm.lk.lock().unwrap().clone().expect("no handle kept");
+        assert!(Arc::ptr_eq(&ours, &LkRuntime::instance()));
     }
 
     /// A hover warms the runtime off the async threads, and keeps it the same way.
@@ -2919,11 +3303,11 @@ mod tests {
         let vm = VoiceManager::new(Arc::new(|_| {}));
         vm.warm_runtime();
         let deadline = Instant::now() + Duration::from_secs(10);
-        while vm.lk.get().is_none() && Instant::now() < deadline {
+        while vm.lk.lock().unwrap().is_none() && Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        let ours = vm.lk.get().expect("never warmed");
-        assert!(Arc::ptr_eq(ours, &LkRuntime::instance()));
+        let ours = vm.lk.lock().unwrap().clone().expect("never warmed");
+        assert!(Arc::ptr_eq(&ours, &LkRuntime::instance()));
         vm.warm_runtime(); // warm already: nothing to do
     }
 
@@ -3676,7 +4060,10 @@ mod tests {
                 lounge.id,
                 AudioConfig::default(),
                 AudioMode::Null(48_000),
-                Some(stale),
+                Some(Rejoin {
+                    epoch: stale,
+                    rebuild_runtime: false,
+                }),
             )
             .await;
         assert!(matches!(r, Err(VoiceError::Cancelled)), "{r:?}");

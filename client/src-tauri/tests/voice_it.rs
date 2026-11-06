@@ -1376,3 +1376,285 @@ async fn hears_a_peer_again_after_leaving_and_rejoining() {
         assert!(heard, "round {round}: sam is never heard");
     }
 }
+
+/// Where `sam_talks_from_another_process` connects (unset: it does nothing).
+const SAM_URL: &str = "PULSE_IT_SAM_URL";
+const SAM_TOKEN: &str = "PULSE_IT_SAM_TOKEN";
+
+/// Not a test of its own: sam's side of the self-heal tests, run in a child process of this
+/// binary (`OtherProcess`) so his connection doesn't share alex's WebRTC runtime. A peer in the
+/// same process keeps its PeerConnections alive, which hides #216. Talks (a tone, real time)
+/// until killed; does nothing when run as part of the suite.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn sam_talks_from_another_process() {
+    use livekit::options::TrackPublishOptions;
+    use livekit::prelude::*;
+    use livekit::webrtc::audio_frame::AudioFrame;
+    use livekit::webrtc::audio_source::native::NativeAudioSource;
+    use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
+
+    let (Ok(url), Ok(token)) = (std::env::var(SAM_URL), std::env::var(SAM_TOKEN)) else {
+        return;
+    };
+    let mut opts = RoomOptions::default();
+    opts.auto_subscribe = false;
+    let (room, _events) = Room::connect(&url, &token, opts).await.unwrap();
+    let src = NativeAudioSource::new(AudioSourceOptions::default(), 48_000, 1, 0);
+    let track = LocalAudioTrack::create_audio_track("mic", RtcAudioSource::Native(src.clone()));
+    room.local_participant()
+        .publish_track(
+            LocalTrack::Audio(track),
+            TrackPublishOptions {
+                source: TrackSource::Microphone,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let tone: Vec<i16> = (0..480)
+        .map(|i| ((i as f32 * 0.13).sin() * 8000.0) as i16)
+        .collect();
+    let start = tokio::time::Instant::now();
+    // at most five minutes, should the parent die without killing us
+    for k in 1..30_000u64 {
+        let frame = AudioFrame {
+            data: tone.clone().into(),
+            sample_rate: 48_000,
+            num_channels: 1,
+            samples_per_channel: 480,
+        };
+        src.capture_frame(&frame).await.unwrap();
+        tokio::time::sleep_until(start + Duration::from_millis(10 * k)).await;
+    }
+}
+
+/// A child process of this test binary, killed when dropped.
+struct OtherProcess(std::process::Child);
+
+impl OtherProcess {
+    fn sam_talks(url: &str, token: &str) -> Self {
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "sam_talks_from_another_process",
+                "--test-threads=1",
+                "--quiet",
+            ])
+            .env(SAM_URL, url)
+            .env(SAM_TOKEN, token)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn sam");
+        OtherProcess(child)
+    }
+}
+
+impl Drop for OtherProcess {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// alex (through Pulse, with the rejoin loop running) and sam (talking, from another process)
+/// in a Lounge; alex not joined yet.
+struct HealCall {
+    vm: Arc<VoiceManager>,
+    api: Api,
+    alex: String,
+    lounge: pulse_protocol::ids::ChannelId,
+    sam: String,
+    sam_process: Option<OtherProcess>,
+    _app: pulse_server::testing::TestApp,
+}
+
+impl HealCall {
+    async fn new() -> Self {
+        let mut cfg = testing::test_config();
+        cfg.livekit_url = dev_livekit("ws");
+        cfg.livekit_secret = DEV_SECRET.into();
+        let app = testing::spawn_with(cfg).await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (sam_id, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        api.join_server(&sam, s.id).await.unwrap();
+        let lounge = api
+            .channels(&alex, s.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name.as_deref() == Some("Lounge"))
+            .unwrap()
+            .id;
+        let vt = api.voice_token(&sam, lounge).await.unwrap();
+        let vm = Arc::new(VoiceManager::new(Arc::new(|_| {})));
+        tokio::spawn({
+            let vm = vm.clone();
+            async move { vm.run_rejoins().await }
+        });
+        HealCall {
+            vm,
+            api,
+            alex,
+            lounge,
+            sam: sam_id.to_string(),
+            sam_process: Some(OtherProcess::sam_talks(&vt.url, &vt.token)),
+            _app: app,
+        }
+    }
+
+    async fn join(&self) {
+        self.vm
+            .join(
+                &self.api,
+                &self.alex,
+                self.lounge,
+                AudioConfig::default(),
+                AudioMode::Null(48_000),
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn hears_sam(&self) -> bool {
+        self.vm
+            .mixer_levels()
+            .await
+            .iter()
+            .any(|(who, l)| *who == self.sam && *l > 0.01)
+    }
+
+    async fn end(mut self) {
+        self.vm.leave().await;
+        self.sam_process.take();
+    }
+}
+
+/// #216 for real, then #217 healing it: alex's first call ends with no PeerConnection left in
+/// the process, which stops the synthetic ADM's pump on the kept runtime, so in the next call
+/// sam's packets arrive but no frames come out. The self-heal rebuilds the runtime and rejoins:
+/// sam is heard, with the devices, mute and volumes carried over. Another stall within two
+/// minutes isn't healed (the rate limit).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn a_stalled_track_heals_by_rebuilding_the_runtime() {
+    let _turn = livekit_turn().await;
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("info,libwebrtc=warn")
+        .try_init();
+    let call = HealCall::new().await;
+    let vm = call.vm.clone();
+    // the first call: sam heard (the runtime is new)
+    call.join().await;
+    assert!(
+        eventually(Duration::from_secs(20), || call.hears_sam()).await,
+        "sam isn't heard in the first call"
+    );
+    vm.leave().await;
+    // the PeerConnections go some time after the room closes
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    // the user's own state, which must carry over the heal
+    vm.toggle_mute().await;
+    vm.set_peer_volume(call.sam.clone(), 150).await;
+
+    // the next call: dead receive (#216), until the heal
+    call.join().await;
+    let joined = tokio::time::Instant::now();
+    assert!(
+        eventually(Duration::from_secs(30), || async { vm.heals() == 1 }).await,
+        "no heal (did #216 not reproduce? is it fixed at the root now?)"
+    );
+    let healing = tokio::time::Instant::now();
+    assert!(
+        eventually(Duration::from_secs(20), || call.hears_sam()).await,
+        "sam isn't heard after the heal"
+    );
+    println!(
+        "self-heal: sam heard {} ms after the heal began, {} ms after the join",
+        healing.elapsed().as_millis(),
+        joined.elapsed().as_millis()
+    );
+    assert_eq!(vm.runtime_rebuilds(), 1, "the runtime was not rebuilt");
+    assert_eq!(vm.pipelines_built(), 2, "the heal reopened the devices");
+    assert!(vm.controls().muted, "mute didn't carry over");
+    assert!(vm.in_voice());
+    assert!(!vm.self_heal_given_up());
+
+    // leave and come back: dead again on this runtime too (#216 isn't fixed at the root), but
+    // within two minutes of the last heal, so not healed again
+    vm.leave().await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    call.join().await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    assert_eq!(vm.heals(), 1, "healed again within the rate limit");
+    assert!(vm.in_voice());
+    call.end().await;
+}
+
+/// A rebuild that doesn't bring the frames back (the same peer stalls again on the new runtime)
+/// is logged and not tried again: the heal never loops. (Simulated: sam's frames are dropped
+/// before the receive loop on every runtime; his packets keep arriving.)
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn a_heal_that_doesnt_help_is_not_retried() {
+    let _turn = livekit_turn().await;
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("info,libwebrtc=warn")
+        .try_init();
+    let call = HealCall::new().await;
+    let vm = call.vm.clone();
+    call.join().await;
+    assert!(
+        eventually(Duration::from_secs(20), || call.hears_sam()).await,
+        "sam is never heard"
+    );
+    vm.simulate_dead_receive(true);
+    assert!(
+        eventually(Duration::from_secs(30), || async { vm.heals() == 1 }).await,
+        "no heal"
+    );
+    assert!(
+        eventually(Duration::from_secs(30), || async {
+            vm.self_heal_given_up()
+        })
+        .await,
+        "the failed heal wasn't recognised"
+    );
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    assert_eq!(vm.heals(), 1);
+    assert!(vm.in_voice(), "the call goes on");
+    call.end().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn zz_probe_runtime_release() {
+    use livekit::prelude::*;
+    use livekit::rtc_engine::lk_runtime::LkRuntime;
+    let _turn = livekit_turn().await;
+    let call = HealCall::new().await;
+    {
+        let w = Arc::downgrade(&LkRuntime::instance());
+        println!("PROBE baseline after drop strong={}", w.strong_count());
+    }
+    let vt = call.api.voice_token(&call.alex, call.lounge).await.unwrap();
+    let (room, events) = Room::connect(&vt.url, &vt.token, RoomOptions::default())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let weak = Arc::downgrade(&LkRuntime::instance());
+    println!("PROBE connected strong={}", weak.strong_count());
+    room.close().await.unwrap();
+    println!("PROBE closed strong={}", weak.strong_count());
+    drop(room);
+    println!("PROBE dropped room strong={}", weak.strong_count());
+    drop(events);
+    for i in 0..30 {
+        println!("PROBE t={}s strong={}", i, weak.strong_count());
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    call.end().await;
+}

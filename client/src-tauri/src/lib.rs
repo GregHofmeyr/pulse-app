@@ -214,12 +214,16 @@ pub fn run() {
             binds.set_problems(hotkeys::install(app, &saved.binds, saved.enabled)?);
             app.manage(binds);
             let handle = app.handle().clone();
-            app.manage(voice::VoiceManager::new(std::sync::Arc::new(
-                move |e: voice::VoiceEvent| {
-                    use tauri::Emitter;
-                    let _ = handle.emit("voice://event", &e);
-                },
-            )));
+            let vm = voice::VoiceManager::new(std::sync::Arc::new(move |e: voice::VoiceEvent| {
+                use tauri::Emitter;
+                let _ = handle.emit("voice://event", &e);
+            }));
+            // a voice self-heal (#217) holds back while a stream is shared or watched
+            let h = app.handle().clone();
+            vm.set_streams_in_use(std::sync::Arc::new(move || {
+                h.state::<stream::audio::StreamAudio>().in_use()
+            }));
+            app.manage(vm);
             // voice comes back by itself after LiveKit gives up reconnecting
             let h = app.handle().clone();
             tauri::async_runtime::spawn(async move {
