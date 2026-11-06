@@ -27,7 +27,7 @@
   import ColumnHandle from '../components/ColumnHandle.svelte'
   import ReportBug from '../components/ReportBug.svelte'
   import PatchNotes from '../components/PatchNotes.svelte'
-  import { patchNotes } from '../patchNotes'
+  import { patchNotes, previousPatchNotes } from '../patchNotes'
   import { markPatchNotesSeen, patchNotesSeen } from '../lib/patchNotesSeen.svelte'
   import { installUpdate, restartBlocked, updates } from '../lib/updates.svelte'
   import CrashReportPrompt from '../components/CrashReportPrompt.svelte'
@@ -698,7 +698,7 @@
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if qotyStart}<QotyStart serverId={qotyStart} onClose={() => (qotyStart = null)} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
-{#if notesOpen}<PatchNotes notes={patchNotes} onClose={() => (notesOpen = false)} />{/if}
+{#if notesOpen}<PatchNotes notes={patchNotes} previous={previousPatchNotes} onClose={() => (notesOpen = false)} />{/if}
 <!-- Profiles: the quick card (one at a time), and the full profile's place (Task 12 renders it here) -->
 <ProfileCardPopover />
 {#if profileUi.full}<FullProfile userId={profileUi.full.userId} serverId={profileUi.full.serverId} onClose={closeFull} />{/if}

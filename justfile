@@ -296,17 +296,19 @@ logs service="pulse-server":
     ssh {{prod}} 'cd /srv/pulse && docker compose logs --tail 100 -f {{service}}'
 
 # Set the app version for a release (#82): the one place is `[workspace.package] version` in Cargo.toml (Tauri, the
-# installer name and every crate read it), and the patch notes show it. Then write the notes and merge.
+# installer name and every crate read it), and the patch notes show it. First move the current notes to
+# `previousPatchNotes` (#235, the top of patchNotes.ts); this only sets the version of `patchNotes`. Then write the
+# notes and merge.
 bump-version $version:
     #!/usr/bin/env bash
     set -euo pipefail
     [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bump-version: a version is X.Y.Z (digits only), got '$version'" >&2; exit 1; }
     sed -i -E '/^\[workspace\.package\]/,/^\[/ s/^version = "[^"]*"/version = "'"$version"'"/' Cargo.toml
-    sed -i -E "s/^  version: '[^']*',/  version: '$version',/" client/ui/src/patchNotes.ts
+    sed -i -E "/^export const patchNotes:/,/^}/ s/^  version: '[^']*',/  version: '$version',/" client/ui/src/patchNotes.ts
     grep -q "^version = \"$version\"" Cargo.toml || { echo "bump-version: Cargo.toml wasn't updated" >&2; exit 1; }
-    grep -q "^  version: '$version'," client/ui/src/patchNotes.ts || { echo "bump-version: patchNotes.ts wasn't updated" >&2; exit 1; }
+    sed -n "/^export const patchNotes:/,/^}/p" client/ui/src/patchNotes.ts | grep -q "^  version: '$version'," || { echo "bump-version: patchNotes.ts wasn't updated" >&2; exit 1; }
     cargo update -w --offline
-    echo "version $version: now give patchNotes.ts a new id, date and notes"
+    echo "version $version: now give patchNotes a new id, date and notes (the old ones in previousPatchNotes)"
 
 # dependency policy: advisories, licences, bans, sources (needs `cargo install cargo-deny --locked`)
 deny:

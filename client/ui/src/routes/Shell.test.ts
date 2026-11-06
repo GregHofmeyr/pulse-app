@@ -47,7 +47,7 @@ import { testMe, testReady } from '../lib/testReady'
 import { ui } from '../lib/store.svelte'
 import { editProfile, openCardSettings, profileUi } from '../lib/profileCard.svelte'
 import { reloadPatchNotesSeen } from '../lib/patchNotesSeen.svelte'
-import { patchNotes } from '../patchNotes'
+import { patchNotes, previousPatchNotes } from '../patchNotes'
 import { startUpdateListening, updates } from '../lib/updates.svelte'
 
 let cmp: ReturnType<typeof mount> | undefined
@@ -384,6 +384,8 @@ describe('account menu', () => {
       flushSync()
       expect(document.querySelector('[role=dialog][aria-label="Patch notes"]')).not.toBeNull()
       expect(document.body.textContent).toContain(patchNotes.date)
+      // #235: the release before, collapsed beneath
+      expect(document.querySelector('details.previous summary')?.textContent?.trim()).toBe(`Previous update (${previousPatchNotes!.version})`)
     })
 
     it('shows a dot until the notes are opened, and opening clears it for good', () => {

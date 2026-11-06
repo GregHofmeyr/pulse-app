@@ -4,18 +4,20 @@
   import type { PatchNotes } from '../patchNotes'
 
   // What's changed in this release (#207), from the title bar. Empty sections are left out. Coming soon (#224) is a
-  // light roadmap after Quality of life, styled a touch softer, at most five bullets.
+  // light roadmap after Quality of life, styled a touch softer, at most five bullets. The release before (#235) sits
+  // below as one closed line; opened, it shows its changes the same way (not its stale roadmap or sign-off).
   const SOON_MAX = 5
-  let { notes, onClose }: { notes: PatchNotes; onClose: () => void } = $props()
+  let { notes, previous = null, onClose }: { notes: PatchNotes; previous?: PatchNotes | null; onClose: () => void } = $props()
 
+  const changes = (n: PatchNotes): { title: string; items: string[]; soft?: boolean }[] => [
+    { title: 'New', items: n.new },
+    { title: 'Bug fixes', items: n.fixes },
+    { title: 'Quality of life', items: n.qol },
+  ]
   const sections = $derived(
-    [
-      { title: 'New', items: notes.new },
-      { title: 'Bug fixes', items: notes.fixes },
-      { title: 'Quality of life', items: notes.qol },
-      { title: 'Coming soon', items: (notes.soon ?? []).slice(0, SOON_MAX), soft: true },
-    ].filter((s) => s.items.length > 0),
+    [...changes(notes), { title: 'Coming soon', items: (notes.soon ?? []).slice(0, SOON_MAX), soft: true }].filter((s) => s.items.length > 0),
   )
+  const previousSections = $derived(previous ? changes(previous).filter((s) => s.items.length > 0) : [])
 </script>
 
 <div class="overlay modal-overlay fade-in">
@@ -37,6 +39,22 @@
       </section>
     {/each}
     {#if notes.message}<p class="message">{notes.message}</p>{/if}
+    {#if previous}
+      <details class="previous">
+        <summary><Icon name="chevronRight" size={14} />Previous update ({previous.version})</summary>
+        <div class="previous-body">
+          <p class="date">{previous.date}</p>
+          {#each previousSections as s (s.title)}
+            <section>
+              <h2>{s.title}</h2>
+              <ul>
+                {#each s.items as item, i (i)}<li>{item}</li>{/each}
+              </ul>
+            </section>
+          {/each}
+        </div>
+      </details>
+    {/if}
     <div class="actions">
       <button type="button" class="btn btn-lg btn-primary" onclick={onClose}>Close</button>
     </div>
@@ -57,5 +75,13 @@
   /* Coming soon is a roadmap, not a promise: a touch softer than the shipped sections. */
   .soon li { color: var(--text-row); }
   .message { margin: 4px 0 0; padding-top: 12px; border-top: 1px solid var(--line-soft); font-size: 13px; line-height: 1.5; color: var(--text-3); white-space: pre-line; }
+  /* The release before (#235): one quiet line under a divider, like the sign-off's, until opened. */
+  .previous { padding-top: 12px; border-top: 1px solid var(--line-soft); }
+  .previous summary { display: flex; align-items: center; gap: 6px; width: fit-content; list-style: none; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-3); }
+  .previous summary::-webkit-details-marker { display: none; }
+  .previous summary:hover { color: var(--text-2); }
+  .previous summary :global(svg) { flex: none; transition: transform var(--dur-fast) var(--ease); }
+  .previous[open] summary :global(svg) { transform: rotate(90deg); }
+  .previous-body { margin-top: 12px; display: flex; flex-direction: column; gap: 12px; }
   .actions { display: flex; justify-content: flex-end; }
 </style>
