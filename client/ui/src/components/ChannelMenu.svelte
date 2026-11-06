@@ -1,7 +1,8 @@
 <script lang="ts">
   // The right-click menu on a sidebar channel row (or Shift+F10 / the menu key on it). Text, quotes
   // and clips: mark as read, mute (a flyout of durations, #131) and notifications (its level or following its server,
-  // a flyout with yours ticked, #195); voice: join or leave. Anyone in the server may rename and
+  // a flyout with yours ticked, #195); voice: join or leave, then the same three for its chat (#226). Anyone in the
+  // server may rename and
   // delete (v1 trust model); those two are handed back to the list, which edits in the row and asks
   // in a dialog.
   import { onMount, untrack } from 'svelte'
@@ -131,7 +132,9 @@
     {:else}
       <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onJoin)}>Join</button>
     {/if}
-  {:else}
+    {#if member}<span class="menu-sep"></span>{/if}
+  {/if}
+  {#if !isVoice || member}
     <button type="button" class="menu-item" role="menuitem" data-item disabled={!unread} onclick={() => pick(report(markRead))}>Mark as read</button>
     {#if muted}
       <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(report(() => api.clearMute('channel', channel.id)))}>Unmute channel</button>

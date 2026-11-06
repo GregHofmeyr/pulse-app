@@ -499,6 +499,7 @@
     onclick={() => { prefetch.cancel(); onJoinVoice(c.id) }} ondblclick={() => onSelect(c.id)}
     oncontextmenu={(e) => { e.preventDefault(); openChanMenu(c, e, e.currentTarget) }} onkeydown={(e) => rowKey(e, c)}>
     <span class="ico"><Icon name="speaker" size={17} /></span><span class="grow">{c.name}</span>
+    {#if isMuted(app.state, c, clock.nowIso)}<span class="mic"><Icon name="bellOff" size={14} /></span>{/if}
     {#if people.length}<span class="count">{people.length}</span>{/if}
   </button>
   {#if member}

@@ -1149,6 +1149,30 @@ describe('voice channel chat (#226)', () => {
     reloadVoiceChat()
   })
 
+  it('a search hit in a voice channel opens its chat in the results’ place, and the message is asked for there', async () => {
+    const { runSearch } = await import('../lib/search.svelte')
+    const { jumpTo } = await import('../lib/jump')
+    const hit = { id: 'M9', channel_id: 'V1', author_id: 'U1', kind: 'normal', content: 'pineapple', reply_to_id: null, created_at: '2026-11-06T10:00:00Z', edited_at: null, deleted: false, reactions: [], mentions: [], embeds: [] }
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'search_messages' ? { hits: [], total: 0, next_cursor: null } : cmd === 'list_messages_around' ? [hit] : cmd === 'list_messages' ? [] : undefined)
+    const scrolled = vi.fn()
+    Element.prototype.scrollIntoView = scrolled
+    show()
+    await runSearch({ kind: 'server', serverId: 'S1' }, 'pineapple', [])
+    flushSync()
+    expect(q('.right-panel aside.voice-chat')).toBeNull()
+    await jumpTo('V1', 'M9')
+    flushSync()
+    await tick()
+    expect(q('.right-panel aside.voice-chat')).not.toBeNull()
+    expect(ui.openChannelId).toBe('V1')
+    expect(app.state.messages['V1']?.some((m) => m.id === 'M9')).toBe(true)
+    // the chat scrolls to it and flashes it
+    for (let i = 0; i < 4; i++) await tick()
+    expect(q('aside.voice-chat [data-message-id="M9"]')?.classList.contains('jump-flash')).toBe(true)
+    expect(scrolled).toHaveBeenCalled()
+  })
+
   it("the row's chat icon opens the stage with the chat beside it, in the members list's place, without joining", async () => {
     show()
     q('.chat-btn')!.click()

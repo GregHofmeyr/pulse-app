@@ -383,9 +383,10 @@ describe('the mute flyout', () => {
 })
 
 describe('a voice channel', () => {
-  it('offers_join_rename_and_delete_but_no_read_or_mute', () => {
+  it('offers_join_then_its_chats_read_mute_and_notifications_then_rename_and_delete', () => {
+    // #226: its chat has unreads, a mute and a notification level like a text channel
     rightClick('Lounge')
-    expect(labels()).toEqual(['Join', 'Rename channel…', 'Delete channel…'])
+    expect(labels()).toEqual(['Join', 'Mark as read', 'Mute channel', 'Notifications', 'Rename channel…', 'Delete channel…'])
     item('Join')!.click()
     flushSync()
     expect(onJoinVoice).toHaveBeenCalledWith('V1')
@@ -456,11 +457,11 @@ describe('the notifications flyout (#195)', () => {
     expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'channel', targetId: 'T1', level: null })
   })
 
-  it('sits_under_mute_in_quotes_too_but_not_in_voice', () => {
+  it('sits_under_mute_in_quotes_and_voice_too', () => {
     rightClick('quotes')
     expect(labels()).toContain('Notifications')
     rightClick('Lounge')
-    expect(labels()).not.toContain('Notifications')
+    expect(labels()).toContain('Notifications') // a voice channel's chat (#226)
   })
 
   it('opening_one_flyout_closes_the_other_after_the_hover_wait', () => {

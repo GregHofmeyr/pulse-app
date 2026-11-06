@@ -42,7 +42,7 @@
   const channels = $derived(
     serverId
       ? Object.values(app.state.channels)
-          .filter((c) => c.server_id === serverId && (c.kind === 'text' || c.kind === 'quotes' || c.kind === 'clips'))
+          .filter((c) => c.server_id === serverId && (c.kind === 'text' || c.kind === 'quotes' || c.kind === 'clips' || c.kind === 'voice'))
           .sort((a, b) => a.position - b.position)
           .map((c) => ({ id: c.id, name: c.name ?? '' }))
       : [],

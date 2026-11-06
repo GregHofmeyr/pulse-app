@@ -360,6 +360,11 @@
   const chatOnScreen = $derived(showRight && rightKind === 'chat')
   const rightColumn = $derived(rightKind === 'chat' ? 'chat' : 'right')
   const rightSaved = $derived(columns[rightColumn])
+  // A click's ask for the chat's message box counts only while the chat can show: one made while it can't (search
+  // results in its place, full view) mustn't take the focus whenever it next appears.
+  $effect(() => {
+    if (!chatOnScreen && voiceChat.focusWanted > untrack(() => voiceChat.focusDone)) voiceChat.focusDone = voiceChat.focusWanted
+  })
   let bodyEl = $state<HTMLElement>()
   let bodyWidth = $state(0)
   $effect(() => {
@@ -445,8 +450,12 @@
     if (!id) return
     untrack(() => {
       showChannel(id)
-      // a jump or a notification into a voice channel's chat (#226): its panel opens to show it
-      if (app.state.channels[id]?.kind === 'voice') setVoiceChat(true)
+      // a jump or a notification into a voice channel's chat (#226): its panel opens to show it, in the right column
+      // search results would otherwise keep (a search hit there closes them, as a reply's panel does when narrow)
+      if (app.state.channels[id]?.kind === 'voice') {
+        if (search.open) closeSearch()
+        setVoiceChat(true)
+      }
       ui.goTo = null
     })
   })
@@ -646,7 +655,7 @@
     {/if}
     <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap. A saved
          width reaches the list as --right-w; unsaved, each list keeps its own default. -->
-    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={rightSaved === null ? null : `${fitted.right}px`}>{#if search.open}<SearchResults />{:else if chatOpen && activeChannelId}<aside class="voice-chat fade-in" aria-label="Chat">{#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId} panel={{ onClose: closeChat, shown: chatOnScreen }} />{/key}</aside>{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} />{/if}</div>
+    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={rightSaved === null ? null : `${fitted.right}px`}>{#if search.open}<SearchResults />{:else if chatOpen && activeChannelId}<aside class="voice-chat fade-in" aria-label="Chat" onanimationend={(e) => e.currentTarget.classList.remove('fade-in')}>{#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId} panel={{ onClose: closeChat, shown: chatOnScreen }} />{/key}</aside>{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} />{/if}</div>
   </div>
 </div>
 <StreamToast />
@@ -734,7 +743,8 @@
   .right-panel { display: flex; flex-shrink: 0; min-height: 0; }
   .right-panel[hidden], .right-panel:empty { display: none; }
   /* a voice channel's chat (#226): a right column like the search results, holding the channel view; it fades in
-     (.fade-in: not under reduced motion, while streaming or unfocused) and goes at once, as the members list comes */
+     (.fade-in, dropped once done so its will-change doesn't hold a layer: not under reduced motion, while streaming or
+     unfocused) and goes at once, as the members list comes */
   .voice-chat { width: var(--right-w, 360px); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-radius: var(--radius); background: var(--bg-1); overflow: hidden; }
   .panel-head { position: relative; height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid var(--line-soft); }
   /* the hover is a rounded pill inside the header, with the text where the padding put it */
