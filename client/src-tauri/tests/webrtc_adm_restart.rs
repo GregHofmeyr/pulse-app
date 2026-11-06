@@ -166,7 +166,10 @@ async fn remote_audio_plays_after_the_last_peer_connection_has_gone() {
         );
         rounds.push(r);
         // let libwebrtc release both PeerConnections, and with the last one terminate the voice
-        // engine (the field: leave, later join again)
+        // engine (the field: leave, later join again). Assumed, not observed: nothing exposes the
+        // PeerConnection count or the pump's state, so a slow machine could make this pass
+        // without the fix, never fail with it (measured: 298/0/0 before the fix). Keep this file
+        // to this one test: another PeerConnection alive in the process would hide the bug.
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     for (n, r) in rounds.iter().enumerate() {
