@@ -58,6 +58,14 @@ else
   echo "skip tauri_signature_verifies (no client/ui/node_modules or node: run pnpm install in client/ui)"
 fi
 
+# --- the app's own key: what a real publish checks against (base64 of a minisign public key file)
+app_pub=$(jq -r '.plugins.updater.pubkey // empty' "$here/../client/src-tauri/tauri.conf.json")
+if [ -n "$app_pub" ] && printf '%s' "$app_pub" | base64 -d 2>/dev/null | grep -q '^untrusted comment: minisign public key'; then
+  pass "tauri.conf.json carries the updater's public key"
+else
+  fail "tauri.conf.json has no readable plugins.updater.pubkey"
+fi
+
 # --- newer_than
 check_newer() {
   local want=$1 new=$2 old=$3 got

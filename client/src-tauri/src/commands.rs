@@ -725,6 +725,8 @@ async fn forward(
         match &u {
             GatewayUpdate::Ready(r) => {
                 app.state::<Core>().learn_me(&token, r.me.id);
+                // each login's first Ready looks for an app update (#82)
+                crate::updater::after_ready(&app, &token);
                 // the jobs load on their own: Ready (and what follows) never waits for the disk
                 let (a, t) = (app.clone(), token.clone());
                 tauri::async_runtime::spawn(async move {

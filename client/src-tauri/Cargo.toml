@@ -64,6 +64,13 @@ qrcode = { version = "0.14", default-features = false }
 # Avatars in desktop notifications (notify/avatar.rs): the cached WebP avatar as a small PNG, which
 # Windows toasts and every Linux notification service can show. Pure Rust (image-webp, png).
 image = { version = "0.25", default-features = false, features = ["png", "webp"] }
+# App updates (updater.rs, #82): comparing the offered version with ours (the updater's own semver).
+semver = "1"
+
+# App updates (updater.rs, #82), driven from Rust only (no webview permission is granted). 2.14.1 needs tauri ^2.12
+# (the lockfile's 2.12.2). Without the default `zip` (macOS/Linux bundles) and `system-proxy`: Windows NSIS only.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["rustls-tls"] }
 
 [features]
 # Strong uses DeepFilterNet3's low-latency model (36 MB) instead of the normal one (8 MB).

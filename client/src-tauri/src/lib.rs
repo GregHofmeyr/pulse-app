@@ -22,6 +22,7 @@ pub mod sounds;
 pub mod startup;
 pub mod stream;
 pub mod throttle;
+pub mod updater;
 pub mod video;
 pub mod voice;
 pub mod webview_crash;
@@ -100,6 +101,8 @@ pub fn run() {
     }
     builder
         .plugin(tauri_plugin_dialog::init())
+        // App updates (updater.rs, #82): driven from Rust only, so no webview permission is granted.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             use tauri::Manager;
             let profile = std::env::var("PULSE_PROFILE").ok();
@@ -226,6 +229,19 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 h.state::<voice::VoiceManager>().run_rejoins().await
             });
+            // App updates (#82): the launch check starts now, so the page usually has the answer when it asks. On
+            // Windows the installer ends the process: first clear the crash marker (an update isn't a crash) and
+            // flush the log.
+            let h = app.handle().clone();
+            app.manage(updater::Updates::new(std::sync::Arc::new(move || {
+                tracing::info!("update: handing over to the installer");
+                reports::crash::clear_running(&h.state::<reports::LogDir>().0);
+                if let Some(guard) = h.try_state::<LogGuard>() {
+                    drop(guard.0.lock().unwrap().take());
+                }
+            })));
+            updater::start_launch_check(app.handle(), session::Store::new(dir.clone(), profile.as_deref()));
+            updater::spawn_periodic(app.handle());
             // A stored login connects now, while the webview boots: Ready no longer waits for
             // the UI and a separate /me round trip. (Keychain reads block: not on the UI thread.)
             let h = app.handle().clone();
@@ -429,6 +445,9 @@ pub fn run() {
             stream::stream_audio_mute,
             stream::stream_audio_watch,
             stream::set_stream_volume,
+            updater::update_launch,
+            updater::update_check,
+            updater::update_install,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Pulse")
