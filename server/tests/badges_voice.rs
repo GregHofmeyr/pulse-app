@@ -10,7 +10,7 @@ use chrono::Utc;
 use common::*;
 use livekit_api::access_token::AccessToken;
 use pulse_protocol::ids::{ChannelId, ServerId, UserId};
-use pulse_protocol::rest::{Channel, Profile, StreamInfo};
+use pulse_protocol::rest::{BadgeCatalogue, Channel, Profile, StreamInfo};
 use pulse_server::badges::catalogue::{HOUR, stat};
 use pulse_server::badges::time::sast_day;
 use pulse_server::badges::{stats, streams, sweep};
@@ -198,6 +198,61 @@ async fn ghost_at_under_five_seconds() {
     assert!(holds(&app, &a, alex, "ghost").await);
 }
 
+/// `user`'s connection `sid` joins or leaves `room`, shaped as LiveKit sends it (every
+/// connection has its own sid).
+async fn vevent(app: &TestApp, event: &str, room: ChannelId, user: UserId, sid: &str) {
+    let mut p = json!({"identity": user.to_string(), "sid": sid});
+    if event == "participant_joined" {
+        p["attributes"] = json!({
+            "pulse_grant": grant_livekit(app, &room.to_string(), &user.to_string()).await
+        });
+    }
+    let body = json!({"event": event, "id": format!("EV_{event}_{sid}"),
+        "room": {"name": room.to_string()}, "participant": p})
+    .to_string();
+    webhook(app, &body).await;
+}
+
+/// "Ghost doesn't seem to track": ten quick visits, each its own connection (as a real
+/// leave-and-rejoin is), with someone else in the call, are ten Ghost visits; your trophy case
+/// shows the count as it goes, and the tenth earns it.
+#[tokio::test]
+async fn ghost_counts_every_quick_visit_and_shows_progress() {
+    let app = spawn().await;
+    let (alex, a) = register(&app, "alex").await;
+    let (sam, b) = register(&app, "sam").await;
+    let l = lounge(&app, &a).await;
+    join_server(&app, &b, l.server_id.unwrap()).await;
+    vevent(&app, "participant_joined", l.id, sam, "PA_sam").await;
+    let progress = |c: BadgeCatalogue| {
+        c.badges
+            .into_iter()
+            .find(|d| d.key == "ghost")
+            .unwrap()
+            .progress
+    };
+    for n in 1..=10 {
+        let sid = format!("PA_alex{n}");
+        vevent(&app, "participant_joined", l.id, alex, &sid).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        vevent(&app, "participant_left", l.id, alex, &sid).await;
+        assert_eq!(stat_of(&app, alex, stat::GHOST).await, n, "visit {n}");
+        if n == 3 {
+            let c: BadgeCatalogue = get_json(&app, &a, "/badges").await;
+            assert_eq!(progress(c), Some(3));
+        }
+    }
+    assert!(holds(&app, &a, alex, "ghost").await);
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM voice_sessions WHERE user_id = ? AND left_at IS NOT NULL",
+    )
+    .bind(alex.to_string())
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(rows, 10, "one closed session per visit");
+}
+
 #[tokio::test]
 async fn early_bird_first_in_the_server_today() {
     let app = spawn().await;
@@ -379,6 +434,39 @@ async fn muted_talk_counts_in_server_voice_only_and_is_rate_limited() {
     set_stat(&app, alex, stat::DOOS_LAST_AT, 0).await;
     muted_talk(&app, &a).await;
     assert!(holds(&app, &a, alex, "the_doos").await);
+}
+
+/// The Doos: once a minute counts, five a South African day, the sixth that day doesn't, the
+/// next day starts again; your trophy case shows the count as progress.
+#[tokio::test]
+async fn muted_talk_caps_at_five_a_day_and_shows_progress() {
+    let app = spawn().await;
+    let (alex, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    vjoin(&app, l.id, alex).await;
+    for n in 1..=6 {
+        // a minute has passed since the last counted one
+        set_stat(&app, alex, stat::DOOS_LAST_AT, 0).await;
+        muted_talk(&app, &a).await;
+        assert_eq!(
+            stat_of(&app, alex, stat::DOOS).await,
+            n.min(5),
+            "report {n}"
+        );
+    }
+    let today = sast_day(Utc::now());
+    assert_eq!(stat_of(&app, alex, stat::DOOS_DAY).await, today);
+    assert_eq!(stat_of(&app, alex, stat::DOOS_DAY_COUNT).await, 5);
+    // the count was yesterday's: today's first counts
+    set_stat(&app, alex, stat::DOOS_DAY, today - 1).await;
+    set_stat(&app, alex, stat::DOOS_LAST_AT, 0).await;
+    muted_talk(&app, &a).await;
+    assert_eq!(stat_of(&app, alex, stat::DOOS).await, 6);
+    assert_eq!(stat_of(&app, alex, stat::DOOS_DAY_COUNT).await, 1);
+    let c: BadgeCatalogue = get_json(&app, &a, "/badges").await;
+    let doos = c.badges.iter().find(|d| d.key == "the_doos").unwrap();
+    assert_eq!(doos.progress, Some(6));
+    assert_eq!(doos.tiers[0].threshold, 10);
 }
 
 #[tokio::test]

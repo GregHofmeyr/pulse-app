@@ -92,6 +92,15 @@ class BadgeStore {
     return this.load()
   }
 
+  /** A trophy case opened: fetch the catalogue again (the cached one shows meanwhile), since its
+   * progress moves with no unlock to refetch it (#241: Ghost sat at 0 / 10 all session). A fetch
+   * already in flight is fresh enough. */
+  reload(): Promise<void> {
+    if (this.#loading) return this.#loading
+    this.#stale = true
+    return this.load()
+  }
+
   /** After an unlock: refetch the catalogue (if in use) and your profile. Unlocks in a burst share
    * the fetch in flight plus one more after it, so the last one's data is never missed. */
   refresh(): Promise<void> {

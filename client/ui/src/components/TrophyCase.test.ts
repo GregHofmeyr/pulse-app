@@ -105,6 +105,19 @@ describe('TrophyCase', () => {
     expect(tile('The Regular')!.textContent).toContain('3 of 8 have this')
   })
 
+  it('opening the case again shows progress made since, with no unlock in between (#241)', async () => {
+    await show({ badges: [], mine: true })
+    expect(tile('The Yapper')!.textContent).toContain('412 / 500 messages')
+    unmount(cmp!)
+    cmp = undefined
+    document.body.innerHTML = ''
+    // eight more messages: progress moved, nothing unlocked (so no BadgeEarned refetch)
+    const later = { ...CATALOGUE, badges: CATALOGUE.badges.map((d) => (d.key === 'the_yapper' ? { ...d, progress: 420 } : d)) }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'get_badge_catalogue' ? later : undefined))
+    await show({ badges: [], mine: true })
+    await vi.waitFor(() => expect(tile('The Yapper')!.textContent).toContain('420 / 500 messages'))
+  })
+
   it('progress bars say which badge they belong to', async () => {
     await show({ badges: [], mine: true })
     expect(tile('The Yapper')!.querySelector('progress')!.getAttribute('aria-label')).toBe('The Yapper progress')

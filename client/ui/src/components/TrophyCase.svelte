@@ -15,7 +15,8 @@
   // showcaseChosen: the owner saved a showcase of their own (false: it's the rarest-five default).
   let { badges, showcase = [], showcaseChosen = false, mine = false }: { badges: Badge[]; showcase?: string[]; showcaseChosen?: boolean; mine?: boolean } = $props()
 
-  $effect(() => void untrack(() => badgeStore.load()))
+  // fresh each time it opens: progress moves without an unlock (#241)
+  $effect(() => void untrack(() => badgeStore.reload()))
 
   const cat = $derived(badgeStore.catalogue)
   const held = $derived(new Map(badges.map((b) => [b.key, b])))
