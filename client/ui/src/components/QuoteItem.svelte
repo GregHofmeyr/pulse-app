@@ -225,7 +225,8 @@
 {/if}
 
 <style>
-  .quote { padding: 8px 18px 2px; position: relative; }
+  /* --bar-room: the quick-action bar's room at narrow widths, as in MessageItem (#237) */
+  .quote { --bar-room: clamp(0px, calc((1200px - 100vw) / 25), 4px); padding: 8px 18px 2px; position: relative; }
   .quote:hover { background: var(--hover-tint); }
   .quote.compact { padding: 0; }
   .quote.compact:hover { background: none; }
@@ -258,7 +259,7 @@
   .unsent-reply { margin: 4px 0 0 10px; padding: 0; border: 0; background: none; color: var(--danger-text); font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
   .unsent-reply:hover { text-decoration: underline; }
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger-text); }
-  .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: var(--radius-sm); will-change: opacity; }
+  .actions { position: absolute; top: calc(-10px + 1.5 * var(--bar-room)); right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: var(--radius-sm); will-change: opacity; }
   /* fades in, hides at once (#173): sweeping down a channel never leaves half-faded bars behind */
   .quote:hover .actions, .actions.open { opacity: 1; pointer-events: auto; transition: opacity var(--dur) var(--ease); }
   .actions button { width: 30px; height: 28px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-2); display: grid; place-items: center; }

@@ -301,8 +301,12 @@
   .status { display: flex; gap: 10px; align-items: baseline; padding: 0 18px 4px 72px; font-size: 12px; color: var(--text-3); }
   .status .fail { color: var(--danger-text); }
   .status button { border: 0; background: none; padding: 0; font-size: 12px; color: var(--text-2); text-decoration: underline; }
-  .msg { padding: 8px 18px 2px; position: relative; }
-  .msg.grouped { padding-top: 1px; }
+  /* At narrow widths (#237) more lines run to the right edge, under the quick-action bar: --bar-room grows from 0 at
+     1200px to 4px at 1100px and below, a ramp rather than a breakpoint so resizing never makes the list jump. The bar
+     moves down by 1.5x it (-10px to -4px, clear of the line above) and grouped rows gain it as top padding. The same in
+     QuoteItem. */
+  .msg { --bar-room: clamp(0px, calc((1200px - 100vw) / 25), 4px); padding: 8px 18px 2px; position: relative; }
+  .msg.grouped { padding-top: calc(1px + var(--bar-room)); }
   .msg:hover { background: var(--hover-tint); }
   .row { display: flex; gap: 14px; }
   .gutter { width: 40px; flex-shrink: 0; }
@@ -323,7 +327,7 @@
   .reply strong { color: var(--text-2); }
   .hook { width: 28px; height: 10px; margin-top: 10px; border-left: 2px solid var(--bg-4); border-top: 2px solid var(--bg-4); border-top-left-radius: 6px; flex-shrink: 0; }
   .snippet { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: var(--radius-sm); will-change: opacity; }
+  .actions { position: absolute; top: calc(-10px + 1.5 * var(--bar-room)); right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: var(--radius-sm); will-change: opacity; }
   /* fades in, hides at once (#173): sweeping down a channel never leaves half-faded bars behind */
   .msg:hover .actions, .actions.open { opacity: 1; pointer-events: auto; transition: opacity var(--dur) var(--ease); }
   .actions button { width: 30px; height: 28px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-2); display: grid; place-items: center; }

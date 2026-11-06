@@ -2,7 +2,9 @@
 // Focus style for the message box and the edit box (#41, owner's pick: "soft border"). Both are
 // contenteditable EmojiBoxes with `outline: none`, so they don't get the app-wide ring; instead their edge
 // turns a faint accent while focused. The message box is focused nearly all the time, which is why it's
-// faint, not the ring. Read from each component's compiled CSS (jsdom can't focus a contenteditable).
+// faint, not the ring. Deliberate, and confirmed by the owner again in #237: these two boxes keep the soft edge while
+// every other field uses the 2px ring; don't "fix" them to match. Read from each component's compiled CSS (jsdom can't
+// focus a contenteditable).
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { compile } from 'svelte/compiler'
