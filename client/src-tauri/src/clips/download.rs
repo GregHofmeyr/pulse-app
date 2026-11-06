@@ -1,6 +1,6 @@
-//! Saving a clip to disk (#204): the name the Save dialog suggests, and the GET of the clip's
-//! original file streamed straight to the chosen path (a clip can be 200 MiB; none of it is held
-//! in memory, and none of it passes through the webview).
+//! Saving a clip (#204) or a quoted image (#206) to disk: the name the Save dialog suggests, and
+//! the GET of the original file streamed straight to the chosen path (a clip can be 200 MiB; none
+//! of it is held in memory, and none of it passes through the webview).
 
 use std::path::{Path, PathBuf};
 
@@ -8,6 +8,8 @@ use super::upload::STALL_AFTER;
 
 /// What a clip with no usable caption is saved as.
 pub const FALLBACK_NAME: &str = "clip";
+/// What an image with no usable caption is saved as.
+pub const IMAGE_NAME: &str = "image";
 /// Every clip is stored as MP4 (`clips/<hash>.mp4`); used when the link doesn't say.
 pub const FALLBACK_EXT: &str = "mp4";
 
@@ -18,15 +20,20 @@ pub enum DownloadError {
     Rejected(u16),
     #[error("the download stopped moving")]
     Stalled,
-    #[error("couldn't save the clip: {0}")]
+    #[error("couldn't save the file: {0}")]
     File(String),
-    #[error("can't reach the clip server: {0}")]
+    #[error("can't reach the server: {0}")]
     Network(String),
 }
 
 /// A file name (without extension) from a clip's caption: its first line, without characters
 /// Windows, macOS or Linux refuse, trimmed, at most 80 characters; "clip" when nothing is left.
 pub fn suggested_stem(caption: &str) -> String {
+    stem_or(caption, FALLBACK_NAME)
+}
+
+/// `suggested_stem` with another name for when nothing usable is left (an image's is "image").
+pub fn stem_or(caption: &str, fallback: &str) -> String {
     const MAX_CHARS: usize = 80;
     const REFUSED: &str = r#"<>:"/\|?*"#;
     let line = caption
@@ -49,9 +56,9 @@ pub fn suggested_stem(caption: &str) -> String {
     // Windows drops trailing dots and spaces; a leading dot hides the file elsewhere
     let stem = short.trim_matches(|c: char| c == '.' || c == ' ');
     if stem.is_empty() {
-        FALLBACK_NAME.to_owned()
+        fallback.to_owned()
     } else if is_reserved_on_windows(stem) {
-        format!("{stem} {FALLBACK_NAME}")
+        format!("{stem} {fallback}")
     } else {
         stem.to_owned()
     }
@@ -84,8 +91,13 @@ pub fn extension_of(url: &str) -> String {
 /// GET `url` into `dest`: written to a sibling first and moved over `dest` only when complete, so
 /// a failed download leaves no half file (and an existing file as it was).
 pub async fn save_url(http: &reqwest::Client, url: &str, dest: &Path) -> Result<(), DownloadError> {
+    save_request(http.get(url), dest).await
+}
+
+/// `save_url` for a request the caller builds (an image needs the session's token, #206).
+pub async fn save_request(req: reqwest::RequestBuilder, dest: &Path) -> Result<(), DownloadError> {
     let part = partial_path(dest);
-    let fetched = fetch_to(http, url, &part).await;
+    let fetched = fetch_to(req, &part).await;
     let done = match fetched {
         Ok(()) => tokio::fs::rename(&part, dest)
             .await
@@ -98,13 +110,13 @@ pub async fn save_url(http: &reqwest::Client, url: &str, dest: &Path) -> Result<
     done
 }
 
-async fn fetch_to(http: &reqwest::Client, url: &str, part: &Path) -> Result<(), DownloadError> {
+async fn fetch_to(req: reqwest::RequestBuilder, part: &Path) -> Result<(), DownloadError> {
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
     // the link is signed: keep it out of error text the UI shows
     let net = |e: reqwest::Error| DownloadError::Network(e.without_url().to_string());
     let file_err = |e: std::io::Error| DownloadError::File(e.to_string());
-    let res = http.get(url).send().await.map_err(net)?;
+    let res = req.send().await.map_err(net)?;
     if !res.status().is_success() {
         return Err(DownloadError::Rejected(res.status().as_u16()));
     }
@@ -187,6 +199,14 @@ mod tests {
     }
 
     #[test]
+    fn an_image_falls_back_to_image() {
+        // saving a quoted image (#206): the caption, or "image" when there is none
+        assert_eq!(stem_or("the look", IMAGE_NAME), "the look");
+        assert_eq!(stem_or("  ", IMAGE_NAME), "image");
+        assert_eq!(stem_or("nul", IMAGE_NAME), "nul image");
+    }
+
+    #[test]
     fn the_extension_comes_from_the_link() {
         assert_eq!(
             extension_of("https://r2.example.com/b/clips/abc.mp4?X-Amz-Signature=1"),
@@ -250,6 +270,18 @@ mod tests {
             "the saved bytes are the served ones"
         );
         assert_eq!(leftovers(dir.path()), vec!["what a shot.mp4"]);
+    }
+
+    #[tokio::test]
+    async fn saves_any_request_the_caller_builds() {
+        // an image (#206) is fetched with the session's token: the caller builds the request
+        let url = serve_once("200 OK", b"webp bytes".to_vec()).await;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("the look.webp");
+        let req = reqwest::Client::new().get(&url).bearer_auth("t");
+        save_request(req, &dest).await.unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"webp bytes");
+        assert_eq!(leftovers(dir.path()), vec!["the look.webp"]);
     }
 
     #[tokio::test]

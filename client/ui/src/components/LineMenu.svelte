@@ -12,6 +12,7 @@
     members = [],
     onAward,
     onCopy,
+    onSave = null,
     onLink,
     onUnlink,
     onClose,
@@ -29,6 +30,8 @@
     onAward: () => unknown
     /** Null where there is nothing to copy (an image without a caption). */
     onCopy: (() => unknown) | null
+    /** Save image (#206): only on an image line. */
+    onSave?: (() => unknown) | null
     onLink: (userId: string) => unknown
     onUnlink: () => unknown
     onClose: () => void
@@ -127,6 +130,7 @@
       <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onAward)}>{award === 'give' ? 'Give quote award' : 'Take back award'}</button>
     {/if}
     {#if onCopy}<button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onCopy)}>Copy</button>{/if}
+    {#if onSave}<button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onSave)}>Save image</button>{/if}
     {#if link === 'link'}
       <button type="button" class="menu-item" role="menuitem" data-item onclick={startPicking}>Link to a member…</button>
     {:else if link === 'unlink'}

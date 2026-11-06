@@ -320,15 +320,89 @@ describe('QuoteItem', () => {
     expect(labels[2]).not.toContain('award')
   })
 
-  it('a line with nothing to do (my own picture, no caption) has no actions button and no menu', () => {
-    show(quote([line({ speaker_id: 'U1', text: null, media: { hash: P, still_hash: null, width: 10, height: 10 } }), line({ id: 'L2' })]))
+  it('a line with nothing to do (my own words, said by me) has no actions button and no menu', () => {
+    show(quote([line({ speaker_id: 'U1', text: null, media: { hash: P, still_hash: null, width: 10, height: 10 } }), line({ id: 'L2', speaker_id: 'U1', text: '', caption: null })]))
     const lines = document.querySelectorAll<HTMLElement>('.line')
-    expect(lines[0].querySelector('button[aria-label="Line actions"]')).toBeNull()
-    expect(lines[1].querySelector('button[aria-label="Line actions"]')).toBeTruthy()
-    lines[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
-    lines[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true }))
+    // my own picture still has Save image (#206)
+    expect(lines[0].querySelector('button[aria-label="Line actions"]')).toBeTruthy()
+    expect(lines[1].querySelector('button[aria-label="Line actions"]')).toBeNull()
+    lines[1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    lines[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true }))
     flushSync()
     expect(document.querySelector('[role=menu]')).toBeNull()
+  })
+
+  describe('Save image (#206)', () => {
+    const pic = (over: Partial<QuoteLine> = {}) => line({ text: null, media: { hash: A, still_hash: S, width: 800, height: 600 }, caption: 'a cat', ...over })
+    const saves = () => calls('save_image').map((c) => c[1])
+    const overlay = () => document.querySelector<HTMLButtonElement>('.line button[aria-label="Save image"]')
+
+    it("in an image line's menu (and right-click) it saves the original file, named after the caption", async () => {
+      show(quote([pic({ speaker_id: 'U1' })]))
+      openMenu(0)
+      expect(items()).toContain('Save image')
+      item('Save image').click()
+      await settle()
+      // the full file, never its still frame
+      expect(saves()).toEqual([{ hash: A, caption: 'a cat' }])
+      expect(document.querySelector('[role=menu]')).toBeNull()
+      document.querySelector<HTMLElement>('.line')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      flushSync()
+      expect(items()).toContain('Save image')
+    })
+
+    it('a text line has no Save image', () => {
+      show(quote([line()]))
+      openMenu(0)
+      expect(items()).not.toContain('Save image')
+      expect(overlay()).toBeNull()
+    })
+
+    it("the clips' download icon sits on the image, with a tooltip, and saves it", async () => {
+      show(quote([pic({ caption: null })]))
+      const b = overlay()!
+      expect(b.classList.contains('clip-dl')).toBe(true)
+      expect(b.dataset.tip).toBe('Save image')
+      b.click()
+      await settle()
+      expect(saves()).toEqual([{ hash: A, caption: '' }])
+      // it isn't the open-full-size button's click
+      flushSync()
+      expect(document.querySelector('[role=dialog]')).toBeNull()
+    })
+
+    it('the full-size view has it too', async () => {
+      show(quote([pic()]))
+      document.querySelector<HTMLElement>('.line .picbtn')!.click(); flushSync()
+      const b = document.querySelector<HTMLButtonElement>('[role=dialog] button[aria-label="Save image"]')!
+      b.click()
+      await settle()
+      expect(saves()).toEqual([{ hash: A, caption: 'a cat' }])
+      // saving doesn't close the view
+      flushSync()
+      expect(document.querySelector('[role=dialog]')).toBeTruthy()
+    })
+
+    it('cancelling the dialog does nothing; a failure shows on the quote; a second click while saving is ignored', async () => {
+      let answer: () => Promise<unknown> = async () => false
+      invoke.mockImplementation(async (cmd: string) => (cmd === 'save_image' ? answer() : undefined))
+      show(quote([pic()]))
+      overlay()!.click()
+      await settle(); flushSync()
+      expect(document.querySelector('[role=alert]')).toBeNull()
+      answer = async () => Promise.reject("couldn't save the file: denied")
+      overlay()!.click()
+      await settle(); flushSync()
+      expect(document.querySelector('[role=alert]')?.textContent).toBe("couldn't save the file: denied")
+      let finish: (v: boolean) => void = () => {}
+      answer = () => new Promise((r) => (finish = r))
+      const before = saves().length
+      overlay()!.click()
+      overlay()!.click()
+      await settle()
+      expect(saves().length).toBe(before + 1)
+      finish(true)
+    })
   })
 
   it('the line actions button says whether its menu is open', () => {

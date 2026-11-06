@@ -1,12 +1,18 @@
 <script lang="ts">
-  // The download icon on a clip's video (#204), Discord-style: top right, shown while the pointer is over the
-  // clip (the parent's :hover rule) or when it has keyboard focus. `beside`: left of the wall card's full-screen button.
+  // The download icon on a clip's video (#204) or a quoted image (#206), Discord-style: top right, shown while the
+  // pointer is over it (the parent's :hover rule) or when it has keyboard focus. `beside`: left of the wall card's
+  // full-screen button.
   import Icon from './Icon.svelte'
 
-  let { onclick, beside = false }: { onclick: () => void; beside?: boolean } = $props()
+  let { onclick, beside = false, label = 'Download clip', tip = 'Download' }: {
+    onclick: (e: MouseEvent) => void
+    beside?: boolean
+    label?: string
+    tip?: string
+  } = $props()
 </script>
 
-<button type="button" class="clip-dl" class:beside aria-label="Download clip" data-tip="Download" {onclick}><Icon name="download" size={16} /></button>
+<button type="button" class="clip-dl" class:beside aria-label={label} data-tip={tip} {onclick}><Icon name="download" size={16} /></button>
 
 <style>
   /* the wall card's full-screen button's look (ClipCard .fs) */

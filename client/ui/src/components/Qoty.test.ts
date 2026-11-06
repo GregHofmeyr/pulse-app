@@ -550,6 +550,20 @@ describe('Quote of the Year winner card', () => {
     expect(text(c)).not.toContain('newer')
   })
 
+  it("a winning image has the clips' download icon: Save image (#206), and a failure shows on the card", async () => {
+    const q = quote('Q1', 'first one')
+    const A = 'a'.repeat(64)
+    q.quote!.lines[0] = { ...q.quote!.lines[0], text: null, media: { hash: A, still_hash: 'b'.repeat(64), width: 80, height: 60 }, caption: 'the look' }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'save_image' ? Promise.reject("couldn't save the file: denied") : undefined))
+    showCard(card(), q)
+    const b = document.querySelector<HTMLButtonElement>('.qoty-card button.clip-dl[aria-label="Save image"]')!
+    expect(b.dataset.tip).toBe('Save image')
+    b.click()
+    await settle()
+    expect(calls('save_image')).toEqual([{ hash: A, caption: 'the look' }])
+    expect(text(document.querySelector('.qoty-card [role=alert]'))).toBe("couldn't save the file: denied")
+  })
+
   it('the card names the speakers as they were when the vote ended, not today\'s', () => {
     // The winning line was later changed to sam; the vote ended with kim saying it.
     const ended = card()

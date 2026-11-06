@@ -1,6 +1,8 @@
 <script lang="ts">
   import { actionBarFocus } from '../lib/focus'
+  import { saveImage } from '../lib/clipDownload'
   import Avatar from './Avatar.svelte'
+  import ClipDownload from './ClipDownload.svelte'
   import DeleteButton from './DeleteButton.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
   import Icon from './Icon.svelte'
@@ -95,8 +97,9 @@
     line.speaker_id ? null : speaker(line).userId ? 'unlink' : 'link'
   const toggleAward = (line: QuoteLine) => attempt(() => (line.awarded ? api.takeAward(line.id) : api.giveAward(line.id)))
   const copyable = (line: QuoteLine) => !!(line.text ?? line.caption)
-  /** Whether the line's menu would have anything in it: award, copy, or link. */
-  const hasActions = (line: QuoteLine) => !!awardOf(line) || copyable(line) || !!linkOf(line)
+  /** Whether the line's menu would have anything in it: award, copy, save (an image), or link. */
+  const hasActions = (line: QuoteLine) => !!awardOf(line) || copyable(line) || !!line.media || !!linkOf(line)
+  const save = (media: LineMedia, caption: string | null) => void saveImage(media, caption, showError)
   const copy = (line: QuoteLine) => attempt(() => navigator.clipboard.writeText(line.text ?? line.caption ?? ''))
   const link = (line: QuoteLine, userId: string) => attempt(() => api.linkSpeaker(serverId, { name: line.speaker_name ?? '', user_id: userId }))
   const unlink = (line: QuoteLine) => attempt(() => api.unlinkSpeaker(serverId, nameKey(line.speaker_name ?? '')))
@@ -139,9 +142,12 @@
                 onkeydown={(e) => lineKey(e, line)}>
                 <div class="said">
                   {#if line.media}
-                    <button type="button" class="picbtn" aria-label="Open image full size" onclick={() => (open = { media: line.media!, caption: line.caption })}>
-                      <QuoteImage media={line.media} caption={line.caption} />
-                    </button>
+                    <div class="pic">
+                      <button type="button" class="picbtn" aria-label="Open image full size" onclick={() => (open = { media: line.media!, caption: line.caption })}>
+                        <QuoteImage media={line.media} caption={line.caption} />
+                      </button>
+                      <ClipDownload label="Save image" tip="Save image" onclick={() => save(line.media!, line.caption)} />
+                    </div>
                     {#if line.caption}<p class="caption">{line.caption}</p>{/if}
                   {:else}
                     <span class="text">“{line.text}”</span>
@@ -199,14 +205,20 @@
     {@const line = m.line}
     {#key m}
       <LineMenu x={m.x} y={m.y} opener={m.opener} award={awardOf(line)} link={linkOf(line)} {members}
-        onAward={() => toggleAward(line)} onCopy={copyable(line) ? () => copy(line) : null} onLink={(id) => link(line, id)} onUnlink={() => unlink(line)}
+        onAward={() => toggleAward(line)} onCopy={copyable(line) ? () => copy(line) : null}
+        onSave={line.media ? () => save(line.media!, line.caption) : null} onLink={(id) => link(line, id)} onUnlink={() => unlink(line)}
         onClose={() => (menu = null)} />
     {/key}
   {/if}
   {#if open}
+    {@const shown = open}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="lightbox" role="dialog" aria-modal="true" aria-label={open.caption ?? 'Quoted image'} tabindex="-1" use:modal={() => (open = null)} onclick={() => (open = null)}>
-      <QuoteImage media={open.media} caption={open.caption} full />
+      <div class="pic">
+        <QuoteImage media={open.media} caption={open.caption} full />
+        <!-- saving leaves the view open -->
+        <ClipDownload label="Save image" tip="Save image" onclick={(e) => { e.stopPropagation(); save(shown.media, shown.caption) }} />
+      </div>
       <button type="button" class="close icon-btn round modal-close" aria-label="Close" onclick={() => (open = null)}><Icon name="x" size={16} /></button>
     </div>
   {/if}
@@ -233,6 +245,9 @@
   .trophy { color: var(--quote-green-text); font-size: 12px; font-weight: 600; }
   .lbtn { opacity: 0; }
   .line:hover .lbtn, .line:focus-within .lbtn { opacity: 1; }
+  /* the image and the clips' download icon over its corner (#206), shown while the pointer is over it */
+  .pic { position: relative; width: fit-content; max-width: 100%; }
+  .pic:hover :global(.clip-dl) { opacity: 1; }
   .picbtn { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: var(--radius-sm); }
   .caption { margin: 4px 0 0; font-size: 13px; color: var(--text-2); }
   .win { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: var(--radius-md); background: var(--quote-green); color: var(--on-quote-green); font-size: 11px; font-weight: 700; }

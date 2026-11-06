@@ -1550,21 +1550,29 @@ impl Api {
     }
 
     pub async fn media(&self, token: &str, hash: &str) -> Result<Vec<u8>, ApiError> {
-        if !crate::media::is_hash(hash) {
-            return Err(ApiError::Rejected("not a media hash".into()));
-        }
-        let r = self
-            .http
-            .get(self.url(&["media", hash])?)
-            .bearer_auth(token)
-            .send()
-            .await;
+        let r = self.media_request(token, hash)?.send().await;
         let bytes = Self::checked(r)
             .await?
             .bytes()
             .await
             .map_err(|e| ApiError::Network(failure_text(e)))?;
         Ok(bytes.to_vec())
+    }
+
+    /// The GET of a stored file, unsent: `media` reads it into memory, Save image (#206) streams it
+    /// to disk. Refuses anything but a hash.
+    pub fn media_request(
+        &self,
+        token: &str,
+        hash: &str,
+    ) -> Result<reqwest::RequestBuilder, ApiError> {
+        if !crate::media::is_hash(hash) {
+            return Err(ApiError::Rejected("not a media hash".into()));
+        }
+        Ok(self
+            .http
+            .get(self.url(&["media", hash])?)
+            .bearer_auth(token))
     }
 
     pub async fn create_emoji(
@@ -3992,6 +4000,30 @@ mod tests {
             .await
             .unwrap();
         assert!(crate::media::is_hash(&info.hash));
+    }
+
+    #[tokio::test]
+    async fn a_quote_image_saves_as_its_original_file() {
+        // Save image (#206): the stored file itself (not its still), streamed to the chosen path
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let info = api
+            .upload_quote_media(&token, crate::media::tests::PNG.to_vec())
+            .await
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("image.webp");
+        let req = api.media_request(&token, &info.hash).unwrap();
+        crate::clips::download::save_request(req, &dest)
+            .await
+            .unwrap();
+        let saved = std::fs::read(&dest).unwrap();
+        assert!(
+            crate::media::verify(&info.hash, &saved),
+            "the saved bytes are the stored file"
+        );
+        assert!(api.media_request(&token, "../me").is_err());
     }
 
     #[tokio::test]

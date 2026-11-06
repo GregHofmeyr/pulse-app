@@ -9,11 +9,14 @@
   // ended), or the plain no-vote line. "Reopen voting" while the vote can still be reopened. A
   // reopen deletes the card on the server: a deleted one shows nothing.
   import { untrack } from 'svelte'
+  import ClipDownload from './ClipDownload.svelte'
   import PixelSpill from './PixelSpill.svelte'
   import QotyStart from './QotyStart.svelte'
   import QuoteImage from './QuoteImage.svelte'
   import VoterStack from './VoterStack.svelte'
   import { motion } from '../lib/animate.svelte'
+  import { saveImage } from '../lib/clipDownload'
+  import { InlineError } from '../lib/inlineError.svelte'
   import { canReopen, plural, snapshotSpeakers, speakersOf } from '../lib/quotes'
   import { api } from '../lib/tauri'
   import { nameOfIn } from '../lib/selectors'
@@ -76,6 +79,9 @@
   const reveal = untrack(() => !revealed.has(message.id) && Date.now() - Date.parse(message.created_at) < 60_000 && !motion.reducedMotion)
   untrack(() => revealed.add(message.id))
   let reopening = $state(false)
+  // Save image (#206): a failure shows on the card for a moment
+  const inlineError = new InlineError()
+  $effect(() => inlineError.stop)
 </script>
 
 {#if !message.deleted}
@@ -92,7 +98,11 @@
         <div class="q">
           {#each lines as line (line.id)}
             {#if line.media}
-              <QuoteImage media={line.media} caption={line.caption} />
+              {@const media = line.media}
+              <div class="shot">
+                <QuoteImage {media} caption={line.caption} />
+                <ClipDownload label="Save image" tip="Save image" onclick={() => void saveImage(media, line.caption, inlineError.show)} />
+              </div>
               {#if line.caption}<p class="caption">{line.caption}</p>{/if}
             {:else}
               <p>“{line.text}”</p>
@@ -100,6 +110,7 @@
           {/each}
         </div>
         <div class="who">{speakers} · <span>Quote of the Year {card.year}</span></div>
+        {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
       {:else if deleted}
         <div class="q"><p class="gone">This quote was deleted.</p></div>
         <div class="who">{speakers ? `${speakers} · ` : ''}<span>Quote of the Year {card.year}</span></div>
@@ -130,7 +141,10 @@
   .q p { margin: 0; }
   .q .caption { font-size: 13px; color: var(--island-text-2); }
   .q .gone { font-size: 15px; font-style: italic; color: var(--island-text-3); }
-  .q :global(.pic) { margin: 0 auto; }
+  /* the image and the clips' download icon over its corner (#206), shown while the pointer is over it */
+  .shot { position: relative; width: fit-content; max-width: 100%; margin: 0 auto; }
+  .shot:hover :global(.clip-dl) { opacity: 1; }
+  .err { position: relative; margin: 0; font-size: 12px; color: var(--danger-text); }
   .who { font-size: 14px; font-weight: 600; color: var(--quote-green); }
   .who span { color: var(--island-text); }
   .tally { display: flex; align-items: center; gap: 8px; }

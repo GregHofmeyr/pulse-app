@@ -423,6 +423,7 @@ pub fn run() {
             commands::edit_clip,
             commands::clip_url,
             commands::save_clip,
+            commands::save_image,
             commands::set_fullscreen,
             commands::list_clips,
             commands::clip_facets,

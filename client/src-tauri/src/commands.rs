@@ -2178,7 +2178,6 @@ pub async fn save_clip(
     caption: String,
 ) -> Result<bool, String> {
     use crate::clips::download;
-    use tauri_plugin_dialog::DialogExt;
     let (api, token) = core.current().map_err(|e| e.to_string())?;
     let link = async || {
         core.check(&app, api.clip_url(&token, message_id).await)
@@ -2187,19 +2186,8 @@ pub async fn save_clip(
     // asked first: its file's extension, and a clip that is gone says so before any dialog
     let first = link().await?;
     let ext = download::extension_of(&first.url);
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    let mut dialog = app
-        .dialog()
-        .file()
-        .set_file_name(format!("{}.{ext}", download::suggested_stem(&caption)))
-        .add_filter("Video", &[ext.as_str()]);
-    if let Some(win) = app.get_webview_window("main") {
-        dialog = dialog.set_parent(&win);
-    }
-    dialog.save_file(move |f| {
-        let _ = tx.send(f);
-    });
-    let Some(dest) = rx.await.ok().flatten().and_then(|f| f.into_path().ok()) else {
+    let name = format!("{}.{ext}", download::suggested_stem(&caption));
+    let Some(dest) = ask_save_path(&app, name, "Video", &ext).await else {
         return Ok(false);
     };
     let http = crate::clips::upload::client();
@@ -2213,6 +2201,60 @@ pub async fn save_clip(
     }
     .map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+/// Save image (#206): a quoted image's stored file (the original, not its still frame) to the
+/// path the system Save dialog picks, named after its caption. `false` when the dialog is
+/// cancelled. Stored images are WebP.
+#[tauri::command]
+pub async fn save_image(
+    app: AppHandle,
+    core: State<'_, Core>,
+    hash: String,
+    caption: String,
+) -> Result<bool, String> {
+    use crate::clips::download;
+    let (api, token) = core.current().map_err(|e| e.to_string())?;
+    // a bad hash says so before any dialog
+    let req = api
+        .media_request(&token, &hash)
+        .map_err(|e| e.to_string())?;
+    let name = format!("{}.webp", download::stem_or(&caption, download::IMAGE_NAME));
+    let Some(dest) = ask_save_path(&app, name, "Image", "webp").await else {
+        return Ok(false);
+    };
+    match download::save_request(req, &dest).await {
+        // the server refused our token: the session is dead, same as any other 401
+        Err(download::DownloadError::Rejected(401)) => core
+            .check::<()>(&app, Err(ApiError::Unauthorized))
+            .map_err(|e| e.to_string()),
+        other => other.map_err(|e| e.to_string()),
+    }?;
+    Ok(true)
+}
+
+/// The system Save dialog over the main window, suggesting `name` and filtered to `ext`; `None`
+/// when it is cancelled.
+async fn ask_save_path(
+    app: &AppHandle,
+    name: String,
+    filter: &str,
+    ext: &str,
+) -> Option<std::path::PathBuf> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_file_name(name)
+        .add_filter(filter, &[ext]);
+    if let Some(win) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&win);
+    }
+    dialog.save_file(move |f| {
+        let _ = tx.send(f);
+    });
+    rx.await.ok().flatten().and_then(|f| f.into_path().ok())
 }
 
 /// The clip player's full screen: the window is frameless, so the page's element fullscreen alone
