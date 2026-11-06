@@ -6,6 +6,7 @@ import { patchNotes, type PatchNotes as Notes } from '../patchNotes'
 
 const notes: Notes = {
   id: 't1',
+  version: '0.2.0',
   date: '1 January 2026',
   new: ['A shiny thing', 'Another'],
   fixes: ['A broken thing works'],
@@ -34,12 +35,17 @@ describe('PatchNotes (#207)', () => {
   it('shows the title, the date beneath it, each section as a heading and a list, and the sign-off', () => {
     show()
     expect(dialog().querySelector('h1')?.textContent).toBe('Patch notes')
-    expect(dialog().querySelector('.date')?.textContent).toBe('1 January 2026')
+    expect(dialog().querySelector('.date')?.textContent).toBe('Pulse 0.2.0 · 1 January 2026')
     const sections = [...dialog().querySelectorAll('section')]
     expect(sections.map((s) => s.querySelector('h2')?.textContent)).toEqual(['New', 'Bug fixes'])
     expect([...sections[0].querySelectorAll('li')].map((l) => l.textContent)).toEqual(['A shiny thing', 'Another'])
     expect([...sections[1].querySelectorAll('li')].map((l) => l.textContent)).toEqual(['A broken thing works'])
     expect(dialog().querySelector('.message')?.textContent).toBe('Thanks, all\nsee you soon')
+  })
+
+  it('the notes show the version (#82)', () => {
+    show({ ...notes, version: '0.3.1' })
+    expect(dialog().querySelector('.date')?.textContent).toMatch(/Pulse 0\.3\.1/)
   })
 
   it('hides empty sections', () => {

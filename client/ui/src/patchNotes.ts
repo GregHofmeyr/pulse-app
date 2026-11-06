@@ -5,6 +5,8 @@
 export type PatchNotes = {
   /** Unique per release; what "seen on this device" is remembered by. */
   id: string
+  /** The app version these notes are for: `[workspace.package] version` in Cargo.toml (`just bump-version` sets both). */
+  version: string
   /** The release date as people read it. */
   date: string
   new: string[]
@@ -18,6 +20,7 @@ export type PatchNotes = {
 
 export const patchNotes: PatchNotes = {
   id: '2026-11-05',
+  version: '0.2.0',
   date: '5 November 2026',
   new: [
     'Channel categories: group text and voice channels, and drag channels and categories into any order',

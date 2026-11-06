@@ -24,7 +24,7 @@
     <div class="top">
       <div class="heading">
         <h1 class="modal-title">Patch notes</h1>
-        <p class="date">{notes.date}</p>
+        <p class="date">Pulse {notes.version} · {notes.date}</p>
       </div>
       <button type="button" class="icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" size={16} /></button>
     </div>

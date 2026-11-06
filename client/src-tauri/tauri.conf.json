@@ -2,7 +2,6 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Pulse",
   "mainBinaryName": "pulse-app",
-  "version": "0.1.0",
   "identifier": "app.pulse.client",
   "build": {
     "frontendDist": "../ui/dist",
