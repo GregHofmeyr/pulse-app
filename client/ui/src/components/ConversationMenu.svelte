@@ -1,7 +1,9 @@
 <script lang="ts">
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
-  import { conversationName } from '../lib/conversations'
+  import { channelLevel, conversationName } from '../lib/conversations'
+  import { CHANNEL_LEVELS } from '../lib/notifyLevels'
+  import Icon from './Icon.svelte'
   import { clickOutside } from '../lib/actions'
   import type { Channel } from '../lib/protocol/Channel'
   import { MUTE_FOR, muteUntil } from '../lib/muteDurations'
@@ -48,6 +50,10 @@
     }
   }
   const muteFor = (minutes: number | null) => run(() => api.setMute('channel', channel.id, muteUntil(minutes)))
+  // The bell's popover on a server channel (#203): its notification level, the channel menu's choices (#195) with
+  // yours ticked. DMs and groups have none.
+  const withLevels = $derived(withMute && !at && channel.server_id !== null)
+  const level = $derived(channelLevel(app.state, channel.id))
   // the right-click menu's mute flyout (#190; the channel menu's, #131)
   let flyout = $state<ReturnType<typeof MuteFlyout>>()
 
@@ -101,6 +107,15 @@
           <button class="menu-item" role="menuitem" onclick={() => muteFor(d.minutes)}>{d.label}</button>
         {/each}
       {/if}
+      {#if withLevels}
+        <span class="menu-sep"></span>
+        <span class="menu-label">Notifications</span>
+        {#each CHANNEL_LEVELS as l (l.label)}
+          <button class="menu-item" role="menuitemradio" aria-checked={l.level === level} onclick={() => run(() => api.setNotifyLevel('channel', channel.id, l.level))}>
+            <span class="grow">{l.label}</span>{#if l.level === level}<Icon name="check" size={14} />{/if}
+          </button>
+        {/each}
+      {/if}
     {/if}
     {#if withManage}
       {#if withMute && isPrivate}<span class="menu-sep"></span>{/if}
@@ -137,6 +152,7 @@
   /* the pop-in grows from the button's corner, or from the cursor (#173) */
   .menu.anchored { --pop-origin: top right; }
   .menu.ctx { --pop-origin: top left; }
+  .grow { flex: 1; }
   .q { margin: 6px 8px; font-size: 13px; color: var(--text-2); }
   .row { display: flex; gap: 4px; }
   .err { margin: 6px 8px 2px; font-size: 12px; color: var(--danger-text); }

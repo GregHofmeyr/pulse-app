@@ -184,3 +184,63 @@ describe('ServerSettings sections', () => {
     expect(document.querySelector('.content h2')!.textContent).toBe('Recently deleted')
   })
 })
+
+// #203: the server's notification level, as the server tab's right-click menu offers it (#195).
+describe('ServerSettings: Notifications', () => {
+  type Level = { target_kind: 'server' | 'channel'; target_id: string; level: 'all' | 'mentions' | 'nothing' }
+  const settle = () => new Promise((r) => setTimeout(r, 0))
+  const open = (levels: Level[] = []) => {
+    invoke.mockReset()
+    invoke.mockResolvedValue(undefined)
+    app.state = { ...emptyState(), notifyLevels: levels }
+    cmp = mount(ServerSettings, { target: document.body, props: { server: { id: 'S1', name: 'Home', icon_hash: null }, onClose: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('nav button')].find((b) => b.textContent === 'Notifications')!.click()
+    flushSync()
+  }
+  const radios = () => [...document.querySelectorAll<HTMLElement>('[role=radiogroup][aria-label="Notifications for Home"] [role=radio]')]
+  const ticked = () => radios().filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => r.getAttribute('aria-label'))
+
+  it('lists the menu’s levels with yours ticked, All messages by default', () => {
+    open()
+    expect(document.querySelector('.content h2')!.textContent).toBe('Notifications')
+    expect(radios().map((r) => r.getAttribute('aria-label'))).toEqual(['All messages', 'Only @mentions', 'Nothing'])
+    expect(ticked()).toEqual(['All messages'])
+    // the tick: the menus' check icon, on the chosen one only
+    expect(radios().map((r) => !!r.closest('.level')!.querySelector('svg'))).toEqual([true, false, false])
+    unmount(cmp!)
+    open([{ target_kind: 'server', target_id: 'S1', level: 'mentions' }, { target_kind: 'server', target_id: 'S2', level: 'nothing' }])
+    expect(ticked()).toEqual(['Only @mentions'])
+  })
+
+  it('picking one sets it; All messages puts the default back; the tick follows the change', async () => {
+    open()
+    radios()[2].click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'server', targetId: 'S1', level: 'nothing' })
+    app.state = { ...app.state, notifyLevels: [{ target_kind: 'server', target_id: 'S1', level: 'nothing' }] }
+    flushSync()
+    expect(ticked()).toEqual(['Nothing'])
+    radios()[0].click()
+    await settle()
+    expect(invoke).toHaveBeenLastCalledWith('set_notify_level', { targetKind: 'server', targetId: 'S1', level: null })
+  })
+
+  it('arrow keys move the choice, as the other settings radio groups do', async () => {
+    open()
+    radios()[0].focus()
+    radios()[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'server', targetId: 'S1', level: 'mentions' })
+    expect(document.activeElement).toBe(radios()[1])
+  })
+
+  it('says why when it fails', async () => {
+    open()
+    invoke.mockRejectedValue('rate limited')
+    radios()[1].click()
+    await settle()
+    flushSync()
+    expect(document.querySelector('.content [role=alert]')?.textContent).toContain('rate limited')
+  })
+})

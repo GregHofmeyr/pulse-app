@@ -8,7 +8,7 @@
   import { clickOutside } from '../lib/actions'
   import { muteUntil } from '../lib/muteDurations'
   import { serverLevel } from '../lib/conversations'
-  import { NOTIFY_LEVELS } from '../lib/notifyLevels'
+  import { NOTIFY_LEVELS, serverLevelToSet } from '../lib/notifyLevels'
   import MenuFlyout from './MenuFlyout.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
   import { isMember } from '../lib/selectors'
@@ -43,8 +43,7 @@
   const flyouts = () => [flyout, levelFlyout]
   const level = $derived(serverLevel(app.state, serverId))
   const levelChoices = $derived(NOTIFY_LEVELS.map((l) => ({ label: l.label, checked: l.level === level })))
-  // All messages is a server's default: picking it puts the default back
-  const pickLevel = (i: number) => pick(report(() => api.setNotifyLevel('server', serverId, NOTIFY_LEVELS[i].level === 'all' ? null : NOTIFY_LEVELS[i].level)))
+  const pickLevel = (i: number) => pick(report(() => api.setNotifyLevel('server', serverId, serverLevelToSet(NOTIFY_LEVELS[i].level))))
 
   onMount(() => {
     if (!el) return

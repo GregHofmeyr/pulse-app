@@ -3,7 +3,8 @@
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: async () => undefined }))
+const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import ConversationMenu from './ConversationMenu.svelte'
 import { app } from '../lib/store.svelte'
@@ -64,5 +65,60 @@ describe('ConversationMenu anchored to its button', () => {
   it('flips above the button when there is no room below', () => {
     const { top } = show({ left: 700, top: 740, width: 32, height: 32 })
     expect(top).toBe(740 - 4 - MENU_H)
+  })
+})
+
+// #203: the bell's popover offers a server channel's notification level, as its right-click menu's flyout does.
+describe("the bell's popover: notification levels", () => {
+  const general: Channel = { id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }
+  const dm: Channel = { id: 'D1', server_id: null, kind: 'dm', name: null, position: 0 }
+  type Level = { target_kind: 'server' | 'channel'; target_id: string; level: 'all' | 'mentions' | 'nothing' }
+  let onClose = vi.fn()
+  const open = (channel: Channel, levels: Level[] = [], muted = false) => {
+    app.state = { ...app.state, notifyLevels: levels } as never
+    anchor.getBoundingClientRect = () => rect({ left: 700, top: 10, width: 32, height: 32 })
+    onClose = vi.fn()
+    cmp = mount(ConversationMenu, { target: document.body, props: { channel, muted, show: 'mute', anchor, onClose, onLeft: () => {} } })
+    flushSync()
+  }
+  const radios = () => [...document.querySelectorAll<HTMLButtonElement>('[role=menu] [role=menuitemradio]')]
+  const ticked = () => radios().filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.textContent?.trim())
+  const settle = () => new Promise((r) => setTimeout(r, 0))
+  beforeEach(() => {
+    invoke.mockReset()
+    invoke.mockResolvedValue(undefined)
+  })
+
+  it('lists the channel menu’s choices under the mute durations, Follow server ticked by default', () => {
+    open(general)
+    expect([...document.querySelectorAll('.menu-label')].map((l) => l.textContent)).toEqual(['Mute', 'Notifications'])
+    expect(radios().map((b) => b.textContent?.trim())).toEqual(['Follow server', 'All messages', 'Only @mentions', 'Nothing'])
+    expect(ticked()).toEqual(['Follow server'])
+    // the tick is the status menu's check icon, on the ticked one only
+    expect(radios().map((b) => !!b.querySelector('svg'))).toEqual([true, false, false, false])
+  })
+
+  it("ticks the channel's own level, also while it's muted", () => {
+    open(general, [{ target_kind: 'channel', target_id: 'C1', level: 'nothing' }, { target_kind: 'server', target_id: 'S1', level: 'mentions' }], true)
+    expect(ticked()).toEqual(['Nothing'])
+  })
+
+  it('picking one sets it and closes; Follow server puts the default back', async () => {
+    open(general)
+    radios().find((b) => b.textContent?.trim() === 'Only @mentions')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'channel', targetId: 'C1', level: 'mentions' })
+    expect(onClose).toHaveBeenCalled()
+    unmount(cmp!)
+    open(general, [{ target_kind: 'channel', target_id: 'C1', level: 'mentions' }])
+    radios().find((b) => b.textContent?.trim() === 'Follow server')!.click()
+    await settle()
+    expect(invoke).toHaveBeenLastCalledWith('set_notify_level', { targetKind: 'channel', targetId: 'C1', level: null })
+  })
+
+  it('a DM or group has no levels', () => {
+    open(dm)
+    expect(radios()).toEqual([])
+    expect([...document.querySelectorAll('.menu-label')].map((l) => l.textContent)).toEqual(['Mute'])
   })
 })
