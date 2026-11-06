@@ -95,8 +95,12 @@ async fn members_send_read_edit_and_delete_in_a_voice_channel() {
     let w = world().await;
     let m1 = send(&w.app, &w.alex, w.lounge.id, "can you hear me?").await;
     let m2 = send(&w.app, &w.sam, w.lounge.id, "loud and clear").await;
-    let list: Vec<Message> =
-        get_json(&w.app, &w.jo, &format!("/channels/{}/messages", w.lounge.id)).await;
+    let list: Vec<Message> = get_json(
+        &w.app,
+        &w.jo,
+        &format!("/channels/{}/messages", w.lounge.id),
+    )
+    .await;
     assert_eq!(
         list.iter().map(|m| m.id).collect::<Vec<_>>(),
         vec![m2.id, m1.id],
@@ -105,7 +109,10 @@ async fn members_send_read_edit_and_delete_in_a_voice_channel() {
     let path = format!("/messages/{}", m1.id);
     assert_eq!(
         status(
-            w.app.http.patch(w.app.url(&path)).json(&json!({"content": "hear me?"})),
+            w.app
+                .http
+                .patch(w.app.url(&path))
+                .json(&json!({"content": "hear me?"})),
             &w.alex
         )
         .await,
@@ -113,17 +120,31 @@ async fn members_send_read_edit_and_delete_in_a_voice_channel() {
     );
     assert_eq!(
         status(
-            w.app.http.patch(w.app.url(&format!("/messages/{}", m2.id))).json(&json!({"content": "no"})),
+            w.app
+                .http
+                .patch(w.app.url(&format!("/messages/{}", m2.id)))
+                .json(&json!({"content": "no"})),
             &w.alex
         )
         .await,
         403,
         "only your own"
     );
-    assert_eq!(status(w.app.http.delete(w.app.url(&path)), &w.alex).await, 204);
-    let list: Vec<Message> =
-        get_json(&w.app, &w.sam, &format!("/channels/{}/messages", w.lounge.id)).await;
-    assert!(list.iter().find(|m| m.id == m1.id).is_none_or(|m| m.deleted));
+    assert_eq!(
+        status(w.app.http.delete(w.app.url(&path)), &w.alex).await,
+        204
+    );
+    let list: Vec<Message> = get_json(
+        &w.app,
+        &w.sam,
+        &format!("/channels/{}/messages", w.lounge.id),
+    )
+    .await;
+    assert!(
+        list.iter()
+            .find(|m| m.id == m1.id)
+            .is_none_or(|m| m.deleted)
+    );
     // a reply, and a reaction
     let r = post_json(
         &w.app,
@@ -135,7 +156,10 @@ async fn members_send_read_edit_and_delete_in_a_voice_channel() {
     assert_eq!(r.status(), 200);
     assert_eq!(
         status(
-            w.app.http.put(w.app.url(&format!("/messages/{}/reactions/%F0%9F%91%8D", m2.id))),
+            w.app.http.put(
+                w.app
+                    .url(&format!("/messages/{}/reactions/%F0%9F%91%8D", m2.id))
+            ),
             &w.alex
         )
         .await,
@@ -157,7 +181,10 @@ async fn people_outside_the_server_cannot_post_or_react() {
     assert_eq!(r.status(), 403);
     assert_eq!(
         status(
-            w.app.http.put(w.app.url(&format!("/messages/{}/reactions/%F0%9F%91%8D", m.id))),
+            w.app.http.put(
+                w.app
+                    .url(&format!("/messages/{}/reactions/%F0%9F%91%8D", m.id))
+            ),
             &w.jo
         )
         .await,
@@ -185,7 +212,11 @@ async fn unreads_and_mentions_count_for_everyone_in_the_server() {
     send(&w.app, &w.alex, w.lounge.id, "anyone on?").await;
     let last = send(&w.app, &w.alex, w.lounge.id, "@sam you there").await;
     assert_eq!(counts(&w.app, &w.sam, w.lounge.id).await, Some((2, 1)));
-    assert_eq!(counts(&w.app, &w.alex, w.lounge.id).await, Some((0, 0)), "your own don't count");
+    assert_eq!(
+        counts(&w.app, &w.alex, w.lounge.id).await,
+        Some((0, 0)),
+        "your own don't count"
+    );
     let r = post_json(
         &w.app,
         &w.sam,
@@ -197,7 +228,13 @@ async fn unreads_and_mentions_count_for_everyone_in_the_server() {
     assert_eq!(counts(&w.app, &w.sam, w.lounge.id).await, Some((0, 0)));
     // a server joined after messages were said there starts with them read
     let (_, kim) = register(&w.app, "kim").await;
-    let r = post_json(&w.app, &kim, &format!("/servers/{}/join", w.server), json!({})).await;
+    let r = post_json(
+        &w.app,
+        &kim,
+        &format!("/servers/{}/join", w.server),
+        json!({}),
+    )
+    .await;
     assert_eq!(r.status(), 204);
     assert_eq!(counts(&w.app, &kim, w.lounge.id).await, Some((0, 0)));
     // Ready's newest-message pointers stay a conversation list thing (DMs and groups)
@@ -233,13 +270,23 @@ async fn server_search_finds_voice_chat() {
     let m = send(&w.app, &w.alex, w.lounge.id, "pineapple on the stream").await;
     let g = general(&w.app, &w.alex, w.server).await;
     send(&w.app, &w.alex, g.id, "no fruit here").await;
-    let found: SearchResults =
-        get_json(&w.app, &w.sam, &format!("/servers/{}/search?q=pineapple", w.server)).await;
-    assert_eq!(found.hits.iter().map(|h| h.message.id).collect::<Vec<_>>(), vec![m.id]);
+    let found: SearchResults = get_json(
+        &w.app,
+        &w.sam,
+        &format!("/servers/{}/search?q=pineapple", w.server),
+    )
+    .await;
+    assert_eq!(
+        found.hits.iter().map(|h| h.message.id).collect::<Vec<_>>(),
+        vec![m.id]
+    );
     let only: SearchResults = get_json(
         &w.app,
         &w.sam,
-        &format!("/servers/{}/search?q=pineapple&in={}", w.server, w.lounge.id),
+        &format!(
+            "/servers/{}/search?q=pineapple&in={}",
+            w.server, w.lounge.id
+        ),
     )
     .await;
     assert_eq!(only.hits.len(), 1, "in: a voice channel");
@@ -250,21 +297,64 @@ async fn deleting_a_voice_channel_takes_its_chat_and_a_purge_removes_it() {
     let w = world().await;
     let m = send(&w.app, &w.sam, w.lounge.id, "@alex bye").await;
     let id = w.lounge.id;
-    assert_eq!(status(w.app.http.delete(w.app.url(&format!("/channels/{id}"))), &w.alex).await, 204);
-    assert_eq!(counts(&w.app, &w.alex, id).await, None, "its counts go with it");
-    let r = get_json::<SearchResults>(&w.app, &w.alex, &format!("/servers/{}/search?q=bye", w.server)).await;
+    assert_eq!(
+        status(
+            w.app.http.delete(w.app.url(&format!("/channels/{id}"))),
+            &w.alex
+        )
+        .await,
+        204
+    );
+    assert_eq!(
+        counts(&w.app, &w.alex, id).await,
+        None,
+        "its counts go with it"
+    );
+    let r = get_json::<SearchResults>(
+        &w.app,
+        &w.alex,
+        &format!("/servers/{}/search?q=bye", w.server),
+    )
+    .await;
     assert!(r.hits.is_empty());
     // a restore brings it back, chat and counts
-    assert_eq!(status(w.app.http.post(w.app.url(&format!("/channels/{id}/restore"))), &w.alex).await, 200);
+    assert_eq!(
+        status(
+            w.app
+                .http
+                .post(w.app.url(&format!("/channels/{id}/restore"))),
+            &w.alex
+        )
+        .await,
+        200
+    );
     assert_eq!(counts(&w.app, &w.alex, id).await, Some((1, 1)));
-    assert_eq!(status(w.app.http.delete(w.app.url(&format!("/channels/{id}"))), &w.alex).await, 204);
-    assert_eq!(status(w.app.http.delete(w.app.url(&format!("/channels/{id}/permanent"))), &w.alex).await, 204);
+    assert_eq!(
+        status(
+            w.app.http.delete(w.app.url(&format!("/channels/{id}"))),
+            &w.alex
+        )
+        .await,
+        204
+    );
+    assert_eq!(
+        status(
+            w.app
+                .http
+                .delete(w.app.url(&format!("/channels/{id}/permanent"))),
+            &w.alex
+        )
+        .await,
+        204
+    );
     for table in ["messages", "read_states", "search_docs"] {
-        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE channel_id = ?"))
-            .bind(id.to_string())
-            .fetch_one(&w.app.db)
-            .await
-            .unwrap();
+        let n: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM {table} WHERE channel_id = ?"
+        ))
+        .bind(id.to_string())
+        .fetch_one(&w.app.db)
+        .await
+        .unwrap();
         assert_eq!(n, 0, "{table}");
     }
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mentions WHERE message_id = ?")
@@ -310,17 +400,37 @@ async fn migration_starts_existing_members_at_all_read_in_voice_channels() {
     );
     let line = "01J0000000000000000000LINE";
     for q in [
-        format!("INSERT INTO users (id, username, password_hash, created_at) VALUES ('{alex}', 'alex', 'x', '{ts}')"),
-        format!("INSERT INTO users (id, username, password_hash, created_at) VALUES ('{sam}', 'sam', 'x', '{ts}')"),
-        format!("INSERT INTO servers (id, name, created_by, created_at) VALUES ('{server}', 'Main', '{alex}', '{ts}')"),
-        format!("INSERT INTO servers (id, name, created_by, created_at) VALUES ('{other}', 'Other', '{alex}', '{ts}')"),
-        format!("INSERT INTO server_members (server_id, user_id, joined_at) VALUES ('{server}', '{alex}', '{ts}')"),
-        format!("INSERT INTO server_members (server_id, user_id, joined_at) VALUES ('{server}', '{sam}', '{ts}')"),
-        format!("INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('{voice}', '{server}', 'voice', 'Lounge', 0, '{ts}')"),
-        format!("INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('{text}', '{other}', 'text', 'general', 0, '{ts}')"),
-        format!("INSERT INTO read_states (user_id, channel_id, last_read_message_id) VALUES ('{alex}', '{text}', NULL)"),
+        format!(
+            "INSERT INTO users (id, username, password_hash, created_at) VALUES ('{alex}', 'alex', 'x', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO users (id, username, password_hash, created_at) VALUES ('{sam}', 'sam', 'x', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO servers (id, name, created_by, created_at) VALUES ('{server}', 'Main', '{alex}', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO servers (id, name, created_by, created_at) VALUES ('{other}', 'Other', '{alex}', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO server_members (server_id, user_id, joined_at) VALUES ('{server}', '{alex}', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO server_members (server_id, user_id, joined_at) VALUES ('{server}', '{sam}', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('{voice}', '{server}', 'voice', 'Lounge', 0, '{ts}')"
+        ),
+        format!(
+            "INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('{text}', '{other}', 'text', 'general', 0, '{ts}')"
+        ),
+        format!(
+            "INSERT INTO read_states (user_id, channel_id, last_read_message_id) VALUES ('{alex}', '{text}', NULL)"
+        ),
         // a line already there (none could be posted, but a point at the newest one is what joining gives)
-        format!("INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES ('{line}', '{voice}', '{alex}', 'hi', '{ts}')"),
+        format!(
+            "INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES ('{line}', '{voice}', '{alex}', 'hi', '{ts}')"
+        ),
     ] {
         sqlx::query(&q).execute(&pool).await.unwrap();
     }

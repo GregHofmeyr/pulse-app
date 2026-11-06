@@ -265,7 +265,8 @@ async fn migration_keeps_every_channel_row() {
     assert_eq!(count("channel_members").await, 1, "the dm kept its member");
     assert_eq!(count("messages").await, 1);
     assert_eq!(count("reactions").await, 1);
-    assert_eq!(count("read_states").await, 1);
+    // and 0026 (#226) gives the member a read point in the voice channel's chat
+    assert_eq!(count("read_states").await, 2);
     assert_eq!(count("server_members").await, 1);
     assert_eq!(count("dm_hidden").await, 1, "the hidden dm stayed hidden");
     assert_eq!(count("voice_sessions").await, 1);

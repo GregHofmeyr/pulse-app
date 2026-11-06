@@ -281,9 +281,7 @@ async fn send(
     let ch = channel_for(&s.db, me, id).await?;
     // A voice channel's chat (#226) takes messages as a text channel does.
     match (ch.kind, ch.server_id) {
-        (kind, Some(server))
-            if kind.has_chat() && !is_server_member(&s.db, server, me).await? =>
-        {
+        (kind, Some(server)) if kind.has_chat() && !is_server_member(&s.db, server, me).await? => {
             return Err(AppError::Forbidden);
         }
         _ => {}

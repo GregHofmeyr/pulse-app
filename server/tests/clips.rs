@@ -323,7 +323,8 @@ async fn migration_keeps_every_channel_row() {
         .await
         .unwrap();
     assert_eq!(count("reactions").await, 0, "ON DELETE CASCADE still works");
-    assert_eq!(count("read_states").await, 0);
+    // the voice channel's read point (0026, #226) stays with its channel
+    assert_eq!(count("read_states").await, 1);
 }
 
 #[tokio::test]
