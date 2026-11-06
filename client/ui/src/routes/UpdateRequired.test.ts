@@ -81,6 +81,38 @@ describe('UpdateRequired (#82)', () => {
     expect(retry()).toBeDefined()
   })
 
+  it('a failed check (offline) also looks again every minute by itself (#233)', async () => {
+    vi.useFakeTimers()
+    let online = false
+    core(async () => {
+      if (!online) throw 'offline'
+      return { version: '0.2.1' }
+    })
+    await show()
+    await vi.waitFor(() => expect(text()).toContain("Couldn't update: offline"))
+    expect(checks()).toBe(1)
+    await vi.advanceTimersByTimeAsync(FORCED_RECHECK_MS)
+    expect(checks()).toBe(2)
+    online = true
+    await vi.advanceTimersByTimeAsync(FORCED_RECHECK_MS)
+    expect(checks()).toBe(3)
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('update_install', { restart: false }))
+  })
+
+  it('a failed install waits for Retry (no download loop) (#233)', async () => {
+    vi.useFakeTimers()
+    core(
+      async () => ({ version: '0.2.1' }),
+      async () => {
+        throw 'signature mismatch'
+      },
+    )
+    await show()
+    await vi.waitFor(() => expect(text()).toContain("Couldn't update: signature mismatch"))
+    await vi.advanceTimersByTimeAsync(FORCED_RECHECK_MS * 3)
+    expect(checks()).toBe(1)
+  })
+
   it('stops re-checking once it is gone', async () => {
     vi.useFakeTimers()
     core(async () => null)

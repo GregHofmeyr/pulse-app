@@ -259,15 +259,28 @@ pub fn run() {
             });
             // App updates (#82): the launch check starts now, so the page usually has the answer when it asks. On
             // Windows the installer ends the process: first clear the crash marker (an update isn't a crash) and
-            // flush the log.
-            let h = app.handle().clone();
-            app.manage(updater::Updates::new(std::sync::Arc::new(move || {
-                tracing::info!("update: handing over to the installer");
-                reports::crash::clear_running(&h.state::<reports::LogDir>().0);
-                if let Some(guard) = h.try_state::<LogGuard>() {
-                    drop(guard.0.lock().unwrap().take());
-                }
-            })));
+            // flush the log. If the installer doesn't start after all, Pulse carries on: both come back (#233).
+            let (h, h2) = (app.handle().clone(), app.handle().clone());
+            app.manage(updater::Updates::new(std::sync::Arc::new(updater::Handover::new(
+                move || {
+                    tracing::info!("update: handing over to the installer");
+                    reports::crash::clear_running(&h.state::<reports::LogDir>().0);
+                    if let Some(guard) = h.try_state::<LogGuard>() {
+                        drop(guard.0.lock().unwrap().take());
+                    }
+                },
+                move || {
+                    let log_dir = &h2.state::<reports::LogDir>().0;
+                    reports::crash::mark_running(log_dir);
+                    if let Some(guard) = h2.try_state::<LogGuard>() {
+                        match logging::reopen(log_dir) {
+                            Ok(g) => *guard.0.lock().unwrap() = Some(g),
+                            Err(e) => eprintln!("logging unavailable after a failed update: {e}"),
+                        }
+                    }
+                    tracing::warn!("update: the installer didn't start; carrying on with this version");
+                },
+            ))));
             updater::start_launch_check(app.handle(), session::Store::new(dir.clone(), profile.as_deref()));
             updater::spawn_periodic(app.handle());
             // A stored login connects now, while the webview boots: Ready no longer waits for

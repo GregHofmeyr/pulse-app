@@ -126,15 +126,20 @@ echo "curl $*" >>"$LOG"
 printf '%s' "${FAKE_CODE:-401}"
 EOF
 chmod +x "$tmp/bin/gh" "$tmp/bin/curl"
-export LOG="$tmp/log" FAKE_ARTIFACT="$tmp/artifact" PATH="$tmp/bin:$PATH" PUBLISH_UPDATE_DIR="$srv"
+mkdir -p "$tmp/tmpdirs"
+export LOG="$tmp/log" FAKE_ARTIFACT="$tmp/artifact" PATH="$tmp/bin:$PATH" PUBLISH_UPDATE_DIR="$srv" TMPDIR="$tmp/tmpdirs"
 export PUBLISH_UPDATE_PUBKEY="$pub_a"
 good_run='{"workflowName":"release-windows","conclusion":"success","headBranch":"main"}'
 
-# artifact VERSION: the CI download for VERSION, signed with key a
+# artifact VERSION [SIGNED]: the CI download for VERSION, signed with key a for version SIGNED (default VERSION, as
+# `tauri build` binds it; '-' = a signature that binds none)
 artifact() {
+  local signed=${2:-$1} comment
   rm -rf "${FAKE_ARTIFACT:?}"/*
   head -c 300000 /dev/urandom >"$FAKE_ARTIFACT/Pulse_$1_x64-setup.exe"
-  minisign -S -s "$tmp/keys/a.key" -m "$FAKE_ARTIFACT/Pulse_$1_x64-setup.exe" -x "$tmp/raw.sig" >/dev/null
+  comment=$(printf 'timestamp:1700000000\tfile:Pulse_%s_x64-setup.exe' "$1")
+  [ "$signed" = - ] || comment+=$(printf '\tversion:%s' "$signed")
+  minisign -S -s "$tmp/keys/a.key" -m "$FAKE_ARTIFACT/Pulse_$1_x64-setup.exe" -x "$tmp/raw.sig" -t "$comment" >/dev/null
   base64 -w0 "$tmp/raw.sig" >"$FAKE_ARTIFACT/Pulse_$1_x64-setup.exe.sig"
   echo 'collect logs' >"$FAKE_ARTIFACT/collect-logs.ps1"
 }
@@ -154,7 +159,7 @@ serve() {
 publish() {
   if (publish_main 4242) >"$tmp/out" 2>&1; then echo ok; else echo refused; fi
 }
-served_version() { jq -r .version "$srv/latest.json" 2>/dev/null; }
+offered() { jq -r .version "$srv/latest.json" 2>/dev/null; }
 files() { (cd "$srv" && find . -type f | sed 's|^\./||' | LC_ALL=C sort | tr '\n' ' '); }
 
 # --- a first publish on an empty server, then the next one
@@ -162,7 +167,7 @@ export FAKE_RUN=$good_run
 serve
 artifact 0.2.0
 [ "$(publish)" = ok ] && pass "first publish" || fail "first publish: $(cat "$tmp/out")"
-[ "$(served_version)" = 0.2.0 ] && pass "manifest names 0.2.0" || fail "manifest after first publish: $(served_version)"
+[ "$(offered)" = 0.2.0 ] && pass "manifest names 0.2.0" || fail "manifest after first publish: $(offered)"
 cmp -s "$srv/Pulse_0.2.0_x64-setup.exe" "$FAKE_ARTIFACT/Pulse_0.2.0_x64-setup.exe" && pass "installer uploaded as built" || fail "installer differs on the server"
 grep -q '^published 0.2.0$' "$tmp/out" && pass "prints published 0.2.0" || fail "no 'published 0.2.0': $(cat "$tmp/out")"
 [ "$(files)" = "Pulse_0.2.0_x64-setup.exe latest.json " ] && pass "no leftovers (.incoming, .tmp, .sig)" || fail "server files: $(files)"
@@ -178,7 +183,7 @@ for v in 0.2.1 0.2.0; do
 done
 serve 0.2.1
 artifact 0.2.2
-[ "$(publish)" = ok ] && [ "$(served_version)" = 0.2.2 ] && pass "0.2.2 over 0.2.1" || fail "0.2.2 over 0.2.1: $(cat "$tmp/out")"
+[ "$(publish)" = ok ] && [ "$(offered)" = 0.2.2 ] && pass "0.2.2 over 0.2.1" || fail "0.2.2 over 0.2.1: $(cat "$tmp/out")"
 
 # --- keeps_two_versions: 0.2.0, 0.2.1, 0.2.2 served, publishing 0.2.3 keeps 0.2.2 and 0.2.3
 serve 0.2.0 0.2.1 0.2.2
@@ -241,7 +246,7 @@ artifact 0.2.2
 export PUBLISH_UPDATE_CP=badcp
 [ "$(publish)" = refused ] && pass "corrupt_upload_never_goes_live: refused" || fail "published a corrupt upload: $(cat "$tmp/out")"
 export PUBLISH_UPDATE_CP=cp
-[ "$(served_version)" = 0.2.1 ] && pass "the old version stays served" || fail "served after a corrupt upload: $(served_version)"
+[ "$(offered)" = 0.2.1 ] && pass "the old version stays served" || fail "served after a corrupt upload: $(offered)"
 [ "$(files)" = "Pulse_0.2.0_x64-setup.exe Pulse_0.2.1_x64-setup.exe latest.json " ] && pass "nothing new left, nothing pruned" || fail "after a corrupt upload: $(files)"
 
 # --- failed_manifest_move_refused: the manifest can't be moved into place → refused, and the new installer isn't pruned
@@ -254,8 +259,24 @@ serve 0.2.1
 artifact 0.2.2
 [ "$(publish)" = refused ] && pass "failed_manifest_move_refused" || fail "a failed manifest move passed: $(cat "$tmp/out")"
 rm "$tmp/bin/mv"
-[ "$(served_version)" = 0.2.1 ] && pass "the old manifest stays" || fail "manifest after a failed move: $(served_version)"
+[ "$(offered)" = 0.2.1 ] && pass "the old manifest stays" || fail "manifest after a failed move: $(offered)"
 [ -f "$srv/Pulse_0.2.1_x64-setup.exe" ] && pass "the served installer is kept" || fail "pruned the served installer: $(files)"
+
+# --- unreadable_manifest_refused (#233): a latest.json that's there but can't be read isn't "nothing served"
+for junk in 'not json' '{"platforms":{}}' '{"version":"latest"}' ''; do
+  serve 0.2.1
+  printf '%s' "$junk" >"$srv/latest.json"
+  artifact 0.2.0
+  [ "$(publish)" = refused ] && pass "unreadable_manifest_refused: '$junk'" || fail "published over an unreadable manifest '$junk': $(cat "$tmp/out")"
+  [ "$(files)" = "Pulse_0.2.1_x64-setup.exe latest.json " ] && pass "nothing uploaded over '$junk'" || fail "uploaded over '$junk': $(files)"
+done
+# an empty server dir still means nothing is served yet
+serve
+artifact 0.2.0
+[ "$(publish)" = ok ] && pass "no manifest at all still publishes" || fail "first publish after the manifest fix: $(cat "$tmp/out")"
+
+# --- the download is deleted, refused or not (#233)
+[ -z "$(ls -A "$TMPDIR")" ] && pass "download_dir_removed: no temp dirs left after all the publishes above" || fail "temp dirs left: $(ls -A "$TMPDIR")"
 
 # --- the route must be live and guarded
 serve 0.2.1

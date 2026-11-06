@@ -136,9 +136,10 @@
   const updateBlocked = $derived(restartBlocked())
   function restartToUpdate() {
     if (updateBlocked || updates.installing) return
-    // a failure is logged and shown nowhere else: the button stays, try again later
+    // a failure is logged and its reason shows in the button's tooltip (#233): the button stays, try again later
     installUpdate(true).catch(() => {})
   }
+  const updateTip = $derived(updateBlocked ? 'Finish your call first' : updates.error ? `Couldn't update: ${updates.error}` : undefined)
   /** Your avatar and name (#168): one control, opening your own card (status and Settings are on it). */
   let meButton = $state<HTMLButtonElement>()
   const myCardOpen = $derived(!!meButton && profileUi.card?.opener === meButton)
@@ -594,7 +595,7 @@
     <!-- #155: icon only; the app-wide tooltip reads its aria-label -->
     <!-- #82: a newer Pulse is ready; aria-disabled, not disabled, in a call: a disabled button swallows the hover that shows the tooltip -->
     {#if updates.offer}
-      <button class="win update" class:off={updateBlocked} aria-disabled={updateBlocked} data-tip={updateBlocked ? 'Finish your call first' : undefined} onclick={restartToUpdate}>Restart to update</button>
+      <button class="win update" class:off={updateBlocked} aria-disabled={updateBlocked} data-tip={updateTip} onclick={restartToUpdate}>Restart to update</button>
     {/if}
     <!-- #207: what's new; a dot until this release's notes are opened once on this device -->
     <button class="win notes" aria-label="Patch notes" onclick={openPatchNotes}><Icon name="scroll" size={16} />{#if patchNotesSeen.id !== patchNotes.id}<span class="new-dot" aria-hidden="true"></span>{/if}</button>

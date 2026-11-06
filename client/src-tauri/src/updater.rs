@@ -97,6 +97,54 @@ pub async fn wait_launch(rx: &mut watch::Receiver<LaunchCheck>, wait: Duration) 
     }
 }
 
+/// Around the installer taking over (Windows): the plugin runs [`Handover::before_exit`] just before it starts the
+/// installer and ends the process (the crash marker is cleared, the log closed). If starting the installer fails, the
+/// install comes back with an error and Pulse carries on, so [`Handover::install_failed`] undoes that (#233).
+pub struct Handover {
+    exit: Box<dyn Fn() + Send + Sync>,
+    resume: Box<dyn Fn() + Send + Sync>,
+    handed_over: AtomicBool,
+}
+
+impl Handover {
+    pub fn new(
+        exit: impl Fn() + Send + Sync + 'static,
+        resume: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            exit: Box::new(exit),
+            resume: Box::new(resume),
+            handed_over: AtomicBool::new(false),
+        }
+    }
+
+    /// The plugin's `on_before_exit`.
+    pub fn before_exit(&self) {
+        self.handed_over.store(true, Ordering::SeqCst);
+        (self.exit)();
+    }
+
+    /// The install came back (it only does when it failed): undo [`Self::before_exit`] if it ran.
+    pub fn install_failed(&self) {
+        if self.handed_over.swap(false, Ordering::SeqCst) {
+            (self.resume)();
+        }
+    }
+}
+
+/// What a check found becomes the update to install. Finding nothing newer (the server withdrew it, or it's signed
+/// out there) clears an earlier one; a failed check leaves it as it was (#233).
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn keep_found<T: Clone>(
+    slot: &Mutex<Option<T>>,
+    checked: Result<Option<T>, String>,
+) -> Result<Option<T>, String> {
+    if let Ok(found) = &checked {
+        *slot.lock().unwrap() = found.clone();
+    }
+    checked
+}
+
 /// The updater's state in the app (managed).
 pub struct Updates {
     launch: watch::Sender<LaunchCheck>,
@@ -104,22 +152,41 @@ pub struct Updates {
     #[cfg(windows)]
     found: Mutex<Option<tauri_plugin_updater::Update>>,
     installing: AtomicBool,
-    /// The login whose first Ready was checked already (its token): one check per login.
+    /// The login checked already (its token), by the launch check or its first Ready: one check per login.
     checked_login: Mutex<Option<String>>,
-    /// Runs just before the installer takes over and the process ends (Windows): crash marker, log flush.
+    /// Around the installer taking over and the process ending (Windows): crash marker, log.
     #[cfg_attr(not(windows), allow(dead_code))]
-    before_exit: Arc<dyn Fn() + Send + Sync>,
+    handover: Arc<Handover>,
 }
 
 impl Updates {
-    pub fn new(before_exit: Arc<dyn Fn() + Send + Sync>) -> Self {
+    pub fn new(handover: Arc<Handover>) -> Self {
         Self {
             launch: watch::channel(LaunchCheck::Pending).0,
             #[cfg(windows)]
             found: Mutex::new(None),
             installing: AtomicBool::new(false),
             checked_login: Mutex::new(None),
-            before_exit,
+            handover,
+        }
+    }
+
+    /// The first check for the login holding `token`: true once per login (the launch check with the stored login
+    /// and that login's first Ready would otherwise both ask, #233).
+    fn claim_login(&self, token: &str) -> bool {
+        let mut checked = self.checked_login.lock().unwrap();
+        if checked.as_deref() == Some(token) {
+            return false;
+        }
+        *checked = Some(token.to_string());
+        true
+    }
+
+    /// That check failed: the login's first Ready may try again.
+    fn release_login(&self, token: &str) {
+        let mut checked = self.checked_login.lock().unwrap();
+        if checked.as_deref() == Some(token) {
+            *checked = None;
         }
     }
 
@@ -135,15 +202,14 @@ impl Updates {
         }
         #[cfg(windows)]
         {
-            let found = check_server(app, server, token, self.before_exit.clone()).await?;
-            let offer = found.as_ref().map(|u| Offer {
-                version: u.version.clone(),
-            });
-            if let Some(u) = found {
+            let found = keep_found(
+                &self.found,
+                check_server(app, server, token, self.handover.clone()).await,
+            )?;
+            if let Some(u) = &found {
                 tracing::info!(version = %u.version, "update: a newer version is available");
-                *self.found.lock().unwrap() = Some(u);
             }
-            Ok(offer)
+            Ok(found.map(|u| Offer { version: u.version }))
         }
         #[cfg(not(windows))]
         {
@@ -155,11 +221,11 @@ impl Updates {
 
 /// One check against `server`: `Ok(None)` = nothing newer (or no manifest, or not signed in there any more).
 #[cfg(windows)]
-async fn check_server(
-    app: &AppHandle,
+async fn check_server<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     server: &str,
     token: &str,
-    before_exit: Arc<dyn Fn() + Send + Sync>,
+    handover: Arc<Handover>,
 ) -> Result<Option<tauri_plugin_updater::Update>, String> {
     use tauri_plugin_updater::UpdaterExt;
     let base = Url::parse(server).map_err(|e| format!("bad server address: {e}"))?;
@@ -175,7 +241,7 @@ async fn check_server(
         // A download that stalls fails (and Pulse carries on) instead of leaving "Updating Pulse…" up for good; a
         // per-read limit, so a slow but moving download of any size still finishes.
         .configure_client(|c| c.read_timeout(DOWNLOAD_STALL))
-        .on_before_exit(move || before_exit())
+        .on_before_exit(move || handover.before_exit())
         .build()
         .map_err(|e| format!("updater setup: {e}"))?;
     let found = match tokio::time::timeout(CHECK_TIMEOUT, updater.check()).await {
@@ -218,13 +284,18 @@ pub fn start_launch_check(app: &AppHandle, store: crate::session::Store) {
                 .flatten();
             match stored {
                 None => None,
-                Some((server, token)) => match updates.check(&app, &server, &token).await {
-                    Ok(offer) => offer,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "update: launch check failed; starting this version");
-                        None
+                Some((server, token)) => {
+                    // this login's first Ready needn't ask again (unless this check fails)
+                    updates.claim_login(&token);
+                    match updates.check(&app, &server, &token).await {
+                        Ok(offer) => offer,
+                        Err(e) => {
+                            updates.release_login(&token);
+                            tracing::warn!(error = %e, "update: launch check failed; starting this version");
+                            None
+                        }
                     }
-                },
+                }
             }
         } else {
             None
@@ -233,7 +304,7 @@ pub fn start_launch_check(app: &AppHandle, store: crate::session::Store) {
     });
 }
 
-/// A running check: an offer goes to the page ("Restart to update").
+/// A running check: an offer goes to the page ("Restart to update"); finding nothing any more takes it away (`null`).
 async fn check_running(app: &AppHandle, why: &str) {
     let Some((server, token)) = current_session(app) else {
         return;
@@ -243,16 +314,15 @@ async fn check_running(app: &AppHandle, why: &str) {
         return;
     }
     match updates.check(app, &server, &token).await {
-        Ok(Some(offer)) => {
+        Ok(offer) => {
             let _ = app.emit(UPDATE_EVENT, &offer);
         }
-        Ok(None) => {}
         Err(e) => tracing::warn!(error = %e, why, "update: check failed"),
     }
 }
 
 /// The gateway's Ready (commands::forward): the first one of each login checks (a login after a signed-out start,
-/// or another account).
+/// or another account), unless the launch check already asked for that login.
 pub fn after_ready(app: &AppHandle, token: &str) {
     if !updates_enabled() {
         return;
@@ -260,12 +330,8 @@ pub fn after_ready(app: &AppHandle, token: &str) {
     let Some(updates) = app.try_state::<Updates>() else {
         return;
     };
-    {
-        let mut checked = updates.checked_login.lock().unwrap();
-        if checked.as_deref() == Some(token) {
-            return;
-        }
-        *checked = Some(token.to_string());
+    if !updates.claim_login(token) {
+        return;
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move { check_running(&app, "login").await });
@@ -326,6 +392,10 @@ pub async fn update_install(app: AppHandle, restart: bool) -> Result<(), String>
         }
         tracing::info!(version = %update.version, restart, "update: downloading");
         let result = download_and_install(&app, &update).await;
+        if result.is_err() {
+            // the installer didn't start after all: crash marker and log back, if they were already handed over
+            updates.handover.install_failed();
+        }
         updates.installing.store(false, Ordering::SeqCst);
         result.inspect_err(|e| tracing::warn!(error = %e, version = %update.version, "update: install failed; staying on this version"))
     }
@@ -445,6 +515,137 @@ mod tests {
         })
         .unwrap();
         assert_eq!(j, r#"{"version":"0.2.1"}"#);
+    }
+
+    fn counting_handover() -> (
+        Handover,
+        Arc<std::sync::atomic::AtomicU32>,
+        Arc<std::sync::atomic::AtomicU32>,
+    ) {
+        use std::sync::atomic::AtomicU32;
+        let (exits, resumes) = (Arc::new(AtomicU32::new(0)), Arc::new(AtomicU32::new(0)));
+        let (e, r) = (exits.clone(), resumes.clone());
+        let h = Handover::new(
+            move || {
+                e.fetch_add(1, Ordering::SeqCst);
+            },
+            move || {
+                r.fetch_add(1, Ordering::SeqCst);
+            },
+        );
+        (h, exits, resumes)
+    }
+
+    /// #233: the crash marker and the log are handed over just before the installer starts; if starting it fails,
+    /// they come back. A download that fails never handed anything over, so there's nothing to undo.
+    #[test]
+    fn a_failed_handover_is_undone() {
+        let (h, exits, resumes) = counting_handover();
+        h.install_failed(); // failed before the plugin's hook ran (a download error)
+        assert_eq!(resumes.load(Ordering::SeqCst), 0);
+        h.before_exit();
+        assert_eq!(exits.load(Ordering::SeqCst), 1);
+        h.install_failed();
+        assert_eq!(resumes.load(Ordering::SeqCst), 1);
+        h.install_failed(); // once per handover
+        assert_eq!(resumes.load(Ordering::SeqCst), 1);
+        h.before_exit();
+        h.install_failed();
+        assert_eq!(resumes.load(Ordering::SeqCst), 2);
+    }
+
+    /// #233: a check that finds nothing clears an earlier offer (the server withdrew it); a failed one keeps it.
+    #[test]
+    fn finding_nothing_withdraws_an_earlier_offer() {
+        let slot = Mutex::new(None);
+        let o = |v: &str| Offer { version: v.into() };
+        assert_eq!(
+            keep_found(&slot, Ok(Some(o("0.2.1")))),
+            Ok(Some(o("0.2.1")))
+        );
+        assert_eq!(*slot.lock().unwrap(), Some(o("0.2.1")));
+        assert!(keep_found(&slot, Err::<Option<Offer>, _>("offline".into())).is_err());
+        assert_eq!(
+            *slot.lock().unwrap(),
+            Some(o("0.2.1")),
+            "a failed check keeps it"
+        );
+        assert_eq!(
+            keep_found(&slot, Ok(Some(o("0.2.2")))),
+            Ok(Some(o("0.2.2")))
+        );
+        assert_eq!(keep_found(&slot, Ok(None)), Ok(None));
+        assert_eq!(*slot.lock().unwrap(), None, "withdrawn");
+    }
+
+    /// #233: one check per login: the launch check's login doesn't ask again at its first Ready, unless it failed.
+    #[test]
+    fn one_check_per_login() {
+        let updates = Updates::new(Arc::new(counting_handover().0));
+        assert!(updates.claim_login("t1"), "the launch check asks");
+        assert!(!updates.claim_login("t1"), "its first Ready doesn't");
+        assert!(updates.claim_login("t2"), "another login does");
+        updates.release_login("t1"); // not the current one: no effect
+        assert!(!updates.claim_login("t2"));
+        updates.release_login("t2"); // its check failed
+        assert!(updates.claim_login("t2"), "so the first Ready tries again");
+    }
+
+    /// #233: an expired or revoked session gets 401 from `/updates/latest.json`; that's "no update" (`Ok(None)`, so
+    /// no Updating screen), not an error, and the session's token was sent. Windows only (the plugin is a Windows
+    /// dependency); release-windows runs it.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn unauthorized_check_is_no_update() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stub = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut req = Vec::new();
+            let mut buf = [0u8; 4096];
+            while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = sock.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&buf[..n]);
+            }
+            sock.write_all(
+                b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+            )
+            .await
+            .unwrap();
+            String::from_utf8_lossy(&req).to_lowercase()
+        });
+
+        let mut ctx = tauri::test::mock_context(tauri::test::noop_assets());
+        ctx.config_mut().plugins.0.insert(
+            "updater".into(),
+            serde_json::json!({
+                "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMyMDA4NkU3MzgzM0MxMEYKUldRUHdUTTQ1NFlBd2g0T1RTd0VGS29ldWpZSGU0M1BPSGlCNSs3ZUxFZWxJQkZ3OHBzUnlNb0gK",
+                "endpoints": [],
+                // the stub is plain http on loopback (release builds refuse http otherwise)
+                "dangerousInsecureTransportProtocol": true
+            }),
+        );
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .build(ctx)
+            .unwrap();
+        let (h, exits, _) = counting_handover();
+        let found = check_server(
+            app.handle(),
+            &format!("http://{addr}/"),
+            "tok-401",
+            Arc::new(h),
+        )
+        .await;
+        assert!(matches!(found, Ok(None)), "401 is no update");
+        let req = stub.await.unwrap();
+        assert!(req.starts_with("get /updates/latest.json "), "{req}");
+        assert!(req.contains("authorization: bearer tok-401"), "{req}");
+        assert_eq!(exits.load(Ordering::SeqCst), 0);
     }
 
     #[cfg(not(windows))]

@@ -304,6 +304,47 @@ describe('account menu', () => {
       updates.installing = false
       updates.error = null
       voice.channelId = null
+      voice.joining = null
+      voice.stage = { stage: 'disconnected', attempt: null }
+    })
+
+    // #233: the core also refuses while a call is reconnecting (or being joined), so the button says so too
+    it('a call that is reconnecting or being joined disables it too', async () => {
+      await open()
+      offered()
+      voice.stage = { stage: 'reconnecting', attempt: 2 }
+      flushSync()
+      expect(button()!.getAttribute('aria-disabled')).toBe('true')
+      expect(button()!.getAttribute('data-tip')).toBe('Finish your call first')
+      voice.stage = { stage: 'disconnected', attempt: null }
+      voice.joining = 'c2'
+      flushSync()
+      expect(button()!.getAttribute('aria-disabled')).toBe('true')
+      voice.joining = null
+      flushSync()
+      expect(button()!.getAttribute('aria-disabled')).not.toBe('true')
+    })
+
+    it("the core's refusal shows on the button instead of vanishing (#233)", async () => {
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'update_install') throw 'Finish your call first'
+        return cmd === 'list_messages' ? [] : undefined
+      })
+      await open()
+      offered()
+      button()!.click()
+      await vi.waitFor(() => expect(updates.installing).toBe(false))
+      flushSync()
+      expect(button()!.getAttribute('data-tip')).toBe("Couldn't update: Finish your call first")
+    })
+
+    it('an offer the server withdrew goes away (#233)', async () => {
+      await open()
+      offered()
+      expect(button()).toBeDefined()
+      handlers.get('pulse://update')!({ payload: null })
+      flushSync()
+      expect(button()).toBeUndefined()
     })
 
     it('no offer, no button; an offer shows it just left of Patch notes', async () => {

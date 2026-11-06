@@ -12,10 +12,11 @@ export const updates = $state({
   error: null as string | null,
 })
 
-/** The core's update events: an offer found while running, and the download's progress. */
+/** The core's update events: an offer found while running (`null`: a check found nothing any more, so an offer the
+ *  server withdrew goes away), and the download's progress. */
 export async function startUpdateListening(): Promise<() => void> {
   const offs = await Promise.all([
-    listen<UpdateOffer>('pulse://update', (e) => {
+    listen<UpdateOffer | null>('pulse://update', (e) => {
       updates.offer = e.payload
     }),
     listen<UpdateProgress>('pulse://update-progress', (e) => {
@@ -42,7 +43,8 @@ export async function installUpdate(restart: boolean): Promise<void> {
   }
 }
 
-/** "Restart to update" waits while you're in a call (a stream needs one too): it never cuts a call. */
+/** "Restart to update" waits while you're in a call (a stream needs one too): it never cuts a call. Joining one, or
+ *  one that's reconnecting, counts (the core refuses then too). */
 export function restartBlocked(): boolean {
-  return voice.channelId !== null
+  return voice.channelId !== null || voice.joining !== null || voice.stage.stage === 'reconnecting'
 }

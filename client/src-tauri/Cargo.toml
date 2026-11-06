@@ -146,3 +146,7 @@ wasapi = "0.26"
 # `rustls-no-provider` for every reqwest 0.13 in the build (tauri's, livekit-api's), whose clients then panic without
 # a process-wide crypto provider.
 tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["native-tls"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+# updater.rs's check against a stub endpoint runs the plugin in a mock app (#233); only the Windows build has it.
+tauri = { version = "2.12", features = ["test"] }

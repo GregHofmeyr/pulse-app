@@ -5,11 +5,13 @@
 #   1. the run must be release-windows, successful, on main or a v* tag;
 #   2. its pulse-windows-installer artifact must hold exactly one Pulse_X.Y.Z_x64-setup.exe and its .sig, and the
 #      signature must verify (minisign) against the public key in client/src-tauri/tauri.conf.json;
-#   3. X.Y.Z must be newer than what the server offers now (a rerun of an old run is refused);
+#   3. X.Y.Z must be newer than what the server offers now (a rerun of an old run is refused; a latest.json that's
+#      there but can't be read refuses too, since it can't be told apart from a newer one);
 #   4. the installer goes up first (to .incoming/, then moved into place), the manifest last, so latest.json never
 #      names a missing file; then everything but this installer and the one before it is deleted;
 #   5. checks: the server's copy hashes the same, the manifest parses, and the route answers 401 without a session.
-# Nothing is uploaded unless 1-3 and the route check pass. Needs gh (logged in), jq, minisign, curl, ssh, scp.
+# Nothing is uploaded unless 1-3 and the route check pass, and the download is deleted whatever happens. Needs gh
+# (logged in), jq, minisign, curl, ssh, scp.
 #
 # PUBLISH_UPDATE_DIR=DIR (the self-test) uses DIR as the server's updates dir instead of ssh/scp.
 set -euo pipefail
@@ -96,9 +98,22 @@ upload() {
   fi
 }
 
-# served_version: what the server's latest.json offers now ('' = nothing yet)
+# served_version: what the server's latest.json offers now ('' = nothing published yet). Fails when it can't tell: no
+# answer from the server, or a latest.json that's there but unreadable or names no X.Y.Z (#233: taking that for
+# "nothing" would let any version, even an older one, replace it).
 served_version() {
-  remote 'cat latest.json 2>/dev/null || true' | jq -r '.version // empty' 2>/dev/null || true
+  local raw v
+  raw=$(remote 'if [ -e latest.json ]; then cat latest.json; else echo "<no manifest>"; fi') || {
+    echo "couldn't read the server's latest.json" >&2
+    return 1
+  }
+  [ "$raw" = "<no manifest>" ] && return 0
+  v=$(jq -r '.version // empty' <<<"$raw" 2>/dev/null) || v=
+  if [[ ! $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "the server's latest.json doesn't name a version" >&2
+    return 1
+  fi
+  echo "$v"
 }
 
 # prune: keeps the installer the manifest names and the next-highest version; deletes every other Pulse_*.exe
@@ -141,8 +156,9 @@ publish_main() {
   [ "$code" = 401 ] || refuse "https://$PULSE_DOMAIN/updates/latest.json answers $code without a session, not 401: deploy the server first"
 
   dl=$(mktemp -d)
+  # on EXIT too: a refusal exits, and the download must go with it (#233)
   # shellcheck disable=SC2064 # $dl is fixed now
-  trap "rm -rf '$dl'" RETURN
+  trap "rm -rf '$dl'" RETURN EXIT
   gh run download "$run_id" --repo "$gh_repo" -n pulse-windows-installer -D "$dl" ||
     refuse "couldn't download run $run_id's pulse-windows-installer"
   local -a exes=()
@@ -165,7 +181,7 @@ publish_main() {
   [ -n "$pubkey" ] || refuse "no plugins.updater.pubkey in tauri.conf.json"
   verify_sig "$exe" "$sig" "$pubkey" || refuse "$name's signature doesn't verify against tauri.conf.json's public key"
 
-  served=$(served_version)
+  served=$(served_version) || refuse "can't tell what the server offers now, so nothing was published"
   newer_than "$version" "$served" || refuse "$version isn't newer than the $served the server offers now (the updater never downgrades: publish a higher version)"
 
   echo "publishing $version (run $run_id; the server offers ${served:-nothing} now)"
@@ -184,7 +200,7 @@ publish_main() {
   remote 'mv -f latest.json.tmp latest.json' || refuse "couldn't put latest.json in place; the server still offers ${served:-nothing}"
   remote 'rmdir .incoming 2>/dev/null || true'
   # prune only once the server really offers this version (it keeps this installer and the one before)
-  [ "$(served_version)" = "$version" ] || refuse "the server's latest.json doesn't offer $version after the move; nothing was pruned"
+  [ "$(served_version 2>/dev/null)" = "$version" ] || refuse "the server's latest.json doesn't offer $version after the move; nothing was pruned"
   prune
 
   remote 'cat latest.json' | jq -e '.platforms["windows-x86_64"].signature | length > 0' >/dev/null ||

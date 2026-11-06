@@ -312,19 +312,12 @@ fn strip_home(path: &Path, home: &Path) -> Option<std::path::PathBuf> {
 /// Start logging to `<dir>/pulse.log.<date>` (daily files, last 7 kept). Keep the guard alive for
 /// the app's lifetime: dropping it flushes and stops the writer.
 pub fn init(dir: &Path) -> anyhow::Result<WorkerGuard> {
-    std::fs::create_dir_all(dir)?;
-    let appender = tracing_appender::rolling::Builder::new()
-        .rotation(tracing_appender::rolling::Rotation::DAILY)
-        .filename_prefix("pulse")
-        .filename_suffix("log")
-        .max_log_files(7)
-        .build(dir)?;
-    let (writer, guard) =
-        tracing_appender::non_blocking(Capped::new(appender, LOG_CAP_BYTES, utc_day));
+    let guard = open_file(dir)?;
     let filter = build_filter(std::env::var("PULSE_LOG").ok().as_deref());
-    // try_init: tests / a second call must not panic on an already-set global subscriber
+    // try_init: tests / a second call must not panic on an already-set global subscriber (whose writer is the
+    // same switch, so a second call's file is the one written to)
     let _ = tracing_subscriber::fmt()
-        .with_writer(writer)
+        .with_writer(FileWriter)
         .with_ansi(false)
         .with_env_filter(filter)
         .try_init();
@@ -337,6 +330,52 @@ pub fn init(dir: &Path) -> anyhow::Result<WorkerGuard> {
         "Pulse starting"
     );
     Ok(guard)
+}
+
+/// Log to `dir` again after the guard `init` gave was dropped: an update's installer was handed the app (the log
+/// closed so nothing is lost when the process ends) but didn't start, so Pulse carries on (#233).
+pub fn reopen(dir: &Path) -> anyhow::Result<WorkerGuard> {
+    let guard = open_file(dir)?;
+    tracing::info!("log reopened");
+    Ok(guard)
+}
+
+/// The log file's writer, behind the global subscriber: [`open_file`] swaps in a new one, so a closed log can be
+/// reopened ([`reopen`]).
+static FILE: std::sync::RwLock<Option<tracing_appender::non_blocking::NonBlocking>> =
+    std::sync::RwLock::new(None);
+
+/// A fresh daily-rolling, size-capped writer on `dir`, made the one the subscriber writes to.
+fn open_file(dir: &Path) -> anyhow::Result<WorkerGuard> {
+    std::fs::create_dir_all(dir)?;
+    let appender = tracing_appender::rolling::Builder::new()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix("pulse")
+        .filename_suffix("log")
+        .max_log_files(7)
+        .build(dir)?;
+    let (writer, guard) =
+        tracing_appender::non_blocking(Capped::new(appender, LOG_CAP_BYTES, utc_day));
+    *FILE.write().unwrap_or_else(|e| e.into_inner()) = Some(writer);
+    Ok(guard)
+}
+
+/// The subscriber's writer: whichever file [`open_file`] opened last (none yet: lines are dropped).
+struct FileWriter;
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for FileWriter {
+    type Writer = tracing_subscriber::fmt::writer::EitherWriter<
+        tracing_appender::non_blocking::NonBlocking,
+        std::io::Sink,
+    >;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        use tracing_subscriber::fmt::writer::EitherWriter;
+        match &*FILE.read().unwrap_or_else(|e| e.into_inner()) {
+            Some(w) => EitherWriter::A(w.clone()),
+            None => EitherWriter::B(std::io::sink()),
+        }
+    }
 }
 
 /// The crash marker + `PANIC` log line, then the previous hook (so the panic still prints).
@@ -833,6 +872,54 @@ mod tests {
         }
         let text = String::from_utf8(w.inner.clone()).unwrap();
         assert!(!text.contains(SESSION_MARKER), "{text}");
+    }
+
+    const REOPEN_CHILD: &str = "PULSE_TEST_REOPEN_CHILD";
+
+    /// Runs only as the child of `a_closed_log_can_be_reopened`.
+    #[test]
+    fn reopen_child() {
+        let Some(dir) = std::env::var_os(REOPEN_CHILD) else {
+            return;
+        };
+        let dir = Path::new(&dir);
+        let guard = init(dir).unwrap();
+        tracing::warn!("before-the-handover-xyzzy");
+        drop(guard); // handed over to an update's installer: flushed and closed
+        let again = reopen(dir).unwrap(); // the installer didn't start
+        tracing::warn!("after-the-reopen-xyzzy");
+        drop(again);
+    }
+
+    /// #233: the log is closed just before an update's installer takes over; if the installer doesn't start, Pulse
+    /// carries on and must keep logging. (Its own process: the subscriber is global.)
+    #[test]
+    fn a_closed_log_can_be_reopened() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "logging::tests::reopen_child",
+                "--test-threads",
+                "1",
+            ])
+            .env(REOPEN_CHILD, dir.path())
+            .env_remove("PULSE_LOG")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let log: String = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|f| f.file_name().to_string_lossy().starts_with("pulse"))
+            .map(|f| std::fs::read_to_string(f.path()).unwrap_or_default())
+            .collect();
+        assert!(log.contains("before-the-handover-xyzzy"), "{log}");
+        assert!(log.contains("after-the-reopen-xyzzy"), "{log}");
     }
 
     const MARKER_CHILD: &str = "PULSE_TEST_MARKER_CHILD";

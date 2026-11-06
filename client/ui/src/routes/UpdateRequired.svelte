@@ -9,7 +9,8 @@
   import { installUpdate, updates } from '../lib/updates.svelte'
 
   // The server needs a newer Pulse (#82): install it by itself ("Updating Pulse…" shows over this screen; Pulse
-  // reopens on it). Not published yet: say so and look again every minute. A failure: say why, with Retry.
+  // reopens on it). Not published yet, or the check failed (offline): say so and look again every minute, or on Retry.
+  // A failed install: say why and wait for Retry (no 80 MB download loop).
   let phase = $state<'checking' | 'installing' | 'not-yet' | 'failed'>('checking')
   let error = $state('')
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -25,6 +26,7 @@
       if (gone) return
       error = errorText(e)
       phase = 'failed'
+      timer = setTimeout(check, FORCED_RECHECK_MS)
       return
     }
     if (gone) return
