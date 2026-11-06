@@ -27,7 +27,7 @@
   let active = $state(0)
   let hovered = $state<Item | null>(null)
   let navigated = $state(false)
-  let root: HTMLDivElement
+  let root: HTMLDivElement | null = null
   let searchEl: HTMLInputElement
   let scroller: HTMLDivElement
 
@@ -127,7 +127,8 @@
     all = true
     query = '' // the sections are hidden while a search is showing
     collapsed[id] = false
-    void tick().then(() => root.querySelector(`[data-section="${id}"]`)?.scrollIntoView({ block: 'start' }))
+    // `root` is null if the picker closed before the tick (a key or a click that also closes it).
+    void tick().then(() => root?.querySelector(`[data-section="${id}"]`)?.scrollIntoView({ block: 'start' }))
   }
 
   function move(delta: number) {
@@ -135,7 +136,7 @@
     navigated = true
     hovered = null
     active = Math.max(0, Math.min(flat.length - 1, active + delta))
-    void tick().then(() => (root.querySelector('.cell.active') as HTMLElement | null)?.scrollIntoView?.({ block: 'nearest' }))
+    void tick().then(() => (root?.querySelector('.cell.active') as HTMLElement | null)?.scrollIntoView?.({ block: 'nearest' }))
   }
 
   function onKey(ev: KeyboardEvent) {

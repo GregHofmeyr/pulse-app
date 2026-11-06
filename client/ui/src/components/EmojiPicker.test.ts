@@ -300,6 +300,25 @@ describe('EmojiPicker', () => {
     expect(document.querySelector('[data-section="group:objects"] .cell')).not.toBeNull()
   })
 
+  it('closing_right_after_a_key_or_a_rail_jump_leaves_no_failing_scroll_behind', async () => {
+    // The scroll after a move or a jump waits a tick; the picker can be gone by then (#240).
+    const rejections: unknown[] = []
+    const onRejection = (r: unknown) => rejections.push(r)
+    process.on('unhandledRejection', onRejection)
+    try {
+      open()
+      key(search(), 'ArrowDown')
+      unmount(cmp!); cmp = undefined
+      open()
+      document.querySelector<HTMLButtonElement>('[data-rail="group:objects"]')!.click()
+      unmount(cmp!); cmp = undefined
+      await new Promise((r) => setTimeout(r, 0))
+    } finally {
+      process.off('unhandledRejection', onRejection)
+    }
+    expect(rejections).toEqual([])
+  })
+
   it('renders_every_standard_emoji_with_lazy_images', () => {
     open()
     expect(cells().length).toBe(standard.length)
