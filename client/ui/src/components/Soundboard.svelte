@@ -7,7 +7,7 @@
   import { app } from '../lib/store.svelte'
   import { mediaUrl } from '../lib/emoji'
   import { isNotFound, isRateLimited, previewPercents, searchSounds, soundSections, TIDY_THRESHOLD, type Section } from '../lib/soundboard'
-  import { setSoundboardVolume, soundboard } from '../lib/soundboard.svelte'
+  import { beginSoundPlay, setSoundboardVolume, soundboard, soundCooling } from '../lib/soundboard.svelte'
   import { mixer } from '../lib/mixer.svelte'
   import { errorText, soundboardCmd } from '../lib/tauri'
   import { loadAudioConfig } from '../lib/voiceui'
@@ -45,6 +45,8 @@
   })
 
   async function play(s: Sound) {
+    // one play, then a moment's cooldown (#214): spam-clicking can't stack your sound over itself
+    if (!beginSoundPlay()) return
     error = null
     try {
       await soundboardCmd.playToCall(s.id)
@@ -108,7 +110,7 @@
 
 {#snippet tileFor(s: Sound)}
   <div
-    class="tile" role="button" tabindex="0" data-tip={s.name}
+    class="tile" class:cooling={soundCooling()} role="button" tabindex="0" data-tip={s.name} aria-disabled={soundCooling() ? 'true' : undefined}
     onclick={() => play(s)} onkeydown={(ev) => tileKey(ev, s)} oncontextmenu={(ev) => openMenu(ev, s)}
   >
     <button class="preview" type="button" aria-label="Preview {s.name}" onclick={(ev) => { ev.stopPropagation(); preview(s) }}><Icon name="volume" size={14} /></button>
@@ -225,8 +227,10 @@
   .head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 2px 4px; background: var(--bg-2); color: var(--text-3); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
   .tidy { font-size: 11px; text-transform: none; letter-spacing: 0; font-weight: 600; }
   .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-  .tile { position: relative; min-width: 0; height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px 4px; border-radius: var(--radius-md); background: var(--bg-3); cursor: pointer; }
+  .tile { position: relative; min-width: 0; height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px 4px; border-radius: var(--radius-md); background: var(--bg-3); cursor: pointer; transition: opacity var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease); }
   .tile:hover { background: var(--bg-4); }
+  /* just played (#214): the tiles dim for the cooldown; the preview ▶ (local only) still works */
+  .tile.cooling { opacity: .55; cursor: not-allowed; }
   .emoji { font-size: 24px; line-height: 1; height: 26px; display: grid; place-items: center; color: var(--text-2); }
   .name { max-width: 100%; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .preview { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-3); cursor: pointer; opacity: 0; }

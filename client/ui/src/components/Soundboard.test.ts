@@ -3,6 +3,8 @@ import { flushSync, mount, tick, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Server } from '../lib/protocol/Server'
 import type { Sound } from '../lib/protocol/Sound'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const invoke = vi.hoisted(() => vi.fn(async (_c: string, _a?: unknown): Promise<unknown> => undefined))
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
@@ -11,7 +13,8 @@ import Soundboard from './Soundboard.svelte'
 import { mixer, reloadMixer, setNotch } from '../lib/mixer.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
-import { soundboard } from '../lib/soundboard.svelte'
+import { resetSoundCooldown, soundboard } from '../lib/soundboard.svelte'
+import { SOUND_COOLDOWN_MS } from '../lib/soundboard'
 
 const servers: Server[] = [
   { id: 'S1', name: 'Main', icon_hash: null },
@@ -66,6 +69,7 @@ beforeEach(() => {
   reloadMixer()
   invoke.mockClear()
   invoke.mockImplementation(async () => undefined)
+  resetSoundCooldown()
   onClose.mockClear(); onAdd.mockClear(); onEdit.mockClear(); onTidy.mockClear(); scrollIntoView.mockClear()
 })
 afterEach(() => {
@@ -115,6 +119,36 @@ describe('Soundboard', () => {
     expect(calls('soundboard_play')).toHaveLength(0)
   })
 
+  // #214: click-spam can't play over itself: after a play, a short cooldown, shown on the tiles
+  it('a_second_click_inside_the_cooldown_plays_nothing_and_the_tiles_say_so', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    try {
+      open()
+      tile('Bruh').click()
+      flushSync()
+      tile('Airhorn').click()
+      tile('Bruh').click()
+      flushSync()
+      expect(calls('play_sound_to_call')).toEqual([['play_sound_to_call', { id: 'b' }]])
+      expect(tiles().every((t) => t.classList.contains('cooling') && t.getAttribute('aria-disabled') === 'true')).toBe(true)
+      vi.advanceTimersByTime(SOUND_COOLDOWN_MS)
+      flushSync()
+      expect(tiles().some((t) => t.classList.contains('cooling'))).toBe(false)
+      tile('Airhorn').click()
+      flushSync()
+      expect(calls('play_sound_to_call').map((c) => c[1])).toEqual([{ id: 'b' }, { id: 'a' }])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('the_cooldown_is_about_a_second_and_fades_on_a_motion_token', () => {
+    expect(SOUND_COOLDOWN_MS).toBe(1000)
+    const css = readFileSync(resolve(__dirname, 'Soundboard.svelte'), 'utf8').match(/<style>([\s\S]*)<\/style>/)![1]
+    expect(css).toMatch(/\.tile\.cooling \{[^}]*opacity: \.55;[^}]*cursor: not-allowed/)
+    expect(css).toMatch(/\.tile \{[^}]*transition: opacity var\(--dur-fast\) var\(--ease\)/)
+  })
+
   it('a_rate_limited_play_is_swallowed_but_other_errors_show', async () => {
     open()
     invoke.mockRejectedValueOnce('slow down a little, then try again')
@@ -122,6 +156,7 @@ describe('Soundboard', () => {
     await settle()
     expect(document.querySelector('[role=alert]')).toBeNull()
     invoke.mockRejectedValueOnce("You're not in a call")
+    resetSoundCooldown()
     tile('Bruh').click()
     await settle()
     expect(document.querySelector('[role=alert]')?.textContent).toBe("You're not in a call")
@@ -152,7 +187,7 @@ describe('Soundboard', () => {
     open()
     tile('Bruh').querySelector<HTMLElement>('.preview')!.click()
     await settle()
-    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 100, soundboardPercent: 100, soundPercent: 120, output: null, soundId: null }]])
+    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 100, soundboardPercent: 100, soundPercent: 120, output: null, soundId: null, player: null }]])
   })
 
   it('preview_follows_the_calls_master_and_soundboard_notch', async () => {
@@ -161,7 +196,7 @@ describe('Soundboard', () => {
     open()
     tile('Bruh').querySelector<HTMLElement>('.preview')!.click()
     await settle()
-    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 60, soundboardPercent: 150, soundPercent: 120, output: null, soundId: null }]])
+    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 60, soundboardPercent: 150, soundPercent: 120, output: null, soundId: null, player: null }]])
   })
 
   it('preview_plays_locally_only', async () => {
@@ -169,7 +204,7 @@ describe('Soundboard', () => {
     expect(btn('Preview Bruh')).not.toBeNull()
     tile('Bruh').querySelector<HTMLElement>('.preview')!.click()
     await settle()
-    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 100, soundboardPercent: 100, soundPercent: 120, output: null, soundId: null }]])
+    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 100, soundboardPercent: 100, soundPercent: 120, output: null, soundId: null, player: null }]])
     expect(calls('play_sound_to_call')).toHaveLength(0)
   })
 

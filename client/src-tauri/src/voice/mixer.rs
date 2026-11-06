@@ -417,6 +417,16 @@ impl MixerInput {
         self.push_clip(ClipSamples::Stream(pcm), gain, None);
     }
 
+    /// [`Self::play_stream`] that ends early once `stop` is set (the same person's next sound, #214).
+    pub fn play_stream_stoppable(
+        &self,
+        pcm: Arc<crate::soundboard::pcm::Pcm>,
+        gain: f32,
+        stop: Arc<AtomicBool>,
+    ) {
+        self.push_clip(ClipSamples::Stream(pcm), gain, Some(stop));
+    }
+
     /// [`Self::play_clip`] that ends early once `stop` is set (the trimmer's pause).
     pub fn play_clip_stoppable(&self, samples: Arc<[f32]>, gain: f32, stop: Arc<AtomicBool>) {
         self.push_clip(ClipSamples::Fixed(samples), gain, Some(stop));
@@ -928,6 +938,23 @@ mod tests {
         let (input, mut m) = mixer(48_000, 200);
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         input.play_clip_stoppable(vec![0.5; 4800].into(), 1.0, stop.clone());
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| (v - 0.5).abs() < 1e-6));
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| *v == 0.0), "stopped on the next pull");
+    }
+
+    /// #214: a soundboard sound still decoding can be cut off too (a person's next play does).
+    #[test]
+    fn a_stopped_streaming_clip_goes_quiet() {
+        let (input, mut m) = mixer(48_000, 200);
+        let pcm = Arc::new(crate::soundboard::pcm::Pcm::with_capacity(4800));
+        pcm.push(&[0.5; 4800]);
+        pcm.finish();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        input.play_stream_stoppable(pcm, 1.0, stop.clone());
         let mut out = vec![0.0; 480];
         m.mix_into(&mut out, 1, 1.0);
         assert!(out.iter().all(|v| (v - 0.5).abs() < 1e-6));

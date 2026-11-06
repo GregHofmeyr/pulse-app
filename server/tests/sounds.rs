@@ -719,6 +719,38 @@ async fn eleventh_play_in_a_second_is_429() {
     assert_eq!(play(&app, &alex, &s.id).await.status(), 429);
 }
 
+/// #214: one person can't spam: after a play, the next waits out a short cooldown (the client
+/// waits a second; the server a little less, so an honest client never hits it). Someone else's
+/// plays are their own.
+#[tokio::test]
+async fn a_play_inside_the_cooldown_is_429_but_others_can_play() {
+    let mut cfg = test_config();
+    cfg.limits.sound_play_user = pulse_server::limits::LimitsConfig::default().sound_play_user;
+    let app = spawn_with(cfg).await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (sam_id, sam) = register(&app, "sam").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    join(&app, &sam, srv.id).await;
+    let media = upload(&app, &alex, 1000).await;
+    let s = create_ok(&app, &alex, srv.id, &media.hash).await;
+    let room = lounge(&app, &alex, srv.id).await;
+    app.state().voice.join(room, alex_id, "PA_a");
+    app.state().voice.join(room, sam_id, "PA_s");
+    assert_eq!(play(&app, &alex, &s.id).await.status(), 204);
+    assert_eq!(
+        play(&app, &alex, &s.id).await.status(),
+        429,
+        "inside the cooldown"
+    );
+    assert_eq!(play(&app, &sam, &s.id).await.status(), 204, "sam's own");
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+    assert_eq!(
+        play(&app, &alex, &s.id).await.status(),
+        204,
+        "after a second"
+    );
+}
+
 #[tokio::test]
 async fn favourite_toggles_are_rate_limited() {
     let mut cfg = test_config();

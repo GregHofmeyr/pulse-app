@@ -42,11 +42,11 @@ describe('soundboard listener', () => {
   })
   it('plays locally for my call with the Calls, soundboard and sound volumes', () => {
     hooks[0](played('U2'))
-    expect(play).toHaveBeenCalledWith('hA', 100, 100, 80, null, 'A')
+    expect(play).toHaveBeenCalledWith('hA', 100, 100, 80, null, 'A', 'U2')
     setNotch('calls', 'master', 40)
     setSoundboardVolume(180)
     hooks[0](played('U2'))
-    expect(play).toHaveBeenLastCalledWith('hA', 40, 180, 80, null, 'A')
+    expect(play).toHaveBeenLastCalledWith('hA', 40, 180, 80, null, 'A', 'U2')
   })
   it('the soundboard volume is the mixer’s Soundboard notch (0-200)', () => {
     setSoundboardVolume(250)
@@ -72,7 +72,7 @@ describe('soundboard listener', () => {
     expect(play).not.toHaveBeenCalled()
     setSoundboardVolume(50)
     hooks[0](played('U3'))
-    expect(play).toHaveBeenCalledWith('hA', 100, 50, 80, null, 'A')
+    expect(play).toHaveBeenCalledWith('hA', 100, 50, 80, null, 'A', 'U3')
   })
   it('a DM or group call plays like a server voice channel, and Mute soundboard holds there too (#175)', () => {
     voiceState.channelId = 'DM1'
@@ -132,6 +132,21 @@ describe('who played it', () => {
       hooks[0](played('U3'))
       await vi.advanceTimersByTimeAsync(0)
       expect(soundboard.playing.has('U3')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // #214: a person's new play cuts their previous one off (the core does that, told who played), so their ring lasts
+  // as long as the new one, even when it is the shorter
+  it('a new play of theirs restarts the ring for its own length', async () => {
+    vi.useFakeTimers()
+    try {
+      hooks[0](played('U2', 'V1', 5000))
+      await vi.advanceTimersByTimeAsync(100)
+      hooks[0](played('U2', 'V1', 400))
+      await vi.advanceTimersByTimeAsync(500)
+      expect(soundboard.playing.has('U2')).toBe(false)
     } finally {
       vi.useRealTimers()
     }

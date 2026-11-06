@@ -9,7 +9,7 @@ import { loadAudioConfig } from './voiceui'
 import { app, onAppEvent } from './store.svelte'
 import { voice } from './voice.svelte'
 import { memberServers } from './reactions'
-import { loadSoundMutes, saveSoundMutes, shouldPlay, warmOrder } from './soundboard'
+import { loadSoundMutes, saveSoundMutes, shouldPlay, SOUND_COOLDOWN_MS, warmOrder } from './soundboard'
 import { soundboardCmd } from './tauri'
 import { mixer, setNotch } from './mixer.svelte'
 
@@ -40,11 +40,11 @@ export const soundboard = {
   },
 }
 
-/** Light `userId`'s ring for `ms`; an overlapping play keeps it lit until the later end. */
+/** Light `userId`'s ring for `ms`. A new play of theirs cuts off the one before (#214), so it restarts the ring for
+ * its own length, shorter or not. */
 export function lightRing(userId: string, ms: number) {
   const until = Date.now() + ms
   const prev = ringEnds.get(userId)
-  if (prev && prev.until >= until) return
   if (prev) clearTimeout(prev.timer)
   const timer = setTimeout(() => {
     ringEnds.delete(userId)
@@ -73,6 +73,27 @@ export function callChanged(channelId: string | null) {
     const hashes = warmOrder(app.state, memberServers(app.state))
     if (hashes.length) soundboardCmd.warm(hashes).catch(() => {})
   }
+}
+
+// Your own cooldown after a play (#214), shared by every soundboard on screen: true while it holds.
+const cool = $state({ on: false })
+let coolTimer: ReturnType<typeof setTimeout> | undefined
+
+/** Whether your plays are cooling down (the tiles show it). */
+export const soundCooling = (): boolean => cool.on
+
+/** Start a play: false (and nothing changes) while the last one's cooldown holds, else true and the cooldown starts. */
+export function beginSoundPlay(): boolean {
+  if (cool.on) return false
+  cool.on = true
+  coolTimer = setTimeout(() => (cool.on = false), SOUND_COOLDOWN_MS)
+  return true
+}
+
+/** Tests: no cooldown. */
+export function resetSoundCooldown() {
+  clearTimeout(coolTimer)
+  cool.on = false
 }
 
 export function setSoundboardVolume(pct: number) {
@@ -105,7 +126,8 @@ export function startSoundboardListening(): () => void {
     if (!shouldPlay(e.d, ctx)) return
     const ms = e.d.duration_ms || app.state.sounds[e.d.sound_id]?.duration_ms || FALLBACK_RING_MS
     soundboardCmd
-      .play(e.d.media_hash, master, level, e.d.volume, loadAudioConfig().output ?? null, e.d.sound_id)
+      // the player: the core cuts off their previous sound (#214); others' carry on
+      .play(e.d.media_hash, master, level, e.d.volume, loadAudioConfig().output ?? null, e.d.sound_id, e.d.user_id)
       // lit once it's actually queued, for as long as it plays
       .then(() => {
         if (voice.channelId === e.d.channel_id) lightRing(e.d.user_id, ms)

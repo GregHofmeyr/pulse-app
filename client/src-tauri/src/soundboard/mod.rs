@@ -160,6 +160,30 @@ impl Cache {
     }
 }
 
+/// Each person's soundboard sound playing here, by user id (#214): their next play cuts the last
+/// one off, so spam-clicking can't stack a sound over itself; other people's carry on. One stop
+/// flag per person (the mixer holds the samples, and drops a stopped clip on its next pull).
+#[derive(Default)]
+pub struct Players(Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>);
+
+impl Players {
+    /// A new sound of `who`'s: stops their last one and returns the new one's stop flag.
+    pub fn start(&self, who: &str) -> Arc<std::sync::atomic::AtomicBool> {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(old) = g.insert(who.to_owned(), stop.clone()) {
+            old.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        stop
+    }
+
+    /// How many people have a flag here.
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+}
+
 /// The trimmer's one playback: its stop flag, and its samples (kept here so a stopped clip's
 /// buffer is never freed on the audio thread).
 #[derive(Default)]
@@ -303,6 +327,29 @@ mod tests {
         t.stop();
         assert!(b.load(SeqCst));
         t.stop(); // nothing playing: fine
+    }
+
+    /// #214: a person's new play cuts off their own previous one; someone else's carries on.
+    #[test]
+    fn a_players_new_sound_stops_only_their_last() {
+        let p = Players::default();
+        let alex1 = p.start("alex");
+        let sam = p.start("sam");
+        assert!(!alex1.load(SeqCst) && !sam.load(SeqCst));
+        let alex2 = p.start("alex");
+        assert!(alex1.load(SeqCst), "alex's last sound is cut off");
+        assert!(!alex2.load(SeqCst));
+        assert!(!sam.load(SeqCst), "sam's sound is not alex's");
+    }
+
+    #[test]
+    fn players_keep_one_flag_each() {
+        let p = Players::default();
+        for _ in 0..50 {
+            p.start("alex");
+        }
+        p.start("sam");
+        assert_eq!(p.len(), 2);
     }
 
     #[test]

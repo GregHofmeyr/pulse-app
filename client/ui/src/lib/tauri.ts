@@ -386,9 +386,10 @@ export const soundboardCmd = {
   preview: (path: string, startMs: number, endMs: number, soundPercent: number, callsPercent: number, soundboardPercent: number, output: string | null) =>
     invoke<void>('soundboard_preview', { path, startMs, endMs, soundPercent, callsPercent, soundboardPercent, output }),
   upload: (path: string, startMs: number, endMs: number) => invoke<MediaInfo>('soundboard_upload', { path, startMs, endMs }),
-  /** Local playback at Calls × Soundboard × the sound's own volume (percents; the core multiplies and caps). */
-  play: (hash: string, callsPercent: number, soundboardPercent: number, soundPercent: number, output: string | null, soundId: string | null = null) =>
-    invoke<void>('soundboard_play', { hash, callsPercent, soundboardPercent, soundPercent, output, soundId }),
+  /** Local playback at Calls × Soundboard × the sound's own volume (percents; the core multiplies and caps). `player`:
+   *  who played it into the call, whose previous sound it cuts off (#214); a preview has none and cuts nothing. */
+  play: (hash: string, callsPercent: number, soundboardPercent: number, soundPercent: number, output: string | null, soundId: string | null = null, player: string | null = null) =>
+    invoke<void>('soundboard_play', { hash, callsPercent, soundboardPercent, soundPercent, output, soundId, player }),
   /** Fetch these sounds into the disk cache ahead of their first play (joining a call). Returns at once. */
   warm: (hashes: string[]) => invoke<void>('soundboard_warm', { hashes }),
   /** The trimmer's play: the picked file from `fromMs` to `toMs`, here only. Resolves with the ms it will play. */

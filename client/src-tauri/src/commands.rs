@@ -3559,16 +3559,21 @@ async fn prepared_bytes(
 
 /// Play a (possibly still decoding) sound: through the call's mixer when in one, which plays it
 /// as it decodes, else on the output device once it's all decoded (previews outside a call).
-/// Returns how long the previous clip waited for the speakers (µs), when in a call.
+/// Returns how long the previous clip waited for the speakers (µs), when in a call. `stop`: ends
+/// it early once set (the same person's next sound, #214).
 async fn play_decoded(
     app: &AppHandle,
     samples: std::sync::Arc<crate::soundboard::pcm::Pcm>,
     gain: f32,
     output: Option<String>,
+    stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Option<u64> {
     if let Some((mix, _)) = app.state::<VoiceManager>().mixer_input().await {
         let last = mix.last_clip_start_us();
-        mix.play_stream(samples, gain);
+        match stop {
+            Some(stop) => mix.play_stream_stoppable(samples, gain, stop),
+            None => mix.play_stream(samples, gain),
+        }
         last
     } else {
         samples.wait_done().await;
@@ -3576,7 +3581,10 @@ async fn play_decoded(
             rate: 48_000,
             samples: samples.to_vec(),
         };
-        crate::sounds::play_samples(sound, gain, output);
+        match stop {
+            Some(stop) => crate::sounds::play_samples_stoppable(sound, gain, output, stop),
+            None => crate::sounds::play_samples(sound, gain, output),
+        }
         None
     }
 }
@@ -3593,6 +3601,7 @@ async fn fetch_sound(core: &Core, hash: String) -> Result<Vec<u8>, String> {
 
 /// Play a server sound (by media hash) for yourself: the call's mixer when in one, else the
 /// speakers. Fetches nothing at zero gain; a decoded sound is cached for instant replays.
+/// `player`: who played it into the call; their previous sound stops (#214). A preview has none.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn soundboard_play(
@@ -3600,12 +3609,14 @@ pub async fn soundboard_play(
     core: State<'_, Core>,
     cache: State<'_, crate::soundboard::Cache>,
     clicks: State<'_, crate::soundboard::Clicks>,
+    players: State<'_, crate::soundboard::Players>,
     hash: String,
     calls_percent: u16,
     soundboard_percent: u16,
     sound_percent: u16,
     output: Option<String>,
     sound_id: Option<String>,
+    player: Option<String>,
 ) -> Result<(), String> {
     let gain = crate::soundboard::gain(calls_percent, soundboard_percent, sound_percent);
     if gain <= 0.0 {
@@ -3615,7 +3626,9 @@ pub async fn soundboard_play(
         .load(&hash, || fetch_sound(&core, hash.clone()))
         .await
         .inspect_err(|e| tracing::warn!(error = %e, "soundboard: couldn't load a sound"))?;
-    let speakers_us = play_decoded(&app, samples, gain, output).await;
+    // cut off at the moment the new one is queued, so the two never overlap
+    let stop = player.as_deref().map(|who| players.start(who));
+    let speakers_us = play_decoded(&app, samples, gain, output, stop).await;
     // your own click, when this is its echo: the whole click -> queued delay
     let click_ms = sound_id
         .as_deref()
@@ -3667,7 +3680,7 @@ pub async fn soundboard_preview(
     let samples = crate::soundboard::decode::decode_streaming(bytes).await?;
     let gain = crate::soundboard::gain(calls_percent, soundboard_percent, sound_percent);
     if gain > 0.0 {
-        play_decoded(&app, samples, gain, output).await;
+        play_decoded(&app, samples, gain, output, None).await;
     }
     Ok(())
 }
