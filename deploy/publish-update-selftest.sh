@@ -58,6 +58,27 @@ else
   echo "skip tauri_signature_verifies (no client/ui/node_modules or node: run pnpm install in client/ui)"
 fi
 
+# --- signed_version (#232): the version a signature binds, from minisign's trusted comment
+minisign -S -s "$tmp/keys/a.key" -m "$tmp/file.exe" -x "$tmp/v.raw.sig" -t "$(printf 'timestamp:1700000000\tfile:Pulse_0.2.2_x64-setup.exe\tversion:0.2.2')" >/dev/null
+base64 -w0 "$tmp/v.raw.sig" >"$tmp/v.sig"
+[ "$(signed_version "$tmp/v.sig")" = 0.2.2 ] && pass "signed_version reads version:0.2.2" || fail "signed_version: '$(signed_version "$tmp/v.sig")'"
+[ -z "$(signed_version "$tmp/file.exe.sig")" ] && pass "signed_version: none in a plain minisign signature" || fail "signed_version found one in a plain signature"
+echo 'not base64 !!' >"$tmp/junk.sig"
+[ -z "$(signed_version "$tmp/junk.sig")" ] && pass "signed_version: none in junk" || fail "signed_version read junk"
+# the real thing: `tauri signer sign --app-version` (what `tauri build` does, by the CLI's own help) writes the same
+if [ -f "$tauri_js" ] && command -v node >/dev/null && [ -f "$tmp/k" ]; then
+  node "$tauri_js" signer sign -f "$tmp/k" -p test --app-version 0.2.2 "$tmp/dummy" >/dev/null 2>&1
+  if [ "$(signed_version "$tmp/dummy.sig")" = 0.2.2 ] && verify_sig "$tmp/dummy" "$tmp/dummy.sig" "$(cat "$tmp/k.pub")" >/dev/null 2>&1; then
+    pass "tauri signer --app-version: signed_version 0.2.2 and it verifies"
+  else
+    fail "tauri signer --app-version: signed_version '$(signed_version "$tmp/dummy.sig")'"
+  fi
+  node "$tauri_js" signer sign -f "$tmp/k" -p test "$tmp/dummy" >/dev/null 2>&1
+  [ -z "$(signed_version "$tmp/dummy.sig")" ] && pass "tauri signer without --app-version binds none" || fail "tauri signer without --app-version: '$(signed_version "$tmp/dummy.sig")'"
+else
+  echo "skip tauri signer --app-version (no client/ui/node_modules or node)"
+fi
+
 # --- the app's own key: what a real publish checks against (base64 of a minisign public key file)
 app_pub=$(jq -r '.plugins.updater.pubkey // empty' "$here/../client/src-tauri/tauri.conf.json")
 if [ -n "$app_pub" ] && printf '%s' "$app_pub" | base64 -d 2>/dev/null | grep -q '^untrusted comment: minisign public key'; then
@@ -261,6 +282,25 @@ artifact 0.2.2
 rm "$tmp/bin/mv"
 [ "$(offered)" = 0.2.1 ] && pass "the old manifest stays" || fail "manifest after a failed move: $(offered)"
 [ -f "$srv/Pulse_0.2.1_x64-setup.exe" ] && pass "the served installer is kept" || fail "pruned the served installer: $(files)"
+
+# --- signed versions (#232): the version the signature binds must be the installer's
+serve 0.2.1
+artifact 0.2.2 0.2.1
+[ "$(publish)" = refused ] && grep -q "is for version 0.2.1, not 0.2.2" "$tmp/out" && pass "refuses a signature for another version" || fail "signed 0.2.1 as 0.2.2: $(cat "$tmp/out")"
+[ "$(files)" = "Pulse_0.2.1_x64-setup.exe latest.json " ] && pass "nothing uploaded for a mismatched signed version" || fail "uploaded on mismatch: $(files)"
+artifact 0.2.2 -
+export PUBLISH_UPDATE_REQUIRE_SIGNED_VERSION=true
+[ "$(publish)" = refused ] && pass "requireSignedVersion: refuses a signature that binds none" || fail "requireSignedVersion published an unbound signature: $(cat "$tmp/out")"
+[ "$(files)" = "Pulse_0.2.1_x64-setup.exe latest.json " ] && pass "nothing uploaded for an unbound signature" || fail "uploaded unbound: $(files)"
+export PUBLISH_UPDATE_REQUIRE_SIGNED_VERSION=false
+[ "$(publish)" = ok ] && grep -q "binds no version" "$tmp/out" && pass "without requireSignedVersion an unbound signature publishes, with a note" || fail "unbound, not required: $(cat "$tmp/out")"
+unset PUBLISH_UPDATE_REQUIRE_SIGNED_VERSION
+# the real switch: tauri.conf.json's plugins.updater.requireSignedVersion. On since 0.2.1: release-windows' signatures
+# bind the version (`tauri build` signs with it: the first signed run's .sig says version:0.2.0), so the app refuses a
+# manifest that pairs a version with another release's installer, or with an older signature that binds none (#232).
+want=$(jq -r '.plugins.updater.requireSignedVersion // false' "$here/../client/src-tauri/tauri.conf.json")
+[ "$want" = true ] && pass "the app requires signed versions (requireSignedVersion)" || fail "requireSignedVersion is off in tauri.conf.json"
+[ "$(require_signed_version)" = "$want" ] && pass "require_signed_version follows tauri.conf.json ($want)" || fail "require_signed_version: $(require_signed_version), conf $want"
 
 # --- unreadable_manifest_refused (#233): a latest.json that's there but can't be read isn't "nothing served"
 for junk in 'not json' '{"platforms":{}}' '{"version":"latest"}' ''; do

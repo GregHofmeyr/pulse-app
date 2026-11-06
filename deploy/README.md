@@ -245,7 +245,8 @@ container's `/data/updates`, outside the media backups).
    `pulse-windows-installer` artifact carries `Pulse_0.2.N_x64-setup.exe` and its `.sig`.
 4. `just publish-update <run-id>` (`gh run list -w release-windows` shows the id). It refuses, before uploading
    anything, a run that isn't a green release-windows on `main` or a `v*` tag, a signature that doesn't verify against
-   the public key in `tauri.conf.json` (needs `minisign`), a version that isn't newer than the one served, a served
+   the public key in `tauri.conf.json` (needs `minisign`) or that binds another version than the installer's, or none
+   (the app has `requireSignedVersion` on, #232), a version that isn't newer than the one served, a served
    `latest.json` it can't read (#233), and a server whose route isn't live. Then it uploads the installer, writes
    `latest.json` last, keeps that installer and the one before it, checks the server's copy and the route, and prints
    `published 0.2.N`.

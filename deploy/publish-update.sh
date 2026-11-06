@@ -4,7 +4,8 @@
 #
 #   1. the run must be release-windows, successful, on main or a v* tag;
 #   2. its pulse-windows-installer artifact must hold exactly one Pulse_X.Y.Z_x64-setup.exe and its .sig, and the
-#      signature must verify (minisign) against the public key in client/src-tauri/tauri.conf.json;
+#      signature must verify (minisign) against the public key in client/src-tauri/tauri.conf.json; a version the
+#      signature binds must be X.Y.Z, and one is required when the app requires it (requireSignedVersion, #232);
 #   3. X.Y.Z must be newer than what the server offers now (a rerun of an old run is refused; a latest.json that's
 #      there but can't be read refuses too, since it can't be told apart from a newer one);
 #   4. the installer goes up first (to .incoming/, then moved into place), the manifest last, so latest.json never
@@ -54,6 +55,34 @@ verify_sig() {
   fi
   rm -rf "$d"
   return "$rc"
+}
+
+# signed_version SIGFILE: the version a Tauri signature binds ('' = none). `tauri build` (and `tauri signer sign
+# --app-version`) write it into minisign's trusted comment as `version:X.Y.Z`, which the global signature covers, so
+# it only counts once verify_sig has passed. The app's updater refuses a manifest whose version differs from it, and,
+# with requireSignedVersion, a signature without one (#232).
+signed_version() {
+  local comment field v
+  local -a fields=()
+  comment=$(base64 -d <"$1" 2>/dev/null | sed -n 's/^trusted comment: //p') || return 0
+  IFS=$'\t' read -r -a fields <<<"${comment%%$'\n'*}" || true
+  for field in "${fields[@]}"; do
+    if [[ $field == version:* ]]; then
+      v=${field#version:}
+      echo "${v#v}"
+      return 0
+    fi
+  done
+}
+
+# require_signed_version: "true" when the app refuses a signature that binds no version
+# (plugins.updater.requireSignedVersion in tauri.conf.json)
+require_signed_version() {
+  if [ -n "${PUBLISH_UPDATE_DIR:-}" ] && [ -n "${PUBLISH_UPDATE_REQUIRE_SIGNED_VERSION:-}" ]; then
+    echo "$PUBLISH_UPDATE_REQUIRE_SIGNED_VERSION"
+  else
+    jq -r '.plugins.updater.requireSignedVersion // false' "$here/../client/src-tauri/tauri.conf.json"
+  fi
 }
 
 # newer_than NEW OLD: NEW is a higher version than OLD (an empty OLD = nothing served yet)
@@ -143,7 +172,7 @@ route_code() {
 }
 
 publish_main() {
-  local run_id=${1:-} info dl exe sig version served name pubkey local_sha remote_sha code
+  local run_id=${1:-} info dl exe sig version served name pubkey signed local_sha remote_sha code
   [[ $run_id =~ ^[0-9]+$ ]] || refuse "a run id is digits (gh run list -w release-windows), got '$run_id'"
 
   info=$(gh run view "$run_id" --repo "$gh_repo" --json workflowName,conclusion,headBranch) ||
@@ -180,6 +209,14 @@ publish_main() {
   fi
   [ -n "$pubkey" ] || refuse "no plugins.updater.pubkey in tauri.conf.json"
   verify_sig "$exe" "$sig" "$pubkey" || refuse "$name's signature doesn't verify against tauri.conf.json's public key"
+  signed=$(signed_version "$sig")
+  if [ -n "$signed" ]; then
+    [ "$signed" = "$version" ] || refuse "$name's signature is for version $signed, not $version"
+  elif [ "$(require_signed_version)" = true ]; then
+    refuse "$name's signature binds no version, and the app requires one (requireSignedVersion): it would refuse this update"
+  else
+    echo "note: $name's signature binds no version (#232)" >&2
+  fi
 
   served=$(served_version) || refuse "can't tell what the server offers now, so nothing was published"
   newer_than "$version" "$served" || refuse "$version isn't newer than the $served the server offers now (the updater never downgrades: publish a higher version)"
