@@ -6,11 +6,11 @@ import type { Event as AppEvent } from './protocol/Event'
 /** Your own mute / deafen, and (from the core) the server's of you (#140), which the core adds. */
 export type Flags = { muted: boolean; deafened: boolean; server_muted?: boolean; server_deafened?: boolean }
 export type SoundName =
-  | 'join' | 'leave' | 'mute' | 'unmute' | 'deafen' | 'undeafen' | 'muted_talk' | 'message' | 'live' | 'live_end' | 'badge'
+  | 'join' | 'leave' | 'mute' | 'unmute' | 'deafen' | 'undeafen' | 'muted_talk' | 'message' | 'live' | 'live_end' | 'badge' | 'wheel_tick'
 
 /** The events, in display order. */
 export const SOUND_NAMES: readonly SoundName[] = [
-  'join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'muted_talk', 'message', 'live', 'live_end', 'badge',
+  'join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'muted_talk', 'message', 'live', 'live_end', 'badge', 'wheel_tick',
 ]
 export const SOUND_LABELS: Record<SoundName, string> = {
   join: 'Join a call',
@@ -24,6 +24,7 @@ export const SOUND_LABELS: Record<SoundName, string> = {
   live: 'Someone goes live',
   live_end: 'A stream ends',
   badge: 'Badge unlocked',
+  wheel_tick: 'Picker wheel tick',
 }
 
 export type SoundSetId =

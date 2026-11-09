@@ -21,6 +21,10 @@ import type { Message } from './protocol/Message'
 import type { Pin } from './protocol/Pin'
 import type { PinDuration } from './protocol/PinDuration'
 import type { PinnedMessage } from './protocol/PinnedMessage'
+import type { Wheel } from './protocol/Wheel'
+import type { CreateWheelRequest } from './protocol/CreateWheelRequest'
+import type { UpdateWheelRequest } from './protocol/UpdateWheelRequest'
+import type { SpinWheelRequest } from './protocol/SpinWheelRequest'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { StreamSettings } from './protocol/StreamSettings'
 import type { VoiceTokenResponse } from './protocol/VoiceTokenResponse'
@@ -424,6 +428,20 @@ export const soundboardCmd = {
   list: (serverId: string) => invoke<Sound[]>('list_sounds', { serverId }),
   playToCall: (id: string) => invoke<void>('play_sound_to_call', { id }),
   setFavourite: (id: string, on: boolean) => invoke<void>('set_sound_favourite', { id, on }),
+}
+
+/** The picker wheel (#158): saved wheels, spins, and Spin again from a spin's line. */
+export const wheelCmd = {
+  listServer: (serverId: string) => invoke<Wheel[]>('list_server_wheels', { serverId }),
+  listMine: () => invoke<Wheel[]>('list_my_wheels'),
+  /** In `serverId`, or Just me with none. */
+  create: (serverId: string | null, name: string, options: string[]) =>
+    invoke<Wheel>('create_wheel', { request: { ...(serverId ? { server_id: serverId } : {}), name, options } satisfies CreateWheelRequest }),
+  update: (id: string, request: UpdateWheelRequest) => invoke<Wheel>('update_wheel', { id, request }),
+  remove: (id: string) => invoke<void>('delete_wheel', { id }),
+  /** A saved wheel by id, or a quick one from its options. Resolves with the spin's line. */
+  spin: (channelId: string, request: SpinWheelRequest) => invoke<Message>('spin_wheel', { channelId, request }),
+  spinAgain: (messageId: string, removeWinner: boolean) => invoke<Message>('spin_again', { messageId, removeWinner }),
 }
 
 /** Tauri rejects with the command's error string. */

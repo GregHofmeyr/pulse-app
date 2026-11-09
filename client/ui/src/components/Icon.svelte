@@ -36,6 +36,8 @@
     // two overlapping sheets: copy to the clipboard (#244)
     copy: 'M10 8h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2zM16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3',
     x: 'M6 6l12 12M18 6 6 18',
+    // a wheel with four spokes: the picker wheel (#158)
+    wheel: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4',
     // a beetle: round body with a centre seam, head, antennae, three legs a side (Report a bug)
     bug: 'M8 10a4 4 0 0 1 8 0v4a4 4 0 0 1-8 0zM12 10v8M9.5 6.5 8 4M14.5 6.5 16 4M8 11H4M8 15H4.5M16 11h4M16 15h3.5M8.5 18 6 20M15.5 18 18 20',
     // a scroll with lines of text: what's new in this release (Patch notes, #207)

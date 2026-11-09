@@ -3919,3 +3919,83 @@ pub async fn set_sound_favourite(
     let (api, token) = core.current()?;
     core.check(&app, api.set_sound_favourite(&token, &id, on).await)
 }
+
+/// A server's saved picker wheels (#158).
+#[tauri::command]
+pub async fn list_server_wheels(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<Vec<pulse_protocol::rest::Wheel>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.server_wheels(&token, server_id).await)
+}
+
+/// Your Just me picker wheels (#158).
+#[tauri::command]
+pub async fn list_my_wheels(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<Vec<pulse_protocol::rest::Wheel>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.my_wheels(&token).await)
+}
+
+/// A new saved wheel: in `request.server_id`, or Just me without one.
+#[tauri::command]
+pub async fn create_wheel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    request: pulse_protocol::rest::CreateWheelRequest,
+) -> Result<pulse_protocol::rest::Wheel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.create_wheel(&token, &request).await)
+}
+
+#[tauri::command]
+pub async fn update_wheel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: String,
+    request: pulse_protocol::rest::UpdateWheelRequest,
+) -> Result<pulse_protocol::rest::Wheel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.update_wheel(&token, &id, &request).await)
+}
+
+#[tauri::command]
+pub async fn delete_wheel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: String,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_wheel(&token, &id).await)
+}
+
+/// Spin a saved wheel (`request.wheel_id`) or a quick one (`request.options`) in a chat.
+#[tauri::command]
+pub async fn spin_wheel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    request: pulse_protocol::rest::SpinWheelRequest,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.spin_wheel(&token, channel_id, &request).await)
+}
+
+/// Spin again from a spin's line, or without its winner.
+#[tauri::command]
+pub async fn spin_again(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    remove_winner: bool,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.spin_again(&token, message_id, remove_winner).await,
+    )
+}

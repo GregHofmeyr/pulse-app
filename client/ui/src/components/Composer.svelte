@@ -8,6 +8,7 @@
   import Icon from './Icon.svelte'
   import EmojiBox, { type Snap } from './EmojiBox.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
+  import WheelPopover from './WheelPopover.svelte'
   import { customToken, savedTone, search, twemojiUrl, withSkin, type Std } from '../lib/emoji'
   import { applyEmoji, emojiQuery, insertAt } from '../lib/emojiComplete'
   import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
@@ -28,6 +29,7 @@
     onTyping,
     mentionables = [],
     serverId = null,
+    wheelChannel = null,
   }: {
     placeholder: string
     draftKey: string
@@ -39,6 +41,8 @@
     mentionables?: Mentionable[]
     /** The server it posts in (null in DMs and groups): suggested names use its role colours. */
     serverId?: string | null
+    /** The chat a picker wheel spins in (#158): shows the wheel button. None where wheels don't spin (threads). */
+    wheelChannel?: string | null
   } = $props()
 
   // The composer remounts per channel ({#key} in Shell), so reading the key once is intended.
@@ -76,6 +80,10 @@
 
   let picking = $state(false)
   let emojiBtn: HTMLButtonElement | undefined = $state()
+  // the wheel popover (#158); `wheelPrefill`: options typed after `/wheel` (fewer than two)
+  let wheeling = $state(false)
+  let wheelPrefill = $state<string[] | null>(null)
+  let wheelBtn: HTMLButtonElement | undefined = $state()
 
   function syncCaret() {
     caret = box.readSel()?.start ?? text.length
@@ -150,13 +158,19 @@
     }
   }
 
+  /** Open the wheel popover (`/wheel` with fewer than two options), starting a quick wheel with `prefill`. */
+  export function openWheel(prefill: string[] = []) {
+    wheelPrefill = prefill
+    wheeling = true
+  }
+
   /** Focus the box: the caret where it was, or (`atEnd`) after all of the text. */
   export function focus(atEnd = false) {
     box?.focus(atEnd ? text.length : undefined)
   }
 </script>
 
-<div class="wrap">
+<div class="wrap" class:has-wheel={!!wheelChannel}>
   {#if open}
     <div class="mentions menu-surface pop-in" role="listbox" aria-label="Mention someone">
       {#each options as o, i (o.id)}
@@ -190,6 +204,15 @@
   {#if picking && emojiBtn}
     <EmojiPopover anchor={emojiBtn} onPick={pickEmoji} onClose={() => (picking = false)} />
   {/if}
+  {#if wheelChannel}
+    <button bind:this={wheelBtn} class="emoji-btn wheel-btn" class:on={wheeling} type="button" aria-label="Picker wheel" data-tip="Picker wheel" data-menu-toggle
+      aria-haspopup="dialog" aria-expanded={wheeling} onclick={() => { wheelPrefill = null; wheeling = !wheeling }}><Icon name="wheel" size={20} /></button>
+    {#if wheeling && wheelBtn}
+      {#key wheelPrefill}
+        <WheelPopover anchor={wheelBtn} channelId={wheelChannel} {serverId} prefill={wheelPrefill} onClose={() => (wheeling = false)} />
+      {/key}
+    {/if}
+  {/if}
 </div>
 
 <style>
@@ -203,6 +226,9 @@
   .emoji-btn { position: absolute; right: 8px; bottom: 8px; width: 32px; height: 32px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); display: grid; place-items: center; }
   /* one step up from the box's bg-3, as every icon button's hover */
   .emoji-btn:hover { background: var(--bg-4); color: var(--text); }
+  /* the picker wheel's button (#158), left of the emoji button */
+  .wheel-btn { right: 44px; }
+  .wheel-btn.on { background: var(--bg-4); color: var(--text); }
   .replying { display: flex; align-items: center; gap: 6px; padding: 8px 14px 0; font-size: 12px; color: var(--text-3); }
   .replying strong { color: var(--text-2); }
   .replying button { margin-left: auto; }
@@ -210,4 +236,5 @@
   .replying button:hover { background: var(--bg-4); }
   /* grows with what's in it (images included), up to 200px, then scrolls */
   .wrap :global(.composer-input) { min-height: 48px; max-height: 200px; padding: 14px 48px 14px 14px; }
+  .wrap.has-wheel :global(.composer-input) { padding-right: 84px; }
 </style>

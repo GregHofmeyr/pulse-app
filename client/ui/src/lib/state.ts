@@ -810,6 +810,10 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     // Toasts and the [NEW] count live outside the reducer.
     case 'BadgeEarned':
       return s
+    // Saved picker wheels are loaded on demand and kept in lib/wheels.svelte.ts (#158).
+    case 'WheelSaved':
+    case 'WheelDeleted':
+      return s
     case 'LayoutChanged':
       return applyLayout(s, e.d.layout)
     case 'ChannelCreated':

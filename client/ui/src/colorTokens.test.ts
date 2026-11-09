@@ -115,6 +115,31 @@ describe('colour literals', () => {
   })
 })
 
+describe("the picker wheel's slices (#158)", () => {
+  // The one exception to "every colour is a token": a wheel's slices run through the neon spectrum (the owner's pick),
+  // generated per wheel from its slice count, with each label's colour picked to read on its slice. They are content,
+  // like skin tones, so a theme doesn't recolour them. lib/wheelColours.ts is the one place they are made; components
+  // only pass its results on, so the literal scan above finds nothing in them.
+  it('are made in lib/wheelColours.ts and nowhere else', () => {
+    const made: string[] = []
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const f = join(dir, e.name)
+        if (e.isDirectory()) walk(f)
+        else if (/\.(ts|svelte)$/.test(e.name) && !/\.test\.ts$/.test(e.name) && /\bhsla?\(/.test(withoutComments(readFileSync(f, 'utf8')))) made.push(rel(f))
+      }
+    }
+    walk(__dirname)
+    expect(made).toEqual(['lib/wheelColours.ts'])
+  })
+
+  it('the wheel components hold no colour literal of their own', () => {
+    for (const f of ['components/Wheel.svelte', 'components/WheelLine.svelte', 'components/WheelEditor.svelte', 'components/WheelPopover.svelte']) {
+      expect([...literalsIn(src(f))], f).toEqual([])
+    }
+  })
+})
+
 describe('the tokens (values pinned to the look before they existed: no visual change)', () => {
   it.each([
     // white hover tints on rows (messages, quotes, clips) and a quote's line

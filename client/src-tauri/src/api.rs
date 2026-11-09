@@ -9,20 +9,21 @@ use pulse_protocol::rest::{
     AddGameRequest, AddMembersRequest, AddQotyOptionRequest, BadgeCatalogue, Category,
     ChangePasswordRequest, Channel, ChannelKind, ClipFacets, ClipStorage, ClipUpload,
     ClipUploadRequest, ClipUrl, ClipView, ConfirmClipRequest, CreateCategoryRequest,
-    CreateDmRequest, CreateEmojiRequest, CreateSoundRequest, CustomEmoji, DeletedChannel,
-    EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest, Game, GoLiveRequest,
-    HideEmbedRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest, LoginRequest,
-    MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired, MuteTarget,
-    NameArchivePage, Pin, PinDuration, PinRequest, PinnedMessage, PostQuoteRequest, Profile,
-    QotyEvent, QotyVoteRequest, RecoveryCodesResponse, RegisterRequest, RenameCategoryRequest,
-    RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest, SaveLayoutRequest, SearchRequest,
-    SearchResults, SendMessageRequest, Server, ServerLayout, ServerVoiceMod, SessionResponse,
-    SetClipViewRequest, SetMuteRequest, SetNicknameRequest, SetNotifyLevelRequest,
-    SetServerVoiceRequest, SetShowcaseRequest, SetStatusRequest, Sound, StartQotyRequest, Status,
-    StreamInfo, StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest,
-    TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse,
-    TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User, VoiceTokenResponse,
-    WatchRequest,
+    CreateDmRequest, CreateEmojiRequest, CreateSoundRequest, CreateWheelRequest, CustomEmoji,
+    DeletedChannel, EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest, Game,
+    GoLiveRequest, HideEmbedRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest,
+    LoginRequest, MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired,
+    MuteTarget, NameArchivePage, Pin, PinDuration, PinRequest, PinnedMessage, PostQuoteRequest,
+    Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse, RegisterRequest,
+    RenameCategoryRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest,
+    SaveLayoutRequest, SearchRequest, SearchResults, SendMessageRequest, Server, ServerLayout,
+    ServerVoiceMod, SessionResponse, SetClipViewRequest, SetMuteRequest, SetNicknameRequest,
+    SetNotifyLevelRequest, SetServerVoiceRequest, SetShowcaseRequest, SetStatusRequest, Sound,
+    SpinAgainRequest, SpinWheelRequest, StartQotyRequest, Status, StreamInfo, StreamRole,
+    StreamSettings, StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest,
+    TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus,
+    UpdateProfileRequest, UpdateSoundRequest, UpdateWheelRequest, User, VoiceTokenResponse,
+    WatchRequest, Wheel,
 };
 use serde::de::DeserializeOwned;
 
@@ -2408,6 +2409,114 @@ impl Api {
     /// `base/seg/seg…`, each segment percent-encoded on its own (an emoji or id can't add a `/`).
     /// A `.` or `..` segment is refused: the URL parser would drop it (or the one before it) and
     /// send the request somewhere else.
+    /// A server's saved picker wheels (#158).
+    pub async fn server_wheels(
+        &self,
+        token: &str,
+        server: ServerId,
+    ) -> Result<Vec<Wheel>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/servers/{server}/wheels", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Your own (Just me) picker wheels (#158).
+    pub async fn my_wheels(&self, token: &str) -> Result<Vec<Wheel>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/wheels/mine", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn create_wheel(
+        &self,
+        token: &str,
+        body: &CreateWheelRequest,
+    ) -> Result<Wheel, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/wheels", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn update_wheel(
+        &self,
+        token: &str,
+        id: &str,
+        body: &UpdateWheelRequest,
+    ) -> Result<Wheel, ApiError> {
+        Self::parse(
+            self.http
+                .patch(self.url(&["wheels", id])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn delete_wheel(&self, token: &str, id: &str) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(self.url(&["wheels", id])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Spin a saved wheel or a quick one in a chat: the spin's line.
+    pub async fn spin_wheel(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &SpinWheelRequest,
+    ) -> Result<Message, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/channels/{channel}/wheel-spins", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Spin again from a spin's line, perhaps without its winner.
+    pub async fn spin_again(
+        &self,
+        token: &str,
+        line: MessageId,
+        remove_winner: bool,
+    ) -> Result<Message, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/messages/{line}/spin-again", self.base))
+                .bearer_auth(token)
+                .json(&SpinAgainRequest { remove_winner })
+                .send()
+                .await,
+        )
+        .await
+    }
+
     fn url(&self, segments: &[&str]) -> Result<reqwest::Url, ApiError> {
         if segments.iter().any(|s| matches!(*s, "." | "..")) {
             return Err(ApiError::Rejected("that name can't be used here".into()));

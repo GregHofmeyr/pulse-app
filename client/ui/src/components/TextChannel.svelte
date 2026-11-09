@@ -31,6 +31,8 @@
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
   import { takeChatFocus, voiceChat } from '../lib/voiceChat.svelte'
+  import { parseWheelCommand, WHEEL_LIMITS } from '../lib/wheel'
+  import { spinWheel } from '../lib/wheels.svelte'
 
   let { channelId, serverId, panel = null, onAddPeople = () => {}, onLeft = () => {}, onStartQoty = () => {}, onVoiceSettings = () => {} }: {
     /** A voice channel's chat (#226), as the panel beside its stage: a Chat header with a close button, no search.
@@ -488,6 +490,15 @@
     else void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   }
   function send(text: string) {
+    // `/wheel a, b, c` spins a quick wheel; `/wheel` on its own (or one option) opens the wheel popover (#158)
+    const wheel = parseWheelCommand(text)
+    if (wheel) {
+      if (wheel.options.length >= WHEEL_LIMITS.minOptions) {
+        error = ''
+        spinWheel(channelId, { options: wheel.options }).catch((e) => (error = errorText(e)))
+      } else composer?.openWheel(wheel.options)
+      return
+    }
     const r = replyTo?.id ?? null
     replyTo = null
     post(text, r)
@@ -629,7 +640,7 @@
     {/if}
   {:else}
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate || isVoice ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
-    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} />
+    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} />
   {/if}
   {#if repliesRoot}
     {#key repliesRoot.id}

@@ -22,6 +22,7 @@
   import { animateEmojiIn } from '../lib/animate.svelte'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
+  import WheelLine from './WheelLine.svelte'
   import { mentionLookup, mentionName, showMentions, styleMentions } from '../lib/mentionStyles'
   import { nameCss, resolveNameStyle } from '../lib/nameStyle'
   import { displayName, roleColorFor, userOf } from '../lib/selectors'
@@ -248,6 +249,9 @@
     <div class="system pin-line" data-message-id={message.id}><Icon name="pin" size={14} /> {nameOf(pl.by)} pinned
       <button type="button" class="link-btn" onclick={() => void jumpTo(message.channel_id, pl.message_id)}>a message</button>{length ? ` ${length}` : ''} ·
       <button type="button" class="link-btn" onclick={() => (ui.openPins = message.channel_id)}>See pins</button> <span class="time">{time}</span></div>
+  {:else if message.wheel}
+    <!-- a picker wheel spin (#158): spins live as it arrives, then the line -->
+    <WheelLine {message} {serverId} {time} />
   {:else}
   <div class="system" data-message-id={message.id}>{message.content} <span class="time">{time}</span></div>
   {/if}

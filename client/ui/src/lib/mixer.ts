@@ -11,7 +11,7 @@ export type MixerPrefs = {
     master: number; join: number; leave: number; mute: number; unmute: number; deafen: number; undeafen: number; muted_talk: number; ringing: number
   }
   streamSounds: { master: number; live: number; live_end: number }
-  notifications: { master: number; message: number; badge: number }
+  notifications: { master: number; message: number; badge: number; wheel_tick: number }
   /** No master: one notch. A `<video>` can't play above its own full volume, so Clips stops at 100. */
   media: { clips: number; clipsMuted: boolean }
 }
@@ -38,7 +38,7 @@ export const MIXER_SECTIONS: readonly MixerSection[] = [
       n('ringing', 'Ringing', 'ring')],
   },
   { id: 'streamSounds', label: 'Stream sounds', master: true, notches: [n('live', 'Someone goes live', 'sound'), n('live_end', 'A stream ends', 'sound')] },
-  { id: 'notifications', label: 'Notifications', master: true, notches: [n('message', 'Message ding', 'sound'), n('badge', 'Badge unlocked', 'sound')] },
+  { id: 'notifications', label: 'Notifications', master: true, notches: [n('message', 'Message ding', 'sound'), n('badge', 'Badge unlocked', 'sound'), n('wheel_tick', 'Picker wheel tick', 'sound')] },
   { id: 'media', label: 'Media', master: false, notches: [{ key: 'clips', label: 'Clips', max: 100 }] },
 ]
 
@@ -48,7 +48,7 @@ export function defaultMixer(): MixerPrefs {
     calls: { master: 100, voices: 100, streams: 100, soundboard: 100 },
     callSounds: { master: 100, join: 100, leave: 100, mute: 100, unmute: 100, deafen: 100, undeafen: 100, muted_talk: 100, ringing: 100 },
     streamSounds: { master: 100, live: 100, live_end: 100 },
-    notifications: { master: 100, message: 100, badge: 100 },
+    notifications: { master: 100, message: 100, badge: 100, wheel_tick: 100 },
     media: { clips: 100, clipsMuted: false },
   }
 }
@@ -79,7 +79,7 @@ type SoundSection = 'callSounds' | 'streamSounds' | 'notifications'
 const SOUND_SECTION: Record<SoundName, SoundSection> = {
   join: 'callSounds', leave: 'callSounds', mute: 'callSounds', unmute: 'callSounds', deafen: 'callSounds', undeafen: 'callSounds',
   muted_talk: 'callSounds',
-  live: 'streamSounds', live_end: 'streamSounds', message: 'notifications', badge: 'notifications',
+  live: 'streamSounds', live_end: 'streamSounds', message: 'notifications', badge: 'notifications', wheel_tick: 'notifications',
 }
 export const soundSectionOf = (name: SoundName): SoundSection => SOUND_SECTION[name]
 

@@ -93,6 +93,9 @@ CLASSIC = {
     "badge": tone([(784, 784), (988, 988), (1568, 1568)], 0.08, gap=0.015, vol=0.30),
     # talking while muted (#252): ding-ding, the same high G6 twice, bright
     "muted_talk": normalise(dings(1568, 0.09, 0.05, bright=0.3), MUTED_TALK_RMS),
+    # the picker wheel (#158): one quiet, short, high tick per slice passing the pointer, so a spin ticks without
+    # becoming a din
+    "wheel_tick": tone([(1568, 1568)], 0.035, vol=0.10),
 }
 
 
@@ -143,6 +146,9 @@ def twostep(variant, event):
     if event == "muted_talk":
         one = _note(base * TWOSTEP_MUTED[variant], note * TWOSTEP_MUTED_SCALE, partials, attack)
         return one + [0.0] * int(RATE * TWOSTEP_MUTED_GAP) + one
+    if event == "wheel_tick":
+        # one short note an octave up (a fifth for the bright variant, already high): a tick, not a beep
+        return _note(base * (2 if base < 1000 else 1.5), 0.035, partials, 0.002, release=0.012)
     mults, scale = TWOSTEP_PAIRS[event]
     dur = MESSAGE_NOTE if scale is None else note * scale
     gap = [0.0] * int(RATE * 0.025)
@@ -167,6 +173,8 @@ def minimal(variant, event):
     if event == "muted_talk":
         one = _minimal_note(variant, MINIMAL_MUTED, MINIMAL_MUTED_NOTE)
         return one + [0.0] * int(RATE * MINIMAL_MUTED_GAP) + one
+    if event == "wheel_tick":
+        return _minimal_note(variant, 2.0, 0.035)
     if event == "badge":
         gap = [0.0] * int(RATE * 0.01)
         out = _minimal_note(variant, MINIMAL_BADGE[0], MINIMAL_BADGE_NOTE)
@@ -302,12 +310,18 @@ RINGTONE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "c
 # ringtone id -> generator; "classic" is ring.wav (above)
 RINGTONES = {"marimba": ring_marimba, "chiptune": ring_chiptune, "phone": ring_phone}
 
+def goofy_wheel_tick():
+    """Goofy's sounds come from Kenney's packs (import_goofy.py), which have no tick: a tiny soft-square blip in
+    their spirit, at Classic's tick level."""
+    return normalise(_pulse(1760, 0.035), active_rms(CLASSIC["wheel_tick"]))
+
 def main():
     for set_id, sounds in SETS.items():
         for name, samples in sounds.items():
             write_wav(f"{OUT}/{set_id}/{name}.wav", samples)
     for name, make in GENERATED_GOOFY.items():
         write_wav(f"{OUT}/goofy/{name}.wav", make())
+    write_wav(f"{OUT}/goofy/wheel_tick.wav", goofy_wheel_tick())
     write_wav(RING_OUT, ringtone())
     for ring_id, make in RINGTONES.items():
         write_wav(f"{RINGTONE_DIR}/{ring_id}.wav", make())
