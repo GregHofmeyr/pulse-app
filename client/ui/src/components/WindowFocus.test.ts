@@ -89,35 +89,41 @@ describe('one window-focus source', () => {
     const logs = () => invoke.mock.calls.filter((c) => c[0] === 'ui_log').map((c) => (c[1] as { line: string; info: boolean }))
     const settle = () => new Promise((r) => setTimeout(r, 0))
     tauriFocus!({ payload: true })
-    await new Promise((r) => setTimeout(r, 2100)) // past the gap from the previous test's sound
-    // chatting in the open, focused DM: nothing logged (the usual case, every message)
-    os.focused = true
-    invoke.mockClear()
-    listeners.get('pulse://event')!({ payload: event('M10') })
-    await settle()
-    expect(logs()).toEqual([])
-    // the page thinks it's focused, the OS says not: that's worth a line
-    os.focused = false
-    listeners.get('pulse://event')!({ payload: event('M11') })
-    await settle()
-    expect(logs().map((l) => l.line)).toEqual([
-      'sound: message private=true mentioned=false open=true thread=- open_thread=- focused=true muted=false level=- gap_ok=true sound=on play=false; the OS says focused=false',
-    ])
-    expect(logs().every((l) => l.info)).toBe(true)
-    // nothing about who or what
-    expect(logs().every((l) => !l.line.includes('U2') && !l.line.includes('hi') && !l.line.includes('D1'))).toBe(true)
-    // unfocused: it dings, and says the sound settings (switched off reads differently from lost)
-    os.focused = true
-    tauriFocus!({ payload: false })
-    const mix = defaultMixer()
-    mix.notifications.message = 0
-    localStorage.setItem('pulse.mixer', JSON.stringify(mix))
-    invoke.mockClear()
-    listeners.get('pulse://event')!({ payload: event('M12') })
-    expect(logs().map((l) => l.line)).toEqual(['sound: message private=true mentioned=false open=true thread=- open_thread=- focused=false muted=false level=- gap_ok=true sound=off play=true'])
-    localStorage.removeItem('pulse.mixer')
-    tauriFocus!({ payload: true })
-  }, 10_000)
+    // past the gap from the previous test's sound: move the clock rather than wait it out (#177)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.now() + 2100)
+    try {
+      // chatting in the open, focused DM: nothing logged (the usual case, every message)
+      os.focused = true
+      invoke.mockClear()
+      listeners.get('pulse://event')!({ payload: event('M10') })
+      await settle()
+      expect(logs()).toEqual([])
+      // the page thinks it's focused, the OS says not: that's worth a line
+      os.focused = false
+      listeners.get('pulse://event')!({ payload: event('M11') })
+      await settle()
+      expect(logs().map((l) => l.line)).toEqual([
+        'sound: message private=true mentioned=false open=true thread=- open_thread=- focused=true muted=false level=- gap_ok=true sound=on play=false; the OS says focused=false',
+      ])
+      expect(logs().every((l) => l.info)).toBe(true)
+      // nothing about who or what
+      expect(logs().every((l) => !l.line.includes('U2') && !l.line.includes('hi') && !l.line.includes('D1'))).toBe(true)
+      // unfocused: it dings, and says the sound settings (switched off reads differently from lost)
+      os.focused = true
+      tauriFocus!({ payload: false })
+      const mix = defaultMixer()
+      mix.notifications.message = 0
+      localStorage.setItem('pulse.mixer', JSON.stringify(mix))
+      invoke.mockClear()
+      listeners.get('pulse://event')!({ payload: event('M12') })
+      expect(logs().map((l) => l.line)).toEqual(['sound: message private=true mentioned=false open=true thread=- open_thread=- focused=false muted=false level=- gap_ok=true sound=off play=true'])
+      localStorage.removeItem('pulse.mixer')
+      tauriFocus!({ payload: true })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 
   it('a diagnostic that throws never costs the event', async () => {
     await new Promise((r) => setTimeout(r, 0))

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { Server } from '../lib/protocol/Server'
   import { app } from '../lib/store.svelte'
@@ -95,6 +95,19 @@
     if (active > flat.length - 1) active = Math.max(0, flat.length - 1)
   })
 
+  // The highlighted cell, as one flag per cell index: moving the highlight touches the two cells involved,
+  // not every one of the ~1.9k cells (each would recheck `idx === active` on every arrow key, #177).
+  const lit = $state<Record<number, boolean>>({})
+  let litAt = -1
+  $effect.pre(() => {
+    const at = navigated ? active : -1
+    untrack(() => {
+      if (litAt >= 0) lit[litAt] = false
+      if (at >= 0) lit[at] = true
+    })
+    litAt = at
+  })
+
   $effect(() => {
     searchEl?.focus()
   })
@@ -188,7 +201,7 @@
 
 {#snippet cell(e: Item, idx: number)}
   <button
-    class="cell" class:active={navigated && idx === active} type="button" aria-label={`:${nameOf(e)}:`}
+    class="cell" class:active={lit[idx]} type="button" aria-label={`:${nameOf(e)}:`}
     data-key={reactionKey(e)} onclick={(ev) => pick(e, ev.shiftKey)}
     onmousedown={(ev) => { if (ev.shiftKey) ev.preventDefault() /* a Shift pick must not extend a text selection */ }}
     onmouseenter={() => { hovered = e; active = idx }} onmouseleave={() => (hovered = null)}

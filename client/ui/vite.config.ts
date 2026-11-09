@@ -14,5 +14,8 @@ export default defineConfig({
   server: { port: 1420, strictPort: true },
   // Tests: resolve Svelte's client runtime, so $effect and mount() work under vitest (the default is the SSR build).
   resolve: process.env.VITEST ? { conditions: ['browser'] } : undefined,
-  test: { setupFiles: ['./src/test-setup.ts'] },
+  // Half the cores (vitest's own watch-mode default), not all but one: each worker is a jsdom process
+  // (~200 MB), and with several suites or builds at once a full set oversubscribes the CPU and memory
+  // until single tests pass the 5 s timeout (#177). Override with --maxWorkers.
+  test: { setupFiles: ['./src/test-setup.ts'], maxWorkers: '50%' },
 })

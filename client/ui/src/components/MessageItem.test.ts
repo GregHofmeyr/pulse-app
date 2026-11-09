@@ -1,5 +1,9 @@
 // @vitest-environment jsdom
 import { flushSync, mount, tick, unmount } from 'svelte'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+// Imported with the file, not inside a test: loading the compiler is slow, and a busy machine pushed it past the test timeout (#177).
+import { compile } from 'svelte/compiler'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
 import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
@@ -612,10 +616,7 @@ describe('MessageItem names and avatars', () => {
 
 describe('mention pill CSS', () => {
   // From the compiled CSS (jsdom applies the cascade but doesn't lay out).
-  it('a scaled pill font keeps the line height', async () => {
-    const { readFileSync } = await import('node:fs')
-    const { resolve } = await import('node:path')
-    const { compile } = await import('svelte/compiler')
+  it('a scaled pill font keeps the line height', () => {
     const src = readFileSync(resolve(__dirname, 'MessageItem.svelte'), 'utf8')
     const css = compile(src, { filename: 'MessageItem.svelte', css: 'external', cssHash: () => 'svelte-test' }).css!.code
     const style = document.createElement('style')
