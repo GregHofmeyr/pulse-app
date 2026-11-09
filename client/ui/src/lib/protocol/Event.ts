@@ -16,6 +16,7 @@ import type { MessageId } from "./MessageId";
 import type { Mute } from "./Mute";
 import type { NotifyLevelPref } from "./NotifyLevelPref";
 import type { OwnStatus } from "./OwnStatus";
+import type { PinnedMessage } from "./PinnedMessage";
 import type { PresenceStatus } from "./PresenceStatus";
 import type { QotyEvent } from "./QotyEvent";
 import type { RingEndReason } from "./RingEndReason";
@@ -80,4 +81,4 @@ mentions: number | null, } } | { "t": "SpeakerLinksChanged", "d": { server_id: S
  * The sound's length, so listeners can show who is playing for as long as it plays
  * (0 from an older server).
  */
-duration_ms: number, } } | { "t": "SoundFavourites", "d": { user_id: UserId, favourites: Array<string>, } } | { "t": "FrequentSounds", "d": { user_id: UserId, frequent: Array<string>, } } | { "t": "ServerVoiceChanged", "d": { state: ServerVoiceMod, } } | { "t": "VoiceDisconnected", "d": { channel_id: ChannelId, user_id: UserId, by: UserId, } } | { "t": "CallStarted", "d": { call: CallInfo, } } | { "t": "CallEnded", "d": { channel_id: ChannelId, call_id: CallId, } } | { "t": "CallRinging", "d": { ring: CallRing, } } | { "t": "CallRingEnded", "d": { channel_id: ChannelId, call_id: CallId, user_id: UserId, reason: RingEndReason, } };
+duration_ms: number, } } | { "t": "SoundFavourites", "d": { user_id: UserId, favourites: Array<string>, } } | { "t": "FrequentSounds", "d": { user_id: UserId, frequent: Array<string>, } } | { "t": "ServerVoiceChanged", "d": { state: ServerVoiceMod, } } | { "t": "VoiceDisconnected", "d": { channel_id: ChannelId, user_id: UserId, by: UserId, } } | { "t": "CallStarted", "d": { call: CallInfo, } } | { "t": "CallEnded", "d": { channel_id: ChannelId, call_id: CallId, } } | { "t": "CallRinging", "d": { ring: CallRing, } } | { "t": "CallRingEnded", "d": { channel_id: ChannelId, call_id: CallId, user_id: UserId, reason: RingEndReason, } } | { "t": "MessagePinned", "d": { channel_id: ChannelId, pinned: PinnedMessage, } } | { "t": "MessageUnpinned", "d": { channel_id: ChannelId, message_id: MessageId, } };

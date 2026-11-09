@@ -41,6 +41,8 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::CreateDmRequest::export_all(&cfg)?;
     rest::SendMessageRequest::export_all(&cfg)?;
     rest::EditMessageRequest::export_all(&cfg)?;
+    rest::PinRequest::export_all(&cfg)?;
+    rest::PinnedMessage::export_all(&cfg)?;
     rest::VoiceTokenResponse::export_all(&cfg)?;
     rest::ApiError::export_all(&cfg)?;
     rest::Person::export_all(&cfg)?;

@@ -170,6 +170,8 @@ async fn silent_client_times_out_despite_outbound_traffic() {
                 embeds: vec![],
                 call: None,
                 qoty_card: None,
+                pin: None,
+                pin_line: None,
             };
             hub.publish(
                 &db,

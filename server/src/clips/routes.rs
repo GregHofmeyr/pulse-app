@@ -328,6 +328,8 @@ async fn confirm(
             replies_seen: None,
         }),
         qoty_card: None,
+        pin: None,
+        pin_line: None,
         embeds: vec![],
         call: None,
     };

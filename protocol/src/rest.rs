@@ -639,6 +639,65 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub call: Option<CallLine>,
+    /// Set while the message is pinned (#178); an expired pin is never sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pin: Option<Pin>,
+    /// Set on a pin's system line (#178): what was pinned, by whom, for how long.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pin_line: Option<PinLine>,
+}
+
+/// How long a pin lasts (#178).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum PinDuration {
+    Hour,
+    Day,
+    Week,
+    Forever,
+}
+
+impl PinDuration {
+    /// As the system line words it: "for 1 day", nothing for Forever.
+    pub fn phrase(self) -> Option<&'static str> {
+        match self {
+            Self::Hour => Some("for 1 hour"),
+            Self::Day => Some("for 1 day"),
+            Self::Week => Some("for 1 week"),
+            Self::Forever => None,
+        }
+    }
+}
+
+/// `PUT /messages/{id}/pin`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct PinRequest {
+    pub duration: PinDuration,
+}
+
+/// A message's pin (#178). `expires_at` is `None` for a Forever pin.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Pin {
+    pub pinned_by: UserId,
+    pub pinned_at: String,
+    pub expires_at: Option<String>,
+}
+
+/// One entry of `GET /channels/{id}/pins`, newest pin first.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct PinnedMessage {
+    pub message: Message,
+    pub pin: Pin,
+}
+
+/// A pin's system line: "alex pinned a message for 1 day · See pins".
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct PinLine {
+    pub message_id: MessageId,
+    pub by: UserId,
+    pub duration: PinDuration,
 }
 
 /// A call line's metadata (#50). Each member's client renders it: "sam started a call", "· 12 min"

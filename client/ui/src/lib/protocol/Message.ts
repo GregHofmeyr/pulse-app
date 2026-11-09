@@ -5,6 +5,8 @@ import type { Clip } from "./Clip";
 import type { LinkEmbed } from "./LinkEmbed";
 import type { MessageId } from "./MessageId";
 import type { MessageKind } from "./MessageKind";
+import type { Pin } from "./Pin";
+import type { PinLine } from "./PinLine";
 import type { QotyCard } from "./QotyCard";
 import type { Quote } from "./Quote";
 import type { ReactionSummary } from "./ReactionSummary";
@@ -43,4 +45,12 @@ embeds: Array<LinkEmbed>,
 /**
  * Set on a DM or group's call line (#50): who started it, when it ended, who joined.
  */
-call?: CallLine, };
+call?: CallLine, 
+/**
+ * Set while the message is pinned (#178); an expired pin is never sent.
+ */
+pin?: Pin, 
+/**
+ * Set on a pin's system line (#178): what was pinned, by whom, for how long.
+ */
+pin_line?: PinLine, };

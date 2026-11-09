@@ -91,8 +91,13 @@ fn from_row(r: Row) -> AppResult<Message> {
             Some(p) if system && deleted_at.is_none() => super::system::call_line(p),
             _ => None,
         },
-        qoty_card: match system_payload {
-            Some(p) if system && deleted_at.is_none() => super::system::qoty_card(&p),
+        qoty_card: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => super::system::qoty_card(p),
+            _ => None,
+        },
+        pin: None,
+        pin_line: match system_payload {
+            Some(p) if system && deleted_at.is_none() => super::system::pin_line(&p),
             _ => None,
         },
     })
@@ -125,6 +130,7 @@ pub(crate) async fn load(
     crate::quotes::attach(db, me, &mut one).await?;
     crate::clips::attach(db, me, &mut one).await?;
     crate::embeds::attach(db, &mut one).await?;
+    crate::pins::attach(db, &mut one).await?;
     let [m] = one;
     Ok(Some(m))
 }
@@ -182,6 +188,7 @@ pub(crate) async fn fill(
     crate::quotes::attach(db, me, &mut page).await?;
     crate::clips::attach(db, me, &mut page).await?;
     crate::embeds::attach(db, &mut page).await?;
+    crate::pins::attach(db, &mut page).await?;
     Ok(page)
 }
 
@@ -346,6 +353,8 @@ async fn send(
         embeds: vec![],
         call: None,
         qoty_card: None,
+        pin: None,
+        pin_line: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -599,6 +608,7 @@ async fn remove(
         None
     };
     crate::embeds::on_delete(&mut tx, id).await?;
+    let unpinned = crate::pins::on_delete(&mut tx, id).await?;
     tx.commit().await?;
     let mut deleted = deleted;
     if let Some(mut ended) = overdue {
@@ -624,6 +634,17 @@ async fn remove(
             },
         )
         .await;
+    if unpinned {
+        s.hub
+            .publish(
+                &s.db,
+                Event::MessageUnpinned {
+                    channel_id: msg.channel_id,
+                    message_id: id,
+                },
+            )
+            .await;
+    }
     if let Some(deleted) = deleted {
         for event in deleted.replies {
             s.hub.publish(&s.db, event).await;
@@ -726,6 +747,8 @@ mod tests {
             embeds: vec![],
             call: None,
             qoty_card: None,
+            pin: None,
+            pin_line: None,
         }
     }
 

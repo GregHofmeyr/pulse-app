@@ -6,9 +6,9 @@ use ts_rs::TS;
 use crate::ids::{CallId, ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game,
-    Member, Message, Mute, NotifyLevelPref, OwnStatus, Person, PresenceStatus, PrivateNickname,
-    QotyEvent, ReadState, RingEndReason, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink,
-    StreamEndReason, StreamInfo, User,
+    Member, Message, Mute, NotifyLevelPref, OwnStatus, Person, PinnedMessage, PresenceStatus,
+    PrivateNickname, QotyEvent, ReadState, RingEndReason, Server, ServerLayout, ServerVoiceMod,
+    Sound, SpeakerLink, StreamEndReason, StreamInfo, User,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -508,6 +508,16 @@ pub enum Event {
         user_id: UserId,
         reason: RingEndReason,
     },
+    /// A message was pinned (#178), with the message as it is now.
+    MessagePinned {
+        channel_id: ChannelId,
+        pinned: PinnedMessage,
+    },
+    /// A pin was taken off, ran out, or went with its deleted message (#178).
+    MessageUnpinned {
+        channel_id: ChannelId,
+        message_id: MessageId,
+    },
 }
 
 impl Event {
@@ -530,7 +540,9 @@ impl Event {
             | Self::SoundPlayed { channel_id, .. }
             | Self::VoiceDisconnected { channel_id, .. }
             | Self::CallEnded { channel_id, .. }
-            | Self::CallRingEnded { channel_id, .. } => Some(*channel_id),
+            | Self::CallRingEnded { channel_id, .. }
+            | Self::MessagePinned { channel_id, .. }
+            | Self::MessageUnpinned { channel_id, .. } => Some(*channel_id),
             Self::CallStarted { call } => Some(call.channel_id),
             Self::CallRinging { ring } => Some(ring.channel_id),
             Self::ChannelCreated { channel } => Some(channel.id),
