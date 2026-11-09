@@ -11,6 +11,7 @@ import type { QotyCard } from "./QotyCard";
 import type { Quote } from "./Quote";
 import type { ReactionSummary } from "./ReactionSummary";
 import type { UserId } from "./UserId";
+import type { WheelSpin } from "./WheelSpin";
 
 export type Message = { id: MessageId, channel_id: ChannelId, author_id: UserId | null, kind: MessageKind, content: string, reply_to_id: MessageId | null, created_at: string, edited_at: string | null, deleted: boolean, 
 /**
@@ -53,4 +54,8 @@ pin?: Pin,
 /**
  * Set on a pin's system line (#178): what was pinned, by whom, for how long.
  */
-pin_line?: PinLine, };
+pin_line?: PinLine, 
+/**
+ * Set on a picker wheel spin's line (#158).
+ */
+wheel?: WheelSpin, };

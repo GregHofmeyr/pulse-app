@@ -127,6 +127,11 @@ pub struct LimitsConfig {
     /// Category and layout changes per person (#54): creating, renaming or deleting a category
     /// and saving a new order. Generous, like renames: a burst of drags is normal use.
     pub layout_user: Rate,
+    /// Saved picker wheel creates, edits and deletes, together per person (#158). Generous, like layout: adding
+    /// options one at a time is a burst of saves.
+    pub wheel_user: Rate,
+    /// Picker wheel spins per person (#158): one every 3 s, so a chat can't be flooded with spinning wheels.
+    pub wheel_spin_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -173,6 +178,8 @@ impl Default for LimitsConfig {
             // six at once, then one every 20 s
             call_user: Rate::new(6, 0.05),
             layout_user: Rate::new(30, 1.0),
+            wheel_user: Rate::new(30, 1.0),
+            wheel_spin_user: Rate::new(1, 1.0 / 3.0),
         }
     }
 }
@@ -212,6 +219,8 @@ impl LimitsConfig {
             live_notify_user: r,
             call_user: r,
             layout_user: r,
+            wheel_user: r,
+            wheel_spin_user: r,
         }
     }
 }
@@ -364,6 +373,8 @@ pub struct Limits {
     pub live_notify_user: Limiter,
     pub call_user: Limiter,
     pub layout_user: Limiter,
+    pub wheel_user: Limiter,
+    pub wheel_spin_user: Limiter,
 }
 
 impl Limits {
@@ -399,6 +410,8 @@ impl Limits {
             live_notify_user: Limiter::new(c.live_notify_user),
             call_user: Limiter::new(c.call_user),
             layout_user: Limiter::new(c.layout_user),
+            wheel_user: Limiter::new(c.wheel_user),
+            wheel_spin_user: Limiter::new(c.wheel_spin_user),
         }
     }
 }

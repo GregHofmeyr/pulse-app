@@ -96,8 +96,12 @@ fn from_row(r: Row) -> AppResult<Message> {
             _ => None,
         },
         pin: None,
-        pin_line: match system_payload {
-            Some(p) if system && deleted_at.is_none() => super::system::pin_line(&p),
+        pin_line: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => super::system::pin_line(p),
+            _ => None,
+        },
+        wheel: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => super::system::wheel_spin(p),
             _ => None,
         },
     })
@@ -352,6 +356,7 @@ async fn send(
         clip: None,
         embeds: vec![],
         call: None,
+        wheel: None,
         qoty_card: None,
         pin: None,
         pin_line: None,
@@ -746,6 +751,7 @@ mod tests {
             clip: None,
             embeds: vec![],
             call: None,
+            wheel: None,
             qoty_card: None,
             pin: None,
             pin_line: None,

@@ -8,7 +8,7 @@ use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game,
     Member, Message, Mute, NotifyLevelPref, OwnStatus, Person, PinnedMessage, PresenceStatus,
     PrivateNickname, QotyEvent, ReadState, RingEndReason, Server, ServerLayout, ServerVoiceMod,
-    Sound, SpeakerLink, StreamEndReason, StreamInfo, User,
+    Sound, SpeakerLink, StreamEndReason, StreamInfo, User, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -448,6 +448,19 @@ pub enum Event {
     SoundUpdated {
         sound: Sound,
     },
+    /// A saved picker wheel was made or changed (#158): a server wheel reaches everyone (servers are public), a
+    /// Just me wheel only its owner.
+    WheelSaved {
+        wheel: Wheel,
+    },
+    /// A saved picker wheel was deleted (#158); reaches whoever its [`Event::WheelSaved`] reached.
+    WheelDeleted {
+        wheel_id: String,
+        #[serde(default)]
+        server_id: Option<ServerId>,
+        #[serde(default)]
+        owner_id: Option<UserId>,
+    },
     /// A sound was removed from a server's soundboard (everyone).
     SoundDeleted {
         server_id: ServerId,
@@ -581,6 +594,8 @@ impl Event {
             | Self::SoundCreated { .. }
             | Self::SoundUpdated { .. }
             | Self::SoundDeleted { .. }
+            | Self::WheelSaved { .. }
+            | Self::WheelDeleted { .. }
             | Self::SoundFavourites { .. }
             | Self::FrequentSounds { .. }
             | Self::PrivateNicknameChanged { .. }
@@ -612,6 +627,8 @@ impl Event {
             | Self::VoiceDisconnected { user_id, .. }
             | Self::CallRingEnded { user_id, .. }
             | Self::BadgeEarned { user_id, .. } => Some(*user_id),
+            Self::WheelSaved { wheel } => wheel.owner_id,
+            Self::WheelDeleted { owner_id, .. } => *owner_id,
             _ => None,
         }
     }
@@ -1163,6 +1180,71 @@ mod tests {
         .unwrap();
         assert!(m.call.is_none());
         assert!(!serde_json::to_string(&m).unwrap().contains("\"call\""));
+    }
+
+    /// Picker wheels (#158): a server wheel's events reach everyone, a Just me wheel's only its owner; a spin rides
+    /// on its line's `MessageCreated` and an older message without `wheel` still parses.
+    #[test]
+    fn wheel_events_are_scoped() {
+        use crate::rest::{Wheel, WheelScope, WheelSpin};
+        let (u, sv) = (UserId::new(), ServerId::new());
+        let wheel = |server_id: Option<ServerId>, owner_id: Option<UserId>| Wheel {
+            id: "w".into(),
+            scope: if owner_id.is_some() {
+                WheelScope::Personal
+            } else {
+                WheelScope::Server
+            },
+            server_id,
+            owner_id,
+            name: "Games".into(),
+            options: vec!["a".into(), "b".into()],
+            updated_at: "2026-11-09T00:00:00.000Z".into(),
+        };
+        let shared = Event::WheelSaved {
+            wheel: wheel(Some(sv), None),
+        };
+        assert_eq!((shared.channel_id(), shared.only_for()), (None, None));
+        let mine = Event::WheelSaved {
+            wheel: wheel(None, Some(u)),
+        };
+        assert_eq!((mine.channel_id(), mine.only_for()), (None, Some(u)));
+        let gone = Event::WheelDeleted {
+            wheel_id: "w".into(),
+            server_id: None,
+            owner_id: Some(u),
+        };
+        assert_eq!((gone.channel_id(), gone.only_for()), (None, Some(u)));
+        let gone = Event::WheelDeleted {
+            wheel_id: "w".into(),
+            server_id: Some(sv),
+            owner_id: None,
+        };
+        assert_eq!((gone.channel_id(), gone.only_for()), (None, None));
+
+        let (c, m_id) = (ChannelId::new(), MessageId::new());
+        let old: Message = serde_json::from_str(&format!(
+            r#"{{"id":"{m_id}","channel_id":"{c}","author_id":null,"kind":"system",
+            "content":"hi","reply_to_id":null,"created_at":"2026-11-09T00:00:00.000Z",
+            "edited_at":null,"deleted":false}}"#
+        ))
+        .unwrap();
+        assert!(old.wheel.is_none());
+        assert!(!serde_json::to_string(&old).unwrap().contains("\"wheel\""));
+        let spin = WheelSpin {
+            spinner_id: Some(u),
+            wheel_id: None,
+            name: None,
+            options: vec!["a".into(), "b".into()],
+            winner: 1,
+            angle: 90.0,
+        };
+        let m = Message {
+            wheel: Some(spin.clone()),
+            ..old
+        };
+        let back: Message = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+        assert_eq!(back.wheel, Some(spin));
     }
 
     #[test]

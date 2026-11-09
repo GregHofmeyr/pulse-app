@@ -28,6 +28,7 @@ pub mod state;
 pub mod streams;
 pub mod updates;
 pub mod voice;
+pub mod wheels;
 
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -72,6 +73,7 @@ pub fn router(state: AppState) -> Router {
         .merge(embeds::routes::router())
         .merge(embeds::page::router())
         .merge(updates::router())
+        .merge(wheels::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)

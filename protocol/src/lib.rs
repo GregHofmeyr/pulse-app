@@ -146,6 +146,13 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::EmbedThumb::export_all(&cfg)?;
     rest::LinkEmbed::export_all(&cfg)?;
     rest::HideEmbedRequest::export_all(&cfg)?;
+    rest::WheelSpin::export_all(&cfg)?;
+    rest::WheelScope::export_all(&cfg)?;
+    rest::Wheel::export_all(&cfg)?;
+    rest::CreateWheelRequest::export_all(&cfg)?;
+    rest::UpdateWheelRequest::export_all(&cfg)?;
+    rest::SpinWheelRequest::export_all(&cfg)?;
+    rest::SpinAgainRequest::export_all(&cfg)?;
     Ok(())
 }
 

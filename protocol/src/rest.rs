@@ -647,6 +647,10 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub pin_line: Option<PinLine>,
+    /// Set on a picker wheel spin's line (#158).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub wheel: Option<WheelSpin>,
 }
 
 /// How long a pin lasts (#178).
@@ -714,6 +718,117 @@ pub struct CallLine {
     /// Members who were in the call at some point; filled in when it ends.
     #[serde(default)]
     pub joined: Vec<UserId>,
+}
+
+/// A picker wheel spin's line (#158): the system line a spin posts, which every client animates to the same
+/// `angle` when it arrives live and shows settled otherwise.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct WheelSpin {
+    /// `None` once the spinner's account is gone.
+    #[serde(default)]
+    pub spinner_id: Option<UserId>,
+    /// The saved wheel it was spun from; `None` for a quick (one-off) wheel, or once that wheel is deleted.
+    #[serde(default)]
+    pub wheel_id: Option<String>,
+    /// The saved wheel's name when spun; `None` for a quick wheel.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The slices in order, clockwise from 12 o'clock.
+    pub options: Vec<String>,
+    /// Index into `options`.
+    pub winner: u32,
+    /// The wheel's final clockwise rotation in degrees, in [0, 360): the pointer at 12 o'clock then sits inside
+    /// the winner's slice ([`wheel_winner_at`]).
+    pub angle: f64,
+}
+
+/// The slice under the pointer at 12 o'clock when the wheel has turned `angle` degrees clockwise: slice `i` of
+/// `n` covers [i·360/n, (i+1)·360/n) clockwise from 12 o'clock.
+pub fn wheel_winner_at(angle: f64, n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    let seg = 360.0 / n as f64;
+    let at = (360.0 - angle.rem_euclid(360.0)).rem_euclid(360.0);
+    ((at / seg).floor() as usize).min(n - 1)
+}
+
+/// Picker wheel limits (#158), shared so the client can say them before the server refuses.
+pub mod wheel_limits {
+    pub const MIN_OPTIONS: usize = 2;
+    pub const MAX_OPTIONS: usize = 100;
+    /// Characters per option, after trimming.
+    pub const OPTION_CHARS: usize = 60;
+    /// Characters in a saved wheel's name, after trimming.
+    pub const NAME_CHARS: usize = 40;
+    pub const WHEELS_PER_SERVER: i64 = 50;
+    pub const WHEELS_PER_PERSON: i64 = 50;
+}
+
+/// Who a saved wheel is for (#158).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum WheelScope {
+    /// Everyone in its server sees and edits it.
+    Server,
+    /// "Just me": only its owner sees it, and may spin it in any chat.
+    Personal,
+}
+
+/// A saved picker wheel (#158).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Wheel {
+    pub id: String,
+    pub scope: WheelScope,
+    /// Set for a server wheel.
+    #[serde(default)]
+    pub server_id: Option<ServerId>,
+    /// Set for a Just me wheel.
+    #[serde(default)]
+    pub owner_id: Option<UserId>,
+    pub name: String,
+    pub options: Vec<String>,
+    pub updated_at: String,
+}
+
+/// `POST /wheels`: a new saved wheel, in `server_id` (a server wheel) or, without one, Just me.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CreateWheelRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub server_id: Option<ServerId>,
+    pub name: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
+/// `PATCH /wheels/{id}`: what changes (absent = kept).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct UpdateWheelRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub options: Option<Vec<String>>,
+}
+
+/// `POST /channels/{id}/wheel-spins`: spin a saved wheel (`wheel_id`) or a quick one (`options`); exactly one.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct SpinWheelRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub wheel_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub options: Option<Vec<String>>,
+}
+
+/// `POST /messages/{id}/spin-again`: the same options again, or without the winner.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct SpinAgainRequest {
+    #[serde(default)]
+    pub remove_winner: bool,
 }
 
 /// A call in progress in a DM or group (#50). It started when the room went from empty to occupied
@@ -1730,6 +1845,28 @@ pub struct SearchResults {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pointer reads slice i of n from a clockwise turn: no turn shows slice 0 at the top's right edge; a
+    /// turn just past one slice's width backwards (360 − s·i − ε) shows slice i.
+    #[test]
+    fn wheel_winner_at_reads_the_slice_under_the_pointer() {
+        assert_eq!(wheel_winner_at(0.0, 4), 0);
+        assert_eq!(wheel_winner_at(359.0, 4), 0);
+        assert_eq!(wheel_winner_at(271.0, 4), 0);
+        assert_eq!(wheel_winner_at(269.0, 4), 1);
+        assert_eq!(wheel_winner_at(180.0 - 1.0, 4), 2);
+        assert_eq!(wheel_winner_at(1.0, 4), 3);
+        // whole extra turns and negative angles read the same
+        assert_eq!(wheel_winner_at(5.0 * 360.0 + 269.0, 4), 1);
+        assert_eq!(wheel_winner_at(-91.0, 4), 1);
+        for n in 2..=100 {
+            let seg = 360.0 / n as f64;
+            for i in 0..n {
+                let mid = seg * (i as f64 + 0.5);
+                assert_eq!(wheel_winner_at(360.0 - mid, n), i, "n={n} i={i}");
+            }
+        }
+    }
 
     /// Badge art (#225): an older server sends no `art`, which reads as none; a picture's hash
     /// round-trips.

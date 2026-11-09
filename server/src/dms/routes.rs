@@ -124,7 +124,7 @@ pub async fn members_of_my_conversations(
 
 /// How a system line names someone: their display name (system lines have no server, and the
 /// server never knows private nicknames).
-async fn shown_name(db: &SqlitePool, u: UserId) -> AppResult<String> {
+pub(crate) async fn shown_name(db: &SqlitePool, u: UserId) -> AppResult<String> {
     Ok(load_user(db, u).await?.display_name)
 }
 

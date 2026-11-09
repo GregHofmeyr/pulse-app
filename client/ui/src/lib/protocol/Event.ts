@@ -31,6 +31,7 @@ import type { StreamInfo } from "./StreamInfo";
 import type { User } from "./User";
 import type { UserId } from "./UserId";
 import type { VoiceFlags } from "./VoiceFlags";
+import type { Wheel } from "./Wheel";
 
 export type Event = { "t": "MessageCreated", "d": { message: Message, nonce: string | null, } } | { "t": "MessageUpdated", "d": { message: Message, } } | { "t": "MessageDeleted", "d": { channel_id: ChannelId, message_id: MessageId, 
 /**
@@ -76,7 +77,7 @@ mentions_cleared: number,
 /**
  * The user's absolute mention count in the channel after this change. Absent from older servers.
  */
-mentions: number | null, } } | { "t": "SpeakerLinksChanged", "d": { server_id: ServerId, links: Array<SpeakerLink>, } } | { "t": "QotyStarted", "d": { event: QotyEvent, } } | { "t": "QotyUpdated", "d": { event: QotyEvent, } } | { "t": "QotyEnded", "d": { event: QotyEvent, } } | { "t": "GameAdded", "d": { game: Game, } } | { "t": "ClipViewChanged", "d": { user_id: UserId, channel_id: ChannelId, view: ClipView, } } | { "t": "BadgeEarned", "d": { user_id: UserId, badge: Badge, name: string, icon: string, } } | { "t": "SoundCreated", "d": { sound: Sound, } } | { "t": "SoundUpdated", "d": { sound: Sound, } } | { "t": "SoundDeleted", "d": { server_id: ServerId, sound_id: string, } } | { "t": "SoundPlayed", "d": { channel_id: ChannelId, user_id: UserId, sound_id: string, media_hash: string, volume: number, 
+mentions: number | null, } } | { "t": "SpeakerLinksChanged", "d": { server_id: ServerId, links: Array<SpeakerLink>, } } | { "t": "QotyStarted", "d": { event: QotyEvent, } } | { "t": "QotyUpdated", "d": { event: QotyEvent, } } | { "t": "QotyEnded", "d": { event: QotyEvent, } } | { "t": "GameAdded", "d": { game: Game, } } | { "t": "ClipViewChanged", "d": { user_id: UserId, channel_id: ChannelId, view: ClipView, } } | { "t": "BadgeEarned", "d": { user_id: UserId, badge: Badge, name: string, icon: string, } } | { "t": "SoundCreated", "d": { sound: Sound, } } | { "t": "SoundUpdated", "d": { sound: Sound, } } | { "t": "WheelSaved", "d": { wheel: Wheel, } } | { "t": "WheelDeleted", "d": { wheel_id: string, server_id: ServerId | null, owner_id: UserId | null, } } | { "t": "SoundDeleted", "d": { server_id: ServerId, sound_id: string, } } | { "t": "SoundPlayed", "d": { channel_id: ChannelId, user_id: UserId, sound_id: string, media_hash: string, volume: number, 
 /**
  * The sound's length, so listeners can show who is playing for as long as it plays
  * (0 from an older server).

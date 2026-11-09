@@ -2,7 +2,7 @@
 
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId};
-use pulse_protocol::rest::{CallLine, Message, MessageKind, PinLine, QotyCard};
+use pulse_protocol::rest::{CallLine, Message, MessageKind, PinLine, QotyCard, WheelSpin};
 use sqlx::SqliteConnection;
 
 use crate::AppState;
@@ -61,6 +61,7 @@ pub async fn insert(
         qoty_card: qoty_card(&stored),
         pin: None,
         pin_line: pin_line(&stored),
+        wheel: wheel_spin(&stored),
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
         .bind(msg.id.to_string())
@@ -127,6 +128,25 @@ pub fn pin_line(payload: &str) -> Option<PinLine> {
     serde_json::from_value(v).ok()
 }
 
+/// The payload `type` of a picker wheel spin's line (#158).
+pub const WHEEL_SPIN: &str = "wheel_spin";
+
+/// A spin line's stored payload.
+pub fn wheel_spin_payload(spin: &WheelSpin) -> AppResult<serde_json::Value> {
+    let mut v = serde_json::to_value(spin).map_err(anyhow::Error::from)?;
+    v["type"] = WHEEL_SPIN.into();
+    Ok(v)
+}
+
+/// The spin in a stored payload, if it is one.
+pub fn wheel_spin(payload: &str) -> Option<WheelSpin> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    if v.get("type")?.as_str()? != WHEEL_SPIN {
+        return None;
+    }
+    serde_json::from_value(v).ok()
+}
+
 /// "a", "a and b", "a, b and c".
 pub fn join_names(names: &[String]) -> String {
     match names {
@@ -172,6 +192,23 @@ mod tests {
         assert_eq!(pin_line(&stored), Some(line));
         assert_eq!(call_line(&stored), None);
         assert_eq!(pin_line(r#"{"type":"call"}"#), None);
+    }
+
+    #[test]
+    fn a_spin_round_trips_through_its_payload() {
+        let spin = WheelSpin {
+            spinner_id: None,
+            wheel_id: Some("w".into()),
+            name: Some("Games".into()),
+            options: vec!["a".into(), "b".into(), "c".into()],
+            winner: 2,
+            angle: 12.5,
+        };
+        let stored = wheel_spin_payload(&spin).unwrap().to_string();
+        assert_eq!(wheel_spin(&stored), Some(spin));
+        assert_eq!(call_line(&stored), None);
+        assert_eq!(qoty_card(&stored), None);
+        assert_eq!(wheel_spin(r#"{"type":"call","call_id":"x"}"#), None);
     }
 
     #[test]
