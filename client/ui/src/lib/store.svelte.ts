@@ -21,6 +21,7 @@ import { loadMixer, soundGain } from './mixer'
 import { streamApi } from './stream/stream.svelte'
 import { windowFocus } from './windowFocus.svelte'
 import { forgetEmbedOrigin } from './linkPreviews.svelte'
+import { forgetClipLinks } from './clipLinks'
 
 // The reducer (state.ts) is pure and never mutates: hold its output as-is (`$state.raw`) instead
 // of deep-proxying it. Reassigning `app.state` is the only way to change it, and the only way that
@@ -249,6 +250,7 @@ export function handleReady(r: Ready) {
   const before = app.state.streams
   // A different user than the one on screen: nothing of theirs carries over (no sign-out was seen).
   const prev = app.state.me
+  if (prev && prev.id !== r.me.id) forgetClipLinks()
   let next = applyReady(prev && prev.id !== r.me.id ? { ...app.state, pending: {} } : app.state, r)
   if (restoredFor !== r.me.id) {
     restoredFor = r.me.id
@@ -329,6 +331,7 @@ export function resetState() {
   ui.openClip = null
   forgetProfileLoads()
   forgetEmbedOrigin() // the next account may be on another server
+  forgetClipLinks() // the next account asks for its own play links
   app.state = emptyState()
   // a held crash report belongs to the session (and server) it was offered in: the next sign-in
   // asks again if the core still has it for that server

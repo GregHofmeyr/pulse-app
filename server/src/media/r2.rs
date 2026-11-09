@@ -77,8 +77,16 @@ impl R2 {
         (url, expires)
     }
 
+    /// A GET URL whose responses say they may be kept, privately, for as long as the link lives
+    /// (`response-cache-control`, signed like every other query parameter). Clips never change,
+    /// so a client that reuses one link can replay from its HTTP cache. Being a query parameter,
+    /// it covers objects stored before it existed.
     pub fn download_url(&self, key: &str, ttl: Duration) -> (Url, String) {
-        let get = self.bucket.get_object(Some(&self.creds), key);
+        let mut get = self.bucket.get_object(Some(&self.creds), key);
+        get.query_mut().insert(
+            "response-cache-control",
+            format!("private, max-age={}, immutable", ttl.as_secs()),
+        );
         let url = get.sign(ttl);
         let expires = expires_at(&url, ttl);
         (url, expires)
@@ -292,6 +300,63 @@ mod tests {
         // Deleting what is already gone is fine.
         r2.delete(key).await.unwrap();
         assert_eq!(r2.head(key).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn play_links_are_cacheable_as_private_and_immutable() {
+        // Clips never change, so a reused link's GET may be served from the player's HTTP cache.
+        // The header is a signed query parameter, so it covers clips stored before it existed.
+        let (fake, r2) = setup().await;
+        fake.put_raw("clips/ee.mp4", b"0123456789".to_vec());
+        let (url, _) = r2.download_url("clips/ee.mp4", TTL);
+        let want = "private, max-age=3600, immutable";
+        let param = url
+            .query_pairs()
+            .find(|(k, _)| k == "response-cache-control")
+            .map(|(_, v)| v.to_string());
+        assert_eq!(param.as_deref(), Some(want));
+        let http = reqwest::Client::new();
+        for range in [None, Some("bytes=2-4")] {
+            let mut req = http.get(url.clone());
+            if let Some(r) = range {
+                req = req.header("range", r);
+            }
+            let r = req.send().await.unwrap();
+            assert!(r.status().is_success(), "{}", r.status());
+            assert_eq!(r.headers()["cache-control"], want);
+        }
+        // A tampered value no longer matches the signature.
+        let mut bad = url.clone();
+        let q: Vec<(String, String)> = url
+            .query_pairs()
+            .map(|(k, v)| {
+                let v = if k == "response-cache-control" {
+                    "public, max-age=31536000".into()
+                } else {
+                    v.to_string()
+                };
+                (k.to_string(), v)
+            })
+            .collect();
+        bad.query_pairs_mut().clear().extend_pairs(q);
+        assert_eq!(
+            http.get(bad).send().await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn the_cache_lifetime_follows_the_link_lifetime() {
+        let (_fake, r2) = setup().await;
+        let (url, _) = r2.download_url("clips/ff.mp4", Duration::from_secs(900));
+        let param = url
+            .query_pairs()
+            .find(|(k, _)| k == "response-cache-control")
+            .map(|(_, v)| v.to_string());
+        assert_eq!(param.as_deref(), Some("private, max-age=900, immutable"));
+        // Uploads are unchanged: a 0.2.1 client sends only the two signed headers it always has.
+        let (put, _) = r2.upload_url("clips/ff.mp4", 5, "video/mp4", TTL);
+        assert!(!put.query_pairs().any(|(k, _)| k.starts_with("response-")));
     }
 
     #[tokio::test]

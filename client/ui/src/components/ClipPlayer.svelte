@@ -1,9 +1,11 @@
 <script lang="ts">
-  // One clip: a lazy thumbnail until played, then the only mounted <video>. The link is asked for on
-  // every play and never stored (it expires in an hour).
+  // One clip: a lazy thumbnail until played, then the only mounted <video>. Its signed link is shared by
+  // every player of the clip and reused until shortly before it expires (clipLinks), so a replay asks
+  // the same URL and can come from the HTTP cache (#268).
   import { onMount } from 'svelte'
   import type { Message } from '../lib/protocol/Message'
   import { api } from '../lib/tauri'
+  import { clipLink } from '../lib/clipLinks'
   import { mediaUrl } from '../lib/emoji'
   import { formatDuration } from '../lib/clips'
   import { claim, elementVolume, playback, release, setMuted, setVolume } from '../lib/clipPlayback.svelte'
@@ -32,6 +34,7 @@
   let fullscreen = $state(false)
   let renewed = false // the one renewal is spent until the video plays again
   let resumeAt: number | null = null
+  let hasMeta = false // the mounted video has its metadata (onMeta ran for this src)
   let startPlaying = true
   let gen = 0 // a newer play (or a pause, stop or unmount) supersedes a slower fetch
   let token: symbol | null = null
@@ -44,22 +47,33 @@
     loading = false
     el?.pause()
     src = null
+    hasMeta = false
     playing = false
   }
 
-  /** Asks for a link and points the video at it; resumes at `from` seconds, playing or not. */
+  /** Gets the clip's link and points the video at it; resumes at `from` seconds, playing or not. A
+   * renewal, or a retry after a failure, asks for a new link rather than the stored one. */
   async function load(from: number, isRenewal: boolean, andPlay: boolean) {
     const mine = ++gen
+    const fresh = isRenewal || failed
     failed = false
     loading = true
     try {
-      const { url } = await api.clipUrl(message.id)
+      const url = await clipLink(message.id, api.clipUrl, { fresh })
       if (mine !== gen) return
       loading = false
       renewed = isRenewal
+      token = claim(message.id, stop, token ?? undefined)
+      if (el && src === url && !el.error && hasMeta) {
+        // Still loaded on this link (a resume after Pause, or a replay after the end): carry on in place.
+        // `from` is the shown time, which trails the video a little: only a real jump (back to the start) seeks.
+        if (Math.abs(el.currentTime - from) > 0.5) el.currentTime = from
+        if (andPlay) el.play()?.catch(() => {})
+        return
+      }
       resumeAt = from
       startPlaying = andPlay
-      token = claim(message.id, stop, token ?? undefined)
+      if (src !== url) hasMeta = false
       src = url
     } catch {
       if (mine !== gen) return
@@ -86,6 +100,7 @@
   function onMeta() {
     if (!el) return
     dur = Number.isFinite(el.duration) ? el.duration : dur
+    hasMeta = true
     if (resumeAt !== null) {
       el.currentTime = resumeAt
       resumeAt = null

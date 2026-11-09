@@ -9,6 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import ClipPlayer from './ClipPlayer.svelte'
 import { setNotch } from '../lib/mixer.svelte'
 import { claim, playback, release } from '../lib/clipPlayback.svelte'
+import { forgetClipLinks } from '../lib/clipLinks'
 
 type Fake = HTMLVideoElement & { _t: number; _d: number; _ns: number; _paused: boolean }
 
@@ -35,7 +36,8 @@ beforeEach(() => {
   proto.pause = vi.fn(function (this: Fake) { this._paused = true; this.dispatchEvent(new Event('pause')) })
   invoke.mockReset()
   let n = 0
-  invoke.mockImplementation(async (cmd) => (cmd === 'clip_url' ? { url: `http://127.0.0.1:7895/clips/k.mp4?sig=${++n}`, expires_at: '2026-10-28T11:00:00Z' } : undefined))
+  invoke.mockImplementation(async (cmd) => (cmd === 'clip_url' ? { url: `http://127.0.0.1:7895/clips/k.mp4?X-Amz-Expires=3600&sig=${++n}`, expires_at: new Date(Date.now() + 3600_000).toISOString() } : undefined))
+  forgetClipLinks()
   localStorage.clear()
   release(claim('reset', () => {})); playback.volume = 100; playback.muted = false
 })
@@ -76,7 +78,7 @@ describe('ClipPlayer', () => {
     expect(urlCalls()).toHaveLength(0)
   })
 
-  it('asks for a fresh link on each play', async () => {
+  it('asks for the link on the first play', async () => {
     const r = show()
     await start(r)
     expect(urlCalls()).toHaveLength(1)
@@ -84,10 +86,86 @@ describe('ClipPlayer', () => {
     expect(v.getAttribute('src')).toContain('sig=1')
     expect(v.getAttribute('preload')).toBe('metadata')
     expect(v.hasAttribute('playsinline')).toBe(true)
-    await press(r, 'Pause')
+  })
+
+  it('Play after Pause carries on in place: same video, same link, same spot', async () => {
+    const r = show()
     await start(r)
+    const v = video(r)!
+    v._t = 12.3; v.dispatchEvent(new Event('timeupdate')); flushSync()
+    await press(r, 'Pause')
+    v._t = 12.4 // the shown time trails the video a little: no seek back for it
+    await press(r, 'Play')
+    expect(urlCalls()).toHaveLength(1)
+    expect(video(r)).toBe(v)
+    expect(v.currentTime).toBe(12.4)
+    expect(v._paused).toBe(false)
+  })
+
+  it('a replay after the end starts over on the same link, without reloading', async () => {
+    const r = show()
+    await start(r)
+    const v = video(r)!
+    v._t = 41; v._d = 41
+    v.dispatchEvent(new Event('timeupdate'))
+    v.pause(); v.dispatchEvent(new Event('ended')); flushSync()
+    await press(r, 'Play')
+    expect(urlCalls()).toHaveLength(1)
+    expect(video(r)).toBe(v)
+    expect(v.currentTime).toBe(0)
+    expect(v._paused).toBe(false)
+  })
+
+  it('reuses the clip’s link after another clip took over, and in another player of the same clip', async () => {
+    const a = show('M1')
+    const b = show('M2')
+    await start(a)
+    await start(b) // displaces M1: its video goes
+    expect(video(a)).toBeNull()
+    await start(a)
+    expect(video(a)!.getAttribute('src')).toContain('sig=1')
+    const c = show('M1') // e.g. the clip opened large
+    await start(c)
+    expect(video(c)!.getAttribute('src')).toContain('sig=1')
+    expect(urlCalls().map((x) => (x[1] as { messageId: string }).messageId)).toEqual(['M1', 'M2'])
+  })
+
+  it('a link close to expiring is not reused', async () => {
+    let n = 0
+    invoke.mockImplementation(async (cmd) => (cmd === 'clip_url' ? { url: `http://127.0.0.1:7895/k?X-Amz-Expires=60&sig=${++n}`, expires_at: '' } : undefined))
+    const a = show('M1')
+    const b = show('M2')
+    await start(a)
+    await start(b)
+    await start(a)
+    expect(urlCalls()).toHaveLength(3)
+    expect(video(a)!.getAttribute('src')).toContain('sig=3')
+  })
+
+  it('Play after a failure asks for a new link', async () => {
+    const r = show()
+    await start(r)
+    video(r)!.dispatchEvent(new Event('error'))
+    await settle(); flushSync()
+    video(r)!.dispatchEvent(new Event('loadedmetadata'))
+    video(r)!.dispatchEvent(new Event('error'))
+    await settle(); flushSync()
+    expect(r.textContent).toContain("Couldn't play this clip")
+    await start(r)
+    expect(urlCalls()).toHaveLength(3)
+    expect(video(r)!.getAttribute('src')).toContain('sig=3')
+    expect(r.textContent).not.toContain("Couldn't play this clip")
+  })
+
+  it('a renewed link replaces the stored one for every player', async () => {
+    const a = show('M1')
+    await start(a)
+    video(a)!.dispatchEvent(new Event('error'))
+    await settle(); flushSync()
+    const b = show('M1')
+    await start(b)
+    expect(video(b)!.getAttribute('src')).toContain('sig=2')
     expect(urlCalls()).toHaveLength(2)
-    expect(video(r)!.getAttribute('src')).toContain('sig=2')
   })
 
   it('does not cache the link in the message', async () => {

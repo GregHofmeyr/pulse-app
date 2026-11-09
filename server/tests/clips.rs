@@ -2168,6 +2168,11 @@ async fn play_urls_are_fresh_and_member_only() {
             .await
             .unwrap();
         assert_eq!(got.status(), 206);
+        // Clips never change: a client reusing this link may replay from its own cache (#268).
+        assert_eq!(
+            got.headers()["cache-control"],
+            "private, max-age=3600, immutable"
+        );
         assert_eq!(got.bytes().await.unwrap().to_vec(), bytes[..10].to_vec());
     }
 

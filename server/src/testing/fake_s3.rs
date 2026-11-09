@@ -290,6 +290,10 @@ async fn handle(State(s): State<Arc<Shared>>, req: Request<Body>) -> Response {
             let mut res = Response::builder()
                 .header(header::ACCEPT_RANGES, "bytes")
                 .header(header::CONTENT_TYPE, ct);
+            // S3 and R2 let a signed GET override this response header.
+            if let Some(cc) = response_override(query, "response-cache-control") {
+                res = res.header(header::CACHE_CONTROL, cc);
+            }
             let (status, slice) = match header_str(&parts.headers, header::RANGE) {
                 None => (StatusCode::OK, 0..len),
                 Some(r) => match parse_range(r, len) {
@@ -324,6 +328,14 @@ async fn handle(State(s): State<Arc<Shared>>, req: Request<Body>) -> Response {
         }
         _ => xml_error(StatusCode::METHOD_NOT_ALLOWED, "MethodNotAllowed", "method"),
     }
+}
+
+/// A `response-*` override from the (already verified) query string, decoded.
+fn response_override(query: &str, name: &str) -> Option<String> {
+    query.split('&').find_map(|p| {
+        let (k, v) = p.split_once('=')?;
+        (percent_decode(k) == name).then(|| percent_decode(v))
+    })
 }
 
 fn header_str(h: &HeaderMap, name: header::HeaderName) -> Option<&str> {

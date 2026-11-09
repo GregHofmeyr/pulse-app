@@ -524,7 +524,8 @@ async fn edit(
     Ok(Json(msg))
 }
 
-/// A new signed link to play a clip. Every call signs again; nothing is stored.
+/// A new signed link to play a clip. Every call signs again; nothing is stored. The link's answers
+/// may be cached (privately, as immutable) for its lifetime: clients reuse it to replay from cache.
 async fn play_url(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,

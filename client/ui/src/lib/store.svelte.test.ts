@@ -9,6 +9,7 @@ import { app, handleReady, loadProfile, noteProfileUpdate, PROFILE_STALE_MS, que
 import { addPending, applyEvent, emptyState, removePending, type Pending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
+import { clipLink } from './clipLinks'
 
 describe('app store', () => {
   // `app` is one module-wide store: start each test from a fresh state, whatever ran before
@@ -125,6 +126,28 @@ describe('unsent messages in the store', () => {
     expect(app.state.pending['C1']).toBeUndefined()
     expect(localStorage.getItem('pulse.unsent.U2')).toBeNull()
     expect(stored('U1').C1).toHaveLength(1)
+  })
+
+  describe('clip play links (#268)', () => {
+    const link = () => { let n = 0; return vi.fn(async () => ({ url: `https://store.test/k?X-Amz-Expires=3600&s=${++n}`, expires_at: '' })) }
+
+    it('sign-out forgets them', async () => {
+      const fetch = link()
+      await clipLink('M1', fetch)
+      resetState()
+      expect(await clipLink('M1', fetch)).toContain('s=2')
+    })
+
+    it('a different user on Ready forgets them; a reconnect of the same user keeps them', async () => {
+      resetState()
+      const fetch = link()
+      handleReady(ready())
+      await clipLink('M1', fetch)
+      handleReady(ready()) // reconnect
+      expect(await clipLink('M1', fetch)).toContain('s=1')
+      handleReady(ready(user('U2', 'sam')))
+      expect(await clipLink('M1', fetch)).toContain('s=2')
+    })
   })
 })
 
