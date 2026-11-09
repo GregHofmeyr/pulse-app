@@ -7,7 +7,9 @@ export const MIXER_KEY = 'pulse.mixer'
 export type MixerPrefs = {
   v: 1
   calls: { master: number; voices: number; streams: number; soundboard: number }
-  callSounds: { master: number; join: number; leave: number; mute: number; unmute: number; deafen: number; undeafen: number; ringing: number }
+  callSounds: {
+    master: number; join: number; leave: number; mute: number; unmute: number; deafen: number; undeafen: number; muted_talk: number; ringing: number
+  }
   streamSounds: { master: number; live: number; live_end: number }
   notifications: { master: number; message: number; badge: number }
   /** No master: one notch. A `<video>` can't play above its own full volume, so Clips stops at 100. */
@@ -32,7 +34,8 @@ export const MIXER_SECTIONS: readonly MixerSection[] = [
   {
     id: 'callSounds', label: 'Call sounds', master: true,
     notches: [n('join', 'Join', 'sound'), n('leave', 'Leave', 'sound'), n('mute', 'Mute', 'sound'), n('unmute', 'Unmute', 'sound'),
-      n('deafen', 'Deafen', 'sound'), n('undeafen', 'Undeafen', 'sound'), n('ringing', 'Ringing', 'ring')],
+      n('deafen', 'Deafen', 'sound'), n('undeafen', 'Undeafen', 'sound'), n('muted_talk', 'Talking while muted', 'sound'),
+      n('ringing', 'Ringing', 'ring')],
   },
   { id: 'streamSounds', label: 'Stream sounds', master: true, notches: [n('live', 'Someone goes live', 'sound'), n('live_end', 'A stream ends', 'sound')] },
   { id: 'notifications', label: 'Notifications', master: true, notches: [n('message', 'Message ding', 'sound'), n('badge', 'Badge unlocked', 'sound')] },
@@ -43,7 +46,7 @@ export function defaultMixer(): MixerPrefs {
   return {
     v: 1,
     calls: { master: 100, voices: 100, streams: 100, soundboard: 100 },
-    callSounds: { master: 100, join: 100, leave: 100, mute: 100, unmute: 100, deafen: 100, undeafen: 100, ringing: 100 },
+    callSounds: { master: 100, join: 100, leave: 100, mute: 100, unmute: 100, deafen: 100, undeafen: 100, muted_talk: 100, ringing: 100 },
     streamSounds: { master: 100, live: 100, live_end: 100 },
     notifications: { master: 100, message: 100, badge: 100 },
     media: { clips: 100, clipsMuted: false },
@@ -75,6 +78,7 @@ export const mixGain = (...pcts: number[]): number => Math.min(MAX_GAIN, pcts.re
 type SoundSection = 'callSounds' | 'streamSounds' | 'notifications'
 const SOUND_SECTION: Record<SoundName, SoundSection> = {
   join: 'callSounds', leave: 'callSounds', mute: 'callSounds', unmute: 'callSounds', deafen: 'callSounds', undeafen: 'callSounds',
+  muted_talk: 'callSounds',
   live: 'streamSounds', live_end: 'streamSounds', message: 'notifications', badge: 'notifications',
 }
 export const soundSectionOf = (name: SoundName): SoundSection => SOUND_SECTION[name]

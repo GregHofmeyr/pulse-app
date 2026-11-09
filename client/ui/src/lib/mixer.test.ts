@@ -41,7 +41,7 @@ describe('sections', () => {
     expect(MIXER_SECTIONS.map((s) => s.label)).toEqual(['Calls', 'Call sounds', 'Stream sounds', 'Notifications', 'Media'])
     expect(MIXER_SECTIONS.map((s) => s.notches.map((n) => n.label))).toEqual([
       ['Voices', 'Streams', 'Soundboard'],
-      ['Join', 'Leave', 'Mute', 'Unmute', 'Deafen', 'Undeafen', 'Ringing'],
+      ['Join', 'Leave', 'Mute', 'Unmute', 'Deafen', 'Undeafen', 'Talking while muted', 'Ringing'],
       ['Someone goes live', 'A stream ends'],
       ['Message ding', 'Badge unlocked'],
       ['Clips'],
@@ -61,12 +61,22 @@ describe('prefs', () => {
     expect(d).toEqual({
       v: 1,
       calls: { master: 100, voices: 100, streams: 100, soundboard: 100 },
-      callSounds: { master: 100, join: 100, leave: 100, mute: 100, unmute: 100, deafen: 100, undeafen: 100, ringing: 100 },
+      callSounds: { master: 100, join: 100, leave: 100, mute: 100, unmute: 100, deafen: 100, undeafen: 100, muted_talk: 100, ringing: 100 },
       streamSounds: { master: 100, live: 100, live_end: 100 },
       notifications: { master: 100, message: 100, badge: 100 },
       media: { clips: 100, clipsMuted: false },
     })
     expect(loadMixer()).toEqual(d)
+  })
+
+  it('a record saved before the muted cue (#252) has it on, at 100 %, and keeps the rest', () => {
+    const before = defaultMixer() as unknown as { callSounds: Record<string, number> }
+    delete before.callSounds.muted_talk
+    before.callSounds.join = 40
+    localStorage.setItem(MIXER_KEY, JSON.stringify(before))
+    const p = loadMixer()
+    expect(p.callSounds.muted_talk).toBe(100)
+    expect(p.callSounds.join).toBe(40)
   })
 
   it('persists one versioned record', () => {
@@ -160,6 +170,7 @@ describe('sound gains', () => {
   })
   it('maps each sound to its section', () => {
     expect(soundSectionOf('undeafen')).toBe('callSounds')
+    expect(soundSectionOf('muted_talk')).toBe('callSounds')
     expect(soundSectionOf('live_end')).toBe('streamSounds')
     expect(soundSectionOf('message')).toBe('notifications')
     expect(soundSectionOf('badge')).toBe('notifications')

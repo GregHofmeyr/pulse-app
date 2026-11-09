@@ -62,6 +62,20 @@ RING_RMS = active_rms(tone([(523, 523), (784, 784)], 0.09, vol=0.34))
 # Join and leave are the events you most need to notice (#219): the loudest of the set, a little brighter, and no
 # longer mirror images: join climbs high (E5 -> B5), leave drops into a low register (B4 -> E4).
 JOIN_LEAVE_RMS = 0.27
+# "You're muted" (#252) has to cut through your own voice: high (well above speech's fundamentals, where the ear is
+# keenest) and nearly as loud as join and leave, which stay the loudest of the set by a dB and a half.
+MUTED_TALK_RMS = JOIN_LEAVE_RMS * 10 ** (-1.5 / 20)
+
+def dings(freq, dur, gap, bright=0.0, tau=0.06, release=0.015):
+    """Two identical strikes: a sine (plus a 2nd harmonic at `bright`) with a quick attack that decays like a bell
+    (tau seconds), faded out over `release` so it doesn't click, then `gap` of silence before the second."""
+    n = int(RATE * dur)
+    one = []
+    for i in range(n):
+        t = i / RATE
+        env = min(1.0, t / 0.003) * math.exp(-t / tau) * min(1.0, (dur - t) / release)
+        one.append((math.sin(2 * math.pi * freq * t) + bright * math.sin(4 * math.pi * freq * t)) * env)
+    return one + [0.0] * int(RATE * gap) + one
 
 CLASSIC = {
     "join": normalise(tone([(659, 659), (988, 988)], 0.09, vol=0.34, bright=0.25), JOIN_LEAVE_RMS),
@@ -77,6 +91,8 @@ CLASSIC = {
     "live_end": tone([(1175, 1175), (784, 784), (587, 587)], 0.07, vol=0.30),
     # a badge unlocked: a rising major chime, brighter than "live"
     "badge": tone([(784, 784), (988, 988), (1568, 1568)], 0.08, gap=0.015, vol=0.30),
+    # talking while muted (#252): ding-ding, the same high G6 twice, bright
+    "muted_talk": normalise(dings(1568, 0.09, 0.05, bright=0.3), MUTED_TALK_RMS),
 }
 
 
@@ -117,9 +133,16 @@ TWOSTEP_PAIRS = {
 }
 # the message notes are this long whatever the variant
 MESSAGE_NOTE = 0.06
+# muted_talk (#252): one high note of the variant twice (a multiple of its base: the deep set's base is low), with a
+# longer gap than the other pairs so the two strikes stay apart
+TWOSTEP_MUTED = {"bright": 1.5, "warm": 2.0, "deep": 4.0}
+TWOSTEP_MUTED_SCALE, TWOSTEP_MUTED_GAP = 0.8, 0.05
 
 def twostep(variant, event):
     base, partials, note, attack = TWOSTEP[variant]
+    if event == "muted_talk":
+        one = _note(base * TWOSTEP_MUTED[variant], note * TWOSTEP_MUTED_SCALE, partials, attack)
+        return one + [0.0] * int(RATE * TWOSTEP_MUTED_GAP) + one
     mults, scale = TWOSTEP_PAIRS[event]
     dur = MESSAGE_NOTE if scale is None else note * scale
     gap = [0.0] * int(RATE * 0.025)
@@ -137,8 +160,13 @@ MINIMAL_MULT = {
 # badge: the set's one note, three times, rising, each cut short (the set's sounds stay <= 0.2 s)
 MINIMAL_BADGE = (1.5, 1.8877, 2.2449)
 MINIMAL_BADGE_NOTE = 0.055
+# muted_talk (#252): the set's note an octave up, twice, each cut short
+MINIMAL_MUTED, MINIMAL_MUTED_NOTE, MINIMAL_MUTED_GAP = 2.0, 0.07, 0.04
 
 def minimal(variant, event):
+    if event == "muted_talk":
+        one = _minimal_note(variant, MINIMAL_MUTED, MINIMAL_MUTED_NOTE)
+        return one + [0.0] * int(RATE * MINIMAL_MUTED_GAP) + one
     if event == "badge":
         gap = [0.0] * int(RATE * 0.01)
         out = _minimal_note(variant, MINIMAL_BADGE[0], MINIMAL_BADGE_NOTE)
@@ -171,6 +199,24 @@ for _v in TWOSTEP:
     SETS[f"twostep-{_v}"] = _scaled(lambda e, v=_v: twostep(v, e))
 for _v in ("soft", "wood", "glass"):
     SETS[f"minimal-{_v}"] = _scaled(lambda e, v=_v: minimal(v, e), minus_db=6.0)
+
+# Goofy is imported from Kenney's packs (scripts/import_goofy.py), but its muted_talk (#252) is our own: two quick
+# square-wave "bloops", each bending up, at Classic's muted_talk level.
+def goofy_muted_talk():
+    def bloop(dur=0.09, f0=900, f1=1400):
+        n = int(RATE * dur)
+        out, phase = [], 0.0
+        for i in range(n):
+            t = i / RATE
+            phase += 2 * math.pi * (f0 + (f1 - f0) * i / n) / RATE
+            v = sum(math.sin(k * phase) / k for k in (1, 3, 5))
+            out.append(v * min(1.0, t / 0.004) * min(1.0, (dur - t) / 0.015))
+        return out
+    one = bloop()
+    return normalise(one + [0.0] * int(RATE * 0.05) + one, active_rms(CLASSIC["muted_talk"]))
+
+# Goofy events made here rather than imported
+GENERATED_GOOFY = {"muted_talk": goofy_muted_talk}
 
 RING_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "client/src-tauri/ringtone/ring.wav")
 
@@ -260,6 +306,8 @@ def main():
     for set_id, sounds in SETS.items():
         for name, samples in sounds.items():
             write_wav(f"{OUT}/{set_id}/{name}.wav", samples)
+    for name, make in GENERATED_GOOFY.items():
+        write_wav(f"{OUT}/goofy/{name}.wav", make())
     write_wav(RING_OUT, ringtone())
     for ring_id, make in RINGTONES.items():
         write_wav(f"{RINGTONE_DIR}/{ring_id}.wav", make())

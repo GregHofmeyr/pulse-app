@@ -170,6 +170,10 @@ export async function startVoiceListening() {
         // The Doos (#49): the server counts it, rate-limited; nothing to show here
         void api.reportMutedTalk().catch(() => {})
         break
+      case 'muted_cue':
+        // "you're muted" (#252), at Call sounds × Talking while muted (0 % is off)
+        playSound('muted_talk')
+        break
     }
     // the optimistic join ends once audio is starting in the channel being joined: not on the audio stage
     // alone, since a cancelled join's disconnect can land after it and leave channelId unset for a moment

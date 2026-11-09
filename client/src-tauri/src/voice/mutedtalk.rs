@@ -2,6 +2,10 @@
 //! input's RMS after WebRTC APM (echo cancelled, so the call coming out of the speakers isn't
 //! you) and before the denoiser. Loud blocks build up talk time and quiet ones drain it
 //! slowly, so the pauses between words don't reset it; unmuting does. It fires once, then rests.
+//!
+//! [`MutedCue`] is the same judgement for the "you're muted" sound (#252), on its own clock: the
+//! badge is rate-limited by design, while the reminder repeats every [`CUE_COOLDOWN`] while you
+//! keep talking, and a fresh mute starts it over.
 
 use std::time::{Duration, Instant};
 
@@ -11,6 +15,8 @@ pub const TALK_RMS: f32 = 0.02;
 pub const TALK_FOR: Duration = Duration::from_millis(1500);
 /// After firing, this long before it can fire again.
 pub const COOLDOWN: Duration = Duration::from_secs(60);
+/// While you keep talking muted, the cue sounds again after this long: a reminder, not a nag.
+pub const CUE_COOLDOWN: Duration = Duration::from_secs(12);
 /// What one 10 ms block adds while loud, and takes away while quiet.
 const LOUD_STEP: Duration = Duration::from_millis(10);
 const QUIET_STEP: Duration = Duration::from_millis(5);
@@ -29,17 +35,59 @@ impl MutedTalk {
             self.talked = Duration::ZERO;
             return;
         }
-        if rms >= TALK_RMS {
-            self.talked += LOUD_STEP;
-        } else {
-            self.talked = self.talked.saturating_sub(QUIET_STEP);
-        }
+        self.talked = build_up(self.talked, rms);
         if self.talked < TALK_FOR {
             return;
         }
         if self
             .last_fired
             .is_some_and(|at| now.duration_since(at) < COOLDOWN)
+        {
+            return;
+        }
+        self.talked = Duration::ZERO;
+        self.last_fired = Some(now);
+        self.fired = true;
+    }
+
+    /// Whether it fired since the last take.
+    pub fn take_fired(&mut self) -> bool {
+        std::mem::take(&mut self.fired)
+    }
+}
+
+/// Talk time after one block at `rms`: loud adds, quiet drains slowly.
+fn build_up(talked: Duration, rms: f32) -> Duration {
+    if rms >= TALK_RMS {
+        talked + LOUD_STEP
+    } else {
+        talked.saturating_sub(QUIET_STEP)
+    }
+}
+
+/// The "you're muted" cue (#252): fires after [`TALK_FOR`] of talk like [`MutedTalk`], then again
+/// every [`CUE_COOLDOWN`] while you keep at it. Unmuting (or deafening) re-arms it at once.
+#[derive(Debug, Default)]
+pub struct MutedCue {
+    talked: Duration,
+    last_fired: Option<Instant>,
+    fired: bool,
+}
+
+impl MutedCue {
+    /// One echo-cancelled 10 ms block: its RMS, and whether the cue applies (`cues_muted_talk`).
+    pub fn block(&mut self, rms: f32, on: bool, now: Instant) {
+        if !on {
+            self.talked = Duration::ZERO;
+            self.last_fired = None;
+            return;
+        }
+        // capped: a long talk through the cooldown doesn't bank up an instant cue after it
+        self.talked = build_up(self.talked, rms).min(TALK_FOR);
+        if self.talked < TALK_FOR
+            || self
+                .last_fired
+                .is_some_and(|at| now.duration_since(at) < CUE_COOLDOWN)
         {
             return;
         }
@@ -138,6 +186,98 @@ mod tests {
         let t = feed(&mut m, t, 30_000, QUIET, true);
         feed(&mut m, t, 1500, TALK, true);
         assert!(m.take_fired(), "after the cooldown");
+    }
+
+    /// `ms` of 10 ms blocks into the cue at `rms`; returns the time after and how often it fired.
+    fn cue(c: &mut MutedCue, t: Instant, ms: u64, rms: f32, on: bool) -> (Instant, u32) {
+        let (mut now, mut n) = (t, 0);
+        for _ in 0..ms / 10 {
+            c.block(rms, on, now);
+            n += c.take_fired() as u32;
+            now += Duration::from_millis(10);
+        }
+        (now, n)
+    }
+
+    #[test]
+    fn the_cue_builds_up_like_the_badge() {
+        let mut c = MutedCue::default();
+        let (t, n) = cue(&mut c, Instant::now(), 1400, TALK, true);
+        assert_eq!(n, 0, "not before TALK_FOR");
+        let (_, n) = cue(&mut c, t, 200, TALK, true);
+        assert_eq!(n, 1);
+        let mut c = MutedCue::default();
+        let (_, n) = cue(&mut c, Instant::now(), 10_000, TALK, false);
+        assert_eq!(n, 0, "not muted");
+        // 100 ms of a cough then 300 ms of quiet, for a minute: drained, never a cue
+        let (mut t, mut n) = (Instant::now(), 0);
+        for _ in 0..150 {
+            let (a, k) = cue(&mut c, t, 100, TALK, true);
+            let (b, j) = cue(&mut c, a, 300, QUIET, true);
+            (t, n) = (b, n + k + j);
+        }
+        assert_eq!(n, 0, "short blips");
+    }
+
+    #[test]
+    fn the_cue_repeats_while_you_keep_talking_muted() {
+        let mut c = MutedCue::default();
+        // a minute of talking muted: the first after TALK_FOR, then one per CUE_COOLDOWN
+        let (_, n) = cue(&mut c, Instant::now(), 60_000, TALK, true);
+        let every = CUE_COOLDOWN.as_secs_f32();
+        let want = 1 + ((60.0 - TALK_FOR.as_secs_f32()) / every) as u32;
+        assert_eq!(n, want);
+        assert!(
+            CUE_COOLDOWN < COOLDOWN,
+            "more often than the badge's detection"
+        );
+        assert!(CUE_COOLDOWN >= Duration::from_secs(10), "not a nag");
+    }
+
+    #[test]
+    fn the_cue_waits_out_its_cooldown_then_needs_fresh_talk() {
+        let mut c = MutedCue::default();
+        let (t, n) = cue(&mut c, Instant::now(), 1500, TALK, true);
+        assert_eq!(n, 1);
+        // talking on through most of the cooldown, then 3 s of quiet until past it: the long
+        // talk doesn't bank up, so one word just after isn't an instant cue
+        let talk_on = CUE_COOLDOWN.as_millis() as u64 - 3_000;
+        let (t, n) = cue(&mut c, t, talk_on, TALK, true);
+        assert_eq!(n, 0, "within the cooldown");
+        let (t, n) = cue(&mut c, t, 3_100, QUIET, true);
+        assert_eq!(n, 0, "past the cooldown now, but quiet");
+        let (t, n) = cue(&mut c, t, 200, TALK, true);
+        assert_eq!(n, 0, "a fresh build-up is needed");
+        let (_, n) = cue(&mut c, t, 1400, TALK, true);
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn unmuting_rearms_the_cue() {
+        let mut c = MutedCue::default();
+        let (t, n) = cue(&mut c, Instant::now(), 1500, TALK, true);
+        assert_eq!(n, 1);
+        // unmute, re-mute two seconds later and talk again: well inside the cooldown, it sounds
+        let (t, _) = cue(&mut c, t, 500, TALK, false);
+        let (_, n) = cue(&mut c, t, 1500, TALK, true);
+        assert_eq!(n, 1, "a new mute is a new reminder");
+    }
+
+    #[test]
+    fn the_badge_and_the_cue_count_apart() {
+        // the badge rests 60 s after firing; the cue comes back sooner, on its own
+        let (mut m, mut c) = (MutedTalk::default(), MutedCue::default());
+        let mut now = Instant::now();
+        let (mut badges, mut cues) = (0, 0);
+        for _ in 0..3000 {
+            m.block(TALK, true, now);
+            c.block(TALK, true, now);
+            badges += m.take_fired() as u32;
+            cues += c.take_fired() as u32;
+            now += Duration::from_millis(10);
+        }
+        assert_eq!(badges, 1, "30 s: the badge once");
+        assert!(cues >= 2, "30 s: the cue {cues} times");
     }
 
     #[test]

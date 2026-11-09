@@ -75,7 +75,7 @@ describe('VolumeMixer', () => {
       expect([r.min, r.max, r.value]).toEqual(['0', '200', '100'])
     }
     expect(slider('Media volume')).toBeNull()
-    for (const l of ['Voices', 'Streams', 'Soundboard', 'Join', 'Leave', 'Mute', 'Unmute', 'Deafen', 'Undeafen',
+    for (const l of ['Voices', 'Streams', 'Soundboard', 'Join', 'Leave', 'Mute', 'Unmute', 'Deafen', 'Undeafen', 'Talking while muted',
       'Someone goes live', 'A stream ends', 'Message ding', 'Badge unlocked']) {
       expect(slider(l).max, l).toBe('200')
     }
@@ -105,6 +105,19 @@ describe('VolumeMixer', () => {
     move('Join', 150)
     button('Test Join').click()
     expect(calls('play_sound')).toEqual([{ name: 'join', set: 'classic', volume: mixGain(50, 150), output: null }])
+  })
+
+  it('Talking while muted (#252) sits with the call sounds, after Undeafen, and ▶ plays its double ding', () => {
+    show()
+    const names = [...section('Call sounds').querySelectorAll('.row .name')].map((e) => e.textContent)
+    expect(names).toEqual(['Join', 'Leave', 'Mute', 'Unmute', 'Deafen', 'Undeafen', 'Talking while muted', 'Ringing'])
+    move('Call sounds volume', 50)
+    move('Talking while muted', 150)
+    button('Test Talking while muted').click()
+    expect(calls('play_sound')).toEqual([{ name: 'muted_talk', set: 'classic', volume: mixGain(50, 150), output: null }])
+    move('Talking while muted', 0)
+    expect(stored().callSounds.muted_talk).toBe(0)
+    expect(slider('Talking while muted').getAttribute('aria-valuetext')).toBe('Off')
   })
 
   it('▶ on Ringing plays one ring at Call sounds × Ringing (#50)', () => {

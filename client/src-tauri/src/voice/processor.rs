@@ -570,9 +570,14 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
             // input, the call playing through speakers would read as you talking.
             let echo_free_rms = mutedtalk::rms(&block);
 
-            let (mic_open, denoise, muted_talk) = {
+            let (mic_open, denoise, muted_talk, muted_cue) = {
                 let c = shared.controls.lock().unwrap();
-                (c.mic_open(), c.denoise_needed(), c.counts_muted_talk())
+                (
+                    c.mic_open(),
+                    c.denoise_needed(),
+                    c.counts_muted_talk(),
+                    c.cues_muted_talk(),
+                )
             };
             shared
                 .mic_silence
@@ -585,6 +590,11 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
                 .unwrap()
                 // your own mute only: server-muted time is never "talking while muted" (#140)
                 .block(echo_free_rms, muted_talk, Instant::now());
+            shared
+                .muted_cue
+                .lock()
+                .unwrap()
+                .block(echo_free_rms, muted_cue, Instant::now());
             if !denoise {
                 // Muted, no meter on screen: skip the denoiser (Strong is most of a call's CPU).
                 // APM above keeps running, so echo cancellation is still converged on unmute.

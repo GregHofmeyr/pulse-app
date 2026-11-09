@@ -62,6 +62,12 @@ impl Controls {
         (self.muted || self.deafened) && !self.server_muted && !self.server_deafened
     }
 
+    /// Talking now plays the "you're muted" cue (#252): your own mute, not deafened (you couldn't
+    /// hear it) and not by the server (not yours to undo).
+    pub fn cues_muted_talk(&self) -> bool {
+        self.muted && !self.deafened && !self.server_muted && !self.server_deafened
+    }
+
     /// A view showing the voice meter appeared (`true`) or went away (`false`).
     pub fn watch_meters(&mut self, on: bool) {
         self.meter_views = if on {
@@ -203,6 +209,27 @@ mod tests {
         assert!(c.counts_muted_talk(), "your own deafen implies mute");
         c.set_server(false, true);
         assert!(!c.counts_muted_talk());
+    }
+
+    /// #252: the "you're muted" cue sounds for your own mute only; deafened you couldn't hear
+    /// it, and a server mute isn't yours to undo.
+    #[test]
+    fn muted_cue_is_your_own_mute_and_not_deafened() {
+        let mut c = Controls::default();
+        assert!(!c.cues_muted_talk(), "open mic");
+        c.toggle_mute();
+        assert!(c.cues_muted_talk(), "your own mute");
+        c.toggle_deafen();
+        assert!(!c.cues_muted_talk(), "deafened: you wouldn't hear it");
+        c.toggle_deafen();
+        assert!(c.cues_muted_talk(), "undeafened back to muted");
+        c.set_server(true, false);
+        assert!(!c.cues_muted_talk(), "server muted");
+        c.set_server(false, true);
+        assert!(!c.cues_muted_talk(), "server deafened");
+        c.set_server(false, false);
+        c.toggle_mute();
+        assert!(!c.cues_muted_talk(), "unmuted");
     }
 
     #[test]

@@ -26,6 +26,8 @@ MAPPING = {
     "badge": ("interface-sounds/Audio/confirmation_004.ogg", 0.0, 0.50),
 }
 
+# Not every Goofy event comes from the packs: gen_sounds.py synthesises the rest (GENERATED_GOOFY: muted_talk).
+
 FADE_IN, FADE_OUT = 0.005, 0.020
 
 

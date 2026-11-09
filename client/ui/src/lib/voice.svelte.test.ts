@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const h = vi.hoisted(() => ({ handlers: {} as Record<string, (e: { payload: unknown }) => void>, calls: [] as string[] }))
+const h = vi.hoisted(() => ({ handlers: {} as Record<string, (e: { payload: unknown }) => void>, calls: [] as string[], args: [] as unknown[] }))
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(async (cmd: string) => {
+  invoke: vi.fn(async (cmd: string, args?: unknown) => {
     h.calls.push(cmd)
+    h.args.push(args)
     return undefined
   }),
 }))
@@ -18,6 +19,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 import { app, startListening } from './store.svelte'
 import { emptyState } from './state'
 import { startVoiceListening, voice } from './voice.svelte'
+import { defaultMixer } from './mixer'
 
 const me = { id: 'ME', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const removed = (channel_id: string, user_id = 'ME') => h.handlers['pulse://event']({ payload: { t: 'ChannelRemoved', d: { channel_id, user_id } } })
@@ -96,9 +98,22 @@ describe('talking into a muted mic', () => {
     await startVoiceListening()
   })
 
-  it('is reported for The Doos', () => {
+  it('is reported for The Doos, without a sound', () => {
     h.handlers['voice://event']({ payload: { kind: 'muted_talk' } })
     expect(h.calls).toEqual(['report_muted_talk'])
+  })
+
+  it('the core\'s cue (#252) plays the double ding, and reports nothing', () => {
+    h.handlers['voice://event']({ payload: { kind: 'muted_cue' } })
+    expect(h.calls).toEqual(['play_sound'])
+    expect(h.args.at(-1)).toEqual({ name: 'muted_talk', set: 'classic', volume: 1, output: null })
+  })
+
+  it('turned off in the volume mixer, the cue plays nothing', () => {
+    localStorage.setItem('pulse.mixer', JSON.stringify({ ...defaultMixer(), callSounds: { ...defaultMixer().callSounds, muted_talk: 0 } }))
+    h.handlers['voice://event']({ payload: { kind: 'muted_cue' } })
+    expect(h.calls).toEqual([])
+    localStorage.removeItem('pulse.mixer')
   })
 })
 

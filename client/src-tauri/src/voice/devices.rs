@@ -378,6 +378,8 @@ pub struct Shared {
     pub mic_silence: Mutex<super::micsilence::MicSilence>,
     /// "You're muted" (The Doos): fed by the processor, reported by the call's meter loop.
     pub muted_talk: Mutex<super::mutedtalk::MutedTalk>,
+    /// The "you're muted" sound (#252): the same judgement on its own, shorter clock.
+    pub muted_cue: Mutex<super::mutedtalk::MutedCue>,
 }
 
 impl Shared {
@@ -419,6 +421,7 @@ impl Shared {
             ns_status: Mutex::new((None, false)),
             mic_silence: Mutex::default(),
             muted_talk: Mutex::default(),
+            muted_cue: Mutex::default(),
             echo_ref: Mutex::new(EchoRef::default()),
             gate_open: Default::default(),
             watchdog: Watchdog::new(Instant::now()),

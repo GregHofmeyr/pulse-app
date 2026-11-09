@@ -6,11 +6,11 @@ import type { Event as AppEvent } from './protocol/Event'
 /** Your own mute / deafen, and (from the core) the server's of you (#140), which the core adds. */
 export type Flags = { muted: boolean; deafened: boolean; server_muted?: boolean; server_deafened?: boolean }
 export type SoundName =
-  | 'join' | 'leave' | 'mute' | 'unmute' | 'deafen' | 'undeafen' | 'message' | 'live' | 'live_end' | 'badge'
+  | 'join' | 'leave' | 'mute' | 'unmute' | 'deafen' | 'undeafen' | 'muted_talk' | 'message' | 'live' | 'live_end' | 'badge'
 
 /** The events, in display order. */
 export const SOUND_NAMES: readonly SoundName[] = [
-  'join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'message', 'live', 'live_end', 'badge',
+  'join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'muted_talk', 'message', 'live', 'live_end', 'badge',
 ]
 export const SOUND_LABELS: Record<SoundName, string> = {
   join: 'Join a call',
@@ -19,6 +19,7 @@ export const SOUND_LABELS: Record<SoundName, string> = {
   unmute: 'Unmute',
   deafen: 'Deafen',
   undeafen: 'Undeafen',
+  muted_talk: 'Talking while muted',
   message: 'New message',
   live: 'Someone goes live',
   live_end: 'A stream ends',
@@ -110,6 +111,9 @@ export type VoiceEvent =
   | { kind: 'mic'; live: boolean; error: string | null }
   /** You've been talking into a muted mic (reported for The Doos badge). */
   | { kind: 'muted_talk' }
+  /** You're talking into your own muted mic: play the "you're muted" double ding (#252). The core paces it (every
+   * 12 s while you keep talking, again at once after a re-mute) and never sends it while you're deafened. */
+  | { kind: 'muted_cue' }
 
 export const clampVolume = (pct: number) => Math.round(Math.min(200, Math.max(0, pct)))
 

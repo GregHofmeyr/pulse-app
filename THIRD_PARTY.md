@@ -17,6 +17,7 @@ The Goofy UI sounds are clips from Kenney's [Digital Audio](https://kenney.nl/as
 [Interface Sounds](https://kenney.nl/assets/interface-sounds) packs, by Kenney Vleugels (https://kenney.nl).
 Both are released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain dedication).
 The clips were trimmed, resampled to 22 050 Hz mono and normalised in loudness; `scripts/import_goofy.py` rebuilds them.
+Its "Talking while muted" sound (`muted_talk.wav`) is not from the packs: `scripts/gen_sounds.py` synthesises it.
 
 ## Spotify icon
 

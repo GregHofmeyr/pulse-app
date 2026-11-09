@@ -50,8 +50,8 @@ sound_table!(
         "goofy",
     ];
     names: [
-        "join", "leave", "mute", "unmute", "deafen", "undeafen", "message", "live", "live_end",
-        "badge",
+        "join", "leave", "mute", "unmute", "deafen", "undeafen", "muted_talk", "message", "live",
+        "live_end", "badge",
     ]
 );
 
@@ -818,6 +818,52 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Runs of 5 ms windows whose peak is at least 15 % of the sound's: the separate strikes.
+    fn strikes(s: &[f32]) -> usize {
+        let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
+        let win = 22_050 * 5 / 1000;
+        let loud: Vec<bool> = s
+            .chunks(win)
+            .map(|c| c.iter().fold(0f32, |m, v| m.max(v.abs())) >= 0.15 * peak)
+            .collect();
+        loud.iter()
+            .enumerate()
+            .filter(|(i, on)| **on && (*i == 0 || !loud[i - 1]))
+            .count()
+    }
+
+    /// #252: "you're muted" is a double ding in every set: two strikes, apart.
+    #[test]
+    fn muted_talk_is_a_double_ding() {
+        for set in SETS {
+            assert_eq!(strikes(&raw(set, "muted_talk")), 2, "{set}/muted_talk");
+        }
+        assert_eq!(
+            strikes(&raw("classic", "mute")),
+            1,
+            "the measure: mute is one glide"
+        );
+    }
+
+    /// It has to be heard over your own voice: pitched well above speech (most of a voice sits
+    /// under ~500 Hz), and in Classic within 2 dB of join, the loudest event.
+    #[test]
+    fn muted_talk_cuts_through_a_voice() {
+        for set in SETS {
+            // over the strikes only: the silent gap between them isn't a pitch
+            let s = raw(set, "muted_talk");
+            let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
+            let sounding: Vec<f32> = s.into_iter().filter(|v| v.abs() >= 0.02 * peak).collect();
+            let hz = zcr(&sounding) * 22_050.0 / 2.0;
+            assert!(hz >= 800.0, "{set}/muted_talk is around {hz:.0} Hz");
+        }
+        let d = db(
+            active_rms(&raw("classic", "join")),
+            active_rms(&raw("classic", "muted_talk")),
+        );
+        assert!(d <= 2.0, "classic/muted_talk is {d:.2} dB under join");
     }
 
     #[test]
