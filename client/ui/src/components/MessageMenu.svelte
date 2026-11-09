@@ -1,7 +1,7 @@
 <script lang="ts">
   // A message's menu (#178): from its action bar's More, or a right-click (Shift+F10, the menu key) on the message.
   // Pin message, with its lengths as the shared hover flyout (MenuFlyout, as Mute's), or Unpin message on a pinned
-  // one. Built like the channel menu: placed by placeMenu, arrows move, Escape closes a hover-opened flyout first.
+  // one; and End poll on your own open poll (#157). Built like the channel menu: placed by placeMenu, arrows move, Escape closes a hover-opened flyout first.
   import { onMount, untrack } from 'svelte'
   import { clickOutside } from '../lib/actions'
   import { placeMenu } from '../lib/menuPlace'

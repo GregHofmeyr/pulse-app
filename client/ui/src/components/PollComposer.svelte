@@ -37,10 +37,13 @@
   const start = untrack((): Draft => {
     const kept = drafts.get(channelId)
     const base = kept ?? { question: '', options: ['', ''], multi: false, anonymous: false, ends: 'day' as PollDuration }
-    if (!prefill) return base
-    const options = prefill.options.slice(0, POLL_LIMITS.maxOptions)
+    // a bare `/poll` keeps the draft
+    if (!prefill || (!prefill.question && !prefill.options.length)) return base
+    // cut to the limits (a field's maxlength doesn't cut what's set from code)
+    const cut = (s: string, n: number) => [...s].slice(0, n).join('')
+    const options = prefill.options.slice(0, POLL_LIMITS.maxOptions).map((o) => cut(o, POLL_LIMITS.optionChars))
     while (options.length < POLL_LIMITS.minOptions) options.push('')
-    return { ...base, question: prefill.question, options }
+    return { ...base, question: cut(prefill.question, POLL_LIMITS.questionChars), options }
   })
   let question = $state(start.question)
   let options = $state<string[]>([...start.options])

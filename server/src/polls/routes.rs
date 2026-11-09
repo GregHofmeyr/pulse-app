@@ -174,10 +174,15 @@ async fn create(
             .execute(&mut *tx)
             .await?;
     }
+    // a poll counts as a message toward the server chat badges, as a send does (never in DMs or groups)
+    let badged = ch.server_id.is_some();
+    if badged {
+        crate::badges::stats::add(&mut tx, me, crate::badges::catalogue::stat::MESSAGES, 1).await?;
+    }
     let moved = crate::reads::advance(&mut tx, me, id, msg.id).await?;
     tx.commit().await?;
     let at = now();
-    msg.poll = Some(Box::new(super::view(&stored, &[], None, &at)));
+    msg.poll = Some(Box::new(super::view(&stored, &[], None, false, &at)));
     s.hub
         .publish(
             &s.db,
@@ -203,7 +208,11 @@ async fn create(
             )
             .await;
     }
-    msg.poll = Some(Box::new(super::view(&stored, &[], Some(me), &at)));
+    drop(_order);
+    if badged {
+        crate::badges::engine::after(&s, &[me]).await;
+    }
+    msg.poll = Some(Box::new(super::view(&stored, &[], Some(me), false, &at)));
     Ok((StatusCode::CREATED, Json(msg)))
 }
 
@@ -265,6 +274,14 @@ async fn vote(
         .execute(&mut *tx)
         .await?;
     }
+    if !choices.is_empty() {
+        // results, once seen, stay: taking the vote back can't be used to peek without voting
+        sqlx::query("INSERT OR IGNORE INTO poll_seen (message_id, user_id) VALUES (?, ?)")
+            .bind(id.to_string())
+            .bind(me.to_string())
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
     changed(&s, &p).await;
     my_view(&s, me, id).await
@@ -289,12 +306,18 @@ async fn close(
         return Err(is_over());
     }
     let who = creator_name(&s.db, &p).await?;
+    // the ended line goes out in commit order with the chat's other messages (as a send)
+    let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
-    // a delete may have landed since the read: a deleted poll has no row, so nothing closes
+    // a delete may have landed since the read: a deleted poll has no row
+    if super::load(&mut tx, id).await?.is_none() {
+        return Err(AppError::NotFound);
+    }
     let line = close_in(&mut tx, &p, &who, &at)
         .await?
         .ok_or_else(is_over)?;
     tx.commit().await?;
     announce_close(&s, &p, line).await;
+    drop(_order);
     my_view(&s, me, id).await
 }

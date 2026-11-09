@@ -122,6 +122,24 @@ describe('PollComposer', () => {
     expect(optionFields().map((f) => f.value)).toEqual(['Valheim', ''])
   })
 
+  it('cuts a too-long prefill to the limits, so it can still be posted', () => {
+    open({ question: 'q'.repeat(250) + '?', options: ['a'.repeat(90), 'b', ...'cdefghijkl'.split('')] })
+    expect(pop().querySelector<HTMLInputElement>('input[aria-label="Question"]')!.value).toHaveLength(200)
+    expect(optionFields()).toHaveLength(10)
+    expect(optionFields()[0].value).toHaveLength(80)
+    expect(button('Post poll')!.disabled).toBe(false)
+  })
+
+  it('a bare /poll keeps the draft', () => {
+    open()
+    fill(pop().querySelector<HTMLInputElement>('input[aria-label="Question"]')!, 'Later?')
+    unmount(cmp!)
+    cmp = undefined
+    document.body.innerHTML = ''
+    open({ question: '', options: [] })
+    expect(pop().querySelector<HTMLInputElement>('input[aria-label="Question"]')!.value).toBe('Later?')
+  })
+
   it('keeps an unposted poll for the chat', () => {
     open()
     fill(pop().querySelector<HTMLInputElement>('input[aria-label="Question"]')!, 'Later?')

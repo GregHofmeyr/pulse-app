@@ -18,7 +18,8 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 
 import { applyEvent, emptyState } from './state'
 import { app } from './store.svelte'
-import { handlePollEvent, resetPolls, votePoll } from './polls.svelte'
+import { handlePollEvent, refreshOpenPolls, resetPolls, votePoll } from './polls.svelte'
+import { shownText } from './poll'
 
 const msg = (over: Partial<Message> = {}): Message => ({
   id: 'M1', channel_id: 'C1', author_id: 'U2', kind: 'normal', content: '📊 Poll: Q', reply_to_id: null,
@@ -77,6 +78,27 @@ describe('live poll views', () => {
     app.state = applyEvent(app.state, { t: 'MessageUpdated', d: { message: msg({ content: 'x' }) } }, 0)
     expect(held()?.poll).toEqual(mine)
     expect(held()?.content).toBe('x')
+  })
+
+  it('a refused vote fetches the poll as it is now', async () => {
+    invoke.mockImplementationOnce(async () => {
+      throw 'this poll has ended'
+    })
+    await expect(votePoll(msg(), [0])).rejects.toBe('this poll has ended')
+    await flush()
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual(['vote_poll', 'get_poll'])
+  })
+
+  it('after a reconnect, every open poll held is fetched again', async () => {
+    app.state = { ...app.state, messages: { C1: [msg(), msg({ id: 'M2', poll: view({ closed: true }) }), msg({ id: 'M3', poll: undefined })] } }
+    refreshOpenPolls()
+    await flush()
+    expect(invoke.mock.calls.map(([, a]) => a)).toEqual([{ messageId: 'M1' }])
+  })
+
+  it('previews show a poll by its question', () => {
+    expect(shownText(msg())).toBe('📊 Q')
+    expect(shownText(msg({ poll: undefined, content: 'hi' }))).toBe('hi')
   })
 
   it('our own new poll from another session fetches the creator view', async () => {

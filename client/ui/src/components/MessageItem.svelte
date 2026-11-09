@@ -24,7 +24,7 @@
   import Name from './Name.svelte'
   import WheelLine from './WheelLine.svelte'
   import PollCard from './PollCard.svelte'
-  import { endedSummary, pollOver } from '../lib/poll'
+  import { endedSummary, pollOver, shownText } from '../lib/poll'
   import { closePoll } from '../lib/polls.svelte'
   import { mentionLookup, mentionName, showMentions, styleMentions } from '../lib/mentionStyles'
   import { nameCss, resolveNameStyle } from '../lib/nameStyle'
@@ -280,7 +280,7 @@
     onpointerenter={() => (rowHover = true)} onpointerleave={() => (rowHover = false)} oncontextmenu={(e) => openMsgMenu(e, e.currentTarget)}>
     {#if replyTo}
       <div class="reply"><span class="hook"></span><strong>{#if replyTo.author_id}<Name userId={replyTo.author_id} {serverId} text={nameOf(replyTo.author_id)} />{:else}{nameOf(null)}{/if}</strong>
-        <span class="snippet">{replyTo.deleted ? 'original message deleted' : replyTo.poll ? `📊 ${replyTo.poll.question}` : showMentions(replyTo.content, lookup, (id) => displayName(app.state, serverId, id)).slice(0, 120)}</span></div>
+        <span class="snippet">{replyTo.deleted ? 'original message deleted' : showMentions(shownText(replyTo), lookup, (id) => displayName(app.state, serverId, id)).slice(0, 120)}</span></div>
     {:else if message.reply_to_id}
       <div class="reply"><span class="hook"></span><span class="snippet">original message not loaded</span></div>
     {/if}

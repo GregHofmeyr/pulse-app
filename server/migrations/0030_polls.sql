@@ -29,3 +29,11 @@ CREATE TABLE poll_votes (
     voted_at   TEXT NOT NULL,
     PRIMARY KEY (message_id, voter_id, option)
 ) STRICT;
+
+-- Who has voted at some point, so taking your vote back doesn't hide results you've already seen (and can't be used
+-- to peek at them without voting).
+CREATE TABLE poll_seen (
+    message_id TEXT NOT NULL REFERENCES polls(message_id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (message_id, user_id)
+) STRICT;

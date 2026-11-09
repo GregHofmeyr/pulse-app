@@ -7,6 +7,7 @@ import { conversationName, shouldAlert, type AlertInput } from './conversations'
 import { channelLabel, displayName, userOf } from './selectors'
 import { mentionLookup, showMentions } from './mentionStyles'
 import { TOKEN_RE } from './emoji'
+import { shownText } from './poll'
 
 /** What the core shows; a click comes back with `channelId` and `threadId`. `avatar`: the author's
  *  avatar (media hash; an animated one's still), which the core shows beside the text (#73). `tag`: the slot it
@@ -30,7 +31,7 @@ export function notifyMessage(s: AppState, v: AlertInput, prefs: NotifyPrefs, mo
   if (!prefs.enabled || v.focused || !shouldAlert(v)) return null
   const m = v.message
   // mentions as the names you see there (never usernames, #47)
-  const shown = { ...m, content: showMentions(m.content, mentionLookup(s), (id) => displayName(s, v.channel.server_id, id)) }
+  const shown = { ...m, content: showMentions(shownText(m), mentionLookup(s), (id) => displayName(s, v.channel.server_id, id)) }
   const n: Notice = { title: notificationTitle(s, m, v.channel, more), body: notificationBody(shown, v.me, prefs.showText), channelId: m.channel_id }
   if (m.thread_root_id) n.threadId = m.thread_root_id
   const author = m.author_id ? userOf(s, m.author_id) : null

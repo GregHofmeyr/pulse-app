@@ -128,8 +128,39 @@ async fn votes_for(db: &mut SqliteConnection, ids: &[String]) -> AppResult<HashM
     Ok(out)
 }
 
-/// The poll as `me` may see it at `now` (`None`: as events show it, to no one in particular).
-pub(crate) fn view(p: &Stored, votes: &[(u32, UserId)], me: Option<UserId>, now: &str) -> Poll {
+/// Of `ids`, the polls `me` has voted in at some point (so still sees the results of after taking the vote back).
+async fn seen_by(
+    db: &mut SqliteConnection,
+    me: Option<UserId>,
+    ids: &[String],
+) -> AppResult<std::collections::HashSet<String>> {
+    let Some(me) = me else {
+        return Ok(Default::default());
+    };
+    if ids.is_empty() {
+        return Ok(Default::default());
+    }
+    let mut q = sqlx::QueryBuilder::new("SELECT message_id FROM poll_seen WHERE user_id = ");
+    q.push_bind(me.to_string());
+    q.push(" AND message_id IN (");
+    let mut list = q.separated(", ");
+    for id in ids {
+        list.push_bind(id);
+    }
+    q.push(")");
+    let rows: Vec<String> = q.build_query_scalar().fetch_all(&mut *db).await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// The poll as `me` may see it at `now` (`None`: as events show it, to no one in particular). `seen`: `me` has voted
+/// in it at some point.
+pub(crate) fn view(
+    p: &Stored,
+    votes: &[(u32, UserId)],
+    me: Option<UserId>,
+    seen: bool,
+    now: &str,
+) -> Poll {
     let closed = p.over(now);
     let mut mine: Vec<u32> = votes
         .iter()
@@ -141,7 +172,7 @@ pub(crate) fn view(p: &Stored, votes: &[(u32, UserId)], me: Option<UserId>, now:
     people.sort_unstable_by_key(|u| u.to_string());
     people.dedup();
     let creator = me.is_some() && me == p.author_id;
-    let results = (closed || creator || !mine.is_empty()).then(|| {
+    let results = (closed || creator || seen || !mine.is_empty()).then(|| {
         p.options
             .iter()
             .enumerate()
@@ -186,7 +217,8 @@ pub(crate) async fn view_for(
         .await?
         .remove(&id.to_string())
         .unwrap_or_default();
-    Ok(Some(view(&p, &votes, me, &now())))
+    let seen = !seen_by(&mut conn, me, &[id.to_string()]).await?.is_empty();
+    Ok(Some(view(&p, &votes, me, seen, &now())))
 }
 
 /// Set each live poll's `poll` as `me` sees it (and clear any other).
@@ -220,12 +252,14 @@ pub(crate) async fn attach(
         .collect::<AppResult<_>>()?;
     let poll_ids: Vec<String> = polls.iter().map(|p| p.message_id.to_string()).collect();
     let mut votes = votes_for(&mut conn, &poll_ids).await?;
+    let seen = seen_by(&mut conn, me, &poll_ids).await?;
     let at = now();
     let mut by_id: HashMap<MessageId, Poll> = polls
         .iter()
         .map(|p| {
-            let v = votes.remove(&p.message_id.to_string()).unwrap_or_default();
-            (p.message_id, view(p, &v, me, &at))
+            let id = p.message_id.to_string();
+            let v = votes.remove(&id).unwrap_or_default();
+            (p.message_id, view(p, &v, me, seen.contains(&id), &at))
         })
         .collect();
     for m in page.iter_mut() {
@@ -409,6 +443,8 @@ pub async fn close_due(s: &AppState, now: &str) -> AppResult<usize> {
     for r in rows {
         let p = stored_from(r)?;
         let who = creator_name(&s.db, &p).await?;
+        // each line goes out in commit order with the chat's other messages (as a send)
+        let _order = s.hub.in_order().await;
         let mut tx = begin_write(&s.db).await?;
         let line = close_in(&mut tx, &p, &who, now).await?;
         tx.commit().await?;
@@ -495,23 +531,25 @@ mod tests {
         };
         let votes = vec![(1, sam)];
         let now = "2026-01-01T00:00:00.000Z";
-        assert_eq!(view(&p, &votes, Some(kim), now).results, None);
-        assert_eq!(view(&p, &votes, None, now).results, None);
-        assert_eq!(view(&p, &votes, Some(kim), now).voters, 1);
+        assert_eq!(view(&p, &votes, Some(kim), false, now).results, None);
+        assert_eq!(view(&p, &votes, None, false, now).results, None);
+        assert_eq!(view(&p, &votes, Some(kim), false, now).voters, 1);
+        // kim voted before and took it back: still sees what she saw
+        assert!(view(&p, &votes, Some(kim), true, now).results.is_some());
         assert_eq!(
-            view(&p, &votes, Some(alex), now).results.unwrap()[1].voters,
+            view(&p, &votes, Some(alex), false, now).results.unwrap()[1].voters,
             vec![sam]
         );
-        assert_eq!(view(&p, &votes, Some(sam), now).mine, vec![1]);
+        assert_eq!(view(&p, &votes, Some(sam), false, now).mine, vec![1]);
         // over by time: everyone (and the events) see it, closed
         let late = "2100-01-02T00:00:00.000Z";
-        let v = view(&p, &votes, None, late);
+        let v = view(&p, &votes, None, false, late);
         assert!(v.closed && v.results.is_some());
         let anon = Stored {
             anonymous: true,
             ..p
         };
-        let v = view(&anon, &votes, Some(alex), now);
+        let v = view(&anon, &votes, Some(alex), false, now);
         assert_eq!(v.results.unwrap()[1].votes, 1);
     }
 }

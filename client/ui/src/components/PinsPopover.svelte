@@ -11,6 +11,7 @@
   import { app, clock } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import Loading from './Loading.svelte'
+  import { shownText } from '../lib/poll'
 
   let { channelId, serverId, onJump, onClose }: {
     channelId: string
@@ -70,7 +71,7 @@
       <div class="pin">
         <div class="text">
           <span class="author">{nameOf(p.message.author_id)}</span>
-          <span class="said">{preview(p.message.content)}</span>
+          <span class="said">{preview(shownText(p.message))}</span>
           <span class="note">{pinTip(nameOf(p.pin.pinned_by), p.pin.expires_at, now)}</span>
         </div>
         <button type="button" class="btn btn-quiet sm" onclick={() => onJump(p.message.id)}>Jump</button>

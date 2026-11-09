@@ -7,7 +7,7 @@ import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
 import type { Poll } from './protocol/Poll'
 import { applyEvent, findShown, setPoll } from './state'
-import { app, onAppEvent } from './store.svelte'
+import { app, onAppEvent, onAppReady } from './store.svelte'
 import { pollCmd } from './tauri'
 
 let tickets = 0
@@ -19,7 +19,14 @@ const wanted = new Set<string>()
 
 async function run(channelId: string, id: string, ask: () => Promise<Poll>): Promise<Poll> {
   const ticket = ++tickets
-  const poll = await ask()
+  let poll: Poll
+  try {
+    poll = await ask()
+  } catch (e) {
+    // refused (it ended, or went, while we were away): show it as it is now
+    void refreshPoll(channelId, id)
+    throw e
+  }
   if (ticket > (shown.get(id) ?? 0)) {
     shown.set(id, ticket)
     app.state = setPoll(app.state, channelId, id, poll)
@@ -34,8 +41,15 @@ export function refreshPoll(channelId: string, id: string): Promise<void> {
     wanted.add(id)
     return busy
   }
-  const go = run(channelId, id, () => pollCmd.get(id))
-    .then(() => {}, () => {}) // a poll deleted meanwhile, or the connection down: the next change fetches again
+  const ticket = ++tickets
+  const go = pollCmd
+    .get(id)
+    .then((poll) => {
+      if (ticket <= (shown.get(id) ?? 0)) return
+      shown.set(id, ticket)
+      app.state = setPoll(app.state, channelId, id, poll)
+    })
+    .catch(() => {}) // a poll deleted meanwhile, or the connection down: the next change fetches again
     .finally(() => {
       fetching.delete(id)
       if (wanted.delete(id)) void refreshPoll(channelId, id)
@@ -75,6 +89,15 @@ export function handlePollEvent(e: Event): void {
 }
 
 onAppEvent(handlePollEvent)
+
+/** After a (re)connect: changes missed while away never come as events, so fetch every open poll this client holds. */
+export function refreshOpenPolls(): void {
+  for (const [channel, list] of Object.entries(app.state.messages)) {
+    for (const m of list) if (m.poll && !m.poll.closed && !m.deleted) void refreshPoll(channel, m.id)
+  }
+}
+
+onAppReady(refreshOpenPolls)
 
 /** For tests: forget everything. */
 export function resetPolls(): void {

@@ -316,7 +316,12 @@ async fn single_choice_moves_multi_choice_sets_and_an_empty_vote_takes_it_back()
     let p = vote_ok(&app, &sam, single.id, &[]).await;
     assert!(p.mine.is_empty());
     assert_eq!(p.voters, 0);
-    assert_eq!(p.results, None, "no vote, no results again");
+    assert!(
+        p.results.is_some(),
+        "results once seen stay: taking the vote back is no way to peek"
+    );
+    // kim, who never voted, still sees none
+    assert_eq!(view(&app, &kim, single.id).await.results, None);
 
     let multi = create_ok(
         &app,
@@ -550,7 +555,7 @@ async fn deleting_a_poll_drops_it_and_its_votes() {
     .await;
     assert_eq!(r.status(), 204);
     let left: i64 = sqlx::query_scalar(
-        "SELECT (SELECT COUNT(*) FROM polls) + (SELECT COUNT(*) FROM poll_votes)",
+        "SELECT (SELECT COUNT(*) FROM polls) + (SELECT COUNT(*) FROM poll_votes) + (SELECT COUNT(*) FROM poll_seen)",
     )
     .fetch_one(&app.db)
     .await

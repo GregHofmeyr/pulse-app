@@ -7,6 +7,7 @@ import { displayName } from './selectors'
 import { mentionLookup, showMentions } from './mentionStyles'
 import { callLineText } from './calls'
 import { isMediaHash, TOKEN_RE } from './emoji'
+import { shownText } from './poll'
 
 export function isMuted(s: AppState, ch: Channel, nowIso: string): boolean {
   const active = (kind: 'server' | 'channel', id: string | null) =>
@@ -141,7 +142,7 @@ export function previewText(s: AppState, m: Message): { text: string; system: bo
   if (m.call) return { text: callLineText(s, m), system: true }
   if (m.kind === 'system') return { text: m.content, system: true }
   // mentions as the names you see (never usernames, #47)
-  const line = showMentions(m.content, mentionLookup(s), (id) => displayName(s, null, id)).replace(/\s+/g, ' ').trim()
+  const line = showMentions(shownText(m), mentionLookup(s), (id) => displayName(s, null, id)).replace(/\s+/g, ' ').trim()
   if (m.author_id === s.me?.id) return { text: `You: ${line}`, system: false }
   if (s.channels[m.channel_id]?.kind === 'group') {
     const who = m.author_id ? displayName(s, null, m.author_id) : 'someone'
