@@ -24,6 +24,36 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.3',
+  version: '0.2.3',
+  date: '9 November 2026',
+  new: [
+    'Spin quietly: everyone watches the wheel spin live, but nothing is saved in the chat',
+    'Just me wheels are now private. Only you see their spins',
+    'A chime when the wheel lands, so you know even if you tabbed out (volume mixer › Picker wheel result)',
+  ],
+  fixes: [
+    'The tick on poll options sits in the middle of its box now',
+  ],
+  qol: [
+    'The result now shows big over the wheel, and the card waits for you to see it before folding away (✕ to dismiss it sooner)',
+    'Starting a spin takes you to the bottom of the chat so you can watch it',
+    'Wheel options can differ by case only: PIZZA and pizza are two different options 👀',
+    'Polls allow the same option twice (we see you)',
+    'A tidier wheel and poll composer: options first, a + for new wheels, more breathing room',
+  ],
+  soon: [
+    'Streaming in DM and group calls',
+    'Share a Spotify Jam or song to the voice stage',
+    'A fresh profile editor: edit right inside your big profile card',
+    'Custom join sounds',
+    'Stream fullscreen, with chat as a side strip',
+  ],
+  message: 'A quick one: the wheel got some love from our resident UI/UX designer 💜',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.2',
   version: '0.2.2',
   date: '9 November 2026',
@@ -53,37 +83,4 @@ export const patchNotes: PatchNotes = {
     'Stream fullscreen, with chat as a side strip',
   ],
   message: 'Pins, polls AND a wheel? The Coming soon list got absolutely cooked 🌈\nSpin responsibly.',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.1',
-  version: '0.2.1',
-  date: '6 November 2026',
-  new: [
-    "Notification settings now also live in Server settings, and in each channel's bell",
-    "Save quote pictures: the download icon on the picture, or Save image in the line's menu",
-    'Missed the last patch notes? They\'re now tucked under "Previous update" at the bottom',
-  ],
-  fixes: [
-    'Badge progress in your trophy case now updates every time you open it (Ghost was counting the whole time, promise)',
-    'One-of-a-kind badges now say 1 of 1, because they are',
-    'On narrower windows, the hover bar on messages no longer covers the line above',
-  ],
-  qol: [
-    'Drag a channel to the top or bottom of the list and it scrolls with you',
-    'Smoother motion all round: the stream mini preview glides into its corner, sections fold smoothly, and menus grow from where you clicked',
-    "Profile cards don't flash in early anymore, and a member's card sits beside them instead of covering faces",
-    'The emoji picker opens quicker',
-    'Voice chat tidy-ups: the Chat button shows unreads, and your search results wait for you while the chat is open',
-    'Go Live and the Soundboard are now tidy icon buttons (hover for their names)',
-  ],
-  soon: [
-    'More fresh and reworked designs on the way, hopefully with more taste!',
-    'Pinned messages',
-    'Polls',
-    'A random picker wheel 🌈',
-    'Streaming in DM and group calls',
-  ],
-  message: "If you're reading this, Pulse just updated itself. No zip files were harmed 💜\n…and the Doos is a slow burn on purpose. Patience, doos.",
 }
