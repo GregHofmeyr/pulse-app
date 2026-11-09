@@ -17,12 +17,6 @@ export const LIVE_WINDOW_MS = 1000
 /** At most one tick this often, however fast the slices pass. */
 export const TICK_GAP_MS = 80
 
-/** `/wheel …` typed in the message box: `options` as typed (perhaps fewer than two). Null for anything else. */
-export function parseWheelCommand(text: string): { options: string[] } | null {
-  const m = /^\/wheel(?:\s+([\s\S]*))?$/i.exec(text.trim())
-  return m ? { options: splitOptions(m[1] ?? '') } : null
-}
-
 /** "a, b, c" (or one per line) → ["a", "b", "c"]: trimmed, blanks dropped. */
 export function splitOptions(text: string): string[] {
   return text

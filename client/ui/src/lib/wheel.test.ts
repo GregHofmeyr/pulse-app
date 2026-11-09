@@ -1,27 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
-  addOptions, fitLabel, labelFit, parseWheelCommand, QUIET_SPIN_MS, rotationAt, shuffled, SPIN_MS, SPIN_TURNS,
+  addOptions, fitLabel, labelFit, QUIET_SPIN_MS, rotationAt, shuffled, SPIN_MS, SPIN_TURNS,
   splitOptions, winnerAt,
 } from './wheel'
 import { contrast, LABEL_DARK, LABEL_LIGHT, labelColour, sliceColour, sliceRgb } from './wheelColours'
 
-describe('the /wheel command', () => {
-  it('reads options after /wheel, comma-separated', () => {
-    expect(parseWheelCommand('/wheel pizza, sushi,  braai ')).toEqual({ options: ['pizza', 'sushi', 'braai'] })
-    expect(parseWheelCommand('/WHEEL a,b')).toEqual({ options: ['a', 'b'] })
-  })
-  it('on its own (or with one option) it has fewer than two', () => {
-    expect(parseWheelCommand('/wheel')).toEqual({ options: [] })
-    expect(parseWheelCommand('  /wheel  ')).toEqual({ options: [] })
-    expect(parseWheelCommand('/wheel pizza')).toEqual({ options: ['pizza'] })
-    expect(parseWheelCommand('/wheel , ,')).toEqual({ options: [] })
-  })
-  it('is nothing else', () => {
-    expect(parseWheelCommand('/wheels a, b')).toBeNull()
-    expect(parseWheelCommand('spin the /wheel a, b')).toBeNull()
-    expect(parseWheelCommand('wheel a, b')).toBeNull()
-  })
-})
+// the `/wheel` command itself is in the command registry (lib/commands.ts, #262)
 
 describe('editing options', () => {
   it('splits pasted lists by commas and lines', () => {

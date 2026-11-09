@@ -31,7 +31,7 @@
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
   import { takeChatFocus, voiceChat } from '../lib/voiceChat.svelte'
-  import { addOptions, parseWheelCommand, WHEEL_LIMITS } from '../lib/wheel'
+  import { COMMANDS, parseCommand, type CommandContext } from '../lib/commands'
   import { spinWheel } from '../lib/wheels.svelte'
 
   let { channelId, serverId, panel = null, onAddPeople = () => {}, onLeft = () => {}, onStartQoty = () => {}, onVoiceSettings = () => {} }: {
@@ -489,15 +489,19 @@
     if (detached) void toPresent()
     else void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   }
+  // what slash commands can do in this chat (lib/commands.ts CommandContext)
+  const commandContext: CommandContext = {
+    spinWheel: (options) => {
+      error = ''
+      spinWheel(channelId, { options }).catch((e) => (error = errorText(e)))
+    },
+    openWheel: (prefill) => composer?.openWheel(prefill),
+  }
   function send(text: string) {
-    // `/wheel a, b, c` spins a quick wheel; `/wheel` on its own (or one option) opens the wheel popover (#158)
-    const wheel = parseWheelCommand(text)
-    if (wheel) {
-      if (wheel.options.length >= WHEEL_LIMITS.minOptions) {
-        error = ''
-        // as the editor adds them: cut to the limit, repeats dropped, at most 100
-        spinWheel(channelId, { options: addOptions([], wheel.options.join(',')).options }).catch((e) => (error = errorText(e)))
-      } else composer?.openWheel(wheel.options)
+    // a slash command (`/wheel a, b, c`, lib/commands.ts) runs instead of being sent (#158, #262)
+    const cmd = parseCommand(text)
+    if (cmd) {
+      cmd.command.run(cmd.args, commandContext)
       return
     }
     const r = replyTo?.id ?? null
@@ -641,7 +645,7 @@
     {/if}
   {:else}
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate || isVoice ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
-    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} />
+    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} commands={COMMANDS} />
   {/if}
   {#if repliesRoot}
     {#key repliesRoot.id}

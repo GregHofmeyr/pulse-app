@@ -91,6 +91,32 @@ describe('/wheel in the message box', () => {
     await vi.waitFor(() => expect(document.querySelector('.chan > .error')?.textContent).toContain('one spin every few seconds'))
   })
 
+  // #262: the message box suggests the chat's commands; /whe + Tab gives "/wheel ", then the options spin it
+  it('/whe and Tab completes to /wheel, with the usage tip while options are typed, and Enter spins', async () => {
+    const box = show()
+    box.replaceChildren(document.createTextNode('/whe'))
+    box.focus()
+    const r = document.createRange()
+    r.setStart(box.firstChild!, 4)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(r)
+    box.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    flushSync()
+    expect(document.querySelector('[role=listbox][aria-label="Commands"]')?.textContent).toContain('/wheel')
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+    flushSync()
+    await vi.waitFor(() => expect(box.textContent).toBe('/wheel '))
+    expect(document.querySelector('.command-tip')?.textContent).toContain('Enter to spin')
+    send(box, '/wheel kim, jo')
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('spin_wheel', { channelId: 'C1', request: { options: ['kim', 'jo'] } }))
+  })
+
+  it('an unknown /word is sent as an ordinary message', async () => {
+    const box = show()
+    send(box, '/shrug hi')
+    await vi.waitFor(() => expect(app.state.pending['C1']?.map((p) => p.content)).toEqual(['/shrug hi']))
+  })
+
   it('the wheel button by the emoji button opens and closes the popover', () => {
     show()
     const btn = document.querySelector<HTMLButtonElement>('button[aria-label="Picker wheel"]')!

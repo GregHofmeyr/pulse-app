@@ -9,6 +9,7 @@ import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
 import { offsetOf, positionAt, serialize } from '../lib/composerDom'
+import { COMMANDS, type SlashCommand } from '../lib/commands'
 
 const ce = (id: string, server_id: string, name: string): CustomEmoji => ({
   id, server_id, name, hash: id.repeat(64).slice(0, 64), still_hash: null, animated: false, added_by: null, created_at: '2026-10-01T00:00:00Z',
@@ -17,7 +18,7 @@ const ce = (id: string, server_id: string, name: string): CustomEmoji => ({
 let cmp: ReturnType<typeof mount> | undefined
 const onSend = vi.fn()
 type Box = HTMLElement
-function show(draftKey = `K${Math.random()}`) {
+function show(draftKey = `K${Math.random()}`, extra: Record<string, unknown> = {}) {
   const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
   app.state = {
     ...emptyState(), me,
@@ -27,7 +28,7 @@ function show(draftKey = `K${Math.random()}`) {
   }
   cmp = mount(Composer, {
     target: document.body,
-    props: { placeholder: 'Message', draftKey, replyingTo: null, onCancelReply: () => {}, onSend, onTyping: () => {} },
+    props: { placeholder: 'Message', draftKey, replyingTo: null, onCancelReply: () => {}, onSend, onTyping: () => {}, ...extra },
   })
   flushSync()
   return document.querySelector<HTMLElement>('[role="textbox"]')!
@@ -758,5 +759,135 @@ describe('Composer mentions', () => {
       .dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
     await tick()
     expect([...box.querySelectorAll('.mention-chip')].map((c) => c.textContent)).toEqual(['@Alex A', '@Sam S'])
+  })
+})
+
+// #262: `/` starting the message suggests commands; Tab / Enter / click completes; a usage tip shows while typing one.
+describe('Composer slash commands', () => {
+  const rows = () => [...document.querySelectorAll('[role=listbox][aria-label="Commands"] [role=option]')]
+  const tip = () => document.querySelector('.command-tip')
+  const extra: SlashCommand = { name: 'whirl', usage: '/whirl thing', description: 'A test command', hint: 'Enter to whirl', run: () => {} }
+  const withCommands = (cmds: SlashCommand[] = COMMANDS) => show(undefined, { commands: cmds })
+  const tab = (box: Box) => {
+    const ev = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    box.dispatchEvent(ev)
+    flushSync()
+    return ev
+  }
+
+  it('a / starting the message lists the commands, in the shared suggestion list, with usage and description', () => {
+    const box = withCommands()
+    type(box, '/')
+    const list = document.querySelector('[role=listbox][aria-label="Commands"]')!
+    expect(list.classList.contains('mentions')).toBe(true)
+    expect(list.classList.contains('menu-surface')).toBe(true)
+    expect(list.classList.contains('pop-in')).toBe(true)
+    expect(rows()).toHaveLength(COMMANDS.length)
+    const w = rows().find((r) => r.textContent!.includes('/wheel'))!
+    expect(w.classList.contains('menu-item')).toBe(true)
+    expect(w.textContent!.replace(/\s+/g, ' ')).toContain('/wheel option1, option2, option3')
+    expect(w.textContent).toContain('Spin a quick wheel')
+  })
+
+  it('/whe then Tab completes to "/wheel " with the caret after the space', async () => {
+    const box = withCommands()
+    type(box, '/whe')
+    expect(rows()).toHaveLength(1)
+    const ev = tab(box)
+    await tick()
+    expect(ev.defaultPrevented).toBe(true)
+    expect(value(box)).toBe('/wheel ')
+    expect(caret(box)).toBe(7)
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('arrows move the highlight and Enter completes the highlighted row; a click completes too', async () => {
+    const box = withCommands([...COMMANDS, extra])
+    type(box, '/wh')
+    expect(rows()).toHaveLength(2)
+    expect(rows()[0].getAttribute('aria-selected')).toBe('true')
+    press(box, 'ArrowDown')
+    expect(rows()[1].getAttribute('aria-selected')).toBe('true')
+    expect(rows()[1].classList.contains('hi')).toBe(true)
+    press(box, 'Enter')
+    await tick()
+    expect(value(box)).toBe('/whirl ')
+    expect(onSend).not.toHaveBeenCalled()
+    type(box, '/w')
+    rows()[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+    await tick()
+    expect(value(box)).toBe('/wheel ')
+  })
+
+  it('a fully typed command name still sends on Enter (just /wheel opens the wheel); Tab still completes it', async () => {
+    const box = withCommands()
+    type(box, '/wheel')
+    expect(rows()).toHaveLength(1)
+    tab(box)
+    await tick()
+    expect(value(box)).toBe('/wheel ')
+    type(box, '/wheel')
+    press(box, 'Enter')
+    await tick()
+    expect(onSend).toHaveBeenCalledWith('/wheel')
+  })
+
+  it('Esc dismisses until the text changes', () => {
+    const box = withCommands()
+    type(box, '/wh')
+    press(box, 'Escape')
+    expect(rows()).toHaveLength(0)
+    type(box, '/whe')
+    expect(rows()).toHaveLength(1)
+  })
+
+  it('no suggestions mid-message, for unknown names, or where the composer has no commands', () => {
+    let box = withCommands()
+    type(box, 'hi /wh')
+    expect(rows()).toHaveLength(0)
+    type(box, '/zz')
+    expect(rows()).toHaveLength(0)
+    unmount(cmp!)
+    document.body.innerHTML = ''
+    box = show()
+    type(box, '/wh')
+    expect(rows()).toHaveLength(0)
+    expect(document.querySelector('[role=listbox]')).toBeNull()
+    type(box, '/wheel a')
+    expect(tip()).toBeNull()
+  })
+
+  it('shows the usage tip while a command\'s arguments are typed, and drops it when the text stops being one', () => {
+    const box = withCommands()
+    type(box, '/wheel')
+    expect(tip()).toBeNull()
+    type(box, '/wheel ')
+    expect(tip()!.textContent!.replace(/\s+/g, ' ').trim()).toBe('/wheel option1, option2, option3 · Enter to spin')
+    expect(rows()).toHaveLength(0)
+    type(box, '/wheel pizza, sus')
+    expect(tip()).not.toBeNull()
+    type(box, 'wheel pizza')
+    expect(tip()).toBeNull()
+    type(box, '/wheels a')
+    expect(tip()).toBeNull()
+  })
+
+  it('the tip gives way to an emoji list', () => {
+    const box = withCommands()
+    type(box, '/wheel :sm')
+    expect(document.querySelector('[aria-label="Insert emoji"]')).not.toBeNull()
+    expect(tip()).toBeNull()
+  })
+
+  it('Tab with nothing suggested is left alone (focus moves on), and ordinary Enter still sends', async () => {
+    const box = withCommands()
+    type(box, 'hello')
+    expect(tab(box).defaultPrevented).toBe(false)
+    type(box, '/wheel a, b')
+    expect(tab(box).defaultPrevented).toBe(false)
+    type(box, 'hello')
+    press(box, 'Enter')
+    await tick()
+    expect(onSend).toHaveBeenCalledWith('hello')
   })
 })

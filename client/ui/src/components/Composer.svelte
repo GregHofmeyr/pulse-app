@@ -14,6 +14,7 @@
   import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
   import { typingThrottle } from '../lib/markdown'
   import { applyMention, mentionQuery, suggest, type Mentionable } from '../lib/mentions'
+  import { applyCommand, commandQuery, suggestCommands, typingCommand, type SlashCommand } from '../lib/commands'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import { memberServers } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
@@ -30,6 +31,7 @@
     mentionables = [],
     serverId = null,
     wheelChannel = null,
+    commands = [],
   }: {
     placeholder: string
     draftKey: string
@@ -43,6 +45,8 @@
     serverId?: string | null
     /** The chat a picker wheel spins in (#158): shows the wheel button. None where wheels don't spin (threads). */
     wheelChannel?: string | null
+    /** Slash commands that run here (#262, lib/commands.ts): suggested on `/`, with a usage tip. None where they don't. */
+    commands?: readonly SlashCommand[]
   } = $props()
 
   // The composer remounts per channel ({#key} in Shell), so reading the key once is intended.
@@ -74,7 +78,14 @@
   // Re-read as the query changes: a tone picked in the picker meanwhile applies from the next keystroke.
   const tone = $derived(emojiOptions.length ? savedTone() : 0)
   const emojiOpen = $derived(emojiOptions.length > 0 && dismissed !== ':' + emojiQ)
-  const shown = $derived(open ? options.length : emojiOpen ? emojiOptions.length : 0)
+  // `/name` starting the message (#262): the commands it could be. Never with the two above: a command name is
+  // one word right after the `/`, so neither an @ nor a : can end at the caret.
+  const cmdQ = $derived(commands.length ? commandQuery(text, caret) : null)
+  const cmdOptions = $derived(cmdQ === null ? [] : suggestCommands(cmdQ, commands))
+  const cmdOpen = $derived(cmdOptions.length > 0 && dismissed !== '/' + cmdQ)
+  // the usage tip while a command's arguments are typed; any list showing takes its place
+  const typing = $derived(commands.length ? typingCommand(text, commands) : null)
+  const shown = $derived(open ? options.length : emojiOpen ? emojiOptions.length : cmdOpen ? cmdOptions.length : 0)
   const serverName = (id: string) => app.state.servers.find((s) => s.id === id)?.name ?? ''
   const emojiText = (e: Std | CustomEmoji) => ('u' in e ? withSkin(e, tone) : customToken(e))
 
@@ -104,6 +115,7 @@
     return mentionables.find((m) => m.username.toLowerCase() === u)?.name ?? null
   }
   const chooseEmoji = (e: Std | CustomEmoji) => setText(applyEmoji(text, caret, emojiText(e)))
+  const chooseCommand = (c: SlashCommand) => setText(applyCommand(text, caret, c.name))
 
   // `sel` keeps the box's selection while the picker has focus: insert there.
   // A `keep` pick (Shift) leaves the picker open and the box unfocused, with the caret advanced.
@@ -121,15 +133,17 @@
         pick = (pick + (e.key === 'ArrowDown' ? 1 : shown - 1)) % shown
         return
       }
-      if (e.key === 'Enter' || e.key === 'Tab') {
+      // Enter on a command already typed in full (`/wheel`) runs it as sent; Tab still completes it
+      const runs = e.key === 'Enter' && !open && !emojiOpen && cmdOptions[pick]?.name === cmdQ?.toLowerCase()
+      if ((e.key === 'Enter' || e.key === 'Tab') && !runs) {
         e.preventDefault()
         // a pick that doesn't fit isn't made (setText refuses it)
-        void (open ? choose(options[pick].username) : chooseEmoji(emojiOptions[pick]))
+        void (open ? choose(options[pick].username) : emojiOpen ? chooseEmoji(emojiOptions[pick]) : chooseCommand(cmdOptions[pick]))
         return
       }
       if (e.key === 'Escape') {
         e.preventDefault()
-        dismissed = open ? query : ':' + emojiQ
+        dismissed = open ? query : emojiOpen ? ':' + emojiQ : '/' + cmdQ
         return
       }
     }
@@ -192,7 +206,24 @@
         </button>
       {/each}
     </div>
+  {:else if cmdOpen}
+    <div class="mentions menu-surface pop-in" role="listbox" aria-label="Commands">
+      {#each cmdOptions as c, i (c.name)}
+        <button class="menu-item" role="option" aria-selected={i === pick} class:hi={i === pick}
+          onmousedown={(e) => { e.preventDefault(); void chooseCommand(c) }}>
+          <span>{@render usage(c)}</span><small>{c.description}</small>
+        </button>
+      {/each}
+    </div>
+  {:else if typing}
+    <div class="mentions command-tip menu-surface pop-in" role="status">
+      <span>{@render usage(typing)}<span class="arg">{` · ${typing.hint}`}</span></span>
+    </div>
   {/if}
+  {#snippet usage(c: SlashCommand)}
+    {@const name = `/${c.name}`}
+    {name}{#if c.usage.startsWith(name)}<span class="arg">{c.usage.slice(name.length)}</span>{:else}<span class="arg">{` ${c.usage}`}</span>{/if}
+  {/snippet}
   {#if replyingTo}
     <div class="replying">Replying to <strong class="name-clip">{replyingTo}</strong>
       <button class="icon-btn icon-btn-xs" aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={14} /></button></div>
@@ -223,6 +254,10 @@
   .mentions .menu-item { font-size: 14px; }
   .mentions img { width: 20px; height: 20px; }
   .mentions small { margin-left: auto; padding-left: 12px; color: var(--text-3); font-size: 11px; }
+  /* slash commands (#262): a command's arguments (and the tip's key hint) quieter than its name */
+  .mentions .arg { color: var(--text-3); }
+  /* the usage tip: the list's surface and placement with one row's padding, not something to press */
+  .command-tip { padding: 6px 10px; font-size: 13px; pointer-events: none; }
   .emoji-btn { position: absolute; right: 8px; bottom: 8px; width: 32px; height: 32px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); display: grid; place-items: center; }
   /* one step up from the box's bg-3, as every icon button's hover */
   .emoji-btn:hover { background: var(--bg-4); color: var(--text); }
