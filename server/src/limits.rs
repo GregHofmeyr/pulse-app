@@ -90,9 +90,11 @@ pub struct LimitsConfig {
     /// Soundboard sound creates, edits and deletes, together per user (each one reaches every
     /// member of the server).
     pub sound_user: Rate,
-    /// Sound plays, per user: a cooldown after each (#214), so one person can't spam the call. The
-    /// client waits a second (`SOUND_COOLDOWN_MS`); this is a little shorter so an honest client's
-    /// timing never trips it, and a modified client still gets at most one sound per 0.8 s.
+    /// Sound plays, per user. People may mash the soundboard (#243): nothing stacks, since each
+    /// new play cuts the player's last sound off in every client (#214), so this only stops what
+    /// no hand does. A burst of 20 covers a frantic few seconds of clicking; the refill of 8 a
+    /// second is about the fastest anyone keeps clicking, while a held key (~30 a second) or a
+    /// script is held to it, which bounds the play-count writes and the fan-out to the call.
     pub sound_play_user: Rate,
     /// Invite codes minted per user.
     pub invite_user: Rate,
@@ -155,7 +157,7 @@ impl Default for LimitsConfig {
             create_user: Rate::per_hour(20),
             emoji_user: Rate::per_hour(30),
             sound_user: Rate::per_hour(120),
-            sound_play_user: Rate::new(1, 1.25),
+            sound_play_user: Rate::new(20, 8.0),
             invite_user: Rate::per_hour(10),
             mutate_user: Rate::new(30, 2.0),
             voice_state_user: Rate::new(10, 2.0),

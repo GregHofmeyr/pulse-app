@@ -13,8 +13,7 @@ import Soundboard from './Soundboard.svelte'
 import { mixer, reloadMixer, setNotch } from '../lib/mixer.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
-import { resetSoundCooldown, soundboard } from '../lib/soundboard.svelte'
-import { SOUND_COOLDOWN_MS } from '../lib/soundboard'
+import { soundboard } from '../lib/soundboard.svelte'
 
 const servers: Server[] = [
   { id: 'S1', name: 'Main', icon_hash: null },
@@ -69,7 +68,6 @@ beforeEach(() => {
   reloadMixer()
   invoke.mockClear()
   invoke.mockImplementation(async () => undefined)
-  resetSoundCooldown()
   onClose.mockClear(); onAdd.mockClear(); onEdit.mockClear(); onTidy.mockClear(); scrollIntoView.mockClear()
 })
 afterEach(() => {
@@ -119,34 +117,27 @@ describe('Soundboard', () => {
     expect(calls('soundboard_play')).toHaveLength(0)
   })
 
-  // #214: click-spam can't play over itself: after a play, a short cooldown, shown on the tiles
-  it('a_second_click_inside_the_cooldown_plays_nothing_and_the_tiles_say_so', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
-    try {
-      open()
-      tile('Bruh').click()
-      flushSync()
-      tile('Airhorn').click()
-      tile('Bruh').click()
-      flushSync()
-      expect(calls('play_sound_to_call')).toEqual([['play_sound_to_call', { id: 'b' }]])
-      expect(tiles().every((t) => t.classList.contains('cooling') && t.getAttribute('aria-disabled') === 'true')).toBe(true)
-      vi.advanceTimersByTime(SOUND_COOLDOWN_MS)
-      flushSync()
-      expect(tiles().some((t) => t.classList.contains('cooling'))).toBe(false)
-      tile('Airhorn').click()
-      flushSync()
-      expect(calls('play_sound_to_call').map((c) => c[1])).toEqual([{ id: 'b' }, { id: 'a' }])
-    } finally {
-      vi.useRealTimers()
-    }
+  // #243 (loosening #214): mash it. Every click plays (each cuts your last sound off, so nothing stacks); the tiles
+  // never dim or go disabled
+  it('mashing_plays_every_click_and_the_tiles_stay_live', () => {
+    open()
+    for (let i = 0; i < 6; i++) tile(i % 2 ? 'Airhorn' : 'Bruh').click()
+    flushSync()
+    expect(calls('play_sound_to_call').map((c) => c[1])).toEqual([{ id: 'b' }, { id: 'a' }, { id: 'b' }, { id: 'a' }, { id: 'b' }, { id: 'a' }])
+    expect(tiles().some((t) => t.classList.contains('cooling') || t.hasAttribute('aria-disabled'))).toBe(false)
+    const css = readFileSync(resolve(__dirname, 'Soundboard.svelte'), 'utf8').match(/<style>([\s\S]*)<\/style>/)![1]
+    expect(css).not.toMatch(/cooling|not-allowed/)
   })
 
-  it('the_cooldown_is_about_a_second_and_fades_on_a_motion_token', () => {
-    expect(SOUND_COOLDOWN_MS).toBe(1000)
-    const css = readFileSync(resolve(__dirname, 'Soundboard.svelte'), 'utf8').match(/<style>([\s\S]*)<\/style>/)![1]
-    expect(css).toMatch(/\.tile\.cooling \{[^}]*opacity: \.55;[^}]*cursor: not-allowed/)
-    expect(css).toMatch(/\.tile \{[^}]*transition: opacity var\(--dur-fast\) var\(--ease\)/)
+  it('mashing_the_keyboard_plays_each_press_but_a_held_key_plays_once', () => {
+    open()
+    const press = (repeat: boolean) => tile('Bruh').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', repeat, bubbles: true, cancelable: true }))
+    press(false)
+    press(false)
+    // held down: the auto-repeat isn't a press (a stuck key mustn't hammer the call)
+    for (let i = 0; i < 10; i++) press(true)
+    flushSync()
+    expect(calls('play_sound_to_call')).toHaveLength(2)
   })
 
   it('a_rate_limited_play_is_swallowed_but_other_errors_show', async () => {
@@ -156,7 +147,6 @@ describe('Soundboard', () => {
     await settle()
     expect(document.querySelector('[role=alert]')).toBeNull()
     invoke.mockRejectedValueOnce("You're not in a call")
-    resetSoundCooldown()
     tile('Bruh').click()
     await settle()
     expect(document.querySelector('[role=alert]')?.textContent).toBe("You're not in a call")

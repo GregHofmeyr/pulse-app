@@ -719,11 +719,12 @@ async fn eleventh_play_in_a_second_is_429() {
     assert_eq!(play(&app, &alex, &s.id).await.status(), 429);
 }
 
-/// #214: one person can't spam: after a play, the next waits out a short cooldown (the client
-/// waits a second; the server a little less, so an honest client never hits it). Someone else's
-/// plays are their own.
+/// #243 (loosening #214): people can mash the soundboard. A burst of quick plays all go through
+/// (each cuts the player's last sound off in the clients, so nothing stacks); only something past
+/// any human pace, a stuck key or a script, is held to the ceiling. Someone else's plays are
+/// their own.
 #[tokio::test]
-async fn a_play_inside_the_cooldown_is_429_but_others_can_play() {
+async fn a_mash_goes_through_but_a_script_hits_the_ceiling() {
     let mut cfg = test_config();
     cfg.limits.sound_play_user = pulse_server::limits::LimitsConfig::default().sound_play_user;
     let app = spawn_with(cfg).await;
@@ -736,18 +737,25 @@ async fn a_play_inside_the_cooldown_is_429_but_others_can_play() {
     let room = lounge(&app, &alex, srv.id).await;
     app.state().voice.join(room, alex_id, "PA_a");
     app.state().voice.join(room, sam_id, "PA_s");
-    assert_eq!(play(&app, &alex, &s.id).await.status(), 204);
-    assert_eq!(
-        play(&app, &alex, &s.id).await.status(),
-        429,
-        "inside the cooldown"
-    );
+    for i in 0..20 {
+        assert_eq!(play(&app, &alex, &s.id).await.status(), 204, "mash {i}");
+    }
+    // a script keeps going far faster than anyone clicks: it runs into the ceiling
+    let mut refused = false;
+    for _ in 0..40 {
+        if play(&app, &alex, &s.id).await.status() == 429 {
+            refused = true;
+            break;
+        }
+    }
+    assert!(refused, "a script is held to the ceiling");
     assert_eq!(play(&app, &sam, &s.id).await.status(), 204, "sam's own");
-    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+    // and it refills quickly: a moment later, the mash goes on
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     assert_eq!(
         play(&app, &alex, &s.id).await.status(),
         204,
-        "after a second"
+        "a moment later"
     );
 }
 

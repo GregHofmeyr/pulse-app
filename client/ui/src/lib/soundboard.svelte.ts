@@ -9,7 +9,7 @@ import { loadAudioConfig } from './voiceui'
 import { app, onAppEvent } from './store.svelte'
 import { voice } from './voice.svelte'
 import { memberServers } from './reactions'
-import { loadSoundMutes, saveSoundMutes, shouldPlay, SOUND_COOLDOWN_MS, warmOrder } from './soundboard'
+import { loadSoundMutes, saveSoundMutes, shouldPlay, warmOrder } from './soundboard'
 import { soundboardCmd } from './tauri'
 import { mixer, setNotch } from './mixer.svelte'
 
@@ -73,27 +73,6 @@ export function callChanged(channelId: string | null) {
     const hashes = warmOrder(app.state, memberServers(app.state))
     if (hashes.length) soundboardCmd.warm(hashes).catch(() => {})
   }
-}
-
-// Your own cooldown after a play (#214), shared by every soundboard on screen: true while it holds.
-const cool = $state({ on: false })
-let coolTimer: ReturnType<typeof setTimeout> | undefined
-
-/** Whether your plays are cooling down (the tiles show it). */
-export const soundCooling = (): boolean => cool.on
-
-/** Start a play: false (and nothing changes) while the last one's cooldown holds, else true and the cooldown starts. */
-export function beginSoundPlay(): boolean {
-  if (cool.on) return false
-  cool.on = true
-  coolTimer = setTimeout(() => (cool.on = false), SOUND_COOLDOWN_MS)
-  return true
-}
-
-/** Tests: no cooldown. */
-export function resetSoundCooldown() {
-  clearTimeout(coolTimer)
-  cool.on = false
 }
 
 export function setSoundboardVolume(pct: number) {

@@ -38,10 +38,6 @@ export function loadSoundMutes(): Record<string, true> {
 }
 export const saveSoundMutes = (m: Record<string, true>) => write(MUTES_KEY, m)
 
-/** After you play a sound into the call, how long until you can play another (#214): click-spam can't stack them. The
- * server holds a slightly shorter one of its own (`sound_play_user`), so a modified client can't either. */
-export const SOUND_COOLDOWN_MS = 1000
-
 /** Whether a relayed SoundPlayed should be heard here (`volume_pct` 0: the soundboard is off). Your own plays in your call do play. */
 export function shouldPlay(
   e: { channel_id: string; user_id: string },

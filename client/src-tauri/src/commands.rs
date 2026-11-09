@@ -3662,6 +3662,8 @@ pub async fn soundboard_play(
     sound_id: Option<String>,
     player: Option<String>,
 ) -> Result<(), String> {
+    // its place in line as it arrives: when mashed, a later press that loads first still wins (#243)
+    let ticket = players.ticket();
     let gain = crate::soundboard::gain(calls_percent, soundboard_percent, sound_percent);
     if gain <= 0.0 {
         return Ok(());
@@ -3671,7 +3673,13 @@ pub async fn soundboard_play(
         .await
         .inspect_err(|e| tracing::warn!(error = %e, "soundboard: couldn't load a sound"))?;
     // cut off at the moment the new one is queued, so the two never overlap
-    let stop = player.as_deref().map(|who| players.start(who));
+    let stop = match player.as_deref() {
+        Some(who) => match players.start(who, ticket) {
+            Some(stop) => Some(stop),
+            None => return Ok(()), // they've already pressed again: that one plays
+        },
+        None => None,
+    };
     let speakers_us = play_decoded(&app, samples, gain, output, stop).await;
     // your own click, when this is its echo: the whole click -> queued delay
     let click_ms = sound_id
