@@ -82,6 +82,17 @@ lto = "fat"
 codegen-units = 1
 strip = true
 
+# The Windows client tests in CI (.github/workflows/windows-client-tests.yml, #253): release without the fat-LTO link
+# and the single codegen unit, which took ~16 of the job's ~19 min compiling for tests that run in ~10 s. Still a
+# release profile: debug_assertions stay off, so the release-only paths (updater::tests::enabled_in_windows_release,
+# the windows_subsystem attribute, no PULSE_DEV_FFMPEG_DIR) are what gets compiled and tested. The installer is built
+# with `release` and keeps fat LTO.
+[profile.release-test]
+inherits = "release"
+lto = false
+codegen-units = 16
+strip = false
+
 # libwebrtc formats every RTC_LOG line at LS_VERBOSE and hands it to Rust only to be dropped
 # (measured: 501 lines/s in a call, tests/webrtc_log_volume.rs). The vendored copy registers its
 # sink at LS_WARNING (src/webrtc.cpp's AddLogToStream). It also verifies the prebuilt libwebrtc

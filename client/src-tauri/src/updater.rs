@@ -654,7 +654,8 @@ mod tests {
         assert!(!updates_enabled());
     }
 
-    /// release-windows runs these with `--release`: there, updating is on (unless a test machine turned it off).
+    /// The Windows CI tests run these in the `release-test` profile (debug_assertions off): there, updating is on
+    /// (unless a test machine turned it off).
     #[cfg(all(windows, not(debug_assertions)))]
     #[test]
     fn enabled_in_windows_release() {

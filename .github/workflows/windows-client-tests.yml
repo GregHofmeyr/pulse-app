@@ -45,16 +45,18 @@ jobs:
         shell: bash
         run: bash scripts/fetch-ffmpeg.sh
       # Screen-share stream code has Windows-only paths (process discovery, open failures) that Linux CI
-      # never compiles. The test binary compiles once here; the steps below reuse it.
-      - run: cargo test --release -p pulse-client --lib 'stream::' -- --skip 'stream::loopback'
+      # never compiles. The test binary compiles once here; the steps below reuse it. Profile `release-test`
+      # (Cargo.toml, #253): release with debug_assertions off but without the installer's fat LTO, which made this
+      # ~19 min.
+      - run: cargo test --profile release-test -p pulse-client --lib 'stream::' -- --skip 'stream::loopback'
       # Finding the bundled ffmpeg and the no-console-window spawn are Windows paths too.
-      - run: cargo test --release -p pulse-client --lib 'clips::ffmpeg::'
+      - run: cargo test --profile release-test -p pulse-client --lib 'clips::ffmpeg::'
       # Keybind hooks are Windows-only too (hook thread priority).
-      - run: cargo test --release -p pulse-client --lib 'hotkeys::'
+      - run: cargo test --profile release-test -p pulse-client --lib 'hotkeys::'
       # The session.json fallback's owner-only DACL is Windows-only too.
-      - run: cargo test --release -p pulse-client --lib 'session::'
+      - run: cargo test --profile release-test -p pulse-client --lib 'session::'
       # App updates (#82) are on only in release Windows builds: their checks, with updating enabled.
-      - run: cargo test --release -p pulse-client --lib 'updater::'
+      - run: cargo test --profile release-test -p pulse-client --lib 'updater::'
       # WASAPI process loopback: a runner with no audio endpoint can't activate it, so it doesn't block the build.
       - continue-on-error: true
-        run: cargo test --release -p pulse-client --lib 'stream::loopback'
+        run: cargo test --profile release-test -p pulse-client --lib 'stream::loopback'
