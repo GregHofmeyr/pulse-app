@@ -88,7 +88,10 @@ beforeEach(() => {
   frames = []
   vi.stubGlobal('requestAnimationFrame', (f: (t: number) => void) => (frames.push(f), frames.length))
   vi.stubGlobal('cancelAnimationFrame', () => {})
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  // Date too: the card's fold timer is `seen + CARD_SEEN_MS - Date.now()`, so with a real clock any millisecond that
+  // passes between marking it seen and arming the timer makes it fire early, and `later(CARD_SEEN_MS - 1)` finds it
+  // folded on a busy runner. One fake clock: time moves only when the test says.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
 })
 afterEach(() => {
   if (cmp) unmount(cmp)
