@@ -46,6 +46,19 @@
   let nameDraft = $state('')
   let nameField: HTMLInputElement | undefined = $state()
   let editor: WheelEditor | undefined = $state()
+  let addDraft = $state('')
+  let root: HTMLDivElement | undefined = $state()
+
+  // Escape in a field (#264) first leaves it, or empties the add field; a second Escape closes the popover. The
+  // quick wheel outlives the popover and a saved one saves as you go, so there's nothing to ask about.
+  function keydown(e: KeyboardEvent) {
+    const t = e.target
+    if (e.key !== 'Escape' || !(t instanceof HTMLInputElement) || t.closest('form.save')) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (t.getAttribute('aria-label') === 'Add an option' && addDraft) addDraft = ''
+    else root?.focus() // out of the field, still in the popover (a name leaving it saves, as on blur)
+  }
 
   $effect(() => {
     if (quick.length) quickDrafts.set(channelId, quick)
@@ -144,7 +157,7 @@
   const canSpin = $derived(options.length >= WHEEL_LIMITS.minOptions && !busy)
 </script>
 
-<div class="wheel-popover pop-in" role="dialog" aria-label="Picker wheel" use:clickOutside={onClose} {style}>
+<div bind:this={root} class="wheel-popover pop-in" role="dialog" aria-label="Picker wheel" tabindex="-1" use:clickOutside={onClose} onkeydown={keydown} {style}>
   <div class="stage">
     <Wheel {options} size={210} onSpin={spin} spinDisabled={!canSpin} />
     <div class="what">
@@ -185,14 +198,14 @@
       {:else}
         <div class="menu-label">Options</div>
       {/if}
-      <WheelEditor bind:this={editor} {options} onChange={setOptions} />
+      <WheelEditor bind:this={editor} bind:draft={addDraft} {options} onChange={setOptions} />
     {/if}
   </div>
 </div>
 
 <style>
   /* the soundboard's frame: the menus' border, radius and shadow round a bg-2 panel */
-  .wheel-popover { width: 600px; max-width: calc(100vw - 12px); height: 480px; display: flex; background: var(--bg-2); border: 1px solid var(--line-menu); border-radius: var(--radius-lg); box-shadow: var(--shadow-3); color: var(--text); overflow: hidden; --pop-origin: bottom left; }
+  .wheel-popover { width: 600px; max-width: calc(100vw - 12px); height: 480px; display: flex; background: var(--bg-2); border: 1px solid var(--line-menu); border-radius: var(--radius-lg); box-shadow: var(--shadow-3); color: var(--text); overflow: hidden; outline: none; --pop-origin: bottom left; }
   .stage { width: 250px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 16px 14px; background: var(--bg-1); border-right: 1px solid var(--line); }
   .what { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; min-width: 0; max-width: 100%; }
   .what .name { font-weight: 700; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }

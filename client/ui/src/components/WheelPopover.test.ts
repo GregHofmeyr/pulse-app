@@ -170,3 +170,68 @@ describe('WheelPopover', () => {
     await vi.waitFor(() => expect(pop().querySelector<HTMLInputElement>('input[aria-label="Wheel name"]')?.value).toBe('New wheel'))
   })
 })
+
+// #264: a light net for closing mid-edit. The quick wheel's options outlive the popover; Escape in a field first
+// leaves it (or empties the add field), and only a second Escape closes the popover.
+describe('WheelPopover Escape', () => {
+  const esc = (el: Element) => {
+    const ev = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    el.dispatchEvent(ev)
+    flushSync()
+    return ev
+  }
+  const addField = () => pop().querySelector<HTMLInputElement>('input[aria-label="Add an option"]')!
+
+  it('the quick wheel survives closing and opening again', async () => {
+    await open()
+    type('Valheim, Apex')
+    unmount(cmp!)
+    cmp = undefined
+    document.body.innerHTML = ''
+    await open()
+    expect(options()).toEqual(['Valheim', 'Apex'])
+  })
+
+  it('Escape in the add field with text empties it, then leaves the field, then closes', async () => {
+    await open()
+    const f = addField()
+    f.focus()
+    f.value = 'Ape'
+    f.dispatchEvent(new Event('input'))
+    flushSync()
+    esc(f)
+    expect(addField().value).toBe('')
+    expect(document.activeElement).toBe(f)
+    expect(closed).toBe(0)
+    esc(f)
+    expect(document.activeElement).toBe(pop()) // out of the field, still in the popover
+    expect(closed).toBe(0)
+    esc(document.activeElement!)
+    expect(closed).toBe(1)
+  })
+
+  it('Escape in a saved wheel\'s name field leaves it (keeping the name), then a second closes', async () => {
+    await open()
+    ;[...pop().querySelectorAll<HTMLButtonElement>('.wheel-row')][1].click()
+    flushSync()
+    const name = pop().querySelector<HTMLInputElement>('input[aria-label="Wheel name"]')!
+    name.focus()
+    name.value = 'Games later'
+    name.dispatchEvent(new Event('input'))
+    flushSync()
+    esc(name)
+    expect(document.activeElement).toBe(pop())
+    expect(closed).toBe(0)
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('update_wheel', { id: 'W1', request: { name: 'Games later' } }))
+    esc(document.activeElement!)
+    expect(closed).toBe(1)
+  })
+
+  it('Escape on a button closes straight away', async () => {
+    await open()
+    const b = button('New wheel')
+    b.focus()
+    esc(b)
+    expect(closed).toBe(1)
+  })
+})

@@ -133,3 +133,145 @@ describe('where the Wheels pages are', () => {
     expect(nav[nav.indexOf('Chat') + 1]).toBe('Wheels')
   })
 })
+
+// #264: in either dialog, Escape with a wheel's edit or a new wheel open closes just that, asking first (inline) when
+// something typed would be lost; with neither open it closes the dialog as before.
+describe('Escape in Settings › Wheels', () => {
+  let closes = 0
+  async function inDialog(which: 'server' | 'mine') {
+    closes = 0
+    cmp = which === 'server'
+      ? mount(ServerSettings, { target: document.body, props: { server, onClose: () => closes++ } })
+      : mount(Settings, { target: document.body, props: { section: 'wheels', onClose: () => closes++ } })
+    flushSync()
+    if (which === 'server') { button('Wheels').click(); flushSync() }
+    await vi.waitFor(() => expect(document.querySelectorAll('.wheel-list li').length).toBeGreaterThan(0))
+    flushSync()
+  }
+  const esc = (el: Element = document.activeElement ?? document.body) => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+  }
+  const typeIn = (el: HTMLInputElement, text: string) => {
+    el.focus()
+    el.value = text
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+  }
+  const question = () => document.querySelector('.wheel-list .q, .new .q')?.textContent ?? null
+  const wheelName = (which: 'server' | 'mine') => (which === 'server' ? 'Games' : 'Tank')
+  const openEdit = (which: 'server' | 'mine') => {
+    document.querySelector<HTMLButtonElement>(`button[aria-label="Edit ${wheelName(which)}"]`)!.click()
+    flushSync()
+  }
+  const editOpen = () => document.querySelector('.wheel-list .edit') !== null
+
+  for (const which of ['server', 'mine'] as const) {
+    describe(which === 'server' ? 'Server settings' : 'your Settings', () => {
+      it('with nothing open, Escape closes the dialog as before', async () => {
+        await inDialog(which)
+        esc()
+        expect(closes).toBe(1)
+      })
+
+      it('an edit with nothing unsaved: Escape closes just the edit, then a second closes the dialog', async () => {
+        await inDialog(which)
+        openEdit(which)
+        expect(editOpen()).toBe(true)
+        esc()
+        expect(editOpen()).toBe(false)
+        expect(question()).toBeNull()
+        expect(closes).toBe(0)
+        // focus is back on the wheel's Edit button
+        expect(document.activeElement?.getAttribute('aria-label')).toBe(`Edit ${wheelName(which)}`)
+        esc()
+        expect(closes).toBe(1)
+      })
+
+      it('a renamed but unsaved name asks first; Keep editing goes back to the field, keeping the typing', async () => {
+        await inDialog(which)
+        openEdit(which)
+        const name = document.querySelector<HTMLInputElement>(`.edit input[aria-label="Name of ${wheelName(which)}"]`)!
+        typeIn(name, 'Renamed')
+        esc(name)
+        expect(question()).toBe('Discard changes?')
+        expect(document.activeElement?.textContent?.trim()).toBe('Keep editing')
+        expect(editOpen()).toBe(true)
+        expect(closes).toBe(0)
+        expect(invoke).not.toHaveBeenCalledWith('update_wheel', expect.objectContaining({ request: { name: 'Renamed' } }))
+        button('Keep editing').click()
+        flushSync()
+        expect(question()).toBeNull()
+        expect(document.activeElement).toBe(name)
+        expect(name.value).toBe('Renamed')
+      })
+
+      it('a second Escape while asking means Keep editing; Discard drops the typing and closes the edit', async () => {
+        await inDialog(which)
+        openEdit(which)
+        const name = document.querySelector<HTMLInputElement>(`.edit input[aria-label="Name of ${wheelName(which)}"]`)!
+        typeIn(name, 'Renamed')
+        esc(name)
+        esc()
+        expect(question()).toBeNull()
+        expect(editOpen()).toBe(true)
+        expect(closes).toBe(0)
+        esc()
+        button('Discard').click()
+        flushSync()
+        expect(editOpen()).toBe(false)
+        expect(closes).toBe(0)
+        expect(invoke).not.toHaveBeenCalledWith('update_wheel', expect.objectContaining({ request: { name: 'Renamed' } }))
+        openEdit(which)
+        expect(document.querySelector<HTMLInputElement>(`.edit input[aria-label="Name of ${wheelName(which)}"]`)!.value).toBe(wheelName(which))
+      })
+
+      it('an option typed but not added counts as unsaved', async () => {
+        await inDialog(which)
+        openEdit(which)
+        typeIn(document.querySelector<HTMLInputElement>('.edit input[aria-label="Add an option"]')!, 'Lethal Company')
+        esc()
+        expect(question()).toBe('Discard changes?')
+        button('Discard').click()
+        flushSync()
+        expect(editOpen()).toBe(false)
+      })
+
+      it('a new wheel: empty closes at once; with a name it asks, and Discard drops it', async () => {
+        await inDialog(which)
+        button('New wheel').click()
+        flushSync()
+        esc()
+        expect(document.querySelector('.new')).toBeNull()
+        expect(closes).toBe(0)
+        expect(document.activeElement?.textContent?.trim()).toBe('New wheel')
+        button('New wheel').click()
+        flushSync()
+        typeIn(document.querySelector<HTMLInputElement>('input[aria-label="New wheel\'s name"]')!, 'Dinner')
+        esc()
+        expect(question()).toBe('Discard changes?')
+        expect(closes).toBe(0)
+        esc() // Keep editing
+        expect(question()).toBeNull()
+        expect(document.querySelector<HTMLInputElement>('input[aria-label="New wheel\'s name"]')!.value).toBe('Dinner')
+        esc()
+        button('Discard').click()
+        flushSync()
+        expect(document.querySelector('.new')).toBeNull()
+        button('New wheel').click()
+        flushSync()
+        expect(document.querySelector<HTMLInputElement>('input[aria-label="New wheel\'s name"]')!.value).toBe('')
+        expect(invoke).not.toHaveBeenCalledWith('create_wheel', expect.anything())
+      })
+
+      it('Escape from the dialog itself (focus outside the pane) still closes the open edit first', async () => {
+        await inDialog(which)
+        openEdit(which)
+        document.querySelector<HTMLElement>('[role=dialog]')!.focus()
+        esc()
+        expect(editOpen()).toBe(false)
+        expect(closes).toBe(0)
+      })
+    })
+  }
+})

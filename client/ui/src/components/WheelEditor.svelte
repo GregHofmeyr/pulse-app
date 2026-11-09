@@ -6,15 +6,16 @@
   import { addOptions, shuffled, WHEEL_LIMITS } from '../lib/wheel'
   import { sliceColour } from '../lib/wheelColours'
 
-  let { options, onChange, disabled = false, autofocus = false }: {
+  let { options, onChange, disabled = false, autofocus = false, draft = $bindable('') }: {
     options: string[]
     onChange: (options: string[]) => void
     disabled?: boolean
     /** Focus the add field on mount (a new or cleared wheel). */
     autofocus?: boolean
+    /** What's typed in the add field and not yet added (the owner may ask whether it's unsaved, or empty it). */
+    draft?: string
   } = $props()
 
-  let draft = $state('')
   let note = $state('')
   let field: HTMLInputElement | undefined = $state()
 

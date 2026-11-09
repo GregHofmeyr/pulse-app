@@ -891,3 +891,77 @@ describe('Composer slash commands', () => {
     expect(onSend).toHaveBeenCalledWith('hello')
   })
 })
+
+// #264: Escape and a click or focus away close any suggestion list, keeping the text; Escape with none open keeps
+// its own meaning (cancel a reply).
+describe('Composer suggestion lists close on Escape and click-away', () => {
+  const listbox = () => document.querySelector('[role=listbox]')
+  const people = [{ id: 'U2', name: 'sam', username: 'sam', alts: ['sam'] }]
+  const cases: [string, string][] = [['mentions', 'hi @s'], ['emoji', 'hi :pog'], ['commands', '/wh']]
+  const withAll = (extra: Record<string, unknown> = {}) => show(undefined, { commands: COMMANDS, mentionables: people, serverId: 'S1', ...extra })
+
+  for (const [what, typed] of cases) {
+    it(`Escape closes the ${what} list, keeps the text, and is taken (a reply stays)`, () => {
+      const onCancelReply = vi.fn()
+      const box = withAll({ replyingTo: 'kim', onCancelReply })
+      type(box, typed)
+      expect(listbox()).not.toBeNull()
+      const ev = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      box.dispatchEvent(ev)
+      flushSync()
+      expect(listbox()).toBeNull()
+      expect(ev.defaultPrevented).toBe(true)
+      expect(value(box)).toBe(typed)
+      expect(onCancelReply).not.toHaveBeenCalled()
+      // with no list open, Escape cancels the reply as before
+      press(box, 'Escape')
+      expect(onCancelReply).toHaveBeenCalledTimes(1)
+    })
+
+    it(`a press outside the composer closes the ${what} list, and it stays closed until the text changes`, () => {
+      const box = withAll()
+      const outside = document.createElement('button')
+      document.body.append(outside)
+      type(box, typed)
+      expect(listbox()).not.toBeNull()
+      outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+      flushSync()
+      expect(listbox()).toBeNull()
+      expect(value(box)).toBe(typed)
+      caretAt(box, typed.length) // back in the box: still closed
+      flushSync()
+      expect(listbox()).toBeNull()
+      type(box, typed) // typing again (the token changing) opens it
+      expect(listbox()).not.toBeNull()
+    })
+
+    it(`focus leaving the composer closes the ${what} list`, () => {
+      const box = withAll()
+      const outside = document.createElement('input')
+      document.body.append(outside)
+      type(box, typed)
+      expect(listbox()).not.toBeNull()
+      outside.focus()
+      flushSync()
+      expect(listbox()).toBeNull()
+    })
+  }
+
+  it('a press on a row (inside the list) still picks it', async () => {
+    const box = withAll()
+    type(box, 'hi @s')
+    const opt = document.querySelector<HTMLElement>('[role=option]')!
+    opt.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+    await tick()
+    expect(box.querySelector('.mention-chip')?.textContent).toBe('@sam')
+  })
+
+  it('focus moving to the composer\'s own emoji button leaves the list alone', () => {
+    const box = withAll()
+    type(box, 'hi @s')
+    document.querySelector<HTMLElement>('button[aria-label="Emoji"]')!.focus()
+    flushSync()
+    expect(listbox()).not.toBeNull()
+  })
+})

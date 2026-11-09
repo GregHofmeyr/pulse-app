@@ -143,7 +143,7 @@
       }
       if (e.key === 'Escape') {
         e.preventDefault()
-        dismissed = open ? query : emojiOpen ? ':' + emojiQ : '/' + cmdQ
+        dismiss()
         return
       }
     }
@@ -161,6 +161,25 @@
       e.preventDefault() // taken: a panel around the box doesn't close too
       onCancelReply()
     }
+  }
+
+  // Esc, a press outside the composer or focus leaving it (#264) closes the list showing, until its token changes
+  function dismiss() {
+    if (shown) dismissed = open ? query : emojiOpen ? ':' + emojiQ : '/' + cmdQ
+  }
+  let wrap: HTMLDivElement | undefined = $state()
+  $effect(() => {
+    if (!shown) return
+    const down = (e: PointerEvent) => {
+      if (!wrap?.contains(e.target as Node)) dismiss()
+    }
+    window.addEventListener('pointerdown', down, true)
+    return () => window.removeEventListener('pointerdown', down, true)
+  })
+  function focusOut(e: FocusEvent) {
+    // the window losing focus (another app) isn't leaving the composer
+    if (!document.hasFocus()) return
+    if (!wrap?.contains(e.relatedTarget as Node | null)) dismiss()
   }
 
   function input(now: number) {
@@ -184,7 +203,7 @@
   }
 </script>
 
-<div class="wrap" class:has-wheel={!!wheelChannel}>
+<div class="wrap" class:has-wheel={!!wheelChannel} bind:this={wrap} onfocusout={focusOut}>
   {#if open}
     <div class="mentions menu-surface pop-in" role="listbox" aria-label="Mention someone">
       {#each options as o, i (o.id)}
