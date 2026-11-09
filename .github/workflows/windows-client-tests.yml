@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 jobs:
-  # Keep the job id `test`: with `key` below it names the Rust cache (v0-rust-release-tests-test-...), which both
+  # Keep the job id `test`: with `key` below it names the Rust cache (v0-rust-release-test-test-...), which both
   # callers share. They build the same thing (same profile, flags and commands), so pushes to main keep the cache warm
   # for releases; PULSE_COMMIT only reaches pulse-client, which the cache doesn't hold.
   test:
@@ -32,10 +32,12 @@ jobs:
         run: |
           rustup toolchain install --profile minimal
           rustc --version
-      # Its own cache, so it and release-windows' `build` don't overwrite each other's target dirs.
+      # Its own cache, so it and release-windows' `build` don't overwrite each other's target dirs. Named after the
+      # cargo profile: rust-cache's key hashes dependencies, not [profile.*], so a profile change needs a new name here
+      # or the old target dir keeps being restored as a full match and the new one is never saved (#253).
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: release-tests
+          key: release-test
           save-if: ${{ inputs.save-cache }}
       - name: Placeholder UI dist (tauri::generate_context! needs the folder)
         shell: bash
