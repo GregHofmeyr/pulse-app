@@ -3,14 +3,14 @@
   import { api, errorText } from '../lib/tauri'
   import { channelLevel, conversationName } from '../lib/conversations'
   import { CHANNEL_LEVELS } from '../lib/notifyLevels'
-  import Icon from './Icon.svelte'
   import { clickOutside } from '../lib/actions'
   import type { Channel } from '../lib/protocol/Channel'
-  import { MUTE_FOR, muteUntil } from '../lib/muteDurations'
+  import { muteUntil } from '../lib/muteDurations'
   import { openRename } from '../lib/profileCard.svelte'
   import { onMount } from 'svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
+  import MenuFlyout from './MenuFlyout.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
   import { pickGroupIcon, removeGroupIcon } from '../lib/groupIcon.svelte'
 
@@ -50,12 +50,28 @@
     }
   }
   const muteFor = (minutes: number | null) => run(() => api.setMute('channel', channel.id, muteUntil(minutes)))
-  // The bell's popover on a server channel (#203): its notification level, the channel menu's choices (#195) with
-  // yours ticked. DMs and groups have none.
+  // The bell's popover (#203, #236): the right-click menu's items, Mute … as the durations flyout (Unmute … while
+  // muted) and, on a server channel, Notifications as the channel menu's levels flyout (#195) with yours ticked,
+  // muted or not. DMs and groups have no levels.
   const withLevels = $derived(withMute && !at && channel.server_id !== null)
   const level = $derived(channelLevel(app.state, channel.id))
-  // the right-click menu's mute flyout (#190; the channel menu's, #131)
+  const levelChoices = $derived(CHANNEL_LEVELS.map((l) => ({ label: l.label, checked: l.level === level })))
+  const pickLevel = (i: number) => run(() => api.setNotifyLevel('channel', channel.id, CHANNEL_LEVELS[i].level))
+  // what the bell's items call it: as the channel menu does on a server, else as the conversation menu does
+  const noun = $derived(channel.server_id !== null ? 'channel' : 'conversation')
+  const flyoutName = $derived(channel.server_id === null ? conversationName(app.state, channel.id) : channel.kind === 'voice' ? channel.name : `#${channel.name}`)
+  // the mute flyout (#190; the channel menu's, #131) and the levels one
   let flyout = $state<ReturnType<typeof MuteFlyout>>()
+  let levelFlyout = $state<ReturnType<typeof MenuFlyout>>()
+  const flyouts = () => [flyout, levelFlyout]
+  // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
+  function keydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && flyouts().some((f) => f?.isOpen())) {
+      e.preventDefault()
+      e.stopPropagation()
+      for (const f of flyouts()) f?.close(false)
+    }
+  }
 
   // By its button: under it, lined up on its right edge, kept 8px inside the window; above it when there's no room
   // below. The layout size (offsetWidth): the .pop-in entrance scales the box while it runs.
@@ -81,8 +97,8 @@
   onpointerover={(e) => {
     // another of the menu's own items under the pointer closes the flyout (after the hover-intent wait)
     const t = (e.target as Element).closest?.('.menu-item')
-    if (t && t.parentElement === el && t !== flyout?.trigger()) flyout?.closeSoon()
-  }}>
+    if (t && t.parentElement === el) for (const f of flyouts()) if (t !== f?.trigger()) f?.closeSoon()
+  }} onkeydown={keydown}>
   {#if confirmLeave}
     <p class="q">Leave {conversationName(app.state, channel.id)}? You'll lose access to its history.</p>
     <div class="row">
@@ -99,22 +115,15 @@
           onPick={muteFor} />
       {/if}
     {:else if withMute}
+      <!-- the bell (#203, #236): the same items and flyouts as the right-click menus -->
       {#if muted}
-        <button class="menu-item" role="menuitem" onclick={() => run(() => api.clearMute('channel', channel.id))}>Unmute</button>
+        <button class="menu-item" role="menuitem" onclick={() => run(() => api.clearMute('channel', channel.id))}>Unmute {noun}</button>
       {:else}
-        <span class="menu-label">Mute</span>
-        {#each MUTE_FOR as d (d.label)}
-          <button class="menu-item" role="menuitem" onclick={() => muteFor(d.minutes)}>{d.label}</button>
-        {/each}
+        <MuteFlyout bind:this={flyout} label="Mute {noun}" flyoutLabel="Mute {flyoutName} for" menuLeft={place?.left ?? 0} menuTop={place?.top ?? 0} onPick={muteFor} />
       {/if}
       {#if withLevels}
-        <span class="menu-sep"></span>
-        <span class="menu-label">Notifications</span>
-        {#each CHANNEL_LEVELS as l (l.label)}
-          <button class="menu-item" role="menuitemradio" aria-checked={l.level === level} onclick={() => run(() => api.setNotifyLevel('channel', channel.id, l.level))}>
-            <span class="grow">{l.label}</span>{#if l.level === level}<Icon name="check" size={14} />{/if}
-          </button>
-        {/each}
+        <MenuFlyout bind:this={levelFlyout} label="Notifications" flyoutLabel="Notifications for {flyoutName}" menuLeft={place?.left ?? 0} menuTop={place?.top ?? 0}
+          choices={levelChoices} onPick={pickLevel} />
       {/if}
     {/if}
     {#if withManage}
@@ -152,7 +161,6 @@
   /* the pop-in grows from the button's corner, or from the cursor (#173) */
   .menu.anchored { --pop-origin: top right; }
   .menu.ctx { --pop-origin: top left; }
-  .grow { flex: 1; }
   .q { margin: 6px 8px; font-size: 13px; color: var(--text-2); }
   .row { display: flex; gap: 4px; }
   .err { margin: 6px 8px 2px; font-size: 12px; color: var(--danger-text); }

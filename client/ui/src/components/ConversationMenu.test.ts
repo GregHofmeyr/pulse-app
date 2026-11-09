@@ -68,8 +68,9 @@ describe('ConversationMenu anchored to its button', () => {
   })
 })
 
-// #203: the bell's popover offers a server channel's notification level, as its right-click menu's flyout does.
-describe("the bell's popover: notification levels", () => {
+// #203, #236: the bell's popover is the right-click menu's items: Mute … as the durations flyout (Unmute … while
+// muted) and, on a server channel, Notifications as the levels flyout with yours ticked, muted or not.
+describe("the bell's popover", () => {
   const general: Channel = { id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }
   const dm: Channel = { id: 'D1', server_id: null, kind: 'dm', name: null, position: 0 }
   type Level = { target_kind: 'server' | 'channel'; target_id: string; level: 'all' | 'mentions' | 'nothing' }
@@ -81,44 +82,94 @@ describe("the bell's popover: notification levels", () => {
     cmp = mount(ConversationMenu, { target: document.body, props: { channel, muted, show: 'mute', anchor, onClose, onLeft: () => {} } })
     flushSync()
   }
-  const radios = () => [...document.querySelectorAll<HTMLButtonElement>('[role=menu] [role=menuitemradio]')]
-  const ticked = () => radios().filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.textContent?.trim())
+  const menu = () => document.querySelector<HTMLElement>('.menu')!
+  const items = () => [...menu().querySelectorAll<HTMLButtonElement>(':scope > [role=menuitem]')]
+  const labels = () => items().map((b) => b.textContent?.trim())
+  const item = (label: string) => items().find((b) => b.textContent?.trim() === label)!
+  const hover = (el: Element) => { el.dispatchEvent(new Event('pointerover', { bubbles: true })); el.dispatchEvent(new Event('pointerenter')); flushSync() }
+  const flyout = (name: string) => document.querySelector<HTMLElement>(`[role=menu][aria-label="${name}"]`)
+  const choices = (name: string) => [...(flyout(name)?.querySelectorAll<HTMLButtonElement>('[role^=menuitem]') ?? [])]
+  const ticked = (name: string) => choices(name).filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.textContent?.trim())
   const settle = () => new Promise((r) => setTimeout(r, 0))
   beforeEach(() => {
     invoke.mockReset()
     invoke.mockResolvedValue(undefined)
   })
 
-  it('lists the channel menu’s choices under the mute durations, Follow server ticked by default', () => {
+  it('no inline list: Mute channel and Notifications, each a flyout as in the channel menu', () => {
     open(general)
-    expect([...document.querySelectorAll('.menu-label')].map((l) => l.textContent)).toEqual(['Mute', 'Notifications'])
-    expect(radios().map((b) => b.textContent?.trim())).toEqual(['Follow server', 'All messages', 'Only @mentions', 'Nothing'])
-    expect(ticked()).toEqual(['Follow server'])
-    // the tick is the status menu's check icon, on the ticked one only
-    expect(radios().map((b) => !!b.querySelector('svg'))).toEqual([true, false, false, false])
+    expect(document.querySelectorAll('.menu-label')).toHaveLength(0)
+    expect(labels()).toEqual(['Mute channel', 'Notifications'])
+    expect(items().map((b) => b.getAttribute('aria-haspopup'))).toEqual(['menu', 'menu'])
+    expect(flyout('Mute #general for')).toBeNull()
   })
 
-  it("ticks the channel's own level, also while it's muted", () => {
+  it('hovering Mute channel shows the durations; picking one mutes it and closes', async () => {
+    open(general)
+    hover(item('Mute channel'))
+    expect(choices('Mute #general for').map((b) => b.textContent?.trim()))
+      .toEqual(['For 15 minutes', 'For 1 hour', 'For 8 hours', 'For 24 hours', 'Until I turn it back on'])
+    // the bell is near the window's right: the flyout opens to the left
+    expect(flyout('Mute #general for')!.dataset.side).toBe('left')
+    choices('Mute #general for')[4].click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_mute', { targetKind: 'channel', targetId: 'C1', until: null })
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('Notifications lists the channel menu’s levels, Follow server ticked by default', () => {
+    open(general)
+    hover(item('Notifications'))
+    expect(choices('Notifications for #general').map((b) => b.textContent?.trim())).toEqual(['Follow server', 'All messages', 'Only @mentions', 'Nothing'])
+    expect(ticked('Notifications for #general')).toEqual(['Follow server'])
+    // hovering the other item closes it (after the hover-intent wait)
+    vi.useFakeTimers()
+    hover(item('Mute channel'))
+    vi.advanceTimersByTime(500); flushSync()
+    vi.useRealTimers()
+    expect(flyout('Notifications for #general')).toBeNull()
+  })
+
+  it('muted (#236): Unmute channel, and the levels are still there with its own ticked', async () => {
     open(general, [{ target_kind: 'channel', target_id: 'C1', level: 'nothing' }, { target_kind: 'server', target_id: 'S1', level: 'mentions' }], true)
-    expect(ticked()).toEqual(['Nothing'])
+    expect(labels()).toEqual(['Unmute channel', 'Notifications'])
+    hover(item('Notifications'))
+    expect(ticked('Notifications for #general')).toEqual(['Nothing'])
+    item('Unmute channel').click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('clear_mute', { targetKind: 'channel', targetId: 'C1' })
   })
 
-  it('picking one sets it and closes; Follow server puts the default back', async () => {
+  it('picking a level sets it and closes; Follow server puts the default back', async () => {
     open(general)
-    radios().find((b) => b.textContent?.trim() === 'Only @mentions')!.click()
+    hover(item('Notifications'))
+    choices('Notifications for #general').find((b) => b.textContent?.trim() === 'Only @mentions')!.click()
     await settle()
     expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'channel', targetId: 'C1', level: 'mentions' })
     expect(onClose).toHaveBeenCalled()
     unmount(cmp!)
     open(general, [{ target_kind: 'channel', target_id: 'C1', level: 'mentions' }])
-    radios().find((b) => b.textContent?.trim() === 'Follow server')!.click()
+    hover(item('Notifications'))
+    choices('Notifications for #general').find((b) => b.textContent?.trim() === 'Follow server')!.click()
     await settle()
     expect(invoke).toHaveBeenLastCalledWith('set_notify_level', { targetKind: 'channel', targetId: 'C1', level: null })
   })
 
-  it('a DM or group has no levels', () => {
+  it('Escape with a flyout open closes just the flyout', () => {
+    open(general)
+    hover(item('Mute channel'))
+    item('Mute channel').focus()
+    item('Mute channel').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(flyout('Mute #general for')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('a DM or group: Mute conversation (or Unmute conversation), no levels', () => {
     open(dm)
-    expect(radios()).toEqual([])
-    expect([...document.querySelectorAll('.menu-label')].map((l) => l.textContent)).toEqual(['Mute'])
+    expect(labels()).toEqual(['Mute conversation'])
+    unmount(cmp!)
+    open(dm, [], true)
+    expect(labels()).toEqual(['Unmute conversation'])
   })
 })

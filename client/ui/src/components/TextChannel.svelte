@@ -532,9 +532,9 @@
       {/if}
       <button class="icon-btn" aria-label="Add people" data-tip="Add people" onclick={onAddPeople}><Icon name="userPlus" size={17} /></button>
     {/if}
-    <button bind:this={muteBtn} class="icon-btn hbtn" class:on={muted} aria-label={muted ? 'Unmute' : 'Mute'} data-tip={muted ? 'Muted — click to unmute' : 'Mute'} data-menu-toggle
-      aria-haspopup={muted ? undefined : 'menu'} aria-expanded={menu === 'mute'}
-      onclick={() => (muted ? void api.clearMute('channel', channelId) : (menu = menu === 'mute' ? null : 'mute'))}><Icon name={muted ? 'bellOff' : 'bell'} size={17} /></button>
+    <button bind:this={muteBtn} class="icon-btn hbtn" class:on={muted} aria-label={muted ? 'Muted' : 'Mute'} data-tip={muted ? 'Muted' : 'Mute'} data-menu-toggle
+      aria-haspopup="menu" aria-expanded={menu === 'mute'}
+      onclick={() => (menu = menu === 'mute' ? null : 'mute')}><Icon name={muted ? 'bellOff' : 'bell'} size={17} /></button>
     {#if isPrivate}
       <button bind:this={moreBtn} class="icon-btn" aria-label="More" aria-haspopup="menu" aria-expanded={menu === 'manage'} data-tip="More" data-menu-toggle
         onclick={() => (menu = menu === 'manage' ? null : 'manage')}><Icon name="dots" size={17} /></button>

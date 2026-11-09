@@ -303,6 +303,22 @@ describe('the mute flyout', () => {
     expect(flyout()!.dataset.side).toBe('right')
   })
 
+  it('in_a_window_too_narrow_for_either_side_it_is_pulled_back_inside_the_right_edge', () => {
+    // #134: a 400px window, the menu 230px wide at 40: 122px to its right, short of the flyout's 204
+    const w = window.innerWidth
+    Object.assign(window, { innerWidth: 400 })
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('menu') ? 230 : 0 })
+    try {
+      rightClick('general', 40)
+      hover(muteItem())
+      expect(flyout()!.dataset.side).toBe('right')
+      expect(flyout()!.style.marginLeft).toBe(`${-(204 - 122)}px`)
+    } finally {
+      vi.restoreAllMocks()
+      Object.assign(window, { innerWidth: w })
+    }
+  })
+
   it('arrow_right_or_enter_opens_it_with_focus_on_the_first_duration_and_arrows_move_inside_it', () => {
     rightClick('general')
     muteItem().focus()

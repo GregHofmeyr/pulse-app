@@ -54,6 +54,22 @@ describe('TextChannel: rendered messages', () => {
     document.body.innerHTML = ''
   })
 
+  // #236: the bell on a muted channel opens its popover (Unmute plus the levels) instead of unmuting at once
+  it('the bell on a muted channel opens the popover rather than unmuting', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    vi.mocked(invoke).mockClear()
+    app.state = { ...app.state, mutes: [{ target_kind: 'channel', target_id: 'C1', until: null }] }
+    flushSync()
+    const bell = document.querySelector<HTMLButtonElement>('.hbtn[aria-haspopup=menu][data-tip^="Muted"]')!
+    expect(bell).not.toBeNull()
+    bell.click()
+    flushSync()
+    expect(vi.mocked(invoke).mock.calls.map(([c]) => c)).not.toContain('clear_mute')
+    expect(bell.getAttribute('aria-expanded')).toBe('true')
+    const items = [...document.querySelectorAll<HTMLElement>('.menu > [role=menuitem]')].map((b) => b.textContent?.trim())
+    expect(items).toEqual(['Unmute channel', 'Notifications'])
+  })
+
   it('someone typing renders no message again', () => {
     expect(pills()).toEqual(['@sam'])
     app.state = applyEvent(app.state, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U2' } }, Date.now())

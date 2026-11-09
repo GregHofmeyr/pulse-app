@@ -3,10 +3,12 @@
   // (MuteFlyout), and "Notifications" and its levels with the current one ticked (#195), in the channel menu and the
   // server tab's (#161). It renders the item and the flyout as the menu's own children; the menu asks it to close
   // (another item hovered, the arrow keys moving on, Escape) through the exported functions.
-  // Beside the menu, to the left unless the menu is too near the left edge. Hover opens it without moving focus;
+  // Beside the menu, to the left unless the menu is too near the left edge; in a window too narrow for either side,
+  // pulled back over the menu so it stays inside (#134). Hover opens it without moving focus;
   // ArrowRight or Enter opens it with focus on its first choice; ArrowLeft or Escape closes just it, back on the item.
   import { flushSync } from 'svelte'
   import { closeTimer } from '../lib/hoverIntent'
+  import { placeFlyout } from '../lib/menuPlace'
   import Icon from './Icon.svelte'
 
   let { label, flyoutLabel, menuLeft, menuTop, choices, onPick, item = '' }: {
@@ -26,8 +28,6 @@
     item?: string
   } = $props()
 
-  const FLYOUT_W = 200
-  const GAP = 4
   /** The choices at 32px, 2px apart, 6px padding and a 1px border. */
   const SUB_H = $derived(choices.length * 32 + (choices.length - 1) * 2 + 2 * 6 + 2)
   const radio = $derived(choices.some((c) => c.checked !== undefined))
@@ -36,7 +36,10 @@
   let itemEl = $state<HTMLButtonElement>()
   let sub = $state<HTMLElement>()
   let subOpen = $state(false)
-  const subSide = $derived<'left' | 'right'>(menuLeft - GAP - FLYOUT_W < 8 ? 'right' : 'left')
+  /** The menu's layout width (the item's parent is the menu), measured when the flyout opens. */
+  let menuW = $state(0)
+  const place = $derived(placeFlyout(menuLeft, menuW))
+  const subSide = $derived(place.side)
   let subTop = $state(0)
   const subItems = () => (sub ? [...sub.querySelectorAll<HTMLButtonElement>('[role^=menuitem]')] : [])
   function focusSub(i: number) {
@@ -45,6 +48,7 @@
   }
   function openSub(focusFirst: boolean) {
     if (!itemEl) return
+    menuW = itemEl.parentElement?.offsetWidth ?? 0
     // level with the item (its first choice beside it: the flyout's 6px padding and 1px border), kept inside
     // the window
     const want = menuTop + itemEl.offsetTop - 7
@@ -111,7 +115,8 @@
 </button>
 {#if subOpen}
   <div bind:this={sub} id={flyoutId} class="flyout menu-surface" data-side={subSide} role="menu" aria-label={flyoutLabel} tabindex="-1"
-    style:top="{subTop}px" onkeydown={subKeydown} onpointerenter={later.cancel}>
+    style:top="{subTop}px" style:margin-left={place.shift && subSide === 'right' ? `${-place.shift}px` : null}
+    style:margin-right={place.shift && subSide === 'left' ? `${-place.shift}px` : null} onkeydown={subKeydown} onpointerenter={later.cancel}>
     {#each choices as c, i (c.label)}
       {#if radio}
         <button type="button" class="menu-item" role="menuitemradio" aria-checked={!!c.checked} onclick={() => onPick(i)}>
