@@ -23,6 +23,9 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import WheelLine from './WheelLine.svelte'
+  import PollCard from './PollCard.svelte'
+  import { endedSummary, pollOver } from '../lib/poll'
+  import { closePoll } from '../lib/polls.svelte'
   import { mentionLookup, mentionName, showMentions, styleMentions } from '../lib/mentionStyles'
   import { nameCss, resolveNameStyle } from '../lib/nameStyle'
   import { displayName, roleColorFor, userOf } from '../lib/selectors'
@@ -169,6 +172,9 @@
       showError(errorText(e))
       void refreshPins(message.channel_id)
     })
+  // your own poll, still open, can be ended from the message's menu (#157); a refusal fetches the poll afresh
+  const endable = $derived(!!message.poll && mine && !pollOver(message.poll, now))
+  const endPoll = () => closePoll(message).catch((e) => showError(errorText(e)))
   function messageAuthor(userId: string) {
     openDm(userId).then((channelId) => (ui.goTo = channelId), (e) => showError(errorText(e)))
   }
@@ -260,6 +266,11 @@
   {:else if message.wheel}
     <!-- a picker wheel spin (#158): spins live as it arrives, then the line -->
     <WheelLine {message} {serverId} {time} />
+  {:else if message.poll_ended}
+    <!-- a poll's ended line (#157): See poll jumps to the poll -->
+    {@const pe = message.poll_ended}
+    <div class="system pin-line" data-message-id={message.id}><Icon name="poll" size={14} /> {nameOf(pe.author_id)}'s poll ended{endedSummary(pe.winners, pe.votes)} ·
+      <button type="button" class="link-btn" onclick={() => void jumpTo(message.channel_id, pe.poll_message_id)}>See poll</button> <span class="time">{time}</span></div>
   {:else}
   <div class="system" data-message-id={message.id}>{message.content} <span class="time">{time}</span></div>
   {/if}
@@ -269,7 +280,7 @@
     onpointerenter={() => (rowHover = true)} onpointerleave={() => (rowHover = false)} oncontextmenu={(e) => openMsgMenu(e, e.currentTarget)}>
     {#if replyTo}
       <div class="reply"><span class="hook"></span><strong>{#if replyTo.author_id}<Name userId={replyTo.author_id} {serverId} text={nameOf(replyTo.author_id)} />{:else}{nameOf(null)}{/if}</strong>
-        <span class="snippet">{replyTo.deleted ? 'original message deleted' : showMentions(replyTo.content, lookup, (id) => displayName(app.state, serverId, id)).slice(0, 120)}</span></div>
+        <span class="snippet">{replyTo.deleted ? 'original message deleted' : replyTo.poll ? `📊 ${replyTo.poll.question}` : showMentions(replyTo.content, lookup, (id) => displayName(app.state, serverId, id)).slice(0, 120)}</span></div>
     {:else if message.reply_to_id}
       <div class="reply"><span class="hook"></span><span class="snippet">original message not loaded</span></div>
     {/if}
@@ -288,6 +299,9 @@
           <EmojiBox bind:this={editBox} bind:text={draft} class="edit" label="Edit message" describedby="{uid}-hint" onkeydown={key} mention={editMention} />
           <small class="hint" id="{uid}-hint">Enter to save · Esc to cancel · Shift+Enter for a new line</small>
           {#if editError}<p class="err" role="alert">{editError}</p>{/if}
+        {:else if message.poll}
+          <!-- a poll (#157): the card stands in for its text (which is the poll for clients that don't know polls) -->
+          <PollCard {message} {nameOf} />
         {:else}
           <!-- renderMessage output is DOMPurify-sanitised (allow-list, cached per message); the only {@html} in the app. -->
           {@const html = renderMessage(message, mentionNames, customEmoji)}
@@ -305,7 +319,7 @@
           <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={16} /></button>
           <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={16} /></button>
           {#if mine}
-            <button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>
+            {#if !message.poll}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
             {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
             <DeleteButton what={message.thread_root_id ? 'reply' : 'message'} onConfirm={() => void del()} />
           {/if}
@@ -342,7 +356,8 @@
 <!-- outside the row, so focus in the menu doesn't count as focus in the message (its action bar) -->
 {#if msgMenu}
   {#key msgMenu}<MessageMenu pinned={!!pin} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
-    onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))} onClose={() => (msgMenu = null)} />{/key}
+    onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
+    onEndPoll={endable ? endPoll : undefined} onClose={() => (msgMenu = null)} />{/key}
 {/if}
 {#if authorMenu && message.author_id}
   {#key authorMenu}<MemberMenu {serverId} userId={message.author_id} x={authorMenu.x} y={authorMenu.y} opener={authorMenu.opener}

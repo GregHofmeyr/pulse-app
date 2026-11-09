@@ -503,6 +503,7 @@
       spinWheel(channelId, { options }).catch((e) => (error = errorText(e)))
     },
     openWheel: (prefill) => composer?.openWheel(prefill),
+    openPoll: (prefill) => composer?.openPoll(prefill),
   }
   function send(text: string) {
     // a slash command (`/wheel a, b, c`, lib/commands.ts) runs instead of being sent (#158, #262)
@@ -652,7 +653,7 @@
     {/if}
   {:else}
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate || isVoice ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
-    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} commands={COMMANDS} />
+    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} pollChannel={channelId} commands={COMMANDS} />
   {/if}
   {#if repliesRoot}
     {#key repliesRoot.id}

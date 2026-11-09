@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextChoices, parsePollArgs, percent, pollReady, pollStatus, totalLabel, winners } from './poll'
+import { endedSummary, nextChoices, parsePollArgs, percent, pollReady, pollStatus, totalLabel, winners } from './poll'
 import type { Poll } from './protocol/Poll'
 
 const poll = (over: Partial<Poll> = {}): Poll => ({
@@ -14,6 +14,14 @@ const poll = (over: Partial<Poll> = {}): Poll => ({
   mine: [],
   results: null,
   ...over,
+})
+
+describe('the ended line', () => {
+  it('reads as the server words it', () => {
+    expect(endedSummary(['Valheim'], 4)).toBe(': Valheim won (4 votes)')
+    expect(endedSummary(['a', 'b', 'c'], 1)).toBe(': a, b and c tied (1 vote each)')
+    expect(endedSummary([], 0)).toBe(' with no votes')
+  })
 })
 
 describe('/poll arguments', () => {

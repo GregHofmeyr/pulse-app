@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { applyCommand, commandQuery, COMMANDS, parseCommand, suggestCommands, typingCommand, type CommandContext } from './commands'
 
-const ctx = (): CommandContext => ({ spinWheel: vi.fn(), openWheel: vi.fn() })
+const ctx = (): CommandContext => ({ spinWheel: vi.fn(), openWheel: vi.fn(), openPoll: vi.fn() })
 
 describe('the command registry', () => {
   it('has /wheel with its usage, description and tip', () => {
@@ -9,6 +9,19 @@ describe('the command registry', () => {
     expect(w.usage).toBe('/wheel option1, option2, option3')
     expect(w.description).toBe('Spin a quick wheel (or just /wheel to open it)')
     expect(w.hint).toBe('Enter to spin')
+  })
+  it('has /poll, which opens the poll composer filled with what was typed (never posts)', () => {
+    const p = COMMANDS.find((c) => c.name === 'poll')!
+    expect(p.usage).toBe('/poll Question? option1, option2')
+    expect(p.description).toBe('Start a poll')
+    expect(p.hint).toBe('Enter to set it up')
+    const c = ctx()
+    const parsed = parseCommand('/poll Where to eat? Pizza, Sushi')!
+    parsed.command.run(parsed.args, c)
+    expect(c.openPoll).toHaveBeenCalledWith({ question: 'Where to eat?', options: ['Pizza', 'Sushi'] })
+    const d = ctx()
+    parseCommand('/POLL')!.command.run('', d)
+    expect(d.openPoll).toHaveBeenCalledWith({ question: '', options: [] })
   })
   it('names are unique, lower case words', () => {
     const names = COMMANDS.map((c) => c.name)

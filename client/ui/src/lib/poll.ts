@@ -77,3 +77,14 @@ const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 /** The total under the options: people who voted ("4 votes"; "4 voters" on multiple choice, where a person may
  *  have several votes). */
 export const totalLabel = (p: Poll) => plural(p.voters, p.multi ? 'voter' : 'vote')
+
+/** "a", "a and b", "a, b and c". */
+const joinNames = (names: string[]) => (names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`)
+
+/** What follows "alex's poll ended" on its line: ": Valheim won (4 votes)", ": a and b tied (2 votes each)", or
+ *  " with no votes" (as the server words the line's text). */
+export function endedSummary(winners: string[], votes: number): string {
+  if (!winners.length) return ' with no votes'
+  if (winners.length === 1) return `: ${winners[0]} won (${plural(votes, 'vote')})`
+  return `: ${joinNames(winners)} tied (${plural(votes, 'vote')} each)`
+}

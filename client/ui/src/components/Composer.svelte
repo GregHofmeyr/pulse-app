@@ -9,6 +9,7 @@
   import EmojiBox, { type Snap } from './EmojiBox.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
   import WheelPopover from './WheelPopover.svelte'
+  import PollComposer from './PollComposer.svelte'
   import { customToken, savedTone, search, twemojiUrl, withSkin, type Std } from '../lib/emoji'
   import { applyEmoji, emojiQuery, insertAt } from '../lib/emojiComplete'
   import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
@@ -31,6 +32,7 @@
     mentionables = [],
     serverId = null,
     wheelChannel = null,
+    pollChannel = null,
     commands = [],
   }: {
     placeholder: string
@@ -45,6 +47,8 @@
     serverId?: string | null
     /** The chat a picker wheel spins in (#158): shows the wheel button. None where wheels don't spin (threads). */
     wheelChannel?: string | null
+    /** The chat a poll posts in (#157): shows the poll button. None where polls don't go (threads). */
+    pollChannel?: string | null
     /** Slash commands that run here (#262, lib/commands.ts): suggested on `/`, with a usage tip. None where they don't. */
     commands?: readonly SlashCommand[]
   } = $props()
@@ -95,6 +99,10 @@
   let wheeling = $state(false)
   let wheelPrefill = $state<string[] | null>(null)
   let wheelBtn: HTMLButtonElement | undefined = $state()
+  // the poll composer (#157); `pollPrefill`: what `/poll` was given
+  let polling = $state(false)
+  let pollPrefill = $state<{ question: string; options: string[] } | null>(null)
+  let pollBtn: HTMLButtonElement | undefined = $state()
 
   function syncCaret() {
     caret = box.readSel()?.start ?? text.length
@@ -193,8 +201,16 @@
 
   /** Open the wheel popover (`/wheel` with fewer than two options), starting a quick wheel with `prefill`. */
   export function openWheel(prefill: string[] = []) {
+    polling = false
     wheelPrefill = prefill
     wheeling = true
+  }
+
+  /** Open the poll composer (`/poll`), filled with what was typed after it. */
+  export function openPoll(prefill: { question: string; options: string[] }) {
+    wheeling = false
+    pollPrefill = prefill
+    polling = true
   }
 
   /** Focus the box: the caret where it was, or (`atEnd`) after all of the text. */
@@ -203,7 +219,7 @@
   }
 </script>
 
-<div class="wrap" class:has-wheel={!!wheelChannel} bind:this={wrap} onfocusout={focusOut}>
+<div class="wrap" class:has-wheel={!!wheelChannel} class:has-poll={!!pollChannel} bind:this={wrap} onfocusout={focusOut}>
   {#if open}
     <div class="mentions menu-surface pop-in" role="listbox" aria-label="Mention someone">
       {#each options as o, i (o.id)}
@@ -263,6 +279,15 @@
       {/key}
     {/if}
   {/if}
+  {#if pollChannel}
+    <button bind:this={pollBtn} class="emoji-btn poll-btn" class:on={polling} type="button" aria-label="Poll" data-tip="Poll" data-menu-toggle
+      aria-haspopup="dialog" aria-expanded={polling} onclick={() => { pollPrefill = null; polling = !polling }}><Icon name="poll" size={20} /></button>
+    {#if polling && pollBtn}
+      {#key pollPrefill}
+        <PollComposer anchor={pollBtn} channelId={pollChannel} prefill={pollPrefill} onClose={() => (polling = false)} />
+      {/key}
+    {/if}
+  {/if}
 </div>
 
 <style>
@@ -291,4 +316,8 @@
   /* grows with what's in it (images included), up to 200px, then scrolls */
   .wrap :global(.composer-input) { min-height: 48px; max-height: 200px; padding: 14px 48px 14px 14px; }
   .wrap.has-wheel :global(.composer-input) { padding-right: 84px; }
+  /* the poll button (#157), left of the wheel button */
+  .poll-btn { right: 80px; }
+  .poll-btn.on { background: var(--bg-4); color: var(--text); }
+  .wrap.has-poll :global(.composer-input) { padding-right: 120px; }
 </style>

@@ -1,11 +1,10 @@
 // Slash commands typed in the message box (#262): the one registry the composer suggests from (type `/`), shows
 // the usage tip for, and TextChannel runs on send.
 //
-// To add a command, add one entry to COMMANDS below, e.g.
-//   { name: 'poll', usage: '/poll Question? option1, option2', description: 'Start a poll', hint: 'Enter to set it up', run: (args, ctx) => ctx.openPoll(args) },
-// and, if `run` needs something new from the chat (a popover to open, say), add it to CommandContext and pass it
+// To add a command, add one entry to COMMANDS below (`/poll` is the simplest to copy), and, if `run` needs something new from the chat (a popover to open, say), add it to CommandContext and pass it
 // where TextChannel builds its context (`commandContext`).
 
+import { parsePollArgs } from './poll'
 import { addOptions, splitOptions, WHEEL_LIMITS } from './wheel'
 
 /** What a command can do in the chat it was sent from. TextChannel provides it. */
@@ -14,6 +13,8 @@ export interface CommandContext {
   spinWheel: (options: string[]) => void
   /** Open the composer's wheel popover, starting a quick wheel with `prefill`. */
   openWheel: (prefill: string[]) => void
+  /** Open the poll composer (#157), filled with what was typed after `/poll`. */
+  openPoll: (prefill: { question: string; options: string[] }) => void
 }
 
 export interface SlashCommand {
@@ -42,6 +43,14 @@ export const COMMANDS: SlashCommand[] = [
       if (options.length >= WHEEL_LIMITS.minOptions) ctx.spinWheel(addOptions([], args).options)
       else ctx.openWheel(options)
     },
+  },
+  {
+    name: 'poll',
+    usage: '/poll Question? option1, option2',
+    description: 'Start a poll',
+    hint: 'Enter to set it up',
+    // fills the poll composer (question up to the `?`, options after it) so the toggles can still be set (#157)
+    run: (args, ctx) => ctx.openPoll(parsePollArgs(args)),
   },
 ]
 

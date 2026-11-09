@@ -9,7 +9,7 @@
   import MenuFlyout from './MenuFlyout.svelte'
   import type { PinDuration } from '../lib/protocol/PinDuration'
 
-  let { pinned, x, y, opener, onPin, onUnpin, onClose }: {
+  let { pinned, x, y, opener, onPin, onUnpin, onEndPoll, onClose }: {
     /** The message is pinned: Unpin message instead of Pin message. */
     pinned: boolean
     x: number
@@ -18,6 +18,8 @@
     opener: HTMLElement
     onPin: (duration: PinDuration) => unknown
     onUnpin: () => unknown
+    /** Set on your own open poll (#157): End poll. */
+    onEndPoll?: () => unknown
     onClose: () => void
   } = $props()
 
@@ -89,6 +91,9 @@
   {:else}
     <MenuFlyout bind:this={flyout} label="Pin message" flyoutLabel="Pin message for" menuLeft={left} menuTop={top} item="pin"
       choices={PIN_FOR} onPick={(i) => pick(() => onPin(PIN_FOR[i].duration))} />
+  {/if}
+  {#if onEndPoll}
+    <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onEndPoll)}>End poll</button>
   {/if}
 </div>
 
