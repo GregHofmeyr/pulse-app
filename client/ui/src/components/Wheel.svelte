@@ -2,17 +2,21 @@
   // The picker wheel itself (#158), shared by the spin card, the popover's preview and Settings: neon slices
   // (lib/wheelColours.ts) with thin gaps, labels along each slice, a pointer at 12 o'clock and a hub in the middle.
   // `rotation` is the wheel's clockwise turn in degrees; whoever spins it moves that. Slice i of n covers
-  // [i·360/n, (i+1)·360/n) clockwise from 12 o'clock, as the server reads its angle.
-  import { fitLabel, labelFit } from '../lib/wheel'
+  // [i·360/n, (i+1)·360/n) clockwise from 12 o'clock, as the server reads its angle. Once a spin lands, `result`
+  // shows the result view over it (#271): the wheel stays, under a dark, centre-weighted fade, with the winner
+  // written large across the hub.
+  import { fitLabel, labelFit, resultFontSize } from '../lib/wheel'
   import { labelColour, sliceColour } from '../lib/wheelColours'
 
-  let { options, rotation = 0, size = 220, landed = null, onSpin, spinLabel = 'Spin', spinDisabled = false, bare = false }: {
+  let { options, rotation = 0, size = 220, landed = null, result = null, onSpin, spinLabel = 'Spin', spinDisabled = false, bare = false }: {
     options: string[]
     rotation?: number
     /** Its width and height in px. */
     size?: number
     /** Once a spin has landed: the winner, the other slices fade back. */
     landed?: number | null
+    /** The result view (#271): the winner's text over a dark fade, in place of the hub. */
+    result?: string | null
     /** Makes the hub a Spin button. */
     onSpin?: () => void
     spinLabel?: string
@@ -67,6 +71,9 @@
   </svg>
   {#if bare}
     <!-- a thumbnail: nothing over the slices -->
+  {:else if result !== null}
+    <!-- the app's fade-in: none under reduced motion, while live or unfocused (app.css) -->
+    <div class="result-view fade-in"><span class="result-text" style:font-size="{resultFontSize(result, size)}px">{result}</span></div>
   {:else if onSpin}
     <button type="button" class="hub" onclick={onSpin} disabled={spinDisabled}>{spinLabel}</button>
   {:else}
@@ -93,4 +100,11 @@
   button.hub:hover:not(:disabled) { color: var(--accent-text); }
   button.hub:disabled { color: var(--text-3); cursor: default; }
   button.hub:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  /* the result view (#271): over the disc (the rim is 4 of the 208 viewBox units), darkest in the middle where the
+     winner is written; the video chrome's dark glass and white, which read over the neon in every theme */
+  .result-view { position: absolute; inset: calc(100% * 4 / 208); border-radius: 50%; display: grid; place-items: center; padding: 0 12%; pointer-events: none;
+    background: radial-gradient(closest-side, var(--video-chrome-strong) 0%, var(--video-chrome-strong) 35%, var(--video-chrome) 85%, var(--video-chrome) 100%); }
+  .result-text { max-width: 100%; color: var(--on-video); font-weight: 800; line-height: 1.1; text-align: center; overflow-wrap: anywhere;
+    text-shadow: 0 1px 2px var(--video-chrome-strong), 0 2px 10px var(--video-chrome-strong);
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
 </style>

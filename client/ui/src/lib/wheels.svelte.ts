@@ -1,6 +1,7 @@
 // The picker wheel's client state (#158). Saved wheels are fetched when a popover or a Settings page opens (they
 // aren't in Ready) and kept current by WheelSaved / WheelDeleted while loaded. Spins remember when they reached
 // this client, so a line that mounts right then spins and one that mounts later (opening the chat late) is settled.
+import { getContext, setContext } from 'svelte'
 import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
 import type { Wheel } from './protocol/Wheel'
@@ -94,6 +95,14 @@ export function spunLive(id: string, now = Date.now()): boolean {
   const at = arrived.get(id)
   return at !== undefined && now - at < LIVE_WINDOW_MS
 }
+
+// --- whether a chat is on screen (#271): a voice channel's chat panel can be open but hidden. Its spin cards are
+// only seen, and only chime, while it shows. TextChannel provides it; elsewhere a chat counts as shown. ---
+const CHAT_SHOWN = Symbol('wheelChatShown')
+/** For TextChannel, as it starts: whether this chat is on screen now. */
+export const provideChatShown = (shown: () => boolean): void => void setContext(CHAT_SHOWN, shown)
+/** For a spin's line or card, as it starts: whether its chat is on screen (call the result when needed). */
+export const chatShown = (): (() => boolean) => getContext<(() => boolean) | undefined>(CHAT_SHOWN) ?? (() => true)
 
 // --- your own spins (#270): the chat you spun in jumps to the latest, as sending a message does ---
 const ownSpinListeners = new Set<(channelId: string) => void>()

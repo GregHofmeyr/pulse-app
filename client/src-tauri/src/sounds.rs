@@ -51,7 +51,7 @@ sound_table!(
     ];
     names: [
         "join", "leave", "mute", "unmute", "deafen", "undeafen", "muted_talk", "message", "live",
-        "live_end", "badge", "wheel_tick",
+        "live_end", "badge", "wheel_tick", "wheel_result",
     ]
 );
 
@@ -864,6 +864,43 @@ mod tests {
             active_rms(&raw("classic", "muted_talk")),
         );
         assert!(d <= 2.0, "classic/muted_talk is {d:.2} dB under join");
+    }
+
+    /// #271: the picker wheel's result is a chime that climbs (it ends higher than it starts) and
+    /// rings out (its last tenth is well under its peak), in every set.
+    #[test]
+    fn wheel_result_is_a_rising_chime_that_rings_out() {
+        for set in SETS {
+            let s = raw(set, "wheel_result");
+            let a = active(&s);
+            let k = a.len() * 2 / 5;
+            let (first, last) = (zcr(&a[..k]), zcr(&a[a.len() - k..]));
+            assert!(
+                last > first * 1.1,
+                "{set}/wheel_result should rise: {first} -> {last}"
+            );
+            let peak = a.iter().fold(0f32, |m, v| m.max(v.abs()));
+            let tail = a[a.len() * 9 / 10..]
+                .iter()
+                .fold(0f32, |m, v| m.max(v.abs()));
+            assert!(
+                tail < peak * 0.5,
+                "{set}/wheel_result should ring out: tail {tail} of {peak}"
+            );
+        }
+    }
+
+    /// Heard with Pulse tabbed out, but not a call event: in Classic 2-4 dB under join.
+    #[test]
+    fn wheel_result_sits_under_join() {
+        let d = db(
+            active_rms(&raw("classic", "join")),
+            active_rms(&raw("classic", "wheel_result")),
+        );
+        assert!(
+            (2.0..=4.0).contains(&d),
+            "classic/wheel_result is {d:.2} dB under join"
+        );
     }
 
     #[test]

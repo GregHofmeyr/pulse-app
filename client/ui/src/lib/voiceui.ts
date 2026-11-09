@@ -7,10 +7,11 @@ import type { Event as AppEvent } from './protocol/Event'
 export type Flags = { muted: boolean; deafened: boolean; server_muted?: boolean; server_deafened?: boolean }
 export type SoundName =
   | 'join' | 'leave' | 'mute' | 'unmute' | 'deafen' | 'undeafen' | 'muted_talk' | 'message' | 'live' | 'live_end' | 'badge' | 'wheel_tick'
+  | 'wheel_result'
 
 /** The events, in display order. */
 export const SOUND_NAMES: readonly SoundName[] = [
-  'join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'muted_talk', 'message', 'live', 'live_end', 'badge', 'wheel_tick',
+  'join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'muted_talk', 'message', 'live', 'live_end', 'badge', 'wheel_tick', 'wheel_result',
 ]
 export const SOUND_LABELS: Record<SoundName, string> = {
   join: 'Join a call',
@@ -25,6 +26,7 @@ export const SOUND_LABELS: Record<SoundName, string> = {
   live_end: 'A stream ends',
   badge: 'Badge unlocked',
   wheel_tick: 'Picker wheel tick',
+  wheel_result: 'Picker wheel result',
 }
 
 export type SoundSetId =

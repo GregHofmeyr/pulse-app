@@ -844,3 +844,39 @@ async fn quiet_spins_are_checked_like_spins() {
     assert_eq!(spin(&app, &alex, g.id, two.clone()).await.status(), 429);
     quiet_ok(&app, &sam, g.id, two).await;
 }
+
+/// #271: options are case-sensitive: `UPPER` and `upper` are two options on a saved wheel, in a quick spin and in a
+/// quiet spin of a saved wheel's subset (which matches each option exactly, so `Upper` isn't `upper`).
+#[tokio::test]
+async fn options_differing_only_in_case_are_two_options() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let s = create_server(&app, &alex, "Main").await;
+    let g = general(&app, &alex, s.id).await;
+    let w = create_ok(
+        &app,
+        &alex,
+        json!({"server_id": s.id, "name": "Case", "options": ["UPPER", "upper", "Upper"]}),
+    )
+    .await;
+    assert_eq!(w.options, ["UPPER", "upper", "Upper"]);
+    let line = spin_ok(&app, &alex, g.id, json!({"options": ["UPPER", "upper"]})).await;
+    assert_eq!(line.wheel.unwrap().options, ["UPPER", "upper"]);
+    let q = quiet_ok(
+        &app,
+        &alex,
+        g.id,
+        json!({"wheel_id": w.id, "options": ["upper", "UPPER"]}),
+    )
+    .await;
+    assert_eq!(q.spin.options, ["upper", "UPPER"]);
+    // `Upper` is on the wheel once: asking for it twice is a wheel that has changed
+    let r = quiet(
+        &app,
+        &alex,
+        g.id,
+        json!({"wheel_id": w.id, "options": ["Upper", "Upper"]}),
+    )
+    .await;
+    assert_eq!(r.status(), 400);
+}

@@ -17,7 +17,9 @@ vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 import TextChannel from './TextChannel.svelte'
 import { forgetQuickWheels } from './WheelPopover.svelte'
 import { app, resetState } from '../lib/store.svelte'
-import { applyReady, emptyState } from '../lib/state'
+import { applyEvent, applyReady, emptyState } from '../lib/state'
+import { motion } from '../lib/animate.svelte'
+import { resetWheelCards } from '../lib/wheelCards'
 import { testReady } from '../lib/testReady'
 import { addQuietSpin, handleWheelEvent, resetWheels, setSpinQuietly } from '../lib/wheels.svelte'
 import { QUIET_CARD_MS } from '../lib/wheel'
@@ -27,9 +29,9 @@ const line = (id: string, options: string[]) => ({ id, channel_id: 'C1', author_
   edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [], wheel: spin(options) })
 
 let cmp: ReturnType<typeof mount> | undefined
-function show() {
+function show(panel: { onClose: () => void; shown: boolean } | null = null) {
   app.state = applyReady(emptyState(), testReady([{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }]))
-  cmp = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+  cmp = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1', panel } })
   flushSync()
   return document.querySelector<HTMLElement>('[role="textbox"]')!
 }
@@ -257,5 +259,39 @@ describe('your spin comes into view', () => {
     flushSync()
     await new Promise((r) => setTimeout(r, 20))
     expect(scrolls).toEqual([])
+  })
+})
+
+// #271: the landing chime and "seen" are for the chat you're looking at: a voice channel's chat panel can be hidden
+describe('a public spin lands', () => {
+  const chimes = () => invoke.mock.calls.filter(([c, a]) => c === 'play_sound' && (a as { name: string }).name === 'wheel_result').length
+  beforeEach(() => {
+    localStorage.clear()
+    resetWheelCards()
+    motion.reducedMotion = true // the short spin
+  })
+  afterEach(() => {
+    motion.reducedMotion = false
+  })
+  async function spinLands(panel: { onClose: () => void; shown: boolean } | null) {
+    show(panel)
+    const e = { t: 'MessageCreated' as const, d: { message: { ...line('L7', ['pizza', 'sushi', 'braai']), created_at: new Date().toISOString() }, nonce: null } }
+    handleWheelEvent(e as never)
+    app.state = applyEvent(app.state, e as never, Date.now())
+    flushSync()
+    await vi.waitFor(() => expect(document.querySelector('.wheel-card .result-view')?.textContent?.trim()).toBe('sushi'))
+  }
+
+  it('chimes with the chat open', async () => {
+    await spinLands(null)
+    expect(chimes()).toBe(1)
+  })
+
+  it("doesn't chime in a hidden chat panel, and its card isn't seen there", async () => {
+    await spinLands({ onClose: () => {}, shown: false })
+    expect(chimes()).toBe(0)
+    FakeIntersectionObserver.set(document.querySelector('.wheel-card')!, true)
+    flushSync()
+    expect(JSON.parse(localStorage.getItem('pulse.wheelCards') ?? '{}')).toEqual({})
   })
 })

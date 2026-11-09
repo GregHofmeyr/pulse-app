@@ -77,6 +77,25 @@ def dings(freq, dur, gap, bright=0.0, tau=0.06, release=0.015):
         one.append((math.sin(2 * math.pi * freq * t) + bright * math.sin(4 * math.pi * freq * t)) * env)
     return one + [0.0] * int(RATE * gap) + one
 
+# The picker wheel's result (#271): a pleasant "ta-da" as the wheel lands, heard over a game or with Pulse tabbed out,
+# but a nice-to-know, not a call event: 3 dB under join and leave.
+WHEEL_RESULT_RMS = JOIN_LEAVE_RMS * 10 ** (-3 / 20)
+
+def chime(freqs, step, ring, partials=((1, 1.0), (2, 0.3), (3, 0.08)), tau=0.09):
+    """Bell strikes `step` seconds apart, each ringing `ring` seconds and into the next (summed, not cut off): a
+    quick attack, partials decaying like a struck bell (higher ones faster), a short fade at the end so it doesn't
+    click."""
+    total = int(RATE * (step * (len(freqs) - 1) + ring))
+    out = [0.0] * total
+    for k, f in enumerate(freqs):
+        at, n = int(RATE * step * k), int(RATE * ring)
+        for i in range(min(n, total - at)):
+            t = i / RATE
+            env = min(1.0, t / 0.003) * min(1.0, (ring - t) / 0.03)
+            v = sum(a * math.exp(-t * m / tau) * math.sin(2 * math.pi * f * m * t) for m, a in partials)
+            out[at + i] += v * env
+    return out
+
 CLASSIC = {
     "join": normalise(tone([(659, 659), (988, 988)], 0.09, vol=0.34, bright=0.25), JOIN_LEAVE_RMS),
     "leave": normalise(tone([(494, 494), (330, 330)], 0.1, vol=0.34, bright=0.25), JOIN_LEAVE_RMS),
@@ -96,6 +115,8 @@ CLASSIC = {
     # the picker wheel (#158): one quiet, short, high tick per slice passing the pointer, so a spin ticks without
     # becoming a din
     "wheel_tick": tone([(1568, 1568)], 0.035, vol=0.36),
+    # the wheel landed (#271): a bright three-bell "ta-da" up a major chord, C6 E6 G6, ringing into each other
+    "wheel_result": normalise(chime([1047, 1319, 1568], 0.07, 0.19), WHEEL_RESULT_RMS),
 }
 
 
@@ -149,6 +170,10 @@ def twostep(variant, event):
     if event == "wheel_tick":
         # one short note an octave up (a fifth for the bright variant, already high): a tick, not a beep
         return _note(base * (2 if base < 1000 else 1.5), 0.035, partials, 0.002, release=0.012)
+    if event == "wheel_result":
+        # the set's own timbre struck like a bell, up the chord from the octave (the bright variant from its base)
+        root = base * (2 if base < 1000 else 1)
+        return chime([root, root * 1.25, root * 1.5], 0.065, 0.18, partials=partials)
     mults, scale = TWOSTEP_PAIRS[event]
     dur = MESSAGE_NOTE if scale is None else note * scale
     gap = [0.0] * int(RATE * 0.025)
@@ -175,6 +200,10 @@ def minimal(variant, event):
         return one + [0.0] * int(RATE * MINIMAL_MUTED_GAP) + one
     if event == "wheel_tick":
         return _minimal_note(variant, 2.0, 0.035)
+    if event == "wheel_result":
+        # the set's note a fifth and then an octave up, each cut short (the set's sounds stay <= 0.2 s)
+        gap = [0.0] * int(RATE * 0.01)
+        return _minimal_note(variant, 1.5, 0.07) + gap + _minimal_note(variant, 2.0, 0.1)
     if event == "badge":
         gap = [0.0] * int(RATE * 0.01)
         out = _minimal_note(variant, MINIMAL_BADGE[0], MINIMAL_BADGE_NOTE)
@@ -315,6 +344,13 @@ def goofy_wheel_tick():
     their spirit, at Classic's tick level."""
     return normalise(_pulse(1760, 0.035), active_rms(CLASSIC["wheel_tick"]))
 
+def goofy_wheel_result():
+    """Goofy's "ta-da" (#271), not from the packs: a quick soft-square arpeggio up a major chord with a held top note,
+    at Classic's result level."""
+    top = [v * math.exp(-i / (RATE * 0.05)) for i, v in enumerate(_pulse(2093, 0.16))]  # rings away
+    notes = [(0.0, _pulse(1047, 0.06)), (0.065, _pulse(1319, 0.06)), (0.13, _pulse(1568, 0.06)), (0.195, top)]
+    return normalise(_mix(0.36, notes), active_rms(CLASSIC["wheel_result"]))
+
 def main():
     for set_id, sounds in SETS.items():
         for name, samples in sounds.items():
@@ -322,6 +358,7 @@ def main():
     for name, make in GENERATED_GOOFY.items():
         write_wav(f"{OUT}/goofy/{name}.wav", make())
     write_wav(f"{OUT}/goofy/wheel_tick.wav", goofy_wheel_tick())
+    write_wav(f"{OUT}/goofy/wheel_result.wav", goofy_wheel_result())
     write_wav(RING_OUT, ringtone())
     for ring_id, make in RINGTONES.items():
         write_wav(f"{RINGTONE_DIR}/{ring_id}.wav", make())

@@ -3,14 +3,14 @@
   // angle for everyone watching, but nothing is saved, so it isn't a message. Once it lands it shows the result for
   // a while (longer while pointed at or focused), then fades away (lib/wheels.svelte.ts quietSpins). Spin again and
   // Remove winner & spin work while it's shown, and are quiet too. A card that mounts later than a moment after it
-  // arrived (the chat opened meanwhile) shows it landed.
+  // arrived (the chat opened meanwhile) shows it landed. Landed, the winner shows in the result view over the wheel
+  // (#271); otherwise quiet spins are as #270 left them.
   import { onDestroy, onMount, untrack } from 'svelte'
   import Name from './Name.svelte'
   import Wheel from './Wheel.svelte'
   import { exitFade } from '../lib/exit'
   import { errorText } from '../lib/tauri'
   import { LIVE_WINDOW_MS, WHEEL_LIMITS } from '../lib/wheel'
-  import { sliceColour } from '../lib/wheelColours'
   import { quietNow, runSpin } from '../lib/wheelSpin'
   import { dropQuietSpin, holdQuietSpin, spinQuietly, type QuietCard } from '../lib/wheels.svelte'
 
@@ -68,13 +68,13 @@
 <div class="wheel-card quiet-card" role="group" aria-label="Quiet spin" out:exitFade
   onmouseenter={() => (hovered = true)} onmouseleave={() => (hovered = false)}
   onfocusin={() => (hovered = true)} onfocusout={() => (hovered = false)}>
-  <Wheel options={spin.options} {rotation} size={140} landed={landed ? spin.winner : null} />
+  <Wheel options={spin.options} {rotation} size={140} landed={landed ? spin.winner : null} result={landed ? winner : null} />
   <div class="body">
     <p class="caption" aria-live="polite">
       {#if !landed}{@render who()} is spinning {label}…
-      {:else}<span class="swatch" style:background={sliceColour(spin.winner, n)}></span> <strong>{winner}</strong>{/if}
+      {:else}{@render who()} spun {label} <span class="sr-only">→ {winner}</span>{/if}
     </p>
-    <small class="note">{#if landed}{@render who()} spun {label} · {/if}Quiet spin · not saved</small>
+    <small class="note">Quiet spin · not saved</small>
     {#if landed}
       <span class="acts">
         <button type="button" class="link-btn" disabled={busy} onclick={() => again(false)}>Spin again</button>
@@ -89,9 +89,7 @@
   /* the spin card (WheelLine's), indented like the system lines */
   .wheel-card { display: flex; align-items: center; gap: 16px; margin: 6px 18px 6px 30px; padding: 12px 16px; align-self: flex-start; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-lg); }
   .body { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 280px; }
-  .caption { margin: 0; font-size: 14px; color: var(--text-2); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-  .caption strong { color: var(--text); font-size: 18px; }
-  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: var(--radius-xs); }
+  .caption { margin: 0; font-size: 14px; color: var(--text-2); }
   .note { color: var(--text-3); font-size: 12px; }
   .acts { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--text-3); }
   .acts .link-btn { font-size: 13px; }

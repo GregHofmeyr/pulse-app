@@ -120,6 +120,18 @@ describe('VolumeMixer', () => {
     expect(slider('Talking while muted').getAttribute('aria-valuetext')).toBe('Off')
   })
 
+  it('Picker wheel result (#271) sits in Notifications after the tick, and ▶ plays its chime', () => {
+    show()
+    const names = [...section('Notifications').querySelectorAll('.row .name')].map((e) => e.textContent)
+    expect(names).toEqual(['Message ding', 'Badge unlocked', 'Picker wheel tick', 'Picker wheel result'])
+    move('Notifications volume', 50)
+    move('Picker wheel result', 150)
+    button('Test Picker wheel result').click()
+    expect(calls('play_sound')).toEqual([{ name: 'wheel_result', set: 'classic', volume: mixGain(50, 150), output: null }])
+    move('Picker wheel result', 0)
+    expect(stored().notifications.wheel_result).toBe(0)
+  })
+
   it('▶ on Ringing plays one ring at Call sounds × Ringing (#50)', () => {
     show()
     move('Call sounds volume', 50)

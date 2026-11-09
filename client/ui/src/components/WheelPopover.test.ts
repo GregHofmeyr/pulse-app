@@ -95,10 +95,13 @@ describe('WheelPopover', () => {
   it('a quick wheel: add, paste several, skip repeats, remove, shuffle, clear all', async () => {
     await open()
     type('pizza')
-    type('sushi, braai, Pizza')
-    expect(options()).toEqual(['pizza', 'sushi', 'braai'])
-    expect(labels()).toEqual(['pizza', 'sushi', 'braai'])
+    // exact repeats are skipped; case counts (#271)
+    type('sushi, braai, pizza, Pizza')
+    expect(options()).toEqual(['pizza', 'sushi', 'braai', 'Pizza'])
+    expect(labels()).toEqual(['pizza', 'sushi', 'braai', 'Pizza'])
     pop().querySelector<HTMLButtonElement>('button[aria-label="Remove sushi"]')!.click()
+    flushSync()
+    pop().querySelector<HTMLButtonElement>('button[aria-label="Remove Pizza"]')!.click()
     flushSync()
     expect(options()).toEqual(['pizza', 'braai'])
     type('tacos, ramen')
@@ -208,6 +211,9 @@ describe('WheelPopover spins (#270)', () => {
     expect(invoke.mock.calls.some(([c]) => String(c).startsWith('spin_'))).toBe(false)
     expect(closed).toBe(0)
     expect(pop().querySelector('.result')!.textContent).toContain('Sigma')
+    // #271: the winner in the result view over the wheel, and your own private spin chimes
+    expect(pop().querySelector('.result-view')!.textContent!.trim()).toBe('Sigma')
+    expect(invoke.mock.calls.filter(([c, a]) => c === 'play_sound' && (a as { name: string }).name === 'wheel_result')).toHaveLength(1)
     expect(app.state.messages['C1'] ?? []).toEqual([])
     // Remove winner & spin takes it off this spin's wheel only (nothing saved), then spins the rest
     expect(button('Spin again')).toBeTruthy()

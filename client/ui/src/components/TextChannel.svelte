@@ -34,7 +34,7 @@
   import { takeChatFocus, voiceChat } from '../lib/voiceChat.svelte'
   import { COMMANDS, parseCommand, type CommandContext } from '../lib/commands'
   import QuietSpinCard from './QuietSpinCard.svelte'
-  import { onOwnSpin, quietSpins, spinQuick } from '../lib/wheels.svelte'
+  import { onOwnSpin, provideChatShown, quietSpins, spinQuick } from '../lib/wheels.svelte'
 
   let { channelId, serverId, panel = null, onAddPeople = () => {}, onLeft = () => {}, onStartQoty = () => {}, onVoiceSettings = () => {} }: {
     /** A voice channel's chat (#226), as the panel beside its stage: a Chat header with a close button, no search.
@@ -507,6 +507,8 @@
   // A spin you start (the popover, /wheel, Spin again; public or quiet) lands at the latest too, so you see it
   // spin (#270). Someone else's only follows if you're at the bottom already (the stick-to-bottom effect above).
   onMount(() => onOwnSpin((c) => c === channelId && toLatest()))
+  // a spin's card is only seen, and only chimes, while this chat is on screen (#271; a voice chat panel can hide)
+  provideChatShown(() => panel?.shown ?? true)
   // what slash commands can do in this chat (lib/commands.ts CommandContext)
   const commandContext: CommandContext = {
     spinWheel: (options) => {

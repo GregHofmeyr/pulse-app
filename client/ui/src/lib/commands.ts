@@ -5,7 +5,7 @@
 // where TextChannel builds its context (`commandContext`).
 
 import { parsePollArgs } from './poll'
-import { addOptions, splitOptions, WHEEL_LIMITS } from './wheel'
+import { addOptions, WHEEL_LIMITS } from './wheel'
 
 /** What a command can do in the chat it was sent from. TextChannel provides it. */
 export interface CommandContext {
@@ -36,11 +36,11 @@ export const COMMANDS: SlashCommand[] = [
     usage: '/wheel option1, option2, option3',
     description: 'Spin a quick wheel (or just /wheel to open it)',
     hint: 'Enter to spin',
-    // two or more options spin at once (cut to the limit, repeats dropped, as the editor adds them); fewer open
-    // the wheel popover with what was typed (#158)
+    // two or more options spin at once (cut to the limit, exact repeats dropped, as the editor adds them); fewer
+    // open the wheel popover with what was typed (#158)
     run: (args, ctx) => {
-      const options = splitOptions(args)
-      if (options.length >= WHEEL_LIMITS.minOptions) ctx.spinWheel(addOptions([], args).options)
+      const options = addOptions([], args).options
+      if (options.length >= WHEEL_LIMITS.minOptions) ctx.spinWheel(options)
       else ctx.openWheel(options)
     },
   },

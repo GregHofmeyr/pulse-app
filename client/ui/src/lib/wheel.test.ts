@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  addOptions, drawSpin, fitLabel, labelFit, QUIET_SPIN_MS, rotationAt, shuffled, SPIN_MS, SPIN_TURNS,
+  addOptions, drawSpin, fitLabel, labelFit, resultFontSize, QUIET_SPIN_MS, rotationAt, shuffled, SPIN_MS, SPIN_TURNS,
   splitOptions, winnerAt,
 } from './wheel'
 import { contrast, LABEL_DARK, LABEL_LIGHT, labelColour, sliceColour, sliceRgb } from './wheelColours'
@@ -11,8 +11,9 @@ describe('editing options', () => {
   it('splits pasted lists by commas and lines', () => {
     expect(splitOptions('a, b\nc,, ')).toEqual(['a', 'b', 'c'])
   })
-  it('adds new ones, skips ones already there in any case, cuts long ones', () => {
-    expect(addOptions(['Pizza'], 'pizza, sushi, Sushi')).toEqual({ options: ['Pizza', 'sushi'], full: false })
+  it('adds new ones, skips exact duplicates (case counts: UPPER and upper are two, #271), cuts long ones', () => {
+    expect(addOptions(['Pizza'], 'pizza, sushi, Sushi, sushi, Pizza')).toEqual({ options: ['Pizza', 'pizza', 'sushi', 'Sushi'], full: false })
+    expect(addOptions([], 'UPPER, upper')).toEqual({ options: ['UPPER', 'upper'], full: false })
     expect(addOptions([], 'x'.repeat(70)).options[0]).toHaveLength(60)
   })
   it('stops at 100', () => {
@@ -110,5 +111,18 @@ describe('slice colours (the neon spectrum)', () => {
       for (let i = 0; i < n; i++) worst = Math.min(worst, contrast(labelColour(i, n), sliceRgb(i, n)))
     }
     expect(worst).toBeGreaterThanOrEqual(3)
+  })
+})
+
+describe('the result view (#271)', () => {
+  it('writes a short winner large, a long one smaller, never tiny, scaled with the wheel', () => {
+    expect(resultFontSize('Valheim', 180)).toBe(27)
+    expect(resultFontSize('Valheim', 140)).toBe(21)
+    const long = resultFontSize('The Elder Scrolls V: Skyrim Special Edition', 180)
+    expect(long).toBeLessThan(27)
+    expect(long).toBeGreaterThanOrEqual(13.5)
+    expect(resultFontSize('x'.repeat(60), 180)).toBe(13.5)
+    // characters, not UTF-16 units
+    expect(resultFontSize('🍕🍣🌮🍔🌭🥗🍜🥟', 180)).toBe(27)
   })
 })

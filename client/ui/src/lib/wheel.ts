@@ -9,9 +9,6 @@ export const SPIN_TURNS = 5
 export const SPIN_MS = 4500
 /** Reduced motion, streaming or an unfocused window: a short turn to the landing, no tick. */
 export const QUIET_SPIN_MS = 400
-/** How long the landed card stays before it folds into the line. */
-export const HOLD_MS = 1600
-export const QUIET_HOLD_MS = 600
 /** A spin that reaches a client this recently is shown spinning when its line mounts; older ones mount settled. */
 export const LIVE_WINDOW_MS = 1000
 /** At most one tick this often, however fast the slices pass. */
@@ -39,19 +36,20 @@ export function splitOptions(text: string): string[] {
 }
 
 /** Add what was typed or pasted (`a, b, c` adds several) to `list`: each cut to the character limit, ones already
- *  there (any case) skipped, and never past the option limit. `full`: some didn't fit. */
+ *  there exactly skipped (case counts: `UPPER` and `upper` are two options, #271), and never past the option limit.
+ *  `full`: some didn't fit. */
 export function addOptions(list: string[], text: string): { options: string[]; full: boolean } {
   const out = [...list]
-  const seen = new Set(list.map((o) => o.toLowerCase()))
+  const seen = new Set(list)
   let full = false
   for (const raw of splitOptions(text)) {
     const o = [...raw].slice(0, WHEEL_LIMITS.optionChars).join('').trim()
-    if (seen.has(o.toLowerCase())) continue
+    if (seen.has(o)) continue
     if (out.length >= WHEEL_LIMITS.maxOptions) {
       full = true
       break
     }
-    seen.add(o.toLowerCase())
+    seen.add(o)
     out.push(o)
   }
   return { options: out, full }
@@ -95,6 +93,14 @@ export function labelFit(n: number): { size: number; chars: number } {
   const size = Math.max(3.5, Math.min(9, ((2 * Math.PI * 70) / Math.max(1, n)) * 0.8))
   const chars = Math.max(3, Math.floor(64 / (size * 0.56)))
   return { size, chars }
+}
+
+/** The result view's winner (#271): its font size in px on a wheel `size` px wide. Up to 8 characters at 15 % of the
+ *  wheel; longer ones shrink (they wrap onto a few lines too), never under half that. */
+export function resultFontSize(text: string, size: number): number {
+  const big = size * 0.15
+  const chars = [...text].length
+  return Math.round(Math.max(big / 2, chars <= 8 ? big : big * Math.sqrt(8 / chars)) * 10) / 10
 }
 
 /** `text` cut to `chars` characters with an ellipsis. */

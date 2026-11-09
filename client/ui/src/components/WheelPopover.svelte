@@ -24,7 +24,7 @@
     loadMyWheels, loadServerWheels, saveWheel, savesSettled, setSpinQuietly, spinQuietly, spinWheel, upsertWheel, wheelPrefs, wheels,
   } from '../lib/wheels.svelte'
   import { drawSpin, WHEEL_LIMITS } from '../lib/wheel'
-  import { sliceColour } from '../lib/wheelColours'
+  import { playSound } from '../lib/voiceui'
   import { quietNow, runSpin } from '../lib/wheelSpin'
   import type { Wheel as SavedWheel } from '../lib/protocol/Wheel'
 
@@ -197,6 +197,8 @@
       onLanded: () => {
         spinning = false
         result = { winner, options: opts }
+        // your own private spin chimes as it lands (#271)
+        playSound('wheel_result')
       },
     })
   }
@@ -216,15 +218,16 @@
 
 <div bind:this={root} class="wheel-popover pop-in" role="dialog" aria-label="Picker wheel" tabindex="-1" use:clickOutside={onClose} onkeydown={keydown} {style}>
   <div class="stage">
-    <Wheel options={shown} {rotation} landed={result?.winner ?? null} size={210} onSpin={spin} spinDisabled={!canSpin} />
+    <Wheel options={shown} {rotation} landed={result?.winner ?? null} result={result ? result.options[result.winner] : null} size={210} onSpin={spin} spinDisabled={!canSpin} />
     <div class="what">
       <span class="name">{current?.name ?? 'Quick wheel'}</span>
       <small>{current ? (current.server_id ? 'Server wheel · everyone here sees it' : 'Just me · only you see its spins') : 'One-off, not saved'}</small>
     </div>
     {#if isPrivate}
       <p class="result" aria-live="polite">
+        <!-- the winner is in the result view over the wheel (#271) -->
         {#if result}
-          <span class="swatch" style:background={sliceColour(result.winner, result.options.length)}></span> <strong>{result.options[result.winner]}</strong>
+          <span class="sr-only">{result.options[result.winner]}</span>
           {#if result.options.length > WHEEL_LIMITS.minOptions}<button type="button" class="link-btn" onclick={() => privateSpin(true)}>Remove winner &amp; spin</button>{/if}
         {/if}
       </p>
@@ -291,10 +294,9 @@
   .what small { color: var(--text-3); font-size: 11px; }
   .spin { align-self: stretch; }
   .error { margin: 0; color: var(--danger-text); font-size: 12px; text-align: center; }
-  /* the private spin's result, under the name: the winner's swatch, the winner, Remove winner & spin */
+  /* the private spin's result, under the name: Remove winner & spin (the winner is over the wheel, #271) */
   .result { margin: 0; min-height: 20px; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px 6px; font-size: 14px; color: var(--text); text-align: center; }
   .result .link-btn { font-size: 13px; }
-  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: var(--radius-xs); flex-shrink: 0; }
   .quietly { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); cursor: pointer; }
   .quietly input { accent-color: var(--accent); margin: 0; }
   /* the side's sections (switch, saved wheels, the wheel's options) each in their own band, split by a line like

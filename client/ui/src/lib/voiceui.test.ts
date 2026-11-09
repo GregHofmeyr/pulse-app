@@ -365,10 +365,10 @@ describe('sound catalogue', () => {
   it('event names match the classic files, with labels', () => {
     const files = readdirSync(new URL('classic/', soundsDir)).map((f) => f.replace(/\.wav$/, ''))
     expect([...SOUND_NAMES].sort()).toEqual(files.sort())
-    expect(SOUND_NAMES).toEqual(['join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'muted_talk', 'message', 'live', 'live_end', 'badge', 'wheel_tick'])
+    expect(SOUND_NAMES).toEqual(['join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'muted_talk', 'message', 'live', 'live_end', 'badge', 'wheel_tick', 'wheel_result'])
     expect(SOUND_NAMES.map((n) => SOUND_LABELS[n])).toEqual([
       'Join a call', 'Leave a call', 'Mute', 'Unmute', 'Deafen', 'Undeafen', 'Talking while muted',
-      'New message', 'Someone goes live', 'A stream ends', 'Badge unlocked', 'Picker wheel tick',
+      'New message', 'Someone goes live', 'A stream ends', 'Badge unlocked', 'Picker wheel tick', 'Picker wheel result',
     ])
   })
 })
