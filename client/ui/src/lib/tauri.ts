@@ -25,6 +25,8 @@ import type { Wheel } from './protocol/Wheel'
 import type { CreateWheelRequest } from './protocol/CreateWheelRequest'
 import type { UpdateWheelRequest } from './protocol/UpdateWheelRequest'
 import type { SpinWheelRequest } from './protocol/SpinWheelRequest'
+import type { CreatePollRequest } from './protocol/CreatePollRequest'
+import type { Poll } from './protocol/Poll'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { StreamSettings } from './protocol/StreamSettings'
 import type { VoiceTokenResponse } from './protocol/VoiceTokenResponse'
@@ -442,6 +444,14 @@ export const wheelCmd = {
   /** A saved wheel by id, or a quick one from its options. Resolves with the spin's line. */
   spin: (channelId: string, request: SpinWheelRequest) => invoke<Message>('spin_wheel', { channelId, request }),
   spinAgain: (messageId: string, removeWinner: boolean) => invoke<Message>('spin_again', { messageId, removeWinner }),
+}
+
+/** Polls (#157): post one, fetch your view of one, vote (your full set of choices; none takes it back), end yours. */
+export const pollCmd = {
+  create: (channelId: string, request: CreatePollRequest) => invoke<Message>('create_poll', { channelId, request }),
+  get: (messageId: string) => invoke<Poll>('get_poll', { messageId }),
+  vote: (messageId: string, options: number[]) => invoke<Poll>('vote_poll', { messageId, options }),
+  close: (messageId: string) => invoke<Poll>('close_poll', { messageId }),
 }
 
 /** Tauri rejects with the command's error string. */

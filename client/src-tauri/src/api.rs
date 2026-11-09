@@ -2514,6 +2514,74 @@ impl Api {
         .await
     }
 
+    /// Post a poll (#157): its message, with the poll as its creator sees it.
+    pub async fn create_poll(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &pulse_protocol::rest::CreatePollRequest,
+    ) -> Result<Message, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/channels/{channel}/polls", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A poll as you see it now.
+    pub async fn get_poll(
+        &self,
+        token: &str,
+        poll: MessageId,
+    ) -> Result<pulse_protocol::rest::Poll, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/messages/{poll}/poll", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Your choices in a poll, replacing any before (none takes your vote back).
+    pub async fn vote_poll(
+        &self,
+        token: &str,
+        poll: MessageId,
+        options: Vec<u32>,
+    ) -> Result<pulse_protocol::rest::Poll, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/messages/{poll}/poll/votes", self.base))
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::PollVoteRequest { options })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// End your poll now.
+    pub async fn close_poll(
+        &self,
+        token: &str,
+        poll: MessageId,
+    ) -> Result<pulse_protocol::rest::Poll, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/messages/{poll}/poll/close", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// `base/seg/seg…`, each segment percent-encoded on its own (an emoji or id can't add a `/`).
     /// A `.` or `..` segment is refused: the URL parser would drop it (or the one before it) and
     /// send the request somewhere else.

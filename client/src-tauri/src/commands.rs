@@ -3999,3 +3999,49 @@ pub async fn spin_again(
         api.spin_again(&token, message_id, remove_winner).await,
     )
 }
+
+/// Post a poll in a chat (#157).
+#[tauri::command]
+pub async fn create_poll(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    request: pulse_protocol::rest::CreatePollRequest,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.create_poll(&token, channel_id, &request).await)
+}
+
+/// A poll as you see it now.
+#[tauri::command]
+pub async fn get_poll(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<pulse_protocol::rest::Poll, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.get_poll(&token, message_id).await)
+}
+
+/// Your choices in a poll (none takes your vote back).
+#[tauri::command]
+pub async fn vote_poll(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    options: Vec<u32>,
+) -> Result<pulse_protocol::rest::Poll, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.vote_poll(&token, message_id, options).await)
+}
+
+/// End your poll now.
+#[tauri::command]
+pub async fn close_poll(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<pulse_protocol::rest::Poll, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.close_poll(&token, message_id).await)
+}

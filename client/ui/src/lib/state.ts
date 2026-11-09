@@ -14,6 +14,7 @@ import type { Member } from './protocol/Member'
 import type { Message } from './protocol/Message'
 import type { NotifyLevelPref } from './protocol/NotifyLevelPref'
 import type { PinnedMessage } from './protocol/PinnedMessage'
+import type { Poll } from './protocol/Poll'
 import type { Mute } from './protocol/Mute'
 import type { Person } from './protocol/Person'
 import type { OwnStatus } from './protocol/OwnStatus'
@@ -309,6 +310,21 @@ export function tracksUnread(s: AppState, channel: string): boolean {
 function upsertEdited(list: Message[], m: Message): Message[] {
   const old = list.find((x) => x.id === m.id)
   return upsertMessage(list, old ? { ...m, reactions: old.reactions } : m)
+}
+
+/** A poll as an event carries it is no one's view (no results, nothing marked yours): a held copy's poll, fetched
+ * for us (#157), stays. Only poll fetches and votes (`setPoll`) change it. */
+function withHeldPoll(m: Message, held: Message | undefined): Message {
+  return held?.poll && m.poll && !m.deleted ? { ...m, poll: held.poll } : m
+}
+
+/** Put our own view of a poll on its message, wherever it shows (#157). The state is returned as is when it isn't
+ * loaded. */
+export function setPoll(s: AppState, channel: string, id: string, poll: Poll): AppState {
+  const put = (m: Message): Message => (m.poll && !m.deleted ? { ...m, poll } : m)
+  const shown = mapShown(s, channel, id, put)
+  const prev = shown.latest[channel]
+  return prev?.id === id ? { ...shown, latest: { ...shown.latest, [channel]: put(prev) } } : shown
 }
 
 function upsertMessage(list: Message[] | undefined, m: Message): Message[] {
@@ -750,7 +766,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         // and is noted so paging forward doesn't stop short of it.
         // A clip joins the channel's feeds, not its text history.
         clipFeeds: feeds.clipFeeds,
-        messages: m.clip || detached(s, c) ? s.messages : { ...s.messages, [c]: upsertMessage(s.messages[c], withMyQuoteState(m, undefined, s.me?.id)) },
+        messages: m.clip || detached(s, c) ? s.messages : { ...s.messages, [c]: upsertMessage(s.messages[c], withHeldPoll(withMyQuoteState(m, undefined, s.me?.id), s.messages[c]?.find((x) => x.id === m.id))) },
         history: m.clip ? s.history : detached(s, c) ? { ...s.history, [c]: withMissed(s.history[c], m.id) } : s.history,
         pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
         typing: withoutTyping(s, c, m.author_id),
@@ -770,7 +786,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       // Only the pin events set a held message's pin (#178): an update read before a pin or unpin landed would
       // otherwise put the old one back.
       const held = findMessage(s, c, e.d.message.id)
-      const m = held ? { ...e.d.message, pin: held.pin } : e.d.message
+      const m = held ? withHeldPoll({ ...e.d.message, pin: held.pin }, held) : e.d.message
       const prev = s.latest[c]
       // Like the loaded copy (upsertEdited): the edit's reactions say me:false for everyone.
       const latest = prev?.id === m.id ? { ...s.latest, [c]: { ...m, reactions: prev.reactions } } : s.latest
@@ -834,6 +850,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     // Saved picker wheels are loaded on demand and kept in lib/wheels.svelte.ts (#158).
     case 'WheelSaved':
     case 'WheelDeleted':
+      return s
+    // Carries no view: lib/polls.svelte.ts fetches ours (#157).
+    case 'PollChanged':
       return s
     case 'LayoutChanged':
       return applyLayout(s, e.d.layout)
