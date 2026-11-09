@@ -1,0 +1,81 @@
+name: ci-windows-server
+
+# The server compiles for Windows too: pulse-server (features `testing`) is a dev-dependency of pulse-client, so the
+# Windows client test binary (windows-client-tests.yml) builds its lib. ci-windows.yml leaves server/** out of its paths
+# (a ~20 min Windows run per server change), so a server-only change that doesn't build on Windows (a Unix-only API
+# outside cfg(unix), say) would only fail release-windows' `test` at release time (#256). This checks the server lib on
+# Windows, as the client tests build it, in a few minutes.
+#
+# A workflow of its own, like ci-windows: release-server.yml waits on ci only, and nothing waits on this. A push or PR
+# that also changes what ci-windows tests skips the check: those full tests compile the same server lib.
+on:
+  push:
+    branches: [main]
+    # protocol/**, vendor/**, the Cargo files, rust-toolchain.toml and .cargo/** start ci-windows, whose tests build
+    # this too.
+    paths: &server
+      - 'server/**'
+      - '.github/workflows/ci-windows-server.yml'
+  pull_request:
+    paths: *server
+  workflow_dispatch:
+
+# A newer run supersedes an older one on the same ref: its tree holds the older run's server changes, and a newer run
+# that skips the check does so because ci-windows' full tests build the server from that tree.
+concurrency:
+  group: ci-windows-server-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Did this push/PR also change what ci-windows tests? Then that run covers the server and this one does nothing.
+  changes:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      client: ${{ steps.filter.outputs.client }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          # ci-windows.yml's `paths`, kept in step with it.
+          filters: |
+            client:
+              - 'client/src-tauri/**'
+              - 'protocol/**'
+              - 'vendor/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.cargo/**'
+              - 'scripts/fetch-ffmpeg.sh'
+              - '.github/workflows/ci-windows.yml'
+              - '.github/workflows/windows-client-tests.yml'
+
+  check:
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.client == 'false') }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Exact version and components come from rust-toolchain.toml (rustup >= 1.28 installs what the file names).
+      - name: Rust toolchain (pinned in rust-toolchain.toml)
+        shell: bash
+        run: |
+          rustup toolchain install --profile minimal
+          rustc --version
+      # Its own small cache (metadata only, no codegen), saved from main alone like the client tests' one: a PR's copy
+      # can't be restored elsewhere and would only crowd the 10 GB.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: server-check
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # What the client test binary builds of the server: its lib with `testing`, in the tests' release-test profile
+      # (debug_assertions off). The server's own tests and binary never run on Windows.
+      - run: cargo check --profile release-test -p pulse-server --features testing --lib

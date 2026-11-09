@@ -8,6 +8,8 @@ name: ci-windows
 on:
   push:
     branches: [main]
+    # ci-windows-server.yml's `changes` filter repeats this list: keep the two in step. server/** is out (~20 min of
+    # Windows time per server change); that workflow checks the server on Windows instead (#256).
     paths: &client
       - 'client/src-tauri/**'
       - 'protocol/**'
