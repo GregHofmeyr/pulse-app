@@ -24,6 +24,26 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.4',
+  version: '0.2.4',
+  date: '9 November 2026',
+  new: [
+    'Wheel results now fold into a little result card: the landed wheel, the winner big, and Spin again, Remove winner and Save as wheel when you hover',
+  ],
+  fixes: [],
+  qol: [],
+  soon: [
+    'Streaming in DM and group calls',
+    'Share a Spotify Jam or song to the voice stage',
+    'A fresh profile editor: edit right inside your big profile card',
+    'Custom join sounds',
+    'Stream fullscreen, with chat as a side strip',
+  ],
+  message: 'Tiny one. The wheel just wanted to look pretty in the chat 🎡',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.3',
   version: '0.2.3',
   date: '9 November 2026',
@@ -50,37 +70,4 @@ export const patchNotes: PatchNotes = {
     'Stream fullscreen, with chat as a side strip',
   ],
   message: 'A quick one: the wheel got some love from our resident UI/UX designer 💜',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.2',
-  version: '0.2.2',
-  date: '9 November 2026',
-  new: [
-    'Pin messages for an hour, a day, a week or forever. The 📌 in the channel header lists them all, with Jump',
-    'The picker wheel 🎡: spin together and land on the same slice, save Server or Just me wheels, or type /wheel pizza, sushi, braai',
-    "Polls 📊: multiple choice, anonymous, and an end time. See who voted for what, unless it's anonymous",
-    'Type / in the message box for commands, and press Tab to finish one',
-  ],
-  fixes: [
-    'Clips replay instantly after pausing or finishing, with no reloading',
-    'Menus on Linux no longer flash when they open',
-    'Escape and clicking away now close the suggestion lists and wheel edits sensibly instead of the whole window',
-  ],
-  qol: [
-    'A double ding when you talk while muted. Turn it down or off in the volume mixer',
-    'The soundboard is now properly mashable 🔨',
-    'Quotes get a 🏆 award button on each line, and Copy quote copies the whole thing',
-    'The bell on a muted channel lets you change notifications without unmuting',
-    "Escape in Settings › Wheels only closes what you're editing, and asks before throwing away changes",
-  ],
-  soon: [
-    'Streaming in DM and group calls',
-    'Share a Spotify Jam or song to the voice stage',
-    'A fresh profile editor: edit right inside your big profile card',
-    'Custom join sounds',
-    'Stream fullscreen, with chat as a side strip',
-  ],
-  message: 'Pins, polls AND a wheel? The Coming soon list got absolutely cooked 🌈\nSpin responsibly.',
 }
