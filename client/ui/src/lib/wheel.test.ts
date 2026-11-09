@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  addOptions, fitLabel, labelFit, QUIET_SPIN_MS, rotationAt, shuffled, SPIN_MS, SPIN_TURNS,
+  addOptions, drawSpin, fitLabel, labelFit, QUIET_SPIN_MS, rotationAt, shuffled, SPIN_MS, SPIN_TURNS,
   splitOptions, winnerAt,
 } from './wheel'
 import { contrast, LABEL_DARK, LABEL_LIGHT, labelColour, sliceColour, sliceRgb } from './wheelColours'
@@ -60,6 +60,29 @@ describe('spin geometry (as the server draws it)', () => {
     expect(labelFit(8).chars).toBeGreaterThanOrEqual(12)
     expect(fitLabel('Deep Rock Galactic', 8)).toBe('Deep Ro…')
     expect(fitLabel('Apex', 8)).toBe('Apex')
+  })
+})
+
+describe('a private draw (#270: Just me wheels spin on this device)', () => {
+  it('lands inside its winner, clear of the edges, as the server draws', () => {
+    for (let n = 2; n <= 100; n += 7) {
+      for (let k = 0; k < 20; k++) {
+        const { winner, angle } = drawSpin(n)
+        expect(winner).toBeGreaterThanOrEqual(0)
+        expect(winner).toBeLessThan(n)
+        expect(angle).toBeGreaterThanOrEqual(0)
+        expect(angle).toBeLessThan(360)
+        expect(winnerAt(angle, n)).toBe(winner)
+      }
+    }
+  })
+  it('every option can win', () => {
+    const seen = new Set<number>()
+    const steps = [0, 0.5, 0.25, 0.5, 0.5, 0.5, 0.75, 0.5, 0.99, 0.5]
+    let i = 0
+    const random = () => steps[i++ % steps.length]
+    for (let k = 0; k < 5; k++) seen.add(drawSpin(4, random).winner)
+    expect([...seen].sort()).toEqual([0, 1, 2, 3])
   })
 })
 

@@ -14,7 +14,7 @@ use pulse_protocol::rest::{
     GoLiveRequest, HideEmbedRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest,
     LoginRequest, MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired,
     MuteTarget, NameArchivePage, Pin, PinDuration, PinRequest, PinnedMessage, PostQuoteRequest,
-    Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse, RegisterRequest,
+    Profile, QotyEvent, QotyVoteRequest, QuietSpin, RecoveryCodesResponse, RegisterRequest,
     RenameCategoryRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest,
     SaveLayoutRequest, SearchRequest, SearchResults, SendMessageRequest, Server, ServerLayout,
     ServerVoiceMod, SessionResponse, SetClipViewRequest, SetMuteRequest, SetNicknameRequest,
@@ -2496,6 +2496,27 @@ impl Api {
         .await
     }
 
+    /// Spin quietly (#270): the chat watches it land, but nothing is saved.
+    pub async fn spin_wheel_quietly(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &SpinWheelRequest,
+    ) -> Result<QuietSpin, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!(
+                    "{}/channels/{channel}/wheel-spins/quiet",
+                    self.base
+                ))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Spin again from a spin's line, perhaps without its winner.
     pub async fn spin_again(
         &self,
@@ -2705,6 +2726,23 @@ mod tests {
             log: String::new(),
         };
         assert_eq!(api.create_report(&token, &req).await.unwrap().id.len(), 26);
+    }
+
+    #[tokio::test]
+    async fn a_quiet_spin_comes_back_drawn() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let g = testing::general(&app, &alex, s.id).await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let req = SpinWheelRequest {
+            wheel_id: None,
+            options: Some(vec!["pizza".into(), "sushi".into()]),
+        };
+        let q = api.spin_wheel_quietly(&alex, g.id, &req).await.unwrap();
+        assert_eq!(q.channel_id, g.id);
+        assert_eq!(q.spin.options, vec!["pizza", "sushi"]);
+        assert!(q.spin.winner < 2);
     }
 
     #[tokio::test]

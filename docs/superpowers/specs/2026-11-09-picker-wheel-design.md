@@ -38,6 +38,16 @@ The group uses online wheel pickers to choose a game, food, or a character to pl
 - Client: `/wheel a, b, c` spins; `/wheel` alone opens the popover; Server / Just me switch; add/paste/remove/shuffle/clear; Save as wheel; the card lands on the server's winner; collapse to the system line; Spin again and Remove winner & spin; reduced motion; Settings pages.
 - **Manual (owner, Linux then Windows, two accounts):** both accounts watch the same spin land on the same slice; a late opener sees the result; save a quick wheel; manage wheels in Settings.
 
+## Follow-ups after 0.2.2 (#270)
+
+Asked for by the owner after 0.2.2; the details are the builder's calls.
+
+- **Just me spins are private (owner).** Spinning a Just me wheel never reaches the server: the popover draws on this device (the server's draw, ported) and spins its own wheel, shows the winner under the name, and stays open. Spin again and Remove winner & spin run there too; a removed winner is off this run of spins only (the saved wheel keeps it), and picking, switching or editing starts afresh. Nothing is posted, so it's on no other device and in no history. A quick wheel (typed, or `/wheel a, b`) stays public, also in DMs; Save as wheel into Just me makes it a Just me wheel, so its spins are private from then on.
+- **Spin quietly (owner).** A checkbox under Spin (not shown for Just me wheels), remembered per device. A quiet spin goes to `POST /channels/{id}/wheel-spins/quiet`: drawn and checked as a spin (same rate limit, same chats), but nothing is stored (no line, no `wheel_spins` row); the server sends `WheelSpunQuietly` to whoever is in the chat now. Clients show it as a card at the bottom of the chat that spins live, shows the result for 6 s after landing (as long as it's pointed at or focused), then fades. Someone opening the chat meanwhile sees it landed; later, nothing. Spin again and Remove winner & spin work on the card while it's shown and are quiet too (a saved wheel's spin keeps its name: the request may name the wheel *and* a subset of its options). Public lines' Spin again stays public. `/wheel a, b, c` follows the checkbox as last left (one remembered choice, so the slash command and the popover agree; the card says "Quiet spin · not saved"). Clients from 0.2.2 and before skip the event (they don't see quiet spins). No migration.
+- **+ New wheel** is a + icon button (14 px, the extra-small icon button, as the channel list's section headers) at the end of the Saved wheels header, tooltip "New wheel".
+- **Breathing room:** the popover's side is three bands (the Server / Just me switch, Saved wheels, the wheel's options) split by the line token, like the poll composer's bands and Settings' sections; the stage's items sit a little further apart. Same 600 × 480 size, never taller than the window.
+- **Your spin comes into view (owner):** a spin you start (popover, `/wheel`, Spin again, Remove winner & spin; public or quiet) takes the chat to the latest as sending a message does, back to the present from a jumped-to window. Other people's spins only follow if they're at the bottom already. Private spins stay in the popover.
+
 ## Out of scope
 
 - Weighted options, images on slices, custom colour palettes per wheel.

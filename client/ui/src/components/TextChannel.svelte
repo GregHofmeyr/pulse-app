@@ -33,7 +33,8 @@
   import type { Message } from '../lib/protocol/Message'
   import { takeChatFocus, voiceChat } from '../lib/voiceChat.svelte'
   import { COMMANDS, parseCommand, type CommandContext } from '../lib/commands'
-  import { spinWheel } from '../lib/wheels.svelte'
+  import QuietSpinCard from './QuietSpinCard.svelte'
+  import { onOwnSpin, quietSpins, spinQuick } from '../lib/wheels.svelte'
 
   let { channelId, serverId, panel = null, onAddPeople = () => {}, onLeft = () => {}, onStartQoty = () => {}, onVoiceSettings = () => {} }: {
     /** A voice channel's chat (#226), as the panel beside its stage: a Chat header with a close button, no search.
@@ -68,6 +69,8 @@
   const reachedStart = $derived(!!history?.start)
   /** The list is a window into the past (a jump), not the latest. */
   const detached = $derived(history?.end === false)
+  /** Quiet spins on show here (#270): cards at the bottom, while the list is the latest (not a jump's window). */
+  const quiet = $derived(quietSpins[channelId] ?? [])
 
   // Fade typing indicators on time, not just on events: one timer for the next expiry, and only
   // while someone is typing (an always-on 1 s interval woke the app all day).
@@ -146,6 +149,7 @@
   $effect(() => {
     void messages.length
     void pending.length
+    void quiet.length
     // A detached window's bottom isn't the latest, and a page added below one stays below the view.
     if (!list || loadingNewer || untrack(() => detached)) return
     const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 120
@@ -490,17 +494,24 @@
 
   const nameOf = $derived(nameOfIn(() => app.state, serverId))
 
-  function post(text: string, replyToId: string | null) {
-    queueMessage(channelId, text, replyToId)
-    // Sending from higher up takes you to the latest (your message lands there).
+  /** To the latest: a page from higher up (a jump's window) goes back to the present, else to the bottom. */
+  function toLatest() {
     if (detached) void toPresent()
     else void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   }
+  function post(text: string, replyToId: string | null) {
+    queueMessage(channelId, text, replyToId)
+    // Sending from higher up takes you to the latest (your message lands there).
+    toLatest()
+  }
+  // A spin you start (the popover, /wheel, Spin again; public or quiet) lands at the latest too, so you see it
+  // spin (#270). Someone else's only follows if you're at the bottom already (the stick-to-bottom effect above).
+  onMount(() => onOwnSpin((c) => c === channelId && toLatest()))
   // what slash commands can do in this chat (lib/commands.ts CommandContext)
   const commandContext: CommandContext = {
     spinWheel: (options) => {
       error = ''
-      spinWheel(channelId, { options }).catch((e) => (error = errorText(e)))
+      spinQuick(channelId, options).catch((e) => (error = errorText(e)))
     },
     openWheel: (prefill) => composer?.openWheel(prefill),
     openPoll: (prefill) => composer?.openPoll(prefill),
@@ -632,6 +643,9 @@
         {mentionNames} meId={app.state.me?.id ?? ''} pending={p} onReply={() => {}} onEdit={async () => {}} onDelete={async () => {}}
         onRetry={() => retry(p.nonce)} onDiscard={() => (app.state = removePending(app.state, channelId, p.nonce))} />
     {/each}
+    {#if !detached}
+      {#each quiet as q (q.spin.id)}<QuietSpinCard card={q} {serverId} />{/each}
+    {/if}
   </div>
   {#if detached}<button class="jump" onclick={toPresent}>Jump to present</button>
   {:else if unreadBelow > 0}<button class="jump" onclick={jump}>{unreadBelow} new · Jump</button>

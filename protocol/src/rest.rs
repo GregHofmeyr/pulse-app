@@ -751,6 +751,15 @@ pub struct WheelSpin {
     pub angle: f64,
 }
 
+/// A quiet picker wheel spin (#270): drawn by the server and shown to the chat live, then gone. Nothing is stored,
+/// so it has no line and no history; `id` only tells one quiet spin from another.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct QuietSpin {
+    pub id: String,
+    pub channel_id: ChannelId,
+    pub spin: WheelSpin,
+}
+
 /// The slice under the pointer at 12 o'clock when the wheel has turned `angle` degrees clockwise: slice `i` of
 /// `n` covers [i·360/n, (i+1)·360/n) clockwise from 12 o'clock.
 pub fn wheel_winner_at(angle: f64, n: usize) -> usize {
@@ -905,7 +914,9 @@ pub struct UpdateWheelRequest {
     pub options: Option<Vec<String>>,
 }
 
-/// `POST /channels/{id}/wheel-spins`: spin a saved wheel (`wheel_id`) or a quick one (`options`); exactly one.
+/// `POST /channels/{id}/wheel-spins` (and `.../wheel-spins/quiet`, #270): spin a saved wheel (`wheel_id`) or a quick
+/// one (`options`). Both: the saved wheel, named, with only these of its options (Remove winner on a quiet spin,
+/// which has no stored spin to run from).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
 pub struct SpinWheelRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -31,7 +31,7 @@ import WheelPopover, { forgetQuickWheels } from './WheelPopover.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { testReady } from '../lib/testReady'
-import { resetWheels } from '../lib/wheels.svelte'
+import { resetWheels, setSpinQuietly, wheelPrefs } from '../lib/wheels.svelte'
 
 let cmp: ReturnType<typeof mount> | undefined
 let closed = 0
@@ -77,19 +77,19 @@ describe('WheelPopover', () => {
     await open()
     expect(pop().getAttribute('aria-label')).toBe('Picker wheel')
     expect(invoke).toHaveBeenCalledWith('list_server_wheels', { serverId: 'S1' })
-    expect(rows()).toEqual(['Quick wheel 0', 'Games tonight 3', 'New wheel'])
+    expect(rows()).toEqual(['Quick wheel 0', 'Games tonight 3'])
     expect(pop().querySelector('.what')!.textContent).toContain('One-off, not saved')
     expect(button('Add at least 2 options').disabled).toBe(true)
     pop().querySelectorAll<HTMLButtonElement>('[role="radio"]')[1].click()
     flushSync()
-    expect(rows()).toEqual(['Quick wheel 0', 'Tank 2', 'New wheel'])
+    expect(rows()).toEqual(['Quick wheel 0', 'Tank 2'])
   })
 
   it('in a DM: Just me wheels only, no switch', async () => {
     await open(null)
     expect(pop().querySelector('[role="radiogroup"]')).toBeNull()
     expect(invoke).not.toHaveBeenCalledWith('list_server_wheels', expect.anything())
-    expect(rows()).toEqual(['Quick wheel 0', 'Tank 2', 'New wheel'])
+    expect(rows()).toEqual(['Quick wheel 0', 'Tank 2'])
   })
 
   it('a quick wheel: add, paste several, skip repeats, remove, shuffle, clear all', async () => {
@@ -165,9 +165,96 @@ describe('WheelPopover', () => {
 
   it('+ New wheel makes one in the shown scope and selects it', async () => {
     await open()
-    button('New wheel').click()
+    pop().querySelector<HTMLButtonElement>('.saved-head button[aria-label="New wheel"]')!.click()
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('create_wheel', { request: { server_id: 'S1', name: 'New wheel', options: [] } }))
     await vi.waitFor(() => expect(pop().querySelector<HTMLInputElement>('input[aria-label="Wheel name"]')?.value).toBe('New wheel'))
+  })
+})
+
+// #270: Just me wheels spin privately, in the popover; other spins can be quiet (remembered per device).
+describe('WheelPopover spins (#270)', () => {
+  let frames: ((t: number) => void)[] = []
+  const runFrames = (t: number) => {
+    const now = frames
+    frames = []
+    for (const f of now) f(t)
+    flushSync()
+  }
+  beforeEach(() => {
+    frames = []
+    vi.stubGlobal('requestAnimationFrame', (f: (t: number) => void) => (frames.push(f), frames.length))
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    setSpinQuietly(false)
+  })
+  const quietBox = () => pop().querySelector<HTMLInputElement>('input[type="checkbox"][aria-label="Spin quietly"], label.quietly input')
+  const justMe = () => {
+    pop().querySelectorAll<HTMLButtonElement>('[role="radio"]')[1].click()
+    flushSync()
+    ;[...pop().querySelectorAll<HTMLButtonElement>('.wheel-row')][1].click()
+    flushSync()
+  }
+
+  it('a Just me wheel spins here, for you alone: nothing is sent, the popover stays and shows the winner', async () => {
+    await open()
+    justMe()
+    expect(pop().querySelector('.what')!.textContent).toContain('only you see')
+    expect(quietBox()).toBeNull()
+    vi.spyOn(Math, 'random').mockReturnValue(0.75) // the second of two slices
+    button('Spin').click()
+    flushSync()
+    runFrames(0)
+    runFrames(100_000)
+    vi.mocked(Math.random).mockRestore()
+    expect(invoke.mock.calls.some(([c]) => String(c).startsWith('spin_'))).toBe(false)
+    expect(closed).toBe(0)
+    expect(pop().querySelector('.result')!.textContent).toContain('Sigma')
+    expect(app.state.messages['C1'] ?? []).toEqual([])
+    // Remove winner & spin takes it off this spin's wheel only (nothing saved), then spins the rest
+    expect(button('Spin again')).toBeTruthy()
+    expect(pop().querySelector('.result button')).toBeNull() // two options: nothing to remove
+  })
+
+  it('Remove winner & spin on a private spin leaves the saved wheel alone', async () => {
+    myWheels[0] = { ...myWheels[0], options: ['Reinhardt', 'Sigma', 'Winston'] }
+    try {
+      await open()
+      justMe()
+      vi.spyOn(Math, 'random').mockReturnValue(0.5) // Sigma
+      button('Spin').click()
+      runFrames(0)
+      runFrames(100_000)
+      expect(pop().querySelector('.result')!.textContent).toContain('Sigma')
+      button('Remove winner & spin').click()
+      flushSync()
+      runFrames(0)
+      runFrames(100_000)
+      vi.mocked(Math.random).mockRestore()
+      expect(labels()).toEqual(['Reinhardt', 'Winston'])
+      expect(options()).toEqual(['Reinhardt', 'Sigma', 'Winston']) // the saved wheel keeps it
+      expect(invoke).not.toHaveBeenCalledWith('update_wheel', expect.anything())
+    } finally {
+      myWheels[0] = { ...myWheels[0], options: ['Reinhardt', 'Sigma'] }
+    }
+  })
+
+  it('"Spin quietly" sends a quiet spin, closes, and is remembered', async () => {
+    await open()
+    type('a, b')
+    const box = quietBox()!
+    expect(box.checked).toBe(false)
+    box.click()
+    flushSync()
+    expect(wheelPrefs.quiet).toBe(true)
+    invoke.mockImplementationOnce(async () => ({ id: 'Q1', channel_id: 'C1', spin: spunLine.wheel }))
+    button('Spin').click()
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('spin_wheel_quietly', { channelId: 'C1', request: { options: ['a', 'b'] } }))
+    await vi.waitFor(() => expect(closed).toBe(1))
+    expect(app.state.messages['C1'] ?? []).toEqual([])
+    unmount(cmp!)
+    cmp = undefined
+    document.body.innerHTML = ''
+    await open()
+    expect(quietBox()!.checked).toBe(true)
   })
 })
 
@@ -229,7 +316,7 @@ describe('WheelPopover Escape', () => {
 
   it('Escape on a button closes straight away', async () => {
     await open()
-    const b = button('New wheel')
+    const b = pop().querySelector<HTMLButtonElement>('.wheel-row')!
     b.focus()
     esc(b)
     expect(closed).toBe(1)

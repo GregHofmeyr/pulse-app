@@ -8,7 +8,8 @@ use futures::{SinkExt, StreamExt};
 use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
 use pulse_protocol::ids::ChannelId;
 use pulse_protocol::rest::{
-    ApiError, Channel, ChannelKind, Message, MessageKind, Wheel, WheelScope, wheel_winner_at,
+    ApiError, Channel, ChannelKind, Message, MessageKind, QuietSpin, Wheel, WheelScope,
+    wheel_winner_at,
 };
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message as Ws;
@@ -421,13 +422,8 @@ async fn spins_are_refused_where_they_dont_belong() {
     let voice = new_channel(&app, &alex, s.id, "voice").await;
     let two = json!({"options": ["a", "b"]});
 
-    // too few, neither or both
-    for b in [
-        json!({"options": ["a"]}),
-        json!({"options": []}),
-        json!({}),
-        json!({"options": ["a", "b"], "wheel_id": "x"}),
-    ] {
+    // too few, or neither
+    for b in [json!({"options": ["a"]}), json!({"options": []}), json!({})] {
         assert_eq!(
             spin(&app, &alex, g.id, b.clone()).await.status(),
             400,
@@ -689,4 +685,162 @@ async fn again(
         json!({"remove_winner": remove}),
     )
     .await
+}
+
+async fn quiet(app: &TestApp, token: &str, channel: ChannelId, body: Value) -> reqwest::Response {
+    post_json(
+        app,
+        token,
+        &format!("/channels/{channel}/wheel-spins/quiet"),
+        body,
+    )
+    .await
+}
+
+async fn quiet_ok(app: &TestApp, token: &str, channel: ChannelId, body: Value) -> QuietSpin {
+    let r = quiet(app, token, channel, body).await;
+    assert_eq!(r.status(), 201);
+    r.json().await.unwrap()
+}
+
+async fn quiet_spun(ws: &mut Socket) -> Option<QuietSpin> {
+    next_matching(ws, |e| match e {
+        Event::WheelSpunQuietly { spin } => Some(spin),
+        _ => None,
+    })
+    .await
+}
+
+/// Spin quietly (#270): the chat watches the same spin land, but no line, no stored spin and no history.
+#[tokio::test]
+async fn a_quiet_spin_is_watched_live_and_leaves_nothing_behind() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (sam_id, sam) = register(&app, "sam").await;
+    let (_, kim) = register(&app, "kim").await;
+    let s = create_server(&app, &alex, "Main").await;
+    join(&app, &sam, s.id).await;
+    let g = general(&app, &alex, s.id).await;
+    let mut alex_ws = hello(&app, &alex).await;
+    let mut sam_ws = hello(&app, &sam).await;
+    let mut kim_ws = hello(&app, &kim).await;
+
+    let q = quiet_ok(
+        &app,
+        &alex,
+        g.id,
+        json!({"options": [" pizza ", "sushi", "braai"]}),
+    )
+    .await;
+    assert_eq!(q.channel_id, g.id);
+    assert_eq!(q.spin.options, vec!["pizza", "sushi", "braai"]);
+    assert_eq!(q.spin.spinner_id, Some(alex_id));
+    assert!((0.0..360.0).contains(&q.spin.angle));
+    assert_eq!(wheel_winner_at(q.spin.angle, 3), q.spin.winner as usize);
+
+    // everyone watching gets the identical spin (servers are public, as their messages are)
+    assert_eq!(quiet_spun(&mut alex_ws).await.unwrap(), q);
+    assert_eq!(quiet_spun(&mut sam_ws).await.unwrap(), q);
+    assert_eq!(quiet_spun(&mut kim_ws).await.unwrap(), q);
+    // a DM's quiet spin reaches only its two
+    let dm = create_dm(&app, &alex, &[sam_id]).await;
+    let in_dm = quiet_ok(&app, &sam, dm.id, json!({"options": ["a", "b"]})).await;
+    assert_eq!(quiet_spun(&mut alex_ws).await.unwrap(), in_dm);
+    assert_eq!(quiet_spun(&mut sam_ws).await.unwrap(), in_dm);
+    assert!(quiet_spun(&mut kim_ws).await.is_none());
+
+    // nothing saved: no line in the history, no stored spin
+    let history: Vec<Message> = get_json(&app, &sam, &format!("/channels/{}/messages", g.id)).await;
+    assert!(history.iter().all(|m| m.wheel.is_none()), "{history:?}");
+    let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM wheel_spins")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(stored, 0);
+
+    // a saved server wheel by id, named; Remove winner sends the rest of its options and keeps the name
+    let games = create_ok(
+        &app,
+        &sam,
+        json!({"server_id": s.id, "name": "Games", "options": ["Valheim", "Apex", "Among Us"]}),
+    )
+    .await;
+    let named = quiet_ok(&app, &sam, g.id, json!({"wheel_id": games.id})).await;
+    assert_eq!(
+        (named.spin.wheel_id.as_deref(), named.spin.name.as_deref()),
+        (Some(games.id.as_str()), Some("Games"))
+    );
+    assert_ne!(named.id, q.id);
+    let fewer = quiet_ok(
+        &app,
+        &alex,
+        g.id,
+        json!({"wheel_id": games.id, "options": ["Valheim", "Among Us"]}),
+    )
+    .await;
+    assert_eq!(fewer.spin.name.as_deref(), Some("Games"));
+    assert_eq!(fewer.spin.options, vec!["Valheim", "Among Us"]);
+}
+
+#[tokio::test]
+async fn quiet_spins_are_checked_like_spins() {
+    let mut cfg = test_config();
+    cfg.limits.wheel_spin_user = pulse_server::limits::Rate::new(1, 0.0001);
+    let app = spawn_with(cfg).await;
+    let (_, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    let (_, kim) = register(&app, "kim").await;
+    let s = create_server(&app, &alex, "Main").await;
+    join(&app, &sam, s.id).await;
+    let g = general(&app, &alex, s.id).await;
+    let quotes = new_channel(&app, &alex, s.id, "quotes").await;
+    let two = json!({"options": ["a", "b"]});
+    let games = create_ok(
+        &app,
+        &alex,
+        json!({"server_id": s.id, "name": "Games", "options": ["Valheim", "Apex"]}),
+    )
+    .await;
+
+    // refusals cost no rate-limit token
+    assert_eq!(
+        quiet(&app, &alex, g.id, json!({"options": ["a"]}))
+            .await
+            .status(),
+        400
+    );
+    assert_eq!(
+        quiet(&app, &alex, quotes.id, two.clone()).await.status(),
+        400
+    );
+    assert_eq!(quiet(&app, &kim, g.id, two.clone()).await.status(), 403);
+    // only options the saved wheel has (each as often as it has it), and still two of them
+    for options in [
+        json!(["Valheim", "Fortnite"]),
+        json!(["Valheim"]),
+        json!(["Valheim", "Valheim"]),
+    ] {
+        let b = json!({"wheel_id": games.id, "options": options});
+        assert_eq!(
+            quiet(&app, &alex, g.id, b.clone()).await.status(),
+            400,
+            "{b}"
+        );
+    }
+    let r = quiet(
+        &app,
+        &alex,
+        g.id,
+        json!({"wheel_id": "nope", "options": ["a", "b"]}),
+    )
+    .await;
+    assert_eq!(r.status(), 404);
+
+    // one spin every few seconds, quiet or not
+    quiet_ok(&app, &alex, g.id, two.clone()).await;
+    let (status, msg) = error(quiet(&app, &alex, g.id, two.clone()).await).await;
+    assert_eq!(status, 429);
+    assert!(msg.contains("one spin every few seconds"), "{msg}");
+    assert_eq!(spin(&app, &alex, g.id, two.clone()).await.status(), 429);
+    quiet_ok(&app, &sam, g.id, two).await;
 }

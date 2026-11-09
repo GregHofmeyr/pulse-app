@@ -850,6 +850,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     // Saved picker wheels are loaded on demand and kept in lib/wheels.svelte.ts (#158).
     case 'WheelSaved':
     case 'WheelDeleted':
+    // A quiet spin (#270) is shown for a moment and kept nowhere but there.
+    case 'WheelSpunQuietly':
       return s
     // Carries no view: lib/polls.svelte.ts fetches ours (#157).
     case 'PollChanged':

@@ -25,6 +25,7 @@ import type { Wheel } from './protocol/Wheel'
 import type { CreateWheelRequest } from './protocol/CreateWheelRequest'
 import type { UpdateWheelRequest } from './protocol/UpdateWheelRequest'
 import type { SpinWheelRequest } from './protocol/SpinWheelRequest'
+import type { QuietSpin } from './protocol/QuietSpin'
 import type { CreatePollRequest } from './protocol/CreatePollRequest'
 import type { Poll } from './protocol/Poll'
 import type { StreamInfo } from './protocol/StreamInfo'
@@ -444,6 +445,8 @@ export const wheelCmd = {
   /** A saved wheel by id, or a quick one from its options. Resolves with the spin's line. */
   spin: (channelId: string, request: SpinWheelRequest) => invoke<Message>('spin_wheel', { channelId, request }),
   spinAgain: (messageId: string, removeWinner: boolean) => invoke<Message>('spin_again', { messageId, removeWinner }),
+  /** A spin the chat watches but nothing saves (#270). Resolves with the spin the server drew. */
+  spinQuietly: (channelId: string, request: SpinWheelRequest) => invoke<QuietSpin>('spin_wheel_quietly', { channelId, request }),
 }
 
 /** Polls (#157): post one, fetch your view of one, vote (your full set of choices; none takes it back), end yours. */

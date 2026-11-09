@@ -7,8 +7,8 @@ use crate::ids::{CallId, ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game,
     Member, Message, Mute, NotifyLevelPref, OwnStatus, Person, PinnedMessage, PresenceStatus,
-    PrivateNickname, QotyEvent, ReadState, RingEndReason, Server, ServerLayout, ServerVoiceMod,
-    Sound, SpeakerLink, StreamEndReason, StreamInfo, User, Wheel,
+    PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason, Server, ServerLayout,
+    ServerVoiceMod, Sound, SpeakerLink, StreamEndReason, StreamInfo, User, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -542,6 +542,11 @@ pub enum Event {
         channel_id: ChannelId,
         message_id: MessageId,
     },
+    /// A quiet picker wheel spin (#270): the chat watches it land as with any spin, but nothing is saved (no line,
+    /// no history), so it reaches only whoever is connected now. Clients from before it skip the frame.
+    WheelSpunQuietly {
+        spin: QuietSpin,
+    },
 }
 
 impl Event {
@@ -568,6 +573,7 @@ impl Event {
             | Self::MessagePinned { channel_id, .. }
             | Self::MessageUnpinned { channel_id, .. }
             | Self::PollChanged { channel_id, .. } => Some(*channel_id),
+            Self::WheelSpunQuietly { spin } => Some(spin.channel_id),
             Self::CallStarted { call } => Some(call.channel_id),
             Self::CallRinging { ring } => Some(ring.channel_id),
             Self::ChannelCreated { channel } => Some(channel.id),
@@ -1259,7 +1265,19 @@ mod tests {
             ..old
         };
         let back: Message = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
-        assert_eq!(back.wheel, Some(Box::new(spin)));
+        assert_eq!(back.wheel, Some(Box::new(spin.clone())));
+
+        // a quiet spin (#270) reaches its chat like a message, and is a frame older clients skip
+        let quiet = Event::WheelSpunQuietly {
+            spin: crate::rest::QuietSpin {
+                id: "q".into(),
+                channel_id: c,
+                spin,
+            },
+        };
+        assert_eq!((quiet.channel_id(), quiet.only_for()), (Some(c), None));
+        let json = serde_json::to_string(&quiet).unwrap();
+        assert!(json.contains(r#""t":"WheelSpunQuietly""#), "{json}");
     }
 
     #[test]

@@ -16,6 +16,19 @@ export const QUIET_HOLD_MS = 600
 export const LIVE_WINDOW_MS = 1000
 /** At most one tick this often, however fast the slices pass. */
 export const TICK_GAP_MS = 80
+/** A quiet spin's card (#270) leaves nothing behind: it shows the result this long after landing, then fades. */
+export const QUIET_LINGER_MS = 6000
+/** How long a quiet spin's card lasts from when it arrives: the full spin, then the result for a while. */
+export const QUIET_CARD_MS = SPIN_MS + QUIET_LINGER_MS
+
+/** A draw on this device, for a Just me wheel's private spin (#270): the winner, uniformly, and the final angle
+ *  that puts the pointer 10-90 % of the way across its slice. The server's `draw` (server/src/wheels/mod.rs). */
+export function drawSpin(n: number, random: () => number = Math.random): { winner: number; angle: number } {
+  const winner = Math.min(n - 1, Math.floor(random() * n))
+  const seg = 360 / n
+  const at = seg * (winner + 0.1 + random() * 0.8)
+  return { winner, angle: (((360 - at) % 360) + 360) % 360 }
+}
 
 /** "a, b, c" (or one per line) → ["a", "b", "c"]: trimmed, blanks dropped. */
 export function splitOptions(text: string): string[] {

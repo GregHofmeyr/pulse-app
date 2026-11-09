@@ -380,6 +380,7 @@ pub fn run() {
             commands::delete_wheel,
             commands::spin_wheel,
             commands::spin_again,
+            commands::spin_wheel_quietly,
             commands::create_poll,
             commands::get_poll,
             commands::vote_poll,

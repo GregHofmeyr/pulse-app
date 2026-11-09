@@ -3985,6 +3985,21 @@ pub async fn spin_wheel(
     core.check(&app, api.spin_wheel(&token, channel_id, &request).await)
 }
 
+/// Spin quietly (#270): the chat watches it land live, but no line is saved.
+#[tauri::command]
+pub async fn spin_wheel_quietly(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    request: pulse_protocol::rest::SpinWheelRequest,
+) -> Result<pulse_protocol::rest::QuietSpin, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.spin_wheel_quietly(&token, channel_id, &request).await,
+    )
+}
+
 /// Spin again from a spin's line, or without its winner.
 #[tauri::command]
 pub async fn spin_again(

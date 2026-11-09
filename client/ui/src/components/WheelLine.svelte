@@ -10,15 +10,13 @@
   import Wheel from './Wheel.svelte'
   import SaveWheelForm from './SaveWheelForm.svelte'
   import { clickOutside } from '../lib/actions'
-  import { motion } from '../lib/animate.svelte'
   import { twemojiUrl } from '../lib/emoji'
   import { popoverStyle } from '../lib/reactions'
   import { errorText } from '../lib/tauri'
-  import { playSound } from '../lib/voiceui'
-  import { HOLD_MS, QUIET_HOLD_MS, rotationAt, spinDuration, TICK_GAP_MS, winnerAt } from '../lib/wheel'
+  import { HOLD_MS, QUIET_HOLD_MS } from '../lib/wheel'
   import { sliceColour } from '../lib/wheelColours'
+  import { quietNow, runSpin } from '../lib/wheelSpin'
   import { spinAgain, spunLive } from '../lib/wheels.svelte'
-  import { windowFocus } from '../lib/windowFocus.svelte'
   import type { Message } from '../lib/protocol/Message'
   import type { WheelSpin } from '../lib/protocol/WheelSpin'
 
@@ -31,42 +29,26 @@
 
   // decided once, as it mounts: a line seen later never replays its spin
   const live = untrack(() => spunLive(message.id))
-  const quiet = untrack(() => motion.reducedMotion || motion.streaming || !windowFocus.focused)
+  const quiet = untrack(quietNow)
   let phase = $state<'spinning' | 'landed' | 'line'>(untrack(() => (live ? 'spinning' : 'line')))
   let rotation = $state(0)
 
   onMount(() => {
     if (!live) return
     const { angle, options } = untrack(() => spin)
-    const count = options.length
-    const duration = spinDuration(quiet)
-    let start: number | null = null
-    let raf = 0
     let hold: ReturnType<typeof setTimeout> | undefined
-    let slice = winnerAt(0, count)
-    let lastTick = -Infinity
-    const frame = (t: number) => {
-      start ??= t
-      const elapsed = t - start
-      rotation = rotationAt(elapsed, angle, quiet)
-      // a quiet tick each time a new slice passes the pointer (never under reduced motion)
-      const now = winnerAt(rotation, count)
-      if (now !== slice) {
-        slice = now
-        if (!quiet && t - lastTick >= TICK_GAP_MS) {
-          lastTick = t
-          playSound('wheel_tick')
-        }
-      }
-      if (elapsed < duration) raf = requestAnimationFrame(frame)
-      else {
+    const stop = runSpin({
+      angle,
+      count: options.length,
+      quiet,
+      onRotate: (deg) => (rotation = deg),
+      onLanded: () => {
         phase = 'landed'
         hold = setTimeout(() => (phase = 'line'), quiet ? QUIET_HOLD_MS : HOLD_MS)
-      }
-    }
-    raf = requestAnimationFrame(frame)
+      },
+    })
     return () => {
-      cancelAnimationFrame(raf)
+      stop()
       clearTimeout(hold)
     }
   })

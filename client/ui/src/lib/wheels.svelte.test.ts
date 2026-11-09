@@ -14,7 +14,11 @@ const invoke = vi.fn(async (cmd: string, _args?: unknown): Promise<unknown> => {
 })
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
-import { noteSpin, resetWheels, saveWheel, savesSettled, spunLive, wheels } from './wheels.svelte'
+import {
+  handleWheelEvent, holdQuietSpin, noteSpin, onOwnSpin, quietSpins, resetWheels, saveWheel, savesSettled, setSpinQuietly,
+  spinAgain, spinQuietly, spinWheel, spunLive, wheelPrefs, wheels,
+} from './wheels.svelte'
+import { QUIET_CARD_MS, QUIET_LINGER_MS } from './wheel'
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
 
@@ -59,6 +63,75 @@ describe('saving a saved wheel', () => {
     answers[0]({ ...w, options: ['x', 'y'] })
     await settled
     expect(done).toBe(true)
+  })
+})
+
+describe('quiet spins (#270)', () => {
+  const q = (id: string, channel_id = 'C1') => ({ id, channel_id, spin: { spinner_id: 'U1', wheel_id: null, name: null, options: ['a', 'b'], winner: 1, angle: 100 } })
+
+  it('one arriving (or our own answer) shows in its chat once, then goes on its own', () => {
+    vi.useFakeTimers()
+    try {
+      handleWheelEvent({ t: 'WheelSpunQuietly', d: { spin: q('Q1') } })
+      handleWheelEvent({ t: 'WheelSpunQuietly', d: { spin: q('Q1') } })
+      handleWheelEvent({ t: 'WheelSpunQuietly', d: { spin: q('Q2', 'C2') } })
+      expect(quietSpins.C1.map((c) => c.spin.id)).toEqual(['Q1'])
+      expect(quietSpins.C2.map((c) => c.spin.id)).toEqual(['Q2'])
+      vi.advanceTimersByTime(QUIET_CARD_MS - 1)
+      expect(quietSpins.C1).toHaveLength(1)
+      vi.advanceTimersByTime(1)
+      expect(quietSpins.C1 ?? []).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stays while it is held (hovered), and goes a moment after it is let go', () => {
+    vi.useFakeTimers()
+    try {
+      handleWheelEvent({ t: 'WheelSpunQuietly', d: { spin: q('Q1') } })
+      holdQuietSpin('Q1', true)
+      vi.advanceTimersByTime(QUIET_CARD_MS * 3)
+      expect(quietSpins.C1).toHaveLength(1)
+      holdQuietSpin('Q1', false)
+      vi.advanceTimersByTime(QUIET_LINGER_MS)
+      expect(quietSpins.C1 ?? []).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('spinning quietly shows ours at once and tells the chat we spun', async () => {
+    invoke.mockImplementationOnce(async () => q('Q7'))
+    const spun: string[] = []
+    const off = onOwnSpin((c) => spun.push(c))
+    await spinQuietly('C1', { options: ['a', 'b'] })
+    off()
+    expect(invoke).toHaveBeenCalledWith('spin_wheel_quietly', { channelId: 'C1', request: { options: ['a', 'b'] } })
+    expect(quietSpins.C1.map((c) => c.spin.id)).toEqual(['Q7'])
+    expect(spun).toEqual(['C1'])
+  })
+
+  it('"Spin quietly" is remembered on this device', () => {
+    setSpinQuietly(true)
+    expect(wheelPrefs.quiet).toBe(true)
+    expect(localStorage.getItem('pulse.wheelSpinQuietly')).toBe('true')
+    setSpinQuietly(false)
+    expect(wheelPrefs.quiet).toBe(false)
+  })
+})
+
+describe('your own spins (#270: the chat jumps to them)', () => {
+  it('a spin you start tells the chat; listeners can stop listening', async () => {
+    const line = { id: 'L9', channel_id: 'C3', wheel: { spinner_id: 'U1', wheel_id: null, name: null, options: ['a', 'b'], winner: 0, angle: 10 } }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'spin_wheel' || cmd === 'spin_again' ? line : undefined))
+    const spun: string[] = []
+    const off = onOwnSpin((c) => spun.push(c))
+    await spinWheel('C3', { options: ['a', 'b'] })
+    await spinAgain('L1', false)
+    off()
+    await spinWheel('C3', { options: ['a', 'b'] })
+    expect(spun).toEqual(['C3', 'C3'])
   })
 })
 

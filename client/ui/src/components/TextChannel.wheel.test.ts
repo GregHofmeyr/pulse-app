@@ -19,7 +19,12 @@ import { forgetQuickWheels } from './WheelPopover.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { testReady } from '../lib/testReady'
-import { resetWheels } from '../lib/wheels.svelte'
+import { addQuietSpin, handleWheelEvent, resetWheels, setSpinQuietly } from '../lib/wheels.svelte'
+import { QUIET_CARD_MS } from '../lib/wheel'
+
+const spin = (options: string[], extra: Record<string, unknown> = {}) => ({ spinner_id: 'U2', wheel_id: null, name: null, options, winner: 1, angle: 100, ...extra })
+const line = (id: string, options: string[]) => ({ id, channel_id: 'C1', author_id: null, kind: 'system', content: '', reply_to_id: null, created_at: '2026-11-09T10:00:00.000Z',
+  edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [], wheel: spin(options) })
 
 let cmp: ReturnType<typeof mount> | undefined
 function show() {
@@ -117,6 +122,20 @@ describe('/wheel in the message box', () => {
     await vi.waitFor(() => expect(app.state.pending['C1']?.map((p) => p.content)).toEqual(['/shrug hi']))
   })
 
+  it('/wheel follows "Spin quietly" as the popover last left it (#270)', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'spin_wheel_quietly' ? { id: 'Q1', channel_id: 'C1', spin: spin(['kim', 'jo']) } : []))
+    setSpinQuietly(true)
+    try {
+      const box = show()
+      send(box, '/wheel kim, jo')
+      await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('spin_wheel_quietly', { channelId: 'C1', request: { options: ['kim', 'jo'] } }))
+      expect(invoke).not.toHaveBeenCalledWith('spin_wheel', expect.anything())
+      await vi.waitFor(() => expect(document.querySelector('.quiet-card')).not.toBeNull())
+    } finally {
+      setSpinQuietly(false)
+    }
+  })
+
   it('the wheel button by the emoji button opens and closes the popover', () => {
     show()
     const btn = document.querySelector<HTMLButtonElement>('button[aria-label="Picker wheel"]')!
@@ -128,5 +147,115 @@ describe('/wheel in the message box', () => {
     btn.click()
     flushSync()
     expect(popover()).toBeNull()
+  })
+})
+
+// #270: a quiet spin's card shows for everyone in the chat, then goes; Spin again / Remove winner on it are quiet too
+describe('quiet spins in the chat', () => {
+  const card = () => document.querySelector<HTMLElement>('.quiet-card')
+  const cardButton = (text: string) => [...(card()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent!.trim() === text)
+  beforeEach(() => {
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'spin_wheel_quietly') {
+        const { request } = args as { request: { options: string[]; wheel_id?: string } }
+        return { id: 'Q9', channel_id: 'C1', spin: spin(request.options, request.wheel_id ? { wheel_id: request.wheel_id, name: 'Games' } : {}) }
+      }
+      return []
+    })
+  })
+
+  it("someone's quiet spin shows as a card that leaves no line, and goes after a while", async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      show()
+      handleWheelEvent({ t: 'WheelSpunQuietly', d: { spin: { id: 'Q1', channel_id: 'C1', spin: spin(['pizza', 'sushi', 'braai']) } } })
+      flushSync()
+      expect(card()).not.toBeNull()
+      expect(card()!.textContent).toContain('Quiet spin · not saved')
+      expect(app.state.messages['C1'] ?? []).toEqual([])
+      vi.advanceTimersByTime(QUIET_CARD_MS)
+      flushSync()
+      expect(card()).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('Spin again and Remove winner & spin on a quiet card spin quietly, and it gives way to the new one', async () => {
+    show()
+    addQuietSpin({ id: 'Q1', channel_id: 'C1', spin: spin(['pizza', 'sushi', 'braai'], { wheel_id: 'W1', name: 'Food' }) }, Date.now() - 2000)
+    flushSync()
+    // the result shows once it lands; a card that mounts later than a moment after arriving is landed already
+    await vi.waitFor(() => expect(cardButton('Remove winner & spin')).toBeTruthy())
+    cardButton('Remove winner & spin')!.click()
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('spin_wheel_quietly', { channelId: 'C1', request: { wheel_id: 'W1', options: ['pizza', 'braai'] } }))
+    await vi.waitFor(() => expect(document.querySelectorAll('.quiet-card')).toHaveLength(1))
+  })
+})
+
+// #270 (5): a spin you start brings the chat to the latest, as sending does; someone else's leaves your place alone
+describe('your spin comes into view', () => {
+  let scrolls: unknown[] = []
+  /** The history has loaded (opening the chat scrolls to the newest), then you scroll well up. */
+  async function scrolledUp() {
+    await vi.waitFor(() => expect(app.state.history['C1']?.loaded).toBe(true))
+    await new Promise((r) => setTimeout(r, 20))
+    const list = document.querySelector<HTMLElement>('.list')!
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, get: () => 2000 })
+    Object.defineProperty(list, 'clientHeight', { configurable: true, get: () => 500 })
+    list.scrollTop = 0
+    scrolls = []
+    return list
+  }
+  beforeEach(() => {
+    scrolls = []
+    Element.prototype.scrollTo = function (this: Element, o?: unknown) {
+      if (this.classList.contains('list')) scrolls.push(o)
+    } as never
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'spin_wheel') return line('L5', ['kim', 'jo'])
+      if (cmd === 'spin_wheel_quietly') return { id: 'Q5', channel_id: 'C1', spin: spin(['kim', 'jo']) }
+      return []
+    })
+  })
+
+  it('/wheel from higher up jumps to the latest', async () => {
+    const box = show()
+    await scrolledUp()
+    scrolls = []
+    send(box, '/wheel kim, jo')
+    await vi.waitFor(() => expect(scrolls).toContainEqual({ top: 2000 }))
+  })
+
+  it('a quiet spin from the popover does too', async () => {
+    setSpinQuietly(true)
+    try {
+      show()
+      await scrolledUp()
+      document.querySelector<HTMLButtonElement>('button[aria-label="Picker wheel"]')!.click()
+      flushSync()
+      const field = document.querySelector<HTMLInputElement>('.wheel-popover input[aria-label="Add an option"]')!
+      field.value = 'kim, jo'
+      field.dispatchEvent(new Event('input'))
+      flushSync()
+      field.form!.requestSubmit()
+      flushSync()
+      scrolls = []
+      ;[...document.querySelectorAll<HTMLButtonElement>('.wheel-popover button')].find((b) => b.textContent!.trim() === 'Spin')!.click()
+      await vi.waitFor(() => expect(scrolls).toContainEqual({ top: 2000 }))
+    } finally {
+      setSpinQuietly(false)
+    }
+  })
+
+  it("someone else's spin doesn't move you when you're reading higher up", async () => {
+    show()
+    await scrolledUp()
+    scrolls = []
+    handleWheelEvent({ t: 'WheelSpunQuietly', d: { spin: { id: 'Q2', channel_id: 'C1', spin: spin(['a', 'b']) } } })
+    app.state = { ...app.state, messages: { ...app.state.messages, C1: [...(app.state.messages['C1'] ?? []), line('L7', ['a', 'b']) as never] } }
+    flushSync()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(scrolls).toEqual([])
   })
 })

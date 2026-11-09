@@ -6,8 +6,8 @@ use axum::routing::{get, patch, post};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId, next_ulid};
 use pulse_protocol::rest::{
-    Channel, ChannelKind, CreateWheelRequest, Message, SpinAgainRequest, SpinWheelRequest,
-    UpdateWheelRequest, Wheel, WheelScope, WheelSpin, wheel_limits,
+    Channel, ChannelKind, CreateWheelRequest, Message, QuietSpin, SpinAgainRequest,
+    SpinWheelRequest, UpdateWheelRequest, Wheel, WheelScope, WheelSpin, wheel_limits,
 };
 
 use super::{clean_name, clean_options, draw, for_owner, for_server, load, spinnable};
@@ -26,6 +26,7 @@ pub fn router() -> Router<AppState> {
         .route("/wheels", post(create))
         .route("/wheels/{id}", patch(update).delete(delete))
         .route("/channels/{id}/wheel-spins", post(spin))
+        .route("/channels/{id}/wheel-spins/quiet", post(spin_quietly))
         .route("/messages/{id}/spin-again", post(spin_again))
 }
 
@@ -227,8 +228,63 @@ async fn spin(
 ) -> AppResult<(StatusCode, Json<Message>)> {
     crate::media::writes_ok(&s.cfg)?;
     let ch = spin_channel(&s, me, id).await?;
-    let (wheel_id, name, options) = match (req.wheel_id, req.options) {
-        (Some(w), None) => {
+    let (wheel_id, name, options) = what_to_spin(&s, me, &ch, req).await?;
+    // Spent once the spin is sure to go ahead: a refused one (too few options, the wrong chat) costs nothing.
+    if !s.limits.wheel_spin_user.hit(&me.to_string()) {
+        return Err(spin_too_soon());
+    }
+    let line = post_spin(&s, me, &ch, wheel_id, name, options).await?;
+    Ok((StatusCode::CREATED, Json(line)))
+}
+
+/// `POST /channels/{id}/wheel-spins/quiet` (#270): a spin the chat watches live that leaves nothing behind. Drawn
+/// and checked as [`spin`] (the same rate limit), but nothing is stored: the spin reaches whoever is in the chat
+/// now as a `WheelSpunQuietly`, and the answer.
+async fn spin_quietly(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ChannelId>,
+    Json(req): Json<SpinWheelRequest>,
+) -> AppResult<(StatusCode, Json<QuietSpin>)> {
+    let ch = spin_channel(&s, me, id).await?;
+    let (wheel_id, name, options) = what_to_spin(&s, me, &ch, req).await?;
+    if !s.limits.wheel_spin_user.hit(&me.to_string()) {
+        return Err(spin_too_soon());
+    }
+    let (winner, angle) = draw(options.len(), &mut rand::rng());
+    let quiet = QuietSpin {
+        id: next_ulid().to_string(),
+        channel_id: ch.id,
+        spin: WheelSpin {
+            spinner_id: Some(me),
+            wheel_id,
+            name,
+            options,
+            winner: u32::try_from(winner).map_err(anyhow::Error::from)?,
+            angle,
+        },
+    };
+    s.hub
+        .publish(
+            &s.db,
+            Event::WheelSpunQuietly {
+                spin: quiet.clone(),
+            },
+        )
+        .await;
+    Ok((StatusCode::CREATED, Json(quiet)))
+}
+
+/// What a spin request spins: a saved wheel (its id, name and options), a quick wheel (its options), or a saved
+/// wheel with only some of its options (named; each option at most as often as the wheel has it). At least two.
+async fn what_to_spin(
+    s: &AppState,
+    me: UserId,
+    ch: &Channel,
+    req: SpinWheelRequest,
+) -> AppResult<(Option<String>, Option<String>, Vec<String>)> {
+    let picked = match (req.wheel_id, req.options) {
+        (Some(w), only) => {
             let wheel = load(&s.db, &w).await?.ok_or(AppError::NotFound)?;
             match wheel.scope {
                 WheelScope::Personal if wheel.owner_id != Some(me) => {
@@ -241,22 +297,33 @@ async fn spin(
                 }
                 _ => {}
             }
-            (Some(wheel.id), Some(wheel.name), wheel.options)
+            let options = match only {
+                None => wheel.options,
+                Some(only) => {
+                    let only = clean_options(only)?;
+                    let mut left = wheel.options;
+                    for o in &only {
+                        let Some(i) = left.iter().position(|x| x == o) else {
+                            return Err(AppError::BadRequest(
+                                "that wheel has changed; open it again to spin".into(),
+                            ));
+                        };
+                        left.swap_remove(i);
+                    }
+                    only
+                }
+            };
+            (Some(wheel.id), Some(wheel.name), options)
         }
         (None, Some(options)) => (None, None, clean_options(options)?),
-        _ => {
+        (None, None) => {
             return Err(AppError::BadRequest(
                 "spin a saved wheel or a list of options".into(),
             ));
         }
     };
-    spinnable(&options)?;
-    // Spent once the spin is sure to go ahead: a refused one (too few options, the wrong chat) costs nothing.
-    if !s.limits.wheel_spin_user.hit(&me.to_string()) {
-        return Err(spin_too_soon());
-    }
-    let line = post_spin(&s, me, &ch, wheel_id, name, options).await?;
-    Ok((StatusCode::CREATED, Json(line)))
+    spinnable(&picked.2)?;
+    Ok(picked)
 }
 
 /// `POST /messages/{id}/spin-again`: Spin again (the same options) or Remove winner & spin, from a spin's line.
