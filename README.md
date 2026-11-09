@@ -7,7 +7,7 @@ What's in it:
 
 - **Chat:** servers as tabs, text and voice channels in categories, DMs and groups, replies, reactions and custom
   emoji, mentions, link embeds (YouTube, Spotify, TikTok…), search, pins, polls, the picker wheel, `/` commands.
-- **Voice:** calls in voice channels and DMs, noise suppression, push-to-talk and keybinds, soundboard, join sounds and
+- **Voice:** calls in voice channels and DMs, noise suppression, push-to-talk and keybinds, soundboard, join and leave
   cues, a volume mixer, text chat beside the call, server mute and deafen.
 - **Streams:** Go Live with app or screen audio, ghost viewers.
 - **Quotes and clips:** a quotes channel with awards and Quote of the Year; clips uploaded to the clips feed.
