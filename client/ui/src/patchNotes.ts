@@ -24,6 +24,39 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.2',
+  version: '0.2.2',
+  date: '9 November 2026',
+  new: [
+    'Pin messages for an hour, a day, a week or forever. The 📌 in the channel header lists them all, with Jump',
+    'The picker wheel 🎡: spin together and land on the same slice, save Server or Just me wheels, or type /wheel pizza, sushi, braai',
+    "Polls 📊: multiple choice, anonymous, and an end time. See who voted for what, unless it's anonymous",
+    'Type / in the message box for commands, and press Tab to finish one',
+  ],
+  fixes: [
+    'Clips replay instantly after pausing or finishing, with no reloading',
+    'Menus on Linux no longer flash when they open',
+    'Escape and clicking away now close the suggestion lists and wheel edits sensibly instead of the whole window',
+  ],
+  qol: [
+    'A double ding when you talk while muted. Turn it down or off in the volume mixer',
+    'The soundboard is now properly mashable 🔨',
+    'Quotes get a 🏆 award button on each line, and Copy quote copies the whole thing',
+    'The bell on a muted channel lets you change notifications without unmuting',
+    "Escape in Settings › Wheels only closes what you're editing, and asks before throwing away changes",
+  ],
+  soon: [
+    'Streaming in DM and group calls',
+    'Share a Spotify Jam or song to the voice stage',
+    'A fresh profile editor: edit right inside your big profile card',
+    'Custom join sounds',
+    'Stream fullscreen, with chat as a side strip',
+  ],
+  message: 'Pins, polls AND a wheel? The Coming soon list got absolutely cooked 🌈\nSpin responsibly.',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.1',
   version: '0.2.1',
   date: '6 November 2026',
@@ -53,41 +86,4 @@ export const patchNotes: PatchNotes = {
     'Streaming in DM and group calls',
   ],
   message: "If you're reading this, Pulse just updated itself. No zip files were harmed 💜\n…and the Doos is a slow burn on purpose. Patience, doos.",
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '2026-11-06',
-  version: '0.2.0',
-  date: '6 November 2026',
-  new: [
-    'Pulse now updates itself. This is the last time you install by hand 🎉',
-    'Text chat inside voice channels: open it from the chat icon on the channel, or the Chat button on the stage',
-    "Choose your stream's sound when you go live: just that app, everything except Pulse, or none",
-    'Spotify links get proper cards, and Jam invites become a "Join the Jam" card',
-    'An Idea tab in Report a bug, for feature requests',
-    'Some very special badges just got very special pictures 👀',
-    'Hidden badges now leave riddles in your trophy case',
-  ],
-  fixes: [
-    'You can hear everyone on every call again (people could go silent after your first call until you restarted)',
-    "Streams no longer go out silent when Pulse couldn't tell which app's sound to share",
-    'Spamming a soundboard sound no longer stacks it on top of itself',
-    'Names with stacked accent marks stay inside their own row (YOU KNOW WHO YOU ARE)',
-  ],
-  qol: [
-    'The voice stage fills up: tiles grow and rearrange smoothly as people join',
-    "See which call you're in from anywhere: bold channel, purple speaker, marked server",
-    'Go Live and the Soundboard sit right above your mute buttons, with a clearer soundboard icon',
-    'Clearer join and leave sounds, plus a highlight when someone joins',
-    'Volume control on clips in the clips wall',
-  ],
-  soon: [
-    'More fresh and reworked designs on the way, hopefully with more taste!',
-    'Pinned messages',
-    'Polls',
-    'A random picker wheel 🌈',
-    'Streaming in DM and group calls',
-  ],
-  message: "Another day, another pile of fixes straight from your reports 💜 Keep them coming, and try the new Idea tab.\n…and yes, the Zalgo thing is real. He comes.",
 }
