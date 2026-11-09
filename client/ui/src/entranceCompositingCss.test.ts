@@ -49,3 +49,17 @@ describe('entrances stay on the compositor (#103)', () => {
     expect(tip).toMatch(/transition:\s*opacity [^,;]*;/) // opacity only
   })
 })
+
+describe('on WebKitGTK the entrances are opacity only (#103)', () => {
+  // With the layer declared up front, a fade is only a new opacity value on it. The scale is a transform
+  // animation, which WebKit composites and overlap-tests on its own terms, starting and stopping with the
+  // animation: the last thing an entrance still changed at its two ends on a busy machine.
+  it('.webkitgtk .pop-in fades in without the scale', () => {
+    expect(decls('.webkitgtk .pop-in')).toMatch(/animation-name:\s*fade-in;/)
+    expect(animated('fade-in')).toEqual(['opacity'])
+  })
+
+  it('leaves the timing alone, and the off switches (streaming, unfocused, reduced motion) still win', () => {
+    expect(decls('.webkitgtk .pop-in')).not.toMatch(/animation:|animation-duration|!important/)
+  })
+})

@@ -948,6 +948,11 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
    flipped), a drop-down `top`, a list that opens upward `bottom`; centred is the default (dialogs). */
 .pop-in { animation: pop-in var(--dur) var(--ease); will-change: opacity; transform-origin: var(--pop-origin); }
 .fade-in { animation: fade-in var(--dur) var(--ease); will-change: opacity; }
+/* WebKitGTK (the Linux app, lib/engine.ts): the same fade without the scale (#103). With the layer declared above, a
+   fade is only a new opacity on it; the scale is a transform animation, which WebKit composites and overlap-tests
+   on its own terms from its first frame to its last, the one change left at the entrance's two ends that a busy
+   machine can drop a frame on. WebView2 keeps the grow. The off switches below still win (!important). */
+.webkitgtk .pop-in { animation-name: fade-in; }
 /* Off, not paused: the pause above would hold them on their first, invisible frame (a stream
    toast arrives while you're in a game). */
 .streaming .pop-in, .streaming .fade-in, .unfocused .pop-in, .unfocused .fade-in { animation: none !important; }

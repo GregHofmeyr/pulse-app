@@ -4,6 +4,7 @@ import './fonts.css'
 import './nameFonts.css'
 import './app.css'
 import App from './App.svelte'
+import { markEngine } from './lib/engine'
 import { applyTheme } from './lib/theme.svelte'
 import { logUncaughtErrors } from './lib/uiErrors'
 
@@ -12,6 +13,8 @@ logUncaughtErrors()
 
 // The saved theme before the first paint (no flash of Pulse Dark on Light).
 applyTheme()
+// The engine's class, before anything opens (#103).
+markEngine()
 
 const app = mount(App, {
   target: document.getElementById('app')!,
