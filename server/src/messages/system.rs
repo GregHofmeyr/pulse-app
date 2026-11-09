@@ -2,7 +2,9 @@
 
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId};
-use pulse_protocol::rest::{CallLine, Message, MessageKind, PinLine, QotyCard, WheelSpin};
+use pulse_protocol::rest::{
+    CallLine, Message, MessageKind, PinLine, PollEnded, QotyCard, WheelSpin,
+};
 use sqlx::SqliteConnection;
 
 use crate::AppState;
@@ -62,6 +64,8 @@ pub async fn insert(
         pin: None,
         pin_line: pin_line(&stored),
         wheel: wheel_spin(&stored).map(Box::new),
+        poll: None,
+        poll_ended: poll_ended(&stored).map(Box::new),
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
         .bind(msg.id.to_string())
@@ -147,6 +151,25 @@ pub fn wheel_spin(payload: &str) -> Option<WheelSpin> {
     serde_json::from_value(v).ok()
 }
 
+/// The payload `type` of a poll's "ended" line (#157).
+pub const POLL_ENDED: &str = "poll_ended";
+
+/// An ended line's stored payload.
+pub fn poll_ended_payload(line: &PollEnded) -> AppResult<serde_json::Value> {
+    let mut v = serde_json::to_value(line).map_err(anyhow::Error::from)?;
+    v["type"] = POLL_ENDED.into();
+    Ok(v)
+}
+
+/// The ended line in a stored payload, if it is one.
+pub fn poll_ended(payload: &str) -> Option<PollEnded> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    if v.get("type")?.as_str()? != POLL_ENDED {
+        return None;
+    }
+    serde_json::from_value(v).ok()
+}
+
 /// "a", "a and b", "a, b and c".
 pub fn join_names(names: &[String]) -> String {
     match names {
@@ -209,6 +232,20 @@ mod tests {
         assert_eq!(call_line(&stored), None);
         assert_eq!(qoty_card(&stored), None);
         assert_eq!(wheel_spin(r#"{"type":"call","call_id":"x"}"#), None);
+    }
+
+    #[test]
+    fn a_poll_ended_line_round_trips_through_its_payload() {
+        let line = PollEnded {
+            poll_message_id: MessageId::new(),
+            author_id: None,
+            winners: vec!["Valheim".into()],
+            votes: 4,
+        };
+        let stored = poll_ended_payload(&line).unwrap().to_string();
+        assert_eq!(poll_ended(&stored), Some(line));
+        assert_eq!(wheel_spin(&stored), None);
+        assert_eq!(poll_ended(r#"{"type":"pin"}"#), None);
     }
 
     #[test]

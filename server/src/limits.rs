@@ -132,6 +132,8 @@ pub struct LimitsConfig {
     pub wheel_user: Rate,
     /// Picker wheel spins per person (#158): one every 3 s, so a chat can't be flooded with spinning wheels.
     pub wheel_spin_user: Rate,
+    /// Poll votes per person (#157): a burst of changing your mind, but not scripted flipping.
+    pub poll_vote_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -180,6 +182,7 @@ impl Default for LimitsConfig {
             layout_user: Rate::new(30, 1.0),
             wheel_user: Rate::new(30, 1.0),
             wheel_spin_user: Rate::new(1, 1.0 / 3.0),
+            poll_vote_user: Rate::new(20, 2.0),
         }
     }
 }
@@ -221,6 +224,7 @@ impl LimitsConfig {
             layout_user: r,
             wheel_user: r,
             wheel_spin_user: r,
+            poll_vote_user: r,
         }
     }
 }
@@ -375,6 +379,7 @@ pub struct Limits {
     pub layout_user: Limiter,
     pub wheel_user: Limiter,
     pub wheel_spin_user: Limiter,
+    pub poll_vote_user: Limiter,
 }
 
 impl Limits {
@@ -412,6 +417,7 @@ impl Limits {
             layout_user: Limiter::new(c.layout_user),
             wheel_user: Limiter::new(c.wheel_user),
             wheel_spin_user: Limiter::new(c.wheel_spin_user),
+            poll_vote_user: Limiter::new(c.poll_vote_user),
         }
     }
 }

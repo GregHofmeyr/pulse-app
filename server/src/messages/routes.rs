@@ -104,6 +104,12 @@ fn from_row(r: Row) -> AppResult<Message> {
             Some(p) if system && deleted_at.is_none() => super::system::wheel_spin(p).map(Box::new),
             _ => None,
         },
+        // set per viewer by `polls::attach`
+        poll: None,
+        poll_ended: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => super::system::poll_ended(p).map(Box::new),
+            _ => None,
+        },
     })
 }
 
@@ -135,6 +141,7 @@ pub(crate) async fn load(
     crate::clips::attach(db, me, &mut one).await?;
     crate::embeds::attach(db, &mut one).await?;
     crate::pins::attach(db, &mut one).await?;
+    crate::polls::attach(db, me, &mut one).await?;
     let [m] = one;
     Ok(Some(m))
 }
@@ -193,6 +200,7 @@ pub(crate) async fn fill(
     crate::clips::attach(db, me, &mut page).await?;
     crate::embeds::attach(db, &mut page).await?;
     crate::pins::attach(db, &mut page).await?;
+    crate::polls::attach(db, me, &mut page).await?;
     Ok(page)
 }
 
@@ -360,6 +368,8 @@ async fn send(
         qoty_card: None,
         pin: None,
         pin_line: None,
+        poll: None,
+        poll_ended: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -518,6 +528,10 @@ async fn edit(
             "quotes can't be edited like messages".into(),
         ));
     }
+    // A poll's text is the poll for older clients (#157); a poll isn't edited after posting.
+    if msg.poll.is_some() {
+        return Err(AppError::BadRequest("polls can't be edited".into()));
+    }
     let is_clip: Option<i64> = sqlx::query_scalar("SELECT 1 FROM clips WHERE message_id = ?")
         .bind(id.to_string())
         .fetch_optional(&s.db)
@@ -614,6 +628,7 @@ async fn remove(
     };
     crate::embeds::on_delete(&mut tx, id).await?;
     let unpinned = crate::pins::on_delete(&mut tx, id).await?;
+    crate::polls::on_delete(&mut tx, id).await?;
     tx.commit().await?;
     let mut deleted = deleted;
     if let Some(mut ended) = overdue {
@@ -755,6 +770,8 @@ mod tests {
             qoty_card: None,
             pin: None,
             pin_line: None,
+            poll: None,
+            poll_ended: None,
         }
     }
 

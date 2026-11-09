@@ -7,6 +7,8 @@ import type { MessageId } from "./MessageId";
 import type { MessageKind } from "./MessageKind";
 import type { Pin } from "./Pin";
 import type { PinLine } from "./PinLine";
+import type { Poll } from "./Poll";
+import type { PollEnded } from "./PollEnded";
 import type { QotyCard } from "./QotyCard";
 import type { Quote } from "./Quote";
 import type { ReactionSummary } from "./ReactionSummary";
@@ -58,4 +60,13 @@ pin_line?: PinLine,
 /**
  * Set on a picker wheel spin's line (#158); boxed so every message (and event) stays small.
  */
-wheel?: WheelSpin, };
+wheel?: WheelSpin, 
+/**
+ * Set on a poll (#157), as the caller sees it (results only once they may see them); events carry the view of
+ * no one in particular, with no results and nothing marked as yours.
+ */
+poll?: Poll, 
+/**
+ * Set on a poll's "ended" system line (#157).
+ */
+poll_ended?: PollEnded, };

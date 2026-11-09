@@ -91,6 +91,8 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         qoty_card: None,
         pin: None,
         pin_line: None,
+        poll: None,
+        poll_ended: None,
     }
 }
 

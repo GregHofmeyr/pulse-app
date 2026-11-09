@@ -536,6 +536,12 @@ pub enum Event {
         channel_id: ChannelId,
         message_id: MessageId,
     },
+    /// A poll's votes changed or it closed (#157). It carries nothing anyone may not see: each client that holds
+    /// the poll fetches its own view (`GET /messages/{id}/poll`).
+    PollChanged {
+        channel_id: ChannelId,
+        message_id: MessageId,
+    },
 }
 
 impl Event {
@@ -560,7 +566,8 @@ impl Event {
             | Self::CallEnded { channel_id, .. }
             | Self::CallRingEnded { channel_id, .. }
             | Self::MessagePinned { channel_id, .. }
-            | Self::MessageUnpinned { channel_id, .. } => Some(*channel_id),
+            | Self::MessageUnpinned { channel_id, .. }
+            | Self::PollChanged { channel_id, .. } => Some(*channel_id),
             Self::CallStarted { call } => Some(call.channel_id),
             Self::CallRinging { ring } => Some(ring.channel_id),
             Self::ChannelCreated { channel } => Some(channel.id),

@@ -330,6 +330,8 @@ async fn confirm(
         qoty_card: None,
         pin: None,
         pin_line: None,
+        poll: None,
+        poll_ended: None,
         embeds: vec![],
         call: None,
         wheel: None,

@@ -15,6 +15,7 @@ pub mod limits;
 pub mod media;
 pub mod messages;
 pub mod pins;
+pub mod polls;
 pub mod presence;
 pub mod profiles;
 pub mod qoty;
@@ -52,6 +53,7 @@ pub fn router(state: AppState) -> Router {
         .merge(messages::reactions::router())
         .merge(messages::threads::router())
         .merge(pins::router())
+        .merge(polls::router())
         .merge(quotes::routes::router())
         .merge(qoty::router())
         .merge(dms::routes::router())
@@ -132,6 +134,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     qoty::spawn_sweeper(state.clone(), qoty::SWEEP_EVERY);
     clips::sweep::spawn(state.clone());
     pins::spawn_sweeper(state.clone());
+    polls::spawn_sweeper(state.clone());
     badges::sweep::spawn(state.clone());
     servers::channels::spawn_sweeper(state.clone());
     presence::sweep::spawn_sweeper(state.clone());

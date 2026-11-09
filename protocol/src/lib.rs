@@ -153,6 +153,12 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::UpdateWheelRequest::export_all(&cfg)?;
     rest::SpinWheelRequest::export_all(&cfg)?;
     rest::SpinAgainRequest::export_all(&cfg)?;
+    rest::Poll::export_all(&cfg)?;
+    rest::PollTally::export_all(&cfg)?;
+    rest::PollDuration::export_all(&cfg)?;
+    rest::CreatePollRequest::export_all(&cfg)?;
+    rest::PollVoteRequest::export_all(&cfg)?;
+    rest::PollEnded::export_all(&cfg)?;
     Ok(())
 }
 

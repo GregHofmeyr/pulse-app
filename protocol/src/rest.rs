@@ -651,6 +651,15 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub wheel: Option<Box<WheelSpin>>,
+    /// Set on a poll (#157), as the caller sees it (results only once they may see them); events carry the view of
+    /// no one in particular, with no results and nothing marked as yours.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub poll: Option<Box<Poll>>,
+    /// Set on a poll's "ended" system line (#157).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub poll_ended: Option<Box<PollEnded>>,
 }
 
 /// How long a pin lasts (#178).
@@ -763,6 +772,89 @@ pub mod wheel_limits {
     pub const NAME_CHARS: usize = 40;
     pub const WHEELS_PER_SERVER: i64 = 50;
     pub const WHEELS_PER_PERSON: i64 = 50;
+}
+
+/// Poll limits (#157), shared so the client can say them before the server refuses.
+pub mod poll_limits {
+    /// Characters in the question, after trimming.
+    pub const QUESTION_CHARS: usize = 200;
+    /// Characters per option, after trimming.
+    pub const OPTION_CHARS: usize = 80;
+    pub const MIN_OPTIONS: usize = 2;
+    pub const MAX_OPTIONS: usize = 10;
+}
+
+/// How long a poll stays open (#157).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum PollDuration {
+    Hour,
+    Day,
+    Week,
+    /// Open until its creator ends it.
+    Never,
+}
+
+/// One option's results (#157).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct PollTally {
+    pub votes: u32,
+    /// Who voted for it, in the order they did; always empty on an anonymous poll.
+    pub voters: Vec<UserId>,
+}
+
+/// A poll (#157), as one person sees it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Poll {
+    pub question: String,
+    pub options: Vec<String>,
+    /// Multiple choice: each option is its own vote. Otherwise one choice per person.
+    pub multi: bool,
+    /// Nobody (the creator included) ever learns who voted for what.
+    pub anonymous: bool,
+    /// `None`: no end (until its creator ends it).
+    pub ends_at: Option<String>,
+    /// When it was closed (by its creator, or when its time ran out and the sweep closed it).
+    pub closed_at: Option<String>,
+    /// Closed, or its time is up (a poll past `ends_at` is over before the sweep has closed it).
+    pub closed: bool,
+    /// How many people have voted.
+    pub voters: u32,
+    /// The options you voted for (indexes into `options`).
+    pub mine: Vec<u32>,
+    /// Per option, in order. `None` until you may see results: after you vote, as its creator, or once it closes.
+    pub results: Option<Vec<PollTally>>,
+}
+
+/// `POST /channels/{id}/polls`.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CreatePollRequest {
+    pub question: String,
+    pub options: Vec<String>,
+    #[serde(default)]
+    pub multi: bool,
+    #[serde(default)]
+    pub anonymous: bool,
+    pub ends_in: PollDuration,
+}
+
+/// `PUT /messages/{id}/poll/votes`: your choices, replacing any before (empty takes your vote back).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct PollVoteRequest {
+    pub options: Vec<u32>,
+}
+
+/// A poll's "ended" line (#157): "alex's poll ended: Valheim won (4 votes) · See poll".
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct PollEnded {
+    pub poll_message_id: MessageId,
+    /// The poll's creator; `None` once their account is gone.
+    #[serde(default)]
+    pub author_id: Option<UserId>,
+    /// The option(s) with the most votes (all of them on a tie); empty when nobody voted.
+    pub winners: Vec<String>,
+    /// The winners' vote count (each, on a tie).
+    pub votes: u32,
 }
 
 /// Who a saved wheel is for (#158).
