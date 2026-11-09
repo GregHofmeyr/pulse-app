@@ -1,0 +1,42 @@
+name: ci-windows
+
+# The Windows-only client tests (windows-client-tests.yml, the same job release-windows runs) on every push to main and
+# every PR that touches what they build, so a Windows breakage shows on the commit that causes it (#245, #246).
+#
+# A workflow of its own, not a job in ci.yml: release-server.yml deploys when ci completes, and this ~20-35 min job must
+# block nothing. Nothing waits on it; a failure is a red check on the commit.
+on:
+  push:
+    branches: [main]
+    paths: &client
+      - 'client/src-tauri/**'
+      - 'protocol/**'
+      - 'vendor/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      # cargo config (build flags, linker) changes what the test binary is
+      - '.cargo/**'
+      - 'scripts/fetch-ffmpeg.sh'
+      - '.github/workflows/ci-windows.yml'
+      - '.github/workflows/windows-client-tests.yml'
+  pull_request:
+    paths: *client
+  workflow_dispatch:
+
+# A newer run supersedes an older one on the same ref. Unlike ci.yml's push runs, cancelling loses nothing: the path
+# filter is on the workflow, so only runs that test start (a docs- or server-only push makes no run and cancels
+# nothing), and the newer run tests a tree that holds the older run's changes too.
+concurrency:
+  group: ci-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/windows-client-tests.yml
+    with:
+      # main's cache is the one PRs and releases restore; a PR's own copy would only crowd it out of the 10 GB.
+      save-cache: ${{ github.ref == 'refs/heads/main' }}

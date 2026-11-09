@@ -78,41 +78,10 @@ jobs:
           path: pulse-windows-installer
           retention-days: 1
 
-  # Windows-only test paths, in parallel with `build` (the release-mode test binary compiles separately anyway).
+  # Windows-only test paths, in parallel with `build` (the release-mode test binary compiles separately anyway). The same
+  # job ci-windows.yml runs on every client change (#245); it shares this job's Rust cache.
   test:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Rust toolchain (pinned in rust-toolchain.toml)
-        shell: bash
-        run: |
-          rustup toolchain install --profile minimal
-          rustc --version
-      # Its own cache, so it and `build` don't overwrite each other's target dirs.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: release-tests
-      - name: Placeholder UI dist (tauri::generate_context! needs the folder)
-        shell: bash
-        run: mkdir -p client/ui/dist
-      # The bundle's ffmpeg/* resources must exist to compile, and the clips::ffmpeg:: tests find it.
-      - name: Fetch ffmpeg (pinned in scripts/fetch-ffmpeg.sh)
-        shell: bash
-        run: bash scripts/fetch-ffmpeg.sh
-      # Screen-share stream code has Windows-only paths (process discovery, open failures) that Linux CI
-      # never compiles. The test binary compiles once here; the steps below reuse it.
-      - run: cargo test --release -p pulse-client --lib 'stream::' -- --skip 'stream::loopback'
-      # Finding the bundled ffmpeg and the no-console-window spawn are Windows paths too.
-      - run: cargo test --release -p pulse-client --lib 'clips::ffmpeg::'
-      # Keybind hooks are Windows-only too (hook thread priority).
-      - run: cargo test --release -p pulse-client --lib 'hotkeys::'
-      # The session.json fallback's owner-only DACL is Windows-only too.
-      - run: cargo test --release -p pulse-client --lib 'session::'
-      # App updates (#82) are on only in release Windows builds: their checks, with updating enabled.
-      - run: cargo test --release -p pulse-client --lib 'updater::'
-      # WASAPI process loopback: a runner with no audio endpoint can't activate it, so it doesn't block the build.
-      - continue-on-error: true
-        run: cargo test --release -p pulse-client --lib 'stream::loopback'
+    uses: ./.github/workflows/windows-client-tests.yml
 
   # The download exists only when both the build and the tests passed.
   publish:

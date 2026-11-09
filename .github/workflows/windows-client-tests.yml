@@ -1,0 +1,60 @@
+name: windows-client-tests
+
+# The Windows-only client tests, in one place for both callers: release-windows.yml (its `test` job, which gates
+# `publish`) and ci-windows.yml (every push to main and every PR that touches the client, #245). Linux CI never
+# compiles these paths; a release found #246 hours after the commit that caused it.
+on:
+  workflow_call:
+    inputs:
+      save-cache:
+        description: Save the Rust cache when this run misses it (main only; a PR's cache can't be restored elsewhere)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Keep the job id `test`: with `key` below it names the Rust cache (v0-rust-release-tests-test-...), which both
+  # callers share. They build the same thing (same profile, flags and commands), so pushes to main keep the cache warm
+  # for releases; PULSE_COMMIT only reaches pulse-client, which the cache doesn't hold.
+  test:
+    runs-on: windows-latest
+    env:
+      # Bug reports name the build they came from (release-windows sets it workflow-wide; a called workflow doesn't
+      # inherit that). github.sha is the caller's commit.
+      PULSE_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Exact version and components come from rust-toolchain.toml (rustup >= 1.28 installs what the file names).
+      - name: Rust toolchain (pinned in rust-toolchain.toml)
+        shell: bash
+        run: |
+          rustup toolchain install --profile minimal
+          rustc --version
+      # Its own cache, so it and release-windows' `build` don't overwrite each other's target dirs.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release-tests
+          save-if: ${{ inputs.save-cache }}
+      - name: Placeholder UI dist (tauri::generate_context! needs the folder)
+        shell: bash
+        run: mkdir -p client/ui/dist
+      # The bundle's ffmpeg/* resources must exist to compile, and the clips::ffmpeg:: tests find it.
+      - name: Fetch ffmpeg (pinned in scripts/fetch-ffmpeg.sh)
+        shell: bash
+        run: bash scripts/fetch-ffmpeg.sh
+      # Screen-share stream code has Windows-only paths (process discovery, open failures) that Linux CI
+      # never compiles. The test binary compiles once here; the steps below reuse it.
+      - run: cargo test --release -p pulse-client --lib 'stream::' -- --skip 'stream::loopback'
+      # Finding the bundled ffmpeg and the no-console-window spawn are Windows paths too.
+      - run: cargo test --release -p pulse-client --lib 'clips::ffmpeg::'
+      # Keybind hooks are Windows-only too (hook thread priority).
+      - run: cargo test --release -p pulse-client --lib 'hotkeys::'
+      # The session.json fallback's owner-only DACL is Windows-only too.
+      - run: cargo test --release -p pulse-client --lib 'session::'
+      # App updates (#82) are on only in release Windows builds: their checks, with updating enabled.
+      - run: cargo test --release -p pulse-client --lib 'updater::'
+      # WASAPI process loopback: a runner with no audio endpoint can't activate it, so it doesn't block the build.
+      - continue-on-error: true
+        run: cargo test --release -p pulse-client --lib 'stream::loopback'
