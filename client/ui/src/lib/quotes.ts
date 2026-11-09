@@ -51,6 +51,18 @@ export function speakerOf(s: AppState, serverId: string, line: QuoteLine): { use
   return link ? { userId: link.user_id, name: displayName(s, serverId, link.user_id) } : { userId: null, name: plain }
 }
 
+/** The whole quote as plain text for the clipboard (#244): a row per line, `“words” — speaker` (an image is
+ *  `[image] caption — speaker`), speakers as the quote shows them. Null when no line has any words to copy. */
+export function quoteText(s: AppState, serverId: string, lines: QuoteLine[]): string | null {
+  if (!lines.some((l) => l.text || l.caption)) return null
+  return lines
+    .map((l) => {
+      const said = l.media ? (l.caption ? `[image] ${l.caption}` : '[image]') : `“${l.text ?? ''}”`
+      return `${said} — ${speakerOf(s, serverId, l).name}`
+    })
+    .join('\n')
+}
+
 /** A quote's reaction score: all its reactions added up. */
 export function score(m: Message): number {
   return m.reactions.reduce((n, r) => n + r.count, 0)

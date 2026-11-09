@@ -57,10 +57,13 @@ const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const items = () => [...document.querySelectorAll<HTMLElement>('[role=menuitem]')].map((e) => e.textContent?.trim())
 const item = (t: string) => [...document.querySelectorAll<HTMLElement>('[role=menuitem]')].find((e) => e.textContent?.trim() === t)!
+/** A line's menu is its right-click menu (#244: no ⋯ button on the line any more). */
 const openMenu = (n = 0) => {
-  document.querySelectorAll<HTMLButtonElement>('button[aria-label="Line actions"]')[n].click()
+  document.querySelectorAll<HTMLElement>('.line')[n].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
   flushSync()
 }
+const awardBtn = (n = 0) => document.querySelectorAll<HTMLElement>('.line')[n].querySelector<HTMLButtonElement>('button.award')
+const copyBtn = () => document.querySelector<HTMLButtonElement>('.actions button[aria-label="Copy quote"]')
 const see = (el: Element, v = true) => { FakeIntersectionObserver.set(el, v); flushSync() }
 
 beforeEach(() => {
@@ -136,7 +139,71 @@ describe('QuoteItem', () => {
     openMenu(1)
     expect(items()).not.toContain('Give quote award')
     expect(items()).not.toContain('Take back award')
-    expect(items()).toContain('Copy')
+    expect(items()).toContain('Copy quote')
+  })
+
+  describe('the award button (#244)', () => {
+    it("sits on each line someone else said, says what it does, and one click gives the award", async () => {
+      show(quote([line(), line({ id: 'L2', speaker_id: 'U1' })]))
+      const b = awardBtn(0)!
+      expect(b.getAttribute('aria-label')).toBe('Give quote award')
+      expect(b.dataset.tip).toBe('Give quote award')
+      expect(b.getAttribute('aria-pressed')).toBe('false')
+      expect(b.classList.contains('icon-btn')).toBe(true)
+      expect(b.querySelector('svg')?.getAttribute('width')).toBe('16')
+      // not on my own line
+      expect(awardBtn(1)).toBeNull()
+      b.click()
+      await settle()
+      expect(calls('give_award')).toEqual([['give_award', { lineId: 'L1' }]])
+      expect(document.querySelector('[role=menu]')).toBeNull()
+    })
+
+    it('once given it shows pressed and takes the award back', async () => {
+      show(quote([line({ awards: 1, awarders: ['U1'], awarded: true })]))
+      const b = awardBtn(0)!
+      expect(b.getAttribute('aria-label')).toBe('Take back award')
+      expect(b.dataset.tip).toBe('Take back award')
+      expect(b.getAttribute('aria-pressed')).toBe('true')
+      b.click()
+      await settle()
+      expect(calls('take_award')).toEqual([['take_award', { lineId: 'L1' }]])
+    })
+
+    it('no line carries a ⋯ menu button any more', () => {
+      show(quote([line(), line({ id: 'L2', speaker_name: 'Jo', speaker_id: null })]))
+      expect(document.querySelector('button[aria-label="Line actions"]')).toBeNull()
+    })
+  })
+
+  describe('Copy quote (#244)', () => {
+    const two = () => quote([line(), line({ id: 'L2', speaker_id: 'U3', text: 'general kenobi' })])
+    const whole = '“hello there” — sam\n“general kenobi” — kim'
+
+    it('the hover bar copies the whole quote, every line with who said it', async () => {
+      show(two())
+      const b = copyBtn()!
+      expect(b.dataset.tip).toBe('Copy quote')
+      expect(b.querySelector('svg')?.getAttribute('width')).toBe('16')
+      b.click()
+      await settle(); flushSync()
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(whole)
+      // the tooltip says it worked
+      expect(b.dataset.tip).toBe('Copied')
+    })
+
+    it("a line's right-click menu copies the whole quote too", async () => {
+      show(two())
+      openMenu(1)
+      item('Copy quote').click()
+      await settle()
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(whole)
+    })
+
+    it('anyone can copy, not only the poster', () => {
+      show(two(), {}, 'U2')
+      expect(copyBtn()).toBeTruthy()
+    })
   })
 
   it('take back calls take_award', async () => {
@@ -148,13 +215,6 @@ describe('QuoteItem', () => {
     expect(calls('take_award')).toEqual([['take_award', { lineId: 'L1' }]])
   })
 
-  it('copy puts the line text on the clipboard', async () => {
-    show(quote([line()]))
-    openMenu(0)
-    item('Copy').click()
-    await settle()
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('hello there')
-  })
 
   it('the menu opens from the keyboard and right-click', () => {
     show(quote([line()]))
@@ -224,8 +284,11 @@ describe('QuoteItem', () => {
     expect(document.querySelector('.reactions, .reaction-row, button[aria-label="Add reaction"]')).toBeNull()
     expect(document.body.textContent).not.toContain('View 2 replies')
     for (const a of ['Reply', 'Edit', 'Delete']) expect(document.querySelector(`button[aria-label="${a}"]`)).toBeNull()
-    // the line menu stays: awards, links and copy are about the line, wherever it shows
-    expect(document.querySelector('button[aria-label="Line actions"]')).toBeTruthy()
+    // awarding stays (it is about the line, wherever it shows), and so does the right-click menu with Copy quote
+    expect(awardBtn(0)).toBeTruthy()
+    expect(copyBtn()).toBeNull()
+    openMenu(0)
+    expect(items()).toContain('Copy quote')
   })
 
   it('a failed delete shows on the quote', async () => {
@@ -320,12 +383,16 @@ describe('QuoteItem', () => {
     expect(labels[2]).not.toContain('award')
   })
 
-  it('a line with nothing to do (my own words, said by me) has no actions button and no menu', () => {
+  it('a line with nothing to do (my own words, said by me, in a quote with no words) has no award and no menu', () => {
     show(quote([line({ speaker_id: 'U1', text: null, media: { hash: P, still_hash: null, width: 10, height: 10 } }), line({ id: 'L2', speaker_id: 'U1', text: '', caption: null })]))
     const lines = document.querySelectorAll<HTMLElement>('.line')
+    expect(awardBtn(0)).toBeNull()
+    expect(awardBtn(1)).toBeNull()
     // my own picture still has Save image (#206)
-    expect(lines[0].querySelector('button[aria-label="Line actions"]')).toBeTruthy()
-    expect(lines[1].querySelector('button[aria-label="Line actions"]')).toBeNull()
+    openMenu(0)
+    expect(items()).toEqual(['Save image'])
+    document.querySelector('[role=menu]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    flushSync()
     lines[1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     lines[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true }))
     flushSync()
@@ -405,24 +472,17 @@ describe('QuoteItem', () => {
     })
   })
 
-  it('the line actions button says whether its menu is open', () => {
-    show(quote([line()]))
-    const b = document.querySelector<HTMLButtonElement>('button[aria-label="Line actions"]')!
-    expect(b.getAttribute('aria-expanded')).toBe('false')
-    b.click(); flushSync()
-    expect(b.getAttribute('aria-expanded')).toBe('true')
-  })
-
-  it('an image line without a caption has nothing to copy; with one it copies the caption', async () => {
+  it('a quote of only uncaptioned images has nothing to copy; a caption copies with its speaker', async () => {
     show(quote([line({ text: null, media: { hash: P, still_hash: null, width: 10, height: 10 } })]))
     openMenu(0)
-    expect(items()).not.toContain('Copy')
+    expect(items()).not.toContain('Copy quote')
+    expect(copyBtn()).toBeNull()
     unmount(cmp!); cmp = undefined; document.body.innerHTML = ''
     show(quote([line({ text: null, media: { hash: P, still_hash: null, width: 10, height: 10 }, caption: 'a cat' })]))
     openMenu(0)
-    item('Copy').click()
+    item('Copy quote').click()
     await settle()
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('a cat')
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('[image] a cat — sam')
   })
 
   it('the full-size image has alt text and the dialog carries the caption', () => {

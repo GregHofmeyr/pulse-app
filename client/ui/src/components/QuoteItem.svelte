@@ -14,7 +14,7 @@
   import { modal } from '../lib/actions'
   import { mediaUrl, reactionKey, type Std } from '../lib/emoji'
   import { menuPoint } from '../lib/participantMenu'
-  import { hasNewReplies, nameKey, speakerOf } from '../lib/quotes'
+  import { hasNewReplies, nameKey, quoteText, speakerOf } from '../lib/quotes'
   import { blockedReason, pickAdds, react } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import { serverPeople } from '../lib/selectors'
@@ -51,7 +51,7 @@
     /** Your replies to it not sent yet (pending or failed), shown while its panel is closed; opens it. */
     unsentReplies?: number
     /** Just the lines (Quote of the Year's options): no poster, reactions, replies or quote actions.
-     *  Each line keeps its menu (award, link, copy): those are about the line, wherever it shows. */
+     *  Each line keeps its award button and right-click menu (link, copy): those show wherever the line does. */
     compact?: boolean
   } = $props()
 
@@ -73,14 +73,12 @@
     }
   }
 
-  // --- the line menu ---
+  // --- the line's right-click menu (#244: no ⋯ button; awarding is the line's own button, copy is the whole quote) ---
   let menu = $state<{ line: QuoteLine; x: number; y: number; opener: HTMLElement } | null>(null)
   function openMenu(line: QuoteLine, e: MouseEvent | KeyboardEvent, anchor: HTMLElement) {
     // a line with nothing to offer (my own picture, say) opens no empty menu
     if (!hasActions(line)) return
-    // clicking the opener again closes its menu
-    if (e.type === 'click' && menu?.opener === anchor) menu = null
-    else menu = { line, ...menuPoint(e, anchor), opener: anchor }
+    menu = { line, ...menuPoint(e, anchor), opener: anchor }
   }
   function lineKey(e: KeyboardEvent, line: QuoteLine) {
     if (e.target !== e.currentTarget) return
@@ -96,11 +94,24 @@
   const linkOf = (line: QuoteLine): 'link' | 'unlink' | null =>
     line.speaker_id ? null : speaker(line).userId ? 'unlink' : 'link'
   const toggleAward = (line: QuoteLine) => attempt(() => (line.awarded ? api.takeAward(line.id) : api.giveAward(line.id)))
-  const copyable = (line: QuoteLine) => !!(line.text ?? line.caption)
+  const awardTip = (line: QuoteLine) => (line.awarded ? 'Take back award' : 'Give quote award')
+  /** The whole quote as text (every line, with who said it); null when it has no words to copy. */
+  const copyText = $derived(quote ? quoteText(app.state, serverId, quote.lines) : null)
   /** Whether the line's menu would have anything in it: award, copy, save (an image), or link. */
-  const hasActions = (line: QuoteLine) => !!awardOf(line) || copyable(line) || !!line.media || !!linkOf(line)
+  const hasActions = (line: QuoteLine) => !!awardOf(line) || !!copyText || !!line.media || !!linkOf(line)
   const save = (media: LineMedia, caption: string | null) => void saveImage(media, caption, showError)
-  const copy = (line: QuoteLine) => attempt(() => navigator.clipboard.writeText(line.text ?? line.caption ?? ''))
+  // the Copy quote button's tooltip says "Copied" for a moment after
+  let copied = $state(false)
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined
+  $effect(() => () => clearTimeout(copiedTimer))
+  const copy = () =>
+    attempt(async () => {
+      if (!copyText) return
+      await navigator.clipboard.writeText(copyText)
+      copied = true
+      clearTimeout(copiedTimer)
+      copiedTimer = setTimeout(() => (copied = false), 2000)
+    })
   const link = (line: QuoteLine, userId: string) => attempt(() => api.linkSpeaker(serverId, { name: line.speaker_name ?? '', user_id: userId }))
   const unlink = (line: QuoteLine) => attempt(() => api.unlinkSpeaker(serverId, nameKey(line.speaker_name ?? '')))
 
@@ -160,9 +171,10 @@
                     <span class="trophy" aria-hidden="true">🏆 {line.awards}</span>
                     <VoterStack userIds={line.awarders} {nameOf} />
                   {/if}
-                  {#if hasActions(line)}
-                    <button type="button" class="icon-btn icon-btn-xs lbtn" aria-label="Line actions" aria-haspopup="menu" aria-expanded={menu?.line.id === line.id} data-menu-toggle
-                      onclick={(e) => openMenu(line, e, e.currentTarget)}><Icon name="dots" size={16} /></button>
+                  <!-- the award, one click to give or take back (#244); none on your own line -->
+                  {#if awardOf(line)}
+                    <button type="button" class="icon-btn icon-btn-xs award" aria-label={awardTip(line)} data-tip={awardTip(line)} aria-pressed={line.awarded}
+                      onclick={() => toggleAward(line)}><Icon name="trophy" size={16} /></button>
                   {/if}
                 </div>
               </div>
@@ -191,6 +203,7 @@
         <div class="actions" class:open={picking || focusIn}>
           <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={16} /></button>
           {#if onReply}<button aria-label="Reply" onclick={onReply}><Icon name="reply" size={16} /></button>{/if}
+          {#if copyText}<button aria-label="Copy quote" data-tip={copied ? 'Copied' : 'Copy quote'} onclick={() => void copy()}><Icon name="copy" size={16} /></button>{/if}
           {#if mine && onEdit}<button aria-label="Edit" onclick={onEdit}><Icon name="pencil" size={16} /></button>{/if}
           {#if mine && onDelete}<DeleteButton what="quote" note="Its replies go too." onConfirm={() => void attempt(onDelete)} />{/if}
         </div>
@@ -205,7 +218,7 @@
     {@const line = m.line}
     {#key m}
       <LineMenu x={m.x} y={m.y} opener={m.opener} award={awardOf(line)} link={linkOf(line)} {members}
-        onAward={() => toggleAward(line)} onCopy={copyable(line) ? () => copy(line) : null}
+        onAward={() => toggleAward(line)} onCopy={copyText ? copy : null}
         onSave={line.media ? () => save(line.media!, line.caption) : null} onLink={(id) => link(line, id)} onUnlink={() => unlink(line)}
         onClose={() => (menu = null)} />
     {/key}
@@ -244,8 +257,11 @@
   .by { display: flex; align-items: center; gap: 8px; flex-shrink: 0; color: var(--text-2); }
   .speaker::before { content: '— '; color: var(--text-3); }
   .trophy { color: var(--quote-green-text); font-size: 12px; font-weight: 600; }
-  .lbtn { opacity: 0; }
-  .line:hover .lbtn, .line:focus-within .lbtn { opacity: 1; }
+  /* the award button (#244): shows on every line while the pointer is over the quote, and stays lit once you've given
+     it. To try it always-on, drop the `opacity: 0`; to show it only on the line under the pointer, use .line:hover. */
+  .award { opacity: 0; }
+  .quote:hover .award, .line:focus-within .award, .award[aria-pressed='true'] { opacity: 1; }
+  .award[aria-pressed='true'] { color: var(--quote-green-text); }
   /* the image and the clips' download icon over its corner (#206), shown while the pointer is over it */
   .pic { position: relative; width: fit-content; max-width: 100%; }
   .pic:hover :global(.clip-dl) { opacity: 1; }

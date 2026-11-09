@@ -12,6 +12,15 @@ const pathOf = (name: string) => {
   return d
 }
 
+describe('the copy icon (#244)', () => {
+  it("is two overlapping sheets, in the set's 24-unit grid", () => {
+    const d = pathOf('copy')
+    expect(d).toBeTruthy()
+    expect(d.split('M').filter(Boolean).length).toBe(2)
+    expect(d).not.toBe(pathOf('square'))
+  })
+})
+
 describe('the soundboard icon (#221)', () => {
   it('reads as sound bursting out: not the old equaliser bars, and not the voice speaker or the volume', () => {
     const d = pathOf('soundboard')

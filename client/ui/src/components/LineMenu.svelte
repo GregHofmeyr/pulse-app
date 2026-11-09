@@ -131,7 +131,7 @@
     {#if award}
       <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onAward)}>{award === 'give' ? 'Give quote award' : 'Take back award'}</button>
     {/if}
-    {#if onCopy}<button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onCopy)}>Copy</button>{/if}
+    {#if onCopy}<button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onCopy)}>Copy quote</button>{/if}
     {#if onSave}<button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onSave)}>Save image</button>{/if}
     {#if link === 'link'}
       <button type="button" class="menu-item" role="menuitem" data-item onclick={startPicking}>Link to a member…</button>

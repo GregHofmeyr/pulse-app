@@ -299,7 +299,8 @@ describe('Quote of the Year voting window details', () => {
   }
   const items = () => [...document.querySelectorAll<HTMLElement>('[role=menuitem]')].map((x) => x.textContent?.trim())
   const lineMenu = () => {
-    option('Q1').querySelector<HTMLButtonElement>('button[aria-label="Line actions"]')!.click()
+    // the line's menu is its right-click menu (#244: the ⋯ button gave way to the award button)
+    option('Q1').querySelector<HTMLElement>('.line')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     flushSync()
   }
 

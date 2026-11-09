@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canReopen, defaultQotyYear, hasNewReplies, leaders, leftLabel, plural, liveQoty, myVote, nameKey, quotePreview, score, speakersOf, speakerOf, stripMarks, timeLeft, voteAction } from './quotes'
+import { canReopen, defaultQotyYear, hasNewReplies, leaders, leftLabel, plural, liveQoty, myVote, nameKey, quotePreview, quoteText, score, speakersOf, speakerOf, stripMarks, timeLeft, voteAction } from './quotes'
 import { applyEvent, applyReady, emptyState } from './state'
 import type { Message } from './protocol/Message'
 import type { QotyEvent } from './protocol/QotyEvent'
@@ -81,6 +81,23 @@ describe('speakerOf', () => {
   })
   it('links of another server do not apply', () => {
     expect(speakerOf(s, 'S2', line()).userId).toBeNull()
+  })
+})
+
+describe('quoteText (#244: Copy quote)', () => {
+  const s = applyReady(emptyState(), ready({ speaker_links: [{ server_id: 'S1', name_key: 'sam b', name: 'Sam B', user_id: 'U2', linked_by: 'U1', linked_at: '2026-10-01T00:00:00Z' }] }))
+  const pic = { hash: 'a'.repeat(64), still_hash: null, width: 10, height: 10 }
+  it('puts every line on its own row, in curly marks, with who said it as it shows', () => {
+    const lines = [line({ text: 'you up?' }), line({ id: 'L2', speaker_id: 'U1', speaker_name: null, text: 'no' }), line({ id: 'L3', speaker_name: 'Kim', text: 'same' })]
+    expect(quoteText(s, 'S1', lines)).toBe('“you up?” — Big Dog\n“no” — alex\n“same” — Kim')
+  })
+  it('an image line copies as [image] with its caption, if any', () => {
+    expect(quoteText(s, 'S1', [line({ text: null, media: pic, caption: 'a cat' }), line({ id: 'L2', text: null, media: pic })]))
+      .toBe('[image] a cat — Big Dog\n[image] — Big Dog')
+  })
+  it('nothing to copy when no line has any words', () => {
+    expect(quoteText(s, 'S1', [line({ text: null, media: pic })])).toBeNull()
+    expect(quoteText(s, 'S1', [])).toBeNull()
   })
 })
 
