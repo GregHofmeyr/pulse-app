@@ -87,13 +87,13 @@ describe('WheelSettings', () => {
     flushSync()
     add.form!.requestSubmit()
     flushSync()
-    expect(invoke).toHaveBeenCalledWith('update_wheel', { id: 'W1', request: { options: ['Valheim', 'Apex', 'Among Us', 'Lethal Company'] } })
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('update_wheel', { id: 'W1', request: { options: ['Valheim', 'Apex', 'Among Us', 'Lethal Company'] } }))
     const name = document.querySelector<HTMLInputElement>('.edit input[aria-label="Name of Games"]')!
     name.value = 'Games tonight'
     name.dispatchEvent(new Event('input', { bubbles: true }))
     name.dispatchEvent(new FocusEvent('blur'))
     flushSync()
-    expect(invoke).toHaveBeenCalledWith('update_wheel', { id: 'W1', request: { name: 'Games tonight' } })
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('update_wheel', { id: 'W1', request: { name: 'Games tonight' } }))
   })
 
   it('Delete asks first', async () => {

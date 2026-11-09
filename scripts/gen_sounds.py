@@ -95,7 +95,7 @@ CLASSIC = {
     "muted_talk": normalise(dings(1568, 0.09, 0.05, bright=0.3), MUTED_TALK_RMS),
     # the picker wheel (#158): one quiet, short, high tick per slice passing the pointer, so a spin ticks without
     # becoming a din
-    "wheel_tick": tone([(1568, 1568)], 0.035, vol=0.10),
+    "wheel_tick": tone([(1568, 1568)], 0.035, vol=0.36),
 }
 
 

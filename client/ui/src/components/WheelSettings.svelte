@@ -7,7 +7,7 @@
   import Wheel from './Wheel.svelte'
   import WheelEditor from './WheelEditor.svelte'
   import { errorText, wheelCmd } from '../lib/tauri'
-  import { dropWheel, loadMyWheels, loadServerWheels, upsertWheel, wheels } from '../lib/wheels.svelte'
+  import { dropWheel, loadMyWheels, loadServerWheels, saveWheel, upsertWheel, wheels } from '../lib/wheels.svelte'
   import { WHEEL_LIMITS } from '../lib/wheel'
   import type { Server } from '../lib/protocol/Server'
   import type { Wheel as SavedWheel } from '../lib/protocol/Wheel'
@@ -47,19 +47,14 @@
 
   async function save(w: SavedWheel, change: { name?: string; options?: string[] }) {
     error = ''
-    upsertWheel({ ...w, ...change })
-    try {
-      upsertWheel(await wheelCmd.update(w.id, change))
-    } catch (e) {
-      error = errorText(e)
-      upsertWheel(w)
-    }
+    error = await saveWheel(w, change)
   }
 
+  // the field shows your typing until you leave it, then the wheel's name again
   function rename(w: SavedWheel) {
     const n = (names[w.id] ?? w.name).trim()
+    delete names[w.id]
     if (n && n !== w.name) void save(w, { name: n })
-    else names[w.id] = w.name
   }
 
   async function remove(w: SavedWheel) {

@@ -7,7 +7,7 @@ import type { Wheel } from './protocol/Wheel'
 import type { SpinWheelRequest } from './protocol/SpinWheelRequest'
 import { applyEvent } from './state'
 import { app, onAppEvent } from './store.svelte'
-import { wheelCmd } from './tauri'
+import { errorText, wheelCmd } from './tauri'
 import { LIVE_WINDOW_MS } from './wheel'
 
 /** Loaded lists: a server's wheels by server id, and yours (null until fetched). */
@@ -47,6 +47,35 @@ export function dropWheel(id: string, serverId: string | null): void {
     wheels.mine = wheels.mine.filter((w) => w.id !== id)
   }
 }
+
+// a saved wheel's changes go out one at a time, in order: the last sent is the one that sticks
+const chains = new Map<string, Promise<unknown>>()
+const latest = new Map<string, number>()
+let sent = 0
+
+/** Change a saved wheel: shown at once, then saved behind its earlier changes. Only the answer to the newest change
+ *  is shown (an older one would briefly undo it). A refusal fetches its list fresh. Resolves with the refusal's
+ *  text, or '' when it saved. */
+export function saveWheel(w: Wheel, change: { name?: string; options?: string[] }): Promise<string> {
+  const n = ++sent
+  latest.set(w.id, n)
+  upsertWheel({ ...w, ...change })
+  const run = (chains.get(w.id) ?? Promise.resolve()).then(async () => {
+    try {
+      const saved = await wheelCmd.update(w.id, change)
+      if (latest.get(w.id) === n) upsertWheel(saved)
+      return ''
+    } catch (e) {
+      await (w.server_id ? loadServerWheels(w.server_id) : loadMyWheels()).catch(() => {})
+      return errorText(e)
+    }
+  })
+  chains.set(w.id, run)
+  return run
+}
+
+/** Every change still being saved has been (a spin of a saved wheel waits, so it spins what you see). */
+export const savesSettled = (): Promise<unknown> => Promise.all(chains.values())
 
 // message id → when its spin reached this client
 const arrived = new Map<string, number>()
@@ -93,4 +122,6 @@ export function resetWheels(): void {
   wheels.server = {}
   wheels.mine = null
   arrived.clear()
+  chains.clear()
+  latest.clear()
 }

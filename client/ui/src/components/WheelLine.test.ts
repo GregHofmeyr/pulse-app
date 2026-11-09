@@ -16,7 +16,7 @@ import { applyReady, emptyState } from '../lib/state'
 import { testReady } from '../lib/testReady'
 import { motion } from '../lib/animate.svelte'
 import { windowFocus } from '../lib/windowFocus.svelte'
-import { noteSpin, resetWheels } from '../lib/wheels.svelte'
+import { noteSpin, resetWheels, spunLive } from '../lib/wheels.svelte'
 import { HOLD_MS, QUIET_SPIN_MS, SPIN_MS, winnerAt } from '../lib/wheel'
 import type { Message } from '../lib/protocol/Message'
 import type { WheelSpin } from '../lib/protocol/WheelSpin'
@@ -93,6 +93,7 @@ describe('a spin seen later', () => {
     await vi.waitFor(() => expect(buttons[1].disabled).toBe(false))
     // your own spin's line shows at once, spinning
     expect(app.state.messages['C1']?.some((m) => m.id === 'L2')).toBe(true)
+    expect(spunLive('L2')).toBe(true)
     buttons[1].click()
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('spin_again', { messageId: 'L1', removeWinner: true }))
   })

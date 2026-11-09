@@ -445,6 +445,21 @@ async fn spins_are_refused_where_they_dont_belong() {
     // a DM only for its two
     let dm = create_dm(&app, &alex, &[sam_id]).await;
     assert_eq!(dm.kind, ChannelKind::Dm);
+    // a spin reopens the DM for whoever had closed it, like a message
+    sqlx::query("INSERT INTO dm_hidden (user_id, channel_id, hidden_at) VALUES (?, ?, ?)")
+        .bind(sam_id.to_string())
+        .bind(dm.id.to_string())
+        .bind("2026-11-09T00:00:00.000Z")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    spin_ok(&app, &alex, dm.id, two.clone()).await;
+    let hidden: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dm_hidden WHERE channel_id = ?")
+        .bind(dm.id.to_string())
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(hidden, 0);
     spin_ok(&app, &sam, dm.id, two.clone()).await;
     assert_eq!(spin(&app, &kim, dm.id, two.clone()).await.status(), 404);
 
@@ -538,6 +553,16 @@ async fn spin_again_and_remove_the_winner() {
     let plain = send(&app, &alex, g.id, "hi").await;
     assert_eq!(again(&app, &alex, plain.id, false).await.status(), 404);
 
+    // a deleted line spins no more
+    let gone = spin_ok(&app, &alex, g.id, json!({"options": ["a", "b"]})).await;
+    sqlx::query("UPDATE messages SET deleted_at = ? WHERE id = ?")
+        .bind("2026-11-09T00:00:00.000Z")
+        .bind(gone.id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(again(&app, &alex, gone.id, false).await.status(), 404);
+
     // a deleted saved wheel's spins still spin again, unlinked
     req(
         &app,
@@ -564,6 +589,13 @@ async fn spins_are_rate_limited_per_person() {
     join(&app, &sam, s.id).await;
     let g = general(&app, &alex, s.id).await;
     let two = json!({"options": ["a", "b"]});
+    // a refused spin costs nothing
+    assert_eq!(
+        spin(&app, &alex, g.id, json!({"options": ["a"]}))
+            .await
+            .status(),
+        400
+    );
     let first = spin_ok(&app, &alex, g.id, two.clone()).await;
     let (status, msg) = error(spin(&app, &alex, g.id, two.clone()).await).await;
     assert_eq!(status, 429);

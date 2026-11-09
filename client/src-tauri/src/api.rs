@@ -2406,9 +2406,6 @@ impl Api {
         .await
     }
 
-    /// `base/seg/seg…`, each segment percent-encoded on its own (an emoji or id can't add a `/`).
-    /// A `.` or `..` segment is refused: the URL parser would drop it (or the one before it) and
-    /// send the request somewhere else.
     /// A server's saved picker wheels (#158).
     pub async fn server_wheels(
         &self,
@@ -2517,6 +2514,9 @@ impl Api {
         .await
     }
 
+    /// `base/seg/seg…`, each segment percent-encoded on its own (an emoji or id can't add a `/`).
+    /// A `.` or `..` segment is refused: the URL parser would drop it (or the one before it) and
+    /// send the request somewhere else.
     fn url(&self, segments: &[&str]) -> Result<reqwest::Url, ApiError> {
         if segments.iter().any(|s| matches!(*s, "." | "..")) {
             return Err(ApiError::Rejected("that name can't be used here".into()));

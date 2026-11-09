@@ -222,9 +222,6 @@ async fn spin(
     Path(id): Path<ChannelId>,
     Json(req): Json<SpinWheelRequest>,
 ) -> AppResult<(StatusCode, Json<Message>)> {
-    if !s.limits.wheel_spin_user.hit(&me.to_string()) {
-        return Err(spin_too_soon());
-    }
     crate::media::writes_ok(&s.cfg)?;
     let ch = spin_channel(&s, me, id).await?;
     let (wheel_id, name, options) = match (req.wheel_id, req.options) {
@@ -251,7 +248,11 @@ async fn spin(
         }
     };
     spinnable(&options)?;
-    let line = post_spin(&s, me, ch.id, wheel_id, name, options).await?;
+    // Spent once the spin is sure to go ahead: a refused one (too few options, the wrong chat) costs nothing.
+    if !s.limits.wheel_spin_user.hit(&me.to_string()) {
+        return Err(spin_too_soon());
+    }
+    let line = post_spin(&s, me, &ch, wheel_id, name, options).await?;
     Ok((StatusCode::CREATED, Json(line)))
 }
 
@@ -263,12 +264,12 @@ async fn spin_again(
     Path(id): Path<MessageId>,
     Json(req): Json<SpinAgainRequest>,
 ) -> AppResult<(StatusCode, Json<Message>)> {
-    if !s.limits.wheel_spin_user.hit(&me.to_string()) {
-        return Err(spin_too_soon());
-    }
     crate::media::writes_ok(&s.cfg)?;
     let row: Option<(String, Option<String>, Option<String>, String, i64)> = sqlx::query_as(
-        "SELECT channel_id, wheel_id, name, options, winner FROM wheel_spins WHERE message_id = ?",
+        // a deleted line (soft-deleted, so its spin row stays) spins no more
+        "SELECT w.channel_id, w.wheel_id, w.name, w.options, w.winner FROM wheel_spins w
+         JOIN messages m ON m.id = w.message_id
+         WHERE w.message_id = ? AND m.deleted_at IS NULL",
     )
     .bind(id.to_string())
     .fetch_optional(&s.db)
@@ -289,7 +290,10 @@ async fn spin_again(
             ));
         }
     }
-    let line = post_spin(&s, me, ch.id, wheel_id, name, options).await?;
+    if !s.limits.wheel_spin_user.hit(&me.to_string()) {
+        return Err(spin_too_soon());
+    }
+    let line = post_spin(&s, me, &ch, wheel_id, name, options).await?;
     Ok((StatusCode::CREATED, Json(line)))
 }
 
@@ -297,7 +301,7 @@ async fn spin_again(
 async fn post_spin(
     s: &AppState,
     me: UserId,
-    channel: ChannelId,
+    ch: &Channel,
     wheel_id: Option<String>,
     name: Option<String>,
     options: Vec<String>,
@@ -318,6 +322,7 @@ async fn post_spin(
         angle,
     };
     let payload = system::wheel_spin_payload(&spin)?;
+    let channel = ch.id;
     let mut tx = begin_write(&s.db).await?;
     let line = system::insert(&mut tx, channel, content, payload).await?;
     let inserted = sqlx::query(
@@ -343,6 +348,13 @@ async fn post_spin(
         r => {
             r?;
         }
+    }
+    if ch.kind.is_private() {
+        // Like a new message or a call line, a spin reopens the conversation for anyone who closed it.
+        sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ?")
+            .bind(channel.to_string())
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await?;
     s.hub

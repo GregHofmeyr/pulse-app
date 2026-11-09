@@ -132,7 +132,8 @@
   .caption strong { color: var(--text); font-size: 18px; }
   .system { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }
   .wheel-line { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
-  .emoji { width: 16px; height: 16px; }
+  /* the inline size, as the call line's icon */
+  .emoji { width: 14px; height: 14px; }
   .what { color: var(--text-2); }
   .won { color: var(--text); }
   .swatch { display: inline-block; width: 10px; height: 10px; border-radius: var(--radius-xs); vertical-align: -1px; }

@@ -18,7 +18,7 @@
   import { clickOutside } from '../lib/actions'
   import { popoverStyle } from '../lib/reactions'
   import { errorText, wheelCmd } from '../lib/tauri'
-  import { loadMyWheels, loadServerWheels, spinWheel, upsertWheel, wheels } from '../lib/wheels.svelte'
+  import { loadMyWheels, loadServerWheels, saveWheel, savesSettled, spinWheel, upsertWheel, wheels } from '../lib/wheels.svelte'
   import { WHEEL_LIMITS } from '../lib/wheel'
   import type { Wheel as SavedWheel } from '../lib/protocol/Wheel'
 
@@ -66,8 +66,10 @@
   $effect(() => {
     if (selected !== 'quick' && !current && (scope === 'server' ? serverId && wheels.server[serverId] : wheels.mine)) selected = 'quick'
   })
+  // a new wheel picked: its name in the field (a change to it by someone else doesn't clobber your typing)
   $effect(() => {
-    nameDraft = current?.name ?? ''
+    void current?.id
+    nameDraft = untrack(() => current?.name ?? '')
   })
 
   function pickScope(v: 'server' | 'mine') {
@@ -82,16 +84,10 @@
     error = ''
   }
 
-  // a saved wheel saves each change; what the server answers (or its event) is the truth
+  // a saved wheel saves each change, in order; what the server answers (or its event) is the truth
   async function save(w: SavedWheel, change: { name?: string; options?: string[] }) {
     error = ''
-    upsertWheel({ ...w, ...change })
-    try {
-      upsertWheel(await wheelCmd.update(w.id, change))
-    } catch (e) {
-      error = errorText(e)
-      upsertWheel(w)
-    }
+    error = await saveWheel(w, change)
   }
 
   function setOptions(next: string[]) {
@@ -127,6 +123,8 @@
     busy = true
     error = ''
     try {
+      // a change still saving goes first: the spin is of the wheel you see
+      await savesSettled()
       await spinWheel(channelId, current ? { wheel_id: current.id } : { options: quick })
       onClose()
     } catch (e) {
@@ -179,7 +177,7 @@
     </div>
     {#if saving}
       <div class="menu-label">Save as wheel</div>
-      <SaveWheelForm {serverId} options={quick} onSaved={saved} onCancel={() => (saving = false)} />
+      <SaveWheelForm {serverId} options={quick} startScope={scope} onSaved={saved} onCancel={() => (saving = false)} />
     {:else}
       {#if current}
         <input bind:this={nameField} class="input input-sm" bind:value={nameDraft} maxlength={WHEEL_LIMITS.nameChars} aria-label="Wheel name"

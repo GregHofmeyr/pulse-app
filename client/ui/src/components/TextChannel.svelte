@@ -31,7 +31,7 @@
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
   import { takeChatFocus, voiceChat } from '../lib/voiceChat.svelte'
-  import { parseWheelCommand, WHEEL_LIMITS } from '../lib/wheel'
+  import { addOptions, parseWheelCommand, WHEEL_LIMITS } from '../lib/wheel'
   import { spinWheel } from '../lib/wheels.svelte'
 
   let { channelId, serverId, panel = null, onAddPeople = () => {}, onLeft = () => {}, onStartQoty = () => {}, onVoiceSettings = () => {} }: {
@@ -495,7 +495,8 @@
     if (wheel) {
       if (wheel.options.length >= WHEEL_LIMITS.minOptions) {
         error = ''
-        spinWheel(channelId, { options: wheel.options }).catch((e) => (error = errorText(e)))
+        // as the editor adds them: cut to the limit, repeats dropped, at most 100
+        spinWheel(channelId, { options: addOptions([], wheel.options.join(',')).options }).catch((e) => (error = errorText(e)))
       } else composer?.openWheel(wheel.options)
       return
     }

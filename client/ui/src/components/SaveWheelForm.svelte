@@ -1,21 +1,24 @@
 <script lang="ts">
   // Save as wheel (#158): keep a quick wheel's options as a saved wheel, Server (anyone in it) or Just me, under a
   // name. Shown in the wheel popover and from a quick spin's line. In a DM or group there is no server: Just me.
+  import { untrack } from 'svelte'
   import Segmented from './Segmented.svelte'
   import { errorText, wheelCmd } from '../lib/tauri'
   import { upsertWheel } from '../lib/wheels.svelte'
   import { WHEEL_LIMITS } from '../lib/wheel'
   import type { Wheel } from '../lib/protocol/Wheel'
 
-  let { serverId, options, onSaved, onCancel }: {
+  let { serverId, options, startScope = 'server', onSaved, onCancel }: {
     serverId: string | null
     options: string[]
+    /** Which of Server / Just me it starts on (the popover's own switch). */
+    startScope?: 'server' | 'mine'
     onSaved: (w: Wheel) => void
     onCancel: () => void
   } = $props()
 
   const SCOPES: { value: 'server' | 'mine'; label: string }[] = [{ value: 'server', label: 'Server' }, { value: 'mine', label: 'Just me' }]
-  let scope = $state<'server' | 'mine'>('server')
+  let scope = $state<'server' | 'mine'>(untrack(() => startScope))
   let name = $state('')
   let error = $state('')
   let saving = $state(false)

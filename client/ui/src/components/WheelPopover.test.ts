@@ -133,7 +133,7 @@ describe('WheelPopover', () => {
     expect(pop().querySelector<HTMLInputElement>('input[aria-label="Wheel name"]')!.value).toBe('Games tonight')
     expect(pop().querySelector('.what')!.textContent).toContain('Server wheel')
     type('Lethal Company')
-    expect(invoke).toHaveBeenCalledWith('update_wheel', { id: 'W1', request: { options: ['Valheim', 'Apex', 'Among Us', 'Lethal Company'] } })
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('update_wheel', { id: 'W1', request: { options: ['Valheim', 'Apex', 'Among Us', 'Lethal Company'] } }))
     button('Spin').click()
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('spin_wheel', { channelId: 'C1', request: { wheel_id: 'W1' } }))
   })
