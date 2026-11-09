@@ -38,6 +38,11 @@
     x: 'M6 6l12 12M18 6 6 18',
     // a wheel with four spokes: the picker wheel (#158)
     wheel: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4',
+    // a turning arrow: spin again (#273); with a cross inside: remove the winner and spin
+    spinAgain: 'M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5',
+    spinRemove: 'M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5M9.5 9.5l5 5M14.5 9.5l-5 5',
+    // a bookmark: save (a quick wheel as a saved one, #273)
+    bookmark: 'M6 3h12v18l-6-4-6 4z',
     // three result bars of different lengths: a poll (#157)
     poll: 'M4 6h12M4 12h16M4 18h8',
     // a beetle: round body with a centre seam, head, antennae, three legs a side (Report a bug)

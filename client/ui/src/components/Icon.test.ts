@@ -40,3 +40,13 @@ describe('the soundboard icon (#221)', () => {
     expect(d.split('M').filter(Boolean).length).toBeGreaterThanOrEqual(4)
   })
 })
+
+describe('the spin line icons (#273)', () => {
+  it('Spin again is a turning arrow; Remove winner & spin adds a cross; Save as wheel is a bookmark', () => {
+    const again = pathOf('spinAgain')
+    const remove = pathOf('spinRemove')
+    expect(remove.startsWith(again)).toBe(true)
+    expect(remove.split('M').filter(Boolean).length).toBe(again.split('M').filter(Boolean).length + 2)
+    expect(pathOf('bookmark')).not.toBe(pathOf('pin'))
+  })
+})

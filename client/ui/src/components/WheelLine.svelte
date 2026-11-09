@@ -2,18 +2,18 @@
   // A picker wheel spin in the chat (#158, #271). When the spin reaches this client as it happens, it mounts as a
   // card with the wheel spinning to the server's angle (the same for everyone watching); it lands with a chime and
   // the result view over the wheel. The card stays until you've seen it (Pulse focused, this chat on screen, the
-  // card in view), then CARD_SEEN_MS more, then folds into the line: "🎡 alex spun Games tonight → ▮ Valheim". ✕
-  // folds it at once; it folds anyway an hour after the spin (lib/wheelCards.ts, per device). Opened later (or
-  // mid-spin) it's the card with the result view while that holds, else the line; it never replays the spin. Spin
-  // again, Remove winner & spin and, for a quick wheel, Save as wheel are on both. Reduced motion, being live and an
-  // unfocused window spin short without ticks (the chime still plays).
+  // card in view), then CARD_SEEN_MS more, then folds into the line. ✕ folds it at once; it folds anyway an hour
+  // after the spin (lib/wheelCards.ts, per device). Opened later (or mid-spin) it's the card with the result view
+  // while that holds, else the line; it never replays the spin. The line is a mini result card (#273): a thumbnail of
+  // the landed wheel, "▮ Valheim" large, "alex spun Games tonight · 8 options · 16:50" under it, and icon buttons
+  // that show on hover or focus. Spin again, Remove winner & spin and, for a quick wheel, Save as wheel are on both.
+  // Reduced motion, being live and an unfocused window spin short without ticks (the chime still plays).
   import { onMount, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import Name from './Name.svelte'
   import Wheel from './Wheel.svelte'
   import SaveWheelForm from './SaveWheelForm.svelte'
   import { clickOutside } from '../lib/actions'
-  import { twemojiUrl } from '../lib/emoji'
   import { popoverStyle } from '../lib/reactions'
   import { errorText } from '../lib/tauri'
   import { playSound } from '../lib/voiceui'
@@ -147,13 +147,24 @@
     {/if}
   </div>
 {:else}
-  <!-- the 🎡 line: its own look is coming (#271 leaves it as it was), so its parts stay plain classes -->
-  <div class="system wheel-line" data-message-id={message.id}>
-    <img class="emoji" src={twemojiUrl('🎡')} alt="🎡" draggable="false" />
-    <span class="what">{@render who()} spun {label} → <span class="swatch" style:background={sliceColour(spin.winner, n)}></span> <strong class="won">{winner}</strong></span>
-    · {@render acts()}
-    <span class="time">{time}</span>
-    {#if error}<span class="err" role="alert">{error}</span>{/if}
+  <!-- the 🎡 line as a mini result card (#273): the landed wheel, the winner, who spun what; actions on hover or focus -->
+  <div class="wheel-line" data-message-id={message.id}>
+    <Wheel options={spin.options} rotation={spin.angle} size={40} landed={spin.winner} mini />
+    <div class="txt">
+      <p class="top"><span class="sr-only">🎡 </span><span class="swatch" style:background={sliceColour(spin.winner, n)}></span><strong class="won">{winner}</strong></p>
+      <p class="sub">{@render who()} spun {label} · {n} options · {time}{#if savedAs} · <span class="saved">Saved as {savedAs}</span>{/if}</p>
+      {#if error}<p class="err" role="alert">{error}</p>{/if}
+    </div>
+    <span class="acts icons" class:held={saving || busy}>
+      <button type="button" class="icon-btn icon-btn-sm" aria-label="Spin again" data-tip="Spin again" disabled={busy} onclick={() => again(false)}><Icon name="spinAgain" size={16} /></button>
+      {#if n > WHEEL_LIMITS.minOptions}
+        <button type="button" class="icon-btn icon-btn-sm" aria-label="Remove winner & spin" data-tip="Remove winner & spin" disabled={busy} onclick={() => again(true)}><Icon name="spinRemove" size={16} /></button>
+      {/if}
+      {#if !spin.name && !savedAs}
+        <button bind:this={saveBtn} type="button" class="icon-btn icon-btn-sm" aria-label="Save as wheel" data-tip="Save as wheel" data-menu-toggle aria-haspopup="dialog"
+          aria-expanded={saving} onclick={() => (saving = !saving)}><Icon name="bookmark" size={16} /></button>
+      {/if}
+    </span>
   </div>
 {/if}
 {#if saving}
@@ -168,13 +179,20 @@
   .body { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 280px; }
   .caption { margin: 0; font-size: 14px; color: var(--text-2); }
   .dismiss { position: absolute; top: 6px; right: 6px; }
-  .system { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }
-  .wheel-line { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
-  /* the inline size, as the call line's icon */
-  .emoji { width: 14px; height: 14px; }
-  .what { color: var(--text-2); }
-  .won { color: var(--text); }
-  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: var(--radius-xs); vertical-align: -1px; }
+  /* the line (#273): a small card, indented like the system lines */
+  .wheel-line { display: flex; align-items: center; gap: 12px; box-sizing: border-box; max-width: 460px; margin: 4px 18px 4px 30px; padding: 8px 6px 8px 8px; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .txt { flex: 1; min-width: 0; }
+  .top, .sub { margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .top { display: flex; align-items: center; gap: 6px; font-size: 15px; line-height: 1.3; }
+  .won { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); font-weight: 700; }
+  .sub { font-size: 12px; color: var(--text-3); }
+  .txt .err { margin: 2px 0 0; }
+  /* the actions show on hover or focus (and while one is in use); still there for Tab, so focus reveals them */
+  .icons { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; }
+  .icons .icon-btn { opacity: 0; }
+  .wheel-line:hover .icon-btn, .wheel-line:focus-within .icon-btn, .icons.held .icon-btn { opacity: 1; }
+  .icons .icon-btn:disabled { opacity: .5; }
+  .swatch { display: inline-block; flex-shrink: 0; width: 10px; height: 10px; border-radius: var(--radius-xs); vertical-align: -1px; }
   .acts { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--text-3); }
   .acts .link-btn { display: inline-flex; align-items: center; gap: 2px; font-size: 13px; }
   .acts .link-btn:disabled { opacity: .5; cursor: default; }

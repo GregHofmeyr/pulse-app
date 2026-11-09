@@ -97,45 +97,76 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('a spin seen later', () => {
-  it('is the settled line straight away: who, which wheel, the winner with its colour', () => {
+/** The line's action buttons (icon buttons, named by aria-label). */
+const lineActs = () => [...document.querySelectorAll<HTMLButtonElement>('.wheel-line .acts button')]
+const actNames = () => lineActs().map((b) => b.getAttribute('aria-label'))
+const act = (name: string) => lineActs().find((b) => b.getAttribute('aria-label') === name)!
+
+describe('a spin seen later (#273: the mini result card)', () => {
+  it('is the settled line straight away: the winner with its colour, then who spun what, the count and the time', () => {
     show(line())
     expect(document.querySelector('.wheel-card')).toBeNull()
-    const text = document.querySelector('.wheel-line')!.textContent!.replace(/\s+/g, ' ')
-    expect(text).toContain('alex spun a quick wheel → braai')
-    expect(document.querySelector<HTMLElement>('.wheel-line .swatch')!.style.background).toMatch(/hsl\(180|rgb\(41, 255, 255\)/)
+    const el = document.querySelector('.wheel-line')!
+    expect(el.querySelector('.won')!.textContent!.trim()).toBe('braai')
+    expect(el.querySelector<HTMLElement>('.swatch')!.style.background).toMatch(/hsl\(180|rgb\(41, 255, 255\)/)
+    expect(el.querySelector('.sub')!.textContent!.replace(/\s+/g, ' ').trim()).toBe('alex spun a quick wheel · 4 options · 10:00')
     expect(frames).toHaveLength(0)
+  })
+
+  it('its thumbnail is the landed wheel: the same slices and colours, the winner full, the rest dimmed, under the pointer', () => {
+    show(line())
+    const thumb = document.querySelector('.wheel-line .wheel')!
+    expect(thumb.getAttribute('style')).toMatch(/width: 40px/)
+    const slices = [...thumb.querySelectorAll('.slice')]
+    expect(slices.map((s) => s.classList.contains('dim'))).toEqual([true, true, false, true])
+    expect(slices.map((s) => s.querySelector('path')!.getAttribute('fill'))).toEqual(['hsl(0, 100%, 58%)', 'hsl(90, 100%, 58%)', 'hsl(180, 100%, 58%)', 'hsl(270, 100%, 58%)'])
+    // turned to the server's angle (slice 2 under the pointer); no labels at this size; a pointer and a small hub
+    expect(thumb.querySelector('svg > g')!.getAttribute('transform')).toBe('rotate(135)')
+    expect(thumb.querySelectorAll('text')).toHaveLength(0)
+    expect(thumb.querySelector('.mini-pointer')).not.toBeNull()
+    expect(thumb.querySelector('.mini-hub')).not.toBeNull()
+    expect(thumb.querySelector('.result-view, button, .hub, .pointer')).toBeNull()
   })
 
   it('names a saved wheel', () => {
     show(line({ name: 'Dinner', wheel_id: 'W1' }))
-    expect(document.querySelector('.wheel-line')!.textContent).toContain('spun Dinner →')
+    expect(document.querySelector('.wheel-line .sub')!.textContent).toContain('alex spun Dinner · 4 options')
+  })
+
+  it('the actions are 16 px icon buttons with tooltips, reachable by Tab', () => {
+    show(line())
+    expect(actNames()).toEqual(['Spin again', 'Remove winner & spin', 'Save as wheel'])
+    for (const b of lineActs()) {
+      expect(b.classList.contains('icon-btn')).toBe(true)
+      expect(b.dataset.tip).toBe(b.getAttribute('aria-label'))
+      expect(b.tabIndex).not.toBe(-1)
+      expect(b.querySelector('svg')!.getAttribute('width')).toBe('16')
+    }
   })
 
   it('Spin again and Remove winner & spin ask the server to spin from this line', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'spin_again' ? { ...line(), id: 'L2' } : undefined))
     show(line())
-    const buttons = [...document.querySelectorAll<HTMLButtonElement>('.wheel-line .link-btn')]
-    expect(buttons.map((b) => b.textContent!.trim())).toEqual(['Spin again', 'Remove winner & spin', 'Save as wheel'])
-    buttons[0].click()
+    act('Spin again').click()
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('spin_again', { messageId: 'L1', removeWinner: false }))
-    await vi.waitFor(() => expect(buttons[1].disabled).toBe(false))
+    await vi.waitFor(() => expect(act('Remove winner & spin').disabled).toBe(false))
     // your own spin's line shows at once, spinning
     expect(app.state.messages['C1']?.some((m) => m.id === 'L2')).toBe(true)
     expect(spunLive('L2')).toBe(true)
-    buttons[1].click()
+    act('Remove winner & spin').click()
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('spin_again', { messageId: 'L1', removeWinner: true }))
   })
 
   it('two options: no Remove winner (one would be left); a saved wheel: no Save as wheel', () => {
     show(line({ options: ['a', 'b'], winner: 0, name: 'Coin', wheel_id: 'W1' }))
-    expect([...document.querySelectorAll('.wheel-line .link-btn')].map((b) => b.textContent!.trim())).toEqual(['Spin again'])
+    expect(actNames()).toEqual(['Spin again'])
+    expect(document.querySelector('.wheel-line .sub')!.textContent).toContain('2 options')
   })
 
   it('a refusal shows on the line', async () => {
     invoke.mockRejectedValueOnce('one spin every few seconds; try again in a moment')
     show(line())
-    document.querySelector<HTMLButtonElement>('.wheel-line .link-btn')!.click()
+    act('Spin again').click()
     await vi.waitFor(() => expect(document.querySelector('.wheel-line [role="alert"]')?.textContent).toContain('one spin every few seconds'))
   })
 
@@ -143,8 +174,11 @@ describe('a spin seen later', () => {
     invoke.mockImplementation(async (cmd: string, args?: unknown) =>
       cmd === 'create_wheel' ? { id: 'W9', scope: 'personal', server_id: null, owner_id: 'U1', name: 'Food', options: OPTIONS, updated_at: '' } : (void args, undefined))
     show(line())
-    ;[...document.querySelectorAll<HTMLButtonElement>('.wheel-line .link-btn')].at(-1)!.click()
+    const save = act('Save as wheel')
+    expect(save.getAttribute('aria-haspopup')).toBe('dialog')
+    save.click()
     flushSync()
+    expect(save.getAttribute('aria-expanded')).toBe('true')
     const form = document.querySelector('form[aria-label="Save as wheel"]')!
     form.querySelector<HTMLButtonElement>('[role="radio"]:nth-child(2)')!.click() // Just me
     const name = form.querySelector<HTMLInputElement>('input')!
@@ -154,6 +188,7 @@ describe('a spin seen later', () => {
     form.querySelector<HTMLButtonElement>('button[type="submit"]')!.click()
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('create_wheel', { request: { name: 'Food', options: OPTIONS } }))
     await vi.waitFor(() => expect(document.querySelector('.wheel-line')!.textContent).toContain('Saved as Food'))
+    expect(actNames()).toEqual(['Spin again', 'Remove winner & spin'])
   })
 })
 
@@ -189,7 +224,7 @@ describe('a spin as it happens', () => {
     expect(card()).not.toBeNull()
     later(1)
     expect(card()).toBeNull()
-    expect(document.querySelector('.wheel-line')!.textContent!.replace(/\s+/g, ' ')).toContain('→ braai')
+    expect(document.querySelector('.wheel-line .won')!.textContent!.trim()).toBe('braai')
   })
 
   it('in view while it spins counts once it lands, not before', () => {

@@ -4,11 +4,12 @@
   // `rotation` is the wheel's clockwise turn in degrees; whoever spins it moves that. Slice i of n covers
   // [i·360/n, (i+1)·360/n) clockwise from 12 o'clock, as the server reads its angle. Once a spin lands, `result`
   // shows the result view over it (#271): the wheel stays, under a dark, centre-weighted fade, with the winner
-  // written large across the hub.
+  // written large across the hub. `mini` is a landed spin's thumbnail (the 🎡 line, #273): the slices without labels,
+  // with a pointer and a small hub drawn to scale.
   import { fitLabel, labelFit, resultFontSize } from '../lib/wheel'
   import { labelColour, sliceColour } from '../lib/wheelColours'
 
-  let { options, rotation = 0, size = 220, landed = null, result = null, onSpin, spinLabel = 'Spin', spinDisabled = false, bare = false }: {
+  let { options, rotation = 0, size = 220, landed = null, result = null, onSpin, spinLabel = 'Spin', spinDisabled = false, bare = false, mini = false }: {
     options: string[]
     rotation?: number
     /** Its width and height in px. */
@@ -23,7 +24,11 @@
     spinDisabled?: boolean
     /** A thumbnail (Settings' list): the slices alone, no labels, pointer or hub. */
     bare?: boolean
+    /** A landed spin's thumbnail (the 🎡 line): no labels; the pointer and a small hub drawn to scale. */
+    mini?: boolean
   } = $props()
+  /** No labels, and none of the HTML hub, pointer or result view. */
+  const plain = $derived(bare || mini)
 
   const R = 100
   const n = $derived(options.length)
@@ -56,21 +61,26 @@
     <circle class="rim" r="103" />
     {#if n === 0}
       <circle class="empty-disc" r={R} />
-      {#if !bare}<text class="empty-text" y="62" text-anchor="middle">Add some options</text>{/if}
+      {#if !plain}<text class="empty-text" y="62" text-anchor="middle">Add some options</text>{/if}
     {:else}
       <g transform="rotate({rotation})">
         {#each slices as s, i (i)}
           <g class="slice" class:dim={landed !== null && landed !== i}>
             <path d={s.d} fill={s.fill} />
-            {#if !bare}<text transform="rotate({s.turn})" x={R - 7} y="0" text-anchor="end" dominant-baseline="central" fill={s.ink}
+            {#if !plain}<text transform="rotate({s.turn})" x={R - 7} y="0" text-anchor="end" dominant-baseline="central" fill={s.ink}
               font-size={fit.size}>{s.label}</text>{/if}
           </g>
         {/each}
       </g>
     {/if}
+    {#if mini}
+      <!-- to scale at any size: the hub, and the pointer at 12 o'clock over the rim -->
+      <circle class="mini-hub" r="22" />
+      <path class="mini-pointer" d="M-20 -112H20L0 -76Z" />
+    {/if}
   </svg>
-  {#if bare}
-    <!-- a thumbnail: nothing over the slices -->
+  {#if plain}
+    <!-- a thumbnail: nothing over the slices but what the svg draws -->
   {:else if result !== null}
     <!-- the app's fade-in: none under reduced motion, while live or unfocused (app.css) -->
     <div class="result-view fade-in"><span class="result-text" style:font-size="{resultFontSize(result, size)}px">{result}</span></div>
@@ -79,7 +89,7 @@
   {:else}
     <span class="hub" aria-hidden="true"></span>
   {/if}
-  {#if !bare}<span class="pointer" aria-hidden="true"></span>{/if}
+  {#if !plain}<span class="pointer" aria-hidden="true"></span>{/if}
 </div>
 
 <style>
@@ -91,6 +101,9 @@
   .slice text { font-weight: 700; pointer-events: none; }
   .slice { transition: opacity var(--dur-slow) var(--ease); }
   .slice.dim { opacity: .35; }
+  /* the thumbnail's hub and pointer (#273), ringed in the surface colour like the full-size ones */
+  .mini-hub { fill: var(--bg-1); stroke: var(--bg-0); stroke-width: 8; }
+  .mini-pointer { fill: var(--text); stroke: var(--bg-0); stroke-width: 6; stroke-linejoin: round; }
   .empty-disc { fill: var(--bg-3); }
   .empty-text { fill: var(--text-3); font-size: 10px; font-weight: 600; }
   /* the pointer: a triangle at 12 o'clock, over the rim */
