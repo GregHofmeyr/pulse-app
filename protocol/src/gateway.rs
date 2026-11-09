@@ -1240,11 +1240,11 @@ mod tests {
             angle: 90.0,
         };
         let m = Message {
-            wheel: Some(spin.clone()),
+            wheel: Some(Box::new(spin.clone())),
             ..old
         };
         let back: Message = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
-        assert_eq!(back.wheel, Some(spin));
+        assert_eq!(back.wheel, Some(Box::new(spin)));
     }
 
     #[test]

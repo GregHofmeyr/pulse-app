@@ -61,7 +61,7 @@ pub async fn insert(
         qoty_card: qoty_card(&stored),
         pin: None,
         pin_line: pin_line(&stored),
-        wheel: wheel_spin(&stored),
+        wheel: wheel_spin(&stored).map(Box::new),
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
         .bind(msg.id.to_string())

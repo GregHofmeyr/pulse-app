@@ -647,10 +647,10 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub pin_line: Option<PinLine>,
-    /// Set on a picker wheel spin's line (#158).
+    /// Set on a picker wheel spin's line (#158); boxed so every message (and event) stays small.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub wheel: Option<WheelSpin>,
+    pub wheel: Option<Box<WheelSpin>>,
 }
 
 /// How long a pin lasts (#178).

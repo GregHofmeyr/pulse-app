@@ -56,6 +56,6 @@ pin?: Pin,
  */
 pin_line?: PinLine, 
 /**
- * Set on a picker wheel spin's line (#158).
+ * Set on a picker wheel spin's line (#158); boxed so every message (and event) stays small.
  */
 wheel?: WheelSpin, };

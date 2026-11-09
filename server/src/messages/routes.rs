@@ -101,7 +101,7 @@ fn from_row(r: Row) -> AppResult<Message> {
             _ => None,
         },
         wheel: match &system_payload {
-            Some(p) if system && deleted_at.is_none() => super::system::wheel_spin(p),
+            Some(p) if system && deleted_at.is_none() => super::system::wheel_spin(p).map(Box::new),
             _ => None,
         },
     })

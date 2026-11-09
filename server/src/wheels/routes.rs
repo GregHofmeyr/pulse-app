@@ -35,6 +35,9 @@ fn too_many_wheels(what: &str, cap: i64) -> AppError {
     ))
 }
 
+/// A stored spin: its chat, saved wheel, name, options (JSON) and winner.
+type SpinRow = (String, Option<String>, Option<String>, String, i64);
+
 fn spin_too_soon() -> AppError {
     AppError::TooManyRequests(Some(
         "one spin every few seconds; try again in a moment".into(),
@@ -265,7 +268,7 @@ async fn spin_again(
     Json(req): Json<SpinAgainRequest>,
 ) -> AppResult<(StatusCode, Json<Message>)> {
     crate::media::writes_ok(&s.cfg)?;
-    let row: Option<(String, Option<String>, Option<String>, String, i64)> = sqlx::query_as(
+    let row: Option<SpinRow> = sqlx::query_as(
         // a deleted line (soft-deleted, so its spin row stays) spins no more
         "SELECT w.channel_id, w.wheel_id, w.name, w.options, w.winner FROM wheel_spins w
          JOIN messages m ON m.id = w.message_id
