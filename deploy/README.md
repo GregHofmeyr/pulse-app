@@ -221,6 +221,20 @@ or call that is already open stays up until it drops. To close those at once, re
   against a database migrated past what it knows (e.g. `0004_message_nonce`). Roll back with
   `just restore <the backup that deploy made>` and then `just deploy <previous sha7>`, or, if that build is from
   before provenance (its `just deploy` refusal says so), `CONFIRM=<previous sha7> just deploy-unverified <previous sha7>`.
+- **Rehearse new migrations before deploying them.** Fetch a fresh backup and decrypt it on your machine, apply the
+  new `server/migrations/*.sql` files to the copy with foreign keys off (as `server/src/db.rs` runs them; table
+  rebuilds have a guard that fails with them on), check it, then delete the copy:
+  ```sh
+  ssh pulse@pulse 'bash /srv/pulse/backup.sh latest'               # → daily/pulse-<stamp>.db.age
+  ssh pulse@pulse 'bash /srv/pulse/backup.sh fetch daily/pulse-<stamp>.db.age' > copy.db.age
+  age -d -i ~/.config/pulse/backup-age.key -o copy.db copy.db.age
+  sqlite3 copy.db "PRAGMA foreign_keys=OFF; BEGIN; $(cat server/migrations/00NN_*.sql) COMMIT;"
+  sqlite3 copy.db 'PRAGMA integrity_check; PRAGMA foreign_key_check;'
+  rm copy.db copy.db.age
+  ```
+  `backup.sh` with no argument means `run` and takes a new backup.
+- After a deploy: `just smoke`, `just clips-check`, `just logs`, and check the migration number
+  (`SELECT max(version) FROM _sqlx_migrations`) and `PRAGMA integrity_check` on the live database (read-only).
 - `just logs` (or `just logs caddy` / `just logs livekit`) follows the live logs.
 - After changing `livekit.yaml`: `just deploy`, then `ssh pulse@pulse 'cd /srv/pulse && docker compose restart livekit'`.
   (A changed `LIVEKIT_NODE_IP` needs no restart: `just deploy` recreates LiveKit with it.)
