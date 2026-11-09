@@ -11,6 +11,13 @@ ignore = [
     # moved to ndarray 0.16 (see client/src-tauri/Cargo.toml). The fix is in 0.21.16 only. Pulse only
     # loads the DeepFilterNet model bundled in the binary, never an attacker-supplied NNEF file.
     "RUSTSEC-2026-0217",
+    # Bundled SQLite < 3.54 can return uninitialised page-cache memory when it opens a database
+    # together with a crafted `-wal` file of a different page size (local attack; the victim must
+    # open attacker-written files). The fix is libsqlite3-sys 0.39, but sqlx 0.8.6 pins ^0.30.1 and
+    # even sqlx 0.9.0 caps it below 0.38, so there is no upgrade path yet. Pulse's server only opens
+    # its own database in its own data directory (and its own backups); clients don't use SQLite.
+    # Drop this once sqlx allows libsqlite3-sys >= 0.39 (tracked in #261).
+    "RUSTSEC-2026-0459",
     # Unmaintained crates, all transitive through Tauri/GTK or DeepFilterNet with no drop-in
     # replacement we control. No known vulnerability; revisit when upstreams move.
     # Paths checked with `cargo tree -i <crate> -e normal,build`.
