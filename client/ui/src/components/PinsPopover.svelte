@@ -5,6 +5,7 @@
   import { clickOutside } from '../lib/actions'
   import { mentionLookup, showMentions } from '../lib/mentionStyles'
   import { livePin, pinTip } from '../lib/pins'
+  import { serverNow } from '../lib/serverClock'
   import { displayName, nameOfIn } from '../lib/selectors'
   import { setPins } from '../lib/state'
   import { app, clock } from '../lib/store.svelte'
@@ -43,8 +44,9 @@
 
   const nameOf = $derived(nameOfIn(() => app.state, serverId))
   const lookup = $derived(mentionLookup(app.state))
-  // the clock moves every 30 s: time left follows it, and a pin that runs out leaves before the sweep's event
-  const now = $derived((void clock.nowIso, Date.now()))
+  // the clock moves every 30 s: time left follows it, and a pin that runs out leaves before the sweep's event (by
+  // the server's clock, #258)
+  const now = $derived((void clock.nowIso, serverNow()))
   const pins = $derived(held ? held.filter((p) => livePin({ ...p.message, pin: p.pin }, now)) : null)
   const preview = (content: string) => showMentions(content, lookup, (id) => displayName(app.state, serverId, id))
 

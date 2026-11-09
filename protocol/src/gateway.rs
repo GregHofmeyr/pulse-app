@@ -153,6 +153,11 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub layouts: Vec<ServerLayout>,
+    /// The server's clock as this Ready was made (#258), so a client whose clock is off can still tell when a
+    /// timed pin runs out. Absent from older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub server_now: Option<String>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -749,6 +754,7 @@ mod tests {
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
+            server_now: None,
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");
@@ -832,6 +838,7 @@ mod tests {
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
+            server_now: None,
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -964,6 +971,7 @@ mod tests {
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
+            server_now: None,
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -1290,6 +1298,7 @@ mod tests {
         ))
         .unwrap();
         assert!(ready.layouts.is_empty());
+        assert_eq!(ready.server_now, None, "nor the server's time (#258)");
     }
 
     /// A server's layout is public like its channels: everyone hears it, as `ChannelDeleted`.

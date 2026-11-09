@@ -21,6 +21,7 @@ vi.mock('../lib/markdown', async (importOriginal) => {
 
 import TextChannel from './TextChannel.svelte'
 import { app, resetState, ui } from '../lib/store.svelte'
+import { pinSync } from '../lib/pinSync.svelte'
 import { addHistory, applyEvent, applyReady, emptyState, markHistory, TYPING_TTL_MS } from '../lib/state'
 
 const user = (id: string, username: string): User => ({ id, username, display_name: username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
@@ -90,6 +91,16 @@ describe('TextChannel: rendered messages', () => {
     flushSync()
     expect(document.querySelector('[role=dialog][aria-label="Pinned messages"]')).not.toBeNull()
     expect(ui.openPins).toBeNull()
+  })
+
+  // #258: after a reconnect the older pages' pins are set right by one fetch of the chat's pins
+  it("a chat marked stale by a reconnect fetches its pins once it's shown", async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    vi.mocked(invoke).mockClear()
+    pinSync.stale = { C1: true }
+    flushSync()
+    expect(vi.mocked(invoke).mock.calls).toContainEqual(['list_pins', { channelId: 'C1' }])
+    expect(pinSync.stale).toEqual({})
   })
 
   it('someone typing renders no message again', () => {

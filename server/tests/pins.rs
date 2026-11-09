@@ -460,3 +460,131 @@ async fn editing_keeps_the_pin_and_messages_carry_it() {
         .find(|m| m.id != a.id && m.kind == MessageKind::Normal);
     assert!(unpinned.is_none_or(|m| m.pin.is_none()));
 }
+
+#[tokio::test]
+async fn ready_tells_the_servers_time_so_clients_can_time_pins_by_it() {
+    let w = world().await;
+    let (mut ws, _) = tokio_tungstenite::connect_async(w.app.ws_url("/gateway"))
+        .await
+        .unwrap();
+    let f = serde_json::to_string(&ClientFrame::Hello {
+        token: w.sam.clone(),
+        client_version: pulse_protocol::PROTOCOL_VERSION,
+    })
+    .unwrap();
+    ws.send(Ws::text(f)).await.unwrap();
+    let before = pulse_server::db::now();
+    let ready = loop {
+        match next_event(&mut ws, Duration::from_secs(3)).await {
+            Some(ServerFrame::Ready(r)) => break r,
+            Some(_) => continue,
+            None => panic!("expected Ready"),
+        }
+    };
+    let after = pulse_server::db::now();
+    let at = ready.server_now.expect("Ready carries the server's time");
+    assert!(before <= at && at <= after, "{before} <= {at} <= {after}");
+}
+
+/// The next pin event, message created or message updated; None after a quiet second.
+async fn next_pin_or_update(ws: &mut Socket) -> Option<Event> {
+    loop {
+        match next_event(ws, Duration::from_secs(1)).await? {
+            ServerFrame::Event(
+                e @ (Event::MessagePinned { .. }
+                | Event::MessageUnpinned { .. }
+                | Event::MessageCreated { .. }
+                | Event::MessageUpdated { .. }),
+            ) => return Some(e),
+            _ => continue,
+        }
+    }
+}
+
+/// The live pin lines in a page, newest first.
+fn pin_lines(listed: &[Message]) -> Vec<&Message> {
+    listed
+        .iter()
+        .filter(|m| m.pin_line.is_some() && !m.deleted)
+        .collect()
+}
+
+#[tokio::test]
+async fn re_pinning_soon_refreshes_your_line_instead_of_posting_another() {
+    let w = world().await;
+    let a = send(&w.app, &w.alex, w.general, "plan").await;
+    assert_eq!(pin(&w.app, &w.alex, a.id, "day").await.status(), 200);
+    let first = pin_lines(&messages(&w.app, &w.alex, w.general).await)[0].id;
+    assert_eq!(unpin(&w.app, &w.alex, a.id).await, 204);
+    let mut ws = hello(&w.app, &w.sam).await;
+    assert_eq!(pin(&w.app, &w.alex, a.id, "week").await.status(), 200);
+    assert!(matches!(
+        next_pin_or_update(&mut ws).await,
+        Some(Event::MessagePinned { .. })
+    ));
+    match next_pin_or_update(&mut ws).await {
+        Some(Event::MessageUpdated { message }) => {
+            assert_eq!(message.id, first, "the earlier line, brought up to date");
+            assert_eq!(message.content, "alex pinned a message for 1 week");
+            assert_eq!(
+                message.pin_line.map(|p| p.duration),
+                Some(PinDuration::Week)
+            );
+            assert_eq!(message.edited_at, None, "nobody edited the line");
+        }
+        other => panic!("expected the line's update, got {other:?}"),
+    }
+    assert!(next_pin_or_update(&mut ws).await.is_none(), "no new line");
+    let listed = messages(&w.app, &w.alex, w.general).await;
+    let lines = pin_lines(&listed);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].content, "alex pinned a message for 1 week");
+}
+
+#[tokio::test]
+async fn someone_else_re_pinning_posts_their_own_line() {
+    let w = world().await;
+    let a = send(&w.app, &w.alex, w.general, "plan").await;
+    assert_eq!(pin(&w.app, &w.alex, a.id, "day").await.status(), 200);
+    assert_eq!(unpin(&w.app, &w.sam, a.id).await, 204);
+    assert_eq!(pin(&w.app, &w.sam, a.id, "day").await.status(), 200);
+    let listed = messages(&w.app, &w.alex, w.general).await;
+    let lines = pin_lines(&listed);
+    assert_eq!(lines.len(), 2, "sam's pin is news");
+    assert_eq!(lines[0].content, "sam pinned a message for 1 day");
+}
+
+#[tokio::test]
+async fn a_line_from_a_while_ago_or_deleted_is_left_alone() {
+    let w = world().await;
+    let a = send(&w.app, &w.alex, w.general, "plan").await;
+    let b = send(&w.app, &w.alex, w.general, "other").await;
+    // alex's line for `a` is from 20 minutes ago (its id says when it was posted)
+    assert_eq!(pin(&w.app, &w.alex, a.id, "day").await.status(), 200);
+    let old = pin_lines(&messages(&w.app, &w.alex, w.general).await)[0].id;
+    let then = (chrono::Utc::now() - chrono::Duration::minutes(20)).timestamp_millis() as u64;
+    sqlx::query("UPDATE messages SET id = ? WHERE id = ?")
+        .bind(MessageId::floor(then).to_string())
+        .bind(old.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    assert_eq!(unpin(&w.app, &w.alex, a.id).await, 204);
+    assert_eq!(pin(&w.app, &w.alex, a.id, "day").await.status(), 200);
+    // alex's line for `b` was deleted: pinning `b` again gets a new line
+    assert_eq!(pin(&w.app, &w.alex, b.id, "hour").await.status(), 200);
+    let b_line = pin_lines(&messages(&w.app, &w.alex, w.general).await)[0].id;
+    sqlx::query("UPDATE messages SET deleted_at = '2026-01-01T00:00:00.000Z' WHERE id = ?")
+        .bind(b_line.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    assert_eq!(unpin(&w.app, &w.alex, b.id).await, 204);
+    assert_eq!(pin(&w.app, &w.alex, b.id, "hour").await.status(), 200);
+    let listed = messages(&w.app, &w.alex, w.general).await;
+    let pinned: Vec<_> = pin_lines(&listed)
+        .into_iter()
+        .map(|m| m.pin_line.as_ref().unwrap().message_id)
+        .collect();
+    assert_eq!(pinned, vec![b.id, a.id, a.id]);
+}

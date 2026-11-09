@@ -31,7 +31,9 @@
   import { openCard } from '../lib/profileCard.svelte'
   import MemberMenu from './MemberMenu.svelte'
   import MessageMenu from './MessageMenu.svelte'
-  import { livePin, pinFor, pinTip } from '../lib/pins'
+  import { livePin, pinFor, pinTip, takesPins } from '../lib/pins'
+  import { refreshPins } from '../lib/pinSync.svelte'
+  import { serverNow } from '../lib/serverClock'
   import { jumpTo } from '../lib/jump'
   import { menuPoint } from '../lib/participantMenu'
   import { nameOpts } from '../lib/theme.svelte'
@@ -142,7 +144,7 @@
   // or a right-click on the message (the author's name and avatar keep their person menu). Not in quotes or clips
   // channels (QuoteItem and the clip views are theirs), nor on an unsent or deleted message. ---
   let msgMenu = $state<{ x: number; y: number; opener: HTMLElement } | null>(null)
-  const pinnable = $derived(channelKind === 'text' || channelKind === 'voice' || channelKind === 'dm' || channelKind === 'group')
+  const pinnable = $derived(takesPins(channelKind))
   const msgMenuOn = $derived(pinnable && !pending && !message.deleted && !editing)
   function openMsgMenu(e: MouseEvent, opener: HTMLElement) {
     // the author's own menu took it (their name or avatar), or there's nothing to show
@@ -156,11 +158,17 @@
     e.preventDefault()
     msgMenu = { ...menuPoint(e, opener), opener }
   }
-  // the clock moves every 30 s: a timed pin's time left (and its end) follow it, before the sweep's event
-  const now = $derived((void clock.nowIso, Date.now()))
+  // the clock moves every 30 s: a timed pin's time left (and its end) follow it, before the sweep's event. By the
+  // server's clock (#258): one running ahead here would otherwise end a pin the server still holds.
+  const now = $derived((void clock.nowIso, serverNow()))
   const pin = $derived(livePin(message, now))
   const pinMark = $derived(pin ? pinTip(nameOf(pin.pinned_by), pin.expires_at, now) : '')
-  const report = (p: Promise<unknown>) => p.catch((e) => showError(errorText(e)))
+  // A refused pin or unpin means the pin here was out of date: show why, and fetch the chat's pins to set it right.
+  const report = (p: Promise<unknown>) =>
+    p.catch((e) => {
+      showError(errorText(e))
+      void refreshPins(message.channel_id)
+    })
   function messageAuthor(userId: string) {
     openDm(userId).then((channelId) => (ui.goTo = channelId), (e) => showError(errorText(e)))
   }

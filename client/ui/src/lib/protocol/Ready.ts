@@ -129,4 +129,9 @@ ringing?: Array<CallRing>,
  * Every server's categories and layout revision (#54). The channels carry their own
  * placement, so each layout's `channels` is empty here.
  */
-layouts?: Array<ServerLayout>, };
+layouts?: Array<ServerLayout>, 
+/**
+ * The server's clock as this Ready was made (#258), so a client whose clock is off can still tell when a
+ * timed pin runs out. Absent from older servers.
+ */
+server_now?: string, };

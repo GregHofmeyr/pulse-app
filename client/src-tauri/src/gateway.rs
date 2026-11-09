@@ -1051,6 +1051,7 @@ mod tests {
                         calls: vec![],
                         ringing: vec![],
                         layouts: vec![],
+                        server_now: None,
                     });
                     ws.send(tokio_tungstenite::tungstenite::Message::text(
                         serde_json::to_string(&ready).unwrap(),

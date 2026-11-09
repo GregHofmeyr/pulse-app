@@ -26,6 +26,7 @@
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
   import { addHistory, addOlder, appendNewer, markHistory, reachLatest, PAGE, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
+  import { pinSync, refreshPins } from '../lib/pinSync.svelte'
   import { liveQoty } from '../lib/quotes'
   import { displayName, groupedPending, groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor, nextTypingExpiry, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
@@ -102,6 +103,12 @@
         error = errorText(e)
       },
     )
+  })
+
+  // A reconnect fetches only the latest page again: the older pages (or a jump's window) still loaded keep the pins
+  // they had, so the chat's pins are fetched to set them right (#258).
+  $effect(() => {
+    if (pinSync.stale[channelId]) void refreshPins(channelId)
   })
 
   // Coming back to a channel whose history is still loaded: nothing is fetched, so nothing above

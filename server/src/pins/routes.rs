@@ -20,6 +20,15 @@ use crate::messages::routes::{COLS, Row, fill, load};
 use crate::messages::system;
 use crate::servers::routes::is_server_member;
 
+/// How recent your own line for a message must be for a re-pin to bring it up to date rather than post another.
+const RELINE_WITHIN: chrono::Duration = chrono::Duration::minutes(10);
+
+/// A pin's line: posted now, or an earlier one of yours brought up to date.
+enum Line {
+    New(Box<Message>),
+    Refreshed(MessageId),
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/messages/{id}/pin", put(pin).delete(unpin))
@@ -145,7 +154,35 @@ async fn pin(
     .bind(&pin.expires_at)
     .execute(&mut *tx)
     .await?;
-    let line = system::insert(&mut tx, ch.id, content, payload).await?;
+    // Your own line for this message from the last few minutes is brought up to date instead of posting another,
+    // so pin, unpin, pin again doesn't fill the chat with lines (#258).
+    let since = (at - RELINE_WITHIN).timestamp_millis().max(0) as u64;
+    let earlier: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM messages WHERE channel_id = ? AND id >= ? AND kind = 'system' AND deleted_at IS NULL \
+         AND json_extract(system_payload, '$.type') = ? AND json_extract(system_payload, '$.message_id') = ? \
+         AND json_extract(system_payload, '$.by') = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(ch.id.to_string())
+    .bind(MessageId::floor(since).to_string())
+    .bind(system::PIN_LINE)
+    .bind(id.to_string())
+    .bind(me.to_string())
+    .fetch_optional(&mut *tx)
+    .await?;
+    let line = match earlier {
+        Some(line) => {
+            sqlx::query("UPDATE messages SET content = ?, system_payload = ? WHERE id = ?")
+                .bind(&content)
+                .bind(payload.to_string())
+                .bind(&line)
+                .execute(&mut *tx)
+                .await?;
+            Line::Refreshed(line.parse().map_err(anyhow::Error::from)?)
+        }
+        None => Line::New(Box::new(
+            system::insert(&mut tx, ch.id, content, payload).await?,
+        )),
+    };
     tx.commit().await?;
     // The message as it is now, as events show it (an edit may have landed since the check above; still under
     // `in_order`, so nothing newer can go out before this). The pin has landed: a failed read falls back to the
@@ -173,15 +210,29 @@ async fn pin(
             },
         )
         .await;
-    s.hub
-        .publish(
-            &s.db,
-            Event::MessageCreated {
-                message: line,
-                nonce: None,
-            },
-        )
-        .await;
+    match line {
+        Line::New(message) => {
+            s.hub
+                .publish(
+                    &s.db,
+                    Event::MessageCreated {
+                        message: *message,
+                        nonce: None,
+                    },
+                )
+                .await
+        }
+        // As a call line follows its call: the same line, its words and payload as they are now.
+        Line::Refreshed(line) => match load(&s.db, None, line).await {
+            Ok(Some(message)) => {
+                s.hub
+                    .publish(&s.db, Event::MessageUpdated { message })
+                    .await
+            }
+            Ok(None) => {}
+            Err(e) => tracing::error!(error = ?e, %line, "couldn't read a pin line back"),
+        },
+    }
     Ok(Json(pin))
 }
 

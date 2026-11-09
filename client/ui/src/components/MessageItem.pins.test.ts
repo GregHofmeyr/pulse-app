@@ -11,6 +11,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import MessageItem from './MessageItem.svelte'
 import { app, ui } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { resetServerClock } from '../lib/serverClock'
 
 const NOW = Date.parse('2026-11-09T10:00:00.000Z')
 const msg = (over: Partial<Message> = {}): Message => ({
@@ -47,6 +48,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW)
   invoke.mockReset(); invoke.mockResolvedValue(undefined)
   ui.goTo = null; ui.jump = null; ui.openPins = null
+  resetServerClock(null)
 })
 afterEach(() => {
   if (cmp) unmount(cmp)
@@ -130,6 +132,21 @@ describe('the message menu (#178)', () => {
     expect(document.querySelector('[role=alert]')?.textContent).toBe('This chat already has 50 pins. Unpin something first.')
   })
 
+  it("a refused pin fetches the chat's pins, so the message shows the pin the server holds (#258)", async () => {
+    const held = { pinned_by: 'U2', pinned_at: '2026-11-09T09:00:00.000Z', expires_at: null }
+    invoke.mockImplementation(async (c: string) => {
+      if (c === 'pin_message') throw 'That message is already pinned.'
+      if (c === 'list_pins') return [{ message: msg({ pin: held }), pin: held }]
+    })
+    show(msg())
+    btn('More')!.click(); flushSync()
+    hover(item('Pin message')!)
+    choices()[0].click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('list_pins', { channelId: 'C1' })
+    expect(app.state.messages['C1'][0].pin).toEqual(held)
+  })
+
   it('is in DMs too, but not in a quotes channel', () => {
     show(msg(), 'dm')
     expect(btn('More')).not.toBeNull()
@@ -160,6 +177,15 @@ describe('the pin marker (#178)', () => {
   it('an unpinned message has none', () => {
     show(msg())
     expect(document.querySelector('.pin-mark')).toBeNull()
+  })
+
+  it("runs out by the server's clock, not a local one running ahead (#258)", () => {
+    // the server's clock is 5 minutes behind ours: a pin ending a minute ago here has 4 minutes left there
+    resetServerClock(new Date(NOW - 5 * 60_000).toISOString(), NOW)
+    show(msg({ pin: { pinned_by: 'U2', pinned_at: '2026-11-09T08:59:00.000Z', expires_at: '2026-11-09T09:59:00.000Z' } }))
+    expect(document.querySelector<HTMLElement>('.meta .pin-mark')?.dataset.tip).toBe('Pinned by sam · 4 minutes left')
+    btn('More')!.click(); flushSync()
+    expect(items().map((b) => b.textContent?.trim())).toEqual(['Unpin message'])
   })
 })
 

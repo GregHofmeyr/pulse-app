@@ -28,6 +28,11 @@ macro_rules! id {
             pub fn new() -> Self {
                 Self(next_ulid())
             }
+
+            /// The smallest id minted at `ms` (milliseconds since the epoch): ids `>=` it were minted then or later.
+            pub fn floor(ms: u64) -> Self {
+                Self(Ulid::from_parts(ms, 0))
+            }
         }
 
         impl std::fmt::Display for $name {

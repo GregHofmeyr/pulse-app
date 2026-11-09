@@ -222,6 +222,27 @@ export function setPins(s: AppState, channel: string, list: PinnedMessage[]): Ap
   return { ...s, pins: { ...s.pins, [channel]: list } }
 }
 
+/** Bring every loaded message of `channel` (older pages and a jump's window too) to the pins just fetched for it
+ * (#258): a reconnect only fetches the latest page again, so the rest would keep the pins they had. Messages in
+ * `skip` had a pin event while the list was loading, which is newer than the list. */
+export function applyPinList(s: AppState, channel: string, list: PinnedMessage[], skip: ReadonlySet<string> = new Set()): AppState {
+  const loaded = s.messages[channel]
+  if (!loaded) return s
+  const pins = new Map(list.map((p) => [p.message.id, p.pin]))
+  let changed = false
+  const next = loaded.map((m) => {
+    if (skip.has(m.id)) return m
+    const p = pins.get(m.id)
+    const same = p ? m.pin?.pinned_by === p.pinned_by && m.pin.pinned_at === p.pinned_at && m.pin.expires_at === p.expires_at : !m.pin
+    if (same) return m
+    changed = true
+    if (p) return { ...m, pin: p }
+    const { pin: _old, ...rest } = m
+    return rest
+  })
+  return changed ? { ...s, messages: { ...s.messages, [channel]: next } } : s
+}
+
 /** `channel`'s fetched pins with `f` applied (unchanged when never fetched). */
 function mapPins(s: AppState, channel: string, f: (list: PinnedMessage[]) => PinnedMessage[]): AppState {
   const list = s.pins[channel]

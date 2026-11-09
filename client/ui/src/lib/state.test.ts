@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyReady, applyMyVote, emptyState, setPins, addPending, pendingMessage, removePending, restoreUnsent, markHistory, applyLayout, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, setProfile, type AppState, type Pending } from './state'
+import { applyEvent, applyPinList, applyReady, applyMyVote, emptyState, setPins, addPending, pendingMessage, removePending, restoreUnsent, markHistory, applyLayout, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, setProfile, type AppState, type Pending } from './state'
 import { feedKey, clipView, type ClipFilter } from './clips'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
@@ -1521,5 +1521,24 @@ describe('pins (#178)', () => {
   it('a reconnect forgets fetched lists (anything may have changed meanwhile)', () => {
     const s = setPins(loaded(), 'C1', [{ message: msg('M1'), pin: pin() }])
     expect(applyReady(s, ready()).pins).toEqual({})
+  })
+
+  it("a chat's fetched pins set every loaded message's pin, older pages included (#258)", () => {
+    // M1 was pinned while we were away; M2's pin was taken off
+    let s = applyEvent(loaded(), pinned('M2'), 0)
+    s = applyPinList(s, 'C1', [{ message: msg('M1'), pin: pin('U1', '2026-11-10T10:00:00.000Z') }])
+    expect(s.messages['C1'].find((m) => m.id === 'M1')?.pin).toEqual(pin('U1', '2026-11-10T10:00:00.000Z'))
+    expect(s.messages['C1'].find((m) => m.id === 'M2')?.pin ?? null).toBeNull()
+  })
+
+  it('leaves a message alone whose pin changed live while the list was loading', () => {
+    let s = applyEvent(loaded(), pinned('M2'), 0)
+    s = applyPinList(s, 'C1', [], new Set(['M2']))
+    expect(s.messages['C1'].find((m) => m.id === 'M2')?.pin).toEqual(pin())
+  })
+
+  it('changes nothing for a chat with nothing loaded', () => {
+    const s = loaded()
+    expect(applyPinList(s, 'C9', [{ message: msg('M1'), pin: pin() }])).toBe(s)
   })
 })

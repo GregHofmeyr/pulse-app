@@ -254,6 +254,7 @@ async fn ready_for(
         appear_offline_to: crate::presence::hidden_list(db, me).await?,
         live_notify: crate::streams::notify::list(db, me).await?,
         layouts,
+        server_now: Some(now()),
     })
 }
 

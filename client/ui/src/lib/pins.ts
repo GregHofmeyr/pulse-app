@@ -1,8 +1,14 @@
 // Pinned messages (#178): the lengths a pin can have, and how a pin reads (the marker's tip, the system line, the
 // popover's "time left").
+import type { ChannelKind } from './protocol/ChannelKind'
 import type { Message } from './protocol/Message'
 import type { Pin } from './protocol/Pin'
 import type { PinDuration } from './protocol/PinDuration'
+
+/** Whether a chat of this kind takes pins: not quotes or clips channels. */
+export function takesPins(kind: ChannelKind | undefined): boolean {
+  return kind === 'text' || kind === 'voice' || kind === 'dm' || kind === 'group'
+}
 
 /** The Pin message flyout's choices, in order. */
 export const PIN_FOR: readonly { label: string; duration: PinDuration }[] = [
