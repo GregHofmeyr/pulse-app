@@ -49,6 +49,8 @@ export const ui = $state({
    *  channel has no history to jump in. */
   openClip: null as { channelId: string; clip: Message } | null,
   jump: null as JumpRequest | null,
+  /** A request to open this chat's pins popover (a pin line's See pins, #178; its channel's view does it and clears it). */
+  openPins: null as string | null,
   /** A short line for the shell to show for a moment (it shows it and clears it). */
   notice: null as string | null,
   autoReported: false,

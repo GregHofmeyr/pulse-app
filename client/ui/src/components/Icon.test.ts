@@ -21,6 +21,15 @@ describe('the copy icon (#244)', () => {
   })
 })
 
+describe('the pin icon (#178)', () => {
+  it('is its own shape, in the set\'s 24-unit grid', () => {
+    const d = pathOf('pin')
+    expect(d).toBeTruthy()
+    expect(d).not.toBe(pathOf('star'))
+    expect(d.split('M').filter(Boolean).length).toBe(2)
+  })
+})
+
 describe('the soundboard icon (#221)', () => {
   it('reads as sound bursting out: not the old equaliser bars, and not the voice speaker or the volume', () => {
     const d = pathOf('soundboard')

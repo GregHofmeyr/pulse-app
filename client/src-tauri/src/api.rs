@@ -13,15 +13,16 @@ use pulse_protocol::rest::{
     EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest, Game, GoLiveRequest,
     HideEmbedRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest, LoginRequest,
     MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired, MuteTarget,
-    NameArchivePage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse,
-    RegisterRequest, RenameCategoryRequest, RenameChannelRequest, RenameEmojiRequest,
-    ReopenQotyRequest, SaveLayoutRequest, SearchRequest, SearchResults, SendMessageRequest, Server,
-    ServerLayout, ServerVoiceMod, SessionResponse, SetClipViewRequest, SetMuteRequest,
-    SetNicknameRequest, SetNotifyLevelRequest, SetServerVoiceRequest, SetShowcaseRequest,
-    SetStatusRequest, Sound, StartQotyRequest, Status, StreamInfo, StreamRole, StreamSettings,
-    StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
-    TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest,
-    UpdateSoundRequest, User, VoiceTokenResponse, WatchRequest,
+    NameArchivePage, Pin, PinDuration, PinRequest, PinnedMessage, PostQuoteRequest, Profile,
+    QotyEvent, QotyVoteRequest, RecoveryCodesResponse, RegisterRequest, RenameCategoryRequest,
+    RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest, SaveLayoutRequest, SearchRequest,
+    SearchResults, SendMessageRequest, Server, ServerLayout, ServerVoiceMod, SessionResponse,
+    SetClipViewRequest, SetMuteRequest, SetNicknameRequest, SetNotifyLevelRequest,
+    SetServerVoiceRequest, SetShowcaseRequest, SetStatusRequest, Sound, StartQotyRequest, Status,
+    StreamInfo, StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest,
+    TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse,
+    TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User, VoiceTokenResponse,
+    WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -789,6 +790,51 @@ impl Api {
                 .post(format!("{}/messages/{message_id}/embeds/hide", self.base))
                 .bearer_auth(token)
                 .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Pin a message for `duration` (#178).
+    pub async fn pin_message(
+        &self,
+        token: &str,
+        id: MessageId,
+        duration: PinDuration,
+    ) -> Result<Pin, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/messages/{id}/pin", self.base))
+                .bearer_auth(token)
+                .json(&PinRequest { duration })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn unpin_message(&self, token: &str, id: MessageId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/messages/{id}/pin", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A chat's pins, newest pin first.
+    pub async fn list_pins(
+        &self,
+        token: &str,
+        channel: ChannelId,
+    ) -> Result<Vec<PinnedMessage>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/channels/{channel}/pins", self.base))
+                .bearer_auth(token)
                 .send()
                 .await,
         )
@@ -4383,6 +4429,29 @@ mod tests {
         assert_eq!(api.reactors(&token, m.id, "👍🏽").await.unwrap(), vec![me]);
         api.remove_reaction(&token, m.id, "👍🏽").await.unwrap();
         assert!(api.reactors(&token, m.id, "👍🏽").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pin_list_and_unpin() {
+        let app = testing::spawn().await;
+        let (me, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let g = testing::general(&app, &token, s.id).await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let m = testing::send(&app, &token, g.id, "plan for tonight").await;
+        let pin = api
+            .pin_message(&token, m.id, PinDuration::Day)
+            .await
+            .unwrap();
+        assert_eq!(pin.pinned_by, me);
+        assert!(pin.expires_at.is_some());
+        let list = api.list_pins(&token, g.id).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].message.id, m.id);
+        api.unpin_message(&token, m.id).await.unwrap();
+        assert!(api.list_pins(&token, g.id).await.unwrap().is_empty());
+        let again = api.unpin_message(&token, m.id).await.unwrap_err();
+        assert!(matches!(again, ApiError::Rejected(_)), "{again:?}");
     }
 
     // ---------- Clips ----------

@@ -20,7 +20,7 @@ vi.mock('../lib/markdown', async (importOriginal) => {
 })
 
 import TextChannel from './TextChannel.svelte'
-import { app, resetState } from '../lib/store.svelte'
+import { app, resetState, ui } from '../lib/store.svelte'
 import { addHistory, applyEvent, applyReady, emptyState, markHistory, TYPING_TTL_MS } from '../lib/state'
 
 const user = (id: string, username: string): User => ({ id, username, display_name: username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
@@ -68,6 +68,28 @@ describe('TextChannel: rendered messages', () => {
     expect(bell.getAttribute('aria-expanded')).toBe('true')
     const items = [...document.querySelectorAll<HTMLElement>('.menu > [role=menuitem]')].map((b) => b.textContent?.trim())
     expect(items).toEqual(['Unmute channel', 'Notifications'])
+  })
+
+  // #178: the pin button sits with the header's other icons and opens the chat's pins
+  it('the pin button opens the pins popover, as does a line\'s See pins', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    vi.mocked(invoke).mockClear()
+    const pinBtn = document.querySelector<HTMLButtonElement>('.head button[aria-label="Pinned messages"]')!
+    expect(pinBtn).not.toBeNull()
+    expect(pinBtn.classList.contains('hbtn')).toBe(true)
+    expect(pinBtn.querySelector('svg')?.getAttribute('width')).toBe(document.querySelector('.head .hbtn[data-tip="Mute"] svg')?.getAttribute('width'))
+    pinBtn.click()
+    flushSync()
+    expect(document.querySelector('.head [role=dialog][aria-label="Pinned messages"]')).not.toBeNull()
+    expect(pinBtn.getAttribute('aria-expanded')).toBe('true')
+    expect(vi.mocked(invoke).mock.calls.map(([c]) => c)).toContain('list_pins')
+    pinBtn.click()
+    flushSync()
+    expect(document.querySelector('[role=dialog][aria-label="Pinned messages"]')).toBeNull()
+    ui.openPins = 'C1'
+    flushSync()
+    expect(document.querySelector('[role=dialog][aria-label="Pinned messages"]')).not.toBeNull()
+    expect(ui.openPins).toBeNull()
   })
 
   it('someone typing renders no message again', () => {

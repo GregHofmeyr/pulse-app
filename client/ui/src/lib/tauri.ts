@@ -18,6 +18,9 @@ import type { Status } from './protocol/Status'
 import type { StartCallResponse } from './protocol/StartCallResponse'
 import type { ServerVoiceMod } from './protocol/ServerVoiceMod'
 import type { Message } from './protocol/Message'
+import type { Pin } from './protocol/Pin'
+import type { PinDuration } from './protocol/PinDuration'
+import type { PinnedMessage } from './protocol/PinnedMessage'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { StreamSettings } from './protocol/StreamSettings'
 import type { VoiceTokenResponse } from './protocol/VoiceTokenResponse'
@@ -169,6 +172,11 @@ export const api = {
     invoke<void>('send_message', { channelId, content, replyToId, nonce }),
   editMessage: (messageId: string, content: string) => invoke<Message>('edit_message', { messageId, content }),
   deleteMessage: (messageId: string) => invoke<void>('delete_message', { messageId }),
+  /** Pins (#178): the change also arrives as MessagePinned / MessageUnpinned (and the pin's line as MessageCreated). */
+  pinMessage: (messageId: string, duration: PinDuration) => invoke<Pin>('pin_message', { messageId, duration }),
+  unpinMessage: (messageId: string) => invoke<void>('unpin_message', { messageId }),
+  /** A chat's pins, newest pin first. */
+  listPins: (channelId: string) => invoke<PinnedMessage[]>('list_pins', { channelId }),
   /** Hides one link's preview on your own message, or all of them (`url` null); the update also arrives as MessageUpdated. */
   hideEmbed: (messageId: string, url: string | null) => invoke<Message>('hide_embed', { messageId, url }),
   /** Our embed page's origin, only when signed in to the server the app's CSP allows framing; else null. */

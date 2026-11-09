@@ -7,6 +7,7 @@
   import QotyCard from './QotyCard.svelte'
   import RepliesPanel from './RepliesPanel.svelte'
   import Leaderboard from './Leaderboard.svelte'
+  import PinsPopover from './PinsPopover.svelte'
   import Composer from './Composer.svelte'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
@@ -463,6 +464,21 @@
     void jumpTo(m.channel_id, m.id)
   }
 
+  // --- pins (#178): the header's pin button, or a pin line's See pins, opens the chat's pins ---
+  const pinsOn = $derived(channel?.kind === 'text' || channel?.kind === 'voice' || isPrivate)
+  let pinsOpen = $state(false)
+  $effect(() => {
+    if (ui.openPins !== channelId) return
+    untrack(() => {
+      ui.openPins = null
+      pinsOpen = true
+    })
+  })
+  function openPinned(messageId: string) {
+    pinsOpen = false
+    void jumpTo(channelId, messageId)
+  }
+
   const nameOf = $derived(nameOfIn(() => app.state, serverId))
 
   function post(text: string, replyToId: string | null) {
@@ -532,6 +548,10 @@
       {/if}
       <button class="icon-btn" aria-label="Add people" data-tip="Add people" onclick={onAddPeople}><Icon name="userPlus" size={17} /></button>
     {/if}
+    {#if pinsOn}
+      <button class="icon-btn hbtn" class:on={pinsOpen} aria-label="Pinned messages" data-tip="Pinned messages" data-menu-toggle aria-haspopup="dialog" aria-expanded={pinsOpen}
+        onclick={() => (pinsOpen = !pinsOpen)}><Icon name="pin" size={17} /></button>
+    {/if}
     <button bind:this={muteBtn} class="icon-btn hbtn" class:on={muted} aria-label={muted ? 'Muted' : 'Mute'} data-tip={muted ? 'Muted' : 'Mute'} data-menu-toggle
       aria-haspopup="menu" aria-expanded={menu === 'mute'}
       onclick={() => (menu = menu === 'mute' ? null : 'mute')}><Icon name={muted ? 'bellOff' : 'bell'} size={17} /></button>
@@ -546,6 +566,9 @@
     {/if}
     {#if leaderboardOpen && serverId}
       <Leaderboard {serverId} onOpen={openLeaderboardEntry} onClose={() => (leaderboardOpen = false)} />
+    {/if}
+    {#if pinsOpen && pinsOn}
+      <PinsPopover {channelId} {serverId} onJump={openPinned} onClose={() => (pinsOpen = false)} />
     {/if}
     {#if menu && channel}
       <ConversationMenu {channel} {muted} show={menu} anchor={menu === 'manage' ? moreBtn : muteBtn} onClose={() => (menu = null)} onRename={startRename} {onLeft} />

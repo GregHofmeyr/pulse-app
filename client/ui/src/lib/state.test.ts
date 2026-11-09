@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, applyLayout, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, setProfile, type AppState, type Pending } from './state'
+import { applyEvent, applyReady, applyMyVote, emptyState, setPins, addPending, pendingMessage, removePending, restoreUnsent, markHistory, applyLayout, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, setProfile, type AppState, type Pending } from './state'
 import { feedKey, clipView, type ClipFilter } from './clips'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
@@ -1463,5 +1463,52 @@ describe('layouts', () => {
     expect(s.channels['C1'].name).toBe('again')
     expect('category_id' in s.channels['C1']).toBe(false)
     expect(s.channels['C1'].position).toBe(0)
+  })
+})
+
+describe('pins (#178)', () => {
+  const pin = (by = 'U2', expires_at: string | null = null) => ({ pinned_by: by, pinned_at: '2026-11-09T10:00:00.000Z', expires_at })
+  const loaded = () => {
+    let s = applyReady(emptyState(), ready())
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M1'), nonce: null } }, 0)
+    return applyEvent(s, { t: 'MessageCreated', d: { message: msg('M2'), nonce: null } }, 0)
+  }
+  const pinned = (id: string, p = pin()): Event => ({ t: 'MessagePinned', d: { channel_id: 'C1', pinned: { message: { ...msg(id), pin: p }, pin: p } } })
+
+  it('a pin marks the loaded message and joins a fetched list, newest first', () => {
+    let s = setPins(loaded(), 'C1', [{ message: { ...msg('M1'), pin: pin() }, pin: pin() }])
+    s = applyEvent(s, pinned('M2', pin('U1')), 0)
+    expect(s.messages['C1'].find((m) => m.id === 'M2')?.pin).toEqual(pin('U1'))
+    expect(s.pins['C1'].map((p) => p.message.id)).toEqual(['M2', 'M1'])
+    // a repeat doesn't list it twice
+    s = applyEvent(s, pinned('M2', pin('U1')), 0)
+    expect(s.pins['C1'].map((p) => p.message.id)).toEqual(['M2', 'M1'])
+  })
+
+  it('a chat whose list was never fetched keeps none (the popover fetches it)', () => {
+    const s = applyEvent(loaded(), pinned('M1'), 0)
+    expect(s.pins['C1']).toBeUndefined()
+    expect(s.messages['C1'][0].pin).toEqual(pin())
+  })
+
+  it('an unpin clears the marker and the list entry', () => {
+    let s = setPins(applyEvent(loaded(), pinned('M1'), 0), 'C1', [{ message: msg('M1'), pin: pin() }])
+    s = applyEvent(s, { t: 'MessageUnpinned', d: { channel_id: 'C1', message_id: 'M1' } }, 0)
+    expect(s.messages['C1'][0].pin ?? null).toBeNull()
+    expect(s.pins['C1']).toEqual([])
+  })
+
+  it('an edit updates the listed copy and keeps its pin; a delete drops it', () => {
+    let s = setPins(loaded(), 'C1', [{ message: { ...msg('M1'), pin: pin() }, pin: pin() }])
+    s = applyEvent(s, { t: 'MessageUpdated', d: { message: { ...msg('M1', 'C1', 'new plan'), pin: pin() } } }, 0)
+    expect(s.pins['C1'][0].message.content).toBe('new plan')
+    expect(s.pins['C1'][0].pin).toEqual(pin())
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M1', author_id: 'U2', mentions: [], thread_root_id: null } }, 0)
+    expect(s.pins['C1']).toEqual([])
+  })
+
+  it('a reconnect forgets fetched lists (anything may have changed meanwhile)', () => {
+    const s = setPins(loaded(), 'C1', [{ message: msg('M1'), pin: pin() }])
+    expect(applyReady(s, ready()).pins).toEqual({})
   })
 })

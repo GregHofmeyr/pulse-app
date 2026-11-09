@@ -14,7 +14,7 @@
   import { reactionKey, type Std } from '../lib/emoji'
   import { pickAdds, react } from '../lib/reactions'
   import { untrack } from 'svelte'
-  import { app, openDm, ui } from '../lib/store.svelte'
+  import { app, clock, openDm, ui } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import { InlineError } from '../lib/inlineError.svelte'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
@@ -29,6 +29,9 @@
   import { appearance } from '../lib/appearance.svelte'
   import { openCard } from '../lib/profileCard.svelte'
   import MemberMenu from './MemberMenu.svelte'
+  import MessageMenu from './MessageMenu.svelte'
+  import { livePin, pinFor, pinTip } from '../lib/pins'
+  import { jumpTo } from '../lib/jump'
   import { menuPoint } from '../lib/participantMenu'
   import { nameOpts } from '../lib/theme.svelte'
   import type { Attachment } from 'svelte/attachments'
@@ -134,6 +137,23 @@
   function authorKey(e: KeyboardEvent) {
     if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) openAuthorMenu(e, e.currentTarget as HTMLElement)
   }
+  // --- the message's own menu (#178): Pin message (a flyout of lengths) or Unpin message. From the action bar's More,
+  // or a right-click on the message (the author's name and avatar keep their person menu). Not in quotes or clips
+  // channels (QuoteItem and the clip views are theirs), nor on an unsent or deleted message. ---
+  let msgMenu = $state<{ x: number; y: number; opener: HTMLElement } | null>(null)
+  const pinnable = $derived(channelKind === 'text' || channelKind === 'voice' || channelKind === 'dm' || channelKind === 'group')
+  const msgMenuOn = $derived(pinnable && !pending && !message.deleted && !editing)
+  function openMsgMenu(e: MouseEvent, opener: HTMLElement) {
+    // the author's own menu took it (their name or avatar), or there's nothing to show
+    if (e.defaultPrevented || !msgMenuOn) return
+    e.preventDefault()
+    msgMenu = { ...menuPoint(e, opener), opener }
+  }
+  // the clock moves every 30 s: a timed pin's time left (and its end) follow it, before the sweep's event
+  const now = $derived((void clock.nowIso, Date.now()))
+  const pin = $derived(livePin(message, now))
+  const pinMark = $derived(pin ? pinTip(nameOf(pin.pinned_by), pin.expires_at, now) : '')
+  const report = (p: Promise<unknown>) => p.catch((e) => showError(errorText(e)))
   function messageAuthor(userId: string) {
     openDm(userId).then((channelId) => (ui.goTo = channelId), (e) => showError(errorText(e)))
   }
@@ -215,13 +235,20 @@
     <!-- a call line (#50) reads per member: "Missed call from sam" for those who never joined -->
     {@const text = callLineText(app.state, message)}
     <div class="system call-line" class:missed={text.startsWith('Missed')} data-message-id={message.id}><Icon name="phone" size={14} /> {text} <span class="time">{time}</span></div>
+  {:else if message.pin_line}
+    <!-- a pin's line (#178): its message jumps to the pinned one, See pins opens the chat's pins -->
+    {@const pl = message.pin_line}
+    {@const length = pinFor(pl.duration)}
+    <div class="system pin-line" data-message-id={message.id}><Icon name="pin" size={14} /> {nameOf(pl.by)} pinned
+      <button type="button" class="link-btn" onclick={() => void jumpTo(message.channel_id, pl.message_id)}>a message</button>{length ? ` ${length}` : ''} ·
+      <button type="button" class="link-btn" onclick={() => (ui.openPins = message.channel_id)}>See pins</button> <span class="time">{time}</span></div>
   {:else}
   <div class="system" data-message-id={message.id}>{message.content} <span class="time">{time}</span></div>
   {/if}
 {:else}
   <!-- focus anywhere inside shows the action bar (hover alone left keyboard users without it) -->
   <div class="msg" data-message-id={message.id} {...actionBarFocus((v) => (focusIn = v))} class:grouped class:mentioned={!!meId && message.mentions.includes(meId)}
-    onpointerenter={() => (rowHover = true)} onpointerleave={() => (rowHover = false)}>
+    onpointerenter={() => (rowHover = true)} onpointerleave={() => (rowHover = false)} oncontextmenu={(e) => openMsgMenu(e, e.currentTarget)}>
     {#if replyTo}
       <div class="reply"><span class="hook"></span><strong>{#if replyTo.author_id}<Name userId={replyTo.author_id} {serverId} text={nameOf(replyTo.author_id)} />{:else}{nameOf(null)}{/if}</strong>
         <span class="snippet">{replyTo.deleted ? 'original message deleted' : showMentions(replyTo.content, lookup, (id) => displayName(app.state, serverId, id)).slice(0, 120)}</span></div>
@@ -230,13 +257,13 @@
     {/if}
     <div class="row">
       {#if grouped && !replyTo}
-        <span class="gutter"></span>
+        <span class="gutter">{#if pin}<span class="pin-mark" data-tip={pinMark}><Icon name="pin" size={14} /></span>{/if}</span>
       {:else}
         <!-- the author menu is a pointer shortcut; the keyboard route is ContextMenu / Shift+F10 on the avatar or name -->
         <span class="author" role="presentation" oncontextmenu={(e) => openAuthorMenu(e, e.currentTarget)} onkeydown={authorKey}><Avatar id={message.author_id ?? ''} {name} size={40} interactive={!!message.author_id} {serverId} hovered={() => rowHover} /></span>
       {/if}
       <div class="body">
-        {#if !grouped || replyTo}<div class="meta"><strong role="presentation" oncontextmenu={(e) => openAuthorMenu(e, e.currentTarget)} onkeydown={authorKey}>{#if message.author_id}<Name userId={message.author_id} {serverId} text={name} />{:else}{name}{/if}</strong><span class="time">{time}</span></div>{/if}
+        {#if !grouped || replyTo}<div class="meta"><strong role="presentation" oncontextmenu={(e) => openAuthorMenu(e, e.currentTarget)} onkeydown={authorKey}>{#if message.author_id}<Name userId={message.author_id} {serverId} text={name} />{:else}{name}{/if}</strong><span class="time">{time}</span>{#if pin}<span class="pin-mark" data-tip={pinMark}><Icon name="pin" size={14} /></span>{/if}</div>{/if}
         {#if message.deleted}
           <p class="deleted">message deleted</p>
         {:else if editing}
@@ -263,6 +290,10 @@
             <button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>
             {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
             <DeleteButton what={message.thread_root_id ? 'reply' : 'message'} onConfirm={() => void del()} />
+          {/if}
+          {#if msgMenuOn}
+            <button aria-label="More" aria-haspopup="menu" aria-expanded={!!msgMenu} data-menu-toggle
+              onclick={(e) => (msgMenu ? (msgMenu = null) : openMsgMenu(e, e.currentTarget))}><Icon name="dots" size={16} /></button>
           {/if}
         </div>
         {#if picking && smileBtn}
@@ -291,6 +322,10 @@
   {@render item()}
 {/if}
 <!-- outside the row, so focus in the menu doesn't count as focus in the message (its action bar) -->
+{#if msgMenu}
+  {#key msgMenu}<MessageMenu pinned={!!pin} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
+    onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))} onClose={() => (msgMenu = null)} />{/key}
+{/if}
 {#if authorMenu && message.author_id}
   {#key authorMenu}<MemberMenu {serverId} userId={message.author_id} x={authorMenu.x} y={authorMenu.y} opener={authorMenu.opener}
     onMessage={channelKind === 'dm' ? undefined : messageAuthor} muteChannelId={channelKind === 'dm' ? message.channel_id : null} onClose={() => (authorMenu = null)} />{/key}
@@ -340,6 +375,13 @@
   .system { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }
   .call-line { display: flex; align-items: center; gap: 6px; }
   .call-line.missed { color: var(--danger-text); }
+  .pin-line :global(svg) { vertical-align: -2px; }
+  .pin-line .link-btn { color: var(--text-2); }
+  .pin-line .link-btn:hover { color: var(--text); }
+  /* the pin marker (#178): by the time, or in a grouped row's gutter, where the time would be */
+  .pin-mark { display: inline-flex; color: var(--text-3); }
+  .meta .pin-mark { align-self: center; }
+  .gutter { display: flex; justify-content: center; padding-top: 4px; }
   .msg.mentioned { background: var(--accent-faint); box-shadow: inset 2px 0 0 var(--focus-ring); }
   .content :global(img.emoji) { width: 1.375em; height: 1.375em; vertical-align: -0.3em; object-fit: contain; }
   .content :global(img.emoji.big) { width: 48px; height: 48px; }

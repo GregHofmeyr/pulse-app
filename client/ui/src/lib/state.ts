@@ -13,6 +13,7 @@ import type { Game } from './protocol/Game'
 import type { Member } from './protocol/Member'
 import type { Message } from './protocol/Message'
 import type { NotifyLevelPref } from './protocol/NotifyLevelPref'
+import type { PinnedMessage } from './protocol/PinnedMessage'
 import type { Mute } from './protocol/Mute'
 import type { Person } from './protocol/Person'
 import type { OwnStatus } from './protocol/OwnStatus'
@@ -118,6 +119,9 @@ export type AppState = {
   /** serverId -> its categories in order and the layout revision they're from (#54). A server missing here is an
    *  older one without categories: its list shows the four kind sections. Where channels sit is on the channels. */
   layouts: Record<string, { revision: number; categories: Category[] }>
+  /** channelId -> its pins, newest pin first (#178): present once the pins popover fetched them, then kept live by
+   *  events. Cleared on every Ready (the popover fetches again). */
+  pins: Record<string, PinnedMessage[]>
 }
 
 export type ClipFeed = { channelId: string; filter: ClipFilter; items: Message[] /* newest first */; start: boolean; loading: boolean; /** Clips deleted while a page was being fetched (it may still carry them). */ gone?: string[] }
@@ -134,7 +138,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -209,7 +213,19 @@ export function applyReady(s: AppState, r: Ready): AppState {
     clipFacets: {},
     // absent from older servers: no categories (the list shows the four kind sections)
     layouts: Object.fromEntries((r.layouts ?? []).map((l) => [l.server_id, { revision: l.revision, categories: l.categories }])),
+    pins: {},
   }
+}
+
+/** A chat's pins as fetched (newest pin first). */
+export function setPins(s: AppState, channel: string, list: PinnedMessage[]): AppState {
+  return { ...s, pins: { ...s.pins, [channel]: list } }
+}
+
+/** `channel`'s fetched pins with `f` applied (unchanged when never fetched). */
+function mapPins(s: AppState, channel: string, f: (list: PinnedMessage[]) => PinnedMessage[]): AppState {
+  const list = s.pins[channel]
+  return list ? { ...s, pins: { ...s.pins, [channel]: f(list) } } : s
 }
 
 /** `c` placed in `category` (null: uncategorised, the field absent) at `position`; `c` itself when it's already there. */
@@ -690,6 +706,7 @@ function dropChannel(s: AppState, c: string): AppState {
     clipViews: drop(s.clipViews),
     clipFacets: drop(s.clipFacets),
     clipFeeds: Object.fromEntries(Object.entries(s.clipFeeds).filter(([, f]) => f.channelId !== c)),
+    pins: drop(s.pins),
   }
 }
 
@@ -735,7 +752,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const latest = prev?.id === m.id ? { ...s.latest, [c]: { ...m, reactions: prev.reactions } } : s.latest
       // A QotY option's copy follows the edit too, loaded or not.
       const follow = (old: Message) => withMyQuoteState({ ...m, reactions: old.reactions }, old, s.me?.id)
-      const q = mapOpenRoot(mapQotyMessages(s, m.id, follow), m.id, follow)
+      // The pins popover's copy too (#178), with the pin it was listed with.
+      const listed = (list: PinnedMessage[]) => list.map((x) => (x.message.id === m.id ? { ...x, message: { ...m, pin: x.pin } } : x))
+      const q = mapPins(mapOpenRoot(mapQotyMessages(s, m.id, follow), m.id, follow), c, listed)
       if (m.clip) return clipUpdated(q, m)
       // History never loaded, or a detached window that doesn't hold it (adding it would leave a gap).
       if (!s.messages[c] || (detached(s, c) && !s.messages[c].some((x) => x.id === m.id))) return latest === s.latest ? q : { ...q, latest }
@@ -770,6 +789,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         openRoot: s.openRoot && s.openRoot.channel_id === c ? gone(s.openRoot) : s.openRoot,
         messages: s.messages[c] ? { ...s.messages, [c]: s.messages[c].map(gone) } : s.messages,
         clipFeeds: dropFromFeeds(s.clipFeeds, c, id),
+        // a deleted message's pin goes with it (the server's MessageUnpinned follows)
+        pins: s.pins[c] ? { ...s.pins, [c]: s.pins[c].filter((p) => p.message.id !== id) } : s.pins,
         latest: s.latest[c] ? { ...s.latest, [c]: gone(s.latest[c]) } : s.latest,
         reads: wasUnread
           ? {
@@ -970,6 +991,20 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, customEmoji: { ...s.customEmoji, [e.d.emoji.id]: e.d.emoji } }
     case 'EmojiDeleted':
       return { ...s, customEmoji: { ...s.customEmoji, [e.d.emoji.id]: { ...e.d.emoji, hash: null, still_hash: null } } }
+    case 'MessagePinned': {
+      const { channel_id: c, pinned } = e.d
+      const id = pinned.message.id
+      const mark = (m: Message): Message => ({ ...m, pin: pinned.pin })
+      // the loaded copy, when there is one, has your own reactions marked
+      const held = findMessage(s, c, id)
+      const listed = (list: PinnedMessage[]) => [{ ...pinned, message: held ? mark(held) : pinned.message }, ...list.filter((p) => p.message.id !== id)]
+      return mapPins(mapMessage(s, c, id, mark), c, listed)
+    }
+    case 'MessageUnpinned': {
+      const { channel_id: c, message_id: id } = e.d
+      const unmark = ({ pin: _p, ...m }: Message): Message => m
+      return mapPins(mapMessage(s, c, id, unmark), c, (list) => list.filter((p) => p.message.id !== id))
+    }
     case 'ReactionAdded':
     case 'ReactionRemoved': {
       const { channel_id: c, message_id: id, emoji, user_id, count } = e.d
@@ -994,6 +1029,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     }
   }
 }
+
 
 function withStream(streams: AppState['streams'], x: StreamInfo): AppState['streams'] {
   return { ...streams, [x.channel_id]: { ...streams[x.channel_id], [x.user_id]: x } }

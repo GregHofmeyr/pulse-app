@@ -10,10 +10,11 @@ use pulse_protocol::ids::{
 use pulse_protocol::rest::{
     BadgeCatalogue, Category, Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji,
     DeletedChannel, EditClipRequest, EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest,
-    MediaInfo, Member, Message, MuteTarget, NameArchivePage, NotifyLevel, PostQuoteRequest,
-    Profile, QotyEvent, RecoveryCodesResponse, SaveLayoutRequest, SearchRequest, SearchResults,
-    Server, ServerLayout, SetMuteRequest, SetNotifyLevelRequest, Sound, StartQotyRequest,
-    TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
+    MediaInfo, Member, Message, MuteTarget, NameArchivePage, NotifyLevel, Pin, PinDuration,
+    PinnedMessage, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse, SaveLayoutRequest,
+    SearchRequest, SearchResults, Server, ServerLayout, SetMuteRequest, SetNotifyLevelRequest,
+    Sound, StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest,
+    UpdateSoundRequest, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -1219,6 +1220,39 @@ pub async fn delete_message(
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.delete_message(&token, message_id).await)
+}
+
+/// Pin a message (#178) for an hour, a day, a week or for good.
+#[tauri::command]
+pub async fn pin_message(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    duration: PinDuration,
+) -> Result<Pin, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.pin_message(&token, message_id, duration).await)
+}
+
+#[tauri::command]
+pub async fn unpin_message(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.unpin_message(&token, message_id).await)
+}
+
+/// A chat's pins, newest pin first.
+#[tauri::command]
+pub async fn list_pins(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+) -> Result<Vec<PinnedMessage>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.list_pins(&token, channel_id).await)
 }
 
 /// Removes your message's preview for `url`, or all of them (`None`), for everyone.
