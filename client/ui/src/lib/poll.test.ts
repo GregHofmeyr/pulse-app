@@ -21,6 +21,9 @@ describe('the ended line', () => {
     expect(endedSummary(['Valheim'], 4)).toBe(': Valheim won (4 votes)')
     expect(endedSummary(['a', 'b', 'c'], 1)).toBe(': a, b and c tied (1 vote each)')
     expect(endedSummary([], 0)).toBe(' with no votes')
+    // options with the same text that tie are named once
+    expect(endedSummary(['Pizza', 'Pizza'], 2)).toBe(': Pizza tied (2 votes each)')
+    expect(endedSummary(['Pizza', 'Tacos', 'Pizza'], 1)).toBe(': Pizza and Tacos tied (1 vote each)')
   })
 })
 
@@ -36,12 +39,13 @@ describe('/poll arguments', () => {
 })
 
 describe('a poll ready to post', () => {
-  it('needs a question and two different options', () => {
+  it('needs a question and two filled options (the same one twice is fine)', () => {
     expect(pollReady('Q', ['a', 'b'])).toBe(true)
     expect(pollReady(' ', ['a', 'b'])).toBe(false)
     expect(pollReady('Q', ['a', ' '])).toBe(false)
     expect(pollReady('Q', ['a', ' ', 'b'])).toBe(false)
-    expect(pollReady('Q', ['Pizza', 'pizza '])).toBe(false)
+    expect(pollReady('Q', ['Pizza', 'pizza '])).toBe(true)
+    expect(pollReady('Q', ['Pizza', 'Pizza'])).toBe(true)
     expect(pollReady('q'.repeat(201), ['a', 'b'])).toBe(false)
     expect(pollReady('Q', ['a', 'o'.repeat(81)])).toBe(false)
   })

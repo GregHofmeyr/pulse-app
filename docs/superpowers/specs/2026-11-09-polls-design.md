@@ -13,7 +13,7 @@ Friends decide things in chat (when to play, what to play, where to eat). A poll
   - a **question** field across the top (a title bar) **(owner)**;
   - **quick toggles** under it: **Multiple choice** (off = single choice) and **Anonymous** (off = votes show who voted) **(owner)**, plus **Ends in** with **1 hour, 1 day, 1 week, No end** (default 1 day);
   - **option rows**, starting with **two empty text rows** and a **"+ Add option"** button underneath **(owner)**; each row can be removed once there are more than two;
-  - **Post poll**, disabled until there's a question and at least two non-empty, distinct options.
+  - **Post poll**, disabled until there's a question and at least two non-empty options. The same option twice is allowed (votes go by position, not text); tied options with the same text are named once on the ended line ("Pizza tied").
   - `/poll Question? a, b, c` prefills the composer (question up to the `?`, options split on commas) rather than posting straight away, so the toggles can still be set.
 - **The poll in chat:** a poll card (a message in the chat like any other, so it scrolls, replies, reacts and can be deleted by its author like a message) showing the question, the options as rows with a vote bar, count and percentage, the toggles' state ("Multiple choice · Anonymous"), the time left or "Closed", and the total votes.
   - **Voting:** click a row to vote; single choice moves your vote, multiple choice toggles each. You can change or remove your vote until it closes. Your choices are marked.

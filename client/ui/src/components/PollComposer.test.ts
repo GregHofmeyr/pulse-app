@@ -85,13 +85,13 @@ describe('PollComposer', () => {
     expect(pop().querySelector('button[aria-label^="Remove option"]')).toBeNull()
   })
 
-  it('posts only a question with two different options, with what was chosen', async () => {
+  it('posts only a question with two filled options, with what was chosen', async () => {
     open()
     fill(pop().querySelector<HTMLInputElement>('input[aria-label="Question"]')!, ' Where to eat? ')
     fill(optionFields()[0], 'Pizza')
     expect(button('Post poll')!.disabled).toBe(true)
-    fill(optionFields()[1], 'pizza')
-    expect(button('Post poll')!.disabled).toBe(true)
+    fill(optionFields()[1], 'Pizza')
+    expect(button('Post poll')!.disabled).toBe(false)
     fill(optionFields()[1], 'Sushi')
     expect(button('Post poll')!.disabled).toBe(false)
     switchFor('Anonymous').click()
@@ -114,6 +114,32 @@ describe('PollComposer', () => {
     await flush()
     expect(pop().querySelector('[role="alert"]')!.textContent).toBe('Too many requests')
     expect(closed).toBe(0)
+  })
+
+  it('the options come straight under the question; the switches and Ends in sit below them', () => {
+    open()
+    const order = (el: Element) => [...pop().querySelectorAll('*')].indexOf(el)
+    const question = pop().querySelector('input[aria-label="Question"]')!
+    const opts = pop().querySelector('ol')!
+    const add = button('Add option')!
+    const multi = switchFor('Multiple choice')
+    const ends = pop().querySelector('[role="radio"]')!
+    const post = button('Post poll')!
+    expect(order(question)).toBeLessThan(order(opts))
+    expect(order(opts)).toBeLessThan(order(add))
+    expect(order(add)).toBeLessThan(order(multi))
+    expect(order(add)).toBeLessThan(order(ends))
+    expect(order(ends)).toBeLessThan(order(post))
+  })
+
+  it('posts the same option twice as it is (/poll included)', async () => {
+    open({ question: 'Lunch?', options: ['Pizza', 'Pizza'] })
+    expect(optionFields().map((f) => f.value)).toEqual(['Pizza', 'Pizza'])
+    button('Post poll')!.click()
+    await flush()
+    expect(invoke).toHaveBeenCalledWith('create_poll', expect.objectContaining({
+      request: expect.objectContaining({ options: ['Pizza', 'Pizza'] }),
+    }))
   })
 
   it('/poll fills it in; one option still gets a second row', () => {

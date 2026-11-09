@@ -8,9 +8,9 @@
 
 <script lang="ts">
   // The poll composer above the message box (#157), the wheel popover's sibling: same frame, same place. A question
-  // across the top, the Multiple choice and Anonymous switches and Ends in under it, then the options (two rows to
-  // start, + Add option up to ten, removable past two) and Post poll, which waits for a question and two different
-  // options. `/poll Question? a, b` opens it filled in.
+  // across the top, the options right under it (two rows to start, + Add option up to ten, removable past two), then
+  // at the bottom, out of the way, the Multiple choice and Anonymous switches, Ends in and Post poll, which waits for
+  // a question and two filled options (the same one twice is fine). `/poll Question? a, b` opens it filled in.
   import { onMount, tick, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import Segmented from './Segmented.svelte'
@@ -119,14 +119,6 @@
       aria-label="Question" onkeydown={(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); focusOption(0) } }} />
   </div>
   <div class="body">
-    <div class="toggles">
-      <label class="toggle"><input type="checkbox" role="switch" class="switch" bind:checked={multi} /><span>Multiple choice</span></label>
-      <label class="toggle"><input type="checkbox" role="switch" class="switch" bind:checked={anonymous} aria-describedby="{uid}-anon" /><span>Anonymous</span></label>
-    </div>
-    <small class="help" id="{uid}-anon">{anonymous ? 'Nobody sees who voted for what, you included.' : 'Everyone sees who voted for what.'}</small>
-    <div class="menu-label">Ends in</div>
-    <Segmented label="Ends in" options={POLL_ENDS.map((o) => ({ value: o.value, label: o.label }))} value={ends} onchange={(v) => (ends = v)} />
-    <div class="menu-label">Options</div>
     <ol class="options" bind:this={list}>
       {#each options as _, i (i)}
         <li>
@@ -142,6 +134,15 @@
       <button type="button" class="add" onclick={() => void addOption()}><Icon name="plus" size={14} /> Add option</button>
     {/if}
   </div>
+  <div class="settings">
+    <div class="toggles">
+      <label class="toggle"><input type="checkbox" role="switch" class="switch" bind:checked={multi} /><span>Multiple choice</span></label>
+      <label class="toggle"><input type="checkbox" role="switch" class="switch" bind:checked={anonymous} aria-describedby="{uid}-anon" /><span>Anonymous</span></label>
+    </div>
+    <small class="help" id="{uid}-anon">{anonymous ? 'Nobody sees who voted for what, you included.' : 'Everyone sees who voted for what.'}</small>
+    <div class="menu-label">Ends in</div>
+    <Segmented label="Ends in" options={POLL_ENDS.map((o) => ({ value: o.value, label: o.label }))} value={ends} onchange={(v) => (ends = v)} />
+  </div>
   <div class="foot">
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <button type="button" class="btn btn-primary btn-lg post" disabled={!ready} onclick={post}>Post poll</button>
@@ -155,7 +156,9 @@
   .title { padding: 12px; background: var(--bg-1); border-bottom: 1px solid var(--line); }
   .question { width: 100%; font-weight: 600; }
   .body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px; }
-  .body .menu-label { padding: 4px 2px 0; }
+  /* the switches and Ends in: a band above Post poll, on bg-1 like the title */
+  .settings { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--bg-1); border-top: 1px solid var(--line); }
+  .settings .menu-label { padding: 2px 2px 0; }
   .toggles { display: flex; flex-wrap: wrap; gap: 8px 20px; }
   .toggle { display: inline-flex; align-items: center; gap: 10px; font-size: 13px; cursor: pointer; }
   .help { color: var(--text-3); font-size: 11px; }

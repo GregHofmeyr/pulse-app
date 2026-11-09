@@ -290,7 +290,8 @@ pub fn clean_question(raw: &str) -> AppResult<String> {
     Ok(q.to_string())
 }
 
-/// The options, each trimmed: 2-10 of them, 1-80 characters on one line each, no two the same (in any case).
+/// The options, each trimmed: 2-10 of them, 1-80 characters on one line each. The same option twice is allowed:
+/// votes go by position, not text.
 pub fn clean_options(raw: Vec<String>) -> AppResult<Vec<String>> {
     if !(poll_limits::MIN_OPTIONS..=poll_limits::MAX_OPTIONS).contains(&raw.len()) {
         return Err(AppError::BadRequest(format!(
@@ -299,7 +300,6 @@ pub fn clean_options(raw: Vec<String>) -> AppResult<Vec<String>> {
             poll_limits::MAX_OPTIONS
         )));
     }
-    let mut seen = std::collections::HashSet::new();
     raw.into_iter()
         .map(|o| {
             let o = o.trim();
@@ -309,9 +309,6 @@ pub fn clean_options(raw: Vec<String>) -> AppResult<Vec<String>> {
                     "options are 1-{} characters on one line",
                     poll_limits::OPTION_CHARS
                 )));
-            }
-            if !seen.insert(o.to_lowercase()) {
-                return Err(AppError::BadRequest("each option must be different".into()));
             }
             Ok(o.to_string())
         })
@@ -333,16 +330,25 @@ fn votes_phrase(n: u32) -> String {
     format!("{n} vote{}", if n == 1 { "" } else { "s" })
 }
 
-/// The ended line's text: "📊 alex's poll ended: Valheim won (4 votes)".
+/// The ended line's text: "📊 alex's poll ended: Valheim won (4 votes)". Tied options with the same text are named
+/// once ("Pizza tied (2 votes each)").
 pub fn ended_text(who: &str, winners: &[String], votes: u32) -> String {
     match winners {
         [] => format!("📊 {who}'s poll ended with no votes"),
         [one] => format!("📊 {who}'s poll ended: {one} won ({})", votes_phrase(votes)),
-        many => format!(
-            "📊 {who}'s poll ended: {} tied ({} each)",
-            system::join_names(many),
-            votes_phrase(votes)
-        ),
+        many => {
+            let mut names: Vec<String> = Vec::with_capacity(many.len());
+            for w in many {
+                if !names.contains(w) {
+                    names.push(w.clone());
+                }
+            }
+            format!(
+                "📊 {who}'s poll ended: {} tied ({} each)",
+                system::join_names(&names),
+                votes_phrase(votes)
+            )
+        }
     }
 }
 
@@ -490,7 +496,12 @@ mod tests {
         assert!(clean_question("a\nb").is_err());
         assert_eq!(clean_options(s(&[" a ", "b"])).unwrap(), s(&["a", "b"]));
         assert!(clean_options(s(&["a"])).is_err());
-        assert!(clean_options(s(&["a", "A "])).is_err());
+        // the same option twice is allowed (votes go by position, not text)
+        assert_eq!(clean_options(s(&["a", "A "])).unwrap(), s(&["a", "A"]));
+        assert_eq!(
+            clean_options(s(&["Pizza", " Pizza"])).unwrap(),
+            s(&["Pizza", "Pizza"])
+        );
         assert!(clean_options(s(&["a", ""])).is_err());
         assert!(clean_options(vec!["o".repeat(81), "b".into()]).is_err());
         let ten: Vec<String> = (0..10).map(|i| i.to_string()).collect();
@@ -512,6 +523,20 @@ mod tests {
         assert_eq!(
             ended_text("alex", &s(&["a", "b", "c"]), 1),
             "📊 alex's poll ended: a, b and c tied (1 vote each)"
+        );
+        // options with the same text that tie are named once
+        let pizzas = s(&["Pizza", "Pizza", "Tacos"]);
+        assert_eq!(
+            winners(&pizzas, &[(0, u), (1, u)]),
+            (s(&["Pizza", "Pizza"]), 1)
+        );
+        assert_eq!(
+            ended_text("alex", &s(&["Pizza", "Pizza"]), 2),
+            "📊 alex's poll ended: Pizza tied (2 votes each)"
+        );
+        assert_eq!(
+            ended_text("alex", &s(&["Pizza", "Tacos", "Pizza"]), 1),
+            "📊 alex's poll ended: Pizza and Tacos tied (1 vote each)"
         );
     }
 

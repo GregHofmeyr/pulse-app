@@ -224,7 +224,6 @@ async fn posting_checks_the_poll_and_the_chat() {
         ),
         poll_body("Q", &["a", &"o".repeat(81)]),
         poll_body("Q", &["a", "  "]),
-        poll_body("Q", &["Pizza", "pizza "]),
         poll_body("Q\nmore", &["a", "b"]),
     ];
     for b in bad {
@@ -460,6 +459,37 @@ async fn only_the_creator_ends_a_poll_and_the_line_says_who_won() {
     assert_eq!(status, 409);
     assert_eq!(close(&app, &alex, m.id).await.status(), 409);
     assert_eq!(ended_lines(&app, &sam, g.id).await.len(), 1);
+}
+
+#[tokio::test]
+async fn the_same_option_twice_is_two_options() {
+    let (app, [alex, sam, kim, _], g) = setup().await;
+    let m = create_ok(
+        &app,
+        &alex,
+        g.id,
+        poll_body("Lunch?", &["Pizza", "Pizza ", "Tacos"]),
+    )
+    .await;
+    assert_eq!(
+        m.poll.as_deref().unwrap().options,
+        vec!["Pizza", "Pizza", "Tacos"]
+    );
+    vote_ok(&app, &sam, m.id, &[0]).await;
+    let p = vote_ok(&app, &kim, m.id, &[1]).await;
+    let counts: Vec<u32> = p.results.unwrap().iter().map(|t| t.votes).collect();
+    assert_eq!(counts, vec![1, 1, 0], "votes count by position");
+    close(&app, &alex, m.id).await;
+    let lines = ended_lines(&app, &alex, g.id).await;
+    assert_eq!(lines.len(), 1);
+    assert_eq!(
+        lines[0].content,
+        "📊 alex's poll ended: Pizza tied (1 vote each)"
+    );
+    assert_eq!(
+        lines[0].poll_ended.as_deref().unwrap().winners,
+        vec!["Pizza", "Pizza"]
+    );
 }
 
 #[tokio::test]

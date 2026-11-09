@@ -33,15 +33,14 @@ export function parsePollArgs(args: string): { question: string; options: string
 
 const chars = (s: string) => [...s].length
 
-/** Post poll's gate: a question and at least two filled options, none blank, none the same (any case), all within
- *  the limits. */
+/** Post poll's gate: a question and at least two filled options, none blank, all within the limits. The same option
+ *  twice is fine (votes go by position, not text). */
 export function pollReady(question: string, options: string[]): boolean {
   const q = question.trim()
   if (!q || chars(q) > POLL_LIMITS.questionChars) return false
   const opts = options.map((o) => o.trim())
   if (opts.length < POLL_LIMITS.minOptions || opts.length > POLL_LIMITS.maxOptions) return false
-  if (opts.some((o) => !o || chars(o) > POLL_LIMITS.optionChars)) return false
-  return new Set(opts.map((o) => o.toLowerCase())).size === opts.length
+  return !opts.some((o) => !o || chars(o) > POLL_LIMITS.optionChars)
 }
 
 /** Your choices after a click on option `i`: single choice moves to it (or, on yours, takes it back); multiple
@@ -87,9 +86,10 @@ export const shownText = (m: Message): string => (m.poll ? `📊 ${m.poll.questi
 const joinNames = (names: string[]) => (names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`)
 
 /** What follows "alex's poll ended" on its line: ": Valheim won (4 votes)", ": a and b tied (2 votes each)", or
- *  " with no votes" (as the server words the line's text). */
+ *  " with no votes" (as the server words the line's text). Tied options with the same text are named once ("Pizza
+ *  tied (2 votes each)"). */
 export function endedSummary(winners: string[], votes: number): string {
   if (!winners.length) return ' with no votes'
   if (winners.length === 1) return `: ${winners[0]} won (${plural(votes, 'vote')})`
-  return `: ${joinNames(winners)} tied (${plural(votes, 'vote')} each)`
+  return `: ${joinNames([...new Set(winners)])} tied (${plural(votes, 'vote')} each)`
 }

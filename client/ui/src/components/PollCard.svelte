@@ -85,7 +85,8 @@
   .choose:disabled { cursor: default; }
   .poll:not(.over) .opt:not(.mine):hover { background: var(--bg-4); }
   /* a round mark for one choice, a square one for multiple: filled with a tick on yours */
-  .mark { width: 16px; height: 16px; flex-shrink: 0; display: grid; place-items: center; border: 2px solid var(--text-3); border-radius: 50%; color: var(--on-accent); }
+  /* border-box: 18 px less the 2 px border each side leaves exactly the 14 px tick, so it centres instead of spilling */
+  .mark { width: 18px; height: 18px; flex-shrink: 0; display: grid; place-items: center; border: 2px solid var(--text-3); border-radius: 50%; color: var(--on-accent); }
   .mark.multi { border-radius: var(--radius-xs); }
   .mine .mark { border-color: var(--focus-ring); background: var(--accent); }
   .label { min-width: 0; overflow-wrap: anywhere; }
