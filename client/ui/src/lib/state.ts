@@ -745,8 +745,11 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     }
     case 'MessageUpdated': {
       if (e.d.message.thread_root_id) return replyUpdated(s, e.d.message)
-      const m = e.d.message
-      const c = m.channel_id
+      const c = e.d.message.channel_id
+      // Only the pin events set a held message's pin (#178): an update read before a pin or unpin landed would
+      // otherwise put the old one back.
+      const held = findMessage(s, c, e.d.message.id)
+      const m = held ? { ...e.d.message, pin: held.pin } : e.d.message
       const prev = s.latest[c]
       // Like the loaded copy (upsertEdited): the edit's reactions say me:false for everyone.
       const latest = prev?.id === m.id ? { ...s.latest, [c]: { ...m, reactions: prev.reactions } } : s.latest

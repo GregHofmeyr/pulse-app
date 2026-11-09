@@ -100,6 +100,17 @@ describe('PinsPopover (#178)', () => {
     expect(rows().map((r) => r.querySelector('.said')?.textContent)).toEqual(['new one', 'plan for tonight'])
   })
 
+  it('fetches again after a reconnect forgot the list, and stays live', async () => {
+    await show()
+    expect(rows()).toHaveLength(2)
+    invoke.mockClear()
+    app.state = { ...app.state, pins: {} } // what Ready does
+    flushSync()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('list_pins', { channelId: 'C1' })
+    expect(rows()).toHaveLength(2)
+  })
+
   it('has a friendly line when nothing is pinned', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'list_pins' ? [] : undefined))
     await show()

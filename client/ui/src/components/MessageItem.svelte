@@ -146,6 +146,12 @@
   function openMsgMenu(e: MouseEvent, opener: HTMLElement) {
     // the author's own menu took it (their name or avatar), or there's nothing to show
     if (e.defaultPrevented || !msgMenuOn) return
+    // a link, an image or text you selected keeps the system menu (Copy, Copy link)
+    if (e.type === 'contextmenu') {
+      const sel = getSelection()
+      if ((e.target as Element).closest?.('a, img, video, input, textarea, [contenteditable]')) return
+      if (sel && !sel.isCollapsed && sel.anchorNode && (opener.contains(sel.anchorNode) || opener.contains(sel.focusNode))) return
+    }
     e.preventDefault()
     msgMenu = { ...menuPoint(e, opener), opener }
   }
@@ -283,7 +289,7 @@
         {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
       </div>
       {#if !pending && !message.deleted && !editing}
-        <div class="actions" class:open={picking || focusIn}>
+        <div class="actions" class:open={picking || focusIn || !!msgMenu}>
           <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={16} /></button>
           <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={16} /></button>
           {#if mine}

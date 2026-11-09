@@ -1507,6 +1507,17 @@ describe('pins (#178)', () => {
     expect(s.pins['C1']).toEqual([])
   })
 
+  it('only pin events set a loaded message\'s pin: an edit carrying an older pin doesn\'t undo one', () => {
+    let s = applyEvent(loaded(), pinned('M1'), 0)
+    // the edit was read before the pin landed
+    s = applyEvent(s, { t: 'MessageUpdated', d: { message: msg('M1', 'C1', 'edited') } }, 0)
+    expect(s.messages['C1'][0].content).toBe('edited')
+    expect(s.messages['C1'][0].pin).toEqual(pin())
+    s = applyEvent(s, { t: 'MessageUnpinned', d: { channel_id: 'C1', message_id: 'M1' } }, 0)
+    s = applyEvent(s, { t: 'MessageUpdated', d: { message: { ...msg('M1', 'C1', 'again'), pin: pin() } } }, 0)
+    expect(s.messages['C1'][0].pin ?? null).toBeNull()
+  })
+
   it('a reconnect forgets fetched lists (anything may have changed meanwhile)', () => {
     const s = setPins(loaded(), 'C1', [{ message: msg('M1'), pin: pin() }])
     expect(applyReady(s, ready()).pins).toEqual({})

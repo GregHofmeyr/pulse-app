@@ -62,6 +62,8 @@ async fn pin(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
+    // A pin posts a line, as a send does: refused the same way while the server's disk is full.
+    crate::media::writes_ok(&s.cfg)?;
     let (mut msg, ch) = target(&s, me, id).await?;
     if msg.kind == MessageKind::System {
         return Err(AppError::BadRequest("system lines can't be pinned".into()));
@@ -145,11 +147,20 @@ async fn pin(
     .await?;
     let line = system::insert(&mut tx, ch.id, content, payload).await?;
     tx.commit().await?;
-    msg.pin = Some(pin.clone());
-    // As events show messages: nothing marked as anyone's own.
-    for r in &mut msg.reactions {
-        r.me = false;
+    // The message as it is now, as events show it (an edit may have landed since the check above; still under
+    // `in_order`, so nothing newer can go out before this). The pin has landed: a failed read falls back to the
+    // copy from the check, logged.
+    match load(&s.db, None, id).await {
+        Ok(Some(now)) => msg = now,
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!(error = ?e, %id, "couldn't read a pinned message back");
+            for r in &mut msg.reactions {
+                r.me = false;
+            }
+        }
     }
+    msg.pin = Some(pin.clone());
     s.hub
         .publish(
             &s.db,

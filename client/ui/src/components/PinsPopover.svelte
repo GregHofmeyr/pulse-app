@@ -20,17 +20,24 @@
   } = $props()
 
   let error = $state('')
-  let fetched = $state(false)
+  // Fetched when first opened, then kept live by the pin events; fetched again whenever the list is gone (a
+  // reconnect's Ready forgets it).
+  const held = $derived(app.state.pins[channelId])
+  let loading: string | null = null
   $effect(() => {
     const id = channelId
-    fetched = false
+    if (held || loading === id) return
+    loading = id
+    error = ''
     api.listPins(id).then(
       (list) => {
-        if (id !== channelId) return
-        app.state = setPins(app.state, id, list)
-        fetched = true
+        loading = null
+        if (id === channelId) app.state = setPins(app.state, id, list)
       },
-      (e) => (error = errorText(e)),
+      (e) => {
+        loading = null
+        if (id === channelId) error = errorText(e)
+      },
     )
   })
 
@@ -38,7 +45,7 @@
   const lookup = $derived(mentionLookup(app.state))
   // the clock moves every 30 s: time left follows it, and a pin that runs out leaves before the sweep's event
   const now = $derived((void clock.nowIso, Date.now()))
-  const pins = $derived(fetched ? (app.state.pins[channelId] ?? []).filter((p) => livePin({ ...p.message, pin: p.pin }, now)) : null)
+  const pins = $derived(held ? held.filter((p) => livePin({ ...p.message, pin: p.pin }, now)) : null)
   const preview = (content: string) => showMentions(content, lookup, (id) => displayName(app.state, serverId, id))
 
   async function unpin(messageId: string) {

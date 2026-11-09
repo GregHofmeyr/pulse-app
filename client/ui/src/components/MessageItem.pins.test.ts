@@ -81,6 +81,36 @@ describe('the message menu (#178)', () => {
     expect(menu()).toBeNull()
   })
 
+  it('a right-click on a link, an image or selected text keeps the system menu (Copy, Copy link)', () => {
+    show(msg({ content: 'see https://example.com' }))
+    const content = document.querySelector<HTMLElement>('.content')!
+    const a = document.createElement('a')
+    a.href = 'https://example.com'
+    content.append(a)
+    const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 50 })
+    a.dispatchEvent(e)
+    flushSync()
+    expect(menu()).toBeNull()
+    expect(e.defaultPrevented).toBe(false)
+    // text selected in the message
+    const r = document.createRange()
+    r.selectNodeContents(content)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(r)
+    const e2 = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 50 })
+    content.dispatchEvent(e2)
+    flushSync()
+    expect(menu()).toBeNull()
+    expect(e2.defaultPrevented).toBe(false)
+    getSelection()!.removeAllRanges()
+  })
+
+  it('the action bar stays up while its menu is open', () => {
+    show(msg())
+    btn('More')!.click(); flushSync()
+    expect(document.querySelector('.actions')?.classList.contains('open')).toBe(true)
+  })
+
   it('a pinned message offers Unpin message instead', async () => {
     show(msg({ pin: { pinned_by: 'U2', pinned_at: '2026-11-09T08:00:00.000Z', expires_at: null } }))
     btn('More')!.click(); flushSync()
