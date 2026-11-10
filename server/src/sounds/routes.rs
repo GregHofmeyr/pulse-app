@@ -372,6 +372,9 @@ async fn store_join_sound(
     server: ServerId,
     sound: Option<&str>,
 ) -> AppResult<()> {
+    // Written and published in commit order (as nicknames are), so a set racing a clear or a rename can't leave
+    // anyone holding the older member.
+    let _order = s.hub.in_order().await;
     // The sound is checked in the write itself, so one deleted meanwhile can't be stored.
     let changed = sqlx::query(
         "UPDATE server_members SET join_sound_id = ?1 WHERE server_id = ?2 AND user_id = ?3

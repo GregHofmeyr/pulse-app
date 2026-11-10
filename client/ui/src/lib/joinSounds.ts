@@ -64,7 +64,7 @@ export const OWN_JOIN_WAIT_MS = 3000
 /** Your own join sounds once: when your connection comes up (`connected`) and when the server announces your join
  * (`announced`), in either order. A held cue plays the join sound the event carries, or the normal cue if it has none
  * or never comes within `waitMs`. */
-export function ownJoin(act: (a: JoinAction) => void, waitMs = OWN_JOIN_WAIT_MS) {
+export function ownJoin(act: (a: JoinAction, channel: string) => void, waitMs = OWN_JOIN_WAIT_MS) {
   let pending: { channel: string; timer: ReturnType<typeof setTimeout> } | null = null
   let early: { channel: string; play: JoinSoundPlay | null; at: number } | null = null
   const of = (play: JoinSoundPlay | null): JoinAction => (play ? { kind: 'sound', play } : { kind: 'cue' })
@@ -77,12 +77,12 @@ export function ownJoin(act: (a: JoinAction) => void, waitMs = OWN_JOIN_WAIT_MS)
       const e = early
       early = null
       if (e && e.channel === channel && now - e.at < waitMs) {
-        act(of(e.play))
+        act(of(e.play), channel)
         return true
       }
       const timer = setTimeout(() => {
         pending = null
-        act({ kind: 'cue' })
+        act({ kind: 'cue' }, channel)
       }, waitMs)
       pending = { channel, timer }
       return true
@@ -92,12 +92,21 @@ export function ownJoin(act: (a: JoinAction) => void, waitMs = OWN_JOIN_WAIT_MS)
       if (pending && pending.channel === channel) {
         clearTimeout(pending.timer)
         pending = null
-        act(of(play))
+        act(of(play), channel)
         return
       }
       early = { channel, play, at: now }
     },
-    /** You left: nothing waits any more. */
+    /** You moved to `channel` (null: left): whatever waits for another call is dropped, so a quick switch never plays
+     * the call you just left. */
+    moved(channel: string | null) {
+      if (pending && pending.channel !== channel) {
+        clearTimeout(pending.timer)
+        pending = null
+      }
+      if (early && early.channel !== channel) early = null
+    },
+    /** Stop: nothing waits any more. */
     reset() {
       if (pending) clearTimeout(pending.timer)
       pending = null

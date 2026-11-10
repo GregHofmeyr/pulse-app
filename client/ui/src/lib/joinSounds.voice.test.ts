@@ -140,12 +140,25 @@ describe('you join', () => {
     expect(plays()[0].args).toMatchObject({ hash: 'hA', player: 'ME' })
   })
 
-  it('the announcement can come first', async () => {
+  it('the announcement can come first, and your ring lights for it too', async () => {
     connection('V1', 'connecting')
     joined('ME', 'V1', play)
     connection('V1', 'connected')
     await flush()
     expect(cmds()).toEqual(['soundboard_play'])
+    expect(soundboard.playing.has('ME')).toBe(true)
+  })
+
+  it('switching calls before the announcement: nothing plays for the call you left', async () => {
+    app.state = { ...state(), channels: { ...state().channels, V2: { id: 'V2', server_id: 'S1', kind: 'voice', name: 'Games', position: 1 } as AppState['channels'][string] } }
+    connection('V1', 'connected')
+    connection('V2', 'connecting')
+    joined('ME', 'V1', play)
+    await flush()
+    expect(cmds()).toEqual([])
+    connection('V2', 'connected')
+    joined('ME', 'V2')
+    expect(cmds()).toEqual(['cue:join'])
   })
 
   it('back within 30 s (no sound on the announcement): the normal cue', () => {

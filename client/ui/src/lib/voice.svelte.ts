@@ -117,10 +117,7 @@ export async function startVoiceListening() {
   const offApp = onAppEvent(leaveIfRemoved)
   const offDisconnect = onAppEvent(noteDisconnect)
   // your own join sounds once, when both your connection and the server's announcement of it are in (#121)
-  const own = ownJoin((a) => {
-    const channel = voice.channelId
-    playJoin(a, app.state.me?.id ?? '', () => !!channel && voice.channelId === channel)
-  })
+  const own = ownJoin((a, channel) => playJoin(a, app.state.me?.id ?? '', () => voice.channelId === channel))
   // someone else joining or leaving your call (#219): a join may carry their join sound (#121)
   const offPeers = onAppEvent((e) => {
     const myId = app.state.me?.id
@@ -140,12 +137,12 @@ export async function startVoiceListening() {
     switch (e.kind) {
       case 'state': {
         const prev = { channelId: voice.channelId, connection: voice.connection, controls: voice.controls }
+        if (prev.channelId !== e.channel_id) own.moved(e.channel_id)
         for (const snd of transitionSounds(prev, { channelId: e.channel_id, connection: e.connection, controls: e.controls })) {
           // your Join cue may wait for your join sound (#121)
           if (snd === 'join' && e.channel_id && own.connected(e.channel_id, holdOwnCue(app.state, e.channel_id, app.state.me?.id, joinSounds.level))) continue
           playSound(snd)
         }
-        if (!e.channel_id) own.reset()
         // a report belongs to one call: the next one starts empty
         if (prev.channelId !== e.channel_id) voice.link = null
         voice.channelId = e.channel_id

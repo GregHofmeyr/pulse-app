@@ -134,6 +134,28 @@ describe('ownJoin', () => {
     vi.advanceTimersByTime(3000)
     expect(acts).toEqual([{ kind: 'cue' }])
   })
+  it('moving to another call drops what waits for the one you left; what waits for the new one stays', () => {
+    own.connected('V1', true)
+    own.moved('V2')
+    own.announced('V1', play)
+    vi.advanceTimersByTime(5000)
+    expect(acts, 'nothing for the call you left').toEqual([])
+    own.announced('V2', play, Date.now())
+    own.moved('V2')
+    own.connected('V2', true)
+    expect(acts).toEqual([{ kind: 'sound', play }])
+  })
+
+  it('says which call it acted for', () => {
+    const seen: string[] = []
+    const o = ownJoin((_a, channel) => seen.push(channel), 3000)
+    o.connected('V1', true)
+    o.announced('V1', null)
+    o.announced('V2', play, Date.now())
+    o.connected('V2', true)
+    expect(seen).toEqual(['V1', 'V2'])
+  })
+
   it('leaving drops whatever waits', () => {
     own.connected('V1', true)
     own.reset()
