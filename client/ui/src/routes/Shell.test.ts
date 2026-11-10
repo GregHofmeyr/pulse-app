@@ -299,14 +299,17 @@ describe('account menu', () => {
       handlers.get('pulse://update')!({ payload: { version: '0.2.1' } })
       flushSync()
     }
-    afterEach(() => {
+    // out of any call and with no offer, before (a test elsewhere may have left a call up) and after
+    const reset = () => {
       updates.offer = null
       updates.installing = false
       updates.error = null
       voice.channelId = null
       voice.joining = null
       voice.stage = { stage: 'disconnected', attempt: null }
-    })
+    }
+    beforeEach(reset)
+    afterEach(reset)
 
     // #233: the core also refuses while a call is reconnecting (or being joined), so the button says so too
     it('a call that is reconnecting or being joined disables it too', async () => {
@@ -583,6 +586,7 @@ describe('watching from anywhere', () => {
 
   beforeEach(async () => {
     localStorage.clear()
+    reloadVoiceChat() // read from storage once: a voice chat left open would take the members list's place
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Windows NT 10.0)')
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
     app.state = applyReady(emptyState(), ready)

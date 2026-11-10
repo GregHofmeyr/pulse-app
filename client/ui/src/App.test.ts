@@ -32,6 +32,7 @@ vi.mock('@tauri-apps/api/window', () => ({
 import App from './App.svelte'
 import { app, ui } from './lib/store.svelte'
 import { emptyState } from './lib/state'
+import { updates } from './lib/updates.svelte'
 
 const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 let cmp: ReturnType<typeof mount> | undefined
@@ -53,6 +54,8 @@ beforeEach(() => {
   h.calls = []
   h.args = {}
   h.respond = {}
+  // an install that "succeeded" (Pulse would close) leaves the Updating screen up: start each test without it
+  Object.assign(updates, { offer: null, installing: false, progress: null, error: null })
 })
 afterEach(() => {
   if (cmp) unmount(cmp)

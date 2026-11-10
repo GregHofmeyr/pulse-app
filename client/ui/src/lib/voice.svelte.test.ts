@@ -29,7 +29,8 @@ describe('removed from a conversation', () => {
   beforeEach(async () => {
     h.calls.length = 0
     app.state = { ...emptyState(), me }
-    Object.assign(voice, { channelId: null, joining: null, leaving: null })
+    // the controls too: a server mute the core still holds (from a #140 test) would be handed back on the next call
+    Object.assign(voice, { channelId: null, joining: null, leaving: null, controls: { muted: false, deafened: false } })
     await startListening()
     off?.()
     off = await startVoiceListening()

@@ -101,6 +101,7 @@ describe('badgeStore', () => {
 
   it('markSeen clears the unseen count and tells the server what was shown', async () => {
     badgeStore.reset()
+    app.state = emptyState() // no cached own profile (an earlier test's would count instead of `bumped`)
     badgeStore.bumped = 2
     expect(badgeStore.unseen).toBe(2)
     badgeStore.markSeen([{ ...badge('the_yapper', 'common', '2026-11-03T00:00:00Z'), tier: 2, seen: false }])
