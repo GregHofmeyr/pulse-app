@@ -503,6 +503,16 @@ describe('a voice channel’s settings (#75)', () => {
     expect(trigger().textContent?.trim()).toBe('192 kbps')
   })
 
+  it('closes_when_the_channel_is_deleted_meanwhile', () => {
+    rightClick('Lounge')
+    item('Channel settings…')!.click()
+    flushSync()
+    const { V1: _gone, ...rest } = app.state.channels
+    app.state = { ...app.state, channels: rest }
+    flushSync()
+    expect(dialog()).toBeNull()
+  })
+
   it('text_channels_have_none', () => {
     rightClick('general')
     expect(labels()).not.toContain('Channel settings…')

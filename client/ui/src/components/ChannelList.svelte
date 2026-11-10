@@ -429,6 +429,7 @@
     const has = (id: string) => !!app.state.channels[id]
     if (chanMenu && !has(chanMenu.channel.id)) chanMenu = null
     if (deleting && !has(deleting.id)) deleting = null
+    if (settingsOf && !has(settingsOf.id)) settingsOf = null
     if (renaming && !has(renaming)) renaming = null
     const cats = new Set((app.state.layouts[serverId]?.categories ?? []).map((c) => c.id))
     if (catMenu && !cats.has(catMenu.category.id)) catMenu = null

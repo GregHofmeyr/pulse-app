@@ -215,7 +215,10 @@ async fn the_mic_sends_at_its_channels_bitrate() {
     let (_, at_256, _) = ceiling[0];
     assert!(at_256 > 230.0, "{ceiling:?}");
     for &(kbps, sent, _) in &ceiling[1..] {
-        assert!(sent < at_256 * 1.1, "{kbps} sent more than 256: {ceiling:?}");
+        assert!(
+            sent < at_256 * 1.1,
+            "{kbps} sent more than 256: {ceiling:?}"
+        );
     }
     // Live: up to the top, down, back to Default; the encoder follows each change
     for &(kbps, _, target) in &live {
@@ -223,5 +226,8 @@ async fn the_mic_sends_at_its_channels_bitrate() {
         assert!(within(target, want, 15.0), "live {kbps}: {live:?}");
     }
     assert!(live[1].1 > live[0].1 * 1.8, "live change up: {live:?}");
-    assert!(within(live[3].1, live[0].1, 15.0), "back to Default: {live:?}");
+    assert!(
+        within(live[3].1, live[0].1, 15.0),
+        "back to Default: {live:?}"
+    );
 }

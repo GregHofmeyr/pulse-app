@@ -1028,6 +1028,8 @@ struct MicHandle {
     out: MicOut,
     /// The call's (cleared once it's over).
     alive: Arc<AtomicBool>,
+    /// Its channel's bitrate, as every publish of it reads it.
+    kbps: MicKbps,
 }
 
 impl VoiceManager {
@@ -1074,21 +1076,20 @@ impl VoiceManager {
     /// it, and whenever it changes. A call in that channel changes its mic's bitrate at once (no
     /// republish); a mic still being published goes out at it. Whether a call there has it now.
     pub async fn set_channel_bitrate(&self, channel: ChannelId, kbps: Option<u32>) -> bool {
-        let kbps = kbps.unwrap_or(0);
-        let was = self.bitrate_of(channel).swap(kbps, Ordering::SeqCst);
+        self.bitrate_of(channel)
+            .store(kbps.unwrap_or(0), Ordering::SeqCst);
         let mic = self.mic.lock().unwrap().clone();
         let Some(mic) = mic.filter(|m| m.channel == channel && m.alive.load(Ordering::SeqCst))
         else {
             return false;
         };
-        if was == kbps {
-            return true;
-        }
         let out = mic.out.lock().await;
         if !*out {
             // not out yet (or server muted): its publish reads the new bitrate
             return true;
         }
+        // read again under the lock: of two changes landing together, the later one stays on the mic
+        let kbps = mic.kbps.load(Ordering::SeqCst);
         match set_mic_bitrate(&mic.track, kbps) {
             Ok(()) => {
                 tracing::info!(kbps, "voice: mic bitrate changed");
@@ -1501,6 +1502,7 @@ impl VoiceManager {
             track: track.clone(),
             out: mic_out.clone(),
             alive: alive.clone(),
+            kbps: kbps.clone(),
         });
         // publish in the background: "connected" doesn't wait the round trip for it. The task is
         // the session's (aborted with it); the room is closed by its guard or the session's leave.
@@ -1820,10 +1822,16 @@ impl VoiceManager {
                         RoomEvent::LocalTrackRepublished { publication, .. }
                             if publication.source() == TrackSource::Microphone =>
                         {
-                            let kbps = mic_kbps.load(Ordering::SeqCst);
-                            if let Err(e) = set_mic_bitrate(&mic_track, kbps) {
-                                tracing::warn!(error = %e, kbps, "voice: mic bitrate not restored");
-                            }
+                            // under the mic's lock, so a change landing meanwhile isn't undone
+                            let (track, mic, kbps) =
+                                (mic_track.clone(), mic_out.clone(), mic_kbps.clone());
+                            tokio::spawn(async move {
+                                let _out = mic.lock().await;
+                                let kbps = kbps.load(Ordering::SeqCst);
+                                if let Err(e) = set_mic_bitrate(&track, kbps) {
+                                    tracing::warn!(error = %e, kbps, "voice: mic bitrate not restored");
+                                }
+                            });
                         }
                         RoomEvent::ConnectionQualityChanged {
                             quality,

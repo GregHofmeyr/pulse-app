@@ -170,6 +170,19 @@ describe('a voice channel’s bitrate (#75)', () => {
     expect(argsOf('set_voice_bitrate')).toEqual([{ channelId: 'V1', bitrate: 128 }])
   })
 
+  it('a change made while the gateway was away comes with the next Ready', async () => {
+    const { voiceApi } = await import('./voice.svelte')
+    await voiceApi.join('V1')
+    h.calls.length = 0
+    h.args.length = 0
+    const { testReady } = await import('./testReady')
+    h.handlers['pulse://ready']({ payload: testReady([{ ...music, bitrate: 128 }, plain]) })
+    expect(argsOf('set_voice_bitrate')).toEqual([{ channelId: 'V1', bitrate: 128 }])
+    // unchanged in the next one: nothing more
+    h.handlers['pulse://ready']({ payload: testReady([{ ...music, bitrate: 128 }, plain]) })
+    expect(argsOf('set_voice_bitrate')).toHaveLength(1)
+  })
+
   it('a channel you are not in is left alone, and so is a rename', async () => {
     const { voiceApi } = await import('./voice.svelte')
     await voiceApi.join('V2')

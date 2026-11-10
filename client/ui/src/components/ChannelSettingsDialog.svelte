@@ -16,23 +16,25 @@
   const live = $derived(app.state.channels[channel.id] ?? channel)
   let value = $state(untrack(() => toChoice(channel.bitrate)))
   let error = $state('')
-  let saving = $state(false)
+  /** Picks of ours on their way: until they're all back, the pick shown is ours. */
+  let saving = 0
   // another person's change lands here too, unless a pick of ours is on its way
   $effect(() => {
     const now = toChoice(live.bitrate)
-    if (!untrack(() => saving)) value = now
+    if (saving === 0) value = now
   })
 
   async function save() {
     error = ''
-    saving = true
+    saving++
+    let landed: string | null | undefined
     try {
-      await api.setChannelBitrate(channel.id, fromChoice(value))
+      landed = toChoice((await api.setChannelBitrate(channel.id, fromChoice(value))).bitrate)
     } catch (e) {
       error = errorText(e)
-      value = toChoice(live.bitrate)
     } finally {
-      saving = false
+      // the last one back shows what the channel holds: its answer, or (failed) what everyone has
+      if (--saving === 0) value = landed !== undefined ? landed : toChoice(live.bitrate)
     }
   }
 </script>

@@ -2,9 +2,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { Event as AppEvent } from './protocol/Event'
+import type { Channel } from './protocol/Channel'
 import { streamApi } from './stream/stream.svelte'
 import { displayName, type SelfVoice } from './selectors'
-import { app, onAppEvent } from './store.svelte'
+import { app, onAppEvent, onAppReady } from './store.svelte'
 import { api } from './tauri'
 import { pushCallMixQuietly } from './mixer.svelte'
 import { loadAudioConfig, loadLocalMutes, loadVolumes, peerCallSound, playSound, saveLocalMutes, saveVolumes, serverVoiceSound, transitionSounds, type AudioConfig, type Connection, type EchoReport, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
@@ -127,14 +128,20 @@ const bitrateSent = new Map<string, number | null>()
 
 /** A voice channel's bitrate changed (#75): the call in it, or the join to it, changes to it at once (the core
  *  retargets the mic in place). Anything else about the channel (a rename) is left alone. */
-function followBitrate(e: AppEvent) {
-  if (e.t !== 'ChannelUpdated') return
-  const c = e.d.channel
-  if (c.id !== voice.channelId && c.id !== voice.joining) return
+function sendBitrate(c: Channel | undefined) {
+  if (!c || (c.id !== voice.channelId && c.id !== voice.joining)) return
   const bitrate = c.bitrate ?? null
   if (bitrateSent.get(c.id) === bitrate) return
   bitrateSent.set(c.id, bitrate)
-  invoke('set_voice_bitrate', { channelId: c.id, bitrate }).catch(() => {})
+  // not sent: the next change (or join) tries again
+  invoke('set_voice_bitrate', { channelId: c.id, bitrate }).catch(() => bitrateSent.delete(c.id))
+}
+const followBitrate = (e: AppEvent) => {
+  if (e.t === 'ChannelUpdated') sendBitrate(e.d.channel)
+}
+/** A change made while the gateway was away arrives in the next Ready, not as a ChannelUpdated. */
+const followBitrateOnReady = () => {
+  for (const id of new Set([voice.channelId, voice.joining])) if (id) sendBitrate(app.state.channels[id])
 }
 
 /** Removed from a DM or group (or left it from another device), or the voice channel was deleted:
@@ -153,6 +160,7 @@ function leaveIfRemoved(e: AppEvent) {
 export async function startVoiceListening() {
   const offApp = onAppEvent(leaveIfRemoved)
   const offBitrate = onAppEvent(followBitrate)
+  const offBitrateReady = onAppReady(followBitrateOnReady)
   const offDisconnect = onAppEvent(noteDisconnect)
   const offServerCue = onAppEvent(cueServerVoice)
   // your own join sounds once, when both your connection and the server's announcement of it are in (#121)
@@ -242,6 +250,7 @@ export async function startVoiceListening() {
   return () => {
     offApp()
     offBitrate()
+    offBitrateReady()
     offDisconnect()
     offServerCue()
     offPeers()
