@@ -20,11 +20,10 @@ use pulse_protocol::rest::{
     ServerVoiceMod, SessionResponse, SetClipViewRequest, SetJoinSoundRequest, SetMuteRequest,
     SetNicknameRequest, SetNotifyLevelRequest, SetServerVoiceRequest, SetShowcaseRequest,
     SetStatusRequest, Sound, SpinAgainRequest, SpinWheelRequest, StageShare, StageShareRequest,
-    StartQotyRequest, Status,
-    StreamInfo, StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest,
-    TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse,
-    TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, UpdateWheelRequest, User,
-    VoiceTokenResponse, WatchRequest, Wheel,
+    StartQotyRequest, Status, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
+    ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
+    TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest,
+    UpdateWheelRequest, User, VoiceTokenResponse, WatchRequest, Wheel,
 };
 use serde::de::DeserializeOwned;
 
