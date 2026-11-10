@@ -103,11 +103,15 @@ describe('renderMessage (cached)', () => {
   })
 
   it('is bounded: the least recently shown entries are evicted', () => {
+    // Filling the cache needs RENDER_CACHE_MAX renders; DOMPurify on jsdom was most of their cost (over 1 s, near the
+    // timeout under load). The cache never looks at the HTML, so skip the sanitizing while filling.
+    const fill = vi.spyOn(DOMPurify, 'sanitize').mockImplementation((html) => String(html))
     renderMessage(msg('KEEP', 'kept'))
     for (let i = 0; i < RENDER_CACHE_MAX; i++) {
       renderMessage(msg(`F${i}`, 'x'))
       if (i % 100 === 0) renderMessage(msg('KEEP', 'kept')) // shown now and then: stays
     }
+    fill.mockRestore()
     const spy = vi.spyOn(DOMPurify, 'sanitize')
     renderMessage(msg('KEEP', 'kept'))
     expect(spy).not.toHaveBeenCalled()
