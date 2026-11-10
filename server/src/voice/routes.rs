@@ -176,7 +176,7 @@ async fn webhook(
             }
             // their join sound (#121), server voice channels only: a lookup that fails just leaves the normal cue
             let join_sound = match ch.server_id {
-                Some(server) => crate::sounds::join_sound_for(&s, server, user_id)
+                Some(server) => crate::sounds::join_sound_for(&s, server, channel_id, user_id)
                     .await
                     .unwrap_or_else(|e| {
                         tracing::error!(error = ?e, user = %user_id, "join sound not looked up");

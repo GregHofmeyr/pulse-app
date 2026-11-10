@@ -42,6 +42,9 @@ pub struct VoiceState {
     pub stage: crate::stage::StageState,
     /// When each person's join sound last went out (#121), for the once-per-30-s rule. Forgotten on restart.
     join_sounds: Arc<Mutex<HashMap<UserId, Instant>>>,
+    /// When each person last left each channel (#278): back within [`JOIN_SOUND_EVERY`] is a reconnect, not a
+    /// join, so it plays no join sound. Only recent leaves are kept; forgotten on restart.
+    recent_leaves: Arc<Mutex<HashMap<(UserId, ChannelId), Instant>>>,
 }
 
 /// A join sound plays at most once per this long per person (#121); joins in between get the normal cue.
@@ -66,9 +69,19 @@ impl VoiceState {
         Snapshot(self.clone())
     }
 
-    /// Whether `user`'s join sound may play for a join at `now`, noting it if so: at most once per
+    /// Whether `user`'s join sound may play for their join to `channel` at `now`, noting it if so. Not when they
+    /// left that channel within [`JOIN_SOUND_EVERY`] (a reconnect, #278), and at most once per
     /// [`JOIN_SOUND_EVERY`] per person, so a flaky connection or channel hopping can't spam it.
-    pub fn take_join_sound(&self, user: UserId, now: Instant) -> bool {
+    pub fn take_join_sound(&self, user: UserId, channel: ChannelId, now: Instant) -> bool {
+        if self
+            .recent_leaves
+            .lock()
+            .unwrap()
+            .get(&(user, channel))
+            .is_some_and(|t| now.saturating_duration_since(*t) < JOIN_SOUND_EVERY)
+        {
+            return false;
+        }
         let mut last = self.join_sounds.lock().unwrap();
         if last
             .get(&user)
@@ -125,6 +138,21 @@ impl VoiceState {
 
     /// Remove `user` if `sid` is their current connection (an empty `sid` matches any).
     pub fn leave(&self, channel: ChannelId, user: UserId, sid: &str) -> Left {
+        self.left_at(channel, user, sid, Instant::now())
+    }
+
+    /// [`Self::leave`] at `now`, which a removal notes as their last leave of `channel` (#278).
+    pub fn left_at(&self, channel: ChannelId, user: UserId, sid: &str, now: Instant) -> Left {
+        let left = self.remove(channel, user, sid);
+        if left == Left::Removed {
+            let mut recent = self.recent_leaves.lock().unwrap();
+            recent.retain(|_, t| now.saturating_duration_since(*t) < JOIN_SOUND_EVERY);
+            recent.insert((user, channel), now);
+        }
+        left
+    }
+
+    fn remove(&self, channel: ChannelId, user: UserId, sid: &str) -> Left {
         let mut rooms = self.rooms.lock().unwrap();
         if let Some(left) = self.left_since_snapshot.lock().unwrap().as_mut()
             && !sid.is_empty()
@@ -212,13 +240,68 @@ mod tests {
         let v = VoiceState::default();
         let (alex, sam) = (UserId::new(), UserId::new());
         let t0 = Instant::now();
-        assert!(v.take_join_sound(alex, t0));
-        assert!(!v.take_join_sound(alex, t0 + Duration::from_secs(29)));
+        let ch = ChannelId::new();
+        assert!(v.take_join_sound(alex, ch, t0));
+        assert!(!v.take_join_sound(alex, ch, t0 + Duration::from_secs(29)));
         assert!(
-            v.take_join_sound(sam, t0 + Duration::from_secs(29)),
+            v.take_join_sound(sam, ch, t0 + Duration::from_secs(29)),
             "someone else isn't held up"
         );
-        assert!(v.take_join_sound(alex, t0 + Duration::from_secs(30)));
-        assert!(!v.take_join_sound(alex, t0 + Duration::from_secs(31)));
+        assert!(v.take_join_sound(alex, ch, t0 + Duration::from_secs(30)));
+        assert!(!v.take_join_sound(alex, ch, t0 + Duration::from_secs(31)));
+    }
+
+    #[test]
+    fn a_rejoin_within_30s_of_leaving_that_channel_is_no_join_sound() {
+        let v = VoiceState::default();
+        let (alex, sam) = (UserId::new(), UserId::new());
+        let (lounge, other) = (ChannelId::new(), ChannelId::new());
+        let t0 = Instant::now();
+        // in the call for a while, then the connection drops and comes back (a reconnect)
+        v.join(lounge, alex, "PA_1");
+        v.join(lounge, sam, "PA_s");
+        assert_eq!(v.left_at(lounge, alex, "PA_1", t0), Left::Removed);
+        assert!(
+            !v.take_join_sound(alex, lounge, t0 + Duration::from_secs(5)),
+            "back seconds later: a reconnect, not a join"
+        );
+        assert!(
+            !v.take_join_sound(alex, lounge, t0 + Duration::from_secs(29)),
+            "still within 30 s of the leave"
+        );
+        assert!(
+            v.take_join_sound(alex, other, t0 + Duration::from_secs(5)),
+            "another channel is a join"
+        );
+        assert!(
+            v.take_join_sound(sam, lounge, t0 + Duration::from_secs(5)),
+            "someone else isn't held up"
+        );
+        // a rejoin that played nothing didn't use up the once-per-30-s play: only the play did
+        let v = VoiceState::default();
+        v.join(lounge, alex, "PA_1");
+        assert_eq!(v.left_at(lounge, alex, "PA_1", t0), Left::Removed);
+        assert!(!v.take_join_sound(alex, lounge, t0 + Duration::from_secs(5)));
+        assert!(
+            v.take_join_sound(alex, lounge, t0 + Duration::from_secs(30)),
+            "30 s after the leave it's a join again"
+        );
+    }
+
+    #[test]
+    fn a_stale_or_absent_leave_is_not_a_recent_leave() {
+        let v = VoiceState::default();
+        let alex = UserId::new();
+        let lounge = ChannelId::new();
+        let t0 = Instant::now();
+        // the new connection's join beat the old one's leave: alex never left
+        v.join(lounge, alex, "PA_1");
+        v.join(lounge, alex, "PA_2");
+        assert_eq!(v.left_at(lounge, alex, "PA_1", t0), Left::Stale);
+        assert_eq!(
+            v.left_at(ChannelId::new(), alex, "PA_x", t0),
+            Left::NotPresent
+        );
+        assert!(v.take_join_sound(alex, lounge, t0 + Duration::from_secs(1)));
     }
 }

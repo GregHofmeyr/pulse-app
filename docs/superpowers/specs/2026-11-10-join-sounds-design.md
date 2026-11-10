@@ -14,7 +14,7 @@ Discord lets people pick a soundboard sound that plays when they join a call; th
 - **Volume and opting out (owner):**
   - a global **"Join sounds"** row in the volume mixer (0 % = you hear the normal join cue for everyone instead);
   - **"Mute join sound"** in the person right-click menu on every surface (members, voice rows, stage tiles, DMs), per person, per device: that person's custom sound is replaced by the normal join cue for you. The menu shows **"Unmute join sound"** while muted. (Person-to-person actions live in right-click menus on every surface.)
-- **Edge cases:** if the sound is deleted from the soundboard, the join sound clears. Rejoining in quick succession plays the custom sound at most once per 30 s per person (otherwise the normal cue), so a flaky connection or channel hopping can't spam it. A server-muted or deafened joiner still gets their join sound (it's a cue, not their voice). Joining as a ghost viewer or someone who appears invisible plays nothing, as today.
+- **Edge cases:** if the sound is deleted from the soundboard, the join sound clears. Rejoining in quick succession plays the custom sound at most once per 30 s per person (otherwise the normal cue), so a flaky connection or channel hopping can't spam it. **A reconnect isn't a join (#278):** coming back to a channel you left less than 30 s ago never plays your join sound, however long ago it last played, so a network reconnect mid-call doesn't replay it for everyone (and you, who don't get a join cue on a reconnect, agree with them). The server keeps each person's last leave per channel in memory; a restart forgets it. A server-muted or deafened joiner still gets their join sound (it's a cue, not their voice). Joining as a ghost viewer or someone who appears invisible plays nothing, as today.
 - **Older clients** keep hearing the normal join cue; nothing breaks.
 
 ## How it gets made
@@ -25,7 +25,7 @@ Discord lets people pick a soundboard sound that plays when they join a call; th
 
 ## Testing
 
-- Server: set/clear, wrong-server sound refused, cleared on delete/leave, the join event carries it, the 30 s rule.
+- Server: set/clear, wrong-server sound refused, cleared on delete/leave, the join event carries it, the 30 s rule, a reconnect (LiveKit's leave then a new connection's join, or the join first, whose late leave is ignored) carries no join sound.
 - Client: menu items swap Set/Clear; join plays the custom sound for everyone in the call; mixer 0 % and per-person mute fall back to the normal cue; DMs keep the normal cue; leave cue unchanged.
 - **Manual (owner, two accounts):** set a 6-second sound, join mid-conversation, everyone hears it fully; mute it for one person; clear it.
 

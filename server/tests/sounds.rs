@@ -1225,6 +1225,7 @@ async fn a_server_muted_joiner_still_gets_their_join_sound() {
     let room = lounge(&app, &alex.1, srv).await;
     assert_eq!(set_join(&app, &sam.1, srv, &s.id).await.status(), 204);
     // muted and deafened while in the call (only someone in voice can be), and still held after leaving it
+    // (joining another channel: back in the same one within 30 s is a reconnect, #278)
     app.state().voice.join(room, sam.0, "PA_0");
     let r = post_json(
         &app,
@@ -1235,8 +1236,9 @@ async fn a_server_muted_joiner_still_gets_their_join_sound() {
     .await;
     assert!(r.status().is_success(), "{}", r.status());
     app.state().voice.leave(room, sam.0, "PA_0");
+    let den = den(&app, &alex.1, srv).await;
     let mut rx = app.hub.register(alex.0, String::new()).rx;
-    livekit(&app, "participant_joined", room, sam.0, "PA_s").await;
+    livekit(&app, "participant_joined", den, sam.0, "PA_s").await;
     let (who, play) = next_join(&mut rx).await;
     assert_eq!(who, sam.0);
     assert!(play.is_some());
@@ -1250,4 +1252,90 @@ async fn dm_and_group_calls_keep_the_normal_join_cue() {
     let mut rx = app.hub.register(sam.0, String::new()).rx;
     livekit(&app, "participant_joined", dm.id, alex.0, "PA_d").await;
     assert_eq!(next_join(&mut rx).await, (alex.0, None));
+}
+
+/// A second voice channel, "Den", in `server`.
+async fn den(app: &TestApp, token: &str, server: ServerId) -> ChannelId {
+    let r = post_json(
+        app,
+        token,
+        &format!("/servers/{server}/channels"),
+        json!({"name": "Den", "kind": "voice"}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    r.json::<pulse_protocol::rest::Channel>().await.unwrap().id
+}
+
+/// The next `VoiceJoined` or `VoiceLeft` on `rx` within `wait`, if any (other frames skipped).
+async fn next_voice(
+    rx: &mut tokio::sync::mpsc::Receiver<ServerFrame>,
+    wait: Duration,
+) -> Option<Event> {
+    let until = tokio::time::Instant::now() + wait;
+    loop {
+        let f = tokio::time::timeout_at(until, rx.recv()).await.ok()??;
+        if let ServerFrame::Event(e @ (Event::VoiceJoined { .. } | Event::VoiceLeft { .. })) = f {
+            return Some(e);
+        }
+    }
+}
+
+/// #278: a full reconnect is LiveKit ending the old connection (`participant_left`) and a new one joining
+/// (`participant_joined`, a new sid) seconds later. Long after the last join sound (here: none since the
+/// server started), it still isn't a join: it gets the normal cue, for everyone alike.
+#[tokio::test]
+async fn a_reconnect_after_a_leave_carries_no_join_sound() {
+    let (app, [alex, sam, _], srv, s) = soundboard().await;
+    let room = lounge(&app, &alex.1, srv).await;
+    assert_eq!(set_join(&app, &alex.1, srv, &s.id).await.status(), 204);
+    // alex has been in the call a while: their last join sound is long past
+    app.state().voice.join(room, alex.0, "PA_1");
+    let mut rx = app.hub.register(sam.0, String::new()).rx;
+
+    livekit(&app, "participant_left", room, alex.0, "PA_1").await;
+    livekit(&app, "participant_joined", room, alex.0, "PA_2").await;
+    assert!(matches!(
+        next_voice(&mut rx, Duration::from_secs(3)).await,
+        Some(Event::VoiceLeft { user_id, .. }) if user_id == alex.0
+    ));
+    assert_eq!(next_join(&mut rx).await, (alex.0, None));
+
+    // moving to another channel is a join: the sound plays there
+    let den = den(&app, &alex.1, srv).await;
+    livekit(&app, "participant_left", room, alex.0, "PA_2").await;
+    livekit(&app, "participant_joined", den, alex.0, "PA_3").await;
+    match next_voice(&mut rx, Duration::from_secs(3)).await {
+        Some(Event::VoiceLeft { .. }) => {}
+        other => panic!("{other:?}"),
+    }
+    match next_voice(&mut rx, Duration::from_secs(3)).await {
+        Some(Event::VoiceJoined {
+            user_id,
+            channel_id,
+            join_sound,
+            ..
+        }) => {
+            assert_eq!((user_id, channel_id), (alex.0, den));
+            assert!(join_sound.is_some(), "another channel is a real join");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// #278: the other order of a full reconnect: the new connection's join lands first (LiveKit kicks the old
+/// one, whose leave lands after). Nobody left, so nothing is announced at all. (An ICE resume keeps the
+/// same connection and sends no webhooks, so it never reaches the server.)
+#[tokio::test]
+async fn a_reconnect_whose_join_beats_the_leave_announces_nothing() {
+    let (app, [alex, sam, _], srv, s) = soundboard().await;
+    let room = lounge(&app, &alex.1, srv).await;
+    assert_eq!(set_join(&app, &alex.1, srv, &s.id).await.status(), 204);
+    app.state().voice.join(room, alex.0, "PA_1");
+    let mut rx = app.hub.register(sam.0, String::new()).rx;
+
+    livekit(&app, "participant_joined", room, alex.0, "PA_2").await;
+    livekit(&app, "participant_left", room, alex.0, "PA_1").await;
+    assert_eq!(next_voice(&mut rx, Duration::from_millis(500)).await, None);
+    assert!(app.voice_members(room).contains(&alex.0));
 }

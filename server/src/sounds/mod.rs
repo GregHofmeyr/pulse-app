@@ -4,7 +4,7 @@
 pub mod routes;
 
 use pulse_protocol::gateway::JoinSoundPlay;
-use pulse_protocol::ids::{ServerId, UserId};
+use pulse_protocol::ids::{ChannelId, ServerId, UserId};
 use pulse_protocol::rest::Sound;
 use sqlx::{SqliteConnection, SqlitePool};
 
@@ -199,11 +199,13 @@ pub async fn publish_favourites(s: &AppState, user: UserId) {
     }
 }
 
-/// `user`'s join sound in `server` (#121), if they have one and it may play now (at most once per 30 s per person).
+/// `user`'s join sound in `server` (#121) for their join to `channel`, if they have one and it may play now: not a
+/// reconnect (back in `channel` within 30 s of leaving it, #278), and at most once per 30 s per person.
 /// Read at join time, so a sound deleted since it was set (the column goes back to NULL) plays nothing.
 pub async fn join_sound_for(
     s: &AppState,
     server: ServerId,
+    channel: ChannelId,
     user: UserId,
 ) -> AppResult<Option<JoinSoundPlay>> {
     let row: Option<(String, String, i64, i64)> = sqlx::query_as(
@@ -218,7 +220,10 @@ pub async fn join_sound_for(
     let Some((sound_id, media_hash, volume, duration_ms)) = row else {
         return Ok(None);
     };
-    if !s.voice.take_join_sound(user, std::time::Instant::now()) {
+    if !s
+        .voice
+        .take_join_sound(user, channel, std::time::Instant::now())
+    {
         return Ok(None);
     }
     Ok(Some(JoinSoundPlay {
