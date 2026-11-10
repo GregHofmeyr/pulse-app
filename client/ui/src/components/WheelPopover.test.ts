@@ -62,6 +62,7 @@ beforeEach(() => {
   resetState()
   resetWheels()
   forgetQuickWheels()
+  setSpinQuietly(false) // "Spin quietly" is remembered per device: a test that ticks it would make every later spin quiet
   invoke.mockClear()
   closed = 0
   app.state = applyReady(emptyState(), testReady([{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }]))
@@ -187,7 +188,6 @@ describe('WheelPopover spins (#270)', () => {
     frames = []
     vi.stubGlobal('requestAnimationFrame', (f: (t: number) => void) => (frames.push(f), frames.length))
     vi.stubGlobal('cancelAnimationFrame', () => {})
-    setSpinQuietly(false)
   })
   const quietBox = () => pop().querySelector<HTMLInputElement>('input[type="checkbox"][aria-label="Spin quietly"], label.quietly input')
   const justMe = () => {
