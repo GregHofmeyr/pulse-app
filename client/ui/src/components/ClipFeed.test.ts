@@ -422,6 +422,10 @@ describe('ClipFeed', () => {
       overlay('M003')!.click()
       await settle()
       expect(saves()).toHaveLength(2)
+      // let that one land too: the one-at-a-time guard is module state, and a save left open would ignore the
+      // next test's clicks on this clip
+      finish(true)
+      await settle()
     })
   })
 
