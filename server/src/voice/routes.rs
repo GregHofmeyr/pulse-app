@@ -50,14 +50,15 @@ async fn token(
     if !s.limits.livekit_token_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
-    // Server muted or deafened (#140): the token can't publish until someone undoes it.
-    let can_publish = match ch.server_id {
-        Some(server) => crate::voice::moderation::publish_allowed(
+    // Server muted or deafened (#140): the token can't publish until someone undoes it, and
+    // while deafened it can't subscribe either (#145).
+    let (can_publish, can_subscribe) = match ch.server_id {
+        Some(server) => crate::voice::moderation::allowed(
             crate::voice::moderation::get(&s.db, server, me)
                 .await?
                 .as_ref(),
         ),
-        None => true,
+        None => (true, true),
     };
     let grant = crate::auth::session::record_grant(&s.db, &session, &room, &me.to_string())
         .await?
@@ -72,7 +73,7 @@ async fn token(
             can_publish: Some(can_publish),
             // Voice rooms carry the microphone only: screen share has its own room (`<id>~s`).
             can_publish_sources: vec!["microphone".into()],
-            can_subscribe: Some(true),
+            can_subscribe: Some(can_subscribe),
             // Nothing in a call uses data messages; refusing them keeps a client from sending
             // arbitrary payloads to everyone in the room.
             can_publish_data: Some(false),

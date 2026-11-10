@@ -245,12 +245,16 @@ struct Lk {
 impl Lk {
     /// LiveKit has `identity` connected in `room`, allowed to publish or not.
     fn connect(&self, room: &str, identity: &str, can_publish: bool) {
+        self.connect_with(room, identity, can_publish, true);
+    }
+    /// [`Lk::connect`], also saying whether they may subscribe.
+    fn connect_with(&self, room: &str, identity: &str, can_publish: bool, can_subscribe: bool) {
         let p = lkp::ParticipantInfo {
             identity: identity.to_owned(),
             sid: format!("PA_{identity}"),
             permission: Some(lkp::ParticipantPermission {
                 can_publish,
-                can_subscribe: true,
+                can_subscribe,
                 ..Default::default()
             }),
             ..Default::default()
@@ -263,6 +267,18 @@ impl Lk {
     }
     fn updates(&self) -> Vec<(String, String, bool)> {
         self.updated.lock().unwrap().clone()
+    }
+    /// What LiveKit lets `identity` in `room` do now: (publish, subscribe).
+    fn perm(&self, room: &str, identity: &str) -> (bool, bool) {
+        let rooms = self.rooms.lock().unwrap();
+        let p = rooms
+            .iter()
+            .filter(|(r, _)| r == room)
+            .flat_map(|(_, ps)| ps.iter())
+            .find(|p| p.identity == identity)
+            .and_then(|p| p.permission.clone())
+            .unwrap();
+        (p.can_publish, p.can_subscribe)
     }
 }
 
@@ -384,7 +400,84 @@ async fn token_while_muted_cannot_publish() {
         .unwrap();
     let g = video_grants(&app, &t);
     assert_eq!(g.can_publish, Some(false));
+    assert_eq!(
+        g.can_subscribe,
+        Some(false),
+        "deafened: can't listen either"
+    );
+}
+
+#[tokio::test]
+async fn token_while_muted_still_hears() {
+    let app = spawn().await;
+    let w = world(&app).await;
+    let path = format!("/voice/{}/token", w.lounge.id);
+    let t: VoiceTokenResponse = post_json(&app, &w.sam.1, &path, json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(video_grants(&app, &t).can_subscribe, Some(true));
+    in_voice(&app, w.lounge.id, w.sam.0);
+    set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": true})).await;
+    app.voice.leave(w.lounge.id, w.sam.0, "");
+    let t: VoiceTokenResponse = post_json(&app, &w.sam.1, &path, json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let g = video_grants(&app, &t);
+    assert_eq!(g.can_publish, Some(false));
     assert_eq!(g.can_subscribe, Some(true));
+}
+
+#[tokio::test]
+async fn deafen_stops_subscribing_at_livekit() {
+    let (app, lk) = spawn_lk().await;
+    let w = world(&app).await;
+    let (room, sam) = (w.lounge.id.to_string(), w.sam.0.to_string());
+    in_voice(&app, w.lounge.id, w.sam.0);
+    lk.connect(&room, &sam, true);
+    set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": true})).await;
+    assert_eq!(lk.perm(&room, &sam), (false, true), "muted still hears");
+    // already not publishing: the deafen still has to reach LiveKit, for subscribing
+    set(&app, &w.alex.1, w.server, w.sam.0, json!({"deafen": true})).await;
+    assert_eq!(lk.updates().len(), 2, "{:?}", lk.updates());
+    assert_eq!(lk.perm(&room, &sam), (false, false));
+    // undeafened but still muted: hears again, still can't speak
+    set(&app, &w.alex.1, w.server, w.sam.0, json!({"deafen": false})).await;
+    assert_eq!(lk.perm(&room, &sam), (false, true));
+    set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": false})).await;
+    assert_eq!(lk.perm(&room, &sam), (true, true));
+}
+
+#[tokio::test]
+async fn join_reconciles_subscribe_permission() {
+    let (app, lk) = spawn_lk().await;
+    let w = world(&app).await;
+    let (room, sam) = (w.lounge.id.to_string(), w.sam.0.to_string());
+    in_voice(&app, w.lounge.id, w.sam.0);
+    set(&app, &w.alex.1, w.server, w.sam.0, json!({"deafen": true})).await;
+    app.voice.leave(w.lounge.id, w.sam.0, "");
+    // a token from before the deafen that a muted-only reconcile would have let through
+    lk.connect(&room, &sam, false);
+    joined(&app, w.lounge.id, w.sam.0, false, true).await;
+    assert!(
+        eventually(|| lk.perm(&room, &sam) == (false, false)).await,
+        "{:?}",
+        lk.perm(&room, &sam)
+    );
+    // a token from while deafened, used after the undo: hearing given back
+    set(&app, &w.alex.1, w.server, w.sam.0, json!({"deafen": false})).await;
+    app.voice.leave(w.lounge.id, w.sam.0, "");
+    lk.rooms.lock().unwrap().clear();
+    lk.connect_with(&room, &sam, false, false);
+    joined(&app, w.lounge.id, w.sam.0, false, false).await;
+    assert!(
+        eventually(|| lk.perm(&room, &sam) == (true, true)).await,
+        "{:?}",
+        lk.perm(&room, &sam)
+    );
 }
 
 fn signed(app: &TestApp, body: &str) -> String {
@@ -397,14 +490,21 @@ fn signed(app: &TestApp, body: &str) -> String {
         .unwrap()
 }
 
-/// LiveKit's `participant_joined` for `user` in `room`, whose token let them publish or not.
-async fn joined(app: &TestApp, room: ChannelId, user: UserId, can_publish: bool) {
+/// LiveKit's `participant_joined` for `user` in `room`, whose token let them publish and
+/// subscribe or not.
+async fn joined(
+    app: &TestApp,
+    room: ChannelId,
+    user: UserId,
+    can_publish: bool,
+    can_subscribe: bool,
+) {
     let grant = grant_livekit(app, &room.to_string(), &user.to_string()).await;
     let body =
         json!({"event": "participant_joined", "id": "EV_test", "room": {"name": room.to_string()},
         "participant": {"identity": user.to_string(), "sid": format!("PA_{user}"),
             "attributes": {"pulse_grant": grant},
-            "permission": {"canPublish": can_publish, "canSubscribe": true}}})
+            "permission": {"canPublish": can_publish, "canSubscribe": can_subscribe}}})
         .to_string();
     let r = app
         .http
@@ -428,7 +528,7 @@ async fn join_reconciles_publish_permission() {
     app.voice.leave(w.lounge.id, w.sam.0, "");
     // a token fetched before the mute (prefetched): LiveKit lets them publish, we take it away
     lk.connect(&room, &sam, true);
-    joined(&app, w.lounge.id, w.sam.0, true).await;
+    joined(&app, w.lounge.id, w.sam.0, true, true).await;
     assert!(
         eventually(|| lk.updates() == vec![(room.clone(), sam.clone(), false)]).await,
         "{:?}",
@@ -436,14 +536,14 @@ async fn join_reconciles_publish_permission() {
     );
     // a matching permission needs no call
     app.voice.leave(w.lounge.id, w.sam.0, "");
-    joined(&app, w.lounge.id, w.sam.0, false).await;
+    joined(&app, w.lounge.id, w.sam.0, false, true).await;
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(lk.updates().len(), 1);
     // a token from while muted, used after the undo: publishing given back
     set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": false})).await;
     app.voice.leave(w.lounge.id, w.sam.0, "");
     let n = lk.updates().len();
-    joined(&app, w.lounge.id, w.sam.0, false).await;
+    joined(&app, w.lounge.id, w.sam.0, false, true).await;
     assert!(
         eventually(|| lk.updates().len() > n
             && lk.updates().last() == Some(&(room.clone(), sam.clone(), true)))
@@ -574,7 +674,7 @@ async fn an_undo_racing_a_join_still_gives_publishing_back() {
     set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": false})).await;
     let n = lk.updates().len();
     lk.connect(&room, &sam, false);
-    joined(&app, w.lounge.id, w.sam.0, false).await;
+    joined(&app, w.lounge.id, w.sam.0, false, true).await;
     assert!(
         eventually(|| lk.updates()[n..] == [(room.clone(), sam.clone(), true)]).await,
         "{:?}",

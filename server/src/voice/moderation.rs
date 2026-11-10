@@ -3,9 +3,13 @@
 //!
 //! Mute and deafen are a row per (server, user) in `voice_moderation`, kept across leaving and
 //! rejoining until undone, and carried in `Ready` and `ServerVoiceChanged`. Both take away
-//! publishing at LiveKit (deafen implies mute): the voice token is minted without it, a live
-//! participant's permission is updated, and every join is reconciled. Not hearing anything while
-//! deafened is the target's client muting the call. Disconnect removes the participant from the
+//! publishing at LiveKit (deafen implies mute), and deafen takes away subscribing too (#145), so
+//! a modified client can't listen in either: the voice token is minted without them, a live
+//! participant's permission is updated, and every join is reconciled. LiveKit (v1.13) drops every
+//! subscription when subscribing is taken away and subscribes them again by itself when it is
+//! given back (`SetPermission` → `ReconcileAll`), also after a join made while deafened, so any
+//! client hears again on the undeafen without rejoining (`client/src-tauri/tests/server_mute_it.rs`).
+//! The target's client also mutes the call itself (all a 0.2.x client does). Disconnect removes the participant from the
 //! voice and stream rooms now and stores nothing; they can rejoin.
 
 use axum::extract::{Path, State};
@@ -85,25 +89,37 @@ pub fn publish_allowed(m: Option<&ServerVoiceMod>) -> bool {
     m.is_none_or(|m| m.muted_by.is_none() && m.deafened_by.is_none())
 }
 
+/// Whether someone with this server mute / deafen may hear the call (subscribe at LiveKit).
+pub fn subscribe_allowed(m: Option<&ServerVoiceMod>) -> bool {
+    m.is_none_or(|m| m.deafened_by.is_none())
+}
+
+/// What LiveKit lets someone with this server mute / deafen do: (publish, subscribe).
+pub fn allowed(m: Option<&ServerVoiceMod>) -> (bool, bool) {
+    (publish_allowed(m), subscribe_allowed(m))
+}
+
 /// A voice participant's LiveKit permission: as the voice token grants (microphone only, no data
-/// messages), with publishing taken away while server muted or deafened.
-pub fn permission(allowed: bool) -> ParticipantPermission {
+/// messages), with publishing taken away while server muted or deafened, and subscribing while
+/// server deafened.
+pub fn permission((publish, subscribe): (bool, bool)) -> ParticipantPermission {
     ParticipantPermission {
-        can_subscribe: true,
-        can_publish: allowed,
+        can_subscribe: subscribe,
+        can_publish: publish,
         can_publish_data: false,
         can_publish_sources: vec![TrackSource::Microphone as i32],
         ..Default::default()
     }
 }
 
-/// Give `user` publishing in `channel`'s room at LiveKit, or take it away (LiveKit then drops
-/// their mic track), as `server`'s mute / deafen of them stands NOW: read here, not handed in, so
-/// racing calls (a mute and its undo, a route and a join) all end on the latest row. Never
-/// fails; problems are logged, within [`crate::voice::revoke::BUDGET`].
+/// Give `user` publishing and subscribing in `channel`'s room at LiveKit, or take them away
+/// (LiveKit then drops their mic track / their subscriptions), as `server`'s mute / deafen of
+/// them stands NOW: read here, not handed in, so racing calls (a mute and its undo, a route and
+/// a join) all end on the latest row. Never fails; problems are logged, within
+/// [`crate::voice::revoke::BUDGET`].
 pub async fn enforce(s: &AppState, server: ServerId, channel: ChannelId, user: UserId) {
-    let allowed = match get(&s.db, server, user).await {
-        Ok(m) => publish_allowed(m.as_ref()),
+    let (publish, subscribe) = match get(&s.db, server, user).await {
+        Ok(m) => allowed(m.as_ref()),
         Err(e) => {
             tracing::warn!(error = ?e, "couldn't read the server mute to enforce it");
             return;
@@ -115,12 +131,12 @@ pub async fn enforce(s: &AppState, server: ServerId, channel: ChannelId, user: U
         &room,
         &identity,
         UpdateParticipantOptions {
-            permission: Some(permission(allowed)),
+            permission: Some(permission((publish, subscribe))),
             ..Default::default()
         },
     );
     match tokio::time::timeout(crate::voice::revoke::BUDGET, update).await {
-        Ok(Ok(_)) => tracing::info!(room, identity, allowed, "LiveKit publish permission set"),
+        Ok(Ok(_)) => tracing::info!(room, identity, publish, subscribe, "LiveKit permission set"),
         Ok(Err(e)) if crate::voice::revoke::not_found(&e) => {
             tracing::debug!(
                 room,
@@ -129,9 +145,15 @@ pub async fn enforce(s: &AppState, server: ServerId, channel: ChannelId, user: U
             )
         }
         Ok(Err(e)) => {
-            tracing::warn!(error = %e, room, identity, allowed, "couldn't set LiveKit publish permission")
+            tracing::warn!(error = %e, room, identity, publish, subscribe, "couldn't set LiveKit permission")
         }
-        Err(_) => tracing::warn!(room, identity, allowed, "LiveKit didn't answer in time"),
+        Err(_) => tracing::warn!(
+            room,
+            identity,
+            publish,
+            subscribe,
+            "LiveKit didn't answer in time"
+        ),
     }
 }
 
@@ -149,14 +171,17 @@ pub async fn reconcile_join(
     p: &ParticipantInfo,
 ) {
     let want = match get(&s.db, server, user).await {
-        Ok(m) => publish_allowed(m.as_ref()),
+        Ok(m) => allowed(m.as_ref()),
         Err(e) => {
             tracing::warn!(error = ?e, "couldn't read the server mute for a join");
             return;
         }
     };
-    // no permission reported: LiveKit's default for our tokens, publishing allowed
-    let has = p.permission.as_ref().is_none_or(|p| p.can_publish);
+    // no permission reported: LiveKit's default for our tokens, both allowed
+    let has = p
+        .permission
+        .as_ref()
+        .map_or((true, true), |p| (p.can_publish, p.can_subscribe));
     if want != has {
         let s = s.clone();
         tokio::spawn(async move { enforce(&s, server, channel, user).await });
@@ -259,7 +284,7 @@ async fn set(
     drop(order);
     // Written, then read: a join racing this is either seen here or reads the new row itself
     // (`reconcile_join`, after it is recorded).
-    if publish_allowed(before.as_ref()) != publish_allowed(Some(&after))
+    if allowed(before.as_ref()) != allowed(Some(&after))
         && let Some(channel) = call_in(&s, server, target).await?
     {
         enforce(&s, server, channel, target).await;
@@ -315,5 +340,25 @@ mod tests {
             "deafen implies mute"
         );
         assert!(!publish_allowed(Some(&m(true, true))));
+    }
+
+    #[test]
+    fn can_subscribe_follows_deafen_only() {
+        let (server, user, by) = (ServerId::new(), UserId::new(), UserId::new());
+        let m = |muted: bool, deafened: bool| ServerVoiceMod {
+            server_id: server,
+            user_id: user,
+            muted_by: muted.then_some(by),
+            deafened_by: deafened.then_some(by),
+        };
+        assert!(subscribe_allowed(None));
+        assert!(
+            subscribe_allowed(Some(&m(true, false))),
+            "muted still hears"
+        );
+        assert!(!subscribe_allowed(Some(&m(false, true))));
+        assert!(!subscribe_allowed(Some(&m(true, true))));
+        assert!(!permission(allowed(Some(&m(false, true)))).can_subscribe);
+        assert!(permission(allowed(Some(&m(true, false)))).can_subscribe);
     }
 }
