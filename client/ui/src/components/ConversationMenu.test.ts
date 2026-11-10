@@ -173,3 +173,32 @@ describe("the bell's popover", () => {
     expect(labels()).toEqual(['Unmute conversation'])
   })
 })
+
+// #121: the DM list's menu for a 1:1 carries the person's items, Mute join sound among them
+describe('a DM in the list', () => {
+  const dm: Channel = { id: 'D1', server_id: null, kind: 'dm', name: null, position: 0 }
+  const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+  const texts = () => [...document.querySelectorAll<HTMLElement>('[role=menu] .menu-item')].map((b) => b.textContent?.trim())
+
+  it('Mute join sound for someone with a join sound, then Unmute', () => {
+    app.state = {
+      ...app.state,
+      dmMembers: { D1: ['U1', 'U2'] },
+      sounds: { A: { id: 'A', server_id: 'S1', name: 'airhorn', emoji: null, emoji_id: null, media_hash: 'hA', volume: 100, duration_ms: 6000, added_by: null, created_at: '2026-11-10T00:00:00.000Z', plays: 0 } },
+      members: { S1: [{ user: sam, nickname: null, join_sound: 'A' }] },
+    } as never
+    anchor.getBoundingClientRect = () => rect({ left: 100, top: 100, width: 20, height: 20 })
+    cmp = mount(ConversationMenu, { target: document.body, props: { channel: dm, muted: false, show: 'all', anchor, onClose: () => {}, onLeft: () => {} } })
+    flushSync()
+    expect(texts()).toContain('Mute join sound')
+    expect(texts().indexOf('Mute join sound')).toBe(texts().indexOf('Notify me when they go live') + 1)
+    ;[...document.querySelectorAll<HTMLElement>('[role=menu] .menu-item')].find((b) => b.textContent?.trim() === 'Mute join sound')!.click()
+    flushSync()
+    expect(JSON.parse(localStorage.getItem('pulse.joinSounds.mutes')!)).toEqual({ U2: true })
+    unmount(cmp)
+    cmp = mount(ConversationMenu, { target: document.body, props: { channel: dm, muted: false, show: 'all', anchor, onClose: () => {}, onLeft: () => {} } })
+    flushSync()
+    expect(texts()).toContain('Unmute join sound')
+    ;[...document.querySelectorAll<HTMLElement>('[role=menu] .menu-item')].find((b) => b.textContent?.trim() === 'Unmute join sound')!.click()
+  })
+})

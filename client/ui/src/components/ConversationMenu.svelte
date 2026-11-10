@@ -10,6 +10,7 @@
   import { onMount } from 'svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
+  import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
   import MenuFlyout from './MenuFlyout.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
   import { pickGroupIcon, removeGroupIcon } from '../lib/groupIcon.svelte'
@@ -141,6 +142,7 @@
       {#if dmWith}
         <button class="menu-item" role="menuitem" onclick={() => { openRename({ kind: 'private', userId: dmWith }); onClose() }}>Change nickname</button>
         <LiveNotifyItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
+        <JoinSoundMuteItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
         <AppearOfflineItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
       {/if}
       {#if isPrivate}

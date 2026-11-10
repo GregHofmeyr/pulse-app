@@ -14,6 +14,7 @@
   import NicknameItems from './NicknameItems.svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
+  import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
 
   let { serverId, userId, x, y, opener, onClose, onMessage, fromCard = false, muteChannelId = null }: {
@@ -119,6 +120,7 @@
   {/if}
   <NicknameItems {serverId} {userId} {pick} />
   <LiveNotifyItem {userId} {pick} />
+  <JoinSoundMuteItem {userId} {pick} />
   <AppearOfflineItem {userId} {pick} />
   {#if muteChannelId && !self}
     <span class="menu-sep" role="separator"></span>

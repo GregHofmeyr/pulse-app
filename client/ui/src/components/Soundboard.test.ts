@@ -215,6 +215,45 @@ describe('Soundboard', () => {
     expect(calls('set_sound_favourite')).toEqual([['set_sound_favourite', { id: 'b', on: false }]])
   })
 
+  // #121: your join sound is picked from a server's soundboard, in the tile's menu
+  describe('join sound', () => {
+    const me = { id: 'ME', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    const member = (join_sound?: string) => ({ user: me, nickname: null, ...(join_sound ? { join_sound } : {}) })
+
+    it('set_as_my_join_sound_sets_it_for_the_sounds_own_server', async () => {
+      app.state.me = me as never
+      app.state.members = { S1: [member()], S2: [member()] }
+      open(new Set(['S1', 'S2']))
+      rightClick(tile('Drumroll'))
+      expect(menuItem('Clear my join sound')).toBeUndefined()
+      menuItem('Set as my join sound')!.click()
+      await settle()
+      expect(calls('set_join_sound')).toEqual([['set_join_sound', { serverId: 'S2', soundId: 'd' }]])
+    })
+
+    it('on_your_current_join_sound_the_menu_offers_clear_instead', async () => {
+      app.state.me = me as never
+      app.state.members = { S1: [member('b')] }
+      open()
+      rightClick(tile('Bruh'))
+      expect(menuItem('Set as my join sound')).toBeUndefined()
+      menuItem('Clear my join sound')!.click()
+      await settle()
+      expect(calls('set_join_sound')).toEqual([['set_join_sound', { serverId: 'S1', soundId: null }]])
+      // another sound of that server still offers Set (it replaces the current one)
+      rightClick(tile('Airhorn'))
+      expect(menuItem('Set as my join sound')).toBeDefined()
+    })
+
+    it('the_item_sits_with_the_others_in_the_same_menu_markup', () => {
+      open()
+      rightClick(tile('Bruh'))
+      const items = [...document.querySelectorAll<HTMLElement>('.ctx [role=menuitem]')].map((b) => b.textContent?.trim())
+      expect(items).toEqual(['Favourite', 'Set as my join sound', 'Edit', 'Delete'])
+      expect(document.querySelector('[data-item="join-sound"]')!.className).toBe('menu-item')
+    })
+  })
+
   it('context_menu_edit_hands_the_sound_to_onEdit', () => {
     open()
     rightClick(tile('Bruh'))

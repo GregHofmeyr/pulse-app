@@ -581,3 +581,45 @@ describe('ParticipantMenu nicknames (#113, #137)', () => {
     expect(menu()).toBeNull()
   })
 })
+
+// #121: Mute join sound, per person, on this device, in the voice row's (and call tile's) menu
+describe('join sound mute', () => {
+  const withJoinSound = (who: string[]) => {
+    const sound = { id: 'A', server_id: 'S1', name: 'airhorn', emoji: null, emoji_id: null, media_hash: 'hA', volume: 100, duration_ms: 6000, added_by: null, created_at: '2026-11-10T00:00:00.000Z', plays: 0 }
+    app.state = { ...app.state, sounds: { A: sound }, members: { S1: app.state.members.S1.map((m) => (who.includes(m.user.id) ? { ...m, join_sound: 'A' } : m)) } }
+  }
+  const item = () => q('[data-item="join-sound-mute"]')
+
+  it('someone with a join sound: the item sits under Mute soundboard and toggles the per-device mute', async () => {
+    withJoinSound(['U2'])
+    mountPanel()
+    rightClick(q('[data-user="U2"]')!)
+    const ids = items().map((i) => i.dataset.item)
+    expect(ids.indexOf('join-sound-mute')).toBe(ids.indexOf('sound-mute') + 1)
+    expect(item()!.textContent?.trim()).toBe('Mute join sound')
+    expect(item()!.className).toBe('menu-item')
+    item()!.click()
+    await settle()
+    expect(JSON.parse(localStorage.getItem('pulse.joinSounds.mutes')!)).toEqual({ U2: true })
+    rightClick(q('[data-user="U2"]')!)
+    expect(item()!.textContent?.trim()).toBe('Unmute join sound')
+    item()!.click()
+    await settle()
+    expect(JSON.parse(localStorage.getItem('pulse.joinSounds.mutes')!)).toEqual({})
+  })
+
+  it('nobody without a join sound gets it', () => {
+    mountPanel()
+    rightClick(q('[data-user="U2"]')!)
+    expect(menu()).not.toBeNull()
+    expect(item()).toBeNull()
+  })
+
+  it('never for yourself', () => {
+    withJoinSound(['U1', 'U2'])
+    mountPanel()
+    rightClick(q('[data-user="U1"]')!)
+    expect(menu()).not.toBeNull()
+    expect(item()).toBeNull()
+  })
+})

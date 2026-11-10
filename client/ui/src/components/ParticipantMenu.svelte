@@ -17,6 +17,7 @@
   import NicknameItems from './NicknameItems.svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
+  import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
   import { api, errorText } from '../lib/tauri'
 
   let {
@@ -169,6 +170,7 @@
       <button type="button" class="menu-item" role="menuitem" data-item="local-mute" onclick={() => pick(() => voiceApi.setLocalMute(userId, !muted))}>{muted ? 'Unmute for me' : 'Mute for me'}</button>
     {:else if id === 'sound-mute'}
       <button type="button" class="menu-item" role="menuitem" data-item="sound-mute" onclick={() => pick(() => setSoundMute(userId, !soundMuted))}>{soundMuted ? 'Unmute soundboard' : 'Mute soundboard'}</button>
+      <JoinSoundMuteItem {userId} {pick} />
     {:else if id === 'message'}
       <button type="button" class="menu-item" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>
     {:else if id === 'stream-volume'}

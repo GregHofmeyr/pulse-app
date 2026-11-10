@@ -86,6 +86,25 @@ describe('a message author menu (#137)', () => {
     expect(document.activeElement).toBe(document.querySelector('[role=menu] [data-item="profile"]'))
   })
 
+  it('someone with a join sound (#121): Mute join sound beside Notify me, and it toggles to Unmute', () => {
+    show('S1')
+    app.state = {
+      ...app.state,
+      sounds: { A: { id: 'A', server_id: 'S1', name: 'airhorn', emoji: null, emoji_id: null, media_hash: 'hA', volume: 100, duration_ms: 6000, added_by: null, created_at: '2026-11-10T00:00:00.000Z', plays: 0 } },
+      members: { S1: [{ user: alex, nickname: null }, { user: sam, nickname: 'Sammy', join_sound: 'A' }] },
+    }
+    flushSync()
+    rightClick(authorName())
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'join-sound-mute', 'appear-offline'])
+    expect(label('join-sound-mute')).toContain('Mute join sound')
+    pick('join-sound-mute')
+    expect(JSON.parse(localStorage.getItem('pulse.joinSounds.mutes')!)).toEqual({ U2: true })
+    rightClick(authorName())
+    expect(label('join-sound-mute')).toContain('Unmute join sound')
+    pick('join-sound-mute')
+    expect(JSON.parse(localStorage.getItem('pulse.joinSounds.mutes')!)).toEqual({})
+  })
+
   it('right-click the avatar opens it too', () => {
     show('S1')
     rightClick(avatar())

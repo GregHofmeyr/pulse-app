@@ -8,6 +8,7 @@
   import { mediaUrl } from '../lib/emoji'
   import { isNotFound, isRateLimited, previewPercents, searchSounds, soundSections, TIDY_THRESHOLD, type Section } from '../lib/soundboard'
   import { setSoundboardVolume, soundboard } from '../lib/soundboard.svelte'
+  import { joinSoundOf } from '../lib/joinSounds'
   import { mixer } from '../lib/mixer.svelte'
   import { errorText, soundboardCmd } from '../lib/tauri'
   import { loadAudioConfig } from '../lib/voiceui'
@@ -63,6 +64,11 @@
   function favourite(s: Sound) {
     soundboardCmd.setFavourite(s.id, !favourites.has(s.id)).catch((e) => (error = errorText(e)))
   }
+  // your join sound in a sound's own server (#121), whichever section the tile is in
+  const isMyJoinSound = (s: Sound) => joinSoundOf(app.state, s.server_id, app.state.me?.id ?? '') === s.id
+  function joinSound(s: Sound) {
+    soundboardCmd.setJoinSound(s.server_id, isMyJoinSound(s) ? null : s.id).catch((e) => (error = errorText(e)))
+  }
   async function remove(s: Sound) {
     asking = null
     try {
@@ -81,7 +87,7 @@
     ev.preventDefault()
     const r = root.getBoundingClientRect()
     // inside the popover so its outside-click handling covers it; clamped to the popover's edges
-    menu = { sound: s, x: Math.max(4, Math.min(ev.clientX - r.left, r.width - 164)), y: Math.max(4, Math.min(ev.clientY - r.top, r.height - 120)) }
+    menu = { sound: s, x: Math.max(4, Math.min(ev.clientX - r.left, r.width - 184)), y: Math.max(4, Math.min(ev.clientY - r.top, r.height - 156)) }
   }
   const choose = (action: (s: Sound) => void) => {
     const s = menu?.sound
@@ -186,6 +192,7 @@
     {@const m = menu}
     <div class="ctx menu-surface pop-in" role="menu" aria-label="Actions for {m.sound.name}" style:left="{m.x}px" style:top="{m.y}px">
       <button type="button" class="menu-item" role="menuitem" onclick={() => choose(favourite)}>{favourites.has(m.sound.id) ? 'Unfavourite' : 'Favourite'}</button>
+      <button type="button" class="menu-item" role="menuitem" data-item="join-sound" onclick={() => choose(joinSound)}>{isMyJoinSound(m.sound) ? 'Clear my join sound' : 'Set as my join sound'}</button>
       <button type="button" class="menu-item" role="menuitem" onclick={() => choose(onEdit)}>Edit</button>
       <button type="button" class="menu-item danger" role="menuitem" onclick={() => choose((s) => (asking = s))}>Delete</button>
     </div>
