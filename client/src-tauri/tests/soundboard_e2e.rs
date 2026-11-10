@@ -142,6 +142,29 @@ async fn sounds_end_to_end() {
         .await
         .unwrap();
 
+    // join sounds (#121): set, then clear, as the member list shows
+    let join_sound = |members: Vec<pulse_protocol::rest::Member>| {
+        members
+            .into_iter()
+            .find(|m| m.user.username == "alex")
+            .unwrap()
+            .join_sound
+    };
+    api.set_join_sound(&alex, srv.id, Some(&sound.id))
+        .await
+        .unwrap();
+    assert_eq!(
+        join_sound(api.members(&alex, srv.id).await.unwrap()),
+        Some(sound.id.clone())
+    );
+    let err = api
+        .set_join_sound(&alex, srv.id, Some("no-such-sound"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ApiError::Rejected(_)), "{err:?}");
+    api.set_join_sound(&alex, srv.id, None).await.unwrap();
+    assert_eq!(join_sound(api.members(&alex, srv.id).await.unwrap()), None);
+
     // not in a call: the server says so
     let err = api.play_sound_to_call(&alex, &sound.id).await.unwrap_err();
     assert!(matches!(err, ApiError::Rejected(_)), "{err:?}");

@@ -17,9 +17,10 @@ use pulse_protocol::rest::{
     Profile, QotyEvent, QotyVoteRequest, QuietSpin, RecoveryCodesResponse, RegisterRequest,
     RenameCategoryRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest,
     SaveLayoutRequest, SearchRequest, SearchResults, SendMessageRequest, Server, ServerLayout,
-    ServerVoiceMod, SessionResponse, SetClipViewRequest, SetMuteRequest, SetNicknameRequest,
-    SetNotifyLevelRequest, SetServerVoiceRequest, SetShowcaseRequest, SetStatusRequest, Sound,
-    SpinAgainRequest, SpinWheelRequest, StageShare, StageShareRequest, StartQotyRequest, Status,
+    ServerVoiceMod, SessionResponse, SetClipViewRequest, SetJoinSoundRequest, SetMuteRequest,
+    SetNicknameRequest, SetNotifyLevelRequest, SetServerVoiceRequest, SetShowcaseRequest,
+    SetStatusRequest, Sound, SpinAgainRequest, SpinWheelRequest, StageShare, StageShareRequest,
+    StartQotyRequest, Status,
     StreamInfo, StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest,
     TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse,
     TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, UpdateWheelRequest, User,
@@ -1803,6 +1804,23 @@ impl Api {
             self.http.put(url)
         } else {
             self.http.delete(url)
+        };
+        Self::ok_empty(req.bearer_auth(token).send().await).await
+    }
+
+    /// Your join sound in `server` (#121): a sound of its soundboard, or `None` for the normal join cue.
+    pub async fn set_join_sound(
+        &self,
+        token: &str,
+        server: ServerId,
+        sound: Option<&str>,
+    ) -> Result<(), ApiError> {
+        let url = self.url(&["servers", &server.to_string(), "join-sound"])?;
+        let req = match sound {
+            Some(id) => self.http.put(url).json(&SetJoinSoundRequest {
+                sound_id: id.to_owned(),
+            }),
+            None => self.http.delete(url),
         };
         Self::ok_empty(req.bearer_auth(token).send().await).await
     }

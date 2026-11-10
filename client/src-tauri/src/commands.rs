@@ -3947,6 +3947,22 @@ pub async fn set_sound_favourite(
     core.check(&app, api.set_sound_favourite(&token, &id, on).await)
 }
 
+/// Your join sound in a server (#121): one of its soundboard's sounds, or none (the normal join cue).
+#[tauri::command]
+pub async fn set_join_sound(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    sound_id: Option<String>,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_join_sound(&token, server_id, sound_id.as_deref())
+            .await,
+    )
+}
+
 /// A server's saved picker wheels (#158).
 #[tauri::command]
 pub async fn list_server_wheels(
