@@ -61,27 +61,33 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([t
  * Dialog behaviour for a modal's root (give it tabindex="-1"): focus moves in on open, Tab wraps
  * inside, Escape calls `onClose` (unless an inner control already took it), and focus returns to
  * what had it before when the modal goes away. Everything beside the modal's ancestor chain is
- * `inert` while it's open (mark a click-to-close backdrop `data-backdrop` to spare it); popovers
- * rendered inside the modal stay usable. A modal opened over another (e.g. an image inside a dialog)
+ * `inert` while it's open, from just after its first frame (mark a click-to-close backdrop `data-backdrop` to
+ * spare it); popovers rendered inside the modal stay usable. A modal opened over another (e.g. an image inside a dialog)
  * takes Escape and Tab until it goes.
  */
 export function modal(node: HTMLElement, onClose: () => void) {
   let cb = onClose
   const before = document.activeElement as HTMLElement | null
+  const items = () => [...node.querySelectorAll<HTMLElement>(FOCUSABLE)]
+  ;(items()[0] ?? node).focus()
+  // Inert lands just after the modal's first frame (#238): it restyles everything behind it, a whole-app style
+  // recalc that made the open frame long. Until then the focus is already inside and the backdrop takes the pointer.
   // Only what we set gets cleared: something already inert (e.g. another modal's) stays that way.
   // Spared: the modal's own `[data-backdrop]` (click to close), and the app-wide tooltip, which
   // lives on <body> and also serves the modal's own controls.
   const inerted: Element[] = []
-  for (let el: Element = node; el.parentElement && el !== document.body; el = el.parentElement) {
-    for (const sib of el.parentElement.children) {
-      if (sib === el || sib.hasAttribute('inert') || sib.hasAttribute('data-backdrop')) continue
-      if (sib instanceof HTMLScriptElement || sib.getAttribute('role') === 'tooltip') continue
-      sib.setAttribute('inert', '')
-      inerted.push(sib)
+  const makeInert = () => {
+    for (let el: Element = node; el.parentElement && el !== document.body; el = el.parentElement) {
+      for (const sib of el.parentElement.children) {
+        if (sib === el || sib.hasAttribute('inert') || sib.hasAttribute('data-backdrop')) continue
+        if (sib instanceof HTMLScriptElement || sib.getAttribute('role') === 'tooltip') continue
+        sib.setAttribute('inert', '')
+        inerted.push(sib)
+      }
     }
   }
-  const items = () => [...node.querySelectorAll<HTMLElement>(FOCUSABLE)]
-  ;(items()[0] ?? node).focus()
+  let inertTimer: ReturnType<typeof setTimeout> | undefined
+  const inertFrame = requestAnimationFrame(() => (inertTimer = setTimeout(makeInert)))
   // On window, in the bubble phase: Svelte delegates onkeydown to the mount root, so inner
   // handlers (an input's or Select's own Esc) have run, and can mark the event handled, by now.
   const key = (e: KeyboardEvent) => {
@@ -121,6 +127,8 @@ export function modal(node: HTMLElement, onClose: () => void) {
       window.removeEventListener('keydown', key)
       const i = openModals.indexOf(node)
       if (i >= 0) openModals.splice(i, 1)
+      cancelAnimationFrame(inertFrame)
+      clearTimeout(inertTimer)
       for (const el of inerted) el.removeAttribute('inert')
       // After clearing inert: an inert element can't take focus.
       if (before?.isConnected) before.focus()

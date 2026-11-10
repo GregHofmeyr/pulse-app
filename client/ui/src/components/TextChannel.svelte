@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte'
+  import { flushSync, onMount, tick, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import MessageItem from './MessageItem.svelte'
   import QuoteComposer from './QuoteComposer.svelte'
@@ -156,8 +156,57 @@
     if (nearBottom) tick().then(() => list?.scrollTo({ top: list.scrollHeight })) // gone if we unmounted meanwhile
   })
 
+  // Opening cheaply (#238): a channel opens with only its newest messages, enough to fill the list, and draws the rest
+  // of its loaded history after that first frame, a frame's worth at a time, older ones going in above the view while
+  // it stays still. So a switch shows the chat without first mounting every message in it, and no one task mounts
+  // them all later either. The first few are measured: too few to fill the list, as many more as should (once), else
+  // all of them at once, so the view starts at the bottom exactly as it ends up. A jump (or a notification's replies)
+  // draws everything first, to find its message.
+  const FIRST = 24
+  let firstCount = $state(FIRST)
+  let drawnAll = $state(untrack(() => ui.jump?.channelId === channelId || ui.openReplies?.channelId === channelId))
+  const from = $derived(drawnAll ? 0 : Math.max(0, messages.length - firstCount))
+  const shown = $derived(from ? messages.slice(from) : messages)
+  let drawTimer: ReturnType<typeof setTimeout> | undefined
+  let drawFrame = 0
+  const nextFrame = () => (drawFrame = requestAnimationFrame(() => (drawTimer = setTimeout(drawMore))))
+  /** Draws the next older ones, the view kept still (WebKitGTK doesn't anchor scrolling; #173): at the bottom the
+   *  newest stays where it is on screen, else the top one in view. Then the next after the coming frame, until all
+   *  are in. */
+  function drawMore() {
+    if (drawnAll) return
+    const drawnNow = list ? [...list.querySelectorAll<HTMLElement>('[data-message-id]')] : []
+    const top = list?.getBoundingClientRect().top ?? 0
+    const anchor = atBottom ? drawnNow.at(-1) : drawnNow.find((el) => el.getBoundingClientRect().bottom > top)
+    const y0 = anchor?.getBoundingClientRect().top ?? 0
+    const fromBottom = list ? list.scrollHeight - list.scrollTop : 0
+    firstCount += FIRST
+    if (firstCount >= messages.length) drawnAll = true
+    flushSync()
+    if (list && anchor?.isConnected) list.scrollTop += anchor.getBoundingClientRect().top - y0
+    else if (list) list.scrollTop = list.scrollHeight - fromBottom
+    if (!drawnAll) nextFrame()
+  }
+  $effect(() => {
+    if (drawnAll || !messages.length) return
+    const partial = from > 0
+    untrack(() => {
+      if (!partial || !list) return void (drawnAll = true) // all there is
+      if (drawFrame) return // drawing the rest
+      // measured with only the newest in the list (the layout this frame needs anyway)
+      const short = list.scrollHeight <= list.clientHeight
+      if (short && firstCount === FIRST) return void (firstCount = Math.ceil((firstCount * (list.clientHeight + 200)) / Math.max(1, list.scrollHeight)))
+      if (short) return void (drawnAll = true)
+      nextFrame()
+    })
+  })
+  $effect(() => () => {
+    cancelAnimationFrame(drawFrame)
+    clearTimeout(drawTimer)
+  })
+
   async function maybeLoadOlder() {
-    if (loadingOlder || reachedStart || list.scrollTop > 60 || !messages.length) return
+    if (loadingOlder || reachedStart || !drawnAll || list.scrollTop > 60 || !messages.length) return
     loadingOlder = true
     try {
       const oldest = messages[0].id
@@ -354,6 +403,7 @@
     if (!messages.some((m) => m.id === j.messageId)) return // its window is still loading
     ui.jump = null
     jumpNotice = ''
+    drawnAll = true // its message may be among the rest; the flash scrolls to it
     void tick().then(() => flash(j.messageId))
   })
   $effect(() => () => {
@@ -614,13 +664,14 @@
   {#if isPrivate}<CallBand {channelId} {onVoiceSettings} />{/if}
   <!-- tabindex -1: a place to put the focus back when nothing better is left (not a tab stop) -->
   <div class="list" tabindex="-1" bind:this={list} onscroll={onScroll}>
-    {#if reachedStart}<div class="start">
+    {#if reachedStart && !from}<div class="start">
       {#if channel?.kind === 'dm'}This is the start of your conversation with {title}.
       {:else if channel?.kind === 'group'}This is the start of {title}.
       {:else if isVoice}This is the start of {title}'s chat.
       {:else}This is the start of #{title}.{/if}
     </div>{/if}
-    {#each messages as m, i (m.id)}
+    {#each shown as m, j (m.id)}
+      {@const i = from + j}
       {#if i === newIndex}<div class="newline" role="separator" aria-label="New messages">NEW</div>{/if}
       {#if m.qoty_card && serverId}
         <QotyCard message={m} {serverId} quote={m.qoty_card.message_id ? (byId.get(m.qoty_card.message_id) ?? null) : null} />

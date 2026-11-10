@@ -149,6 +149,7 @@ describe('clickOutside', () => {
 })
 
 describe('modal', () => {
+  const afterFrame = () => new Promise<void>((r) => requestAnimationFrame(() => setTimeout(() => setTimeout(r))))
   const setup = () => {
     const opener = document.createElement('button')
     const dialog = document.createElement('div')
@@ -201,7 +202,7 @@ describe('modal', () => {
     expect(document.activeElement).toBe(dialog.querySelector('#a'))
   })
 
-  it('makes everything behind it inert while open, and puts it back on destroy', () => {
+  it('makes everything behind it inert while open, and puts it back on destroy', async () => {
     document.body.innerHTML = ''
     document.body.innerHTML =
       '<div id="app"><nav><button id="opener">o</button></nav><main><p id="side">s</p>' +
@@ -211,6 +212,10 @@ describe('modal', () => {
     const inert = (el: Element) => el.hasAttribute('inert')
     $('opener').focus()
     const a = modal($('dlg'), () => {})
+    // the focus moves in at once; inert lands after the modal's first frame (#238)
+    expect(document.activeElement).toBe($('in'))
+    expect(inert($('side'))).toBe(false)
+    await afterFrame()
     for (const id of ['toast', 'side']) expect(inert($(id)), id).toBe(true)
     expect(inert(document.querySelector('nav')!)).toBe(true)
     // The dialog, its ancestors and anything nested inside it stay usable.
@@ -221,6 +226,14 @@ describe('modal', () => {
     expect(inert(document.querySelector('nav')!)).toBe(false)
     expect(inert($('already'))).toBe(true) // was inert before: left alone
     expect(document.activeElement).toBe($('opener'))
+    document.body.innerHTML = ''
+  })
+
+  it('closed before its first frame, it never makes anything inert', async () => {
+    document.body.innerHTML = '<p id="side">s</p><div id="dlg" tabindex="-1"><button>in</button></div>'
+    modal(document.getElementById('dlg')!, () => {}).destroy()
+    await afterFrame()
+    expect(document.getElementById('side')!.hasAttribute('inert')).toBe(false)
     document.body.innerHTML = ''
   })
 

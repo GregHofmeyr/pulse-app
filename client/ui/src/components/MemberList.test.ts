@@ -14,6 +14,7 @@ import { emptyState } from '../lib/state'
 import { appearance } from '../lib/appearance.svelte'
 import { motion } from '../lib/animate.svelte'
 import { closeCard, profileUi } from '../lib/profileCard.svelte'
+import { reactiveProps } from '../lib/testProps.svelte'
 
 const A = 'a'.repeat(64)
 const S = 'b'.repeat(64)
@@ -408,5 +409,32 @@ describe('MemberList row menu (#113)', () => {
       await new Promise((r) => setTimeout(r, 0))
       expect(ui.notice).toContain("they aren't in this server's voice")
     })
+  })
+})
+
+// #238: a big server's list draws its first rows with the switch, the rest just after that first frame
+describe('MemberList: drawn incrementally', () => {
+  const afterFrame = () => new Promise<void>((r) => requestAnimationFrame(() => setTimeout(() => setTimeout(r))))
+  const many = (server: string, n: number) => Array.from({ length: n }, (_, i) => ({ user: { ...alex, id: `${server}-U${i}`, username: `kim${i}`, display_name: `kim ${i}` }, nickname: null }))
+  const rows = () => document.querySelectorAll('.members .row').length
+  const later = () => document.querySelector<HTMLElement>('.members .later')?.style.height ?? null
+
+  it('the first 30 rows, the rest held at their height, then all of them; again on a switch', async () => {
+    unmount(cmp!)
+    app.state = { ...emptyState(), me: alex, members: { S1: many('S1', 50), S2: many('S2', 40) } } as never
+    const props = reactiveProps({ serverId: 'S1', onMessage })
+    cmp = mount(MemberList, { target: document.body, props })
+    flushSync()
+    expect(rows()).toBe(30)
+    expect(later()).toBe(`${20 * 44}px`)
+    expect(document.querySelector('.label')!.textContent).toContain('50') // the count is the whole list's
+    await afterFrame()
+    expect(rows()).toBe(50)
+    expect(later()).toBeNull()
+    props.serverId = 'S2'
+    flushSync()
+    expect(rows()).toBe(30)
+    await afterFrame()
+    expect(rows()).toBe(40)
   })
 })

@@ -3,7 +3,7 @@
 </script>
 
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import { modal } from '../lib/actions'
   import VoiceSettings from './VoiceSettings.svelte'
@@ -22,8 +22,8 @@
     section?: Section
   } = $props()
 
-  let current = $state<Section>('voice')
-  onMount(() => (current = section))
+  // the section asked for from the start: not Voice first, mounted and thrown away a moment later (#238)
+  let current = $state<Section>(untrack(() => section))
   const sections: { key: Section; label: string }[] = [
     { key: 'profile', label: 'Profile' },
     { key: 'appearance', label: 'Appearance' },

@@ -17,6 +17,30 @@
     const { online, offline } = byPresence(app.state, members, (m) => m.user.id, clock.nowIso)
     return [{ key: 'online', label: 'Online', list: online }, { key: 'offline', label: 'Offline', list: offline }].filter((g) => g.list.length)
   })
+  // Opening cheaply (#238): a server's list draws its first rows with the switch and the rest (a big server's hundreds)
+  // just after that first frame, holding their height (rows are 44px) until then.
+  const FIRST_ROWS = 30
+  /** The server whose list is drawn whole. */
+  let drawnFor = $state<string | null>(null)
+  const rows = $derived(drawnFor === serverId ? Infinity : FIRST_ROWS)
+  $effect(() => {
+    const id = serverId
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const frame = requestAnimationFrame(() => (timer = setTimeout(() => (drawnFor = id))))
+    return () => {
+      cancelAnimationFrame(frame)
+      clearTimeout(timer)
+    }
+  })
+  /** How many of each section's rows are drawn: the budget goes to the sections in order. */
+  const drawnRows = $derived.by(() => {
+    let left = rows
+    return sections.map((g) => {
+      const n = Math.min(g.list.length, left)
+      left -= n
+      return n
+    })
+  })
   // the row under the pointer: its avatar animates
   let hovered = $state<string | null>(null)
 
@@ -37,9 +61,9 @@
 </script>
 
 <aside class="members" aria-label="Members">
-  {#each sections as g (g.key)}
+  {#each sections as g, gi (g.key)}
   <div class="label">{g.label} — {g.list.length}</div>
-  {#each g.list as m (m.user.id)}
+  {#each drawnRows[gi] < g.list.length ? g.list.slice(0, drawnRows[gi]) : g.list as m (m.user.id)}
     {@const name = displayName(app.state, serverId, m.user.id)}
     {@const base = baseName(m.user)}
     <!-- the context menu and a click on the row (their card, #182) are pointer shortcuts; the keyboard route is the
@@ -55,6 +79,7 @@
       {/if}
     </div>
   {/each}
+  {#if drawnRows[gi] < g.list.length}<div class="later" style:height="{(g.list.length - drawnRows[gi]) * 44}px"></div>{/if}
   {/each}
 </aside>
 {#if menu}
