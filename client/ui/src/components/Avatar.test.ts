@@ -10,7 +10,11 @@ import Avatar from './Avatar.svelte'
 import { app } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
 import { profileUi, closeCard } from '../lib/profileCard.svelte'
-import { motion } from '../lib/animate.svelte'
+import { motion, watchMotion } from '../lib/animate.svelte'
+
+// The first animated picture starts the app-wide motion watch, which reads reduced motion from matchMedia once: start
+// it here, so it can't overwrite what a test set (whichever test happens to mount the first one).
+watchMotion()
 
 const A = 'a'.repeat(64)
 const S = 'b'.repeat(64)
