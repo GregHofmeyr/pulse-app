@@ -1,6 +1,21 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { menuItems, menuPoint, type MenuCtx } from './participantMenu'
+import { memberVoiceItems, menuItems, menuPoint, type MenuCtx } from './participantMenu'
+
+describe('memberVoiceItems (#144)', () => {
+  const c = { self: false, server: true, inVoice: false, muted: false, deafened: false }
+  it('out of voice, nothing held: none', () => expect(memberVoiceItems(c)).toEqual([]))
+  it('out of voice, held: just the undo for what is held', () => {
+    expect(memberVoiceItems({ ...c, muted: true })).toEqual(['server-mute'])
+    expect(memberVoiceItems({ ...c, deafened: true })).toEqual(['server-deafen'])
+    expect(memberVoiceItems({ ...c, muted: true, deafened: true })).toEqual(['server-mute', 'server-deafen'])
+  })
+  it("in this server's voice: both, no disconnect", () => expect(memberVoiceItems({ ...c, inVoice: true })).toEqual(['server-mute', 'server-deafen']))
+  it('never for yourself or outside a server', () => {
+    expect(memberVoiceItems({ ...c, self: true, inVoice: true, muted: true })).toEqual([])
+    expect(memberVoiceItems({ ...c, server: false, inVoice: true, muted: true })).toEqual([])
+  })
+})
 
 const base: MenuCtx = { self: false, live: false, watching: false, full: false, inCall: true, canGoLive: false, streamingSelf: false }
 const ctx = (over: Partial<MenuCtx>): MenuCtx => ({ ...base, ...over })

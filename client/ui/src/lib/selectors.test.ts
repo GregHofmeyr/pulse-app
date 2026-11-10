@@ -1,9 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState } from './state'
-import { roleColorFor, userOf, callRoster, channelsFor, displayName, groupedWith, groupedPending, isLive, isMember, liveIn, mentionablesFor, nameOfIn, pillNamesFor, serverPeople, typingNames, voiceOccupants } from './selectors'
+import { roleColorFor, userOf, callRoster, channelsFor, displayName, groupedWith, groupedPending, isLive, isMember, liveIn, mentionablesFor, nameOfIn, pillNamesFor, serverPeople, typingNames, voiceOccupants, inServerVoice } from './selectors'
 import type { Message } from './protocol/Message'
 import type { Ready } from './protocol/Ready'
 import type { StreamInfo } from './protocol/StreamInfo'
+
+describe('inServerVoice (#144)', () => {
+  const flags = { muted: false, deafened: false }
+  const s = {
+    ...emptyState(),
+    channels: {
+      V1: { id: 'V1', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 0 },
+      V2: { id: 'V2', server_id: 'S2', kind: 'voice', name: 'Lounge', position: 0 },
+    },
+    voice: { V1: [{ user_id: 'U2', flags }], V2: [{ user_id: 'U3', flags }] },
+  } as never
+  it("someone in one of this server's voice channels", () => expect(inServerVoice(s, 'S1', 'U2')).toBe(true))
+  it("someone in another server's voice, or none", () => {
+    expect(inServerVoice(s, 'S1', 'U3')).toBe(false)
+    expect(inServerVoice(s, 'S1', 'U4')).toBe(false)
+  })
+})
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }

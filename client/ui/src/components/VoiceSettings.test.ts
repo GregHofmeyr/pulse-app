@@ -89,6 +89,24 @@ describe('VoiceSettings echo cancellation (#76)', () => {
     unmount(c)
     document.body.innerHTML = ''
   })
+
+  it('under Auto, what Auto decided for the output, from the core (#172)', () => {
+    voice.echo = { mode: 'auto', running: false, output: 'headphones' }
+    const c = mount(VoiceSettings, { target: document.body })
+    flushSync()
+    const line = () => document.querySelector('[data-echo-decision]')?.textContent?.trim() ?? null
+    expect(line()).toBe('Off for now: your output is headphones or a headset')
+    voice.echo = { mode: 'auto', running: true, output: 'unknown' }
+    flushSync()
+    expect(line()).toBe("On: your output doesn't say it's headphones")
+    const radios = () => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Echo cancellation"] [role=radio]')]
+    radios()[1].click()
+    flushSync()
+    expect(line(), 'On chosen: nothing to explain').toBeNull()
+    unmount(c)
+    document.body.innerHTML = ''
+    voice.echo = null
+  })
 })
 
 describe('VoiceSettings helper text (#163)', () => {

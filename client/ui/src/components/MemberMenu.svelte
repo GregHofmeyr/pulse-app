@@ -1,14 +1,17 @@
 <script lang="ts">
   // A person's menu (#113, #137): from a member-list row, a message author, or a right-click on their profile card
   // (where the server may be none and View profile is left out: you're on it), or a message author in a DM or group
-  // (#189: no server, so no server nickname). The profile, a message, and the nickname items, Appear offline to them
-  // (#45), and in a DM muting it (the DM list's flyout, #190). Keyboard and focus work as in the voice participant menu.
+  // (#189: no server, so no server nickname). The profile, a message, server mute / deafen (#144: as the voice
+  // participant menu's), and the nickname items, Appear offline to them (#45), and in a DM muting it (the DM list's
+  // flyout, #190). Keyboard and focus work as in the voice participant menu.
   import { onMount, untrack } from 'svelte'
   import { app, clock, ui } from '../lib/store.svelte'
   import { placeMenu } from '../lib/menuPlace'
   import { api, errorText } from '../lib/tauri'
   import { muteUntil } from '../lib/muteDurations'
-  import { displayName } from '../lib/selectors'
+  import { displayName, inServerVoice, serverVoiceOf } from '../lib/selectors'
+  import { memberVoiceItems } from '../lib/participantMenu'
+  import ServerVoiceItem from './ServerVoiceItem.svelte'
   import { clickOutside } from '../lib/actions'
   import { openCard } from '../lib/profileCard.svelte'
   import NicknameItems from './NicknameItems.svelte'
@@ -38,7 +41,18 @@
   const muted = $derived(
     !!muteChannelId && app.state.mutes.some((m) => m.target_kind === 'channel' && m.target_id === muteChannelId && (m.until === null || m.until > clock.nowIso)),
   )
-  const reportMute = (f: () => Promise<unknown>) => () => f().catch((e: unknown) => (ui.notice = errorText(e)))
+  // Server mute / deafen (#144): the undo for one they still have, even out of voice; both while in this server's voice
+  const voiceIds = $derived.by(() => {
+    const held = serverVoiceOf(app.state, serverId, userId)
+    return memberVoiceItems({
+      self,
+      server: !!serverId,
+      inVoice: !!serverId && inServerVoice(app.state, serverId, userId),
+      muted: !!held.serverMutedBy,
+      deafened: !!held.serverDeafenedBy,
+    })
+  })
+  const reportMute =(f: () => Promise<unknown>) => () => f().catch((e: unknown) => (ui.notice = errorText(e)))
   // the mute flyout (the channel menu's, #131)
   let flyout = $state<ReturnType<typeof MuteFlyout>>()
   const closeSub = (refocus: boolean | 'if-inside') => flyout?.close(refocus)
@@ -117,6 +131,9 @@
   {/if}
   {#if onMessage && !self}
     <button type="button" class="menu-item" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>
+  {/if}
+  {#if serverId}
+    {#each voiceIds as id (id)}<ServerVoiceItem {id} {serverId} {userId} {pick} />{/each}
   {/if}
   <NicknameItems {serverId} {userId} {pick} />
   <LiveNotifyItem {userId} {pick} />

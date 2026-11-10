@@ -337,9 +337,10 @@ struct PublishWatch<R: CloseRoom> {
 /// it) says nothing either. A failed publish ends the session: `teardown` stops its audio and the
 /// room is closed. A rejoin's goes back to the rejoin loop (still "reconnecting": right after a
 /// drop is when a publish most likely times out), at most `PUBLISH_RETRIES` times in a row;
-/// otherwise the call ends and the UI is told why.
+/// otherwise the call ends and the UI is told why. `Ok(false)`: not published, and not a failure
+/// (server muted, #140): the call is up, the mic not live (#147).
 async fn report_publish<R: CloseRoom>(
-    published: Result<(), String>,
+    published: Result<bool, String>,
     connected: tokio::sync::oneshot::Receiver<()>,
     w: &PublishWatch<R>,
     teardown: impl FnOnce(),
@@ -353,7 +354,7 @@ async fn report_publish<R: CloseRoom>(
         controls: *w.controls.lock().unwrap(),
     };
     let e = match published {
-        Ok(()) => {
+        Ok(live) => {
             // A leave clearing `alive` just after this check lets these two land right before its
             // "disconnected" (the leave's close comes first): harmless, the UI ends on that.
             if w.alive.load(Ordering::SeqCst) {
@@ -363,10 +364,7 @@ async fn report_publish<R: CloseRoom>(
                     stage: JoinStage::Connected,
                     attempt: None,
                 });
-                (w.events)(VoiceEvent::Mic {
-                    live: true,
-                    error: None,
-                });
+                (w.events)(VoiceEvent::Mic { live, error: None });
             }
             return;
         }
@@ -807,6 +805,13 @@ pub enum VoiceEvent {
         active: denoise::NsLevel,
         note: Option<String>,
     },
+    /// What echo cancellation is doing for the output now (#172): the settings page says what
+    /// Auto decided and why.
+    Echo {
+        mode: echo::EchoMode,
+        running: bool,
+        output: echo::Output,
+    },
     DeviceStalled,
     DeviceRecovered,
     /// Our unmuted mic is delivering nothing but digital silence (or is again delivering sound).
@@ -827,6 +832,15 @@ pub enum VoiceEvent {
 }
 
 pub type EventSink = Arc<dyn Fn(VoiceEvent) + Send + Sync>;
+
+/// Echo cancellation's decision, if it changed (#172).
+pub(crate) fn echo_update(shared: &Shared) -> Option<VoiceEvent> {
+    shared.take_echo_status_change().map(|s| VoiceEvent::Echo {
+        mode: s.mode,
+        running: s.running,
+        output: s.output,
+    })
+}
 
 /// This tick's meter update, if a meter is on screen (each one is a JSON eval in the webview: 10 a
 /// second for a whole call otherwise). The levels are taken either way, so a meter that opens
@@ -1444,28 +1458,31 @@ impl VoiceManager {
                 let mut out = mic_out.lock().await;
                 // Server muted (#140): LiveKit refuses the publish. Not a failed call: the mic
                 // goes out once LiveKit gives publishing back (`follow_permission`).
+                // Ok(Ok(live)): whether the mic is out now
                 let published = if *out {
                     // a permission change got the lock first and published it
-                    Ok(Ok(()))
+                    Ok(Ok(true))
                 } else if !publish_allowed(local.permission().as_ref()) {
                     tracing::info!("voice: server muted; the mic is published once allowed");
-                    Ok(Ok(()))
+                    Ok(Ok(false))
                 } else {
                     let r = tokio::time::timeout(
                         PUBLISH_TIMEOUT,
                         local.publish_track(LocalTrack::Audio(track), mic_publish_options()),
                     )
                     .await
-                    .map(|r| r.map(|_| ()));
-                    *out = matches!(r, Ok(Ok(())));
+                    .map(|r| r.map(|_| true));
+                    *out = matches!(r, Ok(Ok(true)));
                     r
                 };
                 drop(out);
                 let published = match published {
-                    Ok(Ok(())) => {
-                        let (publish_ms, since_join_ms) = (ms(t), ms(started));
-                        tracing::info!(publish_ms, since_join_ms, "voice: mic published");
-                        Ok(())
+                    Ok(Ok(live)) => {
+                        if live {
+                            let (publish_ms, since_join_ms) = (ms(t), ms(started));
+                            tracing::info!(publish_ms, since_join_ms, "voice: mic published");
+                        }
+                        Ok(live)
                     }
                     Ok(Err(e)) => Err(e.to_string()),
                     Err(_) => Err("timed out".to_string()),
@@ -1778,6 +1795,9 @@ impl VoiceManager {
                             active: st.active,
                             note: st.note,
                         });
+                    }
+                    if let Some(e) = echo_update(&shared) {
+                        events(e);
                     }
                     if let Some(silent) = shared.mic_silence.lock().unwrap().take_change() {
                         events(VoiceEvent::MicSilent { silent });
@@ -2993,7 +3013,7 @@ mod tests {
 
     /// `rejoin`: Some(epoch) for a rejoin's session. `retries`: `publish_retries` before.
     async fn reported_as(
-        published: Result<(), String>,
+        published: Result<bool, String>,
         connected: bool,
         alive: bool,
         rejoin: Option<u64>,
@@ -3040,7 +3060,7 @@ mod tests {
 
     /// A user's own join.
     async fn reported(
-        published: Result<(), String>,
+        published: Result<bool, String>,
         connected: bool,
         alive: bool,
     ) -> (Vec<VoiceEvent>, bool, bool) {
@@ -3050,7 +3070,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_published_mic_is_reported_live() {
-        let (seen, closed, torn_down) = reported(Ok(()), true, true).await;
+        let (seen, closed, torn_down) = reported(Ok(true), true, true).await;
         assert!(
             matches!(
                 &seen[..],
@@ -3070,10 +3090,33 @@ mod tests {
         assert!(!closed && !torn_down);
     }
 
+    /// A join while server muted (#147): connected, but the mic isn't out, and it says so.
+    #[tokio::test]
+    async fn a_join_while_server_muted_reports_the_mic_not_live() {
+        let (seen, closed, torn_down) = reported(Ok(false), true, true).await;
+        assert!(
+            matches!(
+                &seen[..],
+                [
+                    VoiceEvent::Stage {
+                        stage: JoinStage::Connected,
+                        attempt: None
+                    },
+                    VoiceEvent::Mic {
+                        live: false,
+                        error: None
+                    }
+                ]
+            ),
+            "{seen:?}"
+        );
+        assert!(!closed && !torn_down, "not a failed publish");
+    }
+
     /// A mic that made it in ends a streak of failed rejoin publishes.
     #[tokio::test]
     async fn a_published_mic_resets_the_publish_retries() {
-        let r = reported_as(Ok(()), true, true, Some(3), 1).await;
+        let r = reported_as(Ok(true), true, true, Some(3), 1).await;
         assert_eq!(r.retries, 0);
         assert!(r.handed_back.is_empty());
     }
@@ -3082,7 +3125,7 @@ mod tests {
     /// replaced it: that one's streak of failed publishes stands.
     #[tokio::test]
     async fn a_dead_sessions_late_publish_leaves_the_retries_alone() {
-        let r = reported_as(Ok(()), true, false, Some(3), 2).await;
+        let r = reported_as(Ok(true), true, false, Some(3), 2).await;
         assert_eq!(r.retries, 2);
         assert!(r.events.is_empty(), "{:?}", r.events);
     }
@@ -3168,7 +3211,7 @@ mod tests {
         let (seen, closed, torn_down) = reported(Err("closed".into()), true, false).await;
         assert!(seen.is_empty(), "{seen:?}");
         assert!(!closed && !torn_down);
-        let (seen, ..) = reported(Ok(()), true, false).await;
+        let (seen, ..) = reported(Ok(true), true, false).await;
         assert!(seen.is_empty(), "{seen:?}");
         let r = reported_as(Err("closed".into()), true, false, Some(7), 0).await;
         assert!(r.events.is_empty() && r.handed_back.is_empty());
@@ -3178,11 +3221,24 @@ mod tests {
     /// publish reports nothing, so no event can land after the join's own "disconnected".
     #[tokio::test]
     async fn a_publish_for_a_join_that_never_connected_says_nothing() {
-        for published in [Ok(()), Err("closed".to_string())] {
+        for published in [Ok(true), Ok(false), Err("closed".to_string())] {
             let (seen, _, torn_down) = reported(published, false, true).await;
             assert!(seen.is_empty(), "{seen:?}");
             assert!(!torn_down);
         }
+    }
+
+    #[test]
+    fn echo_event_serialises_for_the_ui() {
+        let e = VoiceEvent::Echo {
+            mode: echo::EchoMode::Auto,
+            running: false,
+            output: echo::Output::Headphones,
+        };
+        assert_eq!(
+            serde_json::to_value(&e).unwrap(),
+            serde_json::json!({"kind":"echo","mode":"auto","running":false,"output":"headphones"})
+        );
     }
 
     #[test]

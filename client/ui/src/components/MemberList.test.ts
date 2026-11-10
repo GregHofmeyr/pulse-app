@@ -9,7 +9,7 @@ vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
 vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 
 import MemberList from './MemberList.svelte'
-import { app } from '../lib/store.svelte'
+import { app, ui } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { appearance } from '../lib/appearance.svelte'
 import { motion } from '../lib/animate.svelte'
@@ -341,5 +341,72 @@ describe('MemberList row menu (#113)', () => {
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     flushSync()
     expect(menu()).toBeNull()
+  })
+
+  describe('server mute and deafen (#144)', () => {
+    const held = (muted_by: string | null, deafened_by: string | null, user = 'U2') => {
+      app.state = { ...app.state, serverVoice: { S1: { [user]: { server_id: 'S1', user_id: user, muted_by, deafened_by } } } }
+      flushSync()
+    }
+    const tip = (id: string) => document.querySelector(`[role=menu] [data-item="${id}"]`)!.getAttribute('data-tip')
+    const inLounge = () => {
+      app.state = {
+        ...app.state,
+        channels: { V1: { id: 'V1', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 0 } },
+        voice: { V1: [{ user_id: 'U2', flags: { muted: false, deafened: false } }] },
+      } as never
+      flushSync()
+    }
+
+    it('someone out of voice with nothing held: no server voice items', () => {
+      rightClick(row(1))
+      expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'appear-offline'])
+    })
+
+    it('server muted while out of voice: Server unmute, saying who did it, as in the voice menu', () => {
+      held('U1', null)
+      rightClick(row(1))
+      expect(ids()).toEqual(['profile', 'message', 'server-mute', 'nick', 'private-nick', 'live-notify', 'appear-offline'])
+      expect(label('server-mute')).toBe('Server unmute')
+      expect(tip('server-mute')).toBe('Server muted by alex')
+      pickItem('server-mute')
+      expect(invoke).toHaveBeenCalledWith('server_voice', { serverId: 'S1', userId: 'U2', mute: false, deafen: null })
+      expect(menu()).toBeNull()
+    })
+
+    it('server deafened while out of voice: Server undeafen', () => {
+      held(null, 'U1')
+      rightClick(row(1))
+      expect(ids()).toEqual(['profile', 'message', 'server-deafen', 'nick', 'private-nick', 'live-notify', 'appear-offline'])
+      expect(label('server-deafen')).toBe('Server undeafen')
+      expect(tip('server-deafen')).toBe('Server deafened by alex')
+      pickItem('server-deafen')
+      expect(invoke).toHaveBeenCalledWith('server_voice', { serverId: 'S1', userId: 'U2', mute: null, deafen: false })
+    })
+
+    it("in this server's voice: Server mute and Server deafen, as in the voice menu (Disconnect stays there)", () => {
+      inLounge()
+      rightClick(row(1))
+      expect(ids()).toEqual(['profile', 'message', 'server-mute', 'server-deafen', 'nick', 'private-nick', 'live-notify', 'appear-offline'])
+      expect(label('server-mute')).toBe('Server mute')
+      expect(tip('server-mute')).toBeNull()
+    })
+
+    it('never on your own row, even held (someone else has to undo it)', () => {
+      held('U2', 'U2', 'U1')
+      rightClick(row(0))
+      expect(ids()).toEqual(['profile', 'nick'])
+    })
+
+    it('a refusal is a toast, not the call box line (#147)', async () => {
+      invoke.mockImplementation(async (cmd: unknown) => {
+        if (cmd === 'server_voice') throw "they aren't in this server's voice"
+      })
+      held('U1', null)
+      rightClick(row(1))
+      pickItem('server-mute')
+      await new Promise((r) => setTimeout(r, 0))
+      expect(ui.notice).toContain("they aren't in this server's voice")
+    })
   })
 })

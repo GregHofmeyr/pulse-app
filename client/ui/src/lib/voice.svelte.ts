@@ -7,7 +7,7 @@ import { displayName, type SelfVoice } from './selectors'
 import { app, onAppEvent } from './store.svelte'
 import { api } from './tauri'
 import { pushCallMixQuietly } from './mixer.svelte'
-import { loadAudioConfig, loadLocalMutes, loadVolumes, peerCallSound, playSound, saveLocalMutes, saveVolumes, transitionSounds, type AudioConfig, type Connection, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
+import { loadAudioConfig, loadLocalMutes, loadVolumes, peerCallSound, playSound, saveLocalMutes, saveVolumes, serverVoiceSound, transitionSounds, type AudioConfig, type Connection, type EchoReport, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
 import { isJoining, reduceStage, type StageState } from './voicestage'
 import { holdOwnCue, ownJoin, peerJoin } from './joinSounds'
 import { joinSounds, playJoin } from './joinSounds.svelte'
@@ -23,6 +23,8 @@ export const voice = $state({
   gateOpen: false,
   /** Suppression actually running (Strong can be loading or have fallen back) and why. */
   ns: { active: null as NsLevel | null, note: null as string | null },
+  /** What echo cancellation is doing for the output last opened, and why (#172); null until the core says. */
+  echo: null as EchoReport | null,
   stalled: false,
   /** Unmuted, yet the mic delivers only digital silence (privacy switch, hardware mute, dead mic). */
   micSilent: false,
@@ -92,9 +94,29 @@ $effect.root(() => {
   })
 })
 
-/** Disconnected by someone in the server (#140): keep who, for the notice. */
+/** How long after "X disconnected you" a call still up in that channel means the removal didn't happen (LiveKit
+ *  down, #147): well past the server's LiveKit budget (2 s) and the drop reaching the core. */
+export const DISCONNECT_SETTLE_MS = 15_000
+
+/** Disconnected by someone in the server (#140): keep who, for the notice. If the call carries on anyway (the
+ *  removal failed), the notice goes, or it would greet them the next time they leave by themselves (#147). */
 function noteDisconnect(e: AppEvent) {
-  if (e.t === 'VoiceDisconnected' && e.d.user_id === app.state.me?.id) voice.disconnectedBy = { by: e.d.by, channelId: e.d.channel_id }
+  if (e.t !== 'VoiceDisconnected' || e.d.user_id !== app.state.me?.id) return
+  voice.disconnectedBy = { by: e.d.by, channelId: e.d.channel_id }
+  // the store's own (proxied) object: a later disconnect replaces it, and this timer then leaves that one alone
+  const note = voice.disconnectedBy
+  setTimeout(() => {
+    if (voice.disconnectedBy === note && voice.channelId === note.channelId) voice.disconnectedBy = null
+  }, DISCONNECT_SETTLE_MS)
+}
+
+/** Someone server muting or deafening you (or undoing it) mid-call: the same cue as your own toggle (#147). Hooks
+ *  run once the event is applied, while `voice.controls` still holds what the core was last told. */
+function cueServerVoice(e: AppEvent) {
+  if (e.t !== 'ServerVoiceChanged' || e.d.state.user_id !== app.state.me?.id || voice.connection !== 'connected') return
+  if (!voice.channelId || app.state.channels[voice.channelId]?.server_id !== e.d.state.server_id) return
+  const snd = serverVoiceSound(voice.controls, { muted: !!e.d.state.muted_by, deafened: !!e.d.state.deafened_by })
+  if (snd) playSound(snd)
 }
 
 /** The newest join; an older one's result is stale. */
@@ -116,6 +138,7 @@ function leaveIfRemoved(e: AppEvent) {
 export async function startVoiceListening() {
   const offApp = onAppEvent(leaveIfRemoved)
   const offDisconnect = onAppEvent(noteDisconnect)
+  const offServerCue = onAppEvent(cueServerVoice)
   // your own join sounds once, when both your connection and the server's announcement of it are in (#121)
   const own = ownJoin((a, channel) => playJoin(a, app.state.me?.id ?? '', () => voice.channelId === channel))
   // someone else joining or leaving your call (#219): a join may carry their join sound (#121)
@@ -171,6 +194,9 @@ export async function startVoiceListening() {
       case 'noise_suppression':
         voice.ns = { active: e.active, note: e.note }
         break
+      case 'echo':
+        voice.echo = { mode: e.mode, running: e.running, output: e.output }
+        break
       case 'device_stalled':
         voice.stalled = true
         break
@@ -200,6 +226,7 @@ export async function startVoiceListening() {
   return () => {
     offApp()
     offDisconnect()
+    offServerCue()
     offPeers()
     own.reset()
     offVoice()
@@ -263,6 +290,8 @@ export const voiceApi = {
     // your row goes at once, not when the server's list catches up
     voice.leaving = voice.channelId ?? voice.joining ?? voice.leaving
     voice.joining = null
+    // leaving by yourself is never "X disconnected you" (a disconnect that didn't take, #147)
+    voice.disconnectedBy = null
     ++joinSeq
     return invoke('leave_voice')
   },

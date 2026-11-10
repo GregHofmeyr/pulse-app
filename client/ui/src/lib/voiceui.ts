@@ -108,6 +108,8 @@ export type VoiceEvent =
   | { kind: 'quality'; user_id: string; quality: string }
   | { kind: 'levels'; mic: number; speaker: number; gate_open: boolean }
   | { kind: 'noise_suppression'; active: NsLevel; note: string | null }
+  /** What echo cancellation is doing for the output now (#172). */
+  | ({ kind: 'echo' } & EchoReport)
   | { kind: 'device_stalled' }
   | { kind: 'device_recovered' }
   | { kind: 'mic_silent'; silent: boolean }
@@ -131,6 +133,26 @@ export function soundFor(prev: Flags, next: Flags): SoundName | null {
   if (prev.deafened !== next.deafened) return next.deafened ? 'deafen' : 'undeafen'
   if (prev.muted !== next.muted) return next.muted ? 'mute' : 'unmute'
   return null
+}
+
+/** The cue for a server mute / deafen of you (or its undo) landing mid-call (#147): the same sounds as your own
+ *  toggles, judged on what you send and hear (yours or the server's), so a change that alters neither plays nothing. */
+export function serverVoiceSound(c: Flags, next: { muted: boolean; deafened: boolean }): SoundName | null {
+  // what you send and hear, given the server's hold: deafen implies mute
+  const effective = (serverMuted: boolean, serverDeafened: boolean): Flags => {
+    const deafened = c.deafened || serverDeafened
+    return { deafened, muted: deafened || c.muted || serverMuted }
+  }
+  return soundFor(effective(!!c.server_muted, !!c.server_deafened), effective(next.muted, next.deafened))
+}
+
+export type EchoReport = { mode: EchoMode; running: boolean; output: 'headphones' | 'other' | 'unknown' }
+
+/** The line under echo cancellation's Auto (#172): what Auto decided for the output open now, from the core. */
+export function echoDecision(e: EchoReport | null, chosen: EchoMode): string | null {
+  if (chosen !== 'auto' || !e || e.mode !== 'auto') return null
+  if (!e.running) return 'Off for now: your output is headphones or a headset'
+  return e.output === 'other' ? "On: your output isn't headphones or a headset" : "On: your output doesn't say it's headphones"
 }
 
 type VoiceSnap = { channelId: string | null; connection: string; controls: Flags }

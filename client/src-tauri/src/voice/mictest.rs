@@ -106,6 +106,9 @@ impl MicTest {
                         note: st.note,
                     });
                 }
+                if let Some(e) = super::echo_update(&shared) {
+                    events(e);
+                }
             }
         });
         *self.running.lock().unwrap() = Some((io, vec![levels]));

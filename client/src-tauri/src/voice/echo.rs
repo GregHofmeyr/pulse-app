@@ -19,7 +19,8 @@ pub enum EchoMode {
 }
 
 /// What the output device is, as far as the system says.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Output {
     /// Headphones or a headset: nothing it plays reaches the mic.
     Headphones,

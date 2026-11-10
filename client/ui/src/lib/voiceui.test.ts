@@ -37,7 +37,36 @@ describe('voice ui helpers', () => {
   })
 })
 
-import { peerCallSound, transitionSounds } from './voiceui'
+import { echoDecision, peerCallSound, serverVoiceSound, transitionSounds } from './voiceui'
+
+describe('serverVoiceSound (#147)', () => {
+  const c = (o: Partial<{ muted: boolean; deafened: boolean; server_muted: boolean; server_deafened: boolean }> = {}) => ({ muted: false, deafened: false, server_muted: false, server_deafened: false, ...o })
+  it('server mute / deafen and their undo play the same cues as your own', () => {
+    expect(serverVoiceSound(c(), { muted: true, deafened: false })).toBe('mute')
+    expect(serverVoiceSound(c({ server_muted: true }), { muted: false, deafened: false })).toBe('unmute')
+    expect(serverVoiceSound(c(), { muted: false, deafened: true })).toBe('deafen')
+    expect(serverVoiceSound(c({ server_deafened: true }), { muted: false, deafened: false })).toBe('undeafen')
+    expect(serverVoiceSound(c({ server_muted: true, server_deafened: true }), { muted: true, deafened: false })).toBe('undeafen')
+  })
+  it('nothing when what you hear and send stays the same', () => {
+    expect(serverVoiceSound(c({ muted: true }), { muted: true, deafened: false }), 'already muted by you').toBeNull()
+    expect(serverVoiceSound(c({ deafened: true }), { muted: false, deafened: true }), 'already deafened by you').toBeNull()
+    expect(serverVoiceSound(c({ server_muted: true }), { muted: true, deafened: false })).toBeNull()
+  })
+})
+
+describe('echoDecision (#172)', () => {
+  it('under Auto, says what it decided and why', () => {
+    expect(echoDecision({ mode: 'auto', running: false, output: 'headphones' }, 'auto')).toBe('Off for now: your output is headphones or a headset')
+    expect(echoDecision({ mode: 'auto', running: true, output: 'other' }, 'auto')).toBe("On: your output isn't headphones or a headset")
+    expect(echoDecision({ mode: 'auto', running: true, output: 'unknown' }, 'auto')).toBe("On: your output doesn't say it's headphones")
+  })
+  it('nothing for On or Off, before the core has said, or while the core still runs the old choice', () => {
+    expect(echoDecision({ mode: 'on', running: true, output: 'headphones' }, 'on')).toBeNull()
+    expect(echoDecision(null, 'auto')).toBeNull()
+    expect(echoDecision({ mode: 'off', running: false, output: 'other' }, 'auto')).toBeNull()
+  })
+})
 
 describe('transitionSounds', () => {
   const off = { muted: false, deafened: false }

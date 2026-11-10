@@ -5,7 +5,7 @@
   import SoundSettings from './SoundSettings.svelte'
   import VolumeMixer from './VolumeMixer.svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
-  import { loadAudioConfig, saveAudioConfig, type AudioConfig, type EchoMode, type NsLevel } from '../lib/voiceui'
+  import { echoDecision, loadAudioConfig, saveAudioConfig, type AudioConfig, type EchoMode, type NsLevel } from '../lib/voiceui'
 
   let cfg = $state<AudioConfig>(loadAudioConfig())
   let inputs = $state<{ name: string; is_default: boolean }[]>([])
@@ -74,6 +74,8 @@
   const toggles: { key: 'auto_gain'; label: string; help: string }[] = [
     { key: 'auto_gain', label: 'Automatic gain control', help: 'Evens out your volume. Leave off if you use input gain.' },
   ]
+  // what Auto decided for the output open now (#172)
+  const echoLine = $derived(echoDecision(voice.echo, cfg.echo_mode))
   const echoModes: { value: EchoMode; label: string }[] = [
     { value: 'auto', label: 'Auto' },
     { value: 'on', label: 'On' },
@@ -129,6 +131,7 @@
 <div class="settings-field"><span class="settings-label">ECHO CANCELLATION</span>
   <Segmented label="Echo cancellation" options={echoModes} value={cfg.echo_mode} onchange={(v) => { cfg.echo_mode = v; apply() }} />
   <small>Stops your speakers leaking back into your mic. Auto turns it off on headphones and headsets.</small>
+  {#if echoLine}<small data-echo-decision role="status">{echoLine}</small>{/if}
 </div>
 
 <div class="check">

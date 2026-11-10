@@ -59,6 +59,11 @@ export function serverVoiceOf(s: AppState, serverId: string | null, userId: stri
   return { serverMutedBy: m?.muted_by ?? undefined, serverDeafenedBy: m?.deafened_by ?? undefined }
 }
 
+/** Whether `userId` is in one of `serverId`'s voice channels (where a server mute or deafen can be put on them, #144). */
+export function inServerVoice(s: AppState, serverId: string, userId: string): boolean {
+  return Object.entries(s.voice).some(([c, members]) => s.channels[c]?.server_id === serverId && members.some((m) => m.user_id === userId))
+}
+
 /** "Server deafened by sam" / "Server muted by sam" for someone in a call (#140), or null. */
 export function serverVoiceTip(s: AppState, serverId: string | null, o: { serverMutedBy?: string; serverDeafenedBy?: string }): string | null {
   if (o.serverDeafenedBy) return `Server deafened by ${displayName(s, serverId, o.serverDeafenedBy)}`

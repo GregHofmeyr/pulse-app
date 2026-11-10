@@ -410,6 +410,14 @@ impl Shared {
                 agc: cfg.auto_gain,
                 built: (echo_on(cfg.echo_mode, Output::Unknown), cfg.auto_gain),
                 logged: None,
+                status: (
+                    EchoStatus {
+                        mode: cfg.echo_mode,
+                        running: echo_on(cfg.echo_mode, Output::Unknown),
+                        output: Output::Unknown,
+                    },
+                    true,
+                ),
             }),
             proc_cfg: Mutex::new(ProcCfg {
                 level: cfg.noise_suppression,
@@ -635,6 +643,14 @@ impl Shared {
         self.rebuild_apm(&mut a);
     }
 
+    /// What echo cancellation decided, if that changed since the last call (the first call always
+    /// has it): for the settings page (#172).
+    pub fn take_echo_status_change(&self) -> Option<EchoStatus> {
+        let mut a = self.apm_cfg.lock().unwrap();
+        let (status, changed) = &mut a.status;
+        std::mem::take(changed).then_some(*status)
+    }
+
     /// Whether echo cancellation runs now.
     #[cfg(test)]
     pub fn echo_running(&self) -> bool {
@@ -648,6 +664,14 @@ impl Shared {
         if a.logged.as_ref() != Some(&decision) {
             tracing::info!(mode = ?a.mode, output = ?a.output, device = %a.device, echo, "voice: echo cancellation");
             a.logged = Some(decision);
+        }
+        let status = EchoStatus {
+            mode: a.mode,
+            running: echo,
+            output: a.output,
+        };
+        if a.status.0 != status {
+            a.status = (status, true);
         }
         let wanted = (echo, a.agc);
         if a.built != wanted {
@@ -668,6 +692,16 @@ struct ApmCfg {
     built: (bool, bool),
     /// The last decision logged: (mode, output, device).
     logged: Option<(EchoMode, Output, String)>,
+    /// The decision for the settings page (#172), and whether it changed since it was last sent.
+    status: (EchoStatus, bool),
+}
+
+/// What echo cancellation is doing and why, for the settings page's line under Auto (#172).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EchoStatus {
+    pub mode: EchoMode,
+    pub running: bool,
+    pub output: Output,
 }
 
 /// Handle to the audio thread. Dropping it stops capture and playback.
@@ -1560,6 +1594,48 @@ mod tests {
         cfg.echo_mode = EchoMode::Auto;
         s.apply_config(&cfg);
         assert!(s.echo_running());
+    }
+
+    /// What Auto decided goes to the settings page (#172): once per change of the decision.
+    #[test]
+    fn echo_decision_is_reported_once_per_change() {
+        let s = Shared::new(&AudioConfig::default(), Default::default(), 200);
+        let st = |running, output| EchoStatus {
+            mode: EchoMode::Auto,
+            running,
+            output,
+        };
+        assert_eq!(
+            s.take_echo_status_change(),
+            Some(st(true, Output::Unknown)),
+            "the first decision, before any output opens"
+        );
+        assert_eq!(s.take_echo_status_change(), None);
+        s.set_output("Headset", Output::Headphones);
+        assert_eq!(
+            s.take_echo_status_change(),
+            Some(st(false, Output::Headphones))
+        );
+        s.set_output("Other headset", Output::Headphones);
+        assert_eq!(
+            s.take_echo_status_change(),
+            None,
+            "same decision on another device: nothing new to say"
+        );
+        s.set_output("Speakers", Output::Other);
+        assert_eq!(s.take_echo_status_change(), Some(st(true, Output::Other)));
+        s.apply_config(&AudioConfig {
+            echo_mode: EchoMode::Off,
+            ..AudioConfig::default()
+        });
+        assert_eq!(
+            s.take_echo_status_change(),
+            Some(EchoStatus {
+                mode: EchoMode::Off,
+                running: false,
+                output: Output::Other
+            })
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@ vi.mock('../lib/stream/room', () => ({ StreamRoom: { connect: async () => room, 
 
 import VoicePanel from './VoicePanel.svelte'
 import ChannelList from './ChannelList.svelte'
-import { app } from '../lib/store.svelte'
+import { app, ui } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { voice, voiceApi } from '../lib/voice.svelte'
 import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
@@ -472,14 +472,27 @@ describe('server mute, deafen and disconnect (#140)', () => {
     expect(invoke).toHaveBeenCalledWith('disconnect_voice', { serverId: 'S1', userId: 'U2' })
   })
 
-  it('a_refusal_is_shown', async () => {
+  it('a_refusal_is_a_toast_not_the_call_box_line (#147)', async () => {
     invoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'server_voice') throw "they aren't in this server's voice"
+      if (cmd === 'server_voice' || cmd === 'disconnect_voice') throw "they aren't in this server's voice"
     })
     openSam()
     item('server-mute').click()
     await settle()
-    expect(voice.error).toContain("they aren't in this server's voice")
+    expect(ui.notice).toContain("they aren't in this server's voice")
+    expect(voice.error).toBe('')
+    ui.notice = null
+    rightClick(q('[data-user="U2"]')!)
+    item('disconnect').click()
+    await settle()
+    expect(ui.notice).toContain("they aren't in this server's voice")
+  })
+
+  it('a_held_mute_or_deafen_says_who_did_it (#144)', () => {
+    held('U1', 'U1')
+    openSam()
+    expect(item('server-mute').getAttribute('data-tip')).toBe('Server muted by alex')
+    expect(item('server-deafen').getAttribute('data-tip')).toBe('Server deafened by alex')
   })
 
   it('tiles_and_rows_show_who_did_it', () => {

@@ -40,6 +40,25 @@ export function menuItems(c: MenuCtx): MenuItemId[] {
   return out
 }
 
+/** The server voice items in a person's menu away from the call (member list, message author, profile card; #144).
+ *  Undoing works wherever they are, so a held mute or deafen offers its undo even once they've left voice; muting needs
+ *  them in this server's voice, so the other way round shows only then. Disconnect stays in the call's own menu. Never
+ *  for yourself (someone else has to undo it) or outside a server. */
+export function memberVoiceItems(c: {
+  self: boolean
+  server: boolean
+  /** They're in one of this server's voice channels. */
+  inVoice: boolean
+  muted: boolean
+  deafened: boolean
+}): ('server-mute' | 'server-deafen')[] {
+  if (c.self || !c.server) return []
+  const out: ('server-mute' | 'server-deafen')[] = []
+  if (c.inVoice || c.muted) out.push('server-mute')
+  if (c.inVoice || c.deafened) out.push('server-deafen')
+  return out
+}
+
 /** Where a menu opens: at the pointer, or (from the keyboard) under the element that asked. */
 export function menuPoint(e: MouseEvent | KeyboardEvent, anchor: HTMLElement): { x: number; y: number } {
   // a click with no detail is a key press on a button: it has no pointer to open at

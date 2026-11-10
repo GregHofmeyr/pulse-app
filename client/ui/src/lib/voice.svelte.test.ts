@@ -180,4 +180,76 @@ describe('server mute and disconnect (#140)', () => {
     await voiceApi.join('V1')
     expect(voice.disconnectedBy).toBeNull()
   })
+
+  const sounds = () => h.args.filter((a, i) => h.calls[i] === 'play_sound').map((a) => (a as { name: string }).name)
+
+  it('you hear the mute and deafen cues when someone server mutes or deafens you mid-call, and on the undo (#147)', () => {
+    Object.assign(voice, { channelId: 'V1', connection: 'connected' })
+    h.args.length = 0
+    event({ t: 'ServerVoiceChanged', d: { state: { server_id: 'S1', user_id: 'ME', muted_by: 'U2', deafened_by: null } } })
+    expect(sounds()).toContain('mute')
+    voice.controls = { muted: false, deafened: false, server_muted: true, server_deafened: false }
+    h.calls.length = 0
+    h.args.length = 0
+    event({ t: 'ServerVoiceChanged', d: { state: { server_id: 'S1', user_id: 'ME', muted_by: 'U2', deafened_by: 'U2' } } })
+    expect(sounds()).toContain('deafen')
+    voice.controls = { muted: false, deafened: false, server_muted: true, server_deafened: true }
+    h.calls.length = 0
+    h.args.length = 0
+    event({ t: 'ServerVoiceChanged', d: { state: { server_id: 'S1', user_id: 'ME', muted_by: null, deafened_by: null } } })
+    expect(sounds()).toContain('undeafen')
+  })
+
+  it('no cue for someone else, another server, or when you are not in a call there (#147)', () => {
+    Object.assign(voice, { channelId: 'V1', connection: 'connected' })
+    h.calls.length = 0
+    h.args.length = 0
+    event({ t: 'ServerVoiceChanged', d: { state: { server_id: 'S1', user_id: 'U3', muted_by: 'U2', deafened_by: null } } })
+    event({ t: 'ServerVoiceChanged', d: { state: { server_id: 'S9', user_id: 'ME', muted_by: 'U2', deafened_by: null } } })
+    voice.channelId = null
+    event({ t: 'ServerVoiceChanged', d: { state: { server_id: 'S1', user_id: 'ME', muted_by: 'U2', deafened_by: null } } })
+    expect(sounds()).toEqual([])
+  })
+
+  it('the disconnect notice goes if the call carries on after it (the removal failed, #147)', () => {
+    vi.useFakeTimers()
+    try {
+      Object.assign(voice, { channelId: 'V1', connection: 'connected' })
+      event({ t: 'VoiceDisconnected', d: { channel_id: 'V1', user_id: 'ME', by: 'U2' } })
+      expect(voice.disconnectedBy).toEqual({ by: 'U2', channelId: 'V1' })
+      vi.advanceTimersByTime(20_000)
+      expect(voice.disconnectedBy).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a disconnect that did end the call keeps its notice (#147)', () => {
+    vi.useFakeTimers()
+    try {
+      Object.assign(voice, { channelId: 'V1', connection: 'connected' })
+      event({ t: 'VoiceDisconnected', d: { channel_id: 'V1', user_id: 'ME', by: 'U2' } })
+      Object.assign(voice, { channelId: null, connection: 'disconnected' })
+      vi.advanceTimersByTime(20_000)
+      expect(voice.disconnectedBy).toEqual({ by: 'U2', channelId: 'V1' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('leaving by yourself is never shown as a disconnect (#147)', async () => {
+    const { voiceApi } = await import('./voice.svelte')
+    Object.assign(voice, { channelId: 'V1', connection: 'connected' })
+    event({ t: 'VoiceDisconnected', d: { channel_id: 'V1', user_id: 'ME', by: 'U2' } })
+    await voiceApi.leave()
+    expect(voice.disconnectedBy).toBeNull()
+  })
+})
+
+describe('echo cancellation report (#172)', () => {
+  it("keeps the core's latest decision", async () => {
+    await startVoiceListening()
+    h.handlers['voice://event']({ payload: { kind: 'echo', mode: 'auto', running: false, output: 'headphones' } })
+    expect(voice.echo).toEqual({ mode: 'auto', running: false, output: 'headphones' })
+  })
 })
