@@ -24,6 +24,26 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.6',
+  version: '0.2.6',
+  date: '10 November 2026',
+  new: [
+    'Go Live in DM and group calls: hit Go Live in the call bar, and the others get a Watch button',
+  ],
+  fixes: [
+    'If Windows takes a stream out of full screen (say a snap), Pulse notices and tidies up',
+    'Smoother audio when someone leaves a call or a call ends',
+  ],
+  qol: [],
+  soon: [
+    'A fresh profile editor: edit right inside your big profile card',
+    'More fresh and reworked designs on the way',
+  ],
+  message: 'The last of the Coming soon list. Stream your DMs to each other, you weirdos 💜',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.5',
   version: '0.2.5',
   date: '10 November 2026',
@@ -53,24 +73,4 @@ export const patchNotes: PatchNotes = {
     'More fresh and reworked designs on the way',
   ],
   message: 'Voice day! Join sounds are live: choose wisely, everyone will hear it 🔊',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.4',
-  version: '0.2.4',
-  date: '9 November 2026',
-  new: [
-    'Wheel results now fold into a little result card: the landed wheel, the winner big, and Spin again, Remove winner and Save as wheel when you hover',
-  ],
-  fixes: [],
-  qol: [],
-  soon: [
-    'Streaming in DM and group calls',
-    'Share a Spotify Jam or song to the voice stage',
-    'A fresh profile editor: edit right inside your big profile card',
-    'Custom join sounds',
-    'Stream fullscreen, with chat as a side strip',
-  ],
-  message: 'Tiny one. The wheel just wanted to look pretty in the chat 🎡',
 }
