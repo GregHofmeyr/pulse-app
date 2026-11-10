@@ -27,6 +27,19 @@ Spotify's [Design Guidelines](https://developer.spotify.com/documentation/design
 21px, single-colour, never over artwork. The path is the one in [Simple Icons](https://simpleicons.org) (CC0 1.0).
 Spotify and its logo are trademarks of Spotify AB; Pulse isn't affiliated with or endorsed by Spotify.
 
+## DeepFilterNet3 (Strong noise suppression)
+
+The "Strong" noise suppression runs DeepFilterNet (`libDF`, git `d375b2d`) with its DeepFilterNet3 model, which is
+compiled into the app. Copyright Hendrik Schröter and contributors. Dual-licensed
+[MIT](https://opensource.org/licenses/MIT) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0).
+Source: https://github.com/Rikorose/DeepFilterNet.
+
+## nnnoiseless / RNNoise (Standard noise suppression)
+
+The "Standard" noise suppression is `nnnoiseless`, a Rust port of Xiph's RNNoise, including its trained weights.
+[BSD-3-Clause](https://opensource.org/licenses/BSD-3-Clause). Sources: https://github.com/jneem/nnnoiseless and
+https://gitlab.xiph.org/xiph/rnnoise.
+
 ## FFmpeg (Windows installer only)
 
 The Windows installer ships `ffmpeg.exe`, `ffprobe.exe` and their DLLs (libavcodec, libavformat, libavfilter,
