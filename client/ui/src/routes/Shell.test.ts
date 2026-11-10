@@ -68,6 +68,9 @@ afterEach(async () => {
   callView.goTo = null
   callView.joinThenWatch = null
   await streamApi.unwatchAll()
+  // a stream's toast ("sam stopped streaming") would be the next test's first .notice
+  stream.notice = ''
+  stream.watchError = ''
   document.body.innerHTML = ''
   vi.restoreAllMocks()
 })
