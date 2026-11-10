@@ -3662,8 +3662,8 @@ async fn prepared_bytes(
     Ok(bytes)
 }
 
-/// Play a (possibly still decoding) sound: through the call's mixer when in one, which plays it
-/// as it decodes, else on the output device once it's all decoded (previews outside a call).
+/// Play a (possibly still decoding) sound as it decodes: through the call's mixer when in one,
+/// else on the output device (previews outside a call).
 /// Returns how long the previous clip waited for the speakers (µs), when in a call. `stop`: ends
 /// it early once set (the same person's next sound, #214).
 async fn play_decoded(
@@ -3681,15 +3681,8 @@ async fn play_decoded(
         }
         last
     } else {
-        samples.wait_done().await;
-        let sound = crate::sounds::Sound {
-            rate: 48_000,
-            samples: samples.to_vec(),
-        };
-        match stop {
-            Some(stop) => crate::sounds::play_samples_stoppable(sound, gain, output, stop),
-            None => crate::sounds::play_samples(sound, gain, output),
-        }
+        // streamed too (#143): it starts once its first 100 ms are decoded, not the whole sound
+        crate::sounds::play_source(crate::sounds::Source::Stream(samples), gain, output, stop);
         None
     }
 }
@@ -3723,6 +3716,12 @@ pub async fn soundboard_play(
     sound_id: Option<String>,
     player: Option<String>,
 ) -> Result<(), String> {
+    // your own play, already heard on click (#143): its echo isn't played twice
+    if let (Some(id), Some(who)) = (sound_id.as_deref(), player.as_deref())
+        && app.state::<crate::soundboard::Echoes>().take(id, who)
+    {
+        return Ok(());
+    }
     // its place in line as it arrives: when mashed, a later press that loads first still wins (#243)
     let ticket = players.ticket();
     let gain = crate::soundboard::gain(calls_percent, soundboard_percent, sound_percent);
@@ -3916,24 +3915,108 @@ pub async fn list_sounds(
     core.check(&app, api.list_sounds(&token, server_id).await)
 }
 
-/// Ask the server to play this sound to everyone in your call.
+/// How to hear your own play on click (#143), as the `SoundPlayed` echo would have played it.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HearNow {
+    hash: String,
+    calls_percent: u16,
+    soundboard_percent: u16,
+    sound_percent: u16,
+    /// You: the player whose previous sound it cuts off (#214), as the echo would name you.
+    player: String,
+}
+
+/// Ask the server to play this sound to everyone in your call. With `hear_now` (in a call, the
+/// soundboard on), you hear it at once through the call's mixer instead of on its echo a round
+/// trip later; if the server refuses it (a rate limit, a deleted sound) it stops at once, or never
+/// starts. Errors carry a code (`ApiError::code`): the UI drops a rate-limited play quietly.
 #[tauri::command]
 pub async fn play_sound_to_call(
     app: AppHandle,
     core: State<'_, Core>,
     clicks: State<'_, crate::soundboard::Clicks>,
     id: String,
-) -> Result<(), ApiError> {
+    hear_now: Option<HearNow>,
+) -> Result<(), crate::api::Coded> {
     let (api, token) = core.current()?;
-    clicks.clicked(&id);
-    let t = std::time::Instant::now();
+    let clicked = std::time::Instant::now();
+    let local = match hear_now {
+        Some(h) => hear_on_click(&app, &id, h, clicked).await,
+        None => None,
+    };
+    if local.is_none() {
+        clicks.clicked(&id); // matched to its echo, to log click -> queued
+    }
     let r = core.check(&app, api.play_sound_to_call(&token, &id).await);
+    if r.is_err()
+        && let Some((play, player)) = &local
+    {
+        play.refuse();
+        app.state::<crate::soundboard::Echoes>().forget(&id, player);
+    }
     tracing::info!(
-        rest_ms = format!("{:.1}", t.elapsed().as_secs_f64() * 1000.0),
+        rest_ms = format!("{:.1}", clicked.elapsed().as_secs_f64() * 1000.0),
         ok = r.is_ok(),
+        heard_on_click = local.is_some(),
         "soundboard: play request"
     );
-    r
+    r.map_err(Into::into)
+}
+
+/// Start hearing your play now (#143), when in a call at a gain above zero: it takes its turn as
+/// it arrives (#243) and loads and queues in the background, so the request goes out at once.
+/// Returns its handle and player, or None (nothing started: the echo plays it as before).
+async fn hear_on_click(
+    app: &AppHandle,
+    sound_id: &str,
+    h: HearNow,
+    clicked: std::time::Instant,
+) -> Option<(std::sync::Arc<crate::soundboard::LocalPlay>, String)> {
+    let gain = crate::soundboard::gain(h.calls_percent, h.soundboard_percent, h.sound_percent);
+    if gain <= 0.0 {
+        return None;
+    }
+    app.state::<VoiceManager>().mixer_input().await?;
+    let ticket = app.state::<crate::soundboard::Players>().ticket();
+    // before the request goes out: its echo can arrive before its response
+    app.state::<crate::soundboard::Echoes>()
+        .expect(sound_id, &h.player);
+    let play = std::sync::Arc::new(crate::soundboard::LocalPlay::default());
+    let (app, handle, player) = (app.clone(), play.clone(), h.player.clone());
+    tauri::async_runtime::spawn(async move {
+        let core = app.state::<Core>();
+        let cache = app.state::<crate::soundboard::Cache>();
+        let loaded = cache
+            .load(&h.hash, || fetch_sound(&core, h.hash.clone()))
+            .await;
+        let (samples, timing) = match loaded {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::warn!(error = %e, "soundboard: couldn't load a sound");
+                return;
+            }
+        };
+        let Some((mix, _)) = app.state::<VoiceManager>().mixer_input().await else {
+            return; // left the call meanwhile
+        };
+        let players = app.state::<crate::soundboard::Players>();
+        let Some(stop) = handle.arm(|| players.start(&h.player, ticket)) else {
+            return; // refused already, or a newer press of yours plays
+        };
+        let last = mix.last_clip_start_us();
+        mix.play_stream_stoppable(samples, gain, stop);
+        tracing::info!(
+            cached = timing.cached,
+            fetch_ms = format!("{:.1}", timing.fetch_ms),
+            decode_start_ms = format!("{:.1}", timing.start_ms),
+            click_to_queued_ms = format!("{:.1}", clicked.elapsed().as_secs_f64() * 1000.0),
+            last_speaker_wait_us = last,
+            heard_on_click = true,
+            "soundboard: play"
+        );
+    });
+    Some((play, player))
 }
 
 #[tauri::command]

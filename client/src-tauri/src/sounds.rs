@@ -221,26 +221,60 @@ pub fn play_ringtone_once(id: &str, volume: f32, output: Option<String>) {
     }
 }
 
-/// Play a soundboard sample on the output device when no call is running (in a call it goes
-/// through the mixer instead). `volume` is the final linear gain, without the UI-sound factor.
-pub fn play_samples(sound: Sound, volume: f32, output: Option<String>) {
+/// What [`spawn_play`] plays: a whole sound, or a soundboard sound still being decoded (#143:
+/// a preview outside a call starts once its first 100 ms are decoded, as one in a call does).
+pub enum Source {
+    Whole(Sound),
+    Stream(std::sync::Arc<crate::soundboard::pcm::Pcm>),
+}
+
+impl Source {
+    fn rate(&self) -> u32 {
+        match self {
+            Self::Whole(s) => s.rate,
+            Self::Stream(_) => 48_000,
+        }
+    }
+
+    /// The most samples it can hold (a stream's stated length): bounds how long playing waits.
+    fn max_len(&self) -> usize {
+        match self {
+            Self::Whole(s) => s.samples.len(),
+            Self::Stream(p) => p.capacity(),
+        }
+    }
+}
+
+impl From<Sound> for Source {
+    fn from(s: Sound) -> Self {
+        Self::Whole(s)
+    }
+}
+
+/// Play a soundboard sound on the output device when no call is running (in a call it goes
+/// through the mixer instead), from its first decoded samples on. `volume` is the final linear
+/// gain, without the UI-sound factor. `stop`: ends it early once set (the trimmer's pause, the
+/// same person's next sound).
+pub fn play_source(
+    source: Source,
+    volume: f32,
+    output: Option<String>,
+    stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) {
     if volume.is_nan() || volume <= 0.0 {
         return;
     }
-    spawn_play(sound, volume, output, "soundboard".to_string(), None);
+    spawn_play(source, volume, output, "soundboard".to_string(), stop);
 }
 
-/// [`play_samples`] that ends early once `stop` is set (the soundboard trimmer's pause).
+/// [`play_source`] of a whole sound that ends early once `stop` is set (the trimmer's pause).
 pub fn play_samples_stoppable(
     sound: Sound,
     volume: f32,
     output: Option<String>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
-    if volume.is_nan() || volume <= 0.0 {
-        return;
-    }
-    spawn_play(sound, volume, output, "soundboard".to_string(), Some(stop));
+    play_source(Source::Whole(sound), volume, output, Some(stop));
 }
 
 type StopFlag = Option<std::sync::Arc<std::sync::atomic::AtomicBool>>;
@@ -251,7 +285,15 @@ fn stopped(stop: &StopFlag) -> bool {
 }
 
 /// The device lookup and fallback shared by UI sounds and soundboard samples; `volume` is final.
-fn spawn_play(sound: Sound, volume: f32, output: Option<String>, name: String, stop: StopFlag) {
+fn spawn_play(
+    source: impl Into<Source>,
+    volume: f32,
+    output: Option<String>,
+    name: String,
+    stop: StopFlag,
+) {
+    // shared between the tries on two devices (the first may fail to open)
+    let source = std::sync::Arc::new(source.into());
     let _ = std::thread::Builder::new()
         .name("pulse-sound".into())
         .spawn(move || {
@@ -267,14 +309,14 @@ fn spawn_play(sound: Sound, volume: f32, output: Option<String>, name: String, s
                 .get(output.as_deref(), exact)
                 .or_else(|| find_device(false, None).ok());
             if let Some(dev) = chosen
-                && play_on(&dev, &sound, volume, &stop)
+                && play_on(&dev, &source, volume, &stop)
             {
                 return;
             }
             // the cached device failed (unplugged): forget it, and play on the default instead
             DEVICES.forget();
             let played = output.is_some()
-                && find_device(false, None).is_ok_and(|dev| play_on(&dev, &sound, volume, &stop));
+                && find_device(false, None).is_ok_and(|dev| play_on(&dev, &source, volume, &stop));
             if !played {
                 // asked for (the `sound` line) but not heard: tells the two apart in a report
                 tracing::warn!(name, "sound: no output device would play it");
@@ -289,42 +331,84 @@ fn shape(x: f32, volume: f32) -> f32 {
     crate::voice::mixer::soft_limit(x * volume)
 }
 
-/// Play `sound` on `dev` to the end (blocking) at the final linear gain `volume`. False if the device wouldn't open.
-fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32, stop: &StopFlag) -> bool {
-    let Ok(cfg) = dev.default_output_config() else {
-        return false;
-    };
-    let (rate, ch) = (cfg.sample_rate(), cfg.channels() as usize);
-    let step = sound.rate as f64 / rate as f64;
-    let total = (sound.samples.len() as f64 / step) as usize;
-    let samples = sound.samples.clone();
+/// `source` resampled to `rate` at the final gain `volume`, one sample per call: None once it has
+/// ended (or `stop` is set). A stream that hasn't decoded the next sample yet gives silence and
+/// holds its place, as the call mixer does; the decoder runs well ahead of real time from a
+/// 100 ms head start, so in practice it never waits.
+fn reader(
+    source: std::sync::Arc<Source>,
+    rate: u32,
+    volume: f32,
+    stop: StopFlag,
+) -> impl FnMut() -> Option<f32> + Send + 'static {
+    let step = source.rate() as f64 / rate as f64;
     let mut pos = 0usize;
-    let halt = stop.clone();
-    let mut next = move || -> Option<f32> {
-        if pos >= total || stopped(&halt) {
+    move || -> Option<f32> {
+        if stopped(&stop) {
             return None;
         }
         let src = pos as f64 * step;
         let (j, frac) = (src.floor() as usize, src.fract() as f32);
-        let a = samples[j.min(samples.len() - 1)];
-        let b = samples[(j + 1).min(samples.len() - 1)];
+        let (a, b) = match &*source {
+            Source::Whole(s) => {
+                if pos >= (s.samples.len() as f64 / step) as usize {
+                    return None;
+                }
+                let last = s.samples.len() - 1;
+                (s.samples[j.min(last)], s.samples[(j + 1).min(last)])
+            }
+            Source::Stream(p) => {
+                // `done` first: once it is set, `ready` is final
+                let done = p.is_done();
+                match p.get(j) {
+                    Some(a) => (a, p.get(j + 1).unwrap_or(a)),
+                    None if done => return None,
+                    None => return Some(0.0), // not decoded yet: wait here
+                }
+            }
+        };
         pos += 1;
         Some(shape(a + (b - a) * frac, volume))
+    }
+}
+
+/// Play `source` on `dev` to the end (blocking) at the final linear gain `volume`. False if the device wouldn't open.
+fn play_on(
+    dev: &cpal::Device,
+    source: &std::sync::Arc<Source>,
+    volume: f32,
+    stop: &StopFlag,
+) -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let Ok(cfg) = dev.default_output_config() else {
+        return false;
     };
+    let (rate, ch) = (cfg.sample_rate(), cfg.channels() as usize);
+    let ended = std::sync::Arc::new(AtomicBool::new(false));
+    let mut next = reader(source.clone(), rate, volume, stop.clone());
+    let ended_in = ended.clone();
     let stream = crate::voice::devices::build_output(dev, &cfg, move |d: &mut [f32], _| {
         for f in d.chunks_mut(ch) {
-            f.fill(next().unwrap_or(0.0));
+            let v = next();
+            if v.is_none() {
+                ended_in.store(true, Ordering::Relaxed);
+            }
+            f.fill(v.unwrap_or(0.0));
         }
     });
     let Ok(stream) = stream else { return false };
     if stream.play().is_err() {
         return false;
     }
-    // sound length + a little tail for the device buffer, or until stopped
-    let end = std::time::Instant::now()
-        + std::time::Duration::from_millis((total as u64 * 1000 / rate as u64) + 150);
-    while std::time::Instant::now() < end && !stopped(stop) {
+    // until it has played out (then a little tail for the device buffer) or is stopped; at most
+    // twice its longest length, in case a stream's decoder stalls
+    let max_ms = source.max_len() as u64 * 1000 / u64::from(source.rate().max(1));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(max_ms * 2 + 1000);
+    while !ended.load(Ordering::Relaxed) && !stopped(stop) && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    if ended.load(Ordering::Relaxed) && !stopped(stop) {
+        std::thread::sleep(std::time::Duration::from_millis(150));
     }
     true
 }
@@ -475,6 +559,60 @@ mod tests {
         // below the knee (every UI sound at <= 100 %: they peak under 0.6) nothing changes
         assert_eq!(shape(0.3, 1.0), 0.3);
         assert_eq!(shape(0.5, 0.4), 0.2);
+    }
+
+    #[test]
+    fn a_whole_sound_reads_to_its_end_resampled() {
+        let s = Sound {
+            rate: 24_000,
+            samples: vec![0.1, 0.2, 0.3],
+        };
+        let mut r = reader(std::sync::Arc::new(Source::Whole(s)), 48_000, 1.0, None);
+        let got: Vec<f32> = std::iter::from_fn(&mut r).collect();
+        assert_eq!(got.len(), 6, "twice the samples at twice the rate");
+        assert!((got[1] - 0.15).abs() < 1e-6, "interpolated: {got:?}");
+        let empty = Source::Whole(Sound {
+            rate: 48_000,
+            samples: vec![],
+        });
+        assert!(reader(std::sync::Arc::new(empty), 48_000, 1.0, None)().is_none());
+    }
+
+    /// #143: a preview outside a call plays a sound as it decodes: what's decoded plays, a gap
+    /// waits in silence without skipping, and it ends once the decode is done and played out.
+    #[test]
+    fn a_streamed_sound_plays_as_it_decodes() {
+        use crate::soundboard::pcm::Pcm;
+        let pcm = std::sync::Arc::new(Pcm::with_capacity(8));
+        pcm.push(&[0.5, 0.5]);
+        let mut r = reader(
+            std::sync::Arc::new(Source::Stream(pcm.clone())),
+            48_000,
+            1.0,
+            None,
+        );
+        assert_eq!((r(), r()), (Some(0.5), Some(0.5)));
+        assert_eq!((r(), r()), (Some(0.0), Some(0.0)), "not decoded yet: waits");
+        pcm.push(&[0.25]);
+        pcm.finish();
+        assert_eq!(r(), Some(0.25), "picks up where it was");
+        assert_eq!(r(), None, "done and played out");
+    }
+
+    #[test]
+    fn a_streamed_sound_stops_when_told() {
+        use crate::soundboard::pcm::Pcm;
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pcm = std::sync::Arc::new(Pcm::complete(&[0.5; 100]));
+        let mut r = reader(
+            std::sync::Arc::new(Source::Stream(pcm)),
+            48_000,
+            1.0,
+            Some(stop.clone()),
+        );
+        assert!(r().is_some());
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(r().is_none());
     }
 
     #[test]

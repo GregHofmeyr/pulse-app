@@ -1783,6 +1783,8 @@ impl VoiceManager {
                     if !alive.load(Ordering::SeqCst) {
                         break;
                     }
+                    // soundboard clips the speakers finished with: freed here, not on the audio thread
+                    shared.mix_in.reap();
                     let queued = shared.mix_in.max_buffered();
                     shared
                         .stats

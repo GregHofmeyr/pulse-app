@@ -150,6 +150,8 @@ async fn rename(
         return Err(AppError::TooManyRequests(None));
     }
     let name = clean_name(&req.name)?;
+    // two quick renames publish their EmojiUpdated in commit order (#123)
+    let _order = s.hub.in_order().await;
     editable(&s, me, &id).await?;
     let changed =
         sqlx::query("UPDATE custom_emoji SET name = ? WHERE id = ? AND deleted_at IS NULL")
@@ -182,6 +184,8 @@ async fn delete(
     if !s.limits.emoji_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
+    // in order with renames: an EmojiUpdated after its EmojiDeleted would bring it back
+    let _order = s.hub.in_order().await;
     editable(&s, me, &id).await?;
     // Dropping the media reference lets cleanup reclaim the file; the row keeps its name.
     let changed = sqlx::query(

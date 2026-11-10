@@ -1,9 +1,9 @@
 //! A decoded sound that can be played while it is still being decoded.
 //!
-//! `opus-decoder` (pure Rust) decodes a 6 s sound in ~0.8 s even optimised, so waiting for the whole
-//! file made a first play that late (#138). A [`Pcm`] is sized up front from the file's stated
-//! length; one decoder thread fills it in order and publishes how far it got, and the audio
-//! callback plays up to there. Samples are stored as `f32` bits in atomics, so the writer and the
+//! The pure-Rust decoder this was built for took ~0.8 s for a 6 s sound, so waiting for the whole
+//! file made a first play that late (#138); libopus (#143) takes ~4 ms, so it rarely matters now.
+//! A [`Pcm`] is sized up front from the file's stated length; one decoder thread fills it in order
+//! and publishes how far it got, and the audio callback plays up to there. Samples are stored as `f32` bits in atomics, so the writer and the
 //! reader share it without locks or `unsafe`.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -56,6 +56,11 @@ impl Pcm {
 
     pub fn is_done(&self) -> bool {
         self.done.load(Ordering::Acquire)
+    }
+
+    /// Room it was made with (the file's stated length).
+    pub fn capacity(&self) -> usize {
+        self.data.len()
     }
 
     pub fn is_full(&self) -> bool {

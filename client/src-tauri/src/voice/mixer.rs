@@ -125,6 +125,12 @@ enum Cmd {
 /// pre-sized `clips` list never grows inside the audio callback.
 pub const MAX_CLIPS: usize = 32;
 
+/// Room for clips the speakers are done with, on their way back to be freed off the audio thread
+/// (#123: a sound's last `Arc` freed in the callback is a ~1 MB free there). A `clear` or a burst
+/// over the limit sends at most a list's worth at once, and the network side empties it on every
+/// play, clear and voice tick (100 ms); only if it is ever full does the callback free one itself.
+const GRAVEYARD: usize = 4 * MAX_CLIPS;
+
 /// A playing one-shot: mono 48 kHz samples (the mixer's rate, so no resampling) and a read position.
 /// A soundboard clip's audio: all decoded, or still being decoded (played as far as it's got).
 pub(crate) enum ClipSamples {
@@ -175,8 +181,10 @@ pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
     let cmds = Arc::new(Mutex::new(Vec::new()));
     let (underrun, adjusted) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
     let clip_start_us = Arc::new(AtomicU64::new(NO_CLIP_YET));
+    let (graveyard, reaper) = rtrb::RingBuffer::new(GRAVEYARD);
     let input = MixerInput {
         clip_start_us: clip_start_us.clone(),
+        reaper: Mutex::new(reaper),
         cmds: cmds.clone(),
         sources: Mutex::new(HashMap::new()),
         gains: Mutex::new(HashMap::new()),
@@ -203,6 +211,7 @@ pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
         underrun,
         adjusted,
         clip_start_us,
+        graveyard,
     };
     (input, speakers)
 }
@@ -230,6 +239,8 @@ pub struct MixerInput {
     /// How long the last clip waited between `play_clip` and its first pull (µs; soundboard
     /// latency diagnostics). The device's own buffer comes on top.
     clip_start_us: Arc<AtomicU64>,
+    /// Clips the speakers are done with, freed here ([`Self::reap`]) rather than in the callback.
+    reaper: Mutex<rtrb::Consumer<Clip>>,
 }
 
 pub(crate) struct SourceIn {
@@ -433,6 +444,7 @@ impl MixerInput {
     }
 
     fn push_clip(&self, samples: ClipSamples, gain: f32, stop: Option<Arc<AtomicBool>>) {
+        self.reap();
         if samples.finished(0) {
             return; // nothing to hear
         }
@@ -442,6 +454,21 @@ impl MixerInput {
             queued: std::time::Instant::now(),
             stop,
         });
+    }
+
+    /// Free the clips the speakers have finished with (here, off the audio thread). Called on
+    /// every play and clear, and by the call's 100 ms tick; returns how many were freed.
+    pub fn reap(&self) -> usize {
+        let Ok(mut r) = self.reaper.try_lock() else {
+            return 0; // someone else is at it
+        };
+        let n = r.slots();
+        if let Ok(chunk) = r.read_chunk(n) {
+            // dropping the iterator's items frees each clip's samples (unless the decode cache
+            // still holds them) and stop flag
+            chunk.into_iter().for_each(drop);
+        }
+        n
     }
 
     /// How long the last clip waited for the speakers (µs), once one has played.
@@ -457,6 +484,8 @@ impl MixerInput {
         self.generation.fetch_add(1, Relaxed);
         sources.clear();
         self.cmds.lock().unwrap().push(Cmd::Clear);
+        drop(sources);
+        self.reap();
     }
 
     /// (owner, kind, gain) of one registered source (tests).
@@ -539,6 +568,33 @@ pub struct Mixer {
     underrun: Arc<AtomicU64>,
     adjusted: Arc<AtomicU64>,
     clip_start_us: Arc<AtomicU64>,
+    /// Where finished clips go to be freed off this thread (see [`GRAVEYARD`]).
+    graveyard: rtrb::Producer<Clip>,
+}
+
+/// Hand a finished clip back to the network side to free (see [`GRAVEYARD`]); freed here only
+/// when that queue is full. A free function: the callers hold borrows of other `Mixer` fields.
+fn bury(graveyard: &mut rtrb::Producer<Clip>, c: Clip) {
+    if let Err(rtrb::PushError::Full(c)) = graveyard.push(c) {
+        drop(c);
+    }
+}
+
+/// Move every clip `dead` says is over from `clips` to the graveyard. Order doesn't matter (the
+/// clips are summed), so `swap_remove`: nothing shifts and nothing is allocated or freed.
+fn bury_where(
+    clips: &mut Vec<Clip>,
+    graveyard: &mut rtrb::Producer<Clip>,
+    dead: impl Fn(&Clip) -> bool,
+) {
+    let mut i = 0;
+    while i < clips.len() {
+        if dead(&clips[i]) {
+            bury(graveyard, clips.swap_remove(i));
+        } else {
+            i += 1;
+        }
+    }
 }
 
 struct Peer {
@@ -600,22 +656,24 @@ impl Mixer {
                         queued,
                         stop,
                     } => {
-                        // over the limit: dropped (the Arc's other owner, the decode cache, keeps the data)
+                        let clip = Clip {
+                            samples,
+                            pos: 0,
+                            gain,
+                            stop,
+                        };
                         if self.clips.len() < MAX_CLIPS {
                             let waited = queued.elapsed().as_micros();
                             self.clip_start_us
                                 .store(u64::try_from(waited).unwrap_or(u64::MAX - 1), Relaxed);
-                            self.clips.push(Clip {
-                                samples,
-                                pos: 0,
-                                gain,
-                                stop,
-                            });
+                            self.clips.push(clip);
+                        } else {
+                            bury(&mut self.graveyard, clip); // over the limit: not played
                         }
                     }
                     Cmd::Clear => {
                         self.peers.clear();
-                        self.clips.clear();
+                        bury_where(&mut self.clips, &mut self.graveyard, |_| true);
                     }
                 }
             }
@@ -648,9 +706,10 @@ impl Mixer {
     /// Fill interleaved `out` (`channels` per frame), one sample per peer per frame.
     pub fn mix_into(&mut self, out: &mut [f32], channels: usize, master: f32) {
         self.intake();
-        // a paused trimmer clip ends here (dropping its Arc: the trimmer state holds the flag's other clone)
-        self.clips
-            .retain(|c| !c.stop.as_ref().is_some_and(|s| s.load(Relaxed)));
+        // a stopped clip (the trimmer's pause, the same person's next sound) ends here
+        bury_where(&mut self.clips, &mut self.graveyard, |c| {
+            c.stop.as_ref().is_some_and(|s| s.load(Relaxed))
+        });
         let frames = out.len() / channels.max(1);
         self.pulls[0] = self.pulls[0].max(frames);
         let refill = self.refill();
@@ -695,9 +754,11 @@ impl Mixer {
             }
             frame.fill(soft_limit(acc * master));
         }
-        // Dropping a finished clip's Arc here is fine: the decode cache holds another clone, or
-        // at worst this frees one small buffer.
-        self.clips.retain(|c| !c.samples.finished(c.pos));
+        // Not dropped here: when the decode cache has evicted it (or it was a preview, never
+        // cached), this is the sound's last clone, and freeing ~1 MB in the callback can glitch.
+        bury_where(&mut self.clips, &mut self.graveyard, |c| {
+            c.samples.finished(c.pos)
+        });
         for p in self.peers.values_mut().filter(|p| !p.waiting) {
             p.low = p.low.min(p.queue.len()); // a source still waiting isn't drifting
         }
@@ -931,6 +992,87 @@ mod tests {
         m.mix_into(&mut out, 1, 1.0);
         assert!(out.iter().all(|v| *v == 0.0));
         assert!(m.clips.is_empty(), "finished and done: dropped");
+    }
+
+    /// #123: the speakers never free a finished clip; the network side does, on its next reap.
+    #[test]
+    fn finished_clips_are_freed_off_the_audio_thread() {
+        let (input, mut m) = mixer(48_000, 200);
+        let samples: Arc<[f32]> = vec![0.5; 480].into();
+        input.play_clip(samples.clone(), 1.0);
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(m.clips.is_empty(), "finished: out of the mix");
+        assert_eq!(
+            Arc::strong_count(&samples),
+            2,
+            "but still alive: the callback didn't free it"
+        );
+        assert_eq!(input.reap(), 1);
+        assert_eq!(Arc::strong_count(&samples), 1, "freed by the reap");
+    }
+
+    /// The decode cache evicted the sound while it played: the mixer's clone is the last one,
+    /// and it is still the reap that frees it.
+    #[test]
+    fn an_evicted_streaming_sound_is_freed_by_the_reap() {
+        let (input, mut m) = mixer(48_000, 200);
+        let pcm = Arc::new(crate::soundboard::pcm::Pcm::complete(&[0.5; 480]));
+        let watch = Arc::downgrade(&pcm);
+        input.play_stream(pcm, 1.0); // the cache's clone is gone: this was the last
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(watch.upgrade().is_some(), "not freed in the callback");
+        input.reap();
+        assert!(watch.upgrade().is_none());
+    }
+
+    #[test]
+    fn stopped_cleared_and_refused_clips_are_freed_by_the_reap_too() {
+        let (input, mut m) = mixer(48_000, 200);
+        let samples: Arc<[f32]> = vec![0.5; 4800].into();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        input.play_clip_stoppable(samples.clone(), 1.0, stop.clone());
+        for _ in 0..MAX_CLIPS {
+            input.play_clip(samples.clone(), 1.0); // one over the limit
+        }
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        m.mix_into(&mut out, 1, 1.0);
+        // the refused one and the stopped one wait for the reap
+        assert_eq!(Arc::strong_count(&samples), 1 + MAX_CLIPS + 1);
+        input.reap();
+        assert_eq!(Arc::strong_count(&samples), 1 + MAX_CLIPS - 1);
+        input.clear(); // reaps what it can now (nothing: the callback hasn't seen the clear)
+        m.mix_into(&mut out, 1, 1.0);
+        assert_eq!(Arc::strong_count(&samples), 1 + MAX_CLIPS - 1);
+        input.reap();
+        assert_eq!(
+            Arc::strong_count(&samples),
+            1,
+            "everything handed back and freed"
+        );
+    }
+
+    #[test]
+    fn a_full_graveyard_frees_in_the_callback_rather_than_leak_or_panic() {
+        let (input, mut m) = mixer(48_000, 200);
+        let samples: Arc<[f32]> = vec![0.5; 10].into();
+        let mut out = vec![0.0; 480];
+        // never reaped (push_clip reaps, so feed the commands directly)
+        for _ in 0..GRAVEYARD + 10 {
+            input.cmds.lock().unwrap().push(Cmd::Clip {
+                samples: ClipSamples::Fixed(samples.clone()),
+                gain: 1.0,
+                queued: std::time::Instant::now(),
+                stop: None,
+            });
+            m.mix_into(&mut out, 1, 1.0);
+        }
+        assert_eq!(Arc::strong_count(&samples), 1 + GRAVEYARD);
+        assert_eq!(input.reap(), GRAVEYARD);
+        assert_eq!(Arc::strong_count(&samples), 1);
     }
 
     #[test]

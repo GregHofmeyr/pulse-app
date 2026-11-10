@@ -124,6 +124,39 @@ impl serde::Serialize for ApiError {
     }
 }
 
+impl ApiError {
+    /// A stable name for the errors the UI acts on rather than shows, so it needn't match the
+    /// words (#123). `"rate_limited"`: a 429, the server's own `rate_limited` code.
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::RateLimited | Self::Told { status: 429, .. } => Some("rate_limited"),
+            _ => None,
+        }
+    }
+}
+
+/// An [`ApiError`] for a command whose UI branches on the kind of failure: serialised as
+/// `{ "message": <the same words a plain ApiError serialises to>, "code": <ApiError::code> | null }`.
+/// Plain `ApiError` stays a string, which every other command's error handling expects.
+#[derive(Debug)]
+pub struct Coded(pub ApiError);
+
+impl From<ApiError> for Coded {
+    fn from(e: ApiError) -> Self {
+        Self(e)
+    }
+}
+
+impl serde::Serialize for Coded {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut st = s.serialize_struct("Coded", 2)?;
+        st.serialize_field("message", &self.0.to_string())?;
+        st.serialize_field("code", &self.0.code())?;
+        st.end()
+    }
+}
+
 /// Plain http:// only for this machine; anything remote must be https (passwords + tokens).
 /// Returns the normalised address to use from here on.
 pub fn check_server_url(url: &str) -> Result<String, ApiError> {
@@ -3444,6 +3477,32 @@ mod tests {
         assert!(
             crate::outbox::retryable(&err),
             "a rate-limited send is retried later"
+        );
+    }
+
+    /// #123: the UI tells a rate limit by its code, and still gets the same words.
+    #[test]
+    fn a_coded_error_carries_the_rate_limit_code_and_the_usual_words() {
+        let json = |e: ApiError| serde_json::to_value(Coded(e)).unwrap();
+        assert_eq!(
+            json(ApiError::RateLimited),
+            serde_json::json!({ "message": "slow down a little, then try again", "code": "rate_limited" })
+        );
+        assert_eq!(
+            json(ApiError::Told {
+                status: 429,
+                message: "That's 20 clips this hour. Try again later.".into()
+            })["code"],
+            "rate_limited"
+        );
+        assert_eq!(
+            json(ApiError::Rejected("not found".into())),
+            serde_json::json!({ "message": "not found", "code": null })
+        );
+        // a plain ApiError is still just its words
+        assert_eq!(
+            serde_json::to_value(ApiError::RateLimited).unwrap(),
+            "slow down a little, then try again"
         );
     }
 

@@ -48,6 +48,25 @@ that rings unite with the real speaking set at render time only.
   ahead would burn ~0.8 s of CPU per sound on every join, for a gain of ~30 ms.
 - `[profile.dev.package.opus-decoder]` is optimised in dev builds (`just linux-client` is a debug build).
 
+## Follow-ups (#123, #143)
+
+- Decoding moved to libopus (#143): libwebrtc, linked for calls, carries libopus and exports its C API on Linux and
+  Windows, so `soundboard/opus.rs` declares and calls it; no new crate or build step. Same 6 s file, optimised:
+  `opus-decoder` ~800 ms, libopus ~4 ms. `opus-decoder` and its dev-profile override are gone. Streaming stays (it
+  costs nothing and a first play still starts after the first 100 ms).
+- Fuzzing (#123): `soundboard/fuzz.rs` feeds mutated and random packets through the production decode loop on a worker
+  under a 2 s budget per case (panic = finding, over budget = finding). `fuzz_decoder_quick` runs with every test run;
+  `fuzz_decoder_long` is the open-ended one (`PULSE_FUZZ_SECS`, `PULSE_FUZZ_SEED`, `--ignored`). `opus-decoder` and
+  libopus both came through clean (numbers in the #123 close-out).
+- Previews outside a call stream too (`sounds::Source::Stream`), and the mixer hands finished clips back through a
+  ring to be freed on the voice tick, never in the audio callback.
+- Your own play is heard on click (#143 item 4): `play_sound_to_call` takes `hear_now`, starts the sound through the
+  mixer with its #243 ticket taken at the click, and marks its echo (`soundboard::Echoes`) so `soundboard_play` skips
+  it (the ring still lights). A refused request (rate limit, deleted sound) stops it at once, or keeps it from starting
+  if it was still loading. Cost: a script-speed press the server refuses still cuts off your previous sound locally.
+- `play_sound_to_call` errors are `{ message, code }` (`api::Coded`); `isRateLimited` checks `code === 'rate_limited'`
+  and still matches the words for an uncoded error.
+
 ---
 
 ### Task 1: Custom emoji on sounds (server + protocol)

@@ -4,7 +4,7 @@ import type { Sound } from './protocol/Sound'
 import { emptyState } from './state'
 import {
   loadSoundMutes, saveSoundMutes,
-  shouldPlay, soundSections, searchSounds, tidyCandidates, isNotFound, previewPercents, warmOrder,
+  shouldPlay, soundSections, searchSounds, tidyCandidates, isNotFound, isRateLimited, previewPercents, warmOrder,
 } from './soundboard'
 
 const snd = (id: string, name: string, over: Partial<Sound> = {}): Sound => ({
@@ -89,10 +89,22 @@ describe('tidyCandidates', () => {
   })
 })
 
+describe('isRateLimited', () => {
+  it("tells a 429 by the core's code, or by its words when there's no code", () => {
+    expect(isRateLimited({ message: 'slow down a little, then try again', code: 'rate_limited' })).toBe(true)
+    expect(isRateLimited({ message: 'anything', code: 'rate_limited' })).toBe(true)
+    expect(isRateLimited('slow down a little, then try again')).toBe(true)
+    expect(isRateLimited({ message: "You're not in a call", code: null })).toBe(false)
+    expect(isRateLimited('not found')).toBe(false)
+    expect(isRateLimited(null)).toBe(false)
+  })
+})
+
 describe('isNotFound', () => {
   it("matches the core's words for a 404 and nothing else", () => {
     expect(isNotFound('not found')).toBe(true)
     expect(isNotFound(new Error('not found'))).toBe(true)
+    expect(isNotFound({ message: "not found", code: null })).toBe(true)
     expect(isNotFound("You're not in a call")).toBe(false)
     expect(isNotFound('slow down a little, then try again')).toBe(false)
   })

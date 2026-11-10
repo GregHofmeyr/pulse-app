@@ -214,6 +214,7 @@ pub fn run() {
             app.manage(soundboard::Clicks::default());
             app.manage(soundboard::Trimming::default());
             app.manage(soundboard::Players::default());
+            app.manage(soundboard::Echoes::default());
             app.manage(stream::PickerMemory::default());
             app.manage(stream::ghost_out::GhostOutput::default());
             let h = app.handle().clone();

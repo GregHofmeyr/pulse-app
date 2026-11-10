@@ -14,6 +14,8 @@ import { mixer, reloadMixer, setNotch } from '../lib/mixer.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { soundboard } from '../lib/soundboard.svelte'
+import { voice } from '../lib/voice.svelte'
+import type { User } from '../lib/protocol/User'
 
 const servers: Server[] = [
   { id: 'S1', name: 'Main', icon_hash: null },
@@ -150,6 +152,42 @@ describe('Soundboard', () => {
     tile('Bruh').click()
     await settle()
     expect(document.querySelector('[role=alert]')?.textContent).toBe("You're not in a call")
+  })
+
+  // #123: the core's coded error, told by its code
+  it('a_rate_limited_play_is_told_by_its_code', async () => {
+    open()
+    invoke.mockRejectedValueOnce({ message: 'slow down a little, then try again', code: 'rate_limited' })
+    tile('Bruh').click()
+    await settle()
+    expect(document.querySelector('[role=alert]')).toBeNull()
+    invoke.mockRejectedValueOnce({ message: "You're not in a call", code: null })
+    tile('Bruh').click()
+    await settle()
+    expect(document.querySelector('[role=alert]')?.textContent).toBe("You're not in a call")
+  })
+
+  // #143: in a call you hear your own play on click (the core stops it if the server refuses)
+  it('in_a_call_a_play_is_heard_on_click_at_the_echos_levels', async () => {
+    app.state.me = { id: 'U9' } as User
+    voice.channelId = 'C1'
+    setNotch('calls', 'master', 80)
+    soundboard.volume_pct = 150
+    try {
+      open()
+      tile('Bruh').click()
+      await settle()
+      expect(calls('play_sound_to_call')).toEqual([
+        ['play_sound_to_call', { id: 'b', hearNow: { hash: 'hb', callsPercent: 80, soundboardPercent: 150, soundPercent: 120, player: 'U9' } }],
+      ])
+      // the soundboard turned off: nothing heard here, as its echo wouldn't be
+      soundboard.volume_pct = 0
+      tile('Bruh').click()
+      await settle()
+      expect(calls('play_sound_to_call').at(-1)).toEqual(['play_sound_to_call', { id: 'b' }])
+    } finally {
+      voice.channelId = null
+    }
   })
 
   it('a_play_of_a_sound_deleted_meanwhile_is_quiet', async () => {

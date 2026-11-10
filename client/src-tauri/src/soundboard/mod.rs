@@ -2,6 +2,9 @@
 
 pub mod decode;
 pub mod encode;
+#[cfg(test)]
+mod fuzz;
+pub mod opus;
 pub mod pcm;
 
 use std::path::{Path, PathBuf};
@@ -126,9 +129,9 @@ impl Cache {
 
     /// Get sounds ready before anyone plays them (joining a call): in order, fetch each one not
     /// already decoded, which fills the media disk cache, so a first play needs no network. It
-    /// decodes nothing: a streamed decode starts playing in milliseconds, while decoding a call's
-    /// worth of sounds ahead would burn ~0.8 s of CPU per 6 s sound on every join. Failures are
-    /// skipped.
+    /// decodes nothing: a streamed decode starts playing in well under a millisecond, and decoding
+    /// a call's worth of sounds ahead would only fill memory (and evict sounds actually played).
+    /// Failures are skipped.
     pub async fn warm<F, Fut>(&self, hashes: &[String], fetch: F)
     where
         F: Fn(String) -> Fut,
@@ -198,6 +201,76 @@ impl Players {
     #[cfg(test)]
     fn len(&self) -> usize {
         self.playing.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+}
+
+/// Your own plays into the call that you hear on click, before the server has answered (#143):
+/// their `SoundPlayed` echo then lights your ring but doesn't play the sound a second time.
+/// Keyed by sound and player; an echo that never comes (a lost event) is forgotten after a while.
+#[derive(Default)]
+pub struct Echoes(Mutex<Vec<(String, String, std::time::Instant)>>);
+
+impl Echoes {
+    /// How long an echo is waited for.
+    const WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+
+    /// `player` is hearing `sound_id` already: skip its next echo.
+    pub fn expect(&self, sound_id: &str, player: &str) {
+        let mut e = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        e.retain(|(_, _, at)| at.elapsed() < Self::WINDOW);
+        e.push((sound_id.into(), player.into(), std::time::Instant::now()));
+    }
+
+    /// Whether this relayed play is the echo of one heard on click (and so not to play again).
+    pub fn take(&self, sound_id: &str, player: &str) -> bool {
+        let mut e = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        e.retain(|(_, _, at)| at.elapsed() < Self::WINDOW);
+        match e.iter().position(|(s, p, _)| s == sound_id && p == player) {
+            Some(i) => {
+                e.remove(i);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The server refused that play: no echo is coming.
+    pub fn forget(&self, sound_id: &str, player: &str) {
+        let mut e = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = e.iter().rposition(|(s, p, _)| s == sound_id && p == player) {
+            e.remove(i);
+        }
+    }
+}
+
+/// One play heard on click, until the server answers (#143). Refused (a rate limit, a deleted
+/// sound), it stops at once, or never starts if it was still loading.
+#[derive(Default)]
+pub struct LocalPlay(Mutex<(bool, Option<Arc<std::sync::atomic::AtomicBool>>)>);
+
+impl LocalPlay {
+    /// About to queue it: `start` takes its turn ([`Players::start`]) and gives its stop flag.
+    /// None (don't queue it) when it was refused already, or `start` says a newer press plays.
+    pub fn arm(
+        &self,
+        start: impl FnOnce() -> Option<Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if g.0 {
+            return None;
+        }
+        let stop = start()?;
+        g.1 = Some(stop.clone());
+        Some(stop)
+    }
+
+    /// The server refused it: stop it (the mixer drops it on its next pull) or keep it from starting.
+    pub fn refuse(&self) {
+        let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        g.0 = true;
+        if let Some(stop) = &g.1 {
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 }
 
@@ -401,6 +474,53 @@ mod tests {
     }
 
     #[test]
+    fn an_echo_of_a_play_heard_on_click_is_skipped_once() {
+        let e = Echoes::default();
+        assert!(!e.take("boom", "alex"), "nothing heard on click");
+        e.expect("boom", "alex");
+        assert!(!e.take("boom", "sam"), "sam's play of it is sam's");
+        assert!(!e.take("horn", "alex"));
+        assert!(e.take("boom", "alex"));
+        assert!(!e.take("boom", "alex"), "only once");
+        // two quick presses, the second refused: one echo is skipped, then plays resume
+        e.expect("boom", "alex");
+        e.expect("boom", "alex");
+        e.forget("boom", "alex");
+        assert!(e.take("boom", "alex"));
+        assert!(!e.take("boom", "alex"));
+    }
+
+    /// #143 with #243: a play heard on click and then refused stops; refused while it was still
+    /// loading, it never starts (and never takes its turn, so it cuts nothing off).
+    #[test]
+    fn a_refused_local_play_stops_or_never_starts() {
+        let p = Players::default();
+        let first = play_now(&p, "alex");
+        let late = LocalPlay::default();
+        let t = p.ticket();
+        late.refuse();
+        assert!(late.arm(|| p.start("alex", t)).is_none());
+        assert!(!first.load(SeqCst), "the refused press cut nothing off");
+
+        let playing = LocalPlay::default();
+        let t = p.ticket();
+        let stop = playing.arm(|| p.start("alex", t)).expect("plays");
+        assert!(
+            first.load(SeqCst),
+            "a new press cuts the last one off (#214)"
+        );
+        assert!(!stop.load(SeqCst));
+        playing.refuse();
+        assert!(stop.load(SeqCst), "refused: stopped at once");
+
+        // superseded while loading (a later press already plays): not queued either
+        let slow = LocalPlay::default();
+        let old = p.ticket();
+        play_now(&p, "alex");
+        assert!(slow.arm(|| p.start("alex", old)).is_none());
+    }
+
+    #[test]
     fn clicks_match_once() {
         let c = Clicks::default();
         assert!(c.take("a").is_none());
@@ -527,9 +647,12 @@ mod tests {
             "soundboard timing (6 s sound, fetch excluded): first play ready after {first_ms:.2} ms \
              (streamed; decoding all of it first takes {whole_ms:.2} ms), cached {again_ms:.3} ms"
         );
+        // with libopus (#143) the whole decode is a few ms, so a streamed start is no longer much
+        // earlier than the end: both are far below the ~800 ms the pure-Rust decoder took
         assert!(
-            first.start_ms < whole_ms / 4.0,
-            "a first play no longer waits for the whole decode"
+            first.start_ms < 600.0 && whole_ms < 600.0,
+            "first play after {} ms, whole decode {whole_ms} ms",
+            first.start_ms
         );
         assert!(again.cached);
         assert!(

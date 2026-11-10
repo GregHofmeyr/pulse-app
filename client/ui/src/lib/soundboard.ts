@@ -92,12 +92,24 @@ export function searchSounds(sounds: Sound[], q: string): Sound[] {
   return [...hits.filter(starts), ...hits.filter((x) => !starts(x))]
 }
 
-/** The core's words for a 429 (`ApiError::RateLimited`): a play that hit the abuse limit is dropped quietly. */
+/** An error's words: a plain string, an Error, or a coded core error's `message`. */
+const messageOf = (e: unknown): string =>
+  typeof e === 'string'
+    ? e
+    : e instanceof Error
+      ? e.message
+      : typeof e === 'object' && e !== null && typeof (e as { message?: unknown }).message === 'string'
+        ? (e as { message: string }).message
+        : ''
+
+/** A 429: a play that hit the abuse limit is dropped quietly. By the core's stable code (#123); the words
+ * (`ApiError::RateLimited`) are still matched for an error that carries no code. */
 export const isRateLimited = (e: unknown): boolean =>
-  (typeof e === 'string' ? e : e instanceof Error ? e.message : '').startsWith('slow down a little')
+  (typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'rate_limited') ||
+  messageOf(e).startsWith('slow down a little')
 
 /** The core's words for a 404: the sound was deleted meanwhile (its SoundDeleted removes the tile). */
-export const isNotFound = (e: unknown): boolean => (typeof e === 'string' ? e : e instanceof Error ? e.message : '') === 'not found'
+export const isNotFound = (e: unknown): boolean => messageOf(e) === 'not found'
 
 /** [Calls, Soundboard] percents a preview plays at. Previews are for yourself: with the soundboard turned off (either
  * at 0) they still play, at full volume. */

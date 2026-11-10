@@ -1,14 +1,12 @@
-//! Ogg Opus → 48 kHz mono f32, in pure Rust. 48 kHz is the voice mixer's rate, so no resampling.
+//! Ogg Opus → 48 kHz mono f32, decoded by libopus ([`super::opus`]). 48 kHz is the voice mixer's
+//! rate, so no resampling.
 
 use std::sync::Arc;
 
-use opus_decoder::OpusDecoder;
 use pulse_protocol::sound::{OggOpus, parse_ogg_opus};
 
+use super::opus::{Decoder, MAX_PACKET_SAMPLES};
 use super::pcm::Pcm;
-
-/// One Opus packet is at most 120 ms.
-const MAX_PACKET_SAMPLES: usize = 5760;
 
 const BAD_FILE: &str = "That sound file couldn't be decoded.";
 
@@ -24,12 +22,14 @@ pub fn decode(bytes: &[u8]) -> Result<Arc<[f32]>, String> {
 }
 
 /// How much audio a streamed decode has ready before playback starts (100 ms): a head start so
-/// the audio callback never catches up with the decoder (which runs ~7x faster than real time).
+/// the audio callback never catches up with the decoder (libopus runs ~1500x faster than real
+/// time, so in practice the whole sound is there almost at once).
 pub const START_SAMPLES: usize = 4800;
 
 /// Decode on a blocking thread, and resolve as soon as [`START_SAMPLES`] are ready (or the whole
 /// sound, when it is shorter): the rest keeps decoding into the returned [`Pcm`] while it plays.
-/// The whole of a 6 s sound takes ~0.8 s in `opus-decoder`, which is what a first play waited for.
+/// Streaming dates from the pure-Rust decoder (~0.8 s for a 6 s sound, #138); with libopus (~4 ms)
+/// it costs nothing and still starts a first play after the first 100 ms.
 pub async fn decode_streaming(bytes: Vec<u8>) -> Result<Arc<Pcm>, String> {
     let duration_ms = parse_ogg_opus(&bytes)
         .map_err(|e| e.to_string())?
@@ -98,15 +98,18 @@ fn decode_untrimmed(ogg: &OggOpus) -> Result<Vec<f32>, String> {
 
 /// Decode `ogg`'s packets in order, handing each one's mono samples to `sink`, until it returns
 /// false (enough) or the packets run out.
-fn decode_packets(ogg: &OggOpus, mut sink: impl FnMut(&[f32]) -> bool) -> Result<(), String> {
+pub(super) fn decode_packets(
+    ogg: &OggOpus,
+    mut sink: impl FnMut(&[f32]) -> bool,
+) -> Result<(), String> {
     let ch = ogg.channels as usize;
-    let mut dec = OpusDecoder::new(48_000, ch).map_err(|_| BAD_FILE.to_string())?;
+    let mut dec = Decoder::new(ch).ok_or_else(|| BAD_FILE.to_string())?;
     let mut pcm = vec![0f32; MAX_PACKET_SAMPLES * ch];
     let mut mono = Vec::with_capacity(MAX_PACKET_SAMPLES);
     for packet in &ogg.packets {
         let n = dec
-            .decode_float(packet, &mut pcm, false)
-            .map_err(|_| BAD_FILE.to_string())?;
+            .decode(packet, &mut pcm)
+            .ok_or_else(|| BAD_FILE.to_string())?;
         mono.clear();
         mono.extend(
             pcm[..n * ch]
@@ -250,7 +253,9 @@ pub(crate) mod tests {
             "soundboard streaming decode (6 s): audio after {start_ms:.1} ms, all after {full_ms:.1} ms"
         );
         assert_eq!(pcm.to_vec(), decode(&ogg).unwrap().to_vec());
-        assert!(start_ms < full_ms / 4.0, "it starts long before the end");
+        // libopus (#143): the whole 6 s in well under a tenth of its length, even in a debug
+        // build on a busy machine (the pure-Rust decoder took ~800 ms optimised)
+        assert!(full_ms < 600.0, "decoding all of it took {full_ms} ms");
     }
 
     #[tokio::test]

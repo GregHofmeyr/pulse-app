@@ -188,6 +188,9 @@ async fn update(
     if !s.limits.sound_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
+    // From the read of the old fields to the publish: two quick edits neither merge into stale
+    // fields nor publish their SoundUpdated out of order (#123).
+    let _order = s.hub.in_order().await;
     let old = editable(&s, me, &id).await?;
     let name = match &req.name {
         Some(n) => clean_name(n).ok_or_else(bad_name)?,
@@ -252,6 +255,8 @@ async fn delete(
     if !s.limits.sound_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
+    // in order with edits: a SoundUpdated published after its SoundDeleted would bring it back
+    let _order = s.hub.in_order().await;
     let sound = editable(&s, me, &id).await?;
     // Favourites and usage go with it (cascade); the file waits for media cleanup.
     let changed = sqlx::query("DELETE FROM sounds WHERE id = ?")

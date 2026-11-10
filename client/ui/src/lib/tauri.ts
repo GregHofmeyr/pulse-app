@@ -412,6 +412,8 @@ export const streamCmd = {
 /** Soundboard commands. `output` is the chosen output device name (null = default). */
 export type SoundPreview = { duration_ms: number; peaks: number[] }
 export type SoundUpdate = { name?: string; emoji?: string | null; emoji_id?: string | null; volume?: number }
+/** Hearing your own play to the call on click (#143): the levels its echo would play at, and you as its player. */
+export type HearNow = { hash: string; callsPercent: number; soundboardPercent: number; soundPercent: number; player: string }
 export const soundboardCmd = {
   support: () => invoke<{ can_send: boolean; reason: string | null }>('soundboard_support'),
   pickFile: () => invoke<string | null>('soundboard_pick_file'),
@@ -434,7 +436,10 @@ export const soundboardCmd = {
   update: (id: string, request: SoundUpdate) => invoke<Sound>('update_sound', { id, request }),
   remove: (id: string) => invoke<void>('delete_sound', { id }),
   list: (serverId: string) => invoke<Sound[]>('list_sounds', { serverId }),
-  playToCall: (id: string) => invoke<void>('play_sound_to_call', { id }),
+  /** Play to everyone in your call. `hearNow` (#143): you hear it at once rather than on its echo; the core stops it
+   *  if the server refuses. Rejects with `{ message, code }` (`code: 'rate_limited'` for a 429). */
+  playToCall: (id: string, hearNow: HearNow | null = null) =>
+    invoke<void>('play_sound_to_call', hearNow ? { id, hearNow } : { id }),
   setFavourite: (id: string, on: boolean) => invoke<void>('set_sound_favourite', { id, on }),
   /** Your join sound in `serverId` (#121): one of its sounds, or null for the normal join cue. */
   setJoinSound: (serverId: string, soundId: string | null) => invoke<void>('set_join_sound', { serverId, soundId }),
@@ -466,5 +471,9 @@ export const pollCmd = {
 
 /** Tauri rejects with the command's error string. */
 export function errorText(e: unknown): string {
-  return typeof e === 'string' ? e : e instanceof Error ? e.message : 'Something went wrong'
+  if (typeof e === 'string') return e
+  if (e instanceof Error) return e.message
+  // a coded core error (`{ message, code }`, e.g. play_sound_to_call)
+  if (typeof e === 'object' && e !== null && typeof (e as { message?: unknown }).message === 'string') return (e as { message: string }).message
+  return 'Something went wrong'
 }
