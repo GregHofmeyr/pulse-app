@@ -40,7 +40,7 @@ describe('sections', () => {
   it('lists the spec’s sections and notches in order', () => {
     expect(MIXER_SECTIONS.map((s) => s.label)).toEqual(['Calls', 'Call sounds', 'Stream sounds', 'Notifications', 'Media'])
     expect(MIXER_SECTIONS.map((s) => s.notches.map((n) => n.label))).toEqual([
-      ['Voices', 'Streams', 'Soundboard'],
+      ['Voices', 'Streams', 'Soundboard', 'Join sounds'],
       ['Join', 'Leave', 'Mute', 'Unmute', 'Deafen', 'Undeafen', 'Talking while muted', 'Ringing'],
       ['Someone goes live', 'A stream ends'],
       ['Message ding', 'Badge unlocked', 'Picker wheel tick', 'Picker wheel result'],
@@ -60,7 +60,7 @@ describe('prefs', () => {
     const d = defaultMixer()
     expect(d).toEqual({
       v: 1,
-      calls: { master: 100, voices: 100, streams: 100, soundboard: 100 },
+      calls: { master: 100, voices: 100, streams: 100, soundboard: 100, join_sounds: 100 },
       callSounds: { master: 100, join: 100, leave: 100, mute: 100, unmute: 100, deafen: 100, undeafen: 100, muted_talk: 100, ringing: 100 },
       streamSounds: { master: 100, live: 100, live_end: 100 },
       notifications: { master: 100, message: 100, badge: 100, wheel_tick: 100, wheel_result: 100 },
@@ -150,7 +150,8 @@ describe('prefs', () => {
       notifications: { message: NaN, badge: 12 }, media: { clips: 150, clipsMuted: 'yes' },
     }))
     const p = loadMixer()
-    expect(p.calls).toEqual({ master: 100, voices: 200, streams: 0, soundboard: 38 })
+    // a record from before join sounds (#121) gains the notch at 100 %
+    expect(p.calls).toEqual({ master: 100, voices: 200, streams: 0, soundboard: 38, join_sounds: 100 })
     expect(p.callSounds).toEqual(defaultMixer().callSounds)
     expect(p.notifications).toEqual({ master: 100, message: 100, badge: 12, wheel_tick: 100, wheel_result: 100 })
     expect(p.media).toEqual({ clips: 100, clipsMuted: false })

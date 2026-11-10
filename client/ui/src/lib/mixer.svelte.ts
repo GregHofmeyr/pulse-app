@@ -44,7 +44,8 @@ export function setNotch(section: SectionId, key: string, pct: number) {
   if (max === undefined || !Number.isFinite(pct)) return
   ;(mixer[section] as Record<string, number | boolean>)[key] = Math.round(Math.min(max, Math.max(0, pct)))
   save()
-  if (section === 'calls' && key !== 'soundboard') pushCallMixQuietly()
+  // the core applies Voices and Streams; the soundboard and join sounds go with each play
+  if (section === 'calls' && key !== 'soundboard' && key !== 'join_sounds') pushCallMixQuietly()
 }
 
 export function setClipsMuted(muted: boolean) {

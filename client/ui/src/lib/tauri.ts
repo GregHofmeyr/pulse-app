@@ -436,6 +436,8 @@ export const soundboardCmd = {
   list: (serverId: string) => invoke<Sound[]>('list_sounds', { serverId }),
   playToCall: (id: string) => invoke<void>('play_sound_to_call', { id }),
   setFavourite: (id: string, on: boolean) => invoke<void>('set_sound_favourite', { id, on }),
+  /** Your join sound in `serverId` (#121): one of its sounds, or null for the normal join cue. */
+  setJoinSound: (serverId: string, soundId: string | null) => invoke<void>('set_join_sound', { serverId, soundId }),
 }
 
 /** The picker wheel (#158): saved wheels, spins, and Spin again from a spin's line. */

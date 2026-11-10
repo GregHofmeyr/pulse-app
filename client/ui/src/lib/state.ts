@@ -765,6 +765,13 @@ function dropChannel(s: AppState, c: string): AppState {
   }
 }
 
+/** `server`'s members with `soundId` taken off as anyone's join sound (#121); the same object when nobody had it. */
+function membersWithoutJoinSound(members: AppState['members'], server: string, soundId: string): AppState['members'] {
+  const list = members[server]
+  if (!list?.some((m) => m.join_sound === soundId)) return members
+  return { ...members, [server]: list.map((m) => (m.join_sound === soundId ? { ...m, join_sound: undefined } : m)) }
+}
+
 export function applyEvent(s: AppState, e: Event, now: number): AppState {
   switch (e.t) {
     case 'MessageCreated': {
@@ -1040,6 +1047,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         sounds,
         soundFavourites: s.soundFavourites.filter((id) => id !== e.d.sound_id),
         frequentSounds: s.frequentSounds.filter((id) => id !== e.d.sound_id),
+        // a deleted sound is nobody's join sound any more (#121; the server clears it too)
+        members: membersWithoutJoinSound(s.members, e.d.server_id, e.d.sound_id),
       }
     }
     case 'SoundPlayed':

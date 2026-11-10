@@ -36,12 +36,13 @@ describe('mixer state', () => {
     expect(stored()).toEqual(defaultMixer())
   })
 
-  it('Calls changes go to the core; the soundboard notch and other sections do not', async () => {
+  it('Calls changes go to the core; the soundboard and join sounds notches and other sections do not', async () => {
     setNotch('calls', 'master', 50)
     await settle()
     setNotch('calls', 'streams', 150)
     await settle()
     setNotch('calls', 'soundboard', 20)
+    setNotch('calls', 'join_sounds', 30)
     setNotch('callSounds', 'master', 20)
     await settle()
     expect(callMixes()).toEqual([

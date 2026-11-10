@@ -7,6 +7,7 @@
   import { mixerCollapsed, toggleMixerSection } from '../lib/mixerCollapsed.svelte'
   import { memberServers } from '../lib/reactions'
   import { soundSections } from '../lib/soundboard'
+  import { joinSoundOf } from '../lib/joinSounds'
   import { app } from '../lib/store.svelte'
   import { soundboardCmd } from '../lib/tauri'
   import { loadAudioConfig, playRingingAt, playSoundAt, type SoundName } from '../lib/voiceui'
@@ -16,21 +17,32 @@
 
   /** What the Soundboard ▶ plays: the first sound the popover would show. */
   const firstSound = $derived(soundSections(app.state, memberServers(app.state), app.state.servers).find((x) => x.sounds.length)?.sounds[0] ?? null)
+  /** What the Join sounds ▶ plays (#121): one of your own join sounds, else the Soundboard ▶'s sound. */
+  const myJoinSound = $derived.by(() => {
+    const me = app.state.me?.id
+    for (const server of me ? Object.keys(app.state.members) : []) {
+      const id = joinSoundOf(app.state, server, me!)
+      if (id) return app.state.sounds[id]
+    }
+    return null
+  })
+  const testSound = (n: Notch) => (n.key === 'join_sounds' ? (myJoinSound ?? firstSound) : firstSound)
 
-  /** The level a test button would play at (0: off, so the button is disabled). */
+  /** The level a test button would play at (0: off, so the button is disabled). Soundboard-played rows (Soundboard,
+   * Join sounds) go under the Calls master. */
   const testGain = (s: MixerSection, n: Notch): number =>
-    n.test === 'soundboard' ? mixGain(mixer.calls.master, mixer.calls.soundboard) : mixGain(value(s, 'master'), value(s, n.key))
+    n.test === 'soundboard' ? mixGain(mixer.calls.master, value(s, n.key)) : mixGain(value(s, 'master'), value(s, n.key))
   const testBlocked = (s: MixerSection, n: Notch): string | null =>
-    n.test === 'soundboard' && !firstSound ? 'No sounds yet' : testGain(s, n) > 0 ? null : 'Off'
+    n.test === 'soundboard' && !testSound(n) ? 'No sounds yet' : testGain(s, n) > 0 ? null : 'Off'
 
   function test(s: MixerSection, n: Notch) {
+    const sound = testSound(n)
     if (n.test === 'sound') {
       playSoundAt(n.key as SoundName, testGain(s, n))
     } else if (n.test === 'ring') {
       playRingingAt(testGain(s, n))
-    } else if (n.test === 'soundboard' && firstSound) {
-      const { master, soundboard } = mixer.calls
-      soundboardCmd.play(firstSound.media_hash, master, soundboard, firstSound.volume, loadAudioConfig().output ?? null).catch(() => {})
+    } else if (n.test === 'soundboard' && sound) {
+      soundboardCmd.play(sound.media_hash, mixer.calls.master, value(s, n.key), sound.volume, loadAudioConfig().output ?? null).catch(() => {})
     }
   }
 </script>

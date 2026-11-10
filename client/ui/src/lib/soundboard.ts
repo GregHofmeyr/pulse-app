@@ -65,9 +65,10 @@ export function soundSections(s: AppState, memberOf: Set<string>, servers: Serve
   return out
 }
 
-/** Media hashes to fetch on joining a call, most likely played first: favourites, frequently used, then
- * the rest of your servers' sounds. One entry per file; sounds of servers you've left are skipped. */
-export function warmOrder(s: AppState, memberOf: Set<string>): string[] {
+/** Media hashes to fetch on joining a call, most likely played first: `first` (join sounds, #121), favourites,
+ * frequently used, then the rest of your servers' sounds. One entry per file; sounds of servers you've left are
+ * skipped. */
+export function warmOrder(s: AppState, memberOf: Set<string>, first: string[] = []): string[] {
   const out: string[] = []
   const seen = new Set<string>()
   const add = (x: Sound | undefined) => {
@@ -75,6 +76,7 @@ export function warmOrder(s: AppState, memberOf: Set<string>): string[] {
     seen.add(x.media_hash)
     out.push(x.media_hash)
   }
+  for (const id of first) add(s.sounds[id])
   for (const id of s.soundFavourites) add(s.sounds[id])
   for (const id of s.frequentSounds) add(s.sounds[id])
   for (const x of Object.values(s.sounds).sort(byName)) add(x)

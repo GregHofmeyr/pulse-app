@@ -174,6 +174,23 @@ describe('VolumeMixer', () => {
     expect(calls('soundboard_play')).toEqual([{ hash: 'ha', callsPercent: 80, soundboardPercent: 140, soundPercent: 120, output: null, soundId: null, player: null }])
   })
 
+  it('Join sounds (#121) sits in Calls after Soundboard; ▶ plays your own join sound at Calls × Join sounds', () => {
+    withSounds([snd('b', 'Bruh'), snd('a', 'Airhorn')])
+    app.state = { ...app.state, members: { S1: [{ user: me, nickname: null, join_sound: 'b' }] } } as AppState
+    show()
+    const rows = [...section('Calls').querySelectorAll('.row .name')].map((n) => n.textContent)
+    expect(rows).toEqual(['Voices', 'Streams', 'Soundboard', 'Join sounds'])
+    move('Calls volume', 80)
+    move('Join sounds', 150)
+    expect(stored().calls.join_sounds).toBe(150)
+    button('Test Join sounds').click()
+    expect(calls('soundboard_play')).toEqual([{ hash: 'hb', callsPercent: 80, soundboardPercent: 150, soundPercent: 120, output: null, soundId: null, player: null }])
+    move('Join sounds', 0)
+    expect(slider('Join sounds').getAttribute('aria-valuetext')).toBe('Off')
+    expect(button('Test Join sounds').disabled).toBe(true)
+    expect(calls('set_call_mix').every((c) => !JSON.stringify(c).includes('150')), 'not a core level').toBe(true)
+  })
+
   it('Reset to defaults puts back only that section', () => {
     show()
     move('Voices', 10)

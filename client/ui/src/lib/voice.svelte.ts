@@ -9,6 +9,8 @@ import { api } from './tauri'
 import { pushCallMixQuietly } from './mixer.svelte'
 import { loadAudioConfig, loadLocalMutes, loadVolumes, peerCallSound, playSound, saveLocalMutes, saveVolumes, transitionSounds, type AudioConfig, type Connection, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
 import { isJoining, reduceStage, type StageState } from './voicestage'
+import { holdOwnCue, ownJoin, peerJoin } from './joinSounds'
+import { joinSounds, playJoin } from './joinSounds.svelte'
 
 export const voice = $state({
   channelId: null as string | null,
@@ -114,9 +116,23 @@ function leaveIfRemoved(e: AppEvent) {
 export async function startVoiceListening() {
   const offApp = onAppEvent(leaveIfRemoved)
   const offDisconnect = onAppEvent(noteDisconnect)
-  // someone else joining or leaving your call (#219)
+  // your own join sounds once, when both your connection and the server's announcement of it are in (#121)
+  const own = ownJoin((a) => {
+    const channel = voice.channelId
+    playJoin(a, app.state.me?.id ?? '', () => !!channel && voice.channelId === channel)
+  })
+  // someone else joining or leaving your call (#219): a join may carry their join sound (#121)
   const offPeers = onAppEvent((e) => {
-    const snd = peerCallSound(e, { myId: app.state.me?.id, channelId: voice.channelId, connection: voice.connection })
+    const myId = app.state.me?.id
+    if (e.t === 'VoiceJoined' && myId && e.d.user_id === myId) own.announced(e.d.channel_id, e.d.join_sound ?? null)
+    const ctx = { myId, channelId: voice.channelId, connection: voice.connection }
+    const join = peerJoin(e, { ...ctx, level: joinSounds.level, mutes: joinSounds.mutes })
+    if (join && e.t === 'VoiceJoined') {
+      const channel = e.d.channel_id
+      playJoin(join, e.d.user_id, () => voice.channelId === channel)
+      return
+    }
+    const snd = peerCallSound(e, ctx)
     if (snd) playSound(snd)
   })
   const offVoice = await listen<VoiceEvent>('voice://event', ({ payload: e }) => {
@@ -124,7 +140,12 @@ export async function startVoiceListening() {
     switch (e.kind) {
       case 'state': {
         const prev = { channelId: voice.channelId, connection: voice.connection, controls: voice.controls }
-        for (const snd of transitionSounds(prev, { channelId: e.channel_id, connection: e.connection, controls: e.controls })) playSound(snd)
+        for (const snd of transitionSounds(prev, { channelId: e.channel_id, connection: e.connection, controls: e.controls })) {
+          // your Join cue may wait for your join sound (#121)
+          if (snd === 'join' && e.channel_id && own.connected(e.channel_id, holdOwnCue(app.state, e.channel_id, app.state.me?.id, joinSounds.level))) continue
+          playSound(snd)
+        }
+        if (!e.channel_id) own.reset()
         // a report belongs to one call: the next one starts empty
         if (prev.channelId !== e.channel_id) voice.link = null
         voice.channelId = e.channel_id
@@ -183,6 +204,7 @@ export async function startVoiceListening() {
     offApp()
     offDisconnect()
     offPeers()
+    own.reset()
     offVoice()
   }
 }

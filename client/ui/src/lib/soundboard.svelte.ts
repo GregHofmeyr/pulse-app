@@ -1,9 +1,7 @@
 // Soundboard prefs and the SoundPlayed listener (the pure rules are in soundboard.ts). The volume is the mixer's
 // Soundboard notch: the popover's slider and Settings → Volume mixer move the same value.
 //
-// "Who played it": while someone's sound plays here, their id is in `soundboard.playing`, and the voice list and
-// call tiles light their ring for it (unioned at render time). It is never mixed into `voice.speaking`, which is the
-// real voice activity that speaking-based features read.
+// "Who played it": while someone's sound plays here their ring lights (soundRings.svelte.ts).
 import { untrack } from 'svelte'
 import { loadAudioConfig } from './voiceui'
 import { app, onAppEvent } from './store.svelte'
@@ -12,11 +10,11 @@ import { memberServers } from './reactions'
 import { loadSoundMutes, saveSoundMutes, shouldPlay, warmOrder } from './soundboard'
 import { soundboardCmd } from './tauri'
 import { mixer, setNotch } from './mixer.svelte'
+import { clearRings, lightRing, rings } from './soundRings.svelte'
+
+export { lightRing }
 
 const muted = $state({ people: loadSoundMutes() as Record<string, true> })
-const rings = $state({ users: new Set<string>() })
-/** When each lit ring goes out (ms since epoch) and its timer. */
-const ringEnds = new Map<string, { until: number; timer: ReturnType<typeof setTimeout> }>()
 /** How long to light a ring when neither the event nor the store knows the sound's length. */
 const FALLBACK_RING_MS = 2000
 
@@ -40,37 +38,18 @@ export const soundboard = {
   },
 }
 
-/** Light `userId`'s ring for `ms`. A new play of theirs cuts off the one before (#214), so it restarts the ring for
- * its own length, shorter or not. */
-export function lightRing(userId: string, ms: number) {
-  const until = Date.now() + ms
-  const prev = ringEnds.get(userId)
-  if (prev) clearTimeout(prev.timer)
-  const timer = setTimeout(() => {
-    ringEnds.delete(userId)
-    const next = new Set(rings.users)
-    next.delete(userId)
-    rings.users = next
-  }, ms)
-  ringEnds.set(userId, { until, timer })
-  if (!rings.users.has(userId)) rings.users = new Set([...rings.users, userId])
-}
-
-function clearRings() {
-  for (const { timer } of ringEnds.values()) clearTimeout(timer)
-  ringEnds.clear()
-  if (rings.users.size) rings.users = new Set()
-}
-
 let lastCall: string | null = null
 /** The call you're in changed: rings belong to one call; joining one (from none) fetches your servers' sounds into the
- * disk cache, so a first play doesn't wait on the network. */
+ * disk cache, so a first play (or someone's join sound) doesn't wait on the network. */
 export function callChanged(channelId: string | null) {
   const joined = lastCall === null && channelId !== null
   if (channelId !== lastCall) clearRings()
   lastCall = channelId
   if (joined) {
-    const hashes = warmOrder(app.state, memberServers(app.state))
+    // the join sounds (#121) of the people in this call's server first: the next join is likeliest to need one
+    const server = app.state.channels[channelId]?.server_id
+    const joinSounds = server ? (app.state.members[server] ?? []).flatMap((m) => (m.join_sound ? [m.join_sound] : [])) : []
+    const hashes = warmOrder(app.state, memberServers(app.state), joinSounds)
     if (hashes.length) soundboardCmd.warm(hashes).catch(() => {})
   }
 }

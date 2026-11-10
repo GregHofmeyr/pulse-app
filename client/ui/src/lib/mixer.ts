@@ -6,7 +6,7 @@ export const MIXER_KEY = 'pulse.mixer'
 
 export type MixerPrefs = {
   v: 1
-  calls: { master: number; voices: number; streams: number; soundboard: number }
+  calls: { master: number; voices: number; streams: number; soundboard: number; join_sounds: number }
   callSounds: {
     master: number; join: number; leave: number; mute: number; unmute: number; deafen: number; undeafen: number; muted_talk: number; ringing: number
   }
@@ -30,7 +30,9 @@ const n = (key: string, label: string, test?: Notch['test']): Notch => ({ key, l
 
 /** Sections in display order. A new sound gets its notch here (and in `MixerPrefs`). */
 export const MIXER_SECTIONS: readonly MixerSection[] = [
-  { id: 'calls', label: 'Calls', master: true, notches: [n('voices', 'Voices'), n('streams', 'Streams'), n('soundboard', 'Soundboard', 'soundboard')] },
+  { id: 'calls', label: 'Calls', master: true, notches: [n('voices', 'Voices'), n('streams', 'Streams'), n('soundboard', 'Soundboard', 'soundboard'),
+    // people's join sounds (#121): played like soundboard sounds; 0 = everyone's join is the normal Join cue instead
+    n('join_sounds', 'Join sounds', 'soundboard')] },
   {
     id: 'callSounds', label: 'Call sounds', master: true,
     notches: [n('join', 'Join', 'sound'), n('leave', 'Leave', 'sound'), n('mute', 'Mute', 'sound'), n('unmute', 'Unmute', 'sound'),
@@ -46,7 +48,7 @@ export const MIXER_SECTIONS: readonly MixerSection[] = [
 export function defaultMixer(): MixerPrefs {
   return {
     v: 1,
-    calls: { master: 100, voices: 100, streams: 100, soundboard: 100 },
+    calls: { master: 100, voices: 100, streams: 100, soundboard: 100, join_sounds: 100 },
     callSounds: { master: 100, join: 100, leave: 100, mute: 100, unmute: 100, deafen: 100, undeafen: 100, muted_talk: 100, ringing: 100 },
     streamSounds: { master: 100, live: 100, live_end: 100 },
     notifications: { master: 100, message: 100, badge: 100, wheel_tick: 100, wheel_result: 100 },
