@@ -40,7 +40,9 @@ pinned_sha() {
     echo "$PUBLISH_MODELS_SHA"
     return
   fi
-  sed -n 's/^pub const LOW_DELAY_SHA256: &str = "\([0-9a-f]\{64\}\)";$/\1/p' "$root/client/src-tauri/src/models.rs"
+  # rustfmt may wrap the constant onto two lines (`= ` then the string on the next line), so read the
+  # declaration and the line after it and take the first 64-hex string.
+  grep -A1 '^pub const LOW_DELAY_SHA256: &str' "$root/client/src-tauri/src/models.rs" | grep -oE '[0-9a-f]{64}' | head -n1
 }
 
 # libdf_rev: the DeepFilterNet git rev the client builds against
