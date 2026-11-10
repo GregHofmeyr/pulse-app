@@ -1,6 +1,6 @@
 # Share a Spotify Jam or song to the voice stage
 
-Issue #234. Drafted 2026-11-09 from the research on #234 and the #196 decision; **awaiting the owner's OK on the marked picks**. The owner's decisions are marked **(owner)**; **(pick)** marks the recommendations the owner is being asked to confirm.
+Issue #234. Drafted 2026-11-09 from the research on #234 and the #196 decision; layout decided with the owner on 2026-11-10 using a playground (https://claude.ai/artifact/EoSWhacUyfQLxxMmdbwhMv, private). The owner's decisions are marked **(owner)**; **(pick)** marks the recommendations the owner is being asked to confirm.
 
 ## Why
 
@@ -13,9 +13,14 @@ Everyone in the group has Spotify Premium and uses Jam. Today a Jam link in chat
   - from the **stage's header**, a Spotify button that takes a pasted link (Jam invite, track, album, playlist, episode or show; the same links #196 already unfurls).
 - **One card per channel (pick):** the stage shows at most one shared card; a new share replaces it. (Per-person cards were the alternative; one card keeps the stage calm and fits "we're all in this Jam".)
 - **The card:** the #196 Spotify card look (art uncropped, title, artist or host, the single-colour Spotify icon, approved button wording "Join the Jam" / "Listen on Spotify" / "Open Spotify"), plus "Shared by alex". A Jam card says **"may have ended"** in its subtitle after an hour, because Pulse can't tell whether a Jam is still live (no public Jam API).
-- **Where it sits:** a compact strip at the top of the stage above the tiles (it never covers tiles or a stream), collapsible to a small Spotify pill; collapsed/expanded is remembered per device.
+- **Where it sits (owner), per viewer:**
+  - **Expanded (default): a strip above the tiles** (art, title, subtitle with "Shared by alex", the Spotify icon, the Spotify button, Minimise, ✕). It never covers tiles or a stream.
+  - **Minimised: a small floating pill in the stage's bottom-right corner** (round art, Spotify icon, title). **Hovering** the pill previews the corner card; **clicking** it opens the **corner card** (a floating mini player: art, title, subtitle, the Spotify button, "Shared by", and controls to go back to the strip, minimise again, or ✕).
+  - **✕ hides it for you** until you click the **Spotify button in the stage header**, which turns green while something's shared and you've hidden it.
+  - **Watching a stream big (owner):** while you have a stream expanded or fullscreen on the stage, the Spotify strip/card/pill is hidden for you to keep the room for the stream, and comes back as it was when you leave that view.
+  - The state (expanded / minimised / corner / hidden) is remembered per device; a new share shows expanded again unless you'd hidden the previous one.
 - **How long it stays (pick):** until the sharer clears it, **the sharer leaves the call**, or **3 hours** pass, whichever is first. Everyone in the call sees it live; people joining later see it too.
-- **Clearing (pick):** anyone in the call can clear it (an ✕ on the card), since a stale Jam shouldn't need its sharer. A small system line in the channel's chat records shares, not clears: "🎵 alex shared a Jam to the stage" (no line for clears or expiry).
+- **Stopping it for everyone (pick):** the ✕ only hides it for you; "Stop sharing" (in the strip's and corner card's controls) clears it for everyone and is available to anyone in the call, since a stale Jam shouldn't need its sharer. A small system line in the channel's chat records shares, not clears: "🎵 alex shared a Jam to the stage" (no line for clears or expiry).
 - **Older clients** ignore the new event; the system line's text reads fine on them.
 
 ## How it gets made
