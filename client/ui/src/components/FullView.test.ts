@@ -585,6 +585,99 @@ describe('chat strip and full screen (#63)', () => {
     expect(fullscreenCalls()).toEqual([true, false])
   })
 
+  // #282: the OS can take the window out of full screen itself (Win+Down, a snap, the compositor's own key). The core's
+  // own fullscreen flag doesn't see that, so the page compares its viewport with the screen on every resize.
+  describe('the OS leaving full screen (#282)', () => {
+    const size = (w: number, h: number, sw = 1920, sh = 1080) => {
+      vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(w)
+      vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(h)
+      vi.spyOn(window.screen, 'width', 'get').mockReturnValue(sw)
+      vi.spyOn(window.screen, 'height', 'get').mockReturnValue(sh)
+      window.dispatchEvent(new Event('resize'))
+      flushSync()
+    }
+    const inScreen = () => !!q('.full-view.screen')
+    async function intoScreen() {
+      size(1280, 720)
+      await fullOnSam()
+      screenBtn()!.click()
+      await settle()
+    }
+
+    it('the app leaves its full screen and keeps the full view, the button says so, and the core is told', async () => {
+      await intoScreen()
+      size(1920, 1080) // the window fills the screen
+      expect(inScreen()).toBe(true)
+      size(1280, 720) // and then the OS put it back
+      await settle()
+      expect(inScreen()).toBe(false)
+      expect(q('.full-view')).not.toBeNull()
+      expect(callView.full).toEqual(SAM)
+      expect(screenBtn()!.getAttribute('aria-label')).toBe('Full screen')
+      expect(screenBtn()!.dataset.tip).toBe('Full screen')
+      // the core still thinks it's full screen until told; nothing more when the view goes
+      expect(fullscreenCalls()).toEqual([true, false])
+      button('Back')!.click()
+      await settle()
+      expect(fullscreenCalls()).toEqual([true, false])
+    })
+
+    it('a window that was already full screen is not put back in it when the OS takes it out', async () => {
+      invoke.mockImplementation(async (cmd: string) => (cmd === 'set_fullscreen' ? true : cmd === 'list_messages' ? [] : undefined))
+      await intoScreen()
+      size(1920, 1080)
+      size(1000, 700)
+      await settle()
+      expect(inScreen()).toBe(false)
+      expect(fullscreenCalls()).toEqual([true, false])
+      // in again: the button goes on working
+      screenBtn()!.click()
+      await settle()
+      expect(inScreen()).toBe(true)
+      expect(fullscreenCalls()).toEqual([true, false, true])
+    })
+
+    it('resizes on the way in (before the window fills the screen) do not count', async () => {
+      await intoScreen()
+      size(1300, 740)
+      size(1600, 900)
+      await settle()
+      expect(inScreen()).toBe(true)
+      expect(fullscreenCalls()).toEqual([true])
+    })
+
+    it('minimised (an empty or hidden page) is not leaving full screen', async () => {
+      await intoScreen()
+      size(1920, 1080)
+      size(0, 0)
+      const hidden = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+      size(800, 600)
+      hidden.mockRestore()
+      size(1920, 1080)
+      await settle()
+      expect(inScreen()).toBe(true)
+      expect(fullscreenCalls()).toEqual([true])
+    })
+
+    it('a pixel short (fractional scaling) still fills the screen', async () => {
+      await intoScreen()
+      size(1535, 863, 1536, 864)
+      size(1536, 862, 1536, 864)
+      await settle()
+      expect(inScreen()).toBe(true)
+      expect(fullscreenCalls()).toEqual([true])
+    })
+
+    it('out of full screen, resizes change nothing', async () => {
+      size(1920, 1080)
+      await fullOnSam()
+      size(1280, 720)
+      await settle()
+      expect(inScreen()).toBe(false)
+      expect(fullscreenCalls()).toEqual([])
+    })
+  })
+
   it('in full screen the hidden side panels have no toggles, and a click on the stream stays', async () => {
     const panels = { left: false, right: false, leftName: 'Channels', hasRight: true, toggle: () => {} }
     cmp = mount(VoicePanel, { target: document.body, context: fullPanelsContext(panels),

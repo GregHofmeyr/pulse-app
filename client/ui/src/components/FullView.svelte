@@ -91,10 +91,35 @@
   function setScreen(on: boolean) {
     if (on === screenOn) return
     screen = screenOn = on
+    filled = false
     if (on) windowWas = Promise.resolve(api.setFullscreen(true)).then((was) => was === true, () => false)
     else void windowWas.then((was) => api.setFullscreen(was)).catch(() => {})
   }
   $effect(() => () => setScreen(false))
+
+  // The OS can take the window out of full screen itself (#282: Win+Down, a snap, the compositor's own key). The
+  // core's fullscreen flag only follows the app's own requests, on Windows and Linux alike, so the page watches its
+  // viewport: once it has filled the screen, a resize that leaves it clearly smaller means the window left. Resizes
+  // on the way in (before it fills) and a minimised window (an empty or hidden page) don't count. If the page never
+  // sees itself fill the screen (a webview reporting another monitor's size), nothing changes: Esc and the button
+  // still work. The full view stays; the core is told the window is no longer full screen, and isn't asked to put it
+  // back as it was.
+  const SLACK_PX = 2 // fractional scaling rounds the viewport a pixel either way
+  let filled = false
+  function resized() {
+    if (!screenOn || document.visibilityState === 'hidden') return
+    const { innerWidth: w, innerHeight: h } = window
+    const { width: sw, height: sh } = window.screen
+    if (!w || !h || !sw || !sh) return
+    if (w >= sw - SLACK_PX && h >= sh - SLACK_PX) {
+      filled = true
+      return
+    }
+    if (!filled) return
+    screen = screenOn = filled = false
+    windowWas = Promise.resolve(false)
+    void Promise.resolve(api.setFullscreen(false)).catch(() => {})
+  }
 
   function stop() {
     // first: closing full view unmounts this, and the props go with it
@@ -156,7 +181,7 @@
   }
 </script>
 
-<svelte:window onkeydown={key} onfocus={() => (activatedAt = performance.now())} />
+<svelte:window onkeydown={key} onresize={resized} onfocus={() => (activatedAt = performance.now())} />
 
 <div class="full-view" class:screen>
   <div class="bar">
