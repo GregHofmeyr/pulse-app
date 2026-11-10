@@ -167,6 +167,7 @@ async fn audience_table() {
                 channel_id: dm.id,
                 user_id: a_id,
                 flags: Default::default(),
+                join_sound: None,
             },
             set(&[a_id, b_id]),
         ),

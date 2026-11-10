@@ -57,6 +57,16 @@ pub struct VoiceFlags {
     pub deafened: bool,
 }
 
+/// What a listener needs to play someone's join sound (#121): played locally like a soundboard play.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct JoinSoundPlay {
+    pub sound_id: String,
+    pub media_hash: String,
+    /// The sound's own gain in percent (10 to 200).
+    pub volume: u16,
+    pub duration_ms: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct VoiceMember {
     pub user_id: UserId,
@@ -242,6 +252,11 @@ pub enum Event {
         user_id: UserId,
         /// The joiner's current mute/deafen (they may have declared it before the join landed).
         flags: VoiceFlags,
+        /// Their join sound (#121), to play instead of the join cue. Only on a server voice channel's join, at most
+        /// once per 30 s per person; absent otherwise (and from older servers).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        join_sound: Option<JoinSoundPlay>,
     },
     VoiceLeft {
         channel_id: ChannelId,
@@ -1131,6 +1146,32 @@ mod tests {
         assert_eq!((e.channel_id(), e.only_for()), (None, Some(owner)));
     }
 
+    /// #121: a join without a join sound reads and writes exactly as before, so old clients and servers agree.
+    #[test]
+    fn voice_joined_join_sound_is_optional_both_ways() {
+        let (c, u) = (ChannelId::new(), UserId::new());
+        let old = serde_json::json!({"t": "VoiceJoined", "d": {"channel_id": c, "user_id": u,
+            "flags": {"muted": false, "deafened": false}}});
+        let e: Event = serde_json::from_value(old).unwrap();
+        assert!(matches!(e, Event::VoiceJoined { join_sound: None, .. }));
+        assert!(!serde_json::to_string(&e).unwrap().contains("join_sound"));
+        let with = Event::VoiceJoined {
+            channel_id: c,
+            user_id: u,
+            flags: VoiceFlags::default(),
+            join_sound: Some(JoinSoundPlay {
+                sound_id: "S1".into(),
+                media_hash: "h".into(),
+                volume: 120,
+                duration_ms: 6000,
+            }),
+        };
+        let back: Event = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
+        assert!(
+            matches!(back, Event::VoiceJoined { join_sound: Some(p), .. } if p.duration_ms == 6000)
+        );
+    }
+
     #[test]
     fn member_updates_go_to_everyone() {
         let e = Event::MemberUpdated {
@@ -1145,6 +1186,7 @@ mod tests {
                     style: Default::default(),
                 },
                 nickname: Some("n".into()),
+                join_sound: None,
             },
         };
         assert_eq!((e.channel_id(), e.only_for()), (None, None));

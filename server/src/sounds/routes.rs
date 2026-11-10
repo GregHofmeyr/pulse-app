@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use axum::routing::{patch, post, put};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ServerId, UserId, next_ulid};
-use pulse_protocol::rest::{CreateSoundRequest, Sound, UpdateSoundRequest};
+use pulse_protocol::rest::{CreateSoundRequest, SetJoinSoundRequest, Sound, UpdateSoundRequest};
 use pulse_protocol::sound::{MAX_BYTES, clean_name, parse_ogg_opus, valid_emoji};
 
 use super::{bad_volume, for_server, load, publish_favourites, publish_frequent, record_play};
@@ -14,7 +14,7 @@ use crate::auth::AuthUser;
 use crate::db::{begin_write, now};
 use crate::error::{AppError, AppResult};
 use crate::media::{MediaKind, path_for, valid_hash};
-use crate::servers::routes::is_server_member;
+use crate::servers::routes::{is_server_member, member_of, require_member};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -22,6 +22,10 @@ pub fn router() -> Router<AppState> {
         .route("/sounds/{id}", patch(update).delete(delete))
         .route("/sounds/{id}/play", post(play))
         .route("/sounds/{id}/favourite", put(favourite).delete(unfavourite))
+        .route(
+            "/servers/{id}/join-sound",
+            put(set_join_sound).delete(clear_join_sound),
+        )
 }
 
 const VOLUME: std::ops::RangeInclusive<u16> = 10..=200;
@@ -354,5 +358,73 @@ async fn unfavourite(
         .execute(&s.db)
         .await?;
     publish_favourites(&s, me).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn not_this_soundboard() -> AppError {
+    AppError::BadRequest("pick a sound from this server's soundboard".into())
+}
+
+/// Store `me`'s join sound in `server` (`None` clears it) and tell everyone (#121).
+async fn store_join_sound(
+    s: &AppState,
+    me: UserId,
+    server: ServerId,
+    sound: Option<&str>,
+) -> AppResult<()> {
+    // The sound is checked in the write itself, so one deleted meanwhile can't be stored.
+    let changed = sqlx::query(
+        "UPDATE server_members SET join_sound_id = ?1 WHERE server_id = ?2 AND user_id = ?3
+           AND (?1 IS NULL OR EXISTS (SELECT 1 FROM sounds WHERE id = ?1 AND server_id = ?2))",
+    )
+    .bind(sound)
+    .bind(server.to_string())
+    .bind(me.to_string())
+    .execute(&s.db)
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        // a member (checked just before) whose sound isn't this server's
+        return Err(not_this_soundboard());
+    }
+    let member = member_of(&s.db, server, me).await?;
+    s.hub
+        .publish(
+            &s.db,
+            Event::MemberUpdated {
+                server_id: server,
+                member,
+            },
+        )
+        .await;
+    Ok(())
+}
+
+/// `PUT /servers/{id}/join-sound`: the sound everyone in the call hears when `me` joins this server's voice channels.
+async fn set_join_sound(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(server): Path<ServerId>,
+    Json(req): Json<SetJoinSoundRequest>,
+) -> AppResult<StatusCode> {
+    if !s.limits.sound_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    require_member(&s.db, server, me).await?;
+    store_join_sound(&s, me, server, Some(&req.sound_id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /servers/{id}/join-sound`: back to the normal join cue.
+async fn clear_join_sound(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(server): Path<ServerId>,
+) -> AppResult<StatusCode> {
+    if !s.limits.sound_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    require_member(&s.db, server, me).await?;
+    store_join_sound(&s, me, server, None).await?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -3,6 +3,7 @@
 
 pub mod routes;
 
+use pulse_protocol::gateway::JoinSoundPlay;
 use pulse_protocol::ids::{ServerId, UserId};
 use pulse_protocol::rest::Sound;
 use sqlx::{SqliteConnection, SqlitePool};
@@ -196,4 +197,34 @@ pub async fn publish_favourites(s: &AppState, user: UserId) {
         }
         Err(e) => tracing::error!(error = ?e, %user, "sound favourites not published"),
     }
+}
+
+/// `user`'s join sound in `server` (#121), if they have one and it may play now (at most once per 30 s per person).
+/// Read at join time, so a sound deleted since it was set (the column goes back to NULL) plays nothing.
+pub async fn join_sound_for(
+    s: &AppState,
+    server: ServerId,
+    user: UserId,
+) -> AppResult<Option<JoinSoundPlay>> {
+    let row: Option<(String, String, i64, i64)> = sqlx::query_as(
+        "SELECT s.id, s.media_hash, s.volume, s.duration_ms FROM server_members m
+         JOIN sounds s ON s.id = m.join_sound_id
+         WHERE m.server_id = ? AND m.user_id = ?",
+    )
+    .bind(server.to_string())
+    .bind(user.to_string())
+    .fetch_optional(&s.db)
+    .await?;
+    let Some((sound_id, media_hash, volume, duration_ms)) = row else {
+        return Ok(None);
+    };
+    if !s.voice.take_join_sound(user, std::time::Instant::now()) {
+        return Ok(None);
+    }
+    Ok(Some(JoinSoundPlay {
+        sound_id,
+        media_hash,
+        volume: u16::try_from(volume).map_err(anyhow::Error::from)?,
+        duration_ms: u32::try_from(duration_ms).map_err(anyhow::Error::from)?,
+    }))
 }

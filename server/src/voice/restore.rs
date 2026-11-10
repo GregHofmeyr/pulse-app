@@ -261,6 +261,8 @@ pub async fn sync(s: &AppState, started_at: &str, budget: Duration) -> anyhow::R
                     channel_id: p.channel,
                     user_id: p.user,
                     flags: s.voice.declared(p.user),
+                    // already in the call before the restart: not a join anyone hears (#121)
+                    join_sound: None,
                 },
             )
             .await;

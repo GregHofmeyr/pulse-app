@@ -9,6 +9,7 @@ import type { ChannelId } from "./ChannelId";
 import type { ClipView } from "./ClipView";
 import type { CustomEmoji } from "./CustomEmoji";
 import type { Game } from "./Game";
+import type { JoinSoundPlay } from "./JoinSoundPlay";
 import type { LineId } from "./LineId";
 import type { Member } from "./Member";
 import type { Message } from "./Message";
@@ -48,7 +49,12 @@ thread_root_id: MessageId | null, } } | { "t": "ChannelCreated", "d": { channel:
 /**
  * The joiner's current mute/deafen (they may have declared it before the join landed).
  */
-flags: VoiceFlags, } } | { "t": "VoiceLeft", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceStateChanged", "d": { channel_id: ChannelId, user_id: UserId, flags: VoiceFlags, } } | { "t": "UserCreated", "d": { user: User, } } | { "t": "PresenceChanged", "d": { user_id: UserId, online: boolean, last_seen_at: string | null, 
+flags: VoiceFlags, 
+/**
+ * Their join sound (#121), to play instead of the join cue. Only on a server voice channel's join, at most
+ * once per 30 s per person; absent otherwise (and from older servers).
+ */
+join_sound?: JoinSoundPlay, } } | { "t": "VoiceLeft", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceStateChanged", "d": { channel_id: ChannelId, user_id: UserId, flags: VoiceFlags, } } | { "t": "UserCreated", "d": { user: User, } } | { "t": "PresenceChanged", "d": { user_id: UserId, online: boolean, last_seen_at: string | null, 
 /**
  * Absent from older servers: go by `online` then.
  */

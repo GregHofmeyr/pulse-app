@@ -371,6 +371,7 @@ async fn voice_joined_event_carries_declared_flags() {
             channel_id,
             user_id,
             flags,
+            ..
         } => assert_eq!((channel_id, user_id, flags), (l.id, a_id, muted)),
         other => panic!("unexpected {other:?}"),
     }

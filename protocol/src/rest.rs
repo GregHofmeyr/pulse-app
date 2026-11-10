@@ -593,6 +593,11 @@ pub struct CreateDmRequest {
 pub struct Member {
     pub user: User,
     pub nickname: Option<String>,
+    /// The id of the sound from this server's soundboard that plays when they join one of its
+    /// voice channels (#121). Absent from older servers, and when none is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub join_sound: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1432,6 +1437,13 @@ pub struct CreateSoundRequest {
     pub media_hash: String,
     #[serde(default = "default_sound_volume")]
     pub volume: u16,
+}
+
+/// `PUT /servers/{id}/join-sound` (#121): the sound that plays when you join that server's voice channels.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct SetJoinSoundRequest {
+    /// A sound of that server's soundboard.
+    pub sound_id: String,
 }
 
 /// Edit a sound. Absent fields stay as they are; `emoji: null` clears the emoji. Setting `emoji`

@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use pulse_protocol::gateway::VoiceFlags;
 use pulse_protocol::ids::{ChannelId, UserId};
@@ -39,7 +40,12 @@ pub struct VoiceState {
     pub calls: crate::calls::CallState,
     /// What's shared on each voice channel's stage (#234).
     pub stage: crate::stage::StageState,
+    /// When each person's join sound last went out (#121), for the once-per-30-s rule. Forgotten on restart.
+    join_sounds: Arc<Mutex<HashMap<UserId, Instant>>>,
 }
+
+/// A join sound plays at most once per this long per person (#121); joins in between get the normal cue.
+pub const JOIN_SOUND_EVERY: Duration = Duration::from_secs(30);
 
 /// Records leaves from [`VoiceState::snapshot`] until dropped.
 #[must_use]
@@ -58,6 +64,22 @@ impl VoiceState {
     pub fn snapshot(&self) -> Snapshot {
         *self.left_since_snapshot.lock().unwrap() = Some(HashSet::new());
         Snapshot(self.clone())
+    }
+
+    /// Whether `user`'s join sound may play for a join at `now`, noting it if so: at most once per
+    /// [`JOIN_SOUND_EVERY`] per person, so a flaky connection or channel hopping can't spam it.
+    pub fn take_join_sound(&self, user: UserId, now: Instant) -> bool {
+        let mut last = self.join_sounds.lock().unwrap();
+        if last
+            .get(&user)
+            .is_some_and(|t| now.saturating_duration_since(*t) < JOIN_SOUND_EVERY)
+        {
+            return false;
+        }
+        // the map only ever holds people who joined with a sound recently; old entries go here
+        last.retain(|_, t| now.saturating_duration_since(*t) < JOIN_SOUND_EVERY);
+        last.insert(user, now);
+        true
     }
 
     /// Record `user`'s connection `sid`; true if they weren't already in the room.
@@ -178,5 +200,22 @@ impl VoiceState {
             .iter()
             .map(|(c, m)| (*c, m.iter().map(|(u, m)| (*u, m.flags)).collect()))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn join_sound_gate_once_per_30s_per_person() {
+        let v = VoiceState::default();
+        let (alex, sam) = (UserId::new(), UserId::new());
+        let t0 = Instant::now();
+        assert!(v.take_join_sound(alex, t0));
+        assert!(!v.take_join_sound(alex, t0 + Duration::from_secs(29)));
+        assert!(v.take_join_sound(sam, t0 + Duration::from_secs(29)), "someone else isn't held up");
+        assert!(v.take_join_sound(alex, t0 + Duration::from_secs(30)));
+        assert!(!v.take_join_sound(alex, t0 + Duration::from_secs(31)));
     }
 }

@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use common::*;
 use futures::{SinkExt, StreamExt};
-use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
-use pulse_protocol::ids::ServerId;
+use pulse_protocol::gateway::{ClientFrame, Event, JoinSoundPlay, Ready, ServerFrame};
+use pulse_protocol::ids::{ChannelId, ServerId, UserId};
 use pulse_protocol::rest::{ApiError, MediaInfo, Sound};
 use pulse_server::media;
 use serde_json::json;
@@ -1013,4 +1013,236 @@ async fn a_group_call_hears_sounds_from_servers_not_everyone_is_in() {
     assert_eq!(r.headers()["content-type"], "audio/ogg");
     // hearing it is not using it: jo still can't play it into the call
     assert_eq!(play(&app, &jo.1, &s.id).await.status(), 403);
+}
+
+// ---- Join sounds (#121) ----
+
+fn signed(app: &TestApp, body: &str) -> String {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let sum = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(body.as_bytes()));
+    livekit_api::access_token::AccessToken::with_api_key(
+        &app.cfg.livekit_key,
+        &app.cfg.livekit_secret,
+    )
+    .with_sha256(&sum)
+    .to_jwt()
+    .unwrap()
+}
+
+/// A LiveKit webhook `event` for `user`'s connection `sid` in `room`.
+async fn livekit(app: &TestApp, event: &str, room: ChannelId, user: UserId, sid: &str) {
+    let grant = grant_livekit(app, &room.to_string(), &user.to_string()).await;
+    let body = json!({"event": event, "id": "EV_test", "room": {"name": room.to_string()},
+        "participant": {"identity": user.to_string(), "sid": sid, "attributes": {"pulse_grant": grant}}})
+    .to_string();
+    let r = app
+        .http
+        .post(app.url("/livekit/webhook"))
+        .header("Authorization", signed(app, &body))
+        .header("Content-Type", "application/webhook+json")
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+}
+
+async fn set_join(app: &TestApp, token: &str, server: ServerId, sound: &str) -> reqwest::Response {
+    app.http
+        .put(app.url(&format!("/servers/{server}/join-sound")))
+        .bearer_auth(token)
+        .json(&json!({ "sound_id": sound }))
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn clear_join(app: &TestApp, token: &str, server: ServerId) -> reqwest::Response {
+    app.http
+        .delete(app.url(&format!("/servers/{server}/join-sound")))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+}
+
+/// `user`'s join sound in `server` as Ready's member list has it.
+async fn join_sound_in_ready(
+    app: &TestApp,
+    token: &str,
+    server: ServerId,
+    user: UserId,
+) -> Option<String> {
+    let (_, ready) = hello(app, token).await;
+    ready
+        .members
+        .iter()
+        .find(|m| m.server_id == server)
+        .unwrap()
+        .members
+        .iter()
+        .find(|m| m.user.id == user)
+        .unwrap()
+        .join_sound
+        .clone()
+}
+
+/// The next `VoiceJoined` on `rx` (other frames skipped), with its join sound.
+async fn next_join(
+    rx: &mut tokio::sync::mpsc::Receiver<ServerFrame>,
+) -> (UserId, Option<JoinSoundPlay>) {
+    loop {
+        let f = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("no VoiceJoined within 3 s")
+            .unwrap();
+        if let ServerFrame::Event(Event::VoiceJoined {
+            user_id,
+            join_sound,
+            ..
+        }) = f
+        {
+            return (user_id, join_sound);
+        }
+    }
+}
+
+#[tokio::test]
+async fn set_and_clear_join_sound_reach_everyone() {
+    let (app, [alex, sam, _], srv, s) = soundboard().await;
+    let (mut s_ws, _) = hello(&app, &sam.1).await;
+
+    assert_eq!(set_join(&app, &alex.1, srv, &s.id).await.status(), 204);
+    match next_event(&mut s_ws).await {
+        Event::MemberUpdated { server_id, member } => {
+            assert_eq!((server_id, member.user.id), (srv, alex.0));
+            assert_eq!(member.join_sound.as_deref(), Some(s.id.as_str()));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        join_sound_in_ready(&app, &sam.1, srv, alex.0)
+            .await
+            .as_deref(),
+        Some(s.id.as_str())
+    );
+
+    assert_eq!(clear_join(&app, &alex.1, srv).await.status(), 204);
+    match next_event(&mut s_ws).await {
+        Event::MemberUpdated { member, .. } => assert_eq!(member.join_sound, None),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(join_sound_in_ready(&app, &sam.1, srv, alex.0).await, None);
+}
+
+#[tokio::test]
+async fn join_sound_must_be_a_sound_of_that_server() {
+    let (app, [alex, sam, _], srv, s) = soundboard().await;
+    let other = create_server(&app, &sam.1, "Other").await;
+    join(&app, &alex.1, other.id).await;
+    // alex's sound belongs to Main, not Other
+    let r = set_join(&app, &alex.1, other.id, &s.id).await;
+    assert_eq!(r.status(), 400);
+    assert!(error_message(r).await.contains("soundboard"));
+    assert_eq!(
+        set_join(&app, &alex.1, srv, "no-such-sound").await.status(),
+        400
+    );
+    assert_eq!(
+        join_sound_in_ready(&app, &alex.1, other.id, alex.0).await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn non_member_cannot_set_or_clear_a_join_sound() {
+    let (app, _, srv, s) = soundboard().await;
+    let jo = register(&app, "jo").await;
+    assert_eq!(set_join(&app, &jo.1, srv, &s.id).await.status(), 403);
+    assert_eq!(clear_join(&app, &jo.1, srv).await.status(), 403);
+}
+
+#[tokio::test]
+async fn deleting_the_sound_clears_join_sounds() {
+    let (app, [alex, sam, _], srv, s) = soundboard().await;
+    assert_eq!(set_join(&app, &alex.1, srv, &s.id).await.status(), 204);
+    assert_eq!(set_join(&app, &sam.1, srv, &s.id).await.status(), 204);
+    assert_eq!(delete(&app, &sam.1, &s.id).await.status(), 204);
+    assert_eq!(join_sound_in_ready(&app, &alex.1, srv, alex.0).await, None);
+    assert_eq!(join_sound_in_ready(&app, &alex.1, srv, sam.0).await, None);
+}
+
+#[tokio::test]
+async fn leaving_the_server_clears_the_join_sound() {
+    let (app, [alex, sam, _], srv, s) = soundboard().await;
+    assert_eq!(set_join(&app, &sam.1, srv, &s.id).await.status(), 204);
+    // there's no leave route yet: leaving is the member row going
+    sqlx::query("DELETE FROM server_members WHERE server_id = ? AND user_id = ?")
+        .bind(srv.to_string())
+        .bind(sam.0.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    join(&app, &sam.1, srv).await;
+    assert_eq!(join_sound_in_ready(&app, &alex.1, srv, sam.0).await, None);
+}
+
+#[tokio::test]
+async fn joining_carries_the_join_sound_once_per_30_seconds() {
+    let (app, [alex, sam, _], srv, s) = soundboard().await;
+    let room = lounge(&app, &alex.1, srv).await;
+    assert_eq!(set_join(&app, &alex.1, srv, &s.id).await.status(), 204);
+    let mut rx = app.hub.register(sam.0, String::new()).rx;
+
+    livekit(&app, "participant_joined", room, alex.0, "PA_1").await;
+    let (who, play) = next_join(&mut rx).await;
+    assert_eq!(who, alex.0);
+    let play = play.expect("the first join carries the sound");
+    assert_eq!(
+        (play.sound_id, play.media_hash, play.volume, play.duration_ms),
+        (s.id.clone(), s.media_hash.clone(), s.volume, s.duration_ms)
+    );
+
+    // a flaky connection or channel hopping: back within 30 s gets the normal cue
+    livekit(&app, "participant_left", room, alex.0, "PA_1").await;
+    livekit(&app, "participant_joined", room, alex.0, "PA_2").await;
+    assert_eq!(next_join(&mut rx).await, (alex.0, None));
+
+    // someone without a join sound: none
+    livekit(&app, "participant_joined", room, sam.0, "PA_s").await;
+    assert_eq!(next_join(&mut rx).await, (sam.0, None));
+}
+
+#[tokio::test]
+async fn a_server_muted_joiner_still_gets_their_join_sound() {
+    let (app, [alex, sam, _], srv, s) = soundboard().await;
+    let room = lounge(&app, &alex.1, srv).await;
+    assert_eq!(set_join(&app, &sam.1, srv, &s.id).await.status(), 204);
+    // muted and deafened while in the call (only someone in voice can be), and still held after leaving it
+    app.state().voice.join(room, sam.0, "PA_0");
+    let r = post_json(
+        &app,
+        &alex.1,
+        &format!("/servers/{srv}/voice/{}", sam.0),
+        json!({ "mute": true, "deafen": true }),
+    )
+    .await;
+    assert!(r.status().is_success(), "{}", r.status());
+    app.state().voice.leave(room, sam.0, "PA_0");
+    let mut rx = app.hub.register(alex.0, String::new()).rx;
+    livekit(&app, "participant_joined", room, sam.0, "PA_s").await;
+    let (who, play) = next_join(&mut rx).await;
+    assert_eq!(who, sam.0);
+    assert!(play.is_some());
+}
+
+#[tokio::test]
+async fn dm_and_group_calls_keep_the_normal_join_cue() {
+    let (app, [alex, sam, _], srv, s) = soundboard().await;
+    assert_eq!(set_join(&app, &alex.1, srv, &s.id).await.status(), 204);
+    let dm = create_dm(&app, &alex.1, &[sam.0]).await;
+    let mut rx = app.hub.register(sam.0, String::new()).rx;
+    livekit(&app, "participant_joined", dm.id, alex.0, "PA_d").await;
+    assert_eq!(next_join(&mut rx).await, (alex.0, None));
 }

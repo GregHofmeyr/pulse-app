@@ -79,6 +79,8 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::Sound::export_all(&cfg)?;
     rest::CreateSoundRequest::export_all(&cfg)?;
     rest::UpdateSoundRequest::export_all(&cfg)?;
+    rest::SetJoinSoundRequest::export_all(&cfg)?;
+    gateway::JoinSoundPlay::export_all(&cfg)?;
     rest::SetServerVoiceRequest::export_all(&cfg)?;
     rest::RenameEmojiRequest::export_all(&cfg)?;
     rest::Quote::export_all(&cfg)?;
