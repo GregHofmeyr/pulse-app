@@ -1334,9 +1334,12 @@ pub async fn join_voice(
     stream_audio: State<'_, StreamAudio>,
     channel_id: ChannelId,
     config: AudioConfig,
+    // the channel's bitrate in kbps (#75); absent = Default (and from a UI that predates it)
+    bitrate: Option<u32>,
 ) -> Result<(), VoiceError> {
     let (api, token) = core.current()?;
-    tracing::info!(%channel_id, input = ?config.input, output = ?config.output, gain = config.input_gain_pct, "join_voice");
+    tracing::info!(%channel_id, input = ?config.input, output = ?config.output, gain = config.input_gain_pct, ?bitrate, "join_voice");
+    voice.set_channel_bitrate(channel_id, bitrate).await;
     // a switch leaves the last channel's stream room (and ends our stream audio there)
     stream_audio.leave().await;
     let r = voice
@@ -1357,6 +1360,17 @@ pub async fn join_voice(
         flags: flags(voice.controls()),
     });
     Ok(())
+}
+
+/// A voice channel's bitrate changed (#75): a call there changes its mic's bitrate now. Whether
+/// a call there has it.
+#[tauri::command]
+pub async fn set_voice_bitrate(
+    voice: State<'_, VoiceManager>,
+    channel_id: ChannelId,
+    bitrate: Option<u32>,
+) -> Result<bool, VoiceError> {
+    Ok(voice.set_channel_bitrate(channel_id, bitrate).await)
 }
 
 #[tauri::command]
@@ -1666,6 +1680,21 @@ pub async fn rename_channel(
 ) -> Result<Channel, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.rename_channel(&token, channel_id, name).await)
+}
+
+/// A voice channel's bitrate in kbps (#75), or `None` for Default; everyone hears ChannelUpdated.
+#[tauri::command]
+pub async fn set_channel_bitrate(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    bitrate: Option<u32>,
+) -> Result<Channel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_channel_bitrate(&token, channel_id, bitrate).await,
+    )
 }
 
 /// A group's icon (#56): an avatar-upload hash, or `None` to clear it.

@@ -145,7 +145,9 @@ impl LocalAudioTrack {
         self.inner.events.lock().unmuted.replace(Box::new(f));
     }
 
-    pub(crate) fn transceiver(&self) -> Option<RtpTransceiver> {
+    // Pulse: `pub` (upstream `pub(crate)`), so the app can change a published mic's RTP sender
+    // parameters (its bitrate, #75) without republishing. See the root Cargo.toml.
+    pub fn transceiver(&self) -> Option<RtpTransceiver> {
         self.inner.info.read().transceiver.clone()
     }
 

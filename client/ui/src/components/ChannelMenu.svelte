@@ -3,8 +3,8 @@
   // and clips: mark as read, mute (a flyout of durations, #131) and notifications (its level or following its server,
   // a flyout with yours ticked, #195); voice: join or leave, then the same three for its chat (#226). Anyone in the
   // server may rename and
-  // delete (v1 trust model); those two are handed back to the list, which edits in the row and asks
-  // in a dialog.
+  // delete (v1 trust model), and open a voice channel's settings (#75); those are handed back to the list, which
+  // edits in the row and asks in a dialog.
   import { onMount, untrack } from 'svelte'
   import { app, clock } from '../lib/store.svelte'
   import { placeMenu } from '../lib/menuPlace'
@@ -18,7 +18,7 @@
   import MuteFlyout from './MuteFlyout.svelte'
   import type { Channel } from '../lib/protocol/Channel'
 
-  let { channel, member, x, y, opener, onClose, onRename, onDelete, onJoin, onError, onMoveUp, onMoveDown, canMoveUp = false, canMoveDown = false }: {
+  let { channel, member, x, y, opener, onClose, onRename, onDelete, onJoin, onError, onSettings = () => {}, onMoveUp, onMoveDown, canMoveUp = false, canMoveDown = false }: {
     channel: Channel
     /** You're in the channel's server: you may rename, delete and join. */
     member: boolean
@@ -32,6 +32,8 @@
     onJoin: () => void
     /** An action failed after the menu had gone: the list says why. */
     onError: (message: string) => void
+    /** Channel settings… (#75): a voice channel's, for members. */
+    onSettings?: () => void
     /** Move up / Move down (#54), the keyboard's way to drag: given only to members on a server with categories. */
     onMoveUp?: () => void
     onMoveDown?: () => void
@@ -149,6 +151,7 @@
   {/if}
   {#if member}
     <span class="menu-sep"></span>
+    {#if isVoice}<button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onSettings)}>Channel settings…</button>{/if}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onRename)}>Rename channel…</button>
     <button type="button" class="menu-item danger" role="menuitem" data-item onclick={() => pick(onDelete)}>Delete channel…</button>
     {#if onMoveUp && onMoveDown}

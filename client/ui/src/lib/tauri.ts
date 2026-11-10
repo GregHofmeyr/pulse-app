@@ -135,6 +135,8 @@ export const api = {
   removeMember: (channelId: string, userId: string) => invoke<void>('remove_member', { channelId, userId }),
   /** A group's name (null = back to the members' names), or a server channel's (always one). */
   renameChannel: (channelId: string, name: string | null) => invoke<Channel>('rename_channel', { channelId, name }),
+  /** A voice channel's bitrate in kbps (#75), or null for Default; everyone hears ChannelUpdated. */
+  setChannelBitrate: (channelId: string, bitrate: number | null) => invoke<Channel>('set_channel_bitrate', { channelId, bitrate }),
   /** A server channel, to its server's Recently deleted; everyone hears ChannelDeleted. */
   deleteChannel: (channelId: string) => invoke<void>('delete_channel', { channelId }),
   listDeletedChannels: (serverId: string) => invoke<DeletedChannel[]>('list_deleted_channels', { serverId }),

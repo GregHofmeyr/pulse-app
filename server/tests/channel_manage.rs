@@ -217,6 +217,176 @@ async fn renaming_a_server_channel_is_checked() {
     );
 }
 
+// ---------- bitrate (#75) ----------
+
+/// An authed PUT with a body; the whole response.
+async fn put_json(
+    app: &TestApp,
+    token: &str,
+    path: &str,
+    body: serde_json::Value,
+) -> reqwest::Response {
+    app.http
+        .put(app.url(path))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
+/// Anyone in the server sets a voice channel's bitrate; everyone hears it (`ChannelUpdated`), and
+/// the listings and Ready carry it from then on. Back to Default sends no bitrate at all.
+#[tokio::test]
+async fn anyone_in_the_server_sets_a_voice_channels_bitrate() {
+    let w = world().await;
+    let lounge = create_channel(&w.app, &w.alex.1, w.server, "voice", "Music").await;
+    assert_eq!(lounge.bitrate, None, "a new channel is at Default");
+    let mut rx = w.app.hub.register(w.jo.0, String::new()).rx;
+    let path = format!("/channels/{}/bitrate", lounge.id);
+    let r = put_json(&w.app, &w.sam.1, &path, json!({ "bitrate": 256 })).await;
+    assert_eq!(r.status(), 200);
+    let ch: Channel = r.json().await.unwrap();
+    assert_eq!(ch.bitrate, Some(256));
+    assert_eq!((ch.id, ch.name.as_deref()), (lounge.id, Some("Music")));
+    match next_event(&mut rx).await {
+        Event::ChannelUpdated { channel } => assert_eq!(channel, ch),
+        other => panic!("unexpected {other:?}"),
+    }
+    let listed: Vec<Channel> =
+        get_json(&w.app, &w.jo.1, &format!("/servers/{}/channels", w.server)).await;
+    assert_eq!(
+        listed.iter().find(|c| c.id == lounge.id).unwrap().bitrate,
+        Some(256)
+    );
+    let ready = pulse_server::gateway::socket::build_ready(
+        &w.app.db,
+        &w.app.voice,
+        &w.app.streams,
+        &w.app.hub,
+        w.sam.0,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        ready
+            .channels
+            .iter()
+            .find(|c| c.id == lounge.id)
+            .unwrap()
+            .bitrate,
+        Some(256)
+    );
+    // a rename (what older clients send) leaves it alone
+    let r = patch(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}", lounge.id),
+        json!({ "name": "Jam" }),
+    )
+    .await;
+    assert_eq!(r.json::<Channel>().await.unwrap().bitrate, Some(256));
+    let _ = next_event(&mut rx).await;
+    // back to Default
+    let r = put_json(&w.app, &w.alex.1, &path, json!({ "bitrate": null })).await;
+    assert_eq!(r.status(), 200);
+    let text = r.text().await.unwrap();
+    assert!(!text.contains("bitrate"), "{text}");
+    match next_event(&mut rx).await {
+        Event::ChannelUpdated { channel } => assert_eq!(channel.bitrate, None),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn setting_a_bitrate_is_checked() {
+    let w = world().await;
+    let lounge = create_channel(&w.app, &w.alex.1, w.server, "voice", "Music").await;
+    let path = format!("/channels/{}/bitrate", lounge.id);
+    // only the presets (Default is null, never its number)
+    for b in [
+        json!(64),
+        json!(0),
+        json!(100),
+        json!(384),
+        json!(510),
+        json!(-1),
+        json!("128"),
+    ] {
+        let st = put_json(&w.app, &w.alex.1, &path, json!({ "bitrate": b }))
+            .await
+            .status();
+        assert!(st == 400 || st == 422, "{b}: {st}");
+    }
+    for b in pulse_protocol::rest::CHANNEL_BITRATES_KBPS {
+        let r = put_json(&w.app, &w.alex.1, &path, json!({ "bitrate": b })).await;
+        assert_eq!(r.status(), 200, "{b}");
+    }
+    // not in the server
+    assert_eq!(
+        put_json(&w.app, &w.jo.1, &path, json!({ "bitrate": 128 }))
+            .await
+            .status(),
+        403
+    );
+    // a channel without a call
+    let g = general(&w.app, &w.alex.1, w.server).await;
+    assert_eq!(
+        put_json(
+            &w.app,
+            &w.alex.1,
+            &format!("/channels/{}/bitrate", g.id),
+            json!({ "bitrate": 128 })
+        )
+        .await
+        .status(),
+        400
+    );
+    // no such channel
+    assert_eq!(
+        put_json(
+            &w.app,
+            &w.alex.1,
+            &format!("/channels/{}/bitrate", ChannelId::new()),
+            json!({ "bitrate": 128 })
+        )
+        .await
+        .status(),
+        404
+    );
+    // a deleted one is gone
+    assert_eq!(
+        delete(&w.app, &w.alex.1, &format!("/channels/{}", lounge.id)).await,
+        204
+    );
+    assert_eq!(
+        put_json(&w.app, &w.alex.1, &path, json!({ "bitrate": 128 }))
+            .await
+            .status(),
+        404
+    );
+}
+
+/// A DM or group call has no channel settings: its bitrate stays Default.
+#[tokio::test]
+async fn a_conversation_has_no_bitrate() {
+    let w = world().await;
+    let r = post_json(&w.app, &w.alex.1, "/dms", json!({ "user_ids": [w.sam.0] })).await;
+    assert!(r.status().is_success(), "{}", r.status());
+    let dm: Channel = r.json().await.unwrap();
+    assert_eq!(
+        put_json(
+            &w.app,
+            &w.alex.1,
+            &format!("/channels/{}/bitrate", dm.id),
+            json!({ "bitrate": 128 })
+        )
+        .await
+        .status(),
+        400
+    );
+}
+
 // ---------- delete ----------
 
 /// A delete moves the channel to Recently deleted: gone for everyone at once, everything in it

@@ -80,7 +80,7 @@ real_device_tests := "--skip mic_test_queue_on_real_devices --skip real_devices_
 
 # voice integration test against the dev LiveKit (real WebRTC, fake peer); no real audio devices
 voice-it: dev-livekit
-    cargo test -p pulse-client --test voice_it --test voice_outage_it --test stream_it --test server_mute_it -- --ignored --nocapture {{ real_device_tests }}
+    cargo test -p pulse-client --test voice_it --test voice_outage_it --test stream_it --test server_mute_it --test voice_bitrate_it -- --ignored --nocapture {{ real_device_tests }}
     cargo test -p pulse-server --test livekit_ice --test stream_liveness_it -- --ignored --nocapture
 
 # the real-device voice probes on their own (mic and speakers open; PULSE_IT_INPUT / PULSE_IT_OUTPUT pick devices)

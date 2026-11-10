@@ -472,6 +472,23 @@ pub struct Channel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub icon_still: Option<String>,
+    /// A voice channel's audio bitrate in kbps (#75), one of [`CHANNEL_BITRATES_KBPS`]: everyone
+    /// publishing there sends at it. Absent: Default (64 kbps), which older clients always send.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub bitrate: Option<u32>,
+}
+
+/// The bitrates a voice channel may set (#75), in kbps, above Default's 64. 256 is as much as the
+/// mic, published as the app publishes it, really sends (measured in
+/// client/src-tauri/tests/voice_bitrate_it.rs: 384 and 510 send ~260).
+pub const CHANNEL_BITRATES_KBPS: [u32; 4] = [96, 128, 192, 256];
+
+/// `PUT /channels/{id}/bitrate`: a voice channel's bitrate (#75), one of
+/// [`CHANNEL_BITRATES_KBPS`]; `None` = back to Default.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SetChannelBitrateRequest {
+    pub bitrate: Option<u32>,
 }
 
 /// A channel in its server's Recently deleted (`GET /servers/{id}/deleted-channels`), with what
@@ -2289,6 +2306,22 @@ mod tests {
         .unwrap();
         assert_eq!(c.category_id, None);
         assert!(!serde_json::to_string(&c).unwrap().contains("category_id"));
+    }
+
+    /// A channel from an older server has no bitrate (#75), and Default sends none back, so
+    /// older clients see the channel as before.
+    #[test]
+    fn a_channel_bitrate_is_optional_both_ways() {
+        let id = ChannelId::new();
+        let mut c: Channel = serde_json::from_str(&format!(
+            r#"{{"id":"{id}","server_id":null,"kind":"voice","name":"Lounge","position":0}}"#
+        ))
+        .unwrap();
+        assert_eq!(c.bitrate, None);
+        assert!(!serde_json::to_string(&c).unwrap().contains("bitrate"));
+        c.bitrate = Some(256);
+        let back: Channel = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back.bitrate, Some(256));
     }
 
     /// An older client asking for a channel names no category: it goes uncategorised.

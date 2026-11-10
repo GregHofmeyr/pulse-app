@@ -12,7 +12,9 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, ServerId, UserId};
-use pulse_protocol::rest::{Channel, ChannelKind, ClipView, DeletedChannel};
+use pulse_protocol::rest::{
+    CHANNEL_BITRATES_KBPS, Channel, ChannelKind, ClipView, DeletedChannel, SetChannelBitrateRequest,
+};
 use sqlx::SqliteConnection;
 
 use crate::AppState;
@@ -70,6 +72,55 @@ pub async fn rename(
         )
         .await;
     Ok(channel)
+}
+
+/// `PUT /channels/{id}/bitrate`: a voice channel's audio bitrate (#75), one of
+/// [`CHANNEL_BITRATES_KBPS`] or `None` for Default. Anyone in the server may, as with renaming;
+/// everyone hears `ChannelUpdated`, and the clients in its call switch to it.
+pub async fn set_bitrate(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ChannelId>,
+    Json(req): Json<SetChannelBitrateRequest>,
+) -> AppResult<Json<Channel>> {
+    // each change reaches everyone: limited and disk-guarded, like a rename
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    crate::media::writes_ok(&s.cfg)?;
+    let (ch, _) = server_channel_for(&s, me, id).await?;
+    if ch.kind != ChannelKind::Voice {
+        return Err(AppError::BadRequest(
+            "only voice channels have a bitrate".into(),
+        ));
+    }
+    if req
+        .bitrate
+        .is_some_and(|b| !CHANNEL_BITRATES_KBPS.contains(&b))
+    {
+        return Err(AppError::BadRequest("not one of the bitrates".into()));
+    }
+    let changed =
+        sqlx::query("UPDATE channels SET bitrate = ? WHERE id = ? AND deleted_at IS NULL")
+            .bind(req.bitrate.map(i64::from))
+            .bind(id.to_string())
+            .execute(&s.db)
+            .await?
+            .rows_affected();
+    // Deleted in the meantime.
+    if changed == 0 {
+        return Err(AppError::NotFound);
+    }
+    let channel = load_channel(&s.db, id).await?.ok_or(AppError::NotFound)?;
+    s.hub
+        .publish(
+            &s.db,
+            Event::ChannelUpdated {
+                channel: channel.clone(),
+            },
+        )
+        .await;
+    Ok(Json(channel))
 }
 
 /// `DELETE /channels/{id}`: move a server channel to its server's Recently deleted (#112). It goes
@@ -214,6 +265,7 @@ type DeletedRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<i64>,
     Option<String>,
     String,
 );
@@ -231,9 +283,11 @@ async fn deleted_channel(
     .bind(id.to_string())
     .fetch_optional(&mut *db)
     .await?;
-    let (id, server, kind, name, position, category, icon, still, by, _) =
+    let (id, server, kind, name, position, category, icon, still, bitrate, by, _) =
         row.ok_or(AppError::NotFound)?;
-    let ch = channel_from_row((id, server, kind, name, position, category, icon, still))?;
+    let ch = channel_from_row((
+        id, server, kind, name, position, category, icon, still, bitrate,
+    ))?;
     let server = ch.server_id.ok_or(AppError::NotFound)?;
     Ok((ch, server, parse_user(by)?))
 }
@@ -292,8 +346,10 @@ pub async fn list_deleted(
     .fetch_all(&mut *db)
     .await?;
     let mut out = Vec::with_capacity(rows.len());
-    for (id, sid, kind, name, position, category, icon, still, by, at) in rows {
-        let channel = channel_from_row((id, sid, kind, name, position, category, icon, still))?;
+    for (id, sid, kind, name, position, category, icon, still, bitrate, by, at) in rows {
+        let channel = channel_from_row((
+            id, sid, kind, name, position, category, icon, still, bitrate,
+        ))?;
         let deleted_by = parse_user(by)?;
         out.push(DeletedChannel {
             held: held(&mut db, channel.id, channel.kind)

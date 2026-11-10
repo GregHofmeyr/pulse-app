@@ -24,6 +24,7 @@
   import ChannelMenu from './ChannelMenu.svelte'
   import CategoryMenu from './CategoryMenu.svelte'
   import DeleteChannelDialog from './DeleteChannelDialog.svelte'
+  import ChannelSettingsDialog from './ChannelSettingsDialog.svelte'
   import { menuPoint } from '../lib/participantMenu'
   import { exitFade } from '../lib/exit'
   import { selfVoice, voice, voiceApi } from '../lib/voice.svelte'
@@ -420,6 +421,8 @@
     }
   }
   let deleting = $state<Channel | null>(null)
+  // a voice channel's settings (#75), from its menu
+  let settingsOf = $state<Channel | null>(null)
   let listEl = $state<HTMLElement>()
   // Deleted meanwhile (by anyone): its menu, rename, field or dialog has nothing left to act on.
   $effect(() => {
@@ -601,7 +604,7 @@
 {#if chanMenu}
   {@const c = chanMenu.channel}
   {#key chanMenu}<ChannelMenu channel={c} {member} x={chanMenu.x} y={chanMenu.y} opener={chanMenu.opener} onClose={() => (chanMenu = null)}
-    onRename={() => startRename(c)} onDelete={() => (deleting = c)} onJoin={() => onJoinVoice(c.id)} onError={(m) => (chanError = m)}
+    onRename={() => startRename(c)} onDelete={() => (deleting = c)} onJoin={() => onJoinVoice(c.id)} onError={(m) => (chanError = m)} onSettings={() => (settingsOf = c)}
     onMoveUp={arrange ? () => moveChannel(c.id, -1) : undefined} onMoveDown={arrange ? () => moveChannel(c.id, 1) : undefined}
     canMoveUp={arrange && !!stepChannel(order(), c.id, -1)} canMoveDown={arrange && !!stepChannel(order(), c.id, 1)} />{/key}
 {/if}
@@ -614,6 +617,9 @@
 {/if}
 {#if deleting}
   <DeleteChannelDialog channel={deleting} onClose={() => (deleting = null)} />
+{/if}
+{#if settingsOf}
+  <ChannelSettingsDialog channel={settingsOf} onClose={() => (settingsOf = null)} />
 {/if}
 {#if menu}
   {#key menu}<ParticipantMenu channelId={menu.channelId} {serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} {onVoiceSettings} onClose={() => (menu = null)} />{/key}

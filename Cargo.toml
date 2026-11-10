@@ -139,14 +139,18 @@ strip = false
 # webrtc-sys-build is upstream's again (0.3.21 is on zip 9; the lockfile keeps zip at 9.0.5 or
 # later, past GHSA-m665-v7pm-7grj).
 #
-# vendor/livekit is livekit 0.9.7 as published, with one change: `RoomSession::close`
+# vendor/livekit is livekit 0.9.7 as published, with two changes. First, `RoomSession::close`
 # (src/room/mod.rs) lets go of the remote participants and their publications as if they had all
 # left. Each remote publication's mute handlers hold the participant that holds the publication, and
 # the engine, so a Room closed while others were still in it kept its engine, PeerConnections and
 # tasks for the rest of the app run, one per call left that way (#227;
 # client/src-tauri/tests/voice_it.rs `leaving_while_others_stay_releases_the_connection`). Still so
 # in livekit 0.10.0. Drop it once upstream's close breaks the cycle, or with the move to 0.10 if
-# 0.10 does by then (the patch then needs re-applying to 0.10's source, never the old copy). Its
+# 0.10 does by then (the patch then needs re-applying to 0.10's source, never the old copy). Second,
+# `LocalAudioTrack::transceiver` (src/room/track/local_audio_track.rs) is `pub` instead of
+# `pub(crate)`, so a voice channel's bitrate (#75) can change a published mic's RTP sender parameters
+# in place rather than republishing it (client/src-tauri/tests/voice_bitrate_it.rs). Still
+# `pub(crate)` in 0.10.0: re-apply it there, or drop it if upstream exposes the sender. Its
 # Cargo.toml also allows warnings, which a path crate's aren't capped like a crates.io one's.
 [patch.crates-io]
 webrtc-sys = { path = "vendor/webrtc-sys" }

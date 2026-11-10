@@ -310,7 +310,7 @@ async fn neteq_buffer_vs_measured_lag() {
     let track = LocalAudioTrack::create_audio_track("mic", RtcAudioSource::Native(source.clone()));
     sender
         .local_participant()
-        .publish_track(LocalTrack::Audio(track), mic_publish_options())
+        .publish_track(LocalTrack::Audio(track), mic_publish_options(0))
         .await
         .unwrap();
 

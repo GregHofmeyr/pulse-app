@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{CategoryId, ChannelId, ServerId, UserId};
@@ -38,6 +38,7 @@ pub fn router() -> Router<AppState> {
             get(super::channels::list_deleted),
         )
         .route("/channels/{id}/restore", post(super::channels::restore))
+        .route("/channels/{id}/bitrate", put(super::channels::set_bitrate))
         .route(
             "/channels/{id}/permanent",
             axum::routing::delete(super::channels::purge_now),
@@ -121,6 +122,7 @@ async fn insert_channel(
         category_id: category,
         icon_hash: None,
         icon_still: None,
+        bitrate: None,
     })
 }
 

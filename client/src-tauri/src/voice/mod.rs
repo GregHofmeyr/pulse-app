@@ -1009,6 +1009,25 @@ pub struct VoiceManager {
     /// room once connected). The next connect waits for it: LiveKit lets a later join of the
     /// same identity replace the earlier one, so a stale connect landing last would kick it.
     connecting: Mutex<Option<Connecting>>,
+    /// Each voice channel's bitrate as the UI last said (kbps, 0 = Default, #75), shared with that
+    /// channel's call: every mic publish there reads it.
+    bitrates: Mutex<HashMap<ChannelId, MicKbps>>,
+    /// The latest call's mic, for changing its bitrate live; set before it's published.
+    mic: Mutex<Option<MicHandle>>,
+}
+
+/// A channel's bitrate in kbps (0 = Default), shared by the manager and that channel's call (#75).
+type MicKbps = Arc<AtomicU32>;
+
+/// A call's mic, for a live bitrate change (#75).
+#[derive(Clone)]
+struct MicHandle {
+    channel: ChannelId,
+    track: LocalAudioTrack,
+    /// Held through every publish of it: a change waits for one in flight, then sees the truth.
+    out: MicOut,
+    /// The call's (cleared once it's over).
+    alive: Arc<AtomicBool>,
 }
 
 impl VoiceManager {
@@ -1036,6 +1055,49 @@ impl VoiceManager {
             built: Default::default(),
             link: Default::default(),
             connecting: Mutex::new(None),
+            bitrates: Default::default(),
+            mic: Mutex::new(None),
+        }
+    }
+
+    /// `channel`'s bitrate, shared with its calls (#75).
+    fn bitrate_of(&self, channel: ChannelId) -> MicKbps {
+        self.bitrates
+            .lock()
+            .unwrap()
+            .entry(channel)
+            .or_default()
+            .clone()
+    }
+
+    /// A voice channel's bitrate (`kbps`, None = Default, #75), from its channel data: on joining
+    /// it, and whenever it changes. A call in that channel changes its mic's bitrate at once (no
+    /// republish); a mic still being published goes out at it. Whether a call there has it now.
+    pub async fn set_channel_bitrate(&self, channel: ChannelId, kbps: Option<u32>) -> bool {
+        let kbps = kbps.unwrap_or(0);
+        let was = self.bitrate_of(channel).swap(kbps, Ordering::SeqCst);
+        let mic = self.mic.lock().unwrap().clone();
+        let Some(mic) = mic.filter(|m| m.channel == channel && m.alive.load(Ordering::SeqCst))
+        else {
+            return false;
+        };
+        if was == kbps {
+            return true;
+        }
+        let out = mic.out.lock().await;
+        if !*out {
+            // not out yet (or server muted): its publish reads the new bitrate
+            return true;
+        }
+        match set_mic_bitrate(&mic.track, kbps) {
+            Ok(()) => {
+                tracing::info!(kbps, "voice: mic bitrate changed");
+                true
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, kbps, "voice: changing the mic bitrate failed");
+                false
+            }
         }
     }
 
@@ -1432,6 +1494,14 @@ impl VoiceManager {
         );
         // the join's publish and a server mute's republish take turns on this (#140)
         let mic_out = MicOut::default();
+        // the channel's bitrate (#75): every publish of this mic reads it; a change finds the mic here
+        let kbps = self.bitrate_of(channel);
+        *self.mic.lock().unwrap() = Some(MicHandle {
+            channel,
+            track: track.clone(),
+            out: mic_out.clone(),
+            alive: alive.clone(),
+        });
         // publish in the background: "connected" doesn't wait the round trip for it. The task is
         // the session's (aborted with it); the room is closed by its guard or the session's leave.
         {
@@ -1450,7 +1520,7 @@ impl VoiceManager {
                 shared.clone(),
                 pipeline_alive.clone(),
             );
-            let (track, mic_out) = (track.clone(), mic_out.clone());
+            let (track, mic_out, kbps) = (track.clone(), mic_out.clone(), kbps.clone());
             tasks.push(tokio::spawn(async move {
                 let t = Instant::now();
                 let local = watch.room.local_participant();
@@ -1468,7 +1538,10 @@ impl VoiceManager {
                 } else {
                     let r = tokio::time::timeout(
                         PUBLISH_TIMEOUT,
-                        local.publish_track(LocalTrack::Audio(track), mic_publish_options()),
+                        local.publish_track(
+                            LocalTrack::Audio(track),
+                            mic_publish_options(kbps.load(Ordering::SeqCst)),
+                        ),
                     )
                     .await
                     .map(|r| r.map(|_| true));
@@ -1569,6 +1642,7 @@ impl VoiceManager {
             let mut give_up = rejoin::GiveUpTimer::new(self.reconnect_give_up);
             // for publishing the mic again once a server mute is undone (#140)
             let (mic_room, mic_track, mic_out) = (room.clone(), track.clone(), mic_out.clone());
+            let mic_kbps = kbps.clone();
             tasks.push(tokio::spawn(async move {
                 let state = |connection, channel_id| VoiceEvent::State {
                     channel_id,
@@ -1730,11 +1804,25 @@ impl VoiceManager {
                             // decided from the permission and the mic as they are once it's our
                             // turn, not from this event, so no flip is missed or acted on twice
                             if alive.load(Ordering::SeqCst) {
-                                let (room, track, mic) =
-                                    (mic_room.clone(), mic_track.clone(), mic_out.clone());
-                                tokio::spawn(
-                                    async move { follow_permission(&room, track, &mic).await },
+                                let (room, track, mic, kbps) = (
+                                    mic_room.clone(),
+                                    mic_track.clone(),
+                                    mic_out.clone(),
+                                    mic_kbps.clone(),
                                 );
+                                tokio::spawn(async move {
+                                    follow_permission(&room, track, &mic, &kbps).await
+                                });
+                            }
+                        }
+                        // LiveKit's own full reconnect republishes the mic with its first
+                        // publish's options: put the channel's bitrate back on it (#75)
+                        RoomEvent::LocalTrackRepublished { publication, .. }
+                            if publication.source() == TrackSource::Microphone =>
+                        {
+                            let kbps = mic_kbps.load(Ordering::SeqCst);
+                            if let Err(e) = set_mic_bitrate(&mic_track, kbps) {
+                                tracing::warn!(error = %e, kbps, "voice: mic bitrate not restored");
                             }
                         }
                         RoomEvent::ConnectionQualityChanged {
@@ -2132,7 +2220,7 @@ fn mic_step(allowed: bool, out: bool) -> MicStep {
 /// back, the mic is published again: a server-side revoke drops the track at LiveKit without
 /// telling the SDK, so its stale publication is let go first (as the SDK's own republish does).
 /// A failure is logged: the call goes on, unheard, until the next change or rejoin.
-async fn follow_permission(room: &Room, track: LocalAudioTrack, mic: &MicOut) {
+async fn follow_permission(room: &Room, track: LocalAudioTrack, mic: &MicOut, kbps: &MicKbps) {
     let mut out = mic.lock().await;
     let local = room.local_participant();
     match mic_step(publish_allowed(local.permission().as_ref()), *out) {
@@ -2146,7 +2234,10 @@ async fn follow_permission(room: &Room, track: LocalAudioTrack, mic: &MicOut) {
             }
             let published = tokio::time::timeout(
                 PUBLISH_TIMEOUT,
-                local.publish_track(LocalTrack::Audio(track), mic_publish_options()),
+                local.publish_track(
+                    LocalTrack::Audio(track),
+                    mic_publish_options(kbps.load(Ordering::SeqCst)),
+                ),
             )
             .await;
             match published {
@@ -2161,19 +2252,53 @@ async fn follow_permission(room: &Room, track: LocalAudioTrack, mic: &MicOut) {
     }
 }
 
-/// How the mic is sent. The SDK's default (`None`) is 48 kbps; Discord defaults to 64 kbps.
+/// The mic's bitrate when its channel sets none (Default, #75). The SDK's own default is 48 kbps;
+/// Discord defaults to 64 kbps.
+pub const DEFAULT_MIC_BPS: u64 = 64_000;
+/// Opus' ceiling (libwebrtc's `kOpusMaxBitrateBps`).
+pub const MAX_MIC_BPS: u64 = 510_000;
+
+/// The mic's cap for a channel bitrate in kbps (0 = Default). Never below Default, never past
+/// Opus' ceiling, whatever a server sends.
+pub fn mic_bps(kbps: u32) -> u64 {
+    (u64::from(kbps) * 1000).clamp(DEFAULT_MIC_BPS, MAX_MIC_BPS)
+}
+
+/// How the mic is sent, at its channel's bitrate (`kbps`, 0 = Default, #75).
 /// DTX makes silence ~free and RED (redundant audio) hides packet loss.
 /// Also used by tests/neteq_probe.rs, so the probe sends exactly like the app.
-pub fn mic_publish_options() -> TrackPublishOptions {
+pub fn mic_publish_options(kbps: u32) -> TrackPublishOptions {
     TrackPublishOptions {
         source: TrackSource::Microphone,
         audio_encoding: Some(livekit::options::AudioEncoding {
-            max_bitrate: 64_000,
+            max_bitrate: mic_bps(kbps),
         }),
         dtx: true,
         red: true,
         ..Default::default()
     }
+}
+
+/// `p` with its (only) encoding capped at `bps`; None when it has no encoding yet (not published).
+fn with_max_bitrate(
+    mut p: livekit::webrtc::rtp_parameters::RtpParameters,
+    bps: u64,
+) -> Option<livekit::webrtc::rtp_parameters::RtpParameters> {
+    p.encodings.first_mut()?.max_bitrate = Some(bps);
+    Some(p)
+}
+
+/// Changes a published mic's bitrate in place (#75): libwebrtc retargets Opus when the sender's
+/// `max_bitrate` changes, so the track isn't republished (no gap, same sid). Also used by
+/// tests/voice_bitrate_it.rs.
+pub fn set_mic_bitrate(track: &LocalAudioTrack, kbps: u32) -> Result<(), String> {
+    let sender = track
+        .transceiver()
+        .ok_or("the mic isn't published")?
+        .sender();
+    let p =
+        with_max_bitrate(sender.parameters(), mic_bps(kbps)).ok_or("the mic has no encoding")?;
+    sender.set_parameters(p).map_err(|e| format!("{e:?}"))
 }
 
 /// Stream audio (a shared game's sound) gets its own volume and never lights the speaking ring.
@@ -3286,10 +3411,51 @@ mod tests {
 
     #[test]
     fn mic_is_published_at_64_kbps_with_dtx_and_red() {
-        let o = mic_publish_options();
+        let o = mic_publish_options(0);
         assert_eq!(o.audio_encoding.map(|e| e.max_bitrate), Some(64_000));
         assert!(o.dtx && o.red);
         assert_eq!(o.source, TrackSource::Microphone);
+    }
+
+    /// A channel's bitrate (#75) is the mic's cap; everything else about the mic stays.
+    #[test]
+    fn a_channel_bitrate_is_the_mics_cap() {
+        let o = mic_publish_options(256);
+        assert_eq!(o.audio_encoding.map(|e| e.max_bitrate), Some(256_000));
+        assert!(o.dtx && o.red);
+        // Default (0) is today's 64 kbps; whatever a server sends stays inside 64..=510
+        assert_eq!(mic_bps(0), 64_000);
+        assert_eq!(mic_bps(32), 64_000);
+        assert_eq!(mic_bps(510), 510_000);
+        assert_eq!(mic_bps(9_999), 510_000);
+    }
+
+    /// Outside a call the bitrate is only kept, for the next join there (and rejoins) to read.
+    #[tokio::test]
+    async fn a_channel_bitrate_is_kept_for_its_next_call() {
+        let vm = VoiceManager::new(Arc::new(|_| {}));
+        let (lounge, other) = (ChannelId::new(), ChannelId::new());
+        assert!(!vm.set_channel_bitrate(lounge, Some(384)).await);
+        assert_eq!(vm.bitrate_of(lounge).load(Ordering::SeqCst), 384);
+        assert_eq!(vm.bitrate_of(other).load(Ordering::SeqCst), 0);
+        assert!(!vm.set_channel_bitrate(lounge, None).await);
+        assert_eq!(vm.bitrate_of(lounge).load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_live_bitrate_change_edits_the_first_encoding_only() {
+        use livekit::webrtc::rtp_parameters::{RtpEncodingParameters, RtpParameters};
+        // not published yet (no encodings): nothing to change
+        assert!(with_max_bitrate(RtpParameters::default(), 128_000).is_none());
+        let mut p = RtpParameters::default();
+        p.encodings.push(RtpEncodingParameters {
+            max_bitrate: Some(64_000),
+            ..Default::default()
+        });
+        let p = with_max_bitrate(p, 128_000).unwrap();
+        assert_eq!(p.encodings.len(), 1);
+        assert_eq!(p.encodings[0].max_bitrate, Some(128_000));
+        assert!(p.encodings[0].active);
     }
     use pulse_server::testing;
 

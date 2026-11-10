@@ -402,7 +402,7 @@ describe('a voice channel', () => {
   it('offers_join_then_its_chats_read_mute_and_notifications_then_rename_and_delete', () => {
     // #226: its chat has unreads, a mute and a notification level like a text channel
     rightClick('Lounge')
-    expect(labels()).toEqual(['Join', 'Mark as read', 'Mute channel', 'Notifications', 'Rename channel…', 'Delete channel…'])
+    expect(labels()).toEqual(['Join', 'Mark as read', 'Mute channel', 'Notifications', 'Channel settings…', 'Rename channel…', 'Delete channel…'])
     item('Join')!.click()
     flushSync()
     expect(onJoinVoice).toHaveBeenCalledWith('V1')
@@ -435,6 +435,77 @@ describe('a voice channel', () => {
     item('Delete channel…')!.click()
     flushSync()
     expect(document.querySelector('[role=dialog]')?.textContent).toContain('Delete Lounge? Anyone in it is disconnected. It moves to Recently deleted for 7 days')
+  })
+})
+
+describe('a voice channel’s settings (#75)', () => {
+  beforeEach(() => {
+    invoke.mockReset()
+    render()
+  })
+  const dialog = () => document.querySelector<HTMLElement>('[role=dialog][aria-label="Channel settings"]')
+  const trigger = () => dialog()!.querySelector<HTMLButtonElement>('button[aria-label=Bitrate]')!
+  const option = (label: string) => [...dialog()!.querySelectorAll<HTMLElement>('[role=option]')].find((o) => o.textContent?.trim() === label)!
+
+  it('opens_from_the_menu_at_default', () => {
+    rightClick('Lounge')
+    item('Channel settings…')!.click()
+    flushSync()
+    expect(menu()).toBeNull()
+    expect(dialog()?.textContent).toContain('Lounge')
+    expect(trigger().textContent?.trim()).toBe('Default (64 kbps)')
+    expect(dialog()?.textContent).toContain('Higher sounds better, music especially, but uses more data for everyone in the call.')
+  })
+
+  it('offers_default_and_the_presets_and_a_pick_saves_it', async () => {
+    invoke.mockResolvedValue({ ...channels[3], bitrate: 256 })
+    rightClick('Lounge')
+    item('Channel settings…')!.click()
+    flushSync()
+    trigger().click()
+    flushSync()
+    expect([...dialog()!.querySelectorAll('[role=option]')].map((o) => o.textContent?.trim())).toEqual([
+      'Default (64 kbps)', '96 kbps', '128 kbps', '192 kbps', '256 kbps (max)',
+    ])
+    option('256 kbps (max)').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+    flushSync()
+    expect(invoke).toHaveBeenCalledWith('set_channel_bitrate', { channelId: 'V1', bitrate: 256 })
+    expect(trigger().textContent?.trim()).toBe('256 kbps (max)')
+    await tick()
+  })
+
+  it('back_to_default_sends_null_and_a_failure_puts_it_back', async () => {
+    render({ ...unread })
+    app.state = { ...app.state, channels: { ...app.state.channels, V1: { ...app.state.channels.V1, bitrate: 128 } } }
+    rightClick('Lounge')
+    item('Channel settings…')!.click()
+    flushSync()
+    expect(trigger().textContent?.trim()).toBe('128 kbps')
+    invoke.mockRejectedValueOnce('Too many requests')
+    trigger().click()
+    flushSync()
+    option('Default (64 kbps)').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+    flushSync()
+    expect(invoke).toHaveBeenCalledWith('set_channel_bitrate', { channelId: 'V1', bitrate: null })
+    await tick()
+    await tick()
+    flushSync()
+    expect(dialog()?.querySelector('[role=alert]')?.textContent).toBeTruthy()
+    expect(trigger().textContent?.trim()).toBe('128 kbps')
+  })
+
+  it('someone_elses_change_shows_while_it_is_open', () => {
+    rightClick('Lounge')
+    item('Channel settings…')!.click()
+    flushSync()
+    app.state = { ...app.state, channels: { ...app.state.channels, V1: { ...app.state.channels.V1, bitrate: 192 } } }
+    flushSync()
+    expect(trigger().textContent?.trim()).toBe('192 kbps')
+  })
+
+  it('text_channels_have_none', () => {
+    rightClick('general')
+    expect(labels()).not.toContain('Channel settings…')
   })
 })
 

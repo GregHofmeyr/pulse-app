@@ -57,6 +57,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::AddMembersRequest::export_all(&cfg)?;
     rest::RenameChannelRequest::export_all(&cfg)?;
     rest::SetGroupIconRequest::export_all(&cfg)?;
+    rest::SetChannelBitrateRequest::export_all(&cfg)?;
     rest::MarkReadRequest::export_all(&cfg)?;
     rest::SetMuteRequest::export_all(&cfg)?;
     rest::NotifyLevel::export_all(&cfg)?;

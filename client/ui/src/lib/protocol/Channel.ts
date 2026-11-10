@@ -20,4 +20,9 @@ icon_hash?: string,
 /**
  * That icon's still, when it's animated.
  */
-icon_still?: string, };
+icon_still?: string, 
+/**
+ * A voice channel's audio bitrate in kbps (#75), one of [`CHANNEL_BITRATES_KBPS`]: everyone
+ * publishing there sends at it. Absent: Default (64 kbps), which older clients always send.
+ */
+bitrate?: number, };

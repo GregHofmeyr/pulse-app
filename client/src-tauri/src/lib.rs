@@ -346,6 +346,8 @@ pub fn run() {
             window_bg::set_window_background,
             embed_window::open_embed_window,
             commands::join_voice,
+            commands::set_voice_bitrate,
+            commands::set_channel_bitrate,
             commands::leave_voice,
             commands::prefetch_voice,
             commands::toggle_mute,

@@ -17,13 +17,14 @@ use pulse_protocol::rest::{
     Profile, QotyEvent, QotyVoteRequest, QuietSpin, RecoveryCodesResponse, RegisterRequest,
     RenameCategoryRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest,
     SaveLayoutRequest, SearchRequest, SearchResults, SendMessageRequest, Server, ServerLayout,
-    ServerVoiceMod, SessionResponse, SetClipViewRequest, SetJoinSoundRequest, SetMuteRequest,
-    SetNicknameRequest, SetNotifyLevelRequest, SetServerVoiceRequest, SetShowcaseRequest,
-    SetStatusRequest, Sound, SpinAgainRequest, SpinWheelRequest, StageShare, StageShareRequest,
-    StartQotyRequest, Status, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
-    ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
-    TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest,
-    UpdateWheelRequest, User, VoiceTokenResponse, WatchRequest, Wheel,
+    ServerVoiceMod, SessionResponse, SetChannelBitrateRequest, SetClipViewRequest,
+    SetJoinSoundRequest, SetMuteRequest, SetNicknameRequest, SetNotifyLevelRequest,
+    SetServerVoiceRequest, SetShowcaseRequest, SetStatusRequest, Sound, SpinAgainRequest,
+    SpinWheelRequest, StageShare, StageShareRequest, StartQotyRequest, Status, StreamInfo,
+    StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest,
+    TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus,
+    UpdateProfileRequest, UpdateSoundRequest, UpdateWheelRequest, User, VoiceTokenResponse,
+    WatchRequest, Wheel,
 };
 use serde::de::DeserializeOwned;
 
@@ -576,6 +577,24 @@ impl Api {
                 .patch(format!("{}/channels/{ch}", self.base))
                 .bearer_auth(token)
                 .json(&RenameChannelRequest { name })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A voice channel's bitrate in kbps (#75), or `None` for Default.
+    pub async fn set_channel_bitrate(
+        &self,
+        token: &str,
+        ch: ChannelId,
+        bitrate: Option<u32>,
+    ) -> Result<Channel, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/channels/{ch}/bitrate", self.base))
+                .bearer_auth(token)
+                .json(&SetChannelBitrateRequest { bitrate })
                 .send()
                 .await,
         )

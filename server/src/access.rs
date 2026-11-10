@@ -15,10 +15,11 @@ pub type ChannelRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<i64>,
 );
 
 pub fn channel_from_row(
-    (id, server_id, kind, name, position, category_id, icon_hash, icon_still): ChannelRow,
+    (id, server_id, kind, name, position, category_id, icon_hash, icon_still, bitrate): ChannelRow,
 ) -> AppResult<Channel> {
     Ok(Channel {
         id: id.parse().map_err(anyhow::Error::from)?,
@@ -36,13 +37,15 @@ pub fn channel_from_row(
             .map_err(anyhow::Error::from)?,
         icon_hash,
         icon_still,
+        // only ever one of the presets (#75); anything else reads as Default
+        bitrate: bitrate.and_then(|b| u32::try_from(b).ok()),
     })
 }
 
 /// The columns [`channel_from_row`] reads, from `channels` (unaliased): a group's icon (#56) comes
-/// with its still, for an animated one.
+/// with its still, for an animated one; a voice channel's bitrate (#75) last.
 pub const CHANNEL_COLS: &str = "id, server_id, kind, name, position, category_id, icon_hash, \
-     (SELECT m.still_hash FROM media m WHERE m.hash = icon_hash) AS icon_still";
+     (SELECT m.still_hash FROM media m WHERE m.hash = icon_hash) AS icon_still, bitrate";
 
 /// The channel, unless there is none or it is in Recently deleted: a deleted channel is gone for
 /// everything but its own Recently deleted routes (`servers::channels`).

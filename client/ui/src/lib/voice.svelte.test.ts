@@ -131,6 +131,56 @@ describe('joining', () => {
   })
 })
 
+describe('a voice channel’s bitrate (#75)', () => {
+  const music = { id: 'V1', server_id: 'S1', kind: 'voice' as const, name: 'Music', position: 0, bitrate: 256 }
+  const plain = { id: 'V2', server_id: 'S1', kind: 'voice' as const, name: 'Lounge', position: 1 }
+  const updated = (channel: unknown) => h.handlers['pulse://event']({ payload: { t: 'ChannelUpdated', d: { channel } } })
+  const argsOf = (cmd: string) => h.args.filter((_, i) => h.calls[i] === cmd)
+  let off: (() => void) | undefined
+  beforeEach(async () => {
+    h.calls.length = 0
+    h.args.length = 0
+    app.state = { ...emptyState(), me, channels: { V1: music, V2: plain } }
+    Object.assign(voice, { channelId: null, joining: null, leaving: null })
+    await startListening()
+    off?.()
+    off = await startVoiceListening()
+  })
+
+  it('goes to the core with the join; Default is none', async () => {
+    const { voiceApi } = await import('./voice.svelte')
+    await voiceApi.join('V1')
+    expect(argsOf('join_voice').at(-1)).toMatchObject({ channelId: 'V1', bitrate: 256 })
+    Object.assign(voice, { joining: null })
+    await voiceApi.join('V2')
+    expect(argsOf('join_voice').at(-1)).toMatchObject({ channelId: 'V2', bitrate: null })
+  })
+
+  it('a change to the call’s channel reaches the core at once', () => {
+    voice.channelId = 'V1'
+    updated({ ...music, bitrate: 192 })
+    expect(argsOf('set_voice_bitrate')).toEqual([{ channelId: 'V1', bitrate: 192 }])
+    updated({ ...music, bitrate: undefined })
+    expect(argsOf('set_voice_bitrate').at(-1)).toEqual({ channelId: 'V1', bitrate: null })
+  })
+
+  it('so does one to the channel being joined', () => {
+    voice.joining = 'V1'
+    updated({ ...music, bitrate: 128 })
+    expect(argsOf('set_voice_bitrate')).toEqual([{ channelId: 'V1', bitrate: 128 }])
+  })
+
+  it('a channel you are not in is left alone, and so is a rename', async () => {
+    const { voiceApi } = await import('./voice.svelte')
+    await voiceApi.join('V2')
+    h.calls.length = 0
+    h.args.length = 0
+    updated({ ...music, bitrate: 192 })
+    updated({ ...plain, name: 'Hangout' })
+    expect(argsOf('set_voice_bitrate')).toEqual([])
+  })
+})
+
 describe('server mute and disconnect (#140)', () => {
   const lounge = { id: 'V1', server_id: 'S1', kind: 'voice' as const, name: 'Lounge', position: 0 }
   const event = (payload: unknown) => h.handlers['pulse://event']({ payload })

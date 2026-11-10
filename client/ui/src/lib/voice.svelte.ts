@@ -122,6 +122,21 @@ function cueServerVoice(e: AppEvent) {
 /** The newest join; an older one's result is stale. */
 let joinSeq = 0
 
+/** Each voice channel's bitrate as last handed to the core (#75; null = Default). */
+const bitrateSent = new Map<string, number | null>()
+
+/** A voice channel's bitrate changed (#75): the call in it, or the join to it, changes to it at once (the core
+ *  retargets the mic in place). Anything else about the channel (a rename) is left alone. */
+function followBitrate(e: AppEvent) {
+  if (e.t !== 'ChannelUpdated') return
+  const c = e.d.channel
+  if (c.id !== voice.channelId && c.id !== voice.joining) return
+  const bitrate = c.bitrate ?? null
+  if (bitrateSent.get(c.id) === bitrate) return
+  bitrateSent.set(c.id, bitrate)
+  invoke('set_voice_bitrate', { channelId: c.id, bitrate }).catch(() => {})
+}
+
 /** Removed from a DM or group (or left it from another device), or the voice channel was deleted:
  *  leave its call, or call off the join to it, through the normal leave so the core disconnects too
  *  (the server has already taken us out of the call). A call already being left for another join is
@@ -137,6 +152,7 @@ function leaveIfRemoved(e: AppEvent) {
 
 export async function startVoiceListening() {
   const offApp = onAppEvent(leaveIfRemoved)
+  const offBitrate = onAppEvent(followBitrate)
   const offDisconnect = onAppEvent(noteDisconnect)
   const offServerCue = onAppEvent(cueServerVoice)
   // your own join sounds once, when both your connection and the server's announcement of it are in (#121)
@@ -225,6 +241,7 @@ export async function startVoiceListening() {
   })
   return () => {
     offApp()
+    offBitrate()
     offDisconnect()
     offServerCue()
     offPeers()
@@ -262,7 +279,10 @@ export const voiceApi = {
     // a newer join, or a leave, came in meanwhile
     if (seq !== joinSeq) return
     try {
-      await invoke('join_voice', { channelId, config: loadAudioConfig() })
+      // the channel's bitrate (#75): a change while in the call follows with set_voice_bitrate
+      const bitrate = app.state.channels[channelId]?.bitrate ?? null
+      bitrateSent.set(channelId, bitrate)
+      await invoke('join_voice', { channelId, config: loadAudioConfig(), bitrate })
     } catch (e) {
       // a newer join (or a leave) replaced this one: that one owns the state now
       if (seq !== joinSeq) return
