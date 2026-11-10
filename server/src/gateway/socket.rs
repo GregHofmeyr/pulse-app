@@ -108,18 +108,30 @@ async fn authenticate(socket: &mut WebSocket, s: &AppState) -> Auth {
 }
 
 /// Every exit path of a connection ends here: unregister and, if that was the user's last
-/// connection, record last-seen and announce they went offline.
-async fn disconnected(s: &AppState, conn: ConnId, me: UserId) {
+/// connection, record last-seen and announce they went offline. `since` is when this connection
+/// was in the hub (read just after registering).
+///
+/// A logout (or a restart) takes all of a user's connections out of the hub at once, so each of
+/// them finds itself the last. Only the first one's last-seen counts: a connection that was
+/// already in the hub when that was written has nothing newer to record, and writing its own (a
+/// later millisecond) would change the offline view and announce it a second time (#274). The
+/// time is read before the online check, so a connection that registers after the check reads
+/// a `since` no earlier than it and still records its own last-seen.
+async fn disconnected(s: &AppState, conn: ConnId, me: UserId, since: &str) {
+    let at = now();
     s.hub.unregister(conn);
     if s.hub.is_online(me) {
         return; // still connected elsewhere
     }
-    let at = now();
-    let _ = sqlx::query("UPDATE users SET last_seen_at = ? WHERE id = ?")
-        .bind(&at)
-        .bind(me.to_string())
-        .execute(&s.db)
-        .await;
+    let _ = sqlx::query(
+        "UPDATE users SET last_seen_at = ?
+         WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at <= ?)",
+    )
+    .bind(&at)
+    .bind(me.to_string())
+    .bind(since)
+    .execute(&s.db)
+    .await;
     s.hub.sync_presence(&s.db, me).await;
 }
 
@@ -283,6 +295,7 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
         return close(socket, CLOSE_TOO_MANY_CONNECTIONS, "too many connections").await;
     };
     let (conn, mut rx, mut kick) = (reg.id, reg.rx, reg.kick);
+    let since = now(); // in the hub from here: see `disconnected`
     // A logout / logout-others may have landed between authenticate and try_register: its kick
     // ran before this socket was in the hub. Every revoke commits the DELETE and only then
     // kicks, so after registering either this re-check sees the row gone, or the kick (which
@@ -290,12 +303,12 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
     match session::exists(&s.db, &token_hash).await {
         Ok(true) => {}
         Ok(false) => {
-            disconnected(&s, conn, me).await;
+            disconnected(&s, conn, me, &since).await;
             return close(socket, CLOSE_UNAUTHORIZED, "unauthorized").await;
         }
         Err(e) => {
             tracing::error!(error = ?e, "session re-check failed");
-            disconnected(&s, conn, me).await;
+            disconnected(&s, conn, me, &since).await;
             return close(socket, 1011, "internal error").await;
         }
     }
@@ -303,12 +316,12 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = ?e, "build_ready failed");
-            disconnected(&s, conn, me).await;
+            disconnected(&s, conn, me, &since).await;
             return;
         }
     };
     if !send(&mut socket, &ServerFrame::Ready(ready)).await {
-        disconnected(&s, conn, me).await;
+        disconnected(&s, conn, me, &since).await;
         return;
     }
     s.hub.sync_presence(&s.db, me).await;
@@ -325,7 +338,7 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
             // A kick closes the queue too; check it first so the client gets the close code.
             biased;
             code = &mut kick => {
-                disconnected(&s, conn, me).await;
+                disconnected(&s, conn, me, &since).await;
                 let reason = match code { Ok(CLOSE_TOO_SLOW) => "too slow", Ok(1012) => "server restarting", _ => "session ended" };
                 return close(socket, code.unwrap_or(CLOSE_UNAUTHORIZED), reason).await;
             }
@@ -334,7 +347,7 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
                 if !send(&mut socket, &frame).await { break }
             }
             _ = tokio::time::sleep_until(deadline) => {
-                disconnected(&s, conn, me).await;
+                disconnected(&s, conn, me, &since).await;
                 return close(socket, CLOSE_TIMEOUT, "heartbeat timeout").await;
             }
             _ = tokio::time::sleep_until(voice_retry), if voice_pending => {
@@ -390,7 +403,7 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
             }
         }
     }
-    disconnected(&s, conn, me).await;
+    disconnected(&s, conn, me, &since).await;
 }
 
 /// How long a held-back VoiceState publish waits before trying the bucket again: about one
