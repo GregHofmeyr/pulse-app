@@ -6,6 +6,7 @@
   import ChannelList from '../components/ChannelList.svelte'
   import MemberList from '../components/MemberList.svelte'
   import MiniPreview from '../components/MiniPreview.svelte'
+  import FullView from '../components/FullView.svelte'
   import StreamToast from '../components/StreamToast.svelte'
   import CallRingPopover from '../components/CallRingPopover.svelte'
   import VoiceStatus from '../components/VoiceStatus.svelte'
@@ -254,7 +255,7 @@
   // The channel whose messages are on screen (the alert rule and jumps go by it): a voice channel's only while its
   // chat panel shows (#226); its stage alone shows none.
   $effect(() => {
-    ui.openChannelId = activeChannel?.kind === 'voice' ? (chatOnScreen ? activeChannelId : null) : activeChannelId
+    ui.openChannelId = activeChannel?.kind === 'voice' || convoFull ? (chatOnScreen ? activeChannelId : null) : activeChannelId
   })
   // Leaving a channel trims it to its newest messages (scrolling up there fetches older ones again).
   // Done when the next channel opens, not in a teardown: a teardown on the shell going away (sign-out)
@@ -364,6 +365,12 @@
   const activeServer = $derived(servers.find((s) => s.id === activeServerId) ?? null)
   const member = $derived(activeServerId ? isMember(app.state, activeServerId) : false)
   const activeChannel = $derived(activeChannelId ? app.state.channels[activeChannelId] : null)
+  /** A DM or group call's stream in full view (#51), in place of the conversation: its streamer, while it's watched. */
+  const convoFull = $derived.by(() => {
+    const f = callView.full
+    const convo = activeChannel?.kind === 'dm' || activeChannel?.kind === 'group'
+    return convo && f && f.channelId === activeChannelId && findWatch(f.channelId, f.streamer) ? f.streamer : null
+  })
   // Resizable side columns (#160). What the right column holds sets its default; a column that isn't showing (full
   // view, the narrow-window search hand-off, Home with nothing on the right) has no handle and takes no room. Saved
   // widths are fitted to the body's width, so a shrinking window narrows them (lib/columns.ts).
@@ -375,7 +382,7 @@
   })
   // A stream in full view (#63) shows the open chat as a strip beside it (FullView: it stays in full screen), so the
   // column doesn't hold it meanwhile; the members list is there instead.
-  const chatInStrip = $derived(chatOpen && fullShown)
+  const chatInStrip = $derived((chatOpen && fullShown) || (!!convoFull && voiceChat.open))
   const rightKind = $derived<keyof typeof RIGHT_DEFAULT | null>(
     searchShown ? 'search' : chatOpen && !chatInStrip ? 'chat' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
   const showLeft = $derived(!hideLeft)
@@ -521,8 +528,9 @@
     }
   })
 
-  /** The voice channel the main area shows, if any: its watches show in the grid, the rest in the mini-preview. */
-  const shownCall = $derived(activeChannel?.kind === 'voice' && (!activeServerId || member) ? activeChannel.id : null)
+  /** The call the main area shows, if any: a voice channel's stage (its watches show in the grid), or a DM or group's
+   *  stream in full view; the rest show in the mini-preview. */
+  const shownCall = $derived(activeChannel?.kind === 'voice' && (!activeServerId || member) ? activeChannel.id : convoFull ? activeChannelId : null)
   const mini = $derived.by(() => {
     const w = stream.watching.find((x) => x.channelId !== shownCall)
     return w ? { channelId: w.channelId, streamer: w.streamer, key: `${w.channelId}/${w.streamer}` } : null
@@ -672,6 +680,8 @@
         <VoicePanel channelId={activeChannelId} serverId={activeServerId} onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />
       {:else if activeChannel?.kind === 'clips' && activeServerId && activeChannelId}
         {#key activeChannelId}<ClipsChannel channelId={activeChannelId} serverId={activeServerId} />{/key}
+      {:else if convoFull && activeChannelId}
+        {#key activeChannelId + '/' + convoFull}<FullView channelId={activeChannelId} streamer={convoFull} serverId={null} onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />{/key}
       {:else if activeChannel && activeChannelId}
         {#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId}
           onAddPeople={() => activeChannelId && (picker = { mode: 'add', channelId: activeChannelId })}

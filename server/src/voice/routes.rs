@@ -9,7 +9,7 @@ use livekit_api::access_token::{AccessToken, TokenVerifier, VideoGrants};
 use livekit_api::webhooks::WebhookReceiver;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
-use pulse_protocol::rest::{Channel, StreamEndReason, VoiceTokenResponse};
+use pulse_protocol::rest::{Channel, VoiceTokenResponse};
 use sqlx::SqlitePool;
 
 use crate::AppState;
@@ -230,27 +230,8 @@ async fn webhook(
             let closed = !sessions.is_empty();
             let mut ended = None;
             if in_memory {
-                // Only the stream in THIS channel: a late leave for an old channel must not
-                // end a stream the user has since started elsewhere.
-                if let Some(info) = s.streams.end(channel_id, user_id) {
-                    tracing::info!(user = %user_id, channel = %channel_id, reason = "left_voice", "stream ended");
-                    crate::streams::routes::publish_ended(
-                        &s,
-                        channel_id,
-                        user_id,
-                        StreamEndReason::LeftVoice,
-                    )
-                    .await;
-                    ended = Some(info);
-                }
-                for (streamer, viewers) in s.streams.remove_viewer_everywhere(channel_id, user_id) {
-                    crate::streams::routes::publish_viewers(&s, channel_id, streamer, viewers)
-                        .await;
-                }
-                // Stream rooms exist only for server voice channels; access to one ends here.
-                if record {
-                    crate::voice::revoke::end_stream_access(&s, channel_id, user_id);
-                }
+                // Their stream and watches here end, and their stream-room access with them.
+                ended = crate::streams::routes::left_call(&s, channel_id, user_id).await;
                 // Their Spotify share on the stage goes with them (#234).
                 crate::stage::left_call(&s, channel_id, user_id).await;
             }

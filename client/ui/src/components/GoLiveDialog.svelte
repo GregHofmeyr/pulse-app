@@ -7,6 +7,7 @@
   import { clampGoLive, loadGoLive, saveGoLive } from '../lib/stream/prefs'
   import { errorText, streamCmd } from '../lib/tauri'
   import { stream, streamApi } from '../lib/stream/stream.svelte'
+  import { app } from '../lib/store.svelte'
   import { CHOICE_LABEL, defaultChoice, soundChoices, UNIDENTIFIED_TIP, type Sound, type SoundChoice, type SoundProbe } from '../lib/stream/sound'
 
   let { channelId, picked = $bindable(), onClose }: { channelId: string; picked: Picked; onClose: () => void } = $props()
@@ -18,6 +19,8 @@
   let res = $state(initial.res)
   let fps = $state(initial.fps)
   let allowGhosts = $state(initial.allowGhosts)
+  // a DM or group call has no ghost viewers (#51): no choice there, and the saved one is left for server channels
+  const inServer = $derived(!!app.state.channels[channelId]?.server_id)
   /** The source last chosen by hand for a window, remembered for the next share. */
   let preferred: Sound = initial.sound
   let sound = $state<SoundChoice>(defaultChoice(initial, picked.surface, null))
@@ -100,7 +103,7 @@
     saveGoLive({ ...settings, sound: preferred })
     handedOff = true
     try {
-      await streamApi.goLive(channelId, track, picked.label, settings)
+      await streamApi.goLive(channelId, track, picked.label, { ...settings, allowGhosts: inServer && allowGhosts })
       onClose() // the track now belongs to the live stream
     } catch {
       // kept for Retry, unless the dialog is already gone (its onDestroy left the capture to us)
@@ -155,7 +158,7 @@
         {/if}
       {/each}
     </fieldset>
-    <label class="check" data-tip="People in the server who aren't in this call can watch without showing up; you see how many (👻)"><input type="checkbox" bind:checked={allowGhosts} disabled={busy} /> Allow ghost viewers</label>
+    {#if inServer}<label class="check" data-tip="People in the server who aren't in this call can watch without showing up; you see how many (👻)"><input type="checkbox" bind:checked={allowGhosts} disabled={busy} /> Allow ghost viewers</label>{/if}
 
     {#if pickError || stream.error}<p class="err" role="alert">{pickError || stream.error}</p>{/if}
     <div class="actions">

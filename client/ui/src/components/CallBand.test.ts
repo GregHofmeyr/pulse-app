@@ -17,6 +17,9 @@ import { handleCallEvent, resetCalls } from '../lib/calls.svelte'
 import { voice } from '../lib/voice.svelte'
 import { testReady } from '../lib/testReady'
 import type { CallRing } from '../lib/protocol/CallRing'
+import type { StreamInfo } from '../lib/protocol/StreamInfo'
+import { stream, streamApi } from '../lib/stream/stream.svelte'
+import { callView } from '../lib/stream/viewer.svelte'
 
 const user = (id: string, username: string) => ({ id, username, display_name: username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const DM = { id: 'DM1', server_id: null, kind: 'dm' as const, name: null, position: 0 }
@@ -153,6 +156,104 @@ describe('CallBand', () => {
       expect(soundboard.mutes.U2).toBe(true)
       setSoundMute('U2', false)
     })
+  })
+})
+
+describe('streams in the call (#51)', () => {
+  const ua = navigator.userAgent
+  const onWindows = (yes: boolean) => Object.defineProperty(navigator, 'userAgent', { value: yes ? 'Mozilla/5.0 (Windows NT 10.0)' : ua, configurable: true })
+  const info = (channel: string, user: string, at = '2026-11-10T10:00:00Z'): StreamInfo => ({
+    channel_id: channel, user_id: user, settings: { height: 1080, fps: 60, audio: true, allow_ghosts: false }, status: 'live', viewers: [], ghosts: 0, started_at: at,
+  })
+  const flags = { muted: false, deafened: false }
+  /** sam (and maybe you) live in the group call; you're in it unless `out`. */
+  const live = (streams: StreamInfo[], out = false) => {
+    app.state = {
+      ...app.state,
+      calls: { G1: call('G1') },
+      voice: { G1: [{ user_id: 'U1', flags }, { user_id: 'U2', flags }, { user_id: 'U3', flags }].filter((m) => !out || m.user_id !== 'U1') },
+      streams: { G1: Object.fromEntries(streams.map((s) => [s.user_id, s])) },
+    }
+    voice.channelId = out ? null : 'G1'
+  }
+  const watchBtn = (name: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="Watch ${name}'s stream"]`)
+  let watchSpy: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    watchSpy = vi.spyOn(streamApi, 'watch').mockResolvedValue(undefined as never)
+  })
+  afterEach(() => {
+    watchSpy.mockRestore()
+    onWindows(false)
+    stream.watching = []
+    callView.full = null
+    callView.goTo = null
+    callView.joinThenWatch = null
+  })
+
+  it('shows who is live with a LIVE badge, and Watch opens their stream in full view', () => {
+    onWindows(true)
+    live([info('G1', 'U2')])
+    show(CallBand, { channelId: 'G1' })
+    const row = document.querySelector('.live-who')!
+    expect(row.querySelector('.live')!.textContent).toBe('LIVE')
+    expect(row.textContent).toContain('sam')
+    const w = watchBtn('sam')!
+    expect(w.textContent).toBe('Watch')
+    w.click()
+    expect(watchSpy).toHaveBeenCalledWith('G1', 'U2')
+    expect(callView.full).toEqual({ channelId: 'G1', streamer: 'U2' })
+  })
+
+  it('your own stream has its badge but no Watch; each other streamer has theirs, oldest first', () => {
+    onWindows(true)
+    live([info('G1', 'U3', '2026-11-10T10:05:00Z'), info('G1', 'U1', '2026-11-10T10:01:00Z'), info('G1', 'U2', '2026-11-10T10:02:00Z')])
+    show(CallBand, { channelId: 'G1' })
+    expect([...document.querySelectorAll('.live-name')].map((n) => n.textContent)).toEqual(['alex', 'sam', 'jo'])
+    expect(watchBtn('alex')).toBeNull()
+    expect(watchBtn('sam')).not.toBeNull()
+    expect(watchBtn('jo')).not.toBeNull()
+  })
+
+  it('a stream you already watch: Open takes you back to it in full view without watching again', () => {
+    onWindows(true)
+    live([info('G1', 'U2')])
+    stream.watching = [{ channelId: 'G1', streamer: 'U2' } as never]
+    show(CallBand, { channelId: 'G1' })
+    const w = watchBtn('sam')!
+    expect(w.textContent).toBe('Open')
+    w.click()
+    expect(watchSpy).not.toHaveBeenCalled()
+    expect(callView.full).toEqual({ channelId: 'G1', streamer: 'U2' })
+  })
+
+  it('out of the call: Join & watch joins first (no ghosts in a DM or group)', async () => {
+    onWindows(true)
+    live([info('G1', 'U2')], true)
+    show(CallBand, { channelId: 'G1' })
+    const w = watchBtn('sam')!
+    expect(w.textContent).toBe('Join & watch')
+    w.click()
+    expect(watchSpy).not.toHaveBeenCalled()
+    expect(callView.joinThenWatch).toEqual({ channelId: 'G1', streamer: 'U2' })
+    await vi.waitFor(() => expect(cmds('join_voice')).toHaveLength(1))
+  })
+
+  it('on Linux, Watch says why it is off and does nothing', () => {
+    live([info('G1', 'U2')])
+    show(CallBand, { channelId: 'G1' })
+    const w = watchBtn('sam')!
+    expect(w.getAttribute('aria-disabled')).toBe('true')
+    expect(w.dataset.tip).toBe("Watching from Linux isn't supported yet")
+    w.click()
+    expect(watchSpy).not.toHaveBeenCalled()
+    expect(callView.full).toBeNull()
+  })
+
+  it('nobody live: no LIVE row', () => {
+    live([])
+    show(CallBand, { channelId: 'G1' })
+    expect(document.querySelector('.band')).not.toBeNull()
+    expect(document.querySelector('.live-who')).toBeNull()
   })
 })
 

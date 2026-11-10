@@ -7,7 +7,7 @@
   import { loadMiniCorner, saveMiniCorner, type Corner } from '../lib/stream/prefs'
   import { findWatch, streamApi } from '../lib/stream/stream.svelte'
   import { hostVideo } from '../lib/stream/videoHost'
-  import { callView } from '../lib/stream/viewer.svelte'
+  import { callView, openFull } from '../lib/stream/viewer.svelte'
 
   // The shell keys this on the stream, so the props never change for one instance.
   let { channelId, streamer }: { channelId: string; streamer: string } = $props()
@@ -111,6 +111,8 @@
       dragged = false
       return
     }
+    // a DM or group call has no grid to go back to (#51): its stream opens in full view, in place of the conversation
+    if (!app.state.channels[channelId]?.server_id) openFull({ channelId, streamer })
     callView.goTo = channelId
   }
 </script>

@@ -661,7 +661,8 @@
       <ConversationMenu {channel} {muted} show={menu} anchor={menu === 'manage' ? moreBtn : muteBtn} onClose={() => (menu = null)} onRename={startRename} {onLeft} />
     {/if}
   </div>
-  {#if isPrivate}<CallBand {channelId} {onVoiceSettings} />{/if}
+  <!-- not in the chat strip beside a DM or group stream in full view (#51): the call is all around it there -->
+  {#if isPrivate && !panel}<CallBand {channelId} {onVoiceSettings} />{/if}
   <!-- tabindex -1: a place to put the focus back when nothing better is left (not a tab stop) -->
   <div class="list" tabindex="-1" bind:this={list} onscroll={onScroll}>
     {#if reachedStart && !from}<div class="start">

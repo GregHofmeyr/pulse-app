@@ -285,7 +285,11 @@ async fn remove_member(
     if had_grants > 0 || left_call {
         crate::voice::revoke::remove_identities(&s, &id.to_string(), &[user.to_string()]).await;
     }
+    // Their stream in its call ends and their watches there stop, as on leaving the call (#51);
+    // their stream-room connections go too. A conversation's streams aren't recorded, so there
+    // is no badge bookkeeping for the one that ended.
     if left_call {
+        crate::streams::routes::left_call(&s, id, user).await;
         s.hub
             .publish(
                 &s.db,

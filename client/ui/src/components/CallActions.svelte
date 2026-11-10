@@ -8,7 +8,6 @@
   import SoundDialog from './SoundDialog.svelte'
   import SoundTidy from './SoundTidy.svelte'
   import type { Sound } from '../lib/protocol/Sound'
-  import { app } from '../lib/store.svelte'
   import { voice } from '../lib/voice.svelte'
   import { pickSource } from '../lib/stream/golive.svelte'
   import { isWindows } from '../lib/stream/platform'
@@ -20,10 +19,9 @@
   const connected = $derived(inHere && voice.connection === 'connected')
   const live = $derived(stream.live?.channelId === channelId)
   // Go Live's reason to be off, if any (aria-disabled, not disabled: a disabled button swallows the hover that shows
-  // the tip). Streams are server voice channels only for now (#51).
+  // the tip). A DM or group call streams like a server voice channel (#51).
   const off = $derived(
-    !app.state.channels[channelId]?.server_id ? "Going live in DM and group calls isn't here yet"
-    : !isWindows() ? "Streaming from Linux isn't supported yet"
+    !isWindows() ? "Streaming from Linux isn't supported yet"
     : !connected ? 'Wait until the call has connected'
     : null,
   )

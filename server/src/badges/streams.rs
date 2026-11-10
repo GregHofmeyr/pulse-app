@@ -1,10 +1,11 @@
-//! Stream sessions, for "Chat, did you see that?" (hours streamed). Streams only exist in server
-//! voice channels, so every one counts. A row is opened when a stream goes live and closed by the
+//! Stream sessions, for "Chat, did you see that?" (hours streamed). Only streams in server voice
+//! channels count: a DM or group call's (#51) is never recorded, like the call itself (voice
+//! sessions, spec §8). A row is opened when a stream goes live and closed by the
 //! end of that same stream (matched on its `started_at`), so a stream that ends and starts again
 //! at once never has its new row closed by the old one's end. Bookkeeping never fails the
 //! stream: errors are logged.
 
-use pulse_protocol::rest::StreamInfo;
+use pulse_protocol::rest::{Channel, StreamInfo};
 use sqlx::SqlitePool;
 
 use super::catalogue::stat;
@@ -14,8 +15,11 @@ use crate::AppState;
 use crate::db::{begin_write, now};
 use crate::error::AppResult;
 
-/// A stream went live (`Started::New`).
-pub async fn started(s: &AppState, info: &StreamInfo) {
+/// A stream went live (`Started::New`) in `channel`. Its `ended` finds no row when this kept none.
+pub async fn started(s: &AppState, channel: &Channel, info: &StreamInfo) {
+    if channel.server_id.is_none() {
+        return;
+    }
     let r = sqlx::query(
         "INSERT INTO stream_sessions (id, user_id, channel_id, started_at) VALUES (?, ?, ?, ?)",
     )

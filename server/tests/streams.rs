@@ -182,25 +182,20 @@ async fn tickets_need_you_in_that_voice_channel() {
 }
 
 #[tokio::test]
-async fn tickets_refuse_text_and_dm_channels() {
+async fn tickets_refuse_text_channels() {
     let app = spawn().await;
     let (a_id, a) = register(&app, "alex").await;
-    let (b_id, _) = register(&app, "sam").await;
     let s = create_server(&app, &a, "Main").await;
     let g = general(&app, &a, s.id).await;
-    let dm = create_dm(&app, &a, &[b_id]).await;
     app.voice.join(g.id, a_id, "PA_t");
-    app.voice.join(dm.id, a_id, "PA_d");
-    for ch in [g.id, dm.id] {
-        let r = post_json(
-            &app,
-            &a,
-            &format!("/streams/{ch}/ticket"),
-            json!({"role":"v"}),
-        )
-        .await;
-        assert_eq!(r.status(), 400, "{ch}");
-    }
+    let r = post_json(
+        &app,
+        &a,
+        &format!("/streams/{}/ticket", g.id),
+        json!({"role":"v"}),
+    )
+    .await;
+    assert_eq!(r.status(), 400);
 }
 
 #[tokio::test]
@@ -1617,4 +1612,234 @@ async fn an_end_that_a_new_go_live_overtook_is_followed_by_the_stream_again() {
             .await
             .is_err()
     );
+}
+
+// --- DM and group calls (#51) ---
+
+/// alex and sam in a DM call; jo is in neither the DM nor the call. `sam`'s and `jo`'s hub
+/// registrations watch what reaches them.
+struct DmCall {
+    dm: Channel,
+    alex: (UserId, String),
+    sam: (UserId, String),
+    jo: (UserId, String),
+    sam_rx: Receiver<ServerFrame>,
+    jo_rx: Receiver<ServerFrame>,
+}
+
+async fn dm_call(app: &TestApp) -> DmCall {
+    let alex = register(app, "alex").await;
+    let sam = register(app, "sam").await;
+    let jo = register(app, "jo").await;
+    let dm = create_dm(app, &alex.1, &[sam.0]).await;
+    app.voice.join(dm.id, alex.0, "PA_test"); // the sid `webhook_left` leaves with
+    app.voice.join(dm.id, sam.0, "PA_s");
+    let sam_rx = app.hub.register(sam.0, String::new()).rx;
+    let jo_rx = app.hub.register(jo.0, String::new()).rx;
+    DmCall {
+        dm,
+        alex,
+        sam,
+        jo,
+        sam_rx,
+        jo_rx,
+    }
+}
+
+#[tokio::test]
+async fn dm_call_members_get_stream_tickets_for_its_stream_room() {
+    let app = spawn().await;
+    let c = dm_call(&app).await;
+    for (role, sources) in [("v", "screen_share"), ("a", "screen_share_audio")] {
+        let r = post_json(
+            &app,
+            &c.alex.1,
+            &format!("/streams/{}/ticket", c.dm.id),
+            json!({"role": role}),
+        )
+        .await;
+        assert_eq!(r.status(), 200, "{role}");
+        let t: VoiceTokenResponse = r.json().await.unwrap();
+        let claims = TokenVerifier::with_api_key(&app.cfg.livekit_key, &app.cfg.livekit_secret)
+            .verify(&t.token)
+            .unwrap();
+        assert_eq!(claims.video.room, format!("{}~s", c.dm.id));
+        assert_eq!(claims.sub, format!("{}#{role}", c.alex.0));
+        assert_eq!(claims.video.can_publish_sources, vec![sources]);
+    }
+}
+
+#[tokio::test]
+async fn dm_streams_refuse_anyone_outside_the_conversation_or_the_call() {
+    let app = spawn().await;
+    let c = dm_call(&app).await;
+    let ticket = format!("/streams/{}/ticket", c.dm.id);
+    // jo isn't in the DM: it doesn't exist for them, even "in" its call
+    app.voice.join(c.dm.id, c.jo.0, "PA_j");
+    let r = post_json(&app, &c.jo.1, &ticket, json!({"role": "v"})).await;
+    assert_eq!(r.status(), 404);
+    assert_eq!(
+        go_live(&app, &c.jo.1, c.dm.id, settings()).await.status(),
+        404
+    );
+    // nor as a ghost (a server voice channel's thing)
+    let r = post_json(&app, &c.jo.1, &ticket, json!({"role": "v", "ghost": true})).await;
+    assert_eq!(r.status(), 404);
+    // sam is in the DM but has left its call
+    let _ = app.voice.leave(c.dm.id, c.sam.0, "PA_s");
+    let r = post_json(&app, &c.sam.1, &ticket, json!({"role": "v"})).await;
+    assert_eq!(r.status(), 403);
+    assert_eq!(
+        go_live(&app, &c.sam.1, c.dm.id, settings()).await.status(),
+        403
+    );
+    // and out of the call, no ghost ticket either
+    let r = post_json(&app, &c.sam.1, &ticket, json!({"role": "v", "ghost": true})).await;
+    assert_eq!(r.status(), 400);
+}
+
+#[tokio::test]
+async fn dm_call_streams_go_live_and_are_watched_by_its_members_only() {
+    let app = spawn().await;
+    let mut c = dm_call(&app).await;
+    let body =
+        json!({"settings": {"height": 1080, "fps": 60, "audio": true, "allow_ghosts": true}});
+    let r = go_live(&app, &c.alex.1, c.dm.id, body).await;
+    assert_eq!(r.status(), 200);
+    let info: StreamInfo = r.json().await.unwrap();
+    // no ghosts outside a server: nobody outside the call can watch
+    assert!(!info.settings.allow_ghosts);
+    assert!(info.settings.audio);
+    match next_stream_event(&mut c.sam_rx).await {
+        Event::StreamStarted { stream } => {
+            assert_eq!((stream.channel_id, stream.user_id), (c.dm.id, c.alex.0))
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    let watch = format!("/streams/{}/watch", c.dm.id);
+    assert_eq!(
+        post_json(&app, &c.sam.1, &watch, json!({"streamer": c.alex.0}))
+            .await
+            .status(),
+        204
+    );
+    match next_stream_event(&mut c.sam_rx).await {
+        Event::ViewersChanged { viewers, .. } => assert_eq!(viewers, vec![c.sam.0]),
+        other => panic!("unexpected {other:?}"),
+    }
+    // jo hears nothing of it and can't watch it, as themselves or as a ghost, or see its preview
+    for ghost in [false, true] {
+        let r = post_json(
+            &app,
+            &c.jo.1,
+            &watch,
+            json!({"streamer": c.alex.0, "ghost": ghost}),
+        )
+        .await;
+        assert_eq!(r.status(), 404, "ghost {ghost}");
+    }
+    let r = app
+        .http
+        .get(app.url(&format!("/streams/{}/{}/preview", c.dm.id, c.alex.0)))
+        .bearer_auth(&c.jo.1)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), next_stream_event(&mut c.jo_rx))
+            .await
+            .is_err(),
+        "a DM's stream reached someone outside it"
+    );
+}
+
+#[tokio::test]
+async fn leaving_a_dm_call_ends_your_stream() {
+    let app = spawn().await;
+    let mut c = dm_call(&app).await;
+    assert_eq!(
+        go_live(&app, &c.alex.1, c.dm.id, settings()).await.status(),
+        200
+    );
+    next_stream_event(&mut c.sam_rx).await;
+    webhook_left(&app, c.dm.id, c.alex.0).await;
+    loop {
+        if let Event::StreamEnded {
+            user_id, reason, ..
+        } = next_stream_event(&mut c.sam_rx).await
+        {
+            assert_eq!((user_id, reason), (c.alex.0, StreamEndReason::LeftVoice));
+            break;
+        }
+    }
+    assert!(app.streams.all().is_empty());
+}
+
+#[tokio::test]
+async fn dm_call_streams_are_not_recorded() {
+    let app = spawn().await;
+    let mut c = dm_call(&app).await;
+    go_live(&app, &c.alex.1, c.dm.id, settings()).await;
+    next_stream_event(&mut c.sam_rx).await;
+    assert_eq!(stop(&app, &c.alex.1, c.dm.id).await.status(), 204);
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM stream_sessions")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+}
+
+#[tokio::test]
+async fn removed_from_a_group_ends_their_stream_and_their_watch() {
+    let app = spawn().await;
+    let alex = register(&app, "alex").await;
+    let sam = register(&app, "sam").await;
+    let kim = register(&app, "kim").await;
+    let group = create_dm(&app, &alex.1, &[sam.0, kim.0]).await;
+    for (id, sid) in [(alex.0, "PA_a"), (sam.0, "PA_s"), (kim.0, "PA_k")] {
+        app.voice.join(group.id, id, sid);
+    }
+    let mut rx = app.hub.register(alex.0, String::new()).rx;
+    assert_eq!(
+        go_live(&app, &sam.1, group.id, settings()).await.status(),
+        200
+    );
+    assert_eq!(
+        go_live(&app, &kim.1, group.id, settings()).await.status(),
+        200
+    );
+    let watch = format!("/streams/{}/watch", group.id);
+    assert_eq!(
+        post_json(&app, &sam.1, &watch, json!({"streamer": kim.0}))
+            .await
+            .status(),
+        204
+    );
+    // sam leaves the group in the middle of the call
+    let r = app
+        .http
+        .delete(app.url(&format!("/channels/{}/members/{}", group.id, sam.0)))
+        .bearer_auth(&sam.1)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    let (mut ended, mut unlisted) = (false, false);
+    while !(ended && unlisted) {
+        match next_stream_event(&mut rx).await {
+            Event::StreamEnded {
+                user_id, reason, ..
+            } if user_id == sam.0 => {
+                assert_eq!(reason, StreamEndReason::LeftVoice);
+                ended = true;
+            }
+            Event::ViewersChanged {
+                user_id, viewers, ..
+            } if user_id == kim.0 && viewers.is_empty() => unlisted = true,
+            _ => {}
+        }
+    }
+    assert!(app.streams.get(group.id, sam.0).is_none());
+    assert!(app.streams.get(group.id, kim.0).is_some());
 }

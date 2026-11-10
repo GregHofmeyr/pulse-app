@@ -23,6 +23,10 @@ vi.mock('../lib/stream/stream.svelte', () => ({
 }))
 
 import GoLiveDialog from './GoLiveDialog.svelte'
+import { app, resetState } from '../lib/store.svelte'
+
+const LOUNGE = { id: 'c1', server_id: 'S1', kind: 'voice' as const, name: 'Lounge', position: 0 }
+const DM = { id: 'DM1', server_id: null, kind: 'dm' as const, name: null, position: 0 }
 
 function picked() {
   return { track: { mediaStreamTrack: {}, stop: vi.fn() }, label: 'Game', surface: 'window', width: 1920, height: 1080 }
@@ -51,6 +55,8 @@ describe('GoLiveDialog capture ownership', () => {
   beforeEach(() => {
     globalThis.MediaStream ??= class {} as never
     document.body.innerHTML = ''
+    resetState()
+    app.state = { ...app.state, channels: { c1: LOUNGE, DM1: DM } }
   })
 
   it('a_failed_go_live_after_the_dialog_closed_stops_the_capture', async () => {
@@ -90,6 +96,25 @@ describe('GoLiveDialog capture ownership', () => {
     c = mount(GoLiveDialog, { target: document.body, props: { channelId: 'c1', picked: picked() as never, onClose: () => {} } })
     flushSync()
     expect(box().checked).toBe(false) // the last choice, per device
+    unmount(c)
+  })
+
+  it('a_dm_or_group_call_has_no_ghost_viewers_and_keeps_the_saved_choice_for_servers', async () => {
+    localStorage.clear()
+    live.settings = []
+    live.goLive = async () => {}
+    const ghostBox = () => [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('Allow ghost viewers'))
+    let c = mount(GoLiveDialog, { target: document.body, props: { channelId: 'DM1', picked: picked() as never, onClose: () => {} } })
+    flushSync()
+    expect(ghostBox()).toBeUndefined()
+    ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Go Live')!.click()
+    await Promise.resolve()
+    expect(live.settings).toEqual([expect.objectContaining({ allowGhosts: false })])
+    unmount(c)
+    // the server channel's choice is still the default (on), not the DM's forced off
+    c = mount(GoLiveDialog, { target: document.body, props: { channelId: 'c1', picked: picked() as never, onClose: () => {} } })
+    flushSync()
+    expect(ghostBox()!.querySelector('input')!.checked).toBe(true)
     unmount(c)
   })
 

@@ -68,19 +68,22 @@ describe('CallActions', () => {
     expect(pick).toHaveBeenCalledWith('V1')
   })
 
-  it('Go Live says why it is off, and does nothing: on Linux, and in a DM or group call', () => {
+  it('Go Live says why it is off on Linux, and does nothing', () => {
     show('V1')
     expect(button('Go Live')!.getAttribute('aria-disabled')).toBe('true')
     expect(button('Go Live')!.dataset.tip).toBe("Streaming from Linux isn't supported yet")
     button('Go Live')!.click()
-    if (cmp) unmount(cmp)
+    expect(pick).not.toHaveBeenCalled()
+  })
+
+  it('Go Live works in a DM or group call as in a server voice channel (#51)', () => {
     onWindows(true)
     voice.channelId = 'DM1'
     show('DM1')
-    expect(button('Go Live')!.getAttribute('aria-disabled')).toBe('true')
-    expect(button('Go Live')!.dataset.tip).toBe("Going live in DM and group calls isn't here yet")
+    expect(button('Go Live')!.getAttribute('aria-disabled')).toBeNull()
+    expect(button('Go Live')!.dataset.tip).toBe('Go Live')
     button('Go Live')!.click()
-    expect(pick).not.toHaveBeenCalled()
+    expect(pick).toHaveBeenCalledWith('DM1')
   })
 
   it('while you are live it stops your stream instead', () => {

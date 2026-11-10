@@ -151,6 +151,82 @@ describe('mini-preview in the shell', () => {
   })
 })
 
+describe('a DM or group call stream in the shell (#51)', () => {
+  const dmStream = { ...samStream, channel_id: 'D1', settings: { ...samStream.settings, allow_ghosts: false } }
+  const DM_SAM = { channelId: 'D1', streamer: 'U2' }
+  beforeEach(() => {
+    app.state = applyReady(emptyState(), {
+      ...ready,
+      channels: [...ready.channels, { id: 'D1', server_id: null, kind: 'dm', name: null, position: 0 }],
+      dm_members: [{ channel_id: 'D1', user_ids: ['U1', 'U2'] }],
+      voice: [{ channel_id: 'D1', members: [{ user_id: 'U1', flags }, { user_id: 'U2', flags }] }],
+      streams: [dmStream],
+      calls: [{ id: 'C1', channel_id: 'D1', started_by: 'U2', started_at: '2026-10-26T10:00:00Z', line_id: null }],
+    } as Ready)
+    voice.channelId = 'D1'
+  })
+
+  it('watch_opens_full_view_in_place_of_the_conversation_back_leaves_the_mini_preview_over_it', async () => {
+    mountShell()
+    goTo('D1')
+    await settle()
+    // the band's Watch: full view in place of the conversation, the one video there
+    q('.band button[aria-label="Watch sam\'s stream"]')!.click()
+    await settle()
+    expect(callView.full).toEqual(DM_SAM)
+    expect(q('.full-view .stage video')).not.toBeNull()
+    expect(q('.band')).toBeNull()
+    expect(q('.mini-preview')).toBeNull()
+    expect(document.querySelectorAll('video')).toHaveLength(1)
+    expect(room.setLayer).toHaveBeenLastCalledWith('U2', 'high')
+
+    // Back: the conversation and its call band, the stream still playing in the mini-preview
+    ;[...document.querySelectorAll<HTMLButtonElement>('.full-view button')].find((b) => b.textContent?.trim() === 'Back')!.click()
+    await settle()
+    expect(q('.full-view')).toBeNull()
+    expect(q('.band')).not.toBeNull()
+    expect(q('.mini-preview video')).not.toBeNull()
+    expect(document.querySelectorAll('video')).toHaveLength(1)
+    expect(q('.band button[aria-label="Watch sam\'s stream"]')!.textContent).toBe('Open')
+
+    // the mini-preview takes you back to full view (a conversation has no grid to go back to)
+    q('.mini-preview .open')!.click()
+    await settle()
+    expect(q('.full-view .stage video')).not.toBeNull()
+    expect(q('.mini-preview')).toBeNull()
+  })
+
+  it('elsewhere_the_watch_is_the_mini_preview_and_it_brings_you_back_to_the_conversation', async () => {
+    mountShell()
+    goTo('D1')
+    await streamApi.watch('D1', 'U2')
+    openFull(DM_SAM)
+    await settle()
+    goTo('T1')
+    await settle()
+    expect(q('.full-view')).toBeNull()
+    expect(q('.mini-preview video')).not.toBeNull()
+    q('.mini-preview .open')!.click()
+    await settle()
+    expect(q('.full-view .stage video')).not.toBeNull()
+    expect(q('.mini-preview')).toBeNull()
+  })
+
+  it('the_stream_ending_closes_full_view_and_shows_the_conversation', async () => {
+    mountShell()
+    goTo('D1')
+    await streamApi.watch('D1', 'U2')
+    openFull(DM_SAM)
+    await settle()
+    expect(q('.full-view')).not.toBeNull()
+    await streamApi.unwatch('D1', 'U2')
+    await settle()
+    expect(q('.full-view')).toBeNull()
+    expect(q('.band')).not.toBeNull()
+    expect(callView.full).toBeNull()
+  })
+})
+
 describe('mini-preview', () => {
   const mountMini = () => {
     cmp = mount(MiniPreview, { target: document.body, props: SAM })

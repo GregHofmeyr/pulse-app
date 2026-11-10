@@ -1,5 +1,6 @@
 //! Screen-share routes: stream-room tickets, go live / stop, watch / unwatch. All bearer-authed,
-//! and every one but unwatch requires the caller to be in that server voice channel right now.
+//! and every one but unwatch requires the caller to be in that call right now: a server voice
+//! channel's, or a DM or group's (#51; no ghost viewers there).
 
 use std::time::{Duration, Instant};
 
@@ -46,8 +47,8 @@ pub fn router() -> Router<AppState> {
         .route("/streams/{channel}/{user}/preview", get(get_preview))
 }
 
-/// Streaming exists only in server voice channels, and only for people in the call right now
-/// (and in the server, same rule as joining voice).
+/// Streaming is for people in the call right now: a server voice channel's (and in the server,
+/// same rule as joining voice) or a DM or group's (#51).
 async fn require_voice_member(s: &AppState, me: UserId, ch: ChannelId) -> AppResult<Channel> {
     let channel = require_visible_member(s, me, ch).await?;
     if !s.voice.members(ch).contains(&me) {
@@ -56,15 +57,20 @@ async fn require_voice_member(s: &AppState, me: UserId, ch: ChannelId) -> AppRes
     Ok(channel)
 }
 
-/// A server voice channel the caller can see and belongs to (no voice membership needed).
+/// A channel with streams the caller can see and belongs to (no voice membership needed): a
+/// server voice channel in a server they're in, or a DM or group they're in (`channel_for`
+/// already refuses a conversation that isn't theirs, as a 404).
 async fn require_visible_member(s: &AppState, me: UserId, ch: ChannelId) -> AppResult<Channel> {
     let channel = channel_for(&s.db, me, ch).await?;
+    if crate::calls::is_conversation(&channel) {
+        return Ok(channel);
+    }
     let Some(server) = channel
         .server_id
         .filter(|_| channel.kind == ChannelKind::Voice)
     else {
         return Err(AppError::BadRequest(
-            "streaming is only in server voice channels".into(),
+            "streaming is only in voice channels and DM or group calls".into(),
         ));
     };
     if !crate::servers::routes::is_server_member(&s.db, server, me).await? {
@@ -119,9 +125,14 @@ async fn ticket(
 }
 
 /// A server member outside the voice channel (spec §5.1). A voice member asking as a ghost is
-/// refused: they watch as themselves.
+/// refused: they watch as themselves. DMs and groups have no ghosts (#51).
 async fn require_ghost(s: &AppState, me: UserId, ch: ChannelId) -> AppResult<()> {
-    require_visible_member(s, me, ch).await?;
+    let channel = require_visible_member(s, me, ch).await?;
+    if channel.server_id.is_none() {
+        return Err(AppError::BadRequest(
+            "ghost viewers are only in server voice channels".into(),
+        ));
+    }
     if s.voice.members(ch).contains(&me) {
         return Err(AppError::Forbidden);
     }
@@ -177,16 +188,20 @@ async fn go_live(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
-    require_voice_member(&s, me, ch).await?;
-    let st = &req.settings;
-    if !HEIGHTS.contains(&st.height) || !FPS.contains(&st.fps) {
+    let channel = require_voice_member(&s, me, ch).await?;
+    let mut settings = req.settings;
+    if !HEIGHTS.contains(&settings.height) || !FPS.contains(&settings.fps) {
         return Err(AppError::BadRequest(
             "height must be 720, 1080 or 1440 and fps 15, 30 or 60".into(),
         ));
     }
-    let (info, event) = match s.streams.start(ch, me, req.settings, now()) {
+    // A DM or group's stream is for the people in its call only (no ghosts outside a server).
+    if channel.server_id.is_none() {
+        settings.allow_ghosts = false;
+    }
+    let (info, event) = match s.streams.start(ch, me, settings, now()) {
         Started::New(stream) => {
-            crate::badges::streams::started(&s, &stream).await;
+            crate::badges::streams::started(&s, &channel, &stream).await;
             (stream.clone(), Event::StreamStarted { stream })
         }
         Started::Updated(stream) => (stream.clone(), Event::StreamUpdated { stream }),
@@ -308,6 +323,24 @@ pub async fn publish_ended(s: &AppState, ch: ChannelId, user: UserId, reason: St
     if let Some(stream) = s.streams.get(ch, user) {
         s.hub.publish(&s.db, Event::StreamUpdated { stream }).await;
     }
+}
+
+/// `user` is out of `ch`'s call (they left it, or left the group it's in): their stream there ends,
+/// they stop watching the streams there, and their stream-room connections go. Returns the stream
+/// that ended, for its badge bookkeeping (the caller runs it last).
+pub async fn left_call(s: &AppState, ch: ChannelId, user: UserId) -> Option<StreamInfo> {
+    // Only the stream in THIS channel: a late leave for an old channel must not end a stream
+    // the user has since started elsewhere.
+    let ended = s.streams.end(ch, user);
+    if ended.is_some() {
+        tracing::info!(user = %user, channel = %ch, reason = "left_voice", "stream ended");
+        publish_ended(s, ch, user, StreamEndReason::LeftVoice).await;
+    }
+    for (streamer, viewers) in s.streams.remove_viewer_everywhere(ch, user) {
+        publish_viewers(s, ch, streamer, viewers).await;
+    }
+    crate::voice::revoke::end_stream_access(s, ch, user);
+    ended
 }
 
 /// `ViewersChanged` with these named viewers and the stream's ghost count now.
