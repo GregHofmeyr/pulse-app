@@ -78,6 +78,9 @@ const press = (key: string, init: KeyboardEventInit = {}) => {
   return e
 }
 async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
+/** Svelte's event delegation keeps the last event for one 0 ms timer, armed only when none is pending (module state:
+ *  whether a test sees it depends on what ran before). Run it, so a timer count is the component's own timers. */
+const runSvelteEventTimer = () => vi.advanceTimersByTime(0)
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -158,6 +161,7 @@ describe('MessageItem errors', () => {
     onDelete.mockRejectedValue('cannot delete')
     show()
     deleteNow(); await settle()
+    runSvelteEventTimer()
     expect(vi.getTimerCount()).toBe(1)
     unmount(cmp!); cmp = undefined
     expect(vi.getTimerCount()).toBe(0)
@@ -170,6 +174,7 @@ describe('MessageItem errors', () => {
     document.querySelector<HTMLButtonElement>('.chip:not(.add)')!.click()
     await settle()
     expect(refuse).toBeDefined()
+    runSvelteEventTimer()
     unmount(cmp!); cmp = undefined
     refuse('reaction refused')
     await settle()
