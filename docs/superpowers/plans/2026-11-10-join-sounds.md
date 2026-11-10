@@ -17,6 +17,10 @@ old server, no sound).
 
 **Spec:** `docs/superpowers/specs/2026-11-10-join-sounds-design.md`
 
+**Status: done (2026-11-10).** Deviations: the server tests live in `server/tests/sounds.rs` (its sound helpers); the
+ring state moved to `client/ui/src/lib/soundRings.svelte.ts`. Deferred: #278 (your own join sound after a full
+reconnect), #279 (the spec's out-of-scope items).
+
 ## Global Constraints
 
 - One join sound per person per server; none = the normal join cue. Nothing in profile settings.
