@@ -125,11 +125,24 @@ enum Cmd {
 /// pre-sized `clips` list never grows inside the audio callback.
 pub const MAX_CLIPS: usize = 32;
 
-/// Room for clips the speakers are done with, on their way back to be freed off the audio thread
-/// (#123: a sound's last `Arc` freed in the callback is a ~1 MB free there). A `clear` or a burst
-/// over the limit sends at most a list's worth at once, and the network side empties it on every
-/// play, clear and voice tick (100 ms); only if it is ever full does the callback free one itself.
-const GRAVEYARD: usize = 4 * MAX_CLIPS;
+/// Peers the speaker side has room for without growing its map in the callback (a normal call).
+const PEERS: usize = 32;
+
+/// Room for what the speakers are done with, on its way back to be freed off the audio thread:
+/// clips (#123: a sound's last `Arc` freed in the callback is a ~1 MB free there) and removed
+/// peers' queues and rings (#284). A `clear` or a burst over the limit sends at most a list's worth
+/// of clips and a room's peers at once, and the network side empties it on every play, clear and
+/// voice tick (100 ms); only if it is ever full does the callback free one itself.
+const GRAVEYARD: usize = 4 * MAX_CLIPS + PEERS;
+
+/// Something the speakers are done with, handed back through the graveyard to be freed.
+/// Never read: it is only held so that dropping it happens on the network side.
+#[allow(dead_code)]
+enum Dead {
+    Clip(Clip),
+    /// A removed or replaced peer, with the id it was keyed by.
+    Peer(Peer, String),
+}
 
 /// A playing one-shot: mono 48 kHz samples (the mixer's rate, so no resampling) and a read position.
 /// A soundboard clip's audio: all decoded, or still being decoded (played as far as it's got).
@@ -198,7 +211,7 @@ pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
     let speakers = Mixer {
         cmds,
         cap,
-        peers: HashMap::with_capacity(32), // no growth in the callback for a normal call
+        peers: HashMap::with_capacity(PEERS), // no growth in the callback for a normal call
         clips: Vec::with_capacity(MAX_CLIPS), // intake refuses more, so never grows in the callback
         target: rate * TARGET_MS / 1000,
         min_pull: rate / 100,
@@ -239,8 +252,9 @@ pub struct MixerInput {
     /// How long the last clip waited between `play_clip` and its first pull (µs; soundboard
     /// latency diagnostics). The device's own buffer comes on top.
     clip_start_us: Arc<AtomicU64>,
-    /// Clips the speakers are done with, freed here ([`Self::reap`]) rather than in the callback.
-    reaper: Mutex<rtrb::Consumer<Clip>>,
+    /// Clips and peers the speakers are done with, freed here ([`Self::reap`]) rather than in
+    /// the callback.
+    reaper: Mutex<rtrb::Consumer<Dead>>,
 }
 
 pub(crate) struct SourceIn {
@@ -456,8 +470,8 @@ impl MixerInput {
         });
     }
 
-    /// Free the clips the speakers have finished with (here, off the audio thread). Called on
-    /// every play and clear, and by the call's 100 ms tick; returns how many were freed.
+    /// Free the clips and peers the speakers have finished with (here, off the audio thread).
+    /// Called on every play and clear, and by the call's 100 ms tick; returns how many were freed.
     pub fn reap(&self) -> usize {
         let Ok(mut r) = self.reaper.try_lock() else {
             return 0; // someone else is at it
@@ -465,7 +479,7 @@ impl MixerInput {
         let n = r.slots();
         if let Ok(chunk) = r.read_chunk(n) {
             // dropping the iterator's items frees each clip's samples (unless the decode cache
-            // still holds them) and stop flag
+            // still holds them) and stop flag, and each peer's queue and ring
             chunk.into_iter().for_each(drop);
         }
         n
@@ -568,15 +582,16 @@ pub struct Mixer {
     underrun: Arc<AtomicU64>,
     adjusted: Arc<AtomicU64>,
     clip_start_us: Arc<AtomicU64>,
-    /// Where finished clips go to be freed off this thread (see [`GRAVEYARD`]).
-    graveyard: rtrb::Producer<Clip>,
+    /// Where finished clips and removed peers go to be freed off this thread (see [`GRAVEYARD`]).
+    graveyard: rtrb::Producer<Dead>,
 }
 
-/// Hand a finished clip back to the network side to free (see [`GRAVEYARD`]); freed here only
-/// when that queue is full. A free function: the callers hold borrows of other `Mixer` fields.
-fn bury(graveyard: &mut rtrb::Producer<Clip>, c: Clip) {
-    if let Err(rtrb::PushError::Full(c)) = graveyard.push(c) {
-        drop(c);
+/// Hand a finished clip or removed peer back to the network side to free (see [`GRAVEYARD`]);
+/// freed here only when that queue is full. A free function: the callers hold borrows of other
+/// `Mixer` fields.
+fn bury(graveyard: &mut rtrb::Producer<Dead>, d: Dead) {
+    if let Err(rtrb::PushError::Full(d)) = graveyard.push(d) {
+        drop(d);
     }
 }
 
@@ -584,13 +599,13 @@ fn bury(graveyard: &mut rtrb::Producer<Clip>, c: Clip) {
 /// clips are summed), so `swap_remove`: nothing shifts and nothing is allocated or freed.
 fn bury_where(
     clips: &mut Vec<Clip>,
-    graveyard: &mut rtrb::Producer<Clip>,
+    graveyard: &mut rtrb::Producer<Dead>,
     dead: impl Fn(&Clip) -> bool,
 ) {
     let mut i = 0;
     while i < clips.len() {
         if dead(&clips[i]) {
-            bury(graveyard, clips.swap_remove(i));
+            bury(graveyard, Dead::Clip(clips.swap_remove(i)));
         } else {
             i += 1;
         }
@@ -640,6 +655,10 @@ impl Mixer {
                             rebuffering: false,
                             waiting: true,
                         };
+                        // re-adding an id starts it empty: the old one goes back to be freed
+                        if let Some((old_id, old)) = self.peers.remove_entry(&id) {
+                            bury(&mut self.graveyard, Dead::Peer(old, old_id));
+                        }
                         self.peers.insert(id, p);
                     }
                     Cmd::Gain { id, gain } => {
@@ -648,7 +667,10 @@ impl Mixer {
                         }
                     }
                     Cmd::Remove { id } => {
-                        self.peers.remove(&id);
+                        // its queue and ring are freed on the network side (#284)
+                        if let Some((id, p)) = self.peers.remove_entry(&id) {
+                            bury(&mut self.graveyard, Dead::Peer(p, id));
+                        }
                     }
                     Cmd::Clip {
                         samples,
@@ -668,11 +690,14 @@ impl Mixer {
                                 .store(u64::try_from(waited).unwrap_or(u64::MAX - 1), Relaxed);
                             self.clips.push(clip);
                         } else {
-                            bury(&mut self.graveyard, clip); // over the limit: not played
+                            bury(&mut self.graveyard, Dead::Clip(clip)); // over the limit: not played
                         }
                     }
                     Cmd::Clear => {
-                        self.peers.clear();
+                        // `drain` keeps the map's room, as `clear` would
+                        for (id, p) in self.peers.drain() {
+                            bury(&mut self.graveyard, Dead::Peer(p, id));
+                        }
                         bury_where(&mut self.clips, &mut self.graveyard, |_| true);
                     }
                 }
@@ -1071,6 +1096,102 @@ mod tests {
             m.mix_into(&mut out, 1, 1.0);
         }
         assert_eq!(Arc::strong_count(&samples), 1 + GRAVEYARD);
+        assert_eq!(input.reap(), GRAVEYARD);
+        assert_eq!(Arc::strong_count(&samples), 1);
+    }
+
+    /// A source's speaker-side state (its queue, ring and published fill), watched through the
+    /// fill counter it shares with the network side: alive while anything holds the `Peer`.
+    fn watch_peer(input: &MixerInput, id: &str) -> std::sync::Weak<AtomicUsize> {
+        Arc::downgrade(&input.sources.lock().unwrap()[id].filled)
+    }
+
+    /// #284: someone leaving frees their queues on the network side's next reap, not in the
+    /// callback (as #123 does for clips).
+    #[test]
+    fn a_removed_source_is_freed_off_the_audio_thread() {
+        let (input, mut m) = mixer_with(48_000, 200, &["a", "b"]);
+        input.push("a", &[100; 4800]);
+        let (a, b) = (watch_peer(&input, "a"), watch_peer(&input, "b"));
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        input.remove_source(input.generation(), "a");
+        input.remove_owner(input.generation(), "b");
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(m.peers.is_empty(), "out of the mix");
+        assert!(
+            a.upgrade().is_some() && b.upgrade().is_some(),
+            "but still alive: the callback didn't free them"
+        );
+        assert_eq!(input.reap(), 2);
+        assert!(
+            a.upgrade().is_none() && b.upgrade().is_none(),
+            "freed by the reap"
+        );
+    }
+
+    /// #284: a call ending (or a channel switch) hands every peer back with the clips.
+    #[test]
+    fn cleared_sources_are_freed_off_the_audio_thread() {
+        let (input, mut m) = mixer_with(48_000, 200, &["a", "b", "c"]);
+        let watched: Vec<_> = ["a", "b", "c"]
+            .iter()
+            .map(|id| watch_peer(&input, id))
+            .collect();
+        let samples: Arc<[f32]> = vec![0.5; 4800].into();
+        input.play_clip(samples.clone(), 1.0);
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        input.clear();
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(m.peers.is_empty() && m.clips.is_empty());
+        assert!(
+            watched.iter().all(|w| w.upgrade().is_some()),
+            "not freed in the callback"
+        );
+        assert_eq!(Arc::strong_count(&samples), 2);
+        assert_eq!(input.reap(), 4);
+        assert!(watched.iter().all(|w| w.upgrade().is_none()));
+        assert_eq!(Arc::strong_count(&samples), 1);
+    }
+
+    /// A source added again under the same id (before its removal was seen) replaces the old
+    /// peer: that one goes back for the reap too.
+    #[test]
+    fn a_replaced_source_is_freed_off_the_audio_thread() {
+        let (input, mut m) = mixer_with(48_000, 200, &["a"]);
+        let old = watch_peer(&input, "a");
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        input.add_source(input.generation(), "a", "a", Voice);
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(old.upgrade().is_some(), "not freed in the callback");
+        assert_eq!(input.reap(), 1);
+        assert!(old.upgrade().is_none());
+        assert_eq!(m.peers.len(), 1, "the new one plays on");
+    }
+
+    /// #284: with the graveyard full (never reaped), a removed peer is freed in the callback
+    /// rather than leaked or the callback panicking.
+    #[test]
+    fn a_full_graveyard_frees_a_removed_source_in_the_callback() {
+        let (input, mut m) = mixer_with(48_000, 200, &["a"]);
+        let a = watch_peer(&input, "a");
+        let samples: Arc<[f32]> = vec![0.5; 10].into();
+        let mut out = vec![0.0; 480];
+        for _ in 0..GRAVEYARD {
+            input.cmds.lock().unwrap().push(Cmd::Clip {
+                samples: ClipSamples::Fixed(samples.clone()),
+                gain: 1.0,
+                queued: std::time::Instant::now(),
+                stop: None,
+            });
+            m.mix_into(&mut out, 1, 1.0);
+        }
+        input.remove_source(input.generation(), "a");
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(m.peers.is_empty());
+        assert!(a.upgrade().is_none(), "freed in place: nowhere to send it");
         assert_eq!(input.reap(), GRAVEYARD);
         assert_eq!(Arc::strong_count(&samples), 1);
     }
