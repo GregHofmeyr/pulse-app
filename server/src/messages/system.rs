@@ -3,7 +3,7 @@
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId};
 use pulse_protocol::rest::{
-    CallLine, Message, MessageKind, PinLine, PollEnded, QotyCard, WheelSpin,
+    CallLine, Message, MessageKind, PinLine, PollEnded, QotyCard, StageShareLine, WheelSpin,
 };
 use sqlx::SqliteConnection;
 
@@ -66,6 +66,7 @@ pub async fn insert(
         wheel: wheel_spin(&stored).map(Box::new),
         poll: None,
         poll_ended: poll_ended(&stored).map(Box::new),
+        stage_share_line: stage_share_line(&stored),
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
         .bind(msg.id.to_string())
@@ -89,6 +90,25 @@ pub fn qoty_card_payload(card: &QotyCard) -> AppResult<serde_json::Value> {
 pub fn qoty_card(payload: &str) -> Option<QotyCard> {
     let v: serde_json::Value = serde_json::from_str(payload).ok()?;
     if v.get("type")?.as_str()? != QOTY_CARD {
+        return None;
+    }
+    serde_json::from_value(v).ok()
+}
+
+/// The payload `type` of a "shared to the stage" line (#234).
+pub const STAGE_SHARE_LINE: &str = "stage_share";
+
+/// A stage share line's stored payload.
+pub fn stage_share_line_payload(line: &StageShareLine) -> AppResult<serde_json::Value> {
+    let mut v = serde_json::to_value(line).map_err(anyhow::Error::from)?;
+    v["type"] = STAGE_SHARE_LINE.into();
+    Ok(v)
+}
+
+/// The stage share line in a stored payload, if it is one.
+pub fn stage_share_line(payload: &str) -> Option<StageShareLine> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    if v.get("type")?.as_str()? != STAGE_SHARE_LINE {
         return None;
     }
     serde_json::from_value(v).ok()

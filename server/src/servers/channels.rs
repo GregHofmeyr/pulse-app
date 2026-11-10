@@ -140,6 +140,7 @@ pub async fn delete(
     // reach anyone (they'd be scoped to a channel that can't be found): clients drop its voice
     // presence and streams on `ChannelDeleted`.
     if ch.kind == ChannelKind::Voice {
+        crate::stage::channel_gone(&s, id);
         let people: Vec<UserId> = s.voice.members(id).into_iter().collect();
         for u in &people {
             s.voice.leave(id, *u, "");

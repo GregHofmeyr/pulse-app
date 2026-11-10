@@ -122,6 +122,7 @@ async fn create(
         pin_line: None,
         poll: None,
         poll_ended: None,
+        stage_share_line: None,
     };
     let stored = Stored {
         message_id: msg.id,

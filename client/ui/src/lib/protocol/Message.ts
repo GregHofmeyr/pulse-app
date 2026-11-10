@@ -12,6 +12,7 @@ import type { PollEnded } from "./PollEnded";
 import type { QotyCard } from "./QotyCard";
 import type { Quote } from "./Quote";
 import type { ReactionSummary } from "./ReactionSummary";
+import type { StageShareLine } from "./StageShareLine";
 import type { UserId } from "./UserId";
 import type { WheelSpin } from "./WheelSpin";
 
@@ -69,4 +70,8 @@ poll?: Poll,
 /**
  * Set on a poll's "ended" system line (#157).
  */
-poll_ended?: PollEnded, };
+poll_ended?: PollEnded, 
+/**
+ * Set on a "shared to the stage" line (#234): who shared what kind of Spotify link.
+ */
+stage_share_line?: StageShareLine, };

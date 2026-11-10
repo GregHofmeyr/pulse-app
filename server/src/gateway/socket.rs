@@ -255,6 +255,7 @@ async fn ready_for(
         live_notify: crate::streams::notify::list(db, me).await?,
         layouts,
         server_now: Some(now()),
+        stage_shares: voice_state.stage.visible(&visible),
     })
 }
 

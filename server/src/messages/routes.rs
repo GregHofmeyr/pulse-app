@@ -110,6 +110,10 @@ fn from_row(r: Row) -> AppResult<Message> {
             Some(p) if system && deleted_at.is_none() => super::system::poll_ended(p).map(Box::new),
             _ => None,
         },
+        stage_share_line: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => super::system::stage_share_line(p),
+            _ => None,
+        },
     })
 }
 
@@ -370,6 +374,7 @@ async fn send(
         pin_line: None,
         poll: None,
         poll_ended: None,
+        stage_share_line: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -772,6 +777,7 @@ mod tests {
             pin_line: None,
             poll: None,
             poll_ended: None,
+            stage_share_line: None,
         }
     }
 

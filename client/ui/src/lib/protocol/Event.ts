@@ -27,6 +27,7 @@ import type { ServerLayout } from "./ServerLayout";
 import type { ServerVoiceMod } from "./ServerVoiceMod";
 import type { Sound } from "./Sound";
 import type { SpeakerLink } from "./SpeakerLink";
+import type { StageShare } from "./StageShare";
 import type { StreamEndReason } from "./StreamEndReason";
 import type { StreamInfo } from "./StreamInfo";
 import type { User } from "./User";
@@ -83,4 +84,4 @@ mentions: number | null, } } | { "t": "SpeakerLinksChanged", "d": { server_id: S
  * The sound's length, so listeners can show who is playing for as long as it plays
  * (0 from an older server).
  */
-duration_ms: number, } } | { "t": "SoundFavourites", "d": { user_id: UserId, favourites: Array<string>, } } | { "t": "FrequentSounds", "d": { user_id: UserId, frequent: Array<string>, } } | { "t": "ServerVoiceChanged", "d": { state: ServerVoiceMod, } } | { "t": "VoiceDisconnected", "d": { channel_id: ChannelId, user_id: UserId, by: UserId, } } | { "t": "CallStarted", "d": { call: CallInfo, } } | { "t": "CallEnded", "d": { channel_id: ChannelId, call_id: CallId, } } | { "t": "CallRinging", "d": { ring: CallRing, } } | { "t": "CallRingEnded", "d": { channel_id: ChannelId, call_id: CallId, user_id: UserId, reason: RingEndReason, } } | { "t": "MessagePinned", "d": { channel_id: ChannelId, pinned: PinnedMessage, } } | { "t": "MessageUnpinned", "d": { channel_id: ChannelId, message_id: MessageId, } } | { "t": "PollChanged", "d": { channel_id: ChannelId, message_id: MessageId, } } | { "t": "WheelSpunQuietly", "d": { spin: QuietSpin, } };
+duration_ms: number, } } | { "t": "SoundFavourites", "d": { user_id: UserId, favourites: Array<string>, } } | { "t": "FrequentSounds", "d": { user_id: UserId, frequent: Array<string>, } } | { "t": "ServerVoiceChanged", "d": { state: ServerVoiceMod, } } | { "t": "VoiceDisconnected", "d": { channel_id: ChannelId, user_id: UserId, by: UserId, } } | { "t": "CallStarted", "d": { call: CallInfo, } } | { "t": "CallEnded", "d": { channel_id: ChannelId, call_id: CallId, } } | { "t": "CallRinging", "d": { ring: CallRing, } } | { "t": "CallRingEnded", "d": { channel_id: ChannelId, call_id: CallId, user_id: UserId, reason: RingEndReason, } } | { "t": "MessagePinned", "d": { channel_id: ChannelId, pinned: PinnedMessage, } } | { "t": "MessageUnpinned", "d": { channel_id: ChannelId, message_id: MessageId, } } | { "t": "PollChanged", "d": { channel_id: ChannelId, message_id: MessageId, } } | { "t": "WheelSpunQuietly", "d": { spin: QuietSpin, } } | { "t": "StageShared", "d": { share: StageShare, } } | { "t": "StageShareCleared", "d": { channel_id: ChannelId, share_id: string, } };

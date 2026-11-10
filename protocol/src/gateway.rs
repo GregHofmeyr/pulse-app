@@ -8,7 +8,7 @@ use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game,
     Member, Message, Mute, NotifyLevelPref, OwnStatus, Person, PinnedMessage, PresenceStatus,
     PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason, Server, ServerLayout,
-    ServerVoiceMod, Sound, SpeakerLink, StreamEndReason, StreamInfo, User, Wheel,
+    ServerVoiceMod, Sound, SpeakerLink, StageShare, StreamEndReason, StreamInfo, User, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -158,6 +158,10 @@ pub struct Ready {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub server_now: Option<String>,
+    /// What's shared on each voice channel's stage (#234), in channels you may see.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub stage_shares: Vec<StageShare>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -547,6 +551,16 @@ pub enum Event {
     WheelSpunQuietly {
         spin: QuietSpin,
     },
+    /// A Spotify link went up on a voice channel's stage (#234), replacing any share there (whose
+    /// `StageShareCleared` comes first). Clients from before it skip the frame.
+    StageShared {
+        share: StageShare,
+    },
+    /// A stage share was stopped, its sharer left the call, or it ran out (#234).
+    StageShareCleared {
+        channel_id: ChannelId,
+        share_id: String,
+    },
 }
 
 impl Event {
@@ -572,7 +586,9 @@ impl Event {
             | Self::CallRingEnded { channel_id, .. }
             | Self::MessagePinned { channel_id, .. }
             | Self::MessageUnpinned { channel_id, .. }
-            | Self::PollChanged { channel_id, .. } => Some(*channel_id),
+            | Self::PollChanged { channel_id, .. }
+            | Self::StageShareCleared { channel_id, .. } => Some(*channel_id),
+            Self::StageShared { share } => Some(share.channel_id),
             Self::WheelSpunQuietly { spin } => Some(spin.channel_id),
             Self::CallStarted { call } => Some(call.channel_id),
             Self::CallRinging { ring } => Some(ring.channel_id),
@@ -768,6 +784,7 @@ mod tests {
             ringing: vec![],
             layouts: vec![],
             server_now: None,
+            stage_shares: vec![],
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");
@@ -852,6 +869,7 @@ mod tests {
             ringing: vec![],
             layouts: vec![],
             server_now: None,
+            stage_shares: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -985,6 +1003,7 @@ mod tests {
             ringing: vec![],
             layouts: vec![],
             server_now: None,
+            stage_shares: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -1312,6 +1331,20 @@ mod tests {
         }
     }
 
+    /// Stage shares (#234) go to their channel's audience, never to one person.
+    #[test]
+    fn stage_share_events_are_channel_scoped() {
+        let ch = ChannelId::new();
+        let cleared = Event::StageShareCleared {
+            channel_id: ch,
+            share_id: "x".into(),
+        };
+        assert_eq!(cleared.channel_id(), Some(ch));
+        assert_eq!(cleared.only_for(), None);
+        let v = serde_json::to_value(&cleared).unwrap();
+        assert_eq!(v["t"], "StageShareCleared");
+    }
+
     /// A `Ready` from an older server (no categories yet) parses with no layouts.
     #[test]
     fn a_ready_without_layouts_parses() {
@@ -1324,6 +1357,7 @@ mod tests {
         .unwrap();
         assert!(ready.layouts.is_empty());
         assert_eq!(ready.server_now, None, "nor the server's time (#258)");
+        assert!(ready.stage_shares.is_empty(), "nor stage shares (#234)");
     }
 
     /// A server's layout is public like its channels: everyone hears it, as `ChannelDeleted`.

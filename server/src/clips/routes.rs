@@ -332,6 +332,7 @@ async fn confirm(
         pin_line: None,
         poll: None,
         poll_ended: None,
+        stage_share_line: None,
         embeds: vec![],
         call: None,
         wheel: None,

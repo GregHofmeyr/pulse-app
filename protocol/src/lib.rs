@@ -160,6 +160,9 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::CreatePollRequest::export_all(&cfg)?;
     rest::PollVoteRequest::export_all(&cfg)?;
     rest::PollEnded::export_all(&cfg)?;
+    rest::StageShare::export_all(&cfg)?;
+    rest::StageShareRequest::export_all(&cfg)?;
+    rest::StageShareLine::export_all(&cfg)?;
     Ok(())
 }
 

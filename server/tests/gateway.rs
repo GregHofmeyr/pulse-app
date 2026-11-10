@@ -93,6 +93,7 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         pin_line: None,
         poll: None,
         poll_ended: None,
+        stage_share_line: None,
     }
 }
 

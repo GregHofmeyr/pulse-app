@@ -1,0 +1,180 @@
+//! `PUT /channels/{id}/stage-share` shares a Spotify link to a server voice channel's stage;
+//! `DELETE /channels/{id}/stage-share/{share_id}` stops that share for everyone. Both need you in the call.
+
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::routing::{delete, put};
+use axum::{Json, Router};
+use pulse_protocol::gateway::Event;
+use pulse_protocol::ids::{ChannelId, UserId};
+use pulse_protocol::rest::{
+    Channel, ChannelKind, EmbedProvider, LinkEmbed, StageShare, StageShareLine, StageShareRequest,
+};
+
+use super::{ANYONE_IN_CALL_MAY_STOP, announce_cleared, kind_of, phrase, spotify_link};
+use crate::AppState;
+use crate::access::channel_for;
+use crate::auth::AuthUser;
+use crate::db::stamp;
+use crate::error::{AppError, AppResult};
+use crate::messages::system;
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/channels/{id}/stage-share", put(share))
+        .route("/channels/{id}/stage-share/{share_id}", delete(stop))
+}
+
+/// A server voice channel the caller can see, belongs to the server of, and is in the call of right now.
+async fn in_call(s: &AppState, me: UserId, id: ChannelId) -> AppResult<Channel> {
+    let ch = channel_for(&s.db, me, id).await?;
+    let Some(server) = ch.server_id.filter(|_| ch.kind == ChannelKind::Voice) else {
+        return Err(AppError::BadRequest(
+            "only a server voice channel has a stage".into(),
+        ));
+    };
+    if !crate::servers::routes::is_server_member(&s.db, server, me).await?
+        || !s.voice.members(id).contains(&me)
+    {
+        return Err(AppError::Forbidden);
+    }
+    Ok(ch)
+}
+
+async fn share(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ChannelId>,
+    Json(req): Json<StageShareRequest>,
+) -> AppResult<Json<StageShare>> {
+    in_call(&s, me, id).await?;
+    let Some(link) = spotify_link(&req.url) else {
+        return Err(AppError::BadRequest("that isn't a Spotify link".into()));
+    };
+    // Sharing what you already have up again changes nothing (no second line).
+    if let Some(up) = s.voice.stage.same(id, me, &link) {
+        return Ok(Json(up));
+    }
+    if !s.limits.stage_share_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    crate::media::writes_ok(&s.cfg)?;
+    let card = s
+        .embeds
+        .unfurl(
+            &s.db,
+            &s.cfg.media_dir,
+            me,
+            &s.limits.link_thumb_user,
+            &link,
+        )
+        .await
+        // a short link that led somewhere else is no Spotify card either
+        .filter(|c| c.provider == EmbedProvider::Spotify && c.provider_id.is_some())
+        .ok_or_else(|| AppError::BadRequest("couldn't read that Spotify link".into()))?;
+    let mut thumb = card.thumb;
+    // The artwork is media no message holds: restart its cleanup clock (a day) so it outlives the share (hours). A
+    // cached one already cleaned up goes.
+    if let Some(t) = &thumb {
+        let touched = sqlx::query("UPDATE media SET created_at = ? WHERE hash = ?")
+            .bind(crate::db::now())
+            .bind(&t.hash)
+            .execute(&s.db)
+            .await?
+            .rows_affected();
+        if touched == 0 {
+            thumb = None;
+        }
+    }
+    let kind = kind_of(card.provider_id.as_deref().unwrap_or_default()).to_owned();
+    let at = chrono::Utc::now();
+    let ttl = chrono::Duration::from_std(s.cfg.stage_share_ttl).map_err(anyhow::Error::from)?;
+    let share = StageShare {
+        id: pulse_protocol::ids::next_ulid().to_string(),
+        channel_id: id,
+        shared_by: me,
+        shared_at: stamp(at),
+        expires_at: stamp(at + ttl),
+        embed: LinkEmbed {
+            url: link,
+            provider: card.provider,
+            kind: card.kind,
+            provider_id: card.provider_id,
+            title: card.title,
+            description: card.description,
+            site_name: card.site_name,
+            author: card.author,
+            thumb,
+            start: None,
+            vertical: false,
+        },
+    };
+    let name: String = sqlx::query_scalar("SELECT display_name FROM users WHERE id = ?")
+        .bind(me.to_string())
+        .fetch_one(&s.db)
+        .await?;
+    let payload = system::stage_share_line_payload(&StageShareLine {
+        by: me,
+        kind: kind.clone(),
+    })?;
+    {
+        // Shares, stops, leaves and expiries go out in the order they happened.
+        let _order = s.hub.in_order().await;
+        // The card took a moment: a leave in the meantime means no share.
+        if !s.voice.members(id).contains(&me) {
+            return Err(AppError::Forbidden);
+        }
+        let gone = s.voice.stage.put(share.clone());
+        announce_cleared(&s, gone).await;
+        s.hub
+            .publish(
+                &s.db,
+                Event::StageShared {
+                    share: share.clone(),
+                },
+            )
+            .await;
+        // Plain text for clients from before it: "🎵 alex shared a Jam to the stage".
+        let content = format!("🎵 {name} shared {} to the stage", phrase(&kind));
+        if let Err(e) = system::post(&s, id, content, payload).await {
+            tracing::warn!(error = ?e, channel = %id, "stage share line not posted");
+        }
+    }
+    expire_later(&s, &share);
+    Ok(Json(share))
+}
+
+/// Take `share` down when it runs out, unless it's gone by then.
+fn expire_later(s: &AppState, share: &StageShare) {
+    let (s, channel, id) = (s.clone(), share.channel_id, share.id.clone());
+    tokio::spawn(async move {
+        tokio::time::sleep(s.cfg.stage_share_ttl).await;
+        let _order = s.hub.in_order().await;
+        if let Some(gone) = s.voice.stage.remove(channel, &id) {
+            announce_cleared(&s, vec![gone]).await;
+        }
+    });
+}
+
+async fn stop(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path((id, share_id)): Path<(ChannelId, String)>,
+) -> AppResult<StatusCode> {
+    in_call(&s, me, id).await?;
+    let _order = s.hub.in_order().await;
+    let up = s
+        .voice
+        .stage
+        .of(id)
+        .into_iter()
+        .find(|x| x.id == share_id)
+        .ok_or(AppError::NotFound)?;
+    if !ANYONE_IN_CALL_MAY_STOP && up.shared_by != me {
+        return Err(AppError::Forbidden);
+    }
+    if let Some(gone) = s.voice.stage.remove(id, &share_id) {
+        announce_cleared(&s, vec![gone]).await;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}

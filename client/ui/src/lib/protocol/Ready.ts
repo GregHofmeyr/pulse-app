@@ -21,6 +21,7 @@ import type { ServerMembers } from "./ServerMembers";
 import type { ServerVoiceMod } from "./ServerVoiceMod";
 import type { Sound } from "./Sound";
 import type { SpeakerLink } from "./SpeakerLink";
+import type { StageShare } from "./StageShare";
 import type { StreamInfo } from "./StreamInfo";
 import type { ThreadSeenPoint } from "./ThreadSeenPoint";
 import type { User } from "./User";
@@ -134,4 +135,8 @@ layouts?: Array<ServerLayout>,
  * The server's clock as this Ready was made (#258), so a client whose clock is off can still tell when a
  * timed pin runs out. Absent from older servers.
  */
-server_now?: string, };
+server_now?: string, 
+/**
+ * What's shared on each voice channel's stage (#234), in channels you may see.
+ */
+stage_shares?: Array<StageShare>, };

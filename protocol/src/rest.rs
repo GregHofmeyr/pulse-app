@@ -660,6 +660,10 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub poll_ended: Option<Box<PollEnded>>,
+    /// Set on a "shared to the stage" line (#234): who shared what kind of Spotify link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stage_share_line: Option<StageShareLine>,
 }
 
 /// How long a pin lasts (#178).
@@ -864,6 +868,34 @@ pub struct PollEnded {
     pub winners: Vec<String>,
     /// The winners' vote count (each, on a tie).
     pub votes: u32,
+}
+
+/// A Spotify link shared to a server voice channel's stage (#234): at most one per channel, gone when its sharer
+/// stops it or leaves the call, someone in the call stops it, or at `expires_at`. In memory on the server only.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct StageShare {
+    /// Tells one share from the next (a stop names the share it means).
+    pub id: String,
+    pub channel_id: ChannelId,
+    pub shared_by: UserId,
+    pub shared_at: String,
+    pub expires_at: String,
+    /// The link's Spotify card, as the embed resolver built it (`provider` is always Spotify).
+    pub embed: LinkEmbed,
+}
+
+/// `PUT /channels/{id}/stage-share` (#234): a Spotify link (web, `spotify:socialsession:` or `spotify.link`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct StageShareRequest {
+    pub url: String,
+}
+
+/// A "shared to the stage" system line (#234): "🎵 alex shared a Jam to the stage".
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct StageShareLine {
+    pub by: UserId,
+    /// The Spotify kind shared: `jam`, `track`, `album`, `playlist`, `episode`, `show` or `artist`.
+    pub kind: String,
 }
 
 /// Who a saved wheel is for (#158).

@@ -175,6 +175,7 @@ async fn silent_client_times_out_despite_outbound_traffic() {
                 pin_line: None,
                 poll: None,
                 poll_ended: None,
+                stage_share_line: None,
             };
             hub.publish(
                 &db,

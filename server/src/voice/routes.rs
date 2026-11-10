@@ -239,6 +239,8 @@ async fn webhook(
                 if record {
                     crate::voice::revoke::end_stream_access(&s, channel_id, user_id);
                 }
+                // Their Spotify share on the stage goes with them (#234).
+                crate::stage::left_call(&s, channel_id, user_id).await;
             }
             if in_memory || closed {
                 s.hub

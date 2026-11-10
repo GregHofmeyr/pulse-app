@@ -1052,6 +1052,7 @@ mod tests {
                         ringing: vec![],
                         layouts: vec![],
                         server_now: None,
+                        stage_shares: vec![],
                     });
                     ws.send(tokio_tungstenite::tungstenite::Message::text(
                         serde_json::to_string(&ready).unwrap(),

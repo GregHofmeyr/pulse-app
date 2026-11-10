@@ -37,6 +37,8 @@ pub struct VoiceState {
     left_since_snapshot: Arc<Mutex<Option<HashSet<String>>>>,
     /// Calls going on in DMs and groups, and who is being rung (#50).
     pub calls: crate::calls::CallState,
+    /// What's shared on each voice channel's stage (#234).
+    pub stage: crate::stage::StageState,
 }
 
 /// Records leaves from [`VoiceState::snapshot`] until dropped.

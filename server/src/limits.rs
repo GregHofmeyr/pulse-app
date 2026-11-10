@@ -134,6 +134,8 @@ pub struct LimitsConfig {
     pub wheel_spin_user: Rate,
     /// Poll votes per person (#157): a burst of changing your mind, but not scripted flipping.
     pub poll_vote_user: Rate,
+    /// Spotify shares to a voice stage per person (#234): each one fetches a card and posts a line.
+    pub stage_share_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -183,6 +185,8 @@ impl Default for LimitsConfig {
             wheel_user: Rate::new(30, 1.0),
             wheel_spin_user: Rate::new(1, 1.0 / 3.0),
             poll_vote_user: Rate::new(20, 2.0),
+            // six at once, then one every 10 s
+            stage_share_user: Rate::new(6, 0.1),
         }
     }
 }
@@ -225,6 +229,7 @@ impl LimitsConfig {
             wheel_user: r,
             wheel_spin_user: r,
             poll_vote_user: r,
+            stage_share_user: r,
         }
     }
 }
@@ -380,6 +385,7 @@ pub struct Limits {
     pub wheel_user: Limiter,
     pub wheel_spin_user: Limiter,
     pub poll_vote_user: Limiter,
+    pub stage_share_user: Limiter,
 }
 
 impl Limits {
@@ -418,6 +424,7 @@ impl Limits {
             wheel_user: Limiter::new(c.wheel_user),
             wheel_spin_user: Limiter::new(c.wheel_spin_user),
             poll_vote_user: Limiter::new(c.poll_vote_user),
+            stage_share_user: Limiter::new(c.stage_share_user),
         }
     }
 }
