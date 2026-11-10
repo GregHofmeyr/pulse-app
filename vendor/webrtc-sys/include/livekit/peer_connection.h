@@ -206,4 +206,9 @@ static std::shared_ptr<PeerConnection> _shared_peer_connection() {
   return nullptr;  // Ignore
 }
 
+// Pulse: how many of these wrappers (one per PeerConnection) are alive in the process. A
+// PeerConnection that outlives its call (a reference cycle above it, #227) shows up here; tests
+// assert on it (client/src-tauri/tests/voice_it.rs). Nothing else reads it.
+size_t live_peer_connections();
+
 }  // namespace livekit_ffi

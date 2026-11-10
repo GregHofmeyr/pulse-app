@@ -3643,8 +3643,6 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 [[package]]
 name = "livekit"
 version = "0.9.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "597d8bae50d9de78c82d93b367b17bf08d62b0cd53727d493d7e56e8d3e58665"
 dependencies = [
  "bmrng",
  "bytes",
@@ -5385,6 +5383,7 @@ dependencies = [
  "url",
  "wasapi",
  "webkit2gtk",
+ "webrtc-sys",
  "webview2-com",
  "windows",
  "windows-core",

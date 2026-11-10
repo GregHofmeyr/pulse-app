@@ -84,6 +84,9 @@ livekit-api = { version = "0.9.1", default-features = false, features = ["access
 totp-rs = { version = "6", default-features = false, features = ["std"] }
 # tests/emoji_e2e.rs builds the PNG and GIF it uploads
 image = { version = "0.25", default-features = false, features = ["png", "gif"] }
+# tests/voice_it.rs counts the PeerConnections alive in the process (the vendored copy's
+# live_peer_connections, #227); the one livekit already builds
+webrtc-sys = "0.3.52"
 
 [target.'cfg(unix)'.dependencies]
 # getuid for the hotkey socket's private fallback directory (ipc.rs); already in the tree.

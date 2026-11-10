@@ -1386,11 +1386,12 @@ async fn hears_a_peer_again_after_leaving_and_rejoining() {
 /// heard the bot and rounds 2 and 3 never did: the synthetic ADM's 10 ms pull died with the engine
 /// and never came back. tests/webrtc_adm_restart.rs is the same without a server.
 ///
-/// Why the peer can't be an SDK Room in this process (as in the test above): livekit 0.9.7 keeps
-/// a Room's engine, and with it its PeerConnection, alive for good when the Room is closed while
-/// a remote participant with a publication is still in it (the publication's mute handler holds
-/// the participant, which holds the engine; only that participant leaving breaks it). Of two
-/// in-process Rooms the first to close always keeps one alive, so the engine is never terminated.
+/// Why the peer is the lk bot and not an SDK Room in this process (as in the test above): upstream
+/// livekit 0.9.7 keeps a Room's engine, and with it its PeerConnection, alive for good when the
+/// Room is closed while a remote participant with a publication is still in it, so of two
+/// in-process Rooms the first to close kept one alive and the engine was never terminated. That is
+/// #227, patched in vendor/livekit (`leaving_while_others_stay_releases_the_connection`); the bot
+/// stays, as the field's peer is in another process too.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn hears_a_peer_after_every_connection_in_the_process_has_gone() {
@@ -1466,4 +1467,140 @@ async fn hears_a_peer_after_every_connection_in_the_process_has_gone() {
         tokio::time::sleep(Duration::from_secs(2)).await;
         assert!(heard, "round {round}: the bot is never heard");
     }
+}
+
+/// #227: leaving a call while someone else is still in it must release that call's PeerConnections.
+/// livekit 0.9.7 kept them (and the engine, and its tasks) for the rest of the app run: each remote
+/// publication's mute handlers hold the participant that holds the publication, a cycle with the
+/// engine inside it, and closing the Room left the remote participants alone. Patched in
+/// vendor/livekit (`RoomSession::close`). Counted with the vendored webrtc-sys wrapper's
+/// `live_peer_connections`, both ways round: alex (the app's VoiceManager) leaves while sam (a bare
+/// SDK Room) still publishes, then sam closes while alex still publishes.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn leaving_while_others_stay_releases_the_connection() {
+    use livekit::options::TrackPublishOptions;
+    use livekit::prelude::*;
+    use livekit::webrtc::audio_source::native::NativeAudioSource;
+    use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
+    use webrtc_sys::peer_connection::ffi::live_peer_connections;
+
+    let _turn = livekit_turn().await;
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = dev_livekit("ws");
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, alex) = testing::register(&app, "alex").await;
+    let (_, sam) = testing::register(&app, "sam").await;
+    let s = testing::create_server(&app, &alex, "Main").await;
+    let api = Api::new(&format!("http://{}", app.addr));
+    api.join_server(&sam, s.id).await.unwrap();
+    let lounge = api
+        .channels(&alex, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+    let room = lounge.id.to_string();
+    let lk = livekit_api::services::room::RoomClient::with_api_key(
+        &dev_livekit("http"),
+        "devkey",
+        DEV_SECRET,
+    );
+    // how many in the room LiveKit sees publishing a track
+    let publishers = || async {
+        lk.list_participants(&room)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|p| !p.tracks.is_empty())
+            .count()
+    };
+    // What this process holds before (earlier tests in the binary, released or not): once
+    // settled, the test only counts its own PeerConnections on top of it.
+    let mut base = live_peer_connections();
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        base = base.min(live_peer_connections());
+    }
+    println!("PeerConnections alive before: {base}");
+    let ours = || live_peer_connections().saturating_sub(base);
+    let settles_at = |n: usize| async move {
+        eventually(Duration::from_secs(10), || async move { ours() <= n }).await
+    };
+
+    // sam joins and publishes a (silent) mic
+    let vt = api.voice_token(&sam, lounge.id).await.unwrap();
+    let mut opts = RoomOptions::default();
+    opts.auto_subscribe = false;
+    let (sam_room, sam_events) = Room::connect(&vt.url, &vt.token, opts).await.unwrap();
+    let src = NativeAudioSource::new(AudioSourceOptions::default(), 48_000, 1, 0);
+    let track = LocalAudioTrack::create_audio_track("mic", RtcAudioSource::Native(src));
+    sam_room
+        .local_participant()
+        .publish_track(
+            LocalTrack::Audio(track),
+            TrackPublishOptions {
+                source: TrackSource::Microphone,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let sam_pcs = ours();
+
+    // 1. alex leaves while sam still publishes: alex's PeerConnections go, sam's stay
+    let vm = VoiceManager::new(Arc::new(|_| {}));
+    let join = || {
+        vm.join(
+            &api,
+            &alex,
+            lounge.id,
+            AudioConfig::default(),
+            AudioMode::Null(48_000),
+        )
+    };
+    join().await.unwrap();
+    let both = eventually(Duration::from_secs(20), || async {
+        publishers().await == 2
+    })
+    .await;
+    assert!(both, "alex and sam never both published");
+    // each has had the other's publication for a moment
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let alex_pcs = ours() - sam_pcs;
+    println!("sam holds {sam_pcs} PeerConnections, alex {alex_pcs}");
+    assert!(sam_pcs > 0 && alex_pcs > 0);
+    vm.leave().await;
+    assert!(
+        settles_at(sam_pcs).await,
+        "alex left while sam stayed: {} PeerConnections alive, {sam_pcs} expected (#227)",
+        ours()
+    );
+
+    // 2. sam closes while alex still publishes: sam's go, alex's stay
+    join().await.unwrap();
+    let both = eventually(Duration::from_secs(20), || async {
+        publishers().await == 2
+    })
+    .await;
+    assert!(both, "alex and sam never both published again");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let alex_pcs = ours() - sam_pcs;
+    sam_room.close().await.unwrap();
+    drop((sam_room, sam_events));
+    assert!(
+        settles_at(alex_pcs).await,
+        "sam closed while alex stayed: {} PeerConnections alive, {alex_pcs} expected (#227)",
+        ours()
+    );
+
+    // 3. alex, alone, leaves: none of this test's are left
+    vm.leave().await;
+    assert!(
+        settles_at(0).await,
+        "{} PeerConnections still alive after everyone left",
+        ours()
+    );
 }

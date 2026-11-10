@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["protocol", "server", "client/src-tauri"]
-exclude = ["spikes", "vendor/webrtc-sys"]
+exclude = ["spikes", "vendor/webrtc-sys", "vendor/livekit"]
 
 [workspace.package]
 edition = "2024"
@@ -133,9 +133,11 @@ strip = false
 # src/synthetic_audio_device.cpp): libwebrtc terminates the ADM with the process's last
 # PeerConnection and inits it for the next, and upstream's no-op Init left the 10 ms playout pump
 # dead, so every call after the first was silent (#216, livekit/rust-sdks#1468;
-# tests/webrtc_adm_restart.rs). Those are the only four changes. Drop the log change when upstream
-# makes the severity follow log::max_level(), the close once upstream's destructor closes, the ADM
-# change once upstream's Init restarts the pump (#1468 fixed); keep the verification while we patch.
+# tests/webrtc_adm_restart.rs). And its wrapper counts the PeerConnections alive in the process
+# (`live_peer_connections`, src/peer_connection.cpp), which only tests read (#227). Those are the
+# only five changes. Drop the log change when upstream makes the severity follow log::max_level(),
+# the close once upstream's destructor closes, the ADM change once upstream's Init restarts the pump
+# (#1468 fixed), the count along with vendor/livekit's patch; keep the verification while we patch.
 # Side effects of the log change: libwebrtc's info/verbose lines are gone at the source, so seeing
 # them (a WebRTC deep-dive) needs a build with the stock severity in src/webrtc.cpp. And the
 # libwebrtc crate logs every line at debug whatever its severity, so even its warnings and errors
@@ -143,5 +145,16 @@ strip = false
 #
 # webrtc-sys-build is upstream's again (0.3.21 is on zip 9; the lockfile keeps zip at 9.0.5 or
 # later, past GHSA-m665-v7pm-7grj).
+#
+# vendor/livekit is livekit 0.9.7 as published, with one change: `RoomSession::close`
+# (src/room/mod.rs) lets go of the remote participants and their publications as if they had all
+# left. Each remote publication's mute handlers hold the participant that holds the publication, and
+# the engine, so a Room closed while others were still in it kept its engine, PeerConnections and
+# tasks for the rest of the app run, one per call left that way (#227;
+# client/src-tauri/tests/voice_it.rs `leaving_while_others_stay_releases_the_connection`). Still so
+# in livekit 0.10.0. Drop it once upstream's close breaks the cycle, or with the move to 0.10 if
+# 0.10 does by then (the patch then needs re-applying to 0.10's source, never the old copy). Its
+# Cargo.toml also allows warnings, which a path crate's aren't capped like a crates.io one's.
 [patch.crates-io]
 webrtc-sys = { path = "vendor/webrtc-sys" }
+livekit = { path = "vendor/livekit" }

@@ -17,6 +17,7 @@
 #include "livekit/peer_connection.h"
 #include "livekit/peer_connection_factory.h"
 
+#include <atomic>
 #include <memory>
 
 #include "api/data_channel_interface.h"
@@ -74,6 +75,13 @@ to_native_offer_answer_options(const RtcOfferAnswerOptions& options) {
   return rtc_options;
 }
 
+// Pulse: see live_peer_connections() in the header (#227).
+static std::atomic<size_t> g_live_peer_connections{0};
+
+size_t live_peer_connections() {
+  return g_live_peer_connections.load(std::memory_order_relaxed);
+}
+
 PeerConnection::PeerConnection(
     std::shared_ptr<RtcRuntime> rtc_runtime,
     webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> pc_factory,
@@ -82,6 +90,7 @@ PeerConnection::PeerConnection(
       pc_factory_(std::move(pc_factory)),
       observer_(std::move(observer)) {
   RTC_LOG(LS_VERBOSE) << "PeerConnection::PeerConnection()";
+  g_live_peer_connections.fetch_add(1, std::memory_order_relaxed);
 }
 
 PeerConnection::~PeerConnection() {
@@ -98,6 +107,7 @@ PeerConnection::~PeerConnection() {
   if (peer_connection_) {
     peer_connection_->Close();
   }
+  g_live_peer_connections.fetch_sub(1, std::memory_order_relaxed);
 }
 
 bool PeerConnection::Initialize(

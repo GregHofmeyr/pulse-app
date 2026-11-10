@@ -215,6 +215,9 @@ pub mod ffi {
         fn close(self: &PeerConnection);
 
         fn _shared_peer_connection() -> SharedPtr<PeerConnection>; // Ignore
+
+        /// Pulse: how many PeerConnections are alive in the process (#227; tests only).
+        fn live_peer_connections() -> usize;
     }
 
     extern "Rust" {
