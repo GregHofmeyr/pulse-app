@@ -24,6 +24,39 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.5',
+  version: '0.2.5',
+  date: '10 November 2026',
+  new: [
+    'Custom join sounds: right-click a soundboard sound → Set as my join sound. Everyone hears it when you join (yes, all 6 seconds)',
+    'Spotify on the stage: share a Jam or song to the voice stage so everyone can hop in. Minimise it to a corner pill or hide it for yourself',
+    'Watch a stream properly full screen, with the chat as a strip beside it',
+    'Per-channel audio quality: right-click a voice channel → Channel settings… and turn the bitrate up',
+    'Strong (low delay) noise suppression in Voice settings: less delay, more CPU. It downloads the first time you pick it',
+  ],
+  fixes: [
+    'Leaving a call while others stay no longer leaves the old connection running in the background',
+    "A dodgy connection no longer replays your join sound for everyone mid-call",
+    'Spotify Jam links now show a proper Jam card in chat',
+  ],
+  qol: [
+    'The soundboard plays the instant you click, and sounds load about 200× faster',
+    'Switching channels and servers, and opening Settings, is snappier',
+    "Undo a server mute or deafen for someone who's left voice, from their right-click menu",
+    'Voice settings now tells you what echo cancellation Auto decided',
+    'Mute someone\'s join sound just for you, from their right-click menu',
+    'Link cards lost the coloured stripe down the side',
+  ],
+  soon: [
+    'Streaming in DM and group calls',
+    'A fresh profile editor: edit right inside your big profile card',
+    'More fresh and reworked designs on the way',
+  ],
+  message: 'Voice day! Join sounds are live: choose wisely, everyone will hear it 🔊',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.4',
   version: '0.2.4',
   date: '9 November 2026',
@@ -40,34 +73,4 @@ export const patchNotes: PatchNotes = {
     'Stream fullscreen, with chat as a side strip',
   ],
   message: 'Tiny one. The wheel just wanted to look pretty in the chat 🎡',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.3',
-  version: '0.2.3',
-  date: '9 November 2026',
-  new: [
-    'Spin quietly: everyone watches the wheel spin live, but nothing is saved in the chat',
-    'Just me wheels are now private. Only you see their spins',
-    'A chime when the wheel lands, so you know even if you tabbed out (volume mixer › Picker wheel result)',
-  ],
-  fixes: [
-    'The tick on poll options sits in the middle of its box now',
-  ],
-  qol: [
-    'The result now shows big over the wheel, and the card waits for you to see it before folding away (✕ to dismiss it sooner)',
-    'Starting a spin takes you to the bottom of the chat so you can watch it',
-    'Wheel options can differ by case only: PIZZA and pizza are two different options 👀',
-    'Polls allow the same option twice (we see you)',
-    'A tidier wheel and poll composer: options first, a + for new wheels, more breathing room',
-  ],
-  soon: [
-    'Streaming in DM and group calls',
-    'Share a Spotify Jam or song to the voice stage',
-    'A fresh profile editor: edit right inside your big profile card',
-    'Custom join sounds',
-    'Stream fullscreen, with chat as a side strip',
-  ],
-  message: 'A quick one: the wheel got some love from our resident UI/UX designer 💜',
 }
