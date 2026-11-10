@@ -5,7 +5,8 @@
   import SoundSettings from './SoundSettings.svelte'
   import VolumeMixer from './VolumeMixer.svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
-  import { echoDecision, loadAudioConfig, saveAudioConfig, type AudioConfig, type EchoMode, type NsLevel } from '../lib/voiceui'
+  import { downloadModel, listenModel, lowDelayModel, refreshModel } from '../lib/models.svelte'
+  import { echoDecision, loadAudioConfig, modelLine, saveAudioConfig, type AudioConfig, type EchoMode, type NsLevel } from '../lib/voiceui'
 
   let cfg = $state<AudioConfig>(loadAudioConfig())
   let inputs = $state<{ name: string; is_default: boolean }[]>([])
@@ -42,6 +43,19 @@
       /* device list is optional */
     }
     listed = true
+  })
+  // Strong (low delay)'s model (#77): where it is, and its download's progress while the page is open
+  onMount(() => {
+    void refreshModel()
+    let off: (() => void) | null = null
+    let gone = false
+    listenModel()
+      .then((f) => (gone ? f() : (off = f)))
+      .catch(() => {})
+    return () => {
+      gone = true
+      off?.()
+    }
   })
   onDestroy(() => {
     if (testing) void voiceApi.stopMicTest()
@@ -85,7 +99,15 @@
     { value: 'off', label: 'Off' },
     { value: 'standard', label: 'Standard' },
     { value: 'strong', label: 'Strong' },
+    { value: 'strong_low_delay', label: 'Strong (low delay)' },
   ]
+  // Picking low delay starts its model's download (Strong runs until it's ready; the core switches by itself).
+  function pickLevel(v: NsLevel) {
+    cfg.noise_suppression = v
+    void apply()
+    if (v === 'strong_low_delay') void downloadModel()
+  }
+  const modelText = $derived(modelLine(lowDelayModel.status))
 </script>
 
 <section class="settings-pane">
@@ -124,7 +146,18 @@
 </div>
 
 <div class="settings-field"><span class="settings-label">NOISE SUPPRESSION</span>
-  <Segmented label="Noise suppression" options={levels} value={cfg.noise_suppression} onchange={(v) => { cfg.noise_suppression = v; apply() }} />
+  <Segmented label="Noise suppression" options={levels} value={cfg.noise_suppression} onchange={pickLevel} />
+  {#if cfg.noise_suppression === 'strong_low_delay'}
+    <small>Less delay, uses more CPU and memory.</small>
+    {#if modelText}
+      <div class="model" data-model-state={lowDelayModel.status.state}>
+        <small role="status">{modelText}</small>
+        {#if lowDelayModel.status.state === 'failed' || lowDelayModel.status.state === 'missing'}
+          <button class="btn btn-secondary" onclick={() => void downloadModel()}>{lowDelayModel.status.state === 'failed' ? 'Retry' : 'Download'}</button>
+        {/if}
+      </div>
+    {/if}
+  {/if}
   {#if voice.ns.note}<p class="warn" role="status">{voice.ns.note}</p>{/if}
 </div>
 
@@ -178,4 +211,5 @@
   .row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
   .row > div { flex: 1; display: flex; flex-direction: column; gap: 2px; }
   .row.auto { padding: 0; border: 0; }
+  .model { display: flex; align-items: center; gap: 12px; }
 </style>

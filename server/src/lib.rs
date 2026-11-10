@@ -14,6 +14,7 @@ pub mod hygiene;
 pub mod limits;
 pub mod media;
 pub mod messages;
+pub mod models;
 pub mod pins;
 pub mod polls;
 pub mod presence;
@@ -77,6 +78,7 @@ pub fn router(state: AppState) -> Router {
         .merge(embeds::routes::router())
         .merge(embeds::page::router())
         .merge(updates::router())
+        .merge(models::router())
         .merge(wheels::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())

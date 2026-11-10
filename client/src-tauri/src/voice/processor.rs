@@ -16,6 +16,7 @@ use super::micsilence;
 use super::mixer::soft_limit;
 use super::mutedtalk;
 use super::resampler::StreamResampler;
+use crate::models::{LoadError, ModelStore};
 
 const OVERLOAD_WINDOW: usize = 300; // 3 s of 10 ms blocks
 const OVERLOAD_MEAN: Duration = Duration::from_micros(7_000); // 70% of the 10 ms budget
@@ -215,23 +216,57 @@ pub fn trim_backlog(q: &mut VecDeque<RawBlock>, now: Instant) -> usize {
     stale
 }
 
-/// Tracks which level is wanted, so a slow model load can't overwrite a newer choice.
+/// Which DeepFilterNet model a worker runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Model {
+    /// Strong: the bundled model.
+    Normal,
+    /// Strong (low delay): the downloaded one (#77).
+    LowDelay,
+}
+
+impl Model {
+    pub fn level(self) -> NsLevel {
+        match self {
+            Self::Normal => NsLevel::Strong,
+            Self::LowDelay => NsLevel::StrongLowDelay,
+        }
+    }
+}
+
+/// Tracks which level is wanted and which one is being aimed for (they differ after a fallback: low delay → Strong →
+/// Standard), so a slow model load can't overwrite a newer choice or fallback.
 pub struct Switcher {
     wanted: NsLevel,
+    target: NsLevel,
     generation: u64,
+    /// Why `target` isn't `wanted` (shown while the fallback runs).
+    note: Option<String>,
 }
 
 impl Switcher {
     pub fn new(level: NsLevel) -> Self {
         Self {
             wanted: level,
+            target: level,
             generation: 0,
+            note: None,
         }
     }
 
     /// Record a new wanted level; returns the generation a load for it must present.
     pub fn request(&mut self, level: NsLevel) -> u64 {
         self.wanted = level;
+        self.target = level;
+        self.note = None;
+        self.generation += 1;
+        self.generation
+    }
+
+    /// Aim for `level` instead of the wanted one, saying why; returns the generation a load for it must present.
+    pub fn fall_back(&mut self, level: NsLevel, note: &str) -> u64 {
+        self.target = level;
+        self.note = Some(note.to_string());
         self.generation += 1;
         self.generation
     }
@@ -240,9 +275,197 @@ impl Switcher {
         self.wanted
     }
 
-    pub fn accept_loaded(&self, generation: u64) -> bool {
-        generation == self.generation && self.wanted == NsLevel::Strong
+    pub fn target(&self) -> NsLevel {
+        self.target
     }
+
+    pub fn note(&self) -> Option<String> {
+        self.note.clone()
+    }
+
+    pub fn accept_loaded(&self, generation: u64, model: Model) -> bool {
+        generation == self.generation && self.target == model.level()
+    }
+}
+
+const LL_MISSING: &str = "Strong (low delay) isn't downloaded yet, using Strong";
+const LL_UNAVAILABLE: &str = "Strong (low delay) unavailable, using Strong";
+const LL_TOO_HEAVY: &str = "Strong (low delay) was too heavy for this PC, using Strong";
+const LL_STOPPED: &str = "Strong (low delay) stopped working, using Strong";
+const STRONG_UNAVAILABLE: &str = "Strong unavailable, using Standard";
+const STRONG_TOO_HEAVY: &str = "Strong was too heavy for this PC, using Standard";
+const STRONG_STOPPED: &str = "Strong stopped working, using Standard";
+
+/// Noise suppression's engine: what the user picked, what can run, and the model loads in between. The fallback
+/// chain is Strong (low delay) → Strong → Standard: a missing, damaged, failed or too-heavy low-delay model gives
+/// Strong (with a note), and Strong's own failures give Standard, as before.
+pub struct NsControl {
+    switcher: Switcher,
+    load_tx: std_mpsc::Sender<LoadResult>,
+    load_rx: std_mpsc::Receiver<LoadResult>,
+    models: Option<Arc<ModelStore>>,
+    /// The models' epoch last seen: a download that finishes mid-call is picked up.
+    epoch: u64,
+}
+
+impl NsControl {
+    pub fn new(level: NsLevel, models: Option<Arc<ModelStore>>) -> Self {
+        let (load_tx, load_rx) = std_mpsc::channel();
+        Self {
+            switcher: Switcher::new(level),
+            load_tx,
+            load_rx,
+            epoch: models.as_ref().map_or(0, |m| m.epoch()),
+            models,
+        }
+    }
+
+    pub fn switcher(&self) -> &Switcher {
+        &self.switcher
+    }
+
+    fn start(&self, generation: u64, model: Model) {
+        start_strong(generation, model, self.models.clone(), self.load_tx.clone());
+    }
+
+    fn low_delay_present(&self) -> bool {
+        self.models.as_ref().is_some_and(|m| m.present())
+    }
+
+    /// The user picked `level` (also at start). Between Strong and low delay the running model carries on until the
+    /// other has loaded; from Off or Standard, Standard runs meanwhile.
+    pub fn choose(&mut self, level: NsLevel, chain: &mut MicChain, shared: &Shared) {
+        let g = self.switcher.request(level);
+        let running = chain.level();
+        let model = match level {
+            NsLevel::Off | NsLevel::Standard => {
+                chain.set_denoiser(level, make_fast(level));
+                return set_status(shared, level, None);
+            }
+            NsLevel::Strong => Model::Normal,
+            NsLevel::StrongLowDelay if !self.low_delay_present() => {
+                return self.fall_back_to_strong(LL_MISSING, chain, shared);
+            }
+            NsLevel::StrongLowDelay => Model::LowDelay,
+        };
+        if running == level {
+            return set_status(shared, level, None);
+        }
+        if !running.is_deep_filter() {
+            chain.set_denoiser(NsLevel::Standard, make_fast(NsLevel::Standard));
+        }
+        self.start(g, model);
+        set_status(shared, chain.level(), None);
+    }
+
+    /// Aim for Strong instead of low delay. A Strong that's running already carries on.
+    fn fall_back_to_strong(&mut self, note: &str, chain: &mut MicChain, shared: &Shared) {
+        let g = self.switcher.fall_back(NsLevel::Strong, note);
+        if chain.level() != NsLevel::Strong {
+            chain.set_denoiser(NsLevel::Standard, make_fast(NsLevel::Standard));
+            self.start(g, Model::Normal);
+        }
+        set_status(shared, chain.level(), Some(note.to_string()));
+    }
+
+    fn fall_back_to_standard(&mut self, note: &str, chain: &mut MicChain, shared: &Shared) {
+        self.switcher.fall_back(NsLevel::Standard, note);
+        chain.set_denoiser(NsLevel::Standard, make_fast(NsLevel::Standard));
+        set_status(shared, NsLevel::Standard, Some(note.to_string()));
+    }
+
+    /// Install finished model loads (outdated ones are dropped, which frees their model); a failed one falls back.
+    /// True if the engine changed.
+    pub fn take_loaded(&mut self, chain: &mut MicChain, shared: &Shared) -> bool {
+        let mut changed = false;
+        while let Ok((g, model, result)) = self.load_rx.try_recv() {
+            if !self.switcher.accept_loaded(g, model) {
+                continue;
+            }
+            changed = true;
+            match (model, result) {
+                (_, Ok(worker)) => {
+                    chain.set_denoiser(model.level(), Box::new(worker));
+                    set_status(shared, model.level(), self.switcher.note());
+                }
+                (Model::LowDelay, Err(e)) => {
+                    let missing = e.downcast_ref::<LoadError>() == Some(&LoadError::Missing);
+                    tracing::warn!(error = %e, "noise suppression: Strong (low delay) failed to load, using Strong");
+                    let note = if missing { LL_MISSING } else { LL_UNAVAILABLE };
+                    self.fall_back_to_strong(note, chain, shared);
+                }
+                (Model::Normal, Err(e)) => {
+                    report_load_failure(shared, &e.to_string());
+                    self.switcher
+                        .fall_back(NsLevel::Standard, STRONG_UNAVAILABLE);
+                    if chain.level() != NsLevel::Standard {
+                        chain.set_denoiser(NsLevel::Standard, make_fast(NsLevel::Standard));
+                    }
+                }
+            }
+        }
+        changed
+    }
+
+    /// The low-delay model was downloaded meanwhile: load it if it's wanted and not running (what runs carries on
+    /// until it has). True if a load started.
+    pub fn check_models(&mut self, chain: &MicChain, shared: &Shared) -> bool {
+        let Some(epoch) = self.models.as_ref().map(|m| m.epoch()) else {
+            return false;
+        };
+        if epoch == self.epoch {
+            return false;
+        }
+        self.epoch = epoch;
+        if self.switcher.wanted() != NsLevel::StrongLowDelay
+            || self.switcher.target() == NsLevel::StrongLowDelay
+        {
+            return false;
+        }
+        let g = self.switcher.request(NsLevel::StrongLowDelay);
+        self.start(g, Model::LowDelay);
+        set_status(shared, chain.level(), None);
+        true
+    }
+
+    /// Whether this block's time counts towards the overload check: only while the aimed-for model runs.
+    pub fn measures(&self, chain: &MicChain) -> bool {
+        chain.level().is_deep_filter() && chain.level() == self.switcher.target()
+    }
+
+    /// This PC can't keep up: low delay → Strong, Strong → Standard.
+    pub fn overloaded(&mut self, chain: &mut MicChain, shared: &Shared) {
+        if chain.level() == NsLevel::StrongLowDelay {
+            tracing::warn!(
+                "noise suppression: this PC can't keep up with Strong (low delay), switching to Strong"
+            );
+            self.fall_back_to_strong(LL_TOO_HEAVY, chain, shared);
+        } else {
+            tracing::warn!(
+                "noise suppression: this PC can't keep up with Strong, switching to Standard"
+            );
+            self.fall_back_to_standard(STRONG_TOO_HEAVY, chain, shared);
+        }
+    }
+
+    /// Replace an engine that stopped working: low delay → Strong, Strong → Standard. True if it replaced one.
+    pub fn recover(&mut self, chain: &mut MicChain, shared: &Shared) -> bool {
+        if !chain.denoiser_failed() {
+            return false;
+        }
+        if chain.level() == NsLevel::StrongLowDelay {
+            tracing::warn!("noise suppression: Strong (low delay) stopped working, using Strong");
+            self.fall_back_to_strong(LL_STOPPED, chain, shared);
+        } else {
+            recover_failed(chain, shared);
+            self.switcher.fall_back(NsLevel::Standard, STRONG_STOPPED);
+        }
+        true
+    }
+}
+
+fn set_status(shared: &Shared, active: NsLevel, note: Option<String>) {
+    shared.set_ns_status(NsStatus { active, note });
 }
 
 pub fn report_load_failure(shared: &Shared, err: &str) {
@@ -252,7 +475,7 @@ pub fn report_load_failure(shared: &Shared, err: &str) {
     );
     shared.set_ns_status(NsStatus {
         active: NsLevel::Standard,
-        note: Some("Strong unavailable, using Standard".into()),
+        note: Some(STRONG_UNAVAILABLE.into()),
     });
 }
 
@@ -266,6 +489,8 @@ pub struct StrongWorker {
     dead: bool,
     /// The worker's last decision level (see `Denoiser::decision_level`).
     level: Option<f32>,
+    /// The model's `gate_lead_blocks` (Strong: 2, low delay: 0).
+    lead: usize,
 }
 
 impl Denoiser for StrongWorker {
@@ -295,7 +520,7 @@ impl Denoiser for StrongWorker {
     }
 
     fn gate_lead_blocks(&self) -> usize {
-        2 // DeepFilter's, on its own thread
+        self.lead // DeepFilter's, on its own thread
     }
 
     fn decision_level(&self) -> Option<f32> {
@@ -303,17 +528,35 @@ impl Denoiser for StrongWorker {
     }
 }
 
-type LoadResult = (u64, anyhow::Result<StrongWorker>);
+pub type LoadResult = (u64, Model, anyhow::Result<StrongWorker>);
 
-/// Load Strong on a new worker thread; the result (tagged with `generation`) arrives on `done`.
-pub fn start_strong(generation: u64, done: std_mpsc::Sender<LoadResult>) {
+/// Load `model` on a new worker thread (low delay from `models`, its hash checked); the result (tagged with
+/// `generation`) arrives on `done`.
+pub fn start_strong(
+    generation: u64,
+    model: Model,
+    models: Option<Arc<ModelStore>>,
+    done: std_mpsc::Sender<LoadResult>,
+) {
     let spawned = std::thread::Builder::new()
         .name("pulse-strong".into())
-        .spawn(move || match DeepFilter::new() {
-            Err(e) => {
-                let _ = done.send((generation, Err(e)));
-            }
-            Ok(mut df) => {
+        .spawn(move || {
+            let loaded = match model {
+                Model::Normal => DeepFilter::new(),
+                Model::LowDelay => models
+                    .ok_or(LoadError::Missing)
+                    .and_then(|m| m.load())
+                    .map_err(anyhow::Error::from)
+                    .and_then(|bytes| DeepFilter::low_delay(&bytes)),
+            };
+            let mut df = match loaded {
+                Err(e) => {
+                    let _ = done.send((generation, model, Err(e)));
+                    return;
+                }
+                Ok(df) => df,
+            };
+            {
                 let _rt = super::rtprio::promote("pulse-strong");
                 let (in_tx, in_rx) = std_mpsc::channel::<Vec<f32>>();
                 let (out_tx, out_rx) = std_mpsc::channel();
@@ -322,8 +565,9 @@ pub fn start_strong(generation: u64, done: std_mpsc::Sender<LoadResult>) {
                     rx: out_rx,
                     dead: false,
                     level: None,
+                    lead: df.gate_lead_blocks(),
                 };
-                if done.send((generation, Ok(handle))).is_err() {
+                if done.send((generation, model, Ok(handle))).is_err() {
                     return;
                 }
                 while let Ok(mut block) = in_rx.recv() {
@@ -348,7 +592,7 @@ pub fn recover_failed(chain: &mut MicChain, shared: &Shared) -> bool {
     chain.set_denoiser(NsLevel::Standard, make_fast(NsLevel::Standard));
     shared.set_ns_status(NsStatus {
         active: NsLevel::Standard,
-        note: Some("Strong stopped working, using Standard".into()),
+        note: Some(STRONG_STOPPED.into()),
     });
     true
 }
@@ -447,28 +691,13 @@ fn to_i16(v: f32) -> i16 {
     (v * 32767.0).round().clamp(-32768.0, 32767.0) as i16
 }
 
-/// While Strong loads (or if it's unavailable), Standard runs in its place.
-fn shown(level: NsLevel) -> NsLevel {
-    if level == NsLevel::Strong {
-        NsLevel::Standard
-    } else {
-        level
-    }
-}
-
 fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
     let cfg = shared.proc_cfg.lock().unwrap().clone();
     let mut version = cfg.version;
-    let mut chain = MicChain::new(cfg.level, cfg.auto, cfg.threshold, cfg.gain);
-    let mut switcher = Switcher::new(cfg.level);
-    let (load_tx, load_rx) = std_mpsc::channel::<LoadResult>();
-    if cfg.level == NsLevel::Strong {
-        start_strong(switcher.request(NsLevel::Strong), load_tx.clone());
-    }
-    shared.set_ns_status(NsStatus {
-        active: shown(cfg.level),
-        note: None,
-    });
+    // Standard runs until a DeepFilterNet model has loaded (`chain.level()` is always what really runs).
+    let mut chain = MicChain::new(NsLevel::Off, cfg.auto, cfg.threshold, cfg.gain);
+    let mut ns = NsControl::new(cfg.level, shared.low_delay_model());
+    ns.choose(cfg.level, &mut chain, &shared);
 
     let mut overload = OverloadDetector::new();
     let mut resampler: Option<(u32, StreamResampler)> = None;
@@ -501,34 +730,15 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
         if cfg.version != version {
             version = cfg.version;
             chain.configure(cfg.auto, cfg.threshold, cfg.gain);
-            if cfg.level != switcher.wanted() {
-                let g = switcher.request(cfg.level);
-                chain.set_denoiser(cfg.level, make_fast(cfg.level));
+            if cfg.level != ns.switcher().wanted() {
+                ns.choose(cfg.level, &mut chain, &shared);
                 overload.reset();
-                if cfg.level == NsLevel::Strong {
-                    start_strong(g, load_tx.clone());
-                }
-                shared.set_ns_status(NsStatus {
-                    active: shown(cfg.level),
-                    note: None,
-                });
             }
         }
-        // a finished model load
-        while let Ok((g, result)) = load_rx.try_recv() {
-            match result {
-                Ok(worker) if switcher.accept_loaded(g) => {
-                    chain.set_denoiser(NsLevel::Strong, Box::new(worker));
-                    overload.reset();
-                    shared.set_ns_status(NsStatus {
-                        active: NsLevel::Strong,
-                        note: None,
-                    });
-                }
-                Ok(_) => {} // outdated: the user changed level meanwhile (dropping it frees the model)
-                Err(e) if switcher.accept_loaded(g) => report_load_failure(&shared, &e.to_string()),
-                Err(_) => {}
-            }
+        // the low-delay model finished downloading; a finished model load
+        ns.check_models(&chain, &shared);
+        if ns.take_loaded(&mut chain, &shared) {
+            overload.reset();
         }
 
         for (rate, samples, _) in queue.drain(..) {
@@ -614,21 +824,11 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
             shared
                 .stats
                 .record_mic_block(out.ns_in, out.ns_out, out.judged, out.sent);
-            if chain.level() == NsLevel::Strong
-                && switcher.wanted() == NsLevel::Strong
-                && overload.record(t.elapsed())
-            {
-                tracing::warn!(
-                    "noise suppression: this PC can't keep up with Strong, switching to Standard"
-                );
-                chain.set_denoiser(NsLevel::Standard, make_fast(NsLevel::Standard));
+            if ns.measures(&chain) && overload.record(t.elapsed()) {
+                ns.overloaded(&mut chain, &shared);
                 overload.reset();
-                shared.set_ns_status(NsStatus {
-                    active: NsLevel::Standard,
-                    note: Some("Strong was too heavy for this PC, using Standard".into()),
-                });
             }
-            if recover_failed(&mut chain, &shared) {
+            if ns.recover(&mut chain, &shared) {
                 overload.reset();
             }
             shared.add_mic_level(out.level, out.sent);
@@ -1337,6 +1537,7 @@ mod tests {
             rx,
             dead: false,
             level: None,
+            lead: 2,
         };
         let mut b = vec![0.3f32; FRAME];
         w.process(&mut b);
@@ -1356,6 +1557,7 @@ mod tests {
             rx,
             dead: false,
             level: Some(0.5), // loud speech, just before it died
+            lead: 2,
         };
         w.process(&mut vec![0.0f32; FRAME]);
         assert_eq!(w.decision_level(), None, "the raw block's level decides");
@@ -1403,11 +1605,11 @@ mod tests {
         let first = s.request(NsLevel::Strong); // starts a load, generation g1
         s.request(NsLevel::Off); // user flips back before it finishes
         assert!(
-            !s.accept_loaded(first),
+            !s.accept_loaded(first, Model::Normal),
             "an outdated load must not be installed"
         );
         let second = s.request(NsLevel::Strong);
-        assert!(s.accept_loaded(second));
+        assert!(s.accept_loaded(second, Model::Normal));
     }
 
     #[test]
@@ -1422,12 +1624,13 @@ mod tests {
     #[test]
     fn strong_worker_cleans_on_its_own_thread() {
         let (tx, rx) = std::sync::mpsc::channel();
-        start_strong(7, tx);
-        let (g, worker) = rx
+        start_strong(7, Model::Normal, None, tx);
+        let (g, model, worker) = rx
             .recv_timeout(Duration::from_secs(10))
             .expect("load finishes");
-        assert_eq!(g, 7);
+        assert_eq!((g, model), (7, Model::Normal));
         let mut w = worker.expect("model loads");
+        assert_eq!(w.gate_lead_blocks(), 2, "Strong's lead");
         let noisy: Vec<f32> = (0..FRAME)
             .map(|i| if i % 3 == 0 { 0.05 } else { -0.03 })
             .collect();
@@ -1443,5 +1646,197 @@ mod tests {
                 .all(|p| p.is_some_and(|p| (0.0..=1.0).contains(&p)))
         );
         assert_ne!(last, noisy, "the model changed the audio");
+    }
+
+    // --- Strong (low delay) and its fallback chain (#77) ---
+
+    use crate::models::ModelStore;
+
+    /// A low-delay model store in a temp dir (empty: not downloaded).
+    fn ll_store() -> (tempfile::TempDir, Arc<ModelStore>) {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Arc::new(ModelStore::low_delay(dir.path().join("models")));
+        (dir, s)
+    }
+
+    /// Waits for a model load to land (installed or fallen back).
+    fn settle(ns: &mut NsControl, chain: &mut MicChain, sh: &Shared) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !ns.take_loaded(chain, sh) {
+            assert!(Instant::now() < deadline, "no model load finished");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn status(sh: &Shared) -> (NsLevel, Option<String>) {
+        let st = sh.take_ns_status_change().expect("a status change");
+        (st.active, st.note)
+    }
+
+    fn off_chain() -> MicChain {
+        MicChain::new(NsLevel::Off, true, 0.02, 1.0)
+    }
+
+    #[test]
+    fn low_delay_not_downloaded_runs_strong_with_a_note() {
+        let sh = shared_with(AudioConfig::default());
+        let (_d, store) = ll_store();
+        let mut ns = NsControl::new(NsLevel::StrongLowDelay, Some(store));
+        let mut c = off_chain();
+        ns.choose(NsLevel::StrongLowDelay, &mut c, &sh);
+        assert_eq!(
+            status(&sh),
+            (NsLevel::Standard, Some(LL_MISSING.into())),
+            "Standard while Strong loads"
+        );
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong);
+        assert_eq!(status(&sh), (NsLevel::Strong, Some(LL_MISSING.into())));
+        assert_eq!(
+            ns.switcher().wanted(),
+            NsLevel::StrongLowDelay,
+            "the choice is kept"
+        );
+    }
+
+    #[test]
+    fn without_a_model_store_low_delay_is_missing() {
+        let sh = shared_with(AudioConfig::default());
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        let mut c = off_chain();
+        ns.choose(NsLevel::StrongLowDelay, &mut c, &sh);
+        assert_eq!(status(&sh).1.as_deref(), Some(LL_MISSING));
+        assert_eq!(ns.switcher().target(), NsLevel::Strong);
+    }
+
+    /// Picked while Strong runs and not downloaded: Strong carries on (no reload, no Standard in between), and when
+    /// the download finishes mid-call low delay replaces it, Strong still running until it has loaded.
+    #[test]
+    fn a_download_mid_call_swaps_strong_for_low_delay() {
+        let sh = shared_with(AudioConfig::default());
+        let (_d, store) = ll_store();
+        let mut ns = NsControl::new(NsLevel::Strong, Some(store.clone()));
+        let mut c = off_chain();
+        ns.choose(NsLevel::Strong, &mut c, &sh);
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong);
+        sh.take_ns_status_change();
+
+        ns.choose(NsLevel::StrongLowDelay, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong, "Strong keeps running");
+        assert_eq!(status(&sh), (NsLevel::Strong, Some(LL_MISSING.into())));
+        assert!(!ns.take_loaded(&mut c, &sh), "nothing was reloaded");
+
+        assert!(!ns.check_models(&c, &sh), "nothing new downloaded");
+        store.put_for_test(&crate::models::checkout_low_delay_model());
+        assert!(ns.check_models(&c, &sh), "the download starts a load");
+        assert_eq!(c.level(), NsLevel::Strong, "Strong runs while it loads");
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::StrongLowDelay);
+        assert_eq!(status(&sh), (NsLevel::StrongLowDelay, None));
+        assert!(!ns.check_models(&c, &sh), "seen once");
+    }
+
+    /// A model on disk that isn't the pinned one: deleted, reported as failed, and Strong runs.
+    #[test]
+    fn a_damaged_low_delay_model_falls_back_to_strong() {
+        let sh = shared_with(AudioConfig::default());
+        let (_d, store) = ll_store();
+        store.put_for_test(b"not the model");
+        let mut ns = NsControl::new(NsLevel::Off, Some(store.clone()));
+        let mut c = off_chain();
+        ns.choose(NsLevel::StrongLowDelay, &mut c, &sh);
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(
+            status(&sh),
+            (NsLevel::Standard, Some(LL_UNAVAILABLE.into())),
+            "Standard while Strong loads"
+        );
+        assert!(!store.present(), "the damaged file is deleted");
+        assert!(matches!(
+            store.status(),
+            crate::models::ModelStatus::Failed { .. }
+        ));
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong);
+        assert_eq!(status(&sh), (NsLevel::Strong, Some(LL_UNAVAILABLE.into())));
+    }
+
+    /// Too heavy: low delay → Strong (with a note), and then Strong → Standard, as before.
+    #[test]
+    fn overload_steps_down_low_delay_then_strong() {
+        let sh = shared_with(AudioConfig::default());
+        let (_d, store) = ll_store();
+        store.put_for_test(&crate::models::checkout_low_delay_model());
+        let mut ns = NsControl::new(NsLevel::Off, Some(store));
+        let mut c = off_chain();
+        ns.choose(NsLevel::StrongLowDelay, &mut c, &sh);
+        assert!(!ns.measures(&c), "not measured while Standard stands in");
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::StrongLowDelay);
+        assert_eq!(c.denoiser.gate_lead_blocks(), 0, "low delay's lead");
+        assert!(ns.measures(&c));
+        sh.take_ns_status_change();
+
+        ns.overloaded(&mut c, &sh);
+        assert_eq!(status(&sh), (NsLevel::Standard, Some(LL_TOO_HEAVY.into())));
+        assert!(!ns.measures(&c));
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong);
+        assert_eq!(status(&sh), (NsLevel::Strong, Some(LL_TOO_HEAVY.into())));
+        assert!(ns.measures(&c));
+
+        ns.overloaded(&mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Standard);
+        assert_eq!(
+            status(&sh),
+            (NsLevel::Standard, Some(STRONG_TOO_HEAVY.into()))
+        );
+        assert!(!ns.measures(&c), "Standard isn't measured");
+    }
+
+    #[test]
+    fn a_dead_low_delay_worker_falls_back_to_strong() {
+        let sh = shared_with(AudioConfig::default());
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        let mut c = off_chain();
+        ns.switcher.request(NsLevel::StrongLowDelay);
+        c.set_denoiser(NsLevel::StrongLowDelay, Box::new(Dead));
+        assert!(ns.recover(&mut c, &sh));
+        assert_eq!(status(&sh), (NsLevel::Standard, Some(LL_STOPPED.into())));
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong);
+        assert!(!ns.recover(&mut c, &sh), "Strong is healthy");
+    }
+
+    /// Changing level while low delay loads: that load is dropped, not installed.
+    #[test]
+    fn a_low_delay_load_outdated_by_a_new_choice_is_dropped() {
+        let sh = shared_with(AudioConfig::default());
+        let (_d, store) = ll_store();
+        store.put_for_test(&crate::models::checkout_low_delay_model());
+        let mut ns = NsControl::new(NsLevel::Off, Some(store));
+        let mut c = off_chain();
+        ns.choose(NsLevel::StrongLowDelay, &mut c, &sh);
+        ns.choose(NsLevel::Off, &mut c, &sh);
+        std::thread::sleep(Duration::from_secs(3));
+        assert!(!ns.take_loaded(&mut c, &sh));
+        assert_eq!(c.level(), NsLevel::Off);
+    }
+
+    /// Back from low delay to Strong: low delay carries on until Strong has loaded.
+    #[test]
+    fn low_delay_runs_until_strong_has_loaded() {
+        let sh = shared_with(AudioConfig::default());
+        let (_d, store) = ll_store();
+        store.put_for_test(&crate::models::checkout_low_delay_model());
+        let mut ns = NsControl::new(NsLevel::Off, Some(store));
+        let mut c = off_chain();
+        ns.choose(NsLevel::StrongLowDelay, &mut c, &sh);
+        settle(&mut ns, &mut c, &sh);
+        ns.choose(NsLevel::Strong, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::StrongLowDelay);
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong);
     }
 }

@@ -186,6 +186,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends minisign
           bash deploy/publish-update-selftest.sh
+      - name: publish-models.sh self-test
+        run: bash deploy/publish-models-selftest.sh
       - name: fetch-ffmpeg.sh self-test
         run: bash scripts/fetch-ffmpeg-test.sh
 

@@ -12,6 +12,7 @@ pub mod keybinds;
 pub mod links;
 pub mod logging;
 pub mod media;
+pub mod models;
 pub mod notify;
 pub mod outbox;
 pub mod qr;
@@ -157,6 +158,8 @@ pub fn run() {
             // Loaded (and acted on) above, before logging was up: report how that went now.
             app.state::<reports::settings::Store>().log_loaded();
             startup::mark("logging_ready"); // (since process start: covers crash checks + log setup)
+            // Downloaded models (#77): local (not roaming) data, one copy for every profile.
+            models::install_low_delay(app.path().app_local_data_dir()?.join("models"));
             let webview_dir = session::profile_dir(&app.path().app_local_data_dir()?, profile.as_deref());
             // The link-preview pop-out shares the main webview's data directory.
             let webview_data = webview_dir.join("webview");
@@ -353,6 +356,8 @@ pub fn run() {
             commands::set_peer_volume,
             commands::set_call_mix,
             commands::set_audio_config,
+            models::model_status,
+            models::model_download,
             commands::list_audio_devices,
             commands::start_mic_test,
             commands::stop_mic_test,

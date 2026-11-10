@@ -115,6 +115,7 @@ deploy-check:
     bash deploy/deploy-selftest.sh
     bash deploy/backup-selftest.sh
     bash deploy/publish-update-selftest.sh
+    bash deploy/publish-models-selftest.sh
 
 # --- production (pulsechat.co.za); see deploy/README.md ---
 prod := "pulse@pulse"
@@ -194,6 +195,11 @@ _ship $tag $pin:
 # signature, uploads it, writes latest.json last and keeps two versions. After `just deploy`; see deploy/README.md.
 publish-update $run_id:
     bash deploy/publish-update.sh "$run_id"
+
+# publish the models the app downloads on first use (#77: Strong (low delay)'s): copies the low-delay model from the
+# pinned libDF checkout, checks its SHA-256 against the app's pin, uploads it and checks the route. After `just deploy`.
+publish-models:
+    bash deploy/publish-models.sh
 
 # outside-in checks of the live server
 smoke:

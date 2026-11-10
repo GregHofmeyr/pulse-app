@@ -1,5 +1,6 @@
-//! Measures the denoisers (run: `cargo test --release --test denoise_bench -- --ignored --nocapture`,
-//! and again with `--features dfn-ll`). Results go into spikes/voice/FINDINGS.md.
+//! Measures the denoisers (run: `cargo test --release --test denoise_bench -- --ignored --nocapture`): RNNoise
+//! (Standard), DeepFilterNet3 (Strong) and its low-delay model (Strong (low delay), #77, read from libDF's cargo
+//! checkout). Results go into spikes/voice/FINDINGS.md.
 
 use std::time::{Duration, Instant};
 
@@ -96,20 +97,31 @@ fn bench_denoisers() {
         delay_ms(&w[..48_000 * 3], &rn_out[..48_000 * 3])
     );
 
+    // Strong: the bundled model
+    bench_deepfilter(&w, "normal", df::tract::DfParams::default);
+}
+
+/// Strong (low delay, #77): the model the app downloads, from libDF's checkout. Its own test, so its RSS figure is
+/// measured in a process the normal model hasn't grown (`--exact bench_low_delay`).
+#[test]
+#[ignore]
+fn bench_low_delay() {
+    let w = workload();
+    let ll = pulse_client::models::checkout_low_delay_model_path()
+        .expect("libDF's checkout (cargo git checkouts) has the low-delay model");
+    let bytes = std::fs::read(ll).unwrap();
+    bench_deepfilter(&w, "low-delay", || {
+        df::tract::DfParams::from_bytes(&bytes).expect("read the low-delay model")
+    });
+}
+
+fn bench_deepfilter(w: &[f32], name: &str, params: impl FnOnce() -> df::tract::DfParams) {
     let r0 = rss_mb();
     let t = Instant::now();
-    let mut df = df::tract::DfTract::new(
-        df::tract::DfParams::default(),
-        &df::tract::RuntimeParams::default_with_ch(1),
-    )
-    .expect("load DeepFilterNet");
+    let mut df = df::tract::DfTract::new(params(), &df::tract::RuntimeParams::default_with_ch(1))
+        .expect("load DeepFilterNet");
     println!(
-        "deepfilter ({}): load {:?}, rss +{:.1} MB, hop {}, lookahead {}, fft {}",
-        if cfg!(feature = "dfn-ll") {
-            "low-latency"
-        } else {
-            "normal"
-        },
+        "deepfilter ({name}): load {:?}, rss +{:.1} MB, hop {}, lookahead {}, fft {}",
         t.elapsed(),
         rss_mb() - r0,
         df.hop_size,
@@ -133,9 +145,9 @@ fn bench_denoisers() {
         times.push(t.elapsed());
         df_out.extend(enh.row(0).iter().copied());
     }
-    report("deepfilter", times);
+    report(&format!("deepfilter ({name})"), times);
     println!(
-        "deepfilter: delay {:.1} ms",
+        "deepfilter ({name}): delay {:.1} ms",
         delay_ms(&w[..48_000 * 3], &df_out[..48_000 * 3])
     );
 }

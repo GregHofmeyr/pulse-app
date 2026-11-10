@@ -116,6 +116,12 @@ export type TwoFactorSetup = { secret: string; qr: QrMatrix }
 export type UpdateOffer = { version: string }
 /** How far the installer download is (`pulse://update-progress`); `total` null = the size isn't known. */
 export type UpdateProgress = { downloaded: number; total: number | null }
+/** Strong (low delay)'s model, downloaded on first use (#77; also each `pulse://model` event). */
+export type ModelStatus =
+  | { state: 'missing' }
+  | { state: 'downloading'; downloaded: number; total: number | null }
+  | { state: 'ready' }
+  | { state: 'failed'; error: string }
 export type Restored = { status: 'ready'; user: User } | { status: 'logged_out' } | { status: 'refused' }
 
 function uploadProfileMedia(cmd: string, bytes: Uint8Array, crop: CropRect | null) {
@@ -251,6 +257,10 @@ export const api = {
   /** Download and install the offer: Pulse closes and reopens on the new version. `restart` = asked for from the
    *  title bar, which the core refuses during a call. Rejects with why, and Pulse carries on as it was. */
   updateInstall: (restart: boolean) => invoke<void>('update_install', { restart }),
+  /** Where Strong (low delay)'s model is (#77). */
+  modelStatus: () => invoke<ModelStatus>('model_status'),
+  /** Download it from the signed-in server (`pulse://model` events on the way); the status it ended in. */
+  modelDownload: () => invoke<ModelStatus>('model_download'),
   /** One line in the app log (what happened and why, never what the user typed); best effort. A failure is `warn`. */
   uiLog: (line: string, level: 'warn' | 'info' = 'warn') => invoke<void>('ui_log', { line, info: level === 'info' }).catch(() => {}),
   /** A desktop notification (lib/notify.ts decided it); best effort, a refusal only dings. */

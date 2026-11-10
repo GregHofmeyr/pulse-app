@@ -128,6 +128,12 @@ describe('migrateAudioConfig', () => {
   it('keeps an explicit new level', () => {
     expect(migrateAudioConfig({ noise_suppression: 'standard', noise_suppress: false }).noise_suppression).toBe('standard')
   })
+  it('#77: every saved level reads back unchanged, Strong (low delay) included; an unknown one gets the default', () => {
+    for (const level of ['off', 'standard', 'strong', 'strong_low_delay'])
+      expect(migrateAudioConfig({ noise_suppression: level, sensitivity: 0.05 })).toEqual({ ...defaultAudioConfig, noise_suppression: level, sensitivity: 0.05 })
+    expect(migrateAudioConfig({ noise_suppression: 'ultra' }).noise_suppression).toBe('strong')
+    expect(defaultAudioConfig.noise_suppression).toBe('strong')
+  })
   it('echo cancellation (#76): the old toggle off stays Off, on becomes Auto (the default); a saved mode wins', () => {
     const off = migrateAudioConfig({ echo_cancel: false })
     expect(off.echo_mode).toBe('off')
@@ -409,5 +415,17 @@ describe('sounds outside a call', () => {
     const muted = { ...idle, controls: { muted: true, deafened: false } }
     expect(transitionSounds(idle, muted)).toEqual(['mute'])
     expect(transitionSounds(muted, idle)).toEqual(['unmute'])
+  })
+})
+
+describe('modelLine (#77)', () => {
+  it("says where Strong (low delay)'s model is; nothing once it's ready", async () => {
+    const { modelLine } = await import('./voiceui')
+    expect(modelLine({ state: 'missing' })).toBe('Not downloaded yet')
+    expect(modelLine({ state: 'downloading', downloaded: 0, total: null })).toBe('Downloading…')
+    expect(modelLine({ state: 'downloading', downloaded: 9_000_000, total: 36_000_000 })).toBe('Downloading… 25%')
+    expect(modelLine({ state: 'downloading', downloaded: 12_582_912, total: null })).toBe('Downloading… 12 MB')
+    expect(modelLine({ state: 'failed', error: "couldn't reach the server" })).toBe("Couldn't download it: couldn't reach the server")
+    expect(modelLine({ state: 'ready' })).toBeNull()
   })
 })

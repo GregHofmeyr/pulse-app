@@ -52,15 +52,108 @@ describe('VoiceSettings noise suppression', () => {
     const c = mount(VoiceSettings, { target: document.body })
     flushSync()
     const radios = () => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Noise suppression"] [role=radio]')]
-    expect(radios().map((r) => r.textContent)).toEqual(['Off', 'Standard', 'Strong'])
+    expect(radios().map((r) => r.textContent)).toEqual(['Off', 'Standard', 'Strong', 'Strong (low delay)'])
     radios()[2].click()
     flushSync()
     await Promise.resolve()
-    expect(radios().map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'false', 'true'])
+    expect(radios().map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'false', 'true', 'false'])
     const applied = invoke.mock.calls.filter(([cmd]) => cmd === 'set_audio_config').at(-1)?.[1] as { config?: { noise_suppression?: string } } | undefined
     expect(JSON.stringify(applied)).toContain('"noise_suppression":"strong"')
     unmount(c)
     document.body.innerHTML = ''
+  })
+})
+
+describe('VoiceSettings Strong (low delay) (#77)', () => {
+  type Status = { state: string; downloaded?: number; total?: number | null; error?: string }
+  let status: Status
+  let finish: ((s: Status) => void) | null
+  beforeEach(() => {
+    invoke.mockClear()
+    localStorage.clear()
+    status = { state: 'missing' }
+    finish = null
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'model_status') return status
+      if (cmd === 'model_download') {
+        status = { state: 'downloading', downloaded: 0, total: null }
+        return new Promise<Status>((resolve) => (finish = (s) => resolve((status = s))))
+      }
+      return undefined
+    })
+  })
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await Promise.resolve()
+    flushSync()
+  }
+  const radios = () => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Noise suppression"] [role=radio]')]
+  const calls = (name: string) => invoke.mock.calls.filter(([cmd]) => cmd === name)
+  const text = () => document.body.textContent ?? ''
+  const done = (c: ReturnType<typeof mount>) => {
+    unmount(c)
+    document.body.innerHTML = ''
+    localStorage.clear()
+    invoke.mockImplementation(async () => undefined)
+  }
+
+  it('picking it applies it, starts the download, shows progress, and the line goes once ready', async () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    await settle()
+    expect(text()).not.toContain('Less delay')
+    radios()[3].click()
+    await settle()
+    expect(radios().map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'false', 'false', 'true'])
+    const applied = calls('set_audio_config').at(-1)?.[1]
+    expect(JSON.stringify(applied)).toContain('"noise_suppression":"strong_low_delay"')
+    expect(text()).toContain('Less delay, uses more CPU and memory.')
+    expect(calls('model_download')).toHaveLength(1)
+    expect(document.querySelector('[data-model-state]')?.textContent).toContain('Downloading…')
+    finish!({ state: 'ready' })
+    await settle()
+    expect(document.querySelector('[data-model-state]')).toBeNull()
+    expect(text()).toContain('Less delay, uses more CPU and memory.')
+    done(c)
+  })
+
+  it('a failed download says why, and Retry downloads again', async () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    await settle()
+    radios()[3].click()
+    await settle()
+    finish!({ state: 'failed', error: "couldn't reach the server" })
+    await settle()
+    const line = document.querySelector('[data-model-state="failed"]')
+    expect(line?.textContent).toContain("Couldn't download it: couldn't reach the server")
+    const retry = [...line!.querySelectorAll('button')].find((b) => b.textContent === 'Retry')!
+    retry.click()
+    await settle()
+    expect(calls('model_download')).toHaveLength(2)
+    expect(document.querySelector('[data-model-state]')?.textContent).toContain('Downloading…')
+    done(c)
+  })
+
+  it('already downloaded: picking it downloads nothing', async () => {
+    status = { state: 'ready' }
+    const c = mount(VoiceSettings, { target: document.body })
+    await settle()
+    radios()[3].click()
+    await settle()
+    expect(calls('model_download')).toHaveLength(0)
+    expect(document.querySelector('[data-model-state]')).toBeNull()
+    done(c)
+  })
+
+  it('chosen earlier but not there (deleted, or damaged): it says so, with a Download button', async () => {
+    localStorage.setItem('pulse.audio', JSON.stringify({ noise_suppression: 'strong_low_delay' }))
+    const c = mount(VoiceSettings, { target: document.body })
+    await settle()
+    const line = document.querySelector('[data-model-state="missing"]')
+    expect(line?.textContent).toContain('Not downloaded yet')
+    expect(calls('model_download'), 'not without asking').toHaveLength(0)
+    ;[...line!.querySelectorAll('button')].find((b) => b.textContent === 'Download')!.click()
+    await settle()
+    expect(calls('model_download')).toHaveLength(1)
+    done(c)
   })
 })
 

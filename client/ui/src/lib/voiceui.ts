@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { loadMixer, ringtoneGain, soundGain, soundMasterGain } from './mixer'
 import type { Event as AppEvent } from './protocol/Event'
+import type { ModelStatus } from './tauri'
 // Pure helpers for the voice UI (tested in voiceui.test.ts).
 
 /** Your own mute / deafen, and (from the core) the server's of you (#140), which the core adds. */
@@ -82,7 +83,24 @@ export function loadSoundPrefs(): SoundPrefs {
 export const saveSoundPrefs = (p: SoundPrefs) => save('pulse.sounds', p)
 
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
-export type NsLevel = 'off' | 'standard' | 'strong'
+/** `strong_low_delay` (#77): DeepFilterNet3's low-delay model, downloaded on first use (Strong runs until it's there). */
+export type NsLevel = 'off' | 'standard' | 'strong' | 'strong_low_delay'
+export const NS_LEVELS: readonly NsLevel[] = ['off', 'standard', 'strong', 'strong_low_delay']
+
+/** Where Strong (low delay)'s model is, in a line for Settings; `null` once it's ready. */
+export function modelLine(s: ModelStatus): string | null {
+  switch (s.state) {
+    case 'missing':
+      return 'Not downloaded yet'
+    case 'downloading':
+      if (s.total) return `Downloading… ${Math.floor((s.downloaded * 100) / s.total)}%`
+      return s.downloaded > 0 ? `Downloading… ${Math.floor(s.downloaded / 1048576)} MB` : 'Downloading…'
+    case 'failed':
+      return `Couldn't download it: ${s.error}`
+    case 'ready':
+      return null
+  }
+}
 
 /** One report from the core's link sampler (`LinkReport` in voice/linkstats.rs). Hand-written: the
  * client's events are not part of the generated protocol bindings. */
@@ -271,6 +289,8 @@ export function migrateAudioConfig(raw: Record<string, unknown>): AudioConfig {
   const { noise_suppress, echo_cancel, ...rest } = raw
   const c = { ...defaultAudioConfig, ...rest } as AudioConfig
   if (raw.noise_suppression === undefined && noise_suppress === false) c.noise_suppression = 'off'
+  // a level this version doesn't know (a newer one's) would be refused by the core: the default instead
+  if (!NS_LEVELS.includes(c.noise_suppression)) c.noise_suppression = defaultAudioConfig.noise_suppression
   if (raw.echo_mode === undefined && echo_cancel === false) c.echo_mode = 'off'
   return c
 }

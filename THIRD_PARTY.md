@@ -30,7 +30,9 @@ Spotify and its logo are trademarks of Spotify AB; Pulse isn't affiliated with o
 ## DeepFilterNet3 (Strong noise suppression)
 
 The "Strong" noise suppression runs DeepFilterNet (`libDF`, git `d375b2d`) with its DeepFilterNet3 model, which is
-compiled into the app. Copyright Hendrik Schröter and contributors. Dual-licensed
+compiled into the app. "Strong (low delay)" runs the same library with DeepFilterNet3's low-delay model
+(`DeepFilterNet3_ll_onnx.tar.gz` from the same commit), which the app downloads from its server on first use. Copyright
+Hendrik Schröter and contributors. Dual-licensed
 [MIT](https://opensource.org/licenses/MIT) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0).
 Source: https://github.com/Rikorose/DeepFilterNet.
 

@@ -267,6 +267,22 @@ container's `/data/updates`, outside the media backups).
 5. Rolling back = publishing a higher version with the fix: the updater never downgrades. The previous installer stays
    in `/srv/pulse/data/updates` for anyone who needs it by hand.
 
+### Publishing the downloadable models
+
+"Strong (low delay)" noise suppression (#77) runs DeepFilterNet3's low-delay model (36 MB), which isn't in the installer:
+the app downloads it the first time someone picks it, from `/models/DeepFilterNet3_ll_onnx.tar.gz` (sign-in only, like
+`/updates`; the server serves that one exact name from `/srv/pulse/data/updates/models`, nothing else) and checks its
+SHA-256 against the hash pinned in `client/src-tauri/src/models.rs` before using it. Until it's there, Strong runs.
+
+- `just publish-models`, once, after the first `just deploy` that has the route (it refuses while the route answers
+  anything but 401 without a session). It takes the file from the libDF checkout the client builds against (found with
+  `cargo metadata`), checks its hash against the app's pin, uploads it to `.incoming/`, checks the server's copy and only
+  then moves it into place. With `PUBLISH_MODELS_TOKEN=<a session token>` it also downloads it through the route and
+  checks the hash. Re-running it is safe.
+- Do it before (or with) the app release that offers "Strong (low delay)": until then, picking it says "the server
+  doesn't have it yet" and Strong carries on.
+- Only again when the libDF rev or the pinned hash changes (both in the client); the old file is replaced in place.
+
 The updater key: the public half is `plugins.updater.pubkey` in `client/src-tauri/tauri.conf.json`; the private half and
 its password are the two repo secrets plus one password-manager copy. Lost = no new update can be signed for installed
 apps (make a new key, ship a build with the new public key, everyone installs that one by hand once). Without the

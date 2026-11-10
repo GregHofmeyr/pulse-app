@@ -16,6 +16,16 @@ pub enum NsLevel {
     Standard,
     #[default]
     Strong,
+    /// DeepFilterNet3's low-delay model (#77): 10 ms instead of 30, for about 3x Strong's CPU and +120 MB. Not
+    /// bundled: downloaded on first use (`crate::models`); Strong runs until it's there.
+    StrongLowDelay,
+}
+
+impl NsLevel {
+    /// Runs DeepFilterNet (Strong or Strong (low delay)).
+    pub fn is_deep_filter(self) -> bool {
+        matches!(self, Self::Strong | Self::StrongLowDelay)
+    }
 }
 
 /// Not `Send`: DeepFilterNet's model can't change threads, and chains live on one thread.
@@ -115,14 +125,21 @@ pub struct DeepFilter {
 }
 
 impl DeepFilter {
-    /// Loads the bundled model (a few hundred ms; call off the audio path).
+    /// Strong: loads the bundled model (a few hundred ms; call off the audio path).
     pub fn new() -> anyhow::Result<Self> {
-        let df = std::panic::catch_unwind(|| {
-            df::tract::DfTract::new(
-                df::tract::DfParams::default(),
-                &df::tract::RuntimeParams::default_with_ch(1),
-            )
-        })
+        Self::load(|| Ok(df::tract::DfParams::default()))
+    }
+
+    /// Strong (low delay): the downloaded model's bytes (a `.tar.gz` as libDF ships it; `crate::models` has already
+    /// checked its hash). Slower to load than Strong; call off the audio path.
+    pub fn low_delay(model: &[u8]) -> anyhow::Result<Self> {
+        Self::load(|| df::tract::DfParams::from_bytes(model).context("reading the model"))
+    }
+
+    fn load(params: impl FnOnce() -> anyhow::Result<df::tract::DfParams>) -> anyhow::Result<Self> {
+        let df = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            df::tract::DfTract::new(params()?, &df::tract::RuntimeParams::default_with_ch(1))
+        }))
         .map_err(|_| anyhow!("DeepFilterNet panicked while loading its model"))?
         .context("loading DeepFilterNet")?;
         anyhow::ensure!(
@@ -161,9 +178,10 @@ impl Denoiser for DeepFilter {
         Some(p)
     }
 
-    /// DeepFilterNet lags its input by 3 blocks; RNNoise's cleaned level only by 1.
+    /// DeepFilterNet lags its input by its lookahead plus 1 block (Strong: 3, low delay: 1); RNNoise's cleaned level
+    /// only by 1. So that level leads by the model's lookahead (Strong: 2, low delay: 0).
     fn gate_lead_blocks(&self) -> usize {
-        2
+        self.df.lookahead
     }
 
     fn decision_level(&self) -> Option<f32> {
@@ -171,11 +189,11 @@ impl Denoiser for DeepFilter {
     }
 }
 
-/// An engine that's instant to build: Strong starts on RNNoise until its model has loaded.
+/// An engine that's instant to build: Strong (and low delay) start on RNNoise until the model has loaded.
 pub fn make_fast(level: NsLevel) -> Box<dyn Denoiser> {
     match level {
         NsLevel::Off => Box::new(Passthrough),
-        NsLevel::Standard | NsLevel::Strong => Box::new(Rnnoise::new()),
+        NsLevel::Standard | NsLevel::Strong | NsLevel::StrongLowDelay => Box::new(Rnnoise::new()),
     }
 }
 
@@ -244,7 +262,41 @@ mod tests {
         vec![
             ("standard", Box::new(Rnnoise::new())),
             ("strong", Box::new(DeepFilter::new().expect("model loads"))),
+            ("strong_low_delay", Box::new(low_delay())),
         ]
+    }
+
+    /// Strong (low delay) on the model libDF's checkout ships (the file `just publish-models` uploads).
+    fn low_delay() -> DeepFilter {
+        DeepFilter::low_delay(&crate::models::checkout_low_delay_model()).expect("model loads")
+    }
+
+    #[test]
+    fn low_delay_refuses_bytes_that_are_not_a_model() {
+        assert!(DeepFilter::low_delay(b"not a model").is_err());
+        assert!(DeepFilter::low_delay(&[]).is_err());
+    }
+
+    /// Old settings read exactly as before; the new level has its own name.
+    #[test]
+    fn levels_keep_their_saved_names() {
+        for (level, name) in [
+            (NsLevel::Off, "off"),
+            (NsLevel::Standard, "standard"),
+            (NsLevel::Strong, "strong"),
+            (NsLevel::StrongLowDelay, "strong_low_delay"),
+        ] {
+            let json = format!("\"{name}\"");
+            assert_eq!(serde_json::to_string(&level).unwrap(), json);
+            assert_eq!(serde_json::from_str::<NsLevel>(&json).unwrap(), level);
+        }
+        assert_eq!(
+            NsLevel::default(),
+            NsLevel::Strong,
+            "the default stays Strong"
+        );
+        assert!(NsLevel::StrongLowDelay.is_deep_filter() && NsLevel::Strong.is_deep_filter());
+        assert!(!NsLevel::Standard.is_deep_filter() && !NsLevel::Off.is_deep_filter());
     }
 
     #[test]
@@ -272,6 +324,7 @@ mod tests {
         let before = level_db(&input);
         let (std_out, _) = run(&mut Rnnoise::new(), &input);
         let (strong_out, _) = run(&mut DeepFilter::new().unwrap(), &input);
+        let (ll_out, _) = run(&mut low_delay(), &input);
         assert!(
             level_db(&std_out) < before,
             "standard: {} -> {}",
@@ -282,6 +335,11 @@ mod tests {
             before - level_db(&strong_out) >= 15.0,
             "strong only cut {:.1} dB",
             before - level_db(&strong_out)
+        );
+        assert!(
+            before - level_db(&ll_out) >= 15.0,
+            "strong (low delay) only cut {:.1} dB",
+            before - level_db(&ll_out)
         );
     }
 
@@ -353,13 +411,19 @@ mod tests {
         assert_eq!(Passthrough.gate_lead_blocks(), 0);
     }
 
+    /// Low delay has no lookahead: it lags one block, like RNNoise's level it decides on, so the gate gets no lead
+    /// from it (#77: the hard-coded 2 was Strong's).
+    #[test]
+    fn low_delay_delay_matches_what_the_gate_assumes() {
+        assert_eq!(lag_blocks(&mut low_delay()), 1, "Strong (low delay): 10 ms");
+        assert_eq!(low_delay().gate_lead_blocks(), 0);
+    }
+
     #[test]
     fn make_fast_never_loads_the_big_model() {
         assert!(make_fast(NsLevel::Off).process(&mut [0.0; FRAME]).is_none());
-        assert!(
-            make_fast(NsLevel::Strong)
-                .process(&mut [0.0; FRAME])
-                .is_some()
-        );
+        for level in [NsLevel::Strong, NsLevel::StrongLowDelay] {
+            assert!(make_fast(level).process(&mut [0.0; FRAME]).is_some());
+        }
     }
 }

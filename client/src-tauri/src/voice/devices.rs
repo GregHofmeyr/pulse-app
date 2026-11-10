@@ -380,6 +380,8 @@ pub struct Shared {
     pub muted_talk: Mutex<super::mutedtalk::MutedTalk>,
     /// The "you're muted" sound (#252): the same judgement on its own, shorter clock.
     pub muted_cue: Mutex<super::mutedtalk::MutedCue>,
+    /// Strong (low delay)'s model store (`crate::models`, #77).
+    low_delay_model: Mutex<Option<Arc<crate::models::ModelStore>>>,
 }
 
 impl Shared {
@@ -440,7 +442,17 @@ impl Shared {
             stats: Default::default(),
             mic_sink: Mutex::new(None),
             mic_queue: Default::default(),
+            low_delay_model: Mutex::new(crate::models::low_delay_store()),
         })
+    }
+
+    /// Where Strong (low delay)'s downloaded model is (#77); `None` = it can't be had (tests, or before setup).
+    pub fn low_delay_model(&self) -> Option<Arc<crate::models::ModelStore>> {
+        self.low_delay_model.lock().unwrap().clone()
+    }
+
+    pub fn set_low_delay_model(&self, store: Option<Arc<crate::models::ModelStore>>) {
+        *self.low_delay_model.lock().unwrap() = store;
     }
 
     /// Speaker callbacks since the last call that found the mixer busy (played silence).
@@ -1636,6 +1648,39 @@ mod tests {
                 output: Output::Other
             })
         );
+    }
+
+    /// #77: saved levels read back unchanged, the new one included, and nothing else in the config moves.
+    #[test]
+    fn saved_noise_levels_read_back_unchanged() {
+        for (name, level) in [
+            ("off", NsLevel::Off),
+            ("standard", NsLevel::Standard),
+            ("strong", NsLevel::Strong),
+            ("strong_low_delay", NsLevel::StrongLowDelay),
+        ] {
+            let saved = format!(
+                r#"{{"input":"Mic","output":null,"input_gain_pct":150,"sensitivity":0.05,"echo_mode":"on",
+                    "noise_suppression":"{name}","auto_sensitivity":false,"auto_gain":true}}"#
+            );
+            let cfg = serde_json::from_str::<AudioConfig>(&saved)
+                .unwrap()
+                .normalized();
+            assert_eq!(cfg.noise_suppression, level, "{name}");
+            assert_eq!(
+                (
+                    cfg.input.as_deref(),
+                    cfg.input_gain_pct,
+                    cfg.echo_mode,
+                    cfg.auto_sensitivity,
+                    cfg.auto_gain
+                ),
+                (Some("Mic"), 150, EchoMode::On, false, true)
+            );
+            let again: AudioConfig =
+                serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+            assert_eq!(again.noise_suppression, level, "{name} round-trips");
+        }
     }
 
     #[test]

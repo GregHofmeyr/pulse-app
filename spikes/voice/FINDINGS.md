@@ -94,6 +94,20 @@ Gotchas:
 
 **Decisions:** Strong = **normal model** — low-latency saves 20 ms but costs 3.5× CPU and +87 MB RSS (rule: ≤ 1.5× CPU). Default level = **Strong** — mean 4.6% (≤ 20%) and p99 7.7% (≤ 50%) of the budget.
 
+### Strong (low delay), downloaded on first use (#77, 2026-11-10, this laptop, release build)
+
+`--features dfn-ll` is gone: `bench_denoisers` measures RNNoise and the normal model, `--exact bench_low_delay` the
+low-delay model (read from libDF's cargo checkout, as the app reads its download), each in its own process.
+
+| Engine | mean / p99 / max per 10 ms | % of budget | load | RSS added | delay |
+|---|---|---|---|---|---|
+| RNNoise | 34 µs / 60 µs / 232 µs | 0.3% | — | — | 10 ms |
+| DeepFilterNet3 normal (bundled) | 387 µs / 477 µs / 821 µs | 3.9% | 191 ms | 31.5 MB | 30 ms |
+| DeepFilterNet3 low delay (downloaded) | 1.33 ms / 2.03 ms / 3.10 ms | 13.3% | 364 ms | 86 MB (+36 MB file while loading) | 10 ms |
+
+Lookahead 2 vs 0; the gate's lead is the model's lookahead (2 vs 0). Matches the investigation (13.3%, ~+122 MB peak,
+10 ms vs 30 ms).
+
 ### Footprint after noise suppression (2026-10-06)
 
 - Windows `pulse-app.exe` (release, `cargo xwin build --release`): **42.6 MB → 67.2 MB** (+24.6 MB: the 8 MB DFN3
