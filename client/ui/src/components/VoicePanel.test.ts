@@ -714,6 +714,16 @@ describe('Spotify on the stage (#234)', () => {
     expect(spotifyBtn()!.classList.contains('waiting')).toBe(false)
   })
 
+  it('hiding by keyboard hands the focus to the header button', async () => {
+    mountPanel()
+    put(share())
+    const x = button('Hide for me')!
+    x.focus()
+    x.click()
+    await settle()
+    expect(document.activeElement).toBe(spotifyBtn())
+  })
+
   it('a new share shows the strip again after you minimised the last one', () => {
     mountPanel()
     put(share())

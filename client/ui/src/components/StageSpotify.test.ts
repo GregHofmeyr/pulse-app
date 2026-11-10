@@ -100,6 +100,25 @@ describe('the strip above the tiles', () => {
   })
 })
 
+describe('keyboard focus follows the view', () => {
+  it('minimise hands it to the pill, opening hands it to the card, back to the strip to its Minimise', async () => {
+    const top = show(share(), 'top')
+    const corner = show(share(), 'corner')
+    const settle = async () => { for (let i = 0; i < 3; i++) await tick(); flushSync() }
+    btn(top, 'Minimise')!.focus()
+    btn(top, 'Minimise')!.click()
+    await settle()
+    expect(document.activeElement).toBe(corner.querySelector('.pill'))
+    ;(document.activeElement as HTMLElement).click()
+    await settle()
+    expect(corner.querySelector('.corner-card')!.contains(document.activeElement)).toBe(true)
+    btn(corner, 'Show above the tiles')!.focus()
+    btn(corner, 'Show above the tiles')!.click()
+    await settle()
+    expect(document.activeElement).toBe(btn(top, 'Minimise'))
+  })
+})
+
 describe('the pill and the corner card', () => {
   it('hovering the pill previews the corner card; a click opens it', () => {
     setMode('S-1', 'pill')

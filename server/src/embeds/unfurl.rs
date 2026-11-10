@@ -71,7 +71,16 @@ pub(super) async fn run(
     let mut link = Url::parse(url).ok()?;
     let mut found = providers::detect(&link);
     if found == Detection::Short {
-        link = fetcher.resolve_redirects(url).await.ok()?;
+        link = match fetcher.resolve_redirects(url).await {
+            Ok(u) => u,
+            // A real Jam short link lands a previewer on a page naming the Jam instead (#234): read the Jam's link
+            // from it. Only the invite is taken; its card is still built from the link alone.
+            Err(_) if link.host_str() == Some("spotify.link") => {
+                let got = fetcher.get(url, Want::Html).await.ok()?;
+                providers::jam_in_page(&String::from_utf8_lossy(&got.body))?
+            }
+            Err(_) => return None,
+        };
         found = providers::detect(&link);
     }
     let (d, text) = match found {

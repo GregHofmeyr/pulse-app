@@ -5,13 +5,14 @@
   //
   // Spotify's rules as on the #196 card: their single-colour icon, never over the artwork; the artwork as they give
   // it (uncropped, 4px corners, nothing on top); their approved link-out wording; Pulse never controls anyone's Spotify.
+  import { tick } from 'svelte'
   import Icon from './Icon.svelte'
   import SpotifyIcon from './SpotifyIcon.svelte'
   import { isMediaHash, mediaUrl } from '../lib/emoji'
   import { closeTimer } from '../lib/hoverIntent'
   import { serverNow } from '../lib/serverClock'
   import { mayStop, stageCard } from '../lib/stageShare'
-  import { modeFor, setMode } from '../lib/stageShareView.svelte'
+  import { modeFor, setMode, type StageMode } from '../lib/stageShareView.svelte'
   import { nameOfIn } from '../lib/selectors'
   import { app, clock } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
@@ -43,7 +44,20 @@
       error = errorText(e)
     }
   }
-  const show = (m: Parameters<typeof setMode>[1]) => setMode(share.id, m)
+  // Each view change unmounts the control you used: the focus goes on to where that view is now (the header's
+  // Spotify button once it's hidden), never down to the page.
+  const FOCUS: Record<StageMode, string> = {
+    strip: '.sp-strip button[aria-label="Minimise"]',
+    pill: '.stage-corner .pill',
+    corner: '.stage-corner .corner-card button',
+    hidden: '[data-stage-spotify]',
+  }
+  async function show(m: StageMode) {
+    const had = !!(document.activeElement && document.activeElement !== document.body)
+    setMode(share.id, m)
+    await tick()
+    if (had && (!document.activeElement || document.activeElement === document.body)) document.querySelector<HTMLElement>(FOCUS[m])?.focus()
+  }
 
   // Hovering the pill previews the corner card; the pointer may move onto the card without it closing.
   let preview = $state(false)
@@ -94,9 +108,9 @@
       <span class="grow"></span>
       {#if !previewing}
         {@render stopBtn()}
-        <button type="button" class="icon-btn icon-btn-xs" aria-label="Show above the tiles" data-tip="Show above the tiles" onclick={() => show('strip')}><Icon name="square" size={14} /></button>
-        <button type="button" class="icon-btn icon-btn-xs" aria-label="Minimise" data-tip="Minimise" onclick={() => show('pill')}><Icon name="min" size={14} /></button>
-        <button type="button" class="icon-btn icon-btn-xs" aria-label="Hide for me" data-tip="Hide for me" onclick={() => show('hidden')}><Icon name="x" size={14} /></button>
+        <button type="button" class="icon-btn icon-btn-xs" aria-label="Show above the tiles" data-tip="Show above the tiles" onclick={() => void show('strip')}><Icon name="square" size={14} /></button>
+        <button type="button" class="icon-btn icon-btn-xs" aria-label="Minimise" data-tip="Minimise" onclick={() => void show('pill')}><Icon name="min" size={14} /></button>
+        <button type="button" class="icon-btn icon-btn-xs" aria-label="Hide for me" data-tip="Hide for me" onclick={() => void show('hidden')}><Icon name="x" size={14} /></button>
       {/if}
     </div>
     {#if error && !previewing}<p class="error" role="alert">{error}</p>{/if}
@@ -110,16 +124,16 @@
     <SpotifyIcon />
     {@render open()}
     {@render stopBtn()}
-    <button type="button" class="icon-btn icon-btn-sm" aria-label="Minimise" data-tip="Minimise" onclick={() => show('pill')}><Icon name="min" size={16} /></button>
-    <button type="button" class="icon-btn icon-btn-sm" aria-label="Hide for me" data-tip="Hide for me" onclick={() => show('hidden')}><Icon name="x" size={16} /></button>
+    <button type="button" class="icon-btn icon-btn-sm" aria-label="Minimise" data-tip="Minimise" onclick={() => void show('pill')}><Icon name="min" size={16} /></button>
+    <button type="button" class="icon-btn icon-btn-sm" aria-label="Hide for me" data-tip="Hide for me" onclick={() => void show('hidden')}><Icon name="x" size={16} /></button>
   </div>
   {#if error}<p class="error strip-error" role="alert">{error}</p>{/if}
 {:else if place === 'corner' && mode === 'corner'}
-  <div class="corner">{@render cornerCard(false)}</div>
+  <div class="corner stage-corner">{@render cornerCard(false)}</div>
 {:else if place === 'corner' && mode === 'pill'}
-  <div class="corner">
+  <div class="corner stage-corner">
     {#if preview}{@render cornerCard(true)}{/if}
-    <button type="button" class="pill" aria-label="{card.title}, on Spotify: open" onclick={() => show('corner')}
+    <button type="button" class="pill" aria-label="{card.title}, on Spotify: open" onclick={() => void show('corner')}
       onpointerenter={enter} onpointerleave={exit} onfocus={enter} onblur={exit}>
       {@render artwork('sm')}
       <SpotifyIcon />

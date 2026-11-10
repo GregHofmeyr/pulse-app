@@ -62,11 +62,13 @@ impl StageState {
             .collect()
     }
 
-    /// `user`'s share of `url` in `channel`, if it's up.
+    /// `user`'s share of `url` in `channel`, if it's up: the same link, whatever its query (Spotify's `?si=`
+    /// changes with every copy of a link).
     pub fn same(&self, channel: ChannelId, user: UserId, url: &str) -> Option<StageShare> {
+        let bare = |u: &str| u.split('?').next().unwrap_or(u).to_owned();
         self.of(channel)
             .into_iter()
-            .find(|s| s.shared_by == user && s.embed.url == url)
+            .find(|s| s.shared_by == user && bare(&s.embed.url) == bare(url))
     }
 
     /// Put `share` up; returns the shares it pushed out (the sharer's own, then the oldest past
@@ -227,6 +229,7 @@ mod tests {
         assert_eq!(out.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["1"]);
         assert_eq!(st.of(ch).len(), 1);
         assert!(st.same(ch, sam, "b").is_some());
+        assert!(st.same(ch, sam, "b?si=other").is_some());
         assert!(st.same(ch, alex, "a").is_none());
         assert!(st.remove(ch, "1").is_none());
         assert_eq!(st.remove(ch, "2").map(|s| s.id), Some("2".into()));

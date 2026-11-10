@@ -222,7 +222,7 @@
     </button>
     {#if inCall || shareHidden}
       <!-- Spotify on the stage (#234): share a link, or bring back the card you hid (the button is tinted then) -->
-      <button type="button" class="icon-btn spotify" class:waiting={shareHidden} aria-haspopup={shareHidden ? undefined : 'dialog'} aria-expanded={shareHidden ? undefined : shareBoxOpen}
+      <button type="button" class="icon-btn spotify" data-stage-spotify class:waiting={shareHidden} aria-haspopup={shareHidden ? undefined : 'dialog'} aria-expanded={shareHidden ? undefined : shareBoxOpen}
         aria-label={shareHidden ? 'Show what’s shared from Spotify' : 'Share Spotify to the stage'} data-tip={shareHidden ? 'Show what’s shared from Spotify' : 'Share Spotify to the stage'} data-menu-toggle
         onclick={spotifyButton}><SpotifyIcon /></button>
     {/if}

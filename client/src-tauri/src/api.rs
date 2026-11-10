@@ -826,7 +826,6 @@ impl Api {
         .await
     }
 
-    /// A chat's pins, newest pin first.
     /// Share a Spotify link to a server voice channel's stage (#234); you must be in its call.
     pub async fn share_to_stage(
         &self,
@@ -869,6 +868,7 @@ impl Api {
         .await
     }
 
+    /// A chat's pins, newest pin first.
     pub async fn list_pins(
         &self,
         token: &str,

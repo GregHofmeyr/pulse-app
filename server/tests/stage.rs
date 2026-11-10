@@ -225,8 +225,13 @@ async fn sharing_a_song_puts_its_card_up_and_posts_a_line() {
     let ready = ready_of(&w.app, &w.jo.1).await;
     assert_eq!(ready.stage_shares, vec![s.clone()]);
 
-    // sharing the same thing again changes nothing
-    let again: StageShare = share(&w, &w.alex.1, &track()).await.json().await.unwrap();
+    // sharing the same thing again (another copy of the link) changes nothing
+    let other_copy = format!("https://open.spotify.com/track/{SPOTIFY_ID}?si=xyz");
+    let again: StageShare = share(&w, &w.alex.1, &other_copy)
+        .await
+        .json()
+        .await
+        .unwrap();
     assert_eq!(again.id, s.id);
     quiet(&mut w.rx).await;
 }
@@ -380,6 +385,10 @@ async fn the_sharer_leaving_the_call_takes_it_down() {
     // a late leave for another channel (alex moved here from there) changes nothing either
     let other = ChannelId::new();
     left(&w.app, other, w.alex.0, "PA_old").await;
+    assert_eq!(w.app.voice.stage.of(w.lounge.id).len(), 1);
+    // a stale leave (alex's old connection, after a reconnect) changes nothing
+    left(&w.app, w.lounge.id, w.alex.0, "PA_alex_old").await;
+    quiet(&mut w.rx).await;
     assert_eq!(w.app.voice.stage.of(w.lounge.id).len(), 1);
     // the sharer leaving does
     left(&w.app, w.lounge.id, w.alex.0, "PA_alex").await;

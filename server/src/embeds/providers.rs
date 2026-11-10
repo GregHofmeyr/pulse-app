@@ -99,6 +99,28 @@ pub fn is_jam(p: EmbedProvider, id: &str) -> bool {
     p == EmbedProvider::Spotify && id.split_once(':').is_some_and(|(kind, _)| kind == JAM)
 }
 
+/// The Jam invite a `spotify.link` landing page names. A real Jam short link doesn't redirect a link previewer to
+/// the Jam: it goes on to a `spotify.app.link` page (200, HTML) that carries the invite's
+/// `https://open.spotify.com/socialsession/<id>` (#234). The first such link in `page` that [`detect`] knows as a Jam.
+pub fn jam_in_page(page: &str) -> Option<Url> {
+    const AT: &str = "https://open.spotify.com/socialsession/";
+    let mut rest = page;
+    while let Some(i) = rest.find(AT) {
+        let tail = &rest[i + AT.len()..];
+        let id: String = tail
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .collect();
+        if let Ok(u) = Url::parse(&format!("{AT}{id}"))
+            && matches!(detect(&u), Detection::Known(ref d) if is_jam(d.provider, &d.id))
+        {
+            return Some(u);
+        }
+        rest = tail;
+    }
+    None
+}
+
 fn plain(provider: EmbedProvider, id: String) -> Detected {
     Detected {
         provider,
@@ -350,6 +372,25 @@ pub fn player_url(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_jam_named_on_a_landing_page() {
+        let page = r#"<img src="https://shareables.scdn.co/publish/socialsession/x.png">
+            <a href="https://open.spotify.com/socialsession/AbC123abc123_-x?si=1&amp;t=2">Open</a>"#;
+        assert_eq!(
+            jam_in_page(page).map(String::from).as_deref(),
+            Some("https://open.spotify.com/socialsession/AbC123abc123_-x")
+        );
+        assert_eq!(
+            jam_in_page("https://open.spotify.com/socialsession/ab"),
+            None
+        );
+        assert_eq!(
+            jam_in_page("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC"),
+            None
+        );
+        assert_eq!(jam_in_page(""), None);
+    }
     use EmbedProvider::*;
 
     const YT: &str = "dQw4w9WgXcQ";

@@ -120,9 +120,16 @@ async fn share(
     {
         // Shares, stops, leaves and expiries go out in the order they happened.
         let _order = s.hub.in_order().await;
-        // The card took a moment: a leave in the meantime means no share.
+        // The card took a moment: a leave or the channel's delete in the meantime means no share, and the same
+        // link shared meanwhile (a double click) is the one up.
+        if crate::access::load_channel(&s.db, id).await?.is_none() {
+            return Err(AppError::NotFound);
+        }
         if !s.voice.members(id).contains(&me) {
             return Err(AppError::Forbidden);
+        }
+        if let Some(up) = s.voice.stage.same(id, me, &share.embed.url) {
+            return Ok(Json(up));
         }
         let gone = s.voice.stage.put(share.clone());
         announce_cleared(&s, gone).await;

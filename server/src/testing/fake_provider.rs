@@ -9,7 +9,8 @@
 //!   metadata; `/held` answers like `/page` once [`FakeProvider::release`] is called.
 //! - `http://www.twitch.tv:<port>/<user>/clip/<slug>`: a clip page's OpenGraph.
 //! - `http://www.tiktok.com:<port>/t/<code>/`: a short link redirecting to [`TIKTOK_URL`].
-//! - `http://spotify.link:<port>/<code>`: a short link redirecting to [`SPOTIFY_JAM_URL`].
+//! - `http://spotify.link:<port>/<code>`: a short link redirecting to [`SPOTIFY_JAM_URL`]; `/Page<…>` answers
+//!   with a landing page naming it instead, as a real one does.
 //! - `/thumb.png`: a 1280×720 PNG.
 
 use std::collections::HashMap;
@@ -244,7 +245,16 @@ async fn spotify_short(req: Request) -> Response {
         .get(header::HOST)
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
-    if host.split(':').next() == Some("spotify.link") {
+    if host.split(':').next() == Some("spotify.link") && req.uri().path().starts_with("/Page") {
+        // what a real one gives a link previewer: a landing page that names the Jam
+        (
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            format!(
+                r#"<html><body><a href="{SPOTIFY_JAM_URL}?si=abc">Open Spotify</a></body></html>"#
+            ),
+        )
+            .into_response()
+    } else if host.split(':').next() == Some("spotify.link") {
         (StatusCode::FOUND, [(header::LOCATION, SPOTIFY_JAM_URL)]).into_response()
     } else {
         StatusCode::NOT_FOUND.into_response()

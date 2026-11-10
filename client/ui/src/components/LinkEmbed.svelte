@@ -44,6 +44,8 @@
   // Share to stage (#234): a Spotify card in the chat of the voice channel you're in a call in.
   const canShare = $derived(!!sp && !!channelId && app.state.channels[channelId]?.kind === 'voice' && voice.channelId === channelId && voice.connection === 'connected')
   let sharing = $state(false)
+  // this very link is what's on the stage now: say so instead of offering it again
+  const onStage = $derived(canShare && !!channelId && (app.state.stageShares[channelId] ?? []).some((x) => x.embed.url === embed.url))
   async function shareToStage() {
     if (!channelId || sharing) return
     sharing = true
@@ -112,7 +114,11 @@
         {/if}
         <a class="btn {sp.jam ? 'btn-primary' : 'btn-secondary'} sp-open" href={embed.url} target="_blank" rel="noopener noreferrer">{sp.action}</a>
         {#if canShare}
-          <button class="btn btn-quiet sp-share" disabled={sharing} data-tip="Show it on the stage for everyone in the call" onclick={() => void shareToStage()}>Share to stage</button>
+          {#if onStage}
+            <span class="btn btn-quiet sp-share on-stage" aria-disabled="true">On the stage</span>
+          {:else}
+            <button class="btn btn-quiet sp-share" disabled={sharing} data-tip="Show it on the stage for everyone in the call" onclick={() => void shareToStage()}>Share to stage</button>
+          {/if}
         {/if}
       </div>
     </div>
@@ -215,6 +221,7 @@
   .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .actions .btn { height: 28px; padding: 0 10px; font-size: 12px; text-decoration: none; }
   .sp-play :global(svg) { fill: currentColor; }
+  .on-stage { cursor: default; color: var(--text-3); }
   /* Spotify's rules: 4px corners, never cropped (contain), nothing on top */
   .art { width: 96px; height: 96px; border-radius: 4px; overflow: hidden; display: grid; place-items: center; }
   .art img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; display: block; border-radius: 4px; }

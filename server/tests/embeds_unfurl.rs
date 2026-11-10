@@ -243,6 +243,21 @@ async fn spotify_short_link_to_a_jam_is_a_jam_card() {
 }
 
 #[tokio::test]
+async fn spotify_short_link_landing_on_a_page_is_a_jam_card() {
+    let env = setup().await;
+    let u = env
+        .unfurl(&env.fake.url("spotify.link", "/PageCode1"))
+        .await;
+    assert_eq!(u, Some(jam_card()));
+    // The landing page was read for the Jam's link; the Jam itself wasn't fetched.
+    assert!(
+        env.fake.requests().iter().all(|r| r == "/PageCode1"),
+        "{:?}",
+        env.fake.requests()
+    );
+}
+
+#[tokio::test]
 async fn instagram_card_without_oembed_is_a_placeholder_card() {
     let env = setup().await;
     let u = env

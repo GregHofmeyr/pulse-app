@@ -207,6 +207,15 @@ describe('LinkEmbed', () => {
         expect(invoke).toHaveBeenCalledWith('share_to_stage', { channelId: 'V1', url: 'https://open.spotify.com/socialsession/ABC123abc123' })
       })
 
+      it('says "On the stage" while that very link is up there', async () => {
+        app.state = { ...app.state, stageShares: { V1: [{ id: 'SH1', channel_id: 'V1', shared_by: 'U2', shared_at: '', expires_at: '', embed: jam() }] } }
+        const host = show(jam(), { channelId: 'V1' })
+        await settle()
+        expect(shareBtn(host)).toBeUndefined()
+        expect(host.textContent).toContain('On the stage')
+        expect(shareBtn(show(sp(), { channelId: 'V1' }))).toBeDefined()
+      })
+
       it('not out of the call, in a text chat, or on another provider', async () => {
         expect(shareBtn(show(sp(), { channelId: 'C1' }))).toBeUndefined()
         expect(shareBtn(show(yt(), { channelId: 'V1' }))).toBeUndefined()
