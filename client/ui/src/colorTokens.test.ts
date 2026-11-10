@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Theming step 1 (#42, docs/superpowers/specs/2026-11-03-theming-design.md "S — tokens only"): every
 // UI colour comes from an app.css :root token, so a theme only has to swap token values. Colours
-// that are fixed on purpose (video chrome, the QR code, skin tones, embed brand colours, the profile
+// that are fixed on purpose (video chrome, the QR code, skin tones, the profile
 // card's own theme, avatar initials) are listed below, each with its reason. The token values are
 // pinned to what the app looked like before the tokens existed: this step changes no pixel.
 import { readdirSync, readFileSync } from 'node:fs'
@@ -74,7 +74,6 @@ const ALLOWED: Record<string, { literals: string[]; reason: string }[]> = {
   'components/CropDialog.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .6)'], reason: VIDEO + ' (the image being cropped, its mask and crop box)' }],
   'components/StreamDiagOverlay.svelte': [{ literals: ['rgba(0, 0, 0, .65)', '#e6e6e6'], reason: 'developer stream diagnostics, a fixed dark box over the video' }],
   'components/LinkEmbed.svelte': [
-    { literals: ['#ff3344', '#fe2c55', '#1ed760', '#ff5500', '#9146ff', '#e1306c'], reason: "the providers' brand colours (the embed's left edge)" },
     { literals: ['#000', '#fff', 'rgba(10, 11, 13, .62)', 'rgba(10, 11, 13, .82)', 'rgba(0, 0, 0, .35)'], reason: VIDEO + ' (the player frame and the play button on the thumbnail)' },
   ],
   'components/TwoFactorSettings.svelte': [{ literals: ['#fff', '#000'], reason: 'the QR code: white quiet zone, black modules, or scanners fail' }],

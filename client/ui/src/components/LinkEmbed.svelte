@@ -22,11 +22,6 @@
 
   loadEmbedOrigin()
 
-  // Brand accents for the left bar (fixed per provider, never from the link's data).
-  const BRAND: Record<string, string> = {
-    youtube: '#ff3344', tiktok: '#fe2c55', spotify: '#1ed760', soundcloud: '#ff5500', twitch: '#9146ff', instagram: '#e1306c',
-  }
-
   const key = $derived(playerKey(messageId, embed.url))
   const label = $derived(providerLabel(embed))
   const canPlay = $derived(playable(embed))
@@ -87,7 +82,7 @@
 
 <div class="wrap">
   {#if sp}
-  <div class="embed spotify" class:playing={active} bind:this={root} style:--brand={BRAND.spotify}>
+  <div class="embed spotify" class:playing={active} bind:this={root}>
     <div class="text">
       <span class="label sp-label"><SpotifyIcon /><span class="sp-kind">{sp.label ? `Spotify · ${sp.label}` : 'Spotify'}</span></span>
       <a class="title" href={embed.url} target="_blank" rel="noopener noreferrer" data-tip={spTitle}>{spTitle}</a>
@@ -113,7 +108,7 @@
     {/if}
   </div>
   {:else}
-  <div class="embed" class:big class:playing={active} bind:this={root} style:--brand={BRAND[embed.provider] ?? 'var(--bg-4)'}>
+  <div class="embed" class:big class:playing={active} bind:this={root}>
     <div class="text">
       <span class="label">{label}{#if embed.author}<span class="by"> · {embed.author}</span>{/if}</span>
       <a class="title" href={embed.url} target="_blank" rel="noopener noreferrer">{embed.title ?? embed.url}</a>
@@ -153,8 +148,7 @@
   .embed {
     position: relative; flex: 0 1 432px; min-width: 0; box-sizing: border-box;
     display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; align-items: start;
-    padding: 10px 12px 12px 14px; border-radius: var(--radius-xs); background: var(--bg-2); border: 1px solid var(--line-soft);
-    box-shadow: inset 4px 0 0 var(--brand);
+    padding: 10px 12px 12px; border-radius: var(--radius-xs); background: var(--bg-2); border: 1px solid var(--line-soft);
   }
   .text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .label { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
