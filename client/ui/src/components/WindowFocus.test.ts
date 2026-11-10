@@ -52,12 +52,22 @@ const sounds = () => invoke.mock.calls.filter((c) => c[0] === 'play_sound').leng
 Element.prototype.scrollTo = () => {}
 watchWindowFocus()
 
+// The message sound plays at most once per SOUND_GAP_MS, and the last one's time is module state. A test that needs a
+// sound moves a fake clock on from the last test's (rather than waiting the gap out, #177), whatever order they run in.
+let clock = Date.now()
+function pastTheSoundGap() {
+  clock += 10_000
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(clock)
+}
+
 let cmp: ReturnType<typeof mount> | undefined
 afterEach(() => {
   if (cmp) unmount(cmp)
   cmp = undefined
   document.body.innerHTML = ''
   invoke.mockClear()
+  vi.useRealTimers()
 })
 
 describe('one window-focus source', () => {
@@ -67,6 +77,7 @@ describe('one window-focus source', () => {
     await startListening()
     ui.openChannelId = 'D1'
     const event = (id: string): Event => ({ t: 'MessageCreated', d: { message: msg(id, 'D1'), nonce: null } }) as Event
+    pastTheSoundGap()
     tauriFocus!({ payload: true })
     listeners.get('pulse://event')!({ payload: event('M1') })
     expect(sounds()).toBe(0) // open and focused: no sound
@@ -89,9 +100,7 @@ describe('one window-focus source', () => {
     const logs = () => invoke.mock.calls.filter((c) => c[0] === 'ui_log').map((c) => (c[1] as { line: string; info: boolean }))
     const settle = () => new Promise((r) => setTimeout(r, 0))
     tauriFocus!({ payload: true })
-    // past the gap from the previous test's sound: move the clock rather than wait it out (#177)
-    vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(Date.now() + 2100)
+    pastTheSoundGap()
     try {
       // chatting in the open, focused DM: nothing logged (the usual case, every message)
       os.focused = true
