@@ -13,8 +13,8 @@ use pulse_protocol::rest::{
     MediaInfo, Member, Message, MuteTarget, NameArchivePage, NotifyLevel, Pin, PinDuration,
     PinnedMessage, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse, SaveLayoutRequest,
     SearchRequest, SearchResults, Server, ServerLayout, SetMuteRequest, SetNotifyLevelRequest,
-    Sound, StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest,
-    UpdateSoundRequest, User,
+    Sound, StageShare, StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus,
+    UpdateProfileRequest, UpdateSoundRequest, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -1242,6 +1242,33 @@ pub async fn unpin_message(
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.unpin_message(&token, message_id).await)
+}
+
+/// Share a Spotify link to a voice channel's stage (#234).
+#[tauri::command]
+pub async fn share_to_stage(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    url: String,
+) -> Result<StageShare, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.share_to_stage(&token, channel_id, &url).await)
+}
+
+/// Stop a stage share for everyone (#234).
+#[tauri::command]
+pub async fn stop_stage_share(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    share_id: String,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.stop_stage_share(&token, channel_id, &share_id).await,
+    )
 }
 
 /// A chat's pins, newest pin first.

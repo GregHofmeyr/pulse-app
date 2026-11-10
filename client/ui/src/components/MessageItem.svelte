@@ -43,6 +43,7 @@
   import type { Attachment } from 'svelte/attachments'
   import type { Message } from '../lib/protocol/Message'
   import type { Pending } from '../lib/state'
+  import { sharePhrase } from '../lib/stageShare'
 
   let {
     message,
@@ -271,6 +272,10 @@
     {@const pe = message.poll_ended}
     <div class="system pin-line" data-message-id={message.id}><Icon name="poll" size={14} /> {nameOf(pe.author_id)}'s poll ended{endedSummary(pe.winners, pe.votes)} ·
       <button type="button" class="link-btn" onclick={() => void jumpTo(message.channel_id, pe.poll_message_id)}>See poll</button> <span class="time">{time}</span></div>
+  {:else if message.stage_share_line}
+    <!-- a share to the voice stage (#234), with today's names: "🎵 alex shared a Jam to the stage" -->
+    {@const sl = message.stage_share_line}
+    <div class="system" data-message-id={message.id}>🎵 {nameOf(sl.by)} shared {sharePhrase(sl.kind)} to the stage <span class="time">{time}</span></div>
   {:else}
   <div class="system" data-message-id={message.id}>{message.content} <span class="time">{time}</span></div>
   {/if}
@@ -310,7 +315,7 @@
           <div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention} onkeydown={openMention}>{@html html}</div>
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
-        {#each embeds as e (e.url)}<LinkEmbed embed={e} messageId={message.id} {mine} onError={showError} />{/each}
+        {#each embeds as e (e.url)}<LinkEmbed embed={e} messageId={message.id} channelId={message.channel_id} {mine} onError={showError} />{/each}
         {#if !pending}<ReactionRow {message} {meId} {nameOf} onError={showError} />{/if}
         {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
       </div>

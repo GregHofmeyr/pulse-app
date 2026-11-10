@@ -9,6 +9,9 @@ const invoke = vi.fn(async (cmd: string, _args?: unknown): Promise<unknown> => (
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import LinkEmbed from './LinkEmbed.svelte'
+import { app } from '../lib/store.svelte'
+import { emptyState } from '../lib/state'
+import { voice } from '../lib/voice.svelte'
 import { forgetEmbedOrigin, player } from '../lib/linkPreviews.svelte'
 
 const HASH = 'a'.repeat(64)
@@ -20,10 +23,10 @@ const yt = (over: Partial<Embed> = {}): Embed => ({
 
 const mounted: ReturnType<typeof mount>[] = []
 const onError = vi.fn()
-function show(embed: Embed, { mine = false, messageId = 'M1' } = {}) {
+function show(embed: Embed, { mine = false, messageId = 'M1', channelId = null as string | null } = {}) {
   const host = document.createElement('div')
   document.body.append(host)
-  mounted.push(mount(LinkEmbed, { target: host, props: { embed, messageId, mine, onError } }))
+  mounted.push(mount(LinkEmbed, { target: host, props: { embed, messageId, channelId, mine, onError } }))
   flushSync()
   return host
 }
@@ -180,6 +183,59 @@ describe('LinkEmbed', () => {
       title: 'Join the Jam', author: null, thumb: null,
     })
     const link = (host: HTMLElement, text: string) => [...host.querySelectorAll('a')].find((a) => a.textContent?.trim() === text)
+
+    describe('Share to stage (#234)', () => {
+      const shareBtn = (host: HTMLElement) => [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Share to stage')
+      beforeEach(() => {
+        app.state = { ...emptyState(), channels: {
+          V1: { id: 'V1', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 0 },
+          C1: { id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },
+        } }
+        voice.channelId = 'V1'
+        voice.connection = 'connected'
+      })
+      afterEach(() => {
+        voice.channelId = null
+        voice.connection = 'disconnected'
+      })
+
+      it('on a Spotify card in the chat of the call you are in', async () => {
+        const host = show(jam(), { channelId: 'V1' })
+        await settle()
+        shareBtn(host)!.click()
+        await settle()
+        expect(invoke).toHaveBeenCalledWith('share_to_stage', { channelId: 'V1', url: 'https://open.spotify.com/socialsession/ABC123abc123' })
+      })
+
+      it('not out of the call, in a text chat, or on another provider', async () => {
+        expect(shareBtn(show(sp(), { channelId: 'C1' }))).toBeUndefined()
+        expect(shareBtn(show(yt(), { channelId: 'V1' }))).toBeUndefined()
+        voice.connection = 'connecting'
+        flushSync()
+        expect(shareBtn(show(sp(), { channelId: 'V1' }))).toBeUndefined()
+        voice.connection = 'connected'
+        voice.channelId = 'V2'
+        flushSync()
+        expect(shareBtn(show(sp(), { channelId: 'V1' }))).toBeUndefined()
+      })
+
+      it('a refusal shows as the message\'s error', async () => {
+        const host = show(sp(), { channelId: 'V1' })
+        await settle()
+        invoke.mockImplementationOnce(async () => { throw { kind: 'rejected', message: "that isn't a Spotify link" } })
+        shareBtn(host)!.click()
+        await settle()
+        expect(onError).toHaveBeenCalledOnce()
+      })
+    })
+
+    it('no coloured bar down the left edge of any card', async () => {
+      for (const e of [sp(), yt()]) {
+        const host = show(e)
+        await settle()
+        expect(host.querySelector<HTMLElement>('.embed')!.style.getPropertyValue('--brand')).toBe('')
+      }
+    })
 
     it('a track: kind, title, artist, uncovered artwork and “Listen on Spotify”', async () => {
       const host = show(sp())

@@ -26,6 +26,7 @@ import type { Ready } from './protocol/Ready'
 import type { Server } from './protocol/Server'
 import type { SpeakerLink } from './protocol/SpeakerLink'
 import type { StreamInfo } from './protocol/StreamInfo'
+import type { StageShare } from './protocol/StageShare'
 import type { User } from './protocol/User'
 import type { VoiceMember } from './protocol/VoiceMember'
 import type { ServerVoiceMod } from './protocol/ServerVoiceMod'
@@ -123,6 +124,8 @@ export type AppState = {
   /** channelId -> its pins, newest pin first (#178): present once the pins popover fetched them, then kept live by
    *  events. Cleared on every Ready (the popover fetches again). */
   pins: Record<string, PinnedMessage[]>
+  /** channelId -> the Spotify shares on its stage, oldest first (#234; one per channel today). */
+  stageShares: Record<string, StageShare[]>
 }
 
 export type ClipFeed = { channelId: string; filter: ClipFilter; items: Message[] /* newest first */; start: boolean; loading: boolean; /** Clips deleted while a page was being fetched (it may still carry them). */ gone?: string[] }
@@ -139,7 +142,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -215,7 +218,21 @@ export function applyReady(s: AppState, r: Ready): AppState {
     // absent from older servers: no categories (the list shows the four kind sections)
     layouts: Object.fromEntries((r.layouts ?? []).map((l) => [l.server_id, { revision: l.revision, categories: l.categories }])),
     pins: {},
+    // absent from older servers
+    stageShares: (r.stage_shares ?? []).reduce<AppState['stageShares']>((acc, x) => withStageShare(acc, x), {}),
   }
+}
+
+/** `share` up on its channel's stage, after any share it replaces (the server announces those first). */
+function withStageShare(all: AppState['stageShares'], share: StageShare): AppState['stageShares'] {
+  const list = (all[share.channel_id] ?? []).filter((x) => x.id !== share.id)
+  return { ...all, [share.channel_id]: [...list, share] }
+}
+
+/** What `channelId`'s stage shows: its newest share, if any (#234). */
+export function stageShareIn(s: AppState, channelId: string): StageShare | null {
+  const list = s.stageShares[channelId]
+  return list?.length ? list[list.length - 1] : null
 }
 
 /** A chat's pins as fetched (newest pin first). */
@@ -744,6 +761,7 @@ function dropChannel(s: AppState, c: string): AppState {
     clipFacets: drop(s.clipFacets),
     clipFeeds: Object.fromEntries(Object.entries(s.clipFeeds).filter(([, f]) => f.channelId !== c)),
     pins: drop(s.pins),
+    stageShares: drop(s.stageShares),
   }
 }
 
@@ -856,6 +874,16 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     // Carries no view: lib/polls.svelte.ts fetches ours (#157).
     case 'PollChanged':
       return s
+    case 'StageShared':
+      return { ...s, stageShares: withStageShare(s.stageShares, e.d.share) }
+    case 'StageShareCleared': {
+      const c = e.d.channel_id
+      const list = s.stageShares[c]
+      if (!list?.some((x) => x.id === e.d.share_id)) return s
+      const rest = list.filter((x) => x.id !== e.d.share_id)
+      const { [c]: _gone, ...others } = s.stageShares
+      return { ...s, stageShares: rest.length ? { ...others, [c]: rest } : others }
+    }
     case 'LayoutChanged':
       return applyLayout(s, e.d.layout)
     case 'ChannelCreated':

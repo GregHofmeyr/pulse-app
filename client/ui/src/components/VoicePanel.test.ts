@@ -31,6 +31,8 @@ import type { Ready } from '../lib/protocol/Ready'
 import { motion } from '../lib/animate.svelte'
 import { stageLayout, tileScale } from '../lib/stagelayout'
 import { reloadVoiceChat, takeChatFocus, voiceChat } from '../lib/voiceChat.svelte'
+import { reloadStageView } from '../lib/stageShareView.svelte'
+import type { StageShare } from '../lib/protocol/StageShare'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -637,5 +639,114 @@ describe('the chat toggle (#226)', () => {
     expect(toggle.querySelector('.chat-pill')?.textContent).toBe('1')
     withReads(0, 0)
     expect(toggle.querySelector('.chat-dot, .chat-pill')).toBeNull()
+  })
+})
+
+describe('Spotify on the stage (#234)', () => {
+  const share = (id = 'SH1'): StageShare => ({
+    id, channel_id: 'V1', shared_by: 'U2', shared_at: new Date().toISOString(), expires_at: new Date(Date.now() + 3 * 3600_000).toISOString(),
+    embed: { url: 'https://open.spotify.com/socialsession/ABC123abc123', provider: 'spotify', kind: 'card', provider_id: 'jam:ABC123abc123', title: 'Join the Jam', description: null, site_name: 'Spotify', author: null, thumb: null, start: null, vertical: false },
+  })
+  const put = (s: StageShare) => {
+    app.state = applyEvent(app.state, { t: 'StageShared', d: { share: s } }, 0)
+    flushSync()
+  }
+  const spotifyBtn = () => q('.head .spotify')
+  beforeEach(() => reloadStageView())
+
+  it('the header button opens the paste box and shares the link', async () => {
+    mountPanel()
+    spotifyBtn()!.click()
+    flushSync()
+    const box = q('[role=dialog][aria-label="Share Spotify to the stage"]')!
+    const input = box.querySelector<HTMLInputElement>('input')!
+    input.value = 'spotify:socialsession:ABC123abc123'
+    input.dispatchEvent(new Event('input'))
+    flushSync()
+    box.querySelector<HTMLButtonElement>('button')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('share_to_stage', { channelId: 'V1', url: 'spotify:socialsession:ABC123abc123' })
+    expect(q('[aria-label="Share Spotify to the stage"][role=dialog]')).toBeNull()
+  })
+
+  it('a refused link says why in the box', async () => {
+    invoke.mockImplementation(async (cmd: string) => { if (cmd === 'share_to_stage') throw { kind: 'rejected', message: "that isn't a Spotify link" } })
+    mountPanel()
+    spotifyBtn()!.click()
+    flushSync()
+    const box = q('[role=dialog][aria-label="Share Spotify to the stage"]')!
+    const input = box.querySelector<HTMLInputElement>('input')!
+    input.value = 'https://example.com'
+    input.dispatchEvent(new Event('input'))
+    flushSync()
+    box.querySelector<HTMLButtonElement>('button')!.click()
+    await settle()
+    expect(box.querySelector('[role=alert]')).not.toBeNull()
+  })
+
+  it('out of the call there is nothing to share from', () => {
+    voice.channelId = null
+    voice.connection = 'disconnected'
+    mountPanel()
+    expect(spotifyBtn()).toBeNull()
+  })
+
+  it('a share shows as the strip above the tiles, for late joiners too', () => {
+    app.state = applyReady(emptyState(), { ...ready, stage_shares: [share()] })
+    mountPanel()
+    const strip = q('.sp-strip')!
+    expect(strip.textContent).toContain('Spotify Jam')
+    expect(strip.compareDocumentPosition(q('.grid-wrap')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('hidden, the header button is tinted and brings it back; a new share stays hidden', () => {
+    mountPanel()
+    put(share())
+    button('Hide for me')!.click()
+    flushSync()
+    expect(q('.sp-strip')).toBeNull()
+    expect(spotifyBtn()!.classList.contains('waiting')).toBe(true)
+    put(share('SH2'))
+    expect(q('.sp-strip')).toBeNull()
+    spotifyBtn()!.click()
+    flushSync()
+    expect(q('.sp-strip')).not.toBeNull()
+    expect(spotifyBtn()!.classList.contains('waiting')).toBe(false)
+  })
+
+  it('a new share shows the strip again after you minimised the last one', () => {
+    mountPanel()
+    put(share())
+    button('Minimise')!.click()
+    flushSync()
+    expect(q('.sp-strip')).toBeNull()
+    expect(q('.pill')).not.toBeNull()
+    put(share('SH2'))
+    expect(q('.sp-strip')).not.toBeNull()
+    expect(q('.pill')).toBeNull()
+  })
+
+  it('stopped for everyone, it goes', () => {
+    mountPanel()
+    put(share())
+    app.state = applyEvent(app.state, { t: 'StageShareCleared', d: { channel_id: 'V1', share_id: 'SH1' } }, 0)
+    flushSync()
+    expect(q('.sp-strip')).toBeNull()
+  })
+
+  it('watching a stream in full view hides it; leaving full view brings it back as it was', async () => {
+    mountPanel()
+    put(share())
+    button('Minimise')!.click()
+    flushSync()
+    await streamApi.watch('V1', 'U2')
+    await settle()
+    button('Full view')!.click()
+    await settle()
+    expect(q('.pill')).toBeNull()
+    expect(q('.sp-strip')).toBeNull()
+    callView.full = null
+    await settle()
+    expect(q('.pill')).not.toBeNull()
   })
 })

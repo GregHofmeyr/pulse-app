@@ -27,6 +27,11 @@
   import { callView, openFull } from '../lib/stream/viewer.svelte'
   import { PANEL_ID } from '../lib/stream/fullPanels'
   import { CHAT_TOGGLE_ID, toggleVoiceChat, voiceChat } from '../lib/voiceChat.svelte'
+  import SpotifyIcon from './SpotifyIcon.svelte'
+  import StageShareBox from './StageShareBox.svelte'
+  import StageSpotify from './StageSpotify.svelte'
+  import { stageShareIn } from '../lib/state'
+  import { modeFor, setMode } from '../lib/stageShareView.svelte'
 
   let { channelId, serverId, onMessage, onVoiceSettings }: {
     channelId: string
@@ -187,6 +192,19 @@
   })
 
   const inCall = $derived(inHere && voice.connection === 'connected')
+
+  // Spotify on the stage (#234): what's shared here, and the header button that shares a link or, while you've
+  // hidden the card, brings it back.
+  const share = $derived(stageShareIn(app.state, channelId))
+  const shareHidden = $derived(!!share && modeFor(share.id) === 'hidden')
+  let shareBoxOpen = $state(false)
+  $effect(() => {
+    if (!inCall) shareBoxOpen = false
+  })
+  function spotifyButton() {
+    if (share && shareHidden) setMode(share.id, 'strip')
+    else shareBoxOpen = !shareBoxOpen
+  }
   const canGoLive = $derived(inCall && !stream.live)
   const windows = isWindows()
 </script>
@@ -202,11 +220,18 @@
     <button type="button" class="icon-btn eye" aria-pressed={showEveryone} aria-label="Show non-streaming participants" data-tip="Show non-streaming participants" onclick={() => setShowEveryone(!showEveryone)}>
       <Icon name={showEveryone ? 'eye' : 'eyeOff'} size={18} />
     </button>
+    {#if inCall || shareHidden}
+      <!-- Spotify on the stage (#234): share a link, or bring back the card you hid (the button is tinted then) -->
+      <button type="button" class="icon-btn spotify" class:waiting={shareHidden} aria-haspopup={shareHidden ? undefined : 'dialog'} aria-expanded={shareHidden ? undefined : shareBoxOpen}
+        aria-label={shareHidden ? 'Show what’s shared from Spotify' : 'Share Spotify to the stage'} data-tip={shareHidden ? 'Show what’s shared from Spotify' : 'Share Spotify to the stage'} data-menu-toggle
+        onclick={spotifyButton}><SpotifyIcon /></button>
+    {/if}
     <!-- its chat (#226): the panel on the right; a click opens it with the message box focused (#202) -->
     <button type="button" id={CHAT_TOGGLE_ID} class="icon-btn chat" aria-pressed={voiceChat.open} aria-controls={PANEL_ID.right} aria-label="Chat{badge?.label ?? ''}" data-tip={voiceChat.open ? 'Hide chat' : 'Show chat'} onclick={() => toggleVoiceChat(true)}>
       <Icon name="message" size={18} />
       {#if badge?.mentions}<span class="pill chat-pill">{badge.mentions}</span>{:else if badge?.unread}<span class="chat-dot"></span>{/if}
     </button>
+    {#if shareBoxOpen && inCall}<StageShareBox {channelId} onClose={() => (shareBoxOpen = false)} />{/if}
   </div>
 
   {#if voice.error}<p class="error" role="alert">{voice.error}</p>{/if}
@@ -215,6 +240,9 @@
   {#if fullStreamer}
     {#key fullStreamer}<FullView {channelId} streamer={fullStreamer} {serverId} {onMessage} {onVoiceSettings} />{/key}
   {:else}
+    <!-- a stream in full view keeps the room: the share stays hidden for you until you leave it, then comes back as it was -->
+    {#if share}<StageSpotify {share} {serverId} {inCall} place="top" />{/if}
+    <div class="stage-area">
     <div class="grid-wrap" bind:this={stageEl}>
       {#if nobodyStreaming(tiles, showEveryone)}
         <p class="empty">Nobody's streaming — <button type="button" class="link-btn" onclick={() => setShowEveryone(true)}>show everyone</button></p>
@@ -234,6 +262,8 @@
           {/each}
         </div>
       {/if}
+    </div>
+    {#if share}<StageSpotify {share} {serverId} {inCall} place="corner" />{/if}
     </div>
   {/if}
 
@@ -288,7 +318,13 @@
 
 <style>
   .panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-  .head { height: 52px; flex-shrink: 0; padding: 0 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--ok-text); }
+  .head { position: relative; height: 52px; flex-shrink: 0; padding: 0 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--ok-text); }
+  /* Spotify's single-colour icon in the header's quiet grey; tinted green (behind it, never on it) while you've
+     hidden what's shared */
+  .spotify { color: var(--text-3); }
+  .spotify:hover { color: var(--text); }
+  .spotify.waiting { color: var(--text); background: var(--ok-soft); box-shadow: inset 0 0 0 1px var(--ok); }
+  .stage-area { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .title { color: var(--text); font-size: 15px; font-weight: 600; flex: 1; }
   .status { font-size: 12px; font-weight: 600; color: var(--ok-text); padding: 4px 10px; border-radius: var(--radius-lg); background: var(--ok-soft); }
   .status.warn { color: var(--warn-text); background: var(--warn-soft); }

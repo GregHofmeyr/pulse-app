@@ -218,3 +218,13 @@ describe('the pin line (#178)', () => {
     expect(ui.openPins).toBe('C1')
   })
 })
+
+describe('a stage share line (#234)', () => {
+  it('reads with today\'s name; older clients read its content as it is', () => {
+    const line = msg({ id: 'L1', author_id: null, kind: 'system', content: '🎵 sam shared a Jam to the stage', stage_share_line: { by: 'U2', kind: 'jam' } })
+    names.U2 = 'samantha'
+    show(line)
+    expect(document.querySelector('.system')!.textContent).toContain('🎵 samantha shared a Jam to the stage')
+    names.U2 = 'sam'
+  })
+})

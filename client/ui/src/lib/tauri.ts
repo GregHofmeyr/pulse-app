@@ -21,6 +21,7 @@ import type { Message } from './protocol/Message'
 import type { Pin } from './protocol/Pin'
 import type { PinDuration } from './protocol/PinDuration'
 import type { PinnedMessage } from './protocol/PinnedMessage'
+import type { StageShare } from './protocol/StageShare'
 import type { Wheel } from './protocol/Wheel'
 import type { CreateWheelRequest } from './protocol/CreateWheelRequest'
 import type { UpdateWheelRequest } from './protocol/UpdateWheelRequest'
@@ -184,6 +185,10 @@ export const api = {
   unpinMessage: (messageId: string) => invoke<void>('unpin_message', { messageId }),
   /** A chat's pins, newest pin first. */
   listPins: (channelId: string) => invoke<PinnedMessage[]>('list_pins', { channelId }),
+  /** Share a Spotify link to a voice channel's stage (#234); you must be in its call. */
+  shareToStage: (channelId: string, url: string) => invoke<StageShare>('share_to_stage', { channelId, url }),
+  /** Stop a stage share for everyone (#234). */
+  stopStageShare: (channelId: string, shareId: string) => invoke<void>('stop_stage_share', { channelId, shareId }),
   /** Hides one link's preview on your own message, or all of them (`url` null); the update also arrives as MessageUpdated. */
   hideEmbed: (messageId: string, url: string | null) => invoke<Message>('hide_embed', { messageId, url }),
   /** Our embed page's origin, only when signed in to the server the app's CSP allows framing; else null. */

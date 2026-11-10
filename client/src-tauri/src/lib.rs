@@ -336,6 +336,8 @@ pub fn run() {
             commands::pin_message,
             commands::unpin_message,
             commands::list_pins,
+            commands::share_to_stage,
+            commands::stop_stage_share,
             commands::embed_origin,
             window_bg::set_window_background,
             embed_window::open_embed_window,

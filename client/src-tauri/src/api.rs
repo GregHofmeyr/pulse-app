@@ -19,11 +19,11 @@ use pulse_protocol::rest::{
     SaveLayoutRequest, SearchRequest, SearchResults, SendMessageRequest, Server, ServerLayout,
     ServerVoiceMod, SessionResponse, SetClipViewRequest, SetMuteRequest, SetNicknameRequest,
     SetNotifyLevelRequest, SetServerVoiceRequest, SetShowcaseRequest, SetStatusRequest, Sound,
-    SpinAgainRequest, SpinWheelRequest, StartQotyRequest, Status, StreamInfo, StreamRole,
-    StreamSettings, StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest,
-    TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus,
-    UpdateProfileRequest, UpdateSoundRequest, UpdateWheelRequest, User, VoiceTokenResponse,
-    WatchRequest, Wheel,
+    SpinAgainRequest, SpinWheelRequest, StageShare, StageShareRequest, StartQotyRequest, Status,
+    StreamInfo, StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest,
+    TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse,
+    TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, UpdateWheelRequest, User,
+    VoiceTokenResponse, WatchRequest, Wheel,
 };
 use serde::de::DeserializeOwned;
 
@@ -827,6 +827,48 @@ impl Api {
     }
 
     /// A chat's pins, newest pin first.
+    /// Share a Spotify link to a server voice channel's stage (#234); you must be in its call.
+    pub async fn share_to_stage(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        url: &str,
+    ) -> Result<StageShare, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/channels/{channel}/stage-share", self.base))
+                .bearer_auth(token)
+                .json(&StageShareRequest { url: url.into() })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Stop the stage share `share_id` for everyone (#234).
+    pub async fn stop_stage_share(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        share_id: &str,
+    ) -> Result<(), ApiError> {
+        // A server-made id; anything else would be a different path.
+        if share_id.is_empty() || !share_id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return Err(ApiError::Rejected("that share isn't up".into()));
+        }
+        Self::ok_empty(
+            self.http
+                .delete(format!(
+                    "{}/channels/{channel}/stage-share/{share_id}",
+                    self.base
+                ))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     pub async fn list_pins(
         &self,
         token: &str,
@@ -4667,6 +4709,34 @@ mod tests {
         assert!(api.list_pins(&token, g.id).await.unwrap().is_empty());
         let again = api.unpin_message(&token, m.id).await.unwrap_err();
         assert!(matches!(again, ApiError::Rejected(_)), "{again:?}");
+    }
+
+    #[tokio::test]
+    async fn share_to_stage_needs_the_call_and_stop_checks_the_id() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let chans: Vec<Channel> =
+            testing::get_json(&app, &token, &format!("/servers/{}/channels", s.id)).await;
+        let lounge = chans.iter().find(|c| c.kind == ChannelKind::Voice).unwrap();
+        let api = Api::new(&format!("http://{}", app.addr));
+        // not in the call
+        let e = api
+            .share_to_stage(&token, lounge.id, "https://example.com/x")
+            .await
+            .unwrap_err();
+        assert!(matches!(e, ApiError::Forbidden(_)), "{e:?}");
+        // an id that isn't one never leaves the client
+        let e = api
+            .stop_stage_share(&token, lounge.id, "../pins")
+            .await
+            .unwrap_err();
+        assert!(matches!(e, ApiError::Rejected(_)), "{e:?}");
+        let e = api
+            .stop_stage_share(&token, lounge.id, "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+            .await
+            .unwrap_err();
+        assert!(matches!(e, ApiError::Forbidden(_)), "{e:?}");
     }
 
     // ---------- Clips ----------

@@ -10,10 +10,14 @@
   import { aspect, audioHeight, JAM_SUBTITLE, playable, playerSrc, popsOut, providerLabel, sandboxFor, spotifyCard } from '../lib/embeds'
   import { embed as origin, loadEmbedOrigin, play, player, playerKey, stop } from '../lib/linkPreviews.svelte'
   import type { LinkEmbed } from '../lib/protocol/LinkEmbed'
+  import { app } from '../lib/store.svelte'
+  import { voice } from '../lib/voice.svelte'
 
-  let { embed, messageId, mine, onError = () => {} }: {
+  let { embed, messageId, channelId = null, mine, onError = () => {} }: {
     embed: LinkEmbed
     messageId: string
+    /** The message's chat: in a voice channel whose call you're in, a Spotify card can go on its stage (#234). */
+    channelId?: string | null
     /** Your own message: you may remove the preview (for everyone). */
     mine: boolean
     /** A failed hide or pop-out, for the message's inline error. */
@@ -36,6 +40,21 @@
   const sp = $derived(spotifyCard(embed))
   const spTitle = $derived(sp?.jam ? 'Join the Jam' : (embed.title ?? embed.url))
   const spSub = $derived(sp?.jam ? JAM_SUBTITLE : (embed.author ?? embed.description))
+
+  // Share to stage (#234): a Spotify card in the chat of the voice channel you're in a call in.
+  const canShare = $derived(!!sp && !!channelId && app.state.channels[channelId]?.kind === 'voice' && voice.channelId === channelId && voice.connection === 'connected')
+  let sharing = $state(false)
+  async function shareToStage() {
+    if (!channelId || sharing) return
+    sharing = true
+    try {
+      await api.shareToStage(channelId, embed.url)
+    } catch (e) {
+      onError(errorText(e))
+    } finally {
+      sharing = false
+    }
+  }
 
   async function start() {
     if (pops) {
@@ -92,6 +111,9 @@
           <button class="btn btn-quiet sp-play" onclick={() => play(key)}><Icon name="play" size={14} />Play</button>
         {/if}
         <a class="btn {sp.jam ? 'btn-primary' : 'btn-secondary'} sp-open" href={embed.url} target="_blank" rel="noopener noreferrer">{sp.action}</a>
+        {#if canShare}
+          <button class="btn btn-quiet sp-share" disabled={sharing} data-tip="Show it on the stage for everyone in the call" onclick={() => void shareToStage()}>Share to stage</button>
+        {/if}
       </div>
     </div>
     {#if active}

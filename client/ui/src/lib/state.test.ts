@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyPinList, applyReady, applyMyVote, emptyState, setPins, addPending, pendingMessage, removePending, restoreUnsent, markHistory, applyLayout, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, setProfile, type AppState, type Pending } from './state'
+import { applyEvent, applyPinList, stageShareIn, applyReady, applyMyVote, emptyState, setPins, addPending, pendingMessage, removePending, restoreUnsent, markHistory, applyLayout, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, setProfile, type AppState, type Pending } from './state'
 import { feedKey, clipView, type ClipFilter } from './clips'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
@@ -10,6 +10,7 @@ import type { Category } from './protocol/Category'
 import type { ServerLayout } from './protocol/ServerLayout'
 import type { Quote } from './protocol/Quote'
 import type { StreamInfo } from './protocol/StreamInfo'
+import type { StageShare } from './protocol/StageShare'
 
 const ch = (id: string, kind: Channel['kind'] = 'text', server_id: string | null = 'S1', position = 0): Channel => ({
   id, server_id, kind, name: id, position,
@@ -361,6 +362,41 @@ describe('streams', () => {
     let s = applyEvent(base(), { t: 'StreamStarted', d: { stream: info('U2') } }, 0)
     s = applyEvent(s, { t: 'VoiceLeft', d: { channel_id: 'V1', user_id: 'U2' } }, 0)
     expect(s.streams['V1']['U2']).toBeDefined() // the server follows up with StreamEnded
+  })
+})
+
+describe('stage shares (#234)', () => {
+  const share = (id: string, channel_id = 'V1', shared_by = 'U2'): StageShare => ({
+    id, channel_id, shared_by, shared_at: '2026-11-10T10:00:00.000Z', expires_at: '2026-11-10T13:00:00.000Z',
+    embed: { url: 'https://open.spotify.com/track/x', provider: 'spotify', kind: 'player', provider_id: 'track:x', title: 'A song', description: null, site_name: 'Spotify', author: 'kim', thumb: null, start: null, vertical: false },
+  })
+  const base = () => applyReady(emptyState(), ready())
+
+  it('ready_lists_them_and_a_reconnect_replaces', () => {
+    const s = applyReady(emptyState(), ready({ stage_shares: [share('a')] }))
+    expect(stageShareIn(s, 'V1')?.id).toBe('a')
+    expect(stageShareIn(applyReady(s, ready()), 'V1')).toBeNull()
+    // an older server sends none
+    expect(applyReady(emptyState(), ready()).stageShares).toEqual({})
+  })
+
+  it('a_share_replaces_and_a_clear_removes_only_its_own', () => {
+    let s = applyEvent(base(), { t: 'StageShared', d: { share: share('a') } }, 0)
+    s = applyEvent(s, { t: 'StageShareCleared', d: { channel_id: 'V1', share_id: 'a' } }, 0)
+    s = applyEvent(s, { t: 'StageShared', d: { share: share('b', 'V1', 'U3') } }, 0)
+    expect(stageShareIn(s, 'V1')?.id).toBe('b')
+    // a late clear for the old one changes nothing
+    const same = applyEvent(s, { t: 'StageShareCleared', d: { channel_id: 'V1', share_id: 'a' } }, 0)
+    expect(same).toBe(s)
+    s = applyEvent(s, { t: 'StageShareCleared', d: { channel_id: 'V1', share_id: 'b' } }, 0)
+    expect(stageShareIn(s, 'V1')).toBeNull()
+    expect(s.stageShares).toEqual({})
+  })
+
+  it('goes_with_a_deleted_channel', () => {
+    const s = applyEvent(base(), { t: 'StageShared', d: { share: share('a') } }, 0)
+    const gone = applyEvent(s, { t: 'ChannelDeleted', d: { channel_id: 'V1', server_id: 'S1' } }, 0)
+    expect(stageShareIn(gone, 'V1')).toBeNull()
   })
 })
 
