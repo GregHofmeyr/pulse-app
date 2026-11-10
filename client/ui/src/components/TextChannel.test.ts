@@ -22,6 +22,12 @@ const msg = (n: number): Message => ({
 })
 const page = (from: number, n: number) => Array.from({ length: n }, (_, i) => msg(from + i))
 
+// Back to the implementation above (the held scroll-up page) before every test: some swap in their own, and the
+// next test, whichever it is, must not run on it.
+beforeEach(() => invoke.mockReset())
+// jsdom has no scrolling, and the list scrolls itself on mount: not only the tests that stub it need one
+Element.prototype.scrollTo ??= () => {}
+
 describe('TextChannel: leaving while an older page is loading', () => {
   it('drops the late page (no hole) and does not throw', async () => {
     const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }

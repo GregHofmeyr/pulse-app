@@ -24,7 +24,7 @@ const flush = () => new Promise((r) => setTimeout(r, 0))
 
 beforeEach(() => {
   resetWheels()
-  invoke.mockClear()
+  invoke.mockReset() // back to the implementation above: a test that swaps it in must not leave it to the next
   answers = []
   fails = []
   wheels.server = { S1: [w] }
