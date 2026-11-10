@@ -71,6 +71,35 @@ opt-level = 3
 [profile.dev.package.blake2]
 opt-level = 3
 
+# Image decoding, resizing and WebP encoding (uploads, link preview thumbnails, Go Live previews).
+# Unoptimised, one 1280x720 link thumbnail took ~0.4 s, and the server processes 2 images at once per
+# process: a test binary of link previews queued past its 5 s waits under load (#274). Optimised it is
+# ~15 ms (the server's resize goes through DynamicImage so it runs this optimised copy, see process.rs).
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.crc32fast]
+opt-level = 3
+[profile.dev.package.simd-adler32]
+opt-level = 3
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+[profile.dev.package.gif]
+opt-level = 3
+[profile.dev.package.weezl]
+opt-level = 3
+[profile.dev.package.color_quant]
+opt-level = 3
+[profile.dev.package.image-webp]
+opt-level = 3
+[profile.dev.package.libwebp-sys2]
+opt-level = 3
+
 # Release builds (installer, server image). Fat LTO + one codegen unit: smaller code
 # (tract/ndarray generics are otherwise duplicated across 16 units) for about 3x the build time.
 # Measured with strip: Linux binary -33 MB, Windows -2.8 MB; speed was not measured. strip also

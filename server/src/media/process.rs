@@ -668,16 +668,22 @@ fn fit_long_side(img: &RgbaImage, side: u32) -> RgbaImage {
 }
 
 /// Scale `img` to `nw`×`nh`.
+///
+/// Through `DynamicImage`, whose methods run the scaling code compiled inside the image crate,
+/// which dev builds optimise (Cargo.toml). `imageops::resize` on an `RgbaImage` is generic, so it
+/// was compiled here, unoptimised in debug builds: ~0.38 s for one 1280×720 link thumbnail, which
+/// tests waited on behind the two processing slots (#274). The same functions, the same pixels.
 fn resize(img: &RgbaImage, nw: u32, nh: u32) -> RgbaImage {
     let (w, h) = img.dimensions();
+    let img = DynamicImage::ImageRgba8(img.clone());
     // Lanczos cost grows with the shrink ratio; a box pre-shrink to twice the target keeps big
     // frames cheap without visible loss.
-    if w > 4 * nw || h > 4 * nh {
-        let pre = imageops::thumbnail(img, 2 * nw, 2 * nh);
-        imageops::resize(&pre, nw, nh, FilterType::Lanczos3)
+    let img = if w > 4 * nw || h > 4 * nh {
+        img.thumbnail_exact(2 * nw, 2 * nh)
     } else {
-        imageops::resize(img, nw, nh, FilterType::Lanczos3)
-    }
+        img
+    };
+    img.resize_exact(nw, nh, FilterType::Lanczos3).into_rgba8()
 }
 
 /// Encode frames (all the same size) as WebP: one frame gives a still image.
@@ -771,6 +777,17 @@ mod tests {
             assert_eq!(f.delay().numer_denom_ms(), (50, 1));
             assert_eq!(f.buffer().dimensions(), (128, 128));
         }
+    }
+
+    #[test]
+    fn resize_gives_imageops_pixels_with_and_without_the_pre_shrink() {
+        let img = RgbaImage::from_fn(200, 120, |x, y| {
+            Rgba([x as u8, y as u8, (x ^ y) as u8, 255])
+        });
+        let lanczos = |i: &RgbaImage, w, h| imageops::resize(i, w, h, FilterType::Lanczos3);
+        assert!(resize(&img, 90, 54) == lanczos(&img, 90, 54));
+        let pre = imageops::thumbnail(&img, 40, 24);
+        assert!(resize(&img, 20, 12) == lanczos(&pre, 20, 12));
     }
 
     #[test]
