@@ -6,6 +6,11 @@ const KEY = 'pulse.voiceChat'
 /** The stage's chat toggle: closing the panel from inside hands the focus back to it. */
 export const CHAT_TOGGLE_ID = 'voice-chat-toggle'
 
+/** A stream in full view (#63) shows the same chat as a strip beside the video, inside the full view (so it stays in
+ *  full screen): its id, and its toggle's in the full view's bar. Open or closed is the panel's own `open`. */
+export const STRIP_ID = 'stream-chat'
+export const STRIP_TOGGLE_ID = 'stream-chat-toggle'
+
 function saved(): boolean {
   try {
     const v: unknown = JSON.parse(localStorage.getItem(KEY) ?? '{}')

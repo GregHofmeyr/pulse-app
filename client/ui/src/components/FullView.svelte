@@ -1,13 +1,21 @@
 <script lang="ts">
-  import { untrack } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import Icon from './Icon.svelte'
+  import ColumnHandle from './ColumnHandle.svelte'
+  import TextChannel from './TextChannel.svelte'
   import StreamDiagOverlay from './StreamDiagOverlay.svelte'
   import Select from './Select.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
   import UserTile from './UserTile.svelte'
   import { overlayShown } from '../lib/escape'
   import { menuPoint } from '../lib/participantMenu'
-  import { app } from '../lib/store.svelte'
+  import { app, clock } from '../lib/store.svelte'
+  import { chatBadge } from '../lib/conversations'
+  import { fitStrip, STRIP } from '../lib/columns'
+  import { columns, resetColumn, setColumn } from '../lib/columns.svelte'
+  import { exitFade } from '../lib/exit'
+  import { api } from '../lib/tauri'
+  import { setVoiceChat, STRIP_ID, STRIP_TOGGLE_ID, toggleVoiceChat, voiceChat } from '../lib/voiceChat.svelte'
   import { callRoster, displayName, liveIn } from '../lib/selectors'
   import { selfVoice } from '../lib/voice.svelte'
   import { volumeLabel } from '../lib/voiceui'
@@ -50,6 +58,44 @@
     }
   })
 
+  // The channel's chat as a strip beside the stream (#63): the voice chat panel's own view and its open/closed (the
+  // shell keeps it out of its right column meanwhile), with its own width. Inside this view, so it stays in full screen.
+  const channel = $derived(app.state.channels[channelId])
+  const chatShown = $derived(!!channel && voiceChat.open)
+  // unreads and mentions while it's closed, as on the stage header's toggle (#230)
+  const badge = $derived(channel && !voiceChat.open ? chatBadge(app.state, channel, clock.nowIso) : null)
+  let body = $state<HTMLElement>()
+  let bodyWidth = $state(0)
+  $effect(() => {
+    if (!body || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver((entries) => (bodyWidth = entries[entries.length - 1]?.contentRect.width ?? 0))
+    ro.observe(body)
+    return () => ro.disconnect()
+  })
+  const strip = $derived(fitStrip(columns.strip, bodyWidth))
+  let stripEl = $state<HTMLElement>()
+  /** The strip's close button: it goes, and the focus it had goes to the toggle. */
+  function closeChat() {
+    const at = document.activeElement
+    const inside = !at || at === document.body || !!stripEl?.contains(at)
+    setVoiceChat(false)
+    if (inside) void tick().then(() => document.getElementById(STRIP_TOGGLE_ID)?.focus())
+  }
+
+  // Full screen (#63): the window goes full screen (as a clip's player does) and this view covers the whole app, so
+  // dialogs, menus, popovers and toasts still show over it. Leaving (the button, Esc, or this view going) puts the
+  // window back as it was.
+  let screen = $state(false)
+  let screenOn = false // for the teardown, which sees state as it was
+  let windowWas: Promise<boolean> = Promise.resolve(false)
+  function setScreen(on: boolean) {
+    if (on === screenOn) return
+    screen = screenOn = on
+    if (on) windowWas = Promise.resolve(api.setFullscreen(true)).then((was) => was === true, () => false)
+    else void windowWas.then((was) => api.setFullscreen(was)).catch(() => {})
+  }
+  $effect(() => () => setScreen(false))
+
   function stop() {
     // first: closing full view unmounts this, and the props go with it
     void streamApi.unwatch(channelId, streamer)
@@ -63,6 +109,12 @@
     if (document.activeElement?.closest(TYPING)) return
     // a dialog, popover or menu over this view takes Esc first (its own listener may run after this one)
     if (overlayShown()) return
+    // full screen first, as a clip's player leaves it; then back to the grid
+    if (screenOn) {
+      e.preventDefault()
+      setScreen(false)
+      return
+    }
     closeFull()
   }
   let menu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
@@ -92,7 +144,8 @@
     const p = press
     press = null
     // checked again at the click: an activation noticed after the press still counts
-    if (!p?.armed || justActivated() || e.detail > 1 || Math.hypot(e.clientX - p.x, e.clientY - p.y) > DRAG_PX) return
+    // not in full screen: a stray click there would throw you out of it and the view at once
+    if (!p?.armed || screenOn || justActivated() || e.detail > 1 || Math.hypot(e.clientX - p.x, e.clientY - p.y) > DRAG_PX) return
     closeFull()
   }
   let stage = $state<HTMLElement>()
@@ -105,9 +158,10 @@
 
 <svelte:window onkeydown={key} onfocus={() => (activatedAt = performance.now())} />
 
-<div class="full-view">
+<div class="full-view" class:screen>
   <div class="bar">
-    {#if panels}
+    <!-- the shell's side panels are under full screen: no toggles for them there -->
+    {#if panels && !screen}
       <button type="button" class="panel-toggle" id={PANEL_TOGGLE_ID.left} aria-label={panels.leftName} aria-controls={PANEL_ID.left} aria-pressed={panels.left}
         data-tip="{panels.left ? 'Hide' : 'Show'} {panels.leftName.toLowerCase()}" onclick={() => panels.toggle('left')}><Icon name="panelLeft" size={18} /></button>
     {/if}
@@ -127,15 +181,27 @@
           Volume <strong>{volumeLabel(volume)}</strong>
           <input type="range" min="0" max="200" step="5" value={volume} aria-label="Stream volume" oninput={(e) => streamApi.setStreamVolume(streamer, +e.currentTarget.value)} />
         </label>
+        <div class="tools">
+          <!-- the channel's chat beside the stream (#63); a click opens it with the message box focused (#202) -->
+          <button type="button" id={STRIP_TOGGLE_ID} class="tool chat" aria-pressed={voiceChat.open} aria-controls={STRIP_ID} aria-label="Chat{badge?.label ?? ''}"
+            data-tip={voiceChat.open ? 'Hide chat' : 'Show chat'} onclick={() => toggleVoiceChat(true)}>
+            <Icon name="message" size={18} />
+            {#if badge?.mentions}<span class="pill chat-pill">{badge.mentions}</span>{:else if badge?.unread}<span class="chat-dot"></span>{/if}
+          </button>
+          <button type="button" class="tool" aria-label={screen ? 'Exit full screen' : 'Full screen'} data-tip={screen ? 'Exit full screen' : 'Full screen'}
+            onclick={() => setScreen(!screen)}><Icon name="fullscreen" size={18} /></button>
+        </div>
         <button type="button" class="btn btn-danger stop" onclick={stop}>Stop watching</button>
       </div>
     </div>
-    {#if panels?.hasRight}
+    {#if panels?.hasRight && !screen}
       {@const name = panels.rightName ?? 'Members'}
       <button type="button" class="panel-toggle" id={PANEL_TOGGLE_ID.right} aria-label={name} aria-controls={PANEL_ID.right} aria-pressed={panels.right}
         data-tip="{panels.right ? 'Hide' : 'Show'} {name.toLowerCase()}" onclick={() => panels.toggle('right')}><Icon name="panelRight" size={18} /></button>
     {/if}
   </div>
+  <div class="body" bind:this={body}>
+  <div class="watch">
   <!-- focusable from script only: the stream's menu hands focus back here when it closes -->
   <div class="stage" bind:this={stage} tabindex="-1">
     {#if watch}<div class="host" {@attach hostVideo(channelId, streamer)}></div>{/if}
@@ -150,6 +216,21 @@
       <div class="slot"><UserTile {entry} {serverId} compact onMenu={(e, a) => (menu = e.type === 'click' && menu?.opener === a ? null : { userId: entry.userId, ...menuPoint(e, a), opener: a })} /></div>
     {/each}
   </div>
+  </div>
+  {#if chatShown}
+    <!-- the columns' handle, centred on the strip's edge -->
+    <div class="grip"><ColumnHandle side="right" width={strip.width} min={STRIP.min} max={strip.max} controls={STRIP_ID} label="Resize the chat"
+      onResize={(w, done) => setColumn('strip', w, done)} onReset={() => resetColumn('strip')} /></div>
+  {/if}
+  {#if chatShown}
+    <!-- fades in and out as the stage's chat panel does (not under reduced motion, while live or unfocused); leaving,
+         it lies over the stream's edge so the stream takes the room back at once -->
+    <aside id={STRIP_ID} class="side-chat fade-in" aria-label="Chat" style:width="{strip.width}px" bind:this={stripEl}
+      onanimationend={(e) => e.currentTarget.classList.remove('fade-in')} out:exitFade onoutrostart={(e) => e.currentTarget.classList.add('leaving')}>
+      <TextChannel {channelId} {serverId} panel={{ onClose: closeChat, shown: true }} />
+    </aside>
+  {/if}
+  </div>
 </div>
 {#if menu}
   {#key menu}<ParticipantMenu {channelId} {serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} {onVoiceSettings} onClose={() => (menu = null)} />{/key}
@@ -157,12 +238,24 @@
 
 <style>
   .full-view { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: #000; }
+  /* full screen (#63): the whole window, over the app's own panels (z 0-19) and under its dialogs (20 and up), menus,
+     popovers, toasts and tooltips, so they still show */
+  .full-view.screen { position: fixed; inset: 0; z-index: 19; }
   .bar { flex-shrink: 0; min-height: 52px; padding: 4px 10px 5px; display: flex; align-items: flex-start; gap: 14px; background: var(--bg-1); border-bottom: 1px solid var(--bg-3); }
   /* the side panel toggles, one in each top corner; pressed while its panel shows */
-  .panel-toggle { width: 32px; height: 32px; margin-top: 5px; flex-shrink: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); display: grid; place-items: center; }
-  .panel-toggle:hover { background: var(--bg-3); color: var(--text); }
-  .panel-toggle[aria-pressed='true'] { background: var(--accent-mid); color: var(--accent-text); }
-  .panel-toggle[aria-pressed='true']:hover { background: var(--accent-strong); }
+  /* the chat and full screen buttons (#63) look the same, in the controls */
+  .panel-toggle, .tool { width: 32px; height: 32px; flex-shrink: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); display: grid; place-items: center; }
+  .panel-toggle { margin-top: 5px; }
+  .panel-toggle:hover, .tool:hover { background: var(--bg-3); color: var(--text); }
+  .panel-toggle[aria-pressed='true'], .tool[aria-pressed='true'] { background: var(--accent-mid); color: var(--accent-text); }
+  .panel-toggle[aria-pressed='true']:hover, .tool[aria-pressed='true']:hover { background: var(--accent-strong); }
+  .tools { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+  /* the chat's dot and count (#230), as on the stage header's toggle, ringed in the bar's colour */
+  .chat { position: relative; --ring: var(--bg-1); }
+  .chat:hover { --ring: var(--bg-3); }
+  .chat-dot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 2px var(--ring); }
+  .pill { min-width: 16px; height: 16px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-block; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((16px - 1cap) / 2) 4px; }
+  .chat-pill { position: absolute; top: -2px; right: -4px; box-shadow: 0 0 0 2px var(--ring); }
   .back { flex-shrink: 0; white-space: nowrap; padding-left: 8px; gap: 4px; }
   /* rows of 42px (the quality select's height): 52px in all on one row, as before, with the corner toggles centred on the first */
   .controls { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
@@ -172,9 +265,17 @@
   .ctl { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); white-space: nowrap; }
   input[type='range'] { width: 120px; accent-color: var(--accent); }
   .stop { flex-shrink: 0; white-space: nowrap; }
+  /* under the bar: the stream with its people below, and the chat strip (#63) beside both */
+  .body { position: relative; flex: 1; min-height: 0; display: flex; }
+  .watch { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  /* a zero-width slot: the handle's 8px (and its -8px margins) sit centred on the strip's edge */
+  .grip { flex: 0 0 0; display: flex; justify-content: center; }
+  .side-chat { flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; background: var(--bg-1); border-left: 1px solid var(--bg-3); overflow: hidden; }
+  .side-chat:global(.leaving) { position: absolute; top: 0; right: 0; bottom: 0; z-index: 1; pointer-events: none; }
   .stage { position: relative; flex: 1; min-height: 0; }
   .host { position: absolute; inset: 0; }
   .unfocus { position: absolute; inset: 0; cursor: zoom-out; }
+  .screen .unfocus { cursor: default; }
   .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .5); color: #fff; font-size: 18px; font-weight: 600; pointer-events: none; }
   .strip { flex-shrink: 0; padding: 8px 12px; display: flex; gap: 8px; overflow-x: auto; background: var(--bg-1); border-top: 1px solid var(--bg-3); }

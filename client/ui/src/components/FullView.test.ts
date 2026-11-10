@@ -26,6 +26,9 @@ import { stream, streamApi } from '../lib/stream/stream.svelte'
 import { callView, openFull } from '../lib/stream/viewer.svelte'
 import { fullPanelsContext, type PanelSide } from '../lib/stream/fullPanels'
 import type { Ready } from '../lib/protocol/Ready'
+import { reloadVoiceChat } from '../lib/voiceChat.svelte'
+import { reloadColumns } from '../lib/columns.svelte'
+import { motion } from '../lib/animate.svelte'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -400,5 +403,212 @@ describe('full view', () => {
     flushSync()
     expect((q('.full-view input[aria-label="Stream volume"]') as HTMLInputElement).value).toBe('170')
     expect(stream.volumes).toEqual({ U2: 170 })
+  })
+})
+
+// #63: the channel's chat as a side strip beside the stream, and the stream in full screen with the strip inside it
+describe('chat strip and full screen (#63)', () => {
+  const chatToggle = () => q('.full-view #stream-chat-toggle') as HTMLButtonElement | null
+  const strip = () => q('.full-view aside#stream-chat')
+  const screenBtn = () => (button('Full screen') ?? button('Exit full screen')) as HTMLButtonElement | undefined
+  const esc = (target: EventTarget = window) => {
+    target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+  }
+  const fullscreenCalls = () => invoke.mock.calls.filter((c) => c[0] === 'set_fullscreen').map((c) => (c[1] as { on: boolean }).on)
+  const openChatFromStorage = () => {
+    localStorage.setItem('pulse.voiceChat', JSON.stringify({ open: true }))
+    reloadVoiceChat()
+  }
+
+  beforeEach(() => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages' ? [] : undefined))
+    Element.prototype.scrollTo ??= () => {}
+    reloadVoiceChat()
+    reloadColumns()
+  })
+  afterEach(() => {
+    motion.reducedMotion = false
+  })
+
+  it('a labelled chat toggle in the bar opens the same chat beside the stream, and remembers it on this device', async () => {
+    await fullOnSam()
+    const t = chatToggle()!
+    expect(t.closest('.trail')).not.toBeNull()
+    expect(t.getAttribute('aria-label')).toBe('Chat')
+    expect(t.getAttribute('aria-pressed')).toBe('false')
+    expect(t.getAttribute('aria-controls')).toBe('stream-chat')
+    expect(t.dataset.tip).toBe('Show chat')
+    expect(t.querySelector('svg')).not.toBeNull()
+    expect(strip()).toBeNull()
+    t.click()
+    await settle()
+    const s = strip()!
+    expect(s.getAttribute('aria-label')).toBe('Chat')
+    // the voice chat panel's own view: its Chat header, close button and composer
+    expect(s.querySelector('.chan.panel .head .title')?.textContent).toBe('Chat')
+    expect(s.querySelector('[aria-label="Close chat"]')).not.toBeNull()
+    expect(s.querySelector('[role="textbox"]')).not.toBeNull()
+    // beside the stream, not instead of it
+    expect(q('.full-view .stage video')).not.toBeNull()
+    expect(t.getAttribute('aria-pressed')).toBe('true')
+    expect(t.dataset.tip).toBe('Hide chat')
+    expect(JSON.parse(localStorage.getItem('pulse.voiceChat')!)).toEqual({ open: true })
+    t.click()
+    await settle()
+    expect(strip()).toBeNull()
+    expect(JSON.parse(localStorage.getItem('pulse.voiceChat')!)).toEqual({ open: false })
+  })
+
+  it('opens already open when the chat was left open, fading in', async () => {
+    openChatFromStorage()
+    await fullOnSam()
+    expect(strip()).not.toBeNull()
+    // app.css: no animation under reduced motion
+    expect(strip()!.classList.contains('fade-in')).toBe(true)
+  })
+
+  it("the strip's close button closes it and hands the focus to the toggle", async () => {
+    await fullOnSam()
+    chatToggle()!.click()
+    await settle()
+    const close = strip()!.querySelector<HTMLButtonElement>('[aria-label="Close chat"]')!
+    close.focus()
+    close.click()
+    await settle()
+    expect(document.activeElement).toBe(chatToggle())
+    expect(chatToggle()!.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('under reduced motion the strip goes at once', async () => {
+    motion.reducedMotion = true
+    await fullOnSam()
+    chatToggle()!.click()
+    await settle()
+    chatToggle()!.click()
+    flushSync()
+    expect(strip()).toBeNull()
+  })
+
+  it('new messages while it is closed: a dot on the toggle (a count for mentions); none while open', async () => {
+    await fullOnSam()
+    const read = { channel_id: 'V1', last_read_message_id: null, unread: 3, mentions: 0 }
+    app.state = { ...app.state, reads: { ...app.state.reads, V1: read } }
+    flushSync()
+    expect(chatToggle()!.querySelector('.chat-dot')).not.toBeNull()
+    expect(chatToggle()!.getAttribute('aria-label')).toBe('Chat, unread messages')
+    app.state = { ...app.state, reads: { ...app.state.reads, V1: { ...read, mentions: 2 } } }
+    flushSync()
+    expect(chatToggle()!.querySelector('.chat-dot')).toBeNull()
+    expect(chatToggle()!.querySelector('.chat-pill')?.textContent).toBe('2')
+    expect(chatToggle()!.getAttribute('aria-label')).toBe('Chat, 2 mentions')
+    chatToggle()!.click()
+    await settle()
+    expect(chatToggle()!.querySelector('.chat-dot, .chat-pill')).toBeNull()
+    expect(chatToggle()!.getAttribute('aria-label')).toBe('Chat')
+  })
+
+  it('resizes like the other columns, with its own remembered width', async () => {
+    await fullOnSam()
+    chatToggle()!.click()
+    await settle()
+    const h = q('.full-view [role=separator][aria-label="Resize the chat"]')!
+    expect(h.getAttribute('aria-controls')).toBe('stream-chat')
+    expect(h.getAttribute('aria-valuenow')).toBe('300')
+    expect(strip()!.style.width).toBe('300px')
+    h.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(strip()!.style.width).toBe('316px')
+    expect(JSON.parse(localStorage.getItem('pulse.columns')!).strip).toBe(316)
+    // the stage's chat panel keeps its own
+    expect(JSON.parse(localStorage.getItem('pulse.columns')!).chat).toBeNull()
+  })
+
+  it('full screen: the window goes full screen with the stream over the whole app, the strip inside it', async () => {
+    openChatFromStorage()
+    await fullOnSam()
+    const b = screenBtn()!
+    expect(b.getAttribute('aria-label')).toBe('Full screen')
+    expect(b.dataset.tip).toBe('Full screen')
+    expect(b.closest('.trail')).not.toBeNull()
+    expect(q('.full-view')!.classList.contains('screen')).toBe(false)
+    b.click()
+    await settle()
+    expect(fullscreenCalls()).toEqual([true])
+    expect(q('.full-view')!.classList.contains('screen')).toBe(true)
+    expect(screenBtn()!.getAttribute('aria-label')).toBe('Exit full screen')
+    expect(q('.full-view.screen aside#stream-chat')).not.toBeNull()
+    expect(q('.full-view.screen #stream-chat-toggle')).not.toBeNull()
+    screenBtn()!.click()
+    await settle()
+    expect(fullscreenCalls()).toEqual([true, false])
+    expect(q('.full-view')!.classList.contains('screen')).toBe(false)
+  })
+
+  it('a window already full screen stays full screen after', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'set_fullscreen' ? true : cmd === 'list_messages' ? [] : undefined))
+    await fullOnSam()
+    screenBtn()!.click()
+    await settle()
+    screenBtn()!.click()
+    await settle()
+    expect(fullscreenCalls()).toEqual([true, true])
+  })
+
+  it('Esc leaves full screen first, then full view; Esc in the message box does neither', async () => {
+    await fullOnSam()
+    chatToggle()!.click()
+    await settle()
+    screenBtn()!.click()
+    await settle()
+    const box = strip()!.querySelector<HTMLElement>('[role="textbox"]')!
+    box.focus()
+    esc(box)
+    expect(q('.full-view.screen')).not.toBeNull()
+    box.blur()
+    esc()
+    await settle()
+    expect(fullscreenCalls()).toEqual([true, false])
+    expect(q('.full-view')).not.toBeNull()
+    expect(q('.full-view.screen')).toBeNull()
+    esc()
+    expect(q('.full-view')).toBeNull()
+  })
+
+  it('leaving full view while full screen gives the window back', async () => {
+    await fullOnSam()
+    screenBtn()!.click()
+    await settle()
+    button('Back')!.click()
+    await settle()
+    expect(q('.full-view')).toBeNull()
+    expect(fullscreenCalls()).toEqual([true, false])
+  })
+
+  it('in full screen the hidden side panels have no toggles, and a click on the stream stays', async () => {
+    const panels = { left: false, right: false, leftName: 'Channels', hasRight: true, toggle: () => {} }
+    cmp = mount(VoicePanel, { target: document.body, context: fullPanelsContext(panels),
+      props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
+    await streamApi.watch('V1', 'U2')
+    openFull(SAM)
+    await settle()
+    expect(document.querySelectorAll('.full-view .panel-toggle')).toHaveLength(2)
+    screenBtn()!.click()
+    await settle()
+    expect(document.querySelectorAll('.full-view .panel-toggle')).toHaveLength(0)
+    await new Promise((r) => setTimeout(r, 350))
+    const u = q('.full-view .unfocus')!
+    u.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100, clientY: 100, button: 0 }))
+    u.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1, clientX: 100, clientY: 100 }))
+    flushSync()
+    expect(callView.full).toEqual(SAM)
+  })
+
+  it("the stage header's chat toggle points at the strip while a stream is in full view", async () => {
+    await fullOnSam()
+    expect(q('#voice-chat-toggle')!.getAttribute('aria-controls')).toBe('stream-chat')
+    q('#voice-chat-toggle')!.click()
+    await settle()
+    expect(strip()).not.toBeNull()
   })
 })

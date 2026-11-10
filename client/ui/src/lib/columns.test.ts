@@ -1,5 +1,27 @@
 import { describe, expect, it } from 'vitest'
-import { COLUMNS, fitColumns, keyWidth, MAIN_MIN, RIGHT_DEFAULT, RIGHT_MIN, type FitInput } from './columns'
+import { COLUMNS, fitColumns, fitStrip, keyWidth, MAIN_MIN, RIGHT_DEFAULT, RIGHT_MIN, STRIP, type FitInput } from './columns'
+
+// #63: the chat strip beside a stream in full view
+describe("the stream's chat strip (#63)", () => {
+  it('is narrower than the stage chat by default, with the same least width', () => {
+    expect(STRIP.def).toBeLessThan(RIGHT_DEFAULT.chat)
+    expect(STRIP.min).toBe(RIGHT_MIN.chat)
+    expect(STRIP.max).toBe(COLUMNS.right.max)
+  })
+
+  it('not laid out yet: only its limits apply', () => {
+    expect(fitStrip(null, 0)).toEqual({ width: STRIP.def, max: STRIP.max })
+    expect(fitStrip(9999, 0)).toEqual({ width: STRIP.max, max: STRIP.max })
+    expect(fitStrip(10, 0)).toEqual({ width: STRIP.min, max: STRIP.max })
+  })
+
+  it("leaves the stream at least the main area's least width, never going under its own", () => {
+    expect(fitStrip(400, 1200)).toEqual({ width: 400, max: STRIP.max })
+    expect(fitStrip(450, 700)).toEqual({ width: 700 - MAIN_MIN, max: 700 - MAIN_MIN })
+    // too narrow for both: the strip keeps its least width
+    expect(fitStrip(null, 500)).toEqual({ width: STRIP.min, max: STRIP.min })
+  })
+})
 
 // the minimum window (900px) less the body's 8px side padding
 const MIN_BODY = 900 - 16

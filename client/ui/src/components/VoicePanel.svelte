@@ -26,7 +26,7 @@
   import { findWatch, stream } from '../lib/stream/stream.svelte'
   import { callView, openFull } from '../lib/stream/viewer.svelte'
   import { PANEL_ID } from '../lib/stream/fullPanels'
-  import { CHAT_TOGGLE_ID, toggleVoiceChat, voiceChat } from '../lib/voiceChat.svelte'
+  import { CHAT_TOGGLE_ID, STRIP_ID, toggleVoiceChat, voiceChat } from '../lib/voiceChat.svelte'
   import SpotifyIcon from './SpotifyIcon.svelte'
   import StageShareBox from './StageShareBox.svelte'
   import StageSpotify from './StageSpotify.svelte'
@@ -226,8 +226,9 @@
         aria-label={shareHidden ? 'Show what’s shared from Spotify' : 'Share Spotify to the stage'} data-tip={shareHidden ? 'Show what’s shared from Spotify' : 'Share Spotify to the stage'} data-menu-toggle
         onclick={spotifyButton}><SpotifyIcon /></button>
     {/if}
-    <!-- its chat (#226): the panel on the right; a click opens it with the message box focused (#202) -->
-    <button type="button" id={CHAT_TOGGLE_ID} class="icon-btn chat" aria-pressed={voiceChat.open} aria-controls={PANEL_ID.right} aria-label="Chat{badge?.label ?? ''}" data-tip={voiceChat.open ? 'Hide chat' : 'Show chat'} onclick={() => toggleVoiceChat(true)}>
+    <!-- its chat (#226): the panel on the right (beside a stream in full view, the strip there, #63); a click opens it
+         with the message box focused (#202) -->
+    <button type="button" id={CHAT_TOGGLE_ID} class="icon-btn chat" aria-pressed={voiceChat.open} aria-controls={fullStreamer ? STRIP_ID : PANEL_ID.right} aria-label="Chat{badge?.label ?? ''}" data-tip={voiceChat.open ? 'Hide chat' : 'Show chat'} onclick={() => toggleVoiceChat(true)}>
       <Icon name="message" size={18} />
       {#if badge?.mentions}<span class="pill chat-pill">{badge.mentions}</span>{:else if badge?.unread}<span class="chat-dot"></span>{/if}
     </button>

@@ -1,11 +1,12 @@
 // The side columns' chosen widths (#160), on this device. null: the default. `chat`: the right column while it holds a
 // voice channel's chat (#226), which keeps its own width (the members list's stays as it was).
+// `strip`: the chat strip beside a stream in full view (#63), with its own width again.
 import type { SavedWidths, Side } from './columns'
 
 const KEY = 'pulse.columns'
 
-export type Column = Side | 'chat'
-export type StoredWidths = SavedWidths & { chat: number | null }
+export type Column = Side | 'chat' | 'strip'
+export type StoredWidths = SavedWidths & { chat: number | null; strip: number | null }
 
 const width = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : null)
 
@@ -13,9 +14,9 @@ function saved(): StoredWidths {
   try {
     const v: unknown = JSON.parse(localStorage.getItem(KEY) ?? '{}')
     const o = v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
-    return { left: width(o.left), right: width(o.right), chat: width(o.chat) }
+    return { left: width(o.left), right: width(o.right), chat: width(o.chat), strip: width(o.strip) }
   } catch {
-    return { left: null, right: null, chat: null }
+    return { left: null, right: null, chat: null, strip: null }
   }
 }
 

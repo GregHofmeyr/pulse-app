@@ -373,11 +373,14 @@
   $effect(() => {
     if (search.behindChat && !chatOpen) search.behindChat = false
   })
+  // A stream in full view (#63) shows the open chat as a strip beside it (FullView: it stays in full screen), so the
+  // column doesn't hold it meanwhile; the members list is there instead.
+  const chatInStrip = $derived(chatOpen && fullShown)
   const rightKind = $derived<keyof typeof RIGHT_DEFAULT | null>(
-    searchShown ? 'search' : chatOpen ? 'chat' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
+    searchShown ? 'search' : chatOpen && !chatInStrip ? 'chat' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
   const showLeft = $derived(!hideLeft)
   const showRight = $derived(!hideRight && rightKind !== null)
-  const chatOnScreen = $derived(showRight && rightKind === 'chat')
+  const chatOnScreen = $derived((showRight && rightKind === 'chat') || chatInStrip)
   const rightColumn = $derived(rightKind === 'chat' ? 'chat' : 'right')
   const rightSaved = $derived(columns[rightColumn])
   // A click's ask for the chat's message box counts only while the chat can show: one made while it can't (search
@@ -687,7 +690,7 @@
     {/if}
     <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap. A saved
          width reaches the list as --right-w; unsaved, each list keeps its own default. -->
-    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={rightSaved === null ? null : `${fitted.right}px`}>{#if searchShown}<SearchResults />{:else if chatOpen && activeChannelId}<aside class="voice-chat fade-in" aria-label="Chat" onanimationend={(e) => e.currentTarget.classList.remove('fade-in')} out:exitFade onoutrostart={(e) => e.currentTarget.classList.add('leaving')}>{#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId} panel={{ onClose: closeChat, shown: chatOnScreen }} />{/key}</aside>{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} />{/if}</div>
+    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={rightSaved === null ? null : `${fitted.right}px`}>{#if searchShown}<SearchResults />{:else if rightKind === 'chat' && activeChannelId}<aside class="voice-chat fade-in" aria-label="Chat" onanimationend={(e) => e.currentTarget.classList.remove('fade-in')} out:exitFade onoutrostart={(e) => e.currentTarget.classList.add('leaving')}>{#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId} panel={{ onClose: closeChat, shown: chatOnScreen }} />{/key}</aside>{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} />{/if}</div>
   </div>
 </div>
 <StreamToast />

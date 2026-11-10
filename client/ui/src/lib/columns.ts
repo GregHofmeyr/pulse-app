@@ -68,6 +68,17 @@ export function fitColumns({ saved, body, left: showLeft, right: showRight, righ
   return { left, right, maxLeft, maxRight }
 }
 
+/** The chat strip beside a stream in full view (#63): narrower than the stage's chat panel by default, with the same
+ *  least width (its composer stays usable) and the right column's most. */
+export const STRIP = { def: 300, min: RIGHT_MIN.chat, max: COLUMNS.right.max } as const
+
+/** The strip's width as shown, fitted to the full view's width (`row`; 0: not laid out yet), and its most: the stream
+ *  keeps at least MAIN_MIN beside it, and the strip never goes under its own least width. */
+export function fitStrip(saved: number | null, row: number): { width: number; max: number } {
+  const max = row > 0 ? clamp(row - MAIN_MIN, STRIP.min, STRIP.max) : STRIP.max
+  return { width: clamp(Math.round(saved ?? STRIP.def), STRIP.min, max), max }
+}
+
 /** One arrow-key step, and a bigger one with Shift. */
 export const KEY_STEP = 16
 export const KEY_STEP_BIG = 64

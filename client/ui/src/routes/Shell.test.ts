@@ -678,6 +678,58 @@ describe('watching from anywhere', () => {
     expect(setItem.mock.calls.filter(([k]) => !/^pulse\.(stream|sounds|unsent)/.test(String(k)))).toEqual([])
   })
 
+  // #63: in full view the voice chat is the strip beside the stream, not the shell's right column
+  it('full_view_shows_the_voice_chat_as_its_strip_and_the_right_column_holds_the_members', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages' ? [] : undefined))
+    localStorage.setItem('pulse.voiceChat', JSON.stringify({ open: true }))
+    reloadVoiceChat()
+    goTo('V1')
+    await settle()
+    expect(q('.right-panel aside.voice-chat')).not.toBeNull()
+    expect(ui.openChannelId).toBe('V1')
+    await streamApi.watch('V1', 'U2')
+    openFull(SAM)
+    await settle()
+    await new Promise((r) => setTimeout(r, 150)) // the column's chat fades out
+    flushSync()
+    // one chat on screen: the strip, inside the full view
+    expect(document.querySelectorAll('.chan.panel')).toHaveLength(1)
+    expect(q('.full-view aside#stream-chat .chan.panel')).not.toBeNull()
+    expect(q('.right-panel aside.voice-chat')).toBeNull()
+    // its messages are on screen (alerts and jumps go by it)
+    expect(ui.openChannelId).toBe('V1')
+    // the corner toggle brings back the members list
+    toggle('Members')!.click()
+    flushSync()
+    expect(q('.right-panel')!.hidden).toBe(false)
+    expect(q('.right-panel aside.members')).not.toBeNull()
+    // the strip closed: nothing of the chat on screen
+    q('#stream-chat-toggle')!.click()
+    await settle()
+    expect(ui.openChannelId).toBeNull()
+    // leaving full view with it open again: back in the column
+    q('#stream-chat-toggle')!.click()
+    await settle()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    await settle()
+    expect(q('.full-view')).toBeNull()
+    expect(q('.right-panel aside.voice-chat')).not.toBeNull()
+    expect(ui.openChannelId).toBe('V1')
+  })
+
+  it('a_click_on_the_strip_toggle_focuses_its_message_box', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages' ? [] : undefined))
+    goTo('V1')
+    await streamApi.watch('V1', 'U2')
+    openFull(SAM)
+    await settle()
+    const t = q('#stream-chat-toggle')!
+    t.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }))
+    t.click()
+    await settle()
+    expect(document.activeElement).toBe(q('.full-view aside#stream-chat [role="textbox"]'))
+  })
+
   it('swapping_the_stream_in_full_view_keeps_the_panels_as_you_set_them', async () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')
@@ -1377,7 +1429,7 @@ describe('voice channel chat (#226)', () => {
     expect(h.getAttribute('aria-valuenow')).toBe('360')
     h.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
     flushSync()
-    expect(JSON.parse(localStorage.getItem('pulse.columns')!)).toEqual({ left: null, right: null, chat: 376 })
+    expect(JSON.parse(localStorage.getItem('pulse.columns')!)).toEqual({ left: null, right: null, chat: 376, strip: null })
     expect(q('.right-panel')!.style.getPropertyValue('--right-w')).toBe('376px')
     // a text channel shows the members list at its own width
     q('.row[data-channel="T1"]')!.click()

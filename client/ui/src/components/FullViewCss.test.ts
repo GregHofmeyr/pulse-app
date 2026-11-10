@@ -36,11 +36,30 @@ describe('the full view bar', () => {
     expect(getComputedStyle(el('<button data-probe class="stop $s"></button>')).whiteSpace).toBe('nowrap')
   })
 
+  // #63
+  it('full screen covers the whole window, over the app but under its dialogs (z 20 and up)', () => {
+    const s = getComputedStyle(el('<div data-probe class="full-view screen $s"></div>'))
+    expect(s.position).toBe('fixed')
+    expect(s.zIndex).toBe('19')
+    expect(getComputedStyle(el('<div data-probe class="full-view $s"></div>')).position).not.toBe('fixed')
+  })
+
+  it("the chat and full screen buttons are the corner toggles' size and look, and the strip is a panel", () => {
+    const tool = getComputedStyle(el('<div class="bar $s"><button data-probe class="tool $s"></button></div>'))
+    expect([tool.width, tool.height, tool.flexShrink]).toEqual(['32px', '32px', '0'])
+    const on = getComputedStyle(el('<button data-probe class="tool $s" aria-pressed="true"></button>'))
+    const toggleOn = getComputedStyle(el('<button data-probe class="panel-toggle $s" aria-pressed="true"></button>'))
+    expect(on.backgroundColor).toBe(toggleOn.backgroundColor)
+    const strip = getComputedStyle(el('<aside data-probe class="side-chat $s"></aside>'))
+    expect(strip.flexShrink).toBe('0')
+    expect(src).toMatch(/\.side-chat \{[^}]*background: var\(--bg-1\)[^}]*border-left: 1px solid var\(--bg-3\)/)
+  })
+
   it('a pressed toggle looks pressed, and still answers a hover', () => {
     const on = getComputedStyle(el('<button data-probe class="panel-toggle $s" aria-pressed="true"></button>'))
     const off = getComputedStyle(el('<button data-probe class="panel-toggle $s" aria-pressed="false"></button>'))
     expect(on.color).not.toBe(off.color)
     // jsdom can't hover: the pressed hover rule exists and changes the pressed background
-    expect(src).toMatch(/\.panel-toggle\[aria-pressed='true'\]:hover \{ background: var\(--accent-strong\)/)
+    expect(src).toMatch(/\.panel-toggle\[aria-pressed='true'\]:hover, \.tool\[aria-pressed='true'\]:hover \{ background: var\(--accent-strong\)/)
   })
 })
