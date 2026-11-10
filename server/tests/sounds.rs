@@ -1200,7 +1200,12 @@ async fn joining_carries_the_join_sound_once_per_30_seconds() {
     assert_eq!(who, alex.0);
     let play = play.expect("the first join carries the sound");
     assert_eq!(
-        (play.sound_id, play.media_hash, play.volume, play.duration_ms),
+        (
+            play.sound_id,
+            play.media_hash,
+            play.volume,
+            play.duration_ms
+        ),
         (s.id.clone(), s.media_hash.clone(), s.volume, s.duration_ms)
     );
 

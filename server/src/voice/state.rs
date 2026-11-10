@@ -214,7 +214,10 @@ mod tests {
         let t0 = Instant::now();
         assert!(v.take_join_sound(alex, t0));
         assert!(!v.take_join_sound(alex, t0 + Duration::from_secs(29)));
-        assert!(v.take_join_sound(sam, t0 + Duration::from_secs(29)), "someone else isn't held up");
+        assert!(
+            v.take_join_sound(sam, t0 + Duration::from_secs(29)),
+            "someone else isn't held up"
+        );
         assert!(v.take_join_sound(alex, t0 + Duration::from_secs(30)));
         assert!(!v.take_join_sound(alex, t0 + Duration::from_secs(31)));
     }

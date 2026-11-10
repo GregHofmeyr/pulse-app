@@ -1153,7 +1153,13 @@ mod tests {
         let old = serde_json::json!({"t": "VoiceJoined", "d": {"channel_id": c, "user_id": u,
             "flags": {"muted": false, "deafened": false}}});
         let e: Event = serde_json::from_value(old).unwrap();
-        assert!(matches!(e, Event::VoiceJoined { join_sound: None, .. }));
+        assert!(matches!(
+            e,
+            Event::VoiceJoined {
+                join_sound: None,
+                ..
+            }
+        ));
         assert!(!serde_json::to_string(&e).unwrap().contains("join_sound"));
         let with = Event::VoiceJoined {
             channel_id: c,
