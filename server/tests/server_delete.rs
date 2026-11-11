@@ -243,6 +243,17 @@ async fn a_deleted_server_is_gone_for_everyone_but_kept_whole() {
     )
     .await;
     assert_eq!(r.status(), 404);
+    // nor muted
+    let r = w
+        .app
+        .http
+        .put(w.app.url("/mutes"))
+        .bearer_auth(&w.sam.1)
+        .json(&json!({ "target_kind": "server", "target_id": w.server, "until": null }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404, "muting a deleted server");
 
     // ...but nothing is purged.
     let id = w.server.to_string();
@@ -639,6 +650,43 @@ async fn the_sweeper_purges_a_server_after_seven_days_in_batches() {
             .await
             .unwrap();
     assert!(broken.is_empty(), "{broken:?}");
+}
+
+/// Ids come from the clock: one that went backwards across a restart can leave an older message
+/// replying to a newer one. The purge still goes through.
+#[tokio::test]
+async fn a_reply_older_than_what_it_answers_doesnt_stop_the_purge() {
+    let w = world().await;
+    let general = general(&w.app, &w.alex.1, w.server).await;
+    let older = send(&w.app, &w.alex.1, general.id, "older").await;
+    for i in 0..3 {
+        send(&w.app, &w.alex.1, general.id, &format!("filler {i}")).await;
+    }
+    let newer = send(&w.app, &w.alex.1, general.id, "newer").await;
+    sqlx::query("UPDATE messages SET reply_to_id = ? WHERE id = ?")
+        .bind(newer.id.to_string())
+        .bind(older.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    assert_eq!(delete_server(&w, &w.alex.1, w.server, "Main").await, 204);
+    let swept = pulse_server::servers::deleted::purge_expired_batched(
+        &w.app.state(),
+        chrono::Utc::now() + chrono::Duration::days(8),
+        2,
+    )
+    .await
+    .unwrap();
+    assert_eq!(swept, 1);
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM servers WHERE id = ?",
+            &w.server.to_string()
+        )
+        .await,
+        0
+    );
 }
 
 #[tokio::test]

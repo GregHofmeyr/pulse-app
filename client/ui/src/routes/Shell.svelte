@@ -280,6 +280,13 @@
   // channel was deleted: go to another of the server's channels. Only fires when a channel we had
   // actually seen disappears (a just-created one may not have arrived yet).
   let notice = $state('')
+  // Each line shows for 4 s from when it's said: a newer line isn't cut short by an older one's timer.
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined
+  function say(line: string) {
+    notice = line
+    clearTimeout(noticeTimer)
+    noticeTimer = setTimeout(() => (notice = ''), 4000)
+  }
   let watch: OpenWatch | null = null
   let lastTitle = ''
   $effect(() => {
@@ -294,12 +301,9 @@
     watch = w.state
     if (!w.removed) return
     const server = activeServerId
-    // its whole server went (#184): the effect below takes us Home and says so
-    if (server && !untrack(() => app.state.servers.some((s) => s.id === server))) return
     if (server) untrack(() => selectServer(server))
     else activeChannelId = null
-    notice = server ? `${lastTitle} was deleted.` : `You're no longer in ${lastTitle}.`
-    setTimeout(() => (notice = ''), 4000)
+    say(server ? `${lastTitle} was deleted.` : `You're no longer in ${lastTitle}.`)
   })
   // The open server was deleted (#184): back to Home, saying so. Only once it had been seen (a just-created one may
   // not have arrived yet).
@@ -318,8 +322,7 @@
       activeServerId = null
       activeChannelId = null
     })
-    notice = `${name} was deleted.`
-    setTimeout(() => (notice = ''), 4000)
+    say(`${name} was deleted.`)
   })
   const pickerTarget = $derived(picker?.mode === 'add' ? app.state.channels[picker.channelId] : null)
   const pickerOthers = $derived(
@@ -492,9 +495,8 @@
     const line = ui.notice
     if (!line) return
     untrack(() => {
-      notice = line
+      say(line)
       ui.notice = null
-      setTimeout(() => (notice = ''), 4000)
     })
   })
   // A jump to a message (lib/jump.ts) asked for its channel.

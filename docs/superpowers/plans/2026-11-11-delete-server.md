@@ -64,7 +64,8 @@ out by their own clock as before (nobody sees it happen).
   `ClipViewChanged` for clip views.
 - **Purge:** `servers::deleted::purge_expired(now)` from an hourly sweeper (started next to the channel sweeper).
   Batched, for #108's write-lock concern: per channel, messages go newest first in batches of 500 (a reply or thread
-  reply is always newer than what it points at, so a batch never leaves a reference into deleted rows), each batch its
+  reply is normally newer than what it points at; one that isn't, after a clock went back across a restart, has its
+  link cleared rather than stopping the purge), each batch its
   own short `begin_write` transaction under `in_order`, quote lines before their messages (the search triggers), and
   each batch's clip objects removed from R2 after its commit (the clip sweeper retries a failure). Then one last
   transaction deletes its notification prefs (server and channel targets; no FK), its channels and the server row,

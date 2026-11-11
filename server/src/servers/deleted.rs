@@ -392,7 +392,7 @@ async fn purge(s: &AppState, id: ServerId, due: &str, batch: i64) -> AppResult<b
         .bind(id.to_string())
         .fetch_all(&s.db)
         .await?;
-    const PAGE: &str = "(SELECT id FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT ?)";
+    const PAGE: &str = "(SELECT id FROM messages WHERE channel_id = ?1 ORDER BY id DESC LIMIT ?2)";
     for channel in &channels {
         loop {
             // Unread and mention counts others publish as absolutes span channels: in commit order.
@@ -400,6 +400,19 @@ async fn purge(s: &AppState, id: ServerId, due: &str, batch: i64) -> AppResult<b
             let mut tx = crate::db::begin_write(&s.db).await?;
             if !still_due(&mut tx, id, due).await? {
                 return Ok(false);
+            }
+            // A reply or thread reply is newer than what it answers, so normally nothing outside the
+            // page points into it; one with an older id (a clock that went back across a restart)
+            // loses the link instead of stopping the purge. Replies stay in their channel.
+            for col in ["reply_to_id", "thread_root_id"] {
+                sqlx::query(&format!(
+                    "UPDATE messages SET {col} = NULL
+                     WHERE channel_id = ?1 AND {col} IN {PAGE} AND id NOT IN {PAGE}"
+                ))
+                .bind(channel)
+                .bind(batch)
+                .execute(&mut *tx)
+                .await?;
             }
             let clips: Vec<String> = sqlx::query_scalar(&format!(
                 "SELECT video_key FROM clips WHERE message_id IN {PAGE}"
