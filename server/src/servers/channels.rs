@@ -549,6 +549,8 @@ async fn purge(s: &AppState, id: ChannelId) -> AppResult<()> {
     .bind(id.to_string())
     .fetch_all(&mut *tx)
     .await?;
+    // Every file started in the channel, sent or not (#57): deleted after the commit.
+    let files = crate::attachments::stored_in_channels(&mut tx, &[id]).await?;
     sqlx::query("DELETE FROM notification_prefs WHERE target_kind = 'channel' AND target_id = ?")
         .bind(id.to_string())
         .execute(&mut *tx)
@@ -572,12 +574,13 @@ async fn purge(s: &AppState, id: ChannelId) -> AppResult<()> {
         .await?;
     tx.commit().await?;
     drop(_order);
-    if !clips.is_empty() {
+    if !clips.is_empty() || !files.is_empty() {
         let s = s.clone();
         tokio::spawn(async move {
             for key in clips {
                 crate::messages::routes::remove_clip_object(&s, &key).await;
             }
+            crate::attachments::remove_objects(&s, files).await;
         });
     }
     Ok(())

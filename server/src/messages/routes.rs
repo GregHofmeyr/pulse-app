@@ -154,6 +154,7 @@ pub(crate) async fn load(
     crate::embeds::attach(db, &mut one).await?;
     crate::pins::attach(db, &mut one).await?;
     crate::polls::attach(db, me, &mut one).await?;
+    crate::attachments::attach(db, &mut one).await?;
     let [m] = one;
     Ok(Some(m))
 }
@@ -161,6 +162,17 @@ pub(crate) async fn load(
 fn clean(content: &str) -> AppResult<String> {
     let c = content.trim();
     if c.is_empty() || c.chars().count() > MAX_LEN {
+        return Err(AppError::BadRequest(format!(
+            "message must be 1-{MAX_LEN} characters"
+        )));
+    }
+    Ok(c.to_string())
+}
+
+/// A message's text when it carries files: trimmed, possibly empty, at most [`MAX_LEN`].
+fn caption(content: &str) -> AppResult<String> {
+    let c = content.trim();
+    if c.chars().count() > MAX_LEN {
         return Err(AppError::BadRequest(format!(
             "message must be 1-{MAX_LEN} characters"
         )));
@@ -213,6 +225,7 @@ pub(crate) async fn fill(
     crate::embeds::attach(db, &mut page).await?;
     crate::pins::attach(db, &mut page).await?;
     crate::polls::attach(db, me, &mut page).await?;
+    crate::attachments::attach(db, &mut page).await?;
     Ok(page)
 }
 
@@ -331,8 +344,37 @@ async fn send(
     } else if ch.kind == ChannelKind::Clips {
         return Err(AppError::BadRequest("only clips can be posted here".into()));
     }
-    let content = clean(&req.content)?;
     nonce::check(req.nonce.as_deref())?;
+    // With files (#57) the text is a caption and may be empty: older clients then read the
+    // plain-text stand-in (`📎 report.pdf`) as the message.
+    let files = !req.attachments.is_empty();
+    let caption = if files {
+        caption(&req.content)?
+    } else {
+        clean(&req.content)?
+    };
+    // A retry of a send that already landed gets it back before its files are checked again
+    // (they belong to that message now). The write below checks again under the lock.
+    if files
+        && let Some(existing) =
+            nonce::existing(&mut *s.db.acquire().await?, me, id, req.nonce.as_deref()).await?
+    {
+        return load(&s.db, Some(me), existing)
+            .await?
+            .map(Json)
+            .ok_or(AppError::NotFound);
+    }
+    let claimed = if files {
+        crate::attachments::claim(&s, me, id, &req.attachments).await?
+    } else {
+        vec![]
+    };
+    let caption_is_fallback = files && caption.is_empty();
+    let content = if caption_is_fallback {
+        crate::attachments::fallback_text(&claimed)
+    } else {
+        caption
+    };
     // A GIF from the picker (#58): its content is its GIPHY link (older clients show that), and nothing else.
     let gif = match req.gif {
         Some(g) => {
@@ -467,8 +509,8 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         poll_ended: None,
         stage_share_line: None,
         gif,
-        attachments: vec![],
-        caption_is_fallback: false,
+        attachments: claimed,
+        caption_is_fallback,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -512,6 +554,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         .bind(&gif_json)
         .execute(&mut *tx)
         .await?;
+    crate::attachments::bind(&mut tx, me, msg.id, &req.attachments).await?;
     mentions::store(&mut tx, msg.id, &mentioned).await?;
     let used = reactions::live_keys(&mut tx, me, reactions::used_in(&msg.content)).await?;
     crate::emoji::record_use(&mut tx, me, &used).await?;
@@ -640,7 +683,18 @@ async fn edit(
             "clips are edited with their own route".into(),
         ));
     }
-    msg.content = clean(&req.content)?;
+    // A message with files may lose its caption: the stand-in text comes back (#57).
+    if msg.attachments.is_empty() {
+        msg.content = clean(&req.content)?;
+    } else {
+        let c = caption(&req.content)?;
+        msg.caption_is_fallback = c.is_empty();
+        msg.content = if c.is_empty() {
+            crate::attachments::fallback_text(&msg.attachments)
+        } else {
+            c
+        };
+    }
     msg.edited_at = Some(now());
     // A GIF (#58) stays while its message is still a link to it (in any of GIPHY's forms); otherwise it goes.
     if msg
@@ -735,6 +789,8 @@ async fn remove(
         None
     };
     crate::embeds::on_delete(&mut tx, id).await?;
+    // The files' objects are deleted after the commit (the sweep retries a failure).
+    let files = crate::attachments::stored_of_message(&mut tx, id).await?;
     let unpinned = crate::pins::on_delete(&mut tx, id).await?;
     crate::polls::on_delete(&mut tx, id).await?;
     tx.commit().await?;
@@ -802,7 +858,10 @@ async fn remove(
         }
         drop(_order);
         remove_clip_object(&s, &clip.key).await;
+    } else {
+        drop(_order);
     }
+    crate::attachments::remove_objects(&s, files).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

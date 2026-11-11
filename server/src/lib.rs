@@ -141,6 +141,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     }
     qoty::spawn_sweeper(state.clone(), qoty::SWEEP_EVERY);
     clips::sweep::spawn(state.clone());
+    attachments::sweep::spawn(state.clone());
     pins::spawn_sweeper(state.clone());
     polls::spawn_sweeper(state.clone());
     badges::sweep::spawn(state.clone());
