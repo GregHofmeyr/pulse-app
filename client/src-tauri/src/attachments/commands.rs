@@ -34,7 +34,11 @@ pub async fn stage_attachment_paths(
         let r = tokio::task::block_in_place(|| stager.stage_path(&path));
         out.push(match r {
             Ok(file) => StageResult::Staged { file },
-            Err(error) => StageResult::Refused { name, error },
+            Err(error) => StageResult::Refused {
+                folder: (error == super::FOLDER).then(|| path.to_string_lossy().into_owned()),
+                name,
+                error,
+            },
         });
     }
     Ok(out)
@@ -78,6 +82,13 @@ fn percent_decode(s: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// "Zip and send": zip a dropped or picked folder and queue the zip.
+#[tauri::command]
+pub async fn zip_attachment_folder(core: State<'_, Core>, path: String) -> Result<Staged, String> {
+    let stager = &core.attachments;
+    tokio::task::block_in_place(|| stager.stage_folder(std::path::Path::new(&path)))
 }
 
 /// Forget a queued file (its chip was removed).

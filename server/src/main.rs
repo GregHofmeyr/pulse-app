@@ -19,6 +19,9 @@ enum Cmd {
     /// Print each server's live clip storage and the estimated monthly cost (needs only
     /// PULSE_DB_URL)
     ClipStorage,
+    /// Print what the bucket holds by kind (message files, temporary files, clips) and what's on
+    /// disk (sounds, emoji), with the estimated monthly cost (needs only PULSE_DB_URL)
+    Storage,
     /// Print a fresh single-use invite code (bootstraps the first account)
     CreateInvite,
     /// Write a consistent snapshot of the database to PATH (must not exist yet)
@@ -98,6 +101,7 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Migrate => migrate().await,
         Cmd::ClipsCheck => clips_check().await,
         Cmd::ClipStorage => clip_storage().await,
+        Cmd::Storage => storage().await,
         Cmd::Serve => pulse_server::serve(cfg()?).await,
         Cmd::CreateInvite => {
             let cfg = cfg()?;
@@ -244,6 +248,20 @@ async fn clips_check() -> anyhow::Result<()> {
         }
         Err(step) => anyhow::bail!("{step}"),
     }
+}
+
+/// `storage` reads only the database, opened read-only, like `clip-storage`.
+async fn storage() -> anyhow::Result<()> {
+    let url = std::env::var("PULSE_DB_URL").unwrap_or_else(|_| "sqlite://pulse.db".into());
+    let db = pulse_server::db::connect_read_only(&url)
+        .await
+        .map_err(|e| anyhow::anyhow!("couldn't open the database {url}: {e}"))?;
+    let usage = pulse_server::attachments::storage::usage(&db).await?;
+    println!(
+        "{}",
+        pulse_server::attachments::storage::format_report(&usage)
+    );
+    Ok(())
 }
 
 /// `clip-storage` reads only the database, opened read-only: it never migrates or creates one.

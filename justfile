@@ -209,6 +209,10 @@ smoke:
 clips-check:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server clips-check'
 
+# what the bucket holds by kind (message files, temporary files, clips) and on disk (sounds, emoji), with the cost (#57)
+storage:
+    ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server storage'
+
 # each server's clip storage and the estimated monthly cost (all servers together; never shown in the app)
 clips-storage:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server clip-storage'

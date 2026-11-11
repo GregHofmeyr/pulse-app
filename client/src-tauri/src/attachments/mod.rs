@@ -3,6 +3,7 @@
 //! holds only each one's id and what its chip shows.
 
 pub mod commands;
+pub mod folder;
 pub mod prepare;
 pub mod send;
 
@@ -43,8 +44,15 @@ pub struct Staged {
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum StageResult {
-    Staged { file: Staged },
-    Refused { name: String, error: String },
+    Staged {
+        file: Staged,
+    },
+    /// `folder`: the path of a folder, which can be zipped and sent instead.
+    Refused {
+        name: String,
+        error: String,
+        folder: Option<String>,
+    },
 }
 
 /// The staged files and the folder converted images are written to.
@@ -160,6 +168,14 @@ impl Stager {
         Ok(self.plain(name, bytes.len() as u64, path, true))
     }
 
+    /// Zip a folder into the staging folder and queue the zip (`<folder>.zip`). Blocking.
+    pub fn stage_folder(&self, folder: &Path) -> Result<Staged, String> {
+        std::fs::create_dir_all(&self.dir).map_err(|_| UNREADABLE.to_string())?;
+        let path = self.dir.join(new_id());
+        let size = folder::zip_folder(folder, &path)?;
+        Ok(self.plain(format!("{}.zip", display_name(folder)), size, path, true))
+    }
+
     pub fn get(&self, id: &str) -> Option<Staged> {
         self.files
             .lock()
@@ -267,6 +283,20 @@ mod tests {
         assert_eq!((t.name.as_str(), t.size), ("notes.txt", 2));
         assert!(t.owned && t.path.exists());
         assert_eq!(st.stage_bytes("x", b"").unwrap_err(), EMPTY);
+    }
+
+    #[test]
+    fn a_folder_is_zipped_and_staged_as_its_name_dot_zip() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Stager::new(dir.path().join("staging"));
+        let mods = dir.path().join("mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(mods.join("a.jar"), b"jar").unwrap();
+        let z = st.stage_folder(&mods).unwrap();
+        assert_eq!(z.name, "mods.zip");
+        assert!(z.owned && z.path.exists());
+        assert_eq!(z.size, std::fs::metadata(&z.path).unwrap().len());
+        assert_eq!(z.kind, AttachmentKind::File);
     }
 
     #[test]

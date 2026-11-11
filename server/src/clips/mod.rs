@@ -146,8 +146,8 @@ pub async fn views_for_ready(db: &SqlitePool, me: UserId) -> AppResult<Vec<ClipV
 }
 
 /// R2's price per GB-month past the free tier.
-const USD_PER_GB_MONTH: f64 = 0.015;
-const FREE_GB: f64 = 10.0;
+pub(crate) const USD_PER_GB_MONTH: f64 = 0.015;
+pub(crate) const FREE_GB: f64 = 10.0;
 
 /// What a server's live clips cost to keep: bytes (videos plus thumbnails), count and dollars a month.
 pub fn est_monthly_usd(bytes: u64) -> f64 {

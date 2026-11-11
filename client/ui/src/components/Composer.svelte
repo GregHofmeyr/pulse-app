@@ -97,14 +97,20 @@
     else fileDrafts.delete(draftKey)
   })
   let fileError = $state<string | null>(null)
+  // A folder that was dropped or picked: offered as a zip (#57)
+  let folderOffer = $state<{ path: string; name: string } | null>(null)
+  let zipping = $state(false)
   // Files over 50 MB are temporary sends **(owner)**: the sender picks how long they last.
   let tempDays = $state<number>(7)
   const hasBig = $derived(files.some((f) => f.size > MAX_BYTES))
 
   function addStaged(results: StageResult[]) {
     fileError = null
+    folderOffer = null
     for (const r of results) {
-      if (r.status === 'refused') {
+      if (r.status === 'refused' && r.folder) {
+        folderOffer = { path: r.folder, name: r.name }
+      } else if (r.status === 'refused') {
         fileError = r.error
       } else if (files.length >= MAX_FILES) {
         fileError = TOO_MANY
@@ -160,6 +166,21 @@
       } catch (err) {
         fileError = errorText(err)
       }
+    }
+  }
+
+  async function zipFolder() {
+    const offer = folderOffer
+    if (!offer || zipping) return
+    zipping = true
+    try {
+      const file = await api.zipAttachmentFolder(offer.path)
+      folderOffer = null
+      addStaged([{ status: 'staged', file }])
+    } catch (e) {
+      fileError = errorText(e)
+    } finally {
+      zipping = false
     }
   }
 
@@ -430,6 +451,14 @@
     {name}{#if c.usage.startsWith(name)}<span class="arg">{c.usage.slice(name.length)}</span>{:else}<span class="arg">{` ${c.usage}`}</span>{/if}
   {/snippet}
   <ComposerFiles {files} onRemove={removeFile} error={fileError} />
+  {#if folderOffer}
+    <!-- a folder can't go as it is: zip it, and the zip joins the queued files (#57) -->
+    <div class="folder" role="status">
+      <span>Folders can't be sent as they are.</span>
+      <button type="button" class="btn btn-quiet" disabled={zipping} onclick={() => void zipFolder()}>{zipping ? `Zipping ${folderOffer.name}…` : 'Zip and send'}</button>
+      <button type="button" class="icon-btn icon-btn-xs" aria-label="Dismiss" onclick={() => (folderOffer = null)}><Icon name="x" size={14} /></button>
+    </div>
+  {/if}
   {#if hasBig}
     <!-- big files (over 50 MB) are temporary sends: how long they last (#57) -->
     <div class="temp" role="group" aria-label="Big files expire in">
@@ -523,6 +552,9 @@
   .wrap.has-gif :global(.composer-input) { padding-right: 84px; }
   .wrap.has-gif.has-wheel :global(.composer-input) { padding-right: 120px; }
   .wrap.has-gif.has-poll :global(.composer-input) { padding-right: 156px; }
+  /* a dropped folder's offer to zip it (#57) */
+  .folder { display: flex; align-items: center; gap: 8px; padding: 8px 12px 0; font-size: 12px; color: var(--text-3); }
+  .folder .btn { height: 24px; padding: 0 8px; font-size: 12px; }
   /* how long big files last (#57): a quiet segmented choice under the chips */
   .temp { display: flex; align-items: center; gap: 6px; padding: 8px 12px 0; font-size: 12px; color: var(--text-3); }
   .temp .btn { height: 24px; padding: 0 8px; font-size: 12px; }

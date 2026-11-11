@@ -475,6 +475,7 @@ pub fn run() {
             attachments::commands::stage_attachment_paths,
             attachments::commands::stage_attachment_bytes,
             attachments::commands::unstage_attachment,
+            attachments::commands::zip_attachment_folder,
             attachments::commands::pick_attachment_files,
             attachments::commands::send_with_attachments,
             attachments::commands::cancel_attachment_send,

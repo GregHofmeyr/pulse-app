@@ -123,7 +123,10 @@ export type StagedFile = {
   preview: string | null
 }
 /** Mirrors `attachments::StageResult`. */
-export type StageResult = { status: 'staged'; file: StagedFile } | { status: 'refused'; name: string; error: string }
+export type StageResult =
+  | { status: 'staged'; file: StagedFile }
+  /** `folder`: a folder's path, which can be zipped and sent instead. */
+  | { status: 'refused'; name: string; error: string; folder: string | null }
 /** `attachments://progress`: bytes of a send's files stored so far. */
 export type AttachmentProgress = { nonce: string; sent: number; total: number }
 
@@ -227,6 +230,8 @@ export const api = {
   stageAttachmentBytes: (name: string, bytes: Uint8Array) =>
     invoke<StagedFile>('stage_attachment_bytes', bytes, { headers: { 'x-name': encodeURIComponent(name) } }),
   unstageAttachment: (id: string) => invoke<void>('unstage_attachment', { id }),
+  /** "Zip and send": zip a folder and queue the zip. */
+  zipAttachmentFolder: (path: string) => invoke<StagedFile>('zip_attachment_folder', { path }),
   pickAttachmentFiles: () => invoke<string[]>('pick_attachment_files'),
   /** Uploads the files, then sends; the outcome arrives on `pulse://outbox` like `sendMessage`. The same nonce again
    *  after a failure uploads only what isn't stored yet. */

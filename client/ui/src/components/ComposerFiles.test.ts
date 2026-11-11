@@ -112,16 +112,27 @@ describe('Composer files', () => {
     expect(chips()).toEqual(['image.webp'])
   })
 
-  it('says why a folder or an eleventh file can\'t be added', async () => {
+  it('offers to zip a folder, and an eleventh file can\'t be added', async () => {
     answers.stage_attachment_paths = (a) =>
       (a as { paths: string[] }).paths.map((p, i) =>
-        p.endsWith('/mods') ? { status: 'refused', name: 'mods', error: 'Folders can\'t be sent as they are. Zip the folder first.' } : { status: 'staged', file: file(`f${i}`, p) },
+        p.endsWith('/mods')
+          ? { status: 'refused', name: 'mods', error: 'Folders can\'t be sent as they are. Zip the folder first.', folder: p }
+          : { status: 'staged', file: file(`f${i}`, p) },
       )
+    answers.zip_attachment_folder = () => file('z', 'mods.zip', 4096)
     answers.pick_attachment_files = () => ['/home/alex/mods']
     show()
     document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
     await settle()
-    expect(document.querySelector('[role=alert]')!.textContent).toContain('Zip the folder first.')
+    const zip = [...document.querySelectorAll('.folder button')].find((b) => b.textContent === 'Zip and send') as HTMLButtonElement
+    expect(zip).toBeTruthy()
+    zip.click()
+    await settle()
+    expect(calls.find((c) => c.cmd === 'zip_attachment_folder')!.args).toEqual({ path: '/home/alex/mods' })
+    expect(chips()).toEqual(['mods.zip'])
+    expect(document.querySelector('.folder')).toBeNull()
+    document.querySelector<HTMLButtonElement>('[aria-label="Remove mods.zip"]')!.click()
+    flushSync()
 
     answers.pick_attachment_files = () => Array.from({ length: 11 }, (_, i) => `f${i}.txt`)
     document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
@@ -129,7 +140,7 @@ describe('Composer files', () => {
     expect(chips()).toHaveLength(10)
     expect(document.querySelector('[role=alert]')!.textContent).toBe('Up to 10 files per message.')
     // the one that didn't fit is let go
-    expect(calls.filter((c) => c.cmd === 'unstage_attachment')).toHaveLength(1)
+    expect(calls.filter((c) => c.cmd === 'unstage_attachment' && (c.args as { id: string }).id !== 'z')).toHaveLength(1)
   })
 
   it('refuses a pasted file over 50 MB without reading it', async () => {

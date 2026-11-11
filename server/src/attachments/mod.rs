@@ -3,6 +3,7 @@
 //! touches the bytes (nor decodes them: images arrive as WebP, converted by the client).
 
 pub mod routes;
+pub mod storage;
 pub mod sweep;
 
 use std::collections::HashMap;

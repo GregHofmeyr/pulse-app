@@ -5379,6 +5379,7 @@ dependencies = [
  "windows",
  "windows-core",
  "zbus 5.19.0",
+ "zip",
 ]
 
 [[package]]
