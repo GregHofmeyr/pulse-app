@@ -7,11 +7,10 @@
   import { app } from '../lib/store.svelte'
   import { mediaUrl } from '../lib/emoji'
   import { isNotFound, isRateLimited, previewPercents, searchSounds, soundSections, TIDY_THRESHOLD, type Section } from '../lib/soundboard'
-  import { setSoundboardVolume, soundboard } from '../lib/soundboard.svelte'
+  import { playToCall, setSoundboardVolume, soundboard } from '../lib/soundboard.svelte'
   import { joinSoundOf } from '../lib/joinSounds'
   import { mixer } from '../lib/mixer.svelte'
-  import { errorText, soundboardCmd, type HearNow } from '../lib/tauri'
-  import { voice } from '../lib/voice.svelte'
+  import { errorText, soundboardCmd } from '../lib/tauri'
   import { loadAudioConfig } from '../lib/voiceui'
   import Icon from './Icon.svelte'
   import SoundEmoji from './SoundEmoji.svelte'
@@ -50,19 +49,11 @@
     // mash away (#243): each play cuts your last one off (#214), so nothing stacks; the server only stops a script
     error = null
     try {
-      await soundboardCmd.playToCall(s.id, hearNow(s))
+      await playToCall(s)
     } catch (e) {
       // a stale click (the sound was just deleted) or the abuse limit: nothing worth saying
       if (!isRateLimited(e) && !isNotFound(e)) error = errorText(e)
     }
-  }
-  // #143: in a call, hear your play on click instead of on its echo, at the levels the echo would have played it at
-  // (the SoundPlayed listener's `shouldPlay` rules); otherwise the echo plays it as before
-  function hearNow(s: Sound): HearNow | null {
-    const me = app.state.me?.id
-    const { master, soundboard: level } = mixer.calls
-    if (!me || !voice.channelId || master <= 0 || level <= 0 || soundboard.mutes[me]) return null
-    return { hash: s.media_hash, callsPercent: master, soundboardPercent: level, soundPercent: s.volume, player: me }
   }
   // Local only: never touches the server, so nobody else hears it.
   function preview(s: Sound) {

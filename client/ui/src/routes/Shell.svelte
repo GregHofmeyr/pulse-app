@@ -68,6 +68,15 @@
   import { keybindsApi } from '../lib/keybinds'
   import { watchWindowFocus } from '../lib/windowFocus.svelte'
   import type { User } from '../lib/protocol/User'
+  // The quick switcher (#309)
+  import QuickSwitcher from '../components/QuickSwitcher.svelte'
+  import { loadRecents, pushRecent, saveRecents, switcherKey, type Place } from '../lib/quickSwitch'
+  import type { ActionContext } from '../lib/quickActions'
+  import { memberServers } from '../lib/reactions'
+  import { playToCall } from '../lib/soundboard.svelte'
+  import { isNotFound, isRateLimited } from '../lib/soundboard'
+  import { pickSource } from '../lib/stream/golive.svelte'
+  import { isWindows } from '../lib/stream/platform'
 
   let { user, onLogout }: { user: User; onLogout: () => void } = $props()
   // rings in the voice list: who's talking, plus whose soundboard sound is playing (render only: never voice.speaking)
@@ -570,6 +579,66 @@
     activeChannelId = general?.id ?? null
   }
 
+  // ---- the quick switcher (#309) ----
+  let switcherOpen = $state(false)
+  /** Places visited on this device, newest first (`s:<server>` / `c:<channel>`). */
+  let recents = $state<string[]>(loadRecents())
+  const here = $derived(activeChannelId ? `c:${activeChannelId}` : activeServerId ? `s:${activeServerId}` : null)
+  $effect(() => {
+    const key = here
+    if (!key) return
+    untrack(() => {
+      recents = pushRecent(recents, key)
+      saveRecents(recents)
+    })
+  })
+  /** Ctrl+K anywhere toggles it; `/` opens it while nothing that takes text has focus (lib/quickSwitch.ts). Another
+   *  dialog open keeps its keys. */
+  function switcherKeys(e: KeyboardEvent) {
+    const blocked = !switcherOpen && !!document.querySelector('[aria-modal="true"]')
+    const does = switcherKey(e, { open: switcherOpen, blocked })
+    if (!does) return
+    e.preventDefault()
+    switcherOpen = does === 'toggle' ? !switcherOpen : true
+  }
+  function switcherGo(p: Place, join: boolean) {
+    if (p.kind === 'server') return selectServer(p.id)
+    // a voice channel opens its stage; Join (Shift+Enter) joins it too, as the channel list's double click does
+    showChannel(p.id)
+    if (join && voice.channelId !== p.id && isMember(app.state, p.serverId ?? '')) void voiceApi.join(p.id)
+  }
+  function quickContext(): ActionContext {
+    const s = app.state
+    const mine = memberServers(s)
+    const serverName = new Map(s.servers.map((x) => [x.id, x.name]))
+    const callCh = voice.channelId ? s.channels[voice.channelId] : undefined
+    const connected = voice.connection === 'connected'
+    const favs = new Map(s.soundFavourites.map((id, i) => [id, i]))
+    const freq = new Map(s.frequentSounds.map((id, i) => [id, i]))
+    const rank = (id: string) => (favs.has(id) ? favs.get(id)! : 1e4 + (freq.get(id) ?? 1e4))
+    return {
+      call: callCh ? { channelId: callCh.id, name: callCh.server_id ? (callCh.name ?? '') : conversationName(s, callCh.id), connected } : null,
+      muted: voice.controls.muted,
+      deafened: voice.controls.deafened,
+      voiceChannels: Object.values(s.channels)
+        .filter((c) => c.kind === 'voice' && !!c.server_id && mine.has(c.server_id))
+        .sort((a, b) => (serverName.get(a.server_id!) ?? '').localeCompare(serverName.get(b.server_id!) ?? '') || a.position - b.position)
+        .map((c) => ({ id: c.id, name: c.name ?? '', server: serverName.get(c.server_id!) ?? '' })),
+      sounds: Object.values(s.sounds).filter((x) => mine.has(x.server_id)).sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name)),
+      goLiveOff: !isWindows() ? "Streaming from Linux isn't supported yet" : !connected ? 'Wait until the call has connected' : stream.live ? "You're already live" : null,
+      join: (id) => {
+        showChannel(id)
+        if (voice.channelId !== id) void voiceApi.join(id)
+      },
+      play: (sound) => void playToCall(sound).catch((e) => { if (!isRateLimited(e) && !isNotFound(e)) say(errorText(e)) }),
+      toggleMute: () => void voiceApi.toggleMute(),
+      toggleDeafen: () => void voiceApi.toggleDeafen(),
+      leave: () => voiceApi.leave(),
+      goLive: () => { if (voice.channelId) void pickSource(voice.channelId) },
+      openSettings: (section) => openSettings(section),
+    }
+  }
+
   async function join() {
     if (!activeServerId) return
     try {
@@ -584,6 +653,8 @@
     onLogout()
   }
 </script>
+
+<svelte:window onkeydown={switcherKeys} />
 
 {#snippet callBadge()}<span class="call-badge" aria-hidden="true"><Icon name="speaker" size={10} /></span>{/snippet}
 
@@ -736,6 +807,7 @@
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if qotyStart}<QotyStart serverId={qotyStart} onClose={() => (qotyStart = null)} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
+{#if switcherOpen}<QuickSwitcher context={quickContext} {recents} {here} onGo={switcherGo} onClose={() => (switcherOpen = false)} />{/if}
 {#if notesOpen}<PatchNotes notes={patchNotes} previous={previousPatchNotes} onClose={() => (notesOpen = false)} />{/if}
 <!-- Profiles: the quick card (one at a time), and the full profile's place (Task 12 renders it here) -->
 <ProfileCardPopover />

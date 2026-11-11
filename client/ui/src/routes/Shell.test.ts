@@ -675,7 +675,7 @@ describe('watching from anywhere', () => {
     await settle()
     expect(side().hidden).toBe(true)
     expect(members().hidden).toBe(true)
-    expect(setItem.mock.calls.filter(([k]) => !/^pulse\.(stream|sounds|unsent)/.test(String(k)))).toEqual([])
+    expect(setItem.mock.calls.filter(([k]) => !/^pulse\.(stream|sounds|unsent|quickSwitch)/.test(String(k)))).toEqual([])
   })
 
   // #63: in full view the voice chat is the strip beside the stream, not the shell's right column

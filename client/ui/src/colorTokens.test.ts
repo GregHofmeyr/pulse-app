@@ -60,6 +60,7 @@ const AVATAR = 'initials on the fixed fallback avatar palette (lib/avatar.ts): w
 const ALLOWED: Record<string, { literals: string[]; reason: string }[]> = {
   'components/Avatar.svelte': [{ literals: ['#fff'], reason: AVATAR }],
   'routes/Shell.svelte': [{ literals: ['#fff'], reason: AVATAR + ' (the server chip)' }],
+  'components/QuickSwitcher.svelte': [{ literals: ['#fff'], reason: AVATAR + " (a server row's chip, as the tab's)" }],
   'components/ClipCard.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .55)', 'rgba(0, 0, 0, .75)', 'rgba(0, 0, 0, .6)'], reason: VIDEO }],
   'components/ClipDownload.svelte': [{ literals: ['#fff', 'rgba(0, 0, 0, .6)', 'rgba(0, 0, 0, .75)'], reason: VIDEO }],
   'components/ClipPlayer.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, 0.6)', 'rgba(0, 0, 0, 0.8)', 'rgba(0, 0, 0, 0.85)'], reason: VIDEO }],

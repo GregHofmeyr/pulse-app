@@ -8,7 +8,8 @@ import { app, onAppEvent } from './store.svelte'
 import { voice } from './voice.svelte'
 import { memberServers } from './reactions'
 import { loadSoundMutes, saveSoundMutes, shouldPlay, warmOrder } from './soundboard'
-import { soundboardCmd } from './tauri'
+import { soundboardCmd, type HearNow } from './tauri'
+import type { Sound } from './protocol/Sound'
 import { mixer, setNotch } from './mixer.svelte'
 import { clearRings, lightRing, rings } from './soundRings.svelte'
 
@@ -52,6 +53,21 @@ export function callChanged(channelId: string | null) {
     const hashes = warmOrder(app.state, memberServers(app.state), joinSounds)
     if (hashes.length) soundboardCmd.warm(hashes).catch(() => {})
   }
+}
+
+/** Play `s` into the call you're in (the soundboard's tile, the quick switcher's Play, #309). Rejects as the core does
+ *  (rate limited, a sound just deleted). */
+export function playToCall(s: Sound): Promise<void> {
+  return soundboardCmd.playToCall(s.id, hearNow(s))
+}
+
+// #143: in a call, hear your play on click instead of on its echo, at the levels the echo would have played it at
+// (the SoundPlayed listener's `shouldPlay` rules); otherwise the echo plays it as before
+function hearNow(s: Sound): HearNow | null {
+  const me = app.state.me?.id
+  const { master, soundboard: level } = mixer.calls
+  if (!me || !voice.channelId || master <= 0 || level <= 0 || muted.people[me]) return null
+  return { hash: s.media_hash, callsPercent: master, soundboardPercent: level, soundPercent: s.volume, player: me }
 }
 
 export function setSoundboardVolume(pct: number) {
