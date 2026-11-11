@@ -107,3 +107,27 @@ fn every_csp_frames_only_the_embed_page_origin() {
         assert_eq!(framing, ["frame-src https://pulsechat.co.za"], "{name}");
     }
 }
+
+fn sources<'a>(csp: &'a str, directive: &str) -> Vec<&'a str> {
+    csp.split(';')
+        .map(str::trim)
+        .find(|d| d.starts_with(&format!("{directive} ")))
+        .map(|d| d.split_whitespace().skip(1).collect())
+        .unwrap_or_default()
+}
+
+/// Attachment images (#57) are `<img>`s of presigned R2 links, like clips are `<video>`s: every
+/// config that lets media load from the store must let images load from it too.
+#[test]
+fn every_csp_loads_images_from_wherever_it_loads_media() {
+    for name in ALL {
+        let csp = csp(name);
+        let img = sources(&csp, "img-src");
+        for store in sources(&csp, "media-src")
+            .into_iter()
+            .filter(|s| s.contains("r2.cloudflarestorage.com") || s.ends_with(":7895"))
+        {
+            assert!(img.contains(&store), "{name}: img-src lacks {store}");
+        }
+    }
+}
