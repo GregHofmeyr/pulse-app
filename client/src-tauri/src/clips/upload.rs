@@ -99,14 +99,49 @@ pub async fn put_file_with_stall(
     cancel: CancellationFlag,
     stall: Duration,
 ) -> Result<(), UploadError> {
-    let file = tokio::fs::File::open(path)
-        .await
-        .map_err(|e| UploadError::File(e.to_string()))?;
-    let total = file
-        .metadata()
+    let total = tokio::fs::metadata(path)
         .await
         .map_err(|e| UploadError::File(e.to_string()))?
         .len();
+    put_slice(
+        http,
+        url,
+        path,
+        0,
+        total,
+        Some(content_type),
+        on_progress,
+        cancel,
+        stall,
+    )
+    .await
+    .map(|_| ())
+}
+
+/// PUT bytes `offset..offset + total` of `path` to `url` (a whole file, or one part of a big
+/// file's multipart upload, #57), with [`put_file`]'s progress, cancel and stall watchdog. A part
+/// has no content type of its own (`None`). The store's `ETag` for what it took, if it sent one.
+#[allow(clippy::too_many_arguments)]
+pub async fn put_slice(
+    http: &reqwest::Client,
+    url: &str,
+    path: &Path,
+    offset: u64,
+    total: u64,
+    content_type: Option<&str>,
+    on_progress: impl Fn(u64, u64) + Send + Sync + 'static,
+    cancel: CancellationFlag,
+    stall: Duration,
+) -> Result<Option<String>, UploadError> {
+    use tokio::io::AsyncSeekExt;
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| UploadError::File(e.to_string()))?;
+    if offset > 0 {
+        file.seek(std::io::SeekFrom::Start(offset))
+            .await
+            .map_err(|e| UploadError::File(e.to_string()))?;
+    }
 
     let started = Instant::now();
     // When the connection last took a chunk, in ms since `started`.
@@ -158,12 +193,11 @@ pub async fn put_file_with_stall(
         }
     });
 
-    let send = http
-        .put(url)
-        .header(reqwest::header::CONTENT_TYPE, content_type)
-        .header(reqwest::header::CONTENT_LENGTH, total)
-        .body(reqwest::Body::wrap_stream(stream))
-        .send();
+    let mut put = http.put(url).header(reqwest::header::CONTENT_LENGTH, total);
+    if let Some(ct) = content_type {
+        put = put.header(reqwest::header::CONTENT_TYPE, ct);
+    }
+    let send = put.body(reqwest::Body::wrap_stream(stream)).send();
 
     let watchdog = async {
         loop {
@@ -184,7 +218,11 @@ pub async fn put_file_with_stall(
         res = send => match res {
             Ok(resp) if resp.status().is_success() => {
                 on_progress(total, total);
-                Ok(())
+                Ok(resp
+                    .headers()
+                    .get(reqwest::header::ETAG)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string))
             }
             Ok(resp) => Err(UploadError::Rejected(resp.status().as_u16())),
             Err(e) => Err(UploadError::Network(crate::api::failure_text(e))),

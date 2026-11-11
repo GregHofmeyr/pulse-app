@@ -1,4 +1,5 @@
 pub mod api;
+pub mod attachments;
 pub mod backoff;
 pub mod bindmatch;
 pub mod clips;
@@ -200,7 +201,11 @@ pub fn run() {
                 )
                 .with_videos(video::Videos::new(Box::new(move |p| {
                     vh.asset_protocol_scope().is_allowed(p)
-                }))),
+                })))
+                .with_attachments(
+                    session::profile_dir(&app.path().app_cache_dir()?, profile.as_deref())
+                        .join("attachments"),
+                ),
             );
             // A clicked notification brings the window up, then the page opens the conversation.
             let h = app.handle().clone();
@@ -466,6 +471,15 @@ pub fn run() {
             commands::add_qoty_option,
             commands::end_qoty,
             commands::reopen_qoty,
+            // attachments (#57)
+            attachments::commands::stage_attachment_paths,
+            attachments::commands::stage_attachment_bytes,
+            attachments::commands::unstage_attachment,
+            attachments::commands::pick_attachment_files,
+            attachments::commands::send_with_attachments,
+            attachments::commands::cancel_attachment_send,
+            attachments::commands::attachment_urls,
+            attachments::commands::save_attachment,
             // clips
             commands::add_game,
             commands::edit_clip,

@@ -64,7 +64,10 @@ base64 = "0.22"
 qrcode = { version = "0.14", default-features = false }
 # Avatars in desktop notifications (notify/avatar.rs): the cached WebP avatar as a small PNG, which
 # Windows toasts and every Linux notification service can show. Pure Rust (image-webp, png).
-image = { version = "0.25", default-features = false, features = ["png", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "webp", "jpeg", "gif", "bmp"] }
+# Attachments (#57): images are converted to lossy (and animated) WebP before upload, as the server
+# encodes emoji; libwebp is built from source, so no system library is needed.
+webp-animation = { version = "0.10", features = ["static"] }
 # App updates (updater.rs, #82): comparing the offered version with ours (the updater's own semver).
 semver = "1"
 

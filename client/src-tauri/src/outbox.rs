@@ -90,6 +90,12 @@ impl Outbox {
         });
     }
 
+    /// Tell the UI how a send outside the queue ended (a message with files, #57), on the same
+    /// event as queued sends.
+    pub fn report(&self, nonce: &str, status: Status, message: Option<&Message>) {
+        (self.status)(nonce, status, message);
+    }
+
     /// Drop everything queued (logout / signed out): it must not be sent under the next account.
     pub fn clear(&self) {
         let dropped: Vec<Item> = std::mem::take(&mut *self.items.lock().unwrap());

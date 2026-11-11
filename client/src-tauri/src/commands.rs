@@ -132,6 +132,10 @@ pub struct Core {
     pub(crate) videos: crate::video::Videos,
     signed_out: SignedOut,
     mfa: PendingMfa,
+    /// Files queued in composers (#57), and where converted images wait to be uploaded.
+    pub(crate) attachments: crate::attachments::Stager,
+    /// Messages with files being sent, by nonce.
+    pub(crate) attachment_sends: crate::attachments::send::Jobs,
 }
 
 impl Core {
@@ -162,7 +166,17 @@ impl Core {
             videos: crate::video::Videos::new(Box::new(|_| false)),
             signed_out,
             mfa: PendingMfa::default(),
+            attachment_sends: Default::default(),
+            attachments: crate::attachments::Stager::new(
+                std::env::temp_dir().join(format!("pulse-attachments-{}", std::process::id())),
+            ),
         }
+    }
+
+    /// Where queued files' converted copies are written (emptied now: they are from a past run).
+    pub fn with_attachments(mut self, dir: std::path::PathBuf) -> Self {
+        self.attachments = crate::attachments::Stager::new(dir);
+        self
     }
 
     /// Where the clip editor keeps its temp files (`<root>/<account scope>/sources/<id>/`).

@@ -5373,6 +5373,7 @@ dependencies = [
  "url",
  "wasapi",
  "webkit2gtk",
+ "webp-animation",
  "webrtc-sys",
  "webview2-com",
  "windows",

@@ -3,12 +3,13 @@
 use std::time::Duration;
 
 use pulse_protocol::ids::{
-    CategoryId, ChannelId, ClipUploadId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId,
+    AttachmentId, CategoryId, ChannelId, ClipUploadId, GameId, LineId, MessageId, QotyEventId,
+    ServerId, UserId,
 };
 use pulse_protocol::rest::{
-    AddGameRequest, AddMembersRequest, AddQotyOptionRequest, BadgeCatalogue, Category,
-    ChangePasswordRequest, Channel, ChannelKind, ClipFacets, ClipStorage, ClipUpload,
-    ClipUploadRequest, ClipUrl, ClipView, ConfirmClipRequest, CreateCategoryRequest,
+    AddGameRequest, AddMembersRequest, AddQotyOptionRequest, AttachmentUpload, AttachmentUrl,
+    BadgeCatalogue, Category, ChangePasswordRequest, Channel, ChannelKind, ClipFacets, ClipStorage,
+    ClipUpload, ClipUploadRequest, ClipUrl, ClipView, ConfirmClipRequest, CreateCategoryRequest,
     CreateDmRequest, CreateEmojiRequest, CreateSoundRequest, CreateWheelRequest, CustomEmoji,
     DeleteServerRequest, DeletedChannel, DeletedServer, EditClipRequest, EditMessageRequest,
     EditQuoteRequest, EggRequest, Game, Gif, GifConfig, GoLiveRequest, HideEmbedRequest,
@@ -21,7 +22,7 @@ use pulse_protocol::rest::{
     SetChannelBitrateRequest, SetClipViewRequest, SetJoinSoundRequest, SetMuteRequest,
     SetNicknameRequest, SetNotifyLevelRequest, SetServerVoiceRequest, SetShowcaseRequest,
     SetStatusRequest, Sound, SpinAgainRequest, SpinWheelRequest, StageShare, StageShareRequest,
-    StartQotyRequest, Status, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
+    StartAttachmentRequest, StartQotyRequest, Status, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
     ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
     TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest,
     UpdateWheelRequest, User, VoiceTokenResponse, WatchRequest, Wheel,
@@ -2440,6 +2441,53 @@ impl Api {
         Self::clip_parse(
             self.http
                 .get(self.url(&["clips", &message.to_string(), "url"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Start uploading one file of a message (#57): PUT it to the answer's URL, then send the
+    /// message with its id. Refusals in Pulse's words come back as `Told` (429, 503) or `Rejected`.
+    pub async fn start_attachment(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &StartAttachmentRequest,
+    ) -> Result<AttachmentUpload, ApiError> {
+        Self::clip_parse(
+            self.http
+                .post(self.url(&["channels", &channel.to_string(), "attachments"])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Drop an upload that won't be sent.
+    pub async fn cancel_attachment(&self, token: &str, id: AttachmentId) -> Result<(), ApiError> {
+        Self::clip_ok_empty(
+            self.http
+                .delete(self.url(&["attachment-uploads", &id.to_string()])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Short-lived links to every file of a message, in order (an expired one has none).
+    pub async fn attachment_urls(
+        &self,
+        token: &str,
+        message: MessageId,
+    ) -> Result<Vec<AttachmentUrl>, ApiError> {
+        Self::clip_parse(
+            self.http
+                .get(self.url(&["messages", &message.to_string(), "attachments", "urls"])?)
                 .bearer_auth(token)
                 .send()
                 .await,
