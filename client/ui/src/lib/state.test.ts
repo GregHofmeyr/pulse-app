@@ -1578,3 +1578,66 @@ describe('pins (#178)', () => {
     expect(applyPinList(s, 'C9', [{ message: msg('M1'), pin: pin() }])).toBe(s)
   })
 })
+
+describe('server delete (#184)', () => {
+  const sound = { id: 'SND1', server_id: 'S1', name: 'boop', emoji: null, emoji_id: null, media_hash: 'h', volume: 100, duration_ms: 500, added_by: null, created_at: '2026-10-01T00:00:00.000Z', plays: 0 }
+  const emoji = { id: 'E1', server_id: 'S1', name: 'wave', hash: 'h', still_hash: null, animated: false, added_by: null, created_at: '2026-10-01T00:00:00.000Z' }
+  const deleted = () => {
+    let s = applyReady(emptyState(), ready({
+      servers: [{ id: 'S1', name: 'Main', icon_hash: null }, { id: 'S2', name: 'Other', icon_hash: null }],
+      channels: [ch('C1'), ch('V1', 'voice'), ch('C9', 'text', 'S2')],
+      sounds: [sound] as Ready['sounds'],
+      custom_emoji: [emoji] as Ready['custom_emoji'],
+      mutes: [{ target_kind: 'server', target_id: 'S1', until: null }, { target_kind: 'channel', target_id: 'C1', until: null }, { target_kind: 'channel', target_id: 'C9', until: null }],
+      layouts: [{ server_id: 'S1', revision: 3, categories: [], channels: [] }],
+    }))
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M1'), nonce: null } }, 0)
+    return s
+  }
+
+  it('drops the server and everything of it, but keeps its emoji for old messages', () => {
+    const s = applyEvent(deleted(), { t: 'ServerDeleted', d: { server_id: 'S1' } }, 0)
+    expect(s.servers.map((x) => x.id)).toEqual(['S2'])
+    expect(Object.keys(s.channels)).toEqual(['C9'])
+    expect(s.messages['C1']).toBeUndefined()
+    expect(s.voice['V1']).toBeUndefined()
+    expect(s.members['S1']).toBeUndefined()
+    expect(s.layouts['S1']).toBeUndefined()
+    expect(s.sounds['SND1']).toBeUndefined()
+    expect(s.customEmoji['E1']).toBeDefined()
+    expect(s.mutes).toEqual([{ target_kind: 'channel', target_id: 'C9', until: null }])
+  })
+
+  it('an unknown server changes nothing that matters', () => {
+    const before = deleted()
+    const s = applyEvent(before, { t: 'ServerDeleted', d: { server_id: 'S7' } }, 0)
+    expect(s.servers).toEqual(before.servers)
+    expect(s.channels).toBe(before.channels)
+  })
+
+  it('a restore brings it back from its snapshot', () => {
+    let s = applyEvent(deleted(), { t: 'ServerDeleted', d: { server_id: 'S1' } }, 0)
+    s = applyEvent(s, {
+      t: 'ServerRestored',
+      d: {
+        snapshot: {
+          server: { id: 'S1', name: 'Main', icon_hash: null, owner_id: 'U1' },
+          channels: [ch('C1'), ch('V1', 'voice')],
+          members: [{ user: me, nickname: null }],
+          layout: { server_id: 'S1', revision: 4, categories: [], channels: [] },
+          custom_emoji: [emoji],
+          sounds: [sound],
+          games: [],
+          speaker_links: [],
+          qoty: [],
+          server_voice: [],
+        },
+      },
+    } as Event, 0)
+    expect(s.servers.map((x) => x.id)).toEqual(['S1', 'S2'])
+    expect(Object.keys(s.channels).sort()).toEqual(['C1', 'C9', 'V1'])
+    expect(s.members['S1']).toHaveLength(1)
+    expect(s.layouts['S1'].revision).toBe(4)
+    expect(s.sounds['SND1']).toBeDefined()
+  })
+})

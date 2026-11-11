@@ -10,7 +10,7 @@ use pulse_protocol::rest::{
     ChangePasswordRequest, Channel, ChannelKind, ClipFacets, ClipStorage, ClipUpload,
     ClipUploadRequest, ClipUrl, ClipView, ConfirmClipRequest, CreateCategoryRequest,
     CreateDmRequest, CreateEmojiRequest, CreateSoundRequest, CreateWheelRequest, CustomEmoji,
-    DeletedChannel, EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest, Game, Gif,
+    DeleteServerRequest, DeletedChannel, DeletedServer, EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest, Game, Gif,
     GifConfig, GoLiveRequest, HideEmbedRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest,
     LoginRequest, MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired,
     MuteTarget, NameArchivePage, Pin, PinDuration, PinRequest, PinnedMessage, PostQuoteRequest,
@@ -650,6 +650,47 @@ impl Api {
         Self::parse(
             self.http
                 .post(format!("{}/channels/{ch}/restore", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Moves a server to its owner's Recently deleted (#184): `name` is its name, typed to confirm.
+    pub async fn delete_server(
+        &self,
+        token: &str,
+        server: ServerId,
+        name: &str,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/servers/{server}", self.base))
+                .bearer_auth(token)
+                .json(&DeleteServerRequest { name: name.into() })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Your own servers in Recently deleted.
+    pub async fn list_deleted_servers(&self, token: &str) -> Result<Vec<DeletedServer>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/servers/deleted", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn restore_server(&self, token: &str, server: ServerId) -> Result<Server, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/servers/{server}/restore", self.base))
                 .bearer_auth(token)
                 .send()
                 .await,
@@ -2947,6 +2988,26 @@ mod tests {
                 .is_empty()
         );
         assert!(api.restore_channel(&alex, g.id).await.is_err(), "gone");
+    }
+
+    #[tokio::test]
+    async fn a_server_is_deleted_and_restored() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        assert!(
+            api.delete_server(&alex, s.id, "nope").await.is_err(),
+            "the name must match"
+        );
+        api.delete_server(&alex, s.id, "Main").await.unwrap();
+        let gone = api.list_deleted_servers(&alex).await.unwrap();
+        assert_eq!(gone.len(), 1);
+        assert_eq!(gone[0].server.id, s.id);
+        assert!(gone[0].can_restore);
+        assert_eq!(api.restore_server(&alex, s.id).await.unwrap().id, s.id);
+        assert!(api.list_deleted_servers(&alex).await.unwrap().is_empty());
+        assert!(api.restore_server(&alex, s.id).await.is_err(), "live again");
     }
 
     #[tokio::test]

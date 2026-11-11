@@ -24,6 +24,7 @@ import type { Profile } from './protocol/Profile'
 import type { QotyEvent } from './protocol/QotyEvent'
 import type { ReadState } from './protocol/ReadState'
 import type { Ready } from './protocol/Ready'
+import type { ServerSnapshot } from './protocol/ServerSnapshot'
 import type { Server } from './protocol/Server'
 import type { SpeakerLink } from './protocol/SpeakerLink'
 import type { StreamInfo } from './protocol/StreamInfo'
@@ -732,6 +733,72 @@ function profileUpdated(s: AppState, d: Extract<Event, { t: 'ProfileUpdated' }>[
 
 /** A channel you no longer have: removed from a conversation, or a server channel deleted. Everything
  *  kept for it goes, its threads included. */
+/** A server channel deleted (or gone with its server): with its call and streams too, since their own events about it
+ *  can't reach us any more (the channel is gone when they'd be sent). A mute or a notification level of it would never
+ *  match again (a restore sends them back). */
+function channelDeleted(s: AppState, c: string): AppState {
+  const { [c]: _v, ...voice } = s.voice
+  const { [c]: _st, ...streams } = s.streams
+  const mutes = s.mutes.filter((m) => !(m.target_kind === 'channel' && m.target_id === c))
+  const levels = s.notifyLevels.filter((l) => !(l.target_kind === 'channel' && l.target_id === c))
+  return {
+    ...dropChannel(s, c), voice, streams,
+    mutes: mutes.length === s.mutes.length ? s.mutes : mutes,
+    notifyLevels: levels.length === s.notifyLevels.length ? s.notifyLevels : levels,
+  }
+}
+
+/** A server its owner deleted (#184): off the rail with everything of it. Its custom emoji stay, as deleted emoji do,
+ *  so a message elsewhere that used one still renders (the pickers only offer servers you're a member of). Our mutes and
+ *  levels of it go; a restore sends them back. */
+function serverDeleted(s: AppState, id: string): AppState {
+  let next = s
+  for (const c of Object.values(s.channels)) if (c.server_id === id) next = channelDeleted(next, c.id)
+  const drop = <T,>(r: Record<string, T>): Record<string, T> => {
+    const { [id]: _x, ...rest } = r
+    return rest
+  }
+  const mutes = next.mutes.filter((m) => !(m.target_kind === 'server' && m.target_id === id))
+  const levels = next.notifyLevels.filter((l) => !(l.target_kind === 'server' && l.target_id === id))
+  return {
+    ...next,
+    servers: next.servers.filter((x) => x.id !== id),
+    members: drop(next.members),
+    roleColors: drop(next.roleColors),
+    layouts: drop(next.layouts),
+    qoty: drop(next.qoty),
+    speakerLinks: drop(next.speakerLinks),
+    games: drop(next.games),
+    serverVoice: drop(next.serverVoice),
+    sounds: Object.fromEntries(Object.entries(next.sounds).filter(([, x]) => x.server_id !== id)),
+    mutes: mutes.length === next.mutes.length ? next.mutes : mutes,
+    notifyLevels: levels.length === next.notifyLevels.length ? next.notifyLevels : levels,
+  }
+}
+
+/** A deleted server back, whole (#184): what Ready would have carried for it. Our counts, mutes and clip views in it
+ *  follow as their own events. */
+function serverRestored(s: AppState, snap: ServerSnapshot): AppState {
+  const id = snap.server.id
+  const servers = [...s.servers.filter((x) => x.id !== id), snap.server].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  const qoty = latestQoty(snap.qoty)[id]
+  const { [id]: _q, ...otherQoty } = s.qoty
+  const { [id]: _v, ...otherVoice } = s.serverVoice
+  return {
+    ...s,
+    servers,
+    channels: { ...s.channels, ...Object.fromEntries(snap.channels.map((c) => [c.id, c])) },
+    members: { ...s.members, [id]: snap.members },
+    layouts: { ...s.layouts, [id]: { revision: snap.layout.revision, categories: snap.layout.categories } },
+    customEmoji: { ...s.customEmoji, ...Object.fromEntries(snap.custom_emoji.map((c) => [c.id, c])) },
+    sounds: { ...s.sounds, ...Object.fromEntries(snap.sounds.map((x) => [x.id, x])) },
+    games: snap.games.reduce<AppState['games']>((acc, g) => withGame(acc, g), { ...s.games, [id]: [] }),
+    speakerLinks: { ...s.speakerLinks, [id]: snap.speaker_links },
+    qoty: qoty ? { ...otherQoty, [id]: withMyOptions(qoty, s.me?.id, undefined) } : otherQoty,
+    serverVoice: snap.server_voice.reduce<AppState['serverVoice']>((acc, m) => withServerVoice(acc, m), otherVoice),
+  }
+}
+
 function dropChannel(s: AppState, c: string): AppState {
   const drop = <T,>(r: Record<string, T>): Record<string, T> => {
     const { [c]: _x, ...rest } = r
@@ -969,21 +1036,12 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     }
     case 'ChannelRemoved':
       return dropChannel(s, e.d.channel_id)
-    case 'ChannelDeleted': {
-      // Its call and streams too: their own events about it can't reach us any more (the channel is
-      // gone when they'd be sent). A mute or a notification level of it would never match again (a restore sends
-      // them back).
-      const c = e.d.channel_id
-      const { [c]: _v, ...voice } = s.voice
-      const { [c]: _st, ...streams } = s.streams
-      const mutes = s.mutes.filter((m) => !(m.target_kind === 'channel' && m.target_id === c))
-      const levels = s.notifyLevels.filter((l) => !(l.target_kind === 'channel' && l.target_id === c))
-      return {
-        ...dropChannel(s, c), voice, streams,
-        mutes: mutes.length === s.mutes.length ? s.mutes : mutes,
-        notifyLevels: levels.length === s.notifyLevels.length ? s.notifyLevels : levels,
-      }
-    }
+    case 'ChannelDeleted':
+      return channelDeleted(s, e.d.channel_id)
+    case 'ServerDeleted':
+      return serverDeleted(s, e.d.server_id)
+    case 'ServerRestored':
+      return serverRestored(s, e.d.snapshot)
     case 'ReadStateUpdated': {
       const c = e.d.channel_id
       const point = e.d.last_read_message_id

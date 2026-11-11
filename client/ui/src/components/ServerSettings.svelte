@@ -8,12 +8,20 @@
   import SpeakerLinkSettings from './SpeakerLinkSettings.svelte'
   import RecentlyDeleted from './RecentlyDeleted.svelte'
   import NotifyLevelSettings from './NotifyLevelSettings.svelte'
+  import DeleteServer from './DeleteServer.svelte'
+  import { app } from '../lib/store.svelte'
   import type { Server } from '../lib/protocol/Server'
 
   let { server, onClose }: { server: Server; onClose: () => void } = $props()
-  // Notifications (#203): your own level for the server, as its tab's right-click menu sets it
-  const sections = ['Emoji', 'Soundboard', 'Wheels', 'Quote speakers', 'Notifications', 'Storage', 'Recently deleted'] as const
-  let section = $state<(typeof sections)[number]>('Emoji')
+  // Notifications (#203): your own level for the server, as its tab's right-click menu sets it. Delete server (#184):
+  // its owner's only, last.
+  type Section = 'Emoji' | 'Soundboard' | 'Wheels' | 'Quote speakers' | 'Notifications' | 'Storage' | 'Recently deleted' | 'Delete server'
+  const owner = $derived(!!server.owner_id && server.owner_id === app.state.me?.id)
+  const sections = $derived<Section[]>([
+    'Emoji', 'Soundboard', 'Wheels', 'Quote speakers', 'Notifications', 'Storage', 'Recently deleted',
+    ...(owner ? (['Delete server'] as const) : []),
+  ])
+  let section = $state<Section>('Emoji')
 </script>
 
 <div class="overlay modal-overlay fade-in">
@@ -22,12 +30,12 @@
   <nav aria-label="Server settings sections">
     <h1>{server.name}</h1>
     {#each sections as s (s)}
-      <button class:on={section === s} aria-current={section === s ? 'page' : undefined} onclick={() => (section = s)}>{s}</button>
+      <button class:on={section === s} class:danger={s === 'Delete server'} aria-current={section === s ? 'page' : undefined} onclick={() => (section = s)}>{s}</button>
     {/each}
   </nav>
   <div class="content">
     <button class="close icon-btn round modal-close" aria-label="Close server settings" onclick={onClose}><Icon name="x" size={16} /></button>
-    {#if section === 'Emoji'}<EmojiSettings {server} />{:else if section === 'Soundboard'}<SoundboardSettings {server} />{:else if section === 'Wheels'}<WheelSettings {server} />{:else if section === 'Notifications'}<NotifyLevelSettings {server} />{:else if section === 'Storage'}<StorageSettings {server} />{:else if section === 'Recently deleted'}<RecentlyDeleted {server} />{:else}<SpeakerLinkSettings {server} />{/if}
+    {#if section === 'Emoji'}<EmojiSettings {server} />{:else if section === 'Soundboard'}<SoundboardSettings {server} />{:else if section === 'Wheels'}<WheelSettings {server} />{:else if section === 'Notifications'}<NotifyLevelSettings {server} />{:else if section === 'Storage'}<StorageSettings {server} />{:else if section === 'Recently deleted'}<RecentlyDeleted {server} />{:else if section === 'Delete server' && owner}<DeleteServer {server} onDeleted={onClose} />{:else}<SpeakerLinkSettings {server} />{/if}
   </div>
 </div>
 </div>
@@ -41,6 +49,7 @@
   nav button { text-align: left; padding: 8px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); font-weight: 600; }
   nav button:hover { background: var(--bg-2); color: var(--text); }
   nav button.on { background: var(--bg-3); color: var(--text); }
+  nav button.danger { color: var(--danger-text); }
   .content { position: relative; flex: 1; min-width: 0; overflow-y: auto; padding: 28px 32px; }
   .close { position: absolute; top: 20px; right: 20px; z-index: 1; }
   @media (max-width: 640px) {

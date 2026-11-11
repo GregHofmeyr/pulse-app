@@ -294,9 +294,31 @@
     watch = w.state
     if (!w.removed) return
     const server = activeServerId
+    // its whole server went (#184): the effect below takes us Home and says so
+    if (server && !untrack(() => app.state.servers.some((s) => s.id === server))) return
     if (server) untrack(() => selectServer(server))
     else activeChannelId = null
     notice = server ? `${lastTitle} was deleted.` : `You're no longer in ${lastTitle}.`
+    setTimeout(() => (notice = ''), 4000)
+  })
+  // The open server was deleted (#184): back to Home, saying so. Only once it had been seen (a just-created one may
+  // not have arrived yet).
+  let seenServer: { id: string; name: string } | null = null
+  $effect(() => {
+    const id = activeServerId
+    const srv = id ? app.state.servers.find((s) => s.id === id) : undefined
+    if (srv) {
+      seenServer = { id: srv.id, name: srv.name }
+      return
+    }
+    if (!id || seenServer?.id !== id) return
+    const name = seenServer.name
+    seenServer = null
+    untrack(() => {
+      activeServerId = null
+      activeChannelId = null
+    })
+    notice = `${name} was deleted.`
     setTimeout(() => (notice = ''), 4000)
   })
   const pickerTarget = $derived(picker?.mode === 'add' ? app.state.channels[picker.channelId] : null)

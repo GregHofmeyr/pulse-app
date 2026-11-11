@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  export type Section = 'profile' | 'appearance' | 'voice' | 'keybinds' | 'chat' | 'wheels' | 'notifications' | 'privacy' | 'advanced'
+  export type Section = 'profile' | 'appearance' | 'voice' | 'keybinds' | 'chat' | 'wheels' | 'notifications' | 'privacy' | 'deleted' | 'advanced'
 </script>
 
 <script lang="ts">
@@ -15,6 +15,7 @@
   import ProfileSettings from './ProfileSettings.svelte'
   import PrivacySettings from './PrivacySettings.svelte'
   import WheelSettings from './WheelSettings.svelte'
+  import DeletedServers from './DeletedServers.svelte'
   let { onClose, onLogout, section = 'voice' }: {
     onClose: () => void
     /** Log out (#168): the last item of the navigation, under the sections, as on Discord. */
@@ -34,6 +35,8 @@
     { key: 'wheels', label: 'Wheels' },
     { key: 'notifications', label: 'Notifications' },
     { key: 'privacy', label: 'Privacy' },
+    // the servers you deleted (#184): a deleted server has no Server settings to hold its Recently deleted
+    { key: 'deleted', label: 'Recently deleted' },
     { key: 'advanced', label: 'Advanced' },
   ]
 
@@ -111,7 +114,7 @@
     {/if}
     {#if current === 'profile'}<ProfileSettings bind:dirty={profileDirty} bind:settling={profileSettling} />
     {:else if current === 'appearance'}<AppearanceSettings />
-    {:else if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else if current === 'wheels'}<WheelSettings />{:else if current === 'notifications'}<NotificationSettings />{:else if current === 'privacy'}<PrivacySettings />{:else}<AdvancedSettings />{/if}
+    {:else if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else if current === 'wheels'}<WheelSettings />{:else if current === 'notifications'}<NotificationSettings />{:else if current === 'privacy'}<PrivacySettings />{:else if current === 'deleted'}<DeletedServers />{:else}<AdvancedSettings />{/if}
   </div>
 </div>
 </div>

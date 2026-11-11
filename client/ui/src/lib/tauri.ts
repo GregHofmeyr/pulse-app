@@ -13,6 +13,7 @@ import type { Category } from './protocol/Category'
 import type { SaveLayoutRequest } from './protocol/SaveLayoutRequest'
 import type { ServerLayout } from './protocol/ServerLayout'
 import type { DeletedChannel } from './protocol/DeletedChannel'
+import type { DeletedServer } from './protocol/DeletedServer'
 import type { Member } from './protocol/Member'
 import type { Status } from './protocol/Status'
 import type { StartCallResponse } from './protocol/StartCallResponse'
@@ -150,6 +151,12 @@ export const api = {
   restoreChannel: (channelId: string) => invoke<Channel>('restore_channel', { channelId }),
   /** A channel in Recently deleted, for good (the server owner only). */
   purgeChannel: (channelId: string) => invoke<void>('purge_channel', { channelId }),
+  /** Your server, to your Recently deleted (#184): `name` typed to confirm; everyone hears ServerDeleted. */
+  deleteServer: (serverId: string, name: string) => invoke<void>('delete_server', { serverId, name }),
+  /** Your own deleted servers, newest first. */
+  listDeletedServers: () => invoke<DeletedServer[]>('list_deleted_servers'),
+  /** Back from Recently deleted, whole; everyone hears ServerRestored. */
+  restoreServer: (serverId: string) => invoke<Server>('restore_server', { serverId }),
   markRead: (channelId: string, messageId: string) => invoke<void>('mark_read', { channelId, messageId }),
   /** The channel menu's Mark as read (#111): the channel and its quote and clip reply threads. */
   markChannelRead: (channelId: string) => invoke<void>('mark_channel_read', { channelId }),

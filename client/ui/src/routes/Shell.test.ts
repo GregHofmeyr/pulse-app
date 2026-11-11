@@ -1051,6 +1051,33 @@ describe('a deleted channel', () => {
   })
 })
 
+describe('a deleted server (#184)', () => {
+  it('takes you Home from it and says why, after its channels go one by one', async () => {
+    const { ui } = await import('../lib/store.svelte')
+    const { testMe: me, testReady } = await import('../lib/testReady')
+    app.state = applyReady(emptyState(), testReady([
+      { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },
+      { id: 'T2', server_id: 'S1', kind: 'text', name: 'old', position: 1 },
+    ]))
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+    flushSync()
+    ui.goTo = 'T2'
+    flushSync()
+    expect(document.querySelector('.chan .head .title')?.textContent).toBe('old')
+    // what the server sends: each channel's ChannelDeleted, then ServerDeleted
+    for (const id of ['T1', 'T2']) {
+      app.state = applyEvent(app.state, { t: 'ChannelDeleted', d: { channel_id: id, server_id: 'S1' } }, Date.now())
+      flushSync()
+    }
+    app.state = applyEvent(app.state, { t: 'ServerDeleted', d: { server_id: 'S1' } }, Date.now())
+    flushSync()
+    expect(document.querySelector('.chan .head .title')).toBeNull()
+    expect([...document.querySelectorAll('nav[aria-label="Servers"] .tab')].map((t) => t.textContent?.trim())).not.toContain('Main')
+    expect(document.querySelector('.panel-head')?.textContent).toContain('Direct messages')
+    expect(document.querySelector('.notice')?.textContent).toBe('Main was deleted.')
+  })
+})
+
 describe('Quote of the Year', () => {
   it('a live vote shows its banner over every channel of its server', async () => {
     const { ui } = await import('../lib/store.svelte')

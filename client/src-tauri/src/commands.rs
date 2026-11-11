@@ -9,7 +9,7 @@ use pulse_protocol::ids::{
 };
 use pulse_protocol::rest::{
     BadgeCatalogue, Category, Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji,
-    DeletedChannel, EditClipRequest, EditQuoteRequest, Game, Gif, Leaderboard, LinkSpeakerRequest,
+    DeletedChannel, DeletedServer, EditClipRequest, EditQuoteRequest, Game, Gif, Leaderboard, LinkSpeakerRequest,
     MediaInfo, Member, Message, MuteTarget, NameArchivePage, NotifyLevel, Pin, PinDuration,
     PinnedMessage, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse, SaveLayoutRequest,
     SearchRequest, SearchResults, Server, ServerLayout, SetMuteRequest, SetNotifyLevelRequest,
@@ -1739,6 +1739,36 @@ pub async fn restore_channel(
 ) -> Result<Channel, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.restore_channel(&token, channel_id).await)
+}
+
+#[tauri::command]
+pub async fn delete_server(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    name: String,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_server(&token, server_id, &name).await)
+}
+
+#[tauri::command]
+pub async fn list_deleted_servers(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<Vec<DeletedServer>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.list_deleted_servers(&token).await)
+}
+
+#[tauri::command]
+pub async fn restore_server(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<Server, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.restore_server(&token, server_id).await)
 }
 
 #[tauri::command]
