@@ -10,6 +10,8 @@
   import EmojiPopover from './EmojiPopover.svelte'
   import ReactionRow from './ReactionRow.svelte'
   import LinkEmbed from './LinkEmbed.svelte'
+  import GifView from './GifView.svelte'
+  import { gifIdOf, gifOnly, gifsOf } from '../lib/giphy'
   import { previews } from '../lib/linkPreviews.svelte'
   import { reactionKey, type Std } from '../lib/emoji'
   import { pickAdds, react } from '../lib/reactions'
@@ -193,7 +195,11 @@
       showError(errorText(e))
     }
   }
-  const embeds = $derived(!pending && !message.deleted && previews.show ? (message.embeds ?? []) : [])
+  // a GIPHY link shows as the GIF (#58), never as a preview card (an older server may have made one)
+  const embeds = $derived(!pending && !message.deleted && previews.show ? (message.embeds ?? []).filter((e) => !gifIdOf(e.url)) : [])
+  // GIFs (#58): a picked one, or the GIPHY links in the text; a message that is only the link shows only the GIF
+  const gifs = $derived(gifsOf(message))
+  const onlyGif = $derived(gifs.length > 0 && gifOnly(message))
   const time = $derived(new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
 
   let editBox: EmojiBox | undefined = $state()
@@ -312,7 +318,8 @@
           {@const html = renderMessage(message, mentionNames, customEmoji)}
           <!-- a mention pill opens its person's card, by click or (focused: styleMentions makes known pills buttons) Enter or Space -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention} onkeydown={openMention}>{@html html}</div>
+          {#if !onlyGif}<div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention} onkeydown={openMention}>{@html html}</div>{/if}
+          {#each gifs as g (g.id)}<GifView gif={g} onError={showError} />{/each}
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
         {#each embeds as e (e.url)}<LinkEmbed embed={e} messageId={message.id} channelId={message.channel_id} {mine} onError={showError} />{/each}

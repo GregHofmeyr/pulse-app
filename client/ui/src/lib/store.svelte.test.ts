@@ -161,7 +161,19 @@ describe('queueMessage', () => {
     expect(p).toMatchObject({ content: 'hey', reply_to_id: 'M9', thread_root_id: null, status: 'pending' })
     const sent = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'send_message')
     expect(sent).toHaveLength(1)
-    expect(sent[0][1]).toEqual({ channelId: 'C1', content: 'hey', replyToId: 'M9', nonce: p.nonce })
+    expect(sent[0][1]).toEqual({ channelId: 'C1', content: 'hey', replyToId: 'M9', nonce: p.nonce, gif: null })
+  })
+
+  it('a GIF from the picker (#58) goes with its link, and the pending message carries it', () => {
+    resetState()
+    vi.mocked(invoke).mockReset()
+    vi.mocked(invoke).mockImplementation((async () => undefined) as never)
+    const gif = { id: 'abc', title: 'Yes', width: 480, height: 270 }
+    queueMessage('C1', 'https://giphy.com/gifs/yes-abc', null, gif)
+    const [p] = app.state.pending.C1
+    expect(p).toMatchObject({ content: 'https://giphy.com/gifs/yes-abc', gif })
+    const sent = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'send_message')
+    expect(sent[0][1]).toEqual({ channelId: 'C1', content: 'https://giphy.com/gifs/yes-abc', replyToId: null, nonce: p.nonce, gif })
   })
 })
 

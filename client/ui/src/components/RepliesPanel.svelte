@@ -14,6 +14,7 @@
   import { groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
+  import type { Gif } from '../lib/protocol/Gif'
 
   let { root, serverId, onClose, onEditQuote = () => {} }: {
     /** The quote or clip (kept current by the caller). */
@@ -144,10 +145,10 @@
   const mentionNames = $derived(sameNames(pillNamesFor(app.state, channelId)))
 
   // `replyToId` stays inside the thread: it's never the quote unless the person picked it.
-  function post(text: string, replyToId: string | null) {
+  function post(text: string, replyToId: string | null, gif: Gif | null = null) {
     const nonce = crypto.randomUUID()
-    app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyToId, thread_root_id: rootId, status: 'pending', created_at: new Date().toISOString() })
-    void api.sendReply(channelId, rootId, text, replyToId, nonce)
+    app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyToId, thread_root_id: rootId, status: 'pending', created_at: new Date().toISOString(), ...(gif ? { gif } : {}) })
+    void api.sendReply(channelId, rootId, text, replyToId, nonce, gif)
     void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   }
   function send(text: string) {
@@ -155,10 +156,16 @@
     replyTo = null
     post(text, r)
   }
+  // a GIF from the picker (#58) goes at once, as a reply to whatever is being replied to in the thread
+  function sendGif(gif: Gif, link: string) {
+    const r = replyTo?.id ?? null
+    replyTo = null
+    post(link, r, gif)
+  }
   // A retry keeps its own target and leaves the one being picked for the next reply alone.
   function retry(p: Pending) {
     app.state = removePending(app.state, channelId, p.nonce)
-    post(p.content, p.reply_to_id)
+    post(p.content, p.reply_to_id, p.gif ?? null)
   }
 
   // Escape closes the panel, unless something else takes it: a field outside the panel, or a menu,
@@ -211,7 +218,7 @@
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   <!-- typing isn't sent: it would show in the channel, where the replies aren't -->
   <Composer bind:this={composer} draftKey="thread:{rootId}" placeholder={root.clip ? 'Reply about this clip' : 'Reply about this quote'} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
-    onCancelReply={() => (replyTo = null)} onSend={(t) => send(t)} onTyping={() => {}} {mentionables} serverId={serverId || null} />
+    onCancelReply={() => (replyTo = null)} onSend={(t) => send(t)} onTyping={() => {}} {mentionables} serverId={serverId || null} onSendGif={sendGif} />
 </aside>
 
 <style>

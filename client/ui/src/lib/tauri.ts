@@ -18,6 +18,7 @@ import type { Status } from './protocol/Status'
 import type { StartCallResponse } from './protocol/StartCallResponse'
 import type { ServerVoiceMod } from './protocol/ServerVoiceMod'
 import type { Message } from './protocol/Message'
+import type { Gif } from './protocol/Gif'
 import type { Pin } from './protocol/Pin'
 import type { PinDuration } from './protocol/PinDuration'
 import type { PinnedMessage } from './protocol/PinnedMessage'
@@ -113,6 +114,11 @@ export type TwoFactorSetup = { secret: string; qr: QrMatrix }
 
 /** What startup found: signed in, show login, or signed in but the server refused the connection. */
 /** A newer Pulse the core can install (#82). */
+/** One GIF in the GIF picker (#58), as GIPHY gave it (the core's `gifs::GifResult`): `preview` and `still` are GIPHY's URLs, untouched. */
+export type GifResult = { id: string; title: string; url: string; width: number; height: number; preview: string; preview_width: number; preview_height: number; still: string }
+/** A page of GIF results; `next`: the next page's offset, null at the end. */
+export type GifPage = { gifs: GifResult[]; next: number | null }
+
 export type UpdateOffer = { version: string }
 /** How far the installer download is (`pulse://update-progress`); `total` null = the size isn't known. */
 export type UpdateProgress = { downloaded: number; total: number | null }
@@ -186,8 +192,8 @@ export const api = {
   listMessages: (channelId: string, before?: string) =>
     invoke<Message[]>('list_messages', { channelId, before: before ?? null }),
   /** Queued in the Rust outbox; the confirmed message arrives as a MessageCreated event with this nonce. */
-  sendMessage: (channelId: string, content: string, replyToId: string | null, nonce: string) =>
-    invoke<void>('send_message', { channelId, content, replyToId, nonce }),
+  sendMessage: (channelId: string, content: string, replyToId: string | null, nonce: string, gif: Gif | null = null) =>
+    invoke<void>('send_message', { channelId, content, replyToId, nonce, gif }),
   editMessage: (messageId: string, content: string) => invoke<Message>('edit_message', { messageId, content }),
   deleteMessage: (messageId: string) => invoke<void>('delete_message', { messageId }),
   /** Pins (#178): the change also arrives as MessagePinned / MessageUnpinned (and the pin's line as MessageCreated). */
@@ -302,8 +308,13 @@ export const api = {
   listReplies: (messageId: string, before?: string) => invoke<Message[]>('list_replies', { messageId, before: before ?? null }),
   /** Queued in the Rust outbox like `sendMessage` (retry, failed state); the confirmed reply arrives on `pulse://outbox` and as a MessageCreated event, with `thread_root_id` set.
    *  `replyToId`: an inline "replying to" inside the same thread. */
-  sendReply: (channelId: string, rootId: string, content: string, replyToId: string | null, nonce: string) =>
-    invoke<void>('send_reply', { channelId, rootId, content, replyToId, nonce }),
+  sendReply: (channelId: string, rootId: string, content: string, replyToId: string | null, nonce: string, gif: Gif | null = null) =>
+    invoke<void>('send_reply', { channelId, rootId, content, replyToId, nonce, gif }),
+  /** GIFs (#58): a page of GIPHY results (`query` blank: trending) from `offset`; null when GIFs aren't set up on this server. */
+  gifFeed: (query: string, offset = 0) => invoke<GifPage | null>('gif_feed', { query, offset }),
+  /** Your favourite GIFs, newest first. */
+  gifFavourites: () => invoke<Gif[]>('gif_favourites'),
+  setGifFavourite: (gif: Gif, on: boolean) => invoke<void>('set_gif_favourite', { gif, on }),
   markRepliesSeen: (rootId: string, messageId: string) => invoke<void>('mark_replies_seen', { rootId, messageId }),
   giveAward: (lineId: string) => invoke<void>('give_award', { lineId }),
   takeAward: (lineId: string) => invoke<void>('take_award', { lineId }),

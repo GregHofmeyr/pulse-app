@@ -31,6 +31,7 @@
   import { displayName, groupedPending, groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor, nextTypingExpiry, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
+  import type { Gif } from '../lib/protocol/Gif'
   import { takeChatFocus, voiceChat } from '../lib/voiceChat.svelte'
   import { COMMANDS, parseCommand, type CommandContext } from '../lib/commands'
   import QuietSpinCard from './QuietSpinCard.svelte'
@@ -549,8 +550,8 @@
     if (detached) void toPresent()
     else void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   }
-  function post(text: string, replyToId: string | null) {
-    queueMessage(channelId, text, replyToId)
+  function post(text: string, replyToId: string | null, gif: Gif | null = null) {
+    queueMessage(channelId, text, replyToId, gif)
     // Sending from higher up takes you to the latest (your message lands there).
     toLatest()
   }
@@ -579,13 +580,19 @@
     replyTo = null
     post(text, r)
   }
+  // a GIF from the picker (#58) goes at once, as a reply to whatever is being replied to
+  function sendGif(gif: Gif, link: string) {
+    const r = replyTo?.id ?? null
+    replyTo = null
+    post(link, r, gif)
+  }
 
   // A retry keeps its own target and leaves the one being picked for the next message alone.
   function retry(nonce: string) {
     const p = pending.find((x) => x.nonce === nonce)
     if (!p) return
     app.state = removePending(app.state, channelId, nonce)
-    post(p.content, p.reply_to_id)
+    post(p.content, p.reply_to_id, p.gif ?? null)
   }
 
   // A quote posted from higher up lands at the latest too.
@@ -721,7 +728,7 @@
     {/if}
   {:else}
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate || isVoice ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
-    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} pollChannel={channelId} commands={COMMANDS} />
+    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} pollChannel={channelId} commands={COMMANDS} onSendGif={sendGif} />
   {/if}
   {#if repliesRoot}
     {#key repliesRoot.id}

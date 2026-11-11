@@ -1,6 +1,7 @@
 // Polls' pure parts (#157): `/poll`'s arguments (the command itself is in lib/commands.ts), a post's checks,
 // voting choices and how a poll reads.
 import { timeLeft } from './pins'
+import { gifOnly } from './giphy'
 import type { Message } from './protocol/Message'
 import type { Poll } from './protocol/Poll'
 import type { PollDuration } from './protocol/PollDuration'
@@ -79,8 +80,9 @@ const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 export const totalLabel = (p: Poll) => plural(p.voters, p.multi ? 'voter' : 'vote')
 
 /** A message's text for one-line previews (the conversation list, notifications, pins, reply snippets): a poll's
- *  question, not the fuller text its `content` carries for clients that don't know polls. */
-export const shownText = (m: Message): string => (m.poll ? `📊 ${m.poll.question}` : m.content)
+ *  question, not the fuller text its `content` carries for clients that don't know polls; "GIF" for a message that is
+ *  only a GIPHY link (#58). */
+export const shownText = (m: Message): string => (m.poll ? `📊 ${m.poll.question}` : gifOnly(m) ? 'GIF' : m.content)
 
 /** "a", "a and b", "a, b and c". */
 const joinNames = (names: string[]) => (names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`)

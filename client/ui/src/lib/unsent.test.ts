@@ -30,6 +30,15 @@ describe('unsent storage', () => {
     expect(localStorage.getItem('pulse.unsent.U1')).toBeNull()
   })
 
+  it('keeps an unsent GIF (#58), drops one that is malformed', () => {
+    const gif = { id: 'abc123', title: 'Yes', width: 480, height: 270 }
+    saveUnsent('U1', { C1: [{ ...p('a'), gif }, { ...p('b'), gif: { ...gif, id: '../x' } }, { ...p('c'), gif: { ...gif, width: -1 } }] })
+    const got = loadUnsent('U1').C1
+    expect(got[0].gif).toEqual(gif)
+    expect(got[1].gif).toBeUndefined()
+    expect(got[2].gif).toBeUndefined()
+  })
+
   it('ignores a prototype key', () => {
     localStorage.setItem('pulse.unsent.U1', `{"__proto__":[{"nonce":"a","content":"x","reply_to_id":null}],"C1":[{"nonce":"b","content":"y","reply_to_id":null}]}`)
     const got = loadUnsent('U1')

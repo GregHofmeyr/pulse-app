@@ -157,3 +157,15 @@ export function animateEmojiIn(_html: string): Attachment<HTMLElement> {
     return () => stops.forEach((s) => s())
   }
 }
+
+/** A GIF (#58): plays while the window is focused and it is on screen (not while you are live). Under reduced motion it
+ *  shows its still until pointed at or clicked (`toggled`); otherwise a click (`toggled`) pauses it. */
+export function shouldPlayGif(s: AnimateState, toggled: boolean): boolean {
+  if (s.streaming || !s.focused || !s.visible) return false
+  return s.reducedMotion ? toggled || s.hovered : !toggled
+}
+
+/** `{@attach}` for a GIF <img> rendered with its `still`: the rule above, hover counted over the button holding it. */
+export function animatedGif(anim: string, still: string, toggled: () => boolean = () => false): Attachment<HTMLImageElement> {
+  return (img) => wireAnimated(img, anim, still, (s) => shouldPlayGif(s, toggled()))
+}

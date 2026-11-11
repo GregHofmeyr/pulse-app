@@ -8,6 +8,7 @@
   import Icon from './Icon.svelte'
   import EmojiBox, { type Snap } from './EmojiBox.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
+  import GifPopover from './GifPopover.svelte'
   import WheelPopover from './WheelPopover.svelte'
   import PollComposer from './PollComposer.svelte'
   import { customToken, savedTone, search, twemojiUrl, withSkin, type Std } from '../lib/emoji'
@@ -17,6 +18,7 @@
   import { applyMention, mentionQuery, suggest, type Mentionable } from '../lib/mentions'
   import { applyCommand, commandQuery, suggestCommands, typingCommand, type SlashCommand } from '../lib/commands'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
+  import type { Gif } from '../lib/protocol/Gif'
   import { memberServers } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import { displayName } from '../lib/selectors'
@@ -34,6 +36,7 @@
     wheelChannel = null,
     pollChannel = null,
     commands = [],
+    onSendGif,
   }: {
     placeholder: string
     draftKey: string
@@ -51,6 +54,8 @@
     pollChannel?: string | null
     /** Slash commands that run here (#262, lib/commands.ts): suggested on `/`, with a usage tip. None where they don't. */
     commands?: readonly SlashCommand[]
+    /** Sends a GIF picked in the GIF picker (#58) at once (`link`: its GIPHY page, the message's text): shows the GIF button. */
+    onSendGif?: (gif: Gif, link: string) => void
   } = $props()
 
   // The composer remounts per channel ({#key} in Shell), so reading the key once is intended.
@@ -95,6 +100,14 @@
 
   let picking = $state(false)
   let emojiBtn: HTMLButtonElement | undefined = $state()
+  // the GIF picker (#58)
+  let gifPicking = $state(false)
+  let gifBtn: HTMLButtonElement | undefined = $state()
+  function pickGif(gif: Gif, link: string) {
+    gifPicking = false
+    onSendGif?.(gif, link)
+    box?.focus()
+  }
   // the wheel popover (#158); `wheelPrefill`: options typed after `/wheel` (fewer than two)
   let wheeling = $state(false)
   let wheelPrefill = $state<string[] | null>(null)
@@ -219,7 +232,7 @@
   }
 </script>
 
-<div class="wrap" class:has-wheel={!!wheelChannel} class:has-poll={!!pollChannel} bind:this={wrap} onfocusout={focusOut}>
+<div class="wrap" class:has-gif={!!onSendGif} class:has-wheel={!!wheelChannel} class:has-poll={!!pollChannel} bind:this={wrap} onfocusout={focusOut}>
   {#if open}
     <div class="mentions menu-surface pop-in" role="listbox" aria-label="Mention someone">
       {#each options as o, i (o.id)}
@@ -269,6 +282,13 @@
   <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={20} /></button>
   {#if picking && emojiBtn}
     <EmojiPopover anchor={emojiBtn} onPick={pickEmoji} onClose={() => (picking = false)} />
+  {/if}
+  {#if onSendGif}
+    <button bind:this={gifBtn} class="emoji-btn gif-btn" class:on={gifPicking} type="button" aria-label="GIF" data-tip="GIF" data-menu-toggle
+      aria-haspopup="dialog" aria-expanded={gifPicking} onclick={() => (gifPicking = !gifPicking)}><Icon name="gif" size={20} /></button>
+    {#if gifPicking && gifBtn}
+      <GifPopover anchor={gifBtn} onPick={pickGif} onClose={() => (gifPicking = false)} />
+    {/if}
   {/if}
   {#if wheelChannel}
     <button bind:this={wheelBtn} class="emoji-btn wheel-btn" class:on={wheeling} type="button" aria-label="Picker wheel" data-tip="Picker wheel" data-menu-toggle
@@ -320,4 +340,12 @@
   .poll-btn { right: 80px; }
   .poll-btn.on { background: var(--bg-4); color: var(--text); }
   .wrap.has-poll :global(.composer-input) { padding-right: 120px; }
+  /* the GIF button (#58), right next to the emoji button: the wheel and poll buttons move one place left */
+  .gif-btn { right: 44px; }
+  .gif-btn.on { background: var(--bg-4); color: var(--text); }
+  .wrap.has-gif .wheel-btn { right: 80px; }
+  .wrap.has-gif .poll-btn { right: 116px; }
+  .wrap.has-gif :global(.composer-input) { padding-right: 84px; }
+  .wrap.has-gif.has-wheel :global(.composer-input) { padding-right: 120px; }
+  .wrap.has-gif.has-poll :global(.composer-input) { padding-right: 156px; }
 </style>

@@ -2,6 +2,7 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
+import type { Gif } from './protocol/Gif'
 import type { CardProfile } from './protocol/CardProfile'
 import type { Profile } from './protocol/Profile'
 import type { User } from './protocol/User'
@@ -149,10 +150,10 @@ export async function openDm(userId: string): Promise<string> {
 }
 
 /** Queue `text` for `channelId`: shown as pending straight away and sent through the core's outbox (retries, failed state). */
-export function queueMessage(channelId: string, text: string, replyToId: string | null): void {
+export function queueMessage(channelId: string, text: string, replyToId: string | null, gif: Gif | null = null): void {
   const nonce = crypto.randomUUID()
-  app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyToId, thread_root_id: null, status: 'pending', created_at: new Date().toISOString() })
-  void api.sendMessage(channelId, text, replyToId, nonce)
+  app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyToId, thread_root_id: null, status: 'pending', created_at: new Date().toISOString(), ...(gif ? { gif } : {}) })
+  void api.sendMessage(channelId, text, replyToId, nonce, gif)
 }
 
 // Unsent messages: saved whenever the pending map changes, and restored (failed, never resent) on

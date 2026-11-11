@@ -60,6 +60,32 @@ describe('shouldAnimate', () => {
   })
 })
 
+describe('shouldPlayGif', () => {
+  // #58: GIFs play on their own, but never under reduced motion until pointed at or clicked
+  const on = { focused: true, visible: true, hovered: false, reducedMotion: false, streaming: false }
+  it('plays while focused and on screen; a click pauses it', async () => {
+    const { shouldPlayGif } = await fresh()
+    expect(shouldPlayGif(on, false)).toBe(true)
+    expect(shouldPlayGif(on, true)).toBe(false)
+    expect(shouldPlayGif({ ...on, focused: false }, false)).toBe(false)
+    expect(shouldPlayGif({ ...on, visible: false }, false)).toBe(false)
+    expect(shouldPlayGif({ ...on, streaming: true }, false)).toBe(false)
+  })
+  it('under reduced motion: the still, until hovered or clicked', async () => {
+    const { shouldPlayGif } = await fresh()
+    const reduced = { ...on, reducedMotion: true }
+    expect(shouldPlayGif(reduced, false)).toBe(false)
+    expect(shouldPlayGif({ ...reduced, hovered: true }, false)).toBe(true)
+    expect(shouldPlayGif(reduced, true)).toBe(true)
+    expect(shouldPlayGif({ ...reduced, visible: false }, true)).toBe(false)
+  })
+  it('"Animate emoji" doesn\'t apply', async () => {
+    const m = await fresh()
+    m.setAnimateMode('never')
+    expect(m.shouldPlayGif(on, false)).toBe(true)
+  })
+})
+
 describe('shouldAnimateProfile', () => {
   const on = { focused: true, visible: true, hovered: false, reducedMotion: false, streaming: false }
   it('lists show the still and animate on hover', async () => {
