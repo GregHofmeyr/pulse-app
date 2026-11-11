@@ -34,6 +34,8 @@ pub enum FakeStore {
 struct Inner {
     mem: HashMap<String, (Vec<u8>, String)>,
     requests: Vec<(Method, String)>,
+    /// Multipart uploads in progress, by upload id (in memory whatever the store).
+    uploads: HashMap<String, Multipart>,
 }
 
 struct Shared {
@@ -98,6 +100,11 @@ impl FakeS3 {
     /// Store an object directly, without a signature.
     pub fn put_raw(&self, key: &str, bytes: Vec<u8>) {
         self.shared.put(key, bytes, "application/octet-stream");
+    }
+
+    /// Multipart uploads still open (neither completed nor aborted).
+    pub fn open_uploads(&self) -> usize {
+        self.shared.inner.lock().unwrap().uploads.len()
     }
 
     pub fn keys(&self) -> Vec<String> {
@@ -272,6 +279,16 @@ async fn handle(State(s): State<Arc<Shared>>, req: Request<Body>) -> Response {
         .requests
         .push((parts.method.clone(), key.to_string()));
 
+    let query_is = |name: &str| query_param(query, name).is_some();
+    if query_is("uploads") || query_is("uploadId") {
+        let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
+            return xml_error(StatusCode::BAD_REQUEST, "IncompleteBody", "body");
+        };
+        if let Some(r) = s.multipart(&parts.method, key, query, &parts.headers, &bytes) {
+            return r;
+        }
+        return xml_error(StatusCode::BAD_REQUEST, "InvalidRequest", "multipart");
+    }
     match parts.method {
         Method::PUT => {
             let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
@@ -351,6 +368,125 @@ fn parse_range(value: &str, len: usize) -> Option<std::ops::Range<usize>> {
         b => b.parse::<usize>().ok()?.checked_add(1)?.min(len),
     };
     (start < len && start < end).then_some(start..end)
+}
+
+// ---- Multipart uploads (#57's big temporary sends) -----------------------------------------------
+
+const S3_NS: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
+
+/// An upload in progress: its object, type and parts by number.
+#[derive(Default)]
+struct Multipart {
+    key: String,
+    content_type: String,
+    parts: std::collections::BTreeMap<u16, Vec<u8>>,
+}
+
+fn part_etag(bytes: &[u8]) -> String {
+    format!("\"{}\"", &hex::encode(Sha256::digest(bytes))[..32])
+}
+
+fn xml_ok(body: String) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/xml")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// A query parameter's decoded value (`uploads` alone counts as present with an empty value).
+fn query_param(query: &str, name: &str) -> Option<String> {
+    query.split('&').find_map(|p| {
+        let (k, v) = p.split_once('=').unwrap_or((p, ""));
+        (percent_decode(k) == name).then(|| percent_decode(v))
+    })
+}
+
+impl Shared {
+    /// The multipart request for `key`, if this is one; `None` leaves it to the plain handlers.
+    fn multipart(&self, method: &Method, key: &str, query: &str, headers: &HeaderMap, body: &[u8]) -> Option<Response> {
+        let no_upload = || xml_error(StatusCode::NOT_FOUND, "NoSuchUpload", "no such upload");
+        if *method == Method::POST && query_param(query, "uploads").is_some() {
+            let id = format!("up-{:016x}", rand::random::<u64>());
+            let ct = header_str(headers, header::CONTENT_TYPE).unwrap_or("application/octet-stream");
+            self.inner.lock().unwrap().uploads.insert(
+                id.clone(),
+                Multipart { key: key.to_string(), content_type: ct.to_string(), parts: Default::default() },
+            );
+            return Some(xml_ok(format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"{S3_NS}\"><Bucket>{FAKE_BUCKET}</Bucket><Key>{key}</Key><UploadId>{id}</UploadId></InitiateMultipartUploadResult>"
+            )));
+        }
+        let upload = query_param(query, "uploadId")?;
+        let mut inner = self.inner.lock().unwrap();
+        let known = inner.uploads.get(&upload).is_some_and(|u| u.key == key);
+        if !known {
+            return Some(no_upload());
+        }
+        match *method {
+            Method::PUT => {
+                let Some(n) = query_param(query, "partNumber").and_then(|n| n.parse::<u16>().ok()) else {
+                    return Some(xml_error(StatusCode::BAD_REQUEST, "InvalidArgument", "partNumber"));
+                };
+                let etag = part_etag(body);
+                inner.uploads.get_mut(&upload).unwrap().parts.insert(n, body.to_vec());
+                Some(Response::builder().status(StatusCode::OK).header(header::ETAG, etag).body(Body::empty()).unwrap())
+            }
+            Method::GET => {
+                let parts: String = inner.uploads[&upload]
+                    .parts
+                    .iter()
+                    .map(|(n, b)| {
+                        format!(
+                            "<Part><PartNumber>{n}</PartNumber><LastModified>2026-01-01T00:00:00.000Z</LastModified><ETag>{}</ETag><Size>{}</Size></Part>",
+                            part_etag(b),
+                            b.len()
+                        )
+                    })
+                    .collect();
+                Some(xml_ok(format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListPartsResult xmlns=\"{S3_NS}\"><Bucket>{FAKE_BUCKET}</Bucket><Key>{key}</Key><UploadId>{upload}</UploadId><MaxParts>1000</MaxParts><IsTruncated>false</IsTruncated>{parts}</ListPartsResult>"
+                )))
+            }
+            Method::POST => {
+                // The body lists (PartNumber, ETag) pairs: each must name a stored part, in order.
+                let text = String::from_utf8_lossy(body);
+                let tag = |chunk: &str, name: &str| -> Option<String> {
+                    let open = format!("<{name}>");
+                    let start = chunk.find(&open)? + open.len();
+                    let end = chunk[start..].find(&format!("</{name}>"))? + start;
+                    Some(chunk[start..end].to_string())
+                };
+                let up = &inner.uploads[&upload];
+                let mut joined = Vec::new();
+                let mut last = 0u16;
+                for chunk in text.split("<Part>").skip(1) {
+                    let (Some(n), Some(etag)) = (tag(chunk, "PartNumber").and_then(|n| n.parse::<u16>().ok()), tag(chunk, "ETag")) else {
+                        return Some(xml_error(StatusCode::BAD_REQUEST, "MalformedXML", "part"));
+                    };
+                    let etag = etag.replace("&quot;", "\"");
+                    match up.parts.get(&n) {
+                        Some(b) if n > last && part_etag(b) == etag => joined.extend_from_slice(b),
+                        _ => return Some(xml_error(StatusCode::BAD_REQUEST, "InvalidPart", "part")),
+                    }
+                    last = n;
+                }
+                let up = inner.uploads.remove(&upload).unwrap();
+                drop(inner);
+                let etag = part_etag(&joined);
+                self.put(&up.key, joined, &up.content_type);
+                Some(xml_ok(format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUploadResult xmlns=\"{S3_NS}\"><Bucket>{FAKE_BUCKET}</Bucket><Key>{key}</Key><ETag>{}</ETag></CompleteMultipartUploadResult>",
+                    etag.replace('"', "&quot;")
+                )))
+            }
+            Method::DELETE => {
+                inner.uploads.remove(&upload);
+                Some(empty(StatusCode::NO_CONTENT))
+            }
+            _ => Some(xml_error(StatusCode::METHOD_NOT_ALLOWED, "MethodNotAllowed", "method")),
+        }
+    }
 }
 
 // ---- SigV4 query-presign verifier ------------------------------------------------------------

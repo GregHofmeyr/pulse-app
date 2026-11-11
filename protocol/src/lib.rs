@@ -49,6 +49,10 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::StartAttachmentRequest::export_all(&cfg)?;
     rest::AttachmentUpload::export_all(&cfg)?;
     rest::AttachmentUrl::export_all(&cfg)?;
+    rest::MultipartInfo::export_all(&cfg)?;
+    rest::PartUrlsRequest::export_all(&cfg)?;
+    rest::PartUrl::export_all(&cfg)?;
+    rest::UploadedPart::export_all(&cfg)?;
     rest::EditMessageRequest::export_all(&cfg)?;
     rest::PinRequest::export_all(&cfg)?;
     rest::PinnedMessage::export_all(&cfg)?;

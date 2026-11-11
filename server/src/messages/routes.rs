@@ -569,7 +569,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         .bind(&gif_json)
         .execute(&mut *tx)
         .await?;
-    crate::attachments::bind(&mut tx, me, msg.id, &attachment_ids).await?;
+    crate::attachments::bind(&mut tx, me, msg.id, &attachment_ids, &mut msg.attachments).await?;
     mentions::store(&mut tx, msg.id, &mentioned).await?;
     let used = reactions::live_keys(&mut tx, me, reactions::used_in(&msg.content)).await?;
     crate::emoji::record_use(&mut tx, me, &used).await?;

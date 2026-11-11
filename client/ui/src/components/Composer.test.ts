@@ -169,7 +169,7 @@ describe('Composer emoji', () => {
     expect(box.textContent).not.toContain('<:pog:1>') // not shown as text
     expect(value(box)).toBe('gg <:pog:1> ')
     press(box, 'Enter')
-    expect(onSend).toHaveBeenCalledWith('gg <:pog:1>', [])
+    expect(onSend).toHaveBeenCalledWith('gg <:pog:1>', [], null)
     expect(value(box)).toBe('')
     expect(box.querySelector('img')).toBeNull()
   })
@@ -200,7 +200,7 @@ describe('Composer emoji', () => {
     box.dispatchEvent(new InputEvent('input', { bubbles: true }))
     flushSync()
     press(box, 'Enter')
-    expect(onSend).toHaveBeenCalledWith('one\ntwo', [])
+    expect(onSend).toHaveBeenCalledWith('one\ntwo', [], null)
   })
 
   it('pasting keeps only the text, at the caret', async () => {
@@ -657,7 +657,7 @@ describe('Composer emoji', () => {
     expect(value(box)).toBe(':pog')
     expect(options()).toHaveLength(0) // the caret went to 0, not left at 4 over ":pog"
     press(box, 'Enter')
-    expect(onSend).toHaveBeenCalledWith(':pog', [])
+    expect(onSend).toHaveBeenCalledWith(':pog', [], null)
   })
 
   it('a paste mid-text opens the emoji popup where it ends', async () => {
@@ -740,7 +740,7 @@ describe('Composer mentions', () => {
     expect(box.textContent).not.toContain('sam')
     box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
     await tick()
-    expect(onSend).toHaveBeenLastCalledWith('hi @sam', [])
+    expect(onSend).toHaveBeenLastCalledWith('hi @sam', [], null)
   })
 
   it('a mention of yourself shows as a chip with your name too', async () => {
@@ -829,7 +829,7 @@ describe('Composer slash commands', () => {
     type(box, '/wheel')
     press(box, 'Enter')
     await tick()
-    expect(onSend).toHaveBeenCalledWith('/wheel', [])
+    expect(onSend).toHaveBeenCalledWith('/wheel', [], null)
   })
 
   it('Esc dismisses until the text changes', () => {
@@ -888,7 +888,7 @@ describe('Composer slash commands', () => {
     type(box, 'hello')
     press(box, 'Enter')
     await tick()
-    expect(onSend).toHaveBeenCalledWith('hello', [])
+    expect(onSend).toHaveBeenCalledWith('hello', [], null)
   })
 })
 

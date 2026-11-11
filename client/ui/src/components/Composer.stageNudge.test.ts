@@ -82,7 +82,7 @@ describe('Composer: Share to the stage? nudge', () => {
     // the message is still there to send as it is
     expect(serialize(box)).toBe(`this one ${link()} is great`)
     enter(box)
-    expect(onSend).toHaveBeenCalledWith(`this one ${link()} is great`, [])
+    expect(onSend).toHaveBeenCalledWith(`this one ${link()} is great`, [], null)
   })
 
   it('a box holding only the link empties once it is shared: the share posts it in the chat already', async () => {

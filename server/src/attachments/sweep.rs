@@ -32,8 +32,8 @@ pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<SweepReport> {
 
     // Never sent, past their time. A purged message's or channel's rows look the same (SET NULL)
     // and go at once: with no channel, no send can ever take them.
-    let pending: Vec<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, key, expires_at FROM attachments
+    let pending: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, key, expires_at, upload_id FROM attachments
          WHERE message_id IS NULL AND (created_at < ? OR channel_id IS NULL)",
     )
     .bind(stamp(
@@ -41,12 +41,17 @@ pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<SweepReport> {
     ))
     .fetch_all(&s.db)
     .await?;
-    for (id, key, expires_at) in pending {
+    for (id, key, expires_at, upload_id) in pending {
         let st = Stored {
             key,
             temp: expires_at.is_some(),
         };
-        if let Err(e) = r2.delete(&st.object_key()).await {
+        // A big file still in parts is abandoned; one whole (or a normal one) is deleted.
+        let gone = match &upload_id {
+            Some(upload) => r2.abort_multipart(&st.object_key(), upload).await,
+            None => r2.delete(&st.object_key()).await,
+        };
+        if let Err(e) = gone {
             tracing::warn!(error = ?e, "couldn't delete an unsent upload's object");
             continue;
         }

@@ -1363,6 +1363,40 @@ pub struct AttachmentUpload {
     pub url: Option<String>,
     pub content_type: String,
     pub expires_at: String,
+    /// A big temporary send goes up in parts instead (`url` is then `None`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub multipart: Option<MultipartInfo>,
+}
+
+/// How a big temporary send goes up (#57): in parts of `part_size` bytes (the last one shorter),
+/// each PUT to its own signed URL (`POST /attachment-uploads/{id}/parts`), then
+/// `POST /attachment-uploads/{id}/complete`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MultipartInfo {
+    pub part_size: u64,
+    pub parts: u16,
+}
+
+/// Parts of a big upload to sign, numbered from 1 (at most `attachment_limits::PARTS_PER_ASK`).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct PartUrlsRequest {
+    pub parts: Vec<u16>,
+}
+
+/// A signed PUT for one part; the store takes exactly `size` bytes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PartUrl {
+    pub part: u16,
+    pub url: String,
+    pub size: u64,
+}
+
+/// A part the store already has (a resumed upload skips it).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct UploadedPart {
+    pub part: u16,
+    pub size: u64,
 }
 
 /// A fresh link to download an attachment.
@@ -1380,6 +1414,12 @@ pub mod attachment_limits {
     pub const TEMP_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
     pub const TEMP_CAP_BYTES: u64 = 20 * 1024 * 1024 * 1024;
     pub const NAME_MAX_CHARS: usize = 200;
+    /// A big send's part size (the last part is shorter): 2 GB is 128 parts.
+    pub const PART_SIZE: u64 = 16 * 1024 * 1024;
+    /// Parts signed per request.
+    pub const PARTS_PER_ASK: usize = 16;
+    /// How long a temporary send can last, in days: the sender picks one.
+    pub const TEMP_DAYS: [u8; 2] = [1, 7];
 }
 
 /// A LiveKit join token (voice, or a stream ticket) and where to use it.

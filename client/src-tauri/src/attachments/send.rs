@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pulse_protocol::ids::{AttachmentId, ChannelId, MessageId};
-use pulse_protocol::rest::{Message, SendMessageRequest, StartAttachmentRequest};
+use pulse_protocol::rest::{
+    AttachmentUpload, Message, MultipartInfo, SendMessageRequest, StartAttachmentRequest,
+};
 use serde::Serialize;
 
 use super::{Staged, Stager};
@@ -60,6 +62,8 @@ struct Job {
     cancel: CancellationFlag,
     /// staged id → its upload, once the store has the whole file.
     stored: Mutex<HashMap<String, AttachmentId>>,
+    /// staged id → a big file's upload still in parts (a retry resumes it).
+    started: Mutex<HashMap<String, AttachmentUpload>>,
 }
 
 /// The sends of this run, by nonce.
@@ -68,6 +72,8 @@ pub struct Jobs {
     jobs: Mutex<HashMap<String, Arc<Job>>>,
 }
 
+/// Files bigger than this are temporary sends, in parts.
+const MAX_BYTES: u64 = pulse_protocol::rest::attachment_limits::MAX_BYTES;
 /// How many times a refused or dropped message send is tried before the row shows Failed.
 const SEND_TRIES: u32 = 3;
 
@@ -78,9 +84,12 @@ impl Jobs {
         // A retry after a cancel starts with a fresh switch (the stored files stay).
         if job.cancel.is_cancelled() {
             let stored = std::mem::take(&mut *job.stored.lock().unwrap_or_else(|p| p.into_inner()));
+            let started =
+                std::mem::take(&mut *job.started.lock().unwrap_or_else(|p| p.into_inner()));
             *job = Arc::new(Job {
                 cancel: CancellationFlag::new(),
                 stored: Mutex::new(stored),
+                started: Mutex::new(started),
             });
         }
         job.clone()
@@ -97,7 +106,12 @@ impl Jobs {
             Some(job) => {
                 job.cancel.cancel();
                 let stored = job.stored.lock().unwrap_or_else(|p| p.into_inner());
-                stored.values().copied().collect()
+                let started = job.started.lock().unwrap_or_else(|p| p.into_inner());
+                stored
+                    .values()
+                    .copied()
+                    .chain(started.values().map(|t| t.id))
+                    .collect()
             }
             None => vec![],
         }
@@ -152,34 +166,64 @@ impl Jobs {
             let id = match already {
                 Some(id) => id,
                 None => {
-                    let ticket = api
-                        .start_attachment(
-                            token,
-                            out.channel,
-                            &StartAttachmentRequest {
-                                name: f.name.clone(),
-                                size: f.size,
-                                content_type: f.content_type.clone(),
-                                width: f.width,
-                                height: f.height,
-                                duration_ms: None,
-                                temp_days: out.temp_days,
-                            },
-                        )
-                        .await?;
-                    let url = ticket.url.clone().ok_or(SendError::Api(ApiError::Rejected(
-                        "That file can't be uploaded by this version of Pulse.".into(),
-                    )))?;
+                    // A big file's upload started by an earlier try is resumed, not restarted.
+                    let resumed = job
+                        .started
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .get(&f.id)
+                        .cloned();
+                    let ticket = match resumed {
+                        Some(t) => t,
+                        None => {
+                            api.start_attachment(
+                                token,
+                                out.channel,
+                                &StartAttachmentRequest {
+                                    name: f.name.clone(),
+                                    size: f.size,
+                                    content_type: f.content_type.clone(),
+                                    width: f.width,
+                                    height: f.height,
+                                    duration_ms: None,
+                                    temp_days: if f.size > MAX_BYTES { out.temp_days } else { None },
+                                },
+                            )
+                            .await?
+                        }
+                    };
                     let r = report.clone();
-                    upload::put_file(
-                        &http,
-                        &url,
-                        &f.path,
-                        &ticket.content_type,
-                        move |sent, _| r(sent),
-                        job.cancel.clone(),
-                    )
-                    .await?;
+                    match (&ticket.multipart, &ticket.url) {
+                        (Some(info), _) => {
+                            job.started
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .insert(f.id.clone(), ticket.clone());
+                            let parts = upload_parts(api, token, &http, f, ticket.id, info, &job.cancel, r).await;
+                            if let Err(SendError::Api(_)) = &parts {
+                                // the upload is gone on the server (expired or swept): start over next time
+                                job.started.lock().unwrap_or_else(|p| p.into_inner()).remove(&f.id);
+                            }
+                            parts?;
+                            job.started.lock().unwrap_or_else(|p| p.into_inner()).remove(&f.id);
+                        }
+                        (None, Some(url)) => {
+                            upload::put_file(
+                                &http,
+                                url,
+                                &f.path,
+                                &ticket.content_type,
+                                move |sent, _| r(sent),
+                                job.cancel.clone(),
+                            )
+                            .await?;
+                        }
+                        (None, None) => {
+                            return Err(SendError::Api(ApiError::Rejected(
+                                "That file can't be uploaded by this version of Pulse.".into(),
+                            )));
+                        }
+                    }
                     job.stored
                         .lock()
                         .unwrap_or_else(|p| p.into_inner())
@@ -233,6 +277,90 @@ impl Jobs {
         }
         Ok(msg)
     }
+}
+
+/// Parts of a big file in flight at once.
+const PARALLEL_PARTS: usize = 3;
+/// How many times one part is tried before the send fails (a retry of the send resumes).
+const PART_TRIES: u32 = 3;
+
+/// Upload a big file's parts (only those the store doesn't have yet), then join them. `report`
+/// gets this file's stored bytes so far.
+#[allow(clippy::too_many_arguments)]
+async fn upload_parts(
+    api: &Api,
+    token: &str,
+    http: &reqwest::Client,
+    file: &Staged,
+    id: AttachmentId,
+    info: &MultipartInfo,
+    cancel: &CancellationFlag,
+    report: impl Fn(u64) + Clone + Send + Sync + 'static,
+) -> Result<(), SendError> {
+    use futures::{StreamExt, TryStreamExt};
+    let have = api.attachment_parts(token, id).await?;
+    let done_bytes: u64 = have.iter().map(|p| p.size).sum();
+    let done: std::collections::HashSet<u16> = have.iter().map(|p| p.part).collect();
+    let todo: Vec<u16> = (1..=info.parts).filter(|p| !done.contains(p)).collect();
+    // bytes stored per part (whole parts) plus what each part in flight has sent
+    let flying: Arc<Mutex<HashMap<u16, u64>>> = Arc::default();
+    let finished = Arc::new(AtomicU64::new(done_bytes));
+    report(done_bytes);
+    for batch in todo.chunks(pulse_protocol::rest::attachment_limits::PARTS_PER_ASK) {
+        let urls = api.attachment_part_urls(token, id, batch).await?;
+        futures::stream::iter(urls)
+            .map(|pu| {
+                let (flying, finished, report, cancel) =
+                    (flying.clone(), finished.clone(), report.clone(), cancel.clone());
+                let path = file.path.clone();
+                let offset = (pu.part as u64 - 1) * info.part_size;
+                async move {
+                    let mut tries = 0;
+                    loop {
+                        tries += 1;
+                        let progress = {
+                            let (flying, finished, report) =
+                                (flying.clone(), finished.clone(), report.clone());
+                            move |sent: u64, _| {
+                                let mut f = flying.lock().unwrap_or_else(|p| p.into_inner());
+                                f.insert(pu.part, sent);
+                                report(finished.load(Ordering::SeqCst) + f.values().sum::<u64>());
+                            }
+                        };
+                        let r = upload::put_slice(
+                            http,
+                            &pu.url,
+                            &path,
+                            offset,
+                            pu.size,
+                            None,
+                            progress,
+                            cancel.clone(),
+                            upload::STALL_AFTER,
+                        )
+                        .await;
+                        flying
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .remove(&pu.part);
+                        match r {
+                            Ok(_) => {
+                                finished.fetch_add(pu.size, Ordering::SeqCst);
+                                return Ok::<(), SendError>(());
+                            }
+                            Err(UploadError::Cancelled) => return Err(UploadError::Cancelled.into()),
+                            Err(e) if tries >= PART_TRIES => return Err(e.into()),
+                            Err(_) => tokio::time::sleep(Duration::from_secs(tries as u64)).await,
+                        }
+                    }
+                }
+            })
+            .buffer_unordered(PARALLEL_PARTS)
+            .try_collect::<Vec<()>>()
+            .await?;
+    }
+    api.complete_attachment(token, id).await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -352,6 +480,99 @@ mod tests {
             .filter(|(method, _)| method == reqwest::Method::PUT)
             .count();
         assert_eq!(puts, 2, "{:?}", fake.requests());
+    }
+
+    /// A file just over the normal limit: four parts.
+    fn stage_big(s: &Setup) -> String {
+        let p = s.dir.path().join("world.zip");
+        let f = std::fs::File::create(&p).unwrap();
+        f.set_len(MAX_BYTES + 1).unwrap();
+        s.stager.stage_path(&p).unwrap().id
+    }
+
+    fn part_puts(s: &Setup) -> usize {
+        s.app
+            .s3
+            .as_ref()
+            .unwrap()
+            .requests()
+            .iter()
+            .filter(|(method, _)| method == reqwest::Method::PUT)
+            .count()
+    }
+
+    #[tokio::test]
+    async fn a_big_file_goes_up_in_parts_and_expires() {
+        let s = setup().await;
+        let mut out = outgoing(&s, vec![stage_big(&s)], "the world");
+        out.temp_days = Some(1);
+        let seen = Arc::new(StdMutex::new(Vec::<Progress>::new()));
+        let log = seen.clone();
+        let m = Jobs::default()
+            .run(&s.api, &s.token, &s.stager, &out, move |p| log.lock().unwrap().push(p))
+            .await
+            .unwrap();
+        assert_eq!(m.attachments[0].size, MAX_BYTES + 1);
+        assert!(m.attachments[0].expires_at.is_some());
+        assert_eq!(part_puts(&s), 4);
+        let last = seen.lock().unwrap().last().cloned().unwrap();
+        assert_eq!((last.sent, last.total), (MAX_BYTES + 1, MAX_BYTES + 1));
+    }
+
+    #[tokio::test]
+    async fn a_retry_resumes_a_big_upload_without_sending_stored_parts_again() {
+        let s = setup().await;
+        let staged = stage_big(&s);
+        let mut out = outgoing(&s, vec![staged.clone()], "");
+        out.temp_days = Some(7);
+        let file = s.stager.get(&staged).unwrap();
+        // an earlier try started the upload and stored part 1, then the connection dropped
+        let ticket = s
+            .api
+            .start_attachment(
+                &s.token,
+                s.channel,
+                &StartAttachmentRequest {
+                    name: file.name.clone(),
+                    size: file.size,
+                    content_type: file.content_type.clone(),
+                    width: None,
+                    height: None,
+                    duration_ms: None,
+                    temp_days: Some(7),
+                },
+            )
+            .await
+            .unwrap();
+        let urls = s
+            .api
+            .attachment_part_urls(&s.token, ticket.id, &[1])
+            .await
+            .unwrap();
+        let part_size = ticket.multipart.as_ref().unwrap().part_size;
+        upload::put_slice(
+            &upload::client(),
+            &urls[0].url,
+            &file.path,
+            0,
+            part_size,
+            None,
+            |_, _| {},
+            CancellationFlag::new(),
+            upload::STALL_AFTER,
+        )
+        .await
+        .unwrap();
+        let jobs = Jobs::default();
+        jobs.job("n-1")
+            .started
+            .lock()
+            .unwrap()
+            .insert(staged, ticket);
+        let m = jobs.run(&s.api, &s.token, &s.stager, &out, |_| {}).await.unwrap();
+        assert_eq!(m.attachments.len(), 1);
+        // part 1 once (the earlier try), then parts 2 to 4
+        assert_eq!(part_puts(&s), 4);
     }
 
     #[tokio::test]

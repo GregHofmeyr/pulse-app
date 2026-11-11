@@ -94,7 +94,7 @@ describe('Composer files', () => {
     expect(calls.find((c) => c.cmd === 'stage_attachment_paths')!.args).toEqual({ paths: ['/home/alex/report.pdf'] })
     expect(chips()).toEqual(['report.pdf'])
     enter(box)
-    expect(onSend).toHaveBeenCalledWith('', [file('s1', 'report.pdf')])
+    expect(onSend).toHaveBeenCalledWith('', [file('s1', 'report.pdf')], null)
     expect(chips()).toEqual([])
   })
 
@@ -132,10 +132,10 @@ describe('Composer files', () => {
     expect(calls.filter((c) => c.cmd === 'unstage_attachment')).toHaveLength(1)
   })
 
-  it('refuses a pasted file over 50 MB without reading it', async () => {
+  it('refuses a pasted file over 2 GB without reading it', async () => {
     const box = show()
     const big = new File([new Uint8Array(1)], 'world.zip')
-    Object.defineProperty(big, 'size', { value: 51 * 1024 * 1024 })
+    Object.defineProperty(big, 'size', { value: 2 * 1024 ** 3 + 1 })
     const read = vi.spyOn(big, 'arrayBuffer')
     const e = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
     Object.defineProperty(e, 'clipboardData', { value: { files: [big], getData: () => '' } })
@@ -143,17 +143,34 @@ describe('Composer files', () => {
     await settle()
     expect(read).not.toHaveBeenCalled()
     expect(calls.find((c) => c.cmd === 'stage_attachment_bytes')).toBeUndefined()
-    expect(document.querySelector('[role=alert]')!.textContent).toBe('Files can be up to 50 MB.')
+    expect(document.querySelector('[role=alert]')!.textContent).toBe('Files can be up to 2 GB.')
   })
 
-  it('refuses a file over 50 MB', async () => {
+  it('refuses a file over 2 GB', async () => {
     answers.pick_attachment_files = () => ['/big.zip']
-    answers.stage_attachment_paths = () => [{ status: 'staged', file: file('b', 'big.zip', 51 * 1024 * 1024) }]
+    answers.stage_attachment_paths = () => [{ status: 'staged', file: file('b', 'big.zip', 2 * 1024 ** 3 + 1) }]
     show()
     document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
     await settle()
     expect(chips()).toEqual([])
-    expect(document.querySelector('[role=alert]')!.textContent).toBe('Files can be up to 50 MB.')
+    expect(document.querySelector('[role=alert]')!.textContent).toBe('Files can be up to 2 GB.')
+  })
+
+  it('a file over 50 MB is a temporary send: the expiry choice shows, 7 days unless 1 is picked', async () => {
+    answers.pick_attachment_files = () => ['/world.zip']
+    answers.stage_attachment_paths = () => [{ status: 'staged', file: file('w', 'world.zip', 300 * 1024 * 1024) }]
+    const box = show()
+    expect(document.querySelector('[aria-label="Big files expire in"]')).toBeNull()
+    document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
+    await settle()
+    const group = document.querySelector('[aria-label="Big files expire in"]')!
+    const choice = (label: string) => [...group.querySelectorAll('button')].find((b) => b.textContent === label)!
+    expect(choice('7 days').getAttribute('aria-pressed')).toBe('true')
+    choice('1 day').click()
+    flushSync()
+    expect(choice('1 day').getAttribute('aria-pressed')).toBe('true')
+    enter(box)
+    expect(onSend).toHaveBeenCalledWith('', [file('w', 'world.zip', 300 * 1024 * 1024)], 1)
   })
 
   it('a removed chip is let go in the core', async () => {

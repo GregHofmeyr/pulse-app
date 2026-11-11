@@ -147,6 +147,17 @@ pub fn fallback_text(atts: &[Attachment]) -> String {
     }
 }
 
+/// How many parts a big upload of `size` bytes has.
+pub fn part_count(size: u64) -> u16 {
+    size.div_ceil(attachment_limits::PART_SIZE).max(1) as u16
+}
+
+/// The length of part `part` (from 1) of a big upload of `size` bytes: the last is the rest.
+pub fn part_len(size: u64, part: u16) -> u64 {
+    let start = (part as u64 - 1) * attachment_limits::PART_SIZE;
+    attachment_limits::PART_SIZE.min(size.saturating_sub(start))
+}
+
 /// An attachment's stored object, for deleting it: the row's key and which prefix it lives under.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stored {
@@ -342,14 +353,38 @@ pub async fn claim(
 }
 
 /// Inside the send's transaction: tie the claimed uploads to `message`, in order. One sent (or
-/// cancelled) meanwhile is a 404 and the send rolls back.
+/// cancelled) meanwhile is a 404 and the send rolls back. A temporary file's days count from now:
+/// its expiry moves by how long it took to send, and `atts` (the claimed ones, in order) get it.
 pub async fn bind(
     tx: &mut SqliteConnection,
     me: UserId,
     message: MessageId,
     ids: &[AttachmentId],
+    atts: &mut [Attachment],
 ) -> AppResult<()> {
+    let now = chrono::Utc::now();
     for (position, id) in ids.iter().enumerate() {
+        let times: Option<(Option<String>, String)> =
+            sqlx::query_as("SELECT expires_at, created_at FROM attachments WHERE id = ?")
+                .bind(id.to_string())
+                .fetch_optional(&mut *tx)
+                .await?;
+        if let Some((Some(expires), created)) = times {
+            let parse = |t: &str| {
+                chrono::DateTime::parse_from_rfc3339(t)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .map_err(anyhow::Error::from)
+            };
+            let moved = crate::db::stamp(now + (parse(&expires)? - parse(&created)?));
+            sqlx::query("UPDATE attachments SET expires_at = ? WHERE id = ?")
+                .bind(&moved)
+                .bind(id.to_string())
+                .execute(&mut *tx)
+                .await?;
+            if let Some(a) = atts.get_mut(position) {
+                a.expires_at = Some(moved);
+            }
+        }
         let done = sqlx::query(
             "UPDATE attachments SET message_id = ?, position = ?
              WHERE id = ? AND user_id = ? AND message_id IS NULL",

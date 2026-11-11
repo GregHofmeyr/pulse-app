@@ -174,6 +174,154 @@ impl R2 {
         }
     }
 
+    /// Start a multipart upload of `key` (a big temporary send, #57): its upload id.
+    pub async fn create_multipart(&self, key: &str, content_type: &str) -> AppResult<String> {
+        let mut action = self.bucket.create_multipart_upload(Some(&self.creds), key);
+        action
+            .headers_mut()
+            .insert("content-type", content_type.to_string());
+        let url = action.sign(SERVER_SIGN_TTL);
+        let r = self
+            .http
+            .post(url)
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .send()
+            .await
+            .map_err(quiet)
+            .with_context(|| format!("R2 create multipart {key}"))?;
+        if !r.status().is_success() {
+            return Err(anyhow::anyhow!("R2 create multipart answered {}", r.status()).into());
+        }
+        let body = r
+            .text()
+            .await
+            .map_err(quiet)
+            .with_context(|| format!("R2 create multipart {key}"))?;
+        let parsed = rusty_s3::actions::CreateMultipartUpload::parse_response(&body)
+            .map_err(|e| anyhow::anyhow!("R2 create multipart: unreadable answer ({e})"))?;
+        Ok(parsed.upload_id().to_string())
+    }
+
+    /// A PUT URL for part `part` of an upload that only accepts exactly `size` bytes (a signed
+    /// header, like a whole object's).
+    pub fn part_url(
+        &self,
+        key: &str,
+        upload_id: &str,
+        part: u16,
+        size: u64,
+        ttl: Duration,
+    ) -> (Url, String) {
+        let mut put = self
+            .bucket
+            .upload_part(Some(&self.creds), key, part, upload_id);
+        put.headers_mut().insert("content-length", size.to_string());
+        let url = put.sign(ttl);
+        let expires = expires_at(&url, ttl);
+        (url, expires)
+    }
+
+    /// The parts stored so far, as `(number, etag, size)` in order; `None` when the upload is
+    /// gone (completed, aborted or never started).
+    pub async fn list_parts(
+        &self,
+        key: &str,
+        upload_id: &str,
+    ) -> AppResult<Option<Vec<(u16, String, u64)>>> {
+        let mut out = Vec::new();
+        let mut marker: Option<u16> = None;
+        loop {
+            let mut action = self.bucket.list_parts(Some(&self.creds), key, upload_id);
+            if let Some(m) = marker {
+                action.set_part_number_marker(m);
+            }
+            let url = action.sign(SERVER_SIGN_TTL);
+            let r = self
+                .http
+                .get(url)
+                .send()
+                .await
+                .map_err(quiet)
+                .with_context(|| format!("R2 list parts {key}"))?;
+            match r.status() {
+                s if s.is_success() => {}
+                reqwest::StatusCode::NOT_FOUND => return Ok(None),
+                s => return Err(anyhow::anyhow!("R2 list parts answered {s}").into()),
+            }
+            let body = r
+                .text()
+                .await
+                .map_err(quiet)
+                .with_context(|| format!("R2 list parts {key}"))?;
+            let page = rusty_s3::actions::ListParts::parse_response(&body)
+                .map_err(|e| anyhow::anyhow!("R2 list parts: unreadable answer ({e})"))?;
+            out.extend(page.parts.into_iter().map(|p| (p.number, p.etag, p.size)));
+            match page.next_part_number_marker {
+                Some(next) if marker != Some(next) => marker = Some(next),
+                _ => break,
+            }
+        }
+        out.sort_by_key(|p| p.0);
+        Ok(Some(out))
+    }
+
+    /// Join an upload's parts into its object: `etags[n]` is part `n + 1`'s.
+    pub async fn complete_multipart(
+        &self,
+        key: &str,
+        upload_id: &str,
+        etags: &[String],
+    ) -> AppResult<()> {
+        let action = self.bucket.complete_multipart_upload(
+            Some(&self.creds),
+            key,
+            upload_id,
+            etags.iter().map(String::as_str),
+        );
+        let url = action.sign(SERVER_SIGN_TTL);
+        let body = action.body();
+        let r = self
+            .http
+            .post(url)
+            .body(body)
+            .send()
+            .await
+            .map_err(quiet)
+            .with_context(|| format!("R2 complete multipart {key}"))?;
+        let status = r.status();
+        let text = r
+            .text()
+            .await
+            .map_err(quiet)
+            .with_context(|| format!("R2 complete multipart {key}"))?;
+        // S3 can answer 200 and still fail: the body says which.
+        if !status.is_success()
+            || rusty_s3::actions::CompleteMultipartUploadResponse::parse(&text).is_err()
+        {
+            return Err(anyhow::anyhow!("R2 complete multipart answered {status}").into());
+        }
+        Ok(())
+    }
+
+    /// Abandon an upload and its parts; one already gone counts as done.
+    pub async fn abort_multipart(&self, key: &str, upload_id: &str) -> AppResult<()> {
+        let url = self
+            .bucket
+            .abort_multipart_upload(Some(&self.creds), key, upload_id)
+            .sign(SERVER_SIGN_TTL);
+        let r = self
+            .http
+            .delete(url)
+            .send()
+            .await
+            .map_err(quiet)
+            .with_context(|| format!("R2 abort multipart {key}"))?;
+        match r.status() {
+            s if s.is_success() || s == reqwest::StatusCode::NOT_FOUND => Ok(()),
+            s => Err(anyhow::anyhow!("R2 abort multipart answered {s}").into()),
+        }
+    }
+
     /// The `clips-check` probe: PUT, HEAD, GET and DELETE one small object through signed URLs.
     /// `Err` names the failing step and its HTTP status.
     pub async fn probe(&self) -> Result<(), String> {
@@ -542,6 +690,56 @@ mod tests {
         }
         // a redirect proves nothing either
         assert!(length_check(StatusCode::TEMPORARY_REDIRECT).is_err());
+    }
+
+    async fn put_part(r2: &R2, key: &str, upload: &str, part: u16, bytes: Vec<u8>) {
+        let (url, _) = r2.part_url(key, upload, part, bytes.len() as u64, TTL);
+        let r = reqwest::Client::new().put(url).body(bytes).send().await.unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn multipart_round_trip() {
+        let (fake, r2) = setup().await;
+        let key = "temp/mp";
+        let upload = r2.create_multipart(key, "application/zip").await.unwrap();
+        put_part(&r2, key, &upload, 1, vec![1; 10]).await;
+        put_part(&r2, key, &upload, 3, vec![3; 4]).await;
+        let parts = r2.list_parts(key, &upload).await.unwrap().unwrap();
+        assert_eq!(parts.iter().map(|p| (p.0, p.2)).collect::<Vec<_>>(), vec![(1, 10), (3, 4)]);
+        put_part(&r2, key, &upload, 2, vec![2; 10]).await;
+        let parts = r2.list_parts(key, &upload).await.unwrap().unwrap();
+        let etags: Vec<String> = parts.into_iter().map(|p| p.1).collect();
+        r2.complete_multipart(key, &upload, &etags).await.unwrap();
+        assert_eq!(r2.head(key).await.unwrap(), Some(24));
+        let (bytes, ct) = fake.object(key).unwrap();
+        assert_eq!(ct, "application/zip");
+        assert_eq!(bytes, [vec![1; 10], vec![2; 10], vec![3; 4]].concat());
+        // a completed upload is gone
+        assert_eq!(r2.list_parts(key, &upload).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_part_url_takes_exactly_its_length() {
+        let (_fake, r2) = setup().await;
+        let upload = r2.create_multipart("temp/len", "application/zip").await.unwrap();
+        let (url, _) = r2.part_url("temp/len", &upload, 1, 5, TTL);
+        let r = reqwest::Client::new().put(url).body(vec![0u8; 6]).send().await.unwrap();
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn abort_discards_parts_and_a_wrong_etag_fails() {
+        let (fake, r2) = setup().await;
+        let key = "temp/ab";
+        let upload = r2.create_multipart(key, "application/zip").await.unwrap();
+        put_part(&r2, key, &upload, 1, vec![1; 3]).await;
+        assert!(r2.complete_multipart(key, &upload, &["\"nope\"".into()]).await.is_err());
+        assert!(fake.object(key).is_none());
+        r2.abort_multipart(key, &upload).await.unwrap();
+        assert_eq!(fake.open_uploads(), 0);
+        // aborting what is already gone is fine
+        r2.abort_multipart(key, &upload).await.unwrap();
     }
 
     #[test]

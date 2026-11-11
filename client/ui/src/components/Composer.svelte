@@ -38,7 +38,7 @@
   import { spotifyLinkIn } from '../lib/stageShare'
   import ComposerFiles from './ComposerFiles.svelte'
   import { api, errorText, type StageResult } from '../lib/tauri'
-  import { MAX_BYTES, MAX_FILES, TOO_BIG, TOO_MANY } from '../lib/attachments'
+  import { MAX_BYTES, MAX_FILES, TEMP_DAYS, TEMP_MAX_BYTES, TOO_BIG_TEMP, TOO_MANY } from '../lib/attachments'
 
   let {
     placeholder,
@@ -60,8 +60,8 @@
     draftKey: string
     replyingTo: string | null
     onCancelReply: () => void
-    /** `files`: what was queued with it (#57); empty for a plain message. */
-    onSend: (text: string, files: StagedFile[]) => void
+    /** `files`: what was queued with it (#57), empty for a plain message; `tempDays`: how long its big files last. */
+    onSend: (text: string, files: StagedFile[], tempDays: number | null) => void
     onTyping: () => void
     /** People who can be @mentioned here (autocomplete). */
     mentionables?: Mentionable[]
@@ -97,6 +97,9 @@
     else fileDrafts.delete(draftKey)
   })
   let fileError = $state<string | null>(null)
+  // Files over 50 MB are temporary sends **(owner)**: the sender picks how long they last.
+  let tempDays = $state<number>(7)
+  const hasBig = $derived(files.some((f) => f.size > MAX_BYTES))
 
   function addStaged(results: StageResult[]) {
     fileError = null
@@ -106,8 +109,8 @@
       } else if (files.length >= MAX_FILES) {
         fileError = TOO_MANY
         void api.unstageAttachment(r.file.id)
-      } else if (r.file.size > MAX_BYTES) {
-        fileError = TOO_BIG
+      } else if (r.file.size > TEMP_MAX_BYTES) {
+        fileError = TOO_BIG_TEMP
         void api.unstageAttachment(r.file.id)
       } else {
         files = [...files, r.file]
@@ -147,8 +150,8 @@
         return
       }
       // checked before reading it: a huge file copied in a file manager isn't pulled into memory (images only shrink)
-      if (f.size > MAX_BYTES) {
-        fileError = TOO_BIG
+      if (f.size > TEMP_MAX_BYTES) {
+        fileError = TOO_BIG_TEMP
         continue
       }
       try {
@@ -311,7 +314,7 @@
       // a link sent as it is has been seen: the chip doesn't come back for it
       const sent = spotifyLinkIn(t)
       if (sent && stageNudge) nudged.add(sent.key)
-      onSend(t, files)
+      onSend(t, files, hasBig ? tempDays : null)
       files = []
       fileError = null
       box.setText({ text: '', caret: 0 }, true, false)
@@ -426,6 +429,15 @@
     {name}{#if c.usage.startsWith(name)}<span class="arg">{c.usage.slice(name.length)}</span>{:else}<span class="arg">{` ${c.usage}`}</span>{/if}
   {/snippet}
   <ComposerFiles {files} onRemove={removeFile} error={fileError} />
+  {#if hasBig}
+    <!-- big files (over 50 MB) are temporary sends: how long they last (#57) -->
+    <div class="temp" role="group" aria-label="Big files expire in">
+      <span>Big files expire in</span>
+      {#each TEMP_DAYS as d (d)}
+        <button type="button" class="btn btn-quiet" aria-pressed={tempDays === d} onclick={() => (tempDays = d)}>{d === 1 ? '1 day' : `${d} days`}</button>
+      {/each}
+    </div>
+  {/if}
   {#if replyingTo}
     <div class="replying">Replying to <strong class="name-clip">{replyingTo}</strong>
       <button class="icon-btn icon-btn-xs" aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={14} /></button></div>
@@ -510,6 +522,10 @@
   .wrap.has-gif :global(.composer-input) { padding-right: 84px; }
   .wrap.has-gif.has-wheel :global(.composer-input) { padding-right: 120px; }
   .wrap.has-gif.has-poll :global(.composer-input) { padding-right: 156px; }
+  /* how long big files last (#57): a quiet segmented choice under the chips */
+  .temp { display: flex; align-items: center; gap: 6px; padding: 8px 12px 0; font-size: 12px; color: var(--text-3); }
+  .temp .btn { height: 24px; padding: 0 8px; font-size: 12px; }
+  .temp .btn[aria-pressed='true'] { background: var(--bg-4); color: var(--text); }
   /* attach files (#57): on the left, as in most chat apps */
   .attach-btn { left: 8px; right: auto; }
   .wrap.has-files :global(.composer-input) { padding-left: 48px; }

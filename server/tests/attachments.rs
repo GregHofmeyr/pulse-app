@@ -165,14 +165,16 @@ async fn empty_and_over_50mb_are_refused() {
 }
 
 #[tokio::test]
-async fn temporary_sends_are_not_available_yet() {
+async fn a_temporary_send_goes_up_in_parts() {
     let w = world().await;
     let mut body = file("world.zip", 300 * MB, "application/zip");
     body["temp_days"] = json!(1);
     let r = start(&w.app, &w.alex.1, w.text.id, body).await;
-    assert_eq!(r.status(), 400);
-    assert_eq!(message_of(r).await, "Temporary files aren't available yet.");
-    assert_eq!(rows(&w.app).await, 0);
+    assert_eq!(r.status(), 200);
+    let up: AttachmentUpload = r.json().await.unwrap();
+    assert!(up.url.is_none());
+    assert_eq!(up.multipart.unwrap().parts, 19);
+    assert_eq!(rows(&w.app).await, 1);
 }
 
 #[tokio::test]

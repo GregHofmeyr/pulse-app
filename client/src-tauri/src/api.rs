@@ -7,7 +7,7 @@ use pulse_protocol::ids::{
     ServerId, UserId,
 };
 use pulse_protocol::rest::{
-    AddGameRequest, AddMembersRequest, AddQotyOptionRequest, AttachmentUpload, AttachmentUrl,
+    AddGameRequest, AddMembersRequest, AddQotyOptionRequest, AttachmentUpload, AttachmentUrl, PartUrl, PartUrlsRequest, UploadedPart,
     BadgeCatalogue, Category, ChangePasswordRequest, Channel, ChannelKind, ClipFacets, ClipStorage,
     ClipUpload, ClipUploadRequest, ClipUrl, ClipView, ConfirmClipRequest, CreateCategoryRequest,
     CreateDmRequest, CreateEmojiRequest, CreateSoundRequest, CreateWheelRequest, CustomEmoji,
@@ -2472,6 +2472,54 @@ impl Api {
         Self::clip_ok_empty(
             self.http
                 .delete(self.url(&["attachment-uploads", &id.to_string()])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Signed PUTs for some parts of a big upload (a temporary send).
+    pub async fn attachment_part_urls(
+        &self,
+        token: &str,
+        id: AttachmentId,
+        parts: &[u16],
+    ) -> Result<Vec<PartUrl>, ApiError> {
+        Self::clip_parse(
+            self.http
+                .post(self.url(&["attachment-uploads", &id.to_string(), "parts"])?)
+                .bearer_auth(token)
+                .json(&PartUrlsRequest {
+                    parts: parts.to_vec(),
+                })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// The parts of a big upload the store already has (a resumed upload sends only the rest).
+    pub async fn attachment_parts(
+        &self,
+        token: &str,
+        id: AttachmentId,
+    ) -> Result<Vec<UploadedPart>, ApiError> {
+        Self::clip_parse(
+            self.http
+                .get(self.url(&["attachment-uploads", &id.to_string(), "parts"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Join a big upload's parts once all are stored.
+    pub async fn complete_attachment(&self, token: &str, id: AttachmentId) -> Result<(), ApiError> {
+        Self::clip_ok_empty(
+            self.http
+                .post(self.url(&["attachment-uploads", &id.to_string(), "complete"])?)
                 .bearer_auth(token)
                 .send()
                 .await,

@@ -570,8 +570,8 @@
     if (detached) void toPresent()
     else void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   }
-  function post(text: string, replyToId: string | null, gif: Gif | null = null, files: readonly StagedFile[] = []) {
-    queueMessage(channelId, text, replyToId, gif, files)
+  function post(text: string, replyToId: string | null, gif: Gif | null = null, files: readonly StagedFile[] = [], tempDays: number | null = null) {
+    queueMessage(channelId, text, replyToId, gif, files, tempDays)
     // Sending from higher up takes you to the latest (your message lands there).
     toLatest()
   }
@@ -589,7 +589,7 @@
     openWheel: (prefill) => composer?.openWheel(prefill),
     openPoll: (prefill) => composer?.openPoll(prefill),
   }
-  function send(text: string, files: StagedFile[] = []) {
+  function send(text: string, files: StagedFile[] = [], tempDays: number | null = null) {
     // a slash command (`/wheel a, b, c`, lib/commands.ts) runs instead of being sent (#158, #262); with files it's text
     const cmd = files.length ? null : parseCommand(text)
     if (cmd) {
@@ -598,7 +598,7 @@
     }
     const r = replyTo?.id ?? null
     replyTo = null
-    post(text, r, null, files)
+    post(text, r, null, files, tempDays)
   }
   // a GIF from the picker (#58) goes at once, as a reply to whatever is being replied to
   function sendGif(gif: Gif, link: string) {
