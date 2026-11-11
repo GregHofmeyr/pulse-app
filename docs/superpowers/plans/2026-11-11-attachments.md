@@ -10,6 +10,16 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-11-attachments-design.md`
 
+## As built (2026-11-11)
+
+All three slices shipped. Where the code differs from the tasks below:
+- Migration `0035_attachments.sql` (GIFs took 0033, delete-a-server 0034).
+- Purge hook: `attachments::stored_in_channels(&mut conn, &[ChannelId]) -> Vec<Stored>` in the purge's transaction, then `attachments::remove_objects(&AppState, Vec<Stored>)` after the commit. Channel purge, DM/group removal and the server purge (#184) all use it.
+- `SendMessageRequest.attachments` reaches the store through `messages::routes::Outgoing` (`attachment_ids`, `attachments`, `caption_is_fallback`).
+- Big sends: complete is idempotent; at most 4 GB of one person's unsent big files count against the 20 GB; pasted files stay at 50 MB (they are read whole).
+- Zip and send keeps the folder's name as the zip's top folder and stops the moment the zip passes 2 GB.
+- Follow-ups: #289, #290, #291 (out of scope), #297 (review minors), #298 (R2 lifecycle rules).
+
 ## Global Constraints
 
 - Up to **10 files per message**; normal attachments **up to 50 MB each, kept forever**; big temporary sends **above 50 MB, up to 2 GB per file**, expiring in **1 day or 7 days**; **server-wide cap of 20 GB of live temp files**.

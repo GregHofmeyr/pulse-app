@@ -420,3 +420,37 @@ async fn sweep_and_cancel_abort_unfinished_multipart_uploads() {
     assert_eq!(s3(app).open_uploads(), 0);
     let _ = b;
 }
+
+#[tokio::test]
+async fn the_storage_report_counts_each_kind() {
+    let w = world().await;
+    let (app, t, ch) = (&w.app, &w.alex.1, w.text.id);
+    let r = post_json(
+        app,
+        t,
+        &format!("/channels/{ch}/attachments"),
+        json!({ "name": "a.txt", "size": 10 * MB, "content_type": "text/plain" }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    start_ok(app, t, ch, BIG, 1).await;
+    let purged = start_ok(app, t, ch, BIG, 1).await;
+    sqlx::query("UPDATE attachments SET purged_at = ? WHERE id = ?")
+        .bind(pulse_server::db::now())
+        .bind(purged.id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let kinds = pulse_server::attachments::storage::usage(&app.db)
+        .await
+        .unwrap();
+    let of = |label: &str| {
+        let k = kinds.iter().find(|k| k.label == label).unwrap();
+        (k.count, k.bytes, k.r2)
+    };
+    assert_eq!(of("attachments"), (1, 10 * MB, true));
+    // the purged one no longer counts
+    assert_eq!(of("temp"), (1, BIG, true));
+    assert_eq!(of("clips"), (0, 0, true));
+    assert!(!of("sounds").2 && !of("emoji").2);
+}

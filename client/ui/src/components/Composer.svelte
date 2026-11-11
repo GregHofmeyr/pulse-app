@@ -15,7 +15,7 @@
 </script>
 
 <script lang="ts">
-  import { untrack } from 'svelte'
+  import { onDestroy, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import EmojiBox, { type Snap } from './EmojiBox.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
@@ -169,12 +169,25 @@
     }
   }
 
+  // the composer went away (another channel) while a zip was being made: nothing owns it then
+  let gone = false
+  onDestroy(() => (gone = true))
+
   async function zipFolder() {
     const offer = folderOffer
     if (!offer || zipping) return
+    // a full queue: refused before minutes of zipping, not after
+    if (files.length >= MAX_FILES) {
+      fileError = TOO_MANY
+      return
+    }
     zipping = true
     try {
       const file = await api.zipAttachmentFolder(offer.path)
+      if (gone) {
+        void api.unstageAttachment(file.id)
+        return
+      }
       folderOffer = null
       addStaged([{ status: 'staged', file }])
     } catch (e) {

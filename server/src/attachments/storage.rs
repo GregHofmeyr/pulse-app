@@ -24,6 +24,7 @@ async fn sum(db: &SqlitePool, sql: &str) -> AppResult<(u64, u64)> {
 pub async fn usage(db: &SqlitePool) -> AppResult<Vec<Kind>> {
     let rows = [
         (
+            // unsent uploads too, until the sweep removes them
             "attachments",
             "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM attachments WHERE expires_at IS NULL",
             true,

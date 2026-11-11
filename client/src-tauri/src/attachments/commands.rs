@@ -29,7 +29,8 @@ pub async fn stage_attachment_paths(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or(p);
-        // Converting an image takes a moment: not on an async worker's time.
+        // Converting an image takes a moment: block_in_place lets this worker's other tasks move
+        // to another thread meanwhile.
         let stager = &core.attachments;
         let r = tokio::task::block_in_place(|| stager.stage_path(&path));
         out.push(match r {
