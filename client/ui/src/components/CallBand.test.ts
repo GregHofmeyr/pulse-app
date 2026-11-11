@@ -316,4 +316,17 @@ describe('the conversation list', () => {
     flushSync()
     expect(document.querySelectorAll('.in-call')).toHaveLength(1)
   })
+  // #286: like the sidebar's LiveBadge on a server voice channel; a marker, not a button (the row is the button)
+  it('marks a conversation whose call has a stream with LIVE', () => {
+    const s = { channel_id: 'G1', user_id: 'U2', settings: { height: 1080, fps: 60, audio: true, allow_ghosts: false }, status: 'live' as const, viewers: [], ghosts: 0, started_at: '2026-11-10T10:00:00Z' }
+    app.state = { ...app.state, calls: { G1: call('G1'), DM1: call('DM1') }, streams: { G1: { U2: s } } }
+    cmps.push(mount(ConversationList, { target: document.body, props: { activeId: null, onOpen: () => {}, onNew: () => {}, onLeft: () => {} } }))
+    flushSync()
+    const marks = [...document.querySelectorAll('.row .live')]
+    expect(marks).toHaveLength(1)
+    expect(marks[0].textContent).toBe('LIVE')
+    expect(marks[0].tagName).toBe('SPAN')
+    expect(marks[0].closest('.row')!.textContent).toContain('Friends')
+    expect(marks[0].getAttribute('data-tip')).toBe('sam is live')
+  })
 })

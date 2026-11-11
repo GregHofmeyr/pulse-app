@@ -5,8 +5,9 @@
   import Name from './Name.svelte'
   import { app, clock } from '../lib/store.svelte'
   import { presenceOf } from '../lib/presence'
-  import { displayName } from '../lib/selectors'
+  import { displayName, liveIn } from '../lib/selectors'
   import ConversationMenu from './ConversationMenu.svelte'
+  import LiveBadge from './LiveBadge.svelte'
   import { conversations, previewParts, previewText } from '../lib/conversations'
   import { mediaUrl } from '../lib/emoji'
   import { voice } from '../lib/voice.svelte'
@@ -29,6 +30,9 @@
   // the row under the pointer: its avatars animate
   let hovered = $state<string | null>(null)
   const over = (id: string) => () => hovered === id
+  /** Who's live in a conversation's call (#286), oldest stream first. */
+  const streamers = (id: string) => Object.values(liveIn(app.state, id)).sort((a, b) => a.started_at.localeCompare(b.started_at)).map((x) => x.user_id)
+  const liveTip = (ids: string[]) => `${ids.map(nameOf).join(', ')} ${ids.length === 1 ? 'is' : 'are'} live`
 </script>
 
 {#snippet picture(c: (typeof list)[number], people: string[])}
@@ -51,6 +55,7 @@
   {#each list as c (c.channel.id)}
     {@const people = others(c.members)}
     {@const badge = c.muted ? c.mentions : c.unread}
+    {@const live = streamers(c.channel.id)}
     <button class="row" class:active={c.channel.id === activeId} class:unread={c.unread > 0 && !c.muted} class:muted={c.muted}
       onclick={() => onOpen(c.channel.id)}
       onpointerenter={() => (hovered = c.channel.id)} onpointerleave={() => { if (hovered === c.channel.id) hovered = null }}
@@ -69,6 +74,8 @@
           <span class="prev" class:sys={p.system}>{#each previewParts(app.state, p.text) as part, i (i)}{#if 'emoji' in part}<img class="emoji" src={mediaUrl(part.emoji.hash)} alt=":{part.emoji.name}:" draggable="false" />{:else}{part.text}{/if}{/each}</span>
         {/if}
       </span>
+      <!-- a stream in its call (#286): the sidebar's LIVE badge, as a still mark (the row is the button) -->
+      {#if live.length}<LiveBadge channelId={c.channel.id} userId={live[0]} marker={liveTip(live)} />{/if}
       {#if c.channel.id === voice.channelId}<span class="in-call mine" role="img" aria-label="You're in this call" data-tip="You're in this call"><Icon name="speaker" size={14} /></span>
       {:else if app.state.calls[c.channel.id]}<span class="in-call" role="img" aria-label="In call" data-tip="In call"><Icon name="phone" size={14} /></span>{/if}
       {#if c.muted}<span class="mute"><Icon name="bellOff" size={14} /></span>{/if}
