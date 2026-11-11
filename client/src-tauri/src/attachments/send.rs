@@ -186,7 +186,11 @@ impl Jobs {
                                     width: f.width,
                                     height: f.height,
                                     duration_ms: None,
-                                    temp_days: if f.size > MAX_BYTES { out.temp_days } else { None },
+                                    temp_days: if f.size > MAX_BYTES {
+                                        out.temp_days
+                                    } else {
+                                        None
+                                    },
                                 },
                             )
                             .await?
@@ -199,13 +203,27 @@ impl Jobs {
                                 .lock()
                                 .unwrap_or_else(|p| p.into_inner())
                                 .insert(f.id.clone(), ticket.clone());
-                            let parts = upload_parts(api, token, &http, f, ticket.id, info, &job.cancel, r).await;
-                            if let Err(SendError::Api(_)) = &parts {
-                                // the upload is gone on the server (expired or swept): start over next time
-                                job.started.lock().unwrap_or_else(|p| p.into_inner()).remove(&f.id);
+                            let parts =
+                                upload_parts(api, token, &http, f, ticket.id, info, &job.cancel, r)
+                                    .await;
+                            // Only an upload the server says is gone (refused: expired, swept,
+                            // cancelled) starts over next time; a dropped connection resumes it.
+                            if let Err(SendError::Api(
+                                ApiError::Rejected(_) | ApiError::Forbidden(_),
+                            )) = &parts
+                            {
+                                job.started
+                                    .lock()
+                                    .unwrap_or_else(|p| p.into_inner())
+                                    .remove(&f.id);
+                                // best effort: it may still hold room on the server until swept
+                                let _ = api.cancel_attachment(token, ticket.id).await;
                             }
                             parts?;
-                            job.started.lock().unwrap_or_else(|p| p.into_inner()).remove(&f.id);
+                            job.started
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .remove(&f.id);
                         }
                         (None, Some(url)) => {
                             upload::put_file(
@@ -310,8 +328,12 @@ async fn upload_parts(
         let urls = api.attachment_part_urls(token, id, batch).await?;
         futures::stream::iter(urls)
             .map(|pu| {
-                let (flying, finished, report, cancel) =
-                    (flying.clone(), finished.clone(), report.clone(), cancel.clone());
+                let (flying, finished, report, cancel) = (
+                    flying.clone(),
+                    finished.clone(),
+                    report.clone(),
+                    cancel.clone(),
+                );
                 let path = file.path.clone();
                 let offset = (pu.part as u64 - 1) * info.part_size;
                 async move {
@@ -339,16 +361,18 @@ async fn upload_parts(
                             upload::STALL_AFTER,
                         )
                         .await;
-                        flying
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .remove(&pu.part);
-                        match r {
-                            Ok(_) => {
+                        {
+                            let mut f = flying.lock().unwrap_or_else(|p| p.into_inner());
+                            if r.is_ok() {
                                 finished.fetch_add(pu.size, Ordering::SeqCst);
-                                return Ok::<(), SendError>(());
                             }
-                            Err(UploadError::Cancelled) => return Err(UploadError::Cancelled.into()),
+                            f.remove(&pu.part);
+                        }
+                        match r {
+                            Ok(_) => return Ok::<(), SendError>(()),
+                            Err(UploadError::Cancelled) => {
+                                return Err(UploadError::Cancelled.into());
+                            }
                             Err(e) if tries >= PART_TRIES => return Err(e.into()),
                             Err(_) => tokio::time::sleep(Duration::from_secs(tries as u64)).await,
                         }
@@ -509,7 +533,9 @@ mod tests {
         let seen = Arc::new(StdMutex::new(Vec::<Progress>::new()));
         let log = seen.clone();
         let m = Jobs::default()
-            .run(&s.api, &s.token, &s.stager, &out, move |p| log.lock().unwrap().push(p))
+            .run(&s.api, &s.token, &s.stager, &out, move |p| {
+                log.lock().unwrap().push(p)
+            })
             .await
             .unwrap();
         assert_eq!(m.attachments[0].size, MAX_BYTES + 1);
@@ -569,7 +595,10 @@ mod tests {
             .lock()
             .unwrap()
             .insert(staged, ticket);
-        let m = jobs.run(&s.api, &s.token, &s.stager, &out, |_| {}).await.unwrap();
+        let m = jobs
+            .run(&s.api, &s.token, &s.stager, &out, |_| {})
+            .await
+            .unwrap();
         assert_eq!(m.attachments.len(), 1);
         // part 1 once (the earlier try), then parts 2 to 4
         assert_eq!(part_puts(&s), 4);

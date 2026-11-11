@@ -694,7 +694,12 @@ mod tests {
 
     async fn put_part(r2: &R2, key: &str, upload: &str, part: u16, bytes: Vec<u8>) {
         let (url, _) = r2.part_url(key, upload, part, bytes.len() as u64, TTL);
-        let r = reqwest::Client::new().put(url).body(bytes).send().await.unwrap();
+        let r = reqwest::Client::new()
+            .put(url)
+            .body(bytes)
+            .send()
+            .await
+            .unwrap();
         assert_eq!(r.status(), StatusCode::OK);
     }
 
@@ -706,7 +711,10 @@ mod tests {
         put_part(&r2, key, &upload, 1, vec![1; 10]).await;
         put_part(&r2, key, &upload, 3, vec![3; 4]).await;
         let parts = r2.list_parts(key, &upload).await.unwrap().unwrap();
-        assert_eq!(parts.iter().map(|p| (p.0, p.2)).collect::<Vec<_>>(), vec![(1, 10), (3, 4)]);
+        assert_eq!(
+            parts.iter().map(|p| (p.0, p.2)).collect::<Vec<_>>(),
+            vec![(1, 10), (3, 4)]
+        );
         put_part(&r2, key, &upload, 2, vec![2; 10]).await;
         let parts = r2.list_parts(key, &upload).await.unwrap().unwrap();
         let etags: Vec<String> = parts.into_iter().map(|p| p.1).collect();
@@ -722,9 +730,17 @@ mod tests {
     #[tokio::test]
     async fn a_part_url_takes_exactly_its_length() {
         let (_fake, r2) = setup().await;
-        let upload = r2.create_multipart("temp/len", "application/zip").await.unwrap();
+        let upload = r2
+            .create_multipart("temp/len", "application/zip")
+            .await
+            .unwrap();
         let (url, _) = r2.part_url("temp/len", &upload, 1, 5, TTL);
-        let r = reqwest::Client::new().put(url).body(vec![0u8; 6]).send().await.unwrap();
+        let r = reqwest::Client::new()
+            .put(url)
+            .body(vec![0u8; 6])
+            .send()
+            .await
+            .unwrap();
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
     }
 
@@ -734,7 +750,11 @@ mod tests {
         let key = "temp/ab";
         let upload = r2.create_multipart(key, "application/zip").await.unwrap();
         put_part(&r2, key, &upload, 1, vec![1; 3]).await;
-        assert!(r2.complete_multipart(key, &upload, &["\"nope\"".into()]).await.is_err());
+        assert!(
+            r2.complete_multipart(key, &upload, &["\"nope\"".into()])
+                .await
+                .is_err()
+        );
         assert!(fake.object(key).is_none());
         r2.abort_multipart(key, &upload).await.unwrap();
         assert_eq!(fake.open_uploads(), 0);

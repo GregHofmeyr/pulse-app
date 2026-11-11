@@ -1420,6 +1420,8 @@ pub mod attachment_limits {
     pub const PARTS_PER_ASK: usize = 16;
     /// How long a temporary send can last, in days: the sender picks one.
     pub const TEMP_DAYS: [u8; 2] = [1, 7];
+    /// One person's big uploads not yet sent hold at most this much of the server's room.
+    pub const TEMP_PENDING_PER_USER: u64 = 4 * 1024 * 1024 * 1024;
 }
 
 /// A LiveKit join token (voice, or a stream ticket) and where to use it.

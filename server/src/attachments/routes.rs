@@ -5,8 +5,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use pulse_protocol::ids::{AttachmentId, ChannelId, MessageId};
 use pulse_protocol::ids::UserId;
+use pulse_protocol::ids::{AttachmentId, ChannelId, MessageId};
 use pulse_protocol::rest::{
     AttachmentKind, AttachmentUpload, AttachmentUrl, ChannelKind, MultipartInfo, PartUrl,
     PartUrlsRequest, StartAttachmentRequest, UploadedPart, attachment_limits,
@@ -79,9 +79,7 @@ async fn start(
             return Err(bad("Files up to 50 MB are kept: send it as a normal file."));
         }
         Some(_) if req.size > attachment_limits::TEMP_MAX_BYTES => {
-            return Err(AppError::PayloadTooLarge(
-                "Files can be up to 2 GB.".into(),
-            ));
+            return Err(AppError::PayloadTooLarge("Files can be up to 2 GB.".into()));
         }
         Some(d) => Some(d),
     };
@@ -126,6 +124,23 @@ async fn start(
         )
         .fetch_one(&mut *tx)
         .await?;
+        // One person's unsent big files can't hold the room for everyone (starts reserve it).
+        let mine: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(size), 0) FROM attachments
+             WHERE user_id = ? AND message_id IS NULL AND expires_at IS NOT NULL
+               AND channel_id IS NOT NULL AND created_at >= ?",
+        )
+        .bind(me.to_string())
+        .bind(crate::db::stamp(
+            now_at - chrono::Duration::hours(super::PENDING_TTL_HOURS),
+        ))
+        .fetch_one(&mut *tx)
+        .await?;
+        if mine as u64 + req.size > attachment_limits::TEMP_PENDING_PER_USER {
+            return Err(AppError::TooManyRequests(Some(
+                "Finish or cancel your other big uploads first.".into(),
+            )));
+        }
         if live as u64 + req.size > attachment_limits::TEMP_CAP_BYTES {
             return Err(AppError::Conflict(
                 "This server's space for big files is full. Try again in a day or two.".into(),
@@ -178,7 +193,9 @@ async fn start(
             id,
             url: None,
             content_type: content_type.into(),
-            expires_at: crate::db::stamp(now_at + chrono::Duration::from_std(URL_TTL).map_err(anyhow::Error::from)?),
+            expires_at: crate::db::stamp(
+                now_at + chrono::Duration::from_std(URL_TTL).map_err(anyhow::Error::from)?,
+            ),
             multipart: Some(MultipartInfo {
                 part_size: attachment_limits::PART_SIZE,
                 parts: part_count(req.size),
@@ -215,7 +232,11 @@ async fn cancel(
     let object = object_key(&key, expires_at.is_some());
     let gone = match (&s.r2, &upload_id) {
         (None, _) => Ok(()),
-        (Some(r2), Some(upload)) => r2.abort_multipart(&object, upload).await,
+        (Some(r2), Some(upload)) => match r2.abort_multipart(&object, upload).await {
+            // a completed join whose bookkeeping failed leaves an object too
+            Ok(()) => r2.delete(&object).await,
+            Err(e) => Err(e),
+        },
         (Some(r2), None) => r2.delete(&object).await,
     };
     if let Err(e) = gone {
@@ -284,7 +305,11 @@ async fn urls(
 }
 
 /// One of my pending big uploads: its stored object, upload id and size.
-async fn my_multipart(db: &SqlitePool, me: UserId, id: AttachmentId) -> AppResult<(Stored, String, u64)> {
+async fn my_multipart(
+    db: &SqlitePool,
+    me: UserId,
+    id: AttachmentId,
+) -> AppResult<(Stored, String, u64)> {
     let row: Option<(String, Option<String>, Option<String>, i64)> = sqlx::query_as(
         "SELECT key, expires_at, upload_id, size FROM attachments
          WHERE id = ? AND user_id = ? AND message_id IS NULL",
@@ -295,7 +320,14 @@ async fn my_multipart(db: &SqlitePool, me: UserId, id: AttachmentId) -> AppResul
     .await?;
     let (key, expires_at, upload_id, size) = row.ok_or(AppError::NotFound)?;
     let upload = upload_id.ok_or(AppError::NotFound)?;
-    Ok((Stored { key, temp: expires_at.is_some() }, upload, size as u64))
+    Ok((
+        Stored {
+            key,
+            temp: expires_at.is_some(),
+        },
+        upload,
+        size as u64,
+    ))
 }
 
 /// Signed PUTs for some parts of a big upload (each for exactly its length).
@@ -322,7 +354,11 @@ async fn part_urls(
             }
             let len = part_len(size, part);
             let (url, _) = r2.part_url(&stored.object_key(), &upload, part, len, URL_TTL);
-            Ok(PartUrl { part, url: url.to_string(), size: len })
+            Ok(PartUrl {
+                part,
+                url: url.to_string(),
+                size: len,
+            })
         })
         .collect::<AppResult<Vec<_>>>()
         .map(Json)
@@ -340,7 +376,12 @@ async fn uploaded_parts(
         .list_parts(&stored.object_key(), &upload)
         .await?
         .ok_or_else(|| AppError::Conflict("That upload expired. Try again.".into()))?;
-    Ok(Json(parts.into_iter().map(|(part, _, size)| UploadedPart { part, size }).collect()))
+    Ok(Json(
+        parts
+            .into_iter()
+            .map(|(part, _, size)| UploadedPart { part, size })
+            .collect(),
+    ))
 }
 
 /// Join a big upload's parts once all are stored, then check the object. After this it can be sent.
@@ -350,6 +391,21 @@ async fn complete(
     Path(id): Path<AttachmentId>,
 ) -> AppResult<StatusCode> {
     let r2 = storage(&s)?;
+    // A retry after a lost answer: already joined (no upload id left) and whole is done.
+    let joined: Option<(String, Option<String>, i64)> = sqlx::query_as(
+        "SELECT key, expires_at, size FROM attachments
+         WHERE id = ? AND user_id = ? AND message_id IS NULL AND upload_id IS NULL",
+    )
+    .bind(id.to_string())
+    .bind(me.to_string())
+    .fetch_optional(&s.db)
+    .await?;
+    if let Some((key, expires_at, size)) = joined
+        && expires_at.is_some()
+        && r2.head(&object_key(&key, true)).await? == Some(size as u64)
+    {
+        return Ok(StatusCode::NO_CONTENT);
+    }
     let (stored, upload, size) = my_multipart(&s.db, me, id).await?;
     let parts = r2
         .list_parts(&stored.object_key(), &upload)
@@ -365,7 +421,8 @@ async fn complete(
         return Err(AppError::Conflict("The upload isn't finished yet.".into()));
     }
     let etags: Vec<String> = parts.into_iter().map(|(_, etag, _)| etag).collect();
-    r2.complete_multipart(&stored.object_key(), &upload, &etags).await?;
+    r2.complete_multipart(&stored.object_key(), &upload, &etags)
+        .await?;
     if r2.head(&stored.object_key()).await? != Some(size) {
         if let Err(e) = r2.delete(&stored.object_key()).await {
             tracing::warn!(error = ?e, "couldn't delete a mismatched upload");
@@ -374,7 +431,9 @@ async fn complete(
             .bind(id.to_string())
             .execute(&s.db)
             .await?;
-        return Err(AppError::Conflict("The upload didn't match. Try again.".into()));
+        return Err(AppError::Conflict(
+            "The upload didn't match. Try again.".into(),
+        ));
     }
     // Whole now: a send may take it.
     sqlx::query("UPDATE attachments SET upload_id = NULL WHERE id = ? AND user_id = ?")

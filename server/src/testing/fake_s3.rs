@@ -404,14 +404,26 @@ fn query_param(query: &str, name: &str) -> Option<String> {
 
 impl Shared {
     /// The multipart request for `key`, if this is one; `None` leaves it to the plain handlers.
-    fn multipart(&self, method: &Method, key: &str, query: &str, headers: &HeaderMap, body: &[u8]) -> Option<Response> {
+    fn multipart(
+        &self,
+        method: &Method,
+        key: &str,
+        query: &str,
+        headers: &HeaderMap,
+        body: &[u8],
+    ) -> Option<Response> {
         let no_upload = || xml_error(StatusCode::NOT_FOUND, "NoSuchUpload", "no such upload");
         if *method == Method::POST && query_param(query, "uploads").is_some() {
             let id = format!("up-{:016x}", rand::random::<u64>());
-            let ct = header_str(headers, header::CONTENT_TYPE).unwrap_or("application/octet-stream");
+            let ct =
+                header_str(headers, header::CONTENT_TYPE).unwrap_or("application/octet-stream");
             self.inner.lock().unwrap().uploads.insert(
                 id.clone(),
-                Multipart { key: key.to_string(), content_type: ct.to_string(), parts: Default::default() },
+                Multipart {
+                    key: key.to_string(),
+                    content_type: ct.to_string(),
+                    parts: Default::default(),
+                },
             );
             return Some(xml_ok(format!(
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"{S3_NS}\"><Bucket>{FAKE_BUCKET}</Bucket><Key>{key}</Key><UploadId>{id}</UploadId></InitiateMultipartUploadResult>"
@@ -425,12 +437,28 @@ impl Shared {
         }
         match *method {
             Method::PUT => {
-                let Some(n) = query_param(query, "partNumber").and_then(|n| n.parse::<u16>().ok()) else {
-                    return Some(xml_error(StatusCode::BAD_REQUEST, "InvalidArgument", "partNumber"));
+                let Some(n) = query_param(query, "partNumber").and_then(|n| n.parse::<u16>().ok())
+                else {
+                    return Some(xml_error(
+                        StatusCode::BAD_REQUEST,
+                        "InvalidArgument",
+                        "partNumber",
+                    ));
                 };
                 let etag = part_etag(body);
-                inner.uploads.get_mut(&upload).unwrap().parts.insert(n, body.to_vec());
-                Some(Response::builder().status(StatusCode::OK).header(header::ETAG, etag).body(Body::empty()).unwrap())
+                inner
+                    .uploads
+                    .get_mut(&upload)
+                    .unwrap()
+                    .parts
+                    .insert(n, body.to_vec());
+                Some(
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::ETAG, etag)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
             }
             Method::GET => {
                 let parts: String = inner.uploads[&upload]
@@ -461,13 +489,18 @@ impl Shared {
                 let mut joined = Vec::new();
                 let mut last = 0u16;
                 for chunk in text.split("<Part>").skip(1) {
-                    let (Some(n), Some(etag)) = (tag(chunk, "PartNumber").and_then(|n| n.parse::<u16>().ok()), tag(chunk, "ETag")) else {
+                    let (Some(n), Some(etag)) = (
+                        tag(chunk, "PartNumber").and_then(|n| n.parse::<u16>().ok()),
+                        tag(chunk, "ETag"),
+                    ) else {
                         return Some(xml_error(StatusCode::BAD_REQUEST, "MalformedXML", "part"));
                     };
                     let etag = etag.replace("&quot;", "\"");
                     match up.parts.get(&n) {
                         Some(b) if n > last && part_etag(b) == etag => joined.extend_from_slice(b),
-                        _ => return Some(xml_error(StatusCode::BAD_REQUEST, "InvalidPart", "part")),
+                        _ => {
+                            return Some(xml_error(StatusCode::BAD_REQUEST, "InvalidPart", "part"));
+                        }
                     }
                     last = n;
                 }
@@ -484,7 +517,11 @@ impl Shared {
                 inner.uploads.remove(&upload);
                 Some(empty(StatusCode::NO_CONTENT))
             }
-            _ => Some(xml_error(StatusCode::METHOD_NOT_ALLOWED, "MethodNotAllowed", "method")),
+            _ => Some(xml_error(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "MethodNotAllowed",
+                "method",
+            )),
         }
     }
 }

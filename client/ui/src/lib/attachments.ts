@@ -76,6 +76,8 @@ export function singleBox(w: number | null, h: number | null): { width: number; 
 /** The most a temporary send can be **(owner)**. */
 export const TEMP_MAX_BYTES = 2 * 1024 * 1024 * 1024
 export const TOO_BIG_TEMP = 'Files can be up to 2 GB.'
+/** A pasted file is read whole: bigger ones go by drag and drop or the paperclip (read from disk as they upload). */
+export const PASTE_TOO_BIG = 'Pasted files can be up to 50 MB. Drop or pick bigger files.'
 /** How long a temporary send lasts: the sender picks **(owner)**. */
 export const TEMP_DAYS = [1, 7] as const
 

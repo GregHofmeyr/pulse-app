@@ -38,7 +38,7 @@
   import { spotifyLinkIn } from '../lib/stageShare'
   import ComposerFiles from './ComposerFiles.svelte'
   import { api, errorText, type StageResult } from '../lib/tauri'
-  import { MAX_BYTES, MAX_FILES, TEMP_DAYS, TEMP_MAX_BYTES, TOO_BIG_TEMP, TOO_MANY } from '../lib/attachments'
+  import { MAX_BYTES, MAX_FILES, PASTE_TOO_BIG, TEMP_DAYS, TEMP_MAX_BYTES, TOO_BIG_TEMP, TOO_MANY } from '../lib/attachments'
 
   let {
     placeholder,
@@ -150,8 +150,8 @@
         return
       }
       // checked before reading it: a huge file copied in a file manager isn't pulled into memory (images only shrink)
-      if (f.size > TEMP_MAX_BYTES) {
-        fileError = TOO_BIG_TEMP
+      if (f.size > MAX_BYTES) {
+        fileError = PASTE_TOO_BIG
         continue
       }
       try {
@@ -316,6 +316,7 @@
       if (sent && stageNudge) nudged.add(sent.key)
       onSend(t, files, hasBig ? tempDays : null)
       files = []
+      tempDays = 7
       fileError = null
       box.setText({ text: '', caret: 0 }, true, false)
       box.forget()

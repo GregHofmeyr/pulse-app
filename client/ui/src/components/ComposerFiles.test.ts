@@ -132,10 +132,10 @@ describe('Composer files', () => {
     expect(calls.filter((c) => c.cmd === 'unstage_attachment')).toHaveLength(1)
   })
 
-  it('refuses a pasted file over 2 GB without reading it', async () => {
+  it('refuses a pasted file over 50 MB without reading it', async () => {
     const box = show()
     const big = new File([new Uint8Array(1)], 'world.zip')
-    Object.defineProperty(big, 'size', { value: 2 * 1024 ** 3 + 1 })
+    Object.defineProperty(big, 'size', { value: 60 * 1024 * 1024 })
     const read = vi.spyOn(big, 'arrayBuffer')
     const e = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
     Object.defineProperty(e, 'clipboardData', { value: { files: [big], getData: () => '' } })
@@ -143,7 +143,7 @@ describe('Composer files', () => {
     await settle()
     expect(read).not.toHaveBeenCalled()
     expect(calls.find((c) => c.cmd === 'stage_attachment_bytes')).toBeUndefined()
-    expect(document.querySelector('[role=alert]')!.textContent).toBe('Files can be up to 2 GB.')
+    expect(document.querySelector('[role=alert]')!.textContent).toBe('Pasted files can be up to 50 MB. Drop or pick bigger files.')
   })
 
   it('refuses a file over 2 GB', async () => {

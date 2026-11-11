@@ -47,8 +47,13 @@ pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<SweepReport> {
             temp: expires_at.is_some(),
         };
         // A big file still in parts is abandoned; one whole (or a normal one) is deleted.
+        // A big file still in parts is abandoned, and its object deleted too: a completed join
+        // whose bookkeeping failed leaves both.
         let gone = match &upload_id {
-            Some(upload) => r2.abort_multipart(&st.object_key(), upload).await,
+            Some(upload) => match r2.abort_multipart(&st.object_key(), upload).await {
+                Ok(()) => r2.delete(&st.object_key()).await,
+                Err(e) => Err(e),
+            },
             None => r2.delete(&st.object_key()).await,
         };
         if let Err(e) = gone {
