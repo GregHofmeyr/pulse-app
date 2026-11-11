@@ -53,7 +53,7 @@ pub async fn stage_attachment_bytes(
         .headers()
         .get("x-name")
         .and_then(|v| v.to_str().ok())
-        .map(|n| percent_decode(n))
+        .map(percent_decode)
         .unwrap_or_else(|| "pasted".into());
     let stager = &core.attachments;
     tokio::task::block_in_place(|| stager.stage_bytes(&name, bytes))

@@ -4380,6 +4380,7 @@ mod tests {
                     nonce: None,
                     thread_root_id: Some(quote.id),
                     gif: None,
+                    attachments: vec![],
                 },
             )
             .await

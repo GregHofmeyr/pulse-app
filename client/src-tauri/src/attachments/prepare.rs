@@ -121,7 +121,7 @@ fn animation(
     for f in frames {
         let f = f.map_err(|_| PrepareError::NotAnImage)?;
         let (num, den) = f.delay().numer_denom_ms();
-        let ms = if den == 0 { 100 } else { (num / den) as i32 };
+        let ms = num.checked_div(den).map_or(100, |ms| ms as i32);
         let img = f.into_buffer();
         pixels += img.width() as u64 * img.height() as u64;
         if pixels > MAX_ANIMATION_PIXELS {
