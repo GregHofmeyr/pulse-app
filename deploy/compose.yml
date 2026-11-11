@@ -46,6 +46,9 @@ services:
       PULSE_CLIPS_S3_BUCKET: ${CLIPS_R2_BUCKET:-}
       PULSE_CLIPS_S3_KEY_ID: ${CLIPS_R2_ACCESS_KEY_ID:-}
       PULSE_CLIPS_S3_SECRET: ${CLIPS_R2_SECRET_ACCESS_KEY:-}
+      # GIFs (#58): handed to signed-in apps, which call GIPHY directly (its terms forbid proxying). Empty = GIFs off.
+      GIPHY_API_KEY: ${GIPHY_API_KEY:-}
+      GIPHY_RATING: ${GIPHY_RATING:-pg-13}
       RUST_LOG: info,sqlx=warn
     volumes:
       - ./data:/data
