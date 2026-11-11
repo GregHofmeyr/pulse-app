@@ -11,6 +11,7 @@
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { addPending, addReplies, closeThread, holdThread, maxIdOf, PAGE, pendingMessage, removePending, threadOf, tracksUnread, type Pending } from '../lib/state'
   import { overlayShown } from '../lib/escape'
+  import { pinToBottom } from '../lib/pinBottom'
   import { groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
@@ -120,6 +121,13 @@
     if (!list) return
     const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 120
     if (nearBottom) void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
+  })
+  // ...and stay there as replies grow after they're drawn (#296, as the channel's list does since #292): a link's card
+  // unfurling later, images loading, reactions.
+  $effect(() => {
+    if (!list) return
+    const p = pinToBottom(list, { on: () => !loadingOlder })
+    return () => p.destroy()
   })
 
   // Seen: up to the newest reply, on opening and as replies arrive, while the window is focused. Only
