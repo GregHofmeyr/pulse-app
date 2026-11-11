@@ -136,6 +136,9 @@ pub struct LimitsConfig {
     pub poll_vote_user: Rate,
     /// Spotify shares to a voice stage per person (#234): each one fetches a card and posts a line.
     pub stage_share_user: Rate,
+    /// GIF config reads and favourite adds and removes, together per person (#58). The app asks for the config
+    /// once a session; a burst of starring is normal use.
+    pub gif_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -187,6 +190,8 @@ impl Default for LimitsConfig {
             poll_vote_user: Rate::new(20, 2.0),
             // six at once, then one every 10 s
             stage_share_user: Rate::new(6, 0.1),
+            // 30 at once, then one every 2 s
+            gif_user: Rate::new(30, 0.5),
         }
     }
 }
@@ -230,6 +235,7 @@ impl LimitsConfig {
             wheel_spin_user: r,
             poll_vote_user: r,
             stage_share_user: r,
+            gif_user: r,
         }
     }
 }
@@ -386,6 +392,7 @@ pub struct Limits {
     pub wheel_spin_user: Limiter,
     pub poll_vote_user: Limiter,
     pub stage_share_user: Limiter,
+    pub gif_user: Limiter,
 }
 
 impl Limits {
@@ -425,6 +432,7 @@ impl Limits {
             wheel_spin_user: Limiter::new(c.wheel_spin_user),
             poll_vote_user: Limiter::new(c.poll_vote_user),
             stage_share_user: Limiter::new(c.stage_share_user),
+            gif_user: Limiter::new(c.gif_user),
         }
     }
 }

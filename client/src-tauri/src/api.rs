@@ -3587,6 +3587,7 @@ mod tests {
                 reply_to_id: None,
                 nonce: Some(format!("n{i}")),
                 thread_root_id: None,
+                gif: None,
             };
             api.send_message(&token, general.id, &req).await.unwrap();
         }
@@ -3616,6 +3617,7 @@ mod tests {
                     reply_to_id: None,
                     nonce: None,
                     thread_root_id: None,
+                    gif: None,
                 },
             )
             .await
@@ -3650,6 +3652,7 @@ mod tests {
                     reply_to_id: None,
                     nonce: None,
                     thread_root_id: None,
+                    gif: None,
                 },
             )
             .await
@@ -4299,6 +4302,7 @@ mod tests {
                     reply_to_id: None,
                     nonce: Some("r1".into()),
                     thread_root_id: Some(quote.id),
+                    gif: None,
                 },
             )
             .await
@@ -4840,6 +4844,7 @@ mod tests {
                     reply_to_id: None,
                     nonce: None,
                     thread_root_id: None,
+                    gif: None,
                 },
             )
             .await

@@ -45,14 +45,50 @@ pub struct Config {
     pub calls: CallTimings,
     /// How long a Spotify share stays on a voice stage at most (#234; `stage::SHARE_TTL`).
     pub stage_share_ttl: Duration,
+    /// GIPHY (#58): the key signed-in apps search with, and the rating they ask for.
+    pub giphy: GiphyConfig,
 }
 
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
     limits, stream_media_timeout, media_dir, media_min_free_bytes, updates_dir, totp_key, clips, embeds,
-    launch_date, calls, stage_share_ttl ;
+    launch_date, calls, stage_share_ttl, giphy ;
     livekit_secret
 });
+
+/// GIPHY (#58). The server never calls GIPHY (its terms forbid proxying): it hands the key to signed-in apps.
+#[derive(Clone)]
+pub struct GiphyConfig {
+    /// `GIPHY_API_KEY`; `None` (unset or empty) = GIFs aren't set up on this server.
+    pub api_key: Option<String>,
+    /// `GIPHY_RATING`: `g`, `pg`, `pg-13` (the default) or `r`.
+    pub rating: String,
+}
+
+pulse_protocol::redacting_debug!(GiphyConfig { rating ; api_key });
+
+impl Default for GiphyConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            rating: "pg-13".into(),
+        }
+    }
+}
+
+/// The GIPHY settings from `GIPHY_API_KEY` and `GIPHY_RATING`. Errors name the variable, never the key.
+fn giphy(get: impl Fn(&str) -> Option<String>) -> anyhow::Result<GiphyConfig> {
+    let api_key = get("GIPHY_API_KEY")
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty());
+    let rating = match get("GIPHY_RATING").map(|r| r.trim().to_ascii_lowercase()) {
+        None => "pg-13".to_string(),
+        Some(r) if r.is_empty() => "pg-13".to_string(),
+        Some(r) if ["g", "pg", "pg-13", "r"].contains(&r.as_str()) => r,
+        Some(_) => anyhow::bail!("GIPHY_RATING must be one of g, pg, pg-13 or r"),
+    };
+    Ok(GiphyConfig { api_key, rating })
+}
 
 /// An S3-compatible bucket for clip videos, path style.
 #[derive(Clone)]
@@ -96,6 +132,7 @@ impl Config {
             launch_date: launch_date(std::env::var("PULSE_LAUNCH_DATE").ok().as_deref())?,
             calls: CallTimings::default(),
             stage_share_ttl: crate::stage::SHARE_TTL,
+            giphy: giphy(|k| std::env::var(k).ok())?,
         })
     }
 }
@@ -291,6 +328,38 @@ mod tests {
     }
 
     #[test]
+    fn giphy_env() {
+        let none = giphy(|_| None).unwrap();
+        assert!(none.api_key.is_none());
+        assert_eq!(none.rating, "pg-13");
+        let empty = giphy(|_| Some("  ".into())).unwrap();
+        assert!(empty.api_key.is_none());
+        assert_eq!(empty.rating, "pg-13");
+        let set = giphy(|k| {
+            Some(match k {
+                "GIPHY_API_KEY" => " abc123 ".into(),
+                _ => "G".into(),
+            })
+        })
+        .unwrap();
+        assert_eq!(set.api_key.as_deref(), Some("abc123"));
+        assert_eq!(set.rating, "g");
+        assert!(
+            !format!("{set:?}").contains("abc123"),
+            "the key is redacted"
+        );
+        let bad = giphy(|k| {
+            Some(match k {
+                "GIPHY_API_KEY" => "s3cret-key".into(),
+                _ => "nc-17".into(),
+            })
+        });
+        let msg = format!("{:#}", bad.unwrap_err());
+        assert!(msg.contains("GIPHY_RATING"));
+        assert!(!msg.contains("s3cret-key"));
+    }
+
+    #[test]
     fn launch_date_env() {
         assert!(launch_date(None).unwrap().is_none());
         assert!(launch_date(Some("")).unwrap().is_none());
@@ -361,6 +430,10 @@ mod tests {
             launch_date: None,
             calls: CallTimings::default(),
             stage_share_ttl: crate::stage::SHARE_TTL,
+            giphy: GiphyConfig {
+                api_key: Some("SECRET-GIPHY".into()),
+                rating: "pg-13".into(),
+            },
         };
         let d = format!("{cfg:?}");
         assert!(!d.contains("SECRET"), "{d}");

@@ -37,8 +37,9 @@ pub(crate) type Row = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
 );
-pub(crate) const COLS: &str = "id, channel_id, author_id, kind, content, reply_to_id, created_at, edited_at, deleted_at, thread_root_id, system_payload";
+pub(crate) const COLS: &str = "id, channel_id, author_id, kind, content, reply_to_id, created_at, edited_at, deleted_at, thread_root_id, system_payload, gif";
 
 fn parse<T: std::str::FromStr>(s: &str) -> AppResult<T>
 where
@@ -60,6 +61,7 @@ fn from_row(r: Row) -> AppResult<Message> {
         deleted_at,
         thread_root_id,
         system_payload,
+        gif,
     ) = r;
     let system = kind == "system";
     Ok(Message {
@@ -114,6 +116,10 @@ fn from_row(r: Row) -> AppResult<Message> {
             Some(p) if system && deleted_at.is_none() => super::system::stage_share_line(p),
             _ => None,
         },
+        // a deleted message shows no GIF, like no content
+        gif: gif
+            .filter(|_| deleted_at.is_none())
+            .and_then(|g| serde_json::from_str(&g).ok()),
     })
 }
 
@@ -325,6 +331,24 @@ async fn send(
     }
     let content = clean(&req.content)?;
     nonce::check(req.nonce.as_deref())?;
+    // A GIF from the picker (#58): its content is its GIPHY link (older clients show that), and nothing else.
+    let gif = match req.gif {
+        Some(g) => {
+            let g = crate::gifs::clean(g)?;
+            if crate::gifs::gif_id(&content).as_deref() != Some(g.id.as_str()) {
+                return Err(AppError::BadRequest(
+                    "a GIF's message must be its GIPHY link".into(),
+                ));
+            }
+            Some(g)
+        }
+        None => None,
+    };
+    let gif_json = gif
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(anyhow::Error::from)?;
     let mut mentioned = mentions::resolve(&s.db, &ch, me, &mentions::parse(&content)).await?;
     if let Some(r) = req.reply_to_id {
         // Same-channel only; a reply target elsewhere (including private) is indistinguishable from missing.
@@ -375,6 +399,7 @@ async fn send(
         poll: None,
         poll_ended: None,
         stage_share_line: None,
+        gif,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -407,7 +432,7 @@ async fn send(
             .map(Json)
             .ok_or(AppError::NotFound);
     }
-    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at, nonce, thread_root_id) VALUES (?, ?, ?, 'normal', ?, ?, ?, ?, ?)")
+    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at, nonce, thread_root_id, gif) VALUES (?, ?, ?, 'normal', ?, ?, ?, ?, ?, ?)")
         .bind(msg.id.to_string())
         .bind(id.to_string())
         .bind(me.to_string())
@@ -416,6 +441,7 @@ async fn send(
         .bind(&msg.created_at)
         .bind(&req.nonce)
         .bind(req.thread_root_id.map(|r| r.to_string()))
+        .bind(&gif_json)
         .execute(&mut *tx)
         .await?;
     mentions::store(&mut tx, msg.id, &mentioned).await?;
@@ -548,15 +574,24 @@ async fn edit(
     }
     msg.content = clean(&req.content)?;
     msg.edited_at = Some(now());
+    // A GIF (#58) stays while its message is still a link to it (in any of GIPHY's forms); otherwise it goes.
+    if msg
+        .gif
+        .as_ref()
+        .is_some_and(|g| crate::gifs::gif_id(&msg.content).as_deref() != Some(g.id.as_str()))
+    {
+        msg.gif = None;
+    }
     // In order with the unfurl's and hides' publishes, so the last update out is the newest.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     // Guarded: a delete that commits between our read and this write wins.
     let changed = sqlx::query(
-        "UPDATE messages SET content = ?, edited_at = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
+        "UPDATE messages SET content = ?, edited_at = ?, gif = CASE WHEN ? THEN gif END WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
     )
     .bind(&msg.content)
     .bind(&msg.edited_at)
+    .bind(msg.gif.is_some())
     .bind(id.to_string())
     .bind(me.to_string())
     .execute(&mut *tx)
@@ -778,6 +813,7 @@ mod tests {
             poll: None,
             poll_ended: None,
             stage_share_line: None,
+            gif: None,
         }
     }
 

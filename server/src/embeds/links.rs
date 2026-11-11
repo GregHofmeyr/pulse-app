@@ -5,8 +5,8 @@ pub const MAX_LINKS: usize = 3;
 
 /// The first [`MAX_LINKS`] distinct `http`/`https` links in `content`, normalised (a Spotify Jam's
 /// `spotify:socialsession:<id>` counts as its `https://open.spotify.com/…` link). Links in
-/// code (inline or fenced) and links wrapped as `<https://…>` (no preview, as on Discord) are
-/// skipped. Trailing punctuation and an unbalanced `)` or `]` aren't part of a link, so one at the
+/// code (inline or fenced), links wrapped as `<https://…>` (no preview, as on Discord) and GIPHY
+/// links (#58) are skipped. Trailing punctuation and an unbalanced `)` or `]` aren't part of a link, so one at the
 /// end of a sentence, in parentheses or in a markdown link comes out right.
 pub fn extract(content: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -15,6 +15,11 @@ pub fn extract(content: &str) -> Vec<String> {
             let Some(url) = jam_uri(raw).or_else(|| normalise(raw)) else {
                 continue;
             };
+            // A GIPHY link gets no preview (#58): clients draw the GIF, and fetching GIPHY's page here and keeping its
+            // thumbnail is what GIPHY's terms forbid.
+            if crate::gifs::gif_id(&url).is_some() {
+                continue;
+            }
             if !out.contains(&url) {
                 out.push(url);
                 if out.len() == MAX_LINKS {
@@ -187,6 +192,21 @@ mod tests {
         assert_eq!(ex("` https://example.com/a"), ["https://example.com/a"]);
         // `<` without its `>` right after the link doesn't suppress it.
         assert_eq!(ex("<https://example.com/a b>"), ["https://example.com/a"]);
+    }
+
+    #[test]
+    fn giphy_links_get_no_preview() {
+        assert_eq!(
+            ex(
+                "https://giphy.com/gifs/yes-3o7TKSjRrfIPjeiVyM https://example.com/a https://media.giphy.com/media/abc/giphy.gif"
+            ),
+            ["https://example.com/a"]
+        );
+        // GIPHY's other pages are ordinary links
+        assert_eq!(
+            ex("https://giphy.com/explore/cats"),
+            ["https://giphy.com/explore/cats"]
+        );
     }
 
     #[test]

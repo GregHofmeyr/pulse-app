@@ -10,6 +10,7 @@ pub mod embeds;
 pub mod emoji;
 pub mod error;
 pub mod gateway;
+pub mod gifs;
 pub mod hygiene;
 pub mod limits;
 pub mod media;
@@ -56,6 +57,7 @@ pub fn router(state: AppState) -> Router {
         .merge(messages::threads::router())
         .merge(pins::router())
         .merge(polls::router())
+        .merge(gifs::router())
         .merge(quotes::routes::router())
         .merge(qoty::router())
         .merge(dms::routes::router())

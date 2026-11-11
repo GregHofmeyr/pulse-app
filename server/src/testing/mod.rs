@@ -81,6 +81,7 @@ pub fn test_config() -> Config {
         launch_date: None,
         calls: crate::config::CallTimings::default(),
         stage_share_ttl: crate::stage::SHARE_TTL,
+        giphy: crate::config::GiphyConfig::default(), // no key unless a test sets one
     }
 }
 

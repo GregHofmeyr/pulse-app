@@ -123,6 +123,7 @@ async fn create(
         poll: None,
         poll_ended: None,
         stage_share_line: None,
+        gif: None,
     };
     let stored = Stored {
         message_id: msg.id,

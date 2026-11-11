@@ -686,6 +686,11 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub stage_share_line: Option<StageShareLine>,
+    /// Set on a GIF sent from the picker (#58): its GIPHY id, title and size. The content is the GIF's GIPHY link, so
+    /// older clients show a link; a pasted GIPHY link has no `gif` and clients draw it from the link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub gif: Option<Gif>,
 }
 
 /// How long a pin lasts (#178).
@@ -807,6 +812,39 @@ pub mod wheel_limits {
     pub const NAME_CHARS: usize = 40;
     pub const WHEELS_PER_SERVER: i64 = 50;
     pub const WHEELS_PER_PERSON: i64 = 50;
+}
+
+/// A GIPHY GIF as Pulse keeps it (#58): its id and what to show before it loads. No GIPHY URLs: GIPHY's terms
+/// forbid storing them, so clients build GIPHY's own media links from the id.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Gif {
+    /// GIPHY's id (letters and digits).
+    pub id: String,
+    /// GIPHY's title, the alt text (may be empty).
+    pub title: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// What a signed-in person's app needs to search GIPHY itself (#58; GIPHY forbids proxying): the server's key
+/// (`None`: GIFs aren't set up there) and the content rating to ask for.
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct GifConfig {
+    pub api_key: Option<String>,
+    /// `g`, `pg`, `pg-13` or `r`.
+    pub rating: String,
+}
+redacting_debug!(GifConfig { rating ; api_key });
+
+/// GIF limits (#58), shared so the client can say them before the server refuses.
+pub mod gif_limits {
+    /// Characters of a GIF id.
+    pub const ID_CHARS: usize = 64;
+    /// Characters of a GIF's title kept (longer ones are cut).
+    pub const TITLE_CHARS: usize = 140;
+    /// Largest width or height accepted.
+    pub const MAX_SIDE: u32 = 8192;
+    pub const FAVOURITES_PER_PERSON: i64 = 200;
 }
 
 /// Poll limits (#157), shared so the client can say them before the server refuses.
@@ -1227,6 +1265,10 @@ pub struct SendMessageRequest {
     /// Post into this quote's thread (quotes channels only).
     #[serde(default)]
     pub thread_root_id: Option<MessageId>,
+    /// A GIF from the picker (#58): `content` must be a GIPHY link to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub gif: Option<Gif>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

@@ -15,6 +15,8 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     gateway::ClientFrame::export_all(&cfg)?;
     gateway::ServerFrame::export_all(&cfg)?;
     rest::RegisterRequest::export_all(&cfg)?;
+    rest::Gif::export_all(&cfg)?;
+    rest::GifConfig::export_all(&cfg)?;
     rest::LoginRequest::export_all(&cfg)?;
     rest::SessionResponse::export_all(&cfg)?;
     rest::InviteResponse::export_all(&cfg)?;

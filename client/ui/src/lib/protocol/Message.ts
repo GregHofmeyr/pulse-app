@@ -2,6 +2,7 @@
 import type { CallLine } from "./CallLine";
 import type { ChannelId } from "./ChannelId";
 import type { Clip } from "./Clip";
+import type { Gif } from "./Gif";
 import type { LinkEmbed } from "./LinkEmbed";
 import type { MessageId } from "./MessageId";
 import type { MessageKind } from "./MessageKind";
@@ -74,4 +75,9 @@ poll_ended?: PollEnded,
 /**
  * Set on a "shared to the stage" line (#234): who shared what kind of Spotify link.
  */
-stage_share_line?: StageShareLine, };
+stage_share_line?: StageShareLine, 
+/**
+ * Set on a GIF sent from the picker (#58): its GIPHY id, title and size. The content is the GIF's GIPHY link, so
+ * older clients show a link; a pasted GIPHY link has no `gif` and clients draw it from the link.
+ */
+gif?: Gif, };

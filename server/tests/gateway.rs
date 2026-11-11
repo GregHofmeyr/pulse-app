@@ -94,6 +94,7 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         poll: None,
         poll_ended: None,
         stage_share_line: None,
+        gif: None,
     }
 }
 
