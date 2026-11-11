@@ -247,7 +247,7 @@ pub(crate) async fn soft_delete_replies(
 ) -> AppResult<Vec<Event>> {
     let id = root.to_string();
     let replies: Vec<(String, String, Option<String>)> = sqlx::query_as(
-        "UPDATE messages SET content = '', deleted_at = ?
+        "UPDATE messages SET content = '', gif = NULL, deleted_at = ?
          WHERE thread_root_id = ? AND deleted_at IS NULL
          RETURNING id, channel_id, author_id",
     )

@@ -342,6 +342,13 @@ async fn a_deleted_gif_message_shows_no_gif() {
     let list: Vec<Message> = get_json(&app, &t, &format!("/channels/{ch}/messages")).await;
     assert!(list[0].deleted);
     assert!(list[0].gif.is_none());
+    // and nothing of it is kept: the delete clears the stored GIF as it clears the text
+    let stored: Option<String> = sqlx::query_scalar("SELECT gif FROM messages WHERE id = ?")
+        .bind(sent.id.to_string())
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert!(stored.is_none());
 }
 
 #[tokio::test]

@@ -133,6 +133,41 @@ describe('GifPicker', () => {
     expect(picked).toEqual([[{ id: 'T0a', title: 'T0a GIF', width: 480, height: 270 }, 'https://giphy.com/gifs/fun-T0a']])
   })
 
+  it('Enter sends the first result of what’s typed, never the old results while the search is on its way', async () => {
+    open()
+    await flush()
+    type('cats')
+    search().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(picked).toHaveLength(0) // trending still showing
+    vi.advanceTimersByTime(SEARCH_DELAY_MS)
+    await flush()
+    search().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(picked.map(([g]) => g.id)).toEqual(['cats0a'])
+  })
+
+  it('a failed page stops loading more until Try again', async () => {
+    feed = async (_q, offset) => {
+      if (offset) throw 'GIF search is busy right now. Try again in a minute.'
+      return { gifs: [r('A'), r('B')], next: 2 }
+    }
+    open()
+    await flush()
+    const grid = picker().querySelector<HTMLElement>('.grid')!
+    Object.defineProperties(grid, { scrollHeight: { value: 500 }, clientHeight: { value: 420 }, scrollTop: { value: 0, writable: true } })
+    grid.dispatchEvent(new Event('scroll'))
+    await flush()
+    grid.dispatchEvent(new Event('scroll'))
+    grid.dispatchEvent(new Event('scroll'))
+    await flush()
+    expect(feedCalls()).toHaveLength(2)
+    expect(text()).toContain('GIF search is busy')
+    feed = async () => ({ gifs: [r('C')], next: null })
+    ;[...picker().querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Try again')!.click()
+    await flush()
+    expect(feedCalls()).toEqual([{ query: '', offset: 0 }, { query: '', offset: 2 }, { query: '', offset: 2 }])
+    expect(labels().sort()).toEqual(['A GIF', 'B GIF', 'C GIF'])
+  })
+
   it('Escape closes it', async () => {
     open()
     await flush()
@@ -209,6 +244,7 @@ describe('GifPicker', () => {
     await flush()
     invoke.mockImplementationOnce(async () => { throw 'You can keep 200 favourite GIFs. Unstar one to make room.' })
     picker().querySelector<HTMLButtonElement>('.cell .star')!.click()
+    await flush()
     await flush()
     expect(gifFavs.list).toHaveLength(0)
     expect(text()).toContain('You can keep 200 favourite GIFs')

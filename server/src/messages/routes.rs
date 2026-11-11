@@ -645,7 +645,7 @@ async fn remove(
         _ => None,
     };
     let changed = sqlx::query(
-        "UPDATE messages SET content = '', deleted_at = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
+        "UPDATE messages SET content = '', gif = NULL, deleted_at = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
     )
     .bind(now())
     .bind(id.to_string())

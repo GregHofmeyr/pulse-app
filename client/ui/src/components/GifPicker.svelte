@@ -106,7 +106,8 @@
   })
 
   function more() {
-    if (tab !== 'giphy' || loading || next === null || !scroller) return
+    // after a failed page, only Try again asks again: scrolling mustn't spend the server's GIPHY calls retrying
+    if (tab !== 'giphy' || loading || error || next === null || !scroller) return
     if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - NEAR_END_PX) void load(shownQuery, next)
   }
 
@@ -118,10 +119,12 @@
     if (ev.key === 'Escape') {
       ev.preventDefault()
       onClose()
-    } else if (ev.key === 'Enter' && ev.target === searchEl && cells[0]) {
-      // Enter in the box sends the first GIF showing
+    } else if (ev.key === 'Enter' && ev.target === searchEl) {
+      // Enter in the box sends the first GIF showing, but only once it's a result of what's typed: never the
+      // previous results while the search is still on its way
       ev.preventDefault()
-      onPick(cells[0].gif, cells[0].link)
+      const current = tab === 'favourites' || (!loading && query.trim() === shownQuery)
+      if (current && cells[0]) onPick(cells[0].gif, cells[0].link)
     }
   }
 </script>
@@ -166,7 +169,7 @@
             <div class="col">{#each col as c (c.gif.id)}{@render cell(c)}{/each}</div>
           {/each}
         </div>
-        {#if error}<p class="none" role="alert">{error}</p>{/if}
+        {#if error}<p class="none" role="alert">{error}{#if next !== null} <button type="button" class="link-btn" onclick={() => void load(shownQuery, next!)}>Try again</button>{/if}</p>{/if}
       {/if}
     </div>
   </div>

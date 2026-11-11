@@ -10,7 +10,12 @@
   import { app } from '../lib/store.svelte'
   import { errorText } from '../lib/tauri'
 
-  let { gif, onError = () => {} }: { gif: ShownGif; onError?: (text: string) => void } = $props()
+  let { gif, onError = () => {}, onFail = () => {} }: {
+    gif: ShownGif
+    onError?: (text: string) => void
+    /** GIPHY couldn't give the GIF (gone, offline, not really a GIF): the message shows its link instead. */
+    onFail?: () => void
+  } = $props()
 
   const media = $derived(gifMedia(gif.id))
   const size = $derived(chatSize(gif))
@@ -43,7 +48,7 @@
 <div class="gif" class:sized={!!size} style:width={size ? `${size.width}px` : null} style:height={size ? `${size.height}px` : null}>
   <button class="play" type="button" aria-label={label} aria-pressed={motion.reducedMotion ? toggled : !toggled} onclick={() => (toggled = !toggled)}>
     <img src={media.still} alt={label} width={size?.width} height={size?.height} draggable="false"
-      onload={(e) => seen(e.currentTarget as HTMLImageElement)} {@attach animatedGif(media.anim, media.still, () => toggled)} />
+      onload={(e) => seen(e.currentTarget as HTMLImageElement)} onerror={onFail} {@attach animatedGif(media.anim, media.still, () => toggled)} />
   </button>
   <button class="icon-btn icon-btn-sm icon-btn-overlay star" class:on={starred} type="button"
     aria-label={starred ? 'Remove from favourite GIFs' : 'Add to favourite GIFs'} aria-pressed={starred} data-tip={starred ? 'Unfavourite' : 'Favourite'}

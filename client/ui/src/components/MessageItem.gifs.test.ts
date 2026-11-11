@@ -15,6 +15,7 @@ import { motion } from '../lib/animate.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { gifFavs, resetGifFavs } from '../lib/gifs.svelte'
+import { previews } from '../lib/linkPreviews.svelte'
 
 const ID = '3o7TKSjRrfIPjeiVyM'
 const LINK = `https://giphy.com/gifs/excited-yes-${ID}`
@@ -121,6 +122,28 @@ describe('GIFs in chat', () => {
     expect(invoke).toHaveBeenCalledWith('set_gif_favourite', { gif: { id: ID, title: 'Excited Yes GIF', width: 480, height: 270 }, on: true })
     expect(gifFavs.list.map((g) => g.id)).toEqual([ID])
     expect(gifs()[0].querySelector('.star')!.getAttribute('aria-label')).toBe('Remove from favourite GIFs')
+  })
+
+  it('a GIF GIPHY can’t give falls back to its link', () => {
+    show(msg(LINK))
+    img().dispatchEvent(new Event('error'))
+    flushSync()
+    expect(gifs()).toHaveLength(0)
+    expect(content()!.textContent).toContain(LINK)
+  })
+
+  it('with link previews off, a pasted link stays a link; a picked GIF still shows', () => {
+    previews.show = false
+    try {
+      show(msg(LINK))
+      expect(gifs()).toHaveLength(0)
+      expect(content()!.textContent).toContain(LINK)
+      unmount(cmp!)
+      show(picked())
+      expect(gifs()).toHaveLength(1)
+    } finally {
+      previews.show = true
+    }
   })
 
   it('a deleted GIF message shows nothing of it', () => {
