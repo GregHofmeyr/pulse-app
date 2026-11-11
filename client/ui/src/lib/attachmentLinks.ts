@@ -22,6 +22,7 @@ export function attachmentLink(
   return cache.get(
     key(messageId, attachmentId),
     async () => {
+      const since = cache.era()
       let all = asking.get(messageId)
       if (!all) {
         all = fetch(messageId)
@@ -31,7 +32,7 @@ export function attachmentLink(
       const askedAt = Date.now()
       const urls = await all
       for (const u of urls) {
-        if (u.url && u.expires_at && u.id !== attachmentId) cache.put(key(messageId, u.id), { url: u.url, expires_at: u.expires_at }, askedAt)
+        if (u.url && u.expires_at && u.id !== attachmentId) cache.put(key(messageId, u.id), { url: u.url, expires_at: u.expires_at }, askedAt, since)
       }
       const mine = urls.find((u) => u.id === attachmentId)
       if (!mine?.url) throw new NoLink()

@@ -25,15 +25,19 @@ export function formatSize(bytes: number): string {
 
 // Files Windows, macOS or Linux can run (or that run something) when opened.
 const EXECUTABLE = new Set([
-  'exe', 'msi', 'msix', 'appx', 'bat', 'cmd', 'com', 'ps1', 'psm1', 'vbs', 'vbe', 'js', 'jse', 'wsf', 'wsh', 'scr',
-  'pif', 'cpl', 'msc', 'reg', 'lnk', 'hta', 'jar', 'sh', 'bash', 'zsh', 'run', 'bin', 'appimage', 'deb', 'rpm', 'apk',
-  'app', 'dmg', 'pkg', 'command', 'dll', 'sys', 'ocx',
+  'exe', 'msi', 'msix', 'msp', 'appx', 'bat', 'cmd', 'com', 'ps1', 'psm1', 'vbs', 'vbe', 'js', 'jse', 'wsf', 'wsh', 'scr',
+  'pif', 'cpl', 'msc', 'reg', 'lnk', 'hta', 'jar', 'sh', 'bash', 'zsh', 'ksh', 'csh', 'fish', 'run', 'bin', 'appimage',
+  'deb', 'rpm', 'apk', 'app', 'dmg', 'pkg', 'command', 'dll', 'sys', 'ocx', 'desktop', 'iso', 'img', 'vhd', 'vhdx',
+  'chm', 'scf', 'url', 'inf', 'gadget', 'settingcontent-ms', 'xll', 'py', 'pyw', 'pl', 'rb', 'html', 'htm', 'xhtml',
+  'svg', 'docm', 'xlsm', 'pptm',
 ])
 
 /** Whether opening the file could run a program (the Download warning). By extension, case-insensitive. */
 export function isExecutable(name: string): boolean {
-  const dot = name.lastIndexOf('.')
-  return dot > 0 && EXECUTABLE.has(name.slice(dot + 1).toLowerCase())
+  // Windows drops trailing dots and spaces: "setup.exe." saves as setup.exe
+  const n = name.replace(/[.\s]+$/, '')
+  const dot = n.lastIndexOf('.')
+  return dot > 0 && EXECUTABLE.has(n.slice(dot + 1).toLowerCase())
 }
 
 export const RUNS_PROGRAMS = 'This file can run programs on your computer'

@@ -366,17 +366,26 @@ async fn remove_member(
             .bind(id.to_string())
             .fetch_one(&mut *tx)
             .await?;
-    if remaining == 0 {
+    // The conversation goes with its last member, and its files' objects after the commit (#57).
+    let files = if remaining == 0 {
+        let files = crate::attachments::stored_in_channels(&mut tx, &[id]).await?;
         sqlx::query("DELETE FROM channels WHERE id = ?")
             .bind(id.to_string())
             .execute(&mut *tx)
             .await?;
-    }
+        files
+    } else {
+        vec![]
+    };
     // Their LiveKit tokens for this call go with their membership (a rejoin with one is also
     // refused by the join check, `voice::revoke::admit`).
     let had_grants =
         crate::auth::session::drop_grants(&mut tx, &id.to_string(), &user.to_string()).await?;
     tx.commit().await?;
+    if !files.is_empty() {
+        let s = s.clone();
+        tokio::spawn(async move { crate::attachments::remove_objects(&s, files).await });
+    }
     // Out of the group, out of its call: LiveKit removes them (best-effort, bounded wait) and
     // they leave the voice state. Their leave webhook then finds nothing to do.
     let left_call = s.voice.leave(id, user, "") == Left::Removed;

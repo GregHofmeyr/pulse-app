@@ -104,7 +104,12 @@ pub fn clean_name(name: &str) -> Option<String> {
         .chars()
         .filter(|c| !c.is_control() && !is_bidi_control(*c))
         .collect();
-    let name = kept.trim().trim_start_matches('.').trim_start();
+    // Windows drops trailing dots and spaces, so "setup.exe." would land as setup.exe: none here.
+    let name = kept
+        .trim()
+        .trim_start_matches('.')
+        .trim_start()
+        .trim_end_matches(['.', ' ']);
     if name.is_empty() {
         return None;
     }
@@ -180,6 +185,21 @@ type Row = (
     Option<String>,
 );
 
+/// [`Row`] with its message id first, as [`attach`] reads it.
+type MessageRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+);
+
 fn to_attachment(r: Row, now: &str) -> AppResult<Attachment> {
     let (id, name, content_type, kind, size, width, height, duration_ms, expires_at, purged_at) = r;
     // Past its time it reads as expired at once; the sweep deletes the bytes within minutes.
@@ -216,19 +236,7 @@ pub async fn attach(db: &SqlitePool, msgs: &mut [Message]) -> AppResult<()> {
         list.push_bind(id);
     }
     q.push(") ORDER BY message_id, position");
-    let rows: Vec<(
-        String,
-        String,
-        String,
-        String,
-        String,
-        i64,
-        Option<i64>,
-        Option<i64>,
-        Option<i64>,
-        Option<String>,
-        Option<String>,
-    )> = q.build_query_as().fetch_all(db).await?;
+    let rows: Vec<MessageRow> = q.build_query_as().fetch_all(db).await?;
     if rows.is_empty() {
         return Ok(());
     }
@@ -504,6 +512,9 @@ mod tests {
         assert_eq!(clean_name("C:\\Users\\x\\b.txt").as_deref(), Some("b.txt"));
         assert_eq!(clean_name("  ..hidden \n").as_deref(), Some("hidden"));
         assert_eq!(clean_name("a\u{2067}b\u{0}c").as_deref(), Some("abc"));
+        // what Windows would save: the warning must see the real extension
+        assert_eq!(clean_name("setup.exe.").as_deref(), Some("setup.exe"));
+        assert_eq!(clean_name("setup.exe . ").as_deref(), Some("setup.exe"));
         for bad in ["", "  ", "dir/", "..", "\u{202e}"] {
             assert_eq!(clean_name(bad), None, "{bad:?}");
         }

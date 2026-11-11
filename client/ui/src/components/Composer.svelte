@@ -146,6 +146,11 @@
         fileError = TOO_MANY
         return
       }
+      // checked before reading it: a huge file copied in a file manager isn't pulled into memory (images only shrink)
+      if (f.size > MAX_BYTES) {
+        fileError = TOO_BIG
+        continue
+      }
       try {
         const file = await api.stageAttachmentBytes(f.name || 'pasted', new Uint8Array(await f.arrayBuffer()))
         addStaged([{ status: 'staged', file }])

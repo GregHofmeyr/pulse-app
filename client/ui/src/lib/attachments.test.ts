@@ -19,7 +19,7 @@ describe('formatSize', () => {
 
 describe('isExecutable', () => {
   it('flags files that can run programs, whatever the case', () => {
-    for (const n of ['Setup.EXE', 'run.AppImage', 'install.msi', 'script.ps1', 'a.bat', 'mods.jar', 'go.sh']) {
+    for (const n of ['Setup.EXE', 'run.AppImage', 'install.msi', 'script.ps1', 'a.bat', 'mods.jar', 'go.sh', 'setup.exe.', 'setup.exe . ', 'disk.iso', 'page.html']) {
       expect(isExecutable(n), n).toBe(true)
     }
     for (const n of ['notes.txt', 'photo.webp', 'world.zip', 'exe', '.bashrc-notes.md']) {

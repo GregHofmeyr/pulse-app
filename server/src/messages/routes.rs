@@ -174,7 +174,7 @@ fn caption(content: &str) -> AppResult<String> {
     let c = content.trim();
     if c.chars().count() > MAX_LEN {
         return Err(AppError::BadRequest(format!(
-            "message must be 1-{MAX_LEN} characters"
+            "a caption can be up to {MAX_LEN} characters"
         )));
     }
     Ok(c.to_string())

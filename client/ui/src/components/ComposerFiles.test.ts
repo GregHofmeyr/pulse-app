@@ -132,6 +132,20 @@ describe('Composer files', () => {
     expect(calls.filter((c) => c.cmd === 'unstage_attachment')).toHaveLength(1)
   })
 
+  it('refuses a pasted file over 50 MB without reading it', async () => {
+    const box = show()
+    const big = new File([new Uint8Array(1)], 'world.zip')
+    Object.defineProperty(big, 'size', { value: 51 * 1024 * 1024 })
+    const read = vi.spyOn(big, 'arrayBuffer')
+    const e = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(e, 'clipboardData', { value: { files: [big], getData: () => '' } })
+    box.dispatchEvent(e)
+    await settle()
+    expect(read).not.toHaveBeenCalled()
+    expect(calls.find((c) => c.cmd === 'stage_attachment_bytes')).toBeUndefined()
+    expect(document.querySelector('[role=alert]')!.textContent).toBe('Files can be up to 50 MB.')
+  })
+
   it('refuses a file over 50 MB', async () => {
     answers.pick_attachment_files = () => ['/big.zip']
     answers.stage_attachment_paths = () => [{ status: 'staged', file: file('b', 'big.zip', 51 * 1024 * 1024) }]

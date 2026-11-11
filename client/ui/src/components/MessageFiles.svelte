@@ -5,7 +5,7 @@
   import type { Attachment } from '../lib/protocol/Attachment'
   import { arrange, gridColumns, singleBox, type VideoSource } from '../lib/attachments'
   import { attachmentLink } from '../lib/attachmentLinks'
-  import { api } from '../lib/tauri'
+  import { api, errorText } from '../lib/tauri'
   import ClipPlayer from './ClipPlayer.svelte'
   import FileCard from './FileCard.svelte'
   import ImageViewer from './ImageViewer.svelte'
@@ -44,6 +44,14 @@
     }
   }
 
+  async function save(a: Attachment) {
+    try {
+      await api.saveAttachment(message.id, a.id, a.name)
+    } catch (e) {
+      onError?.(errorText(e))
+    }
+  }
+
   const video = (a: Attachment): VideoSource => ({
     id: `${message.id}/${a.id}`,
     link: (fresh) => link(a, fresh),
@@ -70,15 +78,16 @@
   </div>
 {/if}
 {#each parts.videos as a (a.id)}
-  <div class="video"><ClipPlayer {message} source={video(a)} /></div>
+  <div class="video"><ClipPlayer {message} source={video(a)} onDownload={() => void save(a)} /></div>
 {/each}
-{#each parts.audio as a (a.id)}
+{#each parts.audio.filter((a) => !broken[a.id]) as a (a.id)}
   <div class="audio">
-    <span class="audio-name"><Icon name="music" size={14} /> {a.name}</span>
+    <span class="audio-name"><Icon name="music" size={14} /> <span class="audio-title">{a.name}</span>
+      <button type="button" class="icon-btn icon-btn-xs" aria-label={`Download ${a.name}`} data-tip="Download" onclick={() => void save(a)}><Icon name="download" size={14} /></button></span>
     {#if urls[a.id]}<audio controls preload="metadata" src={urls[a.id]} onerror={() => failed(a)}></audio>{/if}
   </div>
 {/each}
-{#each [...parts.files, ...parts.images.filter((a) => broken[a.id])] as a (a.id)}
+{#each [...parts.files, ...parts.images.filter((a) => broken[a.id]), ...parts.audio.filter((a) => broken[a.id])] as a (a.id)}
   <FileCard file={a} messageId={message.id} {onError} />
 {/each}
 {#if viewing !== null && images.length}
@@ -96,6 +105,7 @@
     margin-top: 6px; max-width: 432px; box-sizing: border-box; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
     border-radius: var(--radius-xs); background: var(--bg-2); border: 1px solid var(--line-soft);
   }
-  .audio-name { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .audio-name { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); min-width: 0; }
+  .audio-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .audio audio { width: 100%; height: 32px; }
 </style>

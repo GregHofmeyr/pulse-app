@@ -196,6 +196,7 @@ impl Jobs {
             reply_to_id: out.reply_to,
             nonce: Some(out.nonce.clone()),
             thread_root_id: out.thread_root,
+            gif: None,
             attachments: ids,
         };
         let mut tries = 0;
@@ -210,7 +211,17 @@ impl Jobs {
                 Err(e) => {
                     // The server found an upload missing or wrong: upload them all again next time.
                     if matches!(e, ApiError::Rejected(_) | ApiError::Told { .. }) {
-                        job.stored.lock().unwrap_or_else(|p| p.into_inner()).clear();
+                        let forgotten: Vec<AttachmentId> = job
+                            .stored
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .drain()
+                            .map(|(_, id)| id)
+                            .collect();
+                        for id in forgotten {
+                            // Best effort: the sweep removes whatever is left.
+                            let _ = api.cancel_attachment(token, id).await;
+                        }
                     }
                     return Err(e.into());
                 }

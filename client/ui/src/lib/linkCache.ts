@@ -57,9 +57,11 @@ export function linkCache() {
       return p
     },
     /** Store a link fetched alongside another (a message's other files). */
-    put(key: string, link: SignedLink, askedAt: number) {
-      links.set(key, { url: link.url, until: linkUntil(link, askedAt) })
+    put(key: string, link: SignedLink, askedAt: number, since = era) {
+      if (since === era) links.set(key, { url: link.url, until: linkUntil(link, askedAt) })
     },
+    /** For `put`: the sign-in a fetch started under. */
+    era: () => era,
     /** Sign-out or account switch: the next account asks for its own links. */
     forget() {
       era++

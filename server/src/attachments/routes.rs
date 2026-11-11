@@ -78,10 +78,16 @@ async fn start(
     let key = crate::media::new_key();
     // Count and insert under the write lock, so two starts can't both take the last slot.
     let mut tx = begin_write(&s.db).await?;
+    // Only uploads a send could still take count: not one whose channel is gone, nor one past
+    // its time (the sweep removes those).
     let open: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM attachments WHERE user_id = ? AND message_id IS NULL",
+        "SELECT COUNT(*) FROM attachments WHERE user_id = ? AND message_id IS NULL
+           AND channel_id IS NOT NULL AND created_at >= ?",
     )
     .bind(me.to_string())
+    .bind(crate::db::stamp(
+        chrono::Utc::now() - chrono::Duration::hours(super::PENDING_TTL_HOURS),
+    ))
     .fetch_one(&mut *tx)
     .await?;
     if open >= OPEN_PER_USER {

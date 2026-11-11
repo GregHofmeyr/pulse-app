@@ -570,3 +570,52 @@ async fn has_media_and_has_file_filter_search() {
     let r = ids(r);
     assert_eq!(r, vec![file.id]);
 }
+
+#[tokio::test]
+async fn leaving_a_group_deletes_its_files() {
+    let w = world().await;
+    let app = &w.app;
+    let (kim_id, kim) = register(app, "kim").await;
+    let g = create_dm(app, &w.alex.1, &[w.sam.0, kim_id]).await;
+    let a = upload(app, &w.alex.1, g.id, "a.txt", "text/plain", b"x").await;
+    send_ok(app, &w.alex.1, g.id, "", &[a]).await;
+    assert_eq!(s3(app).keys().len(), 1);
+    for (id, token) in [(w.alex.0, &w.alex.1), (w.sam.0, &w.sam.1), (kim_id, &kim)] {
+        let r = app
+            .http
+            .delete(app.url(&format!("/channels/{}/members/{id}", g.id)))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap();
+        assert!(r.status().is_success(), "leave {}", r.status());
+    }
+    // the last one out takes the group, and its files after the commit
+    for _ in 0..50 {
+        if s3(app).keys().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(s3(app).keys().is_empty(), "{:?}", s3(app).keys());
+}
+
+#[tokio::test]
+async fn purged_rows_dont_count_toward_open_uploads() {
+    let w = world().await;
+    let (app, t, ch) = (&w.app, &w.alex.1, w.text.id);
+    upload(app, t, ch, "a.txt", "text/plain", b"x").await;
+    // as a purge leaves a row whose object delete failed: no channel, never claimable
+    sqlx::query("UPDATE attachments SET channel_id = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for _ in 0..pulse_server::attachments::OPEN_PER_USER {
+        start(app, t, ch, "b.txt", "text/plain", 1).await;
+    }
+    // the sweep takes the orphan at once, whatever its age
+    let r = pulse_server::attachments::sweep::run(&app.state(), chrono::Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(r.pending, 1);
+}

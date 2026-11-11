@@ -30,11 +30,11 @@ pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<SweepReport> {
     let mut report = SweepReport::default();
     let Some(r2) = &s.r2 else { return Ok(report) };
 
-    // Never sent. A purged message's or channel's rows look the same (SET NULL), so this also
-    // catches whatever a purge's own delete missed.
+    // Never sent, past their time. A purged message's or channel's rows look the same (SET NULL)
+    // and go at once: with no channel, no send can ever take them.
     let pending: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT id, key, expires_at FROM attachments
-         WHERE message_id IS NULL AND created_at < ?",
+         WHERE message_id IS NULL AND (created_at < ? OR channel_id IS NULL)",
     )
     .bind(stamp(
         now - chrono::Duration::hours(PENDING_TTL_HOURS + GRACE_HOURS),
