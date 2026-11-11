@@ -118,6 +118,43 @@ impl R2 {
         }
     }
 
+    /// The object's first `len` bytes (fewer if it is shorter), or `None` if it isn't there: a
+    /// ranged GET, for checking a file's magic bytes without fetching all of it.
+    pub async fn get_range(&self, key: &str, len: u64) -> AppResult<Option<Vec<u8>>> {
+        if len == 0 {
+            return Ok(self.head(key).await?.map(|_| Vec::new()));
+        }
+        let url = self
+            .bucket
+            .get_object(Some(&self.creds), key)
+            .sign(SERVER_SIGN_TTL);
+        let r = self
+            .http
+            .get(url)
+            .header(reqwest::header::RANGE, format!("bytes=0-{}", len - 1))
+            .send()
+            .await
+            .map_err(quiet)
+            .with_context(|| format!("R2 GET {key}"))?;
+        match r.status() {
+            s if s.is_success() => {
+                let mut bytes = r
+                    .bytes()
+                    .await
+                    .map_err(quiet)
+                    .with_context(|| format!("R2 GET {key}"))?
+                    .to_vec();
+                // A store that ignores the range answers 200 with the whole object.
+                bytes.truncate(len as usize);
+                Ok(Some(bytes))
+            }
+            reqwest::StatusCode::NOT_FOUND => Ok(None),
+            // Only an empty object has no first byte to serve.
+            reqwest::StatusCode::RANGE_NOT_SATISFIABLE => Ok(Some(Vec::new())),
+            s => Err(anyhow::anyhow!("R2 GET answered {s}").into()),
+        }
+    }
+
     /// Delete the object; one that is already gone counts as done.
     pub async fn delete(&self, key: &str) -> AppResult<()> {
         let url = self
@@ -383,6 +420,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_range_reads_the_first_bytes() {
+        let (fake, r2) = setup().await;
+        fake.put_raw("attachments/aa", b"RIFF\x10\0\0\0WEBPVP8 rest".to_vec());
+        assert_eq!(
+            r2.get_range("attachments/aa", 12).await.unwrap().as_deref(),
+            Some(&b"RIFF\x10\0\0\0WEBP"[..])
+        );
+        // A shorter object gives what it has.
+        fake.put_raw("attachments/bb", b"RIFF".to_vec());
+        assert_eq!(
+            r2.get_range("attachments/bb", 12).await.unwrap().as_deref(),
+            Some(&b"RIFF"[..])
+        );
+        assert_eq!(r2.get_range("attachments/missing", 12).await.unwrap(), None);
+        // A broken store is an error, not a missing object.
+        fake.set_down(true);
+        assert!(r2.get_range("attachments/aa", 12).await.is_err());
+    }
+
+    #[tokio::test]
     async fn head_of_a_missing_object_is_none() {
         let (_fake, r2) = setup().await;
         assert_eq!(r2.head("clips/missing.mp4").await.unwrap(), None);
@@ -404,6 +461,7 @@ mod tests {
         for err in [
             r2.head("clips/x.mp4").await.unwrap_err(),
             r2.delete("clips/x.mp4").await.unwrap_err(),
+            r2.get_range("clips/x.mp4", 12).await.unwrap_err(),
         ] {
             for text in [format!("{err:?}"), format!("{err}")] {
                 for secret in [FAKE_KEY_ID, "X-Amz-Signature", "X-Amz-Credential"] {

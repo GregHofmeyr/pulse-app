@@ -106,6 +106,8 @@ pub struct LimitsConfig {
     pub voice_state_user: Rate,
     /// Clip play links minted per user (each signs a storage URL).
     pub clip_url_user: Rate,
+    /// Attachment uploads started per user (each signs a storage URL).
+    pub attachment_user: Rate,
     /// Message searches per user. Reads are otherwise free, but a search can scan far more rows
     /// than a page of history.
     pub search_user: Rate,
@@ -175,6 +177,8 @@ impl Default for LimitsConfig {
             voice_state_user: Rate::new(10, 2.0),
             // A clips wall plays one link per tile opened; 60 at once and one a second after.
             clip_url_user: Rate::new(60, 1.0),
+            // Up to 10 files a message: a few messages' worth at once, then one a second.
+            attachment_user: Rate::new(60, 1.0),
             // The box searches on Enter (and Load more), so a person stays far below this.
             search_user: Rate::new(20, 2.0),
             unfurl_user: Rate::per_minute(20),
@@ -223,6 +227,7 @@ impl LimitsConfig {
             mutate_user: r,
             voice_state_user: r,
             clip_url_user: r,
+            attachment_user: r,
             search_user: r,
             unfurl_user: r,
             link_thumb_user: r,
@@ -380,6 +385,7 @@ pub struct Limits {
     pub mutate_user: Limiter,
     pub voice_state_user: Limiter,
     pub clip_url_user: Limiter,
+    pub attachment_user: Limiter,
     pub search_user: Limiter,
     pub unfurl_user: Limiter,
     pub link_thumb_user: Limiter,
@@ -420,6 +426,7 @@ impl Limits {
             mutate_user: Limiter::new(c.mutate_user),
             voice_state_user: Limiter::new(c.voice_state_user),
             clip_url_user: Limiter::new(c.clip_url_user),
+            attachment_user: Limiter::new(c.attachment_user),
             search_user: Limiter::new(c.search_user),
             unfurl_user: Limiter::new(c.unfurl_user),
             link_thumb_user: Limiter::new(c.link_thumb_user),

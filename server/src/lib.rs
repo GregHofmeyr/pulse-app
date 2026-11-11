@@ -1,4 +1,5 @@
 pub mod access;
+pub mod attachments;
 pub mod auth;
 pub mod badges;
 pub mod calls;
@@ -72,6 +73,7 @@ pub fn router(state: AppState) -> Router {
         .merge(sounds::routes::router())
         .merge(clips::games::router())
         .merge(clips::routes::router())
+        .merge(attachments::routes::router())
         .merge(profiles::routes::router())
         .merge(profiles::private::router())
         .merge(presence::routes::router())
