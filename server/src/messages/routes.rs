@@ -3,9 +3,10 @@ use axum::http::StatusCode;
 use axum::routing::{get, patch};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
-use pulse_protocol::ids::{ChannelId, MessageId, UserId};
+use pulse_protocol::ids::{AttachmentId, ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{
-    Channel, ChannelKind, EditMessageRequest, Gif, Message, MessageKind, SendMessageRequest,
+    Attachment, Channel, ChannelKind, EditMessageRequest, Gif, Message, MessageKind,
+    SendMessageRequest,
 };
 use serde::Deserialize;
 use sqlx::SqlitePool;
@@ -425,6 +426,9 @@ async fn send(
             mentioned,
             nonce: req.nonce,
             gif,
+            attachment_ids: req.attachments,
+            attachments: claimed,
+            caption_is_fallback,
         },
     )
     .await
@@ -441,6 +445,11 @@ pub(crate) struct Outgoing {
     pub nonce: Option<String>,
     /// A GIF from the picker (#58), already checked against the content.
     pub gif: Option<Gif>,
+    /// The uploads it carries (#57), checked by `attachments::claim` (whose answer is `attachments`).
+    pub attachment_ids: Vec<AttachmentId>,
+    pub attachments: Vec<Attachment>,
+    /// `content` is the stand-in text for files sent with no caption.
+    pub caption_is_fallback: bool,
 }
 
 /// Post a plain message from `me` in `ch` as the sharer's own words: Share to stage's chat message (#288). The same
@@ -463,6 +472,9 @@ pub(crate) async fn post_plain(
             mentioned: vec![],
             nonce: None,
             gif: None,
+            attachment_ids: vec![],
+            attachments: vec![],
+            caption_is_fallback: false,
         },
     )
     .await
@@ -478,6 +490,9 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         mentioned,
         nonce: req_nonce,
         gif,
+        attachment_ids,
+        attachments,
+        caption_is_fallback,
     } = out;
     let gif_json = gif
         .as_ref()
@@ -509,7 +524,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         poll_ended: None,
         stage_share_line: None,
         gif,
-        attachments: claimed,
+        attachments,
         caption_is_fallback,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
@@ -554,7 +569,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         .bind(&gif_json)
         .execute(&mut *tx)
         .await?;
-    crate::attachments::bind(&mut tx, me, msg.id, &req.attachments).await?;
+    crate::attachments::bind(&mut tx, me, msg.id, &attachment_ids).await?;
     mentions::store(&mut tx, msg.id, &mentioned).await?;
     let used = reactions::live_keys(&mut tx, me, reactions::used_in(&msg.content)).await?;
     crate::emoji::record_use(&mut tx, me, &used).await?;
