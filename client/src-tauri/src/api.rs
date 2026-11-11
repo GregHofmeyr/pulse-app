@@ -4267,6 +4267,7 @@ mod tests {
                     reply_to_id: None,
                     nonce: None,
                     thread_root_id: Some(quote.id),
+                    gif: None,
                 },
             )
             .await
