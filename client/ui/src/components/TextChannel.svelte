@@ -18,6 +18,7 @@
   import { voice } from '../lib/voice.svelte'
   import SearchBox from './SearchBox.svelte'
   import { narrowerThan } from '../lib/actions'
+  import { pinToBottom } from '../lib/pinBottom'
   import { lastInput } from '../lib/inputModality'
   import { app, clock, queueMessage, ui } from '../lib/store.svelte'
   import { presenceOf } from '../lib/presence'
@@ -155,6 +156,16 @@
     if (!list || loadingNewer || untrack(() => detached)) return
     const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 120
     if (nearBottom) tick().then(() => list?.scrollTo({ top: list.scrollHeight })) // gone if we unmounted meanwhile
+  })
+
+  // ...and stay there as messages grow after they're drawn (#292): a link's card unfurling later, images loading,
+  // reactions, a poll or spin card changing. Not in a detached window (its bottom isn't the latest) or while a newer
+  // page goes in below the view.
+  let pin: ReturnType<typeof pinToBottom> | undefined
+  $effect(() => {
+    if (!list) return
+    const p = (pin = pinToBottom(list, { on: () => !detached && !loadingNewer }))
+    return () => p.destroy()
   })
 
   // Opening cheaply (#238): a channel opens with only its newest messages, enough to fill the list, and draws the rest
@@ -352,6 +363,7 @@
         } else retry = true
       }
       await tick() // with loadingNewer still set, the view stays where it was
+      pin?.mark() // and stays there once it's done: the page went in below the view, not under it
       // Still at the bottom (measured now: atBottom is from the last scroll), e.g. a short page that
       // stopped before a missed live message: fetch on, but only while pages bring something.
       more = more || (page.length > 0 && detached && !!list && list.scrollHeight - list.scrollTop - list.clientHeight < 40)

@@ -90,12 +90,29 @@
     return () => io.disconnect()
   })
   onDestroy(() => stop(key))
+
+  // The player ended, or failed (#292: on Linux the video plays in a window of its own, and closing that window ends
+  // it with an error): our embed page says so, and the card goes back to its thumbnail and play button rather than
+  // staying a dead player. Only from our embed origin and this card's own frame.
+  let frameEl: HTMLIFrameElement | undefined = $state()
+  $effect(() => {
+    if (!active || !origin.origin) return
+    const from = new URL(origin.origin).origin
+    const k = key
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== from || !frameEl || e.source !== frameEl.contentWindow) return
+      const d: unknown = e.data
+      if (d && typeof d === 'object' && (d as { pulse?: unknown }).pulse === 'player' && ['ended', 'error'].includes((d as { state?: unknown }).state as string)) stop(k)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  })
 </script>
 
 {#snippet frame()}
   <div class="frame" class:vertical={shape === '9 / 16'} class:audio={shape === 'audio'}
     style:aspect-ratio={shape === 'audio' ? undefined : shape} style:height={shape === 'audio' ? `${audioHeight(embed)}px` : undefined}>
-    <iframe src={playerSrc(origin.origin!, embed)} title={embed.title ? `${label}: ${embed.title}` : `${label} player`}
+    <iframe bind:this={frameEl} src={playerSrc(origin.origin!, embed)} title={embed.title ? `${label}: ${embed.title}` : `${label} player`}
       sandbox={sandboxFor(embed)} allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
       referrerpolicy="strict-origin-when-cross-origin"></iframe>
   </div>
@@ -143,6 +160,8 @@
       {#if embed.description}<p class="desc">{embed.description}</p>{/if}
     </div>
     {#if active}
+      <!-- back to the card: always a way out of a player, whatever it shows -->
+      <button class="close-player" aria-label="Close player" data-tip="Close player" onclick={() => stop(key)}><Icon name="x" size={14} /></button>
       {@render frame()}
     {:else if hasMedia}
       <div class="media" class:vertical={big && shape === '9 / 16'} style:aspect-ratio={big ? shape : undefined}>
@@ -227,6 +246,11 @@
   .art img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; display: block; border-radius: 4px; }
   .art.tile { color: var(--text-3); background: linear-gradient(135deg, var(--bg-3), var(--bg-4)); }
   .spotify .frame { grid-column: 1 / -1; }
+  .close-player {
+    width: 24px; height: 24px; border: 0; border-radius: var(--radius-xs); padding: 0; background: transparent; color: var(--text-3);
+    display: grid; place-items: center;
+  }
+  .close-player:hover, .close-player:focus-visible { color: var(--text); background: var(--bg-3); }
   .hide {
     width: 24px; height: 24px; border: 0; border-radius: var(--radius-xs); padding: 0; background: transparent; color: var(--text-3);
     /* its own layer for good, as the entrances (#103): a fade that makes and drops one flashes on WebKitGTK */

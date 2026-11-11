@@ -83,6 +83,61 @@ describe('LinkEmbed', () => {
     expect(host.querySelector('img')).toBeNull()
   })
 
+  // #292: on Linux the video plays in a window of its own; when it closes (the player errors) or the video ends, our
+  // embed page says so, and the card goes back to its thumbnail and play button instead of a dead player.
+  const fromPage = (data: unknown, source: Window | null, o = ORIGIN) => window.dispatchEvent(new MessageEvent('message', { data, origin: o, source }))
+  for (const state of ['ended', 'error'] as const) {
+    it(`the player saying it ${state === 'ended' ? 'ended' : 'failed (its pop-out closed)'} brings the card back`, async () => {
+      const host = show(yt())
+      await settle()
+      host.querySelector<HTMLButtonElement>('button.play')!.click()
+      flushSync()
+      const f = host.querySelector('iframe')!
+      fromPage({ pulse: 'player', state }, f.contentWindow)
+      flushSync()
+      expect(host.querySelector('iframe')).toBeNull()
+      expect(host.querySelector('img')!.getAttribute('src')).toContain(HASH)
+      expect(host.querySelector('button.play')).not.toBeNull()
+      expect(player.active).toBeNull()
+      // and plays again from it
+      host.querySelector<HTMLButtonElement>('button.play')!.click()
+      flushSync()
+      expect(host.querySelector('iframe')).not.toBeNull()
+    })
+  }
+
+  it("ignores a player message from another origin, another card's player, or anything that isn't one", async () => {
+    const a = show(yt())
+    const b = show(yt({ url: 'https://youtu.be/aaaaaaaaaaa', provider_id: 'aaaaaaaaaaa' }), { messageId: 'M2' })
+    await settle()
+    a.querySelector<HTMLButtonElement>('button.play')!.click()
+    flushSync()
+    const f = a.querySelector('iframe')!
+    fromPage({ pulse: 'player', state: 'ended' }, f.contentWindow, 'https://evil.example')
+    fromPage({ pulse: 'player', state: 'ended' }, window)
+    fromPage({ pulse: 'player', state: 'playing' }, f.contentWindow)
+    fromPage('{"pulse":"player","state":"ended"}', f.contentWindow)
+    fromPage(null, f.contentWindow)
+    flushSync()
+    expect(a.querySelector('iframe')).not.toBeNull()
+    expect(b.querySelector('iframe')).toBeNull()
+  })
+
+  it('an open player can be closed back to its card', async () => {
+    const host = show(yt())
+    await settle()
+    expect(host.querySelector('button.close-player')).toBeNull()
+    host.querySelector<HTMLButtonElement>('button.play')!.click()
+    flushSync()
+    const close = host.querySelector<HTMLButtonElement>('button.close-player')!
+    expect(close.getAttribute('aria-label')).toBe('Close player')
+    close.click()
+    flushSync()
+    expect(host.querySelector('iframe')).toBeNull()
+    expect(host.querySelector('button.play')).not.toBeNull()
+    expect(host.querySelector('img')).not.toBeNull()
+  })
+
   it('starting a second player stops the first', async () => {
     const a = show(yt())
     const b = show(yt({ url: 'https://youtu.be/aaaaaaaaaaa', provider_id: 'aaaaaaaaaaa' }), { messageId: 'M2' })

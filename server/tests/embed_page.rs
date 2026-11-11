@@ -4,6 +4,7 @@ mod common;
 
 use common::*;
 use pulse_server::config::{Config, EmbedConfig};
+use pulse_server::embeds::page::{RELAY, RELAY_HASH};
 use reqwest::{StatusCode, Url};
 
 const ANCESTORS: &str = "frame-ancestors http://tauri.localhost https://tauri.localhost tauri:";
@@ -63,7 +64,17 @@ async fn page(app: &TestApp, path: &str) -> (String, String) {
     );
     let csp = header(&r, "content-security-policy").to_owned();
     let body = r.text().await.unwrap();
-    assert!(!body.to_lowercase().contains("<script"), "{body}");
+    // No script, but YouTube's one fixed relay (#292), allowed by its hash.
+    let lower = body.to_lowercase();
+    if path.starts_with("/embed/youtube/") {
+        assert_eq!(lower.matches("<script").count(), 1, "{body}");
+        assert!(
+            body.contains(&format!("<script>{RELAY}</script>")),
+            "{body}"
+        );
+    } else {
+        assert!(!lower.contains("<script"), "{body}");
+    }
     assert!(
         body.contains(r#"<meta name="referrer" content="strict-origin-when-cross-origin">"#),
         "{body}"
@@ -75,9 +86,25 @@ async fn page(app: &TestApp, path: &str) -> (String, String) {
 }
 
 fn csp_for(origin: &str) -> String {
+    let script = if origin == "https://www.youtube-nocookie.com" {
+        format!("script-src {}; ", *RELAY_HASH)
+    } else {
+        String::new()
+    };
     format!(
-        "default-src 'none'; style-src 'unsafe-inline'; frame-src {origin}; {ANCESTORS}; base-uri 'none'; form-action 'none'"
+        "default-src 'none'; {script}style-src 'unsafe-inline'; frame-src {origin}; {ANCESTORS}; base-uri 'none'; form-action 'none'"
     )
+}
+
+#[test]
+fn the_relay_hash_is_the_relays_sha256() {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let want = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(RELAY.as_bytes()));
+    assert_eq!(*RELAY_HASH, format!("'sha256-{want}'"));
+    // It only ever tells the app "ended" or "error", and talks to the player on its own origin.
+    assert!(RELAY.contains("parent.postMessage({pulse:'player',state:s},'*')"));
+    assert!(RELAY.contains("e.origin!==o||e.source!==f.contentWindow"));
 }
 
 #[tokio::test]
@@ -98,7 +125,7 @@ async fn each_provider_frames_its_official_player() {
     let cases = [
         (
             "/embed/youtube/dQw4w9WgXcQ",
-            "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1",
+            "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&amp;enablejsapi=1",
             "https://www.youtube-nocookie.com",
         ),
         (
@@ -208,7 +235,7 @@ async fn never_redirects() {
 async fn start_only_for_youtube_and_only_digits() {
     let app = app().await;
     let yt = "/embed/youtube/dQw4w9WgXcQ";
-    let base = "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1";
+    let base = "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&amp;enablejsapi=1";
 
     let (src, _) = page(&app, &format!("{yt}?start=90")).await;
     assert_eq!(src, format!("{base}&amp;start=90"));

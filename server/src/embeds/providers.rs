@@ -337,7 +337,8 @@ pub fn player_url(
                 .filter(|&s| s > 0)
                 .map(|s| format!("&start={s}"))
                 .unwrap_or_default();
-            format!("https://www.youtube-nocookie.com/embed/{id}?autoplay=1{start}")
+            // enablejsapi: the page hears when the video ends or fails (page::RELAY, #292)
+            format!("https://www.youtube-nocookie.com/embed/{id}?autoplay=1&enablejsapi=1{start}")
         }
         EmbedProvider::Tiktok => format!("https://www.tiktok.com/player/v1/{id}?autoplay=1&rel=0"),
         EmbedProvider::Spotify => {
@@ -724,11 +725,13 @@ mod tests {
     fn player_urls_come_from_templates() {
         assert_eq!(
             player_url(Youtube, YT, None, "pulse.example.com").as_deref(),
-            Some("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1")
+            Some("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&enablejsapi=1")
         );
         assert_eq!(
             player_url(Youtube, YT, Some(90), "pulse.example.com").as_deref(),
-            Some("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&start=90")
+            Some(
+                "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&enablejsapi=1&start=90"
+            )
         );
         assert_eq!(
             player_url(Tiktok, TT, Some(5), "pulse.example.com").as_deref(),

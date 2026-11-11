@@ -5,6 +5,13 @@
 //!
 //! The player URL comes only from [`providers::player_url`] (templates plus a validated id), so
 //! the page is no open redirect or frame of anything else; it never answers with a redirect.
+//!
+//! YouTube's page carries one fixed inline script, allowed by its hash only ([`RELAY`]): it tells
+//! the app when the video ended or the player failed, so the card goes back to its thumbnail
+//! (#292: on Linux the video plays in a window of its own, and closing that window fails the
+//! player). Every other provider's page has no script.
+
+use std::sync::LazyLock;
 
 use axum::Router;
 use axum::extract::rejection::PathRejection;
@@ -12,8 +19,10 @@ use axum::extract::{Path, RawQuery, State};
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use base64::Engine;
 use pulse_protocol::rest::EmbedProvider;
 use reqwest::Url;
+use sha2::{Digest, Sha256};
 
 use super::providers;
 use crate::AppState;
@@ -24,6 +33,38 @@ pub const MAX_START: u32 = 7 * 86400;
 
 /// Who may frame the page: the app's own origins (Windows WebView2, Linux, macOS).
 const FRAME_ANCESTORS: &str = "http://tauri.localhost https://tauri.localhost tauri:";
+
+/// YouTube's page script: listens to the player (YouTube's iframe API messages, on the player's
+/// own origin, from this page's one frame) and tells the app (`parent`) only that the video ended
+/// or the player failed. Nothing else is read or passed on. [`RELAY_HASH`] allows exactly it.
+pub const RELAY: &str = concat!(
+    "(function(){var f=document.querySelector('iframe'),o=new URL(f.src).origin,n=0,t;",
+    "function say(m){try{f.contentWindow.postMessage(JSON.stringify(m),o)}catch(_){}}",
+    "function hello(){say({event:'listening',id:1,channel:'widget'});",
+    "say({event:'command',func:'addEventListener',args:['onStateChange'],id:1,channel:'widget'});",
+    "say({event:'command',func:'addEventListener',args:['onError'],id:1,channel:'widget'})}",
+    "function tell(s){parent.postMessage({pulse:'player',state:s},'*')}",
+    "f.addEventListener('load',function(){clearInterval(t);n=0;hello();",
+    "t=setInterval(function(){if(++n>20)clearInterval(t);else hello()},250)});",
+    "addEventListener('message',function(e){if(e.origin!==o||e.source!==f.contentWindow)return;",
+    "var d;try{d=typeof e.data==='string'?JSON.parse(e.data):e.data}catch(_){return}",
+    "if(!d||typeof d!=='object')return;clearInterval(t);",
+    "var s=d.event==='onStateChange'?d.info:d.event==='infoDelivery'&&d.info?d.info.playerState:null;",
+    "if(s===0)tell('ended');else if(d.event==='onError')tell('error')})})();"
+);
+
+/// The CSP source that allows [`RELAY`] and nothing else.
+pub static RELAY_HASH: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "'sha256-{}'",
+        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(RELAY.as_bytes()))
+    )
+});
+
+/// Whether the provider's page carries [`RELAY`].
+fn relays(p: EmbedProvider) -> bool {
+    p == EmbedProvider::Youtube
+}
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/embed/{provider}/{id}", get(page))
@@ -44,8 +85,13 @@ async fn page(
         .map_err(|_| AppError::NotFound)?
         .origin()
         .ascii_serialization();
+    let script = if relays(provider) {
+        format!("script-src {}; ", *RELAY_HASH)
+    } else {
+        String::new()
+    };
     let csp = format!(
-        "default-src 'none'; style-src 'unsafe-inline'; frame-src {origin}; frame-ancestors {FRAME_ANCESTORS}; base-uri 'none'; form-action 'none'"
+        "default-src 'none'; {script}style-src 'unsafe-inline'; frame-src {origin}; frame-ancestors {FRAME_ANCESTORS}; base-uri 'none'; form-action 'none'"
     );
     Ok((
         [
@@ -98,10 +144,15 @@ fn label(p: EmbedProvider) -> &'static str {
     }
 }
 
-/// The page: black, full size, one iframe, no script.
+/// The page: black, full size, one iframe; no script but YouTube's [`RELAY`].
 fn html(p: EmbedProvider, player: &str) -> String {
     let src = escape(player);
     let title = label(p);
+    let script = if relays(p) {
+        format!("<script>{RELAY}</script>")
+    } else {
+        String::new()
+    };
     format!(
         concat!(
             "<!doctype html>\n",
@@ -116,11 +167,12 @@ fn html(p: EmbedProvider, player: &str) -> String {
             "</head>\n",
             "<body><iframe src=\"{src}\" ",
             "allow=\"autoplay; encrypted-media; fullscreen; picture-in-picture\" allowfullscreen ",
-            "referrerpolicy=\"strict-origin-when-cross-origin\" title=\"{title} player\"></iframe></body>\n",
+            "referrerpolicy=\"strict-origin-when-cross-origin\" title=\"{title} player\"></iframe>{script}</body>\n",
             "</html>\n"
         ),
         title = title,
         src = src,
+        script = script,
     )
 }
 
