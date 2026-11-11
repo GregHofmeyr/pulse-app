@@ -31,6 +31,8 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::LoginMfaRequest::export_all(&cfg)?;
     rest::RecoveryCodesResponse::export_all(&cfg)?;
     rest::DeletedChannel::export_all(&cfg)?;
+    rest::DeleteServerRequest::export_all(&cfg)?;
+    rest::DeletedServer::export_all(&cfg)?;
     rest::CreateServerRequest::export_all(&cfg)?;
     rest::CreateChannelRequest::export_all(&cfg)?;
     rest::Category::export_all(&cfg)?;

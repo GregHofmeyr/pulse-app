@@ -142,10 +142,11 @@ pub async fn layout_of(db: &mut SqliteConnection, server: ServerId) -> AppResult
 /// Every server's layout for Ready: categories and revisions only (the channels in Ready carry
 /// their own placement, so `channels` is empty). Two queries however many servers there are.
 pub async fn all_layouts(db: &SqlitePool) -> AppResult<Vec<ServerLayout>> {
-    let servers: Vec<(String, i64)> =
-        sqlx::query_as("SELECT id, layout_revision FROM servers ORDER BY id")
-            .fetch_all(db)
-            .await?;
+    let servers: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT id, layout_revision FROM servers WHERE deleted_at IS NULL ORDER BY id",
+    )
+    .fetch_all(db)
+    .await?;
     let rows: Vec<CategoryRow> = sqlx::query_as(&format!(
         "SELECT {CATEGORY_COLS} FROM categories ORDER BY server_id, position, id"
     ))

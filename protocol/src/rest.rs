@@ -394,6 +394,11 @@ pub struct Server {
     pub id: ServerId,
     pub name: String,
     pub icon_hash: Option<String>,
+    /// Who owns it (its creator): only they may delete or restore it (#184). Absent from older
+    /// servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub owner_id: Option<UserId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -511,6 +516,23 @@ pub struct DeletedChannel {
     /// Year winner, or with a quote up in a live vote. The sweeper keeps it past `purge_at`.
     #[serde(default)]
     pub held: Option<String>,
+}
+
+/// `DELETE /servers/{id}` (#184): the server's name, typed by its owner to confirm.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeleteServerRequest {
+    pub name: String,
+}
+
+/// One of your servers in your Recently deleted (`GET /servers/deleted`, #184).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeletedServer {
+    pub server: Server,
+    pub deleted_at: String,
+    /// When the sweeper purges it, with everything in it.
+    pub purge_at: String,
+    /// False once it is due to be purged (it may be going right now).
+    pub can_restore: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

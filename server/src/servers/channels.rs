@@ -18,7 +18,7 @@ use pulse_protocol::rest::{
 use sqlx::SqliteConnection;
 
 use crate::AppState;
-use crate::access::{CHANNEL_COLS, channel_for, channel_from_row, load_channel};
+use crate::access::{CHANNEL_COLS, DELETED_SERVERS, channel_for, channel_from_row, load_channel};
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
 use crate::servers::categories::{bottom_of, bump, publish_layout};
@@ -189,24 +189,31 @@ pub async fn delete(
     drop(_order);
     // Badge bookkeeping in its own transaction, after the delete: it never fails it.
     crate::badges::voice::closed(&s, id, &closed).await;
-    // The channel can't be found now, so a join webhook finds nothing to join. Its events can't
-    // reach anyone (they'd be scoped to a channel that can't be found): clients drop its voice
-    // presence and streams on `ChannelDeleted`.
     if ch.kind == ChannelKind::Voice {
-        let people: Vec<UserId> = s.voice.members(id).into_iter().collect();
-        for u in &people {
-            s.voice.leave(id, *u, "");
-            let ended = s.streams.end(id, *u);
-            s.streams.remove_viewer_everywhere(id, *u);
-            if let Some(info) = ended {
-                crate::badges::streams::ended(&s, &info).await;
-            }
-        }
-        crate::streams::ghosts::channel_gone(&s, id).await;
-        let s = s.clone();
-        tokio::spawn(async move { crate::voice::revoke::close_call(&s, id, &people).await });
+        end_gone_call(&s, id).await;
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Take everyone out of the call of voice channel `id`, which has just become impossible to find
+/// (deleted, or its server deleted, #184): out of voice state, their streams ended (badges told)
+/// and their viewing dropped, its ghost viewers gone, and LiveKit told to close the call in the
+/// background. A join webhook finds nothing to join now. Its events can't reach anyone (they'd be
+/// scoped to a channel that can't be found): clients drop its voice presence and streams on
+/// `ChannelDeleted`.
+pub(crate) async fn end_gone_call(s: &AppState, id: ChannelId) {
+    let people: Vec<UserId> = s.voice.members(id).into_iter().collect();
+    for u in &people {
+        s.voice.leave(id, *u, "");
+        let ended = s.streams.end(id, *u);
+        s.streams.remove_viewer_everywhere(id, *u);
+        if let Some(info) = ended {
+            crate::badges::streams::ended(s, &info).await;
+        }
+    }
+    crate::streams::ghosts::channel_gone(s, id).await;
+    let s = s.clone();
+    tokio::spawn(async move { crate::voice::revoke::close_call(&s, id, &people).await });
 }
 
 /// How long a deleted channel waits in Recently deleted before the sweeper purges it.
@@ -271,14 +278,15 @@ type DeletedRow = (
 );
 
 /// The deleted server channel `id`: (channel, its server, who deleted it). 404 when there is no
-/// such channel in Recently deleted.
+/// such channel in Recently deleted, or its server is deleted too (#184: frozen with it).
 async fn deleted_channel(
     db: &mut SqliteConnection,
     id: ChannelId,
 ) -> AppResult<(Channel, ServerId, Option<UserId>)> {
     let row: Option<DeletedRow> = sqlx::query_as(&format!(
         "SELECT {CHANNEL_COLS}, deleted_by, deleted_at FROM channels
-         WHERE id = ? AND deleted_at IS NOT NULL AND server_id IS NOT NULL"
+         WHERE id = ? AND deleted_at IS NOT NULL AND server_id IS NOT NULL
+           AND server_id NOT IN {DELETED_SERVERS}"
     ))
     .bind(id.to_string())
     .fetch_optional(&mut *db)
@@ -318,8 +326,8 @@ async fn member_in(db: &mut SqliteConnection, server: ServerId, user: UserId) ->
     Ok(hit.is_some())
 }
 
-/// When a channel deleted at `deleted_at` is due to be purged.
-fn purge_at(deleted_at: &str) -> AppResult<String> {
+/// When a channel (or server) deleted at `deleted_at` is due to be purged.
+pub(crate) fn purge_at(deleted_at: &str) -> AppResult<String> {
     let at = chrono::DateTime::parse_from_rfc3339(deleted_at)
         .map_err(anyhow::Error::from)?
         .with_timezone(&chrono::Utc);
@@ -419,7 +427,7 @@ pub async fn restore(
 /// Each member's read state in `channel`, the mutes of each who has muted it, and the clip view of
 /// each who set one (clients drop all three with the channel). Quote reply seen points come back
 /// on the next Ready.
-async fn republish_own_state(s: &AppState, channel: ChannelId) -> AppResult<()> {
+pub(crate) async fn republish_own_state(s: &AppState, channel: ChannelId) -> AppResult<()> {
     let readers: Vec<String> =
         sqlx::query_scalar("SELECT user_id FROM read_states WHERE channel_id = ?")
             .bind(channel.to_string())
@@ -576,12 +584,14 @@ async fn purge(s: &AppState, id: ChannelId) -> AppResult<()> {
 }
 
 /// Purge every channel deleted [`RECENTLY_DELETED_DAYS`] or more before `now`, except those
-/// [`held`] (they stay in Recently deleted, flagged). Returns how many went.
+/// [`held`] (they stay in Recently deleted, flagged) and those of a deleted server (frozen with it,
+/// #184: its own purge takes them). Returns how many went.
 pub async fn purge_expired(s: &AppState, now: chrono::DateTime<chrono::Utc>) -> AppResult<u32> {
     let due = crate::db::stamp(now - chrono::Duration::days(RECENTLY_DELETED_DAYS));
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM channels WHERE deleted_at IS NOT NULL AND deleted_at <= ? ORDER BY deleted_at",
-    )
+    let ids: Vec<String> = sqlx::query_scalar(&format!(
+        "SELECT id FROM channels WHERE deleted_at IS NOT NULL AND deleted_at <= ?
+         AND server_id NOT IN {DELETED_SERVERS} ORDER BY deleted_at"
+    ))
     .bind(&due)
     .fetch_all(&s.db)
     .await?;

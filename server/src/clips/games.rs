@@ -41,9 +41,13 @@ fn from_row((id, server_id, name, created_by, created_at): Row) -> AppResult<Gam
 
 /// Every server's games, by name (the client filters by server).
 pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<Game>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!("{SELECT} ORDER BY name_key, id"))
-        .fetch_all(db)
-        .await?;
+    // a deleted server's are gone with it (#184)
+    let rows: Vec<Row> = sqlx::query_as(&format!(
+        "{SELECT} WHERE server_id NOT IN {} ORDER BY name_key, id",
+        crate::access::DELETED_SERVERS
+    ))
+    .fetch_all(db)
+    .await?;
     rows.into_iter().map(from_row).collect()
 }
 

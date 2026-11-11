@@ -268,8 +268,10 @@ pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<QotyEvent>> {
     let since = stamp(Utc::now() - chrono::Duration::hours(REOPEN_HOURS));
     let rows: Vec<EventRow> = sqlx::query_as(&format!(
         "SELECT {EVENT_COLS} FROM qoty_events
-         WHERE ended_at IS NULL OR (end_reason = 'early' AND ended_at > ?)
-         ORDER BY started_at, id"
+         WHERE (ended_at IS NULL OR (end_reason = 'early' AND ended_at > ?))
+           AND server_id NOT IN {}
+         ORDER BY started_at, id",
+        crate::access::DELETED_SERVERS
     ))
     .bind(since)
     .fetch_all(db)

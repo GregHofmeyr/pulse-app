@@ -2712,3 +2712,47 @@ async fn read_all_clears_clip_reply_mentions() {
     }) if *user_id == w.alex.0 && *last == clip.id))
     );
 }
+
+#[tokio::test]
+async fn purging_a_deleted_server_removes_its_clip_objects() {
+    let w = world().await;
+    let s3 = w.app.s3.as_ref().unwrap();
+    let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![5u8; 10]).await;
+    let key = text(
+        &w.app,
+        "SELECT video_key FROM clips WHERE message_id = ?",
+        &clip.id.to_string(),
+    )
+    .await;
+    let object = format!("clips/{key}.mp4");
+    let r = w
+        .app
+        .http
+        .delete(w.app.url(&format!("/servers/{}", w.server)))
+        .bearer_auth(&w.alex.1)
+        .json(&json!({ "name": "Main" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    // In Recently deleted the clip and its object are kept (a restore brings them back)...
+    assert!(s3.object(&object).is_some());
+    // ...until it is purged.
+    let swept = pulse_server::servers::deleted::purge_expired(
+        &w.app.state(),
+        chrono::Utc::now() + chrono::Duration::days(8),
+    )
+    .await
+    .unwrap();
+    assert_eq!(swept, 1);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while s3.object(&object).is_some()
+        || count(&w.app, "SELECT COUNT(*) FROM media WHERE hash = ?", &key).await > 0
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "a deleted server's clip object left behind"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}

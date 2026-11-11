@@ -277,8 +277,10 @@ pub(crate) async fn undo(
 /// [`SWEEP_EVERY`] and the server once before it serves. They are stamped as ended once the lock
 /// is held, so no vote that committed meanwhile is later than the end. Returns how many it ended.
 pub async fn end_overdue(s: &AppState, due: &str) -> AppResult<u32> {
+    // A deleted server's vote waits, frozen with it (#184): it ends on the first sweep after a restore.
     const DUE: &str = "SELECT id FROM qoty_events
-                       WHERE ended_at IS NULL AND ends_at IS NOT NULL AND ends_at <= ?";
+                       WHERE ended_at IS NULL AND ends_at IS NOT NULL AND ends_at <= ?
+                         AND server_id NOT IN (SELECT id FROM servers WHERE deleted_at IS NOT NULL)";
     // A cheap look first, so an idle sweep takes no locks.
     let any: Option<String> = sqlx::query_scalar(&format!("{DUE} LIMIT 1"))
         .bind(due)

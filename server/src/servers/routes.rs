@@ -13,7 +13,7 @@ use pulse_protocol::rest::{
 use sqlx::SqlitePool;
 
 use crate::AppState;
-use crate::access::{CHANNEL_COLS, channel_from_row};
+use crate::access::{CHANNEL_COLS, DELETED_SERVERS, channel_from_row};
 use crate::auth::AuthUser;
 use crate::auth::routes::load_user;
 use crate::db::now;
@@ -27,6 +27,12 @@ const MAX_GROUP_OTHERS: usize = 9;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/servers", get(list_servers).post(create_server))
+        .route("/servers/deleted", get(super::deleted::list))
+        .route(
+            "/servers/{id}",
+            axum::routing::delete(super::deleted::delete),
+        )
+        .route("/servers/{id}/restore", post(super::deleted::restore))
         .route("/servers/{id}/join", post(join))
         .route(
             "/servers/{id}/channels",
@@ -54,18 +60,22 @@ pub(crate) fn clean_name(name: &str) -> AppResult<String> {
     Ok(n.to_string())
 }
 
-/// 404 unless `id` is a server. Servers are never deleted, so this holds for the rest of a request.
+/// 404 unless `id` is a server that isn't in its owner's Recently deleted (#184).
 pub(crate) async fn server_exists(db: &SqlitePool, id: ServerId) -> AppResult<()> {
-    let hit: Option<i64> = sqlx::query_scalar("SELECT 1 FROM servers WHERE id = ?")
-        .bind(id.to_string())
-        .fetch_optional(db)
-        .await?;
+    let hit: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM servers WHERE id = ? AND deleted_at IS NULL")
+            .bind(id.to_string())
+            .fetch_optional(db)
+            .await?;
     hit.map(|_| ()).ok_or(AppError::NotFound)
 }
 
+/// Whether `user` is in `server`. Nobody is in a deleted server (#184).
 pub async fn is_server_member(db: &SqlitePool, server: ServerId, user: UserId) -> AppResult<bool> {
-    let hit: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?")
+    let hit: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM server_members m JOIN servers s ON s.id = m.server_id AND s.deleted_at IS NULL
+         WHERE m.server_id = ? AND m.user_id = ?",
+    )
             .bind(server.to_string())
             .bind(user.to_string())
             .fetch_optional(db)
@@ -228,6 +238,7 @@ async fn create_server(
         id,
         name,
         icon_hash: None,
+        owner_id: Some(me),
     };
     s.hub
         .publish(
@@ -258,20 +269,28 @@ async fn create_server(
     Ok(Json(server))
 }
 
+/// The columns [`server_from_row`] reads, from `servers`.
+pub(crate) const SERVER_COLS: &str = "id, name, icon_hash, created_by";
+
+pub(crate) type ServerRow = (String, String, Option<String>, String);
+
+pub(crate) fn server_from_row((id, name, icon_hash, owner): ServerRow) -> AppResult<Server> {
+    Ok(Server {
+        id: id.parse().map_err(anyhow::Error::from)?,
+        name,
+        icon_hash,
+        owner_id: Some(owner.parse().map_err(anyhow::Error::from)?),
+    })
+}
+
+/// Every server, but those in Recently deleted (#184).
 pub async fn all_servers(db: &SqlitePool) -> AppResult<Vec<Server>> {
-    let rows: Vec<(String, String, Option<String>)> =
-        sqlx::query_as("SELECT id, name, icon_hash FROM servers ORDER BY id")
-            .fetch_all(db)
-            .await?;
-    rows.into_iter()
-        .map(|(id, name, icon_hash)| {
-            Ok(Server {
-                id: id.parse().map_err(anyhow::Error::from)?,
-                name,
-                icon_hash,
-            })
-        })
-        .collect()
+    let rows: Vec<ServerRow> = sqlx::query_as(&format!(
+        "SELECT {SERVER_COLS} FROM servers WHERE deleted_at IS NULL ORDER BY id"
+    ))
+    .fetch_all(db)
+    .await?;
+    rows.into_iter().map(server_from_row).collect()
 }
 
 async fn list_servers(State(s): State<AppState>, _: AuthUser) -> AppResult<Json<Vec<Server>>> {
@@ -353,10 +372,11 @@ pub async fn server_channels(db: &SqlitePool, id: ServerId) -> AppResult<Vec<Cha
     rows.into_iter().map(channel_from_row).collect()
 }
 
-/// Every server's channels in one query, each list ordered as [`server_channels`] orders it.
+/// Every live server's channels in one query, each list ordered as [`server_channels`] orders it.
 pub async fn all_server_channels(db: &SqlitePool) -> AppResult<HashMap<ServerId, Vec<Channel>>> {
     let rows = sqlx::query_as(&format!(
         "SELECT {CHANNEL_COLS} FROM channels WHERE server_id IS NOT NULL AND deleted_at IS NULL
+         AND server_id NOT IN {DELETED_SERVERS}
          ORDER BY server_id, kind, position, id"
     ))
     .fetch_all(db)
@@ -499,11 +519,12 @@ struct ServerMemberRow {
     member: MemberRow,
 }
 
-/// Every server's members in one query, each list ordered as [`server_members`] orders it.
+/// Every live server's members in one query, each list ordered as [`server_members`] orders it.
 pub async fn all_server_members(db: &SqlitePool) -> AppResult<HashMap<ServerId, Vec<Member>>> {
     let rows: Vec<ServerMemberRow> = sqlx::query_as(&format!(
         "SELECT m.server_id, {USER_COLS}, m.nickname, m.join_sound_id
          FROM server_members m JOIN users u ON u.id = m.user_id {USER_JOIN}
+         WHERE m.server_id NOT IN {DELETED_SERVERS}
          ORDER BY m.server_id, m.joined_at, m.user_id"
     ))
     .fetch_all(db)

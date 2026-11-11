@@ -47,11 +47,17 @@ pub fn channel_from_row(
 pub const CHANNEL_COLS: &str = "id, server_id, kind, name, position, category_id, icon_hash, \
      (SELECT m.still_hash FROM media m WHERE m.hash = icon_hash) AS icon_still, bitrate";
 
-/// The channel, unless there is none or it is in Recently deleted: a deleted channel is gone for
-/// everything but its own Recently deleted routes (`servers::channels`).
+/// The ids of the servers in their owner's Recently deleted (#184), as a subquery: a channel whose
+/// `server_id` is in it is gone with its server.
+pub const DELETED_SERVERS: &str = "(SELECT id FROM servers WHERE deleted_at IS NOT NULL)";
+
+/// The channel, unless there is none, it is in Recently deleted, or its server is: a deleted
+/// channel is gone for everything but its own Recently deleted routes (`servers::channels`), and a
+/// deleted server's channels for everything but its purge (`servers::deleted`).
 pub async fn load_channel(db: &SqlitePool, id: ChannelId) -> AppResult<Option<Channel>> {
     let row: Option<ChannelRow> = sqlx::query_as(&format!(
-        "SELECT {CHANNEL_COLS} FROM channels WHERE id = ? AND deleted_at IS NULL"
+        "SELECT {CHANNEL_COLS} FROM channels WHERE id = ? AND deleted_at IS NULL
+         AND (server_id IS NULL OR server_id NOT IN {DELETED_SERVERS})"
     ))
     .bind(id.to_string())
     .fetch_optional(db)
@@ -90,19 +96,13 @@ pub async fn channel_for(db: &SqlitePool, user: UserId, id: ChannelId) -> AppRes
 }
 
 /// The channels of `server` that hold messages and `user` may read ([`can_read`]), in order.
-/// 404 when there is no such server.
+/// 404 when there is no such server (or it is deleted).
 pub async fn readable_server_channels(
     db: &SqlitePool,
     user: UserId,
     server: ServerId,
 ) -> AppResult<Vec<Channel>> {
-    let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM servers WHERE id = ?")
-        .bind(server.to_string())
-        .fetch_optional(db)
-        .await?;
-    if exists.is_none() {
-        return Err(AppError::NotFound);
-    }
+    crate::servers::routes::server_exists(db, server).await?;
     let rows: Vec<ChannelRow> = sqlx::query_as(&format!(
         "SELECT {CHANNEL_COLS} FROM channels WHERE server_id = ? AND deleted_at IS NULL
          ORDER BY position, id"

@@ -187,6 +187,23 @@ pub struct ServerMembers {
     pub members: Vec<Member>,
 }
 
+/// A restored server as Ready would carry it (#184): `ServerRestored`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ServerSnapshot {
+    pub server: Server,
+    pub channels: Vec<Channel>,
+    pub members: Vec<Member>,
+    /// Its categories and revision (`channels` empty: the channels carry their placement).
+    pub layout: ServerLayout,
+    pub custom_emoji: Vec<CustomEmoji>,
+    pub sounds: Vec<Sound>,
+    pub games: Vec<Game>,
+    pub speaker_links: Vec<SpeakerLink>,
+    /// Its Quote of the Year votes that are open, or ended and still reopenable.
+    pub qoty: Vec<QotyEvent>,
+    pub server_voice: Vec<ServerVoiceMod>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct DmMembers {
     pub channel_id: ChannelId,
@@ -227,6 +244,19 @@ pub enum Event {
     },
     ServerCreated {
         server: Server,
+    },
+    /// Its owner deleted a server (#184): it moves to their Recently deleted, where nobody else
+    /// sees it, so it leaves everyone's rail with all it holds (everyone: servers are public). A
+    /// `ChannelDeleted` for each of its channels comes first, for clients from before this event,
+    /// which skip it.
+    ServerDeleted {
+        server_id: ServerId,
+    },
+    /// Its owner restored a deleted server, whole (#184): what Ready would carry for it. Each
+    /// member's own counts, mutes and clip views in it follow as their own events. A client
+    /// without this event sees it on its next Ready.
+    ServerRestored {
+        snapshot: ServerSnapshot,
     },
     MemberJoined {
         server_id: ServerId,
@@ -622,6 +652,8 @@ impl Event {
                 Some(*channel_id)
             }
             Self::ServerCreated { .. }
+            | Self::ServerDeleted { .. }
+            | Self::ServerRestored { .. }
             | Self::ChannelDeleted { .. }
             | Self::LayoutChanged { .. }
             | Self::MemberJoined { .. }

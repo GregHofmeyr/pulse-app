@@ -242,8 +242,12 @@ async fn links_of(db: &mut SqliteConnection, server: ServerId) -> AppResult<Vec<
 /// Every server's links, for Ready: it returns all servers' links, matching `Audience::Everyone`
 /// for `SpeakerLinksChanged` (Ready lists every server to every user too).
 pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<SpeakerLink>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!("{COLUMNS} ORDER BY server_id, name_key"))
-        .fetch_all(db)
-        .await?;
+    // a deleted server's are gone with it (#184)
+    let rows: Vec<Row> = sqlx::query_as(&format!(
+        "{COLUMNS} WHERE server_id NOT IN {} ORDER BY server_id, name_key",
+        crate::access::DELETED_SERVERS
+    ))
+    .fetch_all(db)
+    .await?;
     rows.into_iter().map(link_of).collect()
 }

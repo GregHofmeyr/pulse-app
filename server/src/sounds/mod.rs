@@ -68,9 +68,13 @@ fn from_row(
 
 /// Every server's sounds, oldest first.
 pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<Sound>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!("{SELECT} ORDER BY id"))
-        .fetch_all(db)
-        .await?;
+    // a deleted server's are gone with it (#184)
+    let rows: Vec<Row> = sqlx::query_as(&format!(
+        "{SELECT} WHERE server_id NOT IN {} ORDER BY id",
+        crate::access::DELETED_SERVERS
+    ))
+    .fetch_all(db)
+    .await?;
     rows.into_iter().map(from_row).collect()
 }
 

@@ -5,6 +5,7 @@ use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{Message, ReadState};
 use sqlx::{SqliteConnection, SqlitePool};
 
+use crate::access::DELETED_SERVERS;
 use crate::error::AppResult;
 
 /// Start `user` at "everything so far is read" in `channel` (no-op if they already have a point).
@@ -110,7 +111,8 @@ const COUNTED_REPLY_MENTIONS: &str = "FROM mentions mn JOIN messages m ON m.id =
     WHERE mn.user_id = ? AND (? IS NULL OR m.channel_id = ?) AND m.thread_root_id IS NOT NULL
       AND m.deleted_at IS NULL AND root.deleted_at IS NULL
       AND m.id > COALESCE(tr.last_seen_id, '')
-      AND m.channel_id NOT IN (SELECT id FROM channels WHERE deleted_at IS NOT NULL)";
+      AND m.channel_id NOT IN (SELECT id FROM channels WHERE deleted_at IS NOT NULL
+                               OR server_id IN (SELECT id FROM servers WHERE deleted_at IS NOT NULL))";
 
 async fn read_states(
     db: &SqlitePool,
@@ -136,7 +138,8 @@ async fn read_states(
             GROUP BY m.channel_id
          ) tm ON tm.channel_id = rs.channel_id
          WHERE rs.user_id = ? AND (? IS NULL OR rs.channel_id = ?)
-           AND rs.channel_id NOT IN (SELECT id FROM channels WHERE deleted_at IS NOT NULL)"
+           AND rs.channel_id NOT IN (SELECT id FROM channels WHERE deleted_at IS NOT NULL
+                                     OR server_id IN {DELETED_SERVERS})"
     );
     let only = only.map(|c| c.to_string());
     let rows: Vec<(String, Option<String>, i64, i64)> = sqlx::query_as(&sql)
