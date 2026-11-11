@@ -24,6 +24,25 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.8',
+  version: '0.2.8',
+  date: '11 November 2026',
+  new: [
+    'Quick switcher: press Ctrl+K (or / when you\'re not typing) to jump anywhere: servers, channels, DMs, groups. Type > for quick actions like joining voice, playing a sound or muting',
+  ],
+  fixes: [
+    'Images in chat actually show up now 😅',
+  ],
+  qol: [],
+  soon: [
+    'A fresh profile editor: edit right inside your big profile card',
+    'More fresh and reworked designs on the way',
+  ],
+  message: 'Ctrl+K. You\'re welcome.',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.7',
   version: '0.2.7',
   date: '11 November 2026',
@@ -49,24 +68,4 @@ export const patchNotes: PatchNotes = {
     'More fresh and reworked designs on the way',
   ],
   message: 'Send memes properly at last. Screenshots, GIFs, the lot 📎',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.6',
-  version: '0.2.6',
-  date: '10 November 2026',
-  new: [
-    'Go Live in DM and group calls: hit Go Live in the call bar, and the others get a Watch button',
-  ],
-  fixes: [
-    'If Windows takes a stream out of full screen (say a snap), Pulse notices and tidies up',
-    'Smoother audio when someone leaves a call or a call ends',
-  ],
-  qol: [],
-  soon: [
-    'A fresh profile editor: edit right inside your big profile card',
-    'More fresh and reworked designs on the way',
-  ],
-  message: 'The last of the Coming soon list. Stream your DMs to each other, you weirdos 💜',
 }
