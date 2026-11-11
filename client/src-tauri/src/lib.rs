@@ -5,6 +5,7 @@ pub mod clips;
 pub mod commands;
 pub mod embed_window;
 pub mod gateway;
+pub mod gifs;
 pub mod hookwatch;
 pub mod hotkeys;
 pub mod ipc;
@@ -211,6 +212,7 @@ pub fn run() {
                     let _ = h.emit(notify::CLICK_EVENT, click);
                 }),
             ));
+            app.manage(gifs::Gifs::default());
             app.manage(voice::mictest::MicTest::default());
             app.manage(soundboard::Cache::default());
             app.manage(soundboard::Prepared::default());
@@ -334,6 +336,9 @@ pub fn run() {
             commands::list_members,
             commands::list_messages,
             commands::send_message,
+            gifs::gif_feed,
+            gifs::gif_favourites,
+            gifs::set_gif_favourite,
             commands::edit_message,
             commands::delete_message,
             commands::hide_embed,

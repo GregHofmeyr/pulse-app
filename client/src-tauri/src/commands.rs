@@ -9,7 +9,7 @@ use pulse_protocol::ids::{
 };
 use pulse_protocol::rest::{
     BadgeCatalogue, Category, Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji,
-    DeletedChannel, EditClipRequest, EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest,
+    DeletedChannel, EditClipRequest, EditQuoteRequest, Game, Gif, Leaderboard, LinkSpeakerRequest,
     MediaInfo, Member, Message, MuteTarget, NameArchivePage, NotifyLevel, Pin, PinDuration,
     PinnedMessage, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse, SaveLayoutRequest,
     SearchRequest, SearchResults, Server, ServerLayout, SetMuteRequest, SetNotifyLevelRequest,
@@ -1191,10 +1191,12 @@ pub async fn send_message(
     content: String,
     reply_to_id: Option<MessageId>,
     nonce: String,
+    gif: Option<Gif>,
 ) -> Result<(), ApiError> {
     // Queue first, then try: offline sends survive until the connection is back (or fail visibly).
+    // `gif`: a GIF from the picker (#58), whose `content` is its GIPHY link.
     core.outbox
-        .enqueue(nonce, channel_id, content, reply_to_id, None);
+        .enqueue_gif(nonce, channel_id, content, reply_to_id, None, gif);
     if let Ok((api, token)) = core.current() {
         core.outbox.flush(&api, &token, false).await;
     }
@@ -2176,9 +2178,10 @@ pub async fn send_reply(
     content: String,
     reply_to_id: Option<MessageId>,
     nonce: String,
+    gif: Option<Gif>,
 ) -> Result<(), ApiError> {
     core.outbox
-        .enqueue(nonce, channel_id, content, reply_to_id, Some(root_id));
+        .enqueue_gif(nonce, channel_id, content, reply_to_id, Some(root_id), gif);
     if let Ok((api, token)) = core.current() {
         core.outbox.flush(&api, &token, false).await;
     }

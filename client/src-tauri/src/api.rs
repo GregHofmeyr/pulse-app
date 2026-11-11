@@ -10,8 +10,8 @@ use pulse_protocol::rest::{
     ChangePasswordRequest, Channel, ChannelKind, ClipFacets, ClipStorage, ClipUpload,
     ClipUploadRequest, ClipUrl, ClipView, ConfirmClipRequest, CreateCategoryRequest,
     CreateDmRequest, CreateEmojiRequest, CreateSoundRequest, CreateWheelRequest, CustomEmoji,
-    DeletedChannel, EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest, Game,
-    GoLiveRequest, HideEmbedRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest,
+    DeletedChannel, EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest, Game, Gif,
+    GifConfig, GoLiveRequest, HideEmbedRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest,
     LoginRequest, MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired,
     MuteTarget, NameArchivePage, Pin, PinDuration, PinRequest, PinnedMessage, PostQuoteRequest,
     Profile, QotyEvent, QotyVoteRequest, QuietSpin, RecoveryCodesResponse, RegisterRequest,
@@ -889,6 +889,53 @@ impl Api {
                 .await,
         )
         .await
+    }
+
+    /// The key this server's people search GIPHY with (#58), `api_key: None` when GIFs aren't set up there.
+    pub async fn gif_config(&self, token: &str) -> Result<GifConfig, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/gifs/config", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Your favourite GIFs (#58), newest first.
+    pub async fn gif_favourites(&self, token: &str) -> Result<Vec<Gif>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/gifs/favourites", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Star a GIF (#58); starring one already starred changes nothing.
+    pub async fn add_gif_favourite(&self, token: &str, gif: &Gif) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(format!("{}/gifs/favourites", self.base))
+                .bearer_auth(token)
+                .json(gif)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Unstar a GIF (#58); unstarring one that isn't starred changes nothing.
+    pub async fn remove_gif_favourite(&self, token: &str, id: &str) -> Result<(), ApiError> {
+        let mut url = reqwest::Url::parse(&format!("{}/gifs/favourites", self.base))
+            .map_err(|e| ApiError::Rejected(e.to_string()))?;
+        url.path_segments_mut()
+            .map_err(|_| ApiError::Rejected("not a valid server address".into()))?
+            .push(id);
+        Self::ok_empty(self.http.delete(url).bearer_auth(token).send().await).await
     }
 
     /// Share a Spotify link to a server voice channel's stage (#234); you must be in its call.

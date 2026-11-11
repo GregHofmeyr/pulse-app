@@ -1,5 +1,6 @@
 //! Test harness: a real server on an ephemeral port with a fresh temp-file SQLite.
 
+pub mod fake_giphy;
 pub mod fake_provider;
 pub mod fake_s3;
 

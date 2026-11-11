@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use pulse_protocol::ids::{ChannelId, MessageId};
-use pulse_protocol::rest::{Message, SendMessageRequest};
+use pulse_protocol::rest::{Gif, Message, SendMessageRequest};
 use serde::Serialize;
 
 use crate::api::{Api, ApiError};
@@ -37,6 +37,8 @@ struct Item {
     reply_to: Option<MessageId>,
     /// The quote this is a reply to (it then lives in that quote's thread).
     thread_root: Option<MessageId>,
+    /// A GIF from the picker (#58).
+    gif: Option<Gif>,
     attempts: u32,
 }
 
@@ -64,12 +66,26 @@ impl Outbox {
         reply_to: Option<MessageId>,
         thread_root: Option<MessageId>,
     ) {
+        self.enqueue_gif(nonce, channel, content, reply_to, thread_root, None);
+    }
+
+    /// [`Outbox::enqueue`] with a GIF from the picker (#58), whose `content` is the GIF's GIPHY link.
+    pub fn enqueue_gif(
+        &self,
+        nonce: String,
+        channel: ChannelId,
+        content: String,
+        reply_to: Option<MessageId>,
+        thread_root: Option<MessageId>,
+        gif: Option<Gif>,
+    ) {
         self.items.lock().unwrap().push(Item {
             nonce,
             channel,
             content,
             reply_to,
             thread_root,
+            gif,
             attempts: 0,
         });
     }
@@ -98,6 +114,7 @@ impl Outbox {
                 reply_to_id: item.reply_to,
                 nonce: Some(item.nonce.clone()),
                 thread_root_id: item.thread_root,
+                gif: item.gif.clone(),
             };
             match api.send_message(token, item.channel, &body).await {
                 Ok(m) => {
@@ -179,6 +196,38 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn a_queued_gif_goes_out_with_its_message() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let g = testing::general(&app, &token, s.id).await;
+        let (status, seen) = sink();
+        let ob = Outbox::new(status);
+        let gif = Gif {
+            id: "3o7TKSjRrfIPjeiVyM".into(),
+            title: "Yes".into(),
+            width: 480,
+            height: 270,
+        };
+        ob.enqueue_gif(
+            "n1".into(),
+            g.id,
+            "https://giphy.com/gifs/yes-3o7TKSjRrfIPjeiVyM".into(),
+            None,
+            None,
+            Some(gif.clone()),
+        );
+        let api = Api::new(&format!("http://{}", app.addr));
+        ob.flush(&api, &token, false).await;
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            [("n1".into(), Status::Sent)]
+        );
+        let msgs = api.messages(&token, g.id, None).await.unwrap();
+        assert_eq!(msgs[0].gif.as_ref(), Some(&gif));
     }
 
     #[tokio::test]
