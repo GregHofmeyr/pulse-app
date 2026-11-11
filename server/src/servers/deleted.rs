@@ -380,7 +380,8 @@ async fn still_due(tx: &mut SqliteConnection, id: ServerId, due: &str) -> AppRes
 /// deleted message. Quote lines go before their messages (the search triggers rewrite a quote's
 /// entry, which the message's then drops); the cascades take each message's reactions, mentions,
 /// quotes, clips rows, polls, pins, previews and wheel spins. Each batch's clip objects are
-/// deleted from R2 after its commit (the clip sweeper retries a failure). Then, in one last
+/// deleted from R2 after its commit (the clip sweeper retries a failure); the channels' message
+/// files (#57) after the last one (the attachments sweep retries a failure). Then, in one last
 /// transaction, its notification prefs (they have no foreign key), its channels (with their read
 /// states, voice sessions, clip views, calls and stream sessions) and the server row, whose
 /// cascades take its categories, members and their join sounds, custom emoji, sounds, games,
@@ -456,6 +457,13 @@ async fn purge(s: &AppState, id: ServerId, due: &str, batch: i64) -> AppResult<b
     .bind(id.to_string())
     .execute(&mut *tx)
     .await?;
+    // Every file started in its channels, sent or not (#57): their objects go after the commit.
+    let channel_ids = channels
+        .iter()
+        .map(|c| c.parse())
+        .collect::<Result<Vec<pulse_protocol::ids::ChannelId>, _>>()
+        .map_err(anyhow::Error::from)?;
+    let files = crate::attachments::stored_in_channels(&mut tx, &channel_ids).await?;
     // Nothing can post in a deleted server, so its channels are empty by now; a channel made
     // between the list above and here (there is no way to) would refuse, and the next sweep retries.
     sqlx::query("DELETE FROM channels WHERE server_id = ?")
@@ -467,6 +475,10 @@ async fn purge(s: &AppState, id: ServerId, due: &str, batch: i64) -> AppResult<b
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    if !files.is_empty() {
+        let s = s.clone();
+        tokio::spawn(async move { crate::attachments::remove_objects(&s, files).await });
+    }
     Ok(true)
 }
 

@@ -601,6 +601,47 @@ async fn leaving_a_group_deletes_its_files() {
 }
 
 #[tokio::test]
+async fn purging_a_deleted_server_deletes_its_files() {
+    let w = world().await;
+    let (app, t, ch) = (&w.app, &w.alex.1, w.text.id);
+    let a = upload(app, t, ch, "a.txt", "text/plain", b"x").await;
+    send_ok(app, t, ch, "", &[a]).await;
+    upload(app, t, ch, "pending.txt", "text/plain", b"y").await;
+    assert_eq!(s3(app).keys().len(), 2);
+    let r = app
+        .http
+        .delete(app.url(&format!("/servers/{}", w.server)))
+        .bearer_auth(t)
+        .json(&json!({ "name": "Main" }))
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "delete server {}", r.status());
+    // Recently deleted: the files are kept (a restore brings them back)
+    assert_eq!(s3(app).keys().len(), 2);
+    let purged = pulse_server::servers::deleted::purge_expired_batched(
+        &app.state(),
+        chrono::Utc::now() + chrono::Duration::days(30),
+        100,
+    )
+    .await
+    .unwrap();
+    assert_eq!(purged, 1);
+    for _ in 0..50 {
+        if s3(app).keys().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(s3(app).keys().is_empty(), "{:?}", s3(app).keys());
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test]
 async fn purged_rows_dont_count_toward_open_uploads() {
     let w = world().await;
     let (app, t, ch) = (&w.app, &w.alex.1, w.text.id);
