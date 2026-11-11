@@ -24,6 +24,35 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.7',
+  version: '0.2.7',
+  date: '11 November 2026',
+  new: [
+    'Images and files: paste, drop or 📎. Screenshots shrink automatically, there\'s a full-size viewer, and video and audio play inline',
+    'Big files up to 2 GB as temporary sends (1 or 7 days). Drop a folder and Pulse zips it for you',
+    'GIFs: search, trending and favourites, powered by GIPHY',
+    'Delete a server (owner only, with 7 days to change your mind)',
+  ],
+  fixes: [
+    'The chat stays at the bottom when link cards or images load',
+    'Mark as read now clears mentions in quote and clip replies',
+    'YouTube cards come back after playing, and a ✕ closes the player',
+    'Reordering the sidebar at the same time as someone else no longer jumps twice',
+  ],
+  qol: [
+    'Spotify on the stage: the pill grows into the card, a "Share to the stage?" nudge when you paste a link, and shares post the link so everyone can join',
+    'See your own stream in DM calls, with a LIVE mark in your DM list',
+    '"Spotify" shows on a voice channel while something\'s on its stage',
+  ],
+  soon: [
+    'A fresh profile editor: edit right inside your big profile card',
+    'More fresh and reworked designs on the way',
+  ],
+  message: 'Send memes properly at last. Screenshots, GIFs, the lot 📎',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.6',
   version: '0.2.6',
   date: '10 November 2026',
@@ -40,37 +69,4 @@ export const patchNotes: PatchNotes = {
     'More fresh and reworked designs on the way',
   ],
   message: 'The last of the Coming soon list. Stream your DMs to each other, you weirdos 💜',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.5',
-  version: '0.2.5',
-  date: '10 November 2026',
-  new: [
-    'Custom join sounds: right-click a soundboard sound → Set as my join sound. Everyone hears it when you join (yes, all 6 seconds)',
-    'Spotify on the stage: share a Jam or song to the voice stage so everyone can hop in. Minimise it to a corner pill or hide it for yourself',
-    'Watch a stream properly full screen, with the chat as a strip beside it',
-    'Per-channel audio quality: right-click a voice channel → Channel settings… and turn the bitrate up',
-    'Strong (low delay) noise suppression in Voice settings: less delay, more CPU. It downloads the first time you pick it',
-  ],
-  fixes: [
-    'Leaving a call while others stay no longer leaves the old connection running in the background',
-    "A dodgy connection no longer replays your join sound for everyone mid-call",
-    'Spotify Jam links now show a proper Jam card in chat',
-  ],
-  qol: [
-    'The soundboard plays the instant you click, and sounds load about 200× faster',
-    'Switching channels and servers, and opening Settings, is snappier',
-    "Undo a server mute or deafen for someone who's left voice, from their right-click menu",
-    'Voice settings now tells you what echo cancellation Auto decided',
-    'Mute someone\'s join sound just for you, from their right-click menu',
-    'Link cards lost the coloured stripe down the side',
-  ],
-  soon: [
-    'Streaming in DM and group calls',
-    'A fresh profile editor: edit right inside your big profile card',
-    'More fresh and reworked designs on the way',
-  ],
-  message: 'Voice day! Join sounds are live: choose wisely, everyone will hear it 🔊',
 }
