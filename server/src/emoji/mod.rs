@@ -161,6 +161,7 @@ pub async fn frequent(db: &SqlitePool, user: UserId, n: usize) -> AppResult<Vec<
            AND (substr(u.emoji, 1, 7) != 'custom:' OR EXISTS (
                 SELECT 1 FROM custom_emoji e
                 JOIN server_members m ON m.server_id = e.server_id AND m.user_id = ?1
+                JOIN servers sv ON sv.id = e.server_id AND sv.deleted_at IS NULL
                 WHERE e.id = substr(u.emoji, 8) AND e.deleted_at IS NULL))",
     )
     .bind(user.to_string())

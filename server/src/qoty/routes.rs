@@ -86,6 +86,8 @@ async fn start(
 
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    // a server deleted since the member check above starts no vote (#287)
+    crate::servers::routes::server_live_in(&mut tx, server).await?;
     let overdue = ending::end_if_overdue(&mut tx, server).await?;
     if live_in(&mut tx, server).await?.is_some() {
         return Err(AppError::Conflict(

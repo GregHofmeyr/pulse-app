@@ -246,6 +246,7 @@ async fn create(
     let name = clean_name(&req.name)?;
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    crate::servers::routes::server_live_in(&mut tx, server).await?; // deleted since the check (#287)
     let (count, next): (i64, i64) = sqlx::query_as(
         "SELECT COUNT(*), COALESCE(MAX(position) + 1, 0) FROM categories WHERE server_id = ?",
     )

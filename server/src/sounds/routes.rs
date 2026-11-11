@@ -55,6 +55,7 @@ async fn check_custom_emoji(s: &AppState, me: UserId, id: &str) -> AppResult<()>
     let hit: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM custom_emoji e
          JOIN server_members m ON m.server_id = e.server_id AND m.user_id = ?
+         JOIN servers sv ON sv.id = e.server_id AND sv.deleted_at IS NULL
          WHERE e.id = ? AND e.deleted_at IS NULL",
     )
     .bind(me.to_string())
@@ -139,6 +140,8 @@ async fn create(
     let id = next_ulid().to_string();
     // Checked under the write lock, so cleanup can't remove the media before the insert.
     let mut tx = begin_write(&s.db).await?;
+    // a server deleted since the member check above takes no new sound (#287)
+    crate::servers::routes::server_live_in(&mut tx, server).await?;
     let is_sound: Option<(i64,)> =
         sqlx::query_as("SELECT 1 FROM media WHERE hash = ? AND kind = ?")
             .bind(&req.media_hash)

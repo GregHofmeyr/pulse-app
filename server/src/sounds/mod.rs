@@ -146,6 +146,7 @@ pub async fn frequent(db: &SqlitePool, user: UserId, n: usize) -> AppResult<Vec<
         "SELECT u.sound_id, u.score, u.last_used_at FROM sound_usage u
          JOIN sounds s ON s.id = u.sound_id
          JOIN server_members m ON m.server_id = s.server_id AND m.user_id = ?1
+         JOIN servers sv ON sv.id = s.server_id AND sv.deleted_at IS NULL
          WHERE u.user_id = ?1",
     )
     .bind(user.to_string())

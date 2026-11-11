@@ -70,6 +70,18 @@ pub(crate) async fn server_exists(db: &SqlitePool, id: ServerId) -> AppResult<()
     hit.map(|_| ()).ok_or(AppError::NotFound)
 }
 
+/// [`server_exists`] again inside a write transaction (#287). Under `begin_write`'s lock a delete
+/// can't commit between this and the transaction's own commit, so a request that passed the early
+/// check just before a delete committed writes nothing into the deleted server.
+pub(crate) async fn server_live_in(tx: &mut sqlx::SqliteConnection, id: ServerId) -> AppResult<()> {
+    let hit: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM servers WHERE id = ? AND deleted_at IS NULL")
+            .bind(id.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+    hit.map(|_| ()).ok_or(AppError::NotFound)
+}
+
 /// Whether `user` is in `server`. Nobody is in a deleted server (#184).
 pub async fn is_server_member(db: &SqlitePool, server: ServerId, user: UserId) -> AppResult<bool> {
     let hit: Option<i64> = sqlx::query_scalar(
@@ -309,6 +321,7 @@ async fn join(
     // One transaction, under the write lock: a channel created concurrently is either seen here
     // (and gets a read point) or sees us as a member in create_channel.
     let mut tx = crate::db::begin_write(&s.db).await?;
+    server_live_in(&mut tx, id).await?; // a delete committed since the check above (#287)
     let added = sqlx::query(
         "INSERT OR IGNORE INTO server_members (server_id, user_id, joined_at) VALUES (?, ?, ?)",
     )
@@ -422,6 +435,7 @@ async fn create_channel(
     // A new channel changes the server's layout: publish it in revision order.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    server_live_in(&mut tx, id).await?; // a delete committed since the check above (#287)
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE server_id = ?")
         .bind(id.to_string())
         .fetch_one(&mut *tx)

@@ -705,3 +705,166 @@ async fn once_due_it_cant_be_restored() {
     assert!(!list[0].can_restore, "it's being purged");
     assert_eq!(restore(&w, &w.alex.1, w.server).await.status(), 404);
 }
+
+/// A deleted server's emoji and sounds are out of everyone's Frequently used lists, aren't counted
+/// as used when written in a message elsewhere, and can't be a sound's emoji elsewhere (#287).
+#[tokio::test]
+async fn a_deleted_servers_emoji_and_sounds_leave_the_frequent_lists() {
+    let w = world().await;
+    let (emoji_hash, sound_hash) = ("e".repeat(64), "f".repeat(64));
+    insert_media(&w.app, &emoji_hash, "emoji").await;
+    insert_media(&w.app, &sound_hash, "sound").await;
+    let now = pulse_server::db::now();
+    for q in [
+        "INSERT INTO custom_emoji (id, server_id, name, media_hash, animated, created_at)
+         VALUES ('emo1', ?1, 'wave', ?2, 0, ?4)",
+        "INSERT INTO sounds (id, server_id, name, media_hash, duration_ms, created_at)
+         VALUES ('snd1', ?1, 'boop', ?3, 500, ?4)",
+        "INSERT INTO emoji_usage (user_id, emoji, score, last_used_at) VALUES (?5, 'custom:emo1', 5.0, ?4)",
+        "INSERT INTO sound_usage (user_id, sound_id, score, last_used_at) VALUES (?5, 'snd1', 5.0, ?4)",
+    ] {
+        sqlx::query(q)
+            .bind(w.server.to_string())
+            .bind(&emoji_hash)
+            .bind(&sound_hash)
+            .bind(&now)
+            .bind(w.sam.0.to_string())
+            .execute(&w.app.db)
+            .await
+            .unwrap();
+    }
+    let emoji = || pulse_server::emoji::frequent(&w.app.db, w.sam.0, 27);
+    let sounds = || pulse_server::sounds::frequent(&w.app.db, w.sam.0, 8);
+    let live = || async {
+        let mut c = w.app.db.acquire().await.unwrap();
+        pulse_server::messages::reactions::live_keys(&mut c, w.sam.0, vec!["custom:emo1".into()])
+            .await
+            .unwrap()
+    };
+    assert!(emoji().await.unwrap().contains(&"custom:emo1".to_string()));
+    assert_eq!(sounds().await.unwrap(), vec!["snd1".to_string()]);
+    assert_eq!(live().await, vec!["custom:emo1".to_string()]);
+    // sam's own server, whose new sound would use Main's emoji
+    let other = create_server(&w.app, &w.sam.1, "Other").await;
+    let sounds_path = format!("/servers/{}/sounds", other.id);
+    let sound_with = |token: String| {
+        post_json(
+            &w.app,
+            &w.sam.1,
+            &sounds_path,
+            json!({ "name": token, "emoji_id": "emo1", "media_hash": "0".repeat(64) }),
+        )
+    };
+    let r = sound_with("live".into()).await;
+    let body = r.text().await.unwrap();
+    assert!(
+        !body.contains("emoji isn't available"),
+        "passes the emoji check: {body}"
+    );
+
+    assert_eq!(delete_server(&w, &w.alex.1, w.server, "Main").await, 204);
+    assert!(!emoji().await.unwrap().contains(&"custom:emo1".to_string()));
+    assert!(sounds().await.unwrap().is_empty());
+    assert!(live().await.is_empty());
+    let r = sound_with("gone".into()).await;
+    let status = r.status().as_u16();
+    let body = r.text().await.unwrap();
+    assert_eq!(status, 400);
+    assert!(body.contains("emoji isn't available"), "{body}");
+}
+
+/// A write that passed its "is the server there" check just before a delete committed (#287):
+/// the delete holds the write lock while the request checks, then commits while the request waits
+/// for the lock. The request must answer 404 and write nothing (no member, channel, category,
+/// emoji, sound, game or Quote of the Year left in the deleted server, to come back on restore).
+#[tokio::test]
+async fn a_write_that_raced_the_delete_writes_nothing() {
+    let w = world().await;
+    let s = w.server;
+    let emoji_hash = "c".repeat(64);
+    let sound_hash = "d".repeat(64);
+    insert_media(&w.app, &emoji_hash, "emoji").await;
+    insert_media(&w.app, &sound_hash, "sound").await;
+    let cases: Vec<(&str, &str, String, serde_json::Value, &str)> = vec![
+        (
+            "join",
+            &w.jo.1,
+            format!("/servers/{s}/join"),
+            json!({}),
+            "server_members",
+        ),
+        (
+            "channel",
+            &w.sam.1,
+            format!("/servers/{s}/channels"),
+            json!({ "kind": "text", "name": "late" }),
+            "channels",
+        ),
+        (
+            "category",
+            &w.sam.1,
+            format!("/servers/{s}/categories"),
+            json!({ "name": "late" }),
+            "categories",
+        ),
+        (
+            "emoji",
+            &w.sam.1,
+            format!("/servers/{s}/emoji"),
+            json!({ "name": "late", "media_hash": emoji_hash }),
+            "custom_emoji",
+        ),
+        (
+            "sound",
+            &w.sam.1,
+            format!("/servers/{s}/sounds"),
+            json!({ "name": "late", "media_hash": sound_hash }),
+            "sounds",
+        ),
+        (
+            "game",
+            &w.sam.1,
+            format!("/servers/{s}/games"),
+            json!({ "name": "late" }),
+            "games",
+        ),
+        (
+            "qoty",
+            &w.sam.1,
+            format!("/servers/{s}/qoty"),
+            json!({ "year": 2026, "minutes": null }),
+            "qoty_events",
+        ),
+    ];
+    for (what, token, path, body, table) in cases {
+        let rows = format!("SELECT COUNT(*) FROM {table} WHERE server_id = ?");
+        let before = count(&w.app, &rows, &s.to_string()).await;
+        let mut del = pulse_server::db::begin_write(&w.app.db).await.unwrap();
+        sqlx::query("UPDATE servers SET deleted_at = ?, deleted_by = ? WHERE id = ?")
+            .bind(pulse_server::db::now())
+            .bind(w.alex.0.to_string())
+            .bind(s.to_string())
+            .execute(&mut *del)
+            .await
+            .unwrap();
+        let (r, ()) = tokio::join!(post_json(&w.app, token, &path, body), async {
+            // the request checks (the delete isn't committed, so the server is there) and then
+            // waits for the write lock; the delete commits under it
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            del.commit().await.unwrap();
+        });
+        let status = r.status().as_u16();
+        let text = r.text().await.unwrap();
+        assert_eq!(status, 404, "{what}: {text}");
+        assert_eq!(
+            count(&w.app, &rows, &s.to_string()).await,
+            before,
+            "{what}: nothing written into the deleted server"
+        );
+        sqlx::query("UPDATE servers SET deleted_at = NULL, deleted_by = NULL WHERE id = ?")
+            .bind(s.to_string())
+            .execute(&w.app.db)
+            .await
+            .unwrap();
+    }
+}

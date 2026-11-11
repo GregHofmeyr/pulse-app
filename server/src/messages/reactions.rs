@@ -449,6 +449,7 @@ pub async fn live_keys(
     } else {
         let mut q = sqlx::QueryBuilder::new(
             "SELECT e.id FROM custom_emoji e
+             JOIN servers sv ON sv.id = e.server_id AND sv.deleted_at IS NULL
              JOIN server_members m ON m.server_id = e.server_id AND m.user_id = ",
         );
         q.push_bind(user.to_string());

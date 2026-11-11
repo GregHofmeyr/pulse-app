@@ -72,6 +72,8 @@ async fn create(
     let id = next_ulid().to_string();
     // Checked under the write lock, so cleanup can't remove the media before the insert.
     let mut tx = begin_write(&s.db).await?;
+    // a server deleted since the member check above takes no new emoji (#287)
+    crate::servers::routes::server_live_in(&mut tx, server).await?;
     // Equal bytes share one media row, kept with the kind that stored them first: a quote
     // picture that came out exactly emoji-shaped (a 128² square within the emoji size cap) is
     // the same file an emoji upload of it would have made, so it counts too.

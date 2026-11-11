@@ -89,6 +89,8 @@ async fn add(
     let name = clean_name(&req.name)?;
     let key = name_key(&name);
     let mut tx = begin_write(&s.db).await?;
+    // a server deleted since the member check above takes no new game (#287)
+    crate::servers::routes::server_live_in(&mut tx, server).await?;
     let existing: Option<Row> =
         sqlx::query_as(&format!("{SELECT} WHERE server_id = ? AND name_key = ?"))
             .bind(server.to_string())

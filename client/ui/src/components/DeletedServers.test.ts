@@ -8,7 +8,8 @@ vi.mock('@tauri-apps/api/core', () => ({
 }))
 
 import DeletedServers from './DeletedServers.svelte'
-import { app } from '../lib/store.svelte'
+import { app, clock } from '../lib/store.svelte'
+import { windowFocus } from '../lib/windowFocus.svelte'
 import { emptyState } from '../lib/state'
 import type { DeletedServer } from '../lib/protocol/DeletedServer'
 
@@ -73,5 +74,54 @@ describe('DeletedServers', () => {
     await settle()
     flushSync()
     expect(document.querySelector('[role=alert]')).not.toBeNull()
+  })
+
+  // #287: a purge has no event (the server is already off everyone's rail), so the list asks again itself.
+  const listCalls = () => invoke.mock.calls.filter((c) => c[0] === 'list_deleted_servers').length
+  const tickClock = async () => {
+    clock.nowIso = new Date(Date.parse(clock.nowIso) + 30_000).toISOString()
+    flushSync()
+    await settle()
+    flushSync()
+  }
+
+  it('one being deleted for good leaves the list once its purge is done, with Settings open', async () => {
+    await show([gone('S1', 'Main', { can_restore: false, purge_at: new Date(Date.now() - 60_000).toISOString() })])
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_deleted_servers' ? [] : undefined))
+    await tickClock()
+    expect(document.body.textContent).toContain('No deleted servers.')
+  })
+
+  it('one whose 7 days run out while open is asked about again (its Restore goes)', async () => {
+    await show([gone('S1', 'Main', { purge_at: new Date(Date.parse(clock.nowIso) + 10_000).toISOString() })])
+    expect(button('Restore Main')).not.toBeNull()
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_deleted_servers'
+      ? [gone('S1', 'Main', { can_restore: false, purge_at: new Date(Date.now() - 1000).toISOString() })] : undefined))
+    await tickClock()
+    expect(button('Restore Main')).toBeNull()
+  })
+
+  it("doesn't ask again on every tick while nothing is due", async () => {
+    await show([gone('S1', 'Main')])
+    const n = listCalls()
+    await tickClock()
+    await tickClock()
+    expect(listCalls()).toBe(n)
+  })
+
+  it('asks again when the window comes back into focus', async () => {
+    await show([gone('S1', 'Main')])
+    const n = listCalls()
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_deleted_servers' ? [] : undefined))
+    windowFocus.focused = false
+    flushSync()
+    await settle()
+    expect(listCalls()).toBe(n)
+    windowFocus.focused = true
+    flushSync()
+    await settle()
+    flushSync()
+    expect(listCalls()).toBe(n + 1)
+    expect(document.body.textContent).toContain('No deleted servers.')
   })
 })

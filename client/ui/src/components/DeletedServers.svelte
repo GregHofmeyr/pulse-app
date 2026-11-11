@@ -2,7 +2,9 @@
   // Settings → Recently deleted (#184): the servers you deleted, kept for 7 days with everything in them, as a
   // server's deleted channels are in its Server settings (#112). Only you, their owner, see them; Restore brings
   // one back for everyone. Once its 7 days are up it's being deleted for good and can't be restored.
+  import { untrack } from 'svelte'
   import { app, clock } from '../lib/store.svelte'
+  import { windowFocus } from '../lib/windowFocus.svelte'
   import { api, errorText } from '../lib/tauri'
   import Loading from './Loading.svelte'
   import type { DeletedServer } from '../lib/protocol/DeletedServer'
@@ -11,8 +13,24 @@
   let error = $state('')
   // The servers on the rail: a delete or restore (here or on another device) changes them, and the list reloads.
   const live = $derived(app.state.servers.map((s) => s.id).sort().join())
+  // A purge sends no event (the server is off everyone's rail already, #287), so it's asked again: on each tick of
+  // the clock while one listed is due (its 7 days are up, or it's being deleted for good), and when the window comes
+  // back into focus (Settings left open in the background).
+  let again = $state(0)
+  const due = $derived(!!items?.some((d) => !d.can_restore || Date.parse(d.purge_at) <= Date.parse(clock.nowIso)))
+  $effect(() => {
+    void clock.nowIso
+    untrack(() => due && again++)
+  })
+  let wasFocused = untrack(() => windowFocus.focused)
+  $effect(() => {
+    const f = windowFocus.focused
+    if (f && !wasFocused) untrack(() => again++)
+    wasFocused = f
+  })
   $effect(() => {
     void live
+    void again
     error = ''
     let stale = false
     api.listDeletedServers().then(
