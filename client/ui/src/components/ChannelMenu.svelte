@@ -44,7 +44,8 @@
 
   const isVoice = $derived(channel.kind === 'voice')
   const label = $derived(isVoice ? channel.name : `#${channel.name}`)
-  const unread = $derived((app.state.reads[channel.id]?.unread ?? 0) > 0)
+  // a mention in a reply counts too: it's in `mentions`, never `unread` (#111)
+  const unread = $derived((app.state.reads[channel.id]?.unread ?? 0) > 0 || (app.state.reads[channel.id]?.mentions ?? 0) > 0)
   // This channel's own mute (a muted server is unmuted from its tab).
   const muted = $derived(
     app.state.mutes.some((m) => m.target_kind === 'channel' && m.target_id === channel.id && (m.until === null || m.until > clock.nowIso)),
@@ -97,12 +98,9 @@
   }
   const report = (f: () => Promise<unknown>) => () => f().catch((e) => onError(errorText(e)))
 
-  async function markRead() {
-    // the latest page; its order isn't relied on (ids sort by time)
-    const page = await api.listMessages(channel.id)
-    const newest = page.reduce<string | null>((max, m) => (max === null || m.id > max ? m.id : max), null)
-    if (newest) await api.markRead(channel.id, newest)
-  }
+  // The channel and its quote and clip reply threads, on the server (#111): the read and thread-seen
+  // events it sends clear the badges here and on your other devices.
+  const markRead = () => api.markChannelRead(channel.id)
 
   function keydown(e: KeyboardEvent) {
     const list = items()

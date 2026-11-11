@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }))
 
 import ChannelList from './ChannelList.svelte'
 import { app } from '../lib/store.svelte'
-import { applyReady, emptyState } from '../lib/state'
+import { applyEvent, applyReady, emptyState } from '../lib/state'
 import { voice } from '../lib/voice.svelte'
 import { testMe, testReady } from '../lib/testReady'
 import type { Channel } from '../lib/protocol/Channel'
@@ -88,15 +88,33 @@ describe('a text channel', () => {
     expect(item('Mark as read')!.disabled).toBe(true)
   })
 
-  it('mark_as_read_moves_the_read_point_to_the_newest_message', async () => {
-    // the latest page comes newest first
-    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages' ? [{ id: 'M9' }, { id: 'M5' }] : undefined))
+  it('mark_as_read_marks_the_channel_and_its_threads_read_on_the_server', async () => {
     rightClick('old-stuff')
     item('Mark as read')!.click()
     await settle()
-    expect(invoke).toHaveBeenCalledWith('list_messages', { channelId: 'T2', before: null })
-    expect(invoke).toHaveBeenCalledWith('mark_read', { channelId: 'T2', messageId: 'M9' })
+    // one call (#111): the server finds the newest message and every thread's newest reply
+    expect(invoke).toHaveBeenCalledWith('mark_channel_read', { channelId: 'T2' })
+    expect(invoke).not.toHaveBeenCalledWith('mark_read', expect.anything())
     expect(menu()).toBeNull()
+  })
+
+  it('mark_as_read_clears_mentions_in_quote_and_clip_replies', async () => {
+    // nothing unread in the main list: only mentions in replies (#111)
+    render({ read_states: [{ channel_id: 'Q1', last_read_message_id: 'Q9', unread: 0, mentions: 2 }] })
+    expect(row('quotes').querySelector('.pill')?.textContent).toBe('2')
+    rightClick('quotes')
+    expect(item('Mark as read')!.disabled).toBe(false)
+    item('Mark as read')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('mark_channel_read', { channelId: 'Q1' })
+    // what the server sends back for it: a ThreadSeen per thread, carrying the channel's count
+    const me = app.state.me!.id
+    for (const [root, last, cleared] of [['Q5', 'R7', 1], ['C3', 'R8', 1]] as const) {
+      app.state = applyEvent(app.state, { t: 'ThreadSeen', d: { user_id: me, channel_id: 'Q1', root_id: root, last_seen_id: last, mentions_cleared: cleared, mentions: 0 } }, Date.now())
+    }
+    flushSync()
+    expect(row('quotes').querySelector('.pill')).toBeNull()
+    expect(app.state.threadSeen).toMatchObject({ Q5: 'R7', C3: 'R8' })
   })
 
   it('mutes_for_a_length_or_unmutes', async () => {

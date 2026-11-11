@@ -2670,3 +2670,45 @@ async fn purging_a_clips_channel_removes_its_objects() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
+
+/// The channel menu's Mark as read (#111) clears mentions in a clip's replies too.
+#[tokio::test]
+async fn read_all_clears_clip_reply_mentions() {
+    let w = world().await;
+    let clip = upload_clip(&w.app, &w.sam.1, w.channel.id, vec![5u8; 100]).await;
+    let r = clip_reply(&w, &w.sam.1, w.channel.id, clip.id, "look @alex").await;
+    assert_eq!(r.status(), 200);
+    let reply: Message = r.json().await.unwrap();
+    let before = read_state_of(&w, &w.alex.1).await;
+    assert_eq!((before.unread, before.mentions), (1, 1));
+
+    let mut ws = hello(&w.app, &w.alex.1).await;
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/read-all", w.channel.id),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 204);
+    let after = read_state_of(&w, &w.alex.1).await;
+    assert_eq!((after.unread, after.mentions), (0, 0));
+    assert_eq!(after.last_read_message_id, Some(clip.id));
+
+    let frames = frames_until_marker(&w, &mut ws).await;
+    assert!(
+        frames
+            .iter()
+            .any(|f| matches!(f, ServerFrame::Event(Event::ThreadSeen {
+            user_id, root_id, last_seen_id, mentions_cleared: 1, mentions: Some(0), ..
+        }) if *user_id == w.alex.0 && *root_id == clip.id && *last_seen_id == reply.id)),
+        "{frames:?}"
+    );
+    assert!(
+        frames
+            .iter()
+            .any(|f| matches!(f, ServerFrame::Event(Event::ReadStateUpdated {
+        user_id, last_read_message_id: Some(last), mentions: Some(0), unread: Some(0), ..
+    }) if *user_id == w.alex.0 && *last == clip.id))
+    );
+}

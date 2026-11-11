@@ -1760,6 +1760,17 @@ pub async fn mark_read(
     core.check(&app, api.mark_read(&token, channel_id, message_id).await)
 }
 
+/// The channel menu's "Mark as read" (#111): the channel and its quote and clip threads.
+#[tauri::command]
+pub async fn mark_channel_read(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.mark_channel_read(&token, channel_id).await)
+}
+
 #[tauri::command]
 pub async fn set_mute(
     app: AppHandle,

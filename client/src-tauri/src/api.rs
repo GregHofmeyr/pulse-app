@@ -686,6 +686,19 @@ impl Api {
         .await
     }
 
+    /// The channel menu's "Mark as read" (#111): the channel up to its newest message and every
+    /// quote or clip thread in it up to its newest reply.
+    pub async fn mark_channel_read(&self, token: &str, ch: ChannelId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(format!("{}/channels/{ch}/read-all", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     pub async fn set_mute(&self, token: &str, req: &SetMuteRequest) -> Result<(), ApiError> {
         Self::ok_empty(
             self.http
@@ -4160,6 +4173,60 @@ mod tests {
             "poggers"
         );
         api.delete_emoji(&token, &e.id).await.unwrap();
+    }
+
+    /// The channel menu's Mark as read (#111): the channel and its reply threads, in one call.
+    #[tokio::test]
+    async fn mark_channel_read_marks_its_threads_seen() {
+        use pulse_protocol::rest::NewQuoteLine;
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (sam_id, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        api.join_server(&sam, s.id).await.unwrap();
+        let ch = api
+            .create_channel(&alex, s.id, ChannelKind::Quotes, "quotes")
+            .await
+            .unwrap();
+        let quote = api
+            .post_quote(
+                &alex,
+                ch.id,
+                &PostQuoteRequest {
+                    lines: vec![NewQuoteLine {
+                        id: None,
+                        speaker_id: Some(sam_id),
+                        speaker_name: None,
+                        text: Some("hm".into()),
+                        media_hash: None,
+                        caption: None,
+                    }],
+                    today: None,
+                    nonce: None,
+                },
+            )
+            .await
+            .unwrap();
+        let reply = api
+            .send_message(
+                &sam,
+                ch.id,
+                &SendMessageRequest {
+                    content: "hey @alex".into(),
+                    reply_to_id: None,
+                    nonce: None,
+                    thread_root_id: Some(quote.id),
+                },
+            )
+            .await
+            .unwrap();
+        api.mark_channel_read(&alex, ch.id).await.unwrap();
+        let listed = api.messages(&alex, ch.id, None).await.unwrap();
+        assert_eq!(
+            listed[0].quote.as_ref().unwrap().replies_seen,
+            Some(reply.id)
+        );
     }
 
     #[tokio::test]

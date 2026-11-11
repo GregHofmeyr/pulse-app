@@ -145,6 +145,8 @@ export const api = {
   /** A channel in Recently deleted, for good (the server owner only). */
   purgeChannel: (channelId: string) => invoke<void>('purge_channel', { channelId }),
   markRead: (channelId: string, messageId: string) => invoke<void>('mark_read', { channelId, messageId }),
+  /** The channel menu's Mark as read (#111): the channel and its quote and clip reply threads. */
+  markChannelRead: (channelId: string) => invoke<void>('mark_channel_read', { channelId }),
   setMute: (targetKind: 'server' | 'channel', targetId: string, until: string | null) => invoke<void>('set_mute', { targetKind, targetId, until }),
   clearMute: (targetKind: 'server' | 'channel', targetId: string) => invoke<void>('clear_mute', { targetKind, targetId }),
   /** Your notification level for a server or a server channel (#195); null = back to the default. */

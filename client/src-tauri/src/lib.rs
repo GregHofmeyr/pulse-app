@@ -380,6 +380,7 @@ pub fn run() {
             commands::restore_channel,
             commands::purge_channel,
             commands::mark_read,
+            commands::mark_channel_read,
             commands::set_mute,
             commands::clear_mute,
             commands::set_notify_level,

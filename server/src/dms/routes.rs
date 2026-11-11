@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::routing::{delete, patch, post, put};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
-use pulse_protocol::ids::{ChannelId, UserId};
+use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{
     AddMembersRequest, Channel, ChannelKind, MarkReadRequest, Mute, MuteTarget, NotifyLevel,
     NotifyLevelPref, RenameChannelRequest, SetGroupIconRequest, SetMuteRequest,
@@ -26,6 +26,7 @@ use crate::voice::state::Left;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/channels/{id}/read", post(mark_read))
+        .route("/channels/{id}/read-all", post(read_all))
         .route("/channels/{id}/members", post(add_members))
         .route("/channels/{id}/members/{user_id}", delete(remove_member))
         .route(
@@ -75,6 +76,103 @@ async fn mark_read(
                     last_read_message_id: Some(req.message_id),
                     mentions: Some(mentions),
                     unread: Some(unread),
+                },
+            )
+            .await;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The channel menu's "Mark as read" (#111): the read point to the newest main-list message and
+/// every reply thread (quotes', clips') seen up to its newest reply, in one transaction. Publishes
+/// what opening each would: `ReadStateUpdated` if the point moved and a `ThreadSeen` per thread
+/// that moved, only to the caller. `204` also when there was nothing left to mark.
+async fn read_all(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ChannelId>,
+) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    let ch = channel_for(&s.db, me, id).await?; // 404 for a conversation you're not in
+    if let Some(server) = ch.server_id
+        && !crate::servers::routes::is_server_member(&s.db, server, me).await?
+    {
+        return Err(AppError::Forbidden);
+    }
+    // The events carry absolute counts: take them in publish order.
+    let _order = s.hub.in_order().await;
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    let newest: Option<String> = sqlx::query_scalar(
+        "SELECT MAX(id) FROM messages WHERE channel_id = ? AND thread_root_id IS NULL",
+    )
+    .bind(id.to_string())
+    .fetch_one(&mut *tx)
+    .await?;
+    let newest: Option<MessageId> = newest
+        .map(|n| n.parse())
+        .transpose()
+        .map_err(anyhow::Error::from)?;
+    let moved = match newest {
+        Some(n) => crate::reads::advance(&mut tx, me, id, n).await?,
+        None => false,
+    };
+    // Each live root's newest reply (a deleted one still counts as a place in the thread), where
+    // that's past the caller's seen point.
+    let threads: Vec<(String, String)> = sqlx::query_as(
+        "SELECT r.thread_root_id, MAX(r.id) FROM messages r
+         JOIN messages root ON root.id = r.thread_root_id AND root.deleted_at IS NULL
+         LEFT JOIN thread_reads tr ON tr.user_id = ? AND tr.root_id = r.thread_root_id
+         WHERE r.channel_id = ? AND r.thread_root_id IS NOT NULL
+         GROUP BY r.thread_root_id
+         HAVING MAX(r.id) > COALESCE(MAX(tr.last_seen_id), '')
+         ORDER BY r.thread_root_id",
+    )
+    .bind(me.to_string())
+    .bind(id.to_string())
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut seen = Vec::new();
+    for (root, last) in threads {
+        let root: MessageId = root.parse().map_err(anyhow::Error::from)?;
+        let last: MessageId = last.parse().map_err(anyhow::Error::from)?;
+        if let Some(cleared) = crate::messages::threads::mark_seen(&mut tx, me, root, last).await? {
+            seen.push((root, last, cleared));
+        }
+    }
+    tx.commit().await?;
+    if !moved && seen.is_empty() {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    let Some((unread, mentions)) = crate::reads::counts_after_commit(&s.db, me, id).await else {
+        return Ok(StatusCode::NO_CONTENT);
+    };
+    if moved {
+        s.hub
+            .publish(
+                &s.db,
+                Event::ReadStateUpdated {
+                    user_id: me,
+                    channel_id: id,
+                    last_read_message_id: newest,
+                    mentions: Some(mentions),
+                    unread: Some(unread),
+                },
+            )
+            .await;
+    }
+    for (root, last, cleared) in seen {
+        s.hub
+            .publish(
+                &s.db,
+                Event::ThreadSeen {
+                    user_id: me,
+                    channel_id: id,
+                    root_id: root,
+                    last_seen_id: last,
+                    mentions_cleared: cleared,
+                    mentions: Some(mentions),
                 },
             )
             .await;

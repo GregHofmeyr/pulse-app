@@ -4074,3 +4074,219 @@ async fn a_deleted_quotes_channel_leaves_the_board_and_search() {
     assert!(board.most_awarded.is_empty(), "{board:?}");
     assert!(f.found("hidden").await.is_empty());
 }
+
+// ---- Mark a channel and its reply threads read (#111) ----
+
+impl Fixture {
+    async fn read_all(&self, token: &str, ch: ChannelId) -> reqwest::Response {
+        post_json(
+            &self.app,
+            token,
+            &format!("/channels/{ch}/read-all"),
+            json!({}),
+        )
+        .await
+    }
+    async fn state_in(&self, token: &str, ch: ChannelId) -> pulse_protocol::rest::ReadState {
+        let (_ws, ready) = hello_ready(&self.app, token).await;
+        ready
+            .read_states
+            .into_iter()
+            .find(|s| s.channel_id == ch)
+            .expect("read state")
+    }
+}
+
+/// `user`'s next `want` read events on `ws` (each wait gives up after 3 quiet seconds).
+async fn read_events(ws: &mut Socket, user: UserId, want: usize) -> Vec<Event> {
+    let mut out = Vec::new();
+    while out.len() < want {
+        if let ServerFrame::Event(
+            e @ (Event::ReadStateUpdated { user_id, .. } | Event::ThreadSeen { user_id, .. }),
+        ) = next_frame(ws).await.expect("read events")
+            && user_id == user
+        {
+            out.push(e);
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn read_all_clears_reply_mentions_and_the_main_list() {
+    let f = fixture().await;
+    let q1 = f.quote().await;
+    let q3 = f.quote().await;
+    // sam's quote is the newest in the main list, and unread for alex.
+    let q2: Message = f
+        .post(&f.sam_t, json!({ "lines": [f.say(f.alex, "y")] }))
+        .await
+        .json()
+        .await
+        .unwrap();
+    f.reply(&f.sam_t, q1.id, "one @alex").await;
+    let r2 = f.reply(&f.sam_t, q1.id, "two @alex").await;
+    let r3 = f.reply(&f.sam_t, q2.id, "three @alex").await;
+    // A thread with replies but no mention of alex is marked seen too.
+    let r4 = f.reply(&f.sam_t, q3.id, "no mention").await;
+    // Another channel's reply mention stays.
+    let other = create_quotes(&f.app, &f.alex_t, f.server).await;
+    let oq: Message = post_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/quotes", other.id),
+        json!({ "lines": [f.say(f.sam, "z")] }),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let r = post_json(
+        &f.app,
+        &f.sam_t,
+        &format!("/channels/{}/messages", other.id),
+        json!({ "content": "elsewhere @alex", "thread_root_id": oq.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+
+    let before = f.state(&f.alex_t).await;
+    assert_eq!((before.unread, before.mentions), (1, 3));
+    let sam_before = f.state(&f.sam_t).await;
+
+    // alex's other device and sam are both listening.
+    let mut alex_ws = hello(&f.app, &f.alex_t).await;
+    let mut sam_ws = hello(&f.app, &f.sam_t).await;
+    assert_eq!(f.read_all(&f.alex_t, f.ch.id).await.status(), 204);
+
+    let after = f.state(&f.alex_t).await;
+    assert_eq!((after.unread, after.mentions), (0, 0));
+    assert_eq!(
+        after.last_read_message_id,
+        Some(q2.id),
+        "the newest main-list message"
+    );
+    assert_eq!(
+        f.state_in(&f.alex_t, other.id).await.mentions,
+        1,
+        "other channels untouched"
+    );
+    let sam_after = f.state(&f.sam_t).await;
+    assert_eq!(
+        (
+            sam_after.unread,
+            sam_after.mentions,
+            sam_after.last_read_message_id
+        ),
+        (
+            sam_before.unread,
+            sam_before.mentions,
+            sam_before.last_read_message_id
+        ),
+        "sam's read state is sam's"
+    );
+
+    let events = read_events(&mut alex_ws, f.alex, 4).await;
+    assert!(
+        events.contains(&Event::ReadStateUpdated {
+            user_id: f.alex,
+            channel_id: f.ch.id,
+            last_read_message_id: Some(q2.id),
+            mentions: Some(0),
+            unread: Some(0),
+        }),
+        "{events:?}"
+    );
+    for (root, last, cleared) in [(q1.id, r2.id, 2), (q2.id, r3.id, 1), (q3.id, r4.id, 0)] {
+        assert!(
+            events.contains(&Event::ThreadSeen {
+                user_id: f.alex,
+                channel_id: f.ch.id,
+                root_id: root,
+                last_seen_id: last,
+                mentions_cleared: cleared,
+                mentions: Some(0),
+            }),
+            "ThreadSeen for {root}: {events:?}"
+        );
+    }
+    let leaked = tokio::time::timeout(Duration::from_millis(300), async {
+        loop {
+            if let Some(ServerFrame::Event(
+                Event::ThreadSeen { user_id, .. } | Event::ReadStateUpdated { user_id, .. },
+            )) = next_frame(&mut sam_ws).await
+                && user_id == f.alex
+            {
+                return;
+            }
+        }
+    })
+    .await;
+    assert!(leaked.is_err(), "sam must not get alex's read events");
+
+    // The quotes now read as seen by alex.
+    let page: Vec<Message> = get_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/messages", f.ch.id),
+    )
+    .await;
+    let seen = |id: MessageId| {
+        page.iter()
+            .find(|m| m.id == id)
+            .and_then(|m| m.quote.as_ref())
+            .and_then(|q| q.replies_seen)
+    };
+    assert_eq!(
+        (seen(q1.id), seen(q2.id), seen(q3.id)),
+        (Some(r2.id), Some(r3.id), Some(r4.id))
+    );
+
+    // Again: nothing left to do, nothing published.
+    assert_eq!(f.read_all(&f.alex_t, f.ch.id).await.status(), 204);
+    let again = tokio::time::timeout(
+        Duration::from_millis(500),
+        read_events(&mut alex_ws, f.alex, 1),
+    )
+    .await;
+    assert!(again.is_err(), "a second read-all publishes nothing");
+}
+
+#[tokio::test]
+async fn read_all_is_for_members_only() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    f.reply(&f.sam_t, q.id, "hey @alex").await;
+    let (jo, jo_t) = register(&f.app, "jo").await;
+    assert_eq!(
+        f.read_all(&jo_t, f.ch.id).await.status(),
+        403,
+        "not in the server"
+    );
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM read_states WHERE user_id = ?1)
+              + (SELECT COUNT(*) FROM thread_reads WHERE user_id = ?1)",
+    )
+    .bind(jo.to_string())
+    .fetch_one(&f.app.db)
+    .await
+    .unwrap();
+    assert_eq!(rows, 0, "a refused read-all writes nothing");
+    // A DM you're not in: 404, as reading it is.
+    let dm: Channel = post_json(&f.app, &f.alex_t, "/dms", json!({ "user_ids": [f.sam] }))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(f.read_all(&jo_t, dm.id).await.status(), 404);
+    assert_eq!(
+        f.read_all(&f.alex_t, dm.id).await.status(),
+        204,
+        "an empty DM: nothing to do"
+    );
+    assert_eq!(
+        f.state(&f.alex_t).await.mentions,
+        1,
+        "alex's state untouched by jo or the DM"
+    );
+}
