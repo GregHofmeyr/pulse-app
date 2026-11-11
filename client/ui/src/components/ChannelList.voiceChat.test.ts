@@ -97,3 +97,30 @@ describe('the voice row chat icon (#226)', () => {
     expect(chat()).toBeNull()
   })
 })
+
+// #277: while something's shared to a voice channel's stage (#234), its row says so, for people outside the call.
+// A text mark, not Spotify's icon: their icon has to be at least 21px, too big for a row of 14-17px icons.
+describe('the voice row Spotify mark (#277)', () => {
+  const share = (title: string) => ({
+    id: 'SH1', channel_id: 'V1', shared_by: 'U1', shared_at: new Date().toISOString(), expires_at: new Date(Date.now() + 3 * 3600_000).toISOString(),
+    embed: { url: 'https://open.spotify.com/track/abc', provider: 'spotify', kind: 'player', provider_id: 'track:abc', title, description: null, site_name: 'Spotify', author: 'M83', thumb: null, start: null, vertical: false },
+  })
+  const mark = () => voiceRow().querySelector<HTMLElement>('.on-stage')
+
+  it('none while nothing is shared', () => {
+    show()
+    expect(mark()).toBeNull()
+  })
+
+  it('shows while a share is on the stage, says what it is, and goes when it is cleared', () => {
+    show()
+    app.state = { ...app.state, stageShares: { V1: [share('Midnight City') as never] } }
+    flushSync()
+    expect(mark()!.textContent).toBe('Spotify')
+    expect(mark()!.dataset.tip).toBe('On the stage: Midnight City')
+    expect(mark()!.querySelector('svg')).toBeNull()
+    app.state = { ...app.state, stageShares: {} }
+    flushSync()
+    expect(mark()).toBeNull()
+  })
+})

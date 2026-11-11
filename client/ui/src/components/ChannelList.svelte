@@ -10,6 +10,8 @@
   import type { Category } from '../lib/protocol/Category'
   import { app, clock } from '../lib/store.svelte'
   import { callRoster, isMember, serverVoiceTip, type Occupant } from '../lib/selectors'
+  import { stageShareIn } from '../lib/state'
+  import { stageCard } from '../lib/stageShare'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import { api, errorText } from '../lib/tauri'
@@ -531,6 +533,7 @@
 {#snippet voiceRow(c: Channel)}
   {@const people = member ? callRoster(app.state, serverId, c.id, self) : []}
   {@const badge = chatBadge(app.state, c, clock.nowIso)}
+  {@const stage = stageShareIn(app.state, c.id)}
   {#if renaming === c.id}
     {@render renameField(c, 'speaker')}
   {:else}
@@ -541,6 +544,9 @@
     onclick={() => { prefetch.cancel(); onJoinVoice(c.id) }} ondblclick={() => onSelect(c.id)}
     oncontextmenu={(e) => { e.preventDefault(); openChanMenu(c, e, e.currentTarget) }} onkeydown={(e) => rowKey(e, c)}>
     <span class="ico"><Icon name="speaker" size={17} /></span><span class="grow">{c.name}</span>
+    <!-- something shared to its stage (#277, #234), for people outside the call. Text, not Spotify's icon: theirs has
+         to be at least 21px (#196), too big beside the row's 14-17px icons -->
+    {#if stage}<span class="on-stage" data-tip="On the stage: {stageCard(stage, '', Date.parse(clock.nowIso)).title}">Spotify</span>{/if}
     {#if isMuted(app.state, c, clock.nowIso)}<span class="mic"><Icon name="bellOff" size={14} /></span>{/if}
     {#if people.length}<span class="count">{people.length}</span>{/if}
   </button>
@@ -669,6 +675,7 @@
   .ico { color: var(--text-3); display: flex; }
   .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { font-size: 11px; color: var(--text-3); }
+  .on-stage { font-size: 11px; font-weight: 600; color: var(--text-2); white-space: nowrap; }
   /* a voice channel's chat icon (#226): over the row's end (its 34px, less 4px each side), shown while the row is
      hovered, focused or open, and always while its chat has something new */
   .row.with-chat { padding-right: 38px; }
