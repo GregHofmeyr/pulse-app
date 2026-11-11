@@ -20,7 +20,7 @@
   import { narrowerThan } from '../lib/actions'
   import { pinToBottom } from '../lib/pinBottom'
   import { lastInput } from '../lib/inputModality'
-  import { app, clock, queueMessage, ui } from '../lib/store.svelte'
+  import { app, clock, discardFiles, queueMessage, retryFiles, ui } from '../lib/store.svelte'
   import { presenceOf } from '../lib/presence'
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
@@ -30,7 +30,8 @@
   import { pinSync, refreshPins } from '../lib/pinSync.svelte'
   import { liveQoty } from '../lib/quotes'
   import { displayName, groupedPending, groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor, nextTypingExpiry, typingNames } from '../lib/selectors'
-  import { api, errorText } from '../lib/tauri'
+  import { api, errorText, type StagedFile } from '../lib/tauri'
+  import { getCurrentWebview } from '@tauri-apps/api/webview'
   import type { Message } from '../lib/protocol/Message'
   import type { Gif } from '../lib/protocol/Gif'
   import { takeChatFocus, voiceChat } from '../lib/voiceChat.svelte'
@@ -569,8 +570,8 @@
     if (detached) void toPresent()
     else void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   }
-  function post(text: string, replyToId: string | null, gif: Gif | null = null) {
-    queueMessage(channelId, text, replyToId, gif)
+  function post(text: string, replyToId: string | null, gif: Gif | null = null, files: readonly StagedFile[] = []) {
+    queueMessage(channelId, text, replyToId, gif, files)
     // Sending from higher up takes you to the latest (your message lands there).
     toLatest()
   }
@@ -588,16 +589,16 @@
     openWheel: (prefill) => composer?.openWheel(prefill),
     openPoll: (prefill) => composer?.openPoll(prefill),
   }
-  function send(text: string) {
-    // a slash command (`/wheel a, b, c`, lib/commands.ts) runs instead of being sent (#158, #262)
-    const cmd = parseCommand(text)
+  function send(text: string, files: StagedFile[] = []) {
+    // a slash command (`/wheel a, b, c`, lib/commands.ts) runs instead of being sent (#158, #262); with files it's text
+    const cmd = files.length ? null : parseCommand(text)
     if (cmd) {
       cmd.command.run(cmd.args, commandContext)
       return
     }
     const r = replyTo?.id ?? null
     replyTo = null
-    post(text, r)
+    post(text, r, null, files)
   }
   // a GIF from the picker (#58) goes at once, as a reply to whatever is being replied to
   function sendGif(gif: Gif, link: string) {
@@ -610,9 +611,46 @@
   function retry(nonce: string) {
     const p = pending.find((x) => x.nonce === nonce)
     if (!p) return
+    // with files: the same send again, so what was uploaded stays uploaded (#57)
+    if (p.files?.length) return retryFiles(channelId, p)
     app.state = removePending(app.state, channelId, nonce)
     post(p.content, p.reply_to_id, p.gif ?? null)
   }
+
+  // Files dragged over the chat (#57): it lights up, and a drop queues them in the composer. Tauri reports every file
+  // drag over the window (in physical pixels), so only one whose point is on this chat counts, and not with a modal open.
+  let dragging = $state(false)
+  function onChat(pos: { x: number; y: number }): boolean {
+    if (isQuotes || !composer) return false
+    const scale = window.devicePixelRatio || 1
+    const el = document.elementFromPoint(pos.x / scale, pos.y / scale)
+    if (!el || !chan?.contains(el)) return false
+    return !document.querySelector('[aria-modal="true"]')
+  }
+  $effect(() => {
+    let off: (() => void) | null = null
+    let gone = false
+    try {
+      void getCurrentWebview()
+        .onDragDropEvent((e) => {
+          const p = e.payload
+          if (p.type === 'enter' || p.type === 'over') dragging = onChat(p.position)
+          else if (p.type === 'leave') dragging = false
+          else if (p.type === 'drop') {
+            dragging = false
+            if (onChat(p.position)) void composer?.addPaths(p.paths)
+          }
+        })
+        .then((f) => (gone ? f() : (off = f)), () => {})
+    } catch {
+      // not in the app's webview (tests without it): no dropping
+    }
+    return () => {
+      gone = true
+      off?.()
+      dragging = false
+    }
+  })
 
   // A quote posted from higher up lands at the latest too.
   function quotePosted() {
@@ -721,7 +759,7 @@
       <MessageItem message={pm} {serverId} name={nameOf(app.state.me?.id ?? null)} {nameOf} grouped={groupedPending(messages, pendingMessages, i)}
         replyTo={p.reply_to_id ? (byId.get(p.reply_to_id) ?? null) : null} mine
         {mentionNames} meId={app.state.me?.id ?? ''} pending={p} onReply={() => {}} onEdit={async () => {}} onDelete={async () => {}}
-        onRetry={() => retry(p.nonce)} onDiscard={() => (app.state = removePending(app.state, channelId, p.nonce))} />
+        onRetry={() => retry(p.nonce)} onDiscard={() => { discardFiles(p); app.state = removePending(app.state, channelId, p.nonce) }} />
     {/each}
     {#if !detached}
       {#each quiet as q (q.spin.id)}<QuietSpinCard card={q} {serverId} />{/each}
@@ -731,6 +769,7 @@
   {:else if unreadBelow > 0}<button class="jump" onclick={jump}>{unreadBelow} new · Jump</button>
   {:else if farUp}<button class="jump" onclick={jump}>Jump to present</button>{/if}
   {#if jumpNotice}<p class="jump-notice" role="status">{jumpNotice}</p>{/if}
+  {#if dragging}<div class="drop-zone" aria-hidden="true"><span>Drop files to send them</span></div>{/if}
   <div class="typing" aria-live="polite">
     {#if typers.length}<strong class="name-clip">{typers.join(', ')}</strong> {typers.length > 1 ? 'are' : 'is'} typing…{/if}
   </div>
@@ -747,7 +786,7 @@
     {/if}
   {:else}
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate || isVoice ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
-    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} pollChannel={channelId} commands={COMMANDS} onSendGif={sendGif} {stageNudge} />
+    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} pollChannel={channelId} commands={COMMANDS} onSendGif={sendGif} {stageNudge} files />
   {/if}
   {#if repliesRoot}
     {#key repliesRoot.id}
@@ -793,4 +832,7 @@
     100% { background: transparent; }
   }
   .jump-notice { margin: 0 18px 4px; color: var(--text-3); font-size: 13px; }
+  /* files dragged over the chat (#57), as over a clips channel */
+  .drop-zone { position: absolute; inset: 8px; z-index: 4; display: grid; place-items: center; border: 2px dashed var(--focus-ring); border-radius: 14px; background: var(--veil); pointer-events: none; }
+  .drop-zone span { padding: 8px 16px; border-radius: var(--radius-md); background: var(--bg-2); color: var(--text); font-size: 15px; font-weight: 600; }
 </style>

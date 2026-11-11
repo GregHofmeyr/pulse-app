@@ -13,10 +13,10 @@ function rules(css: string) {
   return [...css.matchAll(/([^{}\n]+)\{([^{}]*)\}/g)].map(([, sel, body]) => ({ sel: sel.trim(), body, z: Number(/z-index:\s*(\d+)/.exec(body)?.[1] ?? NaN) }))
 }
 const zOf = (file: string, sel: string) => rules(files.find((f) => f.name === file)!.css).find((r) => r.sel === sel)!.z
-// Full-window layers that can't hold a name: the quote image viewer shows one picture; the nickname
+// Full-window layers that can't hold a name: the quote image viewer and a message's image viewer (#57) show pictures; the nickname
 // dialog asks for one, opened from the card (so above it: checked below). "Updating Pulse…" (#82) covers everything on
 // purpose while Pulse closes for the installer, and holds nothing to click.
-const NO_NAMES = new Set(['./QuoteItem.svelte .lightbox', './NicknameDialog.svelte .overlay', '../routes/Updating.svelte .updating'])
+const NO_NAMES = new Set(['./QuoteItem.svelte .lightbox', './ImageViewer.svelte .viewer', './NicknameDialog.svelte .overlay', '../routes/Updating.svelte .updating'])
 
 describe('stacking', () => {
   it('the full profile sits above every full-window layer, and the quick card above it', () => {

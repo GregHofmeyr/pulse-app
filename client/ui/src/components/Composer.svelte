@@ -1,5 +1,6 @@
 <script lang="ts" module>
   import { SvelteSet } from 'svelte/reactivity'
+  import type { StagedFile } from '../lib/tauri'
   // Unsent text per channel, kept while the app runs (switching channels doesn't lose it).
   const drafts = new Map<string, string>()
   // Spotify links the "Share to the stage?" chip (#288) has offered and won't again this session: shared, dismissed,
@@ -9,6 +10,8 @@
   export function forgetStageNudges(): void {
     nudged.clear()
   }
+  // Files queued per channel (#57), kept the same way.
+  const fileDrafts = new Map<string, StagedFile[]>()
 </script>
 
 <script lang="ts">
@@ -33,7 +36,9 @@
   import Name from './Name.svelte'
   import SpotifyIcon from './SpotifyIcon.svelte'
   import { spotifyLinkIn } from '../lib/stageShare'
-  import { errorText } from '../lib/tauri'
+  import ComposerFiles from './ComposerFiles.svelte'
+  import { api, errorText, type StageResult } from '../lib/tauri'
+  import { MAX_BYTES, MAX_FILES, TOO_BIG, TOO_MANY } from '../lib/attachments'
 
   let {
     placeholder,
@@ -49,12 +54,14 @@
     commands = [],
     onSendGif,
     stageNudge = null,
+    files: filesHere = false,
   }: {
     placeholder: string
     draftKey: string
     replyingTo: string | null
     onCancelReply: () => void
-    onSend: (text: string) => void
+    /** `files`: what was queued with it (#57); empty for a plain message. */
+    onSend: (text: string, files: StagedFile[]) => void
     onTyping: () => void
     /** People who can be @mentioned here (autocomplete). */
     mentionables?: Mentionable[]
@@ -71,6 +78,8 @@
     /** A voice channel's chat while you're in its call (#288): a Spotify link in the box offers "Share to the stage?".
      *  `share` puts a link on the stage; `up` is what's on it now (not offered again). None anywhere else. */
     stageNudge?: { share: (url: string) => Promise<void>; up: readonly string[] } | null
+    /** Files can be sent here (#57): shows the attach button and takes pasted files. */
+    files?: boolean
   } = $props()
 
   // The composer remounts per channel ({#key} in Shell), so reading the key once is intended.
@@ -80,6 +89,77 @@
     else drafts.delete(draftKey)
   })
   let lastTyping: number | null = null
+
+  // Files queued to go with the next message (#57).
+  let files = $state<StagedFile[]>(untrack(() => fileDrafts.get(draftKey) ?? []))
+  $effect(() => {
+    if (files.length) fileDrafts.set(draftKey, files)
+    else fileDrafts.delete(draftKey)
+  })
+  let fileError = $state<string | null>(null)
+
+  function addStaged(results: StageResult[]) {
+    fileError = null
+    for (const r of results) {
+      if (r.status === 'refused') {
+        fileError = r.error
+      } else if (files.length >= MAX_FILES) {
+        fileError = TOO_MANY
+        void api.unstageAttachment(r.file.id)
+      } else if (r.file.size > MAX_BYTES) {
+        fileError = TOO_BIG
+        void api.unstageAttachment(r.file.id)
+      } else {
+        files = [...files, r.file]
+      }
+    }
+  }
+
+  /** Queue files by path (dropped on the chat, or picked). */
+  export async function addPaths(paths: string[]) {
+    if (!filesHere || !paths.length) return
+    if (files.length >= MAX_FILES) {
+      fileError = TOO_MANY
+      return
+    }
+    try {
+      addStaged(await api.stageAttachmentPaths(paths))
+    } catch (e) {
+      fileError = errorText(e)
+    }
+  }
+
+  async function pickFiles() {
+    const paths = await api.pickAttachmentFiles().catch(() => [] as string[])
+    await addPaths(paths)
+    box?.focus()
+  }
+
+  // A screenshot (or a file copied in a file manager) pasted into the box: queued, not typed.
+  async function pasteFiles(e: ClipboardEvent) {
+    const list = Array.from(e.clipboardData?.files ?? [])
+    if (!filesHere || !list.length) return
+    e.preventDefault()
+    e.stopPropagation()
+    for (const f of list) {
+      if (files.length >= MAX_FILES) {
+        fileError = TOO_MANY
+        return
+      }
+      try {
+        const file = await api.stageAttachmentBytes(f.name || 'pasted', new Uint8Array(await f.arrayBuffer()))
+        addStaged([{ status: 'staged', file }])
+      } catch (err) {
+        fileError = errorText(err)
+      }
+    }
+  }
+
+  function removeFile(id: string) {
+    files = files.filter((f) => f.id !== id)
+    fileError = null
+    void api.unstageAttachment(id)
+  }
   // The message box shows custom emoji as images; `text` (what's sent and what drafts keep) stays the truth.
   let box: EmojiBox
 
@@ -222,11 +302,13 @@
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       const t = text.trim()
-      if (!t) return
+      if (!t && !files.length) return
       // a link sent as it is has been seen: the chip doesn't come back for it
       const sent = spotifyLinkIn(t)
       if (sent && stageNudge) nudged.add(sent.key)
-      onSend(t)
+      onSend(t, files)
+      files = []
+      fileError = null
       box.setText({ text: '', caret: 0 }, true, false)
       box.forget()
       lastTyping = null
@@ -286,7 +368,8 @@
   }
 </script>
 
-<div class="wrap" class:has-gif={!!onSendGif} class:has-wheel={!!wheelChannel} class:has-poll={!!pollChannel} bind:this={wrap} onfocusout={focusOut}>
+<div class="wrap" class:has-gif={!!onSendGif} class:has-wheel={!!wheelChannel} class:has-poll={!!pollChannel} class:has-files={filesHere} bind:this={wrap} onfocusout={focusOut}
+  onpastecapture={pasteFiles}>
   {#if open}
     <div class="mentions menu-surface pop-in" role="listbox" aria-label="Mention someone">
       {#each options as o, i (o.id)}
@@ -337,6 +420,7 @@
     {@const name = `/${c.name}`}
     {name}{#if c.usage.startsWith(name)}<span class="arg">{c.usage.slice(name.length)}</span>{:else}<span class="arg">{` ${c.usage}`}</span>{/if}
   {/snippet}
+  <ComposerFiles {files} onRemove={removeFile} error={fileError} />
   {#if replyingTo}
     <div class="replying">Replying to <strong class="name-clip">{replyingTo}</strong>
       <button class="icon-btn icon-btn-xs" aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={14} /></button></div>
@@ -344,6 +428,9 @@
   <EmojiBox bind:this={box} bind:text class="composer-input" label={placeholder} {placeholder} mention={mentionName}
     onkeydown={key} oninput={input} onclick={syncCaret} oncaret={(at) => (caret = at)}
     onkeyup={(e) => { if (e.key.startsWith('Arrow') && !shown) syncCaret() }} />
+  {#if filesHere}
+    <button class="emoji-btn attach-btn" type="button" aria-label="Attach files" data-tip="Attach files" onclick={pickFiles}><Icon name="paperclip" size={20} /></button>
+  {/if}
   <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={20} /></button>
   {#if picking && emojiBtn}
     <EmojiPopover anchor={emojiBtn} onPick={pickEmoji} onClose={() => (picking = false)} />
@@ -418,4 +505,7 @@
   .wrap.has-gif :global(.composer-input) { padding-right: 84px; }
   .wrap.has-gif.has-wheel :global(.composer-input) { padding-right: 120px; }
   .wrap.has-gif.has-poll :global(.composer-input) { padding-right: 156px; }
+  /* attach files (#57): on the left, as in most chat apps */
+  .attach-btn { left: 8px; right: auto; }
+  .wrap.has-files :global(.composer-input) { padding-left: 48px; }
 </style>

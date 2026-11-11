@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeTerm, chipText, filterRows, hasSearchableWords, parseText, replaceTerm, toRequest, type Chip } from './searchQuery'
+import { activeTerm, chipText, filterRows, HAS_VALUES, hasSearchableWords, parseText, replaceTerm, toRequest, type Chip } from './searchQuery'
 
 describe('parseText', () => {
   it('keeps plain words and quoted phrases as the words', () => {
@@ -80,5 +80,12 @@ describe('toRequest and chips', () => {
   })
   it('writes chips as their filter syntax', () => {
     expect(chips.map(chipText)).toEqual(['from: sam', 'has: clip', 'has: link', 'in: #general', 'mentions: alex'])
+  })
+})
+
+describe('has: files (#57)', () => {
+  it('parses media and file, and offers them', () => {
+    expect(parseText('has:media has:file cat').filters).toEqual([{ key: 'has', value: 'media' }, { key: 'has', value: 'file' }])
+    expect(HAS_VALUES.map((h) => h.value)).toEqual(['link', 'media', 'file', 'clip', 'quote'])
   })
 })

@@ -50,7 +50,17 @@ export type ConnState =
   | { rate_limited: number } // seconds until the next attempt
 
 /** A message we've sent but the server hasn't confirmed yet (optimistic UI / offline outbox). */
-export type Pending = { nonce: string; content: string; reply_to_id: string | null; /** The quote this answers (a reply lives in that quote's thread, not the channel list). */ thread_root_id: string | null; status: 'pending' | 'failed'; created_at: string; /** A GIF from the picker (#58); `content` is its GIPHY link. */ gif?: Gif }
+/** A file going with a pending message (#57): its staged id (what a retry sends again) and what its chip shows. */
+export type PendingFile = { id: string; name: string; size: number; kind: string; preview: string | null }
+export type Pending = {
+  nonce: string; content: string; reply_to_id: string | null; /** The quote this answers (a reply lives in that quote's thread, not the channel list). */ thread_root_id: string | null; status: 'pending' | 'failed'; created_at: string
+  /** A GIF from the picker (#58); `content` is its GIPHY link. */
+  gif?: Gif
+  /** Files going with it (#57): uploaded by the core before the message is sent. */
+  files?: PendingFile[]
+  /** A temporary send's days (slice 2). */
+  temp_days?: number | null
+}
 
 export type AppState = {
   me: User | null

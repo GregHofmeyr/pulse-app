@@ -8,8 +8,9 @@ import type { Profile } from './protocol/Profile'
 import type { User } from './protocol/User'
 import type { Ready } from './protocol/Ready'
 import type { ReportKind } from './protocol/ReportKind'
-import { addPending, applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, setProfile, type AppState, type ConnState } from './state'
-import { api } from './tauri'
+import { addPending, applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, setProfile, type AppState, type ConnState, type Pending, type PendingFile } from './state'
+import { attachmentSends } from './attachmentSends.svelte'
+import { api, type AttachmentProgress, type StagedFile } from './tauri'
 import { loadUnsent, saveUnsent } from './unsent'
 import { isMuted, messageSound, notifyLevel, onScreen, SOUND_GAP_MS } from './conversations'
 import { dndActive } from './status'
@@ -23,6 +24,7 @@ import { streamApi } from './stream/stream.svelte'
 import { windowFocus } from './windowFocus.svelte'
 import { forgetEmbedOrigin } from './linkPreviews.svelte'
 import { forgetClipLinks } from './clipLinks'
+import { forgetAttachmentLinks } from './attachmentLinks'
 
 // The reducer (state.ts) is pure and never mutates: hold its output as-is (`$state.raw`) instead
 // of deep-proxying it. Reassigning `app.state` is the only way to change it, and the only way that
@@ -149,11 +151,40 @@ export async function openDm(userId: string): Promise<string> {
   return ch.id
 }
 
-/** Queue `text` for `channelId`: shown as pending straight away and sent through the core's outbox (retries, failed state). */
-export function queueMessage(channelId: string, text: string, replyToId: string | null, gif: Gif | null = null): void {
+/** Queue `text` for `channelId`: shown as pending straight away and sent through the core's outbox (retries, failed state).
+ *  With `files` (#57) the core uploads them first, then sends (its outcome arrives on the same `pulse://outbox`). */
+export function queueMessage(channelId: string, text: string, replyToId: string | null, gif: Gif | null = null, files: readonly StagedFile[] = [], tempDays: number | null = null): void {
   const nonce = crypto.randomUUID()
-  app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyToId, thread_root_id: null, status: 'pending', created_at: new Date().toISOString(), ...(gif ? { gif } : {}) })
-  void api.sendMessage(channelId, text, replyToId, nonce, gif)
+  const pendingFiles: PendingFile[] = files.map((f) => ({ id: f.id, name: f.name, size: f.size, kind: f.kind, preview: f.preview }))
+  app.state = addPending(app.state, channelId, {
+    nonce, content: text, reply_to_id: replyToId, thread_root_id: null, status: 'pending', created_at: new Date().toISOString(),
+    ...(gif ? { gif } : {}),
+    ...(pendingFiles.length ? { files: pendingFiles, temp_days: tempDays } : {}),
+  })
+  if (pendingFiles.length) sendFiles(channelId, nonce, text, replyToId, pendingFiles, tempDays)
+  else void api.sendMessage(channelId, text, replyToId, nonce, gif)
+}
+
+function sendFiles(channelId: string, nonce: string, text: string, replyToId: string | null, files: PendingFile[], tempDays: number | null) {
+  attachmentSends.start(nonce)
+  api
+    .sendWithAttachments({ channelId, content: text, replyToId, threadRootId: null, nonce, staged: files.map((f) => f.id), tempDays })
+    .catch(() => (app.state = setPendingStatus(app.state, channelId, nonce, 'failed')))
+}
+
+/** Try a failed message with files again under its own nonce: what was already uploaded isn't uploaded again. */
+export function retryFiles(channelId: string, p: Pending): void {
+  if (!p.files?.length) return
+  app.state = setPendingStatus(app.state, channelId, p.nonce, 'pending')
+  sendFiles(channelId, p.nonce, p.content, p.reply_to_id, p.files, p.temp_days ?? null)
+}
+
+/** Give up on a pending message with files: the upload stops and the queued files are let go. */
+export function discardFiles(p: Pending): void {
+  if (!p.files?.length) return
+  attachmentSends.forget(p.nonce)
+  void api.cancelAttachmentSend(p.nonce)
+  for (const f of p.files) void api.unstageAttachment(f.id)
 }
 
 // Unsent messages: saved whenever the pending map changes, and restored (failed, never resent) on
@@ -251,7 +282,10 @@ export function handleReady(r: Ready) {
   const before = app.state.streams
   // A different user than the one on screen: nothing of theirs carries over (no sign-out was seen).
   const prev = app.state.me
-  if (prev && prev.id !== r.me.id) forgetClipLinks()
+  if (prev && prev.id !== r.me.id) {
+    forgetClipLinks()
+    forgetAttachmentLinks()
+  }
   let next = applyReady(prev && prev.id !== r.me.id ? { ...app.state, pending: {} } : app.state, r)
   if (restoredFor !== r.me.id) {
     restoredFor = r.me.id
@@ -301,8 +335,11 @@ export async function startListening(): Promise<UnlistenFn> {
     listen('pulse://auto-report-sent', () => (ui.autoReported = true)),
     // ...or it was kept back (automatic sending is off): ask the user.
     listen<{ kind: ReportKind }>('pulse://crash-report-held', (e) => (ui.heldReport = e.payload.kind)),
+    listen<AttachmentProgress>('attachments://progress', (e) => attachmentSends.progress(e.payload)),
+    listen<{ nonce: string; error: string }>('attachments://failed', (e) => attachmentSends.failed(e.payload.nonce, e.payload.error)),
     listen<{ nonce: string; status: 'sent' | 'failed'; message: Message | null }>('pulse://outbox', (e) => {
       const { nonce, status, message } = e.payload
+      if (status === 'sent') attachmentSends.forget(nonce)
       if (status === 'sent' && message) {
         // Confirmed over REST: show it even if the gateway is down (the event, if it comes, dedupes by id).
         app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message, nonce } }, Date.now())
@@ -333,6 +370,7 @@ export function resetState() {
   forgetProfileLoads()
   forgetEmbedOrigin() // the next account may be on another server
   forgetClipLinks() // the next account asks for its own play links
+  forgetAttachmentLinks()
   app.state = emptyState()
   // a held crash report belongs to the session (and server) it was offered in: the next sign-in
   // asks again if the core still has it for that server

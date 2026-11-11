@@ -11,13 +11,16 @@
   import { claim, elementVolume, playback, release, setMuted, setVolume } from '../lib/clipPlayback.svelte'
   import ClipDownload from './ClipDownload.svelte'
   import Icon from './Icon.svelte'
+  import type { VideoSource } from '../lib/attachments'
 
-  let { message, autoplay = false, compact = false, onDownload }: {
+  let { message, autoplay = false, compact = false, onDownload, source }: {
     message: Message
     autoplay?: boolean
     compact?: boolean
     /** Shows the download icon at the top right of the video (#204). */
     onDownload?: () => void
+    /** Plays this video instead of the message's clip; its first frame stands in for a thumbnail. */
+    source?: VideoSource
   } = $props()
 
   const SKIP_S = 5
@@ -40,7 +43,11 @@
   let token: symbol | null = null
   let windowWas: Promise<boolean> = Promise.resolve(false)
 
-  const total = $derived(dur ?? (message.clip?.duration_ms ?? 0) / 1000)
+  const total = $derived(dur ?? ((source ? source.durationMs : message.clip?.duration_ms) ?? 0) / 1000)
+  const playerId = $derived(source?.id ?? message.id)
+  const aspect = $derived(source ? `${source.width ?? 16} / ${source.height ?? 9}` : `${message.clip?.width ?? 16} / ${message.clip?.height ?? 9}`)
+  // a file's video has no thumbnail: its first frame, from a muted video that never plays
+  let posterSrc = $state<string | null>(null)
 
   function stop() {
     gen++
@@ -59,11 +66,11 @@
     failed = false
     loading = true
     try {
-      const url = await clipLink(message.id, api.clipUrl, { fresh })
+      const url = source ? await source.link(fresh) : await clipLink(message.id, api.clipUrl, { fresh })
       if (mine !== gen) return
       loading = false
       renewed = isRenewal
-      token = claim(message.id, stop, token ?? undefined)
+      token = claim(playerId, stop, token ?? undefined)
       if (el && src === url && !el.error && hasMeta) {
         // Still loaded on this link (a resume after Pause, or a replay after the end): carry on in place.
         // `from` is the shown time, which trails the video a little: only a real jump (back to the start) seeks.
@@ -172,6 +179,12 @@
 
   onMount(() => {
     if (autoplay) play()
+    else if (source) {
+      source.link(false).then(
+        (url) => (posterSrc = `${url}#t=0.1`),
+        () => {},
+      )
+    }
     return () => {
       gen++ // a fetch still in flight must not claim for a gone player
       if (token) release(token)
@@ -183,8 +196,8 @@
 <svelte:document onfullscreenchange={onFullscreenChange} />
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-<div class="clip" class:compact role="group" aria-label="Clip player" tabindex="0" bind:this={box} onkeydown={onKey}>
-  <div class="screen" style:aspect-ratio="{message.clip?.width ?? 16} / {message.clip?.height ?? 9}">
+<div class="clip" class:compact role="group" aria-label={source ? 'Video player' : 'Clip player'} tabindex="0" bind:this={box} onkeydown={onKey}>
+  <div class="screen" style:aspect-ratio={aspect}>
     {#if src}
       <!-- svelte-ignore a11y_media_has_caption -->
       <video
@@ -203,14 +216,16 @@
         onerror={onError}
         onclick={toggle}
       ></video>
+    {:else if source && posterSrc}
+      <video class="poster" src={posterSrc} preload="metadata" muted playsinline aria-hidden="true" tabindex="-1"></video>
     {:else if message.clip}
       <img src={mediaUrl(message.clip.thumb_hash)} alt="" loading="lazy" decoding="async" />
     {/if}
     {#if failed}
-      <p class="fail" role="alert">Couldn't play this clip. Try again.</p>
+      <p class="fail" role="alert">{source ? "Couldn't play this video. Try again." : "Couldn't play this clip. Try again."}</p>
     {/if}
     {#if !playing && !loading && !failed}
-      <button class="big" aria-label="Play clip" onclick={play}><Icon name="play" size={28} /></button>
+      <button class="big" aria-label={source ? 'Play video' : 'Play clip'} onclick={play}><Icon name="play" size={28} /></button>
     {/if}
     {#if onDownload}<ClipDownload onclick={onDownload} />{/if}
   </div>

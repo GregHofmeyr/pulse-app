@@ -13,13 +13,15 @@ export type Chip = { key: 'from' | 'mentions' | 'in'; id: string; label: string 
 export const FILTERS: { key: FilterKey; syntax: string; hint: string }[] = [
   { key: 'from', syntax: 'from: user', hint: 'From a specific user' },
   { key: 'mentions', syntax: 'mentions: user', hint: 'Mentions a specific user' },
-  { key: 'has', syntax: 'has: link, clip or quote', hint: 'Includes a link, a clip or a quote' },
+  { key: 'has', syntax: 'has: link, media, file, clip or quote', hint: 'Includes a link, media, a file, a clip or a quote' },
   { key: 'in', syntax: 'in: channel', hint: 'Sent in a specific channel' },
 ]
 
 /** What `has:` can be, as offered in the list. */
 export const HAS_VALUES: { value: SearchHas; hint: string }[] = [
   { value: 'link', hint: 'A web link' },
+  { value: 'media', hint: 'An image, video or audio file' },
+  { value: 'file', hint: 'Any other file' },
   { value: 'clip', hint: 'A video clip' },
   { value: 'quote', hint: 'A quote' },
 ]

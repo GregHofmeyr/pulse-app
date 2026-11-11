@@ -126,7 +126,7 @@ describe('SearchBox', () => {
     expect(optionText()).toEqual([
       'from: user From a specific user',
       'mentions: user Mentions a specific user',
-      'has: link, clip or quote Includes a link, a clip or a quote',
+      'has: link, media, file, clip or quote Includes a link, media, a file, a clip or a quote',
       'in: channel Sent in a specific channel',
     ])
     const list = document.querySelector('[role="listbox"]')!
@@ -191,7 +191,7 @@ describe('SearchBox', () => {
     type(input, 'in:me')
     expect(optionText()).toEqual(['memes'])
     type(input, 'has:')
-    expect(optionText().map((t) => t.split(' ')[0])).toEqual(['link', 'clip', 'quote'])
+    expect(optionText().map((t) => t.split(' ')[0])).toEqual(['link', 'media', 'file', 'clip', 'quote'])
   })
 
   it('picking a suggestion makes a chip and goes back to the filters', async () => {

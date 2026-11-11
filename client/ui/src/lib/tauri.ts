@@ -20,6 +20,8 @@ import type { StartCallResponse } from './protocol/StartCallResponse'
 import type { ServerVoiceMod } from './protocol/ServerVoiceMod'
 import type { Message } from './protocol/Message'
 import type { Gif } from './protocol/Gif'
+import type { AttachmentKind } from './protocol/AttachmentKind'
+import type { AttachmentUrl } from './protocol/AttachmentUrl'
 import type { Pin } from './protocol/Pin'
 import type { PinDuration } from './protocol/PinDuration'
 import type { PinnedMessage } from './protocol/PinnedMessage'
@@ -107,6 +109,23 @@ export type SendClip = {
   caption: string
   gameId: string | null
 }
+
+/** Mirrors `attachments::Staged` (#57): a file queued in the composer, ready to upload. */
+export type StagedFile = {
+  id: string
+  name: string
+  size: number
+  content_type: string
+  kind: AttachmentKind
+  width: number | null
+  height: number | null
+  /** A small PNG thumbnail of an image (a data URL). */
+  preview: string | null
+}
+/** Mirrors `attachments::StageResult`. */
+export type StageResult = { status: 'staged'; file: StagedFile } | { status: 'refused'; name: string; error: string }
+/** `attachments://progress`: bytes of a send's files stored so far. */
+export type AttachmentProgress = { nonce: string; sent: number; total: number }
 
 /** Mirrors `clips::ffmpeg::ClipSupport`. */
 export type ClipSupport = { can_send: boolean; reason: string | null }
@@ -202,6 +221,29 @@ export const api = {
   sendMessage: (channelId: string, content: string, replyToId: string | null, nonce: string, gif: Gif | null = null) =>
     invoke<void>('send_message', { channelId, content, replyToId, nonce, gif }),
   editMessage: (messageId: string, content: string) => invoke<Message>('edit_message', { messageId, content }),
+  /** Files (#57): queue files by path (picked or dropped), one result per path. */
+  stageAttachmentPaths: (paths: string[]) => invoke<StageResult[]>('stage_attachment_paths', { paths }),
+  /** A pasted file: the bytes are the body, its name a header. */
+  stageAttachmentBytes: (name: string, bytes: Uint8Array) =>
+    invoke<StagedFile>('stage_attachment_bytes', bytes, { headers: { 'x-name': encodeURIComponent(name) } }),
+  unstageAttachment: (id: string) => invoke<void>('unstage_attachment', { id }),
+  pickAttachmentFiles: () => invoke<string[]>('pick_attachment_files'),
+  /** Uploads the files, then sends; the outcome arrives on `pulse://outbox` like `sendMessage`. The same nonce again
+   *  after a failure uploads only what isn't stored yet. */
+  sendWithAttachments: (a: {
+    channelId: string
+    content: string
+    replyToId: string | null
+    threadRootId: string | null
+    nonce: string
+    staged: string[]
+    tempDays: number | null
+  }) => invoke<void>('send_with_attachments', a),
+  cancelAttachmentSend: (nonce: string) => invoke<void>('cancel_attachment_send', { nonce }),
+  attachmentUrls: (messageId: string) => invoke<AttachmentUrl[]>('attachment_urls', { messageId }),
+  /** `false` when the Save dialog is cancelled. */
+  saveAttachment: (messageId: string, attachmentId: string, name: string) =>
+    invoke<boolean>('save_attachment', { messageId, attachmentId, name }),
   deleteMessage: (messageId: string) => invoke<void>('delete_message', { messageId }),
   /** Pins (#178): the change also arrives as MessagePinned / MessageUnpinned (and the pin's line as MessageCreated). */
   pinMessage: (messageId: string, duration: PinDuration) => invoke<Pin>('pin_message', { messageId, duration }),

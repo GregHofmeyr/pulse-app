@@ -12,6 +12,10 @@
   import LinkEmbed from './LinkEmbed.svelte'
   import GifView from './GifView.svelte'
   import { gifIdOf, gifOnly, gifsOf } from '../lib/giphy'
+  import MessageFiles from './MessageFiles.svelte'
+  import ComposerFiles from './ComposerFiles.svelte'
+  import { shownCaption } from '../lib/attachments'
+  import { attachmentSends } from '../lib/attachmentSends.svelte'
   import { previews } from '../lib/linkPreviews.svelte'
   import { reactionKey, type Std } from '../lib/emoji'
   import { pickAdds, react } from '../lib/reactions'
@@ -207,7 +211,7 @@
 
   let editBox: EmojiBox | undefined = $state()
   function startEdit() {
-    draft = message.content
+    draft = shownCaption(message)
     editError = ''
     editing = true
   }
@@ -221,7 +225,8 @@
     if (saving) return
     const d = draft.trim()
     editError = ''
-    if (d && d !== message.content) {
+    // a message with files may lose its caption (#57): they're the message then
+    if ((d || message.attachments?.length) && d !== shownCaption(message)) {
       saving = true
       try {
         await onEdit(d)
@@ -321,9 +326,18 @@
           {@const html = renderMessage(message, mentionNames, customEmoji)}
           <!-- a mention pill opens its person's card, by click or (focused: styleMentions makes known pills buttons) Enter or Space -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
-          {#if !onlyGif}<div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention} onkeydown={openMention}>{@html html}</div>{/if}
-          {#each gifs as g (g.id)}<GifView gif={g} onError={showError} onFail={() => (failedGifs = [...failedGifs, g.id])} />{/each}
-          {#if message.edited_at}<span class="edited">(edited)</span>{/if}
+          {#if !message.caption_is_fallback}
+            {#if !onlyGif}<div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention} onkeydown={openMention}>{@html html}</div>{/if}
+            {#each gifs as g (g.id)}<GifView gif={g} onError={showError} onFail={() => (failedGifs = [...failedGifs, g.id])} />{/each}
+            {#if message.edited_at}<span class="edited">(edited)</span>{/if}
+          {/if}
+        {/if}
+        <!-- files (#57): a sent message's, or the chips and upload bar of one on its way -->
+        {#if pending?.files?.length}
+          <ComposerFiles files={pending.files} progress={pending.status === 'pending' ? (attachmentSends.fraction(pending.nonce) ?? 0) : null}
+            error={pending.status === 'failed' ? attachmentSends.error(pending.nonce) : null} />
+        {:else if !pending && !message.deleted && message.attachments?.length}
+          <MessageFiles {message} onError={showError} />
         {/if}
         {#each embeds as e (e.url)}<LinkEmbed embed={e} messageId={message.id} channelId={message.channel_id} {mine} onError={showError} />{/each}
         {#if !pending}<ReactionRow {message} {meId} {nameOf} onError={showError} />{/if}
