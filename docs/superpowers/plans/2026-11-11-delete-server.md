@@ -81,7 +81,7 @@ out by their own clock as before (nobody sees it happen).
   their next Ready, which leaves it out. A restore shows up on their next Ready. The new `Server.owner_id` is optional
   and skipped when absent.
 
-## Migration 0033 (`server/migrations/0033_server_soft_delete.sql`)
+## Migration 0034 (`server/migrations/0034_server_soft_delete.sql`)
 
 Adds two nullable columns to `servers` and one partial index; no rows change, nothing is rebuilt, so foreign keys being
 off during migrations (`db.rs`) don't matter:
@@ -104,7 +104,7 @@ CREATE INDEX servers_deleted ON servers(deleted_at) WHERE deleted_at IS NOT NULL
 
 ### Task 1: Migration, protocol, invisibility
 
-**Files:** create `server/migrations/0033_server_soft_delete.sql`, `server/src/servers/deleted.rs`; modify
+**Files:** create `server/migrations/0034_server_soft_delete.sql`, `server/src/servers/deleted.rs`; modify
 `protocol/src/rest.rs` (`Server.owner_id`, `DeleteServerRequest`, `DeletedServer`), `protocol/src/gateway.rs`
 (`ServerDeleted`, `ServerRestored`, `ServerSnapshot`), `server/src/access.rs`, `server/src/servers/routes.rs`,
 `server/src/servers/categories.rs`, `server/src/reads.rs`, `server/src/{sounds,clips/games,quotes/links,qoty,voice/moderation}`
