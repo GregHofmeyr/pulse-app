@@ -142,25 +142,6 @@ pub fn spotify_link(raw: &str) -> Option<String> {
     }
 }
 
-/// The Spotify kind in a card's id (`jam:<id>` → `jam`).
-pub fn kind_of(provider_id: &str) -> &str {
-    provider_id.split_once(':').map_or("", |(k, _)| k)
-}
-
-/// How the share line names what was shared: "alex shared a Jam to the stage".
-pub fn phrase(kind: &str) -> &'static str {
-    match kind {
-        "jam" => "a Jam",
-        "track" => "a song",
-        "album" => "an album",
-        "playlist" => "a playlist",
-        "episode" => "an episode",
-        "show" => "a podcast",
-        "artist" => "an artist",
-        _ => "something",
-    }
-}
-
 /// Tell `channel` each of `gone` came down.
 pub(crate) async fn announce_cleared(s: &AppState, gone: Vec<StageShare>) {
     for share in gone {
@@ -279,13 +260,5 @@ mod tests {
         ] {
             assert_eq!(spotify_link(bad), None, "{bad}");
         }
-    }
-
-    #[test]
-    fn phrases() {
-        assert_eq!(phrase(kind_of("jam:abc")), "a Jam");
-        assert_eq!(phrase(kind_of("track:abc")), "a song");
-        assert_eq!(phrase(kind_of("show:abc")), "a podcast");
-        assert_eq!(phrase(kind_of("odd")), "something");
     }
 }

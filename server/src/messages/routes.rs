@@ -5,7 +5,7 @@ use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{
-    Channel, ChannelKind, EditMessageRequest, Message, MessageKind, SendMessageRequest,
+    Channel, ChannelKind, EditMessageRequest, Gif, Message, MessageKind, SendMessageRequest,
 };
 use serde::Deserialize;
 use sqlx::SqlitePool;
@@ -344,11 +344,6 @@ async fn send(
         }
         None => None,
     };
-    let gif_json = gif
-        .as_ref()
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(anyhow::Error::from)?;
     let mut mentioned = mentions::resolve(&s.db, &ch, me, &mentions::parse(&content)).await?;
     if let Some(r) = req.reply_to_id {
         // Same-channel only; a reply target elsewhere (including private) is indistinguishable from missing.
@@ -375,19 +370,89 @@ async fn send(
             }
         }
     }
+    deliver(
+        &s,
+        me,
+        &ch,
+        Outgoing {
+            content,
+            reply_to_id: req.reply_to_id,
+            thread_root_id: req.thread_root_id,
+            mentioned,
+            nonce: req.nonce,
+            gif,
+        },
+    )
+    .await
+    .map(Json)
+}
+
+/// A checked message on its way in: what `deliver` stores and fans out.
+pub(crate) struct Outgoing {
+    pub content: String,
+    pub reply_to_id: Option<MessageId>,
+    pub thread_root_id: Option<MessageId>,
+    /// Who it pings (already resolved and allowed to see the chat).
+    pub mentioned: Vec<UserId>,
+    pub nonce: Option<String>,
+    /// A GIF from the picker (#58), already checked against the content.
+    pub gif: Option<Gif>,
+}
+
+/// Post a plain message from `me` in `ch` as the sharer's own words: Share to stage's chat message (#288). The same
+/// path as a send (read point, badges, frequent emoji, previews, the channel's normal notification levels), mentioning
+/// nobody. The caller must not hold the hub's `in_order` guard.
+pub(crate) async fn post_plain(
+    s: &AppState,
+    me: UserId,
+    ch: &Channel,
+    content: String,
+) -> AppResult<Message> {
+    deliver(
+        s,
+        me,
+        ch,
+        Outgoing {
+            content: clean(&content)?,
+            reply_to_id: None,
+            thread_root_id: None,
+            mentioned: vec![],
+            nonce: None,
+            gif: None,
+        },
+    )
+    .await
+}
+
+/// Store `out` from `me` in `ch` and fan it out: the send path after its checks.
+async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppResult<Message> {
+    let id = ch.id;
+    let Outgoing {
+        content,
+        reply_to_id,
+        thread_root_id,
+        mentioned,
+        nonce: req_nonce,
+        gif,
+    } = out;
+    let gif_json = gif
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(anyhow::Error::from)?;
     let mut msg = Message {
         id: MessageId::new(),
         channel_id: id,
         author_id: Some(me),
         kind: MessageKind::Normal,
         content,
-        reply_to_id: req.reply_to_id,
+        reply_to_id,
         created_at: now(),
         edited_at: None,
         deleted: false,
         mentions: mentioned.clone(),
         reactions: vec![],
-        thread_root_id: req.thread_root_id,
+        thread_root_id,
         quote: None,
         clip: None,
         embeds: vec![],
@@ -413,7 +478,7 @@ async fn send(
     msg.id = MessageId::new();
     msg.created_at = now();
     // A delete of the quote may have committed since the early check: the root must still be live.
-    if let Some(root) = req.thread_root_id
+    if let Some(root) = thread_root_id
         && !super::threads::is_live_root(&mut *tx, root, id).await?
     {
         return Err(AppError::BadRequest(
@@ -423,13 +488,12 @@ async fn send(
     // An outbox retry of a send that already landed (e.g. the proxy said 502 after we committed):
     // hand back the original instead of posting twice. Under the write lock, check-then-insert is
     // atomic; the unique index is the backstop.
-    if let Some(existing) = nonce::existing(&mut tx, me, id, req.nonce.as_deref()).await? {
+    if let Some(existing) = nonce::existing(&mut tx, me, id, req_nonce.as_deref()).await? {
         tx.rollback().await?;
         // Not re-published: the first send already fanned it out, and a second MessageCreated
         // would double-count unreads on other clients.
         return load(&s.db, Some(me), existing)
             .await?
-            .map(Json)
             .ok_or(AppError::NotFound);
     }
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at, nonce, thread_root_id, gif) VALUES (?, ?, ?, 'normal', ?, ?, ?, ?, ?, ?)")
@@ -439,8 +503,8 @@ async fn send(
         .bind(&msg.content)
         .bind(msg.reply_to_id.map(|r| r.to_string()))
         .bind(&msg.created_at)
-        .bind(&req.nonce)
-        .bind(req.thread_root_id.map(|r| r.to_string()))
+        .bind(&req_nonce)
+        .bind(thread_root_id.map(|r| r.to_string()))
         .bind(&gif_json)
         .execute(&mut *tx)
         .await?;
@@ -465,7 +529,7 @@ async fn send(
     // Sending marks your own read point (you've obviously seen everything up to here).
     let mut thread_cleared = None;
     // A reply is not channel traffic: it marks your place in its thread instead.
-    let moved = match req.thread_root_id {
+    let moved = match thread_root_id {
         Some(root) => {
             thread_cleared = super::threads::mark_seen(&mut tx, me, root, msg.id).await?;
             false
@@ -478,13 +542,13 @@ async fn send(
             &s.db,
             Event::MessageCreated {
                 message: msg.clone(),
-                nonce: req.nonce,
+                nonce: req_nonce,
             },
         )
         .await;
     // Replying moves your place in the thread (and covers earlier mentions of you): tell your
     // other sessions.
-    if let (Some(root), Some(mentions_cleared)) = (req.thread_root_id, thread_cleared)
+    if let (Some(root), Some(mentions_cleared)) = (thread_root_id, thread_cleared)
         && let Some((_, mentions)) = crate::reads::counts_after_commit(&s.db, me, id).await
     {
         s.hub
@@ -519,12 +583,12 @@ async fn send(
     }
     if !used.is_empty() {
         // Still under this send's `in_order` guard (tokio's mutex isn't reentrant).
-        crate::emoji::publish_frequent(&s, me).await;
+        crate::emoji::publish_frequent(s, me).await;
     }
-    crate::badges::engine::after(&s, &badges).await;
+    crate::badges::engine::after(s, &badges).await;
     // Previews follow as a MessageUpdated (after this send's events: the task takes `in_order`).
-    crate::embeds::spawn_unfurl(&s, msg.id, me, msg.content.clone());
-    Ok(Json(msg))
+    crate::embeds::spawn_unfurl(s, msg.id, me, msg.content.clone());
+    Ok(msg)
 }
 
 /// Load a live message the caller can see and authored. Outsiders get 404, others' messages 403.

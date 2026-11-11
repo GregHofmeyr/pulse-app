@@ -96,15 +96,9 @@ pub fn qoty_card(payload: &str) -> Option<QotyCard> {
     serde_json::from_value(v).ok()
 }
 
-/// The payload `type` of a "shared to the stage" line (#234).
+/// The payload `type` of a "shared to the stage" line (#234). New shares post the link as the sharer's own message
+/// instead (#288); the lines already in the history still read back.
 pub const STAGE_SHARE_LINE: &str = "stage_share";
-
-/// A stage share line's stored payload.
-pub fn stage_share_line_payload(line: &StageShareLine) -> AppResult<serde_json::Value> {
-    let mut v = serde_json::to_value(line).map_err(anyhow::Error::from)?;
-    v["type"] = STAGE_SHARE_LINE.into();
-    Ok(v)
-}
 
 /// The stage share line in a stored payload, if it is one.
 pub fn stage_share_line(payload: &str) -> Option<StageShareLine> {

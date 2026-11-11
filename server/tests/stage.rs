@@ -1,4 +1,5 @@
-//! Spotify on a voice channel's stage (#234): share, replace, stop, expiry, leaving the call, the line, Ready.
+//! Spotify on a voice channel's stage (#234): share, replace, stop, expiry, leaving the call, the chat message
+//! (#288), Ready.
 mod common;
 
 use std::time::Duration;
@@ -8,7 +9,7 @@ use common::*;
 use livekit_api::access_token::AccessToken;
 use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
 use pulse_protocol::ids::{ChannelId, UserId};
-use pulse_protocol::rest::{Channel, ChannelKind, Message, StageShare};
+use pulse_protocol::rest::{Channel, ChannelKind, Message, MessageKind, StageShare};
 use pulse_server::config::Config;
 use pulse_server::testing::fake_provider::{FakeProvider, SPOTIFY_ID, SPOTIFY_JAM_URL};
 use serde_json::json;
@@ -16,6 +17,8 @@ use sha2::{Digest, Sha256};
 use tokio::sync::mpsc::Receiver;
 
 const JAM: &str = "ABC123abc123ABC123abc123";
+/// How a share's chat message starts (#288).
+const LEAD: &str = "🎵 Shared to the stage: ";
 
 struct World {
     app: TestApp,
@@ -96,7 +99,7 @@ async fn stop(w: &World, token: &str, id: &str) -> u16 {
         .as_u16()
 }
 
-/// The next stage event (or share line) on `rx`, skipping everything else.
+/// The next stage event (or share message) on `rx`, skipping everything else.
 async fn next(rx: &mut Receiver<ServerFrame>) -> Event {
     loop {
         let f = tokio::time::timeout(Duration::from_secs(3), rx.recv())
@@ -106,7 +109,7 @@ async fn next(rx: &mut Receiver<ServerFrame>) -> Event {
         if let ServerFrame::Event(e) = f {
             match &e {
                 Event::StageShared { .. } | Event::StageShareCleared { .. } => return e,
-                Event::MessageCreated { message, .. } if message.stage_share_line.is_some() => {
+                Event::MessageCreated { message, .. } if message.content.starts_with(LEAD) => {
                     return e;
                 }
                 _ => {}
@@ -168,7 +171,7 @@ async fn left(app: &TestApp, room: ChannelId, user: UserId, sid: &str) {
 }
 
 #[tokio::test]
-async fn sharing_a_song_puts_its_card_up_and_posts_a_line() {
+async fn sharing_a_song_puts_its_card_up_and_posts_the_link_in_chat() {
     let mut w = world().await;
     let r = share(&w, &w.alex.1, &format!("  {}  ", track())).await;
     assert_eq!(r.status(), 200);
@@ -193,23 +196,53 @@ async fn sharing_a_song_puts_its_card_up_and_posts_a_line() {
         Event::StageShared { share } => assert_eq!(share, s),
         e => panic!("unexpected {e:?}"),
     }
-    match next(&mut w.rx).await {
-        Event::MessageCreated { message, .. } => {
-            assert_eq!(message.channel_id, w.lounge.id);
-            assert_eq!(message.content, "🎵 alex shared a song to the stage");
-            let line = message.stage_share_line.unwrap();
-            assert_eq!((line.by, line.kind.as_str()), (w.alex.0, "track"));
-        }
+    // a normal message from the sharer with the link (#288): it unfurls as the Spotify card for everyone, 0.2.x too
+    let posted = match next(&mut w.rx).await {
+        Event::MessageCreated { message, .. } => message,
         e => panic!("unexpected {e:?}"),
-    }
-    // the line reads back from the chat too
+    };
+    assert_eq!(posted.channel_id, w.lounge.id);
+    assert_eq!(posted.author_id, Some(w.alex.0));
+    assert_eq!(posted.kind, MessageKind::Normal);
+    assert_eq!(posted.content, format!("{LEAD}{}", track()));
+    assert!(posted.mentions.is_empty());
+    assert!(posted.stage_share_line.is_none());
+    // its preview follows as for any message
+    let card = loop {
+        let f = tokio::time::timeout(Duration::from_secs(3), w.rx.recv())
+            .await
+            .expect("timed out waiting for the preview")
+            .expect("hub closed");
+        if let ServerFrame::Event(Event::MessageUpdated { message }) = f
+            && message.id == posted.id
+            && !message.embeds.is_empty()
+        {
+            break message.embeds[0].clone();
+        }
+    };
+    assert_eq!(
+        card.provider_id.as_deref(),
+        Some(&*format!("track:{SPOTIFY_ID}"))
+    );
+    // it reads back from the chat, as alex's
     let msgs: Vec<Message> = get_json(
         &w.app,
         &w.sam.1,
         &format!("/channels/{}/messages", w.lounge.id),
     )
     .await;
-    assert!(msgs.iter().any(|m| m.stage_share_line.is_some()));
+    assert!(
+        msgs.iter()
+            .any(|m| m.id == posted.id && m.author_id == Some(w.alex.0))
+    );
+    // sending it moved alex's read point, as a send does
+    let mine = ready_of(&w.app, &w.alex.1).await;
+    let rs = mine
+        .read_states
+        .iter()
+        .find(|r| r.channel_id == w.lounge.id)
+        .expect("alex's read state");
+    assert_eq!(rs.last_read_message_id, Some(posted.id));
 
     // the art outlives the share: its cleanup clock was restarted just now
     let created: String = sqlx::query_scalar("SELECT created_at FROM media WHERE hash = ?")
@@ -249,7 +282,7 @@ async fn jams_by_app_uri_and_short_link() {
     next(&mut w.rx).await;
     match next(&mut w.rx).await {
         Event::MessageCreated { message, .. } => {
-            assert_eq!(message.content, "🎵 alex shared a Jam to the stage")
+            assert_eq!(message.content, format!("{LEAD}{SPOTIFY_JAM_URL}"))
         }
         e => panic!("unexpected {e:?}"),
     }

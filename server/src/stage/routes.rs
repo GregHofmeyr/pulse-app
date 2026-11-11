@@ -8,16 +8,18 @@ use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::{
-    Channel, ChannelKind, EmbedProvider, LinkEmbed, StageShare, StageShareLine, StageShareRequest,
+    Channel, ChannelKind, EmbedProvider, LinkEmbed, StageShare, StageShareRequest,
 };
 
-use super::{ANYONE_IN_CALL_MAY_STOP, announce_cleared, kind_of, phrase, spotify_link};
+use super::{ANYONE_IN_CALL_MAY_STOP, announce_cleared, spotify_link};
 use crate::AppState;
 use crate::access::channel_for;
 use crate::auth::AuthUser;
 use crate::db::stamp;
 use crate::error::{AppError, AppResult};
-use crate::messages::system;
+
+/// How a share's chat message starts, before the link (#288).
+pub const SHARE_LEAD: &str = "🎵 Shared to the stage:";
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -47,7 +49,7 @@ async fn share(
     Path(id): Path<ChannelId>,
     Json(req): Json<StageShareRequest>,
 ) -> AppResult<Json<StageShare>> {
-    in_call(&s, me, id).await?;
+    let ch = in_call(&s, me, id).await?;
     let Some(link) = spotify_link(&req.url) else {
         return Err(AppError::BadRequest("that isn't a Spotify link".into()));
     };
@@ -86,7 +88,6 @@ async fn share(
             thumb = None;
         }
     }
-    let kind = kind_of(card.provider_id.as_deref().unwrap_or_default()).to_owned();
     let at = chrono::Utc::now();
     let ttl = chrono::Duration::from_std(s.cfg.stage_share_ttl).map_err(anyhow::Error::from)?;
     let share = StageShare {
@@ -109,14 +110,6 @@ async fn share(
             vertical: false,
         },
     };
-    let name: String = sqlx::query_scalar("SELECT display_name FROM users WHERE id = ?")
-        .bind(me.to_string())
-        .fetch_one(&s.db)
-        .await?;
-    let payload = system::stage_share_line_payload(&StageShareLine {
-        by: me,
-        kind: kind.clone(),
-    })?;
     {
         // Shares, stops, leaves and expiries go out in the order they happened.
         let _order = s.hub.in_order().await;
@@ -141,11 +134,13 @@ async fn share(
                 },
             )
             .await;
-        // Plain text for clients from before it: "🎵 alex shared a Jam to the stage".
-        let content = format!("🎵 {name} shared {} to the stage", phrase(&kind));
-        if let Err(e) = system::post(&s, id, content, payload).await {
-            tracing::warn!(error = ?e, channel = %id, "stage share line not posted");
-        }
+    }
+    // The link in chat as the sharer's own message (#288), through the send path once the order guard is let go: it
+    // unfurls as the Spotify or Jam card for everyone (people not in the call, 0.2.x clients), follows each person's
+    // notification level for the channel, and mentions nobody.
+    let content = format!("{SHARE_LEAD} {}", share.embed.url);
+    if let Err(e) = crate::messages::routes::post_plain(&s, me, &ch, content).await {
+        tracing::warn!(error = ?e, channel = %id, "stage share message not posted");
     }
     expire_later(&s, &share);
     Ok(Json(share))
