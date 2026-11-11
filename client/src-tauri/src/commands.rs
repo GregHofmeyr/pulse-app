@@ -9,12 +9,12 @@ use pulse_protocol::ids::{
 };
 use pulse_protocol::rest::{
     BadgeCatalogue, Category, Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji,
-    DeletedChannel, DeletedServer, EditClipRequest, EditQuoteRequest, Game, Gif, Leaderboard, LinkSpeakerRequest,
-    MediaInfo, Member, Message, MuteTarget, NameArchivePage, NotifyLevel, Pin, PinDuration,
-    PinnedMessage, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse, SaveLayoutRequest,
-    SearchRequest, SearchResults, Server, ServerLayout, SetMuteRequest, SetNotifyLevelRequest,
-    Sound, StageShare, StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus,
-    UpdateProfileRequest, UpdateSoundRequest, User,
+    DeletedChannel, DeletedServer, EditClipRequest, EditQuoteRequest, Game, Gif, Leaderboard,
+    LinkSpeakerRequest, MediaInfo, Member, Message, MuteTarget, NameArchivePage, NotifyLevel, Pin,
+    PinDuration, PinnedMessage, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse,
+    SaveLayoutRequest, SearchRequest, SearchResults, Server, ServerLayout, SetMuteRequest,
+    SetNotifyLevelRequest, Sound, StageShare, StartQotyRequest, TwoFactorEnabledResponse,
+    TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
