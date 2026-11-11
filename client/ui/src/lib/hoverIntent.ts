@@ -5,6 +5,11 @@
 /** How long a hover-opened flyout waits before closing once the pointer is over another item. */
 export const SUBMENU_CLOSE_DELAY = 200
 
+/** The stage's Spotify pill (#288): how long the pointer rests on it, having moved, before it grows into its card. */
+export const PILL_OPEN_DELAY = 200
+/** How long the card waits once the pointer has left it before it shrinks back into the pill. */
+export const PILL_CLOSE_GRACE = 300
+
 export type CloseTimer = { schedule: (close: () => void) => void; cancel: () => void }
 
 export function closeTimer(delay = SUBMENU_CLOSE_DELAY): CloseTimer {

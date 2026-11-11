@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ANYONE_IN_CALL_MAY_STOP, JAM_MAY_HAVE_ENDED_MS, mayStop, sharePhrase, stageCard } from './stageShare'
+import { ANYONE_IN_CALL_MAY_STOP, JAM_MAY_HAVE_ENDED_MS, mayStop, sharePhrase, spotifyLinkIn, stageCard } from './stageShare'
 import type { StageShare } from './protocol/StageShare'
 
 const at = Date.parse('2026-11-10T10:00:00.000Z')
@@ -35,6 +35,43 @@ describe('mayStop', () => {
   })
 })
 
-it('sharePhrase words each kind as the server does', () => {
+it('sharePhrase words each kind as the share lines in the history do', () => {
   expect(['jam', 'track', 'show', 'odd'].map(sharePhrase)).toEqual(['a Jam', 'a song', 'a podcast', 'something'])
+})
+
+describe('spotifyLinkIn (the composer nudge, #288)', () => {
+  const ID = '4uLU6hMCjMI75M1A2tKUQC'
+  it('finds a track, album, playlist, episode, show or artist link in a message, keyed without its ?si=', () => {
+    for (const kind of ['track', 'album', 'playlist', 'episode', 'show', 'artist']) {
+      const url = `https://open.spotify.com/${kind}/${ID}?si=abc`
+      expect(spotifyLinkIn(`listen to this ${url} now`)).toEqual({ url, key: `${kind}:${ID}` })
+    }
+    // another copy of the same link is the same link
+    expect(spotifyLinkIn(`https://open.spotify.com/intl-de/track/${ID}?si=xyz`)?.key).toBe(`track:${ID}`)
+  })
+
+  it('a Jam: its invite, its app URI and a spotify.link short link', () => {
+    expect(spotifyLinkIn('join https://open.spotify.com/socialsession/AbC123abc_-x?si=1')).toEqual({ url: 'https://open.spotify.com/socialsession/AbC123abc_-x?si=1', key: 'jam:AbC123abc_-x' })
+    expect(spotifyLinkIn('spotify:socialsession:AbC123abc_-x')?.key).toBe('jam:AbC123abc_-x')
+    expect(spotifyLinkIn('https://spotify.link/AbCd12Ef')).toEqual({ url: 'https://spotify.link/AbCd12Ef', key: 'short:AbCd12Ef' })
+  })
+
+  it('leaves punctuation round it out', () => {
+    expect(spotifyLinkIn(`(https://open.spotify.com/track/${ID}).`)?.url).toBe(`https://open.spotify.com/track/${ID}`)
+    expect(spotifyLinkIn(`https://open.spotify.com/track/${ID}?si=a, so good`)?.url).toBe(`https://open.spotify.com/track/${ID}?si=a`)
+  })
+
+  it('nothing for other links, look-alikes or a link still being typed', () => {
+    for (const t of [
+      'no link here',
+      'https://example.com/track/x',
+      `https://open.spotify.com.example.com/track/${ID}`,
+      `https://xopen.spotify.com/track/${ID}`,
+      'https://open.spotify.com/track/4uLU6h',
+      'https://open.spotify.com/',
+      `https://open.spotify.com/user/${ID}`,
+      'https://spotify.link/',
+      `spotify:track:${ID}`,
+    ]) expect(spotifyLinkIn(t), t).toBeNull()
+  })
 })

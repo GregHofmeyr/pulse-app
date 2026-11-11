@@ -12,6 +12,7 @@ import { app, resetState } from '../lib/store.svelte'
 import { addHistory, applyReady, emptyState, markHistory } from '../lib/state'
 import { testReady } from '../lib/testReady'
 import { windowFocus } from '../lib/windowFocus.svelte'
+import { voice } from '../lib/voice.svelte'
 import { reloadVoiceChat, setVoiceChat } from '../lib/voiceChat.svelte'
 import type { Message } from '../lib/protocol/Message'
 
@@ -96,5 +97,38 @@ describe('TextChannel as the voice chat panel (#226)', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('Share to the stage? in the voice chat (#288)', () => {
+  const LINK = 'https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQ8'
+  const typeIn = (t: string) => {
+    const b = box()!
+    b.replaceChildren(document.createTextNode(t))
+    b.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    flushSync()
+  }
+  afterEach(() => {
+    voice.channelId = null
+    voice.connection = 'disconnected'
+  })
+
+  it('offers it while you are in the call, and the chip shares the link to this channel\'s stage', async () => {
+    voice.channelId = 'V1'
+    voice.connection = 'connected'
+    await open()
+    typeIn(`listen ${LINK}`)
+    const btn = [...document.querySelectorAll<HTMLButtonElement>('.stage-nudge button')].find((b) => b.textContent?.trim() === 'Share to the stage?')!
+    btn.click()
+    await tick()
+    expect(invoke).toHaveBeenCalledWith('share_to_stage', { channelId: 'V1', url: LINK })
+  })
+
+  it('not when you are not in this call', async () => {
+    voice.channelId = 'V2'
+    voice.connection = 'connected'
+    await open()
+    typeIn(`listen ${LINK}`)
+    expect(document.querySelector('.stage-nudge')).toBeNull()
   })
 })

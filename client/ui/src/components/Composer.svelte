@@ -1,6 +1,14 @@
 <script lang="ts" module>
+  import { SvelteSet } from 'svelte/reactivity'
   // Unsent text per channel, kept while the app runs (switching channels doesn't lose it).
   const drafts = new Map<string, string>()
+  // Spotify links the "Share to the stage?" chip (#288) has offered and won't again this session: shared, dismissed,
+  // or sent as a message. By lib/stageShare's key, so another copy of the same link counts too.
+  const nudged = new SvelteSet<string>()
+  /** Tests: as after a restart. */
+  export function forgetStageNudges(): void {
+    nudged.clear()
+  }
 </script>
 
 <script lang="ts">
@@ -23,6 +31,9 @@
   import { app } from '../lib/store.svelte'
   import { displayName } from '../lib/selectors'
   import Name from './Name.svelte'
+  import SpotifyIcon from './SpotifyIcon.svelte'
+  import { spotifyLinkIn } from '../lib/stageShare'
+  import { errorText } from '../lib/tauri'
 
   let {
     placeholder,
@@ -37,6 +48,7 @@
     pollChannel = null,
     commands = [],
     onSendGif,
+    stageNudge = null,
   }: {
     placeholder: string
     draftKey: string
@@ -56,6 +68,9 @@
     commands?: readonly SlashCommand[]
     /** Sends a GIF picked in the GIF picker (#58) at once (`link`: its GIPHY page, the message's text): shows the GIF button. */
     onSendGif?: (gif: Gif, link: string) => void
+    /** A voice channel's chat while you're in its call (#288): a Spotify link in the box offers "Share to the stage?".
+     *  `share` puts a link on the stage; `up` is what's on it now (not offered again). None anywhere else. */
+    stageNudge?: { share: (url: string) => Promise<void>; up: readonly string[] } | null
   } = $props()
 
   // The composer remounts per channel ({#key} in Shell), so reading the key once is intended.
@@ -95,6 +110,42 @@
   // the usage tip while a command's arguments are typed; any list showing takes its place
   const typing = $derived(commands.length ? typingCommand(text, commands) : null)
   const shown = $derived(open ? options.length : emojiOpen ? emojiOptions.length : cmdOpen ? cmdOptions.length : 0)
+  // "Share to the stage?" (#288): the first Spotify link in the box, unless it's on the stage already or was offered
+  // before; never over a list or the usage tip (they're about what's typed right now).
+  const nudgeLink = $derived.by(() => {
+    if (!stageNudge) return null
+    const l = spotifyLinkIn(text)
+    if (!l || nudged.has(l.key) || stageNudge.up.some((u) => spotifyLinkIn(u)?.key === l.key)) return null
+    return l
+  })
+  const nudgeOpen = $derived(!!nudgeLink && !shown && !typing)
+  let nudgeBusy = $state(false)
+  let nudgeError = $state('')
+  let nudgeErrorFor: string | null = null
+  $effect(() => {
+    // an error is about the link it was for
+    if (nudgeLink?.key !== nudgeErrorFor) nudgeError = ''
+  })
+  async function shareNudged() {
+    const l = nudgeLink
+    if (!l || !stageNudge || nudgeBusy) return
+    nudgeBusy = true
+    nudgeError = ''
+    try {
+      await stageNudge.share(l.url)
+      nudged.add(l.key)
+      // the share posts the link in the chat itself (#288): a box holding only that link would post it twice
+      if (text.trim() === l.url) {
+        box.setText({ text: '', caret: 0 }, true, false)
+        box.forget()
+      }
+    } catch (e) {
+      nudgeErrorFor = l.key
+      nudgeError = errorText(e)
+    } finally {
+      nudgeBusy = false
+    }
+  }
   const serverName = (id: string) => app.state.servers.find((s) => s.id === id)?.name ?? ''
   const emojiText = (e: Std | CustomEmoji) => ('u' in e ? withSkin(e, tone) : customToken(e))
 
@@ -172,6 +223,9 @@
       e.preventDefault()
       const t = text.trim()
       if (!t) return
+      // a link sent as it is has been seen: the chip doesn't come back for it
+      const sent = spotifyLinkIn(t)
+      if (sent && stageNudge) nudged.add(sent.key)
       onSend(t)
       box.setText({ text: '', caret: 0 }, true, false)
       box.forget()
@@ -267,6 +321,17 @@
     <div class="mentions command-tip menu-surface pop-in" role="status">
       <span>{@render usage(typing)}<span class="arg">{` · ${typing.hint}`}</span></span>
     </div>
+  {:else if nudgeOpen && nudgeLink}
+    <div class="mentions stage-nudge menu-surface pop-in" role="group" aria-label="Share to the stage">
+      <div class="nudge-row">
+        <SpotifyIcon />
+        <button type="button" class="btn btn-quiet nudge-share" disabled={nudgeBusy} data-tip="Show it on the stage for everyone in the call"
+          onmousedown={(e) => e.preventDefault()} onclick={() => void shareNudged()}>Share to the stage?</button>
+        <button type="button" class="icon-btn icon-btn-xs" aria-label="Dismiss" data-tip="Not this one"
+          onmousedown={(e) => e.preventDefault()} onclick={() => nudged.add(nudgeLink.key)}><Icon name="x" size={14} /></button>
+      </div>
+      {#if nudgeError}<p class="nudge-error" role="alert">{nudgeError}</p>{/if}
+    </div>
   {/if}
   {#snippet usage(c: SlashCommand)}
     {@const name = `/${c.name}`}
@@ -322,6 +387,11 @@
   .mentions .arg { color: var(--text-3); }
   /* the usage tip: the list's surface and placement with one row's padding, not something to press */
   .command-tip { padding: 6px 10px; font-size: 13px; pointer-events: none; }
+  /* Share to the stage? (#288): the tip's surface and place, with something to press */
+  .stage-nudge { min-width: 0; padding: 4px 4px 4px 10px; gap: 4px; color: var(--text); }
+  .nudge-row { display: flex; align-items: center; gap: 6px; }
+  .nudge-share { height: 28px; padding: 0 10px; font-size: 13px; white-space: nowrap; }
+  .nudge-error { margin: 0 6px 4px 0; color: var(--danger-text); font-size: 12px; }
   .emoji-btn { position: absolute; right: 8px; bottom: 8px; width: 32px; height: 32px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); display: grid; place-items: center; }
   /* one step up from the box's bg-3, as every icon button's hover */
   .emoji-btn:hover { background: var(--bg-4); color: var(--text); }

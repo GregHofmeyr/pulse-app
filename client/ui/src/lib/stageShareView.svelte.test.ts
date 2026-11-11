@@ -15,7 +15,7 @@ describe('stage share view (#234)', () => {
   })
 
   it('a new share shows the strip again, unless you hid the one before', () => {
-    setMode('a', 'corner')
+    setMode('a', 'pill')
     expect(modeFor('b')).toBe('strip')
     setMode('b', 'hidden')
     expect(modeFor('c')).toBe('hidden')
@@ -28,5 +28,11 @@ describe('stage share view (#234)', () => {
     localStorage.setItem('pulse.stageShare', '{"mode":"sideways"}')
     reloadStageView()
     expect(modeFor('a')).toBe('strip')
+  })
+
+  it('the corner card opens from the pill and is never kept (#288): one saved open comes back as the pill', () => {
+    localStorage.setItem('pulse.stageShare', '{"mode":"corner","shareId":"a"}')
+    reloadStageView()
+    expect(modeFor('a')).toBe('pill')
   })
 })

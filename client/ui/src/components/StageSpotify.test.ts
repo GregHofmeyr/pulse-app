@@ -10,6 +10,10 @@ import { app } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { reloadStageView, setMode, modeFor } from '../lib/stageShareView.svelte'
 import { resetServerClock } from '../lib/serverClock'
+import { PILL_CLOSE_GRACE, PILL_OPEN_DELAY } from '../lib/hoverIntent'
+
+/** Icon.svelte's expand (two arrows out to opposite corners). */
+const EXPAND_PATH = 'M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7'
 import type { Ready } from '../lib/protocol/Ready'
 import type { StageShare } from '../lib/protocol/StageShare'
 
@@ -119,35 +123,170 @@ describe('keyboard focus follows the view', () => {
   })
 })
 
-describe('the pill and the corner card', () => {
-  it('hovering the pill previews the corner card; a click opens it', () => {
+// #288: the pill itself grows into the corner card, on a hover that means it or a click, and shrinks back.
+describe('the pill grows into the corner card', () => {
+  const corner = () => {
     setMode('S-1', 'pill')
-    const host = show(share(), 'corner')
+    return show(share(), 'corner')
+  }
+  const zone = (host: HTMLElement) => host.querySelector<HTMLElement>('.stage-corner')!
+  // as the browser sends them: enter and leave stay on the element, the rest bubble
+  const at = (type: string, x: number, y: number) => new PointerEvent(type, { clientX: x, clientY: y, pointerType: 'mouse', bubbles: !/enter|leave/.test(type) })
+  const card = (host: HTMLElement) => host.querySelector('.corner-card')
+  const advance = (ms: number) => {
+    vi.advanceTimersByTime(ms)
+    flushSync()
+  }
+  afterEach(() => vi.useRealTimers())
+
+  it('focusing the window or the pill opens nothing, nor does the pointer just being there (the refocus bug)', () => {
+    vi.useFakeTimers()
+    const host = corner()
     const pill = host.querySelector<HTMLElement>('.pill')!
-    expect(host.querySelector('.corner-card')).toBeNull()
-    pill.dispatchEvent(new PointerEvent('pointerenter'))
-    flushSync()
-    const peek = host.querySelector('.corner-card')!
-    expect(peek.textContent).toContain('Midnight City')
-    // a preview has no controls
-    expect(btn(host, 'Hide for me')).toBeUndefined()
-    pill.click()
-    flushSync()
+    pill.focus()
+    window.dispatchEvent(new FocusEvent('focus'))
+    // what a window coming back to the front sends with the pointer already over the pill: no real movement
+    zone(host).dispatchEvent(at('pointerenter', 50, 20))
+    zone(host).dispatchEvent(at('pointermove', 50, 20))
+    zone(host).dispatchEvent(at('pointerover', 50, 20))
+    advance(2000)
+    expect(card(host)).toBeNull()
+    expect(document.activeElement).toBe(pill)
+    // a move without an enter first (refocus sends one) isn't a hover either
+    zone(host).dispatchEvent(at('pointerleave', 0, 0))
+    zone(host).dispatchEvent(at('pointermove', 60, 22))
+    advance(2000)
+    expect(card(host)).toBeNull()
+  })
+
+  it('a hover that means it (the pointer moving on the pill, then a short rest) grows it into the card, controls and all', () => {
+    vi.useFakeTimers()
+    const host = corner()
+    zone(host).dispatchEvent(at('pointerenter', 50, 20))
+    zone(host).dispatchEvent(at('pointermove', 54, 21))
+    advance(PILL_OPEN_DELAY - 50)
+    expect(card(host)).toBeNull()
+    advance(60)
+    expect(card(host)!.textContent).toContain('Midnight City')
+    // the pill became the card: one thing, so moving over it never crosses a gap
     expect(host.querySelector('.pill')).toBeNull()
     expect(btn(host, 'Hide for me')).toBeDefined()
     expect(btn(host, 'Listen on Spotify')).toBeDefined()
   })
 
-  it('the corner card goes back to the strip, minimises again, or hides', () => {
-    setMode('S-1', 'corner')
-    const host = show(share(), 'corner')
-    btn(host, 'Minimise')!.click()
-    flushSync()
+  it('shrinks back once the pointer has been gone a moment; coming back in time keeps it', () => {
+    vi.useFakeTimers()
+    const host = corner()
+    zone(host).dispatchEvent(at('pointerenter', 50, 20))
+    zone(host).dispatchEvent(at('pointermove', 54, 21))
+    advance(PILL_OPEN_DELAY)
+    zone(host).dispatchEvent(at('pointerleave', 0, 0))
+    advance(PILL_CLOSE_GRACE - 100)
+    expect(card(host)).not.toBeNull()
+    zone(host).dispatchEvent(at('pointerenter', 50, 20))
+    advance(PILL_CLOSE_GRACE * 2)
+    expect(card(host)).not.toBeNull()
+    zone(host).dispatchEvent(at('pointerleave', 0, 0))
+    advance(PILL_CLOSE_GRACE)
+    expect(card(host)).toBeNull()
+    expect(host.querySelector('.pill')).not.toBeNull()
     expect(modeFor('S-1')).toBe('pill')
-    setMode('S-1', 'corner')
+  })
+
+  it('a press in a card opened by hover keeps it open, as if it had been clicked open', () => {
+    vi.useFakeTimers()
+    const host = corner()
+    zone(host).dispatchEvent(at('pointerenter', 50, 20))
+    zone(host).dispatchEvent(at('pointermove', 54, 21))
+    advance(PILL_OPEN_DELAY)
+    card(host)!.dispatchEvent(at('pointerdown', 60, 30))
+    zone(host).dispatchEvent(at('pointerleave', 0, 0))
+    advance(PILL_CLOSE_GRACE * 3)
+    expect(card(host)).not.toBeNull()
+  })
+
+  it('a click opens it until a click outside or Escape; Escape hands the focus back to the pill', async () => {
+    vi.useFakeTimers()
+    const host = corner()
+    host.querySelector<HTMLElement>('.pill')!.click()
+    for (let i = 0; i < 3; i++) await tick()
+    flushSync()
+    expect(card(host)).not.toBeNull()
+    expect(card(host)!.contains(document.activeElement)).toBe(true)
+    // opened on purpose: the pointer leaving doesn't close it
+    zone(host).dispatchEvent(at('pointerleave', 0, 0))
+    advance(PILL_CLOSE_GRACE * 3)
+    expect(card(host)).not.toBeNull()
+    card(host)!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    for (let i = 0; i < 3; i++) await tick()
+    flushSync()
+    expect(card(host)).toBeNull()
+    expect(document.activeElement).toBe(host.querySelector('.pill'))
+    // Escape with the pointer still there: it needs a new hover to open again
+    zone(host).dispatchEvent(at('pointermove', 70, 25))
+    advance(PILL_OPEN_DELAY * 3)
+    expect(card(host)).toBeNull()
+
+    host.querySelector<HTMLElement>('.pill')!.click()
+    for (let i = 0; i < 3; i++) await tick()
+    flushSync()
+    card(host)!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    flushSync()
+    expect(card(host)).not.toBeNull()
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    flushSync()
+    expect(card(host)).toBeNull()
+  })
+
+  it('the keyboard: Enter on the pill opens it with the focus inside; tabbing out of it closes it', async () => {
+    const host = corner()
+    const outside = document.createElement('button')
+    document.body.append(outside)
+    const pill = host.querySelector<HTMLElement>('.pill')!
+    expect(pill.getAttribute('aria-expanded')).toBe('false')
+    pill.focus()
+    pill.click() // what Enter or Space on a button does
+    for (let i = 0; i < 3; i++) await tick()
+    flushSync()
+    const inside = document.activeElement as HTMLElement
+    expect(card(host)!.contains(inside)).toBe(true)
+    inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }))
+    flushSync()
+    expect(card(host)).toBeNull()
+  })
+
+  it('its controls sit inside the card: Show above the tiles (an expand icon), Minimise, Hide for me, then the Spotify button and Stop sharing', async () => {
+    const host = corner()
+    host.querySelector<HTMLElement>('.pill')!.click()
+    for (let i = 0; i < 3; i++) await tick()
+    flushSync()
+    const c = card(host)!
+    for (const l of ['Show above the tiles', 'Minimise', 'Hide for me', 'Listen on Spotify', 'Stop sharing']) expect(c.contains(btn(host, l)!), l).toBe(true)
+    const expand = btn(host, 'Show above the tiles')!
+    expect(expand.classList.contains('icon-btn')).toBe(true)
+    expect(expand.getAttribute('data-tip')).toBe('Show above the tiles')
+    expect(expand.querySelector('svg path')!.getAttribute('d')).toBe(EXPAND_PATH)
+    // Minimise shrinks it into the pill (focus there); the expand goes back to the strip
+    btn(host, 'Minimise')!.focus()
+    btn(host, 'Minimise')!.click()
+    for (let i = 0; i < 3; i++) await tick()
+    flushSync()
+    expect(card(host)).toBeNull()
+    expect(document.activeElement).toBe(host.querySelector('.pill'))
+    expect(modeFor('S-1')).toBe('pill')
+    host.querySelector<HTMLElement>('.pill')!.click()
+    for (let i = 0; i < 3; i++) await tick()
     flushSync()
     btn(host, 'Show above the tiles')!.click()
     flushSync()
     expect(modeFor('S-1')).toBe('strip')
+    setMode('S-1', 'pill')
+    flushSync()
+    host.querySelector<HTMLElement>('.pill')!.click()
+    for (let i = 0; i < 3; i++) await tick()
+    flushSync()
+    btn(host, 'Hide for me')!.click()
+    flushSync()
+    expect(modeFor('S-1')).toBe('hidden')
   })
 })

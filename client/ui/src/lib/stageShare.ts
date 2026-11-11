@@ -44,5 +44,24 @@ const PHRASES: Record<string, string> = {
   jam: 'a Jam', track: 'a song', album: 'an album', playlist: 'a playlist', episode: 'an episode', show: 'a podcast', artist: 'an artist',
 }
 
-/** How the share's chat line names what was shared ("alex shared a Jam to the stage"), as the server words it. */
+/** How an old share line names what was shared ("alex shared a Jam to the stage"): shares from before #288 left one in
+ *  the chat; now the share is the sharer's own message with the link. */
 export const sharePhrase = (kind: string): string => PHRASES[kind] ?? 'something'
+
+// The Spotify links the stage takes (server/src/stage/mod.rs spotify_link, the ones #196 unfurls): an open.spotify.com
+// link to something (an id is 22 letters and digits) or a Jam invite, a Jam's app URI, or a spotify.link short link.
+// Ends at the next space; punctuation after it isn't part of it.
+const SPOTIFY_LINK =
+  /(?<![\w.:/-])(?:https?:\/\/open\.spotify\.com\/(?:intl-[a-z]{2}(?:-[a-z]{2})?\/)?(?:(track|album|playlist|episode|show|artist)\/([A-Za-z0-9]{22})(?![A-Za-z0-9])|socialsession\/([\w-]{6,}))|spotify:socialsession:([\w-]{6,})|https?:\/\/spotify\.link\/([A-Za-z0-9]{4,}))[^\s]*/gi
+
+/** The first Spotify link in `text` the stage could take (#288, the composer's "Share to the stage?" nudge): the link
+ *  as written, and a key that's the same for every copy of it (another `?si=`, another locale). */
+export function spotifyLinkIn(text: string): { url: string; key: string } | null {
+  for (const m of text.matchAll(SPOTIFY_LINK)) {
+    const url = m[0].replace(/[)\]}>.,;:!?'"]+$/, '')
+    const [, kind, id, jam, jamUri, short] = m
+    const key = kind ? `${kind.toLowerCase()}:${id}` : jam || jamUri ? `jam:${jam ?? jamUri}` : `short:${short}`
+    return { url, key }
+  }
+  return null
+}

@@ -245,6 +245,13 @@
   // the phone button (#50): start this conversation's call (ringing the others), or join the one going on
   const callGoing = $derived(!!app.state.calls[channelId])
   const inThisCall = $derived(voice.channelId === channelId || voice.joining === channelId)
+  // "Share to the stage?" on a Spotify link in the box (#288): a server voice channel's chat while you're in its call,
+  // as a Spotify card's Share to stage (LinkEmbed).
+  const stageNudge = $derived(
+    isVoice && !!channel?.server_id && voice.channelId === channelId && voice.connection === 'connected'
+      ? { share: (url: string) => api.shareToStage(channelId, url).then(() => {}), up: (app.state.stageShares[channelId] ?? []).map((x) => x.embed.url) }
+      : null,
+  )
   async function call() {
     error = ''
     try {
@@ -728,7 +735,7 @@
     {/if}
   {:else}
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate || isVoice ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
-    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} pollChannel={channelId} commands={COMMANDS} onSendGif={sendGif} />
+    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} pollChannel={channelId} commands={COMMANDS} onSendGif={sendGif} {stageNudge} />
   {/if}
   {#if repliesRoot}
     {#key repliesRoot.id}

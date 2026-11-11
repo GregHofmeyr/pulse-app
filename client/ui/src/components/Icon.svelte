@@ -73,6 +73,8 @@
     play: 'M7 4v16l13-8z',
     pause: 'M8 4v16M16 4v16',
     fullscreen: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
+    // two arrows out to opposite corners: make it bigger (the stage's Spotify card back to the strip, #288)
+    expand: 'M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7',
     back5: 'M3 4v5h5M3.5 9A9 9 0 1 1 3 13',
     fwd5: 'M21 4v5h-5M20.5 9A9 9 0 1 0 21 13',
     frameBack: 'M19 5 9 12l10 7zM5 5v14',

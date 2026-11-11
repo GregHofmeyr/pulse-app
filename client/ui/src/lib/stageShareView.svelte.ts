@@ -1,11 +1,11 @@
 // How the stage shows a Spotify share for you (#234), remembered on this device: the strip above the tiles, the
-// floating pill, the corner card, or hidden (until the header's Spotify button). A new share shows the strip again,
-// unless you'd hidden the one before it.
+// floating pill, or hidden (until the header's Spotify button). A new share shows the strip again, unless you'd hidden
+// the one before it. The corner card is the pill grown open (#288): a moment's view, never kept.
 
-export type StageMode = 'strip' | 'pill' | 'corner' | 'hidden'
+export type StageMode = 'strip' | 'pill' | 'hidden'
 
 const KEY = 'pulse.stageShare'
-const MODES: StageMode[] = ['strip', 'pill', 'corner', 'hidden']
+const MODES: StageMode[] = ['strip', 'pill', 'hidden']
 
 type Saved = { mode: StageMode; shareId: string | null }
 
@@ -14,7 +14,9 @@ function load(): Saved {
     const v: unknown = JSON.parse(localStorage.getItem(KEY) ?? '{}')
     if (v && typeof v === 'object') {
       const o = v as Record<string, unknown>
-      const mode = MODES.includes(o.mode as StageMode) ? (o.mode as StageMode) : 'strip'
+      // 'corner' was kept before #288: it's the pill now, which opens into the card
+      const raw = o.mode === 'corner' ? 'pill' : o.mode
+      const mode = MODES.includes(raw as StageMode) ? (raw as StageMode) : 'strip'
       return { mode, shareId: typeof o.shareId === 'string' ? o.shareId : null }
     }
   } catch {
