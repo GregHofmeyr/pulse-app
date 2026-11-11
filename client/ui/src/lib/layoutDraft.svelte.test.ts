@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 // Categories (#54): a reorder shows at once as a draft over the server's layout; the saved layout replaces it, a
 // refused one (someone else moved first) snaps back to the server's order with a notice.
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushSync } from 'svelte'
 
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }))
 
-import { drafts, resetSaves, saveOrder } from './layoutDraft.svelte'
+import { drafts, REFUSED_HOLD_MS, resetSaves, saveOrder } from './layoutDraft.svelte'
 import { app, ui } from './store.svelte'
 import { emptyState } from './state'
 import { toRequest, type Order } from './layout'
@@ -33,7 +34,26 @@ beforeEach(() => {
   resetSaves()
   ui.notice = null
   app.state = { ...emptyState(), channels: { A: ch('A', 0), B: ch('B', 0, 'K1') }, layouts: { S1: { revision: 7, categories: [cat] } } }
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
 })
+afterEach(() => {
+  vi.useRealTimers()
+})
+/** A refused draft is held for the change that beat it (#198); nothing comes, so it goes after the hold. */
+const holdPasses = () => {
+  vi.advanceTimersByTime(REFUSED_HOLD_MS)
+  flushSync()
+}
+/** Lets a refusal be handled (its promise has been answered). */
+const answered = async () => {
+  for (let i = 0; i < 5; i++) await Promise.resolve()
+}
+/** Someone else's layout lands (a LayoutChanged): the revision moves on. */
+const theirsLands = async (revision = 8) => {
+  app.state = { ...app.state, layouts: { S1: { revision, categories: [cat] } } }
+  flushSync()
+  await Promise.resolve()
+}
 
 describe('saveOrder', () => {
   it('the draft shows at once and the saved layout replaces it', async () => {
@@ -51,10 +71,14 @@ describe('saveOrder', () => {
     expect(ui.notice).toBeNull()
   })
 
-  it('a refused save snaps back', async () => {
+  it('a refused save snaps back once the hold passes', async () => {
     invoke.mockRejectedValueOnce('Someone else changed the list first')
     const before = app.state
-    await saveOrder('S1', order)
+    const done = saveOrder('S1', order)
+    await answered()
+    expect(drafts.byServer['S1']).toEqual(order)
+    holdPasses()
+    await done
     expect(drafts.byServer['S1']).toBeUndefined()
     expect(app.state).toBe(before)
     expect(ui.notice).toBe('Someone else changed the list first')
@@ -101,6 +125,8 @@ describe('saveOrder', () => {
     const a = saveOrder('S1', order)
     const b = saveOrder('S1', { top: [], cats: [{ id: 'K1', channels: ['A', 'B'] }] })
     first.reject('Someone else changed the list first')
+    await answered()
+    holdPasses()
     await Promise.all([a, b])
     expect(invoke).toHaveBeenCalledTimes(1)
     expect(drafts.byServer['S1']).toBeUndefined()
@@ -116,6 +142,7 @@ describe('saveOrder', () => {
     invoke.mockRejectedValueOnce('stale')
     await saveOrder('S1', order, 6)
     expect(invoke).toHaveBeenCalledWith('save_layout', { serverId: 'S1', layout: toRequest(order, 6) })
+    // the change it missed is already here: nothing to wait for
     expect(drafts.byServer['S1']).toBeUndefined()
   })
 
@@ -128,5 +155,46 @@ describe('saveOrder', () => {
     first.resolve(saved)
     await Promise.all([a, b])
     expect(invoke).toHaveBeenLastCalledWith('save_layout', { serverId: 'S1', layout: toRequest(next, 8) })
+  })
+
+  // #198: refused before the other person's change arrives, the list would snap back and then move again to theirs.
+  // The draft stays until their layout lands (or a short hold passes), so it's one move.
+  describe('a refusal that beats the change it lost to (#198)', () => {
+    it('keeps the draft until their layout lands, then shows theirs', async () => {
+      invoke.mockRejectedValueOnce('Someone else changed the list first')
+      let settled = false
+      const done = saveOrder('S1', order).then(() => (settled = true))
+      await answered()
+      expect(drafts.byServer['S1']).toEqual(order)
+      expect(ui.notice).toBe('Someone else changed the list first')
+      expect(settled).toBe(false)
+      await theirsLands()
+      await done
+      expect(drafts.byServer['S1']).toBeUndefined()
+    })
+
+    it('their layout already here when the refusal comes: the draft goes at once', async () => {
+      const d = deferred<ServerLayout>()
+      invoke.mockReturnValueOnce(d.promise)
+      const done = saveOrder('S1', order)
+      await theirsLands()
+      expect(drafts.byServer['S1']).toEqual(order)
+      d.reject('Someone else changed the list first')
+      await done
+      expect(drafts.byServer['S1']).toBeUndefined()
+    })
+
+    it('a new move during the hold is not dropped by it', async () => {
+      invoke.mockRejectedValueOnce('stale').mockReturnValueOnce(new Promise(() => {}))
+      const first = saveOrder('S1', order)
+      await answered()
+      const next: Order = { top: [], cats: [{ id: 'K1', channels: ['A', 'B'] }] }
+      void saveOrder('S1', next)
+      // the new move ends the hold: the refused save has settled
+      await first
+      holdPasses()
+      await theirsLands()
+      expect(drafts.byServer['S1']).toEqual(next)
+    })
   })
 })

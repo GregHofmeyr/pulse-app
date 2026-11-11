@@ -19,7 +19,7 @@ import { startVoiceListening, voice, voiceApi } from '../lib/voice.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 import { HOVER_DELAY_MS } from '../lib/hoverPrefetch'
 import { categoryUi, requestCreateCategory } from '../lib/categoryUi.svelte'
-import { drafts, resetSaves } from '../lib/layoutDraft.svelte'
+import { drafts, REFUSED_HOLD_MS, resetSaves } from '../lib/layoutDraft.svelte'
 import { isCollapsed, resetCollapsed, setCollapsed } from '../lib/sidebarSections.svelte'
 import { testReady } from '../lib/testReady'
 import type { Category } from '../lib/protocol/Category'
@@ -716,21 +716,32 @@ describe('ChannelList by categories', () => {
   })
 
   it('a refused move snaps back with focus still on what moved', async () => {
-    showLive()
-    invoke.mockImplementation((c: string) => (c === 'save_layout' ? Promise.reject('Someone else changed the list first') : Promise.resolve(undefined)))
-    rowOf('T2').focus()
-    press(rowOf('T2'), 'ArrowDown', { altKey: true })
-    await flush()
-    await flush()
-    // back in its own category (a new element again), and still focused
-    expect(rowNames(document.querySelector('.cat[data-category="C1"]')!)).toEqual(['general', 'memes'])
-    expect(document.activeElement).toBe(rowOf('T2'))
-    headingOf('C3').focus()
-    press(headingOf('C3'), 'ArrowUp', { altKey: true })
-    await flush()
-    await flush()
-    expect(headings().map((h) => h.textContent?.trim())).toEqual(['Text Channels', 'Gaming', 'Voice Channels'])
-    expect(document.activeElement).toBe(headingOf('C3'))
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      showLive()
+      invoke.mockImplementation((c: string) => (c === 'save_layout' ? Promise.reject('Someone else changed the list first') : Promise.resolve(undefined)))
+      rowOf('T2').focus()
+      press(rowOf('T2'), 'ArrowDown', { altKey: true })
+      await flush()
+      await flush()
+      // nothing else arrived: after the hold for it (#198), back in its own category (a new element), still focused
+      vi.advanceTimersByTime(REFUSED_HOLD_MS)
+      await flush()
+      await flush()
+      expect(rowNames(document.querySelector('.cat[data-category="C1"]')!)).toEqual(['general', 'memes'])
+      expect(document.activeElement).toBe(rowOf('T2'))
+      headingOf('C3').focus()
+      press(headingOf('C3'), 'ArrowUp', { altKey: true })
+      await flush()
+      await flush()
+      vi.advanceTimersByTime(REFUSED_HOLD_MS)
+      await flush()
+      await flush()
+      expect(headings().map((h) => h.textContent?.trim())).toEqual(['Text Channels', 'Gaming', 'Voice Channels'])
+      expect(document.activeElement).toBe(headingOf('C3'))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("Move up / Move down in a channel's menu", async () => {
