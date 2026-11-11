@@ -249,6 +249,33 @@ describe('streams in the call (#51)', () => {
     expect(callView.full).toBeNull()
   })
 
+  // #285: as a server voice channel shows yours as a tile, the band shows your own stream (the live card, its preview
+  // and Stop) while you're live here; no ghost switch (a DM or group has no ghosts)
+  it('you live here: your live card shows under the band, without the ghost switch', () => {
+    onWindows(true)
+    globalThis.MediaStream ??= class {} as never
+    live([info('G1', 'U1')])
+    stream.live = { channelId: 'G1', res: 1080, fps: 60, audio: true, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: false, sound: 'app' } as never
+    show(CallBand, { channelId: 'G1' })
+    const card = document.querySelector('section[aria-label="You\'re live"]')!
+    expect(card).not.toBeNull()
+    expect(card.querySelector('video')).not.toBeNull()
+    expect(card.textContent).not.toContain('Allow ghost viewers')
+    expect([...card.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Stop')).toBe(true)
+    stream.live = null
+    flushSync()
+    expect(document.querySelector('section[aria-label="You\'re live"]')).toBeNull()
+  })
+
+  it('live in another call: no live card in this one', () => {
+    onWindows(true)
+    live([info('G1', 'U2')])
+    stream.live = { channelId: 'DM1', res: 1080, fps: 60, audio: true, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: false, sound: 'app' } as never
+    show(CallBand, { channelId: 'G1' })
+    expect(document.querySelector('section[aria-label="You\'re live"]')).toBeNull()
+    stream.live = null
+  })
+
   it('nobody live: no LIVE row', () => {
     live([])
     show(CallBand, { channelId: 'G1' })

@@ -6,6 +6,7 @@
   // whatever call you're in, and each person's "Mute soundboard" (their right-click menu) holds here too.
   // Someone live here (#51): their LIVE badge (its popover has the preview) and Watch, as in a server voice channel;
   // the watch shows in full view in place of the conversation (the shell), or as the mini-preview once you go Back.
+  // You live here (#285): your live card (preview, viewers, Stop) under the band, as a server channel's tile shows it.
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
@@ -18,9 +19,10 @@
   import { declineCall, joinCall, ringIn } from '../lib/calls.svelte'
   import { soundboard } from '../lib/soundboard.svelte'
   import LiveBadge from './LiveBadge.svelte'
+  import LiveCard from './LiveCard.svelte'
   import { liveIn } from '../lib/selectors'
   import { isWindows } from '../lib/stream/platform'
-  import { findWatch } from '../lib/stream/stream.svelte'
+  import { findWatch, stream } from '../lib/stream/stream.svelte'
   import { watchDisabledReason } from '../lib/stream/viewer'
   import { openFull, watchModeFor, watchStream } from '../lib/stream/viewer.svelte'
 
@@ -101,6 +103,7 @@
       {#if ring}<button class="decline" onclick={() => declineCall(channelId)}>Decline</button>{/if}
     {/if}
   </div>
+  {#if stream.live?.channelId === channelId}<div class="mine"><LiveCard {channelId} serverId={null} /></div>{/if}
 {/if}
 
 {#if menu}
@@ -118,6 +121,8 @@
   .label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text); }
   .band.ringing .label { color: var(--ok-text); }
   .grow { flex: 1; }
+  /* your live card (#285): its own margins, with the band's gap above */
+  .mine { flex-shrink: 0; display: flex; flex-direction: column; padding-top: 8px; }
   .live-who { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
   .live-name { font-weight: 600; }
   .watch { height: 28px; padding: 0 12px; border: 0; border-radius: var(--radius-md); background: var(--accent); color: var(--on-accent); font-weight: 600; }

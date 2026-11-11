@@ -11,6 +11,8 @@
   let { channelId, serverId, tile = false }: { channelId: string; serverId: string | null; tile?: boolean } = $props()
 
   const live = $derived(stream.live)
+  // a DM or group call has no ghost viewers (#51, #285)
+  const convo = $derived(['dm', 'group'].includes(app.state.channels[channelId]?.kind ?? ''))
   const mine = $derived(liveIn(app.state, channelId)[app.state.me?.id ?? ''])
   const viewers = $derived(mine?.viewers ?? [])
   const ghosts = $derived(ghostCount(mine?.ghosts))
@@ -72,9 +74,9 @@
         </button>
       {/if}
       <!-- off mid-stream: the ghosts watching now are removed ("<you> switched to voice-only") -->
-      <label class="allow" data-tip="People in the server who aren't in this call can watch without showing up">
+      {#if !convo}<label class="allow" data-tip="People in the server who aren't in this call can watch without showing up">
         <input type="checkbox" checked={live.allowGhosts} onchange={(e) => streamApi.setAllowGhosts(e.currentTarget.checked)} /> Allow ghost viewers
-      </label>
+      </label>{/if}
       <span class="spacer"></span>
       <button type="button" class="btn btn-danger" onclick={() => streamApi.stop()}>Stop</button>
     </div>
