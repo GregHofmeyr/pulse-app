@@ -68,6 +68,8 @@ pub async fn insert(
         poll_ended: poll_ended(&stored).map(Box::new),
         stage_share_line: stage_share_line(&stored),
         gif: None,
+        attachments: vec![],
+        caption_is_fallback: false,
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
         .bind(msg.id.to_string())

@@ -183,6 +183,12 @@ impl Search {
                 SearchHas::Quote => {
                     " AND EXISTS (SELECT 1 FROM quotes x WHERE x.message_id = m.id)"
                 }
+                SearchHas::Media => {
+                    " AND EXISTS (SELECT 1 FROM attachments x WHERE x.message_id = m.id AND x.kind IN ('image','video','audio'))"
+                }
+                SearchHas::File => {
+                    " AND EXISTS (SELECT 1 FROM attachments x WHERE x.message_id = m.id AND x.kind = 'file')"
+                }
                 SearchHas::Link => {
                     " AND (instr(lower(m.content), 'http://') > 0
                        OR instr(lower(m.content), 'https://') > 0

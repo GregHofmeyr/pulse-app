@@ -120,6 +120,8 @@ fn from_row(r: Row) -> AppResult<Message> {
         gif: gif
             .filter(|_| deleted_at.is_none())
             .and_then(|g| serde_json::from_str(&g).ok()),
+        attachments: vec![],
+        caption_is_fallback: false,
     })
 }
 
@@ -465,6 +467,8 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         poll_ended: None,
         stage_share_line: None,
         gif,
+        attachments: vec![],
+        caption_is_fallback: false,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -878,6 +882,8 @@ mod tests {
             poll_ended: None,
             stage_share_line: None,
             gif: None,
+            attachments: vec![],
+            caption_is_fallback: false,
         }
     }
 

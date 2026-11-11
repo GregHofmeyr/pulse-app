@@ -124,6 +124,8 @@ async fn create(
         poll_ended: None,
         stage_share_line: None,
         gif: None,
+        attachments: vec![],
+        caption_is_fallback: false,
     };
     let stored = Stored {
         message_id: msg.id,

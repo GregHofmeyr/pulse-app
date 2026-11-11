@@ -115,6 +115,7 @@ impl Outbox {
                 nonce: Some(item.nonce.clone()),
                 thread_root_id: item.thread_root,
                 gif: item.gif.clone(),
+                attachments: vec![],
             };
             match api.send_message(token, item.channel, &body).await {
                 Ok(m) => {

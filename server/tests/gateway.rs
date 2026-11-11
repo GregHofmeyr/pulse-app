@@ -95,6 +95,8 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         poll_ended: None,
         stage_share_line: None,
         gif: None,
+        attachments: vec![],
+        caption_is_fallback: false,
     }
 }
 

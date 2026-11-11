@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::ids::{
-    CallId, CategoryId, ChannelId, ClipUploadId, GameId, LineId, MessageId, QotyEventId, ServerId,
-    UserId,
+    AttachmentId, CallId, CategoryId, ChannelId, ClipUploadId, GameId, LineId, MessageId,
+    QotyEventId, ServerId, UserId,
 };
 
 /// A `Debug` that names every field but prints the secret ones as `<redacted>`, for types that
@@ -713,6 +713,15 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub gif: Option<Gif>,
+    /// Images, videos, audio and files sent with the message (#57), in the order they were attached.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<Attachment>>", optional)]
+    pub attachments: Vec<Attachment>,
+    /// True when `content` is only a stand-in for the attachments' names (nothing was typed), so
+    /// the UI can hide it instead of showing it as a caption.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub caption_is_fallback: bool,
 }
 
 /// How long a pin lasts (#178).
@@ -1291,11 +1300,86 @@ pub struct SendMessageRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub gif: Option<Gif>,
+    /// Uploads (from `POST /attachments`) to attach; sends from before attachments omit it.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentId>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct EditMessageRequest {
     pub content: String,
+}
+
+// ---------- Attachments (#57) ----------
+
+/// What an attachment is, which decides how the UI shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum AttachmentKind {
+    Image,
+    Video,
+    Audio,
+    File,
+}
+
+/// A file sent with a message.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Attachment {
+    pub id: AttachmentId,
+    pub name: String,
+    pub content_type: String,
+    pub kind: AttachmentKind,
+    pub size: u64,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub duration_ms: Option<u32>,
+    /// Temporary sends only (RFC 3339, millisecond precision, Z).
+    pub expires_at: Option<String>,
+    /// A temporary send whose bytes are gone.
+    pub expired: bool,
+}
+
+/// `POST /attachments`: what is about to be uploaded.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct StartAttachmentRequest {
+    pub name: String,
+    pub size: u64,
+    pub content_type: String,
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub height: Option<u32>,
+    #[serde(default)]
+    pub duration_ms: Option<u32>,
+    /// Keep the file for this many days, then delete it (a temporary send).
+    #[serde(default)]
+    pub temp_days: Option<u8>,
+}
+
+/// Where to put the bytes. `url` is `None` when the upload has no single PUT URL (big sends).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct AttachmentUpload {
+    pub id: AttachmentId,
+    pub url: Option<String>,
+    pub content_type: String,
+    pub expires_at: String,
+}
+
+/// A fresh link to download an attachment.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct AttachmentUrl {
+    pub id: AttachmentId,
+    pub url: Option<String>,
+    pub expires_at: Option<String>,
+}
+
+/// Limits on attachments, shared so the client can refuse before uploading.
+pub mod attachment_limits {
+    pub const PER_MESSAGE: usize = 10;
+    pub const MAX_BYTES: u64 = 50 * 1024 * 1024;
+    pub const TEMP_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+    pub const TEMP_CAP_BYTES: u64 = 20 * 1024 * 1024 * 1024;
+    pub const NAME_MAX_CHARS: usize = 200;
 }
 
 /// A LiveKit join token (voice, or a stream ticket) and where to use it.
@@ -1998,6 +2082,8 @@ pub enum SearchHas {
     Clip,
     Quote,
     Link,
+    Media,
+    File,
 }
 
 impl SearchHas {
@@ -2006,6 +2092,8 @@ impl SearchHas {
             Self::Clip => "clip",
             Self::Quote => "quote",
             Self::Link => "link",
+            Self::Media => "media",
+            Self::File => "file",
         }
     }
 
@@ -2014,6 +2102,8 @@ impl SearchHas {
             "clip" => Self::Clip,
             "quote" => Self::Quote,
             "link" => Self::Link,
+            "media" => Self::Media,
+            "file" => Self::File,
             _ => return None,
         })
     }
@@ -2073,6 +2163,55 @@ pub struct SearchResults {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn plain_message() -> Message {
+        serde_json::from_value(serde_json::json!({
+            "id": MessageId::new(), "channel_id": ChannelId::new(), "author_id": null,
+            "kind": "normal", "content": "hi", "reply_to_id": null,
+            "created_at": "2026-11-11T10:00:00.000Z", "edited_at": null, "deleted": false,
+        }))
+        .unwrap()
+    }
+
+    /// A message with no attachments looks as it did before them (keeps every frame small);
+    /// one with attachments round-trips.
+    #[test]
+    fn message_attachments_round_trip_and_stay_off_the_wire_when_empty() {
+        let m = plain_message();
+        let json = serde_json::to_value(&m).unwrap();
+        assert!(json.get("attachments").is_none(), "{json}");
+        assert!(json.get("caption_is_fallback").is_none(), "{json}");
+        assert!(m.attachments.is_empty() && !m.caption_is_fallback);
+
+        let with = Message {
+            attachments: vec![Attachment {
+                id: AttachmentId::new(),
+                name: "cat.png".into(),
+                content_type: "image/png".into(),
+                kind: AttachmentKind::Image,
+                size: 1234,
+                width: Some(10),
+                height: Some(20),
+                duration_ms: None,
+                expires_at: None,
+                expired: false,
+            }],
+            caption_is_fallback: true,
+            ..m
+        };
+        let json = serde_json::to_value(&with).unwrap();
+        assert_eq!(json["attachments"][0]["kind"], "image");
+        assert_eq!(json["caption_is_fallback"], true);
+        assert_eq!(serde_json::from_value::<Message>(json).unwrap(), with);
+    }
+
+    /// Sends from before attachments have no `attachments` key.
+    #[test]
+    fn send_request_without_attachments_defaults_to_none() {
+        let r: SendMessageRequest =
+            serde_json::from_str(r#"{"content":"hi","reply_to_id":null,"nonce":null}"#).unwrap();
+        assert!(r.attachments.is_empty());
+    }
 
     /// The pointer reads slice i of n from a clockwise turn: no turn shows slice 0 at the top's right edge; a
     /// turn just past one slice's width backwards (360 − s·i − ε) shows slice i.
@@ -2299,6 +2438,8 @@ mod tests {
             (SearchHas::Clip, "clip"),
             (SearchHas::Quote, "quote"),
             (SearchHas::Link, "link"),
+            (SearchHas::Media, "media"),
+            (SearchHas::File, "file"),
         ] {
             assert_eq!(serde_json::to_string(&h).unwrap(), format!("\"{w}\""));
             assert_eq!(h.as_str(), w);

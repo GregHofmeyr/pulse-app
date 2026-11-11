@@ -177,6 +177,8 @@ async fn silent_client_times_out_despite_outbound_traffic() {
                 poll_ended: None,
                 stage_share_line: None,
                 gif: None,
+                attachments: vec![],
+                caption_is_fallback: false,
             };
             hub.publish(
                 &db,

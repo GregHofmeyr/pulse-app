@@ -138,6 +138,7 @@ async fn emoji_reactions_and_media_end_to_end() {
         nonce: None,
         thread_root_id: None,
         gif: None,
+        attachments: vec![],
     };
     let msg = api.send_message(&alex, chan.id, &req).await.unwrap();
 

@@ -44,6 +44,11 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::LayoutCategory::export_all(&cfg)?;
     rest::CreateDmRequest::export_all(&cfg)?;
     rest::SendMessageRequest::export_all(&cfg)?;
+    rest::AttachmentKind::export_all(&cfg)?;
+    rest::Attachment::export_all(&cfg)?;
+    rest::StartAttachmentRequest::export_all(&cfg)?;
+    rest::AttachmentUpload::export_all(&cfg)?;
+    rest::AttachmentUrl::export_all(&cfg)?;
     rest::EditMessageRequest::export_all(&cfg)?;
     rest::PinRequest::export_all(&cfg)?;
     rest::PinnedMessage::export_all(&cfg)?;

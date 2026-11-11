@@ -4,4 +4,4 @@
  * What a search result must carry (`has:` in the box). Sent as one comma-separated `has`
  * parameter of these words.
  */
-export type SearchHas = "clip" | "quote" | "link";
+export type SearchHas = "clip" | "quote" | "link" | "media" | "file";
