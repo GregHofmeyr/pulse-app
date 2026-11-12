@@ -24,6 +24,30 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.9',
+  version: '0.2.9',
+  date: '12 November 2026',
+  new: [
+    'Inbox: every @mention and reply to you, across every server and DM, in one place (top bar). All and Mentions tabs, click to jump',
+    'Listening to: show what you\'re playing on Spotify on your profile, and a Jam on the stage shows the current song and art. Off until you turn it on in Settings › Privacy',
+    'Notes to self: a private chat with just you, pinned at the top of your DMs',
+    'Add to quotes from any message\'s menu',
+  ],
+  fixes: [],
+  qol: [
+    'Jumped away to read a reply? "Back to where you were" takes you back before jumping to the present',
+    'The quick switcher now searches messages too',
+    'Bind a global key to open the quick switcher from any app (Settings › Keybinds)',
+  ],
+  soon: [
+    'A fresh profile editor: edit right inside your big profile card',
+    'More fresh and reworked designs on the way',
+  ],
+  message: 'Your inbox is now in Pulse. Sorry 📬',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.8',
   version: '0.2.8',
   date: '11 November 2026',
@@ -39,33 +63,4 @@ export const patchNotes: PatchNotes = {
     'More fresh and reworked designs on the way',
   ],
   message: 'Ctrl+K. You\'re welcome.',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.7',
-  version: '0.2.7',
-  date: '11 November 2026',
-  new: [
-    'Images and files: paste, drop or 📎. Screenshots shrink automatically, there\'s a full-size viewer, and video and audio play inline',
-    'Big files up to 2 GB as temporary sends (1 or 7 days). Drop a folder and Pulse zips it for you',
-    'GIFs: search, trending and favourites, powered by GIPHY',
-    'Delete a server (owner only, with 7 days to change your mind)',
-  ],
-  fixes: [
-    'The chat stays at the bottom when link cards or images load',
-    'Mark as read now clears mentions in quote and clip replies',
-    'YouTube cards come back after playing, and a ✕ closes the player',
-    'Reordering the sidebar at the same time as someone else no longer jumps twice',
-  ],
-  qol: [
-    'Spotify on the stage: the pill grows into the card, a "Share to the stage?" nudge when you paste a link, and shares post the link so everyone can join',
-    'See your own stream in DM calls, with a LIVE mark in your DM list',
-    '"Spotify" shows on a voice channel while something\'s on its stage',
-  ],
-  soon: [
-    'A fresh profile editor: edit right inside your big profile card',
-    'More fresh and reworked designs on the way',
-  ],
-  message: 'Send memes properly at last. Screenshots, GIFs, the lot 📎',
 }
