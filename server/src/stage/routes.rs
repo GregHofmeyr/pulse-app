@@ -74,23 +74,14 @@ async fn share(
         // a short link that led somewhere else is no Spotify card either
         .filter(|c| c.provider == EmbedProvider::Spotify && c.provider_id.is_some())
         .ok_or_else(|| AppError::BadRequest("couldn't read that Spotify link".into()))?;
-    let mut thumb = card.thumb;
-    // The artwork is media no message holds: restart its cleanup clock (a day) so it outlives the share (hours). A
-    // cached one already cleaned up goes.
-    if let Some(t) = &thumb {
-        let touched = sqlx::query("UPDATE media SET created_at = ? WHERE hash = ?")
-            .bind(crate::db::now())
-            .bind(&t.hash)
-            .execute(&s.db)
-            .await?
-            .rows_affected();
-        if touched == 0 {
-            thumb = None;
-        }
-    }
+    // The artwork is media no message holds: its cleanup clock (a day) restarts so it outlives the share (hours).
+    let thumb = match card.thumb {
+        Some(t) => crate::embeds::keep_thumb(&s.db, t).await?,
+        None => None,
+    };
     let at = chrono::Utc::now();
     let ttl = chrono::Duration::from_std(s.cfg.stage_share_ttl).map_err(anyhow::Error::from)?;
-    let share = StageShare {
+    let mut share = StageShare {
         id: pulse_protocol::ids::next_ulid().to_string(),
         channel_id: id,
         shared_by: me,
@@ -109,6 +100,7 @@ async fn share(
             start: None,
             vertical: false,
         },
+        now_playing: None,
     };
     {
         // Shares, stops, leaves and expiries go out in the order they happened.
@@ -124,6 +116,10 @@ async fn share(
         if let Some(up) = s.voice.stage.same(id, me, &share.embed.url) {
             return Ok(Json(up));
         }
+        // a Jam shows what its sharer's Spotify plays (#275), from the start
+        share.now_playing = super::jam(&share)
+            .then(|| s.hub.listening_of(me, false))
+            .flatten();
         let gone = s.voice.stage.put(share.clone());
         announce_cleared(&s, gone).await;
         s.hub

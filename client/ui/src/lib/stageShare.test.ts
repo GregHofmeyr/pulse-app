@@ -11,19 +11,29 @@ const share = (provider_id: string, over: Partial<StageShare['embed']> = {}): St
 describe('stageCard', () => {
   it('a Jam: Join the Jam, and "may have ended" after an hour', () => {
     const jam = share('jam:abc', { kind: 'card', title: 'Join the Jam', author: null })
-    expect(stageCard(jam, 'alex', at)).toEqual({ title: 'Spotify Jam', subtitle: 'Listen together · Shared by alex', action: 'Join the Jam', jam: true })
+    expect(stageCard(jam, 'alex', at)).toEqual({ title: 'Spotify Jam', subtitle: 'Listen together · Shared by alex', action: 'Join the Jam', jam: true, nowPlaying: null })
     expect(stageCard(jam, 'alex', at + JAM_MAY_HAVE_ENDED_MS - 1).subtitle).toBe('Listen together · Shared by alex')
     expect(stageCard(jam, 'alex', at + JAM_MAY_HAVE_ENDED_MS).subtitle).toBe('Shared by alex · may have ended')
   })
 
   it('a song: its title, artist and Listen on Spotify; never "may have ended"', () => {
-    expect(stageCard(share('track:x'), 'sam', at + 2 * JAM_MAY_HAVE_ENDED_MS)).toEqual({ title: 'Midnight City', subtitle: 'M83 · Shared by sam', action: 'Listen on Spotify', jam: false })
+    expect(stageCard(share('track:x'), 'sam', at + 2 * JAM_MAY_HAVE_ENDED_MS)).toEqual({ title: 'Midnight City', subtitle: 'M83 · Shared by sam', action: 'Listen on Spotify', jam: false, nowPlaying: null })
   })
 
   it('without an artist the kind stands in; without a title the link; an artist opens Spotify', () => {
     expect(stageCard(share('playlist:x', { author: null }), 'kim', at).subtitle).toBe('Playlist · Shared by kim')
     expect(stageCard(share('track:x', { title: null }), 'kim', at).title).toBe('https://open.spotify.com/x')
     expect(stageCard(share('artist:x', { author: null }), 'kim', at).action).toBe('Open Spotify')
+  })
+})
+
+describe('a Jam\'s Now playing (#275)', () => {
+  const song = { title: 'Song', artist: 'The Band', album: null, spotify_id: null, art: null }
+  it('a Jam shows what its sharer plays; anything else never does', () => {
+    const jam = { ...share('jam:abc', { kind: 'card' }), now_playing: song }
+    expect(stageCard(jam, 'alex', at).nowPlaying).toBe('Now playing · Song · The Band')
+    expect(stageCard({ ...jam, now_playing: { ...song, artist: null } }, 'alex', at).nowPlaying).toBe('Now playing · Song')
+    expect(stageCard({ ...share('track:x'), now_playing: song }, 'alex', at).nowPlaying).toBeNull()
   })
 })
 

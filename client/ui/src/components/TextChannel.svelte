@@ -22,6 +22,8 @@
   import { lastInput } from '../lib/inputModality'
   import { app, clock, discardFiles, queueMessage, retryFiles, ui } from '../lib/store.svelte'
   import { presenceOf } from '../lib/presence'
+  import { listeningOf } from '../lib/activity'
+  import ListeningLine from './ListeningLine.svelte'
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { conversationName, firstUnreadIndex, isMuted, isNotes, reanchor, shouldMarkRead } from '../lib/conversations'
@@ -726,6 +728,8 @@
     {:else if isPrivate && channel?.kind === 'dm' && others[0]}
       <Avatar id={others[0]} name={title} size={26} presence={presenceOf(app.state, others[0], clock.nowIso)} interactive serverId={null} />
       <span class="title"><Name userId={others[0]} serverId={null} text={title} /></span>
+      {@const listening = listeningOf(app.state, others[0])}
+      {#if listening}<ListeningLine {listening} />{/if}
     {:else if isPrivate}
       {#if channel?.icon_hash}
         <GroupIcon hash={channel.icon_hash} still={channel.icon_still} size={26} />

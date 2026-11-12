@@ -2,6 +2,9 @@
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
+  import ListeningLine from './ListeningLine.svelte'
+  import SpotifyIcon from './SpotifyIcon.svelte'
+  import { listeningOf } from '../lib/activity'
   import { app, clock } from '../lib/store.svelte'
   import { byPresence, presenceOf } from '../lib/presence'
   import { api, errorText } from '../lib/tauri'
@@ -39,9 +42,12 @@
   {#each sections as g (g.key)}
   <div class="label">{g.label} — {g.list.length}</div>
   {#each g.list as p (p.user.id)}
+    {@const listening = listeningOf(app.state, p.user.id)}
     <div class="row hover-row" class:off={g.key === 'offline'} data-section={g.key} role="presentation" onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}>
       <Avatar id={p.user.id} name={p.name} size={32} presence={presenceOf(app.state, p.user.id, clock.nowIso)} interactive serverId={null} hovered={() => hovered === p.user.id} />
-      <span class="who"><Name userId={p.user.id} serverId={null} text={p.name} surface="side" />{#if p.user.id === app.state.me?.id}<small> (you)</small>{/if}</span>
+      <!-- what they're listening to (#275) on the line under the name; Spotify's icon at the row's end -->
+      <span class="who"><span class="nm"><Name userId={p.user.id} serverId={null} text={p.name} surface="side" />{#if p.user.id === app.state.me?.id}<small> (you)</small>{/if}</span>{#if listening}<ListeningLine {listening} icon={false} />{/if}</span>
+      {#if listening}<span class="sp"><SpotifyIcon /></span>{/if}
       {#if p.user.id !== app.state.me?.id}
         <button class="x" aria-label="Remove {p.name}" data-tip="Remove from group" onclick={() => remove(p.user.id)}><Icon name="x" size={14} /></button>
       {/if}
@@ -61,7 +67,9 @@
   .row.off:hover { opacity: 1; }
   /* the status dot (#169): small, cut out of the avatar in the row's own colour (--ring), as on Discord */
   .row :global(.pres) { width: 12px; height: 12px; min-width: 0; min-height: 0; right: -1px; bottom: -1px; }
-  .who { flex: 1; min-width: 0; font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .who { flex: 1; min-width: 0; font-size: 14px; font-weight: 500; display: flex; flex-direction: column; }
+  .nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sp { flex-shrink: 0; color: var(--text-3); }
   .who small { color: var(--text-3); font-weight: 400; }
   /* a row's revealed action: the same as the server member list's Message (#173) */
   .x { width: 28px; height: 28px; flex-shrink: 0; border: 0; border-radius: var(--radius-sm); background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; opacity: 0; }

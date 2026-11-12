@@ -119,8 +119,15 @@ async fn authenticate(socket: &mut WebSocket, s: &AppState) -> Auth {
 /// a `since` no earlier than it and still records its own last-seen.
 async fn disconnected(s: &AppState, conn: ConnId, me: UserId, since: &str) {
     let at = now();
+    // what this connection was listening to goes with it (#275)
+    let was_listening = s.hub.listening_held(conn).is_some();
     s.hub.unregister(conn);
     if s.hub.is_online(me) {
+        if was_listening {
+            // another device's activity (or none) is theirs now
+            s.hub.sync_presence(&s.db, me).await;
+            crate::stage::listening_changed(s, me).await;
+        }
         return; // still connected elsewhere
     }
     let _ = sqlx::query(
@@ -133,6 +140,9 @@ async fn disconnected(s: &AppState, conn: ConnId, me: UserId, since: &str) {
     .execute(&s.db)
     .await;
     s.hub.sync_presence(&s.db, me).await;
+    if was_listening {
+        crate::stage::listening_changed(s, me).await;
+    }
 }
 
 /// Everyone with an account, with their presence as `viewer` may see it (#45).
@@ -339,6 +349,10 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
     let mut voice_pending = false;
     let mut voice_retry = tokio::time::Instant::now();
     let voice_wait = voice_retry_wait(s.cfg.limits.voice_state_user);
+    // "Listening to" updates held back by the limit (#275): the latest waits for the bucket, so it always lands.
+    let mut listening_pending: Option<ClientFrame> = None;
+    let mut listening_retry = tokio::time::Instant::now();
+    let listening_wait = voice_retry_wait(s.cfg.limits.listening_user);
     loop {
         tokio::select! {
             // A kick closes the queue too; check it first so the client gets the close code.
@@ -367,6 +381,15 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
                         }
                     }
                     None => voice_pending = false, // left voice; the leave event says it all
+                }
+            }
+            _ = tokio::time::sleep_until(listening_retry), if listening_pending.is_some() => {
+                if s.limits.listening_user.hit(&me.to_string()) {
+                    if let Some(ClientFrame::Listening { listening, show }) = listening_pending.take() {
+                        crate::activity::received(&s, conn, me, listening, show);
+                    }
+                } else {
+                    listening_retry = tokio::time::Instant::now() + listening_wait;
                 }
             }
             inc = socket.recv() => {
@@ -402,6 +425,17 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
                                 voice_pending = true;
                                 voice_retry = tokio::time::Instant::now() + voice_wait;
                             }
+                        }
+                    }
+                    Ok(ClientFrame::Listening { listening, show }) => {
+                        // a newer one replaces one held back; over the limit, it waits for the retry above
+                        if listening_pending.is_none() && s.limits.listening_user.hit(&me.to_string()) {
+                            crate::activity::received(&s, conn, me, listening, show);
+                        } else {
+                            if listening_pending.is_none() {
+                                listening_retry = tokio::time::Instant::now() + listening_wait;
+                            }
+                            listening_pending = Some(ClientFrame::Listening { listening, show });
                         }
                     }
                     Ok(ClientFrame::Hello { .. }) | Err(_) => {}

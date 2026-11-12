@@ -30,6 +30,11 @@ pub async fn audience_for(db: &SqlitePool, event: &Event) -> anyhow::Result<Audi
     if let Some(owner) = event.only_for() {
         return Ok(Audience::Users([owner].into_iter().collect()));
     }
+    // What someone listens to (#275) is told per viewer by `Hub::sync_presence`, never to an audience: published by
+    // mistake, it reaches nobody.
+    if matches!(event, Event::ListeningChanged { .. }) {
+        return Ok(Audience::Users(HashSet::new()));
+    }
     let Some(channel_id) = event.channel_id() else {
         // ServerCreated / MemberJoined: server-level, public.
         return Ok(Audience::Everyone);

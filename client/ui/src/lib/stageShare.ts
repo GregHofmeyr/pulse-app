@@ -1,6 +1,7 @@
 // Spotify on the voice stage (#234): how a shared card reads, and who may stop it. Pure; the owner's open choices
 // that the client mirrors are the constants here (the server's are in server/src/stage/mod.rs).
 import { spotifyCard } from './embeds'
+import { songLine } from './activity'
 import type { StageShare } from './protocol/StageShare'
 
 /** Anyone in the call may stop a share for everyone, not just its sharer (pick; the server enforces it too). */
@@ -15,6 +16,8 @@ export type StageCard = {
   /** The link-out's wording, one of Spotify's approved labels (#196). */
   action: 'Join the Jam' | 'Listen on Spotify' | 'Open Spotify'
   jam: boolean
+  /** A Jam's live "Now playing · Song · Artist" (#275): what its sharer's Spotify plays, while their Pulse reads it. */
+  nowPlaying: string | null
 }
 
 /** How `share`'s card reads, shared by `sharer` (a display name), at server time `now` (ms). */
@@ -23,7 +26,8 @@ export function stageCard(share: StageShare, sharer: string, now: number): Stage
   const by = `Shared by ${sharer}`
   if (sp?.jam) {
     const old = now - Date.parse(share.shared_at) >= JAM_MAY_HAVE_ENDED_MS
-    return { title: 'Spotify Jam', subtitle: old ? `${by} · may have ended` : `Listen together · ${by}`, action: 'Join the Jam', jam: true }
+    const np = share.now_playing ? `Now playing · ${songLine(share.now_playing)}` : null
+    return { title: 'Spotify Jam', subtitle: old ? `${by} · may have ended` : `Listen together · ${by}`, action: 'Join the Jam', jam: true, nowPlaying: np }
   }
   const e = share.embed
   const what = e.author?.trim() || sp?.label || null
@@ -32,6 +36,7 @@ export function stageCard(share: StageShare, sharer: string, now: number): Stage
     subtitle: what ? `${what} · ${by}` : by,
     action: sp?.action ?? 'Open Spotify',
     jam: false,
+    nowPlaying: null,
   }
 }
 

@@ -438,3 +438,19 @@ describe('MemberList: drawn incrementally', () => {
     expect(rows()).toBe(40)
   })
 })
+
+describe('MemberList: Listening to (#275)', () => {
+  it("someone's song takes the line under their name, with Spotify's icon at the row's end; gone, the name clip is back", () => {
+    const samRow = () => [...document.querySelectorAll<HTMLElement>('.members .row')].find((r) => r.textContent?.includes('Sammy'))!
+    expect(samRow().querySelector('.name-clip')?.textContent).toBe('sam')
+    app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online', listening: { title: 'Song', artist: 'The Band', album: null, spotify_id: null, art: null } } } }
+    flushSync()
+    expect(samRow().querySelector('.listening-line')?.textContent).toBe('Listening to Song · The Band')
+    expect(samRow().querySelector('.name-clip')).toBeNull()
+    expect(samRow().querySelector('.sp .spotify-icon')).not.toBeNull()
+    app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online' } } }
+    flushSync()
+    expect(samRow().querySelector('.listening-line')).toBeNull()
+    expect(samRow().querySelector('.name-clip')?.textContent).toBe('sam')
+  })
+})

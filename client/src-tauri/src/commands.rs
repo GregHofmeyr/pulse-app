@@ -477,9 +477,16 @@ impl Core {
             let app = app.clone();
             std::sync::Arc::new(move || {
                 // try_state: the gateway may start before voice is set up
-                app.try_state::<VoiceManager>()
+                let mut frames = app
+                    .try_state::<VoiceManager>()
                     .map(|v| after_ready_frames(v.controls()))
-                    .unwrap_or_default()
+                    .unwrap_or_default();
+                // what Spotify plays (#275): the server forgets it with the connection
+                frames.extend(
+                    app.try_state::<crate::activity::MediaActivity>()
+                        .and_then(|m| m.after_ready()),
+                );
+                frames
             })
         };
         let handle = GatewayHandle::spawn_full(
@@ -1319,6 +1326,19 @@ pub async fn hide_embed(
 pub fn embed_origin(core: State<'_, Core>) -> Option<String> {
     let (api, _) = core.current().ok()?;
     crate::embed_window::embed_origin_for(api.base()).map(str::to_owned)
+}
+
+/// "Read media activity" and "Show my activity" (#275), from the page's saved settings at boot and on every change.
+/// Reading off: no watcher at all.
+#[tauri::command]
+pub fn set_media_activity(m: State<'_, crate::activity::MediaActivity>, read: bool, show: bool) {
+    m.set(read, show);
+}
+
+/// Whether Pulse reads Spotify now, and what it last read (Settings shows it).
+#[tauri::command]
+pub fn media_activity(m: State<'_, crate::activity::MediaActivity>) -> crate::activity::MediaState {
+    m.state()
 }
 
 /// Tell others you're typing (the UI throttles to 1 per 3 s).

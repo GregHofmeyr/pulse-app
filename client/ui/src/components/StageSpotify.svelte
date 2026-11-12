@@ -34,7 +34,9 @@
   const card = $derived(stageCard(share, nameOf(share.shared_by), now))
   const mode = $derived(modeFor(share.id))
   const canStop = $derived(mayStop(share, app.state.me?.id ?? '', inCall))
-  const art = $derived(share.embed.thumb && isMediaHash(share.embed.thumb.hash) ? mediaUrl(share.embed.thumb.hash) : null)
+  // a Jam's "Now playing" (#275) shows its song's art, when the server found one; otherwise the link's own
+  const thumb = $derived(card.nowPlaying && share.now_playing?.art && isMediaHash(share.now_playing.art.hash) ? share.now_playing.art : share.embed.thumb)
+  const art = $derived(thumb && isMediaHash(thumb.hash) ? mediaUrl(thumb.hash) : null)
 
   let error = $state('')
   async function stop() {
@@ -183,7 +185,7 @@
 {#snippet artwork(size: 'sm' | 'md' | 'lg')}
   <!-- Spotify's artwork as they give it: uncropped, 4px corners, nothing over it -->
   <span class="art {size}" class:tile={!art} aria-hidden="true">
-    {#if art}<img src={art} alt="" width={share.embed.thumb!.width} height={share.embed.thumb!.height} />{:else}<Icon name="headphones" size={size === 'sm' ? 14 : 18} />{/if}
+    {#if art}<img src={art} alt="" width={thumb!.width} height={thumb!.height} />{:else}<Icon name="headphones" size={size === 'sm' ? 14 : 18} />{/if}
   </span>
 {/snippet}
 
@@ -191,6 +193,7 @@
   <span class="words">
     <span class="title" data-tip={card.title}>{card.title}</span>
     <span class="sub" data-tip={card.subtitle}>{card.subtitle}</span>
+    {#if card.nowPlaying}<span class="sub now" data-tip={card.nowPlaying}>{card.nowPlaying}</span>{/if}
   </span>
 {/snippet}
 
@@ -240,7 +243,7 @@
       <button type="button" class="pill" aria-label="{card.title}, on Spotify: open" aria-expanded="false" onclick={() => void grow('pinned', true)}>
         {@render artwork('sm')}
         <SpotifyIcon />
-        <span class="pill-title">{card.title}</span>
+        <span class="pill-title">{share.now_playing?.title ?? card.title}</span>
       </button>
     {/if}
   </div>
@@ -252,6 +255,7 @@
   .words { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .title { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sub { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub.now { color: var(--text-2); }
   .sp-open, .sp-stop { height: 28px; padding: 0 10px; font-size: 12px; text-decoration: none; white-space: nowrap; flex-shrink: 0; }
   .art { flex: none; border-radius: 4px; overflow: hidden; display: grid; place-items: center; }
   .art img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; display: block; border-radius: 4px; }

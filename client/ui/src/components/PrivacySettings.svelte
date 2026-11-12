@@ -8,6 +8,9 @@
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import { displayName } from '../lib/selectors'
+  import { activityPrefs, mediaActivity, setReadMedia, setShowActivity } from '../lib/activityPrefs.svelte'
+  import { songLine } from '../lib/activity'
+  const uid = $props.id()
 
   let error = $state('')
   // the name you see them by (#47); the list keeps the order you hid them in
@@ -46,6 +49,25 @@
 
 <section class="settings-pane">
   <h2>Privacy</h2>
+  <!-- "Listening to" (#275): both off until turned on; reading off means Pulse runs nothing for it -->
+  <div class="settings-field">
+    <h3 class="settings-section-title">Activity</h3>
+    <label class="row">
+      <input type="checkbox" role="switch" class="switch" checked={activityPrefs.read} aria-describedby="{uid}-read-help"
+        onchange={(e) => setReadMedia(e.currentTarget.checked)} />
+      <span>Read media activity</span>
+    </label>
+    <small id="{uid}-read-help">Lets Pulse see what the Spotify app on this computer is playing. Off, Pulse doesn't look at all.</small>
+    <label class="row">
+      <input type="checkbox" role="switch" class="switch" checked={activityPrefs.show} disabled={!activityPrefs.read} aria-describedby="{uid}-show-help"
+        onchange={(e) => setShowActivity(e.currentTarget.checked)} />
+      <span>Show my activity</span>
+    </label>
+    <small id="{uid}-show-help">Everyone who can see you online sees "Listening to" on your profile. Off, it only updates a Jam you share to the stage.</small>
+    {#if activityPrefs.read}
+      <p class="reading" aria-live="polite">{mediaActivity.playing ? `Spotify is playing ${songLine(mediaActivity.playing)}` : 'Nothing playing in Spotify right now.'}</p>
+    {/if}
+  </div>
   <div class="settings-field">
     <h3 class="settings-section-title">Appear offline to</h3>
     <p class="hint">They see you offline, whatever your status, with your last seen frozen at when you hid. They're never told.</p>
@@ -76,6 +98,8 @@
   p { margin: 0; color: var(--text-2); font-size: 13px; }
   /* the list is the shared .settings-list (app.css) */
   .add { align-self: flex-start; }
+  .row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .reading { color: var(--text-3); }
   .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
 </style>

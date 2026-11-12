@@ -18,6 +18,7 @@
   import Updating from './routes/Updating.svelte'
   import { screenFor } from './lib/screen'
   import { installUpdate, startUpdateListening, updates } from './lib/updates.svelte'
+  import { startMediaActivity } from './lib/activityPrefs.svelte'
 
   let user = $state<User | null>(null)
   let booting = $state(true)
@@ -48,7 +49,9 @@
   onMount(() => {
     let off: (() => void) | undefined
     // Listen before restoring so the first Ready can't slip past us.
-    Promise.all([startListening(), startVoiceListening(), startUpdateListening()]).then(async ([unlisten, unlistenVoice, unlistenUpdates]) => {
+    // "Listening to" (#275): the core reads nothing until it's told the saved switches
+    const media = startMediaActivity().catch(() => () => {})
+    Promise.all([startListening(), startVoiceListening(), startUpdateListening(), media]).then(async ([unlisten, unlistenVoice, unlistenUpdates, unlistenMedia]) => {
       const unlistenBadges = startBadgeListening()
       const unlistenSounds = startSoundboardListening()
       off = () => {
@@ -57,6 +60,7 @@
         unlistenUpdates()
         unlistenBadges()
         unlistenSounds()
+        unlistenMedia()
       }
       // A newer Pulse (#82): the check started with the app; install it now ("Updating Pulse…", then Pulse reopens
       // on it). No offer, or a failed install, boots as usual on this version.

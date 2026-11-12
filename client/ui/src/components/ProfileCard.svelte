@@ -10,6 +10,8 @@
   import Icon from './Icon.svelte'
   import { app, clock, openDm, queueMessage, ui } from '../lib/store.svelte'
   import { presenceOf } from '../lib/presence'
+  import { listeningOf } from '../lib/activity'
+  import ListeningPanel from './ListeningPanel.svelte'
   import { errorText } from '../lib/tauri'
   import { baseName, displayName } from '../lib/selectors'
   import { cardVars, nameStop } from '../lib/cardTheme'
@@ -65,6 +67,8 @@
   const name = $derived(preview ? baseName(user) : displayName(app.state, serverId, user.id))
   // no dot for someone we know nothing of; yours shows your own status (Invisible: the grey offline dot, #171)
   const presence = $derived(mine || app.state.people[user.id] ? presenceOf(app.state, user.id, clock.nowIso) : null)
+  // what they're listening to (#275), as the server lets you see it; never on the profile editor's preview
+  const listening = $derived(preview ? null : listeningOf(app.state, user.id))
   const bioHtml = $derived(card.bio ? renderMarkdown(card.bio, [], app.state.customEmoji) : '')
   // The server voice room they're in, only if it is one of your channels (one you can see); a
   // group call is never named.
@@ -171,6 +175,7 @@
       <!-- renderMarkdown output is DOMPurify-sanitised (the message renderer's allow-list) -->
       <div class="bio" {@attach animateEmojiIn(bioHtml)}>{@html bioHtml}</div>
     {/if}
+    {#if listening}<ListeningPanel {listening} />{/if}
     {#if loading && !stats}
       <!-- where Member since and Voice will be -->
       <div class="panel skeleton stats-skeleton" aria-hidden="true"><span></span><span></span></div>

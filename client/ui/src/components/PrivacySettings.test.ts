@@ -13,6 +13,7 @@ import PrivacySettings from './PrivacySettings.svelte'
 import Settings from './Settings.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
+import { activityPrefs, mediaActivity } from '../lib/activityPrefs.svelte'
 
 const user = (id: string, name: string) => ({ id, username: name, display_name: name, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const alex = user('U1', 'alex')
@@ -40,11 +41,44 @@ afterEach(() => {
 })
 const rows = () => [...document.querySelectorAll<HTMLElement>('.hidden-list li')]
 
+describe('PrivacySettings → Activity (#275)', () => {
+  const switches = () => [...document.querySelectorAll<HTMLInputElement>('input[role="switch"]')]
+  const calls = () => invoke.mock.calls.filter(([c]) => c === 'set_media_activity').map(([, a]) => a)
+
+  it('both off until turned on; Show waits for Read; each change tells the core and is kept', () => {
+    localStorage.clear()
+    activityPrefs.read = false
+    activityPrefs.show = false
+    cmp = mount(PrivacySettings, { target: document.body })
+    flushSync()
+    const [read, show] = switches()
+    expect([read.checked, show.checked, show.disabled]).toEqual([false, false, true])
+    expect(document.querySelector('.reading')).toBeNull()
+    read.click()
+    flushSync()
+    expect(show.disabled).toBe(false)
+    expect(calls()).toEqual([{ read: true, show: false }])
+    expect(localStorage.getItem('pulse.activity.read')).toBe('true')
+    expect(document.querySelector('.reading')!.textContent).toBe('Nothing playing in Spotify right now.')
+    show.click()
+    flushSync()
+    expect(calls().at(-1)).toEqual({ read: true, show: true })
+    mediaActivity.playing = { title: 'Song', artist: 'The Band', album: null, spotify_id: null }
+    flushSync()
+    expect(document.querySelector('.reading')!.textContent).toBe('Spotify is playing Song · The Band')
+    read.click()
+    flushSync()
+    expect(calls().at(-1)).toEqual({ read: false, show: true })
+    expect(show.disabled).toBe(true)
+    mediaActivity.playing = null
+  })
+})
+
 describe('PrivacySettings', () => {
   it('lists everyone you appear offline to, by the name you see them by, with their avatar', () => {
     cmp = mount(PrivacySettings, { target: document.body })
     flushSync()
-    expect(document.querySelector('h3')!.textContent).toBe('Appear offline to')
+    expect([...document.querySelectorAll('h3')].map((h) => h.textContent)).toEqual(['Activity', 'Appear offline to'])
     expect(rows().map((r) => r.querySelector('.who')!.textContent?.trim())).toEqual(['Kimmy', 'sam'])
     expect(rows().every((r) => r.querySelector('.av'))).toBe(true)
   })

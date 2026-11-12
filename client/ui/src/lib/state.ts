@@ -973,6 +973,13 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const { [c]: _gone, ...others } = s.stageShares
       return { ...s, stageShares: rest.length ? { ...others, [c]: rest } : others }
     }
+    // A Jam's "Now playing" (#275): its sharer's Spotify changed song.
+    case 'StageNowPlaying': {
+      const c = e.d.channel_id
+      const list = s.stageShares[c]
+      if (!list?.some((x) => x.id === e.d.share_id)) return s
+      return { ...s, stageShares: { ...s.stageShares, [c]: list.map((x) => (x.id === e.d.share_id ? { ...x, now_playing: e.d.now_playing ?? undefined } : x)) } }
+    }
     case 'LayoutChanged':
       return applyLayout(s, e.d.layout)
     case 'ChannelCreated':
@@ -1022,7 +1029,15 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'PresenceChanged': {
       const p = s.people[e.d.user_id]
       if (!p) return s
-      return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, online: e.d.online, last_seen_at: e.d.last_seen_at ?? p.last_seen_at, status: presenceStatus(e.d.status, e.d.online) } } }
+      // someone who looks offline shows no activity (#275; the server says so too, right after)
+      const listening = e.d.online ? p.listening : undefined
+      return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, online: e.d.online, last_seen_at: e.d.last_seen_at ?? p.last_seen_at, status: presenceStatus(e.d.status, e.d.online), listening } } }
+    }
+    // What someone's Spotify plays (#275), as the server lets you see it.
+    case 'ListeningChanged': {
+      const p = s.people[e.d.user_id]
+      if (!p) return s
+      return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, listening: e.d.listening ?? undefined } } }
     }
     // your own status and hidden list reach only your own sessions; anything else isn't ours to keep
     case 'StatusChanged':

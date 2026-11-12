@@ -152,6 +152,10 @@ export type ModelStatus =
   | { state: 'downloading'; downloaded: number; total: number | null }
   | { state: 'ready' }
   | { state: 'failed'; error: string }
+/** What Spotify plays, as this device's media session tells it (#275, the core's `activity::NowPlaying`). */
+export type NowPlaying = { title: string; artist: string | null; album: string | null; spotify_id: string | null }
+/** Whether this device reads Spotify, and what it last read (`pulse://media-activity`). */
+export type MediaState = { reading: boolean; playing: NowPlaying | null }
 export type Restored = { status: 'ready'; user: User } | { status: 'logged_out' } | { status: 'refused' }
 
 function uploadProfileMedia(cmd: string, bytes: Uint8Array, crop: CropRect | null) {
@@ -310,6 +314,10 @@ export const api = {
   stopRingtone: () => invoke<void>('stop_ringtone').catch(() => {}),
   /** Appear offline to one person, or stop (#45). An AppearOfflineChanged follows to your sessions. */
   setAppearOffline: (userId: string, hidden: boolean) => invoke<void>('set_appear_offline', { userId, hidden }),
+  /** "Read media activity" and "Show my activity" (#275): reading off runs no watcher at all. */
+  setMediaActivity: (read: boolean, show: boolean) => invoke<void>('set_media_activity', { read, show }),
+  /** Whether this device reads Spotify now, and what it last read. */
+  mediaActivity: () => invoke<MediaState>('media_activity'),
   /** Get a notification when someone goes live, or stop (#60). A LiveNotifyChanged follows to your sessions. */
   setLiveNotify: (userId: string, on: boolean) => invoke<void>('set_live_notify', { userId, on }),
   /** A group's icon (#56): an avatar-pipeline media hash, or null for the members' faces. Any member may. */

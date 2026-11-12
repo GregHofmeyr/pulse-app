@@ -99,3 +99,13 @@ Svelte 5 + vitest.
 ### Task 5: Finish
 
 - [ ] fmt, clippy, server + client tests, xwin clippy, UI; code review of the diff; fix; rebase; merge `Closes #275`.
+
+## As built (2026-11-12)
+
+- Deferred with issues: Share to stage from an activity (#321), other players and games (#322), album art on Windows
+  (#323).
+- Measured on Linux (`cargo test -p pulse-client --lib cost_with_reading_on_and_off -- --ignored --nocapture`, the
+  watcher alone in a test process, a fake player in another process): reading off, idle: 0 ms CPU over 30 s, 4
+  threads; reading on, no player, idle: 0 ms over 30 s, +3 threads (the zbus connection's), RSS +~10 MB (mostly the new
+  threads' allocator arenas); 100 song changes in 10 s: 90 ms CPU (0.75 %), and no send (nothing held long enough to
+  settle); player gone, idle: 0 ms; watcher dropped: back to 6 threads (async-io's process-wide reactor stays, idle).

@@ -290,3 +290,27 @@ describe('the pill grows into the corner card', () => {
     expect(modeFor('S-1')).toBe('hidden')
   })
 })
+
+describe("a Jam's Now playing (#275)", () => {
+  const NOW = 'c'.repeat(64)
+  const jam = (now_playing?: StageShare['now_playing']) =>
+    share({ now_playing }, { url: 'https://open.spotify.com/socialsession/abcdefgh', kind: 'card', provider_id: 'jam:abcdefgh', title: null, author: null })
+
+  it("the strip shows the sharer's song under the Jam, with its art; without one, the Jam's own", () => {
+    const host = show(jam({ title: 'Live song', artist: 'The Band', album: null, spotify_id: null, art: { hash: NOW, width: 640, height: 640 } }), 'top')
+    const strip = host.querySelector('.sp-strip')!
+    expect(strip.querySelector('.sub.now')!.textContent).toBe('Now playing · Live song · The Band')
+    expect(strip.querySelector('.art img')!.getAttribute('src')).toContain(NOW)
+    // still the Jam's own button
+    expect(btn(host, 'Join the Jam')).toBeDefined()
+    const plain = show(jam(), 'top')
+    expect(plain.querySelector('.sub.now')).toBeNull()
+    expect(plain.querySelector('.art img')!.getAttribute('src')).toContain(HASH)
+  })
+
+  it('the pill names the song playing', () => {
+    setMode('S-1', 'pill')
+    const host = show(jam({ title: 'Live song', artist: null, album: null, spotify_id: null, art: null }), 'corner')
+    expect(host.querySelector('.pill-title')!.textContent).toBe('Live song')
+  })
+})

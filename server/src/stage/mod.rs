@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
-use pulse_protocol::rest::{EmbedProvider, StageShare};
+use pulse_protocol::rest::{EmbedProvider, Listening, StageShare};
 use reqwest::Url;
 
 use crate::AppState;
@@ -118,6 +118,30 @@ impl StageState {
         gone
     }
 
+    /// Every share `user` has up, anywhere.
+    pub fn by(&self, user: UserId) -> Vec<StageShare> {
+        self.lock()
+            .values()
+            .flat_map(|l| l.iter().filter(|s| s.shared_by == user).cloned())
+            .collect()
+    }
+
+    /// Set the "Now playing" of the share `id` in `channel` (#275); whether it changed.
+    pub fn set_now_playing(&self, channel: ChannelId, id: &str, now: Option<Listening>) -> bool {
+        let mut map = self.lock();
+        let Some(share) = map
+            .get_mut(&channel)
+            .and_then(|l| l.iter_mut().find(|s| s.id == id))
+        else {
+            return false;
+        };
+        if share.now_playing == now {
+            return false;
+        }
+        share.now_playing = now;
+        true
+    }
+
     /// Take down everything in `channel`.
     pub fn remove_channel(&self, channel: ChannelId) -> Vec<StageShare> {
         self.lock().remove(&channel).unwrap_or_default()
@@ -139,6 +163,40 @@ pub fn spotify_link(raw: &str) -> Option<String> {
         providers::Detection::Known(d) if d.provider == EmbedProvider::Spotify => Some(link),
         providers::Detection::Short if url.host_str() == Some("spotify.link") => Some(link),
         _ => None,
+    }
+}
+
+/// Whether `share` is a Jam: only a Jam gets a live "Now playing" (#275).
+pub fn jam(share: &StageShare) -> bool {
+    share
+        .embed
+        .provider_id
+        .as_deref()
+        .is_some_and(|id| providers::is_jam(share.embed.provider, id))
+}
+
+/// What `user` is listening to changed (or they stopped reading, or disconnected): each Jam of theirs on a stage
+/// shows it, whatever their status or "Show my activity" says (#275: they shared the Jam, in a call they're visibly
+/// in). Only real changes go out.
+pub async fn listening_changed(s: &AppState, user: UserId) {
+    let _order = s.hub.in_order().await;
+    let now = s.hub.listening_of(user, false);
+    for share in s.voice.stage.by(user).into_iter().filter(jam) {
+        if s.voice
+            .stage
+            .set_now_playing(share.channel_id, &share.id, now.clone())
+        {
+            s.hub
+                .publish(
+                    &s.db,
+                    Event::StageNowPlaying {
+                        channel_id: share.channel_id,
+                        share_id: share.id,
+                        now_playing: now.clone(),
+                    },
+                )
+                .await;
+        }
     }
 }
 
@@ -198,6 +256,7 @@ mod tests {
                 start: None,
                 vertical: false,
             },
+            now_playing: None,
         }
     }
 
@@ -215,6 +274,39 @@ mod tests {
         assert!(st.remove(ch, "1").is_none());
         assert_eq!(st.remove(ch, "2").map(|s| s.id), Some("2".into()));
         assert!(st.of(ch).is_empty());
+    }
+
+    #[test]
+    fn now_playing_only_on_change_and_only_jams_count() {
+        let st = StageState::default();
+        let (ch, alex) = (ChannelId::new(), UserId::new());
+        let mut j = share(
+            "1",
+            ch,
+            alex,
+            "https://open.spotify.com/socialsession/abcdefgh",
+        );
+        j.embed.provider_id = Some("jam:abcdefgh".into());
+        assert!(jam(&j));
+        assert!(!jam(&share("2", ch, alex, "a")));
+        st.put(j);
+        let song = Listening {
+            title: "Song".into(),
+            artist: None,
+            album: None,
+            spotify_id: None,
+            art: None,
+        };
+        assert_eq!(st.by(alex).len(), 1);
+        assert!(st.set_now_playing(ch, "1", Some(song.clone())));
+        assert!(
+            !st.set_now_playing(ch, "1", Some(song.clone())),
+            "no change"
+        );
+        assert_eq!(st.of(ch)[0].now_playing, Some(song));
+        assert!(st.set_now_playing(ch, "1", None));
+        assert!(!st.set_now_playing(ch, "nope", None));
+        assert!(st.by(UserId::new()).is_empty());
     }
 
     #[test]

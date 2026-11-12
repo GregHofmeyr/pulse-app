@@ -290,6 +290,19 @@ pub async fn store(
     Ok(true)
 }
 
+/// A card's thumbnail kept for something no message holds (a stage share, a "Listening to"): its media row's cleanup
+/// clock (a day) restarts, so it outlives what shows it (hours). `None` for one already cleaned up (a cached card can
+/// name a file that's gone).
+pub async fn keep_thumb(db: &SqlitePool, thumb: EmbedThumb) -> sqlx::Result<Option<EmbedThumb>> {
+    let touched = sqlx::query("UPDATE media SET created_at = ? WHERE hash = ?")
+        .bind(crate::db::now())
+        .bind(&thumb.hash)
+        .execute(db)
+        .await?
+        .rows_affected();
+    Ok((touched > 0).then_some(thumb))
+}
+
 /// An `EmbedProvider` as stored (its wire name). `Unknown` is never stored.
 pub fn provider_str(p: EmbedProvider) -> &'static str {
     match p {

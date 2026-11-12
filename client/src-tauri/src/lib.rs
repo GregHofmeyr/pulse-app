@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod api;
 pub mod attachments;
 pub mod backoff;
@@ -218,6 +219,15 @@ pub fn run() {
                 }),
             ));
             app.manage(gifs::Gifs::default());
+            // "Listening to" (#275): nothing runs until the page says "Read media activity" is on
+            let (h, h2) = (app.handle().clone(), app.handle().clone());
+            app.manage(activity::MediaActivity::new(
+                std::sync::Arc::new(move |f| h.state::<commands::Core>().send_frame(f)),
+                std::sync::Arc::new(move |state| {
+                    use tauri::Emitter;
+                    let _ = h2.emit("pulse://media-activity", state);
+                }),
+            ));
             app.manage(voice::mictest::MicTest::default());
             app.manage(soundboard::Cache::default());
             app.manage(soundboard::Prepared::default());
@@ -427,6 +437,8 @@ pub fn run() {
             commands::set_status,
             commands::set_appear_offline,
             commands::set_live_notify,
+            commands::set_media_activity,
+            commands::media_activity,
             commands::name_archive,
             commands::upload_avatar_media,
             commands::upload_banner_media,

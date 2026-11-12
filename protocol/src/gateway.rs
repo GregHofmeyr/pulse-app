@@ -6,10 +6,10 @@ use ts_rs::TS;
 use crate::ids::{CallId, ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game,
-    InboxItem, Member, Message, Mute, NotifyLevelPref, OwnStatus, Person, PinnedMessage,
-    PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason, Server,
-    ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare, StreamEndReason, StreamInfo,
-    User, Wheel,
+    InboxItem, Listening, ListeningUpdate, Member, Message, Mute, NotifyLevelPref, OwnStatus,
+    Person, PinnedMessage, PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState,
+    RingEndReason, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare,
+    StreamEndReason, StreamInfo, User, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -30,6 +30,13 @@ pub enum ClientFrame {
     VoiceState {
         flags: VoiceFlags,
     },
+    /// What this device's Spotify is playing (#275), `None` when nothing is (or reading stopped). `show`: others may
+    /// see it as your activity; either way it feeds a Jam you put on the stage. Held per connection, gone with it;
+    /// servers from before it ignore the frame.
+    Listening {
+        listening: Option<ListeningUpdate>,
+        show: bool,
+    },
 }
 
 impl std::fmt::Debug for ClientFrame {
@@ -48,6 +55,12 @@ impl std::fmt::Debug for ClientFrame {
             Self::VoiceState { flags } => {
                 f.debug_struct("VoiceState").field("flags", flags).finish()
             }
+            // what someone listens to stays out of logs
+            Self::Listening { listening, show } => f
+                .debug_struct("Listening")
+                .field("listening", &listening.as_ref().map(|_| "<playing>"))
+                .field("show", show)
+                .finish(),
         }
     }
 }
@@ -631,6 +644,19 @@ pub enum Event {
         channel_id: ChannelId,
         share_id: String,
     },
+    /// What `user_id` is listening to as this receiver may see it (#275): each viewer gets their own, from the same
+    /// pass as `PresenceChanged`, so someone who looks offline to you has `None`. Never published to an audience.
+    ListeningChanged {
+        user_id: UserId,
+        listening: Option<Listening>,
+    },
+    /// A Jam on the stage has a new "Now playing" (#275): its sharer's Spotify changed song. Clients from before it
+    /// skip the frame.
+    StageNowPlaying {
+        channel_id: ChannelId,
+        share_id: String,
+        now_playing: Option<Listening>,
+    },
 }
 
 impl Event {
@@ -657,7 +683,8 @@ impl Event {
             | Self::MessagePinned { channel_id, .. }
             | Self::MessageUnpinned { channel_id, .. }
             | Self::PollChanged { channel_id, .. }
-            | Self::StageShareCleared { channel_id, .. } => Some(*channel_id),
+            | Self::StageShareCleared { channel_id, .. }
+            | Self::StageNowPlaying { channel_id, .. } => Some(*channel_id),
             Self::StageShared { share } => Some(share.channel_id),
             Self::WheelSpunQuietly { spin } => Some(spin.channel_id),
             Self::CallStarted { call } => Some(call.channel_id),
@@ -685,6 +712,7 @@ impl Event {
             | Self::MemberUpdated { .. }
             | Self::UserCreated { .. }
             | Self::PresenceChanged { .. }
+            | Self::ListeningChanged { .. }
             | Self::ProfileUpdated { .. }
             | Self::MutesChanged { .. }
             | Self::NotifyLevelsChanged { .. }
@@ -1456,6 +1484,63 @@ mod tests {
         assert_eq!(cleared.only_for(), None);
         let v = serde_json::to_value(&cleared).unwrap();
         assert_eq!(v["t"], "StageShareCleared");
+    }
+
+    /// "Listening to" (#275): the frame's wire shape, its Debug keeps the song out of logs, and the events are scoped
+    /// right (the activity per viewer, never an audience; the stage's to its channel).
+    #[test]
+    fn listening_frames_and_events() {
+        let f: ClientFrame = serde_json::from_str(
+            r#"{"op":"Listening","d":{"listening":{"title":"Song","artist":"Band","spotify_id":"track:4uLU6hMCjMI75M1A2tKUQC"},"show":true}}"#,
+        )
+        .unwrap();
+        let ClientFrame::Listening {
+            listening: Some(l),
+            show: true,
+        } = &f
+        else {
+            panic!("{f:?}")
+        };
+        assert_eq!((l.title.as_str(), l.album.as_deref()), ("Song", None));
+        let dbg = format!("{f:?}");
+        assert!(!dbg.contains("Song") && !dbg.contains("Band"), "{dbg}");
+        let off: ClientFrame =
+            serde_json::from_str(r#"{"op":"Listening","d":{"listening":null,"show":false}}"#)
+                .unwrap();
+        assert!(matches!(
+            off,
+            ClientFrame::Listening {
+                listening: None,
+                show: false
+            }
+        ));
+
+        let u = UserId::new();
+        let e = Event::ListeningChanged {
+            user_id: u,
+            listening: None,
+        };
+        assert_eq!((e.channel_id(), e.only_for()), (None, None));
+        let ch = ChannelId::new();
+        let np = Event::StageNowPlaying {
+            channel_id: ch,
+            share_id: "x".into(),
+            now_playing: None,
+        };
+        assert_eq!((np.channel_id(), np.only_for()), (Some(ch), None));
+    }
+
+    /// A person and a share from an older server (no activity, no now playing) still parse, and a person with none
+    /// sends no `listening` field to older clients.
+    #[test]
+    fn older_people_and_shares_parse() {
+        let u = UserId::new();
+        let p: Person = serde_json::from_str(&format!(
+            r#"{{"user":{{"id":"{u}","username":"alex","display_name":"alex","avatar_hash":null}},"online":true,"last_seen_at":null}}"#
+        ))
+        .unwrap();
+        assert_eq!(p.listening, None);
+        assert!(serde_json::to_value(&p).unwrap().get("listening").is_none());
     }
 
     /// A `Ready` from an older server (no categories yet) parses with no layouts.

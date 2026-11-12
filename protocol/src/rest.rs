@@ -974,6 +974,11 @@ pub struct StageShare {
     pub expires_at: String,
     /// The link's Spotify card, as the embed resolver built it (`provider` is always Spotify).
     pub embed: LinkEmbed,
+    /// A Jam's live "Now playing" (#275): what its sharer's Spotify is playing, while their Pulse reads it. Absent
+    /// otherwise, on anything but a Jam, and from older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub now_playing: Option<Listening>,
 }
 
 /// `PUT /channels/{id}/stage-share` (#234): a Spotify link (web, `spotify:socialsession:` or `spotify.link`).
@@ -1119,6 +1124,41 @@ pub struct Person {
     /// Absent from older servers: go by `online` then.
     #[serde(default)]
     pub status: PresenceStatus,
+    /// What they're listening to on Spotify (#275), only while they share it and look online to this viewer.
+    /// Absent otherwise, and from older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub listening: Option<Listening>,
+}
+
+/// What someone's Spotify app is playing (#275), read by their own Pulse from the OS media session (MPRIS on Linux,
+/// the system media controls on Windows): no Spotify login, nothing that controls their Spotify.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Listening {
+    pub title: String,
+    #[serde(default)]
+    pub artist: Option<String>,
+    #[serde(default)]
+    pub album: Option<String>,
+    /// `track:<id>` or `episode:<id>` (Spotify's 22-character id), when the media session gave one: the link-out is
+    /// then `open.spotify.com/<kind>/<id>`.
+    #[serde(default)]
+    pub spotify_id: Option<String>,
+    /// The album art, from that link's Spotify card (the server's embed resolver); none without a `spotify_id`.
+    #[serde(default)]
+    pub art: Option<EmbedThumb>,
+}
+
+/// What a client says its Spotify is playing (#275, `ClientFrame::Listening`); the server checks it and adds the art.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ListeningUpdate {
+    pub title: String,
+    #[serde(default)]
+    pub artist: Option<String>,
+    #[serde(default)]
+    pub album: Option<String>,
+    #[serde(default)]
+    pub spotify_id: Option<String>,
 }
 
 /// What a viewer sees of someone (#45). Never `Invisible`: that looks exactly like `Offline`.

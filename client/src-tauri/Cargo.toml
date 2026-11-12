@@ -137,6 +137,9 @@ windows = { version = "0.62", features = [
     "Foundation",
     "Data_Xml_Dom",
     "UI_Notifications",
+    # "Listening to" (#275, activity/gsmtc.rs): the Spotify app's session in the system media transport controls.
+    "Media_Control",
+    "Foundation_Collections",
 ] }
 # WebView2 memory target (webview_memory.rs). Keep these on the versions tauri/wry use (see
 # Cargo.lock), or the COM types don't match (E0308).
