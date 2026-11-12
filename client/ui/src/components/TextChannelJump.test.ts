@@ -366,3 +366,88 @@ describe("TextChannel: a notification's reply opens its quote's replies", () => 
     expect(ui.openReplies).toEqual({ channelId: 'C2', rootId: 'M0003' })
   })
 })
+
+describe('TextChannel: back to where you were (#317)', () => {
+  const rect = HTMLElement.prototype.getBoundingClientRect
+  const bar = () => document.querySelector<HTMLButtonElement>('button.jump')
+  // jsdom has no layout: each message is 40px tall and the list shows from `topMessage` down
+  let topMessage = 0
+  beforeEach(() => {
+    Element.prototype.scrollTo = () => {}
+    Element.prototype.scrollIntoView = () => {}
+    resetState()
+    ui.jump = null
+    invoke.mockReset()
+    invoke.mockImplementation(async () => undefined)
+    ui.openChannelId = 'C1'
+    windowFocus.focused = true
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const id = this.dataset.messageId
+      const y = id ? (Number(id.slice(1)) - topMessage) * 40 : 0
+      return { top: y, bottom: y + 40, left: 0, right: 0, width: 0, height: 40, x: 0, y, toJSON() {} } as DOMRect
+    }
+  })
+  afterEach(() => {
+    HTMLElement.prototype.getBoundingClientRect = rect
+    if (cmp) unmount(cmp)
+    cmp = undefined
+    document.body.innerHTML = ''
+  })
+  /** Scrolled up from the bottom, reading from message `n` down. */
+  const readFrom = (n: number) => {
+    topMessage = n
+    const list = document.querySelector<HTMLElement>('.list')!
+    Object.defineProperty(list, 'scrollHeight', { value: 5000, configurable: true })
+    Object.defineProperty(list, 'clientHeight', { value: 500, configurable: true })
+    list.scrollTop = 1000
+    list.dispatchEvent(new Event('scroll'))
+    flushSync()
+  }
+  /** What lib/jump.ts does for a message that isn't loaded: the window around it, then the request. */
+  const jumpAway = async (to: number) => {
+    app.state = loadWindow(app.state, 'C1', newestFirst(to - 25, 50), msg(to).id)
+    ui.jump = { channelId: 'C1', messageId: msg(to).id, seq: 1 }
+    await settle()
+  }
+
+  it('after a jump away, the control first goes back to where you were reading, then to the present', async () => {
+    app.state = loadLatest(ready('text'), 'C1', newestFirst(900, 50))
+    show()
+    readFrom(910)
+    await jumpAway(100)
+    expect(bar()?.textContent).toBe('Back to where you were')
+    invoke.mockImplementation(async (cmd, args) =>
+      cmd === 'list_messages_around' ? newestFirst(885, 50)
+        : cmd === 'list_messages' && !(args as { before: string | null }).before ? newestFirst(900, 50) : undefined)
+    bar()!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('list_messages_around', { channelId: 'C1', messageId: 'M0910' })
+    expect(document.querySelector('[data-message-id="M0910"]')).toBeTruthy()
+    // the second press: the present
+    expect(bar()?.textContent).toBe('Jump to present')
+    bar()!.click()
+    await settle()
+    expect(app.state.messages['C1'].at(-1)!.id).toBe('M0949')
+    expect(app.state.history['C1'].end).toBe(true)
+  })
+
+  it('reading at the present: no back step, the control is Jump to present', async () => {
+    app.state = loadLatest(ready('text'), 'C1', newestFirst(900, 50))
+    show() // jsdom: at the bottom
+    await jumpAway(100)
+    expect(bar()?.textContent).toBe('Jump to present')
+  })
+
+  it('arriving by a jump (search, pins elsewhere) with unread messages: back goes to your last-read spot', async () => {
+    const read = { read_states: [{ channel_id: 'C1', last_read_message_id: 'M0920', unread: 29, mentions: 0 }] }
+    app.state = loadWindow(applyReady(emptyState(), testReady([{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }], read)), 'C1', newestFirst(75, 50), 'M0100')
+    ui.jump = { channelId: 'C1', messageId: 'M0100', seq: 1 }
+    show()
+    await settle()
+    expect(bar()?.textContent).toBe('Back to where you were')
+    invoke.mockImplementation(async (cmd) => (cmd === 'list_messages_around' ? newestFirst(895, 50) : undefined))
+    bar()!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('list_messages_around', { channelId: 'C1', messageId: 'M0920' })
+  })
+})

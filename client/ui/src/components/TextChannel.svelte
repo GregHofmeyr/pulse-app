@@ -341,6 +341,58 @@
     list.scrollTo({ top: list.scrollHeight, behavior: motion.reducedMotion ? 'auto' : 'smooth' })
   }
 
+  // --- back to where you were (#317): a jump away (a reply's original, search, pins) remembers the message you were
+  // reading, and the jump control offers it first ("Back to where you were"); the next press goes to the present.
+  // Arriving in the channel by a jump, where you were is your last-read spot (while there's unread below it). ---
+  let back = $state<{ channelId: string; messageId: string } | null>(null)
+  const backTo = $derived(back?.channelId === channelId ? back.messageId : null)
+  let goingBack = false
+  // the channel the list is drawing, and whether that's a window away from the present (both follow the state once the
+  // view has redrawn: a jump's window is in the state before it's on screen)
+  let listFor: string | null = null
+  let drawnDetached = false
+  $effect(() => {
+    listFor = channelId
+    drawnDetached = detached
+  })
+  /** The message at the top of the view, or null at the present (nothing to come back to). */
+  function readingAt(): string | null {
+    if (!list || (atBottom && !drawnDetached)) return null
+    const top = list.getBoundingClientRect().top
+    for (const el of list.querySelectorAll<HTMLElement>('[data-message-id]')) {
+      const id = el.dataset.messageId
+      // (the drawn list: the state may already hold the jump's window; an unsent message has no place to come back to)
+      if (id && !id.startsWith('pending:') && el.getBoundingClientRect().bottom > top) return id
+    }
+    return null
+  }
+  // Before the jump's window is drawn: the view still shows where you were.
+  $effect.pre(() => {
+    const j = ui.jump
+    if (!j || j.channelId !== channelId) return
+    untrack(() => {
+      if (goingBack) {
+        goingBack = false
+        return
+      }
+      if (j.missing || j.error) return
+      let at: string | null
+      if (listFor === channelId) at = readingAt()
+      else {
+        const r = app.state.reads[channelId]
+        at = r && r.unread > 0 ? r.last_read_message_id : null
+      }
+      back = at && at !== j.messageId ? { channelId, messageId: at } : null
+    })
+  })
+  function goBack() {
+    if (!backTo) return
+    const id = backTo
+    back = null
+    goingBack = true
+    void jumpTo(channelId, id)
+  }
+
   // --- jump to a message (lib/jump.ts sets `ui.jump`): scroll it to the middle and flash it. A
   // detached window pages forward from its bottom, or "Jump to present" reloads the latest. ---
   let loadingNewer = false
@@ -381,6 +433,7 @@
   let loadingPresent = false
   async function toPresent() {
     if (loadingPresent) return
+    back = null
     loadingPresent = true
     try {
       if (!(await jumpToPresent(channelId))) return // a jump took over
@@ -569,6 +622,7 @@
 
   /** To the latest: a page from higher up (a jump's window) goes back to the present, else to the bottom. */
   function toLatest() {
+    back = null
     if (detached) void toPresent()
     else void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   }
@@ -772,7 +826,8 @@
       {#each quiet as q (q.spin.id)}<QuietSpinCard card={q} {serverId} />{/each}
     {/if}
   </div>
-  {#if detached}<button class="jump" onclick={toPresent}>Jump to present</button>
+  {#if backTo}<button class="jump" onclick={goBack}>Back to where you were</button>
+  {:else if detached}<button class="jump" onclick={toPresent}>Jump to present</button>
   {:else if unreadBelow > 0}<button class="jump" onclick={jump}>{unreadBelow} new · Jump</button>
   {:else if farUp}<button class="jump" onclick={jump}>Jump to present</button>{/if}
   {#if jumpNotice}<p class="jump-notice" role="status">{jumpNotice}</p>{/if}
