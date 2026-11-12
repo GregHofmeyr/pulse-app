@@ -1,8 +1,9 @@
 <script lang="ts">
   // The quick switcher (#309): one floating search bar, its results unfolding underneath on the same surface (no
   // dialog header). Jump to a server, channel, DM or group; `>` for quick actions. The rules are in lib/quickSwitch.ts
-  // and lib/quickActions.ts; the shell opens it (Ctrl+K, or `/` outside a text field) and does the going. Messages
-  // (#320) are the one slow section (lib/quickMessages.ts): searched once typing pauses, listed under the instant ones.
+  // and lib/quickActions.ts; the shell opens it (Ctrl+K, `/` outside a text field, or the global keybind from anywhere
+  // on the desktop, #319) and does the going. Messages (#320) are the one slow section (lib/quickMessages.ts): searched
+  // once typing pauses, listed under the instant ones.
   import { onDestroy, tick } from 'svelte'
   import Icon, { type IconName } from './Icon.svelte'
   import Avatar from './Avatar.svelte'

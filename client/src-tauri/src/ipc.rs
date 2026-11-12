@@ -1,5 +1,6 @@
 //! Linux hotkeys: Wayland apps can't grab global keys, so a Hyprland bind runs
-//! `pulse-app --toggle-mute`, which pokes the running app over an owner-only Unix socket.
+//! `pulse-app --toggle-mute` (or `--toggle-deafen`, `--quick-switch`), which pokes the running app
+//! over an owner-only Unix socket.
 
 #[cfg(unix)]
 use std::path::{Path, PathBuf};
@@ -8,6 +9,8 @@ use std::path::{Path, PathBuf};
 pub enum Command {
     ToggleMute,
     ToggleDeafen,
+    /// Bring the window up and open the quick switcher (#319).
+    QuickSwitch,
 }
 
 impl Command {
@@ -15,6 +18,7 @@ impl Command {
         match line.trim() {
             "toggle-mute" => Some(Self::ToggleMute),
             "toggle-deafen" => Some(Self::ToggleDeafen),
+            "quick-switch" => Some(Self::QuickSwitch),
             _ => None,
         }
     }
@@ -30,6 +34,7 @@ impl Command {
         match self {
             Self::ToggleMute => "toggle-mute\n",
             Self::ToggleDeafen => "toggle-deafen\n",
+            Self::QuickSwitch => "quick-switch\n",
         }
     }
 }
@@ -253,10 +258,15 @@ mod tests {
         let _server = serve(&path, move |c| g.lock().unwrap().push(c)).unwrap();
         send(&path, Command::ToggleMute).unwrap();
         send(&path, Command::ToggleDeafen).unwrap();
+        send(&path, Command::QuickSwitch).unwrap();
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert_eq!(
             *got.lock().unwrap(),
-            vec![Command::ToggleMute, Command::ToggleDeafen]
+            vec![
+                Command::ToggleMute,
+                Command::ToggleDeafen,
+                Command::QuickSwitch
+            ]
         );
     }
 
@@ -271,6 +281,10 @@ mod tests {
         assert_eq!(
             Command::from_args(&["pulse-app".into(), "--toggle-mute".into()]),
             Some(Command::ToggleMute)
+        );
+        assert_eq!(
+            Command::from_args(&["pulse-app".into(), "--quick-switch".into()]),
+            Some(Command::QuickSwitch)
         );
         assert_eq!(Command::from_args(&["pulse-app".into()]), None);
     }

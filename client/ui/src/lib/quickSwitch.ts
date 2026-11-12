@@ -51,6 +51,19 @@ export function switcherKey(e: KeyLike, s: { open: boolean; blocked: boolean }):
   return null
 }
 
+/** How close an in-app toggle and the global keybind's event are to be one press. */
+export const SAME_PRESS_MS = 500
+
+/** The global keybind fired (#319; the window is already brought up): whether the switcher shows next. Pressed again
+ *  while Pulse was in front with it open, it closes, as a launcher's key does; from another app it opens (or stays
+ *  open, now in front). Another dialog open (`blocked`) keeps its place. Bound to the in-app keys themselves (Ctrl+K),
+ *  one press reaches both: with Pulse in front and an in-app toggle just now (`sinceLocalMs`), that toggle stands. */
+export function globalSwitch(s: { open: boolean; wasFocused: boolean; blocked: boolean; sinceLocalMs?: number }): boolean {
+  if (s.wasFocused && (s.sinceLocalMs ?? Infinity) < SAME_PRESS_MS) return s.open
+  if (s.open) return !s.wasFocused
+  return !s.blocked
+}
+
 // ---- places ----
 
 const lower = (xs: (string | null | undefined)[]) => [...new Set(xs.filter((x): x is string => !!x).map((x) => x.toLowerCase()))]

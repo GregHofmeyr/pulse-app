@@ -29,7 +29,7 @@ describe('KeybindSettings master switch', () => {
   let c: ReturnType<typeof mount> | null = null
   beforeEach(() => {
     invoke.mockClear()
-    state = { binds: { toggle_mute: F13, toggle_deafen: null }, enabled: true, problems: [], chosen: true }
+    state = { binds: { toggle_mute: F13, toggle_deafen: null, quick_switch: null }, enabled: true, problems: [], chosen: true }
   })
   afterEach(() => {
     if (c) unmount(c)
@@ -84,5 +84,33 @@ describe('KeybindSettings master switch', () => {
     await settle()
     expect(master().getAttribute('aria-pressed')).toBe('true')
     expect(document.querySelector('[role=alert]')?.textContent).toContain('disk full')
+  })
+})
+
+describe('KeybindSettings: the quick switcher (#319)', () => {
+  let c: ReturnType<typeof mount> | null = null
+  beforeEach(() => {
+    state = { binds: { toggle_mute: F13, toggle_deafen: null, quick_switch: null }, enabled: true, problems: [], chosen: true }
+  })
+  afterEach(() => {
+    if (c) unmount(c)
+    c = null
+    document.body.innerHTML = ''
+    vi.restoreAllMocks()
+  })
+
+  it('is one more bindable action, unbound until you choose', async () => {
+    c = mount(KeybindSettings, { target: document.body })
+    await settle()
+    const row = document.querySelector<HTMLButtonElement>('button.key[aria-label="Change Open quick switcher"]')!
+    expect(row.textContent!.trim()).toBe('Not set')
+  })
+
+  it('on Linux, names the command for the desktop to bind', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (X11; Linux x86_64)')
+    c = mount(KeybindSettings, { target: document.body })
+    await settle()
+    const cmds = [...document.querySelectorAll('.list code')].map((x) => x.textContent)
+    expect(cmds).toEqual(['pulse-app --toggle-mute', 'pulse-app --toggle-deafen', 'pulse-app --quick-switch'])
   })
 })

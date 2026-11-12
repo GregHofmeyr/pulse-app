@@ -2,7 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    // `pulse-app --toggle-mute` / `--toggle-deafen`: poke the running app and exit (Linux hotkeys).
+    // `pulse-app --toggle-mute` / `--toggle-deafen` / `--quick-switch`: poke the running app and exit
+    // (Linux hotkeys).
     let args: Vec<String> = std::env::args().collect();
     if let Some(cmd) = pulse_client::ipc::Command::from_args(&args) {
         #[cfg(unix)]
@@ -16,7 +17,7 @@ fn main() {
         #[cfg(not(unix))]
         {
             let _ = cmd;
-            eprintln!("use the in-app shortcuts (Ctrl+Shift+M / Ctrl+Shift+D) on this platform");
+            eprintln!("bind these in Pulse (Settings > Keybinds) on this platform");
             std::process::exit(1);
         }
     }

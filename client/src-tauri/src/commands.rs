@@ -1566,14 +1566,41 @@ pub fn watch_voice_link(voice: State<'_, VoiceManager>, on: bool) {
     voice.watch_link(on);
 }
 
-/// Hotkey path (IPC on Linux, keyboard/mouse hooks on Windows): toggle + broadcast, same as the buttons.
+/// Asks the page to open the quick switcher (#319), after the window is brought up.
+pub const QUICK_SWITCH_EVENT: &str = "pulse://quick-switch";
+
+/// What the page is told with [`QUICK_SWITCH_EVENT`]: whether Pulse was already in front, so pressing
+/// the bind again closes the switcher, as a launcher's does.
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickSwitch {
+    pub was_focused: bool,
+}
+
+/// Bring the window up (unminimised, shown, focused) and ask the page to open the switcher.
+fn quick_switch(app: &AppHandle) {
+    let was_focused = app.get_webview_window("main").is_some_and(|w| {
+        w.is_focused().unwrap_or(false)
+            && w.is_visible().unwrap_or(false)
+            && !w.is_minimized().unwrap_or(true)
+    });
+    crate::bring_to_front(app);
+    let _ = app.emit(QUICK_SWITCH_EVENT, QuickSwitch { was_focused });
+}
+
+/// Hotkey path (IPC on Linux, keyboard/mouse hooks on Windows): toggle + broadcast, same as the
+/// buttons; the quick switcher's bind brings the window up instead.
 pub fn hotkey(app: &AppHandle, c: crate::ipc::Command) {
+    if c == crate::ipc::Command::QuickSwitch {
+        return quick_switch(app);
+    }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let voice = app.state::<VoiceManager>();
         let controls = match c {
             crate::ipc::Command::ToggleMute => voice.toggle_mute().await,
             crate::ipc::Command::ToggleDeafen => voice.toggle_deafen().await,
+            crate::ipc::Command::QuickSwitch => return,
         };
         app.state::<Core>().send_frame(ClientFrame::VoiceState {
             flags: flags(controls),
@@ -2902,6 +2929,16 @@ pub async fn reopen_qoty(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #319: what the page listens for (Shell's switcher), and in its casing.
+    #[test]
+    fn quick_switch_is_what_the_ui_listens_for() {
+        assert_eq!(QUICK_SWITCH_EVENT, "pulse://quick-switch");
+        assert_eq!(
+            serde_json::to_string(&QuickSwitch { was_focused: true }).unwrap(),
+            r#"{"wasFocused":true}"#
+        );
+    }
 
     #[test]
     fn only_the_newest_generation_is_current() {

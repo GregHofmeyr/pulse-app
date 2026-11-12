@@ -5,6 +5,7 @@ import { emptyState, type AppState } from './state'
 import type { Channel } from './protocol/Channel'
 import type { User } from './protocol/User'
 import {
+  globalSwitch,
   buildResults, isTyping, loadRecents, matchScore, parseQuery, placesFrom, pushRecent, rankPlaces, recentPlaces, RECENTS_KEY, RECENTS_SHOWN, saveRecents, switcherKey, type Place,
 } from './quickSwitch'
 
@@ -218,5 +219,26 @@ describe('buildResults', () => {
   it('`>`: actions only, all of them with nothing after it', () => {
     expect(ids(buildResults({ places, actions, raw: '>', recents: [], here: null }))).toEqual([['actions', ['join:c2', 'join:v9', 'settings']]])
     expect(ids(buildResults({ places, actions, raw: '> sett', recents: [], here: null }))).toEqual([['actions', ['settings']]])
+  })
+})
+
+describe('globalSwitch (#319)', () => {
+  it('from another app: opens it, or keeps it open now Pulse is in front', () => {
+    expect(globalSwitch({ open: false, wasFocused: false, blocked: false })).toBe(true)
+    expect(globalSwitch({ open: true, wasFocused: false, blocked: false })).toBe(true)
+  })
+  it('pressed again with Pulse in front: closes it; opens it if it was shut', () => {
+    expect(globalSwitch({ open: true, wasFocused: true, blocked: false })).toBe(false)
+    expect(globalSwitch({ open: false, wasFocused: true, blocked: false })).toBe(true)
+  })
+  it('bound to the in-app keys, one press is one toggle: the in-app one just now stands', () => {
+    expect(globalSwitch({ open: true, wasFocused: true, blocked: false, sinceLocalMs: 40 })).toBe(true)
+    expect(globalSwitch({ open: false, wasFocused: true, blocked: false, sinceLocalMs: 40 })).toBe(false)
+    expect(globalSwitch({ open: true, wasFocused: true, blocked: false, sinceLocalMs: 5000 })).toBe(false)
+    // from another app the in-app keys never fired
+    expect(globalSwitch({ open: false, wasFocused: false, blocked: false, sinceLocalMs: 40 })).toBe(true)
+  })
+  it('another dialog open: left alone (the window still came up)', () => {
+    expect(globalSwitch({ open: false, wasFocused: false, blocked: true })).toBe(false)
   })
 })

@@ -71,7 +71,7 @@
   import type { User } from '../lib/protocol/User'
   // The quick switcher (#309)
   import QuickSwitcher from '../components/QuickSwitcher.svelte'
-  import { loadRecents, pushRecent, saveRecents, switcherKey, type Place } from '../lib/quickSwitch'
+  import { globalSwitch, SAME_PRESS_MS, loadRecents, pushRecent, saveRecents, switcherKey, type Place } from '../lib/quickSwitch'
   import type { ActionContext } from '../lib/quickActions'
   import { memberServers } from '../lib/reactions'
   import { playToCall } from '../lib/soundboard.svelte'
@@ -593,6 +593,10 @@
       saveRecents(recents)
     })
   })
+  /** When an in-app key last opened or closed it, and when the global bind (#319) last fired with Pulse in front: a
+   *  global bind on the in-app keys (Ctrl+K) reaches both, in either order, and is still one press. */
+  let localSwitchAt = -Infinity
+  let globalSwitchAt = -Infinity
   /** Ctrl+K anywhere toggles it; `/` opens it while nothing that takes text has focus (lib/quickSwitch.ts). Another
    *  dialog open keeps its keys. */
   function switcherKeys(e: KeyboardEvent) {
@@ -600,8 +604,22 @@
     const does = switcherKey(e, { open: switcherOpen, blocked })
     if (!does) return
     e.preventDefault()
+    if (performance.now() - globalSwitchAt < SAME_PRESS_MS) return
     switcherOpen = does === 'toggle' ? !switcherOpen : true
+    localSwitchAt = performance.now()
   }
+  /** The global keybind (#319): the core brought the window up; open the switcher, or close it when Pulse was already
+   *  in front with it open (pressed again, as a launcher's key does). Another dialog open keeps the window as it is. */
+  $effect(() => {
+    const ask = ui.quickSwitch
+    if (!ask) return
+    untrack(() => {
+      ui.quickSwitch = null
+      if (ask.wasFocused) globalSwitchAt = performance.now()
+      const blocked = !switcherOpen && !!document.querySelector('[aria-modal="true"]')
+      switcherOpen = globalSwitch({ open: switcherOpen, wasFocused: ask.wasFocused, blocked, sinceLocalMs: performance.now() - localSwitchAt })
+    })
+  })
   function switcherGo(p: Place, join: boolean) {
     if (p.kind === 'server') return selectServer(p.id)
     // a voice channel opens its stage; Join (Shift+Enter) joins it too, as the channel list's double click does

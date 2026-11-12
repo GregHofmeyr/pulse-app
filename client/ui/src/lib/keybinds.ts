@@ -3,12 +3,14 @@ import { invoke } from '@tauri-apps/api/core'
 
 /** A key combination, by physical key (W3C `code`), so it survives a layout switch. */
 export type Bind = { code: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean }
-export type Keybinds = { toggle_mute: Bind | null; toggle_deafen: Bind | null }
+export type Keybinds = { toggle_mute: Bind | null; toggle_deafen: Bind | null; quick_switch: Bind | null }
 export type Action = keyof Keybinds
 
 export const actions: { key: Action; label: string }[] = [
   { key: 'toggle_mute', label: 'Toggle mute' },
   { key: 'toggle_deafen', label: 'Toggle deafen' },
+  // brings Pulse up from anywhere and opens the quick switcher (#319)
+  { key: 'quick_switch', label: 'Open quick switcher' },
 ]
 
 type Mods = { ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }

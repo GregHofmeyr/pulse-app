@@ -55,6 +55,9 @@ export const ui = $state({
   jump: null as JumpRequest | null,
   /** A request to open this chat's pins popover (a pin line's See pins, #178; its channel's view does it and clears it). */
   openPins: null as string | null,
+  /** The quick switcher's global keybind fired (#319; the core already brought the window up): the shell opens the
+   *  switcher, or closes it if Pulse was in front with it open, and clears this. */
+  quickSwitch: null as { wasFocused: boolean } | null,
   /** A short line for the shell to show for a moment (it shows it and clears it). */
   notice: null as string | null,
   autoReported: false,
@@ -332,6 +335,7 @@ export async function startListening(): Promise<UnlistenFn> {
     // LiveKit closed stream audio's connection under us
     listen<{ channel_id: string }>('stream://audio_closed', (e) => void streamApi.onAudioClosed(e.payload.channel_id)),
     listen<{ channelId: string; threadId: string | null }>('pulse://notification-click', (e) => handleNotificationClick(e.payload)),
+    listen<{ wasFocused: boolean }>('pulse://quick-switch', (e) => (ui.quickSwitch = { wasFocused: e.payload.wasFocused })),
     listen<ConnState>('pulse://conn', (e) => {
       app.connAt = Date.now()
       app.state = { ...app.state, conn: e.payload }

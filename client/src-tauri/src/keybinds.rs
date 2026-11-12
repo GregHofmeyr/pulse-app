@@ -25,12 +25,16 @@ pub struct Bind {
 pub struct Keybinds {
     pub toggle_mute: Option<Bind>,
     pub toggle_deafen: Option<Bind>,
+    /// Bring Pulse up and open the quick switcher (#319). Unbound by default like the others.
+    #[serde(default)]
+    pub quick_switch: Option<Bind>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     ToggleMute,
     ToggleDeafen,
+    QuickSwitch,
 }
 
 impl Action {
@@ -38,6 +42,7 @@ impl Action {
         match self {
             Self::ToggleMute => "Toggle mute",
             Self::ToggleDeafen => "Toggle deafen",
+            Self::QuickSwitch => "Open quick switcher",
         }
     }
 
@@ -45,20 +50,37 @@ impl Action {
         match self {
             Self::ToggleMute => crate::ipc::Command::ToggleMute,
             Self::ToggleDeafen => crate::ipc::Command::ToggleDeafen,
+            Self::QuickSwitch => crate::ipc::Command::QuickSwitch,
         }
     }
+
+    /// Every action, in the order the settings pane lists them (an earlier one keeps a shared bind).
+    pub const ALL: [Action; 3] = [Self::ToggleMute, Self::ToggleDeafen, Self::QuickSwitch];
 }
 
 impl Keybinds {
     /// Each bound action with its bind.
     pub fn bound(&self) -> Vec<(Action, &Bind)> {
-        [
-            (Action::ToggleMute, &self.toggle_mute),
-            (Action::ToggleDeafen, &self.toggle_deafen),
-        ]
-        .into_iter()
-        .filter_map(|(a, b)| b.as_ref().map(|b| (a, b)))
-        .collect()
+        Action::ALL
+            .into_iter()
+            .filter_map(|a| self.get(a).as_ref().map(|b| (a, b)))
+            .collect()
+    }
+
+    pub fn get(&self, a: Action) -> &Option<Bind> {
+        match a {
+            Action::ToggleMute => &self.toggle_mute,
+            Action::ToggleDeafen => &self.toggle_deafen,
+            Action::QuickSwitch => &self.quick_switch,
+        }
+    }
+
+    fn slot(&mut self, a: Action) -> &mut Option<Bind> {
+        match a {
+            Action::ToggleMute => &mut self.toggle_mute,
+            Action::ToggleDeafen => &mut self.toggle_deafen,
+            Action::QuickSwitch => &mut self.quick_switch,
+        }
     }
 }
 
@@ -90,11 +112,12 @@ impl Bind {
 }
 
 impl Keybinds {
-    fn normalized(self) -> Keybinds {
-        Keybinds {
-            toggle_mute: self.toggle_mute.map(Bind::normalized),
-            toggle_deafen: self.toggle_deafen.map(Bind::normalized),
+    fn normalized(mut self) -> Keybinds {
+        for a in Action::ALL {
+            let slot = self.slot(a);
+            *slot = slot.take().map(Bind::normalized);
         }
+        self
     }
 }
 
@@ -215,27 +238,20 @@ pub fn load(dir: &Path) -> Saved {
 }
 
 /// `k` minus any bind this version can't use.
-fn usable(k: Keybinds) -> Keybinds {
-    // a bind this version can't use drops only itself (v1 allowed keys v2 doesn't know)
-    let keep = |b: Option<Bind>| {
-        b.filter(|b| {
-            let alone = Keybinds {
-                toggle_mute: Some(b.clone()),
-                toggle_deafen: None,
-            };
-            validate(&alone)
-                .inspect_err(|e| tracing::warn!(error = %e, "keybind dropped"))
-                .is_ok()
-        })
-    };
-    let mut k = Keybinds {
-        toggle_mute: keep(k.toggle_mute),
-        toggle_deafen: keep(k.toggle_deafen),
-    };
-    if validate(&k).is_err() {
-        k.toggle_deafen = None; // both on one bind: the first keeps it
+fn usable(mut k: Keybinds) -> Keybinds {
+    let mut out = Keybinds::default();
+    for a in Action::ALL {
+        let Some(b) = k.slot(a).take() else { continue };
+        // a bind this version can't use drops only itself (v1 allowed keys v2 doesn't know), and two
+        // actions on one bind: the earlier keeps it
+        let mut with = out.clone();
+        *with.slot(a) = Some(b);
+        match validate(&with) {
+            Ok(()) => out = with,
+            Err(e) => tracing::warn!(error = %e, "keybind dropped"),
+        }
     }
-    k
+    out
 }
 
 pub fn save(dir: &Path, saved: &Saved) -> std::io::Result<()> {
@@ -385,7 +401,7 @@ mod tests {
     fn check(bind: Bind) -> Result<(), String> {
         validate(&Keybinds {
             toggle_mute: Some(bind),
-            toggle_deafen: None,
+            ..Default::default()
         })
     }
 
@@ -457,6 +473,7 @@ mod tests {
         let v1 = Keybinds {
             toggle_mute: Some(b("KeyM", "cs")),
             toggle_deafen: Some(b("F13", "ca")),
+            quick_switch: None,
         };
         save(dir.path(), &v1.clone().into()).unwrap();
         assert_eq!(load(dir.path()).binds, v1);
@@ -504,6 +521,7 @@ mod tests {
         let k = Keybinds {
             toggle_mute: Some(b("KeyD", "cs")),
             toggle_deafen: Some(b("KeyD", "cs")),
+            quick_switch: None,
         };
         assert_eq!(
             validate(&k).unwrap_err(),
@@ -527,10 +545,7 @@ mod tests {
 
     #[test]
     fn unbound_actions_are_fine() {
-        let k = Keybinds {
-            toggle_mute: None,
-            toggle_deafen: None,
-        };
+        let k = Keybinds::default();
         assert!(validate(&k).is_ok());
         assert!(k.bound().is_empty());
     }
@@ -558,7 +573,7 @@ mod tests {
         let off = Saved {
             binds: Keybinds {
                 toggle_mute: Some(b("KeyM", "cs")),
-                toggle_deafen: None,
+                ..Default::default()
             },
             enabled: false,
         };
@@ -583,7 +598,7 @@ mod tests {
             &Saved {
                 binds: Keybinds {
                     toggle_mute: Some(b("F13", "")),
-                    toggle_deafen: None,
+                    ..Default::default()
                 },
                 enabled: false,
             },
@@ -621,7 +636,7 @@ mod tests {
         );
         let mine = Keybinds {
             toggle_mute: Some(b("F13", "")),
-            toggle_deafen: None,
+            ..Default::default()
         };
         save(dir.path(), &mine.clone().into()).unwrap();
         assert_eq!(load(dir.path()).binds, mine);
@@ -638,5 +653,38 @@ mod tests {
         // a missing action reads as unbound (an older file)
         std::fs::write(dir.path().join(FILE), r#"{"toggle_mute":{"code":"F13"}}"#).unwrap();
         assert_eq!(load(dir.path()).binds.toggle_deafen, None);
+        assert_eq!(load(dir.path()).binds.quick_switch, None);
+    }
+
+    /// #319: one more bindable action, listed and validated like the others; an older Pulse
+    /// reading the file ignores it, and a file from before it reads as unbound.
+    #[test]
+    fn the_quick_switcher_is_bindable_like_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let k = Keybinds {
+            quick_switch: Some(b("KeyK", "cs")),
+            ..Default::default()
+        };
+        assert!(validate(&k).is_ok());
+        assert_eq!(k.bound(), vec![(Action::QuickSwitch, &b("KeyK", "cs"))]);
+        assert_eq!(
+            Action::QuickSwitch.command(),
+            crate::ipc::Command::QuickSwitch
+        );
+        save(dir.path(), &k.clone().into()).unwrap();
+        assert_eq!(load(dir.path()).binds, k);
+        let clash = Keybinds {
+            toggle_mute: Some(b("KeyK", "cs")),
+            ..k.clone()
+        };
+        assert_eq!(
+            validate(&clash).unwrap_err(),
+            "Ctrl+Shift+K can't be both toggle mute and open quick switcher"
+        );
+        // on load, the earlier action keeps a shared bind
+        save(dir.path(), &clash.into()).unwrap();
+        let loaded = load(dir.path()).binds;
+        assert_eq!(loaded.toggle_mute, Some(b("KeyK", "cs")));
+        assert_eq!(loaded.quick_switch, None);
     }
 }
