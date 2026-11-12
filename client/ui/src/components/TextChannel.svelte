@@ -24,7 +24,7 @@
   import { presenceOf } from '../lib/presence'
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
-  import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
+  import { conversationName, firstUnreadIndex, isMuted, isNotes, reanchor, shouldMarkRead } from '../lib/conversations'
   import { addHistory, addOlder, appendNewer, markHistory, reachLatest, PAGE, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
   import { pinSync, refreshPins } from '../lib/pinSync.svelte'
@@ -253,6 +253,8 @@
   const isVoice = $derived(channel?.kind === 'voice')
   const title = $derived(isPrivate ? conversationName(app.state, channelId) : (channel?.name ?? ''))
   const others = $derived((app.state.dmMembers[channelId] ?? []).filter((u) => u !== app.state.me?.id))
+  // your notes to self (#308): nobody to call, add or be alerted by
+  const notes = $derived(isNotes(app.state, channelId))
   const muted = $derived(channel ? isMuted(app.state, channel, clock.nowIso) : false)
   // the phone button (#50): start this conversation's call (ringing the others), or join the one going on
   const callGoing = $derived(!!app.state.calls[channelId])
@@ -665,6 +667,8 @@
   <div class="head" use:narrowerThan={{ px: NARROW_HEAD, set: (v) => (narrowHead = v) }}>
     {#if panel}
       <Icon name="message" size={16} /><span class="title">Chat</span>
+    {:else if notes}
+      <Icon name="pencil" size={16} /><span class="title">{title}</span>
     {:else if isPrivate && channel?.kind === 'dm' && others[0]}
       <Avatar id={others[0]} name={title} size={26} presence={presenceOf(app.state, others[0], clock.nowIso)} interactive serverId={null} />
       <span class="title"><Name userId={others[0]} serverId={null} text={title} /></span>
@@ -693,7 +697,7 @@
         onclick={() => (leaderboardOpen = !leaderboardOpen)}><Icon name="trophy" size={17} /></button>
       {#if !qotyLive}<button class="qoty-btn qoty" onclick={onStartQoty}>Start Quote of the Year</button>{/if}
     {/if}
-    {#if isPrivate}
+    {#if isPrivate && !notes}
       {#if !inThisCall}
         <button class="icon-btn" aria-label={callGoing ? 'Join call' : 'Start a call'} data-tip={callGoing ? 'Join call' : 'Start a call'} onclick={call}><Icon name="phone" size={17} /></button>
       {/if}
@@ -703,10 +707,12 @@
       <button class="icon-btn hbtn" class:on={pinsOpen} aria-label="Pinned messages" data-tip="Pinned messages" data-menu-toggle aria-haspopup="dialog" aria-expanded={pinsOpen}
         onclick={() => (pinsOpen = !pinsOpen)}><Icon name="pin" size={17} /></button>
     {/if}
+    {#if !notes}
     <button bind:this={muteBtn} class="icon-btn hbtn" class:on={muted} aria-label={muted ? 'Muted' : 'Mute'} data-tip={muted ? 'Muted' : 'Mute'} data-menu-toggle
       aria-haspopup="menu" aria-expanded={menu === 'mute'}
       onclick={() => (menu = menu === 'mute' ? null : 'mute')}><Icon name={muted ? 'bellOff' : 'bell'} size={17} /></button>
-    {#if isPrivate}
+    {/if}
+    {#if isPrivate && !notes}
       <button bind:this={moreBtn} class="icon-btn" aria-label="More" aria-haspopup="menu" aria-expanded={menu === 'manage'} data-tip="More" data-menu-toggle
         onclick={() => (menu = menu === 'manage' ? null : 'manage')}><Icon name="dots" size={17} /></button>
     {/if}
@@ -726,11 +732,12 @@
     {/if}
   </div>
   <!-- not in the chat strip beside a DM or group stream in full view (#51): the call is all around it there -->
-  {#if isPrivate && !panel}<CallBand {channelId} {onVoiceSettings} />{/if}
+  {#if isPrivate && !panel && !notes}<CallBand {channelId} {onVoiceSettings} />{/if}
   <!-- tabindex -1: a place to put the focus back when nothing better is left (not a tab stop) -->
   <div class="list" tabindex="-1" bind:this={list} onscroll={onScroll}>
     {#if reachedStart && !from}<div class="start">
-      {#if channel?.kind === 'dm'}This is the start of your conversation with {title}.
+      {#if notes}This is the start of your notes. Only you can see them: jot things down, keep links and files.
+      {:else if channel?.kind === 'dm'}This is the start of your conversation with {title}.
       {:else if channel?.kind === 'group'}This is the start of {title}.
       {:else if isVoice}This is the start of {title}'s chat.
       {:else}This is the start of #{title}.{/if}

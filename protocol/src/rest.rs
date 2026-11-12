@@ -622,7 +622,8 @@ pub struct LayoutCategory {
     pub channels: Vec<ChannelId>,
 }
 
-/// One other user → a 1:1 `dm` (reused if it exists); 2..=9 others → a new `group`.
+/// One other user → a 1:1 `dm` (reused if it exists); 2..=9 others → a new `group`; only yourself →
+/// your notes to self (#308), a `dm` with you as its only member (made on first open, then reused).
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct CreateDmRequest {
     pub user_ids: Vec<UserId>,

@@ -32,6 +32,16 @@ async fn start(
     if !crate::voice::routes::may_join(&s.db, me, &ch).await? {
         return Err(AppError::NotFound);
     }
+    // Notes to self (#308): a DM with nobody else in it has nobody to call.
+    if crate::dms::routes::members_of(&s.db, ch.id)
+        .await?
+        .iter()
+        .all(|u| *u == me)
+    {
+        return Err(AppError::BadRequest(
+            "there's nobody else here to call".into(),
+        ));
+    }
     if !s.limits.call_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }

@@ -8,9 +8,11 @@
   import { displayName, liveIn } from '../lib/selectors'
   import ConversationMenu from './ConversationMenu.svelte'
   import LiveBadge from './LiveBadge.svelte'
-  import { conversations, previewParts, previewText } from '../lib/conversations'
+  import { conversations, NOTES_NAME, previewParts, previewText } from '../lib/conversations'
   import { mediaUrl } from '../lib/emoji'
   import { voice } from '../lib/voice.svelte'
+  import { openDm } from '../lib/store.svelte'
+  import { errorText } from '../lib/tauri'
 
   let { activeId, onOpen, onNew, onLeft }: {
     activeId: string | null
@@ -33,10 +35,30 @@
   /** Who's live in a conversation's call (#286), oldest stream first. */
   const streamers = (id: string) => Object.values(liveIn(app.state, id)).sort((a, b) => a.started_at.localeCompare(b.started_at)).map((x) => x.user_id)
   const liveTip = (ids: string[]) => `${ids.map(nameOf).join(', ')} ${ids.length === 1 ? 'is' : 'are'} live`
+
+  // Notes to self (#308): always on top. Before its first open (or after you closed it) the row stands in for it, and
+  // opening it asks the server for your DM with only you, which makes it the first time.
+  const hasNotes = $derived(list.some((c) => c.notes))
+  let notesError = $state('')
+  async function openNotes() {
+    if (!me) return
+    notesError = ''
+    try {
+      onOpen(await openDm(me))
+    } catch (e) {
+      notesError = errorText(e)
+    }
+  }
 </script>
 
+{#snippet notesPicture()}
+  <span class="notes-pic" aria-hidden="true"><Icon name="pencil" size={16} /></span>
+{/snippet}
+
 {#snippet picture(c: (typeof list)[number], people: string[])}
-  {#if c.channel.kind === 'dm' && people[0]}
+  {#if c.notes}
+    {@render notesPicture()}
+  {:else if c.channel.kind === 'dm' && people[0]}
     <Avatar id={people[0]} name={nameOf(people[0])} size={32} presence={presenceOf(app.state, people[0], clock.nowIso)} hovered={over(c.channel.id)} />
   {:else if c.channel.icon_hash}
     <GroupIcon hash={c.channel.icon_hash} still={c.channel.icon_still} size={32} hovered={over(c.channel.id)} />
@@ -52,6 +74,13 @@
 <button class="btn btn-lg btn-quiet new" onclick={onNew}><Icon name="plus" size={16} /> New message</button>
 
 <div class="list">
+  {#if !hasNotes}
+    <button class="row" onclick={openNotes}>
+      {@render notesPicture()}
+      <span class="meta"><span class="name"><span class="name-clip">{NOTES_NAME}</span></span><span class="prev">Just for you</span></span>
+    </button>
+    {#if notesError}<p class="err" role="alert">{notesError}</p>{/if}
+  {/if}
   {#each list as c (c.channel.id)}
     {@const people = others(c.members)}
     {@const badge = c.muted ? c.mentions : c.unread}
@@ -59,7 +88,7 @@
     <button class="row" class:active={c.channel.id === activeId} class:unread={c.unread > 0 && !c.muted} class:muted={c.muted}
       onclick={() => onOpen(c.channel.id)}
       onpointerenter={() => (hovered = c.channel.id)} onpointerleave={() => { if (hovered === c.channel.id) hovered = null }}
-      oncontextmenu={(e) => { e.preventDefault(); ctx = { id: c.channel.id, x: e.clientX, y: Math.min(e.clientY, innerHeight - 250) } }}>
+      oncontextmenu={(e) => { e.preventDefault(); if (c.notes) return; ctx ={ id: c.channel.id, x: e.clientX, y: Math.min(e.clientY, innerHeight - 250) } }}>
       {#if c.channel.id === voice.channelId}
         <!-- the call you're in (#220): the same ring and badge as its tab -->
         <span class="call-here round">{@render picture(c, people)}<span class="call-badge" aria-hidden="true"><Icon name="speaker" size={10} /></span></span>
@@ -124,4 +153,7 @@
   /* the unread pill of the channel list and server tabs (#173) */
   .pill { min-width: 16px; height: 16px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-block; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((16px - 1cap) / 2) 4px; }
   .empty { padding: 12px 10px; font-size: 13px; color: var(--text-3); }
+  /* your notes (#308): a round tile the size of a DM's avatar */
+  .notes-pic { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; display: grid; place-items: center; background: var(--bg-3); color: var(--text-2); }
+  .err { padding: 0 10px 6px; font-size: 12px; color: var(--danger-text); }
 </style>

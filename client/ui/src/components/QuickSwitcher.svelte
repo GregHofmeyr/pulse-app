@@ -93,7 +93,8 @@
     <span class="lead chip" style:background={avatarColor(r.place.id)} aria-hidden="true">{initial(r.place.name)}</span>
   {:else if r.place.kind === 'dm'}
     {@const other = otherIn(r.place.id)}
-    <span class="lead">{#if other}<Avatar id={other} name={r.place.name} size={20} />{:else}<Icon name="message" size={18} />{/if}</span>
+    <!-- no one else in it: your notes (#308) -->
+    <span class="lead">{#if other}<Avatar id={other} name={r.place.name} size={20} />{:else}<Icon name="pencil" size={18} />{/if}</span>
   {:else if r.place.kind === 'group'}
     {@const ch = app.state.channels[r.place.id]}
     <span class="lead">{#if ch?.icon_hash}<GroupIcon hash={ch.icon_hash} still={ch.icon_still} size={20} />{:else}<Icon name="users" size={18} />{/if}</span>

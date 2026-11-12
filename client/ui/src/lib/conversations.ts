@@ -42,9 +42,23 @@ export function notifyLevel(s: AppState, ch: Channel): NotifyLevel {
   return channelLevel(s, ch.id) ?? serverLevel(s, ch.server_id)
 }
 
+/** Your notes to self (#308): the DM whose only member is you (the server makes it the first time you open it). */
+export function isNotes(s: AppState, channelId: string): boolean {
+  const members = s.dmMembers[channelId]
+  return s.channels[channelId]?.kind === 'dm' && !!s.me && members?.length === 1 && members[0] === s.me.id
+}
+
+/** Your notes conversation's id, or null before you've first opened it. */
+export function notesId(s: AppState): string | null {
+  return Object.keys(s.channels).find((id) => isNotes(s, id)) ?? null
+}
+
+export const NOTES_NAME = 'Notes'
+
 export function conversationName(s: AppState, channelId: string): string {
   const ch = s.channels[channelId]
   if (ch?.name) return ch.name
+  if (isNotes(s, channelId)) return NOTES_NAME
   const others = (s.dmMembers[channelId] ?? []).filter((u) => u !== s.me?.id)
   const names = others.map((u) => displayName(s, null, u))
   return names.join(', ') || 'Just you'
@@ -61,8 +75,10 @@ export function conversations(s: AppState, nowIso: string) {
       unread: s.reads[channel.id]?.unread ?? 0,
       mentions: s.reads[channel.id]?.mentions ?? 0,
       muted: isMuted(s, channel, nowIso),
+      notes: isNotes(s, channel.id),
     }))
-    .sort((a, b) => (b.latest?.id ?? b.channel.id).localeCompare(a.latest?.id ?? a.channel.id))
+    // your notes (#308) pinned on top, then newest first
+    .sort((a, b) => Number(b.notes) - Number(a.notes) || (b.latest?.id ?? b.channel.id).localeCompare(a.latest?.id ?? a.channel.id))
 }
 
 /** Home tab: unread + mentions of your DMs/groups (only mentions when muted). Server mentions show on server tabs. */

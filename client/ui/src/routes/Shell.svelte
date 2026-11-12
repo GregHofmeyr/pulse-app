@@ -59,7 +59,7 @@
   import GroupIconCrop from '../components/GroupIconCrop.svelte'
   import { badgeStore, logoClick } from '../lib/badges.svelte'
   import { applyEvent, dropClipJob, setClipJob, trimHistory } from '../lib/state'
-  import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
+  import { conversationName, homeBadge, inVoice, notesId, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { baseName, displayName, isMember, liveIn } from '../lib/selectors'
   import { CONN_PILL_DELAY_MS, isRefusal } from '../lib/conn'
   import { avatarColor, initial } from '../lib/avatar'
@@ -636,6 +636,7 @@
       leave: () => voiceApi.leave(),
       goLive: () => { if (voice.channelId) void pickSource(voice.channelId) },
       openSettings: (section) => openSettings(section),
+      openNotes: s.me && !(notesId(s) && !s.hidden[notesId(s)!]) ? () => void messageUser(s.me!.id) : undefined,
     }
   }
 

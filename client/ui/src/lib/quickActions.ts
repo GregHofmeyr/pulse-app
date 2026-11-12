@@ -29,6 +29,8 @@ export interface ActionContext {
   leave: () => void
   goLive: () => void
   openSettings: (section: Section) => void
+  /** Open your notes to self (#308), making them; only until they exist (then they're listed as a place). */
+  openNotes?: () => void
 }
 
 export interface QuickAction {
@@ -82,6 +84,8 @@ export const SOURCES: Source[] = [
     !ctx.call
       ? []
       : ctx.sounds.map((s) => ({ id: `play:${s.id}`, label: `Play ${s.name}`, name: s.name, context: 'Soundboard', icon: 'soundboard' as const, keywords: ['sound'], run: (c: ActionContext) => c.play(s) })),
+  // your notes to self (#308), before they're a place
+  (ctx) => (ctx.openNotes ? [{ id: 'notes', label: 'Notes', icon: 'pencil', keywords: ['notes to self', 'yourself'], run: (c) => c.openNotes?.() }] : []),
   // settings, and each of its pages
   () => [
     { id: 'settings', label: 'Open Settings', icon: 'gear', keywords: ['preferences', 'options'], run: (c) => c.openSettings('voice') },

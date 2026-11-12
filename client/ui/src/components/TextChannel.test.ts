@@ -777,4 +777,19 @@ describe('TextChannel: the phone button (#50)', () => {
     expect(document.querySelector('.band')).toBeNull()
     unmount(c)
   })
+  it('your notes (#308): titled Notes, with pins and search but no call, add people or mute', () => {
+    const notes = { id: 'N1', server_id: null, kind: 'dm' as const, name: null, position: 0 }
+    const s = { ...app.state, channels: { ...app.state.channels, N1: notes }, dmMembers: { ...app.state.dmMembers, N1: ['U1'] } }
+    app.state = markHistory(addHistory(s, 'N1', []), 'N1', true)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'N1', serverId: null } })
+    flushSync()
+    expect(document.querySelector('.head .title')?.textContent).toBe('Notes')
+    expect(phone()).toBeNull()
+    expect(document.querySelector('.head button[aria-label="Add people"]')).toBeNull()
+    expect(document.querySelector('.head button[aria-label="Mute"]')).toBeNull()
+    expect(document.querySelector('.head button[aria-label="Pinned messages"]')).not.toBeNull()
+    expect(document.querySelector('.band')).toBeNull()
+    expect(document.querySelector('.start')?.textContent).toContain('Only you can see them')
+    unmount(c)
+  })
 })

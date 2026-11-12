@@ -138,11 +138,12 @@ async fn dm_validation() {
             .status(),
         400
     );
+    // only yourself is your notes to self (#308), not an error
     assert_eq!(
         post_json(&app, &a, "/dms", json!({"user_ids": [a_id]}))
             .await
             .status(),
-        400
+        200
     );
     let ghost = pulse_protocol::ids::UserId::new();
     assert_eq!(

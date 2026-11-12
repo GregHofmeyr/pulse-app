@@ -148,6 +148,11 @@ export async function openDm(userId: string): Promise<string> {
   const ch = await api.createDm([userId])
   // Show it straight away: the ChannelCreated gateway event may arrive after this response.
   if (!app.state.channels[ch.id]) app.state = applyEvent(app.state, { t: 'ChannelCreated', d: { channel: ch } }, Date.now())
+  // and who's in it (a DM: you and them; your notes, #308: just you), which GroupMembersChanged may also bring late
+  const me = app.state.me?.id
+  if (me && ch.kind === 'dm' && !app.state.dmMembers[ch.id]) {
+    app.state = applyEvent(app.state, { t: 'GroupMembersChanged', d: { channel_id: ch.id, user_ids: [...new Set([me, userId])].sort() } }, Date.now())
+  }
   return ch.id
 }
 

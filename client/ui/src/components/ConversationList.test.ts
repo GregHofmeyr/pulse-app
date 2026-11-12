@@ -159,3 +159,39 @@ describe('the call you are in', () => {
     expect(other.querySelector('.in-call:not(.mine)')?.getAttribute('aria-label')).toBe('In call')
   })
 })
+
+describe('Notes to self (#308)', () => {
+  const rows = () => [...document.querySelectorAll<HTMLElement>('.list .row')]
+
+  it('is pinned at the top before you ever open it, and opening it makes it (a DM with only you)', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    vi.mocked(invoke).mockClear()
+    vi.mocked(invoke).mockImplementation(async (cmd) => cmd === 'create_dm' ? { id: 'N1', server_id: null, kind: 'dm', name: null, position: 0 } : undefined)
+    const opened: string[] = []
+    if (cmp) unmount(cmp)
+    cmp = mount(ConversationList, { target: document.body, props: { activeId: null, onOpen: (id: string) => opened.push(id), onNew: () => {}, onLeft: () => {} } })
+    flushSync()
+    expect(rows()[0].textContent).toContain('Notes')
+    rows()[0].click()
+    await vi.waitFor(() => expect(opened).toEqual(['N1']))
+    expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === 'create_dm').map(([, a]) => a)).toEqual([{ userIds: ['U1'] }])
+    // shown as your notes straight away, before the gateway's events for it arrive
+    flushSync()
+    expect(rows().filter((r) => r.textContent?.includes('Notes'))).toHaveLength(1)
+    expect(app.state.dmMembers['N1']).toEqual(['U1'])
+    vi.mocked(invoke).mockImplementation(async () => undefined)
+  })
+
+  it('once made, it is the top row, one of it, with no person menu', () => {
+    app.state = {
+      ...app.state,
+      channels: { ...app.state.channels, N1: { id: 'N1', server_id: null, kind: 'dm', name: null, position: 0 } },
+      dmMembers: { ...app.state.dmMembers, N1: ['U1'] },
+    } as never
+    flushSync()
+    expect(rows()[0].textContent).toContain('Notes')
+    expect(rows().filter((r) => r.textContent?.includes('Notes'))).toHaveLength(1)
+    rightClick(rows()[0])
+    expect(document.querySelector('[role=menu]')).toBeNull()
+  })
+})

@@ -915,3 +915,65 @@ async fn read_state_events_carry_the_absolute_mention_count() {
         "{e:?}"
     );
 }
+
+/// Notes to self (#308): asking for a DM with only yourself opens your one-person DM, made on first
+/// open and reused after; it's never someone else's DM, nobody else can see it, and it has no calls.
+#[tokio::test]
+async fn notes_to_self_is_a_one_person_dm() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let dm = create_dm(&app, &a, &[b_id]).await;
+    let notes = create_dm(&app, &a, &[a_id]).await;
+    assert_ne!(notes.id, dm.id, "not the DM with sam");
+    assert_eq!(notes.kind, pulse_protocol::rest::ChannelKind::Dm);
+    assert_eq!(create_dm(&app, &a, &[a_id]).await.id, notes.id, "reused");
+    assert_eq!(
+        create_dm(&app, &a, &[b_id]).await.id,
+        dm.id,
+        "the DM still resolves"
+    );
+    let sams_notes = create_dm(&app, &b, &[b_id]).await;
+    assert_ne!(sams_notes.id, notes.id, "everyone has their own");
+
+    let m = send(&app, &a, notes.id, "buy milk").await;
+    let (_ws, ready) = hello(&app, &a).await;
+    let members = ready
+        .dm_members
+        .iter()
+        .find(|m| m.channel_id == notes.id)
+        .expect("listed");
+    assert_eq!(members.user_ids, vec![a_id]);
+    assert_eq!(read_state(&ready, notes.id).await.unread, 0);
+    let r = app
+        .http
+        .get(app.url(&format!("/channels/{}/messages", notes.id)))
+        .bearer_auth(&b)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404, "only you");
+    assert_eq!(history(&app, &a, notes.id).await[0].id, m.id);
+
+    let call = post_json(
+        &app,
+        &a,
+        &format!("/calls/{}", notes.id),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(call.status(), 400, "nobody to call");
+
+    // Closed, it comes back on the next open.
+    let close = post_json(
+        &app,
+        &a,
+        &format!("/channels/{}/close", notes.id),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(close.status(), 204);
+    assert_eq!(create_dm(&app, &a, &[a_id]).await.id, notes.id);
+    let (_ws2, ready) = hello(&app, &a).await;
+    assert!(ready.hidden.is_empty());
+}

@@ -2,6 +2,7 @@
 import type { UserId } from "./UserId";
 
 /**
- * One other user → a 1:1 `dm` (reused if it exists); 2..=9 others → a new `group`.
+ * One other user → a 1:1 `dm` (reused if it exists); 2..=9 others → a new `group`; only yourself →
+ * your notes to self (#308), a `dm` with you as its only member (made on first open, then reused).
  */
 export type CreateDmRequest = { user_ids: Array<UserId>, };

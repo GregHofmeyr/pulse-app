@@ -421,3 +421,34 @@ describe('NEW divider anchor', () => {
     expect(firstUnreadIndex(more, anchor, 'ME')).toBe(5)
   })
 })
+
+import { isNotes, notesId } from './conversations'
+
+describe('notes to self (#308)', () => {
+  const withNotes = (over: Partial<Ready> = {}) => ready({
+    channels: [...ready().channels, { id: 'N1', server_id: null, kind: 'dm', name: null, position: 0 }],
+    dm_members: [...ready().dm_members, { channel_id: 'N1', user_ids: ['ME'] }],
+    ...over,
+  })
+
+  it('is the DM whose only member is you, named Notes', () => {
+    const s = applyReady(emptyState(), withNotes())
+    expect(isNotes(s, 'N1')).toBe(true)
+    expect(isNotes(s, 'DM1')).toBe(false)
+    expect(isNotes(s, 'G1')).toBe(false)
+    expect(notesId(s)).toBe('N1')
+    expect(conversationName(s, 'N1')).toBe('Notes')
+    expect(notesId(applyReady(emptyState(), ready()))).toBe(null)
+  })
+
+  it('sits at the top of the list, above newer conversations', () => {
+    const s = applyReady(emptyState(), withNotes({ latest: [msg('M3', 'DM1', 'U1'), msg('Z9', 'G1', 'U2'), msg('M1', 'N1', 'ME')] }))
+    expect(conversations(s, NOW).map((c) => c.channel.id)).toEqual(['N1', 'G1', 'DM1'])
+  })
+
+  it('never alerts: everything in it is yours', () => {
+    const s = applyReady(emptyState(), withNotes())
+    const message = msg('M20', 'N1', 'ME')
+    expect(shouldAlert({ message, me: 'ME', channel: s.channels['N1'], open: false, openThread: null, focused: false, muted: false, level: 'all' })).toBe(false)
+  })
+})

@@ -105,6 +105,16 @@
     }
   }
 
+  async function openNotes() {
+    error = null
+    try {
+      ui.goTo = await openDm(user.id)
+      onClose?.()
+    } catch (e) {
+      error = errorText(e)
+    }
+  }
+
   // Your own card's status row (#45) opens your status menu, above it.
   let statusMenu = $state<HTMLElement | null>(null)
 
@@ -183,9 +193,12 @@
         <button type="button" aria-haspopup="menu" aria-expanded={!!statusMenu} data-menu-toggle onclick={(e) => (statusMenu = statusMenu ? null : e.currentTarget)}>
           <span class="status {presence?.kind ?? 'online'}"></span><span>{presence?.label ?? 'Online'}</span><Icon name="chevronRight" size={14} /></button>
         {#if size === 'quick'}<button type="button" onclick={viewFull}><Icon name="trophy" size={16} /><span>Badges</span></button>{/if}
+        <!-- your notes to self (#308): your DM with only you, made the first time -->
+        <button type="button" onclick={openNotes}><Icon name="pencil" size={16} /><span>Notes</span></button>
         <!-- Settings (#168): the me area opens only this card, so the card is the way there (the cog stays too) -->
         <button type="button" onclick={openCardSettings}><Icon name="gear" size={16} /><span>Settings</span></button>
       </div>
+      {#if error}<p class="err" role="alert">{error}</p>{/if}
     {:else if !preview && size === 'quick'}
       <button type="button" class="full-link" onclick={viewFull}>View full profile</button>
     {/if}

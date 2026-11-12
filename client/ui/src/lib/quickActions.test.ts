@@ -41,6 +41,16 @@ describe('the action registry', () => {
     const off = allActions(ctx(inCall))
     expect(off.find((a) => a.id === 'mute')!.label).toBe('Mute')
   })
+  it('Notes (#308): opens your notes until they exist (then they are a place of their own)', () => {
+    expect(ids(ctx())).not.toContain('notes')
+    const openNotes = vi.fn()
+    const c = ctx({ openNotes })
+    const notes = allActions(c).find((a) => a.id === 'notes')!
+    expect(notes.label).toBe('Notes')
+    expect(matchActions(allActions(c), 'notes', 50, true).map((a) => a.id)).toContain('notes')
+    notes.run(c)
+    expect(openNotes).toHaveBeenCalled()
+  })
   it('no Go Live where it is off (Linux, not connected)', () => {
     expect(ids(ctx({ ...inCall, goLiveOff: "Streaming from Linux isn't supported yet" }))).not.toContain('golive')
   })

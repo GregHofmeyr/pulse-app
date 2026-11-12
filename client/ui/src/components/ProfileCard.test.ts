@@ -379,6 +379,16 @@ describe('ProfileCard', () => {
     expect(profileUi.full).toBeNull()
   })
 
+  it('your card has Notes (#308): opens your notes (a DM with only you) and closes the card', async () => {
+    const onClose = vi.fn()
+    vi.mocked(invoke).mockImplementation((async (cmd: string) => (cmd === 'create_dm' ? { id: 'N1', server_id: null, kind: 'dm', name: null, position: 0 } : undefined)) as never)
+    const el = show({ user: alex, onClose })
+    ;[...el.querySelectorAll<HTMLButtonElement>('.actions button')].find((b) => b.textContent?.trim() === 'Notes')!.click()
+    await vi.waitFor(() => expect(ui.goTo).toBe('N1'))
+    expect(calls('create_dm')[0][1]).toEqual({ userIds: ['U1'] })
+    expect(onClose).toHaveBeenCalled()
+  })
+
   it('the bio is plain text under the name, not a panel', () => {
     const bio = show({ card: card({ bio: 'hello there' }) }).querySelector('.bio')!
     expect(bio.textContent).toContain('hello there')
@@ -388,7 +398,7 @@ describe('ProfileCard', () => {
   it('your quick card groups Edit profile, your status, Badges and Settings in one box', () => {
     const el = show({ user: alex })
     const rows = [...el.querySelectorAll<HTMLButtonElement>('.actions button')]
-    expect(rows.map((b) => b.textContent?.trim())).toEqual(['Edit profile', 'Online', 'Badges', 'Settings'])
+    expect(rows.map((b) => b.textContent?.trim())).toEqual(['Edit profile', 'Online', 'Badges', 'Notes', 'Settings'])
     // the status row opens your status menu (#45), without Your profile: you're on it
     rows[1].click()
     flushSync()
@@ -440,7 +450,7 @@ describe('ProfileCard', () => {
 
   it('your full card keeps Edit profile and status, without Badges (the trophy case is beside it)', () => {
     const rows = [...show({ user: alex, size: 'full' }).querySelectorAll('.actions button')].map((b) => b.textContent?.trim())
-    expect(rows).toEqual(['Edit profile', 'Online', 'Settings'])
+    expect(rows).toEqual(['Edit profile', 'Online', 'Notes', 'Settings'])
   })
 
   it('Settings on your card opens Settings: the card and the full profile give way (#168)', () => {

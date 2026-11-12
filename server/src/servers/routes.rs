@@ -578,6 +578,92 @@ async fn list_dms(
     Ok(Json(dms_of(&s.db, me).await?))
 }
 
+/// Your notes to self (#308): the `dm` whose only member is `me`, if you've opened it before.
+async fn existing_notes<'e>(
+    db: impl sqlx::SqliteExecutor<'e>,
+    me: UserId,
+) -> AppResult<Option<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT c.id FROM channels c
+         JOIN channel_members m ON m.channel_id = c.id AND m.user_id = ?
+         WHERE c.kind = 'dm' AND NOT EXISTS
+           (SELECT 1 FROM channel_members o WHERE o.channel_id = c.id AND o.user_id <> ?)
+         LIMIT 1",
+    )
+    .bind(me.to_string())
+    .bind(me.to_string())
+    .fetch_optional(db)
+    .await?)
+}
+
+/// Open (or make, on first open) your notes to self (#308): a `dm` with you as its only member.
+/// Like a 1:1 DM it's made once and pays a create only then, and opening it reopens it if you'd
+/// closed it.
+async fn open_notes(s: &AppState, me: UserId) -> AppResult<Channel> {
+    if !s.limits.create_user.allowed(&me.to_string()) && existing_notes(&s.db, me).await?.is_none()
+    {
+        return Err(AppError::TooManyRequests(None));
+    }
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    if let Some(id) = existing_notes(&mut *tx, me).await? {
+        let channel_id: ChannelId = id.parse().map_err(anyhow::Error::from)?;
+        let reopened = sqlx::query("DELETE FROM dm_hidden WHERE user_id = ? AND channel_id = ?")
+            .bind(me.to_string())
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        tx.commit().await?;
+        if reopened > 0 {
+            s.hub
+                .publish(
+                    &s.db,
+                    Event::ConversationVisibility {
+                        user_id: me,
+                        channel_id,
+                        hidden: false,
+                    },
+                )
+                .await;
+        }
+        let ch = crate::access::load_channel(&s.db, channel_id).await?;
+        return ch.ok_or(AppError::NotFound);
+    }
+    if !s.limits.create_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None)); // dropping `tx` rolls back
+    }
+    let ch = insert_channel(&mut tx, None, ChannelKind::Dm, None, 0, None).await?;
+    sqlx::query(
+        "INSERT INTO channel_members (channel_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(ch.id.to_string())
+    .bind(me.to_string())
+    .bind(me.to_string())
+    .bind(now())
+    .execute(&mut *tx)
+    .await?;
+    crate::reads::init_point(&mut tx, me, ch.id).await?;
+    tx.commit().await?;
+    s.hub
+        .publish(
+            &s.db,
+            Event::ChannelCreated {
+                channel: ch.clone(),
+            },
+        )
+        .await;
+    s.hub
+        .publish(
+            &s.db,
+            Event::GroupMembersChanged {
+                channel_id: ch.id,
+                user_ids: vec![me],
+            },
+        )
+        .await;
+    Ok(ch)
+}
+
 /// The 1:1 DM between `a` and `b`, if there is one.
 async fn existing_dm<'e>(
     db: impl sqlx::SqliteExecutor<'e>,
@@ -601,6 +687,10 @@ async fn create_dm(
     AuthUser(me): AuthUser,
     Json(req): Json<CreateDmRequest>,
 ) -> AppResult<Json<Channel>> {
+    // Only yourself: your notes to self (#308), a one-person DM.
+    if !req.user_ids.is_empty() && req.user_ids.iter().all(|u| *u == me) {
+        return open_notes(&s, me).await.map(Json);
+    }
     let others: BTreeSet<UserId> = req.user_ids.into_iter().filter(|u| *u != me).collect();
     if others.is_empty() || others.len() > MAX_GROUP_OTHERS {
         return Err(AppError::BadRequest(format!(
