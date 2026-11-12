@@ -40,6 +40,7 @@
   import { openCard } from '../lib/profileCard.svelte'
   import MemberMenu from './MemberMenu.svelte'
   import MessageMenu from './MessageMenu.svelte'
+  import { quoteRequest, quotesChannelsFor } from '../lib/quoteFromMessage'
   import { livePin, pinFor, pinTip, takesPins } from '../lib/pins'
   import { refreshPins } from '../lib/pinSync.svelte'
   import { serverNow } from '../lib/serverClock'
@@ -182,6 +183,20 @@
   // your own poll, still open, can be ended from the message's menu (#157); a refusal fetches the poll afresh
   const endable = $derived(!!message.poll && mine && !pollOver(message.poll, now))
   const endPoll = () => closePoll(message).catch((e) => showError(errorText(e)))
+  // Add to quotes (#316): the message as a quote, its author speaking, in one of its server's quotes channels (none in
+  // a DM or group: no item there). One request id per message, so a double pick posts it once.
+  const quotesChannels = $derived(msgMenu ? quotesChannelsFor(app.state, message).map((c) => ({ id: c.id, name: c.name ?? '' })) : [])
+  let quoteNonce: string | null = null
+  function addToQuotes(channelId: string) {
+    const server = app.state.channels[message.channel_id]?.server_id
+    if (!server) return
+    quoteNonce ??= crypto.randomUUID()
+    const name = app.state.channels[channelId]?.name ?? 'quotes'
+    return api.postQuote(channelId, quoteRequest(app.state, message, server, quoteNonce)).then(
+      () => (ui.notice = `Added to #${name}`),
+      (e) => showError(errorText(e)),
+    )
+  }
   function messageAuthor(userId: string) {
     openDm(userId).then((channelId) => (ui.goTo = channelId), (e) => showError(errorText(e)))
   }
@@ -386,7 +401,7 @@
 {#if msgMenu}
   {#key msgMenu}<MessageMenu pinned={!!pin} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
     onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
-    onEndPoll={endable ? endPoll : undefined} onClose={() => (msgMenu = null)} />{/key}
+    onEndPoll={endable ? endPoll : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
 {/if}
 {#if authorMenu && message.author_id}
   {#key authorMenu}<MemberMenu {serverId} userId={message.author_id} x={authorMenu.x} y={authorMenu.y} opener={authorMenu.opener}

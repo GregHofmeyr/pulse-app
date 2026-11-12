@@ -1,7 +1,8 @@
 <script lang="ts">
   // A message's menu (#178): from its action bar's More, or a right-click (Shift+F10, the menu key) on the message.
   // Pin message, with its lengths as the shared hover flyout (MenuFlyout, as Mute's), or Unpin message on a pinned
-  // one; and End poll on your own open poll (#157). Built like the channel menu: placed by placeMenu, arrows move, Escape closes a hover-opened flyout first.
+  // one; End poll on your own open poll (#157); and Add to quotes (#316), a flyout of the server's quotes channels when
+  // it has several. Built like the channel menu: placed by placeMenu, arrows move, Escape closes a hover-opened flyout first.
   import { onMount, untrack } from 'svelte'
   import { clickOutside } from '../lib/actions'
   import { placeMenu } from '../lib/menuPlace'
@@ -9,7 +10,7 @@
   import MenuFlyout from './MenuFlyout.svelte'
   import type { PinDuration } from '../lib/protocol/PinDuration'
 
-  let { pinned, x, y, opener, onPin, onUnpin, onEndPoll, onClose }: {
+  let { pinned, x, y, opener, onPin, onUnpin, onEndPoll, quotesChannels = [], onQuote, onClose }: {
     /** The message is pinned: Unpin message instead of Pin message. */
     pinned: boolean
     x: number
@@ -20,8 +21,13 @@
     onUnpin: () => unknown
     /** Set on your own open poll (#157): End poll. */
     onEndPoll?: () => unknown
+    /** Add to quotes (#316): the server's quotes channels this message can become a quote in (none: no item). One
+     *  is a plain item; several, a flyout to pick from. */
+    quotesChannels?: readonly { id: string; name: string }[]
+    onQuote?: (channelId: string) => unknown
     onClose: () => void
   } = $props()
+  const quoteChoices = $derived(quotesChannels.map((c) => ({ label: `#${c.name}` })))
 
   let el = $state<HTMLElement>()
   let left = $state(untrack(() => x))
@@ -45,7 +51,9 @@
   }
 
   let flyout = $state<ReturnType<typeof MenuFlyout>>()
-  const closeSub = (refocus: boolean | 'if-inside') => flyout?.close(refocus)
+  let quoteFlyout = $state<ReturnType<typeof MenuFlyout>>()
+  const flyouts = () => [flyout, quoteFlyout]
+  const closeSub = (refocus: boolean | 'if-inside') => flyouts().forEach((f) => f?.close(refocus))
 
   function close(restoreFocus: boolean) {
     if (closed) return
@@ -66,7 +74,7 @@
     const at = list.indexOf(document.activeElement as HTMLButtonElement)
     if (e.key === 'ArrowLeft') { e.preventDefault(); closeSub(false); return }
     // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
-    if (e.key === 'Escape' && flyout?.isOpen()) { e.preventDefault(); e.stopPropagation(); closeSub(false); return }
+    if (e.key === 'Escape' && flyouts().some((f) => f?.isOpen())) { e.preventDefault(); e.stopPropagation(); closeSub(false); return }
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) closeSub(false)
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); focusItem(at + 1); break
@@ -84,7 +92,8 @@
   onpointerover={(e) => {
     // another of the menu's own items under the pointer closes the flyout
     const t = (e.target as Element).closest?.('[data-item]')
-    if (t && t.parentElement === el && t !== flyout?.trigger()) flyout?.closeSoon()
+    if (!t || t.parentElement !== el) return
+    for (const f of flyouts()) if (t !== f?.trigger()) f?.closeSoon()
   }}>
   {#if pinned}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onUnpin)}>Unpin message</button>
@@ -94,6 +103,12 @@
   {/if}
   {#if onEndPoll}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onEndPoll)}>End poll</button>
+  {/if}
+  {#if onQuote && quotesChannels.length === 1}
+    <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(() => onQuote(quotesChannels[0].id))}>Add to quotes</button>
+  {:else if onQuote && quotesChannels.length > 1}
+    <MenuFlyout bind:this={quoteFlyout} label="Add to quotes…" flyoutLabel="Add to quotes in" menuLeft={left} menuTop={top} item="quote"
+      choices={quoteChoices} onPick={(i) => pick(() => onQuote(quotesChannels[i].id))} />
   {/if}
 </div>
 
