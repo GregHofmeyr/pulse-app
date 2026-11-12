@@ -125,6 +125,8 @@ fn listening_in(r: &Ready, who: UserId) -> Option<Listening> {
 }
 
 struct People {
+    /// Keep it bound (`app: _app`), never left to `..`: it owns the database's temp dir, and once that's gone the
+    /// server's next new pool connection fails (SQLITE_CANTOPEN), so presence and activity announcements go missing.
     app: TestApp,
     fake: FakeProvider,
     alex: (UserId, String, Socket),
@@ -221,6 +223,7 @@ async fn what_alex_plays_reaches_everyone_with_its_art_and_their_next_ready() {
 #[tokio::test]
 async fn show_off_tells_nobody_and_a_bad_update_is_nothing() {
     let People {
+        app: _app,
         alex: (a, _, mut alex_ws),
         sam: (_, _, mut sam_ws),
         ..
@@ -309,6 +312,7 @@ async fn it_goes_with_its_connection() {
 #[tokio::test]
 async fn over_the_limit_the_latest_still_lands() {
     let People {
+        app: _app,
         alex: (a, _, mut alex_ws),
         sam: (_, _, mut sam_ws),
         ..
@@ -320,10 +324,16 @@ async fn over_the_limit_the_latest_still_lands() {
     for t in ["One", "Two", "Three", "Four"] {
         say(&mut alex_ws, Some(update(t)), true).await;
     }
-    let seen: Vec<String> = about(&drain(&mut sam_ws, 1500).await, a)
-        .into_iter()
-        .map(|l| l.unwrap().title)
-        .collect();
+    // everything up to the latest (the trailing retry is one refill, 0.5 s, away), then nothing after it
+    let mut seen: Vec<String> = vec![];
+    while seen.last().map(String::as_str) != Some("Four") {
+        let l = next_listening(&mut sam_ws, a).await;
+        seen.push(l.expect("something playing").title);
+    }
+    assert!(
+        about(&drain(&mut sam_ws, 1000).await, a).is_empty(),
+        "{seen:?}"
+    );
     assert_eq!(seen.first().map(String::as_str), Some("One"));
     assert_eq!(seen.last().map(String::as_str), Some("Four"), "{seen:?}");
     assert!(seen.len() <= 2, "the held-back ones were dropped: {seen:?}");
