@@ -40,7 +40,8 @@
   import PeoplePicker from '../components/PeoplePicker.svelte'
   import GroupMembers from '../components/GroupMembers.svelte'
   import SearchResults from '../components/SearchResults.svelte'
-  import { closeSearch, search } from '../lib/search.svelte'
+  import { closeSearch, openHit, search } from '../lib/search.svelte'
+  import { toRequest } from '../lib/searchQuery'
   // Profiles: the quick card and the full profile
   import ProfileCardPopover from '../components/ProfileCardPopover.svelte'
   import { closeFull, closeRename, openCard, profileUi } from '../lib/profileCard.svelte'
@@ -607,6 +608,23 @@
     showChannel(p.id)
     if (join && voice.channelId !== p.id && isMember(app.state, p.serverId ?? '')) void voiceApi.join(p.id)
   }
+  /** The switcher's Messages section (#320): the server you're in (a member), else the DM or group you're in, else
+   *  none. The same search route as the search box, its first page. */
+  const quickMessages = $derived.by(() => {
+    const s = app.state
+    const ch = activeChannelId ? s.channels[activeChannelId] : undefined
+    const scope = activeServerId
+      ? member ? { serverId: activeServerId, channelId: null, label: activeServer?.name ?? '' } : null
+      : ch && !ch.server_id && (ch.kind === 'dm' || ch.kind === 'group') ? { serverId: null, channelId: ch.id, label: conversationName(s, ch.id) } : null
+    if (!scope) return null
+    const { label, ...args } = scope
+    return {
+      label: `Messages in ${label}`,
+      serverId: args.serverId,
+      search: async (q: string) => (await api.searchMessages(args, toRequest(q, []))).hits,
+      open: openHit,
+    }
+  })
   function quickContext(): ActionContext {
     const s = app.state
     const mine = memberServers(s)
@@ -808,7 +826,7 @@
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if qotyStart}<QotyStart serverId={qotyStart} onClose={() => (qotyStart = null)} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
-{#if switcherOpen}<QuickSwitcher context={quickContext} {recents} {here} onGo={switcherGo} onClose={() => (switcherOpen = false)} />{/if}
+{#if switcherOpen}<QuickSwitcher context={quickContext} {recents} {here} messages={quickMessages} onGo={switcherGo} onClose={() => (switcherOpen = false)} />{/if}
 {#if notesOpen}<PatchNotes notes={patchNotes} previous={previousPatchNotes} onClose={() => (notesOpen = false)} />{/if}
 <!-- Profiles: the quick card (one at a time), and the full profile's place (Task 12 renders it here) -->
 <ProfileCardPopover />

@@ -10,6 +10,12 @@ import QuickSwitcher from './QuickSwitcher.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { ActionContext } from '../lib/quickActions'
+import { MESSAGE_DELAY_MS } from '../lib/quickMessages'
+import type { SearchHit } from '../lib/protocol/SearchHit'
+
+type Messages = { label: string; serverId: string | null; search: (q: string) => Promise<SearchHit[]>; open: (hit: SearchHit) => void }
+const hit = (id: string, text: string, author = 'U2', channel = 'c1') =>
+  ({ message: { id, channel_id: channel, author_id: author }, text, highlights: [{ start: 0, end: 5 }], root: null }) as unknown as SearchHit
 
 const user = (id: string, username: string) => ({ id, username, display_name: username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const ch = (id: string, kind: string, name: string | null, server_id: string | null = null) => ({ id, kind, name, server_id, position: 0 })
@@ -48,10 +54,10 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-const open = (recents: string[] = [], here: string | null = null) => {
+const open = (recents: string[] = [], here: string | null = null, messages: Messages | null = null) => {
   document.body.innerHTML = '<button id="before">before</button>'
   document.getElementById('before')!.focus()
-  cmp = mount(QuickSwitcher, { target: document.body, props: { context: () => ctx, recents, here, onGo, onClose } })
+  cmp = mount(QuickSwitcher, { target: document.body, props: { context: () => ctx, recents, here, messages, onGo, onClose } })
   flushSync()
 }
 const field = () => document.querySelector<HTMLInputElement>('input[role="combobox"]')!
@@ -171,6 +177,80 @@ describe('QuickSwitcher', () => {
     await settle()
     expect(ctx.openSettings).toHaveBeenCalledWith('keybinds')
     expect(onGo).not.toHaveBeenCalled()
+  })
+  describe('Messages (#320)', () => {
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    const heads = () => [...document.querySelectorAll('.head')].map((h) => h.textContent)
+    const note = () => document.querySelector('.note')?.textContent ?? null
+    const messages = (search: Messages['search']): Messages => ({ label: 'Messages in Game Night', serverId: 's1', search: vi.fn(search), open: vi.fn() })
+
+    it('arrive under the instant sections once typing pauses, without moving them; Enter jumps to one', async () => {
+      const m = messages(async () => [hit('m1', 'setup is done\nsecond line'), hit('m2', 'setup again')])
+      open([], null, m)
+      type('set')
+      // the instant results are there at once, the messages on their way below them
+      expect(names()).toEqual(['setup', 'Open Settings'])
+      expect(note()).toBe('Searching messages…')
+      expect(m.search).not.toHaveBeenCalled()
+      await wait(MESSAGE_DELAY_MS + 30)
+      flushSync()
+      expect(m.search).toHaveBeenCalledTimes(1)
+      expect(m.search).toHaveBeenCalledWith('set')
+      expect(heads()).toEqual(['Jump to', 'Actions', 'Messages in Game Night'])
+      // the line with the match, the words marked; who and where faintly after it
+      expect(names().slice(0, 3)).toEqual(['setup', 'Open Settings', 'setup is done'])
+      expect(options()[2].querySelector('mark')!.textContent).toBe('setup')
+      expect(options()[2].querySelector('.ctx')!.textContent).toBe('sam · #general')
+      expect(note()).toBeNull()
+      expect(activeOption()).toBe(options()[0])
+      press('ArrowDown')
+      press('ArrowDown')
+      expect(activeOption()).toBe(options()[2])
+      press('Enter')
+      await settle()
+      expect(onClose).toHaveBeenCalled()
+      expect(m.open).toHaveBeenCalledWith(expect.objectContaining({ message: expect.objectContaining({ id: 'm1' }) }))
+      expect(onGo).not.toHaveBeenCalled()
+    })
+
+    it('typing on drops the older answer; one character and `>` never search', async () => {
+      const m = messages(async (q) => [hit(`m-${q}`, `${q} found`)])
+      open([], null, m)
+      type('s')
+      await wait(MESSAGE_DELAY_MS + 30)
+      type('>set')
+      await wait(MESSAGE_DELAY_MS + 30)
+      expect(m.search).not.toHaveBeenCalled()
+      expect(note()).toBeNull()
+      type('gen')
+      await wait(20)
+      type('gene')
+      await wait(MESSAGE_DELAY_MS + 30)
+      flushSync()
+      expect(m.search).toHaveBeenCalledTimes(1)
+      expect(m.search).toHaveBeenCalledWith('gene')
+      expect(names()).toContain('gene found')
+    })
+
+    it('nothing anywhere yet: no "Nothing matches" while messages are searched, a quiet note if they fail', async () => {
+      const m = messages(() => Promise.reject(new Error('offline')))
+      open([], null, m)
+      type('zzqx')
+      expect(document.querySelector('.empty')).toBeNull()
+      expect(note()).toBe('Searching messages…')
+      await wait(MESSAGE_DELAY_MS + 30)
+      flushSync()
+      expect(note()).toBe("Couldn't search messages")
+      expect(options()).toHaveLength(0)
+    })
+
+    it('no scope (Home with nothing open): no Messages section at all', async () => {
+      open()
+      type('set')
+      expect(note()).toBeNull()
+      await wait(MESSAGE_DELAY_MS + 30)
+      expect(heads()).toEqual(['Jump to', 'Actions'])
+    })
   })
   it('Escape closes, and the focus goes back where it was', () => {
     open()

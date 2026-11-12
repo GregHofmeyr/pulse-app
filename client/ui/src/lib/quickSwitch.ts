@@ -5,6 +5,7 @@ import type { AppState } from './state'
 import { conversationName } from './conversations'
 import { displayName, namesOf } from './selectors'
 import { matchActions, type QuickAction } from './quickActions'
+import type { SearchHit } from './protocol/SearchHit'
 
 export type PlaceKind = 'server' | 'text' | 'voice' | 'quotes' | 'clips' | 'dm' | 'group'
 
@@ -193,10 +194,11 @@ export function parseQuery(raw: string): { actions: boolean; text: string } {
 
 // ---- results ----
 
-export type Row = { type: 'place'; place: Place } | { type: 'action'; action: QuickAction }
+/** A message hit comes only from the slower Messages section (lib/quickMessages.ts, #320). */
+export type Row = { type: 'place'; place: Place } | { type: 'action'; action: QuickAction } | { type: 'message'; hit: SearchHit }
 /** A titled run of results. The switcher draws whatever sections it's given, in order, as one list: the instant ones
- *  come from here, and a slower source added later (message search, say) appends its own section once it answers,
- *  so typing never waits on it. */
+ *  come from here, and a slower source (message search, lib/quickMessages.ts) appends its own section once it
+ *  answers, so typing never waits on it. */
 export interface ResultSection {
   id: string
   label: string
