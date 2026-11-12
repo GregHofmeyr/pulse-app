@@ -24,7 +24,7 @@ const context = (o: Partial<ActionContext> = {}): ActionContext => ({
   call: null, muted: false, deafened: false,
   voiceChannels: [{ id: 'v1', name: 'Lounge', server: 'Game Night' }],
   sounds: [], goLiveOff: null,
-  join: vi.fn(), play: vi.fn(), toggleMute: vi.fn(), toggleDeafen: vi.fn(), leave: vi.fn(), goLive: vi.fn(), openSettings: vi.fn(),
+  join: vi.fn(), play: vi.fn(), toggleMute: vi.fn(), toggleDeafen: vi.fn(), leave: vi.fn(), goLive: vi.fn(), openSettings: vi.fn(), openInbox: vi.fn(),
   ...o,
 })
 

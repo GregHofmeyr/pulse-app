@@ -9,12 +9,12 @@ use pulse_protocol::ids::{
 };
 use pulse_protocol::rest::{
     BadgeCatalogue, Category, Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji,
-    DeletedChannel, DeletedServer, EditClipRequest, EditQuoteRequest, Game, Gif, Leaderboard,
-    LinkSpeakerRequest, MediaInfo, Member, Message, MuteTarget, NameArchivePage, NotifyLevel, Pin,
-    PinDuration, PinnedMessage, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse,
-    SaveLayoutRequest, SearchRequest, SearchResults, Server, ServerLayout, SetMuteRequest,
-    SetNotifyLevelRequest, Sound, StageShare, StartQotyRequest, TwoFactorEnabledResponse,
-    TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
+    DeletedChannel, DeletedServer, EditClipRequest, EditQuoteRequest, Game, Gif, InboxPage,
+    Leaderboard, LinkSpeakerRequest, MediaInfo, Member, Message, MuteTarget, NameArchivePage,
+    NotifyLevel, Pin, PinDuration, PinnedMessage, PostQuoteRequest, Profile, QotyEvent,
+    RecoveryCodesResponse, SaveLayoutRequest, SearchRequest, SearchResults, Server, ServerLayout,
+    SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare, StartQotyRequest,
+    TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -1820,6 +1820,47 @@ pub async fn purge_channel(
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.purge_channel(&token, channel_id).await)
+}
+
+/// A page of your inbox (#306), newest first.
+#[tauri::command]
+pub async fn inbox(
+    app: AppHandle,
+    core: State<'_, Core>,
+    before: Option<MessageId>,
+    mentions: bool,
+) -> Result<InboxPage, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.inbox(&token, before, mentions).await)
+}
+
+/// How many inbox items are unread (#306).
+#[tauri::command]
+pub async fn inbox_unread(app: AppHandle, core: State<'_, Core>) -> Result<u32, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.inbox_unread(&token).await)
+}
+
+/// An inbox item was opened (#306).
+#[tauri::command]
+pub async fn inbox_read(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.inbox_read(&token, message_id).await)
+}
+
+/// The inbox's Mark all read (#306), up to the newest item shown.
+#[tauri::command]
+pub async fn inbox_read_all(
+    app: AppHandle,
+    core: State<'_, Core>,
+    upto: Option<MessageId>,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.inbox_read_all(&token, upto).await)
 }
 
 #[tauri::command]

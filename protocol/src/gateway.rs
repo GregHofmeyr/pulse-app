@@ -6,9 +6,10 @@ use ts_rs::TS;
 use crate::ids::{CallId, ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game,
-    Member, Message, Mute, NotifyLevelPref, OwnStatus, Person, PinnedMessage, PresenceStatus,
-    PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason, Server, ServerLayout,
-    ServerVoiceMod, Sound, SpeakerLink, StageShare, StreamEndReason, StreamInfo, User, Wheel,
+    InboxItem, Member, Message, Mute, NotifyLevelPref, OwnStatus, Person, PinnedMessage,
+    PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason, Server,
+    ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare, StreamEndReason, StreamInfo,
+    User, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -172,6 +173,10 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub stage_shares: Vec<StageShare>,
+    /// How many items in your inbox are unread (#306). Absent from older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub inbox_unread: Option<u32>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -453,6 +458,26 @@ pub enum Event {
         /// The counted awarders, oldest first.
         awarders: Vec<UserId>,
     },
+    /// Only to the user's own sessions: something new in their inbox (#306), and their unread count after it.
+    InboxItemAdded {
+        user_id: UserId,
+        item: Box<InboxItem>,
+        unread: u32,
+    },
+    /// Only to the user's own sessions: their inbox changed (#306). `unread` is the absolute unread count after
+    /// it; `read` are items now read (opened on some device), `read_upto` marks every item up to it read (Mark all
+    /// read), `removed` are items that are gone (their message was deleted). A read point or thread seen point
+    /// that moved reads items too: clients mark those from that event itself.
+    InboxUpdated {
+        user_id: UserId,
+        unread: u32,
+        #[serde(default)]
+        read: Vec<MessageId>,
+        #[serde(default)]
+        read_upto: Option<MessageId>,
+        #[serde(default)]
+        removed: Vec<MessageId>,
+    },
     /// Only to the user's own sessions: they have read a quote's thread up to `last_seen_id`.
     ThreadSeen {
         user_id: UserId,
@@ -663,6 +688,9 @@ impl Event {
             | Self::ProfileUpdated { .. }
             | Self::MutesChanged { .. }
             | Self::NotifyLevelsChanged { .. }
+            // one user's own, across chats (#306)
+            | Self::InboxItemAdded { .. }
+            | Self::InboxUpdated { .. }
             | Self::EmojiCreated { .. }
             | Self::EmojiUpdated { .. }
             | Self::EmojiDeleted { .. }
@@ -707,7 +735,9 @@ impl Event {
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
             | Self::CallRingEnded { user_id, .. }
-            | Self::BadgeEarned { user_id, .. } => Some(*user_id),
+            | Self::BadgeEarned { user_id, .. }
+            | Self::InboxItemAdded { user_id, .. }
+            | Self::InboxUpdated { user_id, .. } => Some(*user_id),
             Self::WheelSaved { wheel } => wheel.owner_id,
             Self::WheelDeleted { owner_id, .. } => *owner_id,
             _ => None,
@@ -832,6 +862,7 @@ mod tests {
             layouts: vec![],
             server_now: None,
             stage_shares: vec![],
+            inbox_unread: None,
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");
@@ -917,6 +948,7 @@ mod tests {
             layouts: vec![],
             server_now: None,
             stage_shares: vec![],
+            inbox_unread: None,
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -1051,6 +1083,7 @@ mod tests {
             layouts: vec![],
             server_now: None,
             stage_shares: vec![],
+            inbox_unread: None,
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();

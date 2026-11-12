@@ -18,6 +18,7 @@ const ctx = (o: Partial<ActionContext> = {}): ActionContext => ({
   leave: vi.fn(),
   goLive: vi.fn(),
   openSettings: vi.fn(),
+  openInbox: vi.fn(),
   ...o,
 })
 const inCall = { call: { channelId: 'v1', name: 'Lounge', connected: true } }
@@ -73,6 +74,15 @@ describe('the action registry', () => {
     expect(c.openSettings).toHaveBeenCalledWith('keybinds')
     run('settings')
     expect(c.openSettings).toHaveBeenCalledWith('voice')
+  })
+  it('Inbox opens the inbox (#306), found after > and close by its name or "mentions"', () => {
+    const c = ctx()
+    const list = allActions(c)
+    list.find((a) => a.id === 'inbox')!.run(c)
+    expect(c.openInbox).toHaveBeenCalled()
+    expect(matchActions(list, 'inbox')[0].id).toBe('inbox')
+    expect(matchActions(list, 'inb', 50, true)[0]?.id).toBe('inbox')
+    expect(matchActions(list, 'mentions')[0].id).toBe('inbox')
   })
   it('ids are unique', () => {
     const list = ids(ctx(inCall))

@@ -13,6 +13,7 @@ pub mod error;
 pub mod gateway;
 pub mod gifs;
 pub mod hygiene;
+pub mod inbox;
 pub mod limits;
 pub mod media;
 pub mod messages;
@@ -56,6 +57,7 @@ pub fn router(state: AppState) -> Router {
         .merge(messages::routes::router())
         .merge(messages::reactions::router())
         .merge(messages::threads::router())
+        .merge(inbox::router())
         .merge(pins::router())
         .merge(polls::router())
         .merge(gifs::router())

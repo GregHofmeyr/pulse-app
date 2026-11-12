@@ -65,6 +65,9 @@ struct Inner {
     presence: tokio::sync::Mutex<()>,
     /// See [`Hub::in_order`].
     ordered: tokio::sync::Mutex<()>,
+    /// The inbox unread count each connected user was last told (#306: Ready, then inbox events), so a read
+    /// point that moves without changing it tells them nothing.
+    inbox_told: Mutex<HashMap<UserId, u32>>,
 }
 
 impl Hub {
@@ -105,12 +108,35 @@ impl Hub {
     /// hub already dropped it (logout, too slow, shutdown).
     pub fn unregister(&self, id: ConnId) {
         let mut conns = self.inner.conns.lock().unwrap();
-        conns.remove(&id);
+        let gone = conns.remove(&id);
         self.inner
             .announced
             .lock()
             .unwrap()
             .retain(|(_, conn), _| *conn != id);
+        if let Some(gone) = gone
+            && !conns.values().any(|c| c.user == gone.user)
+        {
+            self.inner.inbox_told.lock().unwrap().remove(&gone.user);
+        }
+    }
+
+    /// Note that `user` is being told their inbox has `unread` unread items (#306); true when that differs
+    /// from what they were last told (or they were told nothing yet).
+    pub fn tell_inbox(&self, user: UserId, unread: u32) -> bool {
+        self.inner.inbox_told.lock().unwrap().insert(user, unread) != Some(unread)
+    }
+
+    /// [`Hub::tell_inbox`] for a count that may not have changed: true (and noted) only when `user` was told a
+    /// count before (their Ready) and this one differs from it.
+    pub fn inbox_changed(&self, user: UserId, unread: u32) -> bool {
+        match self.inner.inbox_told.lock().unwrap().get_mut(&user) {
+            Some(told) if *told != unread => {
+                *told = unread;
+                true
+            }
+            _ => false,
+        }
     }
 
     pub fn is_online(&self, user: UserId) -> bool {
@@ -171,7 +197,8 @@ impl Hub {
         self.inner.ordered.lock().await
     }
 
-    /// Deliver `event` to every connection whose user is in its audience.
+    /// Deliver `event` to every connection whose user is in its audience, then the inbox events it implies
+    /// (#306, `inbox::follow_ups`) to their own users' sessions, right behind it.
     pub async fn publish(&self, db: &SqlitePool, event: Event) {
         let audience = match audience_for(db, &event).await {
             Ok(a) => a,
@@ -180,8 +207,16 @@ impl Hub {
                 return;
             }
         };
+        let follow = crate::inbox::follow_ups(db, self, &event).await;
         let frame = ServerFrame::Event(event);
-        deliver(&mut self.inner.conns.lock().unwrap(), &audience, &frame);
+        let mut conns = self.inner.conns.lock().unwrap();
+        deliver(&mut conns, &audience, &frame);
+        for e in follow {
+            // Inbox events are always one user's own (`Event::only_for`).
+            let Some(owner) = e.only_for() else { continue };
+            let to = Audience::Users([owner].into_iter().collect());
+            deliver(&mut conns, &to, &ServerFrame::Event(e));
+        }
     }
 
     /// Like [`Hub::publish`], but only to the members of `only` who are also in the event's

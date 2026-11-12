@@ -122,7 +122,7 @@ describe('Shell', () => {
     const tab = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes(name))!
     tab('Alpha').click()
     flushSync()
-    document.querySelector<HTMLButtonElement>('[data-menu-toggle]')!.click()
+    document.querySelector<HTMLButtonElement>('.head-btn[data-menu-toggle]')!.click()
     flushSync()
     ;[...document.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find((b) => b.textContent === 'Server settings')!.click()
     flushSync()

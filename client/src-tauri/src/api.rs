@@ -12,21 +12,22 @@ use pulse_protocol::rest::{
     ClipUpload, ClipUploadRequest, ClipUrl, ClipView, ConfirmClipRequest, CreateCategoryRequest,
     CreateDmRequest, CreateEmojiRequest, CreateSoundRequest, CreateWheelRequest, CustomEmoji,
     DeleteServerRequest, DeletedChannel, DeletedServer, EditClipRequest, EditMessageRequest,
-    EditQuoteRequest, EggRequest, Game, Gif, GifConfig, GoLiveRequest, HideEmbedRequest,
-    Leaderboard, LinkSpeakerRequest, LoginMfaRequest, LoginRequest, MarkBadgesSeenRequest,
-    MarkReadRequest, MediaInfo, Member, Message, MfaRequired, MuteTarget, NameArchivePage, PartUrl,
-    PartUrlsRequest, Pin, PinDuration, PinRequest, PinnedMessage, PostQuoteRequest, Profile,
-    QotyEvent, QotyVoteRequest, QuietSpin, RecoveryCodesResponse, RegisterRequest,
-    RenameCategoryRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest,
-    SaveLayoutRequest, SearchRequest, SearchResults, SendMessageRequest, Server, ServerLayout,
-    ServerVoiceMod, SessionResponse, SetChannelBitrateRequest, SetClipViewRequest,
-    SetJoinSoundRequest, SetMuteRequest, SetNicknameRequest, SetNotifyLevelRequest,
-    SetServerVoiceRequest, SetShowcaseRequest, SetStatusRequest, Sound, SpinAgainRequest,
-    SpinWheelRequest, StageShare, StageShareRequest, StartAttachmentRequest, StartQotyRequest,
-    Status, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest,
-    TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse,
-    TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, UpdateWheelRequest, UploadedPart,
-    User, VoiceTokenResponse, WatchRequest, Wheel,
+    EditQuoteRequest, EggRequest, Game, Gif, GifConfig, GoLiveRequest, HideEmbedRequest, InboxPage,
+    InboxReadAllRequest, InboxUnread, Leaderboard, LinkSpeakerRequest, LoginMfaRequest,
+    LoginRequest, MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired,
+    MuteTarget, NameArchivePage, PartUrl, PartUrlsRequest, Pin, PinDuration, PinRequest,
+    PinnedMessage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, QuietSpin,
+    RecoveryCodesResponse, RegisterRequest, RenameCategoryRequest, RenameChannelRequest,
+    RenameEmojiRequest, ReopenQotyRequest, SaveLayoutRequest, SearchRequest, SearchResults,
+    SendMessageRequest, Server, ServerLayout, ServerVoiceMod, SessionResponse,
+    SetChannelBitrateRequest, SetClipViewRequest, SetJoinSoundRequest, SetMuteRequest,
+    SetNicknameRequest, SetNotifyLevelRequest, SetServerVoiceRequest, SetShowcaseRequest,
+    SetStatusRequest, Sound, SpinAgainRequest, SpinWheelRequest, StageShare, StageShareRequest,
+    StartAttachmentRequest, StartQotyRequest, Status, StreamInfo, StreamRole, StreamSettings,
+    StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
+    TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest,
+    UpdateSoundRequest, UpdateWheelRequest, UploadedPart, User, VoiceTokenResponse, WatchRequest,
+    Wheel,
 };
 use serde::de::DeserializeOwned;
 
@@ -706,6 +707,68 @@ impl Api {
             self.http
                 .delete(format!("{}/channels/{ch}/permanent", self.base))
                 .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A page of your inbox (#306), newest first: older than `before`, and only typed mentions with `mentions`.
+    pub async fn inbox(
+        &self,
+        token: &str,
+        before: Option<MessageId>,
+        mentions: bool,
+    ) -> Result<InboxPage, ApiError> {
+        let mut req = self
+            .http
+            .get(format!("{}/inbox", self.base))
+            .bearer_auth(token);
+        if let Some(b) = before {
+            req = req.query(&[("before", b.to_string())]);
+        }
+        if mentions {
+            req = req.query(&[("mentions", "true")]);
+        }
+        Self::parse(req.send().await).await
+    }
+
+    /// How many items in your inbox are unread (#306).
+    pub async fn inbox_unread(&self, token: &str) -> Result<u32, ApiError> {
+        let r: InboxUnread = Self::parse(
+            self.http
+                .get(format!("{}/inbox/unread", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await?;
+        Ok(r.unread)
+    }
+
+    /// An inbox item was opened (#306): read on every device.
+    pub async fn inbox_read(&self, token: &str, message: MessageId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(format!("{}/inbox/{message}/read", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Mark all read (#306): every item up to `upto`, the newest one shown (none: up to now).
+    pub async fn inbox_read_all(
+        &self,
+        token: &str,
+        upto: Option<MessageId>,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(format!("{}/inbox/read-all", self.base))
+                .bearer_auth(token)
+                .json(&InboxReadAllRequest { upto })
                 .send()
                 .await,
         )
@@ -5065,6 +5128,50 @@ mod tests {
         assert_eq!(api.reactors(&token, m.id, "👍🏽").await.unwrap(), vec![me]);
         api.remove_reaction(&token, m.id, "👍🏽").await.unwrap();
         assert!(api.reactors(&token, m.id, "👍🏽").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn inbox_lists_counts_and_reads() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (_, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let r = testing::post_json(
+            &app,
+            &sam,
+            &format!("/servers/{}/join", s.id),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(r.status(), 204);
+        let g = testing::general(&app, &alex, s.id).await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let mine = testing::send(&app, &alex, g.id, "base").await;
+        let a = testing::send(&app, &sam, g.id, "@alex one").await;
+        let reply: Message = testing::post_json(
+            &app,
+            &sam,
+            &format!("/channels/{}/messages", g.id),
+            serde_json::json!({ "content": "two", "reply_to_id": mine.id }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+        let page = api.inbox(&alex, None, false).await.unwrap();
+        let ids: Vec<_> = page.items.iter().map(|i| i.message.id).collect();
+        assert_eq!(ids, vec![reply.id, a.id]);
+        assert_eq!(page.unread, 2);
+        let mentions = api.inbox(&alex, None, true).await.unwrap();
+        assert_eq!(mentions.items.len(), 1);
+        let older = api.inbox(&alex, Some(reply.id), false).await.unwrap();
+        assert_eq!(older.items[0].message.id, a.id);
+        api.inbox_read(&alex, a.id).await.unwrap();
+        assert_eq!(api.inbox_unread(&alex).await.unwrap(), 1);
+        api.inbox_read_all(&alex, None).await.unwrap();
+        assert_eq!(api.inbox_unread(&alex).await.unwrap(), 0);
+        let gone = api.inbox_read(&sam, a.id).await.unwrap_err();
+        assert!(matches!(gone, ApiError::Rejected(_)), "{gone:?}");
     }
 
     #[tokio::test]

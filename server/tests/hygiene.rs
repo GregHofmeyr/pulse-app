@@ -225,3 +225,42 @@ async fn writes_refused_with_507_when_disk_is_low() {
     assert_eq!(name, None, "not renamed");
     assert_eq!(count(&app, "SELECT COUNT(*) FROM bug_reports").await, 0);
 }
+
+/// Inbox items leave after 30 days (#306): the rows saying one was opened go with them.
+#[tokio::test]
+async fn prune_drops_inbox_reads_of_items_past_30_days() {
+    let app = spawn().await;
+    let (alex, alex_t) = register(&app, "alex").await;
+    let (sam, sam_t) = register(&app, "sam").await;
+    let s = create_server(&app, &alex_t, "Main").await;
+    let r = post_json(&app, &sam_t, &format!("/servers/{}/join", s.id), json!({})).await;
+    assert_eq!(r.status(), 204);
+    let ch = general(&app, &alex_t, s.id).await;
+    let fresh = send(&app, &sam_t, ch.id, "@alex new").await;
+    let old = pulse_protocol::ids::MessageId::floor(
+        (Utc::now() - Duration::days(31)).timestamp_millis() as u64,
+    );
+    sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES (?, ?, ?, 'old', ?)")
+        .bind(old.to_string())
+        .bind(ch.id.to_string())
+        .bind(sam.to_string())
+        .bind(ts(Duration::days(-31)))
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for m in [old, fresh.id] {
+        sqlx::query("INSERT INTO inbox_reads (user_id, message_id) VALUES (?, ?)")
+            .bind(alex.to_string())
+            .bind(m.to_string())
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+    let n = prune(&app.db, Utc::now()).await.unwrap();
+    assert_eq!(n.inbox_reads, 1);
+    let left: Vec<String> = sqlx::query_scalar("SELECT message_id FROM inbox_reads")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, [fresh.id.to_string()]);
+}

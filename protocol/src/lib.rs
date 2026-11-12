@@ -106,6 +106,12 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::SpeakerLink::export_all(&cfg)?;
     rest::LinkSpeakerRequest::export_all(&cfg)?;
     rest::ThreadSeenRequest::export_all(&cfg)?;
+    rest::InboxKind::export_all(&cfg)?;
+    rest::InboxSnippet::export_all(&cfg)?;
+    rest::InboxItem::export_all(&cfg)?;
+    rest::InboxPage::export_all(&cfg)?;
+    rest::InboxUnread::export_all(&cfg)?;
+    rest::InboxReadAllRequest::export_all(&cfg)?;
     rest::QotyEndReason::export_all(&cfg)?;
     rest::QotyEvent::export_all(&cfg)?;
     rest::QotyOption::export_all(&cfg)?;

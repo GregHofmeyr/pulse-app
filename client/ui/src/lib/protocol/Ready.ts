@@ -139,4 +139,8 @@ server_now?: string,
 /**
  * What's shared on each voice channel's stage (#234), in channels you may see.
  */
-stage_shares?: Array<StageShare>, };
+stage_shares?: Array<StageShare>, 
+/**
+ * How many items in your inbox are unread (#306). Absent from older servers.
+ */
+inbox_unread?: number, };

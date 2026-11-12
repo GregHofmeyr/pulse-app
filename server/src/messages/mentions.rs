@@ -85,17 +85,23 @@ pub async fn can_see(db: &SqlitePool, channel: &Channel, user: UserId) -> AppRes
     Ok(hit.is_some())
 }
 
+/// Store `users` as mentioned in `message`: `explicit` when they were typed (`@name`), not when it only
+/// pings them as the author of the message it replies to (the inbox's Mentions tab, #306).
 pub async fn store(
     c: &mut SqliteConnection,
     message: MessageId,
     users: &[UserId],
+    explicit: bool,
 ) -> AppResult<()> {
     for u in users {
-        sqlx::query("INSERT OR IGNORE INTO mentions (message_id, user_id) VALUES (?, ?)")
-            .bind(message.to_string())
-            .bind(u.to_string())
-            .execute(&mut *c)
-            .await?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO mentions (message_id, user_id, explicit) VALUES (?, ?, ?)",
+        )
+        .bind(message.to_string())
+        .bind(u.to_string())
+        .bind(explicit)
+        .execute(&mut *c)
+        .await?;
     }
     Ok(())
 }

@@ -1053,6 +1053,7 @@ mod tests {
                         layouts: vec![],
                         server_now: None,
                         stage_shares: vec![],
+                        inbox_unread: None,
                     });
                     ws.send(tokio_tungstenite::tungstenite::Message::text(
                         serde_json::to_string(&ready).unwrap(),

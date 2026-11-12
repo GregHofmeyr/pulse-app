@@ -950,6 +950,10 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     // Toasts and the [NEW] count live outside the reducer.
     case 'BadgeEarned':
       return s
+    // The inbox (#306) is kept in lib/inbox.svelte.ts.
+    case 'InboxItemAdded':
+    case 'InboxUpdated':
+      return s
     // Saved picker wheels are loaded on demand and kept in lib/wheels.svelte.ts (#158).
     case 'WheelSaved':
     case 'WheelDeleted':

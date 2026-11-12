@@ -19,6 +19,7 @@ import type { Status } from './protocol/Status'
 import type { StartCallResponse } from './protocol/StartCallResponse'
 import type { ServerVoiceMod } from './protocol/ServerVoiceMod'
 import type { Message } from './protocol/Message'
+import type { InboxPage } from './protocol/InboxPage'
 import type { Gif } from './protocol/Gif'
 import type { AttachmentKind } from './protocol/AttachmentKind'
 import type { AttachmentUrl } from './protocol/AttachmentUrl'
@@ -255,6 +256,14 @@ export const api = {
   unpinMessage: (messageId: string) => invoke<void>('unpin_message', { messageId }),
   /** A chat's pins, newest pin first. */
   listPins: (channelId: string) => invoke<PinnedMessage[]>('list_pins', { channelId }),
+  /** A page of your inbox (#306), newest first: older than `before`; only typed mentions with `mentions`. */
+  inbox: (before: string | null, mentions: boolean) => invoke<InboxPage>('inbox', { before, mentions }),
+  /** How many inbox items are unread (#306). */
+  inboxUnread: () => invoke<number>('inbox_unread'),
+  /** An inbox item was opened (#306); the change also arrives as InboxUpdated on every device. */
+  inboxRead: (messageId: string) => invoke<void>('inbox_read', { messageId }),
+  /** Mark all read (#306), up to the newest item shown (null: up to now). */
+  inboxReadAll: (upto: string | null) => invoke<void>('inbox_read_all', { upto }),
   /** Share a Spotify link to a voice channel's stage (#234); you must be in its call. */
   shareToStage: (channelId: string, url: string) => invoke<StageShare>('share_to_stage', { channelId, url }),
   /** Stop a stage share for everyone (#234). */

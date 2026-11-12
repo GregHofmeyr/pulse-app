@@ -9,6 +9,7 @@ import type { ChannelId } from "./ChannelId";
 import type { ClipView } from "./ClipView";
 import type { CustomEmoji } from "./CustomEmoji";
 import type { Game } from "./Game";
+import type { InboxItem } from "./InboxItem";
 import type { JoinSoundPlay } from "./JoinSoundPlay";
 import type { LineId } from "./LineId";
 import type { Member } from "./Member";
@@ -78,7 +79,7 @@ ghosts: number, } } | { "t": "EmojiCreated", "d": { emoji: CustomEmoji, } } | { 
 /**
  * The counted awarders, oldest first.
  */
-awarders: Array<UserId>, } } | { "t": "ThreadSeen", "d": { user_id: UserId, channel_id: ChannelId, root_id: MessageId, last_seen_id: MessageId, 
+awarders: Array<UserId>, } } | { "t": "InboxItemAdded", "d": { user_id: UserId, item: InboxItem, unread: number, } } | { "t": "InboxUpdated", "d": { user_id: UserId, unread: number, read: Array<MessageId>, read_upto: MessageId | null, removed: Array<MessageId>, } } | { "t": "ThreadSeen", "d": { user_id: UserId, channel_id: ChannelId, root_id: MessageId, last_seen_id: MessageId, 
 /**
  * How many of their unread mentions in that thread this cleared.
  */

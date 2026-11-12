@@ -78,6 +78,10 @@
   import { isNotFound, isRateLimited } from '../lib/soundboard'
   import { pickSource } from '../lib/stream/golive.svelte'
   import { isWindows } from '../lib/stream/platform'
+  // The inbox (#306)
+  import InboxPopover from '../components/InboxPopover.svelte'
+  import { closeInbox, inbox, openInbox, toggleInbox } from '../lib/inbox.svelte'
+  import { badgeText } from '../lib/inbox'
 
   let { user, onLogout }: { user: User; onLogout: () => void } = $props()
   // rings in the voice list: who's talking, plus whose soundboard sound is playing (render only: never voice.speaking)
@@ -580,6 +584,16 @@
     activeChannelId = general?.id ?? null
   }
 
+  // ---- the inbox (#306) ----
+  let inboxButton = $state<HTMLButtonElement>()
+  /** Closed by Esc or a press outside: Esc gives the focus back to its button. */
+  function closeInboxPopover(e?: Event) {
+    closeInbox()
+    if (e instanceof KeyboardEvent) inboxButton?.focus()
+  }
+  // signed out (the shell goes): it starts closed next time
+  $effect(() => () => untrack(closeInbox))
+
   // ---- the quick switcher (#309) ----
   let switcherOpen = $state(false)
   /** Places visited on this device, newest first (`s:<server>` / `c:<channel>`). */
@@ -673,6 +687,7 @@
       goLive: () => { if (voice.channelId) void pickSource(voice.channelId) },
       openSettings: (section) => openSettings(section),
       openNotes: s.me && !(notesId(s) && !s.hidden[notesId(s)!]) ? () => void messageUser(s.me!.id) : undefined,
+      openInbox: () => openInbox(),
     }
   }
 
@@ -740,6 +755,12 @@
     {#if updates.offer}
       <button class="win update" class:off={updateBlocked} aria-disabled={updateBlocked} data-tip={updateTip} onclick={restartToUpdate}>Restart to update</button>
     {/if}
+    <!-- #306: the inbox, your mentions and replies everywhere; its count of unread ones -->
+    <span class="inbox-anchor">
+      <button bind:this={inboxButton} class="win inbox" data-menu-toggle aria-haspopup="dialog" aria-expanded={inbox.open}
+        aria-label={inbox.unread > 0 ? `Inbox, ${inbox.unread} unread` : 'Inbox'} data-tip="Inbox" onclick={toggleInbox}><Icon name="inbox" size={16} />{#if inbox.unread > 0}<span class="pill" aria-hidden="true">{badgeText(inbox.unread)}</span>{/if}</button>
+      {#if inbox.open}<InboxPopover onClose={closeInboxPopover} />{/if}
+    </span>
     <!-- #207: what's new; a dot until this release's notes are opened once on this device -->
     <button class="win notes" aria-label="Patch notes" onclick={openPatchNotes}><Icon name="scroll" size={16} />{#if patchNotesSeen.id !== patchNotes.id}<span class="new-dot" aria-hidden="true"></span>{/if}</button>
     <button class="win report" aria-label="Report a bug or suggest an idea" onclick={() => (reportOpen = true)}><Icon name="bug" size={16} /></button>
@@ -914,6 +935,11 @@
   .win.report:hover, .win.report:focus-visible { color: var(--warn-text); }
   /* Patch notes (#207): the unseen dot sits on the icon's corner, cut out of the title bar (or its hover pill) */
   .win.notes { position: relative; --ring: var(--bg-0); }
+  .inbox-anchor { position: relative; display: flex; }
+  .win.inbox { position: relative; }
+  .win.inbox[aria-expanded="true"] { background: var(--bg-2); color: var(--text); }
+  /* the Home tab's count, tucked onto the icon's corner */
+  .win.inbox .pill { position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 9px; font-weight: 700; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((14px - 1cap) / 2) 3px; pointer-events: none; }
   .win.notes:hover { --ring: var(--bg-2); }
   .win.notes .new-dot { top: 3px; right: 6px; width: 8px; height: 8px; }
   /* Restart to update (#82): the same quiet title bar button, with words; dimmed (no hover) while in a call */

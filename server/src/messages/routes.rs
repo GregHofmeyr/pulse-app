@@ -389,7 +389,9 @@ async fn send(
         }
         None => None,
     };
-    let mut mentioned = mentions::resolve(&s.db, &ch, me, &mentions::parse(&content)).await?;
+    let mentioned = mentions::resolve(&s.db, &ch, me, &mentions::parse(&content)).await?;
+    // The reply's ping, kept apart from typed mentions: the inbox tells them apart (#306).
+    let mut pinged = Vec::new();
     if let Some(r) = req.reply_to_id {
         // Same-channel only; a reply target elsewhere (including private) is indistinguishable from missing.
         match load(&s.db, None, r).await? {
@@ -405,7 +407,7 @@ async fn send(
                     && !mentioned.contains(&author)
                     && mentions::can_see(&s.db, &ch, author).await?
                 {
-                    mentioned.push(author);
+                    pinged.push(author);
                 }
             }
             _ => {
@@ -424,6 +426,7 @@ async fn send(
             reply_to_id: req.reply_to_id,
             thread_root_id: req.thread_root_id,
             mentioned,
+            pinged,
             nonce: req.nonce,
             gif,
             attachment_ids: req.attachments,
@@ -440,8 +443,11 @@ pub(crate) struct Outgoing {
     pub content: String,
     pub reply_to_id: Option<MessageId>,
     pub thread_root_id: Option<MessageId>,
-    /// Who it pings (already resolved and allowed to see the chat).
+    /// Whom it mentions by name (already resolved and allowed to see the chat).
     pub mentioned: Vec<UserId>,
+    /// Whom else it pings: the author of the message it replies to, when not also mentioned (#306 tells them
+    /// apart; everywhere else they're mentions alike).
+    pub pinged: Vec<UserId>,
     pub nonce: Option<String>,
     /// A GIF from the picker (#58), already checked against the content.
     pub gif: Option<Gif>,
@@ -470,6 +476,7 @@ pub(crate) async fn post_plain(
             reply_to_id: None,
             thread_root_id: None,
             mentioned: vec![],
+            pinged: vec![],
             nonce: None,
             gif: None,
             attachment_ids: vec![],
@@ -488,6 +495,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         reply_to_id,
         thread_root_id,
         mentioned,
+        pinged,
         nonce: req_nonce,
         gif,
         attachment_ids,
@@ -509,7 +517,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         created_at: now(),
         edited_at: None,
         deleted: false,
-        mentions: mentioned.clone(),
+        mentions: mentioned.iter().chain(&pinged).copied().collect(),
         reactions: vec![],
         thread_root_id,
         quote: None,
@@ -570,7 +578,8 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         .execute(&mut *tx)
         .await?;
     crate::attachments::bind(&mut tx, me, msg.id, &attachment_ids, &mut msg.attachments).await?;
-    mentions::store(&mut tx, msg.id, &mentioned).await?;
+    mentions::store(&mut tx, msg.id, &mentioned, true).await?;
+    mentions::store(&mut tx, msg.id, &pinged, false).await?;
     let used = reactions::live_keys(&mut tx, me, reactions::used_in(&msg.content)).await?;
     crate::emoji::record_use(&mut tx, me, &used).await?;
     // Badges count server chat only, never DMs or groups.

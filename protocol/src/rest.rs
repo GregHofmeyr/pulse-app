@@ -1921,6 +1921,59 @@ pub struct LinkSpeakerRequest {
     pub user_id: UserId,
 }
 
+/// Why something is in your inbox (#306): a typed `@you`, or only a reply to your message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum InboxKind {
+    Mention,
+    Reply,
+}
+
+/// The message an inbox item replied to, cut to one short line.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct InboxSnippet {
+    pub message_id: MessageId,
+    pub author_id: Option<UserId>,
+    /// At most [`INBOX_SNIPPET_CHARS`] characters; empty when it was deleted.
+    pub content: String,
+    pub deleted: bool,
+}
+
+/// How long an inbox snippet of the replied-to message may be.
+pub const INBOX_SNIPPET_CHARS: usize = 140;
+
+/// One thing meant for you (#306): a message that mentions you or replies to you. Where it is comes from
+/// `message.channel_id` (and `message.thread_root_id` for a reply in a quote's or clip's thread).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct InboxItem {
+    pub message: Message,
+    pub kind: InboxKind,
+    /// What it replied to, when it is a reply.
+    pub replied_to: Option<InboxSnippet>,
+    /// Read: opened from the inbox, covered by your read point (or thread seen point), or marked all read.
+    pub read: bool,
+}
+
+/// `GET /inbox`: a page of your inbox, newest first, and how many items are unread in all.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct InboxPage {
+    pub items: Vec<InboxItem>,
+    pub unread: u32,
+}
+
+/// `GET /inbox/unread`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct InboxUnread {
+    pub unread: u32,
+}
+
+/// `POST /inbox/read-all`: every item up to `upto` (the newest one you were shown) is read; none: up to now.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+pub struct InboxReadAllRequest {
+    #[serde(default)]
+    pub upto: Option<MessageId>,
+}
+
 /// "I have read this quote's thread up to here."
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct ThreadSeenRequest {

@@ -17,6 +17,7 @@ pub struct Pruned {
     pub invites: u64,
     pub mfa_tickets: u64,
     pub reports: u64,
+    pub inbox_reads: u64,
 }
 
 fn ts(t: DateTime<Utc>) -> String {
@@ -28,7 +29,8 @@ fn ts(t: DateTime<Utc>) -> String {
 /// - invites past their 24-hour life, used or not (nothing references an invite row, and an
 ///   expired one is already refused as unknown, so the answer doesn't change);
 /// - expired two-factor login tickets;
-/// - reports older than [`REPORT_RETENTION_DAYS`].
+/// - reports older than [`REPORT_RETENTION_DAYS`];
+/// - inbox reads of items older than the inbox keeps them ([`crate::inbox::DAYS`], #306).
 pub async fn prune(db: &SqlitePool, now: DateTime<Utc>) -> AppResult<Pruned> {
     let sessions = sqlx::query("DELETE FROM sessions WHERE expires_at <= ?")
         .bind(ts(now))
@@ -50,11 +52,17 @@ pub async fn prune(db: &SqlitePool, now: DateTime<Utc>) -> AppResult<Pruned> {
         .execute(db)
         .await?
         .rows_affected();
+    let inbox_reads = sqlx::query("DELETE FROM inbox_reads WHERE message_id < ?")
+        .bind(crate::inbox::cutoff(now).to_string())
+        .execute(db)
+        .await?
+        .rows_affected();
     let pruned = Pruned {
         sessions,
         invites,
         mfa_tickets,
         reports,
+        inbox_reads,
     };
     if pruned != Pruned::default() {
         tracing::info!(
@@ -62,6 +70,7 @@ pub async fn prune(db: &SqlitePool, now: DateTime<Utc>) -> AppResult<Pruned> {
             invites,
             mfa_tickets,
             reports,
+            inbox_reads,
             "expired rows pruned"
         );
     }
