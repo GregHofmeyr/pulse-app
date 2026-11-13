@@ -2898,24 +2898,40 @@ pub async fn search_quotes(
     core.check(&app, api.search_quotes(&token, server_id, &q).await)
 }
 
-/// Message search: a server's (`server_id`) or one DM or group's (`channel_id`).
+/// Where [`search_messages`] looks: with `everywhere` (#331), everything you can read less the
+/// server and/or conversation named; without it, the server named, else the conversation.
+fn search_scope(
+    everywhere: Option<bool>,
+    server_id: Option<ServerId>,
+    channel_id: Option<ChannelId>,
+) -> Result<SearchScope, ApiError> {
+    if everywhere == Some(true) {
+        return Ok(SearchScope::Everywhere {
+            except_server: server_id,
+            except_channel: channel_id,
+        });
+    }
+    match (server_id, channel_id) {
+        (Some(s), _) => Ok(SearchScope::Server(s)),
+        (None, Some(c)) => Ok(SearchScope::Conversation(c)),
+        (None, None) => Err(ApiError::Rejected(
+            "search a server or a conversation".into(),
+        )),
+    }
+}
+
+/// Message search: a server's (`server_id`) or one DM or group's (`channel_id`); or, with
+/// `everywhere`, every channel you can read except those (#331).
 #[tauri::command]
 pub async fn search_messages(
     app: AppHandle,
     core: State<'_, Core>,
     server_id: Option<ServerId>,
     channel_id: Option<ChannelId>,
+    everywhere: Option<bool>,
     query: SearchRequest,
 ) -> Result<SearchResults, ApiError> {
-    let scope = match (server_id, channel_id) {
-        (Some(s), _) => SearchScope::Server(s),
-        (None, Some(c)) => SearchScope::Conversation(c),
-        (None, None) => {
-            return Err(ApiError::Rejected(
-                "search a server or a conversation".into(),
-            ));
-        }
-    };
+    let scope = search_scope(everywhere, server_id, channel_id)?;
     let (api, token) = core.current()?;
     core.check(&app, api.search(&token, scope, &query).await)
 }
@@ -2990,6 +3006,36 @@ pub async fn reopen_qoty(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #331: `everywhere` turns the ids into what to leave out; without it they pick the scope.
+    #[test]
+    fn search_scope_from_the_page() {
+        let s = ServerId::new();
+        let c = ChannelId::new();
+        assert_eq!(
+            search_scope(None, Some(s), Some(c)).unwrap(),
+            SearchScope::Server(s)
+        );
+        assert_eq!(
+            search_scope(Some(false), None, Some(c)).unwrap(),
+            SearchScope::Conversation(c)
+        );
+        assert!(search_scope(None, None, None).is_err());
+        assert_eq!(
+            search_scope(Some(true), None, None).unwrap(),
+            SearchScope::Everywhere {
+                except_server: None,
+                except_channel: None
+            }
+        );
+        assert_eq!(
+            search_scope(Some(true), Some(s), Some(c)).unwrap(),
+            SearchScope::Everywhere {
+                except_server: Some(s),
+                except_channel: Some(c)
+            }
+        );
+    }
 
     /// #319: what the page listens for (Shell's switcher), and in its casing.
     #[test]

@@ -31,11 +31,16 @@ use pulse_protocol::rest::{
 };
 use serde::de::DeserializeOwned;
 
-/// Where a message search looks: one whole server, or one DM or group on its own.
+/// Where a message search looks: one whole server, one DM or group on its own, or everywhere
+/// you can read (#331), less one server or conversation (shown on its own already).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SearchScope {
     Server(ServerId),
     Conversation(ChannelId),
+    Everywhere {
+        except_server: Option<ServerId>,
+        except_channel: Option<ChannelId>,
+    },
 }
 
 /// What a password login led to. Not `Debug`: both variants hold a credential.
@@ -2107,8 +2112,21 @@ impl Api {
         let url = match scope {
             SearchScope::Server(s) => self.url(&["servers", &s.to_string(), "search"])?,
             SearchScope::Conversation(c) => self.url(&["channels", &c.to_string(), "search"])?,
+            SearchScope::Everywhere { .. } => self.url(&["search"])?,
         };
         let mut q: Vec<(&str, String)> = Vec::new();
+        if let SearchScope::Everywhere {
+            except_server,
+            except_channel,
+        } = scope
+        {
+            if let Some(s) = except_server {
+                q.push(("except_server", s.to_string()));
+            }
+            if let Some(c) = except_channel {
+                q.push(("except_channel", c.to_string()));
+            }
+        }
         if !req.q.trim().is_empty() {
             q.push(("q", req.q.clone()));
         }
@@ -3272,6 +3290,28 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(dm_hits.hits[0].text, "pizza in private");
+        // Everywhere (#331): the server and the DM in one search, minus what's excepted.
+        let everywhere = |except_server, except_channel| SearchScope::Everywhere {
+            except_server,
+            except_channel,
+        };
+        let both = api
+            .search(&alex, everywhere(None, None), &req)
+            .await
+            .unwrap();
+        assert_eq!(both.hits.len(), 2);
+        let not_server = api
+            .search(&alex, everywhere(Some(s.id), None), &req)
+            .await
+            .unwrap();
+        assert_eq!(not_server.hits[0].text, "pizza in private");
+        assert_eq!(not_server.hits.len(), 1);
+        let not_dm = api
+            .search(&alex, everywhere(None, Some(dm.id)), &req)
+            .await
+            .unwrap();
+        assert_eq!(not_dm.hits[0].message.id, theirs.id);
+        assert_eq!(not_dm.hits.len(), 1);
         // Every filter reaches the server: `has` too.
         let none = api
             .search(

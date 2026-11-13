@@ -95,6 +95,39 @@ pub async fn channel_for(db: &SqlitePool, user: UserId, id: ChannelId) -> AppRes
     Ok(ch)
 }
 
+/// The ids of every channel holding messages that `user` may read, as "everywhere" search sees
+/// it (#331): each chat channel of every live server they are a member of (what
+/// [`readable_server_channels`] gives for each), and every DM, group and notes they are in
+/// ([`can_read`]). Never a deleted channel, a deleted server's, or a conversation they left.
+pub async fn readable_channel_ids_everywhere(
+    db: &SqlitePool,
+    user: UserId,
+) -> AppResult<Vec<String>> {
+    // Server channels: only the kinds with a chat (kept in Rust, as `readable_server_channels`
+    // keeps them). Conversations: only the ones you're in, the one rule `can_read` applies.
+    let rows: Vec<(String, String)> = sqlx::query_as(&format!(
+        "SELECT c.id, c.kind FROM channels c
+         WHERE c.deleted_at IS NULL
+           AND c.server_id IN (SELECT server_id FROM server_members WHERE user_id = ?1)
+           AND c.server_id NOT IN {DELETED_SERVERS}
+         UNION ALL
+         SELECT c.id, c.kind FROM channel_members cm JOIN channels c ON c.id = cm.channel_id
+         WHERE cm.user_id = ?1 AND c.deleted_at IS NULL AND c.server_id IS NULL"
+    ))
+    .bind(user.to_string())
+    .fetch_all(db)
+    .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for (id, kind) in rows {
+        let kind =
+            ChannelKind::parse(&kind).ok_or_else(|| anyhow::anyhow!("bad channel kind {kind}"))?;
+        if kind.has_chat() || kind.is_private() {
+            out.push(id);
+        }
+    }
+    Ok(out)
+}
+
 /// The channels of `server` that hold messages and `user` may read ([`can_read`]), in order.
 /// 404 when there is no such server (or it is deleted).
 pub async fn readable_server_channels(

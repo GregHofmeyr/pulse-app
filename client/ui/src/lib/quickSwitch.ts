@@ -207,8 +207,9 @@ export function parseQuery(raw: string): { actions: boolean; text: string } {
 
 // ---- results ----
 
-/** A message hit comes only from the slower Messages section (lib/quickMessages.ts, #320). */
-export type Row = { type: 'place'; place: Place } | { type: 'action'; action: QuickAction } | { type: 'message'; hit: SearchHit }
+/** A message hit comes only from the slower Messages sections (lib/quickMessages.ts, #320): `everywhere` for one in
+ *  "Messages everywhere" (#331), which says where it is and opens with that section's opener. */
+export type Row = { type: 'place'; place: Place } | { type: 'action'; action: QuickAction } | { type: 'message'; hit: SearchHit; everywhere?: boolean }
 /** A titled run of results. The switcher draws whatever sections it's given, in order, as one list: the instant ones
  *  come from here, and a slower source (message search, lib/quickMessages.ts) appends its own section once it
  *  answers, so typing never waits on it. */
