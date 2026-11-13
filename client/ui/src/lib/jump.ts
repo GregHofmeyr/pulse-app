@@ -16,7 +16,10 @@ export async function jumpTo(channelId: string, messageId: string): Promise<void
   if (!app.state.channels[channelId]) return void (ui.notice = 'That channel was deleted.')
   const mine = ++seq
   ui.goTo = channelId
-  if (!app.state.messages[channelId]?.some((m) => m.id === messageId)) {
+  // Held but not loaded (a list from before a reconnect, reloading when shown; #329): that reload may replace it, so
+  // the window is loaded all the same (and marks the chat loaded, so the reload's page is dropped).
+  const held = !!app.state.history[channelId]?.loaded && !!app.state.messages[channelId]?.some((m) => m.id === messageId)
+  if (!held) {
     let page
     try {
       page = await api.listMessagesAround(channelId, messageId)

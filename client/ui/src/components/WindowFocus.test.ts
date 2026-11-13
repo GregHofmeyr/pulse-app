@@ -157,11 +157,11 @@ describe('one window-focus source', () => {
       tauriFocus!({ payload: false })
       cmp = mount(TextChannel, { target: document.body, props: { channelId: 'D1', serverId: null } })
       flushSync()
-      vi.advanceTimersByTime(1000)
+      await vi.advanceTimersByTimeAsync(1000) // (the first page loads: a chat is only marked read once loaded)
       expect(invoke.mock.calls.filter((c) => c[0] === 'mark_read')).toHaveLength(0)
       tauriFocus!({ payload: true })
       flushSync()
-      vi.advanceTimersByTime(1000)
+      await vi.advanceTimersByTimeAsync(1000)
       expect(invoke).toHaveBeenCalledWith('mark_read', { channelId: 'D1', messageId: 'M5' })
     } finally {
       vi.useRealTimers()

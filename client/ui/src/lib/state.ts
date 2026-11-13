@@ -146,8 +146,19 @@ export type ClipFeed = { channelId: string; filter: ClipFilter; items: Message[]
 export const CLIP_PAGE = 30
 
 /** `resume` (a list held from before a reconnect, not yet reloaded; #329): the newest of its contiguous messages, those
- *  paged in before. Live messages that joined it since may sit beyond a hole after it. */
-export type History = { loaded: boolean; start: boolean; end: boolean; missed?: string[]; missedMore?: true; resume?: string }
+ *  paged in before. Live messages that joined it since may sit beyond a hole after it. Once it reloaded into a window
+ *  paged forward, where the view lands when next drawn: `openAt` the first new message (with the NEW line over it), or
+ *  `toLatest` (your own message came meanwhile: you're at the latest, like sending from a jump's window). */
+export type History = {
+  loaded: boolean
+  start: boolean
+  end: boolean
+  missed?: string[]
+  missedMore?: true
+  resume?: string
+  openAt?: string
+  toLatest?: true
+}
 
 /** Most missed live messages a detached list keeps track of. Pages are contiguous, so a list that
  * holds a kept one holds every older one too; the oldest are dropped first. */
@@ -1439,10 +1450,21 @@ export function resumeAfter(s: AppState, channel: string, page: Message[]): AppS
   }
   const last = page.reduce((a, m) => (m.id > a ? m.id : a), '')
   const held = s.messages[channel] ?? []
-  let h: History = { loaded: true, start, end: false }
-  for (const m of held) if (m.id > last) h = withMissed(h, m.id)
+  const first = page.reduce((a, m) => (m.id < a ? m.id : a), last)
+  const beyond = held.filter((m) => m.id > last)
+  const mine = !!s.me && beyond.some((m) => m.author_id === s.me!.id)
+  let h: History = mine ? { loaded: true, start, end: false, toLatest: true } : { loaded: true, start, end: false, openAt: first }
+  for (const m of beyond) h = withMissed(h, m.id)
   const next = addHistory({ ...s, messages: { ...s.messages, [channel]: held.filter((m) => m.id <= last) } }, channel, page)
   return { ...next, history: { ...s.history, [channel]: h } }
+}
+
+/** The view has landed where `resumeAfter` asked (or a jump took it elsewhere): the request goes. */
+export function landed(s: AppState, channel: string): AppState {
+  const h = s.history[channel]
+  if (!h || (!h.openAt && !h.toLatest)) return s
+  const { openAt: _at, toLatest: _latest, ...rest } = h
+  return { ...s, history: { ...s.history, [channel]: rest } }
 }
 
 /** Add `channel`'s latest page to what it holds (a first visit, or a reconnect's reload when your place is the latest).

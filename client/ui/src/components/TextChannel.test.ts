@@ -970,6 +970,76 @@ describe('TextChannel: more than a page arriving while away (#329)', () => {
     unmount(c)
   })
 
+  /** Holds every `list_messages_after` answer until the test releases it (the rest as `serve(last)`). */
+  const holdAfter = (last: number) => {
+    const all = serve(last)
+    const served = invoke.getMockImplementation()!
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    invoke.mockImplementation(async (cmd: string, a?: { before?: string | null; messageId?: string }) => {
+      if (cmd === 'list_messages_after') await gate
+      return served(cmd, a)
+    })
+    return { all, release: () => release() }
+  }
+
+  it('left while it reloads, coming back still opens at the first new message (#329)', async () => {
+    app.state = markHistory(addHistory(app.state, 'C1', page(101, 100)), 'C1', false)
+    let c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    const after = holdAfter(320)
+    handleReady(testReady([C1], read('M0200', 120)))
+    flushSync()
+    unmount(c) // switched away with the page on its way
+    after.release()
+    await vi.waitFor(() => expect(ids()).toContain('M0250'))
+    const rect = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const y = this.dataset.messageId === 'M0201' ? 900 : 0
+      return { top: y, bottom: y + 20, left: 0, right: 0, width: 0, height: 20, x: 0, y, toJSON() {} } as DOMRect
+    }
+    try {
+      c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+      flushSync()
+      const list = document.querySelector<HTMLElement>('.list')!
+      await vi.waitFor(() => expect(list.scrollTop).toBe(860))
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = rect
+      unmount(c)
+    }
+  })
+
+  it('your own message sent while it reloads takes you to the latest, where it is (#329)', async () => {
+    app.state = markHistory(addHistory(app.state, 'C1', page(101, 100)), 'C1', false)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    const after = holdAfter(321)
+    after.all[320] = { ...after.all[320], author_id: 'U1' } // M0321: mine
+    handleReady(testReady([C1], read('M0200', 120)))
+    flushSync()
+    app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: after.all[320], nonce: null } }, 0)
+    after.release()
+    await vi.waitFor(() => expect(app.state.history['C1']).toMatchObject({ loaded: true, end: true }))
+    expect(ids().at(-1)).toBe('M0321')
+    expect(contiguous()).toBe(true)
+    unmount(c)
+  })
+
+  it("doesn't mark the chat read while it reloads: the hole isn't read (#329)", async () => {
+    app.state = markHistory(addHistory(app.state, 'C1', page(101, 100)), 'C1', false)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    const after = holdAfter(320)
+    handleReady(testReady([C1], read('M0200', 120)))
+    flushSync()
+    app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: msg(321), nonce: null } }, 0)
+    flushSync()
+    await new Promise((r) => setTimeout(r, 400))
+    expect(calls('mark_read')).toBe(0)
+    after.release()
+    unmount(c)
+  })
+
   it('a reader caught up elsewhere gets the latest page in place of the old list, which scroll-up fills back', async () => {
     app.state = markHistory(addHistory(app.state, 'C1', page(101, 100)), 'C1', false)
     const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })

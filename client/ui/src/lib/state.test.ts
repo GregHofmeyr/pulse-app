@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyPinList, stageShareIn, applyReady, applyMyVote, emptyState, setPins, addPending, pendingMessage, removePending, restoreUnsent, markHistory, resumePoint, resumeAfter, mergeLatest, applyLayout, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, setProfile, type AppState, type Pending } from './state'
+import { applyEvent, applyPinList, stageShareIn, applyReady, applyMyVote, emptyState, setPins, addPending, pendingMessage, removePending, restoreUnsent, markHistory, resumePoint, resumeAfter, mergeLatest, landed, applyLayout, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, setProfile, type AppState, type Pending } from './state'
 import { feedKey, clipView, type ClipFilter } from './clips'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
@@ -1695,7 +1695,17 @@ describe('coming back after a reconnect (#329)', () => {
     s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M0321'), nonce: null } }, 0) // during the request
     s = resumeAfter(s, 'C1', newestFirst(ids(201, 50)))
     expect(s.messages['C1'].map((m) => m.id)).toEqual(ids(101, 150))
-    expect(s.history['C1']).toEqual({ loaded: true, start: false, end: false, missed: ['M0321'] })
+    expect(s.history['C1']).toEqual({ loaded: true, start: false, end: false, openAt: 'M0201', missed: ['M0321'] })
+  })
+
+  it('your own message beyond a full page asks for the latest; landing clears the ask', () => {
+    let s = back(readAt('M0200', 120))
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M0321', 'C1', 'hi', 'U1'), nonce: null } }, 0)
+    s = resumeAfter(s, 'C1', newestFirst(ids(201, 50)))
+    expect(s.history['C1']).toEqual({ loaded: true, start: false, end: false, toLatest: true, missed: ['M0321'] })
+    const once = landed(s, 'C1')
+    expect(once.history['C1']).toEqual({ loaded: true, start: false, end: false, missed: ['M0321'] })
+    expect(landed(once, 'C1')).toBe(once) // nothing left to clear
   })
 
   it('a short page on reaches the latest, live messages kept, the start kept', () => {
