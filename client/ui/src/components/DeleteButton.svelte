@@ -3,13 +3,14 @@
   // message?"), like a clip's Delete; Shift+click deletes straight away, as on Discord.
   import { tick } from 'svelte'
   import Icon from './Icon.svelte'
-  import { clickOutside } from '../lib/actions'
+  import { clickOutside, portal } from '../lib/actions'
 
   let { what, note = '', onConfirm }: { what: string; note?: string; onConfirm: () => void } = $props()
 
   let asking = $state(false)
   /** Where the question floats: fixed by the bin, so it never makes the message list longer (on the
-   *  last message it would push the chat up). Below the bin, or above it near the window's bottom. */
+   *  last message it would push the chat up). Below the bin, or above it near the window's bottom. It's moved out to
+   *  the page (`portal`): left in the action bar's layer, the composer covered it on the last message. */
   let place = $state('')
   const WIDTH = 240
   const ROOM = 120 // about the question's height
@@ -53,7 +54,7 @@
 <span class="del">
   <button bind:this={opener} class="trigger" aria-label="Delete" aria-haspopup="dialog" aria-expanded={asking} data-menu-toggle onclick={press}><Icon name="trash" size={16} /></button>
   {#if asking}
-    <div class="ask menu-surface pop-in" role="alertdialog" aria-label="Delete {what}" style={place} use:clickOutside={close}>
+    <div class="ask menu-surface pop-in" role="alertdialog" aria-label="Delete {what}" style={place} use:portal use:clickOutside={close}>
       <p>Delete this {what}?{note ? ` ${note}` : ''}</p>
       <button bind:this={keep} type="button" class="btn btn-secondary" onclick={() => close()}>Cancel</button>
       <button type="button" class="btn btn-danger go" onclick={confirm}>Delete</button>

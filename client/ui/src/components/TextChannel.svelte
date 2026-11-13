@@ -447,7 +447,7 @@
       loadingPresent = false
     }
   }
-  const FLASH_MS = 2000
+  const FLASH_MS = 3000
   let flashEl: Element | null = null
   let flashTimer: ReturnType<typeof setTimeout> | undefined
   let noticeTimer: ReturnType<typeof setTimeout> | undefined
@@ -891,10 +891,11 @@
   .typing strong { color: var(--text); }
   .error { margin: 0 18px 4px; color: var(--danger-text); font-size: 13px; }
   /* a jumped-to message: a fading highlight, or a static outline under reduced motion */
-  .list :global(.jump-flash) { animation: jump-flash 2s ease-out; }
+  .list :global(.jump-flash) { animation: jump-flash 3s ease-out; }
   .list :global(.jump-flash.still) { animation: none; outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+  /* held for a second (the view is still settling after a switch), then fades */
   @keyframes jump-flash {
-    0%, 30% { background: var(--accent-mid); }
+    0%, 35% { background: var(--accent-strong); }
     100% { background: transparent; }
   }
   .jump-notice { margin: 0 18px 4px; color: var(--text-3); font-size: 13px; }

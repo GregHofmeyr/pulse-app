@@ -34,6 +34,21 @@ describe('DeleteButton', () => {
     expect(document.activeElement?.textContent).toBe('Cancel')
   })
 
+  it("the question is moved out to the page, so the action bar's layer can't tuck it under the composer", () => {
+    const host = document.createElement('div')
+    host.className = 'bar'
+    document.body.append(host)
+    onConfirm.mockReset()
+    cmp = mount(DeleteButton, { target: host, props: { what: 'quote', onConfirm } })
+    flushSync()
+    click(host.querySelector('button[aria-label="Delete"]')!)
+    expect(ask()?.parentElement).toBe(document.body)
+    expect(host.contains(ask())).toBe(false)
+    click(ask()!.querySelector('.go')!)
+    expect(onConfirm).toHaveBeenCalledOnce()
+    expect(ask()).toBeNull()
+  })
+
   it('says what else goes with it', () => {
     click(show({ what: 'quote', note: 'Its replies go too.' }))
     expect(ask()?.textContent).toContain('Delete this quote? Its replies go too.')

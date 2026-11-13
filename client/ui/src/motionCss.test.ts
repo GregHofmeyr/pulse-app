@@ -70,7 +70,7 @@ describe('motion', () => {
     'components/UserTile.svelte': /^(spin |2\.4s$)/,
     // the update download whose size isn't known (#82): a bar that slides at its own speed, like a spinner
     'routes/Updating.svelte': /^slide /,
-    // the jumped-to message's highlight fades over two seconds, long enough to find it
+    // the jumped-to message's highlight is held, then fades over three seconds, long enough to find it
     'components/TextChannel.svelte': /^jump-flash /,
     // reduced motion: everything finishes at once
     'app.css': /^\.01ms !important$/,

@@ -68,7 +68,7 @@ describe('TextChannel: jump to a message', () => {
     expect(target.classList.contains('jump-flash')).toBe(true)
     expect(target.classList.contains('still')).toBe(false)
     expect(ui.jump).toBeNull() // handled
-    vi.advanceTimersByTime(2100)
+    vi.advanceTimersByTime(3100)
     expect(target.classList.contains('jump-flash')).toBe(false)
     // the same target again flashes again
     ui.jump = { channelId: 'C1', messageId: 'M0125', seq: 2 }

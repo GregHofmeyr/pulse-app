@@ -178,3 +178,17 @@ export function narrowerThan(node: HTMLElement, opts: { px: number; set: (narrow
     },
   }
 }
+
+/** Moves a floating popover out to the page, so a `position: fixed` one escapes the clipping and stacking of what it
+ *  sits in (an action bar's own layer would tuck it under the composer). Inside an open modal it moves to that modal's
+ *  root instead: everything outside the modal is inert. */
+export function portal(node: HTMLElement) {
+  const from = node.parentElement
+  const host = (from && [...openModals].reverse().find((m) => m.isConnected && m.contains(from))) || document.body
+  host.appendChild(node)
+  return {
+    destroy() {
+      node.remove()
+    },
+  }
+}
