@@ -112,21 +112,14 @@ describe('applyTheme', () => {
     m.setTheme('dark')
     // a menu (the @-mention list, search suggestions) is lighter than the chat on dark themes
     expect(m.nameBg('menu')).toBe('#2e3037')
-    // the profile card is a dark island in every theme
-    expect(m.nameBg('island')).toBe(m.ISLAND_BG)
-    // …measured against the lightest a preset card gets (Sunset's orange end, mixed into near-black)
-    const { THEME_PRESETS, mixHex, NEAR_BLACK, CARD_MIX } = await import('./cardTheme')
-    const { luminance, parseHex } = await import('./color')
-    for (const p of THEME_PRESETS) for (const c of [p.top, p.bottom]) expect(luminance(parseHex(mixHex(c, NEAR_BLACK, CARD_MIX))!)).toBeLessThanOrEqual(luminance(parseHex(m.ISLAND_BG)!))
   })
 
-  it('profile cards follow the theme (#139): dark on dark themes, light on light ones, standing off their surfaces', async () => {
+  it('profile cards take only lightness from the theme (#156: their colours are their own; a light theme lifts them)', async () => {
     const m = await fresh()
-    expect(m.cardLook()).toEqual({ light: false, ground: [] })
+    expect(m.cardLook()).toEqual({ light: false })
     m.setTheme('light')
     m.setTint('pink')
-    const s = surfacesFor('light', 'pink')
-    expect(m.cardLook()).toEqual({ light: true, ground: [s.bg0, s.bg1, s.bg2] })
+    expect(m.cardLook()).toEqual({ light: true })
     m.setTheme('pastel')
     expect(m.cardLook().light).toBe(true)
     m.setTheme('oled')

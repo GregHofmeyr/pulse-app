@@ -42,16 +42,24 @@ describe('profileDraft', () => {
     expect(d).toEqual({
       avatarHash: 'a1', avatarStill: 'a1s', bannerHash: 'b1', bannerStill: null,
       themeTop: '#c2457a', themeBottom: '#3a1f5e', font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'],
-      pronouns: 'they/them', bio: 'hi\nthere', displayName: profile.user.display_name,
+      pronouns: 'they/them', bio: 'hi\nthere', displayName: profile.user.display_name, glow: true,
     })
     expect(toRequest(d)).toEqual({
       avatar_hash: 'a1', banner_hash: 'b1', theme_top: '#c2457a', theme_bottom: '#3a1f5e',
       style: { font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'] }, pronouns: 'they/them', bio: 'hi\nthere',
-      display_name: profile.user.display_name,
+      display_name: profile.user.display_name, glow: true,
     })
     // the draft holds its own colours: editing it never touches the profile
     d.colors.push('#000000')
     expect(profile.user.style.colors).toHaveLength(2)
+  })
+
+  it('the card glow (#156): read from the card, on when an older server sends none, sent and previewed as set', () => {
+    expect(draftFrom({ ...profile, card: { ...profile.card, glow: false } }).glow).toBe(false)
+    expect(draftFrom({ ...profile, card: { ...profile.card, glow: true } }).glow).toBe(true)
+    const d = { ...draftFrom(profile), glow: false }
+    expect(toRequest(d).glow).toBe(false)
+    expect(previewCard(d).glow).toBe(false)
   })
 
   it('name rules match the server (profiles/names.rs)', () => {
@@ -76,7 +84,7 @@ describe('profileDraft', () => {
     const changes: Partial<Draft>[] = [
       { avatarHash: null }, { avatarStill: null }, { bannerHash: 'b2' }, { bannerStill: 'b2s' },
       { themeTop: '#000000' }, { themeBottom: '#000000' }, { font: null }, { colors: ['#ffbe7a'] },
-      { colors: ['#ffbe7a', '#ff7faf'] }, { pronouns: 'she/her' }, { bio: 'hi' },
+      { colors: ['#ffbe7a', '#ff7faf'] }, { pronouns: 'she/her' }, { bio: 'hi' }, { glow: false },
     ]
     for (const c of changes) expect(isDirty({ ...saved, ...c }, saved), JSON.stringify(c)).toBe(true)
   })
@@ -103,7 +111,7 @@ describe('profileDraft', () => {
     expect(previewUser(alex, draftFrom(profile)).style.colors).toEqual(['#ffbe7a', '#ff7fae'])
     // the card: the theme as picked (a custom pair is accepted as is), empty text shows nothing
     const c = previewCard({ ...d, themeTop: '#FFFFFF', themeBottom: '#ffff00' })
-    expect(c).toEqual({ banner_hash: 'b1', banner_still: null, theme_top: '#ffffff', theme_bottom: '#ffff00', pronouns: null, bio: null })
+    expect(c).toEqual({ banner_hash: 'b1', banner_still: null, theme_top: '#ffffff', theme_bottom: '#ffff00', pronouns: null, bio: null, glow: true })
   })
 })
 

@@ -24,11 +24,11 @@
 </section>
 
 <style>
-  /* the card's own panel (ProfileCard .panel) */
-  .listening { border-radius: var(--radius-md); padding: 10px 12px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--card-text); }
-  .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 600; color: var(--card-text-2); }
+  /* the card's own translucent panel (ProfileCard .panel), sized with the card (--k, #156) */
+  .listening { border-radius: var(--radius-md); padding: calc(10px * var(--k, 1)) calc(12px * var(--k, 1)); background: var(--card-panel); display: flex; flex-direction: column; gap: 8px; font-size: calc(13px * var(--k, 1)); color: var(--card-text); }
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: calc(12px * var(--k, 1)); font-weight: 600; color: var(--card-text-2); }
   .row { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  .art { flex: none; width: 48px; height: 48px; object-fit: contain; border-radius: 4px; display: block; }
+  .art { flex: none; width: calc(48px * var(--k, 1)); height: calc(48px * var(--k, 1)); object-fit: contain; border-radius: 4px; display: block; }
   .words { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sub { color: var(--card-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

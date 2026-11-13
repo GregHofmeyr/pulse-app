@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { CARD_MIX, CARD_MIX_LIGHT, CARD_TEXT, CARD_TEXT_2, cardVars, DEFAULT_THEME, mixHex, NEAR_BLACK, NEAR_WHITE, nameStop, PANEL_MIX, PANEL_MIX_LIGHT, presetFor, THEME_PRESETS } from './cardTheme'
-import { contrast, lightenForName } from './nameStyle'
+import { BODY_RATIO, cardInk, cardVars, composite, DARK_CARD, DEFAULT_THEME, EDGE_SHADE, LIGHT_CARD, mixHex, nameStop, presetFor, THEME_PRESETS } from './cardTheme'
+import { contrast, luminance, parseHex } from './color'
+
+const lum = (c: string) => luminance(parseHex(c)!)
+/** Every surface the card's text sits on: its two ends and the panels and the message box over them. */
+const surfaces = (v: Record<string, string>, ink: typeof LIGHT_CARD) =>
+  [v['--card-top'], v['--card-bottom']].flatMap((s) => [s, composite(s, ink.panel), composite(s, ink.field)])
+
+// The owner's references (#156): pastel lilac, mint to teal, white to periwinkle, sky blue, pink, cyan to lilac,
+// lavender-white, dusty rose. Made-up hexes of those kinds.
+const PASTELS: [string, string][] = [
+  ['#e9d5f7', '#cdb4ee'], ['#cdeedd', '#8fd3c7'], ['#ffffff', '#b4c2f7'], ['#bfe3ff', '#9ccdf5'],
+  ['#ffc8e0', '#f5a9cb'], ['#b8f1f5', '#d6c4f5'], ['#f4f0ff', '#e6defa'], ['#efd0d3', '#e0b4ba'],
+]
+const SWEEP = ['#ffffff', '#ffb6d9', '#ffff00', '#00ffff', '#00ff00', '#8a3cff', '#ff8a2a', '#808080', '#3a3d46', '#0d1430', '#000000', '#c2457a']
 
 describe('cardTheme', () => {
   it('presets are exact', () => {
@@ -12,29 +25,6 @@ describe('cardTheme', () => {
       { key: 'plain', label: 'Plain', top: '#3a3d46', bottom: '#16171b' },
     ])
     expect(DEFAULT_THEME.key).toBe('plain')
-    expect([CARD_MIX, PANEL_MIX, NEAR_BLACK, CARD_TEXT, CARD_TEXT_2]).toEqual([0.3, 0.18, '#0d0e12', '#f2f3f6', '#d6d8df'])
-  })
-
-  it('worst themes keep text readable', () => {
-    for (const top of ['#ffffff', '#ffff00', '#00ffff', '#00ff00']) for (const bottom of ['#ffffff', '#ffff00', '#00ffff', '#00ff00']) {
-      const v = cardVars(top, bottom)
-      for (const surface of [v['--card-top'], v['--card-bottom']]) {
-        expect(contrast(CARD_TEXT, surface), surface).toBeGreaterThanOrEqual(4.5)
-        expect(contrast(CARD_TEXT_2, surface), surface).toBeGreaterThanOrEqual(4.5)
-        expect(contrast(lightenForName('#000000'), surface), surface).toBeGreaterThanOrEqual(3.0)
-      }
-      for (const panel of [v['--panel-top'], v['--panel-bottom']]) expect(contrast(CARD_TEXT_2, panel), panel).toBeGreaterThanOrEqual(4.5)
-    }
-  })
-
-  it('cardVars exposes the properties', () => {
-    const v = cardVars('#ffffff', '#000000')
-    expect(Object.keys(v).sort()).toEqual([
-      '--card-bottom', '--card-danger', '--card-edge', '--card-hover', '--card-lift', '--card-line', '--card-ok', '--card-skeleton', '--card-text', '--card-text-2', '--card-top',
-      '--glow-bottom', '--glow-bottom-a', '--glow-top', '--glow-top-a', '--panel-bottom', '--panel-top',
-    ])
-    expect(v['--glow-top']).toBe('#ffffff')
-    expect(v['--card-top']).toBe(mixHex('#ffffff', NEAR_BLACK, CARD_MIX))
   })
 
   it('presetFor finds presets and returns null for custom', () => {
@@ -44,64 +34,102 @@ describe('cardTheme', () => {
     expect(presetFor('#8a3cff', '#000000')).toBeNull()
   })
 
-  it('on a dark theme: the dark island as before (the raw colours on the edge, glows at 45%)', () => {
-    for (const p of THEME_PRESETS) {
-      const v = cardVars(p.top, p.bottom)
-      expect(v['--card-top']).toBe(mixHex(p.top, NEAR_BLACK, CARD_MIX))
-      expect(v['--panel-bottom']).toBe(mixHex(p.bottom, NEAR_BLACK, PANEL_MIX))
-      expect([v['--card-text'], v['--card-text-2']]).toEqual([CARD_TEXT, CARD_TEXT_2])
-      expect([v['--glow-top'], v['--glow-bottom']]).toEqual([p.top, p.bottom])
-      expect([v['--glow-top-a'], v['--glow-bottom-a']]).toEqual([`${p.top}73`, `${p.bottom}73`])
-      expect(v['--card-line']).toBe('rgb(242 243 246 / .08)')
-    }
+  it('cardVars exposes the properties', () => {
+    expect(Object.keys(cardVars('#ffffff', '#000000')).sort()).toEqual([
+      '--card-border-bottom', '--card-border-top', '--card-bottom', '--card-danger', '--card-edge', '--card-field', '--card-hover', '--card-lift', '--card-line',
+      '--card-ok', '--card-panel', '--card-skeleton', '--card-text', '--card-text-2', '--card-top',
+      '--glow-bottom', '--glow-bottom-a', '--glow-top', '--glow-top-a', '--panel-bottom', '--panel-top',
+    ])
   })
 })
 
-// #139: on a light theme the card is light too (its two colours mixed into white), with dark text, and light card
-// colours (pink + white) still show: the edge is moved just far enough to stand off the app's surfaces.
-describe('cardTheme on a light theme (#139)', () => {
-  const ground = ['#e9eaed', '#f4f4f6', '#ffffff']
-  const light = { light: true, ground }
-  const SWEEP = ['#ffffff', '#ffb6d9', '#ffff00', '#00ffff', '#8a3cff', '#3a3d46', '#000000', '#0d1430', '#ff8a2a']
-
-  it('surfaces are the colours mixed into white; panels a little whiter', () => {
-    expect([CARD_MIX_LIGHT, PANEL_MIX_LIGHT, NEAR_WHITE]).toEqual([0.4, 0.22, '#ffffff'])
-    const v = cardVars('#ffb6d9', '#ffffff', light)
-    expect(v['--card-top']).toBe(mixHex('#ffb6d9', NEAR_WHITE, CARD_MIX_LIGHT))
-    expect(v['--card-bottom']).toBe('#ffffff')
-    expect(v['--panel-top']).toBe(mixHex('#ffb6d9', NEAR_WHITE, PANEL_MIX_LIGHT))
-  })
-
-  it('text is dark and reads on every surface, whatever the colours', () => {
-    for (const top of SWEEP) for (const bottom of SWEEP) {
-      const v = cardVars(top, bottom, light)
-      for (const s of [v['--card-top'], v['--card-bottom'], v['--panel-top'], v['--panel-bottom']]) {
-        expect(contrast(v['--card-text'], s), `${top} ${bottom} ${s}`).toBeGreaterThanOrEqual(7)
-        expect(contrast(v['--card-text-2'], s), `${top} ${bottom} ${s}`).toBeGreaterThanOrEqual(4.5)
-        // the voice-room line and errors too (review: the theme's own -text tokens fell under 3:1 on a tinted card)
-        expect(contrast(v['--card-ok'], s), `ok ${top} ${bottom} ${s}`).toBeGreaterThanOrEqual(4.5)
-        expect(contrast(v['--card-danger'], s), `danger ${top} ${bottom} ${s}`).toBeGreaterThanOrEqual(4.5)
-      }
-      expect(contrast(v['--card-text'], '#ffffff')).toBeGreaterThan(contrast(v['--card-text'], '#000000'))
+describe('the card is drawn in its own two colours (#156)', () => {
+  it('pastel colours are used as picked, with near-black text', () => {
+    for (const [top, bottom] of PASTELS) {
+      const v = cardVars(top, bottom)
+      expect([v['--card-top'], v['--card-bottom']], `${top} ${bottom}`).toEqual([top, bottom])
+      expect(cardInk(top, bottom).light).toBe(true)
+      expect(lum(v['--card-text'])).toBeLessThan(0.02)
+      // secondary text is a darker grey, not the app's light-on-dark tokens
+      expect(lum(v['--card-text-2'])).toBeLessThan(0.1)
+      expect(lum(v['--card-text-2'])).toBeGreaterThan(lum(v['--card-text']))
     }
   })
 
-  it('light card colours still show: the edge stands off the app surfaces (white turns grey, pink a deeper pink)', () => {
-    const v = cardVars('#ffb6d9', '#ffffff', light)
-    for (const g of ground) for (const e of [v['--glow-top'], v['--glow-bottom']]) expect(contrast(e, g)).toBeGreaterThanOrEqual(1.5)
-    expect(v['--glow-bottom']).not.toBe('#ffffff')
-    const [r, g, b] = [1, 3, 5].map((i) => parseInt(v['--glow-top'].slice(i, i + 2), 16))
-    expect(r).toBeGreaterThan(g) // still pink
-    expect(b).toBeGreaterThan(g)
-    expect(v['--glow-bottom-a']).toBe(`${v['--glow-bottom']}73`)
-    // a dark colour is already off the ground: kept as picked
-    expect(cardVars('#8a3cff', '#ff8a2a', light)['--glow-top']).toBe('#8a3cff')
+  it('dark colours are used as picked, with light text as before', () => {
+    for (const p of THEME_PRESETS.slice(1)) {
+      const v = cardVars(p.top, p.bottom)
+      expect(cardInk(p.top, p.bottom).light).toBe(false)
+      expect([v['--card-text'], v['--card-text-2']]).toEqual([DARK_CARD.text, DARK_CARD.text2])
+      // a mid-dark end (Forest's green, Berry's pink) darkens a little so the secondary grey reads; the rest as picked
+      for (const [drawn, picked] of [[v['--card-top'], p.top], [v['--card-bottom'], p.bottom]]) {
+        expect(lum(drawn)).toBeLessThanOrEqual(lum(picked))
+        expect(lum(drawn)).toBeGreaterThan(lum(picked) * 0.6)
+      }
+    }
+    for (const p of [THEME_PRESETS[1], THEME_PRESETS[4]]) expect(cardInk(p.top, p.bottom)).toEqual({ light: false, top: p.top, bottom: p.bottom })
   })
 
-  it('lines, hovers and the lift follow the light card', () => {
-    const v = cardVars('#3a3d46', '#16171b', light)
+  it('the app theme changes nothing but the lift', () => {
+    for (const [top, bottom] of [...PASTELS, ['#22325e', '#0d1430'] as [string, string]]) {
+      const dark = cardVars(top, bottom, { light: false })
+      const light = cardVars(top, bottom, { light: true })
+      expect({ ...light, '--card-lift': '' }).toEqual({ ...dark, '--card-lift': '' })
+      expect(light['--card-lift']).toBe('var(--shadow-2)')
+      expect(dark['--card-lift']).toBe('0 0 #0000')
+    }
+  })
+
+  it('whatever the colours, body text reads (WCAG AA) on every surface of the card', () => {
+    for (const top of SWEEP) for (const bottom of SWEEP) {
+      const v = cardVars(top, bottom)
+      const ink = cardInk(top, bottom).light ? LIGHT_CARD : DARK_CARD
+      for (const s of surfaces(v, ink)) {
+        expect(contrast(v['--card-text'], s), `${top} ${bottom} ${s}`).toBeGreaterThanOrEqual(BODY_RATIO)
+        expect(contrast(v['--card-text-2'], s), `2 ${top} ${bottom} ${s}`).toBeGreaterThanOrEqual(BODY_RATIO)
+        expect(contrast(v['--card-ok'], s), `ok ${top} ${bottom} ${s}`).toBeGreaterThanOrEqual(BODY_RATIO)
+        expect(contrast(v['--card-danger'], s), `danger ${top} ${bottom} ${s}`).toBeGreaterThanOrEqual(BODY_RATIO)
+      }
+    }
+  })
+
+  it('a pair neither text reads on as is (purple to orange) moves the least it must, toward one side', () => {
+    const { light, top, bottom } = cardInk('#8a3cff', '#ff8a2a')
+    const moved = [top, bottom]
+    // both ends move the same way: lighter for dark text, darker for light text
+    for (const [c, was] of [[moved[0], '#8a3cff'], [moved[1], '#ff8a2a']]) {
+      if (light) expect(lum(c)).toBeGreaterThanOrEqual(lum(was))
+      else expect(lum(c)).toBeLessThanOrEqual(lum(was))
+    }
+    // one step less and the text would not read: compare with the other look's own minimum
+    const v = cardVars('#8a3cff', '#ff8a2a')
+    expect(contrast(v['--card-text'], v['--card-top'])).toBeGreaterThanOrEqual(BODY_RATIO)
+    expect(contrast(v['--card-text'], v['--card-top'])).toBeLessThan(BODY_RATIO + 2.5)
+  })
+
+  it('the panels and the message box are translucent overlays; the solid panel colours are what they make', () => {
+    const v = cardVars('#e9d5f7', '#cdb4ee')
+    expect(v['--card-panel']).toBe('rgb(255 255 255 / .4)')
+    expect(v['--card-field']).toBe('rgb(0 0 0 / .07)')
+    expect(v['--panel-top']).toBe(composite('#e9d5f7', LIGHT_CARD.panel))
+    const d = cardVars('#22325e', '#0d1430')
+    expect(d['--card-panel']).toMatch(/^rgb\(0 0 0 \/ \.\d+\)$/)
+    expect(d['--card-line']).toBe('rgb(242 243 246 / .1)')
     expect(v['--card-line']).toBe('rgb(23 24 28 / .1)')
-    expect(v['--card-lift']).toBe('var(--shadow-2)')
+  })
+
+  it('the border is a stronger shade of each colour: darker on a light card, lighter on a dark one', () => {
+    const v = cardVars('#ffffff', '#b4c2f7')
+    expect(v['--card-border-top']).toBe(mixHex('#000000', '#ffffff', EDGE_SHADE))
+    expect(lum(v['--card-border-bottom'])).toBeLessThan(lum('#b4c2f7'))
+    const d = cardVars('#22325e', '#0d1430')
+    expect(lum(d['--card-border-top'])).toBeGreaterThan(lum('#22325e'))
+  })
+
+  it('the glow is each raw colour at 45%', () => {
+    const v = cardVars('#FFC8E0', '#f5a9cb')
+    expect([v['--glow-top'], v['--glow-bottom']]).toEqual(['#ffc8e0', '#f5a9cb'])
+    expect([v['--glow-top-a'], v['--glow-bottom-a']]).toEqual(['#ffc8e073', '#f5a9cb73'])
   })
 })
 

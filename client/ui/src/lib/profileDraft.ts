@@ -19,6 +19,8 @@ export type Draft = {
   bio: string
   /** How your name looks everywhere (#47), as typed: trimmed on Save. */
   displayName: string
+  /** Your card glows in its colours (#156). */
+  glow: boolean
 }
 
 export function draftFrom(p: Profile): Draft {
@@ -35,6 +37,8 @@ export function draftFrom(p: Profile): Draft {
     bio: p.card.bio ?? '',
     // an older server sends none: start from the username, as the migration does
     displayName: p.user.display_name || p.user.username,
+    // an older server sends none: on, as every card was
+    glow: p.card.glow !== false,
   }
 }
 
@@ -55,6 +59,7 @@ export function toRequest(d: Draft): UpdateProfileRequest {
     pronouns: orNull(d.pronouns),
     bio: orNull(d.bio),
     display_name: d.displayName.trim(),
+    glow: d.glow,
   }
 }
 
@@ -72,6 +77,7 @@ export function previewCard(d: Draft): CardProfile {
     theme_bottom: d.themeBottom.toLowerCase(),
     pronouns: orNull(d.pronouns)?.trim() ?? null,
     bio: orNull(d.bio),
+    glow: d.glow,
   }
 }
 
