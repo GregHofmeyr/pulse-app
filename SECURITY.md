@@ -6,7 +6,8 @@ Pulse is a small, invite-only voice and text chat. It has three parts:
 - a LiveKit SFU that carries voice and screen share;
 - a desktop client (Tauri 2 with a Rust core and a Svelte UI). Windows is the main platform; Linux also builds.
 
-Production is a single VM. Caddy sits in front, and the services run with Docker Compose.
+Production is a single VM. Caddy sits in front, and the services run with Docker Compose. Clip videos and files sent
+in chat are kept in a Cloudflare R2 bucket, and encrypted backups in another.
 
 This page is for someone deciding whether the client may be installed on managed machines. It covers what the client
 touches, what it sends and to where, what it stores, and the known gaps. Everything here describes the code in this
@@ -15,8 +16,8 @@ repository.
 ## 1. What the client accesses, and when
 
 **Keyboard and mouse: global keybinds, Windows only.**
-- **What it installs.** Mute and deafen work while another app has focus. For this, the client installs low-level
-  keyboard and mouse hooks (`WH_KEYBOARD_LL`, `WH_MOUSE_LL`).
+- **What it installs.** Mute, deafen and **Open quick switcher** work while another app has focus. For this, the client
+  installs low-level keyboard and mouse hooks (`WH_KEYBOARD_LL`, `WH_MOUSE_LL`).
 - **Only while something is bound.** The hooks are installed only when the **Global keybinds** switch is on *and* at
   least one keybind is set. Nothing is bound by default, so a fresh install runs no hooks. Adding the first bind
   installs them; removing the last one removes them. Recording a bind in Settings doesn't need them: Settings reads
@@ -63,12 +64,29 @@ repository.
   - Process IDs may appear in the local log, and so in a bug or crash report (section 3).
   - Executable names and window titles are not logged.
 
+**Media activity ("Listening to"): only when the user turns it on.**
+- **Two switches, both off by default.** Settings → Privacy → **Read media activity** lets the client read what the
+  Spotify app on this machine is playing. **Show my activity** (only available while reading is on) shares it with
+  others.
+- **What it reads.** Only Spotify's own session in the operating system's media controls: MPRIS over the user's
+  session D-Bus on Linux, the system media transport controls on Windows. Other players' sessions are ignored. It
+  reads the title, artist and album, and on Linux the Spotify track or episode id. It controls nothing.
+- **When reading is off** there is no watcher at all: no D-Bus connection, no thread, nothing sent. When it is on, the
+  watcher wakes only on the player's own change signals; nothing is polled.
+- **What is sent, and to whom.** The client sends those fields to the Pulse server, at most once every 5 seconds. The
+  server keeps them in memory for that connection only (never in the database) and drops them when the connection
+  closes. With **Show my activity** on, people who can see the user online get "Listening to"; anyone the user
+  appears offline to (Invisible, "appear offline to", disconnected) gets nothing. With it off, the reading only updates
+  a Spotify Jam the user shared to a voice stage themselves (its "Now playing" line). With a Spotify id,
+  the server fetches the album art from Spotify's public link preview, as for any Spotify link.
+
 **Microphone.** The microphone is opened when the user joins a voice channel or runs the microphone test in Settings.
 Audio goes to the SFU (section 2).
 
 ## 2. Network
 
-The client makes outbound connections only, all to the Pulse server and its LiveKit SFU:
+The client makes outbound connections only: to the Pulse server and its LiveKit SFU, to the server's file storage,
+and to GIPHY when GIFs are used:
 
 | Purpose | Protocol / port | Notes |
 |---|---|---|
@@ -76,6 +94,8 @@ The client makes outbound connections only, all to the Pulse server and its Live
 | Voice / screen-share signalling | WSS, TCP 443 (`voice.` subdomain) | Through the same TLS reverse proxy. |
 | Voice / screen-share media | UDP 7882, or TCP 7881 as a fallback | WebRTC (DTLS-SRTP) to the SFU. |
 | TURN relay | UDP 3478 | LiveKit's built-in TURN, for clients on restrictive networks. It also serves as the clients' STUN server. |
+| Files and clips | HTTPS, TCP 443 (`<account>.r2.cloudflarestorage.com`) | The server's Cloudflare R2 bucket. Uploads (from the Rust core) and downloads and playback (the core, or the webview's image, video and audio elements) use URLs the server signs for one object, valid for an hour; an upload URL is bound to the file's size and type. No session token is sent there. |
+| GIFs | HTTPS, TCP 443 (`api.giphy.com`, `media.giphy.com`) | Only on servers with GIFs set up. The Rust core searches GIPHY's API with the server's key (fetched once per session, never given to the web UI); the webview loads GIF images from GIPHY's media host. GIPHY sees the user's IP address and search text. |
 
 - **No peer-to-peer media.** Media goes from each client to the SFU and from the SFU to the other members. Clients never
   exchange media directly.
@@ -88,6 +108,8 @@ The client makes outbound connections only, all to the Pulse server and its Live
   - A test checks both LiveKit configurations (production and development) for this. Another test, run against a real
     LiveKit, checks that the ICE servers in the join response are only our own.
 - **Webview limits.** The UI's Content Security Policy (section 4) also limits where the webview itself may connect.
+- **Updates and models** come from the signed-in Pulse server (section 4, *App updates*), never from a third party.
+- **Links.** Web links open in the user's default browser, never in a Pulse window.
 
 **No listening network ports.** The client opens no listening TCP or UDP port that another machine can connect to.
 WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
@@ -97,8 +119,8 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   runtime directory (`$XDG_RUNTIME_DIR`). If that isn't set, it is in `pulse-app-<uid>` in the system temp directory,
   a directory with mode `0700`. If that directory already exists and isn't a real directory owned by the user with no
   group or other access (for example, a symlink), the client doesn't open the socket and logs a warning.
-  The `pulse-app --toggle-mute` / `--toggle-deafen` command uses it, and it accepts only those two commands. The
-  command follows the same rules and refuses a socket that isn't owned by the user.
+  The `pulse-app --toggle-mute` / `--toggle-deafen` / `--quick-switch` command uses it, and it accepts only those three
+  commands. The command follows the same rules and refuses a socket that isn't owned by the user.
 - **Second launch.** When the app is started a second time, the single-instance plugin tells the copy already running
   to show its window.
 
@@ -151,12 +173,22 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     current session (the last app start, sign-in or restore, marked by a line that `PULSE_LOG` and the daily size cap
     never drop). Only that exact marker line counts: another line that merely contains the marker text neither starts
     a session nor gets past the size cap. Older sessions in the same file are left out.
-- **Image cache.** Custom emoji images are fetched from the server once and cached as WebP files, keyed by their
-  SHA-256 hash.
+- **Image cache.** Images the server stores (custom emoji, avatars, banners and other uploaded images) are fetched
+  from the server once and cached as WebP files, keyed by their SHA-256 hash.
   - **Where.** `%LOCALAPPDATA%\app.pulse.client\media\` on Windows.
   - **Separate per login.** Each account on each server has its own subfolder.
   - **Integrity.** A file whose contents don't match its hash is fetched again.
   - **Sign-out.** Signing out deletes that account's cache, along with the webview's own copies.
+- **Files being sent.** An image queued in the message box is converted to WebP on the machine (so the server never
+  decodes it), and a dropped folder the user chooses to send is zipped; those copies go in a staging folder in the
+  app's local cache folder, per profile. They are deleted when the file is removed or sent, and the folder is emptied
+  at the next start. Other files are uploaded straight from where they are.
+- **Downloads.** Clips, images and files are saved only when the user clicks Download, to the place they choose. A
+  cancelled download deletes its partial file. Pulse never opens a downloaded file by itself; files that can run
+  programs (`.exe`, `.msi`, `.bat`, `.ps1`, …) get a warning on Download.
+- **Downloaded model.** The "Strong (low delay)" noise-suppression model is downloaded once, from the signed-in Pulse
+  server, into the app's local data folder, and its SHA-256 is checked against a hash pinned in the app before every
+  use.
 - **Other local files.** The client also stores:
   - keybinds and the global-keybinds switch (`keybinds.json`);
   - the crash-report setting (`reports.json`);
@@ -338,6 +370,11 @@ ties each of those tokens to the session that asked for it:
   tokens for it are forgotten, LiveKit is asked to remove them (best-effort, at most 2 seconds, as on sign-out) and
   they are taken off the call's member list. A rejoin with a token they kept fails the join check. Their client also
   leaves the call when it is told the group is gone.
+- **Deleted channels.** Deleting a channel (or its server) asks LiveKit to close that channel's voice and stream rooms
+  (best-effort, at most 2 seconds), which disconnects everyone in them, including a join the server hadn't heard about
+  yet; a later join is refused because the channel is gone. Writes that race a delete (a message, a reaction, a pin, an
+  upload, a quote or clip) re-check that the channel still exists inside their own database transaction, and are
+  refused with 404, writing nothing; a voice join that races it is undone.
 - **Leaving voice.** When someone leaves a server voice channel's call (not a reconnect), LiveKit is asked to remove
   their screen-share connections there too, in the background. This is skipped if they are back in the call by then.
   Removal is by identity, so a new screen-share connection made in the same instant could be removed.
@@ -390,6 +427,12 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
 
 Unused media is cleaned up in the same hourly pass (see "Uploaded images").
 
+Deleted channels and servers stay in the server's *Recently deleted* for 7 days, restorable by the server's owner or
+whoever deleted them, and are then purged for good with everything in them, in batches of 500 messages, each its own
+transaction. The owner's **Delete now** starts the purge at once and cannot be undone. Every ten minutes a separate
+sweep deletes, from file storage, expired temporary sends, the files of deleted messages and uploads that were never
+sent within 24 hours.
+
 **Low disk.** Sending a message, renaming a group, submitting a report, adding a custom emoji and uploading an image
 are refused with a 507 "server storage is full" when the free space on the database's volume or the media volume is
 below the configured minimum (2 GB by default). The check comes after sign-in and the rate limit, before any work.
@@ -405,8 +448,12 @@ below the configured minimum (2 GB by default). The check comes after sign-in an
   - at most 300 frames;
   - at most 100 megapixels decoded per animation;
   - two images processed at a time.
-- **Re-encoding.** Every image upload (custom emoji) is decoded and re-encoded server-side to a WebP of at most 128×128.
-  The original bytes are never stored or served.
+- **Re-encoding.** Every image upload is decoded and re-encoded server-side to WebP; the original bytes are never
+  stored or served, so their metadata goes with them. Custom emoji become at most 128×128, avatars 256×256, banners
+  960×384 (600×240 animated), quote images at most 1600 px on the long side (640 px animated), and badge art at most
+  256×256. Emoji and quote images keep the 2 MB limit above; avatars and banners accept up to 8 MB and 200 frames.
+  Link-preview thumbnails, which the server fetches itself, go through the same decoder and become a still of at most
+  480 px.
 - **Go Live previews** are image uploads too. They use the same decoding memory limit and the same WebP encoder, with
   their own size limit and fitting:
   - at most 100 KB per upload;
@@ -419,11 +466,30 @@ below the configured minimum (2 GB by default). The check comes after sign-in an
 
   The Go Live video itself goes through LiveKit as video and is not re-encoded by the server.
 
+**Files in chat.** Messages in text channels, voice channels' chats, DMs and groups can carry files (up to 10 per
+message).
+- **Where they go.** The client uploads each file straight to the server's file storage (Cloudflare R2) on a URL the
+  server signs for one object, its exact size and its type, valid for an hour. The server never handles the bytes and
+  never decodes them: images are converted to WebP on the sender's machine.
+- **Who can upload and read them.** Starting an upload and getting a file's link both need a signed-in session and the
+  same access as reading the chat (a member of the server, or of the DM or group). Links expire after an hour (the
+  client reuses one until shortly before then).
+- **Limits.** Up to 50 MB per file, kept until the message is deleted; or, as a temporary send, up to 2 GB, deleted
+  after 1 or 7 days, with at most 20 GB of live temporary files per Pulse server. One person may have at most 50
+  uploads started and not sent. Before a message is sent with a file, the server checks the stored object's size
+  against what was declared.
+- **Stored type.** Only WebP images and a fixed list of video and audio types keep their type; anything else is stored
+  as `application/octet-stream`, so a stored file never claims to be HTML or script. A declared image type other than
+  WebP is refused.
+- **Deleting.** Deleting a message, channel or server deletes its files from storage (see *Database cleanup*).
+
 **Message rendering.**
 - **Markdown.** Markdown is rendered in the client and then sanitised with DOMPurify, using a strict allow-list of tags
   and attributes.
 - **Raw HTML.** HTML typed in a message is shown as text.
-- **Remote images.** Remote images are never loaded. Only bundled emoji and the client's own emoji cache can be images.
+- **Remote images.** Arbitrary remote images are never loaded. Images come only from the app itself, the client's own
+  media cache, GIPHY's media host (a GIF is drawn from its GIPHY id, never from a URL in the message) and the server's
+  file storage (signed links to files sent in chat). Link-preview thumbnails are fetched and re-encoded by the server.
 - **Links.** Links must be `http(s):` or `mailto:`.
 
 **Link-embed page.** `GET /embed/<provider>/<id>` is the one page the server serves without a session. It is a small
@@ -447,11 +513,24 @@ and the app frames it, so the player gets an HTTPS parent with a real origin.
   holds. The provider learns the viewer's IP address and our origin when the player loads, which happens only after
   the member clicks play.
 
+**App updates.** The Windows app updates itself.
+- **Where from.** It asks only the server it is signed in to (`/updates/latest.json`, with the session token; the route
+  answers 401 without one), at launch, after each sign-in and every 30 minutes. An installer URL on any other origin
+  is refused before anything is fetched, so the token never leaves that server.
+- **Signed.** The installer must carry a signature from the project's updater key that verifies against the public key
+  built into the app, and that signature must bind the version it claims (Tauri's `requireSignedVersion`). Anything
+  else is refused and the app stays as it is. The updater never installs an older version.
+- **When.** At launch, before the main window is used, or later as "Restart to update", never during a call.
+- **Downloaded model.** The noise-suppression model comes from the same server the same way (section 3).
+
 **Client webview lockdown.**
 - **Content Security Policy.** The UI runs under a strict CSP:
   - `default-src 'self'`;
   - no `unsafe-eval` and no inline scripts (inline styles are allowed: `style-src 'self' 'unsafe-inline'`);
-  - images only from the app itself, `data:` and the app's emoji cache;
+  - images only from the app itself, `data:`, the app's media cache, the local asset protocol, GIPHY
+    (`https://*.giphy.com`) and Cloudflare R2 (`https://*.r2.cloudflarestorage.com`, files sent in chat);
+  - video and audio only from the app itself, `mediastream:`, `blob:`, the local asset protocol and Cloudflare R2
+    (clips and files);
   - `connect-src` limited to the app's own IPC and the voice server;
   - `frame-src https://pulsechat.co.za` only: the app may frame nothing but the server's link-embed page (section 4),
     which frames the provider's player in turn;
@@ -528,6 +607,8 @@ and the app frames it, so the player gets an HTTPS parent with a real origin.
   Once configured, every night and before each deploy, the database and uploaded media are encrypted with `age` and
   stored in an S3-compatible object store. That object store is with a different provider from the VM. The
   decryption key is not on the server, and the plaintext snapshot is deleted as soon as it has been encrypted.
+  Clip videos and files sent in chat live in a separate R2 bucket with its own token and are not backed up (R2 is
+  their durable copy).
 - **LiveKit's public address.** LiveKit is given the server's public IPv4 address in the deployment's configuration.
   It does not discover it, so it contacts no outside STUN server at start-up. A deploy stops before changing anything
   if that address is missing or malformed, or is a private, loopback, link-local, carrier-grade NAT, multicast or
@@ -552,25 +633,36 @@ and the app frames it, so the player gets an HTTPS parent with a real origin.
 - **Builds.** GitHub Actions builds the Windows installer and the server image from this repository on GitHub-hosted
   runners.
   - **Permissions.** The workflows run with read-only repository permissions by default.
-  - **Secrets.** The only credential they use is the automatic `GITHUB_TOKEN`. The server-image workflow is also granted
-    `packages: write`, to publish the image to GitHub's container registry. No other secrets are configured or used.
+  - **Secrets.** The server-image workflow uses only the automatic `GITHUB_TOKEN`, granted `packages: write` (to publish
+    the image to GitHub's container registry), `id-token: write` and `attestations: write` (to sign and store its
+    build provenance, below). The Windows release workflow uses the updater signing key and its password
+    (`TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`), which sign each installer for the app's
+    self-updater (section 4); without them it fails, so there are no unsigned releases. No other secrets are configured
+    or used.
   - **Who can publish.** Only a successful CI run of a push to `main` in this repository, or a manual run by someone with write access,
     publishes a server image. Pull requests from forks cannot.
+  - **Build provenance.** Each server image (the multi-arch index and each architecture's image) gets a GitHub artifact
+    attestation: SLSA build provenance signed through Sigstore with the workflow's OIDC identity. Before a deploy, the
+    operator's machine resolves the tag to its digest and runs `gh attestation verify`, requiring that the image was
+    built by this repository's `release-server.yml`, run from `main`, on a GitHub-hosted runner (and, for a commit tag,
+    that every platform image is labelled with that commit). Anything else stops the deploy before the server is
+    contacted. The server then pulls exactly that digest. Images built before attestations were added can only be
+    deployed through an explicitly confirmed, loudly marked unverified path.
 - **Pinned build inputs.**
   - **Actions.** Every GitHub Action is pinned to a full commit SHA.
-  - **Base images.** The server image's base images are pinned to an exact version and digest (`rust:1.98.1-bookworm`,
-    `debian:bookworm-20261020-slim`). A pull request that changes the Dockerfile (a Dependabot bump included) gets a
+  - **Base images.** The server image's base images are pinned to an exact version and digest (`rust:1.99.1-bookworm`,
+    `debian:bookworm-20261027-slim`). A pull request that changes the Dockerfile (a Dependabot bump included) gets a
     CI build of the image (amd64, not published) on the pull request.
-  - **Rust.** The toolchain is pinned to 1.98.1 in `rust-toolchain.toml`. CI and the release builds install exactly
+  - **Rust.** The toolchain is pinned to 1.99.1 in `rust-toolchain.toml`. CI and the release builds install exactly
     that version.
-  - **Tauri CLI.** The Windows build uses the Tauri CLI at an exact version (2.12.1), installed from the UI's lockfile.
+  - **Tauri CLI.** The Windows build uses the Tauri CLI at an exact version (2.12.4), installed from the UI's lockfile.
   - **Node.js and pnpm.** CI and the Windows build use exact versions (Node.js 22.23.4, pnpm 11.28.8). Dependabot
     doesn't update these; `deploy/README.md` says how to bump them.
   - **LLVM (CI only).** LLVM comes from apt.llvm.org's signed package repository. Before adding it, CI checks the
     repository key's fingerprint against a pinned value and fails if it differs. Nothing installed this way ships.
 - **Verified downloads.**
   - **libwebrtc.** The client links a prebuilt `libwebrtc` that the build downloads from LiveKit's GitHub releases
-    (tag `webrtc-89d790b`). Before extracting it, the build checks the archive's SHA-256 against a value pinned in the
+    (tag `webrtc-a545de4`). Before extracting it, the build checks the archive's SHA-256 against a value pinned in the
     repository (`vendor/webrtc-sys/libwebrtc_download.rs`, for Linux x64 and Windows x64). It fails on a mismatch, and
     for any target without a pin. A libwebrtc built locally from source (`LK_CUSTOM_WEBRTC`) skips the download.
 - **Rust dependencies.** `cargo-deny` checks advisories, licences, wildcard version requirements and sources
@@ -610,11 +702,20 @@ and the app frames it, so the player gets an HTTPS parent with a real origin.
   prunes the old ones), and this repository configures no object lock or retention. Someone who takes over the host
   could destroy the backups. The fix is R2 bucket lock and lifecycle rules, which the operator sets in Cloudflare, not
   this repository.
-- **The server image is not signed.** It has no signature and no build provenance. The deploy pins the digest it
-  pulled, so a moved tag can't change what runs, but nothing proves where that image was built.
-- **Code signing.** The Windows installer is not code-signed yet, so SmartScreen and endpoint tools will see an unsigned
-  publisher.
-- **Updates.** There is no auto-updater. New versions are installed by hand.
+- **Server image provenance is checked on the operator's machine only.** The server has no `gh`: it pulls the digest
+  the deploying machine verified and passes along, and can't check provenance itself (section 6).
+- **Code signing.** The Windows installer is not code-signed (Authenticode) yet, so SmartScreen and endpoint tools will
+  see an unsigned publisher. Its updates are signed with the updater key (section 4), which the app checks, but
+  Windows doesn't know that key.
+- **Updater key.** If the updater key were stolen, someone who could also serve files from the Pulse server could push
+  an update to installed apps. If it were lost, no new update could be signed for installed apps, and everyone would
+  have to install a build with a new key by hand once.
+- **Files in chat are not scanned.** Files are stored and passed on as sent; Pulse runs no malware scan. Files that can
+  run programs get a warning on Download, and Pulse never opens files by itself.
+- **Third parties for optional features.** GIFs are searched and loaded from GIPHY directly by each client (GIPHY's
+  terms forbid proxying), so GIPHY sees users' IP addresses and searches. Files and clips are served from Cloudflare R2
+  on signed links, so Cloudflare sees downloaders' IP addresses. A signed link works for anyone who holds it until it
+  expires (an hour).
 - **Accounts.**
   - Any member can create invite codes.
   - Rate limits, including the two-factor limits, are held in memory, so they reset when the server restarts.
@@ -623,9 +724,12 @@ and the app frames it, so the player gets an HTTPS parent with a real origin.
     is that past 100/hour, each further IP still gets a guess, about one every 6 minutes per IP. An owner who shares
     an IP with the attacker (the same network or NAT) can be refused until either limit refills.
 - **Server design.**
-  - Any member of a server can rename or delete any custom emoji in it.
+  - Any member of a server can rename or delete any custom emoji in it, and delete any of its channels (the owner or
+    whoever deleted it can restore it within 7 days; only the owner can delete it for good sooner).
+  - Any member of a server can server-mute, server-deafen or disconnect anyone else in its voice channels.
   - Every account can read the history of server channels.
-  - There are no server roles, kicks or bans.
+  - There are no server roles, kicks or bans. A server's owner (its creator) is the only one who may delete or restore
+    the server.
 - **No TURN over TLS.** There is no TURN over TLS/TCP 443, so voice may not work on networks that block UDP and allow
   nothing but 443.
 

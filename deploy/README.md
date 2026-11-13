@@ -18,6 +18,11 @@ One small Ubuntu server, three containers (Docker Compose, all on host networkin
   posts there over loopback. The public link-embed page (`/embed/<provider>/<id>`) goes through like the rest; compose
   sets `PULSE_PUBLIC_URL=https://${PULSE_DOMAIN}` for it (without it the page answers 404).
 - `wss://voice.pulsechat.co.za` → Caddy → LiveKit signalling. Audio goes straight to LiveKit over UDP.
+- pulse-server calls LiveKit's server API over loopback (`http://127.0.0.1:7880`, the `pulse` key in `LIVEKIT_KEYS`):
+  removing signed-out or refused participants, server mute, checking who is connected after a restart, and closing a
+  deleted channel's voice and stream rooms (`DeleteRoom`, #109). A key from `LIVEKIT_KEYS` has every grant. If you
+  ever swap in a scoped key, give it `roomCreate` (DeleteRoom), `roomAdmin` and `roomList`, or deleting a channel logs
+  `couldn't close LiveKit room` and its call stays connected until people leave.
 - Firewall allow-list: `80/tcp 443/tcp 7881/tcp 7882/udp 3478/udp 41641/udp` (41641 = Tailscale). SSH only
   over Tailscale.
 
@@ -26,7 +31,8 @@ On the server everything lives in `/srv/pulse`:
 ```
 compose.yml  Caddyfile  livekit.yaml  backup.sh  .env (600: settings + secrets, incl. PULSE_TOTP_KEY)
 data/pulse.db                         the database
-data/media/                           uploaded emoji
+data/media/                           uploaded images and sounds (emoji, avatars, banners, quote images, soundboard)
+data/updates/                         app installers, latest.json and the downloadable model (section 7)
 caddy/                                certificates and Caddy state
 ```
 
@@ -137,6 +143,13 @@ or stolen device. Both run in a one-off server container, so they work with the 
 server isn't told: the next request from a signed-out device fails and it can't reconnect, but a real-time connection
 or call that is already open stays up until it drops. To close those at once, restart the server:
 `ssh pulse@pulse 'cd /srv/pulse && docker compose restart pulse-server'`.
+
+### GIFs (optional)
+
+The GIF picker (#58) searches GIPHY from each signed-in app; the server only hands its key to signed-in apps (GIPHY's
+terms forbid proxying its API or media) and keeps favourites. Get a key at developers.giphy.com, then put it in
+`/srv/pulse/.env` as `GIPHY_API_KEY` (and optionally `GIPHY_RATING`: `g`, `pg`, `pg-13` (the default) or `r`), and
+`just deploy`. Without a key GIFs are off; the picker says "GIFs aren't set up on this server yet".
 
 ## 7. Deploying and rolling back
 
@@ -353,17 +366,24 @@ the row-driven hourly cleanup: delete those under `data/media` by hand, or resto
 Backups of a media directory that changes mid-archive (an upload during the backup) only warn; the database backup
 and the rest of the media are kept.
 
-## 9. Clips storage
+## 9. Clips storage (clips and files in chat)
 
-Clips (the clips channels) keep their videos in a Cloudflare R2 bucket of their own, apart from the backups bucket:
-the client uploads straight to R2 with a short-lived signed URL, and players stream from R2 the same way. **Clips are
-not backed up, by design:** R2 is the durable copy. The nightly job copies the database rows (which say what each clip
-is) and the thumbnails (small files on the server's disk, backed up with the media like emoji), but never the videos.
-Lose the bucket and the rows would point at nothing, so don't delete it.
+Clips (the clips channels) and files sent in chat (#57: images, videos, audio and other files in text channels, voice
+channels' chats, DMs and groups) keep their bytes in one Cloudflare R2 bucket of their own, apart from the backups
+bucket: the client uploads straight to R2 with a short-lived signed URL (big temporary sends in signed parts), and
+players and downloads fetch from R2 the same way. The server never handles the bytes. Objects are kept apart by
+prefix: clip videos, `attachments/` (message files, kept until their message is deleted) and `temp/` (big temporary
+sends, deleted after their 1 or 7 days). A server sweep every ten minutes deletes expired temporary files, the files
+of deleted messages and uploads that were never sent (after 24 hours).
+
+**Clips and chat files are not backed up, by design:** R2 is the durable copy. The nightly job copies the database rows
+(which say what each clip and file is) and the clip thumbnails (small files on the server's disk, backed up with the
+media like emoji), but never the videos or files. Lose the bucket and the rows would point at nothing, so don't delete
+it.
 
 Without the three `CLIPS_R2_*` settings the server runs fine and answers "Clips storage isn't set up on this server."
-for clip uploads. They are all or nothing: `deploy.sh` (and `just deploy`, before copying anything) refuses a
-half-filled set and names the empty ones.
+for clip uploads and "File storage isn't set up on this server." for files. They are all or nothing: `deploy.sh` (and
+`just deploy`, before copying anything) refuses a half-filled set and names the empty ones.
 
 Setup, once, in the Cloudflare dashboard and on the server:
 
@@ -377,8 +397,14 @@ Setup, once, in the Cloudflare dashboard and on the server:
 4. `just deploy`, then `just clips-check`: it writes, reads and deletes one small object with the live settings
    and says which step failed if one does.
 
-`just clips-storage` shows how many clips each server holds, their size and the estimated monthly cost (R2's free tier
-taken into account).
+5. Recommended (#298, still open): two R2 lifecycle rules on that bucket, as a backstop to the sweep.
+   R2 → the bucket → Settings → Object lifecycle rules: delete objects with the prefix `temp/` 8 days after upload
+   (the longest temporary send is 7 days), and abort incomplete multipart uploads after 2 days (a crash between
+   starting a big upload and recording it would otherwise leave one open).
+
+`just storage` shows what the bucket holds by kind (message files, temporary files, clips) and what's on the server's
+disk (sounds, emoji), with R2's estimated monthly cost. `just clips-storage` shows how many clips each server holds,
+their size and the estimated monthly cost (R2's free tier taken into account).
 
 **No CORS rule is needed on the bucket.** Uploads come from the Tauri client's Rust core (not a browser origin), and
 playback is a plain `<video src>` element, which makes a no-cors request.
