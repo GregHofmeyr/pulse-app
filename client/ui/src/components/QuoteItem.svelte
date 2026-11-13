@@ -13,7 +13,9 @@
   import VoterStack from './VoterStack.svelte'
   import { modal } from '../lib/actions'
   import { mediaUrl, reactionKey, type Std } from '../lib/emoji'
-  import { menuPoint } from '../lib/participantMenu'
+  import { isMenuKey, menuPoint } from '../lib/participantMenu'
+  import { messagePerson } from '../lib/messagePerson'
+  import MemberMenu from './MemberMenu.svelte'
   import { hasNewReplies, nameKey, quoteText, speakerOf } from '../lib/quotes'
   import { blockedReason, pickAdds, react } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
@@ -129,6 +131,18 @@
   let over = $state(false)
   const sid = $derived(serverId || null)
 
+  // --- a person's menu (#135): right-click (or ContextMenu / Shift+F10 on) the poster's name or avatar, or a member
+  // speaker's name (which then isn't the line's menu) ---
+  let personMenu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
+  function openPersonMenu(userId: string | null, e: MouseEvent | KeyboardEvent, zone: HTMLElement) {
+    if (!userId) return
+    if (e instanceof KeyboardEvent && !isMenuKey(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    const opener = zone.querySelector<HTMLElement>('button') ?? zone
+    personMenu = { userId, ...menuPoint(e, opener), opener }
+  }
+
   // --- the full-size image ---
   let open = $state<{ media: LineMedia; caption: string | null } | null>(null)
 </script>
@@ -138,9 +152,10 @@
   <div class="quote" class:compact data-message-id={message.id} {...actionBarFocus((v) => (focusIn = v))}
     onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}>
     <div class="row">
-      {#if !compact}<Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={40} interactive={!!message.author_id} serverId={sid} hovered={() => over} />{/if}
+      <!-- the person menu is a pointer shortcut here; the keyboard route is ContextMenu / Shift+F10 on the avatar or name -->
+      {#if !compact}<span class="author" role="presentation" oncontextmenu={(e) => openPersonMenu(message.author_id, e, e.currentTarget)} onkeydown={(e) => openPersonMenu(message.author_id, e, e.currentTarget)}><Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={40} interactive={!!message.author_id} serverId={sid} hovered={() => over} /></span>{/if}
       <div class="body">
-        {#if !compact}<div class="meta"><strong>{#if message.author_id}<Name userId={message.author_id} serverId={sid} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</strong><span class="time">{when}</span></div>{/if}
+        {#if !compact}<div class="meta"><strong role="presentation" oncontextmenu={(e) => openPersonMenu(message.author_id, e, e.currentTarget)} onkeydown={(e) => openPersonMenu(message.author_id, e, e.currentTarget)}>{#if message.author_id}<Name userId={message.author_id} serverId={sid} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</strong><span class="time">{when}</span></div>{/if}
         {#if message.deleted}
           <p class="deleted">quote deleted</p>
         {:else}
@@ -166,7 +181,7 @@
                 </div>
                 <div class="by">
                   <!-- a member (or a name linked to one) is styled and opens their card; a plain name stays text -->
-                  <span class="speaker">{#if who.userId}<Name userId={who.userId} serverId={sid} text={who.name} />{:else}<span class="name-clip">{who.name}</span>{/if}</span>
+                  <span class="speaker" role="presentation" oncontextmenu={(e) => openPersonMenu(who.userId, e, e.currentTarget)} onkeydown={(e) => openPersonMenu(who.userId, e, e.currentTarget)}>{#if who.userId}<Name userId={who.userId} serverId={sid} text={who.name} />{:else}<span class="name-clip">{who.name}</span>{/if}</span>
                   {#if line.awards > 0}
                     <span class="trophy" aria-hidden="true">🏆 {line.awards}</span>
                     <VoterStack userIds={line.awarders} {nameOf} />
@@ -223,6 +238,9 @@
         onClose={() => (menu = null)} />
     {/key}
   {/if}
+  {#if personMenu}
+    {#key personMenu}<MemberMenu serverId={sid} userId={personMenu.userId} x={personMenu.x} y={personMenu.y} opener={personMenu.opener} onMessage={messagePerson} onClose={() => (personMenu = null)} />{/key}
+  {/if}
   {#if open}
     {@const shown = open}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -239,6 +257,7 @@
 
 <style>
   /* --bar-room: the quick-action bar's room at narrow widths, as in MessageItem (#237) */
+  .author { display: contents; }
   .quote { --bar-room: clamp(0px, calc((1200px - 100vw) / 25), 4px); padding: 8px 18px 2px; position: relative; }
   .quote:hover { background: var(--hover-tint); }
   .quote.compact { padding: 0; }

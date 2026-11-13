@@ -161,3 +161,41 @@ describe('SearchResults', () => {
     expect(cards()[0].querySelector('.text')!.textContent).toBe('“pizza forever” — jo')
   })
 })
+
+describe("a result's person menu (#135): its author's", () => {
+  const menu = () => document.querySelector<HTMLElement>('[role=menu]')
+  const ids = () => [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')].map((i) => i.dataset.item)
+  const key = (el: Element, k: string, init: KeyboardEventInit = {}) => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+    flushSync()
+  }
+
+  it("right-click a result: its author's menu, in the result's server", () => {
+    show({ hits: [hit(msg('M1'))], total: 1 })
+    const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 })
+    cards()[0].dispatchEvent(e)
+    flushSync()
+    expect(e.defaultPrevented).toBe(true)
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for sam')
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'appear-offline'])
+  })
+
+  it('Shift+F10 on a focused result opens it; Esc closes just the menu (not the search) and focus goes back', () => {
+    show({ hits: [hit(msg('M1'))], total: 1 })
+    const card = cards()[0]
+    card.focus()
+    key(card, 'F10', { shiftKey: true })
+    expect(menu()).not.toBeNull()
+    key(document.activeElement!, 'Escape')
+    expect(menu()).toBeNull()
+    expect(search.open).toBe(true)
+    expect(document.activeElement).toBe(card)
+  })
+
+  it('a Pulse (system) result has none', () => {
+    show({ hits: [hit(msg('M1', 'C1', { author_id: null }))], total: 1 })
+    cards()[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    flushSync()
+    expect(menu()).toBeNull()
+  })
+})

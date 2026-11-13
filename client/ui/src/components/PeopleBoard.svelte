@@ -8,6 +8,8 @@
   import { errorText } from '../lib/tauri'
   import { displayName } from '../lib/selectors'
   import { callUser } from '../lib/calls.svelte'
+  import { isMenuKey, rowMenuAt } from '../lib/participantMenu'
+  import MemberMenu from './MemberMenu.svelte'
 
   let { onOpen, onJoinVoice }: {
     onOpen: (channelId: string) => void
@@ -59,6 +61,13 @@
     }
   }
 
+  // A card's person menu (#135): MemberMenu outside servers. Right-click, or ContextMenu / Shift+F10 on its name or avatar.
+  let menu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
+  function openMenu(userId: string, e: MouseEvent | KeyboardEvent, card: HTMLElement) {
+    e.preventDefault()
+    menu = { userId, ...rowMenuAt(e, card) }
+  }
+
   async function message(userId: string) {
     error = ''
     try {
@@ -80,7 +89,8 @@
           {@const voice = voiceOf(p.user.id)}
           {@const unread = dmUnread(p.user.id)}
           <div class="card" class:unread={unread > 0} class:away={!isOn(p.presence)} role="presentation"
-            onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}>
+            onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}
+            oncontextmenu={(e) => openMenu(p.user.id, e, e.currentTarget)} onkeydown={(e) => { if (isMenuKey(e)) openMenu(p.user.id, e, e.currentTarget) }}>
             <div class="who">
               <Avatar id={p.user.id} name={p.name} size={36} presence={p.presence} interactive serverId={null} hovered={() => hovered === p.user.id} />
               <div class="text">
@@ -110,6 +120,9 @@
     <p class="empty">Nobody else is here yet. Invite your friends!</p>
   {/each}
 </div>
+{#if menu}
+  {#key menu}<MemberMenu serverId={null} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} onMessage={message} onClose={() => (menu = null)} />{/key}
+{/if}
 
 <style>
   .board { flex: 1; min-height: 0; overflow-y: auto; padding: 0 18px 18px; }

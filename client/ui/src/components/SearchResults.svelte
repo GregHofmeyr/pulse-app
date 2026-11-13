@@ -13,6 +13,9 @@
   import { channelLabel, displayName } from '../lib/selectors'
   import { mediaUrl } from '../lib/emoji'
   import type { SearchHit } from '../lib/protocol/SearchHit'
+  import { isMenuKey, menuPoint } from '../lib/participantMenu'
+  import { messagePerson } from '../lib/messagePerson'
+  import MemberMenu from './MemberMenu.svelte'
 
   const serverId = $derived(search.scope?.kind === 'server' ? search.scope.serverId : null)
   const count = $derived(search.total === null ? '' : search.total > 50 ? '50+ results' : `${search.total} ${search.total === 1 ? 'result' : 'results'}`)
@@ -36,6 +39,16 @@
     return app.state.channels[h.message.channel_id]?.kind === 'clips' ? 'reply in clip' : 'reply in quote'
   }
   const author = (h: SearchHit) => (h.message.author_id ? displayName(app.state, serverId, h.message.author_id) : 'Pulse')
+
+  // A result's person menu (#135): its author's, in the server it was said in. Right-click the result, or ContextMenu /
+  // Shift+F10 on it. Drawn outside the results so its Esc closes only it.
+  let menu = $state<{ userId: string; serverId: string | null; x: number; y: number; opener: HTMLElement } | null>(null)
+  function openMenu(h: SearchHit, e: MouseEvent | KeyboardEvent, opener: HTMLElement) {
+    if (!h.message.author_id || (e instanceof KeyboardEvent && !isMenuKey(e))) return
+    e.preventDefault()
+    const sid = app.state.channels[h.message.channel_id]?.server_id ?? null
+    menu = { userId: h.message.author_id, serverId: sid, ...menuPoint(e, opener), opener }
+  }
 
   function keydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -71,7 +84,7 @@
         {@const where = app.state.channels[h.message.channel_id]}
         {@const tag = label(h)}
         {@const pic = lineImage(h, s)}
-        <button type="button" class="result" onclick={() => openHit(h)}>
+        <button type="button" class="result" onclick={() => openHit(h)} oncontextmenu={(e) => openMenu(h, e, e.currentTarget)} onkeydown={(e) => openMenu(h, e, e.currentTarget)}>
           {#if h.message.author_id}<Avatar id={h.message.author_id} name={author(h)} size={28} />{:else}<span class="av-gap"></span>{/if}
           <span class="main">
             <span class="meta">
@@ -94,6 +107,9 @@
     {/if}
   </div>
 </section>
+{#if menu}
+  {#key menu}<MemberMenu serverId={menu.serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} onMessage={messagePerson} onClose={() => (menu = null)} />{/key}
+{/if}
 
 <style>
   .search-results { width: var(--right-w, 340px); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-radius: var(--radius); background: var(--bg-1); }

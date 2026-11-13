@@ -538,3 +538,54 @@ describe('QuoteItem names', () => {
     expect(document.querySelector('.meta .name')!.textContent).toBe('alex')
   })
 })
+
+describe('the person menu on a quote (#135): its poster and its member speakers', () => {
+  const menu = () => document.querySelector<HTMLElement>('[role=menu]')
+  const ids = () => [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')].map((i) => i.dataset.item)
+  const rightClick = (el: Element) => {
+    const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 40 })
+    el.dispatchEvent(e)
+    flushSync()
+    return e
+  }
+  const key = (el: Element, k: string, init: KeyboardEventInit = {}) => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+    flushSync()
+  }
+
+  it("right-click the poster's name or avatar: their person menu, in this server", () => {
+    show(quote([line()], { author_id: 'U2' }))
+    expect(rightClick(document.querySelector('.meta .name')!).defaultPrevented).toBe(true)
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for sam')
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'appear-offline'])
+    key(document.activeElement!, 'Escape')
+    rightClick(document.querySelector('.avbtn')!)
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for sam')
+  })
+
+  it("Shift+F10 on the poster's name opens it; Esc gives focus back", () => {
+    show(quote([line()], { author_id: 'U2' }))
+    const name = document.querySelector<HTMLElement>('.meta .name')!
+    name.focus()
+    key(name, 'F10', { shiftKey: true })
+    expect(menu()).not.toBeNull()
+    key(document.activeElement!, 'Escape')
+    expect(menu()).toBeNull()
+    expect(document.activeElement).toBe(name)
+  })
+
+  it("a member speaker's name: their person menu, not the line's; the rest of the line keeps the line menu", () => {
+    show(quote([line({ speaker_id: 'U3' })]))
+    const name = document.querySelector<HTMLElement>('.line .speaker .name')!
+    rightClick(name)
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for kim')
+    expect(items()).not.toContain('Copy quote')
+    key(document.activeElement!, 'Escape')
+    name.focus()
+    key(name, 'ContextMenu')
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for kim')
+    key(document.activeElement!, 'Escape')
+    openMenu(0)
+    expect(items()).toContain('Copy quote')
+  })
+})
