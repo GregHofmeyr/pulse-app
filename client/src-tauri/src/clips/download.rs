@@ -2,8 +2,12 @@
 //! the GET of the original file streamed straight to the chosen path (a clip can be 200 MiB; none
 //! of it is held in memory, and none of it passes through the webview).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+pub use super::upload::CancellationFlag;
 use super::upload::STALL_AFTER;
 
 /// What a clip with no usable caption is saved as.
@@ -20,6 +24,9 @@ pub enum DownloadError {
     Rejected(u16),
     #[error("the download stopped moving")]
     Stalled,
+    /// Stopped on purpose (#205): the UI says nothing.
+    #[error("cancelled")]
+    Cancelled,
     #[error("couldn't save the file: {0}")]
     File(String),
     #[error("can't reach the server: {0}")]
@@ -88,6 +95,37 @@ pub fn extension_of(url: &str) -> String {
         .unwrap_or_else(|| FALLBACK_EXT.to_owned())
 }
 
+/// How far a download is: the bytes written so far and the whole size when the server said it
+/// (`None`: no `content-length`, so the UI shows it indeterminate). Sent to the UI as
+/// `download://progress` with the download's key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct Progress {
+    pub received: u64,
+    pub total: Option<u64>,
+}
+
+/// At most ten progress reports a second (the last one, complete, always goes).
+pub const PROGRESS_EVERY: Duration = Duration::from_millis(100);
+
+/// Rate limit for progress reports: the first one at once, then at most one per [`PROGRESS_EVERY`].
+#[derive(Debug, Default)]
+pub struct Throttle {
+    last: Option<Instant>,
+}
+
+impl Throttle {
+    /// Whether a report at `now` goes out (and, if so, it counts as the latest).
+    pub fn due(&mut self, now: Instant) -> bool {
+        let due = self
+            .last
+            .is_none_or(|t| now.saturating_duration_since(t) >= PROGRESS_EVERY);
+        if due {
+            self.last = Some(now);
+        }
+        due
+    }
+}
+
 /// GET `url` into `dest`: written to a sibling first and moved over `dest` only when complete, so
 /// a failed download leaves no half file (and an existing file as it was).
 pub async fn save_url(http: &reqwest::Client, url: &str, dest: &Path) -> Result<(), DownloadError> {
@@ -96,9 +134,23 @@ pub async fn save_url(http: &reqwest::Client, url: &str, dest: &Path) -> Result<
 
 /// `save_url` for a request the caller builds (an image needs the session's token, #206).
 pub async fn save_request(req: reqwest::RequestBuilder, dest: &Path) -> Result<(), DownloadError> {
+    save_watched(req, dest, |_| {}, &CancellationFlag::new()).await
+}
+
+/// [`save_request`] with progress (#205): `on_progress` gets one report as the body starts, then
+/// at most one per [`PROGRESS_EVERY`], and the complete one before the file takes its place.
+/// `cancel` stops the network read at once and deletes the partial file
+/// ([`DownloadError::Cancelled`]); an existing file at `dest` stays as it was.
+pub async fn save_watched(
+    req: reqwest::RequestBuilder,
+    dest: &Path,
+    on_progress: impl FnMut(Progress) + Send,
+    cancel: &CancellationFlag,
+) -> Result<(), DownloadError> {
     let part = partial_path(dest);
-    let fetched = fetch_to(req, &part).await;
+    let fetched = fetch_to(req, &part, on_progress, cancel).await;
     let done = match fetched {
+        Ok(()) if cancel.is_cancelled() => Err(DownloadError::Cancelled),
         Ok(()) => tokio::fs::rename(&part, dest)
             .await
             .map_err(|e| DownloadError::File(e.to_string())),
@@ -110,27 +162,120 @@ pub async fn save_request(req: reqwest::RequestBuilder, dest: &Path) -> Result<(
     done
 }
 
-async fn fetch_to(req: reqwest::RequestBuilder, part: &Path) -> Result<(), DownloadError> {
+async fn fetch_to(
+    req: reqwest::RequestBuilder,
+    part: &Path,
+    mut on_progress: impl FnMut(Progress) + Send,
+    cancel: &CancellationFlag,
+) -> Result<(), DownloadError> {
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
     // the link is signed: keep it out of error text the UI shows
     let net = |e: reqwest::Error| DownloadError::Network(e.without_url().to_string());
     let file_err = |e: std::io::Error| DownloadError::File(e.to_string());
-    let res = req.send().await.map_err(net)?;
+    let res = tokio::select! {
+        biased;
+        () = cancel.cancelled() => return Err(DownloadError::Cancelled),
+        res = req.send() => res.map_err(net)?,
+    };
     if !res.status().is_success() {
         return Err(DownloadError::Rejected(res.status().as_u16()));
     }
+    let total = res.content_length();
     let mut file = tokio::fs::File::create(part).await.map_err(file_err)?;
     let mut body = res.bytes_stream();
-    loop {
-        match tokio::time::timeout(STALL_AFTER, body.next()).await {
-            Err(_) => return Err(DownloadError::Stalled),
-            Ok(None) => break,
-            Ok(Some(Err(e))) => return Err(net(e)),
-            Ok(Some(Ok(chunk))) => file.write_all(&chunk).await.map_err(file_err)?,
+    let mut received = 0u64;
+    let mut throttle = Throttle::default();
+    let mut reported = None;
+    let mut report = |received: u64, throttle: &mut Throttle, force: bool| {
+        if reported != Some(received) && (throttle.due(Instant::now()) || force) {
+            reported = Some(received);
+            on_progress(Progress { received, total });
         }
+    };
+    report(0, &mut throttle, true);
+    let read = loop {
+        // dropping the body (cancel, stall, error) closes the connection: the read stops there
+        let next = tokio::select! {
+            biased;
+            () = cancel.cancelled() => break Err(DownloadError::Cancelled),
+            next = tokio::time::timeout(STALL_AFTER, body.next()) => next,
+        };
+        match next {
+            Err(_) => break Err(DownloadError::Stalled),
+            Ok(None) => break Ok(()),
+            Ok(Some(Err(e))) => break Err(net(e)),
+            Ok(Some(Ok(chunk))) => {
+                if let Err(e) = file.write_all(&chunk).await {
+                    break Err(file_err(e));
+                }
+                received += chunk.len() as u64;
+                report(received, &mut throttle, false);
+            }
+        }
+    };
+    drop(body);
+    // finish any write in flight and close the file before it is moved or deleted (Windows
+    // refuses to delete an open file)
+    let flushed = file.flush().await.map_err(file_err);
+    drop(file);
+    read?;
+    flushed?;
+    report(received, &mut throttle, true);
+    Ok(())
+}
+
+/// The downloads running now, by key (`clip:<message>`, `image:<hash>`, `file:<attachment>`): one
+/// at a time per key, and each one's cancel switch. Cloning shares the map.
+#[derive(Clone, Default)]
+pub struct Downloads(Arc<Mutex<HashMap<String, CancellationFlag>>>);
+
+/// A download that holds its key until it is dropped.
+pub struct Running {
+    key: String,
+    flag: CancellationFlag,
+    all: Downloads,
+}
+
+impl Downloads {
+    /// Claim `key` for a new download; `None` while one with that key runs.
+    pub fn begin(&self, key: impl Into<String>) -> Option<Running> {
+        let key = key.into();
+        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if map.contains_key(&key) {
+            return None;
+        }
+        let flag = CancellationFlag::new();
+        map.insert(key.clone(), flag.clone());
+        Some(Running {
+            key,
+            flag,
+            all: self.clone(),
+        })
     }
-    file.flush().await.map_err(file_err)
+
+    /// Stop the download with `key`; `false` when none runs.
+    pub fn cancel(&self, key: &str) -> bool {
+        let map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        map.get(key).inspect(|f| f.cancel()).is_some()
+    }
+}
+
+impl Running {
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub fn flag(&self) -> &CancellationFlag {
+        &self.flag
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        let mut map = self.all.0.lock().unwrap_or_else(|e| e.into_inner());
+        map.remove(&self.key);
+    }
 }
 
 /// `.<name>.part` beside `dest`.
@@ -323,6 +468,197 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, DownloadError::Network(_)), "{err:?}");
         assert!(leftovers(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn progress_goes_out_at_most_ten_times_a_second() {
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        let mut t = Throttle::default();
+        assert!(t.due(ms(0)), "the first report goes at once");
+        assert!(!t.due(ms(1)));
+        assert!(!t.due(ms(99)));
+        assert!(t.due(ms(100)));
+        assert!(!t.due(ms(150)));
+        assert!(t.due(ms(260)));
+        let sent = (0..1000).filter(|i| t.due(ms(1000 + i))).count();
+        assert_eq!(
+            sent, 10,
+            "one second of chunks every millisecond is ten reports"
+        );
+    }
+
+    /// A response written in `chunks`, each after `gap`; with `length` false it has no
+    /// content-length (chunked).
+    async fn serve_slowly(chunks: Vec<Vec<u8>>, gap: Duration, length: bool) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf).await;
+            let size: usize = chunks.iter().map(Vec::len).sum();
+            let head = if length {
+                format!("HTTP/1.1 200 OK\r\ncontent-length: {size}\r\nconnection: close\r\n\r\n")
+            } else {
+                "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n".into()
+            };
+            s.write_all(head.as_bytes()).await.unwrap();
+            for c in chunks {
+                tokio::time::sleep(gap).await;
+                if length {
+                    s.write_all(&c).await.unwrap();
+                } else {
+                    s.write_all(format!("{:x}\r\n", c.len()).as_bytes())
+                        .await
+                        .unwrap();
+                    s.write_all(&c).await.unwrap();
+                    s.write_all(b"\r\n").await.unwrap();
+                }
+                s.flush().await.unwrap();
+            }
+            if !length {
+                s.write_all(b"0\r\n\r\n").await.unwrap();
+            }
+            s.shutdown().await.unwrap();
+        });
+        format!("http://{addr}/clips/abc.mp4?sig=1")
+    }
+
+    async fn watched(url: &str, dest: &Path) -> (Result<(), DownloadError>, Vec<Progress>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let res = save_watched(
+            reqwest::Client::new().get(url),
+            dest,
+            move |p| log.lock().unwrap().push(p),
+            &CancellationFlag::new(),
+        )
+        .await;
+        let seen = seen.lock().unwrap().clone();
+        (res, seen)
+    }
+
+    #[tokio::test]
+    async fn progress_is_throttled_and_ends_complete() {
+        // 60 chunks over about 600 ms: a report per chunk would be 60
+        let chunks: Vec<Vec<u8>> = (0..60).map(|i| vec![i as u8; 1024]).collect();
+        let url = serve_slowly(chunks, Duration::from_millis(10), true).await;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("ace.mp4");
+        let started = Instant::now();
+        let (res, seen) = watched(&url, &dest).await;
+        res.unwrap();
+        let elapsed = started.elapsed().as_millis() as usize;
+        let total = Some(60 * 1024);
+        assert_eq!(seen.first(), Some(&Progress { received: 0, total }));
+        assert_eq!(
+            seen.last(),
+            Some(&Progress {
+                received: 60 * 1024,
+                total
+            })
+        );
+        assert!(
+            seen.len() <= elapsed / 100 + 2,
+            "{} reports in {elapsed} ms",
+            seen.len()
+        );
+        assert!(seen.len() >= 3, "it moves in between: {seen:?}");
+        assert!(seen.windows(2).all(|w| w[0].received < w[1].received));
+        assert_eq!(std::fs::read(&dest).unwrap().len(), 60 * 1024);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_length_reports_no_total() {
+        let chunks: Vec<Vec<u8>> = (0..5).map(|_| vec![7u8; 2000]).collect();
+        let url = serve_slowly(chunks, Duration::from_millis(5), false).await;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("ace.mp4");
+        let (res, seen) = watched(&url, &dest).await;
+        res.unwrap();
+        assert!(seen.iter().all(|p| p.total.is_none()), "{seen:?}");
+        assert_eq!(seen.last().unwrap().received, 10_000);
+        assert_eq!(std::fs::read(&dest).unwrap(), vec![7u8; 10_000]);
+    }
+
+    #[tokio::test]
+    async fn cancelling_stops_the_read_and_deletes_the_partial_file() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf).await;
+            let head = "HTTP/1.1 200 OK\r\ncontent-length: 104857600\r\nconnection: close\r\n\r\n";
+            s.write_all(head.as_bytes()).await.unwrap();
+            s.write_all(&vec![1u8; 64 * 1024]).await.unwrap();
+            s.flush().await.unwrap();
+            // then nothing more: the client has to hang up for this read to end
+            let _ = closed_tx.send(s.read(&mut buf).await.map(|n| n == 0).unwrap_or(true));
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("ace.mp4");
+        std::fs::write(&dest, b"keep me").unwrap();
+        let cancel = CancellationFlag::new();
+        let stop = cancel.clone();
+        let part = partial_path(&dest);
+        // once the first bytes are on disk and the server has gone quiet, the user cancels
+        tokio::spawn(async move {
+            while std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0) < 64 * 1024 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            stop.cancel();
+        });
+        let err = save_watched(
+            reqwest::Client::new().get(format!("http://{addr}/clips/a.mp4")),
+            &dest,
+            |_| {},
+            &cancel,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, DownloadError::Cancelled), "{err:?}");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"keep me");
+        assert_eq!(leftovers(dir.path()), vec!["ace.mp4"], "no partial file");
+        let closed = tokio::time::timeout(Duration::from_secs(5), closed_rx)
+            .await
+            .expect("the connection closes")
+            .unwrap();
+        assert!(closed, "the client hung up");
+    }
+
+    #[tokio::test]
+    async fn cancelled_before_it_starts_saves_nothing() {
+        let url = serve_once("200 OK", b"x".to_vec()).await;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("ace.mp4");
+        let cancel = CancellationFlag::new();
+        cancel.cancel();
+        let err = save_watched(reqwest::Client::new().get(&url), &dest, |_| {}, &cancel)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DownloadError::Cancelled), "{err:?}");
+        assert!(leftovers(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn one_download_per_key_at_a_time() {
+        let all = Downloads::default();
+        let first = all.begin("clip:1").expect("free");
+        assert!(all.begin("clip:1").is_none(), "a second one doesn't start");
+        let other = all
+            .begin("clip:2")
+            .expect("another clip is its own download");
+        assert!(all.cancel("clip:1"));
+        assert!(first.flag().is_cancelled());
+        assert!(!other.flag().is_cancelled());
+        assert!(!all.cancel("clip:3"), "nothing to stop");
+        drop(first);
+        assert!(all.begin("clip:1").is_some(), "free again once it ends");
     }
 
     #[tokio::test]

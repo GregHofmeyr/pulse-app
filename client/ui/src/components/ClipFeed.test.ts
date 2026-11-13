@@ -20,6 +20,7 @@ import { claim, playback, release } from '../lib/clipPlayback.svelte'
 import { reactiveProps } from '../lib/testProps.svelte'
 import { testMe, testReady } from '../lib/testReady'
 import { windowFocus } from '../lib/windowFocus.svelte'
+import { downloads } from '../lib/downloads.svelte'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready = (lastRead: string | null = null) =>
@@ -407,6 +408,8 @@ describe('ClipFeed', () => {
     })
 
     it('a second click while one is saving is ignored', async () => {
+      // by class: once saved it is labelled Saved for a moment (#205), and a click then saves it again
+      const overlay = (cid: string) => card(cid).querySelector<HTMLButtonElement>('button.clip-dl')
       pages = [[clip('M003')]]
       let finish: (v: boolean) => void = () => {}
       const base = invoke.getMockImplementation()!
@@ -426,6 +429,94 @@ describe('ClipFeed', () => {
       // next test's clicks on this clip
       finish(true)
       await settle()
+    })
+  })
+
+  describe('download progress (#205)', () => {
+    const icon = (cid: string) => card(cid).querySelector<HTMLButtonElement>('button.clip-dl')!
+    const items = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((b) => b.textContent?.trim())
+    const openMenu = (cid: string) => {
+      card(cid).querySelector<HTMLButtonElement>('button[aria-label="Clip actions"]')!.click()
+      flushSync()
+    }
+    let finish: (v: boolean) => void = () => {}
+    beforeEach(() => {
+      const base = invoke.getMockImplementation()!
+      invoke.mockImplementation(async (cmd: string, args?: unknown) =>
+        cmd === 'save_clip' ? new Promise((r) => (finish = r)) : base(cmd, args))
+    })
+    afterEach(() => downloads.reset())
+
+    async function downloading(cid: string, received: number, total: number | null) {
+      pages = [[clip(cid)]]
+      await show({ layout: 'list' })
+      icon(cid).click()
+      await settle()
+      downloads.progress({ key: `clip:${cid}`, received, total })
+      flushSync()
+    }
+
+    it('a ring on the download icon shows how far it is, and stays shown', async () => {
+      await downloading('M003', 0, 1000)
+      expect(icon('M003').querySelector('.ring')).not.toBeNull()
+      downloads.progress({ key: 'clip:M003', received: 420, total: 1000 })
+      flushSync()
+      expect(icon('M003').getAttribute('aria-label')).toBe('Cancel download, 42%')
+      expect(icon('M003').dataset.tip).toBe('Cancel download')
+      expect(icon('M003').classList.contains('active')).toBe(true)
+      const fill = icon('M003').querySelector<SVGCircleElement>('.fill')!
+      const c = Number(fill.getAttribute('stroke-dasharray'))
+      expect(Number(fill.getAttribute('stroke-dashoffset'))).toBeCloseTo(c * 0.58, 3)
+      finish(true)
+      await settle()
+    })
+
+    it('an unknown size turns instead', async () => {
+      await downloading('M003', 2048, null)
+      expect(icon('M003').querySelector('.ring')!.classList.contains('spin')).toBe(true)
+      expect(icon('M003').getAttribute('aria-label')).toBe('Cancel download')
+      finish(true)
+      await settle()
+    })
+
+    it('clicking the ring again cancels it, with no error line', async () => {
+      await downloading('M003', 10, 100)
+      icon('M003').click()
+      await settle()
+      expect(calls('cancel_download').map((c) => c[1])).toEqual([{ key: 'clip:M003' }])
+      expect(calls('save_clip')).toHaveLength(1)
+      finish(false) // the core stopped and deleted the partial file
+      await settle()
+      flushSync()
+      expect(icon('M003').getAttribute('aria-label')).toBe('Download clip')
+      expect(icon('M003').classList.contains('active')).toBe(false)
+      expect(card('M003').querySelector('[role="alert"]')).toBeNull()
+    })
+
+    it('the menu says Downloading 42% and has Cancel download', async () => {
+      await downloading('M003', 42, 100)
+      openMenu('M003')
+      expect(items()).toEqual(['Downloading 42%', 'Cancel download'])
+      ;[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === 'Cancel download')!.click()
+      await settle()
+      expect(calls('cancel_download').map((c) => c[1])).toEqual([{ key: 'clip:M003' }])
+      finish(false)
+      await settle()
+      flushSync()
+      openMenu('M003')
+      expect(items()).toEqual(['Download'])
+    })
+
+    it('a finished download says Saved, quietly', async () => {
+      await downloading('M003', 100, 100)
+      finish(true)
+      await settle()
+      flushSync()
+      expect(icon('M003').getAttribute('aria-label')).toBe('Saved')
+      expect(icon('M003').dataset.tip).toBe('Saved')
+      expect(card('M003').querySelector('[role="alert"]')).toBeNull()
+      openMenu('M003')
+      expect(items()).toEqual(['Saved'])
     })
   })
 

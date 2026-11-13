@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({
     if (cmd === 'attachment_urls') {
       return current.map((a) => ({ id: a.id, url: `https://store.test/${a.id}?X-Amz-Expires=3600`, expires_at: '2099-01-01T00:00:00.000Z' }))
     }
-    if (cmd === 'save_attachment') return true
+    if (cmd === 'save_attachment') return saveAnswer()
     return undefined
   },
 }))
@@ -18,10 +18,12 @@ vi.mock('@tauri-apps/api/core', () => ({
 import MessageFiles from './MessageFiles.svelte'
 import ImageViewer from './ImageViewer.svelte'
 import { forgetAttachmentLinks } from '../lib/attachmentLinks'
+import { downloads } from '../lib/downloads.svelte'
 import type { Attachment } from '../lib/protocol/Attachment'
 import type { Message } from '../lib/protocol/Message'
 
 let current: Attachment[] = []
+let saveAnswer: () => Promise<boolean> = async () => true
 const att = (id: string, name: string, kind: Attachment['kind'], extra: Partial<Attachment> = {}): Attachment => ({
   id, name, kind, content_type: 'application/octet-stream', size: 2048, width: null, height: null, duration_ms: null, expires_at: null, expired: false, ...extra,
 })
@@ -42,10 +44,12 @@ const settle = async () => {
 }
 
 beforeEach(() => {
+  saveAnswer = async () => true
   calls.length = 0
   forgetAttachmentLinks()
 })
 afterEach(() => {
+  downloads.reset()
   if (cmp) unmount(cmp)
   cmp = undefined
   document.body.innerHTML = ''
@@ -90,6 +94,48 @@ describe('MessageFiles', () => {
     document.querySelector<HTMLButtonElement>('[aria-label="Download report.pdf"]')!.click()
     await settle()
     expect(calls.find((c) => c.cmd === 'save_attachment')!.args).toMatchObject({ attachmentId: 'f', name: 'report.pdf' })
+  })
+
+  it('a file card shows how far it has saved, cancels, and says Saved (#205)', async () => {
+    let finish: (v: boolean) => void = () => {}
+    saveAnswer = () => new Promise((r) => (finish = r))
+    show([att('f', 'world.zip', 'file', { size: 300 * 1024 * 1024 })])
+    document.querySelector<HTMLButtonElement>('[aria-label="Download world.zip"]')!.click()
+    await settle()
+    downloads.progress({ key: 'file:f', received: 42, total: 100 })
+    flushSync()
+    const button = document.querySelector<HTMLButtonElement>('.card .download')!
+    expect(button.textContent?.trim()).toBe('42% · Cancel')
+    expect(button.getAttribute('aria-label')).toBe('Cancel download of world.zip, 42%')
+    expect(button.querySelector('.ring')).not.toBeNull()
+    button.click()
+    await settle()
+    expect(calls.filter((c) => c.cmd === 'cancel_download').map((c) => c.args)).toEqual([{ key: 'file:f' }])
+    finish(false)
+    await settle()
+    expect(button.textContent?.trim()).toBe('Download')
+    // and again, to the end
+    button.click()
+    await settle()
+    downloads.progress({ key: 'file:f', received: 0, total: null })
+    flushSync()
+    expect(button.textContent?.trim()).toBe('Cancel')
+    expect(button.querySelector('.ring')!.classList.contains('spin')).toBe(true)
+    finish(true)
+    await settle()
+    expect(button.textContent?.trim()).toBe('Saved')
+    expect(button.getAttribute('aria-label')).toBe('Saved world.zip')
+  })
+
+  it('a video file shows its progress on the player\'s download icon (#205)', async () => {
+    saveAnswer = () => new Promise(() => {})
+    show([att('v', 'match.mp4', 'video')])
+    const icon = document.querySelector<HTMLButtonElement>('button.clip-dl')!
+    icon.click()
+    await settle()
+    downloads.progress({ key: 'file:v', received: 1, total: 4 })
+    flushSync()
+    expect(icon.getAttribute('aria-label')).toBe('Cancel download, 25%')
   })
 
   it('warns that a program can run before it is downloaded', () => {

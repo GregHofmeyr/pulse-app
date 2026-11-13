@@ -208,8 +208,10 @@ pub async fn attachment_urls(
     core.check(&app, api.attachment_urls(&token, message_id).await)
 }
 
-/// Download one file of a message to where the system Save dialog says, suggesting its name.
-/// `false` when the dialog is cancelled. Pulse never opens what it saves.
+/// Download one file of a message to where the system Save dialog says, suggesting its name, its
+/// progress as `download://progress` events keyed `file:<attachment id>` (#205). `false` when the
+/// dialog or the download is cancelled, or this file is already downloading. Pulse never opens
+/// what it saves.
 #[tauri::command]
 pub async fn save_attachment(
     app: AppHandle,
@@ -219,6 +221,10 @@ pub async fn save_attachment(
     name: String,
 ) -> Result<bool, String> {
     use crate::clips::download;
+    use crate::commands::save_reporting;
+    let Some(run) = core.downloads.begin(format!("file:{attachment_id}")) else {
+        return Ok(false);
+    };
     let (api, token) = core.current().map_err(|e| e.to_string())?;
     let link = async || -> Result<String, String> {
         let urls = core
@@ -235,16 +241,15 @@ pub async fn save_attachment(
         return Ok(false);
     };
     let http = crate::clips::upload::client();
-    match download::save_url(&http, &first, &dest).await {
+    match save_reporting(&app, &run, http.get(&first), &dest).await {
         // the link lasts an hour; a dialog left open longer gets a fresh one
         Err(download::DownloadError::Rejected(403)) => {
             let fresh = link().await?;
-            download::save_url(&http, &fresh, &dest).await
+            save_reporting(&app, &run, http.get(&fresh), &dest).await
         }
         other => other,
     }
-    .map_err(|e| e.to_string())?;
-    Ok(true)
+    .map_err(|e| e.to_string())
 }
 
 const GONE: &str = "That file isn't available any more.";

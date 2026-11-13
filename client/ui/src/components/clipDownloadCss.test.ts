@@ -26,7 +26,7 @@ describe('the clip download icon', () => {
   it('shows while the pointer is over the wall card, left of its full-screen button', () => {
     const card = css('ClipCard.svelte')
     expect(rule(card, /\.card\.[\w-]+:hover \.clip-dl/)).toMatch(/opacity: ?1/)
-    expect(readFileSync(resolve(__dirname, 'ClipCard.svelte'), 'utf8')).toContain('<ClipDownload onclick={download} beside />')
+    expect(readFileSync(resolve(__dirname, 'ClipCard.svelte'), 'utf8')).toContain('<ClipDownload onclick={download} key={clipKey(message.id)} beside />')
     expect(rule(own, /\.clip-dl\.beside\.[\w-]+/)).toMatch(/right: ?40px/) // .fs is 28px wide at right: 8px
   })
 

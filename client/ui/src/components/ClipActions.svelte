@@ -1,11 +1,13 @@
 <script lang="ts">
   // A clip's menu: Download for everyone (#204); for the poster also Edit (caption and game, in a small dialog)
-  // and Delete (asked first). The server refuses anyone else's edit or delete anyway.
+  // and Delete (asked first). The server refuses anyone else's edit or delete anyway. While the clip downloads (#205)
+  // Download reads "Downloading 42%" and Cancel download stops it.
   import { tick } from 'svelte'
   import GamePicker from './GamePicker.svelte'
   import Icon from './Icon.svelte'
   import { clickOutside, modal } from '../lib/actions'
   import { api, errorText } from '../lib/tauri'
+  import { clipKey, downloads } from '../lib/downloads.svelte'
   import type { Message } from '../lib/protocol/Message'
 
   let { message, serverId, mine, onDownload }: { message: Message; serverId: string; mine: boolean; onDownload: () => void } = $props()
@@ -15,6 +17,10 @@
   let opener: HTMLButtonElement | undefined = $state()
   let keep: HTMLButtonElement | undefined = $state()
   let menu = $state(false)
+  const dl = $derived(downloads.view(clipKey(message.id)))
+  const dlText = $derived(
+    dl?.phase === 'downloading' ? (dl.fraction === null ? 'Downloading…' : `Downloading ${Math.round(dl.fraction * 100)}%`) : '',
+  )
   let asking = $state(false)
   let editing = $state(false)
   let caption = $state('')
@@ -29,6 +35,10 @@
   function download() {
     menu = false
     onDownload()
+  }
+  function cancelDownload() {
+    menu = false
+    downloads.cancel(clipKey(message.id))
   }
   function startEdit() {
     menu = false
@@ -70,7 +80,12 @@
     onclick={() => (menu = !menu)}><Icon name="dots" size={16} /></button>
   {#if menu}
     <div class="menu menu-surface pop-in" role="menu" use:clickOutside={closeMenu}>
-      <button type="button" class="menu-item" role="menuitem" onclick={download}><Icon name="download" size={14} />Download</button>
+      {#if dl?.phase === 'downloading'}
+        <span class="menu-item progress" role="menuitem" aria-disabled="true"><Icon name="download" size={14} />{dlText}</span>
+        <button type="button" class="menu-item" role="menuitem" onclick={cancelDownload}><Icon name="x" size={14} />Cancel download</button>
+      {:else}
+        <button type="button" class="menu-item" role="menuitem" onclick={download}><Icon name={dl?.phase === 'saved' ? 'check' : 'download'} size={14} />{dl?.phase === 'saved' ? 'Saved' : 'Download'}</button>
+      {/if}
       {#if mine}
         <button type="button" class="menu-item" role="menuitem" onclick={startEdit}><Icon name="pencil" size={14} />Edit</button>
         <button type="button" class="menu-item danger" role="menuitem" onclick={() => void askDelete()}><Icon name="trash" size={14} />Delete</button>
@@ -106,6 +121,9 @@
 <style>
   .clip-actions { position: relative; }
   .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 140px; --pop-origin: top right; }
+  /* the download's progress: a line of the menu, not a choice */
+  .menu-item.progress { color: var(--text-2); cursor: default; font-variant-numeric: tabular-nums; }
+  .menu-item.progress:hover { background: none; }
   .ask { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: 240px; padding: 10px; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
   .ask p { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--text); }
   .ask .err { margin: 4px 0 0; color: var(--danger-text); }

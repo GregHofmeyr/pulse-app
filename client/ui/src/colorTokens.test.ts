@@ -62,7 +62,7 @@ const ALLOWED: Record<string, { literals: string[]; reason: string }[]> = {
   'routes/Shell.svelte': [{ literals: ['#fff'], reason: AVATAR + ' (the server chip)' }],
   'components/QuickSwitcher.svelte': [{ literals: ['#fff'], reason: AVATAR + " (a server row's chip, as the tab's)" }],
   'components/ClipCard.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .55)', 'rgba(0, 0, 0, .75)', 'rgba(0, 0, 0, .6)'], reason: VIDEO }],
-  'components/ClipDownload.svelte': [{ literals: ['#fff', 'rgba(0, 0, 0, .6)', 'rgba(0, 0, 0, .75)'], reason: VIDEO }],
+  'components/ClipDownload.svelte': [{ literals: ['#fff', 'rgba(0, 0, 0, .6)', 'rgba(0, 0, 0, .75)', 'rgba(255, 255, 255, .25)'], reason: VIDEO }],
   'components/ClipPlayer.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, 0.6)', 'rgba(0, 0, 0, 0.8)', 'rgba(0, 0, 0, 0.85)'], reason: VIDEO }],
   'components/ClipEditor.svelte': [{ literals: ['#000'], reason: VIDEO }],
   'components/ClipTimeline.svelte': [{ literals: ['rgba(0, 0, 0, 0.5)', 'rgba(0, 0, 0, 0.6)'], reason: VIDEO + ' (the filmstrip)' }],

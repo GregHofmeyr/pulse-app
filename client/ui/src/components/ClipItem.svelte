@@ -10,6 +10,7 @@
   import ReactionRow from './ReactionRow.svelte'
   import { clipRowEstimate, gameName } from '../lib/clips'
   import { downloadClip } from '../lib/clipDownload'
+  import { clipKey } from '../lib/downloads.svelte'
   import { suggestedReactions } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import { InlineError } from '../lib/inlineError.svelte'
@@ -68,7 +69,7 @@
         <ClipActions {message} {serverId} {mine} onDownload={download} />
       </div>
       <ClipCaption {message} />
-      <div class="player"><ClipPlayer {message} {compact} onDownload={download} /></div>
+      <div class="player"><ClipPlayer {message} {compact} onDownload={download} downloadKey={clipKey(message.id)} /></div>
       <ReactionRow {message} {meId} {nameOf} onError={inlineError.show} {suggest} alwaysAdd />
       {#if onOpenReplies && !compact}<ClipReplies {message} {onOpenReplies} {unsentReplies} />{/if}
       {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
