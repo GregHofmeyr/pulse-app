@@ -9,8 +9,10 @@
   import { byPresence, presenceOf } from '../lib/presence'
   import { api, errorText } from '../lib/tauri'
   import { displayName } from '../lib/selectors'
+  import { isMenuKey, rowMenuAt } from '../lib/participantMenu'
+  import MemberMenu from './MemberMenu.svelte'
 
-  let { channelId }: { channelId: string } = $props()
+  let { channelId, onMessage }: { channelId: string; onMessage?: (userId: string) => void } = $props()
   // by the name you see them by (#47)
   const members = $derived(
     (app.state.dmMembers[channelId] ?? [])
@@ -28,6 +30,15 @@
   // the row under the pointer: its avatar animates
   let hovered = $state<string | null>(null)
 
+  // A row's menu (#135): the server member list's person menu (MemberMenu) with no server, so View profile, Message,
+  // Change nickname (your private one) and the other person-to-person items. Right-click, or ContextMenu / Shift+F10
+  // on the row's name or avatar.
+  let menu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
+  function openMenu(userId: string, e: MouseEvent | KeyboardEvent, row: HTMLElement) {
+    e.preventDefault()
+    menu = { userId, ...rowMenuAt(e, row) }
+  }
+
   async function remove(id: string) {
     error = ''
     try {
@@ -43,7 +54,8 @@
   <div class="label">{g.label} — {g.list.length}</div>
   {#each g.list as p (p.user.id)}
     {@const listening = listeningOf(app.state, p.user.id)}
-    <div class="row hover-row" class:off={g.key === 'offline'} data-section={g.key} role="presentation" onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}>
+    <div class="row hover-row" class:off={g.key === 'offline'} data-section={g.key} role="presentation" onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}
+      oncontextmenu={(e) => openMenu(p.user.id, e, e.currentTarget)} onkeydown={(e) => { if (isMenuKey(e)) openMenu(p.user.id, e, e.currentTarget) }}>
       <Avatar id={p.user.id} name={p.name} size={32} presence={presenceOf(app.state, p.user.id, clock.nowIso)} interactive serverId={null} hovered={() => hovered === p.user.id} />
       <!-- what they're listening to (#275) on the line under the name; Spotify's icon at the row's end -->
       <span class="who"><span class="nm"><Name userId={p.user.id} serverId={null} text={p.name} surface="side" />{#if p.user.id === app.state.me?.id}<small> (you)</small>{/if}</span>{#if listening}<ListeningLine {listening} icon={false} />{/if}</span>
@@ -56,6 +68,9 @@
   {/each}
   {#if error}<p class="err" role="alert">{error}</p>{/if}
 </aside>
+{#if menu}
+  {#key menu}<MemberMenu serverId={null} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} onClose={() => (menu = null)} />{/key}
+{/if}
 
 <style>
   .members { width: var(--right-w, 220px); flex-shrink: 0; background: var(--bg-1); border-radius: var(--radius); padding: 8px; overflow-y: auto; }
