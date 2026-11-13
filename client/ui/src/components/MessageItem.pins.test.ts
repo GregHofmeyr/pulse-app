@@ -217,6 +217,11 @@ describe('the pin line (#178)', () => {
     see.click()
     expect(ui.openPins).toBe('C1')
   })
+
+  it('pins a quote in a quotes channel (#257)', () => {
+    show(line('day'), 'quotes')
+    expect(document.querySelector('.pin-line')?.textContent?.replace(/\s+/g, ' ')).toContain('alex pinned a quote for 1 day · See pins')
+  })
 })
 
 describe('a stage share line (#234)', () => {

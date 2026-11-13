@@ -299,6 +299,30 @@ describe('TextChannel: quotes channel', () => {
     expect([...document.querySelectorAll('button')].some((b) => b.textContent === 'Start Quote of the Year')).toBe(true)
   })
 
+  // #257: a quotes channel keeps pins too, and Jump on a pinned quote shows it in the list
+  it('has the pins button; Jump on a pinned quote scrolls to it and flashes it', async () => {
+    const scrolled: Element[] = []
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this) }
+    const pin = { pinned_by: 'U1', pinned_at: '2026-10-01T00:00:00.000Z', expires_at: null }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_pins' ? [{ message: { ...quoteMsg, pin }, pin }] : cmd === 'list_replies' ? [] : undefined))
+    show('quotes', [{ ...quoteMsg, pin }, system])
+    const pinBtn = document.querySelector<HTMLButtonElement>('.head button[aria-label="Pinned quotes"]')!
+    expect(pinBtn).not.toBeNull()
+    pinBtn.click()
+    flushSync()
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    flushSync()
+    const row = document.querySelector<HTMLElement>('.pins-pop .pin')!
+    expect(row.querySelector('.said')?.textContent).toBe('“hi”')
+    ;[...row.querySelectorAll('button')].find((b) => b.textContent === 'Jump')!.click()
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    flushSync()
+    expect(document.querySelector('.pins-pop')).toBeNull()
+    const target = document.querySelector(`[data-message-id="${quoteMsg.id}"]`)!
+    expect(target.classList.contains('jump-flash')).toBe(true)
+    expect(scrolled).toContain(target)
+  })
+
   it('renders a Quote of the Year result as its card, and drops it when the card is removed', () => {
     const card: Message = {
       ...msg(2), author_id: null, kind: 'system', content: 'Quote of the Year 2026: “hi” — alex',

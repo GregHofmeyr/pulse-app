@@ -300,13 +300,13 @@ describe('ClipFeed', () => {
     }
     const item = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === label)!
     const labels = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((b) => b.textContent?.trim())
-    // everyone's clip has the menu, with Download first (#204); Edit and Delete are the poster's
+    // everyone's clip has the menu, with Download first (#204) and Pin clip (#257); Edit and Delete are the poster's
     open('M003')
-    expect(labels()).toEqual(['Download'])
+    expect(labels()).toEqual(['Download', 'Pin clip'])
     open('M003')
     expect(labels()).toEqual([])
     open()
-    expect(labels()).toEqual(['Download', 'Edit', 'Delete'])
+    expect(labels()).toEqual(['Download', 'Pin clip', 'Edit', 'Delete'])
     open()
     // Edit: caption and game, through a dialog
     open()
@@ -496,7 +496,7 @@ describe('ClipFeed', () => {
     it('the menu says Downloading 42% and has Cancel download', async () => {
       await downloading('M003', 42, 100)
       openMenu('M003')
-      expect(items()).toEqual(['Downloading 42%', 'Cancel download'])
+      expect(items()).toEqual(['Downloading 42%', 'Cancel download', 'Pin clip'])
       ;[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === 'Cancel download')!.click()
       await settle()
       expect(calls('cancel_download').map((c) => c[1])).toEqual([{ key: 'clip:M003' }])
@@ -504,7 +504,7 @@ describe('ClipFeed', () => {
       await settle()
       flushSync()
       openMenu('M003')
-      expect(items()).toEqual(['Download'])
+      expect(items()).toEqual(['Download', 'Pin clip'])
     })
 
     it('a finished download says Saved, quietly', async () => {
@@ -516,7 +516,7 @@ describe('ClipFeed', () => {
       expect(icon('M003').dataset.tip).toBe('Saved')
       expect(card('M003').querySelector('[role="alert"]')).toBeNull()
       openMenu('M003')
-      expect(items()).toEqual(['Saved'])
+      expect(items()).toEqual(['Saved', 'Pin clip'])
     })
   })
 
@@ -585,6 +585,67 @@ describe('ClipFeed', () => {
       // a clip keeps your other reactions (no take-back as on a quote)
       expect(calls('add_reaction').map((c) => c[1])).toEqual([{ messageId: 'M001', emoji: '👍' }])
       expect(calls('remove_reaction')).toHaveLength(0)
+    })
+  })
+
+  // #257: a clip pins from its own ⋯ menu, and shows a marker by its time
+  describe.each(['list', 'wall'] as const)('pins (%s)', (layout) => {
+    const pin = (expires_at: string | null) => ({ pinned_by: 'U1', pinned_at: '2026-10-01T10:00:00.000Z', expires_at })
+    const openMenu = (cid: string) => {
+      card(cid).querySelector<HTMLButtonElement>('button[aria-label="Clip actions"]')!.click()
+      flushSync()
+    }
+    const item = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === label)
+    const lengths = () => [...(document.querySelector('[role=menu][aria-label="Pin clip for"]')?.querySelectorAll<HTMLButtonElement>('[role=menuitem]') ?? [])]
+
+    it('Pin clip is a flyout of lengths; picking one pins the clip', async () => {
+      pages = [[clip('M001')]]
+      await show({ layout })
+      expect(card('M001').querySelector('.pin-mark')).toBeNull()
+      openMenu('M001')
+      item('Pin clip')!.dispatchEvent(new Event('pointerenter'))
+      flushSync()
+      expect(lengths().map((b) => b.textContent?.trim())).toEqual(['1 hour', '1 day', '1 week', 'Forever'])
+      lengths()[3].click()
+      await settle()
+      expect(calls('pin_message').map((c) => c[1])).toEqual([{ messageId: 'M001', duration: 'forever' }])
+      expect(document.querySelector('[role="menu"]')).toBeNull()
+    })
+
+    it("a pin from anyone marks the clip live; its menu then offers Unpin clip", async () => {
+      pages = [[clip('M001')]]
+      await show({ layout })
+      const p = pin(null)
+      app.state = applyEvent(app.state, { t: 'MessagePinned', d: { channel_id: 'C1', pinned: { message: { ...clip('M001'), pin: p }, pin: p } } }, 0)
+      flushSync()
+      const mark = card('M001').querySelector<HTMLElement>('.pin-mark')
+      expect(mark?.dataset.tip).toBe('Pinned by alex')
+      expect(mark?.querySelector('svg')?.getAttribute('width')).toBe('14')
+      openMenu('M001')
+      expect(item('Pin clip')).toBeUndefined()
+      item('Unpin clip')!.click()
+      await settle()
+      expect(calls('unpin_message').map((c) => c[1])).toEqual([{ messageId: 'M001' }])
+      app.state = applyEvent(app.state, { t: 'MessageUnpinned', d: { channel_id: 'C1', message_id: 'M001' } }, 0)
+      flushSync()
+      expect(card('M001').querySelector('.pin-mark')).toBeNull()
+    })
+
+    it("a refused pin says why and fetches the channel's pins to set it right", async () => {
+      pages = [[clip('M001')]]
+      await show({ layout })
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'pin_message') throw 'This chat already has 50 pins. Unpin something first.'
+        return cmd === 'list_pins' ? [] : undefined
+      })
+      openMenu('M001')
+      item('Pin clip')!.dispatchEvent(new Event('pointerenter'))
+      flushSync()
+      lengths()[0].click()
+      await settle()
+      flushSync()
+      expect(card('M001').querySelector('[role=alert]')?.textContent).toBe('This chat already has 50 pins. Unpin something first.')
+      expect(calls('list_pins').map((c) => c[1])).toEqual([{ channelId: 'C1' }])
     })
   })
 })

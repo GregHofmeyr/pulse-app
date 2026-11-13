@@ -9,9 +9,11 @@
   import { flushSync } from 'svelte'
   import { closeTimer } from '../lib/hoverIntent'
   import { placeFlyout } from '../lib/menuPlace'
-  import Icon from './Icon.svelte'
+  import Icon, { type IconName } from './Icon.svelte'
 
-  let { label, flyoutLabel, menuLeft, menuTop, choices, onPick, item = '' }: {
+  let { label, flyoutLabel, menuLeft, menuTop, choices, onPick, item = '', icon }: {
+    /** An icon before the label, in a menu whose items have them (a clip's menu, #257). */
+    icon?: IconName
     /** The item's text, e.g. "Mute channel". */
     label: string
     /** The flyout menu's accessible name, e.g. "Mute #general for". */
@@ -111,7 +113,7 @@
 
 <button bind:this={itemEl} type="button" class="menu-item has-sub" class:hi={subOpen} role="menuitem" data-item={item} aria-haspopup="menu" aria-expanded={subOpen}
   aria-controls={subOpen ? flyoutId : undefined} onpointerenter={() => { later.cancel(); openSub(false) }} onclick={() => openSub(true)} onkeydown={triggerKeydown}>
-  <span class="grow">{label}</span><Icon name={subSide === 'right' ? 'chevronRight' : 'chevronLeft'} size={14} />
+  {#if icon}<Icon name={icon} size={14} />{/if}<span class="grow">{label}</span><Icon name={subSide === 'right' ? 'chevronRight' : 'chevronLeft'} size={14} />
 </button>
 {#if subOpen}
   <div bind:this={sub} id={flyoutId} class="flyout menu-surface" data-side={subSide} role="menu" aria-label={flyoutLabel} tabindex="-1"
@@ -131,7 +133,8 @@
 
 <style>
   .grow { flex: 1; }
-  .has-sub :global(svg) { color: var(--text-3); }
+  /* the chevron (a leading icon keeps the item's colour) */
+  .has-sub > :global(svg:last-child) { color: var(--text-3); }
   /* beside the menu, past its 1px border, with a small gap the pointer crosses without closing it */
   .flyout { position: absolute; z-index: 1; width: 200px; gap: 2px; outline: none; }
   .flyout[data-side='left'] { right: calc(100% + 4px + 1px); }

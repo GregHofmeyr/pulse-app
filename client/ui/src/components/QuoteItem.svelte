@@ -18,8 +18,12 @@
   import MemberMenu from './MemberMenu.svelte'
   import { hasNewReplies, nameKey, quoteText, speakerOf } from '../lib/quotes'
   import { blockedReason, pickAdds, react } from '../lib/reactions'
-  import { app } from '../lib/store.svelte'
+  import { app, clock } from '../lib/store.svelte'
   import { serverPeople } from '../lib/selectors'
+  import { livePin, pinTip } from '../lib/pins'
+  import { refreshPins } from '../lib/pinSync.svelte'
+  import { serverNow } from '../lib/serverClock'
+  import type { PinDuration } from '../lib/protocol/PinDuration'
   import { api, errorText } from '../lib/tauri'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { LineMedia } from '../lib/protocol/LineMedia'
@@ -99,8 +103,22 @@
   const awardTip = (line: QuoteLine) => (line.awarded ? 'Take back award' : 'Give quote award')
   /** The whole quote as text (every line, with who said it); null when it has no words to copy. */
   const copyText = $derived(quote ? quoteText(app.state, serverId, quote.lines) : null)
-  /** Whether the line's menu would have anything in it: award, copy, save (an image), or link. */
-  const hasActions = (line: QuoteLine) => !!awardOf(line) || !!copyText || !!line.media || !!linkOf(line)
+  // --- pins (#257): the whole quote pins from any line's menu, as Copy quote does; not a QotY option (compact) ---
+  // the clock moves every 30 s: a timed pin's time left (and its end) follow it, by the server's clock (#258)
+  const now = $derived((void clock.nowIso, serverNow()))
+  const pin = $derived(livePin(message, now))
+  const pinMark = $derived(pin ? pinTip(nameOf(pin.pinned_by), pin.expires_at, now) : '')
+  const pinItem = $derived<'pin' | 'unpin' | null>(compact || message.deleted ? null : pin ? 'unpin' : 'pin')
+  // A refused pin or unpin means the pin here was out of date: show why, and fetch the chat's pins to set it right.
+  const report = (p: Promise<unknown>) =>
+    p.catch((e) => {
+      showError(errorText(e))
+      void refreshPins(message.channel_id)
+    })
+  const pinQuote = (d: PinDuration) => report(api.pinMessage(message.id, d))
+  const unpinQuote = () => report(api.unpinMessage(message.id))
+  /** Whether the line's menu would have anything in it: award, copy, save (an image), pin, or link. */
+  const hasActions = (line: QuoteLine) => !!awardOf(line) || !!copyText || !!line.media || !!pinItem || !!linkOf(line)
   const save = (media: LineMedia, caption: string | null) => void saveImage(media, caption, showError)
   // the Copy quote button's tooltip says "Copied" for a moment after
   let copied = $state(false)
@@ -155,7 +173,7 @@
       <!-- the person menu is a pointer shortcut here; the keyboard route is ContextMenu / Shift+F10 on the avatar or name -->
       {#if !compact}<span class="author" role="presentation" oncontextmenu={(e) => openPersonMenu(message.author_id, e, e.currentTarget)} onkeydown={(e) => openPersonMenu(message.author_id, e, e.currentTarget)}><Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={40} interactive={!!message.author_id} serverId={sid} hovered={() => over} /></span>{/if}
       <div class="body">
-        {#if !compact}<div class="meta"><strong role="presentation" oncontextmenu={(e) => openPersonMenu(message.author_id, e, e.currentTarget)} onkeydown={(e) => openPersonMenu(message.author_id, e, e.currentTarget)}>{#if message.author_id}<Name userId={message.author_id} serverId={sid} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</strong><span class="time">{when}</span></div>{/if}
+        {#if !compact}<div class="meta"><strong role="presentation" oncontextmenu={(e) => openPersonMenu(message.author_id, e, e.currentTarget)} onkeydown={(e) => openPersonMenu(message.author_id, e, e.currentTarget)}>{#if message.author_id}<Name userId={message.author_id} serverId={sid} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</strong><span class="time">{when}</span>{#if pin}<span class="pin-mark" data-tip={pinMark}><Icon name="pin" size={14} /></span>{/if}</div>{/if}
         {#if message.deleted}
           <p class="deleted">quote deleted</p>
         {:else}
@@ -234,7 +252,8 @@
     {#key m}
       <LineMenu x={m.x} y={m.y} opener={m.opener} award={awardOf(line)} link={linkOf(line)} {members}
         onAward={() => toggleAward(line)} onCopy={copyText ? copy : null}
-        onSave={line.media ? () => save(line.media!, line.caption) : null} onLink={(id) => link(line, id)} onUnlink={() => unlink(line)}
+        onSave={line.media ? () => save(line.media!, line.caption) : null} pin={pinItem} onPin={pinQuote} onUnpin={unpinQuote}
+        onLink={(id) => link(line, id)} onUnlink={() => unlink(line)}
         onClose={() => (menu = null)} />
     {/key}
   {/if}
@@ -267,6 +286,8 @@
   .meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
   .meta strong { font-size: 14.5px; }
   .time { font-size: 11px; color: var(--text-3); }
+  /* the pin marker (#257), as a message's (MessageItem .pin-mark): by the time */
+  .pin-mark { display: inline-flex; align-self: center; color: var(--text-3); }
   .deleted { margin: 0; font-style: italic; color: var(--text-3); }
   .lines { display: flex; flex-direction: column; gap: 2px; border-left: 3px solid var(--quote-green-deep); padding-left: 10px; }
   .line { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 2px 6px; margin-left: -6px; border-radius: var(--radius-sm); outline: none; }

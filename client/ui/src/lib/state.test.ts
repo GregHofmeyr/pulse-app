@@ -1577,6 +1577,57 @@ describe('pins (#178)', () => {
     const s = loaded()
     expect(applyPinList(s, 'C9', [{ message: msg('M1'), pin: pin() }])).toBe(s)
   })
+
+  // #257: a clips channel's clips live in its feeds, not its text history
+  describe('in a clips channel', () => {
+    const clip = (id: string, over: Partial<Message> = {}): Message => ({
+      ...msg(id, 'K1', ''),
+      clip: { thumb_hash: 'th', duration_ms: 1000, width: 1, height: 1, size: 1, game_id: null, reply_count: 0, last_reply_id: null, replies_seen: null },
+      ...over,
+    })
+    const feeds = () => {
+      let s = applyReady(emptyState(), ready({ channels: [ch('K1', 'clips')] }))
+      for (const f of [{}, { author: 'U2' }] as ClipFilter[]) s = loadFeedPage(openFeed(s, 'K1', f), feedKey('K1', f), [clip('M2'), clip('M1')])
+      return s
+    }
+    const pinOf = (s: AppState, id: string, f: ClipFilter = {}) => s.clipFeeds[feedKey('K1', f)].items.find((m) => m.id === id)?.pin ?? null
+    const pinnedClip = (id: string, p = pin()): Event => ({ t: 'MessagePinned', d: { channel_id: 'K1', pinned: { message: { ...clip(id), pin: p }, pin: p } } })
+
+    it('a pin and an unpin reach the clip in every feed that holds it, and its fetched list', () => {
+      let s = setPins(feeds(), 'K1', [])
+      s = applyEvent(s, pinnedClip('M1'), 0)
+      expect(pinOf(s, 'M1')).toEqual(pin())
+      expect(pinOf(s, 'M1', { author: 'U2' })).toEqual(pin())
+      expect(pinOf(s, 'M2')).toBeNull()
+      expect(s.pins['K1'].map((p) => p.message.id)).toEqual(['M1'])
+      s = applyEvent(s, { t: 'MessageUnpinned', d: { channel_id: 'K1', message_id: 'M1' } }, 0)
+      expect(pinOf(s, 'M1')).toBeNull()
+      expect(pinOf(s, 'M1', { author: 'U2' })).toBeNull()
+      expect(s.pins['K1']).toEqual([])
+    })
+
+    it("a clip's edit keeps the pin it holds (only pin events set it)", () => {
+      let s = applyEvent(feeds(), pinnedClip('M1'), 0)
+      s = applyEvent(s, { t: 'MessageUpdated', d: { message: clip('M1', { content: 'new caption' }) } }, 0)
+      const held = s.clipFeeds[feedKey('K1', {})].items.find((m) => m.id === 'M1')!
+      expect(held.content).toBe('new caption')
+      expect(held.pin).toEqual(pin())
+      s = applyEvent(s, { t: 'MessageUnpinned', d: { channel_id: 'K1', message_id: 'M1' } }, 0)
+      s = applyEvent(s, { t: 'MessageUpdated', d: { message: clip('M1', { content: 'again', pin: pin() }) } }, 0)
+      expect(pinOf(s, 'M1')).toBeNull()
+    })
+
+    it("a clips channel's fetched pins set its feeds' clips", () => {
+      let s = applyEvent(feeds(), pinnedClip('M2'), 0)
+      s = applyPinList(s, 'K1', [{ message: clip('M1'), pin: pin('U1') }])
+      expect(pinOf(s, 'M1')).toEqual(pin('U1'))
+      expect(pinOf(s, 'M2')).toBeNull()
+      expect(pinOf(s, 'M1', { author: 'U2' })).toEqual(pin('U1'))
+      // one whose pin changed live while the list loaded is left alone
+      s = applyPinList(applyEvent(s, pinnedClip('M2'), 0), 'K1', [], new Set(['M2']))
+      expect(pinOf(s, 'M2')).toEqual(pin())
+    })
+  })
 })
 
 describe('server delete (#184)', () => {

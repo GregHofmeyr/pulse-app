@@ -10,7 +10,7 @@ use pulse_protocol::rest::{
     Channel, Message, MessageKind, Pin, PinDuration, PinLine, PinRequest, PinnedMessage,
 };
 
-use super::{MAX_PINS, PinRow, pin_from_row, pinnable};
+use super::{MAX_PINS, PinRow, line_noun, pin_from_row};
 use crate::AppState;
 use crate::access::channel_for;
 use crate::auth::AuthUser;
@@ -35,14 +35,9 @@ pub fn router() -> Router<AppState> {
         .route("/channels/{id}/pins", get(list))
 }
 
-/// The chat `ch`, if it takes pins and `me` may write in it: the same rule as sending (a server channel needs
-/// you in its server; a DM or group was already checked by `channel_for`).
+/// The chat `ch`, if `me` may write in it: the same rule as sending (a server channel needs you in its server; a DM
+/// or group was already checked by `channel_for`).
 async fn writable(s: &AppState, me: UserId, ch: &Channel) -> AppResult<()> {
-    if !pinnable(ch.kind) {
-        return Err(AppError::BadRequest(
-            "pins aren't kept in quotes or clips channels".into(),
-        ));
-    }
     if let Some(server) = ch.server_id
         && !is_server_member(&s.db, server, me).await?
     {
@@ -91,19 +86,26 @@ async fn pin(
             PinDuration::Forever => None,
         },
     };
-    let name: String = sqlx::query_scalar("SELECT display_name FROM users WHERE id = ?")
-        .bind(me.to_string())
-        .fetch_one(&s.db)
-        .await?;
-    let content = match req.duration.phrase() {
-        Some(p) => format!("{name} pinned a message {p}"),
-        None => format!("{name} pinned a message"),
+    // The line's words (older clients show those) and payload; none in a clips channel (see `line_noun`).
+    let said = match line_noun(ch.kind) {
+        Some(noun) => {
+            let name: String = sqlx::query_scalar("SELECT display_name FROM users WHERE id = ?")
+                .bind(me.to_string())
+                .fetch_one(&s.db)
+                .await?;
+            let content = match req.duration.phrase() {
+                Some(p) => format!("{name} pinned a {noun} {p}"),
+                None => format!("{name} pinned a {noun}"),
+            };
+            let payload = system::pin_line_payload(&PinLine {
+                message_id: id,
+                by: me,
+                duration: req.duration,
+            })?;
+            Some((content, payload))
+        }
+        None => None,
     };
-    let payload = system::pin_line_payload(&PinLine {
-        message_id: id,
-        by: me,
-        duration: req.duration,
-    })?;
     // The pin's event and its line go out in commit order with other pins, unpins and the sweep's expiries.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
@@ -155,34 +157,11 @@ async fn pin(
     .bind(&pin.expires_at)
     .execute(&mut *tx)
     .await?;
-    // Your own line for this message from the last few minutes is brought up to date instead of posting another,
-    // so pin, unpin, pin again doesn't fill the chat with lines (#258).
-    let since = (at - RELINE_WITHIN).timestamp_millis().max(0) as u64;
-    let earlier: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM messages WHERE channel_id = ? AND id >= ? AND kind = 'system' AND deleted_at IS NULL \
-         AND json_extract(system_payload, '$.type') = ? AND json_extract(system_payload, '$.message_id') = ? \
-         AND json_extract(system_payload, '$.by') = ? ORDER BY id DESC LIMIT 1",
-    )
-    .bind(ch.id.to_string())
-    .bind(MessageId::floor(since).to_string())
-    .bind(system::PIN_LINE)
-    .bind(id.to_string())
-    .bind(me.to_string())
-    .fetch_optional(&mut *tx)
-    .await?;
-    let line = match earlier {
-        Some(line) => {
-            sqlx::query("UPDATE messages SET content = ?, system_payload = ? WHERE id = ?")
-                .bind(&content)
-                .bind(payload.to_string())
-                .bind(&line)
-                .execute(&mut *tx)
-                .await?;
-            Line::Refreshed(line.parse().map_err(anyhow::Error::from)?)
+    let line = match said {
+        Some((content, payload)) => {
+            Some(post_line(&mut tx, ch.id, id, me, at, content, payload).await?)
         }
-        None => Line::New(Box::new(
-            system::insert(&mut tx, ch.id, content, payload).await?,
-        )),
+        None => None,
     };
     tx.commit().await?;
     // The message as it is now, as events show it (an edit may have landed since the check above; still under
@@ -212,7 +191,8 @@ async fn pin(
         )
         .await;
     match line {
-        Line::New(message) => {
+        None => {}
+        Some(Line::New(message)) => {
             s.hub
                 .publish(
                     &s.db,
@@ -224,7 +204,7 @@ async fn pin(
                 .await
         }
         // As a call line follows its call: the same line, its words and payload as they are now.
-        Line::Refreshed(line) => match load(&s.db, None, line).await {
+        Some(Line::Refreshed(line)) => match load(&s.db, None, line).await {
             Ok(Some(message)) => {
                 s.hub
                     .publish(&s.db, Event::MessageUpdated { message })
@@ -235,6 +215,46 @@ async fn pin(
         },
     }
     Ok(Json(pin))
+}
+
+/// Post the pin's line in `tx`, or bring your own line for this message from the last few minutes up to date
+/// instead, so pin, unpin, pin again doesn't fill the chat with lines (#258).
+async fn post_line(
+    tx: &mut sqlx::SqliteConnection,
+    channel: ChannelId,
+    id: MessageId,
+    me: UserId,
+    at: chrono::DateTime<chrono::Utc>,
+    content: String,
+    payload: serde_json::Value,
+) -> AppResult<Line> {
+    let since = (at - RELINE_WITHIN).timestamp_millis().max(0) as u64;
+    let earlier: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM messages WHERE channel_id = ? AND id >= ? AND kind = 'system' AND deleted_at IS NULL \
+         AND json_extract(system_payload, '$.type') = ? AND json_extract(system_payload, '$.message_id') = ? \
+         AND json_extract(system_payload, '$.by') = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(channel.to_string())
+    .bind(MessageId::floor(since).to_string())
+    .bind(system::PIN_LINE)
+    .bind(id.to_string())
+    .bind(me.to_string())
+    .fetch_optional(&mut *tx)
+    .await?;
+    Ok(match earlier {
+        Some(line) => {
+            sqlx::query("UPDATE messages SET content = ?, system_payload = ? WHERE id = ?")
+                .bind(&content)
+                .bind(payload.to_string())
+                .bind(&line)
+                .execute(&mut *tx)
+                .await?;
+            Line::Refreshed(line.parse().map_err(anyhow::Error::from)?)
+        }
+        None => Line::New(Box::new(
+            system::insert(&mut *tx, channel, content, payload).await?,
+        )),
+    })
 }
 
 async fn unpin(
@@ -276,12 +296,7 @@ async fn list(
     AuthUser(me): AuthUser,
     Path(id): Path<ChannelId>,
 ) -> AppResult<Json<Vec<PinnedMessage>>> {
-    let ch = channel_for(&s.db, me, id).await?;
-    if !pinnable(ch.kind) {
-        return Err(AppError::BadRequest(
-            "pins aren't kept in quotes or clips channels".into(),
-        ));
-    }
+    channel_for(&s.db, me, id).await?;
     let pins: Vec<PinRow> = sqlx::query_as(
         "SELECT p.message_id, p.pinned_by, p.pinned_at, p.expires_at FROM pins p
          JOIN messages m ON m.id = p.message_id

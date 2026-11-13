@@ -15,8 +15,10 @@
   import { clipKey } from '../lib/downloads.svelte'
   import { mediaUrl } from '../lib/emoji'
   import { suggestedReactions } from '../lib/reactions'
-  import { app } from '../lib/store.svelte'
+  import { app, clock } from '../lib/store.svelte'
   import { InlineError } from '../lib/inlineError.svelte'
+  import { livePin, pinTip } from '../lib/pins'
+  import { serverNow } from '../lib/serverClock'
   import type { Message } from '../lib/protocol/Message'
 
   let {
@@ -51,6 +53,10 @@
   // Any number of reactions per person: offer your usual picks it has no chip for yet.
   const suggest = $derived(suggestedReactions(app.state, message.reactions))
   const when = $derived(new Date(message.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))
+
+  // pinned (#257): a marker by the time, as a message's; by the server's clock, moving every 30 s (#258)
+  const now = $derived((void clock.nowIso, serverNow()))
+  const pin = $derived(livePin(message, now))
 
   const inlineError = new InlineError()
   $effect(() => inlineError.stop)
@@ -91,9 +97,9 @@
         {#if game}<span class="game">{game}</span>{/if}
         <span class="grow"></span>
         {#if onOpenReplies}<button type="button" class="icon-btn icon-btn-sm" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={16} /></button>{/if}
-        <ClipActions {message} {serverId} {mine} onDownload={download} />
+        <ClipActions {message} {serverId} {mine} onDownload={download} onError={inlineError.show} />
       </div>
-      <span class="time">{when}{#if message.edited_at} · edited{/if}</span>
+      <span class="time">{when}{#if message.edited_at} · edited{/if}{#if pin}<span class="pin-mark" data-tip={pinTip(nameOf(pin.pinned_by), pin.expires_at, now)}><Icon name="pin" size={14} /></span>{/if}</span>
       <ReactionRow {message} {meId} {nameOf} onError={inlineError.show} {suggest} alwaysAdd />
       {#if onOpenReplies}<ClipReplies {message} {onOpenReplies} {unsentReplies} />{/if}
       {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
@@ -120,6 +126,7 @@
   .who { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .game { padding: 1px 8px; border-radius: var(--radius-md); background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; white-space: nowrap; }
   .grow { flex: 1; }
-  .time { font-size: 11px; color: var(--text-3); }
+  .time { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-3); }
+  .pin-mark { display: inline-flex; }
   .err { margin: 0; font-size: 12px; color: var(--danger-text); }
 </style>

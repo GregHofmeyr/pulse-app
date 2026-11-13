@@ -8,7 +8,7 @@ Friends want to keep a message in view for a while (a plan for tonight, a link, 
 
 ## What it does
 
-- **Where:** text channels, DMs, groups, and voice channels' chats (#226) **(owner)**. Not quotes or clips channels; revisit only if someone asks **(owner)**.
+- **Where:** text channels, DMs, groups, and voice channels' chats (#226) **(owner)**. Not quotes or clips channels; revisit only if someone asks **(owner)**. Since revisited: quotes and clips channels take pins too (#257, below).
 - **Who:** anyone who can read and write the chat can pin and unpin **(owner)**. Pulse has no roles yet; the system line shows who pinned.
 - **Pinning:** the message's menus (hover bar ⋯ / right-click, wherever its other actions live; match the existing surfaces) get **Pin message ›**, a hover flyout using the shared `MenuFlyout` (the same one mute uses, #236) with **1 hour, 1 day, 1 week, Forever** **(owner)**. A pinned message's menu shows **Unpin message** instead **(owner)**.
 - **Expiry:** a timed pin disappears quietly when its time runs out; no line, no notification **(owner)**.
@@ -32,8 +32,19 @@ Friends want to keep a message in view for a while (a plan for tonight, a link, 
 - Client: the flyout and its four options; Unpin replaces Pin; marker and tooltip text; the system line and its See pins; the popover lists, jumps and unpins; live updates from another device.
 - **Manual (owner, Linux then Windows):** pin for 1 hour and Forever in a channel and a DM; see the line, the marker and the popover; jump; unpin; a second account sees it live.
 
+## Quotes and clips channels (#257)
+
+Added later, as the "only if someone asks" above allowed. Builder's calls, kept as close to chats as those channels allow:
+
+- **What pins:** a quote or a clip (the channel's posts). Thread replies still can't be pinned, and system lines (a Quote of the Year card is one) still can't.
+- **Who, how long, how many:** unchanged: anyone who can post there (a member of the server), the same four lengths, the same cap of 50 per channel, the same expiry and delete rules. No migration: quotes and clips are rows of `messages` already.
+- **Menus:** a quote's right-click menu (any line's: the quote's only menu since #244, where Copy quote already acts on the whole quote) gets **Pin quote ›** / **Unpin quote**. A clip's ⋯ menu (list and wall) gets **Pin clip ›** / **Unpin clip**, after Download. A quotes or clips channel's plain messages (thread replies) get no Pin item.
+- **Marker:** the same pin icon by a quote's time, and by a clip's time in the list and on the wall.
+- **System line:** in a quotes channel, as in chats, worded "alex pinned a quote for 1 day" (in its content too, for older clients). In a clips channel, **no line**: the channel shows only its clips (to this client and older ones), so a line would sit in its history unseen.
+- **Pins popover:** in the quotes channel's header (with the leaderboard) and the clips channel's header (by the view toggle), named "Pinned quotes" / "Pinned clips". A quote reads as who said it and its words; Jump scrolls to it and flashes it. A clip reads as its thumbnail and caption (else its game, else "Clip · 0:30") by its poster; **Open** opens its panel, as a search result does (a clips channel has no history to jump in).
+- **Older clients** (0.2.x): see the quote line as a normal system line, ignore pins they don't show, and never ask for a quotes or clips channel's pins.
+
 ## Out of scope
 
-- Pinning in quotes or clips channels (only if requested).
 - Pin notifications, or a line for unpins and expiries.
 - Per-role pin permissions (waits on roles, #79).

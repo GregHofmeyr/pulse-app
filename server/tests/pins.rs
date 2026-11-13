@@ -8,7 +8,8 @@ use futures::{SinkExt, StreamExt};
 use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
-    ApiError, Channel, ChannelKind, Message, MessageKind, Pin, PinDuration, PinnedMessage,
+    ApiError, Channel, ChannelKind, ClipUpload, MediaInfo, Message, MessageKind, Pin, PinDuration,
+    PinnedMessage,
 };
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
@@ -239,40 +240,6 @@ async fn voice_channels_chats_take_pins() {
     let m = send(&w.app, &w.alex, lounge.id, "can you hear me?").await;
     assert_eq!(pin(&w.app, &w.sam, m.id, "hour").await.status(), 200);
     assert_eq!(pins(&w.app, &w.alex, lounge.id).await.len(), 1);
-}
-
-#[tokio::test]
-async fn quotes_and_clips_channels_refuse_pins() {
-    let w = world().await;
-    let r = post_json(
-        &w.app,
-        &w.alex,
-        &format!("/servers/{}/channels", w.server),
-        json!({"kind": "quotes", "name": "quotes"}),
-    )
-    .await;
-    assert_eq!(r.status(), 200);
-    let quotes: Channel = r.json().await.unwrap();
-    // a quote is a message of the quotes channel
-    let r = post_json(
-        &w.app,
-        &w.alex,
-        &format!("/channels/{}/quotes", quotes.id),
-        json!({"lines": [{"speaker_name": "kim", "text": "a joke"}], "today": null, "nonce": null}),
-    )
-    .await;
-    assert_eq!(r.status(), 200);
-    let q: Message = r.json().await.unwrap();
-    assert_eq!(pin(&w.app, &w.alex, q.id, "hour").await.status(), 400);
-    let r = w
-        .app
-        .http
-        .get(w.app.url(&format!("/channels/{}/pins", quotes.id)))
-        .bearer_auth(&w.alex)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 400, "a quotes channel has no pins");
 }
 
 #[tokio::test]
@@ -587,4 +554,267 @@ async fn a_line_from_a_while_ago_or_deleted_is_left_alone() {
         .map(|m| m.pin_line.as_ref().unwrap().message_id)
         .collect();
     assert_eq!(pinned, vec![b.id, a.id, a.id]);
+}
+
+// ---- Quotes and clips channels (#257) ----
+
+/// A new channel of `kind` ("quotes" or "clips") in w's server.
+async fn add_channel(w: &World, kind: &str) -> Channel {
+    let r = post_json(
+        &w.app,
+        &w.alex,
+        &format!("/servers/{}/channels", w.server),
+        json!({"kind": kind, "name": kind}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
+
+async fn post_quote(w: &World, token: &str, channel: ChannelId, text: &str) -> Message {
+    let r = post_json(
+        &w.app,
+        token,
+        &format!("/channels/{channel}/quotes"),
+        json!({"lines": [{"speaker_name": "kim", "text": text}], "today": null, "nonce": null}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
+
+/// A thumbnail no other call uploads (the media store keeps an image's first uploader).
+async fn upload_thumb(app: &TestApp, token: &str) -> String {
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let mut img = image::RgbaImage::from_pixel(64, 36, image::Rgba([n as u8, 7, 9, 255]));
+    img.put_pixel(n % 64, n / 64 % 36, image::Rgba([3, n as u8, 2, 255]));
+    let mut png = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut png, image::ImageFormat::Png).unwrap();
+    let r = app
+        .http
+        .post(app.url("/media/clip-thumb"))
+        .bearer_auth(token)
+        .header("content-type", "application/octet-stream")
+        .body(png.into_inner())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "thumb upload");
+    r.json::<MediaInfo>().await.unwrap().hash
+}
+
+/// Ticket, PUT, thumbnail, confirm: one posted clip (as tests/clips.rs posts them).
+async fn post_clip(w: &World, token: &str, channel: ChannelId, caption: &str) -> Message {
+    let bytes = vec![7u8; 1_000];
+    let r = post_json(
+        &w.app,
+        token,
+        &format!("/channels/{channel}/clips/uploads"),
+        json!({ "size": bytes.len(), "duration_ms": 30_000 }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "ticket");
+    let up: ClipUpload = r.json().await.unwrap();
+    let r = w
+        .app
+        .http
+        .put(&up.url)
+        .header("content-type", &up.content_type)
+        .body(bytes)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "PUT {}", r.status());
+    let thumb = upload_thumb(&w.app, token).await;
+    let r = post_json(
+        &w.app,
+        token,
+        &format!("/clip-uploads/{}/confirm", up.id),
+        json!({
+            "caption": caption, "game_id": null, "duration_ms": 30_000, "width": 1920,
+            "height": 1080, "thumb_hash": thumb, "nonce": null,
+        }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "confirm");
+    r.json().await.unwrap()
+}
+
+/// A reply in `root`'s thread.
+async fn reply(w: &World, token: &str, channel: ChannelId, root: MessageId) -> Message {
+    let r = post_json(
+        &w.app,
+        token,
+        &format!("/channels/{channel}/messages"),
+        json!({"content": "ha", "thread_root_id": root}),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "reply");
+    r.json().await.unwrap()
+}
+
+/// Fill a chat to the cap with pinned messages, written straight in (past the write limiter).
+async fn fill_to_cap(w: &World, channel: ChannelId) {
+    for i in 0..50 {
+        let id = MessageId::new();
+        sqlx::query(
+            "INSERT INTO messages (id, channel_id, author_id, kind, content, created_at) \
+             SELECT ?, ?, id, 'normal', ?, ? FROM users WHERE username = 'alex'",
+        )
+        .bind(id.to_string())
+        .bind(channel.to_string())
+        .bind(format!("m{i}"))
+        .bind(pulse_server::db::now())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO pins (message_id, channel_id, pinned_by, pinned_at, expires_at) \
+             SELECT id, channel_id, author_id, ?, NULL FROM messages WHERE id = ?",
+        )
+        .bind(pulse_server::db::now())
+        .bind(id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    }
+}
+
+async fn delete_message(w: &World, token: &str, id: MessageId) {
+    let r = w
+        .app
+        .http
+        .delete(w.app.url(&format!("/messages/{id}")))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+}
+
+#[tokio::test]
+async fn quotes_take_pins_with_a_line_that_says_quote() {
+    let w = world().await;
+    let quotes = add_channel(&w, "quotes").await;
+    let q = post_quote(&w, &w.alex, quotes.id, "a joke").await;
+    let mut ws = hello(&w.app, &w.sam).await;
+    assert_eq!(pin(&w.app, &w.sam, q.id, "day").await.status(), 200);
+    match next_pin_event(&mut ws).await {
+        Some(Event::MessagePinned { channel_id, pinned }) => {
+            assert_eq!((channel_id, pinned.message.id), (quotes.id, q.id));
+            assert!(
+                pinned.message.quote.is_some(),
+                "the event carries the quote"
+            );
+        }
+        other => panic!("expected MessagePinned, got {other:?}"),
+    }
+    let line = match next_pin_event(&mut ws).await {
+        Some(Event::MessageCreated { message, .. }) => message,
+        other => panic!("expected the system line, got {other:?}"),
+    };
+    assert_eq!(line.kind, MessageKind::System);
+    assert_eq!(line.content, "sam pinned a quote for 1 day");
+    assert_eq!(line.pin_line.map(|p| p.message_id), Some(q.id));
+
+    let list = pins(&w.app, &w.jo, quotes.id).await;
+    assert_eq!(list.len(), 1);
+    let listed = list[0]
+        .message
+        .quote
+        .as_ref()
+        .expect("listed with its quote");
+    assert_eq!(listed.lines[0].text.as_deref(), Some("a joke"));
+    assert_eq!(list[0].message.pin.as_ref(), Some(&list[0].pin));
+
+    // the rules of any chat: outsiders refused, replies refused, Forever reads without a length
+    assert_eq!(pin(&w.app, &w.jo, q.id, "hour").await.status(), 403);
+    assert_eq!(unpin(&w.app, &w.jo, q.id).await, 403);
+    let r = reply(&w, &w.sam, quotes.id, q.id).await;
+    assert_eq!(pin(&w.app, &w.alex, r.id, "hour").await.status(), 400);
+    assert_eq!(unpin(&w.app, &w.alex, q.id).await, 204);
+    assert_eq!(pin(&w.app, &w.alex, q.id, "forever").await.status(), 200);
+    let lines: Vec<Message> = messages(&w.app, &w.alex, quotes.id)
+        .await
+        .into_iter()
+        .filter(|m| m.kind == MessageKind::System)
+        .collect();
+    assert_eq!(lines[0].content, "alex pinned a quote");
+
+    // deleting the quote drops its pin
+    delete_message(&w, &w.alex, q.id).await;
+    assert!(pins(&w.app, &w.alex, quotes.id).await.is_empty());
+}
+
+#[tokio::test]
+async fn clips_take_pins_with_no_line() {
+    let w = world().await;
+    let clips = add_channel(&w, "clips").await;
+    let c = post_clip(&w, &w.alex, clips.id, "that jump").await;
+    // a reply in its thread, posted before the socket opens (its own event is no pin's)
+    let r = reply(&w, &w.sam, clips.id, c.id).await;
+    let mut ws = hello(&w.app, &w.sam).await;
+    assert_eq!(pin(&w.app, &w.sam, c.id, "week").await.status(), 200);
+    match next_pin_event(&mut ws).await {
+        Some(Event::MessagePinned { channel_id, pinned }) => {
+            assert_eq!((channel_id, pinned.message.id), (clips.id, c.id));
+            assert!(pinned.message.clip.is_some(), "the event carries the clip");
+        }
+        other => panic!("expected MessagePinned, got {other:?}"),
+    }
+    assert!(
+        next_pin_event(&mut ws).await.is_none(),
+        "no line: a clips channel shows only clips"
+    );
+    let lines: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM messages WHERE kind = 'system' AND channel_id = ?",
+    )
+    .bind(clips.id.to_string())
+    .fetch_one(&w.app.db)
+    .await
+    .unwrap();
+    assert_eq!(lines, 0);
+
+    let list = pins(&w.app, &w.jo, clips.id).await;
+    assert_eq!(list.len(), 1);
+    let clip = list[0].message.clip.as_ref().expect("listed with its clip");
+    assert!(!clip.thumb_hash.is_empty(), "with its thumbnail");
+    assert_eq!(list[0].message.content, "that jump");
+    // the feed's copy carries the pin, as a chat's history does
+    let feed: Vec<Message> =
+        get_json(&w.app, &w.sam, &format!("/channels/{}/clips", clips.id)).await;
+    assert!(feed.iter().find(|m| m.id == c.id).unwrap().pin.is_some());
+
+    assert_eq!(pin(&w.app, &w.jo, c.id, "hour").await.status(), 403);
+    assert_eq!(pin(&w.app, &w.alex, c.id, "hour").await.status(), 409);
+    assert_eq!(pin(&w.app, &w.alex, r.id, "hour").await.status(), 400);
+    assert_eq!(unpin(&w.app, &w.alex, c.id).await, 204);
+    match next_pin_event(&mut ws).await {
+        Some(Event::MessageUnpinned { message_id, .. }) => assert_eq!(message_id, c.id),
+        other => panic!("expected MessageUnpinned, got {other:?}"),
+    }
+    assert!(pins(&w.app, &w.alex, clips.id).await.is_empty());
+
+    // deleting a pinned clip drops its pin
+    assert_eq!(pin(&w.app, &w.alex, c.id, "forever").await.status(), 200);
+    delete_message(&w, &w.alex, c.id).await;
+    assert!(pins(&w.app, &w.alex, clips.id).await.is_empty());
+}
+
+#[tokio::test]
+async fn quotes_and_clips_channels_keep_the_cap() {
+    let w = world().await;
+    let quotes = add_channel(&w, "quotes").await;
+    let q = post_quote(&w, &w.alex, quotes.id, "one too many").await;
+    fill_to_cap(&w, quotes.id).await;
+    let r = pin(&w.app, &w.alex, q.id, "hour").await;
+    assert_eq!(r.status(), 409);
+    let e: ApiError = r.json().await.unwrap();
+    assert!(e.message.contains("Unpin something first"), "{}", e.message);
+
+    let clips = add_channel(&w, "clips").await;
+    let c = post_clip(&w, &w.alex, clips.id, "").await;
+    fill_to_cap(&w, clips.id).await;
+    assert_eq!(pin(&w.app, &w.alex, c.id, "hour").await.status(), 409);
 }

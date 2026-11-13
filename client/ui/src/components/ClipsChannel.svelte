@@ -224,7 +224,7 @@
 </script>
 
 <div class="chan" class:with-replies={!!repliesRoot} bind:this={chan}>
-  <ClipsHeader {channelId} {serverId} {filter} onFilter={(f) => (filter = f)} {view} onShare={share} />
+  <ClipsHeader {channelId} {serverId} {filter} onFilter={(f) => (filter = f)} {view} onShare={share} onOpenPinned={openReplies} />
   <ClipFeed {channelId} {filter} layout={view} onOpenReplies={openReplies} {unsentReplies} {pending} />
   {#if repliesRoot}
     {#key repliesRoot.id}

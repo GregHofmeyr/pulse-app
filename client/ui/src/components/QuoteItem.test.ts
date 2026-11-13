@@ -390,11 +390,20 @@ describe('QuoteItem', () => {
     expect(awardBtn(1)).toBeNull()
     // my own picture still has Save image (#206)
     openMenu(0)
-    expect(items()).toEqual(['Save image'])
+    expect(items()).toEqual(['Save image', 'Pin quote'])
     document.querySelector('[role=menu]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     flushSync()
+    // the whole quote can still be pinned from it (#257); where the quote can't be pinned (a QotY option), no menu
     lines[1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
-    lines[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true }))
+    flushSync()
+    expect(items()).toEqual(['Pin quote'])
+    document.querySelector('[role=menu]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    flushSync()
+    unmount(cmp!); cmp = undefined; document.body.innerHTML = ''
+    show(quote([line({ speaker_id: 'U1', text: '', caption: null })]), { compact: true })
+    const only = document.querySelector<HTMLElement>('.line')!
+    only.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    only.dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true }))
     flushSync()
     expect(document.querySelector('[role=menu]')).toBeNull()
   })
@@ -587,5 +596,78 @@ describe('the person menu on a quote (#135): its poster and its member speakers'
     key(document.activeElement!, 'Escape')
     openMenu(0)
     expect(items()).toContain('Copy quote')
+  })
+})
+
+describe('pins on a quote (#257)', () => {
+  const NOW = Date.parse('2026-11-09T10:00:00.000Z')
+  const pinned = (expires_at: string | null) => ({ pin: { pinned_by: 'U2', pinned_at: '2026-11-09T08:00:00.000Z', expires_at } })
+  const flyout = () => document.querySelector<HTMLElement>('[role=menu][aria-label="Pin quote for"]')
+  const lengths = () => [...(flyout()?.querySelectorAll<HTMLButtonElement>('[role=menuitem]') ?? [])]
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW)
+    ;(await import('../lib/serverClock')).resetServerClock(null)
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it("the line's menu pins the whole quote, for a length picked from the flyout", async () => {
+    show(quote([line()]))
+    openMenu(0)
+    expect(items()).toContain('Pin quote')
+    expect(items()).not.toContain('Unpin quote')
+    item('Pin quote').dispatchEvent(new Event('pointerenter'))
+    flushSync()
+    expect(lengths().map((b) => b.textContent?.trim())).toEqual(['1 hour', '1 day', '1 week', 'Forever'])
+    lengths()[1].click()
+    await settle()
+    expect(calls('pin_message')).toEqual([['pin_message', { messageId: 'M1', duration: 'day' }]])
+    expect(document.querySelector('[role=menu]')).toBeNull()
+  })
+
+  it('a pinned quote offers Unpin quote, and shows the marker by its time', async () => {
+    show(quote([line()], pinned('2026-11-11T13:00:00.000Z')))
+    const mark = document.querySelector<HTMLElement>('.meta .pin-mark')
+    expect(mark?.dataset.tip).toBe('Pinned by sam · 2 days left')
+    expect(mark?.querySelector('svg')?.getAttribute('width')).toBe('14')
+    openMenu(0)
+    expect(items()).not.toContain('Pin quote')
+    item('Unpin quote').click()
+    await settle()
+    expect(calls('unpin_message')).toEqual([['unpin_message', { messageId: 'M1' }]])
+  })
+
+  it('a Forever pin reads without a time; one run out shows nowhere', () => {
+    show(quote([line()], pinned(null)))
+    expect(document.querySelector<HTMLElement>('.pin-mark')?.dataset.tip).toBe('Pinned by sam')
+    unmount(cmp!); cmp = undefined; document.body.innerHTML = ''
+    show(quote([line()], pinned('2026-11-09T09:00:00.000Z')))
+    expect(document.querySelector('.pin-mark')).toBeNull()
+    openMenu(0)
+    expect(items()).toContain('Pin quote')
+  })
+
+  it("a refused pin says why and fetches the chat's pins to set it right", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'pin_message') throw 'This chat already has 50 pins. Unpin something first.'
+      return cmd === 'list_pins' ? [] : undefined
+    })
+    show(quote([line()]))
+    openMenu(0)
+    item('Pin quote').dispatchEvent(new Event('pointerenter'))
+    flushSync()
+    lengths()[0].click()
+    await settle()
+    flushSync()
+    expect(document.querySelector('[role=alert]')?.textContent).toBe('This chat already has 50 pins. Unpin something first.')
+    expect(calls('list_pins')).toEqual([['list_pins', { channelId: 'C1' }]])
+  })
+
+  it("a QotY option (compact) has no pin item and no marker", () => {
+    show(quote([line()], pinned(null)), { compact: true })
+    expect(document.querySelector('.pin-mark')).toBeNull()
+    openMenu(0)
+    expect(items()).not.toContain('Pin quote')
+    expect(items()).not.toContain('Unpin quote')
   })
 })

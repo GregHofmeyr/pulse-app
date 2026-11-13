@@ -52,6 +52,33 @@ describe('a clip opened from search', () => {
     expect(ui.openClip).toBeNull()
   })
 
+  // #257: the same rule for a pinned clip: the header's pins list it, and Open shows its panel
+  it("a pinned clip opens its panel from the header's pins", async () => {
+    const pin = { pinned_by: 'U1', pinned_at: '2026-10-01T10:00:00.000Z', expires_at: null }
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'list_pins' ? [{ message: { ...clip, pin }, pin }]
+      : cmd === 'list_replies' ? []
+      : cmd === 'clip_facets' ? { games: [], authors: [] }
+      : undefined)
+    app.state = applyReady(emptyState(), testReady([{ id: 'C1', server_id: 'S1', kind: 'clips', name: 'highlights', position: 0 }], {
+      members: [{ server_id: 'S1', members: [{ user: testMe, nickname: null }] }],
+    }))
+    cmp = mount(ClipsChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    const pinBtn = document.querySelector<HTMLButtonElement>('.head button[aria-label="Pinned clips"]')!
+    expect(pinBtn.classList.contains('hbtn')).toBe(true)
+    expect(pinBtn.querySelector('svg')?.getAttribute('width')).toBe('17')
+    pinBtn.click()
+    flushSync()
+    expect(pinBtn.getAttribute('aria-expanded')).toBe('true')
+    await vi.waitFor(() => expect(document.querySelector('.pins-pop .pin .said')?.textContent).toBe('the clutch'))
+    ;[...document.querySelectorAll<HTMLButtonElement>('.pins-pop .pin button')].find((b) => b.textContent === 'Open')!.click()
+    flushSync()
+    expect(document.querySelector('.pins-pop')).toBeNull()
+    await vi.waitFor(() => expect(document.querySelector('.replies-panel')).not.toBeNull())
+    expect(invoke).toHaveBeenCalledWith('list_replies', expect.objectContaining({ messageId: 'V1' }))
+  })
+
   it("leaves another channel's request alone", () => {
     app.state = applyReady(emptyState(), testReady([{ id: 'C1', server_id: 'S1', kind: 'clips', name: 'highlights', position: 0 }]))
     ui.openClip = { channelId: 'C9', clip: { ...clip, channel_id: 'C9' } }
