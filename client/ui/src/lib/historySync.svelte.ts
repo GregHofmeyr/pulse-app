@@ -71,6 +71,8 @@ export async function refreshHistory(channel: string, apply: (change: () => void
     let i = 0 // the oldest of ours not yet covered
     let cursor: string | null = null // the newest covered, when the next of ours follows it directly
     while (i < ids.length) {
+      // The latest page took the list's place (#329): nothing of ours is left to set right.
+      if (!(app.state.messages[channel] ?? []).some((m) => ours.has(m.id))) break
       let page: Message[]
       let from: string
       let end: boolean

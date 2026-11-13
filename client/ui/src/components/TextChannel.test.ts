@@ -874,3 +874,144 @@ describe('TextChannel: older loaded pages after a reconnect (#263)', () => {
     }
   })
 })
+
+describe('TextChannel: more than a page arriving while away (#329)', () => {
+  const C1 = { id: 'C1', server_id: 'S1', kind: 'text' as const, name: 'general', position: 0 }
+  const read = (last: string, unread: number) => ({ read_states: [{ channel_id: 'C1', last_read_message_id: last, unread, mentions: 0 }] })
+  const ids = () => app.state.messages['C1'].map((m) => m.id)
+  /** No message missing between the oldest and the newest held. */
+  const contiguous = () => ids().every((id, i, all) => i === 0 || Number(id.slice(1)) === Number(all[i - 1].slice(1)) + 1)
+  /** The server: M0001..M`last`, pages as it sends them (an after page newest first). */
+  const serve = (last: number) => {
+    const all = Array.from({ length: last }, (_, i) => msg(i + 1))
+    invoke.mockImplementation(async (cmd: string, a?: { before?: string | null; messageId?: string }) => {
+      if (cmd === 'list_messages') return (a?.before ? all.filter((m) => m.id < a.before!) : all).slice(-50)
+      if (cmd === 'list_messages_after') return all.filter((m) => m.id > a!.messageId!).slice(0, 50).reverse()
+      if (cmd === 'list_messages_around') {
+        const i = all.findIndex((m) => m.id === a!.messageId)
+        return i < 0 ? null : all.slice(Math.max(0, i - 25), i + 25)
+      }
+      return undefined
+    })
+    return all
+  }
+  const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd).length
+  beforeEach(() => {
+    resetState()
+    handleReady(testReady([C1], read('M0200', 0)))
+  })
+  afterEach(() => resetState())
+
+  it('a reader with unread messages picks up where they were: the list goes on from its newest, no hole', async () => {
+    app.state = markHistory(addHistory(app.state, 'C1', page(101, 100)), 'C1', false) // M0101..M0200, all read
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    serve(320) // 120 came while away
+    handleReady(testReady([C1], read('M0200', 120)))
+    flushSync()
+    await vi.waitFor(() => expect(ids()).toContain('M0201'))
+    expect(contiguous()).toBe(true)
+    expect(ids()[0]).toBe('M0101') // what was read stays
+    expect(ids().at(-1)).toBe('M0250')
+    expect(app.state.history['C1'].end).toBe(false) // more below: paging forward reaches the latest
+    expect(document.querySelector('.jump')?.textContent).toBe('Jump to present')
+    unmount(c)
+  })
+
+  it('at the bottom, the first new message comes to the top of the view; reading on pages forward to the latest', async () => {
+    app.state = markHistory(addHistory(app.state, 'C1', page(101, 100)), 'C1', false)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    const list = document.querySelector<HTMLElement>('.list')!
+    const rect = HTMLElement.prototype.getBoundingClientRect
+    // jsdom has no layout: the first message after the old newest sits 900px down the list
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const y = this.dataset.messageId === 'M0201' ? 900 : 0
+      return { top: y, bottom: y + 20, left: 0, right: 0, width: 0, height: 20, x: 0, y, toJSON() {} } as DOMRect
+    }
+    try {
+      list.scrollTop = 0
+      serve(320)
+      handleReady(testReady([C1], read('M0200', 120)))
+      flushSync()
+      await vi.waitFor(() => expect(list.scrollTop).toBe(860)) // with room for the NEW line above it
+      expect(document.querySelector('.newline')).not.toBeNull()
+      // read down to the bottom: the next pages come until the latest, attached again
+      for (let i = 0; i < 3 && app.state.history['C1'].end === false; i++) {
+        Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 1000 })
+        Object.defineProperty(list, 'clientHeight', { configurable: true, value: 1000 })
+        list.dispatchEvent(new Event('scroll'))
+        await vi.waitFor(() => expect(ids().length).toBeGreaterThan(150 + 50 * i))
+      }
+      await vi.waitFor(() => expect(app.state.history['C1'].end).toBe(true))
+      expect(ids().at(-1)).toBe('M0320')
+      expect(contiguous()).toBe(true)
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = rect
+      unmount(c)
+    }
+  })
+
+  it('scrolled up, the view stays where it is', async () => {
+    app.state = markHistory(addHistory(app.state, 'C1', page(101, 100)), 'C1', false)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    const list = document.querySelector<HTMLElement>('.list')!
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 5000 })
+    Object.defineProperty(list, 'clientHeight', { configurable: true, value: 500 })
+    list.scrollTop = 1000
+    list.dispatchEvent(new Event('scroll'))
+    serve(320)
+    handleReady(testReady([C1], read('M0200', 120)))
+    flushSync()
+    await vi.waitFor(() => expect(ids()).toContain('M0250'))
+    await tick()
+    expect(list.scrollTop).toBe(1000)
+    unmount(c)
+  })
+
+  it('a reader caught up elsewhere gets the latest page in place of the old list, which scroll-up fills back', async () => {
+    app.state = markHistory(addHistory(app.state, 'C1', page(101, 100)), 'C1', false)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    serve(320)
+    handleReady(testReady([C1], read('M0320', 0))) // read on another device
+    flushSync()
+    await vi.waitFor(() => expect(ids()).toContain('M0320'))
+    expect(ids()[0]).toBe('M0271')
+    expect(contiguous()).toBe(true)
+    expect(app.state.history['C1']).toMatchObject({ loaded: true, start: false, end: true })
+    // the range reload of the old list stops once that list is gone (no request per old page)
+    await new Promise((r) => setTimeout(r, 0))
+    await tick()
+    expect(calls('list_messages_around')).toBeLessThanOrEqual(1)
+    expect(calls('list_messages_after')).toBe(0)
+    unmount(c)
+  })
+
+  it('a few new messages still join the list as before, attached', async () => {
+    app.state = markHistory(addHistory(app.state, 'C1', page(101, 100)), 'C1', false)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    serve(210)
+    handleReady(testReady([C1], read('M0200', 10)))
+    flushSync()
+    await vi.waitFor(() => expect(ids()).toContain('M0210'))
+    expect(ids()[0]).toBe('M0101')
+    expect(contiguous()).toBe(true)
+    expect(app.state.history['C1']).toMatchObject({ loaded: true, end: true })
+    unmount(c)
+  })
+
+  it('a chat that had reached its start keeps that through a reconnect', async () => {
+    serve(20)
+    app.state = markHistory(addHistory(app.state, 'C1', page(1, 20)), 'C1', true)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    handleReady(testReady([C1], read('M0020', 0)))
+    flushSync()
+    await vi.waitFor(() => expect(app.state.history['C1']?.loaded).toBe(true))
+    expect(app.state.history['C1'].start).toBe(true)
+    unmount(c)
+  })
+})

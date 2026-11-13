@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyPinList, stageShareIn, applyReady, applyMyVote, emptyState, setPins, addPending, pendingMessage, removePending, restoreUnsent, markHistory, applyLayout, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, setProfile, type AppState, type Pending } from './state'
+import { applyEvent, applyPinList, stageShareIn, applyReady, applyMyVote, emptyState, setPins, addPending, pendingMessage, removePending, restoreUnsent, markHistory, resumePoint, resumeAfter, mergeLatest, applyLayout, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, setProfile, type AppState, type Pending } from './state'
 import { feedKey, clipView, type ClipFilter } from './clips'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
@@ -1639,5 +1639,81 @@ describe('server delete (#184)', () => {
     expect(s.members['S1']).toHaveLength(1)
     expect(s.layouts['S1'].revision).toBe(4)
     expect(s.sounds['SND1']).toBeDefined()
+  })
+})
+
+describe('coming back after a reconnect (#329)', () => {
+  const ids = (from: number, n: number) => Array.from({ length: n }, (_, i) => `M${String(from + i).padStart(4, '0')}`)
+  const newestFirst = (list: string[]) => list.map((id) => msg(id)).reverse()
+  const readAt = (last: string | null, unread: number) => ({ read_states: [{ channel_id: 'C1', last_read_message_id: last, unread, mentions: 0 }] })
+  /** M0101..M0200 loaded, then a reconnect with `read`. */
+  const back = (read: Partial<Ready>, start = false) => {
+    const s = markHistory(addHistory(applyReady(emptyState(), ready()), 'C1', newestFirst(ids(101, 100))), 'C1', start)
+    return applyReady(s, ready(read))
+  }
+
+  it("a Ready keeps a loaded chat's marker, not loaded, with its start and the newest it holds", () => {
+    expect(back({}, true).history['C1']).toEqual({ loaded: false, start: true, end: true, resume: 'M0200' })
+    // a second Ready before it reloaded: a live message since the first may be beyond a hole, so it isn't the point
+    let s = applyEvent(back({}), { t: 'MessageCreated', d: { message: msg('M0400'), nonce: null } }, 0)
+    s = applyReady(s, ready())
+    expect(s.history['C1'].resume).toBe('M0200')
+  })
+
+  it('goes on from the newest held only with unread from within or just after it', () => {
+    expect(resumePoint(back(readAt('M0200', 120)), 'C1')).toBe('M0200')
+    expect(resumePoint(back(readAt('M0150', 170)), 'C1')).toBe('M0200')
+    expect(resumePoint(back(readAt(null, 300)), 'C1')).toBe('M0200')
+    expect(resumePoint(back(readAt('M0320', 0)), 'C1')).toBeNull() // caught up
+    expect(resumePoint(back(readAt('M0300', 20)), 'C1')).toBeNull() // read further elsewhere
+    expect(resumePoint(back({}), 'C1')).toBeNull() // no read state
+    // a live message after the reconnect isn't where it goes on from (the hole would be behind it)
+    expect(resumePoint(applyEvent(back(readAt('M0200', 120)), { t: 'MessageCreated', d: { message: msg('M0321'), nonce: null } }, 0), 'C1')).toBe('M0200')
+    // a chat holding only live messages, never loaded: its latest page
+    let s = applyReady(emptyState(), ready(readAt('M0001', 1)))
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M0002'), nonce: null } }, 0)
+    expect(resumePoint(s, 'C1')).toBeNull()
+  })
+
+  it('a live message since the reconnect inside the latest page leaves no hole behind it', () => {
+    // caught up elsewhere; M0320 came live before the chat was shown, and is the latest page's newest
+    const s = applyEvent(back(readAt('M0319', 0)), { t: 'MessageCreated', d: { message: msg('M0320'), nonce: null } }, 0)
+    const after = mergeLatest(s, 'C1', newestFirst(ids(271, 50)))
+    expect(after.messages['C1'].map((m) => m.id)).toEqual(ids(271, 50))
+  })
+
+  it('a stray live message older than a full latest page is cut off from it, not kept before a hole', () => {
+    let s = applyReady(emptyState(), ready())
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M0100'), nonce: null } }, 0) // never opened
+    s = mergeLatest(s, 'C1', newestFirst(ids(271, 50)))
+    expect(s.messages['C1'].map((m) => m.id)).toEqual(ids(271, 50))
+    expect(s.history['C1']).toEqual({ loaded: true, start: false, end: true })
+  })
+
+  it('a full page on becomes a window paged forward; a live message beyond it waits, noted', () => {
+    let s = back(readAt('M0200', 120))
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M0321'), nonce: null } }, 0) // during the request
+    s = resumeAfter(s, 'C1', newestFirst(ids(201, 50)))
+    expect(s.messages['C1'].map((m) => m.id)).toEqual(ids(101, 150))
+    expect(s.history['C1']).toEqual({ loaded: true, start: false, end: false, missed: ['M0321'] })
+  })
+
+  it('a short page on reaches the latest, live messages kept, the start kept', () => {
+    let s = back(readAt('M0200', 10), true)
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M0211'), nonce: null } }, 0)
+    s = resumeAfter(s, 'C1', newestFirst(ids(201, 10)))
+    expect(s.messages['C1'].map((m) => m.id)).toEqual(ids(101, 111))
+    expect(s.history['C1']).toEqual({ loaded: true, start: true, end: true })
+  })
+
+  it("a full latest page that doesn't meet the list takes its place; one that meets it joins it", () => {
+    let s = back(readAt('M0320', 0), true)
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M0321'), nonce: null } }, 0)
+    const far = mergeLatest(s, 'C1', newestFirst(ids(271, 50)))
+    expect(far.messages['C1'].map((m) => m.id)).toEqual(ids(271, 51)) // the live one newer than the page stays
+    expect(far.history['C1']).toEqual({ loaded: true, start: false, end: true })
+    const near = mergeLatest(back(readAt('M0230', 0), true), 'C1', newestFirst(ids(181, 50)))
+    expect(near.messages['C1'].map((m) => m.id)).toEqual(ids(101, 130))
+    expect(near.history['C1']).toEqual({ loaded: true, start: true, end: true })
   })
 })
