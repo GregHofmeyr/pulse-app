@@ -13,12 +13,14 @@
   import Icon from './Icon.svelte'
   import type { VideoSource } from '../lib/attachments'
 
-  let { message, autoplay = false, compact = false, onDownload, source }: {
+  let { message, autoplay = false, compact = false, onDownload, downloadKey, source }: {
     message: Message
     autoplay?: boolean
     compact?: boolean
     /** Shows the download icon at the top right of the video (#204). */
     onDownload?: () => void
+    /** The download that icon starts (#205): its progress shows on the icon. */
+    downloadKey?: string
     /** Plays this video instead of the message's clip; its first frame stands in for a thumbnail. */
     source?: VideoSource
   } = $props()
@@ -227,7 +229,7 @@
     {#if !playing && !loading && !failed}
       <button class="big" aria-label={source ? 'Play video' : 'Play clip'} onclick={play}><Icon name="play" size={28} /></button>
     {/if}
-    {#if onDownload}<ClipDownload onclick={onDownload} />{/if}
+    {#if onDownload}<ClipDownload onclick={onDownload} key={downloadKey} />{/if}
   </div>
   <div class="bar">
     <button class="ico" aria-label={playing || loading ? 'Pause' : 'Play'} onclick={toggle}><Icon name={playing || loading ? 'pause' : 'play'} /></button>

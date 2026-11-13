@@ -16,6 +16,7 @@
   import UpdateRequired from './routes/UpdateRequired.svelte'
   import Waiting from './routes/Waiting.svelte'
   import Updating from './routes/Updating.svelte'
+  import DownloadAnnouncer from './components/DownloadAnnouncer.svelte'
   import { screenFor } from './lib/screen'
   import { installUpdate, startUpdateListening, updates } from './lib/updates.svelte'
   import { startMediaActivity } from './lib/activityPrefs.svelte'
@@ -134,6 +135,8 @@
 {/if}
 <!-- #82: over everything, so a failed install leaves the screen beneath exactly as it was -->
 {#if updates.installing}<Updating />{/if}
+<!-- #205: downloads starting and finishing, for screen readers -->
+<DownloadAnnouncer />
 
 <style>
   .boot { height: 100%; background: var(--bg-0); }

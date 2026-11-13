@@ -6,6 +6,9 @@
   import type { Attachment } from '../lib/protocol/Attachment'
   import { api, errorText } from '../lib/tauri'
   import { attachmentLink } from '../lib/attachmentLinks'
+  import { saveFile } from '../lib/clipDownload'
+  import { downloads, fileKey } from '../lib/downloads.svelte'
+  import ProgressRing from './ProgressRing.svelte'
 
   let { images, messageId, start = 0, onClose, onError }: {
     images: readonly Attachment[]
@@ -24,8 +27,10 @@
   let zoom = $state(1)
   let original = $state(false)
   let src = $state<string | null>(null)
-  let saving = $state(false)
   const img = $derived(images[index])
+  // Save image (#205): a ring and Cancel while it saves, Saved for a moment
+  const dl = $derived(downloads.view(fileKey(img.id)))
+  const percent = $derived(dl?.phase === 'downloading' && dl.fraction !== null ? Math.round(dl.fraction * 100) : null)
 
   $effect(() => {
     const a = img
@@ -57,17 +62,7 @@
     setZoom(zoom + (e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP))
   }
 
-  async function save() {
-    if (saving) return
-    saving = true
-    try {
-      await api.saveAttachment(messageId, img.id, img.name)
-    } catch (e) {
-      onError?.(errorText(e))
-    } finally {
-      saving = false
-    }
-  }
+  const save = () => void saveFile(messageId, img, (text) => onError?.(text))
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -89,7 +84,16 @@
     <button type="button" class="btn btn-quiet" aria-label="Zoom out" disabled={original || zoom <= ZOOM_MIN} onclick={() => setZoom(zoom - ZOOM_STEP)}>−</button>
     <button type="button" class="btn btn-quiet" aria-label="Zoom in" disabled={original || zoom >= ZOOM_MAX} onclick={() => setZoom(zoom + ZOOM_STEP)}>+</button>
     <button type="button" class="btn btn-quiet" aria-pressed={original} onclick={() => (original = !original)}>{original ? 'Fit to window' : 'Open original size'}</button>
-    <button type="button" class="btn btn-quiet" disabled={saving} onclick={save}><Icon name="download" size={14} /> Save image</button>
+    <button type="button" class="btn btn-quiet save" onclick={save}
+      aria-label={dl?.phase === 'downloading' ? `Cancel saving${percent === null ? '' : `, ${percent}%`}` : undefined}>
+      {#if dl?.phase === 'downloading'}
+        <span class="ring-box"><ProgressRing fraction={dl.fraction} size={16} /></span>{percent === null ? '' : `${percent}% · `}Cancel
+      {:else if dl?.phase === 'saved'}
+        <Icon name="check" size={14} /> Saved
+      {:else}
+        <Icon name="download" size={14} /> Save image
+      {/if}
+    </button>
   </div>
   <button type="button" class="close icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" size={16} /></button>
 </div>
@@ -105,6 +109,8 @@
   .bar { display: flex; align-items: center; gap: 8px; padding: 12px 16px 16px; justify-content: center; flex-wrap: wrap; }
   .name { color: var(--text); font-size: 13px; max-width: 40vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-right: 8px; }
   .count { color: var(--text-3); }
+  .save { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+  .ring-box { position: relative; width: 16px; height: 16px; flex: none; }
   .nav { position: absolute; top: 50%; translate: 0 -50%; }
   .prev { left: 16px; }
   .prev :global(svg) { rotate: 90deg; }

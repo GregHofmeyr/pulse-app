@@ -130,6 +130,8 @@ export type StageResult =
   | { status: 'refused'; name: string; error: string; folder: string | null }
 /** `attachments://progress`: bytes of a send's files stored so far. */
 export type AttachmentProgress = { nonce: string; sent: number; total: number }
+/** `download://progress` (#205): how far a save to disk is, by key (`clip:<message>`, `image:<hash>`, `file:<attachment>`); `total` null = the size isn't known. */
+export type DownloadProgress = { key: string; received: number; total: number | null }
 
 /** Mirrors `clips::ffmpeg::ClipSupport`. */
 export type ClipSupport = { can_send: boolean; reason: string | null }
@@ -251,7 +253,7 @@ export const api = {
   }) => invoke<void>('send_with_attachments', a),
   cancelAttachmentSend: (nonce: string) => invoke<void>('cancel_attachment_send', { nonce }),
   attachmentUrls: (messageId: string) => invoke<AttachmentUrl[]>('attachment_urls', { messageId }),
-  /** `false` when the Save dialog is cancelled. */
+  /** `false` when the Save dialog or the download is cancelled (or this file is already downloading). Progress: `download://progress`, key `file:<attachment id>`. */
   saveAttachment: (messageId: string, attachmentId: string, name: string) =>
     invoke<boolean>('save_attachment', { messageId, attachmentId, name }),
   deleteMessage: (messageId: string) => invoke<void>('delete_message', { messageId }),
@@ -398,10 +400,12 @@ export const api = {
   editClip: (messageId: string, body: EditClipRequest) => invoke<Message>('edit_clip', { messageId, body }),
   /** A link that works for an hour; ask again on every play. */
   clipUrl: (messageId: string) => invoke<ClipUrl>('clip_url', { messageId }),
-  /** The system Save dialog, named from the caption; the original file is written by the Rust core. False when cancelled. */
+  /** The system Save dialog, named from the caption; the original file is written by the Rust core. False when the dialog or the download is cancelled. Progress: `download://progress`, key `clip:<message id>`. */
   saveClip: (messageId: string, caption: string) => invoke<boolean>('save_clip', { messageId, caption }),
   /** Save image (#206): the same Save dialog for a stored image (its full file, never the still), named from the caption. False when cancelled. */
   saveImage: (hash: string, caption: string) => invoke<boolean>('save_image', { hash, caption }),
+  /** Stop a running save_clip / save_image / save_attachment (#205): the partial file is deleted and that call answers false. */
+  cancelDownload: (key: string) => invoke<void>('cancel_download', { key }),
   /** Puts the (frameless) main window in or out of full screen, with a clip's element fullscreen. Resolves to whether it was fullscreen before. */
   setFullscreen: (on: boolean) => invoke<boolean>('set_fullscreen', { on }),
   /** Newest first, 30 a page; `before` pages back. */

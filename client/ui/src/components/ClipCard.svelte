@@ -12,6 +12,7 @@
   import ReactionRow from './ReactionRow.svelte'
   import { formatDuration, gameName } from '../lib/clips'
   import { downloadClip } from '../lib/clipDownload'
+  import { clipKey } from '../lib/downloads.svelte'
   import { mediaUrl } from '../lib/emoji'
   import { suggestedReactions } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
@@ -70,7 +71,7 @@
     onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}>
     <div class="media" class:still={!playing}>
       {#if playing}
-        <ClipPlayer {message} autoplay compact onDownload={download} />
+        <ClipPlayer {message} autoplay compact onDownload={download} downloadKey={clipKey(message.id)} />
       {:else}
         <button type="button" class="thumb" aria-label="Play clip" onclick={onPlay}>
           <img src={mediaUrl(clip.thumb_hash)} alt="" loading="lazy" decoding="async" />
@@ -78,7 +79,7 @@
         </button>
         <span class="duration">{formatDuration(clip.duration_ms)}</span>
         <button type="button" class="fs" aria-label="Play full screen" onclick={() => void playFullscreen()}><Icon name="fullscreen" size={16} /></button>
-        <ClipDownload onclick={download} beside />
+        <ClipDownload onclick={download} key={clipKey(message.id)} beside />
         {#if isNew}<span class="badge-new">new</span>{/if}
       {/if}
     </div>

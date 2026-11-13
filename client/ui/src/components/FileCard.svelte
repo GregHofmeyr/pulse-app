@@ -5,7 +5,9 @@
   import Icon from './Icon.svelte'
   import type { Attachment } from '../lib/protocol/Attachment'
   import { expiresLabel, formatSize, isExecutable, isExpired, RUNS_PROGRAMS } from '../lib/attachments'
-  import { api, errorText } from '../lib/tauri'
+  import ProgressRing from './ProgressRing.svelte'
+  import { saveFile } from '../lib/clipDownload'
+  import { downloads, fileKey } from '../lib/downloads.svelte'
   import { clock } from '../lib/store.svelte'
 
   let { file, messageId, onError }: {
@@ -18,19 +20,15 @@
   const now = $derived(Date.parse(clock.nowIso))
   const expired = $derived(isExpired(file, now))
   const icon = $derived(file.kind === 'video' ? 'film' : file.kind === 'audio' ? 'music' : file.kind === 'image' ? 'image' : 'file')
-  let saving = $state(false)
-
-  async function download() {
-    if (saving) return
-    saving = true
-    try {
-      await api.saveAttachment(messageId, file.id, file.name)
-    } catch (e) {
-      onError?.(errorText(e))
-    } finally {
-      saving = false
-    }
-  }
+  // Download, then (#205) a ring and Cancel while it saves, and Saved for a moment
+  const dl = $derived(downloads.view(fileKey(file.id)))
+  const percent = $derived(dl?.phase === 'downloading' && dl.fraction !== null ? Math.round(dl.fraction * 100) : null)
+  const label = $derived(
+    dl?.phase === 'downloading' ? `Cancel download of ${file.name}${percent === null ? '' : `, ${percent}%`}`
+    : dl?.phase === 'saved' ? `Saved ${file.name}`
+    : `Download ${file.name}`,
+  )
+  const download = () => void saveFile(messageId, file, (text) => onError?.(text))
 </script>
 
 <div class="card">
@@ -42,8 +40,14 @@
   {#if expired}
     <span class="expired">Expired</span>
   {:else}
-    <button class="btn btn-quiet download" type="button" aria-label={`Download ${file.name}`} disabled={saving} onclick={download}>
-      <Icon name="download" size={14} /> Download
+    <button class="btn btn-quiet download" type="button" aria-label={label} onclick={download}>
+      {#if dl?.phase === 'downloading'}
+        <span class="ring-box"><ProgressRing fraction={dl.fraction} size={16} /></span>{percent === null ? '' : `${percent}% · `}Cancel
+      {:else if dl?.phase === 'saved'}
+        <Icon name="check" size={14} /> Saved
+      {:else}
+        <Icon name="download" size={14} /> Download
+      {/if}
     </button>
   {/if}
   {#if runs && !expired}
@@ -62,7 +66,8 @@
   .text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .name { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .size { font-size: 12px; color: var(--text-3); }
-  .download { height: 28px; padding: 0 10px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+  .download { height: 28px; padding: 0 10px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+  .ring-box { position: relative; width: 16px; height: 16px; flex: none; }
   .expired { font-size: 12px; font-weight: 600; color: var(--text-3); }
   .warn { grid-column: 1 / -1; margin: 4px 0 0; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--warn-text); }
 </style>

@@ -10,7 +10,8 @@ import type { Ready } from './protocol/Ready'
 import type { ReportKind } from './protocol/ReportKind'
 import { addPending, applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, setProfile, type AppState, type ConnState, type Pending, type PendingFile } from './state'
 import { attachmentSends } from './attachmentSends.svelte'
-import { api, type AttachmentProgress, type StagedFile } from './tauri'
+import { downloads } from './downloads.svelte'
+import { api, type AttachmentProgress, type DownloadProgress, type StagedFile } from './tauri'
 import { loadUnsent, saveUnsent } from './unsent'
 import { isMuted, messageSound, notifyLevel, onScreen, SOUND_GAP_MS } from './conversations'
 import { dndActive } from './status'
@@ -345,6 +346,7 @@ export async function startListening(): Promise<UnlistenFn> {
     // ...or it was kept back (automatic sending is off): ask the user.
     listen<{ kind: ReportKind }>('pulse://crash-report-held', (e) => (ui.heldReport = e.payload.kind)),
     listen<AttachmentProgress>('attachments://progress', (e) => attachmentSends.progress(e.payload)),
+    listen<DownloadProgress>('download://progress', (e) => downloads.progress(e.payload)),
     listen<{ nonce: string; error: string }>('attachments://failed', (e) => attachmentSends.failed(e.payload.nonce, e.payload.error)),
     listen<{ nonce: string; status: 'sent' | 'failed'; message: Message | null }>('pulse://outbox', (e) => {
       const { nonce, status, message } = e.payload

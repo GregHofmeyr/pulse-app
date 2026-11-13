@@ -16,6 +16,7 @@
   import VoterStack from './VoterStack.svelte'
   import { motion } from '../lib/animate.svelte'
   import { saveImage } from '../lib/clipDownload'
+  import { imageKey } from '../lib/downloads.svelte'
   import { InlineError } from '../lib/inlineError.svelte'
   import { canReopen, plural, snapshotSpeakers, speakersOf } from '../lib/quotes'
   import { api } from '../lib/tauri'
@@ -101,7 +102,7 @@
               {@const media = line.media}
               <div class="shot">
                 <QuoteImage {media} caption={line.caption} />
-                <ClipDownload label="Save image" tip="Save image" onclick={() => void saveImage(media, line.caption, inlineError.show)} />
+                <ClipDownload label="Save image" tip="Save image" key={imageKey(media.hash)} onclick={() => void saveImage(media, line.caption, inlineError.show)} />
               </div>
               {#if line.caption}<p class="caption">{line.caption}</p>{/if}
             {:else}
