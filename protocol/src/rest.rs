@@ -2331,7 +2331,10 @@ mod tests {
             pronouns: Option<String>,
             bio: Option<String>,
         }
-        let off = CardProfile { glow: false, ..card };
+        let off = CardProfile {
+            glow: false,
+            ..card
+        };
         let json = serde_json::to_value(&off).unwrap();
         assert_eq!(json["glow"], false);
         let old: OldCardProfile = serde_json::from_value(json).unwrap();
