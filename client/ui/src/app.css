@@ -954,8 +954,9 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
    machine can drop a frame on. WebView2 keeps the grow. The off switches below still win (!important). */
 .webkitgtk .pop-in { animation-name: fade-in; }
 /* Off, not paused: the pause above would hold them on their first, invisible frame (a stream
-   toast arrives while you're in a game). */
-.streaming .pop-in, .streaming .fade-in, .unfocused .pop-in, .unfocused .fade-in { animation: none !important; }
+   toast arrives while you're in a game). Not one that has finished (.entered, lib/entrances.ts): switched back on, it
+   would replay, and focus coming back (a native colour picker's window closing) faded Settings in again. */
+.streaming .pop-in:not(.entered), .streaming .fade-in:not(.entered), .unfocused .pop-in:not(.entered), .unfocused .fade-in:not(.entered) { animation: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .pop-in, .fade-in { animation: none !important; }
 }
