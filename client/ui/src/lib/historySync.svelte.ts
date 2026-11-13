@@ -65,12 +65,17 @@ export async function refreshHistory(channel: string, apply: (change: () => void
   const ids = (app.state.messages[channel] ?? []).map((m) => m.id)
   const ours = new Set(ids)
   const newest = ids[ids.length - 1]
+  // the newest held from before the reconnect (while the chat hasn't reloaded yet), else the newest held
+  const old = app.state.history[channel]?.resume ?? newest ?? ''
   const put = (page: Message[], inSpan: (id: string) => boolean) =>
     apply(() => (app.state = applyRefreshed(app.state, channel, page, (id) => ours.has(id) && inSpan(id), touched)))
   try {
     let i = 0 // the oldest of ours not yet covered
     let cursor: string | null = null // the newest covered, when the next of ours follows it directly
     while (i < ids.length) {
+      // The latest page took the list's place (#329): nothing of the list from before the reconnect is left to set
+      // right (live messages since, kept with the page, are fresh).
+      if (!(app.state.messages[channel] ?? []).some((m) => ours.has(m.id) && m.id <= old)) break
       let page: Message[]
       let from: string
       let end: boolean

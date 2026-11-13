@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 
 import { historySync, noteMessageEvent, refreshHistory } from './historySync.svelte'
 import { app, handleReady, resetState } from './store.svelte'
-import { addHistory, applyEvent, applyRefreshed, loadWindow, markHistory, PAGE } from './state'
+import { addHistory, applyEvent, applyRefreshed, loadWindow, markHistory, mergeLatest, PAGE } from './state'
 import { testReady } from './testReady'
 import type { Message } from './protocol/Message'
 
@@ -57,6 +57,18 @@ beforeEach(() => {
 afterEach(() => resetState())
 
 describe('loaded messages after a reconnect (#263)', () => {
+  it('stops once the latest page took the old list\'s place, a live message kept with it (#329)', async () => {
+    serve(400)
+    handleReady(testReady([TEXT, OTHER]))
+    app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: msg(400), nonce: null } }, 0) // live, since
+    const done = refreshHistory('C1')
+    app.state = mergeLatest(app.state, 'C1', range(351, 400)) // caught up elsewhere: the latest page replaces the list
+    await done
+    expect(app.state.messages['C1'][0].id).toBe(id(351))
+    expect(calls('list_messages_around')).toBeLessThanOrEqual(1) // the one already sent
+    expect(calls('list_messages_after')).toBe(0)
+  })
+
   it('marks every chat with messages loaded', () => {
     expect(historySync.stale).toEqual({})
     app.state = addHistory(app.state, 'C2', [msg(1, {}, 'C2')])

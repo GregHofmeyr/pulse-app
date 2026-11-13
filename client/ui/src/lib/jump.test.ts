@@ -48,6 +48,16 @@ describe('jumpTo', () => {
     expect(ui.jump!.seq).not.toBe(first)
   })
 
+  it('jumping to a held message while the chat reloads after a reconnect loads its window (the reload would replace the list; #329)', async () => {
+    app.state = applyReady(app.state, testReady([{ id: 'C1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 0 }, { id: 'C2', server_id: 'S1', kind: 'text', name: 'general', position: 1 }]))
+    expect(app.state.history['C1'].loaded).toBe(false)
+    invoke.mockImplementation(async (cmd) => (cmd === 'list_messages_around' ? newestFirst(885, 50) : undefined))
+    await jumpTo('C1', 'M0910')
+    expect(invoke).toHaveBeenCalledWith('list_messages_around', { channelId: 'C1', messageId: 'M0910' })
+    expect(app.state.history['C1'].loaded).toBe(true) // so the reload's latest page, when it comes, is dropped
+    expect(ui.jump).toMatchObject({ channelId: 'C1', messageId: 'M0910' })
+  })
+
   it('jumping to a far message loads the window around it', async () => {
     invoke.mockImplementation(async (cmd) => (cmd === 'list_messages_around' ? newestFirst(100, 50) : undefined))
     await jumpTo('C1', 'M0125')

@@ -27,7 +27,7 @@
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { conversationName, firstUnreadIndex, isMuted, isNotes, reanchor, shouldMarkRead } from '../lib/conversations'
-  import { addHistory, addOlder, appendNewer, markHistory, reachLatest, PAGE, pendingMessage, removePending } from '../lib/state'
+  import { addOlder, appendNewer, mergeLatest, reachLatest, landed, resumeAfter, resumePoint, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
   import { pinSync, refreshPins } from '../lib/pinSync.svelte'
   import { historySync, refreshHistory } from '../lib/historySync.svelte'
@@ -71,6 +71,8 @@
   let composer: Composer | undefined = $state()
   let loadingOlder = false
   let fetching: string | null = null
+  /** Room left above a message brought to the top of the view, for the NEW line over it. */
+  const NEW_LINE_ROOM = 40
   const history = $derived(app.state.history[channelId])
   const reachedStart = $derived(!!history?.start)
   /** The list is a window into the past (a jump), not the latest. */
@@ -94,16 +96,28 @@
 
   // Fetch the latest page whenever this channel isn't marked loaded (first view, or after a
   // reconnect cleared the markers). Marked only on success, so an offline failure retries later.
+  // After a reconnect with unread messages you go on from the newest held from before it instead (#329): any number
+  // may have come, and the latest page wouldn't meet the list.
   $effect(() => {
     const c = channelId
     if (history?.loaded || fetching === c) return
     fetching = c
-    api.listMessages(c).then(
+    const resume = untrack(() => resumePoint(app.state, c))
+    const forward = resume !== null
+    const request = forward ? api.listMessagesAfter(c, resume) : api.listMessages(c)
+    request.then(
       async (page) => {
         fetching = null
         // A jump's window got there first: merging the latest page into it would leave a gap.
         if (app.state.history[c]?.loaded) return
-        app.state = markHistory(addHistory(app.state, c, page), c, page.length < PAGE)
+        if (!forward) {
+          app.state = mergeLatest(app.state, c, page)
+          await tick()
+          return void list?.scrollTo({ top: list.scrollHeight })
+        }
+        app.state = resumeAfter(app.state, c, page)
+        // More to come below: where the view lands is in the state (`land`, below), so a view drawn later lands too.
+        if (app.state.history[c]?.end === false) return
         await tick()
         list?.scrollTo({ top: list.scrollHeight })
       },
@@ -138,13 +152,32 @@
     if (list && now) list.scrollTop += now.getBoundingClientRect().top - y0
   }
 
-  // Coming back to a channel whose history is still loaded: nothing is fetched, so nothing above
-  // scrolls, and a fresh list opens at the top. Open at the newest, like a first visit (a jump that
+  // Coming back to a channel whose history is still loaded (or held from before a reconnect, while it reloads):
+  // a fresh list opens at the top. Open at the newest, like a first visit (a jump that
   // brought you here scrolls to its message itself).
   onMount(() => {
-    if (!untrack(() => history?.loaded) || ui.jump?.channelId === channelId) return
+    if (!untrack(() => !!history && messages.length > 0 && !history.openAt) || ui.jump?.channelId === channelId) return
     void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   })
+
+  // A reconnect's reload left more to come below (#329, `resumeAfter`): at the bottom (or opening), the first new
+  // message goes to the top of the view to read on from, the NEW line above it; scrolled up, the view stays where it
+  // is. Your own message sent meanwhile takes you to the latest instead. Once, whichever view draws it first.
+  $effect(() => {
+    const h = history
+    if (!h?.openAt && !h?.toLatest) return
+    untrack(() => void land(h.openAt, !!h.toLatest))
+  })
+  async function land(at: string | undefined, latest: boolean) {
+    app.state = landed(app.state, channelId)
+    if (ui.jump?.channelId === channelId) return // a jump scrolls to its own message
+    if (latest) return void toPresent()
+    if (!at || !atBottom) return
+    drawnAll = true
+    await tick()
+    const el = list?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(at)}"]`)
+    if (list && el) list.scrollTop += el.getBoundingClientRect().top - list.getBoundingClientRect().top - NEW_LINE_ROOM
+  }
 
   // Opened with the pointer (a click on the channel or conversation): you're here to write, so the
   // message box takes the focus, the caret after any draft. Not from the keyboard (arrows or Enter in
@@ -343,8 +376,9 @@
     const newest = messages.at(-1)?.id
     const read = app.state.reads[channelId]?.last_read_message_id ?? null
     const want = shouldMarkRead({ open: panel?.shown ?? true, focused: windowFocus.focused, atBottom })
-    // The bottom of a detached window isn't the latest: only reaching the latest marks it read.
-    if (!newest || !want || detached || (read !== null && newest <= read)) return
+    // The bottom of a detached window isn't the latest: only reaching the latest marks it read. Nor is a list not loaded
+    // yet (reloading after a reconnect, #329): a live message at its bottom may sit past a hole.
+    if (!newest || !want || detached || !history?.loaded || (read !== null && newest <= read)) return
     if (markTimer) clearTimeout(markTimer)
     markTimer = setTimeout(() => void api.markRead(channelId, newest).catch(() => {}), 300)
     return () => {

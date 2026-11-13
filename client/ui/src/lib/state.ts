@@ -145,7 +145,20 @@ export type ClipFeed = { channelId: string; filter: ClipFilter; items: Message[]
 /** Clips per page of a feed (the server's page size). */
 export const CLIP_PAGE = 30
 
-export type History = { loaded: boolean; start: boolean; end: boolean; missed?: string[]; missedMore?: true }
+/** `resume` (a list held from before a reconnect, not yet reloaded; #329): the newest of its contiguous messages, those
+ *  paged in before. Live messages that joined it since may sit beyond a hole after it. Once it reloaded into a window
+ *  paged forward, where the view lands when next drawn: `openAt` the first new message (with the NEW line over it), or
+ *  `toLatest` (your own message came meanwhile: you're at the latest, like sending from a jump's window). */
+export type History = {
+  loaded: boolean
+  start: boolean
+  end: boolean
+  missed?: string[]
+  missedMore?: true
+  resume?: string
+  openAt?: string
+  toLatest?: true
+}
 
 /** Most missed live messages a detached list keeps track of. Pages are contiguous, so a list that
  * holds a kept one holds every older one too; the oldest are dropped first. */
@@ -176,7 +189,19 @@ export function applyReady(s: AppState, r: Ready): AppState {
   const messages = Object.fromEntries(Object.entries(s.messages).filter(([id]) => id in channels))
   // A detached window (a jump into the past) stays as it is: it pages forward to the latest from its
   // bottom. Clearing its marker would merge the latest page into it, leaving a gap.
-  const history = Object.fromEntries(Object.entries(s.history).filter(([id, h]) => id in channels && h.end === false))
+  // Any other loaded chat is reloaded when next shown (#329): its marker stays, not loaded, so the view knows it holds
+  // messages paged in before (to go on from, or to replace) and whether they reach the channel's start.
+  const history = Object.fromEntries(
+    Object.entries(s.history).flatMap(([id, h]): [string, History][] => {
+      if (!(id in channels)) return []
+      if (h.end === false) return [[id, h]]
+      const list = messages[id] ?? []
+      if (!list.length) return []
+      // (a second Ready before it reloaded: live messages since the first may be beyond a hole)
+      const resume = (!h.loaded && h.resume) || list[list.length - 1].id
+      return [[id, { loaded: false, start: h.start, end: true, resume }]]
+    }),
+  )
   const pending = Object.fromEntries(Object.entries(s.pending).filter(([id]) => id in channels))
   return {
     ...s,
@@ -1397,6 +1422,66 @@ export function loadWindow(s: AppState, channel: string, page: Message[], around
 export function loadLatest(s: AppState, channel: string, page: Message[]): AppState {
   const list = sorted(page)
   const h = { ...reached(list, s.history[channel], true), start: list.length < PAGE }
+  return withoutDeadReplies({ ...s, messages: { ...s.messages, [channel]: list }, history: { ...s.history, [channel]: h } }, channel)
+}
+
+// --- Coming back after a reconnect (#329): the chat's loaded list is from before it, and any number of messages may
+// have come since. One page on from its newest can't leave a hole; the latest page can, once more than a page came. ---
+
+/** Where `channel`, holding messages from before a reconnect, goes on from (an `after` page: the newest of those
+ *  messages) rather than taking its latest page, or null. It goes on when you have unread messages from within or just
+ *  after what it holds, so the NEW line and what follows it are reached by reading on, as in a jump's window. Caught up
+ *  (or having read further on another device), your place is the latest. */
+export function resumePoint(s: AppState, channel: string): string | null {
+  const h = s.history[channel]
+  const read = s.reads[channel]
+  if (!h?.resume || h.loaded || !read || read.unread <= 0) return null
+  return read.last_read_message_id === null || read.last_read_message_id <= h.resume ? h.resume : null
+}
+
+/** Add the page fetched after `resumePoint`. A short one reaches the latest (live messages that joined the list since
+ *  the reconnect are within it or just after). A full one leaves more to come: the list becomes a window paged forward
+ *  from its bottom, and a live message beyond the page waits for that paging, noted (no hole). */
+export function resumeAfter(s: AppState, channel: string, page: Message[]): AppState {
+  const start = !!s.history[channel]?.start
+  if (page.length < PAGE) {
+    const next = addHistory(s, channel, page)
+    return { ...next, history: { ...s.history, [channel]: { loaded: true, start, end: true } } }
+  }
+  const last = page.reduce((a, m) => (m.id > a ? m.id : a), '')
+  const held = s.messages[channel] ?? []
+  const first = page.reduce((a, m) => (m.id < a ? m.id : a), last)
+  const beyond = held.filter((m) => m.id > last)
+  const mine = !!s.me && beyond.some((m) => m.author_id === s.me!.id)
+  let h: History = mine ? { loaded: true, start, end: false, toLatest: true } : { loaded: true, start, end: false, openAt: first }
+  for (const m of beyond) h = withMissed(h, m.id)
+  const next = addHistory({ ...s, messages: { ...s.messages, [channel]: held.filter((m) => m.id <= last) } }, channel, page)
+  return { ...next, history: { ...s.history, [channel]: h } }
+}
+
+/** The view has landed where `resumeAfter` asked (or a jump took it elsewhere): the request goes. */
+export function landed(s: AppState, channel: string): AppState {
+  const h = s.history[channel]
+  if (!h || (!h.openAt && !h.toLatest)) return s
+  const { openAt: _at, toLatest: _latest, ...rest } = h
+  return { ...s, history: { ...s.history, [channel]: rest } }
+}
+
+/** Add `channel`'s latest page to what it holds (a first visit, or a reconnect's reload when your place is the latest).
+ *  A full page that doesn't meet what it holds takes the list's place (as "Jump to present" does), keeping only live
+ *  messages newer than it, and scroll-up pages back from it (no hole). Unread messages dropped that way are reached
+ *  again by scrolling up, the NEW line with them. */
+export function mergeLatest(s: AppState, channel: string, page: Message[]): AppState {
+  const held = s.messages[channel] ?? []
+  const first = page.reduce((a, m) => (a === '' || m.id < a ? m.id : a), '')
+  const last = page.reduce((a, m) => (m.id > a ? m.id : a), '')
+  const resume = s.history[channel]?.resume
+  // Held from before a reconnect: they meet the page if their newest is in it. Otherwise only live messages are held
+  // (never paged in, so not contiguous): any older than the page are cut off from it.
+  const meets = page.length < PAGE || (resume ? resume >= first : !held.some((m) => m.id < first))
+  if (meets) return markHistory(addHistory(s, channel, page), channel, page.length < PAGE)
+  const list = sorted([...page, ...held.filter((m) => m.id > last)])
+  const h: History = { loaded: true, start: false, end: true }
   return withoutDeadReplies({ ...s, messages: { ...s.messages, [channel]: list }, history: { ...s.history, [channel]: h } }, channel)
 }
 
