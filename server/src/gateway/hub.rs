@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use pulse_protocol::gateway::{Event, ServerFrame};
 use pulse_protocol::ids::UserId;
@@ -25,6 +25,12 @@ pub const CLOSE_TOO_MANY_CONNECTIONS: u16 = 4006;
 
 pub type ConnId = u64;
 
+/// A connected user's inbox (#306, #327): what they were last told their unread count is (`None`: nothing yet, or
+/// forgotten because it changed with no event of its own), behind their own lock. Every count is read from the
+/// database and sent while it is held, so counts reach their devices in the order they were read: a stale count
+/// can never land after a fresh one, nor make the hub skip one as unchanged.
+pub type InboxSlot = Arc<tokio::sync::Mutex<Option<u32>>>;
+
 pub struct Registration {
     pub id: ConnId,
     pub rx: mpsc::Receiver<ServerFrame>,
@@ -37,6 +43,9 @@ struct Conn {
     token_hash: String,
     tx: mpsc::Sender<ServerFrame>,
     kick: Option<oneshot::Sender<u16>>,
+    /// Its Ready's inbox count has been read: inbox events reach it from then on (one read before would be
+    /// older than its Ready, which supersedes it).
+    inbox: bool,
 }
 
 impl Conn {
@@ -75,9 +84,11 @@ struct Inner {
     presence: tokio::sync::Mutex<()>,
     /// See [`Hub::in_order`].
     ordered: tokio::sync::Mutex<()>,
-    /// The inbox unread count each connected user was last told (#306: Ready, then inbox events), so a read
-    /// point that moves without changing it tells them nothing.
-    inbox_told: Mutex<HashMap<UserId, u32>>,
+    /// Each connected user's [`InboxSlot`]. Locked only while `conns` is held (after it), so a slot is made only
+    /// for someone connected and goes with their last connection.
+    inbox: Mutex<HashMap<UserId, InboxSlot>>,
+    /// The inbox worker's queue (#327, [`Hub::publish_all`]), started on first use.
+    inbox_queue: OnceLock<mpsc::UnboundedSender<(SqlitePool, Vec<crate::inbox::Job>)>>,
     /// Each connection's "Listening to" (#275). Locked only while `conns` is held (after it).
     listening: Mutex<HashMap<ConnId, Held>>,
     /// Each connection's newest listening update, by ticket ([`Hub::listening_ticket`]): one that took longer to
@@ -130,6 +141,7 @@ impl Hub {
                 token_hash,
                 tx,
                 kick: Some(ktx),
+                inbox: false,
             },
         );
         Some(Registration { id, rx, kick: krx })
@@ -155,7 +167,7 @@ impl Hub {
         if let Some(gone) = gone
             && !conns.values().any(|c| c.user == gone.user)
         {
-            self.inner.inbox_told.lock().unwrap().remove(&gone.user);
+            self.inner.inbox.lock().unwrap().remove(&gone.user);
         }
     }
 
@@ -231,22 +243,64 @@ impl Hub {
             .map(|h| h.listening.clone())
     }
 
-    /// Note that `user` is being told their inbox has `unread` unread items (#306); true when that differs
-    /// from what they were last told (or they were told nothing yet).
-    pub fn tell_inbox(&self, user: UserId, unread: u32) -> bool {
-        self.inner.inbox_told.lock().unwrap().insert(user, unread) != Some(unread)
+    /// `user`'s [`InboxSlot`] (made on first use) while they are connected; `None` when they aren't, so a count
+    /// read for someone who has just left never leaves a slot behind.
+    pub fn inbox_slot(&self, user: UserId) -> Option<InboxSlot> {
+        let conns = self.inner.conns.lock().unwrap();
+        if !conns.values().any(|c| c.user == user) {
+            return None;
+        }
+        Some(
+            self.inner
+                .inbox
+                .lock()
+                .unwrap()
+                .entry(user)
+                .or_default()
+                .clone(),
+        )
     }
 
-    /// [`Hub::tell_inbox`] for a count that may not have changed: true (and noted) only when `user` was told a
-    /// count before (their Ready) and this one differs from it.
-    pub fn inbox_changed(&self, user: UserId, unread: u32) -> bool {
-        match self.inner.inbox_told.lock().unwrap().get_mut(&user) {
-            Some(told) if *told != unread => {
-                *told = unread;
-                true
-            }
-            _ => false,
+    /// Send inbox event `event` to its owner's connections that have had their Ready count, if `slot` (held by
+    /// the caller) is still theirs: after a disconnect and reconnect it isn't, and the new Ready supersedes it.
+    pub(crate) fn send_inbox(&self, slot: &InboxSlot, event: Event) {
+        let Some(owner) = event.only_for() else {
+            return;
+        };
+        let mut conns = self.inner.conns.lock().unwrap();
+        if !self
+            .inner
+            .inbox
+            .lock()
+            .unwrap()
+            .get(&owner)
+            .is_some_and(|s| Arc::ptr_eq(s, slot))
+        {
+            return;
         }
+        deliver_where(
+            &mut conns,
+            |c| c.user == owner && c.inbox,
+            &ServerFrame::Event(event),
+        );
+    }
+
+    /// Connection `conn`'s Ready count has been read (under its user's [`InboxSlot`]): inbox events reach it now.
+    pub(crate) fn inbox_ready(&self, conn: ConnId) {
+        if let Some(c) = self.inner.conns.lock().unwrap().get_mut(&conn) {
+            c.inbox = true;
+        }
+    }
+
+    /// Everyone connected.
+    pub fn online_users(&self) -> HashSet<UserId> {
+        self.inner
+            .conns
+            .lock()
+            .unwrap()
+            .values()
+            .map(|c| c.user)
+            .collect()
     }
 
     pub fn is_online(&self, user: UserId) -> bool {
@@ -307,26 +361,51 @@ impl Hub {
         self.inner.ordered.lock().await
     }
 
-    /// Deliver `event` to every connection whose user is in its audience, then the inbox events it implies
-    /// (#306, `inbox::follow_ups`) to their own users' sessions, right behind it.
+    /// Deliver `event` to every connection whose user is in its audience; the inbox events it implies follow
+    /// ([`Hub::publish_all`]).
     pub async fn publish(&self, db: &SqlitePool, event: Event) {
-        let audience = match audience_for(db, &event).await {
-            Ok(a) => a,
-            Err(e) => {
-                tracing::error!(error = ?e, "audience_for failed; event dropped");
-                return;
+        self.publish_all(db, vec![event]).await;
+    }
+
+    /// Deliver each of `events`, in order, to every connection whose user is in its audience. The inbox events
+    /// they imply together (#306, `inbox::follow_ups`: one per person for the whole batch, so a quote's delete
+    /// with all its replies counts each inbox once) are queued for the inbox worker, which reads and sends them
+    /// after: never under the caller's [`Hub::in_order`] (#327). The worker takes the batches in publish order,
+    /// and each person's counts under their [`InboxSlot`].
+    pub async fn publish_all(&self, db: &SqlitePool, events: Vec<Event>) {
+        let mut out = Vec::with_capacity(events.len());
+        for event in events {
+            match audience_for(db, &event).await {
+                Ok(a) => out.push((a, event)),
+                Err(e) => tracing::error!(error = ?e, "audience_for failed; event dropped"),
             }
-        };
-        let follow = crate::inbox::follow_ups(db, self, &event).await;
-        let frame = ServerFrame::Event(event);
-        let mut conns = self.inner.conns.lock().unwrap();
-        deliver(&mut conns, &audience, &frame);
-        for e in follow {
-            // Inbox events are always one user's own (`Event::only_for`).
-            let Some(owner) = e.only_for() else { continue };
-            let to = Audience::Users([owner].into_iter().collect());
-            deliver(&mut conns, &to, &ServerFrame::Event(e));
         }
+        let jobs = crate::inbox::follow_ups(self, out.iter().map(|(_, e)| e));
+        {
+            let mut conns = self.inner.conns.lock().unwrap();
+            for (audience, event) in out {
+                deliver(&mut conns, &audience, &ServerFrame::Event(event));
+            }
+        }
+        if !jobs.is_empty() {
+            self.queue_inbox(db, jobs);
+        }
+    }
+
+    /// Hand `jobs` to the inbox worker, starting it the first time. It holds the hub weakly: it ends with it.
+    fn queue_inbox(&self, db: &SqlitePool, jobs: Vec<crate::inbox::Job>) {
+        let queue = self.inner.inbox_queue.get_or_init(|| {
+            let (tx, mut rx) = mpsc::unbounded_channel::<(SqlitePool, Vec<crate::inbox::Job>)>();
+            let hub: Weak<Inner> = Arc::downgrade(&self.inner);
+            tokio::spawn(async move {
+                while let Some((db, jobs)) = rx.recv().await {
+                    let Some(inner) = hub.upgrade() else { break };
+                    crate::inbox::run(&db, &Hub { inner }, jobs).await;
+                }
+            });
+            tx
+        });
+        let _ = queue.send((db.clone(), jobs));
     }
 
     /// Like [`Hub::publish`], but only to the members of `only` who are also in the event's
@@ -498,8 +577,17 @@ fn deliver(
     audience: &super::audience::Audience,
     frame: &ServerFrame,
 ) {
+    deliver_where(conns, |c| audience.includes(c.user), frame);
+}
+
+/// Queue `frame` for every connection `to` picks; drop connections that can't keep up.
+fn deliver_where(
+    conns: &mut HashMap<ConnId, Conn>,
+    to: impl Fn(&Conn) -> bool,
+    frame: &ServerFrame,
+) {
     conns.retain(|id, c| {
-        if !audience.includes(c.user) {
+        if !to(c) {
             return true;
         }
         match c.tx.try_send(frame.clone()) {
@@ -544,6 +632,38 @@ mod tests {
             "a slot freed"
         );
         assert!(hub.try_register(user, String::new(), 8).is_none());
+    }
+
+    /// #327: a count read for someone who has since left leaves nothing behind, and one read before they came
+    /// back (under the old slot) never reaches the new connection, nor a connection before its Ready count.
+    #[test]
+    fn inbox_slots_go_with_the_last_connection_and_stale_counts_stay_out() {
+        let hub = Hub::default();
+        let alex = UserId::new();
+        let event = |unread| Event::InboxUpdated {
+            user_id: alex,
+            unread,
+            read: vec![],
+            read_upto: None,
+            removed: vec![],
+        };
+        assert!(hub.inbox_slot(alex).is_none(), "not connected");
+        let first = hub.register(alex, String::new());
+        let old = hub.inbox_slot(alex).unwrap();
+        hub.unregister(first.id);
+        assert!(hub.inbox_slot(alex).is_none(), "no slot after they left");
+        assert!(hub.inner.inbox.lock().unwrap().is_empty());
+        let mut again = hub.register(alex, String::new());
+        hub.send_inbox(&hub.inbox_slot(alex).unwrap(), event(1));
+        assert!(again.rx.try_recv().is_err(), "not before its Ready count");
+        hub.inbox_ready(again.id);
+        hub.send_inbox(&old, event(2));
+        assert!(again.rx.try_recv().is_err(), "nothing from the old slot");
+        hub.send_inbox(&hub.inbox_slot(alex).unwrap(), event(3));
+        assert!(matches!(
+            again.rx.try_recv(),
+            Ok(ServerFrame::Event(Event::InboxUpdated { unread: 3, .. }))
+        ));
     }
 
     #[test]

@@ -560,3 +560,207 @@ async fn muting_tells_your_devices_the_new_count_and_an_unchanged_read_tells_not
     f.mark_read(&f.alex_t, f.ch.id, plain.id).await;
     assert!(next_inbox(&mut ws).await.is_none());
 }
+
+impl Fx {
+    async fn unmute_channel(&self, token: &str, ch: ChannelId) {
+        let r = self
+            .app
+            .http
+            .delete(self.app.url(&format!("/mutes/channel/{ch}")))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 204, "unmute");
+    }
+    async fn leave(&self, token: &str, ch: ChannelId, who: UserId) {
+        let r = self
+            .app
+            .http
+            .delete(self.app.url(&format!("/channels/{ch}/members/{who}")))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap();
+        assert!(r.status().is_success(), "leave: {}", r.status());
+    }
+    async fn new_channel(&self, kind: &str, name: &str) -> Channel {
+        let r = post_json(
+            &self.app,
+            &self.alex_t,
+            &format!("/servers/{}/channels", self.ch.server_id.unwrap()),
+            json!({ "kind": kind, "name": name }),
+        )
+        .await;
+        assert_eq!(r.status(), 200, "new channel");
+        r.json().await.unwrap()
+    }
+}
+
+/// #327: the inbox work runs after the publish, not inside it: a send that mentions someone completes while
+/// their inbox is busy, and its item reaches them once it is free.
+
+#[tokio::test]
+async fn a_mention_is_sent_without_waiting_on_the_inbox() {
+    let f = fx().await;
+    let (mut ws, _) = hello(&f.app, &f.alex_t).await;
+    let slot = f.app.hub.inbox_slot(f.alex).expect("alex is connected");
+    let held = slot.lock().await;
+    let m = tokio::time::timeout(
+        Duration::from_secs(2),
+        send(&f.app, &f.sam_t, f.ch.id, "@alex hi"),
+    )
+    .await
+    .expect("the send isn't held up by the inbox");
+    drop(held);
+    match next_inbox(&mut ws).await {
+        Some(Event::InboxItemAdded { item, unread, .. }) => {
+            assert_eq!((item.message.id, unread), (m.id, 1));
+        }
+        other => panic!("expected InboxItemAdded, got {other:?}"),
+    }
+}
+
+/// #327: deleting a quote takes all its replies with it; each person mentioned hears it once, with every
+/// item it took.
+#[tokio::test]
+async fn deleting_a_quote_with_replies_tells_each_person_once() {
+    let f = fx().await;
+    let quotes = f.new_channel("quotes", "quotes").await;
+    let r = post_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/quotes", quotes.id),
+        json!({ "lines": [{ "speaker_id": f.sam, "text": "x" }] }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let quote: Message = r.json().await.unwrap();
+    let mut replies = vec![];
+    for n in 0..3 {
+        let r = post_json(
+            &f.app,
+            &f.sam_t,
+            &format!("/channels/{}/messages", quotes.id),
+            json!({ "content": format!("@alex look {n}"), "thread_root_id": quote.id }),
+        )
+        .await;
+        assert_eq!(r.status(), 200);
+        replies.push(r.json::<Message>().await.unwrap().id);
+    }
+    let (mut ws, ready) = hello(&f.app, &f.alex_t).await;
+    assert_eq!(ready.inbox_unread, Some(3));
+    f.delete(&f.alex_t, quote.id).await;
+    match next_inbox(&mut ws).await {
+        Some(Event::InboxUpdated {
+            unread,
+            mut removed,
+            ..
+        }) => {
+            removed.sort();
+            assert_eq!((unread, removed), (0, replies));
+        }
+        other => panic!("expected one InboxUpdated, got {other:?}"),
+    }
+    assert!(next_inbox(&mut ws).await.is_none(), "only one");
+}
+
+/// #327: counts are read and sent under the person's own lock, so whatever order mutes and reads land in, the
+/// last count a device hears is the true one.
+
+#[tokio::test]
+async fn the_last_count_a_device_hears_is_the_true_one() {
+    let f = fx().await;
+    let mine = send(&f.app, &f.alex_t, f.ch.id, "base").await;
+    f.reply(&f.sam_t, f.ch.id, mine.id, "plain").await;
+    let (mut ws, ready) = hello(&f.app, &f.alex_t).await;
+    assert_eq!(ready.inbox_unread, Some(1));
+    let slot = f.app.hub.inbox_slot(f.alex).unwrap();
+    let held = slot.lock().await;
+    // both land while the inbox is busy: the counts that follow are read after, from where they left it
+    f.mute_channel(&f.alex_t, f.ch.id).await;
+    f.unmute_channel(&f.alex_t, f.ch.id).await;
+    drop(held);
+    let mut last = 1;
+    while let Some(e) = next_inbox(&mut ws).await {
+        if let Event::InboxUpdated { unread, .. } = e {
+            last = unread;
+        }
+    }
+    assert_eq!(last, f.unread(&f.alex_t).await);
+    assert_eq!(last, 1);
+}
+
+/// #327: a deleted (then restored) channel changes the count with no inbox event of its own (clients refetch):
+/// what the hub last told is forgotten, so a later count equal to the old one is still told.
+#[tokio::test]
+async fn a_count_after_a_channel_comes_back_is_told() {
+    let f = fx().await;
+    let two = f.new_channel("text", "two").await;
+    send(&f.app, &f.sam_t, two.id, "@alex in two").await;
+    let (mut ws, ready) = hello(&f.app, &f.alex_t).await;
+    assert_eq!(ready.inbox_unread, Some(1));
+    let r = f
+        .app
+        .http
+        .delete(f.app.url(&format!("/channels/{}", two.id)))
+        .bearer_auth(&f.alex_t)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    assert_eq!(f.unread(&f.alex_t).await, 0, "the client refetches this");
+    let r = post_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/restore", two.id),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    assert!(
+        matches!(
+            next_inbox(&mut ws).await,
+            Some(Event::InboxUpdated { unread: 1, .. })
+        ),
+        "the count it's back to is told"
+    );
+}
+
+/// #327: likewise for a group you leave.
+#[tokio::test]
+async fn a_count_after_leaving_a_group_is_told() {
+    let f = fx().await;
+    let mine = send(&f.app, &f.alex_t, f.ch.id, "base").await;
+    f.reply(&f.sam_t, f.ch.id, mine.id, "plain").await;
+    f.mute_channel(&f.alex_t, f.ch.id).await;
+    let group = create_dm(&f.app, &f.sam_t, &[f.alex, f.kim]).await;
+    send(&f.app, &f.sam_t, group.id, "@alex in the group").await;
+    let (mut ws, ready) = hello(&f.app, &f.alex_t).await;
+    assert_eq!(ready.inbox_unread, Some(1));
+    f.leave(&f.alex_t, group.id, f.alex).await;
+    assert_eq!(f.unread(&f.alex_t).await, 0);
+    f.unmute_channel(&f.alex_t, f.ch.id).await;
+    assert!(
+        matches!(
+            next_inbox(&mut ws).await,
+            Some(Event::InboxUpdated { unread: 1, .. })
+        ),
+        "the muted reply counts again, and that's told"
+    );
+}
+
+/// #327: the hygiene prune of inbox reads (by message id) has an index to use.
+#[tokio::test]
+async fn inbox_reads_are_indexed_by_message() {
+    let f = fx().await;
+    let plan: Vec<(i64, i64, i64, String)> =
+        sqlx::query_as("EXPLAIN QUERY PLAN DELETE FROM inbox_reads WHERE message_id < 'x'")
+            .fetch_all(&f.app.db)
+            .await
+            .unwrap();
+    assert!(
+        plan.iter().any(|(_, _, _, d)| d.starts_with("SEARCH")),
+        "{plan:?}"
+    );
+}

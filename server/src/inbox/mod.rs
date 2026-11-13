@@ -5,22 +5,23 @@
 //! before your Mark all read (`inbox_cleared`). Items older than [`DAYS`] are gone.
 //!
 //! Events: [`follow_ups`] turns the events the app already publishes (a new message, a read point or seen
-//! point moving, a mute, a delete) into the inbox events they imply; `Hub::publish` delivers them right
-//! after their trigger, to the user's own sessions only.
+//! point moving, a mute, a delete) into the inbox work they imply; the hub's inbox worker ([`run`]) does it
+//! after the publish (#327), sending each user's events to their own sessions only, under their inbox slot.
 
 pub mod routes;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{MessageId, UserId};
-use pulse_protocol::rest::{INBOX_SNIPPET_CHARS, InboxItem, InboxKind, InboxSnippet};
+use pulse_protocol::rest::{INBOX_SNIPPET_CHARS, InboxItem, InboxKind, InboxSnippet, Message};
 use sqlx::SqlitePool;
 
 use crate::db::now;
 use crate::error::AppResult;
-use crate::gateway::hub::Hub;
+use crate::gateway::hub::{ConnId, Hub};
 use crate::messages::routes::{COLS, Row, fill};
 
 pub use routes::router;
@@ -201,60 +202,229 @@ async fn snippets(
     Ok(out)
 }
 
-/// The inbox events `event` implies, each for one user's own sessions, and only for users who are connected
-/// (a later Ready has it all). A read point, seen point or mute tells them only when their unread count
-/// changed. A failed read is logged and that user's event skipped: the trigger has landed, and their next
+/// Inbox work an event implies for one connected user (#327), done by the hub's inbox worker ([`run`]) after the
+/// publish, outside its `in_order`.
+pub enum Job {
+    /// A new message that mentions them: its item, if it is one of theirs, and the count.
+    Added { user: UserId, message: Arc<Message> },
+    /// Messages that mentioned them were deleted: the items to take out, and the count.
+    Removed { user: UserId, ids: Vec<MessageId> },
+    /// A read point, seen point or mute moved: the count, if it changed from what they were told.
+    Recount { user: UserId },
+    /// Their count changed with no inbox event (a channel or server deleted or restored, a conversation left;
+    /// clients refetch it): forget what they were told, so the next count is told whatever it is.
+    Forget { user: UserId },
+}
+
+/// The inbox work `events` (published together) imply, for users who are connected (a later Ready has it all):
+/// one [`Job::Removed`] per person for all the batch's deletes.
+pub fn follow_ups<'a>(hub: &Hub, events: impl Iterator<Item = &'a Event>) -> Vec<Job> {
+    let mut out: Vec<Job> = Vec::new();
+    let mut online: Option<HashSet<UserId>> = None;
+    for event in events {
+        if !matches!(
+            event,
+            Event::MessageCreated { .. }
+                | Event::MessageDeleted { .. }
+                | Event::ReadStateUpdated { .. }
+                | Event::ThreadSeen { .. }
+                | Event::MutesChanged { .. }
+                | Event::ChannelRemoved { .. }
+                | Event::ChannelDeleted { .. }
+                | Event::ChannelRestored { .. }
+                | Event::ServerDeleted { .. }
+                | Event::ServerRestored { .. }
+        ) {
+            continue;
+        }
+        // read once per batch, and only for an event that may need it
+        let online = online.get_or_insert_with(|| hub.online_users());
+        match event {
+            Event::MessageCreated { message, .. }
+                if !message.deleted && message.mentions.iter().any(|u| online.contains(u)) =>
+            {
+                let message = Arc::new(message.clone());
+                for user in message.mentions.iter().filter(|u| online.contains(u)) {
+                    out.push(Job::Added {
+                        user: *user,
+                        message: message.clone(),
+                    });
+                }
+            }
+            Event::MessageDeleted {
+                message_id,
+                mentions,
+                ..
+            } => {
+                for &user in mentions.iter().filter(|u| online.contains(u)) {
+                    let theirs = out.iter_mut().find_map(|j| match j {
+                        Job::Removed { user: u, ids } if *u == user => Some(ids),
+                        _ => None,
+                    });
+                    match theirs {
+                        Some(ids) => ids.push(*message_id),
+                        None => out.push(Job::Removed {
+                            user,
+                            ids: vec![*message_id],
+                        }),
+                    }
+                }
+            }
+            Event::ReadStateUpdated { user_id, .. }
+            | Event::ThreadSeen { user_id, .. }
+            | Event::MutesChanged { user_id, .. } => {
+                if online.contains(user_id) {
+                    out.push(Job::Recount { user: *user_id });
+                }
+            }
+            Event::ChannelRemoved { user_id, .. } => {
+                if online.contains(user_id) {
+                    out.push(Job::Forget { user: *user_id });
+                }
+            }
+            // server channels are everyone's
+            Event::ChannelDeleted { .. }
+            | Event::ChannelRestored { .. }
+            | Event::ServerDeleted { .. }
+            | Event::ServerRestored { .. } => {
+                out.extend(online.iter().map(|&user| Job::Forget { user }));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Do `jobs`, each under its user's [`InboxSlot`](crate::gateway::hub::InboxSlot): the count is read and sent
+/// while it is held. A failed read is logged and that event skipped: the trigger has landed, and the user's next
 /// Ready (or fetch) has the count.
-pub async fn follow_ups(db: &SqlitePool, hub: &Hub, event: &Event) -> Vec<Event> {
-    let mut out = Vec::new();
-    match event {
-        Event::MessageCreated { message, .. } if !message.deleted => {
-            for &user in message.mentions.iter().filter(|u| hub.is_online(**u)) {
+pub async fn run(db: &SqlitePool, hub: &Hub, jobs: Vec<Job>) {
+    // a reply's snippet, read once however many people the reply pings
+    let mut replied: HashMap<MessageId, Option<InboxSnippet>> = HashMap::new();
+    for job in jobs {
+        match job {
+            Job::Added { user, message } => {
+                let Some(slot) = hub.inbox_slot(user) else {
+                    continue;
+                };
+                let mut told = slot.lock().await;
                 let added = async {
-                    let Some(item) = item(db, user, message.id).await? else {
+                    let Some((explicit, read)) = visible(db, user, message.id).await? else {
                         return Ok(None);
+                    };
+                    let replied_to = match message.reply_to_id {
+                        Some(to) => match replied.get(&to) {
+                            Some(s) => s.clone(),
+                            None => {
+                                let s = snippets(db, &[to]).await?.remove(&to);
+                                replied.insert(to, s.clone());
+                                s
+                            }
+                        },
+                        None => None,
+                    };
+                    let item = InboxItem {
+                        kind: if explicit {
+                            InboxKind::Mention
+                        } else {
+                            InboxKind::Reply
+                        },
+                        replied_to,
+                        message: (*message).clone(),
+                        read,
                     };
                     AppResult::Ok(Some((item, unread(db, user).await?)))
                 };
                 match added.await {
                     Ok(Some((item, unread))) => {
-                        hub.tell_inbox(user, unread);
-                        out.push(Event::InboxItemAdded {
-                            user_id: user,
-                            item: Box::new(item),
-                            unread,
-                        });
+                        *told = Some(unread);
+                        hub.send_inbox(
+                            &slot,
+                            Event::InboxItemAdded {
+                                user_id: user,
+                                item: Box::new(item),
+                                unread,
+                            },
+                        );
                     }
                     Ok(None) => {}
                     Err(e) => tracing::error!(error = ?e, %user, "couldn't read an inbox item"),
                 }
             }
-        }
-        Event::MessageDeleted {
-            message_id,
-            mentions,
-            ..
-        } => {
-            for &user in mentions.iter().filter(|u| hub.is_online(**u)) {
-                if let Some(unread) = count(db, user).await {
-                    hub.tell_inbox(user, unread);
-                    out.push(updated(user, unread, vec![], None, vec![*message_id]));
+            Job::Removed { user, ids } => {
+                tell(db, hub, user, true, |n| updated(user, n, vec![], None, ids)).await;
+            }
+            Job::Recount { user } => {
+                tell(db, hub, user, false, |n| {
+                    updated(user, n, vec![], None, vec![])
+                })
+                .await;
+            }
+            Job::Forget { user } => {
+                if let Some(slot) = hub.inbox_slot(user) {
+                    *slot.lock().await = None;
                 }
             }
         }
-        Event::ReadStateUpdated { user_id, .. }
-        | Event::ThreadSeen { user_id, .. }
-        | Event::MutesChanged { user_id, .. } => {
-            if hub.is_online(*user_id)
-                && let Some(unread) = count(db, *user_id).await
-                && hub.inbox_changed(*user_id, unread)
-            {
-                out.push(updated(*user_id, unread, vec![], None, vec![]));
-            }
-        }
-        _ => {}
     }
-    out
+}
+
+/// Whether `message` is one of `me`'s visible items: (a typed mention, read).
+async fn visible(
+    db: &SqlitePool,
+    me: UserId,
+    message: MessageId,
+) -> AppResult<Option<(bool, bool)>> {
+    Ok(sqlx::query_as::<_, (bool, bool)>(&format!(
+        "SELECT mn.explicit, {READ} {ITEMS} AND mn.message_id = ?"
+    ))
+    .bind(me.to_string())
+    .bind(cutoff(Utc::now()).to_string())
+    .bind(now())
+    .bind(message.to_string())
+    .fetch_optional(db)
+    .await?)
+}
+
+/// Read `user`'s count under their inbox slot and send `make(count)` to their devices: always when `always`
+/// (the event carries more than the count), otherwise only when it differs from what they were last told.
+/// Nothing when they aren't connected.
+pub(crate) async fn tell(
+    db: &SqlitePool,
+    hub: &Hub,
+    user: UserId,
+    always: bool,
+    make: impl FnOnce(u32) -> Event,
+) {
+    let Some(slot) = hub.inbox_slot(user) else {
+        return;
+    };
+    let mut told = slot.lock().await;
+    let Some(n) = count(db, user).await else {
+        return;
+    };
+    if always || *told != Some(n) {
+        *told = Some(n);
+        hub.send_inbox(&slot, make(n));
+    }
+}
+
+/// Ready's inbox count for `me`. For a connection (`conn`) it is read under their inbox slot and counts as told;
+/// their other devices hear it if it differs from what they were told, and this connection gets inbox events
+/// from now on (none read before this count, which supersedes them).
+pub async fn ready(db: &SqlitePool, hub: &Hub, me: UserId, conn: Option<ConnId>) -> AppResult<u32> {
+    let Some((conn, slot)) = conn.and_then(|c| Some((c, hub.inbox_slot(me)?))) else {
+        return unread(db, me).await;
+    };
+    let mut told = slot.lock().await;
+    let n = unread(db, me).await?;
+    if *told != Some(n) {
+        *told = Some(n);
+        // before this connection is ready: it has the count in its Ready
+        hub.send_inbox(&slot, updated(me, n, vec![], None, vec![]));
+    }
+    hub.inbox_ready(conn);
+    Ok(n)
 }
 
 async fn count(db: &SqlitePool, user: UserId) -> Option<u32> {

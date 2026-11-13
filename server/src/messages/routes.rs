@@ -828,35 +828,32 @@ async fn remove(
         // Under this delete's `in_order` guard.
         crate::qoty::ending::announce(&s, ended).await;
     }
-    s.hub
-        .publish(
-            &s.db,
-            Event::MessageDeleted {
-                channel_id: msg.channel_id,
-                message_id: id,
-                author_id: Some(me),
-                // As loaded before the delete (only sending stores mentions): nothing after the
-                // commit may fail the request, since the delete has landed.
-                mentions: msg.mentions,
-                thread_root_id: msg.thread_root_id,
-            },
-        )
-        .await;
+    // The message, then everything its delete took with it, as one batch: whoever they mentioned hears it
+    // in one inbox event (#327), however many replies a quote or clip had.
+    let mut events = vec![Event::MessageDeleted {
+        channel_id: msg.channel_id,
+        message_id: id,
+        author_id: Some(me),
+        // As loaded before the delete (only sending stores mentions): nothing after the
+        // commit may fail the request, since the delete has landed.
+        mentions: msg.mentions,
+        thread_root_id: msg.thread_root_id,
+    }];
     if unpinned {
-        s.hub
-            .publish(
-                &s.db,
-                Event::MessageUnpinned {
-                    channel_id: msg.channel_id,
-                    message_id: id,
-                },
-            )
-            .await;
+        events.push(Event::MessageUnpinned {
+            channel_id: msg.channel_id,
+            message_id: id,
+        });
     }
+    let mut clip = clip;
+    if let Some(d) = deleted.as_mut() {
+        events.append(&mut d.replies);
+    }
+    if let Some(c) = clip.as_mut() {
+        events.append(&mut c.replies);
+    }
+    s.hub.publish_all(&s.db, events).await;
     if let Some(deleted) = deleted {
-        for event in deleted.replies {
-            s.hub.publish(&s.db, event).await;
-        }
         // The delete has landed: a card that can't be read back is logged, not a failed request.
         for card in deleted.cards {
             match load(&s.db, None, card).await {
@@ -877,9 +874,6 @@ async fn remove(
         }
     }
     if let Some(clip) = clip {
-        for event in clip.replies {
-            s.hub.publish(&s.db, event).await;
-        }
         drop(_order);
         remove_clip_object(&s, &clip.key).await;
     } else {
