@@ -808,3 +808,158 @@ async fn inbox_reads_are_indexed_by_message() {
         "{plan:?}"
     );
 }
+
+impl Fx {
+    async fn mute_for(&self, token: &str, kind: &str, id: &str, until: &str) {
+        let r = self
+            .app
+            .http
+            .put(self.app.url("/mutes"))
+            .bearer_auth(token)
+            .json(&json!({"target_kind": kind, "target_id": id, "until": until}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 204, "timed mute");
+    }
+    /// Make `who`'s mute of `id` have run out a while ago (as if its time had passed).
+    async fn run_out(&self, who: UserId, id: &str) {
+        sqlx::query(
+            "UPDATE notification_prefs SET muted_until = '2000-01-01T00:00:00.000Z'
+             WHERE user_id = ? AND target_id = ?",
+        )
+        .bind(who.to_string())
+        .bind(id)
+        .execute(&self.app.db)
+        .await
+        .unwrap();
+    }
+    /// `who`'s pref rows: (target, muted, level).
+    async fn prefs(&self, who: UserId) -> Vec<(String, i64, Option<String>)> {
+        sqlx::query_as(
+            "SELECT target_id, muted, level FROM notification_prefs WHERE user_id = ?
+             ORDER BY target_kind, target_id",
+        )
+        .bind(who.to_string())
+        .fetch_all(&self.app.db)
+        .await
+        .unwrap()
+    }
+    async fn sweep(&self) -> usize {
+        pulse_server::dms::sweep::sweep_mutes(&self.app.state())
+            .await
+            .unwrap()
+    }
+}
+
+/// The next MutesChanged or inbox event (skips other frames); None when none comes within 3 s.
+async fn next_mutes_or_inbox(ws: &mut Socket) -> Option<Event> {
+    loop {
+        match next_frame(ws).await? {
+            ServerFrame::Event(
+                e @ (Event::MutesChanged { .. }
+                | Event::InboxItemAdded { .. }
+                | Event::InboxUpdated { .. }),
+            ) => return Some(e),
+            _ => continue,
+        }
+    }
+}
+
+/// The mutes of the next of those, which must be a MutesChanged.
+async fn next_mutes(ws: &mut Socket) -> Option<Vec<pulse_protocol::rest::Mute>> {
+    match next_mutes_or_inbox(ws).await? {
+        Event::MutesChanged { mutes, .. } => Some(mutes),
+        other => panic!("expected MutesChanged, got {other:?}"),
+    }
+}
+
+/// #325: a timed mute running out is told to every device of its owner (their mutes, then the inbox count the
+/// plain reply it hid adds back), once; mutes still running, and other people's, are left alone.
+#[tokio::test]
+async fn a_timed_mute_running_out_tells_every_device_the_count() {
+    let f = fx().await;
+    let later = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(1));
+    let server = f.ch.server_id.unwrap().to_string();
+    let ch = f.ch.id.to_string();
+    let mine = send(&f.app, &f.alex_t, f.ch.id, "base").await;
+    f.reply(&f.sam_t, f.ch.id, mine.id, "plain").await;
+    // alex: #general on Mentions and muted for an hour, and the server muted for an hour
+    let r = f
+        .app
+        .http
+        .put(f.app.url("/notify-levels"))
+        .bearer_auth(&f.alex_t)
+        .json(&json!({"target_kind": "channel", "target_id": ch, "level": "mentions"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204, "level");
+    f.mute_for(&f.alex_t, "channel", &ch, &later).await;
+    f.mute_for(&f.alex_t, "server", &server, &later).await;
+    // kim: #general muted until turned back on
+    f.mute_channel(&f.kim_t, f.ch.id).await;
+    let (mut one, ready) = hello(&f.app, &f.alex_t).await;
+    let (mut two, _) = hello(&f.app, &f.alex_t).await;
+    assert_eq!(ready.inbox_unread, Some(0), "the plain reply is hidden");
+
+    // nothing has run out: the sweep does nothing (were anything sent, the next reads would see it first)
+    assert_eq!(f.sweep().await, 0);
+
+    // the channel's mute runs out; the server's still hides the reply: the mutes are told, the count isn't
+    f.run_out(f.alex, &ch).await;
+    assert_eq!(f.sweep().await, 1);
+    for ws in [&mut one, &mut two] {
+        let mutes = next_mutes(ws).await.expect("mutes told");
+        assert_eq!(mutes.len(), 1, "only the server's is left: {mutes:?}");
+        // the count is unchanged, so not told: the next events on each device are the next sweep's
+    }
+    // the mute is gone from its row; the row's level stays
+    assert_eq!(
+        f.prefs(f.alex).await,
+        vec![
+            (ch.clone(), 0, Some("mentions".into())),
+            (server.clone(), 1, None)
+        ]
+    );
+
+    // the server's runs out too: the reply counts again, and every device hears it
+    f.run_out(f.alex, &server).await;
+    assert_eq!(f.sweep().await, 1);
+    for ws in [&mut one, &mut two] {
+        assert_eq!(next_mutes(ws).await.expect("mutes told"), vec![]);
+        assert!(matches!(
+            next_mutes_or_inbox(ws).await,
+            Some(Event::InboxUpdated { unread: 1, .. })
+        ));
+    }
+    assert_eq!(f.unread(&f.alex_t).await, 1);
+    // a row left with neither a mute nor a level goes
+    assert_eq!(
+        f.prefs(f.alex).await,
+        vec![(ch.clone(), 0, Some("mentions".into()))]
+    );
+    // swept once: nothing more; kim's mute is untouched
+    assert_eq!(f.sweep().await, 0);
+    assert_eq!(f.prefs(f.kim).await, vec![(ch.clone(), 1, None)]);
+}
+
+/// #325: a mute that ran out while its owner wasn't connected (or the server was down) is cleared on the next
+/// sweep with nothing sent to anyone else, and their next Ready counts what it hid.
+#[tokio::test]
+async fn a_mute_that_ran_out_offline_is_cleared_quietly() {
+    let f = fx().await;
+    let later = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(8));
+    let ch = f.ch.id.to_string();
+    let mine = send(&f.app, &f.alex_t, f.ch.id, "base").await;
+    f.reply(&f.sam_t, f.ch.id, mine.id, "plain").await;
+    f.mute_for(&f.alex_t, "channel", &ch, &later).await;
+    f.run_out(f.alex, &ch).await;
+    let (mut sam_ws, _) = hello(&f.app, &f.sam_t).await;
+    assert_eq!(f.sweep().await, 1);
+    assert!(f.prefs(f.alex).await.is_empty());
+    assert!(next_mutes(&mut sam_ws).await.is_none(), "only alex's own");
+    let (_ws, ready) = hello(&f.app, &f.alex_t).await;
+    assert_eq!(ready.inbox_unread, Some(1));
+    assert!(ready.mutes.is_empty());
+}

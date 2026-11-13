@@ -151,6 +151,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     servers::channels::spawn_sweeper(state.clone());
     servers::deleted::spawn_sweeper(state.clone());
     presence::sweep::spawn_sweeper(state.clone());
+    dms::sweep::spawn_sweeper(state.clone());
     streams::liveness::spawn(
         state.clone(),
         streams::liveness::CHECK_EVERY,
