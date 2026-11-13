@@ -90,7 +90,7 @@ describe('GroupMembers row menu (#135): the server member list\'s person menu, w
     three()
     rightClick(rowOf('sam'))
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for sam')
-    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'appear-offline'])
+    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'appear-offline', 'remove'])
     expect(label('private-nick')).toBe('Change nickname')
     expect(document.activeElement).toBe(items()[0])
   })
@@ -106,6 +106,54 @@ describe('GroupMembers row menu (#135): the server member list\'s person menu, w
     three()
     rightClick(rowOf('alex'))
     expect(ids()).toEqual(['profile'])
+  })
+
+  it('no hover X on the rows: Remove from group lives in the menu (#335)', () => {
+    three()
+    expect(document.querySelector('.members .row .x')).toBeNull()
+    expect(document.querySelector('.members [aria-label^="Remove"], .members [data-tip="Remove from group"]')).toBeNull()
+  })
+
+  it('Remove from group (#335): last, in danger red, after a line; removes them from this group', async () => {
+    three()
+    rightClick(rowOf('kim'))
+    expect(ids().at(-1)).toBe('remove')
+    const item = document.querySelector<HTMLElement>('[role=menu] [data-item="remove"]')!
+    expect(item.textContent?.trim()).toBe('Remove from group')
+    expect(item.classList.contains('danger')).toBe(true)
+    expect(item.getAttribute('role')).toBe('menuitem')
+    expect(item.previousElementSibling?.getAttribute('role')).toBe('separator')
+    pickItem('remove')
+    await tick()
+    expect(invoke.mock.calls.filter(([c]) => c === 'remove_member').map(([, a]) => a)).toEqual([{ channelId: 'G1', userId: 'U3' }])
+    expect(menu()).toBeNull()
+  })
+
+  it('Remove from group: never on your own row (Leave group is the conversation menu\'s)', () => {
+    three()
+    rightClick(rowOf('alex'))
+    expect(ids()).not.toContain('remove')
+  })
+
+  it('Remove from group: a failure shows under the list', async () => {
+    three()
+    invoke.mockImplementation(async (c: unknown) => { if (c === 'remove_member') throw 'not allowed'; return undefined })
+    rightClick(rowOf('sam'))
+    pickItem('remove')
+    await tick(); await tick(); flushSync()
+    expect(document.querySelector('.members [role=alert]')?.textContent).toBeTruthy()
+  })
+
+  it('Remove from group from the keyboard: Shift+F10, End, Enter', async () => {
+    three()
+    const name = rowOf('sam').querySelector<HTMLElement>('.name')!
+    name.focus()
+    key(name, 'F10', { shiftKey: true })
+    key(document.activeElement!, 'End')
+    expect((document.activeElement as HTMLElement).dataset.item).toBe('remove')
+    key(document.activeElement!, 'Enter')
+    await tick()
+    expect(invoke.mock.calls.filter(([c]) => c === 'remove_member').map(([, a]) => a)).toEqual([{ channelId: 'G1', userId: 'U2' }])
   })
 
   it('View profile opens their card outside any server; Message messages them', () => {
