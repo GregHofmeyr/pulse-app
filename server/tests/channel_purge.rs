@@ -374,3 +374,57 @@ async fn two_purges_of_one_channel_both_finish() {
     );
     assert_no_orphans(&w.app).await;
 }
+
+/// Two "Delete now" clicks on one channel (#337): both purges run, and whichever reaches the last
+/// transaction second finds the channel gone. That isn't a 404: the channel is gone, as asked.
+#[tokio::test]
+async fn a_double_delete_now_answers_204_twice() {
+    let w = world().await;
+    fill(&w.app, w.old.id, w.alex.0, 3_000).await;
+    delete_channel(&w, w.old.id).await;
+    let url = w.app.url(&format!("/channels/{}/permanent", w.old.id));
+    let (a, b) = tokio::join!(
+        status(w.app.http.delete(&url), &w.alex.1),
+        status(w.app.http.delete(&url), &w.alex.1),
+    );
+    assert_eq!((a, b), (204, 204));
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM channels WHERE id = ?",
+            &w.old.id.to_string()
+        )
+        .await,
+        0
+    );
+    assert_no_orphans(&w.app).await;
+}
+
+/// "Delete now" racing the sweep (#337): the click answers 204 whichever purge deletes the channel.
+#[tokio::test]
+async fn a_delete_now_racing_the_sweep_answers_204() {
+    let w = world().await;
+    fill(&w.app, w.old.id, w.alex.0, 3_000).await;
+    delete_channel(&w, w.old.id).await;
+    let url = w.app.url(&format!("/channels/{}/permanent", w.old.id));
+    let s = w.app.state();
+    let click = status(w.app.http.delete(&url), &w.alex.1);
+    let sweep = async {
+        // Let the click make the channel due first, so the sweep takes it too.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        pulse_server::servers::channels::purge_expired_batched(&s, chrono::Utc::now(), 300).await
+    };
+    let (click, swept) = tokio::join!(click, sweep);
+    swept.unwrap();
+    assert_eq!(click, 204);
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM channels WHERE id = ?",
+            &w.old.id.to_string()
+        )
+        .await,
+        0
+    );
+    assert_no_orphans(&w.app).await;
+}

@@ -221,6 +221,17 @@ or call that is already open stays up until it drops. To close those at once, re
   against a database migrated past what it knows (e.g. `0004_message_nonce`). Roll back with
   `just restore <the backup that deploy made>` and then `just deploy <previous sha7>`, or, if that build is from
   before provenance (its `just deploy` refusal says so), `CONFIRM=<previous sha7> just deploy-unverified <previous sha7>`.
+- Undoing a migration's schema change is never enough on its own, even for one that only adds an index (the
+  "Rollback = drop the index" notes in `0037_inbox_reads_message.sql` and `0039_message_child_indexes.sql` leave
+  this out; applied migration files can't be edited, sqlx records their checksums). The server runs its migrations
+  with sqlx's default `ignore_missing = false` (`server/src/db.rs`), so an older image refuses to start while
+  `_sqlx_migrations` holds a version it doesn't know, whatever the schema. Either restore the backup the deploy made (above), or undo
+  the change and delete its row in one go, with the server stopped:
+  ```sh
+  sqlite3 data/pulse.db "BEGIN; DROP INDEX messages_reply_to; DROP INDEX thread_reads_root;
+                         DELETE FROM _sqlx_migrations WHERE version = 39; COMMIT;"
+  ```
+  (the example undoes `0039`; roll back newest first, one migration at a time).
 - **Rehearse new migrations before deploying them.** Fetch a fresh backup and decrypt it on your machine, apply the
   new `server/migrations/*.sql` files to the copy with foreign keys off (as `server/src/db.rs` runs them; table
   rebuilds have a guard that fails with them on), check it, then delete the copy:
