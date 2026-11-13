@@ -17,7 +17,8 @@
   import { closeCard, openFull, profileUi } from '../lib/profileCard.svelte'
   import type { CardProfile } from '../lib/protocol/CardProfile'
 
-  const WIDTH = 300
+  /** The quick card's width (ProfileCard: 300px, 12% bigger since #156). */
+  const WIDTH = 336
   const GAP = 8
   /** Room round the card for its glow (the .pop padding): a scrolling box clips shadows at its edge. */
   const GLOW_ROOM = 26
@@ -143,5 +144,5 @@
   /* held (CARD_HOLD_MS): there and focused but not seen; its pop-in plays once it shows */
   .pop.held { opacity: 0; }
   .pop.held > :global(*) { pointer-events: none; }
-  .err { margin: 6px 0 0; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--bg-3); color: var(--text-2); font-size: 12px; max-width: 300px; }
+  .err { margin: 6px 0 0; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--bg-3); color: var(--text-2); font-size: 12px; max-width: 336px; }
 </style>

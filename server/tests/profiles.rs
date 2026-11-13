@@ -486,6 +486,7 @@ fn request() -> UpdateProfileRequest {
         pronouns: None,
         bio: None,
         display_name: None,
+        glow: None,
     }
 }
 
@@ -539,6 +540,7 @@ async fn saves_a_whole_profile_and_tells_everyone() {
         pronouns: Some("they/them".into()),
         bio: Some("one\ntwo\nthree".into()),
         display_name: None,
+        glow: None,
     };
     let r = put_profile(&app, &alex, &req).await;
     assert_eq!(r.status(), 200);
@@ -778,4 +780,46 @@ async fn bio_line_endings_are_normalised_and_blank_lines_trimmed_at_both_ends() 
     r.bio = Some("\n \n\r\n\n\n  a\nb\nc\nd\ne".into());
     let p: Profile = put_profile(&app, &alex, &r).await.json().await.unwrap();
     assert_eq!(p.card.bio.as_deref(), Some("  a\nb\nc\nd\ne"));
+}
+
+/// The card glow (#156): on for everyone to start, the owner turns it off, everyone sees it off
+/// (the profile, the live event), and a save from an older client (no `glow`) leaves it as it is.
+#[tokio::test]
+async fn card_glow_is_saved_and_older_clients_keep_it() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    assert!(profile_of(&app, &sam, alex_id).await.card.glow);
+
+    let mut sam_ws = connected(&app, &sam).await;
+    let mut req = request();
+    req.glow = Some(false);
+    let r = put_profile(&app, &alex, &req).await;
+    assert_eq!(r.status(), 200);
+    let p: Profile = r.json().await.unwrap();
+    assert!(!p.card.glow);
+    match profile_event(&mut sam_ws).await {
+        Event::ProfileUpdated { card, .. } => assert!(!card.glow),
+        _ => unreachable!(),
+    }
+    assert!(!profile_of(&app, &sam, alex_id).await.card.glow);
+
+    // an older client sends the whole profile without the field
+    let mut old = serde_json::to_value(request()).unwrap();
+    old.as_object_mut().unwrap().remove("glow");
+    old.as_object_mut().unwrap().remove("display_name");
+    let r = app
+        .http
+        .put(app.url("/me/profile"))
+        .bearer_auth(&alex)
+        .json(&old)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(!profile_of(&app, &sam, alex_id).await.card.glow);
+
+    req.glow = Some(true);
+    assert_eq!(put_profile(&app, &alex, &req).await.status(), 200);
+    assert!(profile_of(&app, &sam, alex_id).await.card.glow);
 }

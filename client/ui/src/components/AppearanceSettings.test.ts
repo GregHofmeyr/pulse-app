@@ -99,6 +99,10 @@ describe('AppearanceSettings: theme, accent and name readability (#42)', () => {
     expect(pick.value).toBe('#3ddc97')
     pick.value = '#123456'
     pick.dispatchEvent(new Event('input', { bubbles: true }))
+    // once a frame at most (#156 follow-up); the picker closing applies it at once
+    flushSync()
+    expect(html.style.getPropertyValue('--accent')).toBe('#3ddc97')
+    pick.dispatchEvent(new Event('change', { bubbles: true }))
     flushSync()
     expect(html.style.getPropertyValue('--accent')).toBe('#123456')
     expect(html.style.getPropertyValue('--on-accent')).toBe('#ffffff')
@@ -107,6 +111,41 @@ describe('AppearanceSettings: theme, accent and name readability (#42)', () => {
     flushSync()
     expect(html.style.getPropertyValue('--accent')).toBe('')
     expect(localStorage.getItem('pulse.accent')).toBeNull()
+  })
+
+  it('a drag in the colour well (a burst of input events) restyles the app once a frame, with the last colour (#156 follow-up)', async () => {
+    open()
+    const pick = document.querySelector<HTMLInputElement>('input[type=color]')!
+    const writes: string[] = []
+    const set = html.style.setProperty.bind(html.style)
+    html.style.setProperty = (k: string, v: string | null, p?: string) => {
+      if (k === '--accent') writes.push(v ?? '')
+      set(k, v, p)
+    }
+    try {
+      for (const c of ['#101010', '#202020', '#303030', '#404040', '#505050']) {
+        pick.value = c
+        pick.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      expect(writes).toEqual([])
+      await new Promise((r) => requestAnimationFrame(r))
+      flushSync()
+      expect(writes).toEqual(['#505050'])
+      expect(localStorage.getItem('pulse.accent')).toBe('#505050')
+    } finally {
+      html.style.setProperty = set
+    }
+  })
+
+  it('a preset picked wins over a drag still waiting for its frame', async () => {
+    open()
+    const pick = document.querySelector<HTMLInputElement>('input[type=color]')!
+    pick.value = '#101010'
+    pick.dispatchEvent(new Event('input', { bubbles: true }))
+    button('Accent', 'Mint').click()
+    await new Promise((r) => requestAnimationFrame(r))
+    flushSync()
+    expect(html.style.getPropertyValue('--accent')).toBe('#3ddc97')
   })
 
   it('name readability: a three-step slider with a live sample of name styles', () => {

@@ -14,7 +14,7 @@
     text?: string
     interactive?: boolean
     size?: 'normal' | 'card'
-    /** What it sits on, so it's made readable there (#42): the chat and dialogs, the sidebar and member lists, or the profile card's dark island. */
+    /** What it sits on, so it's made readable there (#42): the chat and dialogs, the sidebar and member lists, or a menu (a profile card passes `bg`, its own colour). */
     surface?: NameSurface
     /** The exact colour it sits on, instead of `surface` (a profile card's own surface, #139). */
     bg?: string

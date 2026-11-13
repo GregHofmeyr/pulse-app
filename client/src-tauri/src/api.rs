@@ -4814,6 +4814,7 @@ mod tests {
                     pronouns: Some("they/them".into()),
                     bio: Some("hi".into()),
                     display_name: None,
+                    glow: None,
                 },
             )
             .await

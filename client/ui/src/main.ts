@@ -5,6 +5,7 @@ import './nameFonts.css'
 import './app.css'
 import App from './App.svelte'
 import { markEngine } from './lib/engine'
+import { markFinishedEntrances } from './lib/entrances'
 import { applyTheme } from './lib/theme.svelte'
 import { logUncaughtErrors } from './lib/uiErrors'
 
@@ -15,6 +16,8 @@ logUncaughtErrors()
 applyTheme()
 // The engine's class, before anything opens (#103).
 markEngine()
+// A finished entrance never replays when focus comes back (lib/entrances.ts).
+markFinishedEntrances()
 
 const app = mount(App, {
   target: document.getElementById('app')!,

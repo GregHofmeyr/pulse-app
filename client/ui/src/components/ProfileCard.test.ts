@@ -13,9 +13,9 @@ import ProfileCardPopover, { CARD_HOLD_MS } from './ProfileCardPopover.svelte'
 import { app, noteProfileUpdate, PROFILE_STALE_MS, resetState, ui } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
 import { closeCard, closeFull, openCard, profileUi } from '../lib/profileCard.svelte'
-import { CARD_MIX_LIGHT, mixHex, NEAR_BLACK, NEAR_WHITE, THEME_PRESETS } from '../lib/cardTheme'
+import { cardVars, THEME_PRESETS } from '../lib/cardTheme'
 import { setTheme, setTint } from '../lib/theme.svelte'
-import { contrast } from '../lib/color'
+import { contrast, luminance, parseHex } from '../lib/color'
 import { appearance } from '../lib/appearance.svelte'
 import { badgeStore } from '../lib/badges.svelte'
 import type { User } from '../lib/protocol/User'
@@ -59,12 +59,43 @@ describe('ProfileCard', () => {
   it('renders each preset theme', () => {
     for (const p of THEME_PRESETS) {
       const el = show({ card: card({ theme_top: p.top, theme_bottom: p.bottom }) })
-      expect(el.style.getPropertyValue('--card-top')).toBe(mixHex(p.top, NEAR_BLACK, 0.3))
+      expect(el.style.getPropertyValue('--card-top')).toBe(cardVars(p.top, p.bottom)['--card-top'])
       expect(el.style.getPropertyValue('--glow-bottom')).toBe(p.bottom)
       unmount(cmp!)
       cmp = undefined
       document.body.innerHTML = ''
     }
+  })
+
+  describe('light card colours (#156)', () => {
+    const lum = (c: string) => luminance(parseHex(c)!)
+    it('a pastel card is drawn in its colours as picked, with dark text, in a dark app theme too', () => {
+      setTheme('dark')
+      const el = show({ card: card({ theme_top: '#ffc8e0', theme_bottom: '#ffffff' }) })
+      expect(el.style.getPropertyValue('--card-top')).toBe('#ffc8e0')
+      expect(el.style.getPropertyValue('--card-bottom')).toBe('#ffffff')
+      expect(el.classList.contains('light')).toBe(true)
+      expect(lum(el.style.getPropertyValue('--card-text'))).toBeLessThan(0.02)
+    })
+    it('a dark card keeps light text in a light app theme', () => {
+      setTheme('light')
+      const el = show({ card: card({ theme_top: '#22325e', theme_bottom: '#0d1430' }) })
+      expect(el.classList.contains('light')).toBe(false)
+      expect(lum(el.style.getPropertyValue('--card-text'))).toBeGreaterThan(0.8)
+      setTheme('dark')
+    })
+  })
+
+  describe('the glow (#156)', () => {
+    it('glows unless its owner turned it off; an older server (no field) means on', () => {
+      expect(show().classList.contains('glow')).toBe(true)
+      unmount(cmp!)
+      cmp = undefined
+      expect(show({ card: card({ glow: true }) }).classList.contains('glow')).toBe(true)
+      unmount(cmp!)
+      cmp = undefined
+      expect(show({ card: card({ glow: false }) }).classList.contains('glow')).toBe(false)
+    })
   })
 
   describe('on a light theme (#139)', () => {
@@ -79,16 +110,17 @@ describe('ProfileCard', () => {
       return '#' + [m[2], m[3], m[4]].map((v) => Number(v).toString(16).padStart(2, '0')).join('')
     }
 
-    it('the card turns light (its colours mixed into white) and back, live', () => {
+    it('the card keeps its colours; a light theme only lifts it, live', () => {
       setTheme('light')
       const el = show({ card: card({ theme_top: '#ffb6d9', theme_bottom: '#ffffff' }) })
-      expect(el.style.getPropertyValue('--card-top')).toBe(mixHex('#ffb6d9', NEAR_WHITE, CARD_MIX_LIGHT))
+      expect(el.style.getPropertyValue('--card-top')).toBe('#ffb6d9')
       expect(el.style.getPropertyValue('--card-lift')).toBe('var(--shadow-2)')
-      // white on a white chat would vanish: the edge stands off it
-      expect(el.style.getPropertyValue('--glow-bottom')).not.toBe('#ffffff')
+      // white on a white chat would vanish: the border is a darker shade
+      expect(el.style.getPropertyValue('--card-border-bottom')).not.toBe('#ffffff')
       setTheme('dark')
       flushSync()
-      expect(el.style.getPropertyValue('--card-top')).toBe(mixHex('#ffb6d9', NEAR_BLACK, 0.3))
+      expect(el.style.getPropertyValue('--card-top')).toBe('#ffb6d9')
+      expect(el.style.getPropertyValue('--card-lift')).toBe('0 0 #0000')
     })
 
     it('a light name colour is made readable on the light card itself', () => {
@@ -113,7 +145,8 @@ describe('ProfileCard', () => {
     const el = show({ card: card({ banner_hash: BANNER, pronouns: 'they/them', bio: 'hi **there**' }) })
     expect(el.querySelector('.banner img')!.getAttribute('src')).toContain(BANNER)
     expect(el.querySelector('.av')).not.toBeNull()
-    expect(el.querySelector('.av')!.getAttribute('style')).toContain('80px')
+    // the quick card's avatar, 12% bigger since #156 (the full card's stays 80)
+    expect(el.querySelector('.av')!.getAttribute('style')).toContain('90px')
     expect(el.querySelector('.name')!.textContent).toBe('sam')
     expect(el.querySelector('.handle')!.textContent).toBe('@sam · they/them')
     expect(el.querySelector('.bio')!.innerHTML).toContain('<strong>there</strong>')

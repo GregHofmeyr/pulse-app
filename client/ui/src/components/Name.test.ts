@@ -77,12 +77,15 @@ describe('Name', () => {
     expect(contrast(rgb(side.getAttribute('style')!), surfacesFor('light', 'plain').bg1)).toBeGreaterThanOrEqual(7)
     unmount(cmp!)
     document.body.innerHTML = ''
-    // the profile card stays a dark island: the name stays light
-    const island = show({ interactive: false, surface: 'island' })
-    expect(rgb(island.getAttribute('style')!)).toBe('#ffc4a3')
+    // on a profile card it is measured against the card's own colour, whatever the theme (#156): a dark card keeps it
+    // light, a light card darkens it
+    const onDark = show({ interactive: false, bg: '#22325e' })
+    expect(rgb(onDark.getAttribute('style')!)).toBe('#ffc4a3')
+    unmount(cmp!)
+    document.body.innerHTML = ''
     setTheme('dark')
-    flushSync()
-    expect(rgb(island.getAttribute('style')!)).toBe('#ffc4a3')
+    const onLight = show({ interactive: false, bg: '#ffc8e0' })
+    expect(contrast(rgb(onLight.getAttribute('style')!), '#ffc8e0')).toBeGreaterThanOrEqual(4.5)
   })
   it('restyles live when the theme changes, and measures a menu name against the menu', () => {
     setup({ font: null, colors: [] }, '#3b4bd8')

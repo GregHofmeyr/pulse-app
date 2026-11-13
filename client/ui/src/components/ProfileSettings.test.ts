@@ -59,7 +59,13 @@ const previewCard = () => document.querySelector<HTMLElement>('.preview .card')!
 const previewLine = () => document.querySelector<HTMLElement>('.preview .line')!
 const previewName = () => previewLine().querySelector<HTMLElement>('.name')!
 const click = (el: HTMLElement) => { el.click(); flushSync() }
-const setColor = (el: HTMLInputElement, v: string) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); flushSync() }
+// a pick in a native colour picker: its input, then its change as it closes (input alone lands on the next frame)
+const setColor = (el: HTMLInputElement, v: string) => {
+  el.value = v
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  el.dispatchEvent(new Event('change', { bubbles: true }))
+  flushSync()
+}
 const type = (el: HTMLInputElement, v: string) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); flushSync() }
 const bioBox = () => document.querySelector<HTMLElement>('[role=textbox][aria-label="Bio"]')!
 function typeBio(t: string) {
@@ -239,7 +245,7 @@ describe('ProfileSettings', () => {
     const req = (calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request
     expect(req).toEqual({
       avatar_hash: null, banner_hash: null, theme_top: '#1f7a5a', theme_bottom: '#0f2b3a',
-      style: { font: 'fredoka', colors: ['#000000'] }, pronouns: null, bio: 'hello', display_name: 'alex',
+      style: { font: 'fredoka', colors: ['#000000'] }, pronouns: null, bio: 'hello', display_name: 'alex', glow: true,
     })
     const stored = saved({
       user: { ...alex, style: { font: 'fredoka', colors: ['#a8a8a8'] } },
@@ -373,6 +379,72 @@ describe('ProfileSettings', () => {
       await open(saved({ user: { ...alex, display_name: 'Alex A' } }))
       expect(document.querySelector('.nudge')).toBeNull()
     })
+  })
+
+  it('a drag in a colour picker (a burst of input events) redraws the preview once a frame, with the last colour (#156 follow-up)', async () => {
+    await open()
+    click(option('Card theme', 'Custom'))
+    const [top] = document.querySelectorAll<HTMLInputElement>('.theme input[type=color]')
+    const card = previewCard()
+    let redraws = 0
+    const seen = new MutationObserver((m) => (redraws += m.length))
+    seen.observe(card, { attributes: true, attributeFilter: ['style'] })
+    for (const c of ['#101010', '#202020', '#303030', '#404040', '#505050', '#ffb6d9']) {
+      top.value = c
+      top.dispatchEvent(new Event('input', { bubbles: true }))
+      flushSync()
+    }
+    await Promise.resolve()
+    expect(redraws).toBe(0)
+    await new Promise((r) => requestAnimationFrame(r))
+    flushSync()
+    await Promise.resolve()
+    expect(redraws).toBe(1)
+    expect(card.getAttribute('style')).toContain('--glow-top: #ffb6d9')
+    seen.disconnect()
+  })
+
+  it('Save takes a colour still waiting for its frame', async () => {
+    await open()
+    click(option('Card theme', 'Custom'))
+    const [top] = document.querySelectorAll<HTMLInputElement>('.theme input[type=color]')
+    setColor(top, '#202020')
+    top.value = '#ffb6d9'
+    top.dispatchEvent(new Event('input', { bubbles: true }))
+    click(button('Save'))
+    const req = (calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request
+    expect(req.theme_top).toBe('#ffb6d9')
+  })
+
+  it('the glow switch (#156): on by default, saved with the profile, the preview follows it', async () => {
+    const state = await open()
+    const glow = document.querySelector<HTMLInputElement>('input[role=switch]')!
+    expect(glow.closest('label')!.textContent).toContain('Card glow')
+    expect(glow.checked).toBe(true)
+    expect(previewCard().classList.contains('glow')).toBe(true)
+    click(glow)
+    expect(previewCard().classList.contains('glow')).toBe(false)
+    expect(state.dirty).toBe(true)
+    click(button('Save'))
+    const req = (calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request
+    expect(req.glow).toBe(false)
+  })
+
+  it('a saved glow off is what the editor shows', async () => {
+    await open(saved({ card: { ...saved().card, glow: false } }))
+    expect(document.querySelector<HTMLInputElement>('input[role=switch]')!.checked).toBe(false)
+    expect(previewCard().classList.contains('glow')).toBe(false)
+  })
+
+  it('the custom theme shows its colours: on the Custom chip and as hex beside each well (#141)', async () => {
+    await open(saved({ card: { ...saved().card, theme_top: '#ffb6d9', theme_bottom: '#ffffff' } }))
+    const chip = option('Card theme', 'Custom')
+    expect(chip.querySelector<HTMLElement>('.mini')!.style.background).toContain('linear-gradient')
+    const labels = [...document.querySelectorAll('.theme .pick')].map((l) => l.textContent!.replace(/\s+/g, ' ').trim())
+    expect(labels).toEqual(['Top #ffb6d9', 'Bottom #ffffff'])
+    // a preset picked: no custom colours shown
+    click(option('Card theme', 'Night sky'))
+    expect(option('Card theme', 'Custom').querySelector('.mini')).toBeNull()
   })
 
   it('a saved custom card theme is what the editor shows after signing out and in (#139)', async () => {

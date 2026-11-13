@@ -117,6 +117,7 @@ fn profile_request(display_name: Option<&str>) -> UpdateProfileRequest {
         pronouns: None,
         bio: None,
         display_name: display_name.map(str::to_owned),
+        glow: None,
     }
 }
 

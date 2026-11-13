@@ -3,4 +3,9 @@
 /**
  * The parts of a profile card that are not part of [`User`].
  */
-export type CardProfile = { banner_hash: string | null, banner_still: string | null, theme_top: string, theme_bottom: string, pronouns: string | null, bio: string | null, };
+export type CardProfile = { banner_hash: string | null, banner_still: string | null, theme_top: string, theme_bottom: string, pronouns: string | null, bio: string | null, 
+/**
+ * The card glows in its two colours (#156): the owner's choice, the same for everyone who sees
+ * it. Absent from older servers, which always drew the glow: on.
+ */
+glow?: boolean, };

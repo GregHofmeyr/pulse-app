@@ -105,7 +105,8 @@ describe('motion', () => {
   it('entrances are switched off, not paused, while streaming or unfocused (paused, they would stay invisible)', () => {
     expect(rule('.pop-in').getPropertyValue('animation')).toMatch(/^pop-in /)
     expect(rule('.fade-in').getPropertyValue('animation')).toMatch(/^fade-in /)
-    for (const sel of ['.streaming .pop-in', '.streaming .fade-in', '.unfocused .pop-in', '.unfocused .fade-in']) {
+    // …except one that has finished (#156 follow-up): switched back on, it would replay when focus comes back
+    for (const sel of ['.streaming .pop-in:not(.entered)', '.streaming .fade-in:not(.entered)', '.unfocused .pop-in:not(.entered)', '.unfocused .fade-in:not(.entered)']) {
       const off = rule(sel)
       expect(off.getPropertyValue('animation'), sel).toBe('none')
       expect(off.getPropertyPriority('animation'), sel).toBe('important')

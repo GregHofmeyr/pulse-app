@@ -63,3 +63,25 @@ describe('the showcase badges on the card', () => {
     expect(zoom).toBeLessThanOrEqual(0.85)
   })
 })
+
+describe('#156: the glow is a choice, the quick card a little bigger', () => {
+  it('the glow shadow is only on a card that glows; the lift is on every card', () => {
+    const base = rule(/\.card\.svelte-test/)!
+    expect(base).not.toMatch(/glow-top-a/)
+    expect(base).toMatch(/box-shadow:\s*var\(--card-lift\)/)
+    expect(rule(/\.card\.glow\.svelte-test/)).toMatch(/box-shadow:[^;]*var\(--glow-top-a\)[^;]*var\(--glow-bottom-a\)[^;]*var\(--card-lift\)/)
+  })
+  it('the quick card is 10–15% bigger than its old 300px, every size from one scale; the full card keeps its own', () => {
+    const base = rule(/\.card\.svelte-test/)!
+    const k = Number(base.match(/--k:\s*([\d.]+)/)?.[1])
+    expect(k).toBeGreaterThanOrEqual(1.1)
+    expect(k).toBeLessThanOrEqual(1.15)
+    expect(base).toMatch(/width:\s*calc\(300px \* var\(--k\)\)/)
+    expect(rule(/\.card\.full\.svelte-test/)).toMatch(/--k:\s*1;/)
+  })
+  it('the border is the card\'s own stronger shade; panels and the message box are translucent', () => {
+    expect(rule(/\.card\.svelte-test/)).toMatch(/linear-gradient\(var\(--card-border-top\), var\(--card-border-bottom\)\) border-box/)
+    expect(rule(/\.panel\.svelte-test/)).toMatch(/background:\s*var\(--card-panel\)/)
+    expect(rule(/\.msg\.svelte-test/)).toMatch(/background:\s*var\(--card-field\)/)
+  })
+})

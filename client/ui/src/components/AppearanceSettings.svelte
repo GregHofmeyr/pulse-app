@@ -4,7 +4,19 @@
   import { ACCENT_PRESETS, NAME_LEVELS, themeByKey, THEMES, TINTS } from '../lib/themes'
   import { NAME_GRADIENTS, NAME_SOLIDS, nameCss, resolveNameStyle, type NamePreset } from '../lib/nameStyle'
   import type { User } from '../lib/protocol/User'
+  import { onDestroy } from 'svelte'
+  import { perFrame } from '../lib/perFrame'
   const uid = $props.id()
+
+  // The colour well fires `input` many times a frame while you drag, and each new accent restyles the whole app (its
+  // tokens on <html>) and is saved: once a frame, the last colour; `change` (the picker closing) at once (#156 follow-up).
+  const accentIn = perFrame((c: string) => setAccent(c))
+  onDestroy(() => accentIn.flush())
+  // a preset or Theme default wins over a drag still waiting for its frame
+  function pickAccent(c: string | null) {
+    accentIn.cancel()
+    setAccent(c)
+  }
 
   const current = $derived(themeByKey(theme.key))
   // The colour well shows the custom accent, or the theme's own until one is picked.
@@ -63,16 +75,16 @@
   <div class="settings-field">
     <span class="settings-label">ACCENT</span>
     <div class="swatches" role="group" aria-label="Accent">
-      <button type="button" class="default toggle-chip" aria-pressed={theme.accent === null} onclick={() => setAccent(null)}>
+      <button type="button" class="default toggle-chip" aria-pressed={theme.accent === null} onclick={() => pickAccent(null)}>
         <span class="chip" style:background={current.accent} aria-hidden="true"></span>Theme default
       </button>
       {#each ACCENT_PRESETS as p (p.color)}
-        <button type="button" class="chip-btn" aria-label={p.label} aria-pressed={presetPicked(p.color)} onclick={() => setAccent(p.color)}>
+        <button type="button" class="chip-btn" aria-label={p.label} aria-pressed={presetPicked(p.color)} onclick={() => pickAccent(p.color)}>
           <span class="chip" style:background={p.color} aria-hidden="true"></span>
         </button>
       {/each}
       <label class="custom" data-tip="Any colour">
-        <input type="color" value={shownAccent} aria-describedby="{uid}-accent" oninput={(e) => setAccent(e.currentTarget.value)} />
+        <input type="color" value={shownAccent} aria-describedby="{uid}-accent" oninput={(e) => accentIn.push(e.currentTarget.value)} onchange={() => accentIn.flush()} />
         <span>Custom</span>
       </label>
     </div>

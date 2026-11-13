@@ -9,7 +9,7 @@
   import { modal } from '../lib/actions'
   import { app, loadProfile, revalidateProfile } from '../lib/store.svelte'
   import { displayName, serverNick, userOf } from '../lib/selectors'
-  import { DEFAULT_THEME, cardVars, nameStop } from '../lib/cardTheme'
+  import { DEFAULT_THEME, cardTheme, nameStop } from '../lib/cardTheme'
   import { cardLook } from '../lib/theme.svelte'
   import { twemojiUrl } from '../lib/emoji'
   import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
@@ -25,10 +25,10 @@
   const user = $derived(userOf(app.state, userId) ?? cached?.user ?? null)
   const card = $derived(cached?.card ?? PLACEHOLDER)
   const stats = $derived(cached?.stats ?? null)
-  // light or dark as the app theme is (#139); the boards' names are made readable on the boards themselves
-  const look = $derived(cardVars(card.theme_top, card.theme_bottom, cardLook()))
-  const vars = $derived(Object.entries(look).map(([k, v]) => `${k}: ${v}`).join('; '))
-  const boardBg = $derived(nameStop(look['--panel-top'], look['--panel-bottom'], cardLook().light))
+  // the card's own colours, its text light or dark from them (#156); the boards' names are made readable on the boards
+  const look = $derived(cardTheme(card.theme_top, card.theme_bottom, cardLook()))
+  const vars = $derived(Object.entries(look.vars).map(([k, v]) => `${k}: ${v}`).join('; '))
+  const boardBg = $derived(nameStop(look.vars['--panel-top'], look.vars['--panel-bottom'], look.light))
   let failed = $state<string | null>(null)
 
   function load(id: string) {
@@ -189,8 +189,11 @@
         radial-gradient(circle 12px at 12px 12px, #000 98%, transparent) right var(--gutter) bottom / 24px 24px no-repeat;
     }
   }
-  .close { position: absolute; top: 12px; right: 12px; z-index: 1; }
-  .board { border-radius: var(--radius-lg); padding: 14px 16px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); color: var(--card-text); }
+  /* on the card's colours: its own greys (#156) */
+  .close { position: absolute; top: 12px; right: 12px; z-index: 1; background: var(--card-panel); color: var(--card-text-2); }
+  .close:hover:not(:disabled) { background: var(--card-hover); color: var(--card-text); }
+  /* the boards: the card's translucent panel over its gradient (#156) */
+  .board { border-radius: var(--radius-lg); padding: 14px 16px; background: var(--card-panel); color: var(--card-text); }
   h2 { margin: 0 0 10px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--card-text-2); }
   dl { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
   dt { font-size: 12px; color: var(--card-text-2); }

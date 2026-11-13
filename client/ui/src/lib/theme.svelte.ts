@@ -2,8 +2,8 @@
 // them on <html> (data-theme / data-tint pick the app.css block; a custom accent's derived tokens go inline) and tells
 // the app window its background colour, so a restart on Light doesn't flash dark.
 import { invoke } from '@tauri-apps/api/core'
-import { luminance, parseHex } from './color'
-import { CARD_MIX, mixHex, NEAR_BLACK, THEME_PRESETS, type CardLook } from './cardTheme'
+import { parseHex } from './color'
+import { type CardLook } from './cardTheme'
 import { DEFAULT_NAME_LEVEL, DEFAULT_THEME, DEFAULT_TINT, deriveAccent, NAME_LEVELS, surfacesFor, themeByKey, THEMES, TINTS, type NameLevel, type Surfaces, type ThemeKey, type TintKey } from './themes'
 
 const KEYS = { key: 'pulse.theme', tint: 'pulse.lightTint', accent: 'pulse.accent', names: 'pulse.nameReadability' } as const
@@ -64,24 +64,18 @@ export function nameRatio(): number {
   return (NAME_LEVELS.find((l) => l.key === theme.names) ?? NAME_LEVELS[1]).ratio
 }
 
-/** The profile card: a dark island in every theme (lib/cardTheme.ts). Names there are measured against the lightest
- *  colour a preset card can have, so they read on all of them. */
-export const ISLAND_BG = THEME_PRESETS.flatMap((p) => [p.top, p.bottom].map((c) => mixHex(c, NEAR_BLACK, CARD_MIX))).reduce((a, b) => (luminance(parseHex(b)!) > luminance(parseHex(a)!) ? b : a))
-
-/** How profile cards look in the current theme (#139, lib/cardTheme.ts): light on a light theme, standing off the
- *  ground, sidebar and chat it opens over. Reads the theme: call it inside a $derived. */
+/** What profile cards take from the current theme (lib/cardTheme.ts): only whether it is light, where a soft shadow
+ *  lifts them off the page; their colours and text come from the card itself (#156). Reads the theme: call it inside a
+ *  $derived. */
 export function cardLook(): CardLook {
-  if (!themeByKey(theme.key).light) return { light: false, ground: [] }
-  const s = currentSurfaces()
-  return { light: true, ground: [s.bg0, s.bg1, s.bg2] }
+  return { light: themeByKey(theme.key).light }
 }
 
-export type NameSurface = 'chat' | 'side' | 'menu' | 'island'
+export type NameSurface = 'chat' | 'side' | 'menu'
 
-/** The surface a name is measured against: the chat (--bg-2), the sidebar and member lists (--bg-1), a menu
- *  (--surface-menu: the @-mention list, search suggestions), or the card. */
+/** The surface a name is measured against: the chat (--bg-2), the sidebar and member lists (--bg-1), or a menu
+ *  (--surface-menu: the @-mention list, search suggestions). On a profile card, Name is given the card's own colour. */
 export function nameBg(surface: NameSurface): string {
-  if (surface === 'island') return ISLAND_BG
   const s = currentSurfaces()
   return surface === 'side' ? s.bg1 : surface === 'menu' ? s.menu : s.bg2
 }

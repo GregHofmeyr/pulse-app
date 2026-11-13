@@ -8,4 +8,8 @@ export type UpdateProfileRequest = { avatar_hash: string | null, banner_hash: st
 /**
  * The new display name; absent keeps the current one (older clients don't send it).
  */
-display_name: string | null, };
+display_name: string | null, 
+/**
+ * Whether the card glows (#156); absent keeps the current setting (older clients don't send it).
+ */
+glow?: boolean, };

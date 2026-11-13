@@ -20,6 +20,7 @@
   import { lightenForName, NAME_GRADIENTS, NAME_SOLIDS, type NamePreset } from '../lib/nameStyle'
   import type { CropRect } from '../lib/crop'
   import type { Profile } from '../lib/protocol/Profile'
+  import { perFrame } from '../lib/perFrame'
   import Loading from './Loading.svelte'
 
   let { dirty = $bindable(false), settling = $bindable(null) }: {
@@ -29,6 +30,7 @@
     settling?: Promise<void> | null
   } = $props()
 
+  const uid = $props.id()
   type Kind = 'avatar' | 'banner'
   const ACCEPT = 'image/png,image/jpeg,image/gif,image/webp'
   const SAVED_MS = 2000
@@ -125,9 +127,18 @@
     loadedFor = id
     untrack(() => load(id))
   })
+  // A native colour picker fires `input` many times a frame while you drag; each wrote the draft and redrew the preview
+  // card (#156 follow-up). One write per frame, the last value; `change` (the picker closing) writes at once.
+  const pickers = {
+    top: perFrame((v: string) => draft && (draft.themeTop = v)),
+    bottom: perFrame((v: string) => draft && (draft.themeBottom = v)),
+    colours: [0, 1].map((i) => perFrame((v: string) => draft && i < draft.colors.length && (draft.colors[i] = v))),
+  }
+  const allPickers = [pickers.top, pickers.bottom, ...pickers.colours]
   onDestroy(() => {
     gone = true
     clearTimeout(savedTimer)
+    for (const p of allPickers) p.cancel()
   })
 
   function pickFile(kind: Kind, e: Event & { currentTarget: HTMLInputElement }) {
@@ -175,6 +186,8 @@
 
   function setTheme(top: string, bottom: string) {
     if (!draft) return
+    pickers.top.cancel()
+    pickers.bottom.cancel()
     customTheme = false
     draft.themeTop = top
     draft.themeBottom = bottom
@@ -182,6 +195,7 @@
 
   function setColours(colors: string[], custom = false) {
     if (!draft) return
+    for (const p of pickers.colours) p.cancel()
     customColour = custom
     draft.colors = [...colors]
   }
@@ -216,6 +230,7 @@
 
   function reset() {
     if (!profile) return
+    for (const p of allPickers) p.cancel()
     gen.avatar++
     gen.banner++
     uploading = { avatar: false, banner: false }
@@ -226,6 +241,7 @@
   }
 
   function save() {
+    for (const p of allPickers) p.flush()
     if (!draft || saving || !changed || invalid || busy) return
     const p = send($state.snapshot(draft))
     settling = p
@@ -310,14 +326,30 @@
               <button type="button" role="radio" class="swatch" aria-label={p.label} aria-checked={themeKey === p.key} tabindex={themeKey === p.key ? 0 : -1}
                 style:background="linear-gradient({p.top}, {p.bottom})" onclick={() => setTheme(p.top, p.bottom)}></button>
             {/each}
-            <button type="button" role="radio" class="chip toggle-chip" aria-checked={themeKey === null} tabindex={themeKey === null ? 0 : -1} onclick={() => (customTheme = true)}>Custom</button>
+            <!-- Custom shows the colours it holds (#141: next to the presets, pale ones looked like nothing was picked) -->
+            <button type="button" role="radio" class="chip toggle-chip custom-chip" aria-checked={themeKey === null} tabindex={themeKey === null ? 0 : -1} onclick={() => (customTheme = true)}>
+              {#if themeKey === null}<span class="mini" style:background="linear-gradient({draft.themeTop}, {draft.themeBottom})" aria-hidden="true"></span>{/if}Custom</button>
           </div>
           {#if themeKey === null}
             <div class="row">
-              <input type="color" aria-label="Top colour" value={draft.themeTop} oninput={(e) => (draft!.themeTop = e.currentTarget.value)} />
-              <input type="color" aria-label="Bottom colour" value={draft.themeBottom} oninput={(e) => (draft!.themeBottom = e.currentTarget.value)} />
+              <label class="pick">
+                <input type="color" aria-label="Top colour" value={draft.themeTop} oninput={(e) => pickers.top.push(e.currentTarget.value)} onchange={() => pickers.top.flush()} />
+                <span>Top <code>{draft.themeTop}</code></span>
+              </label>
+              <label class="pick">
+                <input type="color" aria-label="Bottom colour" value={draft.themeBottom} oninput={(e) => pickers.bottom.push(e.currentTarget.value)} onchange={() => pickers.bottom.flush()} />
+                <span>Bottom <code>{draft.themeBottom}</code></span>
+              </label>
             </div>
           {/if}
+        </div>
+
+        <div class="settings-field">
+          <label class="toggle-row">
+            <input type="checkbox" role="switch" class="switch" aria-describedby="{uid}-glow" bind:checked={draft.glow} />
+            <span>Card glow</span>
+          </label>
+          <small id="{uid}-glow">A soft glow in your card's colours around it. Everyone sees your card as you set it.</small>
         </div>
 
         <div class="settings-field">
@@ -352,7 +384,7 @@
             <div class="row">
               {#each draft.colors as c, i}
                 <input type="color" aria-label={draft.colors.length >= 2 ? (i === 0 ? 'First colour' : 'Second colour') : 'Colour'} value={c}
-                  oninput={(e) => (draft!.colors[i] = e.currentTarget.value)} />
+                  oninput={(e) => pickers.colours[i].push(e.currentTarget.value)} onchange={() => pickers.colours[i].flush()} />
               {/each}
             </div>
             {#if lightened}<small>Lightened so it reads on dark backgrounds.</small>{/if}
@@ -404,7 +436,8 @@
 {/if}
 
 <style>
-  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; align-items: start; }
+  /* the preview column: the quick card's width (ProfileCard, #156) */
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 336px; gap: 24px; align-items: start; }
   .settings { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
   .preview { position: sticky; top: 0; display: flex; flex-direction: column; gap: 16px; }
   @media (max-width: 860px) {
@@ -418,7 +451,10 @@
   .upload.disabled { opacity: .5; cursor: default; }
   .file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   .swatches, .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  .swatch { width: 40px; height: 28px; border-radius: var(--radius-sm); border: 2px solid transparent; padding: 0; cursor: pointer; }
+  /* a hairline inside every swatch: a white or pale one still reads as a swatch on a light theme (#141) */
+  .swatch { width: 40px; height: 28px; border-radius: var(--radius-sm); border: 2px solid transparent; padding: 0; cursor: pointer; outline: 1px solid var(--line-strong); outline-offset: -1px; }
+  .swatch[aria-checked='true'] { outline: none; }
+  .swatch:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .swatch.round { width: 28px; border-radius: 50%; }
   .swatch[aria-checked='true'] { border-color: var(--text); box-shadow: 0 0 0 2px var(--ring) inset; }
   /* Default (no colour) and Custom: swatch-sized, drawn in the theme's own greys */
@@ -428,7 +464,17 @@
   .swatch.none[aria-checked='true'], .swatch.pick[aria-checked='true'] { border-color: var(--text); }
   /* the shared .toggle-chip (app.css); a font's name keeps the body size, so the sample reads */
   .chip { font-size: 14px; font-weight: 400; }
-  input[type='color'] { width: 44px; height: 30px; padding: 0 2px; border: 1px solid var(--bg-4); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
+  /* The colour wells (#141): the whole well is the colour, with a hairline edge that shows round a white or pale one on
+     any theme, and the hex beside it. */
+  input[type='color'] { width: 44px; height: 32px; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; cursor: pointer; overflow: hidden; }
+  input[type='color']::-webkit-color-swatch-wrapper { padding: 0; }
+  input[type='color']::-webkit-color-swatch { border: 0; border-radius: 0; }
+  input[type='color']::-moz-color-swatch { border: 0; border-radius: 0; }
+  .pick { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); cursor: pointer; }
+  .pick code { font-size: 12px; color: var(--text-3); }
+  .custom-chip { display: inline-flex; align-items: center; gap: 6px; }
+  .mini { width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--line-strong); }
+  .toggle-row { display: flex; align-items: center; gap: 10px; font-weight: 600; cursor: pointer; }
   /* the shared field ring (EmojiBox turns the box's own outline off) */
   .settings-field :global(.bio:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .settings-field :global(.bio) { min-height: 72px; max-height: 160px; overflow-y: auto; padding: 8px 12px; border: 1px solid var(--bg-4); border-radius: var(--radius-md); background: var(--bg-1); white-space: pre-wrap; }
