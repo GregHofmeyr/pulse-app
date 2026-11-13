@@ -66,3 +66,16 @@ export function menuPoint(e: MouseEvent | KeyboardEvent, anchor: HTMLElement): {
   const r = anchor.getBoundingClientRect()
   return { x: r.left, y: r.bottom }
 }
+
+/** The keyboard's way to a context menu: the ContextMenu key, or Shift+F10. */
+export function isMenuKey(e: KeyboardEvent): boolean {
+  return e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)
+}
+
+/** A person row's menu (member lists, #113, #135): where it opens and what gets focus back. From the keyboard that's
+ *  what had focus inside the row; from the pointer, the row's name (else the row). */
+export function rowMenuAt(e: MouseEvent | KeyboardEvent, row: HTMLElement): { x: number; y: number; opener: HTMLElement } {
+  const focused = document.activeElement instanceof HTMLElement && row.contains(document.activeElement) ? document.activeElement : null
+  const opener = (e instanceof KeyboardEvent && focused) || row.querySelector<HTMLElement>('.name') || row
+  return { ...menuPoint(e, opener), opener }
+}

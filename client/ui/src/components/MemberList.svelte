@@ -9,7 +9,7 @@
   import { listeningOf } from '../lib/activity'
   import MemberMenu from './MemberMenu.svelte'
   import { baseName, displayName } from '../lib/selectors'
-  import { menuPoint } from '../lib/participantMenu'
+  import { isMenuKey, rowMenuAt } from '../lib/participantMenu'
   import { openCard } from '../lib/profileCard.svelte'
 
   let { serverId, onMessage }: { serverId: string; onMessage?: (userId: string) => void } = $props()
@@ -51,12 +51,10 @@
   // back to what had it (from the keyboard), else to the row's name.
   let menu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
   function openMenu(userId: string, e: MouseEvent | KeyboardEvent, row: HTMLElement) {
-    const focused = document.activeElement instanceof HTMLElement && row.contains(document.activeElement) ? document.activeElement : null
-    const opener = (e instanceof KeyboardEvent && focused) || row.querySelector<HTMLElement>('.name') || row
-    menu = { userId, ...menuPoint(e, opener), opener }
+    menu = { userId, ...rowMenuAt(e, row) }
   }
   function rowKey(userId: string, e: KeyboardEvent) {
-    if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+    if (isMenuKey(e)) {
       e.preventDefault()
       openMenu(userId, e, e.currentTarget as HTMLElement)
     }

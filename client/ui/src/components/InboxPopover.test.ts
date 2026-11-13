@@ -183,3 +183,34 @@ describe('the inbox (#306)', () => {
     expect(document.querySelector('.none')?.textContent).toContain('Mentions and replies to you land here')
   })
 })
+
+describe("an inbox row's person menu (#135): who wrote it", () => {
+  const menu = () => document.querySelector<HTMLElement>('[role=menu]')
+  const itemIds = () => [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')].map((i) => i.dataset.item)
+  const key = (el: Element, k: string, init: KeyboardEventInit = {}) => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+    flushSync()
+  }
+
+  it('right-click a row: its author\'s menu, in the server it was said in', async () => {
+    await show()
+    const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 })
+    rows()[0].dispatchEvent(e)
+    flushSync()
+    expect(e.defaultPrevented).toBe(true)
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for Sam')
+    expect(itemIds()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'appear-offline'])
+  })
+
+  it('Shift+F10 on a focused row opens it; Esc closes only the menu, focus back on the row', async () => {
+    await show()
+    const row = rows()[0]
+    row.focus()
+    key(row, 'F10', { shiftKey: true })
+    expect(menu()).not.toBeNull()
+    key(document.activeElement!, 'Escape')
+    expect(menu()).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(row)
+  })
+})

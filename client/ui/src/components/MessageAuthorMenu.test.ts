@@ -236,3 +236,63 @@ describe('a message author menu in a DM or group (#189)', () => {
     expect(ids()).toEqual(['profile'])
   })
 })
+
+describe('the person menu on the other people a message names (#135)', () => {
+  const kim = { id: 'U3', username: 'kim', display_name: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+  function showWith(serverId: string | null, over: Partial<Message>, replyTo: Message | null = null) {
+    const m = msg(over)
+    app.state = {
+      ...emptyState(), me: alex,
+      people: { U1: { user: alex, online: true, last_seen_at: null }, U2: { user: sam, online: true, last_seen_at: null }, U3: { user: kim, online: true, last_seen_at: null } },
+      members: { S1: [{ user: alex, nickname: null }, { user: sam, nickname: 'Sammy' }, { user: kim, nickname: null }] },
+      channels: { C1: { id: 'C1', server_id: serverId, kind: serverId ? 'text' : 'group', name: 'c', position: 0 } },
+      messages: { C1: replyTo ? [replyTo, m] : [m] },
+    } as never
+    cmp = mount(MessageItem, { target: document.body, props: {
+      message: m, serverId, name: 'Sammy', nameOf: (id: string | null) => id ?? '', replyTo, mentionNames: ['kim', 'sam', 'alex'],
+      grouped: false, mine: false, onReply: () => {}, onEdit: async () => {}, onDelete: async () => {}, meId: 'U1',
+    } })
+    flushSync()
+  }
+  const pill = () => document.querySelector<HTMLElement>('.content .mention')!
+
+  it("right-click a mention pill: that person's menu (not the message's), in this server", () => {
+    showWith('S1', { content: 'hi @kim' })
+    const e = rightClick(pill())
+    expect(e.defaultPrevented).toBe(true)
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for kim')
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'appear-offline'])
+    pick('profile')
+    expect(profileUi.card).toMatchObject({ userId: 'U3', serverId: 'S1' })
+  })
+
+  it('a mention in a group: no server items; Shift+F10 on the focused pill opens it and Esc gives focus back', () => {
+    showWith(null, { content: 'hi @kim' })
+    const p = pill()
+    p.focus()
+    key(p, 'F10', { shiftKey: true })
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for kim')
+    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'appear-offline'])
+    key(document.activeElement!, 'Escape')
+    expect(menu()).toBeNull()
+    expect(document.activeElement).toBe(p)
+  })
+
+  it('a mention of yourself: just your profile (and your server nickname)', () => {
+    showWith('S1', { content: 'hi @alex' })
+    rightClick(pill())
+    expect(ids()).toEqual(['profile', 'nick'])
+  })
+
+  it("the replied-to author's name: their menu", () => {
+    const original = msg({ id: 'M0', author_id: 'U3', content: 'first' })
+    showWith('S1', { reply_to_id: 'M0' }, original)
+    const name = document.querySelector<HTMLElement>('.reply .name')!
+    rightClick(name)
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for kim')
+    key(document.activeElement!, 'Escape')
+    name.focus()
+    key(name, 'ContextMenu')
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for kim')
+  })
+})

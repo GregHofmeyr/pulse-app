@@ -64,3 +64,32 @@ describe('PeopleBoard', () => {
     vi.mocked(invoke).mockImplementation(async () => undefined)
   })
 })
+
+describe('PeopleBoard person menu (#135)', () => {
+  const card = (name: string) => [...document.querySelectorAll<HTMLElement>('.card')].find((c) => c.textContent?.includes(name))!
+  const menu = () => document.querySelector<HTMLElement>('[role=menu]')
+  const ids = () => [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')].map((i) => i.dataset.item)
+  const key = (el: Element, k: string, init: KeyboardEventInit = {}) => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+    flushSync()
+  }
+
+  it('right-click a card: their person menu, outside servers', () => {
+    const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 })
+    card('sam').dispatchEvent(e)
+    flushSync()
+    expect(e.defaultPrevented).toBe(true)
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for sam')
+    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'appear-offline'])
+  })
+
+  it('Shift+F10 on the name opens it; Esc gives focus back', () => {
+    const name = card('kim').querySelector<HTMLElement>('.name')!
+    name.focus()
+    key(name, 'F10', { shiftKey: true })
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for kim')
+    key(document.activeElement!, 'Escape')
+    expect(menu()).toBeNull()
+    expect(document.activeElement).toBe(name)
+  })
+})

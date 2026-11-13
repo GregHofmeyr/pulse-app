@@ -45,7 +45,7 @@
   import { refreshPins } from '../lib/pinSync.svelte'
   import { serverNow } from '../lib/serverClock'
   import { jumpTo } from '../lib/jump'
-  import { menuPoint } from '../lib/participantMenu'
+  import { isMenuKey, menuPoint } from '../lib/participantMenu'
   import { nameOpts } from '../lib/theme.svelte'
   import type { Attachment } from 'svelte/attachments'
   import type { Message } from '../lib/protocol/Message'
@@ -138,18 +138,29 @@
   // --- the author's menu (#137): right-click (or ContextMenu / Shift+F10 on) the author's name or avatar: View
   // profile, Message, the nickname items. In a DM or group too (#189), with no server nickname; Message only in a
   // group (a DM is already that), and in a DM Mute conversation, as the DM list's menu. ---
-  let authorMenu = $state<{ x: number; y: number; opener: HTMLElement } | null>(null)
+  // The same menu for the other people a message names (#135): a mention pill, and the replied-to author's name.
+  let authorMenu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
   const authorMenuOn = $derived(!!message.author_id && !pending)
   const channelKind = $derived(app.state.channels[message.channel_id]?.kind)
   /** `zone`: the avatar or the name line; the menu returns focus to its button. */
-  function openAuthorMenu(e: MouseEvent | KeyboardEvent, zone: HTMLElement) {
-    if (!authorMenuOn) return
-    const opener = zone.querySelector<HTMLElement>('button') ?? zone
+  function openAuthorMenu(e: MouseEvent | KeyboardEvent, zone: HTMLElement, userId = message.author_id) {
+    if (!userId || (userId === message.author_id && !authorMenuOn)) return
+    const opener = zone.matches('button, [role=button]') ? zone : (zone.querySelector<HTMLElement>('button') ?? zone)
     e.preventDefault()
-    authorMenu = { ...menuPoint(e, opener), opener }
+    authorMenu = { userId, ...menuPoint(e, opener), opener }
   }
   function authorKey(e: KeyboardEvent) {
-    if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) openAuthorMenu(e, e.currentTarget as HTMLElement)
+    if (isMenuKey(e)) openAuthorMenu(e, e.currentTarget as HTMLElement)
+  }
+  function replyKey(e: KeyboardEvent) {
+    if (isMenuKey(e) && replyTo?.author_id) openAuthorMenu(e, e.currentTarget as HTMLElement, replyTo.author_id)
+  }
+  /** A right-click (or ContextMenu / Shift+F10) on a known mention pill: that person's menu, not the message's. */
+  function mentionMenu(e: MouseEvent | KeyboardEvent) {
+    if (e instanceof KeyboardEvent && !isMenuKey(e)) return
+    const pill = (e.target as Element).closest<HTMLElement>('.mention')
+    const id = pill && lookup(mentionName(pill))
+    if (pill && id) openAuthorMenu(e, pill, id)
   }
   // --- the message's own menu (#178): Pin message (a flyout of lengths) or Unpin message. From the action bar's More,
   // or a right-click on the message (the author's name and avatar keep their person menu). Not in quotes or clips
@@ -313,7 +324,7 @@
   <div class="msg" data-message-id={message.id} {...actionBarFocus((v) => (focusIn = v))} class:grouped class:mentioned={!!meId && message.mentions.includes(meId)}
     onpointerenter={() => (rowHover = true)} onpointerleave={() => (rowHover = false)} oncontextmenu={(e) => openMsgMenu(e, e.currentTarget)}>
     {#if replyTo}
-      <div class="reply"><span class="hook"></span><strong>{#if replyTo.author_id}<Name userId={replyTo.author_id} {serverId} text={nameOf(replyTo.author_id)} />{:else}{nameOf(null)}{/if}</strong>
+      <div class="reply"><span class="hook"></span><strong role="presentation" oncontextmenu={(e) => { if (replyTo?.author_id) openAuthorMenu(e, e.currentTarget, replyTo.author_id) }} onkeydown={replyKey}>{#if replyTo.author_id}<Name userId={replyTo.author_id} {serverId} text={nameOf(replyTo.author_id)} />{:else}{nameOf(null)}{/if}</strong>
         <span class="snippet">{replyTo.deleted ? 'original message deleted' : showMentions(shownText(replyTo), lookup, (id) => displayName(app.state, serverId, id)).slice(0, 120)}</span></div>
     {:else if message.reply_to_id}
       <div class="reply"><span class="hook"></span><span class="snippet">original message not loaded</span></div>
@@ -342,7 +353,7 @@
           <!-- a mention pill opens its person's card, by click or (focused: styleMentions makes known pills buttons) Enter or Space -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           {#if !message.caption_is_fallback}
-            {#if !onlyGif}<div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention} onkeydown={openMention}>{@html html}</div>{/if}
+            {#if !onlyGif}<div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention} onkeydown={(e) => { openMention(e); mentionMenu(e) }} oncontextmenu={mentionMenu}>{@html html}</div>{/if}
             {#each gifs as g (g.id)}<GifView gif={g} onError={showError} onFail={() => (failedGifs = [...failedGifs, g.id])} />{/each}
             {#if message.edited_at}<span class="edited">(edited)</span>{/if}
           {/if}
@@ -403,8 +414,8 @@
     onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
     onEndPoll={endable ? endPoll : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
 {/if}
-{#if authorMenu && message.author_id}
-  {#key authorMenu}<MemberMenu {serverId} userId={message.author_id} x={authorMenu.x} y={authorMenu.y} opener={authorMenu.opener}
+{#if authorMenu}
+  {#key authorMenu}<MemberMenu {serverId} userId={authorMenu.userId} x={authorMenu.x} y={authorMenu.y} opener={authorMenu.opener}
     onMessage={channelKind === 'dm' ? undefined : messageAuthor} muteChannelId={channelKind === 'dm' ? message.channel_id : null} onClose={() => (authorMenu = null)} />{/key}
 {/if}
 
