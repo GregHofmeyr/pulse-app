@@ -572,7 +572,7 @@ async fn deleting_a_voice_channel_kicks_whoever_is_in_it() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut cfg = test_config();
     cfg.livekit_api_url = format!("http://{}", listener.local_addr().unwrap());
-    let removed = livekit::serve_fake_shared(listener, rooms.clone());
+    let (_, deleted) = livekit::serve_fake_deleting(listener, rooms.clone());
     let w = world_with(spawn_with(cfg).await).await;
     let room = create_channel(&w.app, &w.alex.1, w.server, "voice", "Room").await;
     let roomid = room.id.to_string();
@@ -596,7 +596,26 @@ async fn deleting_a_voice_channel_kicks_whoever_is_in_it() {
             ..Default::default()
         });
     }
+    // and jo, whose join webhook hasn't applied yet (#109): LiveKit has them, our voice state
+    // doesn't, so no snapshot of it would take them out
+    people.push(livekit_protocol::ParticipantInfo {
+        identity: w.jo.0.to_string(),
+        sid: "PA_j".into(),
+        ..Default::default()
+    });
     rooms.lock().unwrap().push((roomid.clone(), people));
+    // alex's screen share and a ghost watching it, in the stream room
+    let in_stream = |identity: String| livekit_protocol::ParticipantInfo {
+        identity,
+        ..Default::default()
+    };
+    rooms.lock().unwrap().push((
+        format!("{roomid}~s"),
+        vec![
+            in_stream(format!("{}#v", w.alex.0)),
+            in_stream("g_ghost#v".into()),
+        ],
+    ));
 
     assert_eq!(
         delete(&w.app, &w.sam.1, &format!("/channels/{}", room.id)).await,
@@ -632,25 +651,9 @@ async fn deleting_a_voice_channel_kicks_whoever_is_in_it() {
     )
     .await;
     assert_eq!(r.status(), 404);
-    // LiveKit is told to drop both (in the background)
-    let mut want = vec![
-        (roomid.clone(), w.alex.0.to_string()),
-        (roomid.clone(), w.sam.0.to_string()),
-    ];
-    want.sort();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let mut got: Vec<(String, String)> = removed.lock().unwrap().clone();
-        got.sort();
-        if got == want {
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "LiveKit removals: {got:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    // LiveKit is told (in the background) to close its voice and stream rooms, which takes out
+    // everyone in them, jo and the ghost included (#109)
+    livekit::wait_rooms_deleted(&deleted, &rooms, &roomid).await;
 }
 
 // ---------- Recently deleted: list, restore, purge ----------

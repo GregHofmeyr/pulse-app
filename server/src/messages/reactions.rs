@@ -223,7 +223,8 @@ pub async fn toggle(
     // Events carry absolute counts, so two racing toggles must not publish out of commit order.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
-    // A delete that committed since the check wins.
+    // A delete (of the message, or its channel: #109) that committed since the check wins.
+    crate::access::channel_live_in(&mut tx, channel_id).await?;
     let live: Option<i64> =
         sqlx::query_scalar("SELECT 1 FROM messages WHERE id = ? AND deleted_at IS NULL")
             .bind(msg.to_string())

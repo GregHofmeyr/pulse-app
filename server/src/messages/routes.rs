@@ -542,6 +542,8 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
     let _order = s.hub.in_order().await;
     // One transaction: the message, its mentions and your read point land together or not at all.
     let mut tx = crate::db::begin_write(&s.db).await?;
+    // A delete of the channel may have committed since the early check (#109).
+    crate::access::channel_live_in(&mut tx, id).await?;
     // Under the write lock the id is minted in commit order, so a seen point can never pass a
     // reply that hasn't committed yet.
     msg.id = MessageId::new();
@@ -731,6 +733,7 @@ async fn edit(
     // In order with the unfurl's and hides' publishes, so the last update out is the newest.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    crate::access::channel_live_in(&mut tx, msg.channel_id).await?; // channel deleted since (#109)
     // Guarded: a delete that commits between our read and this write wins.
     let changed = sqlx::query(
         "UPDATE messages SET content = ?, edited_at = ?, gif = CASE WHEN ? THEN gif END WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
@@ -784,6 +787,7 @@ async fn remove(
     // count, a quote's reactions and awards): publish in commit order. Deletes are rare.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    crate::access::channel_live_in(&mut tx, ch.id).await?; // channel deleted since (#109)
     // A vote whose time ran out is over even if no sweep has ended it yet: end it first, so the
     // quote it may have won with is still there (and still its option) when it is counted.
     let overdue = match ch.server_id {

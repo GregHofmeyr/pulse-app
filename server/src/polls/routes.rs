@@ -142,6 +142,7 @@ async fn create(
     // commit order with every other message.
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
+    crate::access::channel_live_in(&mut tx, id).await?; // channel deleted since (#109)
     // minted under the write lock, so ids keep commit order (as a send)
     msg.id = MessageId::new();
     msg.created_at = now();
@@ -255,7 +256,8 @@ async fn vote(
         )));
     }
     let mut tx = begin_write(&s.db).await?;
-    // Read again under the write lock: a close (or a delete) may have landed since.
+    // Read again under the write lock: a close (or a delete, of it or its channel) may have landed since.
+    crate::access::channel_live_in(&mut tx, p.channel_id).await?;
     let at = now();
     match super::load(&mut tx, id).await? {
         None => return Err(AppError::NotFound),
@@ -313,6 +315,7 @@ async fn close(
     // the ended line goes out in commit order with the chat's other messages (as a send)
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
+    crate::access::channel_live_in(&mut tx, p.channel_id).await?; // channel deleted since (#109)
     // a delete may have landed since the read: a deleted poll has no row
     if super::load(&mut tx, id).await?.is_none() {
         return Err(AppError::NotFound);

@@ -300,7 +300,7 @@ async fn deleting_a_server_ends_its_calls() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut cfg = test_config();
     cfg.livekit_api_url = format!("http://{}", listener.local_addr().unwrap());
-    let removed = common::livekit::serve_fake_shared(listener, rooms.clone());
+    let (_, deleted) = common::livekit::serve_fake_deleting(listener, rooms.clone());
     let w = world_with(spawn_with(cfg).await).await;
     let lounge = channels(&w)
         .await
@@ -349,24 +349,8 @@ async fn deleting_a_server_ends_its_calls() {
     )
     .await;
     assert_eq!(r.status(), 404, "nobody joins it while it is deleted");
-    let mut want = vec![
-        (roomid.clone(), w.alex.0.to_string()),
-        (roomid.clone(), w.sam.0.to_string()),
-    ];
-    want.sort();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let mut got: Vec<(String, String)> = removed.lock().unwrap().clone();
-        got.sort();
-        if got == want {
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "LiveKit removals: {got:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    // LiveKit closes its voice and stream rooms (#109)
+    common::livekit::wait_rooms_deleted(&deleted, &rooms, &roomid).await;
 }
 
 #[tokio::test]

@@ -39,6 +39,7 @@ pub async fn fake_livekit_hanging() -> String {
         "GetParticipant",
         "RemoveParticipant",
         "UpdateParticipant",
+        "DeleteRoom",
     ] {
         app = app.route(&format!("/twirp/livekit.RoomService/{method}"), post(hang));
     }
@@ -85,14 +86,65 @@ pub fn serve_fake_shared(listener: tokio::net::TcpListener, rooms: SharedRooms) 
     serve_fake_logs(listener, rooms).0
 }
 
+/// Rooms the fake was asked to delete (DeleteRoom), in order.
+pub type Deleted = Arc<Mutex<Vec<String>>>;
+
+/// Wait (up to 5 s) until the fake was asked to delete channel `room`'s voice room and its
+/// stream room (`<room>~s`), and LiveKit has nobody left in either.
+pub async fn wait_rooms_deleted(deleted: &Deleted, rooms: &SharedRooms, room: &str) {
+    let want = [room.to_owned(), format!("{room}~s")];
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut got = deleted.lock().unwrap().clone();
+        got.sort();
+        if got == want {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "LiveKit room deletions: {got:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let left: Vec<String> = rooms
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(name, _)| want.contains(name))
+        .flat_map(|(_, ps)| ps.iter().map(|p| p.identity.clone()))
+        .collect();
+    assert!(left.is_empty(), "still in LiveKit: {left:?}");
+}
+
+/// [`serve_fake_shared`], also returning the log of DeleteRoom calls (a deleted room's
+/// participants are gone from `rooms`, as LiveKit disconnects them all).
+pub fn serve_fake_deleting(
+    listener: tokio::net::TcpListener,
+    rooms: SharedRooms,
+) -> (Removed, Deleted) {
+    let (removed, _, deleted) = serve_fake_all(listener, rooms);
+    (removed, deleted)
+}
+
 /// [`serve_fake_shared`], also answering UpdateParticipant (permission changes are applied to
 /// the participant and logged).
 pub fn serve_fake_logs(
     listener: tokio::net::TcpListener,
     rooms: SharedRooms,
 ) -> (Removed, Updated) {
+    let (removed, updated, _) = serve_fake_all(listener, rooms);
+    (removed, updated)
+}
+
+/// The fake with every log: removals, permission updates and room deletions.
+pub fn serve_fake_all(
+    listener: tokio::net::TcpListener,
+    rooms: SharedRooms,
+) -> (Removed, Updated, Deleted) {
     let removed = Removed::default();
     let updated = Updated::default();
+    let deleted = Deleted::default();
+    let (r6, dlog) = (rooms.clone(), deleted.clone());
     let (r5, ulog) = (rooms.clone(), updated.clone());
     let (r1, r2, r3, r4, log) = (
         rooms.clone(),
@@ -209,9 +261,27 @@ pub fn serve_fake_logs(
                     p.encode_to_vec().into_response()
                 }
             }),
+        )
+        .route(
+            "/twirp/livekit.RoomService/DeleteRoom",
+            post(move |body: Bytes| {
+                let (rooms, log) = (r6.clone(), dlog.clone());
+                async move {
+                    let req = lkp::DeleteRoomRequest::decode(body).unwrap();
+                    log.lock().unwrap().push(req.room.clone());
+                    // as LiveKit v1.13: a room it doesn't have is not_found
+                    let mut rooms = rooms.lock().unwrap();
+                    let before = rooms.len();
+                    rooms.retain(|(name, _)| *name != req.room);
+                    if rooms.len() == before {
+                        return twirp_not_found();
+                    }
+                    lkp::DeleteRoomResponse {}.encode_to_vec().into_response()
+                }
+            }),
         );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (removed, updated)
+    (removed, updated, deleted)
 }
 
 pub fn twirp_not_found() -> Response {

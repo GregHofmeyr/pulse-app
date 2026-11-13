@@ -2,7 +2,7 @@
 
 use pulse_protocol::ids::{CategoryId, ChannelId, ServerId, UserId};
 use pulse_protocol::rest::{Channel, ChannelKind};
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::error::{AppError, AppResult};
 
@@ -63,6 +63,31 @@ pub async fn load_channel(db: &SqlitePool, id: ChannelId) -> AppResult<Option<Ch
     .fetch_optional(db)
     .await?;
     row.map(channel_from_row).transpose()
+}
+
+/// Whether [`load_channel`] would find `id`, asked inside a write transaction.
+pub async fn channel_is_live_in(db: &mut SqliteConnection, id: ChannelId) -> sqlx::Result<bool> {
+    let hit: Option<i64> = sqlx::query_scalar(&format!(
+        "SELECT 1 FROM channels WHERE id = ? AND deleted_at IS NULL
+         AND (server_id IS NULL OR server_id NOT IN {DELETED_SERVERS})"
+    ))
+    .bind(id.to_string())
+    .fetch_optional(&mut *db)
+    .await?;
+    Ok(hit.is_some())
+}
+
+/// [`load_channel`]'s rule again inside a write transaction (#109), as `server_live_in` is for
+/// servers (#287): 404 unless the channel is still there. Under `begin_write`'s lock a delete
+/// can't commit between this and the transaction's own commit, so a write that passed its early
+/// check just before its channel (or the channel's server) was deleted, or a group went with its
+/// last member, writes nothing and publishes nothing.
+pub async fn channel_live_in(db: &mut SqliteConnection, id: ChannelId) -> AppResult<()> {
+    if channel_is_live_in(db, id).await? {
+        Ok(())
+    } else {
+        Err(AppError::NotFound)
+    }
 }
 
 pub async fn is_channel_member(
