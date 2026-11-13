@@ -5,9 +5,27 @@ import type { Message } from './protocol/Message'
 import type { Pin } from './protocol/Pin'
 import type { PinDuration } from './protocol/PinDuration'
 
-/** Whether a chat of this kind takes pins: not quotes or clips channels. */
+/** Whether a chat of this kind takes pins: every kind, quotes and clips channels too (#257, their quotes and clips). */
 export function takesPins(kind: ChannelKind | undefined): boolean {
+  return kind !== undefined
+}
+
+/** Whether a plain message (MessageItem) offers Pin message here: in chats, not quotes or clips channels, whose
+ *  posts pin from QuoteItem's and the clip views' own menus, and whose plain messages are thread replies (never
+ *  pinned). */
+export function pinsPlainMessages(kind: ChannelKind | undefined): boolean {
   return kind === 'text' || kind === 'voice' || kind === 'dm' || kind === 'group'
+}
+
+/** What a pin's line calls the pinned post: "a quote" in a quotes channel, else "a message" (#257; a clips
+ *  channel's pins post no line). */
+export function pinnedNoun(kind: ChannelKind | undefined): string {
+  return kind === 'quotes' ? 'a quote' : 'a message'
+}
+
+/** The pins popover's title, and its header button's name: "Pinned quotes", "Pinned clips", else "Pinned messages". */
+export function pinsTitle(kind: ChannelKind | undefined): string {
+  return kind === 'quotes' ? 'Pinned quotes' : kind === 'clips' ? 'Pinned clips' : 'Pinned messages'
 }
 
 /** The Pin message flyout's choices, in order. */

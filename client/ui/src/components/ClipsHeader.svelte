@@ -1,8 +1,10 @@
 <script lang="ts">
   // A clips channel's header: its name, the filter chips (All, each game used here, By person ▾), the
-  // list/wall toggle and "Share a clip".
+  // list/wall toggle, the pins (#257) and "Share a clip".
   import Icon from './Icon.svelte'
+  import PinsPopover from './PinsPopover.svelte'
   import SearchBox from './SearchBox.svelte'
+  import type { Message } from '../lib/protocol/Message'
   import { clickOutside, narrowerThan } from '../lib/actions'
   import { clipFilter, type ClipFilter } from '../lib/clips'
   import { clipFilters, setClipFiltersShown } from '../lib/clipFiltersShown.svelte'
@@ -11,7 +13,9 @@
   import { api, errorText } from '../lib/tauri'
   import type { ClipView } from '../lib/protocol/ClipView'
 
-  let { channelId, serverId, filter, onFilter, view, onView = () => {}, onShare }: {
+  let { channelId, serverId, filter, onFilter, view, onView = () => {}, onShare, onOpenPinned = () => {} }: {
+    /** A pinned clip's Open, from the pins (#257): a clips channel has no history to jump in, so its panel opens. */
+    onOpenPinned?: (clip: Message) => void
     channelId: string
     serverId: string
     filter: ClipFilter
@@ -56,6 +60,12 @@
 
   let people = $state(false)
   let error = $state('')
+  // the channel's pins (#257), the popover a chat's header opens
+  let pinsOpen = $state(false)
+  function openPinned(m: Message) {
+    pinsOpen = false
+    onOpenPinned(m)
+  }
 
   function pickGame(id: string) {
     onFilter(clipFilter(filter.game === id ? null : id, filter.author))
@@ -120,12 +130,19 @@
     <button type="button" class="tbtn" aria-label="List view" data-tip="List" aria-pressed={view === 'list'} onclick={() => setView('list')}><Icon name="list" size={16} /></button>
     <button type="button" class="tbtn" aria-label="Wall view" data-tip="Wall" aria-pressed={view === 'wall'} onclick={() => setView('wall')}><Icon name="grid" size={16} /></button>
   </div>
+  <button type="button" class="icon-btn hbtn" class:on={pinsOpen} aria-label="Pinned clips" data-tip="Pinned clips" data-menu-toggle aria-haspopup="dialog" aria-expanded={pinsOpen}
+    onclick={() => (pinsOpen = !pinsOpen)}><Icon name="pin" size={17} /></button>
   <button type="button" class="share btn btn-primary" onclick={onShare}>Share a clip</button>
   <SearchBox {serverId} {channelId} compact={narrow} />
+  {#if pinsOpen}
+    <PinsPopover {channelId} {serverId} onJump={openPinned} onClose={() => (pinsOpen = false)} />
+  {/if}
 </div>
 
 <style>
-  .head { min-height: 52px; flex-shrink: 0; padding: 8px 18px; box-sizing: border-box; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--text-3); }
+  .head { position: relative; min-height: 52px; flex-shrink: 0; padding: 8px 18px; box-sizing: border-box; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--text-3); }
+  /* the pins button, as a chat header's (TextChannel .hbtn) */
+  .hbtn.on { background: var(--bg-3); color: var(--text); }
   .ico { display: flex; }
   .title { display: flex; align-items: center; gap: 4px; max-width: 240px; padding: 2px 6px; margin-left: -6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: 15px; font-weight: 600; }
   .title:hover { background: var(--bg-3); }

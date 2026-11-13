@@ -41,7 +41,7 @@
   import MemberMenu from './MemberMenu.svelte'
   import MessageMenu from './MessageMenu.svelte'
   import { quoteRequest, quotesChannelsFor } from '../lib/quoteFromMessage'
-  import { livePin, pinFor, pinTip, takesPins } from '../lib/pins'
+  import { livePin, pinFor, pinTip, pinnedNoun, pinsPlainMessages } from '../lib/pins'
   import { refreshPins } from '../lib/pinSync.svelte'
   import { serverNow } from '../lib/serverClock'
   import { jumpTo } from '../lib/jump'
@@ -166,7 +166,7 @@
   // or a right-click on the message (the author's name and avatar keep their person menu). Not in quotes or clips
   // channels (QuoteItem and the clip views are theirs), nor on an unsent or deleted message. ---
   let msgMenu = $state<{ x: number; y: number; opener: HTMLElement } | null>(null)
-  const pinnable = $derived(takesPins(channelKind))
+  const pinnable = $derived(pinsPlainMessages(channelKind))
   const msgMenuOn = $derived(pinnable && !pending && !message.deleted && !editing)
   function openMsgMenu(e: MouseEvent, opener: HTMLElement) {
     // the author's own menu took it (their name or avatar), or there's nothing to show
@@ -302,7 +302,7 @@
     {@const pl = message.pin_line}
     {@const length = pinFor(pl.duration)}
     <div class="system pin-line" data-message-id={message.id}><Icon name="pin" size={14} /> {nameOf(pl.by)} pinned
-      <button type="button" class="link-btn" onclick={() => void jumpTo(message.channel_id, pl.message_id)}>a message</button>{length ? ` ${length}` : ''} ·
+      <button type="button" class="link-btn" onclick={() => void jumpTo(message.channel_id, pl.message_id)}>{pinnedNoun(channelKind)}</button>{length ? ` ${length}` : ''} ·
       <button type="button" class="link-btn" onclick={() => (ui.openPins = message.channel_id)}>See pins</button> <span class="time">{time}</span></div>
   {:else if message.wheel}
     <!-- a picker wheel spin (#158): spins live as it arrives, then the line -->

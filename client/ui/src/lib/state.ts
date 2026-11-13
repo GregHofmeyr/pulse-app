@@ -279,23 +279,35 @@ export function setPins(s: AppState, channel: string, list: PinnedMessage[]): Ap
 
 /** Bring every loaded message of `channel` (older pages and a jump's window too) to the pins just fetched for it
  * (#258): a reconnect only fetches the latest page again, so the rest would keep the pins they had. Messages in
- * `skip` had a pin event while the list was loading, which is newer than the list. */
+ * `skip` had a pin event while the list was loading, which is newer than the list. A clips channel's clips, held in
+ * its feeds, are set the same way (#257). */
 export function applyPinList(s: AppState, channel: string, list: PinnedMessage[], skip: ReadonlySet<string> = new Set()): AppState {
-  const loaded = s.messages[channel]
-  if (!loaded) return s
   const pins = new Map(list.map((p) => [p.message.id, p.pin]))
-  let changed = false
-  const next = loaded.map((m) => {
-    if (skip.has(m.id)) return m
-    const p = pins.get(m.id)
-    const same = p ? m.pin?.pinned_by === p.pinned_by && m.pin.pinned_at === p.pinned_at && m.pin.expires_at === p.expires_at : !m.pin
-    if (same) return m
-    changed = true
-    if (p) return { ...m, pin: p }
-    const { pin: _old, ...rest } = m
-    return rest
-  })
-  return changed ? { ...s, messages: { ...s.messages, [channel]: next } } : s
+  /** `held` brought to the list; the same array when nothing in it changed. */
+  const bring = (held: Message[]): Message[] => {
+    let changed = false
+    const next = held.map((m) => {
+      if (skip.has(m.id)) return m
+      const p = pins.get(m.id)
+      const same = p ? m.pin?.pinned_by === p.pinned_by && m.pin.pinned_at === p.pinned_at && m.pin.expires_at === p.expires_at : !m.pin
+      if (same) return m
+      changed = true
+      if (p) return { ...m, pin: p }
+      const { pin: _old, ...rest } = m
+      return rest
+    })
+    return changed ? next : held
+  }
+  let out = s
+  const loaded = s.messages[channel]
+  const next = loaded && bring(loaded)
+  if (next && next !== loaded) out = { ...out, messages: { ...out.messages, [channel]: next } }
+  for (const [k, feed] of Object.entries(s.clipFeeds)) {
+    if (feed.channelId !== channel) continue
+    const items = bring(feed.items)
+    if (items !== feed.items) out = { ...out, clipFeeds: { ...out.clipFeeds, [k]: { ...feed, items } } }
+  }
+  return out
 }
 
 /** `channel`'s fetched pins with `f` applied (unchanged when never fetched). */
@@ -485,7 +497,13 @@ function clipCreated(s: AppState, m: Message): AppState {
 }
 
 /** A clip edited: replaced where it still matches, dropped where it no longer does, added where its edit now fits. Reactions and
- * the seen point are kept (events carry neither). */
+ * the seen point are kept (events carry neither), and so is a held copy's pin (only the pin events set it, #257). */
+/** `m` with `held`'s pin (none when it has none). */
+function withPinOf(m: Message, held: Message): Message {
+  const { pin: _p, ...rest } = m
+  return held.pin ? { ...rest, pin: held.pin } : rest
+}
+
 function clipUpdated(s: AppState, m: Message): AppState {
   let feeds = s.clipFeeds
   for (const [k, feed] of Object.entries(s.clipFeeds)) {
@@ -497,7 +515,7 @@ function clipUpdated(s: AppState, m: Message): AppState {
     const items = !fits
       ? feed.items.filter((x) => x.id !== m.id)
       : old
-        ? feed.items.map((x) => (x.id === m.id ? { ...withMyQuoteState(m, old, undefined), reactions: old.reactions } : x))
+        ? feed.items.map((x) => (x.id === m.id ? withPinOf({ ...withMyQuoteState(m, old, undefined), reactions: old.reactions }, old) : x))
         : [...feed.items, m].sort(newestFirst)
     feeds = { ...feeds, [k]: { ...feed, items } }
   }
@@ -1194,15 +1212,15 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const { channel_id: c, pinned } = e.d
       const id = pinned.message.id
       const mark = (m: Message): Message => ({ ...m, pin: pinned.pin })
-      // the loaded copy, when there is one, has your own reactions marked
-      const held = findMessage(s, c, id)
+      // the loaded copy (a clip's is in the feeds, #257), when there is one, has your own reactions marked
+      const held = findMessage(s, c, id) ?? loadedRoot(s, c, id)
       const listed = (list: PinnedMessage[]) => [{ ...pinned, message: held ? mark(held) : pinned.message }, ...list.filter((p) => p.message.id !== id)]
-      return mapPins(mapMessage(s, c, id, mark), c, listed)
+      return mapPins(mapFeedItems(mapMessage(s, c, id, mark), c, id, mark), c, listed)
     }
     case 'MessageUnpinned': {
       const { channel_id: c, message_id: id } = e.d
       const unmark = ({ pin: _p, ...m }: Message): Message => m
-      return mapPins(mapMessage(s, c, id, unmark), c, (list) => list.filter((p) => p.message.id !== id))
+      return mapPins(mapFeedItems(mapMessage(s, c, id, unmark), c, id, unmark), c, (list) => list.filter((p) => p.message.id !== id))
     }
     case 'ReactionAdded':
     case 'ReactionRemoved': {

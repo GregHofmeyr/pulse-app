@@ -12,8 +12,10 @@
   import { downloadClip } from '../lib/clipDownload'
   import { clipKey } from '../lib/downloads.svelte'
   import { suggestedReactions } from '../lib/reactions'
-  import { app } from '../lib/store.svelte'
+  import { app, clock } from '../lib/store.svelte'
   import { InlineError } from '../lib/inlineError.svelte'
+  import { livePin, pinTip } from '../lib/pins'
+  import { serverNow } from '../lib/serverClock'
   import type { Message } from '../lib/protocol/Message'
 
   let {
@@ -47,6 +49,10 @@
   const suggest = $derived(suggestedReactions(app.state, message.reactions))
   const when = $derived(new Date(message.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))
 
+  // pinned (#257): a marker by the time, as a message's; by the server's clock, moving every 30 s (#258)
+  const now = $derived((void clock.nowIso, serverNow()))
+  const pin = $derived(livePin(message, now))
+
   const inlineError = new InlineError()
   $effect(() => inlineError.stop)
   const download = () => void downloadClip(message, inlineError.show)
@@ -64,9 +70,10 @@
         {#if game}<span class="game">{game}</span>{/if}
         <span class="time">{when}</span>
         {#if message.edited_at}<span class="edited">(edited)</span>{/if}
+        {#if pin}<span class="pin-mark" data-tip={pinTip(nameOf(pin.pinned_by), pin.expires_at, now)}><Icon name="pin" size={14} /></span>{/if}
         <span class="grow"></span>
         {#if onOpenReplies && !compact}<button type="button" class="icon-btn icon-btn-sm" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={16} /></button>{/if}
-        <ClipActions {message} {serverId} {mine} onDownload={download} />
+        <ClipActions {message} {serverId} {mine} onDownload={download} onError={inlineError.show} />
       </div>
       <ClipCaption {message} />
       <div class="player"><ClipPlayer {message} {compact} onDownload={download} downloadKey={clipKey(message.id)} /></div>
@@ -91,6 +98,7 @@
     .game { display: none; }
   }
   .time, .edited { font-size: 11px; color: var(--text-3); }
+  .pin-mark { display: inline-flex; color: var(--text-3); }
   .grow { flex: 1; }
   .player { width: 100%; max-width: 640px; }
   .compact .player { max-width: 100%; }

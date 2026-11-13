@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PIN_FOR, livePin, pinFor, pinTip, timeLeft } from './pins'
+import { PIN_FOR, livePin, pinFor, pinTip, pinnedNoun, pinsPlainMessages, pinsTitle, takesPins, timeLeft } from './pins'
 import type { Message } from './protocol/Message'
 
 const NOW = Date.parse('2026-11-09T10:00:00.000Z')
@@ -41,5 +41,29 @@ describe('pins (#178)', () => {
     expect(livePin({ pin: { pinned_by: 'U1', pinned_at: iso(-H), expires_at: null } } as Message, NOW + 1e12)).not.toBeNull()
     expect(livePin({} as Message, NOW)).toBeNull()
     expect(livePin({ deleted: true, pin: { pinned_by: 'U1', pinned_at: iso(0), expires_at: null } } as Message, NOW)).toBeNull()
+  })
+})
+
+describe('pins in quotes and clips channels (#257)', () => {
+  it('every chat takes pins; only chats offer Pin message on a plain message', () => {
+    for (const k of ['text', 'voice', 'dm', 'group', 'quotes', 'clips'] as const) expect(takesPins(k)).toBe(true)
+    expect(takesPins(undefined)).toBe(false)
+    for (const k of ['text', 'voice', 'dm', 'group'] as const) expect(pinsPlainMessages(k)).toBe(true)
+    // a quotes or clips channel's plain messages are thread replies
+    expect(pinsPlainMessages('quotes')).toBe(false)
+    expect(pinsPlainMessages('clips')).toBe(false)
+  })
+
+  it("a quotes channel's line pins a quote", () => {
+    expect(pinnedNoun('quotes')).toBe('a quote')
+    expect(pinnedNoun('text')).toBe('a message')
+    expect(pinnedNoun('dm')).toBe('a message')
+  })
+
+  it('the pins are named for what they hold', () => {
+    expect(pinsTitle('quotes')).toBe('Pinned quotes')
+    expect(pinsTitle('clips')).toBe('Pinned clips')
+    expect(pinsTitle('text')).toBe('Pinned messages')
+    expect(pinsTitle('group')).toBe('Pinned messages')
   })
 })

@@ -3,6 +3,9 @@
   import { clickOutside } from '../lib/actions'
   import { placeMenu } from '../lib/menuPlace'
   import { suggest, type Mentionable } from '../lib/mentions'
+  import { PIN_FOR } from '../lib/pins'
+  import MenuFlyout from './MenuFlyout.svelte'
+  import type { PinDuration } from '../lib/protocol/PinDuration'
 
   let {
     x,
@@ -14,6 +17,9 @@
     onAward,
     onCopy,
     onSave = null,
+    pin = null,
+    onPin = () => {},
+    onUnpin = () => {},
     onLink,
     onUnlink,
     onClose,
@@ -33,6 +39,11 @@
     onCopy: (() => unknown) | null
     /** Save image (#206): only on an image line. */
     onSave?: (() => unknown) | null
+    /** The whole quote's pin (#257): 'pin' offers Pin quote, a flyout of lengths (as the message menu's); 'unpin'
+     *  offers Unpin quote; null (a QotY option) neither. */
+    pin?: 'pin' | 'unpin' | null
+    onPin?: (duration: PinDuration) => unknown
+    onUnpin?: () => unknown
     onLink: (userId: string) => unknown
     onUnlink: () => unknown
     onClose: () => void
@@ -61,7 +72,9 @@
     focusItem(0)
   })
 
+  // the menu's own items (the pin flyout's lengths sit inside it, under their own menu)
   const items = () => (el ? [...el.querySelectorAll<HTMLElement>('[data-item]')] : [])
+  let flyout = $state<ReturnType<typeof MenuFlyout>>()
   function focusItem(i: number) {
     const list = items()
     if (list.length) list[(i + list.length) % list.length].focus()
@@ -93,6 +106,10 @@
   function keydown(e: KeyboardEvent) {
     const list = items()
     const at = list.indexOf(document.activeElement as HTMLElement)
+    // the pin flyout (as the message menu's): ArrowLeft closes it, and a hover-opened one takes the first Escape
+    if (e.key === 'ArrowLeft' && !picking) { e.preventDefault(); flyout?.close(false); return }
+    if (e.key === 'Escape' && flyout?.isOpen()) { e.preventDefault(); e.stopPropagation(); flyout.close(false); return }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) flyout?.close(false)
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); focusItem(at + 1); break
       case 'ArrowUp': e.preventDefault(); focusItem(at < 0 ? -1 : at - 1); break
@@ -117,7 +134,12 @@
 </script>
 
 <div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Line actions" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px" style:--pop-origin={origin}
-  onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
+  onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}
+  onpointerover={(e) => {
+    // another of the menu's own items under the pointer closes the pin flyout
+    const t = (e.target as Element).closest?.('[data-item]')
+    if (t && t.parentElement === el && t !== flyout?.trigger()) flyout?.closeSoon()
+  }}>
   {#if picking}
     <input type="text" class="input input-sm find" data-item aria-label="Find a member" placeholder="Find a member" autocomplete="off" bind:value={query} />
     <div role="group" aria-label="Members">
@@ -133,6 +155,12 @@
     {/if}
     {#if onCopy}<button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onCopy)}>Copy quote</button>{/if}
     {#if onSave}<button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onSave)}>Save image</button>{/if}
+    {#if pin === 'pin'}
+      <MenuFlyout bind:this={flyout} label="Pin quote" flyoutLabel="Pin quote for" menuLeft={left} menuTop={top} item="pin"
+        choices={PIN_FOR} onPick={(i) => pick(() => onPin(PIN_FOR[i].duration))} />
+    {:else if pin === 'unpin'}
+      <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onUnpin)}>Unpin quote</button>
+    {/if}
     {#if link === 'link'}
       <button type="button" class="menu-item" role="menuitem" data-item onclick={startPicking}>Link to a member…</button>
     {:else if link === 'unlink'}

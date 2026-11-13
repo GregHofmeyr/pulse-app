@@ -36,10 +36,10 @@ beforeEach(() => {
 afterEach(() => resetState())
 
 describe('pins after a reconnect (#258)', () => {
-  it('marks every chat with loaded messages that takes pins', () => {
+  it('marks every chat with loaded messages that takes pins (a quotes channel too, #257)', () => {
     expect(pinSync.stale).toEqual({})
     handleReady(testReady([TEXT, QUOTES]))
-    expect(pinSync.stale).toEqual({ C1: true })
+    expect(pinSync.stale).toEqual({ C1: true, Q1: true })
   })
 
   it("one fetch of the chat's pins sets its loaded messages, older pages included", async () => {
@@ -51,7 +51,7 @@ describe('pins after a reconnect (#258)', () => {
     expect(invoke).toHaveBeenCalledTimes(1)
     expect(pinOf('M1')).toBeNull()
     expect(pinOf('M2')).toEqual(pin('U1'))
-    expect(pinSync.stale).toEqual({})
+    expect(pinSync.stale).toEqual({ Q1: true }) // the quotes chat waits until it is shown
   })
 
   it('a pin event while the list loads wins over the list', async () => {
@@ -78,7 +78,7 @@ describe('pins after a reconnect (#258)', () => {
     await refreshPins('C1')
     await settle()
     expect(calls).toBe(2)
-    expect(pinSync.stale).toEqual({})
+    expect(pinSync.stale).toEqual({ Q1: true })
   })
 
   it("each Ready sets the server's clock that times pins", () => {

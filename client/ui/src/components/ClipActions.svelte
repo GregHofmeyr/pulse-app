@@ -1,16 +1,30 @@
 <script lang="ts">
-  // A clip's menu: Download for everyone (#204); for the poster also Edit (caption and game, in a small dialog)
-  // and Delete (asked first). The server refuses anyone else's edit or delete anyway. While the clip downloads (#205)
-  // Download reads "Downloading 42%" and Cancel download stops it.
+  // A clip's menu: Download for everyone (#204), and Pin clip (a flyout of lengths, as a message's menu has) or Unpin
+  // clip (#257); for the poster also Edit (caption and game, in a small dialog) and Delete (asked first). The server
+  // refuses anyone else's edit or delete anyway. While the clip downloads (#205) Download reads "Downloading 42%" and
+  // Cancel download stops it.
   import { tick } from 'svelte'
   import GamePicker from './GamePicker.svelte'
   import Icon from './Icon.svelte'
+  import MenuFlyout from './MenuFlyout.svelte'
   import { clickOutside, modal } from '../lib/actions'
+  import { livePin, PIN_FOR } from '../lib/pins'
+  import { refreshPins } from '../lib/pinSync.svelte'
+  import { serverNow } from '../lib/serverClock'
+  import { clock } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import { clipKey, downloads } from '../lib/downloads.svelte'
   import type { Message } from '../lib/protocol/Message'
+  import type { PinDuration } from '../lib/protocol/PinDuration'
 
-  let { message, serverId, mine, onDownload }: { message: Message; serverId: string; mine: boolean; onDownload: () => void } = $props()
+  let { message, serverId, mine, onDownload, onError = () => {} }: {
+    message: Message
+    serverId: string
+    mine: boolean
+    onDownload: () => void
+    /** Says why a pin or unpin was refused (the clip's own error line). */
+    onError?: (text: string) => void
+  } = $props()
 
   const MAX_CAPTION = 300
 
@@ -31,6 +45,36 @@
   function closeMenu(e?: Event) {
     menu = false
     if (e instanceof KeyboardEvent) opener?.focus()
+  }
+
+  // --- pins (#257): by the server's clock, as a message's (#258); a pin run out is offered again at once ---
+  const pinned = $derived(!!livePin(message, (void clock.nowIso, serverNow())))
+  let menuEl = $state<HTMLElement>()
+  let flyout = $state<ReturnType<typeof MenuFlyout>>()
+  // where the menu sits on screen, for the flyout's placing: under the ⋯ button, its right edge on the button's (its
+  // layout box, not its rectangle, which the entrance scales)
+  let menuLeft = $state(0)
+  let menuTop = $state(0)
+  $effect(() => {
+    if (!menu || !menuEl || !opener) return
+    const r = opener.getBoundingClientRect()
+    menuLeft = r.right - menuEl.offsetWidth
+    menuTop = r.bottom + 4
+  })
+  // A refused pin or unpin means the pin here was out of date: say why, and fetch the channel's pins to set it right.
+  const report = (p: Promise<unknown>) =>
+    p.catch((e) => {
+      onError(errorText(e))
+      void refreshPins(message.channel_id)
+    })
+  function pin(d: PinDuration) {
+    menu = false
+    opener?.focus()
+    void report(api.pinMessage(message.id, d))
+  }
+  function unpin() {
+    menu = false
+    void report(api.unpinMessage(message.id))
   }
   function download() {
     menu = false
@@ -79,12 +123,23 @@
   <button bind:this={opener} type="button" class="icon-btn icon-btn-sm" aria-label="Clip actions" aria-haspopup="menu" aria-expanded={menu} data-menu-toggle
     onclick={() => (menu = !menu)}><Icon name="dots" size={16} /></button>
   {#if menu}
-    <div class="menu menu-surface pop-in" role="menu" use:clickOutside={closeMenu}>
+    <div bind:this={menuEl} class="menu menu-surface pop-in" role="menu" tabindex="-1" use:clickOutside={closeMenu}
+      onpointerover={(e) => {
+        // another of the menu's own items under the pointer closes the pin flyout
+        const t = (e.target as Element).closest?.('.menu-item')
+        if (t && t.parentElement === menuEl && t !== flyout?.trigger()) flyout?.closeSoon()
+      }}>
       {#if dl?.phase === 'downloading'}
         <span class="menu-item progress" role="menuitem" aria-disabled="true"><Icon name="download" size={14} />{dlText}</span>
         <button type="button" class="menu-item" role="menuitem" onclick={cancelDownload}><Icon name="x" size={14} />Cancel download</button>
       {:else}
         <button type="button" class="menu-item" role="menuitem" onclick={download}><Icon name={dl?.phase === 'saved' ? 'check' : 'download'} size={14} />{dl?.phase === 'saved' ? 'Saved' : 'Download'}</button>
+      {/if}
+      {#if pinned}
+        <button type="button" class="menu-item" role="menuitem" onclick={unpin}><Icon name="pin" size={14} />Unpin clip</button>
+      {:else}
+        <MenuFlyout bind:this={flyout} label="Pin clip" flyoutLabel="Pin clip for" {menuLeft} {menuTop} item="pin" icon="pin"
+          choices={PIN_FOR} onPick={(i) => pin(PIN_FOR[i].duration)} />
       {/if}
       {#if mine}
         <button type="button" class="menu-item" role="menuitem" onclick={startEdit}><Icon name="pencil" size={14} />Edit</button>
@@ -120,7 +175,7 @@
 
 <style>
   .clip-actions { position: relative; }
-  .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 140px; --pop-origin: top right; }
+  .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 140px; outline: none; --pop-origin: top right; }
   /* the download's progress: a line of the menu, not a choice */
   .menu-item.progress { color: var(--text-2); cursor: default; font-variant-numeric: tabular-nums; }
   .menu-item.progress:hover { background: none; }

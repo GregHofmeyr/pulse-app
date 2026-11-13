@@ -1,5 +1,6 @@
 //! Pinned messages (#178): anyone who can read and write a chat (a text channel, a DM, a group, a voice channel's
-//! chat) may pin a message in it for an hour, a day, a week or for good, and unpin it.
+//! chat, and since #257 a quotes or clips channel, whose posts are its quotes or clips) may pin a message in it for
+//! an hour, a day, a week or for good, and unpin it.
 //!
 //! Expiry: a pin past its `expires_at` is never shown (every read filters on the time), and a sweep every
 //! [`SWEEP_EVERY`] deletes the overdue rows and tells the chat with `MessageUnpinned`. So a pin is gone from every
@@ -27,12 +28,17 @@ pub const MAX_PINS: i64 = 50;
 /// How often overdue pins are swept.
 pub const SWEEP_EVERY: Duration = Duration::from_secs(30);
 
-/// Whether a chat of this kind takes pins: not quotes or clips channels.
-pub fn pinnable(kind: ChannelKind) -> bool {
-    matches!(
-        kind,
-        ChannelKind::Text | ChannelKind::Voice | ChannelKind::Dm | ChannelKind::Group
-    )
+/// What a pin's system line calls the pinned post in a chat of this kind ("alex pinned a quote"), or None where a
+/// pin posts no line: every chat takes pins (quotes and clips channels too, #257), but a clips channel shows only
+/// its clips, so a line there would never be seen (in its feed, by this client or an older one).
+pub fn line_noun(kind: ChannelKind) -> Option<&'static str> {
+    match kind {
+        ChannelKind::Text | ChannelKind::Voice | ChannelKind::Dm | ChannelKind::Group => {
+            Some("message")
+        }
+        ChannelKind::Quotes => Some("quote"),
+        ChannelKind::Clips => None,
+    }
 }
 
 /// `message_id, pinned_by, pinned_at, expires_at`.
@@ -138,16 +144,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_chats_take_pins() {
+    fn a_pin_line_names_the_post_and_clips_get_none() {
         for k in [
             ChannelKind::Text,
             ChannelKind::Voice,
             ChannelKind::Dm,
             ChannelKind::Group,
         ] {
-            assert!(pinnable(k), "{k:?}");
+            assert_eq!(line_noun(k), Some("message"), "{k:?}");
         }
-        assert!(!pinnable(ChannelKind::Quotes));
-        assert!(!pinnable(ChannelKind::Clips));
+        assert_eq!(line_noun(ChannelKind::Quotes), Some("quote"));
+        assert_eq!(line_noun(ChannelKind::Clips), None);
     }
 }
