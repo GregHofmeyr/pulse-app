@@ -1,5 +1,4 @@
 <script lang="ts">
-  import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import ListeningLine from './ListeningLine.svelte'
@@ -31,8 +30,8 @@
   let hovered = $state<string | null>(null)
 
   // A row's menu (#135): the server member list's person menu (MemberMenu) with no server, so View profile, Message,
-  // Change nickname (your private one) and the other person-to-person items. Right-click, or ContextMenu / Shift+F10
-  // on the row's name or avatar.
+  // Change nickname (your private one) and the other person-to-person items, then Remove from group (#335: was a
+  // hover X on the row; anyone but you, as before). Right-click, or ContextMenu / Shift+F10 on the row's name or avatar.
   let menu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
   function openMenu(userId: string, e: MouseEvent | KeyboardEvent, row: HTMLElement) {
     e.preventDefault()
@@ -60,16 +59,13 @@
       <!-- what they're listening to (#275) on the line under the name; Spotify's icon at the row's end -->
       <span class="who"><span class="nm"><Name userId={p.user.id} serverId={null} text={p.name} surface="side" />{#if p.user.id === app.state.me?.id}<small> (you)</small>{/if}</span>{#if listening}<ListeningLine {listening} icon={false} />{/if}</span>
       {#if listening}<span class="sp"><SpotifyIcon /></span>{/if}
-      {#if p.user.id !== app.state.me?.id}
-        <button class="x" aria-label="Remove {p.name}" data-tip="Remove from group" onclick={() => remove(p.user.id)}><Icon name="x" size={14} /></button>
-      {/if}
     </div>
   {/each}
   {/each}
   {#if error}<p class="err" role="alert">{error}</p>{/if}
 </aside>
 {#if menu}
-  {#key menu}<MemberMenu serverId={null} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} onClose={() => (menu = null)} />{/key}
+  {#key menu}<MemberMenu serverId={null} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} onRemove={remove} onClose={() => (menu = null)} />{/key}
 {/if}
 
 <style>
@@ -86,9 +82,5 @@
   .nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sp { flex-shrink: 0; color: var(--text-3); }
   .who small { color: var(--text-3); font-weight: 400; }
-  /* a row's revealed action: the same as the server member list's Message (#173) */
-  .x { width: 28px; height: 28px; flex-shrink: 0; border: 0; border-radius: var(--radius-sm); background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; opacity: 0; }
-  .x:hover { background: var(--bg-4); color: var(--text); }
-  .row:hover .x, .x:focus-visible { opacity: 1; }
   .err { margin: 8px 10px; font-size: 13px; color: var(--danger-text); }
 </style>

@@ -3,7 +3,8 @@
   // (where the server may be none and View profile is left out: you're on it), or a message author in a DM or group
   // (#189: no server, so no server nickname). The profile, a message, server mute / deafen (#144: as the voice
   // participant menu's), and the nickname items, Appear offline to them (#45), and in a DM muting it (the DM list's
-  // flyout, #190). Keyboard and focus work as in the voice participant menu.
+  // flyout, #190), and in a group's member list Remove from group (#335). Keyboard and focus work as in the voice
+  // participant menu.
   import { onMount, untrack } from 'svelte'
   import { app, clock, ui } from '../lib/store.svelte'
   import { placeMenu } from '../lib/menuPlace'
@@ -20,7 +21,7 @@
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
 
-  let { serverId, userId, x, y, opener, onClose, onMessage, fromCard = false, muteChannelId = null }: {
+  let { serverId, userId, x, y, opener, onClose, onMessage, onRemove, fromCard = false, muteChannelId = null }: {
     /** The server it opens in, or null (a card opened outside servers). */
     serverId: string | null
     userId: string
@@ -30,6 +31,8 @@
     opener: HTMLElement
     onClose: () => void
     onMessage?: (userId: string) => void
+    /** Opened on a group's member list (#335): Remove from group, for anyone but you. */
+    onRemove?: (userId: string) => void
     /** Opened on their profile card: no View profile. */
     fromCard?: boolean
     /** Opened on a message in your DM with them: Mute conversation mutes that DM. */
@@ -147,6 +150,10 @@
       <MuteFlyout bind:this={flyout} item="mute" label="Mute conversation" flyoutLabel="Mute {name} for" menuLeft={left} menuTop={top}
         onPick={(m) => pick(reportMute(() => api.setMute('channel', muteChannelId, muteUntil(m))))} />
     {/if}
+  {/if}
+  {#if onRemove && !self}
+    <span class="menu-sep" role="separator"></span>
+    <button type="button" class="menu-item danger" role="menuitem" data-item="remove" onclick={() => pick(() => onRemove(userId))}>Remove from group</button>
   {/if}
 </div>
 
