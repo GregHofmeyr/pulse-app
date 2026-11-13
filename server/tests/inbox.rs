@@ -926,12 +926,19 @@ async fn a_timed_mute_running_out_tells_every_device_the_count() {
     // the server's runs out too: the reply counts again, and every device hears it
     f.run_out(f.alex, &server).await;
     assert_eq!(f.sweep().await, 1);
+    // Either order: the first sweep's recount may still be queued in the inbox worker when the server's mute
+    // runs out, and then it reads (and tells) the new count before this sweep's MutesChanged goes out.
     for ws in [&mut one, &mut two] {
-        assert_eq!(next_mutes(ws).await.expect("mutes told"), vec![]);
-        assert!(matches!(
-            next_mutes_or_inbox(ws).await,
-            Some(Event::InboxUpdated { unread: 1, .. })
-        ));
+        let (mut mutes, mut counted) = (None, false);
+        for _ in 0..2 {
+            match next_mutes_or_inbox(ws).await.expect("told") {
+                Event::MutesChanged { mutes: m, .. } => mutes = Some(m),
+                Event::InboxUpdated { unread: 1, .. } => counted = true,
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert_eq!(mutes, Some(vec![]), "mutes told");
+        assert!(counted, "the count is told");
     }
     assert_eq!(f.unread(&f.alex_t).await, 1);
     // a row left with neither a mute nor a level goes
