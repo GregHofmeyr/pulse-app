@@ -26,7 +26,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 axum = { version = "0.8", features = ["ws"] }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 tower-http = { version = "0.6", features = ["trace", "fs"] }
 # ServiceExt::oneshot, to stream an update installer through tower-http's ServeFile (updates.rs); already in the tree via axum
 tower = { version = "0.5", features = ["util"] }
@@ -65,7 +65,7 @@ sha2 = "0.11"
 tokio-tungstenite = "0.29"
 futures = "0.3"
 pulse-server = { path = ".", features = ["testing"] }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tokio.workspace = true
 serde_json.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
