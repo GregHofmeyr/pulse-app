@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex};
 
 use pulse_protocol::gateway::{Event, ServerFrame};
 use pulse_protocol::ids::UserId;
@@ -30,6 +30,12 @@ pub type ConnId = u64;
 /// database and sent while it is held, so counts reach their devices in the order they were read: a stale count
 /// can never land after a fresh one, nor make the hub skip one as unchanged.
 pub type InboxSlot = Arc<tokio::sync::Mutex<Option<u32>>>;
+
+/// Inbox work for the hub's inbox worker ([`Hub::publish_all`]).
+type InboxBatch = (SqlitePool, Vec<crate::inbox::Job>);
+
+/// The most batches the inbox worker takes in one go (it coalesces their counts, `inbox::run`).
+const INBOX_BATCHES: usize = 256;
 
 pub struct Registration {
     pub id: ConnId,
@@ -87,8 +93,8 @@ struct Inner {
     /// Each connected user's [`InboxSlot`]. Locked only while `conns` is held (after it), so a slot is made only
     /// for someone connected and goes with their last connection.
     inbox: Mutex<HashMap<UserId, InboxSlot>>,
-    /// The inbox worker's queue (#327, [`Hub::publish_all`]), started on first use.
-    inbox_queue: OnceLock<mpsc::UnboundedSender<(SqlitePool, Vec<crate::inbox::Job>)>>,
+    /// The inbox worker's queue (#327, [`Hub::publish_all`]), started on first use (and again if it ever ends).
+    inbox_queue: Mutex<Option<mpsc::UnboundedSender<InboxBatch>>>,
     /// Each connection's "Listening to" (#275). Locked only while `conns` is held (after it).
     listening: Mutex<HashMap<ConnId, Held>>,
     /// Each connection's newest listening update, by ticket ([`Hub::listening_ticket`]): one that took longer to
@@ -164,11 +170,19 @@ impl Hub {
             .lock()
             .unwrap()
             .retain(|(_, conn), _| *conn != id);
-        if let Some(gone) = gone
-            && !conns.values().any(|c| c.user == gone.user)
-        {
-            self.inner.inbox.lock().unwrap().remove(&gone.user);
+        if gone.is_some() {
+            self.prune_inbox(&conns);
         }
+    }
+
+    /// Drop the inbox slots of users with no connection left in `conns` (the `conns` lock held), whichever way
+    /// their last one went: unregistered, or dropped by the hub itself (a kicked session, too slow, shutdown).
+    fn prune_inbox(&self, conns: &HashMap<ConnId, Conn>) {
+        self.inner
+            .inbox
+            .lock()
+            .unwrap()
+            .retain(|u, _| conns.values().any(|c| c.user == *u));
     }
 
     /// A ticket for connection `conn`'s next listening update (#275), taken as the frame arrives: only the newest
@@ -278,11 +292,13 @@ impl Hub {
         {
             return;
         }
-        deliver_where(
+        if deliver_where(
             &mut conns,
             |c| c.user == owner && c.inbox,
             &ServerFrame::Event(event),
-        );
+        ) {
+            self.prune_inbox(&conns);
+        }
     }
 
     /// Connection `conn`'s Ready count has been read (under its user's [`InboxSlot`]): inbox events reach it now.
@@ -324,7 +340,8 @@ impl Hub {
 
     /// Close every socket opened with this session (logout / revocation).
     pub fn drop_session(&self, token_hash: &str) {
-        self.inner.conns.lock().unwrap().retain(|_, c| {
+        let mut conns = self.inner.conns.lock().unwrap();
+        conns.retain(|_, c| {
             if c.token_hash == token_hash {
                 c.kick(CLOSE_UNAUTHORIZED);
                 false
@@ -332,12 +349,14 @@ impl Hub {
                 true
             }
         });
+        self.prune_inbox(&conns);
     }
 
     /// Close `user`'s sockets opened with any session other than `keep_hash` ("sign out all
     /// other devices"); the caller's own sockets and everyone else's stay open.
     pub fn drop_other_sessions(&self, user: UserId, keep_hash: &str) {
-        self.inner.conns.lock().unwrap().retain(|_, c| {
+        let mut conns = self.inner.conns.lock().unwrap();
+        conns.retain(|_, c| {
             if c.user == user && c.token_hash != keep_hash {
                 c.kick(CLOSE_UNAUTHORIZED);
                 false
@@ -345,13 +364,16 @@ impl Hub {
                 true
             }
         });
+        self.prune_inbox(&conns);
     }
 
     /// Close every socket with `code` (1012 = server restarting; clients reconnect).
     pub fn close_all(&self, code: u16) {
-        for (_, mut c) in self.inner.conns.lock().unwrap().drain() {
+        let mut conns = self.inner.conns.lock().unwrap();
+        for (_, mut c) in conns.drain() {
             c.kick(code);
         }
+        self.prune_inbox(&conns);
     }
 
     /// Hold this from before a write transaction until its events are published, so events
@@ -383,8 +405,12 @@ impl Hub {
         let jobs = crate::inbox::follow_ups(self, out.iter().map(|(_, e)| e));
         {
             let mut conns = self.inner.conns.lock().unwrap();
+            let mut dropped = false;
             for (audience, event) in out {
-                deliver(&mut conns, &audience, &ServerFrame::Event(event));
+                dropped |= deliver(&mut conns, &audience, &ServerFrame::Event(event));
+            }
+            if dropped {
+                self.prune_inbox(&conns);
             }
         }
         if !jobs.is_empty() {
@@ -392,20 +418,49 @@ impl Hub {
         }
     }
 
-    /// Hand `jobs` to the inbox worker, starting it the first time. It holds the hub weakly: it ends with it.
+    /// Hand `jobs` to the inbox worker, starting it the first time (or again, logged, if it has ended).
     fn queue_inbox(&self, db: &SqlitePool, jobs: Vec<crate::inbox::Job>) {
-        let queue = self.inner.inbox_queue.get_or_init(|| {
-            let (tx, mut rx) = mpsc::unbounded_channel::<(SqlitePool, Vec<crate::inbox::Job>)>();
-            let hub: Weak<Inner> = Arc::downgrade(&self.inner);
-            tokio::spawn(async move {
-                while let Some((db, jobs)) = rx.recv().await {
-                    let Some(inner) = hub.upgrade() else { break };
-                    crate::inbox::run(&db, &Hub { inner }, jobs).await;
+        let mut queue = self.inner.inbox_queue.lock().unwrap();
+        let mut batch = (db.clone(), jobs);
+        if let Some(tx) = queue.as_ref() {
+            match tx.send(batch) {
+                Ok(()) => return,
+                Err(mpsc::error::SendError(b)) => {
+                    tracing::error!("the inbox worker has ended; starting another");
+                    batch = b;
                 }
-            });
-            tx
+            }
+        }
+        let tx = self.start_inbox_worker();
+        if tx.send(batch).is_err() {
+            tracing::error!("couldn't queue inbox work; those events are lost (a Ready has them)");
+        }
+        *queue = Some(tx);
+    }
+
+    /// The inbox worker: takes batches in publish order, with whatever else is already waiting (up to
+    /// [`INBOX_BATCHES`], so `inbox::run` counts each person once for all of them). It holds the hub weakly and
+    /// ends with it. A batch that panics is logged and the worker goes on with the next.
+    fn start_inbox_worker(&self) -> mpsc::UnboundedSender<InboxBatch> {
+        let (tx, mut rx) = mpsc::unbounded_channel::<InboxBatch>();
+        let hub = Arc::downgrade(&self.inner);
+        tokio::spawn(async move {
+            while let Some((db, mut jobs)) = rx.recv().await {
+                // one hub, one database: the first batch's pool serves them all
+                for _ in 1..INBOX_BATCHES {
+                    let Ok((_, more)) = rx.try_recv() else { break };
+                    jobs.extend(more);
+                }
+                let Some(inner) = hub.upgrade() else { break };
+                let hub = Hub { inner };
+                if let Err(e) =
+                    tokio::spawn(async move { crate::inbox::run(&db, &hub, jobs).await }).await
+                {
+                    tracing::error!(error = ?e, "an inbox batch failed; its events are lost (a Ready has them)");
+                }
+            }
         });
-        let _ = queue.send((db.clone(), jobs));
+        tx
     }
 
     /// Like [`Hub::publish`], but only to the members of `only` who are also in the event's
@@ -425,7 +480,10 @@ impl Hub {
                 .collect(),
         );
         let frame = ServerFrame::Event(event);
-        deliver(&mut self.inner.conns.lock().unwrap(), &allowed, &frame);
+        let mut conns = self.inner.conns.lock().unwrap();
+        if deliver(&mut conns, &allowed, &frame) {
+            self.prune_inbox(&conns);
+        }
     }
 
     /// Tell each connected viewer how `user` looks to them now (#45: per viewer, see
@@ -494,8 +552,10 @@ impl Hub {
             }
         }
         // the presence first: a client drops the activity of someone who went offline
-        send_each(&mut conns, &to);
-        send_each(&mut conns, &listening_to);
+        let dropped = send_each(&mut conns, &to) | send_each(&mut conns, &listening_to);
+        if dropped {
+            self.prune_inbox(&conns);
+        }
         (!to.is_empty()).then_some(connected)
     }
 
@@ -553,8 +613,9 @@ impl Hub {
     }
 }
 
-/// Queue each connection's own frame; drop connections that can't keep up.
-fn send_each(conns: &mut HashMap<ConnId, Conn>, frames: &HashMap<ConnId, ServerFrame>) {
+/// Queue each connection's own frame; drop connections that can't keep up (true when any was).
+fn send_each(conns: &mut HashMap<ConnId, Conn>, frames: &HashMap<ConnId, ServerFrame>) -> bool {
+    let before = conns.len();
     conns.retain(|id, c| {
         let Some(frame) = frames.get(id) else {
             return true;
@@ -569,23 +630,25 @@ fn send_each(conns: &mut HashMap<ConnId, Conn>, frames: &HashMap<ConnId, ServerF
             Err(mpsc::error::TrySendError::Closed(_)) => false,
         }
     });
+    conns.len() < before
 }
 
-/// Queue `frame` for every connection in `audience`; drop connections that can't keep up.
+/// Queue `frame` for every connection in `audience`; drop connections that can't keep up (true when any was).
 fn deliver(
     conns: &mut HashMap<ConnId, Conn>,
     audience: &super::audience::Audience,
     frame: &ServerFrame,
-) {
-    deliver_where(conns, |c| audience.includes(c.user), frame);
+) -> bool {
+    deliver_where(conns, |c| audience.includes(c.user), frame)
 }
 
-/// Queue `frame` for every connection `to` picks; drop connections that can't keep up.
+/// Queue `frame` for every connection `to` picks; drop connections that can't keep up (true when any was).
 fn deliver_where(
     conns: &mut HashMap<ConnId, Conn>,
     to: impl Fn(&Conn) -> bool,
     frame: &ServerFrame,
-) {
+) -> bool {
+    let before = conns.len();
     conns.retain(|id, c| {
         if !to(c) {
             return true;
@@ -600,6 +663,7 @@ fn deliver_where(
             Err(mpsc::error::TrySendError::Closed(_)) => false,
         }
     });
+    conns.len() < before
 }
 
 #[cfg(test)]
@@ -664,6 +728,62 @@ mod tests {
             again.rx.try_recv(),
             Ok(ServerFrame::Event(Event::InboxUpdated { unread: 3, .. }))
         ));
+    }
+
+    /// #327 review: a connection the hub drops itself (a kicked session, one too slow to keep up) takes its user's
+    /// inbox slot with it when it was their last.
+    #[test]
+    fn inbox_slots_go_when_the_hub_drops_the_last_connection() {
+        let hub = Hub::default();
+        let (alex, sam) = (UserId::new(), UserId::new());
+        let _a = hub.register(alex, "a".into());
+        let s = hub.register(sam, "s".into());
+        hub.inbox_slot(alex).unwrap();
+        hub.inbox_slot(sam).unwrap();
+        hub.drop_session("a");
+        assert!(
+            !hub.inner.inbox.lock().unwrap().contains_key(&alex),
+            "kicked"
+        );
+        hub.drop_other_sessions(sam, "keep");
+        assert!(hub.inner.inbox.lock().unwrap().is_empty(), "kicked too");
+
+        let kim = UserId::new();
+        let slow = hub.register(kim, String::new());
+        let slot = hub.inbox_slot(kim).unwrap();
+        hub.inbox_ready(slow.id);
+        let event = Event::InboxUpdated {
+            user_id: kim,
+            unread: 1,
+            read: vec![],
+            read_upto: None,
+            removed: vec![],
+        };
+        // never read: its queue fills, then the next frame drops it
+        for _ in 0..=QUEUE {
+            hub.send_inbox(&slot, event.clone());
+        }
+        assert_eq!(hub.connections_for(kim), 0, "dropped as too slow");
+        assert!(hub.inner.inbox.lock().unwrap().is_empty(), "too slow");
+        drop(s);
+    }
+
+    /// #327 review: inbox work queued after the worker ended starts another, rather than being lost for good.
+    #[tokio::test]
+    async fn the_inbox_worker_starts_again_if_it_has_ended() {
+        let hub = Hub::default();
+        let (dead, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        *hub.inner.inbox_queue.lock().unwrap() = Some(dead);
+        let db = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
+        hub.queue_inbox(
+            &db,
+            vec![crate::inbox::Job::Recount {
+                user: UserId::new(),
+            }],
+        );
+        let queue = hub.inner.inbox_queue.lock().unwrap();
+        assert!(!queue.as_ref().unwrap().is_closed(), "a live worker again");
     }
 
     #[test]

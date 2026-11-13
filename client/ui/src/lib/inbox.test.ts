@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest'
-import { appendPage, applyToList, badgeText, highlightParts, loadTab, markRead, oneLine, saveTab, whereLabel } from './inbox'
+import { appendPage, applyToList, arrived, badgeText, highlightParts, loadTab, markRead, oneLine, saveTab, whereLabel } from './inbox'
 import { emptyState, type AppState } from './state'
 import type { Channel } from './protocol/Channel'
 import type { Event } from './protocol/Event'
@@ -90,5 +90,19 @@ describe('inbox (#306)', () => {
     expect(markRead(list, () => false)).toBe(list)
     expect(badgeText(7)).toBe('7')
     expect(badgeText(100)).toBe('99+')
+  })
+
+  // #327: a new item can reach this device after the read point that covers it, or after its chat went
+  it('a new item is read when a read point or seen point here covers it, and dropped when its chat is gone', () => {
+    const s = { ...state(), reads: { C1: { channel_id: 'C1', last_read_message_id: 'M5', unread: 0, mentions: 0 } }, threadSeen: { Q1: 'M7' } }
+    expect(arrived(s, item('M4'))?.read).toBe(true)
+    expect(arrived(s, item('M6'))?.read).toBe(false)
+    expect(arrived(s, item('M6', {}, { thread_root_id: 'Q1' }))?.read).toBe(true)
+    expect(arrived(s, item('M8', {}, { thread_root_id: 'Q1' }))?.read).toBe(false)
+    // a reply isn't read by the channel's read point
+    expect(arrived(s, item('M4', {}, { thread_root_id: 'Q2' }))?.read).toBe(false)
+    expect(arrived(s, item('M4', {}, { channel_id: 'GONE' }))).toBeNull()
+    const fresh = item('M6')
+    expect(arrived(s, fresh)).toBe(fresh)
   })
 })

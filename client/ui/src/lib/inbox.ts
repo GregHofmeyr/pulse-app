@@ -115,6 +115,18 @@ export function applyToList(items: InboxItem[], e: Event, tab: InboxTab): InboxI
   }
 }
 
+/** A new item as this device should list it (#327): `null` when its chat is no longer known here (deleted, or a
+ *  conversation left), read when the read point (a reply: the thread's seen point) already covers it. The server
+ *  reads the item before it sends it, so a read point or a delete can reach this device first. Otherwise the same
+ *  item. */
+export function arrived(s: AppState, item: InboxItem): InboxItem | null {
+  const m = item.message
+  if (!s.channels[m.channel_id]) return null
+  if (item.read) return item
+  const upto = m.thread_root_id ? s.threadSeen[m.thread_root_id] : s.reads[m.channel_id]?.last_read_message_id
+  return upto && m.id <= upto ? { ...item, read: true } : item
+}
+
 /** Items newest first, with `more` (an older page) after them, dropping any already listed. */
 export function appendPage(items: InboxItem[], more: InboxItem[]): InboxItem[] {
   const have = new Set(items.map((i) => i.message.id))

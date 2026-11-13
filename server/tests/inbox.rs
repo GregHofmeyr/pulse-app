@@ -691,14 +691,15 @@ async fn the_last_count_a_device_hears_is_the_true_one() {
     assert_eq!(last, 1);
 }
 
-/// #327: a deleted (then restored) channel changes the count with no inbox event of its own (clients refetch):
-/// what the hub last told is forgotten, so a later count equal to the old one is still told.
+/// #327: a deleted (then restored) channel changes the count of whoever had items in it: they're told the fresh
+/// count (a count read before the delete can't stick), and nobody else hears anything.
 #[tokio::test]
-async fn a_count_after_a_channel_comes_back_is_told() {
+async fn a_count_after_a_channel_goes_and_comes_back_is_told() {
     let f = fx().await;
     let two = f.new_channel("text", "two").await;
     send(&f.app, &f.sam_t, two.id, "@alex in two").await;
     let (mut ws, ready) = hello(&f.app, &f.alex_t).await;
+    let (mut kim_ws, _) = hello(&f.app, &f.kim_t).await;
     assert_eq!(ready.inbox_unread, Some(1));
     let r = f
         .app
@@ -709,7 +710,13 @@ async fn a_count_after_a_channel_comes_back_is_told() {
         .await
         .unwrap();
     assert_eq!(r.status(), 204);
-    assert_eq!(f.unread(&f.alex_t).await, 0, "the client refetches this");
+    assert!(
+        matches!(
+            next_inbox(&mut ws).await,
+            Some(Event::InboxUpdated { unread: 0, .. })
+        ),
+        "the count without it is told"
+    );
     let r = post_json(
         &f.app,
         &f.alex_t,
@@ -725,6 +732,37 @@ async fn a_count_after_a_channel_comes_back_is_told() {
         ),
         "the count it's back to is told"
     );
+    assert!(
+        next_inbox(&mut kim_ws).await.is_none(),
+        "kim had nothing there"
+    );
+}
+
+/// #327 review: deleting a server takes all its channels at once: whoever had items in them hears the new count
+/// once.
+#[tokio::test]
+async fn deleting_a_server_tells_the_count_once() {
+    let f = fx().await;
+    let two = f.new_channel("text", "two").await;
+    send(&f.app, &f.sam_t, f.ch.id, "@alex in general").await;
+    send(&f.app, &f.sam_t, two.id, "@alex in two").await;
+    let (mut ws, ready) = hello(&f.app, &f.alex_t).await;
+    assert_eq!(ready.inbox_unread, Some(2));
+    let r = f
+        .app
+        .http
+        .delete(f.app.url(&format!("/servers/{}", f.ch.server_id.unwrap())))
+        .bearer_auth(&f.alex_t)
+        .json(&json!({ "name": "Main" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    assert!(matches!(
+        next_inbox(&mut ws).await,
+        Some(Event::InboxUpdated { unread: 0, .. })
+    ));
+    assert!(next_inbox(&mut ws).await.is_none(), "only once");
 }
 
 /// #327: likewise for a group you leave.
@@ -739,7 +777,13 @@ async fn a_count_after_leaving_a_group_is_told() {
     let (mut ws, ready) = hello(&f.app, &f.alex_t).await;
     assert_eq!(ready.inbox_unread, Some(1));
     f.leave(&f.alex_t, group.id, f.alex).await;
-    assert_eq!(f.unread(&f.alex_t).await, 0);
+    assert!(
+        matches!(
+            next_inbox(&mut ws).await,
+            Some(Event::InboxUpdated { unread: 0, .. })
+        ),
+        "the count without the group is told"
+    );
     f.unmute_channel(&f.alex_t, f.ch.id).await;
     assert!(
         matches!(
