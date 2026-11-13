@@ -146,6 +146,17 @@ describe('QuickSwitcher', () => {
     await settle()
     expect(onGo).toHaveBeenLastCalledWith(expect.objectContaining({ key: 's:s1' }), false)
   })
+  it("while a voice row is listed, every place row keeps the Join button's room, so the server names line up", () => {
+    open(['c:c2', 'c:v1'])
+    expect(names()).toEqual(['setup', 'Lounge'])
+    const [text, voice] = options()
+    expect(text.querySelector('.end.cols .join-slot')).toBeTruthy()
+    expect(voice.querySelector('.end.cols button.join')).toBeTruthy()
+    unmount(cmp!)
+    cmp = undefined
+    open(['c:c2', 'c:c1'])
+    expect(document.querySelector('.join-slot')).toBeNull() // no voice row: no empty room on the right
+  })
   it('a voice channel opens its stage; Shift+Enter or its Join button joins too', async () => {
     open()
     type('lounge')

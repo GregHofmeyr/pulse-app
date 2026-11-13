@@ -107,6 +107,7 @@
 
   const KIND_ICON: Partial<Record<Place['kind'], IconName>> = { text: 'hash', voice: 'speaker', quotes: 'quote', clips: 'film' }
   const otherIn = (id: string) => (app.state.dmMembers[id] ?? []).find((u) => u !== app.state.me?.id) ?? null
+  const anyVoice = $derived(flat.some((r) => r.type === 'place' && r.place.kind === 'voice'))
   const rowKey = (r: Row) => (r.type === 'place' ? r.place.key : r.type === 'message' ? `m:${r.hit.message.id}` : r.action.id)
   const author = (h: SearchHit) => (h.message.author_id ? displayName(app.state, messages?.serverId ?? null, h.message.author_id) : 'Pulse')
   /** Faint after the name: a place's server, an action's page, a message's author (and channel, in a server). */
@@ -167,12 +168,15 @@
                 <span class="name">{r.type === 'place' ? r.place.name : r.action.label}</span>
               {/if}
               {#if r.type === 'place' && r.place.kind === 'voice'}<span class="sr-only">, voice channel, Shift+Enter to join</span>{/if}
-              <span class="end">
+              <span class="end" class:cols={r.type === 'place'}>
                 {#if contextOf(r)}<small class="ctx">{contextOf(r)}</small>{/if}
-                <!-- shown on the highlighted row, its room kept on every voice row so nothing shifts as the highlight moves -->
+                <!-- shown on the highlighted row; its room is kept on every place row while any voice row is listed, so the
+                     server names line up in one column and nothing shifts as the highlight moves -->
                 {#if r.type === 'place' && r.place.kind === 'voice'}
                   <button type="button" class="btn btn-quiet join" tabindex="-1" aria-hidden="true"
                     onclick={(e) => { e.stopPropagation(); void choose(i, true) }}>Join</button>
+                {:else if r.type === 'place' && anyVoice}
+                  <span class="join-slot" aria-hidden="true"></span>
                 {/if}
               </span>
             </div>
@@ -207,7 +211,10 @@
   .end { padding-left: 12px; flex-shrink: 0; min-width: 0; max-width: 45%; display: flex; align-items: center; gap: 8px; }
   .end:empty { display: none; }
   .ctx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 12px; }
-  .join { height: 26px; padding: 0 10px; flex-shrink: 0; visibility: hidden; }
+  /* a place's server in a fixed, left-aligned column, so the names line up down the list */
+  .end.cols .ctx { width: 9.5rem; }
+  .join, .join-slot { width: 56px; height: 26px; padding: 0; flex-shrink: 0; justify-content: center; }
+  .join { visibility: hidden; }
   .row.hi .join { visibility: visible; }
   /* as tall as a row, so the hits take its place without a jump */
   .note { margin: 0; min-height: 40px; padding: 0 10px; display: flex; align-items: center; color: var(--text-3); font-size: 13px; }
