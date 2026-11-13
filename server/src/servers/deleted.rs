@@ -2,7 +2,9 @@
 //! owner's Recently deleted for [`RECENTLY_DELETED_DAYS`], as a deleted channel does (#112): gone
 //! for everyone (the access rule, the server checks and the Ready lists skip it) but nothing in it
 //! purged, so the owner can restore it whole. After that the sweeper purges it with everything in
-//! it, in batches, so a big server never holds the write lock for long (#108).
+//! it, in batches (`servers::purge`), so a big server never holds the write lock for long (#108).
+//!
+//! [`RECENTLY_DELETED_DAYS`]: crate::servers::channels::RECENTLY_DELETED_DAYS
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -17,15 +19,15 @@ use sqlx::SqliteConnection;
 use crate::AppState;
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
-use crate::servers::channels::{RECENTLY_DELETED_DAYS, end_gone_call, purge_at};
+use crate::servers::channels::{end_gone_call, purge_at};
 use crate::servers::routes::{SERVER_COLS, ServerRow, server_from_row};
 
-/// How many messages one purge transaction deletes.
-const PURGE_BATCH: i64 = 500;
+use crate::servers::purge::{BATCH as PURGE_BATCH, Purging};
 
-/// Deleted at or before this, a server is due to be purged and can no longer be restored.
+/// Deleted at or before this, a server is due to be purged and can no longer be restored (as a
+/// channel is: the same 7 days).
 fn due(now: chrono::DateTime<chrono::Utc>) -> String {
-    crate::db::stamp(now - chrono::Duration::days(RECENTLY_DELETED_DAYS))
+    crate::servers::channels::due(now)
 }
 
 /// `DELETE /servers/{id}`: the owner moves their server to their Recently deleted. 404 when there
@@ -328,6 +330,8 @@ async fn republish_own_state(s: &AppState, server: ServerId) -> AppResult<()> {
 }
 
 /// Purge every server deleted [`RECENTLY_DELETED_DAYS`] or more before `now`. Returns how many went.
+///
+/// [`RECENTLY_DELETED_DAYS`]: crate::servers::channels::RECENTLY_DELETED_DAYS
 pub async fn purge_expired(s: &AppState, now: chrono::DateTime<chrono::Utc>) -> AppResult<u32> {
     purge_expired_batched(s, now, PURGE_BATCH).await
 }
@@ -359,7 +363,11 @@ pub async fn purge_expired_batched(
 }
 
 /// Whether `id` is still deleted and due (`false`: someone else purged it).
-async fn still_due(tx: &mut SqliteConnection, id: ServerId, due: &str) -> AppResult<bool> {
+pub(crate) async fn still_due(
+    tx: &mut SqliteConnection,
+    id: ServerId,
+    due: &str,
+) -> AppResult<bool> {
     let hit: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM servers WHERE id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?",
     )
@@ -370,73 +378,34 @@ async fn still_due(tx: &mut SqliteConnection, id: ServerId, due: &str) -> AppRes
     Ok(hit.is_some())
 }
 
-/// A deleted, due server and everything in it, for good. Its channels' messages go first, newest
-/// first, `batch` per transaction (each its own short hold of the write lock, #108): a reply or a
-/// thread reply is always newer than what it points at, so no batch leaves one pointing at a
-/// deleted message. Quote lines go before their messages (the search triggers rewrite a quote's
-/// entry, which the message's then drops); the cascades take each message's reactions, mentions,
-/// quotes, clips rows, polls, pins, previews and wheel spins. Each batch's clip objects are
-/// deleted from R2 after its commit (the clip sweeper retries a failure); the channels' message
-/// files (#57) after the last one (the attachments sweep retries a failure). Then, in one last
-/// transaction, its notification prefs (they have no foreign key), its channels (with their read
-/// states, voice sessions, clip views, calls and stream sessions) and the server row, whose
-/// cascades take its categories, members and their join sounds, custom emoji, sounds, games,
-/// wheels, speaker links, Quote of the Year votes and winners, server mutes and nickname history.
-/// Disk media nothing uses any more is left to the media cleanup. Nobody hears of it: the server
-/// left everyone's view when it was deleted. `false` when it was purged in the meantime.
+/// A deleted, due server and everything in it, for good. Its channels' messages go first, one
+/// channel after another, `batch` per transaction (`servers::purge::messages`: each batch its own
+/// short hold of the write lock, #108, with the messages' search entries, reactions, mentions,
+/// quotes, clips rows and objects, polls, pins, previews, inbox and thread reads and wheel spins).
+/// Then, in one last transaction, its notification prefs (they have no foreign key), its channels
+/// (with their read states, voice sessions, clip views, calls and stream sessions) and the server
+/// row, whose cascades take its categories, members and their join sounds, custom emoji, sounds,
+/// games, wheels, speaker links, Quote of the Year votes and winners, server mutes and nickname
+/// history; the channels' files (#57) go after that commit (the attachments sweep retries a
+/// failure). Disk media nothing uses any more is left to the media cleanup. Nobody hears of it:
+/// the server left everyone's view when it was deleted. A purge cut off part-way (a restart) is
+/// taken up from what is left by the next sweep. `false` when it was purged in the meantime.
 async fn purge(s: &AppState, id: ServerId, due: &str, batch: i64) -> AppResult<bool> {
     let channels: Vec<String> = sqlx::query_scalar("SELECT id FROM channels WHERE server_id = ?")
         .bind(id.to_string())
         .fetch_all(&s.db)
         .await?;
-    const PAGE: &str = "(SELECT id FROM messages WHERE channel_id = ?1 ORDER BY id DESC LIMIT ?2)";
-    for channel in &channels {
-        loop {
-            // Unread and mention counts others publish as absolutes span channels: in commit order.
-            let order = s.hub.in_order().await;
-            let mut tx = crate::db::begin_write(&s.db).await?;
-            if !still_due(&mut tx, id, due).await? {
-                return Ok(false);
-            }
-            // A reply or thread reply is newer than what it answers, so normally nothing outside the
-            // page points into it; one with an older id (a clock that went back across a restart)
-            // loses the link instead of stopping the purge. Replies stay in their channel.
-            for col in ["reply_to_id", "thread_root_id"] {
-                sqlx::query(&format!(
-                    "UPDATE messages SET {col} = NULL
-                     WHERE channel_id = ?1 AND {col} IN {PAGE} AND id NOT IN {PAGE}"
-                ))
-                .bind(channel)
-                .bind(batch)
-                .execute(&mut *tx)
-                .await?;
-            }
-            let clips: Vec<String> = sqlx::query_scalar(&format!(
-                "SELECT video_key FROM clips WHERE message_id IN {PAGE}"
-            ))
-            .bind(channel)
-            .bind(batch)
-            .fetch_all(&mut *tx)
-            .await?;
-            sqlx::query(&format!(
-                "DELETE FROM quote_lines WHERE message_id IN {PAGE}"
-            ))
-            .bind(channel)
-            .bind(batch)
-            .execute(&mut *tx)
-            .await?;
-            let gone = sqlx::query(&format!("DELETE FROM messages WHERE id IN {PAGE}"))
-                .bind(channel)
-                .bind(batch)
-                .execute(&mut *tx)
-                .await?
-                .rows_affected();
-            tx.commit().await?;
-            drop(order);
-            remove_clip_objects(s, clips);
-            if gone < batch as u64 {
-                break;
-            }
+    let channel_ids = channels
+        .iter()
+        .map(|c| c.parse())
+        .collect::<Result<Vec<ChannelId>, _>>()
+        .map_err(anyhow::Error::from)?;
+    let what = Purging::Server { id, due };
+    for channel in &channel_ids {
+        match crate::servers::purge::messages(s, *channel, &what, batch, None).await {
+            Ok(_) => {}
+            Err(AppError::NotFound) => return Ok(false),
+            Err(e) => return Err(e),
         }
     }
     let _order = s.hub.in_order().await;
@@ -454,14 +423,10 @@ async fn purge(s: &AppState, id: ServerId, due: &str, batch: i64) -> AppResult<b
     .execute(&mut *tx)
     .await?;
     // Every file started in its channels, sent or not (#57): their objects go after the commit.
-    let channel_ids = channels
-        .iter()
-        .map(|c| c.parse())
-        .collect::<Result<Vec<pulse_protocol::ids::ChannelId>, _>>()
-        .map_err(anyhow::Error::from)?;
     let files = crate::attachments::stored_in_channels(&mut tx, &channel_ids).await?;
-    // Nothing can post in a deleted server, so its channels are empty by now; a channel made
-    // between the list above and here (there is no way to) would refuse, and the next sweep retries.
+    // Nothing can post in a deleted server, so its channels are empty by now (were a message left,
+    // the cascade would take it, its search entry by trigger); a channel made between the list
+    // above and here (there is no way to) would go with them, and its files to the sweep.
     sqlx::query("DELETE FROM channels WHERE server_id = ?")
         .bind(id.to_string())
         .execute(&mut *tx)
@@ -476,18 +441,6 @@ async fn purge(s: &AppState, id: ServerId, due: &str, batch: i64) -> AppResult<b
         tokio::spawn(async move { crate::attachments::remove_objects(&s, files).await });
     }
     Ok(true)
-}
-
-fn remove_clip_objects(s: &AppState, keys: Vec<String>) {
-    if keys.is_empty() {
-        return;
-    }
-    let s = s.clone();
-    tokio::spawn(async move {
-        for key in keys {
-            crate::messages::routes::remove_clip_object(&s, &key).await;
-        }
-    });
 }
 
 /// How often the sweeper looks for servers due to be purged.
