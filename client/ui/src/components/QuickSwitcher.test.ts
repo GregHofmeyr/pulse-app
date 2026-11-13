@@ -54,10 +54,11 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-const open = (recents: string[] = [], here: string | null = null, messages: Messages | null = null) => {
+type Everywhere = { search: (q: string) => Promise<SearchHit[]>; open: (hit: SearchHit) => void }
+const open = (recents: string[] = [], here: string | null = null, messages: Messages | null = null, everywhere: Everywhere | null = null) => {
   document.body.innerHTML = '<button id="before">before</button>'
   document.getElementById('before')!.focus()
-  cmp = mount(QuickSwitcher, { target: document.body, props: { context: () => ctx, recents, here, messages, onGo, onClose } })
+  cmp = mount(QuickSwitcher, { target: document.body, props: { context: () => ctx, recents, here, messages, everywhere, onGo, onClose } })
   flushSync()
 }
 const field = () => document.querySelector<HTMLInputElement>('input[role="combobox"]')!
@@ -261,6 +262,135 @@ describe('QuickSwitcher', () => {
       expect(note()).toBeNull()
       await wait(MESSAGE_DELAY_MS + 30)
       expect(heads()).toEqual(['Jump to', 'Actions'])
+    })
+  })
+  describe('Messages everywhere (#331)', () => {
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    const heads = () => [...document.querySelectorAll('.head')].map((h) => h.textContent)
+    const note = () => document.querySelector('.note')?.textContent ?? null
+    const ctxOf = (name: string) => options().find((o) => o.querySelector('.name')!.textContent === name)?.querySelector('.ctx')?.textContent ?? null
+    const here = (search: Messages['search']): Messages => ({ label: 'Messages in Game Night', serverId: 's1', search: vi.fn(search), open: vi.fn() })
+    const everywhere = (search: Everywhere['search']): Everywhere => ({ search: vi.fn(search), open: vi.fn() })
+    beforeEach(() => {
+      app.state = {
+        ...app.state,
+        servers: [...app.state.servers, { id: 's2', name: 'Book Club', icon_hash: null }] as never,
+        channels: {
+          ...app.state.channels,
+          c9: ch('c9', 'text', 'lobby', 's2'),
+          g1: ch('g1', 'group', 'Trip'),
+          n1: ch('n1', 'dm', null),
+        } as never,
+        dmMembers: { ...app.state.dmMembers, g1: ['U1', 'U2', 'U3'], n1: ['U1'] },
+        people: { ...app.state.people, U3: { user: user('U3', 'kim'), online: true } } as never,
+      }
+    })
+
+    it('follow the first section, leaving out its hits; each says where it is; the keys run through both', async () => {
+      const m = here(async () => [hit('m1', 'setup here'), hit('m2', 'setup again')])
+      const e = everywhere(async () => [
+        hit('m2', 'setup again'),
+        hit('e1', 'setup in the club', 'U3', 'c9'),
+        hit('e2', 'setup in a dm', 'U2', 'd1'),
+        hit('e3', 'setup on the trip', 'U2', 'g1'),
+        hit('e4', 'setup note', 'U1', 'n1'),
+      ])
+      open([], null, m, e)
+      type('set')
+      expect(note()).toBe('Searching messages…')
+      await wait(MESSAGE_DELAY_MS + 30)
+      flushSync()
+      expect(m.search).toHaveBeenCalledWith('set')
+      expect(e.search).toHaveBeenCalledWith('set')
+      expect(heads()).toEqual(['Jump to', 'Actions', 'Messages in Game Night', 'Messages everywhere'])
+      expect(names()).toEqual(['setup', 'Open Settings', 'setup here', 'setup again', 'setup in the club', 'setup in a dm', 'setup on the trip', 'setup note'])
+      // the first section's own look; the second also names the server, or the DM or group (once, when it's who wrote it)
+      expect(ctxOf('setup here')).toBe('sam · #general')
+      expect(ctxOf('setup in the club')).toBe('kim · Book Club · #lobby')
+      expect(ctxOf('setup in a dm')).toBe('sam')
+      expect(ctxOf('setup on the trip')).toBe('sam · Trip')
+      expect(ctxOf('setup note')).toBe('alex · Notes')
+      expect(options()[4].querySelector('mark')!.textContent).toBe('setup')
+      expect(status()).toBe('8 results')
+      expect(note()).toBeNull()
+      // the highlight moves from the first section into the second; Enter opens the hit with the second's opener
+      for (let i = 0; i < 4; i++) press('ArrowDown')
+      expect(activeOption()).toBe(options()[4])
+      press('Enter')
+      await settle()
+      expect(onClose).toHaveBeenCalled()
+      expect(e.open).toHaveBeenCalledWith(expect.objectContaining({ message: expect.objectContaining({ id: 'e1' }) }))
+      expect(m.open).not.toHaveBeenCalled()
+    })
+
+    it('a click on an everywhere hit opens it', async () => {
+      const e = everywhere(async () => [hit('e1', 'setup in the club', 'U3', 'c9')])
+      open([], null, null, e)
+      type('set')
+      await wait(MESSAGE_DELAY_MS + 30)
+      flushSync()
+      options().find((o) => o.textContent!.includes('setup in the club'))!.click()
+      await settle()
+      expect(e.open).toHaveBeenCalledWith(expect.objectContaining({ message: expect.objectContaining({ id: 'e1' }) }))
+    })
+
+    it('nowhere searchable (Home, Notes, a server you only view): just the everywhere section', async () => {
+      const e = everywhere(async () => [hit('e1', 'setup in the club', 'U3', 'c9')])
+      open([], null, null, e)
+      type('set')
+      expect(note()).toBe('Searching messages…')
+      await wait(MESSAGE_DELAY_MS + 30)
+      flushSync()
+      expect(heads()).toEqual(['Jump to', 'Actions', 'Messages everywhere'])
+    })
+
+    it("waits for the first section, so its rows never push the second's down under the pointer", async () => {
+      let answer: (h: SearchHit[]) => void = () => {}
+      const m = here(() => new Promise((r) => (answer = r)))
+      const e = everywhere(async () => [hit('e1', 'setup in the club', 'U3', 'c9')])
+      open([], null, m, e)
+      type('set')
+      await wait(MESSAGE_DELAY_MS + 30)
+      flushSync()
+      expect(heads()).toEqual(['Jump to', 'Actions'])
+      expect(note()).toBe('Searching messages…')
+      answer([hit('m1', 'setup here')])
+      await settle()
+      flushSync()
+      expect(heads()).toEqual(['Jump to', 'Actions', 'Messages in Game Night', 'Messages everywhere'])
+      expect(note()).toBeNull()
+    })
+
+    it("either failing says so quietly; the other's hits still show", async () => {
+      const m = here(() => Promise.reject(new Error('offline')))
+      const e = everywhere(async () => [hit('e1', 'setup in the club', 'U3', 'c9')])
+      open([], null, m, e)
+      type('zzqx')
+      await wait(MESSAGE_DELAY_MS + 30)
+      flushSync()
+      expect(heads()).toEqual(['Messages everywhere'])
+      expect(note()).toBe("Couldn't search messages")
+      const m2 = here(async () => [hit('m1', 'zzqx here')])
+      const e2 = everywhere(() => Promise.reject(new Error('offline')))
+      if (cmp) unmount(cmp)
+      open([], null, m2, e2)
+      type('zzqx')
+      await wait(MESSAGE_DELAY_MS + 30)
+      flushSync()
+      expect(heads()).toEqual(['Messages in Game Night'])
+      expect(note()).toBe("Couldn't search messages")
+    })
+
+    it('nothing found anywhere: "No results", no empty headings', async () => {
+      const m = here(async () => [])
+      const e = everywhere(async () => [])
+      open([], null, m, e)
+      type('zzqx')
+      await wait(MESSAGE_DELAY_MS + 30)
+      flushSync()
+      expect(heads()).toEqual([])
+      expect(note()).toBeNull()
+      expect(document.querySelector('.empty')!.textContent).toContain('Nothing matches')
     })
   })
   it('Escape closes, and the focus goes back where it was', () => {

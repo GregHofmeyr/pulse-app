@@ -60,7 +60,7 @@
   import GroupIconCrop from '../components/GroupIconCrop.svelte'
   import { badgeStore, logoClick } from '../lib/badges.svelte'
   import { applyEvent, dropClipJob, setClipJob, trimHistory } from '../lib/state'
-  import { conversationName, homeBadge, inVoice, notesId, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
+  import { conversationName, homeBadge, inVoice, isNotes, notesId, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { baseName, displayName, isMember, liveIn } from '../lib/selectors'
   import { CONN_PILL_DELAY_MS, isRefusal } from '../lib/conn'
   import { avatarColor, initial } from '../lib/avatar'
@@ -640,19 +640,31 @@
     showChannel(p.id)
     if (join && voice.channelId !== p.id && isMember(app.state, p.serverId ?? '')) void voiceApi.join(p.id)
   }
-  /** The switcher's Messages section (#320): the server you're in (a member), else the DM or group you're in, else
-   *  none. The same search route as the search box, its first page. */
-  const quickMessages = $derived.by(() => {
+  /** Where the switcher's first Messages section (#320) searches: the server you're in (a member), else the DM or group
+   *  you're in, else none. Your notes are none (#331): they're searched with everything else. */
+  const quickScope = $derived.by(() => {
     const s = app.state
     const ch = activeChannelId ? s.channels[activeChannelId] : undefined
-    const scope = activeServerId
+    return activeServerId
       ? member ? { serverId: activeServerId, channelId: null, label: activeServer?.name ?? '' } : null
-      : ch && !ch.server_id && (ch.kind === 'dm' || ch.kind === 'group') ? { serverId: null, channelId: ch.id, label: conversationName(s, ch.id) } : null
+      : ch && !ch.server_id && (ch.kind === 'dm' || ch.kind === 'group') && !isNotes(s, ch.id) ? { serverId: null, channelId: ch.id, label: conversationName(s, ch.id) } : null
+  })
+  /** The switcher's Messages section (#320) for `quickScope`: the same search route as the search box, its first page. */
+  const quickMessages = $derived.by(() => {
+    const scope = quickScope
     if (!scope) return null
     const { label, ...args } = scope
     return {
       label: `Messages in ${label}`,
       serverId: args.serverId,
+      search: async (q: string) => (await api.searchMessages(args, toRequest(q, []))).hits,
+      open: openHit,
+    }
+  })
+  /** Its "Messages everywhere" section (#331): every server you're in, your DMs, groups and notes, less `quickScope`. */
+  const quickEverywhere = $derived.by(() => {
+    const args = { serverId: quickScope?.serverId ?? null, channelId: quickScope?.channelId ?? null, everywhere: true }
+    return {
       search: async (q: string) => (await api.searchMessages(args, toRequest(q, []))).hits,
       open: openHit,
     }
@@ -865,7 +877,7 @@
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if qotyStart}<QotyStart serverId={qotyStart} onClose={() => (qotyStart = null)} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
-{#if switcherOpen}<QuickSwitcher context={quickContext} {recents} {here} messages={quickMessages} onGo={switcherGo} onClose={() => (switcherOpen = false)} />{/if}
+{#if switcherOpen}<QuickSwitcher context={quickContext} {recents} {here} messages={quickMessages} everywhere={quickEverywhere} onGo={switcherGo} onClose={() => (switcherOpen = false)} />{/if}
 {#if notesOpen}<PatchNotes notes={patchNotes} previous={previousPatchNotes} onClose={() => (notesOpen = false)} />{/if}
 <!-- Profiles: the quick card (one at a time), and the full profile's place (Task 12 renders it here) -->
 <ProfileCardPopover />

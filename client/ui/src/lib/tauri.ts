@@ -443,8 +443,9 @@ export const api = {
   /** The jobs of this session (after a restart, the ones left over, failed). */
   clipJobs: () => invoke<ClipJob[]>('clip_jobs'),
   searchQuotes: (serverId: string, q: string) => invoke<Message[]>('search_quotes', { serverId, q }),
-  /** Message search in one server (`serverId`) or one DM or group (`channelId`). */
-  searchMessages: (scope: { serverId: string | null; channelId: string | null }, query: SearchRequest) =>
+  /** Message search in one server (`serverId`) or one DM or group (`channelId`); with `everywhere` (#331), every
+   *  channel you can read except that server and/or conversation (the switcher's first section). */
+  searchMessages: (scope: { serverId: string | null; channelId: string | null; everywhere?: boolean }, query: SearchRequest) =>
     invoke<SearchResults>('search_messages', { ...scope, query }),
   startQoty: (serverId: string, body: StartQotyRequest) => invoke<QotyEvent>('start_qoty', { serverId, body }),
   voteQoty: (eventId: string, messageId: string) => invoke<QotyEvent>('vote_qoty', { eventId, messageId }),

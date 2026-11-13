@@ -1,5 +1,6 @@
-//! Search speed on a friend-group-sized server: ~50k messages over five channels. Ignored by
-//! default (it takes a while to fill); run with
+//! Search speed on a friend-group-sized server: ~50k messages, most over five channels, the rest
+//! over a DM, nine more servers and a dozen groups (so "everywhere", #331, walks ~65 channels).
+//! Ignored by default (it takes a while to fill); run with
 //! `cargo test -p pulse-server --test search_perf -- --ignored --nocapture`.
 mod common;
 
@@ -50,6 +51,36 @@ async fn typical_queries_take_under_50ms() {
     // A quiet DM beside the busy server: one message in 50 (1k of the 50k).
     let dm = create_dm(&app, &alex, &[sam_id]).await.id;
 
+    // Everywhere else alex reads (#331): nine more servers of five channels, a dozen groups and
+    // notes. One message in ten lands among them.
+    let (kim_id, _) = register(&app, "kim").await;
+    let (jo_id, _) = register(&app, "jo").await;
+    let mut elsewhere = Vec::new();
+    for n in 0..9 {
+        let x = create_server(&app, &alex, &format!("Other {n}")).await;
+        elsewhere.push(general(&app, &alex, x.id).await.id);
+        for name in ["a", "b", "c", "d"] {
+            let r = post_json(
+                &app,
+                &alex,
+                &format!("/servers/{}/channels", x.id),
+                serde_json::json!({ "kind": "text", "name": name }),
+            )
+            .await;
+            let c: pulse_protocol::rest::Channel = r.json().await.unwrap();
+            elsewhere.push(c.id);
+        }
+    }
+    for n in 0..12 {
+        let who = match n % 3 {
+            0 => vec![sam_id, kim_id],
+            1 => vec![sam_id, jo_id],
+            _ => vec![kim_id, jo_id],
+        };
+        elsewhere.push(create_dm(&app, &alex, &who).await.id);
+    }
+    elsewhere.push(create_dm(&app, &alex, &[alex_id]).await.id);
+
     let words = vocabulary();
     let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
     let mut next = move || {
@@ -77,7 +108,16 @@ async fn typical_queries_take_under_50ms() {
             "INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES (?, ?, ?, ?, ?)",
         )
         .bind(pulse_protocol::ids::MessageId::new().to_string())
-        .bind(if i % 50 == 7 { dm } else { channels[i % channels.len()] }.to_string())
+        .bind(
+            if i % 50 == 7 {
+                dm
+            } else if i % 10 == 3 {
+                elsewhere[(i / 10) % elsewhere.len()]
+            } else {
+                channels[i % channels.len()]
+            }
+            .to_string(),
+        )
         .bind(author.to_string())
         .bind(text.join(" "))
         .bind(pulse_server::db::now())
@@ -94,6 +134,8 @@ async fn typical_queries_take_under_50ms() {
     let common = &words[0];
     let server = |q: &str| format!("/servers/{}/search?{q}", s.id);
     let in_dm = |q: &str| format!("/channels/{dm}/search?{q}");
+    let all = |q: &str| format!("/search?{q}");
+    let main = s.id;
     let general = channels[0];
     // (path, typical): typical ones must meet the budget; the others are printed only.
     let queries = [
@@ -110,9 +152,59 @@ async fn typical_queries_take_under_50ms() {
         (in_dm("q=zebracorn"), true),
         (in_dm(&format!("from={sam_id}")), true),
         (in_dm("has=link"), true),
+        // Everywhere (#331): ~65 channels as a filter on the same walk.
+        (all(&format!("q={common}")), true),
+        (all("q=zebracorn"), true),
+        (all(&format!("q={common}+{}", words[1])), true),
+        (all(&format!("q={}", &common[..2])), true),
+        (all(&format!("from={sam_id}")), true),
+        (all(&format!("q={common}&from={sam_id}")), true),
+        (all("q=zebracorn&has=link"), true),
+        // The switcher's second section from inside the busy server: everything but it.
+        (all(&format!("q={common}&except_server={main}")), true),
+        (all(&format!("q=zebracorn&except_server={main}")), true),
+        (all(&format!("q={common}&except_channel={dm}")), true),
         // A filter-only search nothing matches walks every doc: the worst case, not a typical one.
         (server("has=link"), false),
+        (all("has=link"), false),
     ];
+
+    // The plan of an everywhere search with words (what push_from_where builds for several
+    // channels): the index must lead, walked in rowid order, with no sort (the early stop).
+    let mut list = vec![general.to_string(), dm.to_string()];
+    list.extend(
+        channels[1..]
+            .iter()
+            .chain(&elsewhere)
+            .map(|c| c.to_string()),
+    );
+    let marks = vec!["?"; list.len()].join(", ");
+    let sql = format!(
+        "EXPLAIN QUERY PLAN SELECT s.rowid, m.id FROM message_search s
+         CROSS JOIN search_docs d ON d.doc = s.rowid
+         CROSS JOIN messages m ON m.id = d.message_id
+         CROSS JOIN channels c ON c.id = m.channel_id
+         WHERE message_search MATCH ? AND +d.channel_id IN ({marks})
+         ORDER BY s.rowid DESC LIMIT 26"
+    );
+    let mut q = sqlx::query_as::<_, (i64, i64, i64, String)>(&sql).bind(common.clone());
+    for c in &list {
+        q = q.bind(c.clone());
+    }
+    let plan = q.fetch_all(&app.db).await.unwrap();
+    println!("everywhere plan ({} channels):", list.len());
+    for (_, _, _, step) in &plan {
+        println!("  {step}");
+    }
+    assert!(
+        plan[0].3.contains("VIRTUAL TABLE INDEX"),
+        "the index leads: {plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|p| p.3.contains("TEMP B-TREE")),
+        "no sort, so the walk stops after a page: {plan:?}"
+    );
+
     let mut worst = Duration::ZERO;
     for (path, typical) in &queries {
         let mut times = Vec::new();
@@ -132,6 +224,8 @@ async fn typical_queries_take_under_50ms() {
         };
         let q = if path.starts_with("/channels") {
             format!("dm {}", &path[path.find('?').unwrap()..])
+        } else if path.starts_with("/search") {
+            format!("everywhere {}", &path[path.find('?').unwrap()..])
         } else {
             format!("server {}", &path[path.find('?').unwrap()..])
         };

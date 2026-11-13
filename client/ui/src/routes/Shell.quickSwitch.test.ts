@@ -125,4 +125,40 @@ describe('the quick switcher in the shell', () => {
     expect(settings).not.toBeNull()
     expect(settings!.querySelector('[aria-current="page"], .active, [aria-selected="true"]')?.textContent).toContain('Keybinds')
   })
+  describe('messages everywhere (#331)', () => {
+    const searches = () => invoke.mock.calls.filter((c) => c[0] === 'search_messages').map((c) => c[1])
+    const hit = (id: string, channel: string, text: string) => ({ message: { id, channel_id: channel, author_id: testMe.id }, text, highlights: [], root: null })
+    const heads = () => [...switcher()!.querySelectorAll('.head')].map((h) => h.textContent)
+    const searchesSettled = () => new Promise((r) => setTimeout(r, 260))
+
+    it('from Home: one search, everywhere, leaving nothing out', async () => {
+      invoke.mockImplementation(async (cmd: string) =>
+        cmd === 'search_messages' ? { hits: [hit('m1', 'T1', 'pizza tonight')], next_cursor: null, total: 1 } : cmd === 'list_messages' ? [] : undefined)
+      keydown(document.body, 'k', { ctrlKey: true })
+      type('pizza')
+      await searchesSettled()
+      flushSync()
+      expect(searches()).toEqual([{ serverId: null, channelId: null, everywhere: true, query: expect.objectContaining({ q: 'pizza' }) }])
+      expect(heads()).toEqual(['Messages everywhere'])
+      expect(switcher()!.querySelector('.ctx')!.textContent).toContain('Main · #general')
+    })
+    it('in a server you are in: that server first, then everywhere but it', async () => {
+      tab('Main').click()
+      flushSync()
+      await settle()
+      invoke.mockImplementation(async (cmd: string, a: { everywhere?: boolean }) =>
+        cmd === 'search_messages'
+          ? { hits: a.everywhere ? [] : [hit('m1', 'T1', 'pizza tonight')], next_cursor: null, total: 1 }
+          : cmd === 'list_messages' ? [] : undefined)
+      keydown(document.body, 'k', { ctrlKey: true })
+      type('pizza')
+      await searchesSettled()
+      flushSync()
+      expect(searches()).toEqual([
+        { serverId: 'S1', channelId: null, query: expect.objectContaining({ q: 'pizza' }) },
+        { serverId: 'S1', channelId: null, everywhere: true, query: expect.objectContaining({ q: 'pizza' }) },
+      ])
+      expect(heads()).toEqual(['Messages in Main'])
+    })
+  })
 })

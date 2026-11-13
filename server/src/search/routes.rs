@@ -1,5 +1,5 @@
-//! `GET /servers/{id}/search` and `GET /channels/{id}/search`: the index, filtered to what you can
-//! read, newest first.
+//! `GET /servers/{id}/search`, `GET /channels/{id}/search` and `GET /search` (everywhere you can
+//! read, #331): the index, filtered to what you can read, newest first.
 
 use std::collections::HashMap;
 
@@ -12,7 +12,7 @@ use serde::Deserialize;
 use sqlx::{QueryBuilder, Sqlite};
 
 use crate::AppState;
-use crate::access::{channel_for, readable_server_channels};
+use crate::access::{channel_for, readable_channel_ids_everywhere, readable_server_channels};
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
 use crate::messages::routes::{COLS, Row, fill};
@@ -23,6 +23,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/servers/{id}/search", get(in_server))
         .route("/channels/{id}/search", get(in_conversation))
+        .route("/search", get(everywhere))
 }
 
 /// Hits per page.
@@ -43,6 +44,10 @@ struct Params {
     mentions: Option<UserId>,
     /// A doc number from `next_cursor`.
     cursor: Option<String>,
+    /// Everywhere search only: leave out this server's channels (the switcher's first section).
+    except_server: Option<ServerId>,
+    /// Everywhere search only: leave out this DM or group (the switcher's first section).
+    except_channel: Option<ChannelId>,
 }
 
 /// A search, checked: what to match and where.
@@ -219,7 +224,7 @@ async fn in_server(
     if let Some(only) = p.in_channel {
         channels.retain(|c| c.id == only);
     }
-    run(&s, me, &search, &channels).await.map(Json)
+    run(&s, me, &search, &ids(&channels)).await.map(Json)
 }
 
 async fn in_conversation(
@@ -239,7 +244,39 @@ async fn in_conversation(
         return Err(AppError::BadRequest("in: is for server search".into()));
     }
     let search = Search::parse(&p)?;
-    run(&s, me, &search, &[ch]).await.map(Json)
+    run(&s, me, &search, &ids(&[ch])).await.map(Json)
+}
+
+/// Every channel you can read (#331): each chat channel of every server you're a member of, and
+/// your DMs, groups and notes, as one walk of the index (several channels are a filter on it, so
+/// this costs about what a server's search does). `except_server` / `except_channel` leave out
+/// what the switcher already shows for where you are.
+async fn everywhere(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Query(p): Query<Params>,
+) -> AppResult<Json<SearchResults>> {
+    limit(&s, me)?;
+    if p.in_channel.is_some() {
+        return Err(AppError::BadRequest("in: is for server search".into()));
+    }
+    let search = Search::parse(&p)?;
+    let mut channels = readable_channel_ids_everywhere(&s.db, me).await?;
+    let mut skip: Vec<String> = p.except_channel.iter().map(|c| c.to_string()).collect();
+    if let Some(server) = p.except_server {
+        let of_server: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM channels WHERE server_id = ?")
+                .bind(server.to_string())
+                .fetch_all(&s.db)
+                .await?;
+        skip.extend(of_server);
+    }
+    channels.retain(|c| !skip.contains(c));
+    run(&s, me, &search, &channels).await.map(Json)
+}
+
+fn ids(channels: &[Channel]) -> Vec<String> {
+    channels.iter().map(|c| c.id.to_string()).collect()
 }
 
 fn limit(s: &AppState, me: UserId) -> AppResult<()> {
@@ -254,9 +291,8 @@ async fn run(
     s: &AppState,
     me: UserId,
     search: &Search,
-    channels: &[Channel],
+    channels: &[String],
 ) -> AppResult<SearchResults> {
-    let channels: Vec<String> = channels.iter().map(|c| c.id.to_string()).collect();
     if channels.is_empty() {
         return Ok(SearchResults {
             hits: vec![],
@@ -266,9 +302,9 @@ async fn run(
     }
     // Docs are numbered in posting order, so newest first is doc order, and the cursor is the
     // last doc read.
-    let key = search.key(&channels);
+    let key = search.key(channels);
     let mut q = QueryBuilder::new(format!("SELECT {key}, m.id"));
-    search.push_from_where(&mut q, &channels);
+    search.push_from_where(&mut q, channels);
     if let Some(c) = search.cursor {
         q.push(format!(" AND {key} < ")).push_bind(c);
     }
@@ -289,7 +325,7 @@ async fn run(
         Some(page.len() as u32)
     } else {
         let mut q = QueryBuilder::new("SELECT COUNT(*) FROM (SELECT 1");
-        search.push_from_where(&mut q, &channels);
+        search.push_from_where(&mut q, channels);
         q.push(" LIMIT ").push_bind(COUNT_CAP).push(")");
         let n: i64 = q.build_query_scalar().fetch_one(&s.db).await?;
         Some(n as u32)

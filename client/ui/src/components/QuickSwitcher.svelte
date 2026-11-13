@@ -3,7 +3,7 @@
   // dialog header). Jump to a server, channel, DM or group; `>` for quick actions. The rules are in lib/quickSwitch.ts
   // and lib/quickActions.ts; the shell opens it (Ctrl+K, `/` outside a text field, or the global keybind from anywhere
   // on the desktop, #319) and does the going. Messages (#320) are the one slow section (lib/quickMessages.ts): searched
-  // once typing pauses, listed under the instant ones.
+  // once typing pauses, listed under the instant ones: where you are first, then everywhere else you can read (#331).
   import { onDestroy, tick } from 'svelte'
   import Icon, { type IconName } from './Icon.svelte'
   import Avatar from './Avatar.svelte'
@@ -16,9 +16,10 @@
   import { messageQuery, messageSearcher, NO_MESSAGES, type MessageResults } from '../lib/quickMessages'
   import { lineWithHit, segments } from '../lib/highlight'
   import { channelLabel, displayName } from '../lib/selectors'
+  import { conversationName } from '../lib/conversations'
   import type { SearchHit } from '../lib/protocol/SearchHit'
 
-  let { context, recents, here, messages = null, onGo, onClose }: {
+  let { context, recents, here, messages = null, everywhere = null, onGo, onClose }: {
     /** What the quick actions can see and do, read when the list builds (so Mute turns to Unmute). */
     context: () => ActionContext
     /** Recently visited place keys, newest first. */
@@ -28,6 +29,9 @@
     /** Message search where you are (a server, or a DM or group), or null for none: `label` heads its section,
      *  `search` asks the search route for a query, `open` shows a hit where it lives. */
     messages?: { label: string; serverId: string | null; search: (query: string) => Promise<SearchHit[]>; open: (hit: SearchHit) => void } | null
+    /** Message search everywhere else you can read (#331), or null: listed after `messages` as "Messages everywhere",
+     *  each hit saying where it is. `search` already leaves out `messages`' scope. */
+    everywhere?: { search: (query: string) => Promise<SearchHit[]>; open: (hit: SearchHit) => void } | null
     /** Go to `place`; `join` also joins a voice channel (its row's Join). */
     onGo: (place: Place, join: boolean) => void
     onClose: () => void
@@ -47,11 +51,25 @@
   const searcher = messageSearcher({ search: (q) => (messages ? messages.search(q) : Promise.resolve([])), onChange: (r) => (found = r) })
   $effect(() => searcher.set(messages ? messageQuery(raw) : null))
   onDestroy(() => searcher.dispose())
-  const messageRows = $derived<ResultSection[]>(
-    messages && found.status === 'done' && found.hits.length ? [{ id: 'messages', label: messages.label, rows: found.hits.map((hit) => ({ type: 'message' as const, hit })) }] : [],
-  )
+  // everywhere else (#331): its own searcher on the same pause, listed once the first section has settled (so that
+  // one's rows never push these down under the pointer), less any hit the first section already shows
+  let foundAll = $state.raw<MessageResults>(NO_MESSAGES)
+  const searcherAll = messageSearcher({ search: (q) => (everywhere ? everywhere.search(q) : Promise.resolve([])), onChange: (r) => (foundAll = r) })
+  $effect(() => searcherAll.set(everywhere ? messageQuery(raw) : null))
+  onDestroy(() => searcherAll.dispose())
+  const hereSettled = $derived(!messages || found.status === 'done' || found.status === 'error')
+  const everywhereHits = $derived.by(() => {
+    if (!everywhere || foundAll.status !== 'done' || !hereSettled) return []
+    const shown = new Set(found.hits.map((h) => h.message.id))
+    return foundAll.hits.filter((h) => !shown.has(h.message.id))
+  })
+  const messageRows = $derived<ResultSection[]>([
+    ...(messages && found.status === 'done' && found.hits.length ? [{ id: 'messages', label: messages.label, rows: found.hits.map((hit) => ({ type: 'message' as const, hit, everywhere: false })) }] : []),
+    ...(everywhereHits.length ? [{ id: 'messages-everywhere', label: 'Messages everywhere', rows: everywhereHits.map((hit) => ({ type: 'message' as const, hit, everywhere: true })) }] : []),
+  ])
   // shown under the instant results while messages are on their way (or failed), in the room their section will take
-  const messageNote = $derived(found.status === 'loading' ? 'Searching messages…' : found.status === 'error' ? "Couldn't search messages" : '')
+  // (everywhere's answer held for the first section counts as on its way: the first is then still loading)
+  const messageNote = $derived(found.status === 'loading' || foundAll.status === 'loading' ? 'Searching messages…' : found.status === 'error' || foundAll.status === 'error' ? "Couldn't search messages" : '')
 
   const sections = $derived([...instant, ...messageRows])
   // one list for the keys: each section's rows follow on from the one before
@@ -84,7 +102,7 @@
     // held now: closing tears this component down, props and all
     const go = onGo
     const c = ctx
-    const open = messages?.open
+    const open = row.type === 'message' && row.everywhere ? everywhere?.open : messages?.open
     onClose()
     // after the switcher has gone and handed the focus back: what opens next (Settings, a channel) takes it from there
     await tick()
@@ -109,19 +127,36 @@
   const otherIn = (id: string) => (app.state.dmMembers[id] ?? []).find((u) => u !== app.state.me?.id) ?? null
   const anyVoice = $derived(flat.some((r) => r.type === 'place' && r.place.kind === 'voice'))
   const rowKey = (r: Row) => (r.type === 'place' ? r.place.key : r.type === 'message' ? `m:${r.hit.message.id}` : r.action.id)
-  const author = (h: SearchHit) => (h.message.author_id ? displayName(app.state, messages?.serverId ?? null, h.message.author_id) : 'Pulse')
-  /** Faint after the name: a place's server, an action's page, a message's author (and channel, in a server). */
+  /** The name a hit's author goes by where it was said: that server's nickname (the first section's server; an
+   *  everywhere hit's own), else their name. */
+  function author(h: SearchHit, everywhere = false): string {
+    if (!h.message.author_id) return 'Pulse'
+    const server = everywhere ? (app.state.channels[h.message.channel_id]?.server_id ?? null) : (messages?.serverId ?? null)
+    return displayName(app.state, server, h.message.author_id)
+  }
+  const authorOf = (r: Row) => (r.type === 'message' ? author(r.hit, r.everywhere) : '')
+  /** Faint after the name: a place's server, an action's page, a message's author (and channel, in a server). An
+   *  everywhere hit (#331) also says where it is: its server and channel, or its DM or group (named once, when that
+   *  name is who wrote it, as in a DM's other person's own message). */
   function contextOf(r: Row): string | null {
     if (r.type === 'place') return r.place.context
     if (r.type === 'action') return r.action.context ?? null
+    const who = author(r.hit, r.everywhere)
     const ch = app.state.channels[r.hit.message.channel_id]
-    return ch?.server_id ? `${author(r.hit)} · ${channelLabel(ch)}` : author(r.hit)
+    if (!ch) return who
+    if (!r.everywhere) return ch.server_id ? `${who} · ${channelLabel(ch)}` : who
+    if (ch.server_id) {
+      const server = app.state.servers.find((x) => x.id === ch.server_id)?.name
+      return [who, server, channelLabel(ch)].filter(Boolean).join(' · ')
+    }
+    const where = conversationName(app.state, ch.id)
+    return where === who ? who : `${who} · ${where}`
   }
 </script>
 
 {#snippet lead(r: Row)}
   {#if r.type === 'message'}
-    <span class="lead">{#if r.hit.message.author_id}<Avatar id={r.hit.message.author_id} name={author(r.hit)} size={20} />{:else}<Icon name="hash" size={18} />{/if}</span>
+    <span class="lead">{#if r.hit.message.author_id}<Avatar id={r.hit.message.author_id} name={authorOf(r)} size={20} />{:else}<Icon name="hash" size={18} />{/if}</span>
   {:else if r.type === 'action'}
     <span class="lead"><Icon name={r.action.icon} size={18} /></span>
   {:else if r.place.kind === 'server'}

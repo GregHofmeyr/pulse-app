@@ -560,3 +560,203 @@ async fn rate_limited_429() {
     assert_eq!(get(&app, &alex, &path).await.status(), 200);
     assert_eq!(get(&app, &alex, &path).await.status(), 429);
 }
+
+// ---------- everywhere (#331): every channel you can read, in one walk ----------
+
+async fn everywhere(f: &Fx, token: &str, query: &str) -> SearchResults {
+    get_json(&f.app, token, &format!("/search?{query}")).await
+}
+
+async fn delete_path(app: &TestApp, token: &str, path: &str) -> u16 {
+    app.http
+        .delete(app.url(path))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+/// Everything alex can read: both servers alex is in, a DM, a group and alex's notes. Never a
+/// server alex isn't in, someone else's DM, a deleted channel, a deleted server, or a group alex
+/// was removed from.
+#[tokio::test]
+async fn everywhere_searches_exactly_what_you_can_read() {
+    let f = setup().await;
+    let (jo_id, jo) = register(&f.app, "jo").await;
+    let (_, kim) = register(&f.app, "kim").await;
+    let mut want = Vec::new();
+    want.push(send(&f.app, &f.sam.1, f.general.id, "pizza main").await.id);
+    let second = create_server(&f.app, &f.sam.1, "Second").await;
+    post_json(
+        &f.app,
+        &f.alex.1,
+        &format!("/servers/{}/join", second.id),
+        json!({}),
+    )
+    .await;
+    let second_general = general(&f.app, &f.sam.1, second.id).await;
+    want.push(
+        send(&f.app, &f.sam.1, second_general.id, "pizza second")
+            .await
+            .id,
+    );
+    let dm = create_dm(&f.app, &f.alex.1, &[f.sam.0]).await;
+    want.push(send(&f.app, &f.sam.1, dm.id, "pizza dm").await.id);
+    let group = create_dm(&f.app, &f.alex.1, &[f.sam.0, jo_id]).await;
+    want.push(send(&f.app, &f.sam.1, group.id, "pizza group").await.id);
+    let notes = create_dm(&f.app, &f.alex.1, &[f.alex.0]).await;
+    want.push(send(&f.app, &f.alex.1, notes.id, "pizza notes").await.id);
+    // a voice channel's chat is read like any other channel's
+    let voice = channel(&f, "voice", "Lounge").await;
+    want.push(
+        send(&f.app, &f.sam.1, voice.id, "pizza voice chat")
+            .await
+            .id,
+    );
+    want.reverse();
+
+    // A server alex never joined (server channels are visible to all, but it isn't "yours").
+    let kims = create_server(&f.app, &kim, "Kim's").await;
+    let kims_general = general(&f.app, &kim, kims.id).await;
+    send(&f.app, &kim, kims_general.id, "pizza not joined").await;
+    // Someone else's DM.
+    let theirs = create_dm(&f.app, &f.sam.1, &[jo_id]).await;
+    send(&f.app, &jo, theirs.id, "pizza theirs").await;
+    // A deleted channel of a server alex is in.
+    let old = channel(&f, "text", "old").await;
+    send(&f.app, &f.alex.1, old.id, "pizza deleted channel").await;
+    assert!(delete_path(&f.app, &f.alex.1, &format!("/channels/{}", old.id)).await < 300);
+    // A deleted server alex was in.
+    let gone = create_server(&f.app, &f.alex.1, "Gone").await;
+    let gone_general = general(&f.app, &f.alex.1, gone.id).await;
+    send(&f.app, &f.alex.1, gone_general.id, "pizza deleted server").await;
+    let r = f
+        .app
+        .http
+        .delete(f.app.url(&format!("/servers/{}", gone.id)))
+        .bearer_auth(&f.alex.1)
+        .json(&json!({ "name": "Gone" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    // A group alex was removed from (they left).
+    let left = create_dm(&f.app, &f.sam.1, &[f.alex.0, jo_id]).await;
+    send(&f.app, &f.sam.1, left.id, "pizza left group").await;
+    let path = format!("/channels/{}/members/{}", left.id, f.alex.0);
+    assert!(delete_path(&f.app, &f.alex.1, &path).await < 300);
+
+    let r = everywhere(&f, &f.alex.1, "q=pizza").await;
+    assert_eq!(ids(&r), want);
+    assert_eq!(r.total, Some(want.len() as u32));
+    // Filters only walk the same channels.
+    let r = everywhere(&f, &f.alex.1, &format!("from={}", f.sam.0)).await;
+    assert!(r.hits.iter().all(|h| h.message.author_id == Some(f.sam.0)));
+    assert_eq!(r.hits.len(), 5);
+    // Kim sees only kim's own server.
+    let r = everywhere(&f, &kim, "q=pizza").await;
+    assert_eq!(r.hits.len(), 1);
+    assert_eq!(r.hits[0].message.channel_id, kims_general.id);
+}
+
+/// What the switcher's first section already shows is left out: a server, or a DM or group.
+#[tokio::test]
+async fn everywhere_except_where_you_are() {
+    let f = setup().await;
+    let here = send(&f.app, &f.sam.1, f.general.id, "pizza main").await.id;
+    let dm = create_dm(&f.app, &f.alex.1, &[f.sam.0]).await;
+    let in_dm = send(&f.app, &f.sam.1, dm.id, "pizza dm").await.id;
+    let r = everywhere(
+        &f,
+        &f.alex.1,
+        &format!("q=pizza&except_server={}", f.server),
+    )
+    .await;
+    assert_eq!(ids(&r), vec![in_dm]);
+    let r = everywhere(&f, &f.alex.1, &format!("q=pizza&except_channel={}", dm.id)).await;
+    assert_eq!(ids(&r), vec![here]);
+    // Everything excepted: nothing left, not an error.
+    let r = everywhere(
+        &f,
+        &f.alex.1,
+        &format!(
+            "q=pizza&except_server={}&except_channel={}",
+            f.server, dm.id
+        ),
+    )
+    .await;
+    assert!(r.hits.is_empty());
+    assert_eq!(r.total, Some(0));
+    // An unknown id excepts nothing.
+    let r = everywhere(
+        &f,
+        &f.alex.1,
+        &format!("q=pizza&except_server={}", ServerId::new()),
+    )
+    .await;
+    assert_eq!(r.hits.len(), 2);
+}
+
+/// Pages walk across channels newest first, stable under new posts, like a server's.
+#[tokio::test]
+async fn everywhere_pages_across_channels() {
+    let f = setup().await;
+    let dm = create_dm(&f.app, &f.alex.1, &[f.sam.0]).await;
+    let mut sent = Vec::new();
+    for i in 0..30 {
+        sent.push(
+            send(&f.app, &f.sam.1, f.general.id, &format!("pizza s{i}"))
+                .await
+                .id,
+        );
+        sent.push(
+            send(&f.app, &f.sam.1, dm.id, &format!("pizza d{i}"))
+                .await
+                .id,
+        );
+    }
+    sent.reverse();
+    let p1 = everywhere(&f, &f.alex.1, "q=pizza").await;
+    assert_eq!(p1.hits.len(), 25);
+    assert_eq!(p1.total, Some(51));
+    send(&f.app, &f.alex.1, dm.id, "pizza new").await;
+    let c1 = p1.next_cursor.clone().unwrap();
+    let p2 = everywhere(&f, &f.alex.1, &format!("q=pizza&cursor={c1}")).await;
+    assert_eq!(p2.total, None);
+    let c2 = p2.next_cursor.clone().unwrap();
+    let p3 = everywhere(&f, &f.alex.1, &format!("q=pizza&cursor={c2}")).await;
+    assert_eq!(p3.next_cursor, None);
+    let all: Vec<MessageId> = [&p1, &p2, &p3].iter().flat_map(|p| ids(p)).collect();
+    assert_eq!(all, sent);
+}
+
+#[tokio::test]
+async fn everywhere_refuses_in_and_empty() {
+    let f = setup().await;
+    let with_in = format!("q=pizza&in={}", f.general.id);
+    for q in ["", "q=", with_in.as_str()] {
+        let r = get(&f.app, &f.alex.1, &format!("/search?{q}")).await;
+        assert_eq!(r.status(), 400, "{q}");
+    }
+    let r = f
+        .app
+        .http
+        .get(f.app.url("/search?q=pizza"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+}
+
+/// Someone in nothing yet finds nothing (no channels: no walk).
+#[tokio::test]
+async fn everywhere_with_nowhere_to_look() {
+    let f = setup().await;
+    let (_, jo) = register(&f.app, "jo").await;
+    send(&f.app, &f.alex.1, f.general.id, "pizza").await;
+    let r = everywhere(&f, &jo, "q=pizza").await;
+    assert!(r.hits.is_empty());
+    assert_eq!(r.total, Some(0));
+}
