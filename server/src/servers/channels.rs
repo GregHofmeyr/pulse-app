@@ -569,8 +569,13 @@ pub async fn purge_now(
     let mut task = {
         let s = s.clone();
         tokio::spawn(async move {
-            let done = purge(&s, id, &due, PURGE_BATCH, None).await;
-            // Restored can't be (it's due), so a 404 or 409 is a purge that raced it, or a hold.
+            let mut done = purge(&s, id, &due, PURGE_BATCH, None).await;
+            // Restored can't be (it's due), so a 404 is another purge (a second click, the sweep)
+            // that deleted the channel first (#337): it is gone, as asked, so that's a success.
+            if matches!(done, Err(AppError::NotFound)) && gone(&s, id).await {
+                done = Ok(());
+            }
+            // A 409 is a hold.
             if let Err(e) = &done
                 && !matches!(e, AppError::NotFound | AppError::Conflict(_))
             {
@@ -583,6 +588,15 @@ pub async fn purge_now(
         done.map_err(anyhow::Error::from)??;
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Whether channel `id` no longer exists (purged). `false` when the read fails.
+async fn gone(s: &AppState, id: ChannelId) -> bool {
+    let hit: Result<Option<i64>, _> = sqlx::query_scalar("SELECT 1 FROM channels WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_optional(&s.db)
+        .await;
+    matches!(hit, Ok(None))
 }
 
 /// How long "Delete now" waits for its purge before answering (clients give up on a request after
