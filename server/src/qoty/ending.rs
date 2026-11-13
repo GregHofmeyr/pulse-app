@@ -256,14 +256,20 @@ pub(crate) async fn undo(
         .bind(id.to_string())
         .execute(&mut *tx)
         .await?;
-    // This event's own wins are gone by now, so any win left is another vote's.
-    const GONE: &str = "event_id = ? AND (
+    // This event's own wins are gone by now, so any win left is another vote's. A quote in a
+    // channel that is due to be purged (or part-way through its purge, #108) goes too: the purge
+    // never stops for a vote that came back after it started.
+    const GONE: &str = "event_id = ?1 AND (
         message_id IN (SELECT id FROM messages WHERE deleted_at IS NOT NULL)
-        OR message_id IN (SELECT message_id FROM qoty_winners))";
+        OR message_id IN (SELECT message_id FROM qoty_winners)
+        OR message_id IN (SELECT m.id FROM messages m JOIN channels c ON c.id = m.channel_id
+                          WHERE c.deleted_at IS NOT NULL AND c.deleted_at <= ?2))";
+    let due = crate::servers::channels::due(chrono::Utc::now());
     // Votes go with their option (foreign key cascade), but not by luck: say so.
     for table in ["qoty_votes", "qoty_options"] {
         sqlx::query(&format!("DELETE FROM {table} WHERE {GONE}"))
             .bind(id.to_string())
+            .bind(&due)
             .execute(&mut *tx)
             .await?;
     }

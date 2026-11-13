@@ -2011,3 +2011,48 @@ async fn a_quotes_channel_holding_a_past_winner_stays() {
         .await;
     assert_eq!(r.status(), 200);
 }
+
+/// A vote reopened while one of its options' channel is part-way through its purge (#108) loses
+/// that option, as it loses a deleted quote's: the purge goes on, and nothing can vote for a quote
+/// that is going.
+#[tokio::test]
+async fn a_vote_reopened_during_a_purge_drops_the_options_being_purged() {
+    let f = fixture().await;
+    let other = create_quotes(&f.app, &f.alex_t, f.server, "more").await;
+    let going = f.quote_in(other.id, "going").await;
+    for i in 0..4 {
+        f.quote_in(other.id, &format!("filler {i}")).await;
+    }
+    let kept = f.quote("staying").await;
+    let e = f.started().await;
+    assert_eq!(f.add(&f.alex_t, e.id, going.id).await.status(), 200);
+    assert_eq!(f.add(&f.alex_t, e.id, kept.id).await.status(), 200);
+    f.ended(&f.alex_t, e.id).await;
+    let path = format!("/channels/{}", other.id);
+    assert_eq!(
+        f.call(Method::DELETE, &f.sam_t, &path, None).await.status(),
+        204
+    );
+    // "Delete now", cut off after one batch of two (the newest fillers).
+    let s = f.app.state();
+    pulse_server::servers::channels::purge_partly(&s, other.id, 2, 1)
+        .await
+        .unwrap();
+    let r = f.reopen(&f.alex_t, e.id, None).await;
+    assert_eq!(r.status(), 200);
+    let reopened: QotyEvent = r.json().await.unwrap();
+    assert_eq!(option_ids(&reopened), vec![kept.id]);
+    // The next sweep finishes the purge.
+    let swept = pulse_server::servers::channels::purge_expired(&s, chrono::Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(swept, 1);
+    assert_eq!(
+        f.count(&format!(
+            "SELECT COUNT(*) FROM channels WHERE id = '{}'",
+            other.id
+        ))
+        .await,
+        0
+    );
+}

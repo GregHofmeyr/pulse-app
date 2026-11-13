@@ -6,6 +6,11 @@
 //! whoever deleted it may restore it; the owner may purge it now, and the sweeper purges it after
 //! [`RECENTLY_DELETED_DAYS`]. A deleted channel still counts toward the server's channel cap, so a
 //! restore never takes a server past it.
+//!
+//! A purge goes in short batches (#108, `servers::purge`), so it can be cut off part-way by a
+//! restart. "Delete now" therefore first makes the channel due (as if its 7 days were up): from
+//! then on it is out of Recently deleted and can't be restored, and if the purge doesn't finish,
+//! the next sweep takes up from what is left.
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -250,7 +255,7 @@ async fn on_ballot(db: &mut SqliteConnection, id: ChannelId) -> AppResult<bool> 
 /// the delete itself): a quotes channel stays while one of its quotes is [`on_ballot`], and for
 /// good once it holds a winner (what won is kept when its quote is deleted: `qoty_winners`). The
 /// sweeper leaves such a channel in Recently deleted, where the list shows this as `held`.
-async fn held(
+pub(crate) async fn held(
     db: &mut SqliteConnection,
     id: ChannelId,
     kind: ChannelKind,
@@ -274,6 +279,29 @@ async fn held(
         .map(|_| "It holds a Quote of the Year winner, so it can't be deleted for good."))
 }
 
+/// Deleted at or before this, a channel is due to be purged: the sweeper takes it, and it can no
+/// longer be restored (unless [`held`], when it never will be purged).
+pub(crate) fn due(now: chrono::DateTime<chrono::Utc>) -> String {
+    crate::db::stamp(now - chrono::Duration::days(RECENTLY_DELETED_DAYS))
+}
+
+/// Whether channel `id` is still deleted and due by `due` (`false`: restored, or purged by someone
+/// else).
+pub(crate) async fn still_due(
+    db: &mut SqliteConnection,
+    id: ChannelId,
+    due: &str,
+) -> AppResult<bool> {
+    let hit: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM channels WHERE id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?",
+    )
+    .bind(id.to_string())
+    .bind(due)
+    .fetch_optional(&mut *db)
+    .await?;
+    Ok(hit.is_some())
+}
+
 type DeletedRow = (
     String,
     Option<String>,
@@ -288,12 +316,12 @@ type DeletedRow = (
     String,
 );
 
-/// The deleted server channel `id`: (channel, its server, who deleted it). 404 when there is no
-/// such channel in Recently deleted, or its server is deleted too (#184: frozen with it).
+/// The deleted server channel `id`: (channel, its server, who deleted it, when). 404 when there is
+/// no such channel in Recently deleted, or its server is deleted too (#184: frozen with it).
 async fn deleted_channel(
     db: &mut SqliteConnection,
     id: ChannelId,
-) -> AppResult<(Channel, ServerId, Option<UserId>)> {
+) -> AppResult<(Channel, ServerId, Option<UserId>, String)> {
     let row: Option<DeletedRow> = sqlx::query_as(&format!(
         "SELECT {CHANNEL_COLS}, deleted_by, deleted_at FROM channels
          WHERE id = ? AND deleted_at IS NOT NULL AND server_id IS NOT NULL
@@ -302,13 +330,13 @@ async fn deleted_channel(
     .bind(id.to_string())
     .fetch_optional(&mut *db)
     .await?;
-    let (id, server, kind, name, position, category, icon, still, bitrate, by, _) =
+    let (id, server, kind, name, position, category, icon, still, bitrate, by, at) =
         row.ok_or(AppError::NotFound)?;
     let ch = channel_from_row((
         id, server, kind, name, position, category, icon, still, bitrate,
     ))?;
     let server = ch.server_id.ok_or(AppError::NotFound)?;
-    Ok((ch, server, parse_user(by)?))
+    Ok((ch, server, parse_user(by)?, at))
 }
 
 fn parse_user(id: Option<String>) -> AppResult<Option<UserId>> {
@@ -348,7 +376,8 @@ pub(crate) fn purge_at(deleted_at: &str) -> AppResult<String> {
 }
 
 /// `GET /servers/{id}/deleted-channels`: the server's Recently deleted, newest first, for its
-/// members, each with what the asker may do with it.
+/// members, each with what the asker may do with it. A channel that is due and not [`held`] isn't
+/// listed: it is being purged (or about to be), and can't be restored.
 pub async fn list_deleted(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -364,16 +393,19 @@ pub async fn list_deleted(
     .bind(server.to_string())
     .fetch_all(&mut *db)
     .await?;
+    let due = due(chrono::Utc::now());
     let mut out = Vec::with_capacity(rows.len());
     for (id, sid, kind, name, position, category, icon, still, bitrate, by, at) in rows {
         let channel = channel_from_row((
             id, sid, kind, name, position, category, icon, still, bitrate,
         ))?;
         let deleted_by = parse_user(by)?;
+        let held = held(&mut db, channel.id, channel.kind).await?;
+        if held.is_none() && at <= due {
+            continue;
+        }
         out.push(DeletedChannel {
-            held: held(&mut db, channel.id, channel.kind)
-                .await?
-                .map(str::to_string),
+            held: held.map(str::to_string),
             can_restore: owner || deleted_by == Some(me),
             can_purge: owner,
             purge_at: purge_at(&at)?,
@@ -388,7 +420,8 @@ pub async fn list_deleted(
 /// `POST /channels/{id}/restore`: put a deleted server channel back, with everything in it, live
 /// for everyone. The server owner and whoever deleted it may. It goes to the bottom of its
 /// category, or of the uncategorised area when its category was deleted meanwhile (which cleared
-/// its `category_id`): the order has moved on since, so its old position means nothing now.
+/// its `category_id`): the order has moved on since, so its old position means nothing now. 404
+/// once it is due (being purged, or about to be), unless it is [`held`] (never purged).
 pub async fn restore(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -400,7 +433,10 @@ pub async fn restore(
     // The counts that follow are absolutes: in commit order.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
-    let (old, server, deleted_by) = deleted_channel(&mut tx, id).await?;
+    let (old, server, deleted_by, at) = deleted_channel(&mut tx, id).await?;
+    if at <= due(chrono::Utc::now()) && held(&mut tx, id, old.kind).await?.is_none() {
+        return Err(AppError::NotFound);
+    }
     if !member_in(&mut tx, server, me).await?
         || (owner_of(&mut tx, server).await? != me && deleted_by != Some(me))
     {
@@ -517,7 +553,10 @@ pub(crate) async fn republish_own_state(s: &AppState, channel: ChannelId) -> App
 }
 
 /// `DELETE /channels/{id}/permanent`: the owner's "Delete now" from Recently deleted. 409 while
-/// it is [`held`].
+/// it is [`held`]. It first makes the channel due, in its own transaction (out of Recently
+/// deleted, no longer restorable), then purges it. The purge runs as its own task, so a client
+/// that hangs up doesn't cut it off (a restart still can: the next sweep finishes it), and the
+/// answer waits for it at most [`PURGE_NOW_WAIT`]: a big channel goes on purging after it.
 pub async fn purge_now(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -526,82 +565,139 @@ pub async fn purge_now(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
-    let mut db = s.db.acquire().await?;
-    let (_, server, _) = deleted_channel(&mut db, id).await?;
-    if owner_of(&mut db, server).await? != me {
-        return Err(AppError::Forbidden);
+    let due = make_due(&s, me, id).await?;
+    let mut task = {
+        let s = s.clone();
+        tokio::spawn(async move {
+            let done = purge(&s, id, &due, PURGE_BATCH, None).await;
+            // Restored can't be (it's due), so a 404 or 409 is a purge that raced it, or a hold.
+            if let Err(e) = &done
+                && !matches!(e, AppError::NotFound | AppError::Conflict(_))
+            {
+                tracing::warn!(error = ?e, channel = %id, "couldn't purge a deleted channel now; the sweep will");
+            }
+            done
+        })
+    };
+    if let Ok(done) = tokio::time::timeout(PURGE_NOW_WAIT, &mut task).await {
+        done.map_err(anyhow::Error::from)??;
     }
-    drop(db);
-    purge(&s, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// A deleted server channel and everything in it, for good (a hard delete, like a group whose
-/// last member leaves): 404 unless it is in Recently deleted, 409 while it is [`held`]. Its
-/// messages go, their search entries with them (by trigger), and the cascades take their
-/// reactions, mentions, quotes, clips rows, previews, seen points of quote replies, options of
-/// ended Quote of the Year votes, and the channel's read states, voice sessions and clip views;
-/// its mutes are deleted here, and its open clip tickets keep no channel (their confirm then
-/// refuses). Disk media nothing uses any more is left to the media cleanup, and clip objects are
-/// deleted after the commit (the clip sweeper retries a failure). Nobody hears of it: the channel
-/// left everyone's view when it was deleted.
-async fn purge(s: &AppState, id: ChannelId) -> AppResult<()> {
-    // Unread and mention counts others publish as absolutes span channels: in commit order.
-    let _order = s.hub.in_order().await;
+/// How long "Delete now" waits for its purge before answering (clients give up on a request after
+/// 15 s): a small channel is gone when it answers, a big one shortly after.
+const PURGE_NOW_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// "Delete now"'s first step: deleted channel `id` (404 unless in Recently deleted; 403 unless
+/// `me` owns its server; 409 while [`held`]) is made due now, if it isn't already. Returns the due
+/// mark its purge goes by.
+async fn make_due(s: &AppState, me: UserId, id: ChannelId) -> AppResult<String> {
     let mut tx = crate::db::begin_write(&s.db).await?;
-    let (ch, _, _) = deleted_channel(&mut tx, id).await?;
+    let (ch, server, _, _) = deleted_channel(&mut tx, id).await?;
+    if owner_of(&mut tx, server).await? != me {
+        return Err(AppError::Forbidden);
+    }
     if let Some(why) = held(&mut tx, id, ch.kind).await? {
         return Err(AppError::Conflict(why.into()));
     }
-    let clips: Vec<String> = sqlx::query_scalar(
-        "SELECT c.video_key FROM clips c JOIN messages m ON m.id = c.message_id
-         WHERE m.channel_id = ?",
-    )
-    .bind(id.to_string())
-    .fetch_all(&mut *tx)
-    .await?;
+    let due = due(chrono::Utc::now());
+    sqlx::query("UPDATE channels SET deleted_at = ?1 WHERE id = ?2 AND deleted_at > ?1")
+        .bind(&due)
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(due)
+}
+
+/// How many messages one purge transaction deletes.
+const PURGE_BATCH: i64 = crate::servers::purge::BATCH;
+
+/// "Delete now" by the server's owner, cut off after `batches` batches of `batch` messages as a
+/// restart would cut it off: for tests.
+#[cfg(feature = "testing")]
+pub async fn purge_partly(
+    s: &AppState,
+    id: ChannelId,
+    batch: i64,
+    batches: usize,
+) -> AppResult<()> {
+    let owner = {
+        let mut db = s.db.acquire().await?;
+        let (_, server, _, _) = deleted_channel(&mut db, id).await?;
+        owner_of(&mut db, server).await?
+    };
+    let due = make_due(s, owner, id).await?;
+    purge(s, id, &due, batch, Some(batches)).await
+}
+
+/// A deleted server channel due by `due` and everything in it, for good (a hard delete, like a
+/// group whose last member leaves): 404 unless it is in Recently deleted and due, 409 while it is
+/// [`held`]. Its messages go first, `batch` per transaction (`servers::purge::messages`: their
+/// search entries, reactions, mentions, quotes, clips rows and objects, polls, pins, previews,
+/// inbox and thread reads, options of ended Quote of the Year votes and wheel spins with them),
+/// stopping after `max_batches` if given. Then, in one last short transaction, its mutes (they
+/// have no foreign key) and the channel, whose cascades take its read states, voice sessions,
+/// calls, clip views and stream sessions; its open clip tickets keep no channel (their confirm
+/// then refuses). Every file started in it (#57) is deleted after that commit (the attachments
+/// sweep retries a failure). Disk media nothing uses any more is left to the media cleanup. Nobody
+/// hears of it: the channel left everyone's view when it was deleted.
+async fn purge(
+    s: &AppState,
+    id: ChannelId,
+    due: &str,
+    batch: i64,
+    max_batches: Option<usize>,
+) -> AppResult<()> {
+    let kind = {
+        let mut db = s.db.acquire().await?;
+        deleted_channel(&mut db, id).await?.0.kind
+    };
+    let what = crate::servers::purge::Purging::Channel { id, kind, due };
+    if !crate::servers::purge::messages(s, id, &what, batch, max_batches).await? {
+        return Ok(()); // cut off (tests)
+    }
+    // Unread and mention counts others publish as absolutes span channels: in commit order.
+    let _order = s.hub.in_order().await;
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    what.check(&mut tx).await?;
     // Every file started in the channel, sent or not (#57): deleted after the commit.
     let files = crate::attachments::stored_in_channels(&mut tx, &[id]).await?;
     sqlx::query("DELETE FROM notification_prefs WHERE target_kind = 'channel' AND target_id = ?")
         .bind(id.to_string())
         .execute(&mut *tx)
         .await?;
-    // Before the channel, so the search triggers run for each message (one statement: replies and
-    // quote replies point at messages going with them).
-    // Quote lines first: their trigger rewrites a quote's entry, which the message's then drops.
-    sqlx::query(
-        "DELETE FROM quote_lines WHERE message_id IN (SELECT id FROM messages WHERE channel_id = ?)",
-    )
-    .bind(id.to_string())
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query("DELETE FROM messages WHERE channel_id = ?")
-        .bind(id.to_string())
-        .execute(&mut *tx)
-        .await?;
+    // No write reaches a deleted channel (#109), so it is empty by now; were a message left, the
+    // cascade would take it (its search entry by trigger).
     sqlx::query("DELETE FROM channels WHERE id = ? AND deleted_at IS NOT NULL")
         .bind(id.to_string())
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
     drop(_order);
-    if !clips.is_empty() || !files.is_empty() {
+    if !files.is_empty() {
         let s = s.clone();
-        tokio::spawn(async move {
-            for key in clips {
-                crate::messages::routes::remove_clip_object(&s, &key).await;
-            }
-            crate::attachments::remove_objects(&s, files).await;
-        });
+        tokio::spawn(async move { crate::attachments::remove_objects(&s, files).await });
     }
     Ok(())
 }
 
-/// Purge every channel deleted [`RECENTLY_DELETED_DAYS`] or more before `now`, except those
-/// [`held`] (they stay in Recently deleted, flagged) and those of a deleted server (frozen with it,
-/// #184: its own purge takes them). Returns how many went.
+/// Purge every channel deleted [`RECENTLY_DELETED_DAYS`] or more before `now` (or made due by
+/// "Delete now", including one whose purge was cut off), except those [`held`] (they stay in
+/// Recently deleted, flagged) and those of a deleted server (frozen with it, #184: its own purge
+/// takes them). Returns how many went.
 pub async fn purge_expired(s: &AppState, now: chrono::DateTime<chrono::Utc>) -> AppResult<u32> {
-    let due = crate::db::stamp(now - chrono::Duration::days(RECENTLY_DELETED_DAYS));
+    purge_expired_batched(s, now, PURGE_BATCH).await
+}
+
+/// [`purge_expired`] deleting at most `batch` messages per transaction.
+pub async fn purge_expired_batched(
+    s: &AppState,
+    now: chrono::DateTime<chrono::Utc>,
+    batch: i64,
+) -> AppResult<u32> {
+    let due = due(now);
     let ids: Vec<String> = sqlx::query_scalar(&format!(
         "SELECT id FROM channels WHERE deleted_at IS NOT NULL AND deleted_at <= ?
          AND server_id NOT IN {DELETED_SERVERS} ORDER BY deleted_at"
@@ -612,7 +708,7 @@ pub async fn purge_expired(s: &AppState, now: chrono::DateTime<chrono::Utc>) -> 
     let mut purged = 0;
     for id in ids {
         let id: ChannelId = id.parse().map_err(anyhow::Error::from)?;
-        match purge(s, id).await {
+        match purge(s, id, &due, batch, None).await {
             Ok(()) => purged += 1,
             // Held, or restored or purged in the meantime.
             Err(AppError::Conflict(_) | AppError::NotFound) => {}
