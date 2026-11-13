@@ -1,6 +1,6 @@
 // The inbox (#306): the unread count on the top bar's button (from Ready, then every inbox event), and the popover's
 // lists, one per tab, fetched when first shown and kept live by events. The pure parts are in inbox.ts.
-import { appendPage, applyToList, INBOX_PAGE, loadTab, markRead, saveTab, type InboxTab } from './inbox'
+import { appendPage, applyToList, arrived, INBOX_PAGE, loadTab, markRead, saveTab, type InboxTab } from './inbox'
 import { jumpTo } from './jump'
 import type { Event } from './protocol/Event'
 import type { InboxItem } from './protocol/InboxItem'
@@ -117,8 +117,15 @@ export async function markAllRead(): Promise<void> {
 }
 
 /** A live event: inbox events, and the read points, seen points and deletes that read or remove items. */
-export function noteInboxEvent(e: Event): void {
-  if (e.t === 'InboxItemAdded' || e.t === 'InboxUpdated') inbox.unread = e.d.unread
+export function noteInboxEvent(event: Event): void {
+  if (event.t === 'InboxItemAdded' || event.t === 'InboxUpdated') inbox.unread = event.d.unread
+  let e = event
+  if (e.t === 'InboxItemAdded') {
+    // as this device stands: its chat gone (dropped) or already read here (#327)
+    const item = arrived(app.state, e.d.item)
+    if (!item) return
+    e = { ...e, d: { ...e.d, item } }
+  }
   for (const tab of TABS) {
     const list = inbox.lists[tab]
     if (!list) continue

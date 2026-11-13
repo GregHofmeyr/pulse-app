@@ -239,11 +239,8 @@ async fn ready_for(
             live.push(stream);
         }
     }
-    // Your inbox count (#306); later events tell you only when it changes from this.
-    let inbox_unread = crate::inbox::unread(db, me).await?;
-    if conn.is_some() {
-        hub.tell_inbox(me, inbox_unread);
-    }
+    // Your inbox count (#306); this connection's inbox events follow from it (#327).
+    let inbox_unread = crate::inbox::ready(db, hub, me, conn).await?;
     // Calls in your own conversations only (#50), and the rings that are yours.
     let (calls, ringing) = voice_state.calls.for_ready(me, &visible).await;
     Ok(Ready {

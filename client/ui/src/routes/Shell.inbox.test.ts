@@ -14,7 +14,7 @@ vi.mock('../lib/stream/room', () => ({ StreamRoom: { connect: async () => ({}), 
 
 import Shell from './Shell.svelte'
 import { handleReady, resetState } from '../lib/store.svelte'
-import { closeInbox, noteInboxEvent } from '../lib/inbox.svelte'
+import { closeInbox, inbox, noteInboxEvent } from '../lib/inbox.svelte'
 import { testMe, testReady } from '../lib/testReady'
 import { testItem } from '../lib/testInbox'
 
@@ -69,6 +69,19 @@ describe('the inbox in the shell (#306)', () => {
     flushSync()
     expect(popover()).toBeNull()
     expect(document.activeElement).toBe(button())
+  })
+
+  // #327: the server reads an item before it sends it, so its chat may be gone by the time it arrives
+  it('a new item from a chat no longer here is not listed, but its count is', async () => {
+    button().click()
+    await settle()
+    const added = (id: string, channel_id: string, unread: number) =>
+      noteInboxEvent({ t: 'InboxItemAdded', d: { user_id: 'U1', item: testItem(id, {}, { channel_id }), unread } })
+    added('M2', 'GONE', 3)
+    added('M3', 'T1', 4)
+    flushSync()
+    expect(inbox.lists.all?.items.map((i) => i.message.id)).toEqual(['M3', 'M1'])
+    expect(inbox.unread).toBe(4)
   })
 
   it('the quick switcher’s Inbox opens it', async () => {

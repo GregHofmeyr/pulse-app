@@ -92,20 +92,16 @@ pub async fn delete(
         .into_iter()
         .filter_map(|(c, kind)| Some((c.parse().ok()?, kind == "voice")))
         .collect();
-    for (channel_id, _) in &live {
-        s.hub
-            .publish(
-                &s.db,
-                Event::ChannelDeleted {
-                    channel_id: *channel_id,
-                    server_id: id,
-                },
-            )
-            .await;
-    }
-    s.hub
-        .publish(&s.db, Event::ServerDeleted { server_id: id })
-        .await;
+    // One batch: whoever had inbox items in it is told their count once (#327).
+    let mut events: Vec<Event> = live
+        .iter()
+        .map(|(channel_id, _)| Event::ChannelDeleted {
+            channel_id: *channel_id,
+            server_id: id,
+        })
+        .collect();
+    events.push(Event::ServerDeleted { server_id: id });
+    s.hub.publish_all(&s.db, events).await;
     // Their stages go in the same order as shares (#234).
     for (channel_id, voice) in &live {
         if *voice {

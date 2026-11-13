@@ -8,7 +8,7 @@ use pulse_protocol::ids::MessageId;
 use pulse_protocol::rest::{InboxPage, InboxReadAllRequest, InboxUnread};
 use serde::Deserialize;
 
-use super::{Filter, item, list, unread, updated};
+use super::{Filter, item, list, tell, unread, updated};
 use crate::AppState;
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
@@ -75,8 +75,6 @@ async fn read_one(
     if item(&s.db, me, id).await?.is_none() {
         return Err(AppError::NotFound);
     }
-    // The event carries an absolute count: in publish order with whatever else changes it.
-    let _order = s.hub.in_order().await;
     let added =
         sqlx::query("INSERT OR IGNORE INTO inbox_reads (user_id, message_id) VALUES (?, ?)")
             .bind(me.to_string())
@@ -84,13 +82,12 @@ async fn read_one(
             .execute(&s.db)
             .await?
             .rows_affected();
-    if added > 0
-        && let Some(n) = super::count(&s.db, me).await
-    {
-        s.hub.tell_inbox(me, n);
-        s.hub
-            .publish(&s.db, updated(me, n, vec![id], None, vec![]))
-            .await;
+    if added > 0 {
+        // The event carries an absolute count: read and sent under your inbox slot (#327).
+        tell(&s.db, &s.hub, me, true, |n| {
+            updated(me, n, vec![id], None, vec![])
+        })
+        .await;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -107,7 +104,6 @@ async fn read_all(
     }
     let now = MessageId::new();
     let upto = req.upto.map_or(now, |u| u.min(now));
-    let _order = s.hub.in_order().await;
     let moved = sqlx::query(
         "INSERT INTO inbox_cleared (user_id, upto) VALUES (?, ?)
          ON CONFLICT (user_id) DO UPDATE SET upto = excluded.upto
@@ -118,13 +114,11 @@ async fn read_all(
     .execute(&s.db)
     .await?
     .rows_affected();
-    if moved > 0
-        && let Some(n) = super::count(&s.db, me).await
-    {
-        s.hub.tell_inbox(me, n);
-        s.hub
-            .publish(&s.db, updated(me, n, vec![], Some(upto), vec![]))
-            .await;
+    if moved > 0 {
+        tell(&s.db, &s.hub, me, true, |n| {
+            updated(me, n, vec![], Some(upto), vec![])
+        })
+        .await;
     }
     Ok(StatusCode::NO_CONTENT)
 }
