@@ -83,7 +83,7 @@ impl IntoResponse for AppError {
         // here, where every route's errors pass, whether they came up as `sqlx` or `anyhow` errors.
         let this = match self {
             Self::Internal(e) if foreign_key_failure(&e) => {
-                tracing::info!(error = %e, "a write's target went before it landed; 404");
+                tracing::warn!(error = %e, "a write's target went before it landed (or a bug failed a foreign key); 404");
                 Self::NotFound
             }
             other => other,
