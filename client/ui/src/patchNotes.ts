@@ -24,6 +24,39 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.10',
+  version: '0.2.10',
+  date: '13 November 2026',
+  new: [
+    'Profile cards in your own colours: light colours finally look like themselves, text switches dark or light to stay readable, and there\'s a Card glow switch in Settings › Profile',
+    'Pin quotes and clips: right-click a quote or use a clip\'s ⋯ menu, and find them under Pins in the channel header',
+    'The quick switcher searches messages everywhere you are, not just the server you\'re in',
+    'Downloads show progress: clips, images and files get a progress ring, you can cancel, and they say Saved when done',
+  ],
+  fixes: [
+    'Coming back after a busy spell opens where you stopped reading, with nothing silently skipped',
+    'Reactions, edits and deletes from while you were offline now show on older messages too',
+    'The delete confirm on the bottom message or quote no longer hides under the message box',
+    'Settings no longer flashes while you pick colours (Linux)',
+    'Server names in the quick switcher line up neatly',
+    'Unread counts in the Inbox stay right after deletes, mutes and reconnects',
+  ],
+  qol: [
+    'Right-click a person almost anywhere for their menu: group members, @mentions, reply names, quote speakers, search results and the Inbox. Remove from group lives there now too',
+    'Small profile cards are a little bigger',
+    'A message you jump to now gets a clearer highlight',
+    'Clips and clip replies in the Inbox open the clip',
+    'The Inbox count catches up on its own when a timed mute runs out',
+  ],
+  soon: [
+    'A fresh profile editor: edit right inside your big profile card',
+    'More fresh and reworked designs on the way',
+  ],
+  message: 'Pin it, find it, download it. Pulse has a filing cabinet now 🗂️',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.9',
   version: '0.2.9',
   date: '12 November 2026',
@@ -44,23 +77,4 @@ export const patchNotes: PatchNotes = {
     'More fresh and reworked designs on the way',
   ],
   message: 'Your inbox is now in Pulse. Sorry 📬',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.8',
-  version: '0.2.8',
-  date: '11 November 2026',
-  new: [
-    'Quick switcher: press Ctrl+K (or / when you\'re not typing) to jump anywhere: servers, channels, DMs, groups. Type > for quick actions like joining voice, playing a sound or muting',
-  ],
-  fixes: [
-    'Images in chat actually show up now 😅',
-  ],
-  qol: [],
-  soon: [
-    'A fresh profile editor: edit right inside your big profile card',
-    'More fresh and reworked designs on the way',
-  ],
-  message: 'Ctrl+K. You\'re welcome.',
 }
