@@ -1302,6 +1302,35 @@ export function addHistory(s: AppState, channel: string, older: Message[]): AppS
   return withoutDeadReplies({ ...s, messages: { ...s.messages, [channel]: list } }, channel)
 }
 
+/** Set `channel`'s loaded messages by a page fetched again (#263): within the span the page covers (`inSpan`), a held
+ * message takes the page's copy, and one the page doesn't have is gone (removed for good). Nothing is added (the loaded
+ * list is contiguous, so the span holds nothing it lacks) and nothing outside the span moves; `skip` (changed live while
+ * it loaded) keeps the copy held. The state is returned as is when nothing changed. */
+export function applyRefreshed(
+  s: AppState,
+  channel: string,
+  page: Message[],
+  inSpan: (id: string) => boolean,
+  skip: ReadonlySet<string>,
+): AppState {
+  const list = s.messages[channel]
+  if (!list) return s
+  const fresh = new Map(page.map((m) => [m.id, m]))
+  let changed = false
+  const next: Message[] = []
+  for (const m of list) {
+    const f = fresh.get(m.id)
+    if (skip.has(m.id) || (!f && !inSpan(m.id))) next.push(m)
+    else if (!f) changed = true
+    else if (JSON.stringify(f) === JSON.stringify(m)) next.push(m)
+    else {
+      changed = true
+      next.push(f)
+    }
+  }
+  return changed ? withoutDeadReplies({ ...s, messages: { ...s.messages, [channel]: next } }, channel) : s
+}
+
 export function markHistory(s: AppState, channel: string, reachedStart: boolean): AppState {
   const prev = s.history[channel]
   return { ...s, history: { ...s.history, [channel]: { loaded: true, start: reachedStart || !!prev?.start, end: prev?.end ?? true } } }
