@@ -1,7 +1,6 @@
 // Message search: the last search run and its results (a snapshot: nothing updates them live), and
 // where a clicked result goes.
-import { jumpTo } from './jump'
-import { app, ui } from './store.svelte'
+import { openMessage } from './openMessage'
 import { api, errorText } from './tauri'
 import { toRequest, type Chip } from './searchQuery'
 import type { SearchHit } from './protocol/SearchHit'
@@ -74,23 +73,8 @@ export function closeSearch(): void {
   Object.assign(search, { open: false, behindChat: false, scope: null, words: '', chips: [], status: 'idle', hits: [], total: null, nextCursor: null, error: '', loadingMore: false })
 }
 
-/** Show a result where it lives; the results stay open for the next one. A clips channel has no
- *  history to jump in: its clip's panel opens instead (a reply's clip, for a reply). A reply in a
- *  quote opens that quote's replies, as a notification click does. */
+/** Show a result where it lives (lib/openMessage.ts: a clip's panel, a quote's replies, or the message in its
+ *  channel); the results stay open for the next one. */
 export function openHit(hit: SearchHit): void {
-  const m = hit.message
-  const ch = app.state.channels[m.channel_id]
-  if (!ch) return
-  if (ch.kind === 'clips') {
-    const clip = hit.root ?? m
-    ui.goTo = ch.id
-    ui.openClip = { channelId: ch.id, clip }
-    return
-  }
-  if (m.thread_root_id) {
-    ui.goTo = ch.id
-    ui.openReplies = { channelId: ch.id, rootId: m.thread_root_id }
-    return
-  }
-  void jumpTo(ch.id, m.id)
+  openMessage(hit.message, hit.root)
 }

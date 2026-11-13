@@ -132,6 +132,15 @@ describe('search store', () => {
     expect(ui.openClip).toEqual({ channelId: 'K1', clip })
   })
 
+  it('a reply to a clip without its clip fetches the clip first (#324)', async () => {
+    const clip = msg('V1', 'K1')
+    invoke.mockResolvedValue([msg('V0', 'K1'), clip])
+    openHit(hit(msg('R2', 'K1', { thread_root_id: 'V1' })))
+    expect(ui.goTo).toBe('K1')
+    await vi.waitFor(() => expect(ui.openClip).toEqual({ channelId: 'K1', clip }))
+    expect(invoke).toHaveBeenCalledWith('list_messages_around', { channelId: 'K1', messageId: 'V1' })
+  })
+
   it('the results stay open after a click', () => {
     search.open = true
     openHit(hit(msg('R1', 'Q1', { thread_root_id: 'Q9' }), msg('Q9', 'Q1')))

@@ -11,9 +11,9 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import InboxPopover from './InboxPopover.svelte'
 import { closeInbox, inbox, noteInboxEvent, openInbox } from '../lib/inbox.svelte'
 import { INBOX_PAGE } from '../lib/inbox'
-import { clock, handleReady, resetState, ui } from '../lib/store.svelte'
+import { app, clock, handleReady, resetState, ui } from '../lib/store.svelte'
 import { testMe, testReady } from '../lib/testReady'
-import { testItem as item } from '../lib/testInbox'
+import { testItem as item, testMessage } from '../lib/testInbox'
 
 const sam = { id: 'SAM', username: 'sam', display_name: 'Sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const NOW = Date.parse('2026-11-12T10:05:00.000Z')
@@ -36,6 +36,8 @@ function ready(unread: number) {
   handleReady(testReady([
     { id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 } as never,
     { id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 1 } as never,
+    { id: 'K1', server_id: 'S1', kind: 'clips', name: 'clips', position: 2 } as never,
+    { id: 'V9', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 3 } as never,
   ], {
     members: [{ server_id: 'S1', members: [{ user: testMe, nickname: null }, { user: sam, nickname: null }] }],
     inbox_unread: unread,
@@ -212,5 +214,85 @@ describe("an inbox row's person menu (#135): who wrote it", () => {
     expect(menu()).toBeNull()
     expect(onClose).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(row)
+  })
+})
+
+describe('where an inbox item opens (#324)', () => {
+  beforeEach(() => {
+    Object.assign(ui, { goTo: null, notice: null, openChannelId: null, jump: null })
+  })
+  /** Show the popover with `it` as its one item, and click it. */
+  async function openOnly(it: InboxItem) {
+    pages = { all: { items: [it], unread: 1 }, mentions: { items: [it], unread: 1 } }
+    inbox.lists = { all: null, mentions: null }
+    await show()
+    rows()[0].click()
+    await settle()
+  }
+  const clip = testMessage('V1', { channel_id: 'K1', author_id: 'U1', mentions: [], content: 'clutch' })
+  const clipReply = item('R5', { kind: 'reply' }, { channel_id: 'K1', thread_root_id: 'V1', mentions: [] })
+
+  it('a reply to a clip fetches that clip and opens its panel', async () => {
+    const before = testMessage('V0', { channel_id: 'K1' })
+    const fallback = invoke.getMockImplementation()!
+    invoke.mockImplementation(async (cmd, args) => (cmd === 'list_messages_around' ? [before, clip] : fallback(cmd, args)))
+    await openOnly(clipReply)
+    expect(invoke).toHaveBeenCalledWith('list_messages_around', { channelId: 'K1', messageId: 'V1' })
+    expect(ui.goTo).toBe('K1')
+    expect(ui.openClip).toEqual({ channelId: 'K1', clip })
+    expect(ui.openReplies).toBeNull()
+  })
+
+  it('a reply to a clip already held here opens its panel at once', async () => {
+    app.state = { ...app.state, clipFeeds: { k: { channelId: 'K1', filter: {}, items: [clip], start: true, loading: false } } }
+    await openOnly(clipReply)
+    expect(invoke).not.toHaveBeenCalledWith('list_messages_around', expect.anything())
+    expect(ui.openClip).toEqual({ channelId: 'K1', clip })
+  })
+
+  it('a clip that mentions you opens its own panel', async () => {
+    const mention = item('V2', {}, { channel_id: 'K1', content: 'gg @alex' })
+    await openOnly(mention)
+    expect(invoke).not.toHaveBeenCalledWith('list_messages_around', expect.anything())
+    expect(ui.goTo).toBe('K1')
+    expect(ui.openClip).toEqual({ channelId: 'K1', clip: mention.message })
+  })
+
+  it('a reply to a deleted clip says so and opens no panel', async () => {
+    const fallback = invoke.getMockImplementation()!
+    invoke.mockImplementation(async (cmd, args) => (cmd === 'list_messages_around' ? null : fallback(cmd, args)))
+    await openOnly(clipReply)
+    expect(ui.openClip).toBeNull()
+    expect(ui.notice).toBe('That clip was deleted.')
+  })
+
+  it('a clip fetched after you went elsewhere opens nothing', async () => {
+    let answer!: (v: unknown) => void
+    const fallback = invoke.getMockImplementation()!
+    invoke.mockImplementation((cmd, args) => (cmd === 'list_messages_around' ? new Promise((r) => (answer = r)) : fallback(cmd, args)))
+    await openOnly(clipReply)
+    ui.goTo = null
+    ui.openChannelId = 'C1'
+    answer([clip])
+    await settle()
+    expect(ui.openClip).toBeNull()
+  })
+
+  it('a reply to a quote opens its replies; a voice channel chat mention jumps there', async () => {
+    await openOnly(item('R6', { kind: 'reply' }, { channel_id: 'Q1', thread_root_id: 'QT' }))
+    expect(ui.goTo).toBe('Q1')
+    expect(ui.openReplies).toEqual({ channelId: 'Q1', rootId: 'QT' })
+    expect(ui.openClip).toBeNull()
+    unmount(cmp!)
+    cmp = undefined
+    invoke.mockClear()
+    await openOnly(item('M7', {}, { channel_id: 'V9' }))
+    expect(invoke).toHaveBeenCalledWith('list_messages_around', { channelId: 'V9', messageId: 'M7' })
+  })
+
+  it('an item in a chat no longer here says so', async () => {
+    await openOnly(item('M8', {}, { channel_id: 'GONE', thread_root_id: 'X' }))
+    expect(ui.notice).toBe('That channel was deleted.')
+    expect(ui.openReplies).toBeNull()
   })
 })
