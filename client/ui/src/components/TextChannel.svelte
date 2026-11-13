@@ -30,6 +30,7 @@
   import { addHistory, addOlder, appendNewer, markHistory, reachLatest, PAGE, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
   import { pinSync, refreshPins } from '../lib/pinSync.svelte'
+  import { historySync, refreshHistory } from '../lib/historySync.svelte'
   import { liveQoty } from '../lib/quotes'
   import { displayName, groupedPending, groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor, nextTypingExpiry, typingNames } from '../lib/selectors'
   import { api, errorText, type StagedFile } from '../lib/tauri'
@@ -118,6 +119,24 @@
   $effect(() => {
     if (pinSync.stale[channelId]) void refreshPins(channelId)
   })
+  // ...and the reactions, edits and deletes they had, so the loaded range is fetched again and set right in place
+  // (#263), the message on screen kept where it is.
+  $effect(() => {
+    if (historySync.stale[channelId]) void refreshHistory(channelId, keepStill)
+  })
+  /** Makes `change` to the list with the top message in view held where it is on screen (WebKitGTK doesn't anchor
+   *  scrolling; #173). At the bottom, pinToBottom keeps the view there. */
+  function keepStill(change: () => void) {
+    if (!list || atBottom) return change()
+    const top = list.getBoundingClientRect().top
+    const anchor = [...list.querySelectorAll<HTMLElement>('[data-message-id]')].find((el) => el.getBoundingClientRect().bottom > top)
+    const id = anchor?.dataset.messageId
+    const y0 = anchor?.getBoundingClientRect().top ?? 0
+    change()
+    flushSync()
+    const now = id && list?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`)
+    if (list && now) list.scrollTop += now.getBoundingClientRect().top - y0
+  }
 
   // Coming back to a channel whose history is still loaded: nothing is fetched, so nothing above
   // scrolls, and a fresh list opens at the top. Open at the newest, like a first visit (a jump that

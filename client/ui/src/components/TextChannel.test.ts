@@ -793,3 +793,84 @@ describe('TextChannel: the phone button (#50)', () => {
     unmount(c)
   })
 })
+
+describe('TextChannel: older loaded pages after a reconnect (#263)', () => {
+  const C1 = { id: 'C1', server_id: 'S1', kind: 'text' as const, name: 'general', position: 0 }
+  beforeEach(() => {
+    resetState()
+    handleReady(testReady([C1]))
+  })
+  afterEach(() => resetState())
+
+  it('an older page shows the reactions, edits and deletes made while away, the list kept as it was', async () => {
+    // scrolled back through 3 pages: M0101..M0250
+    app.state = markHistory(addHistory(app.state, 'C1', page(101, 150)), 'C1', false)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    // while away: M0110 got a reaction, M0120 was edited, M0130 deleted
+    const now = (n: number): Message =>
+      n === 110 ? { ...msg(n), reactions: [{ emoji: '👍', count: 1, me: false }] }
+      : n === 120 ? { ...msg(n), content: 'edited while away', edited_at: '2026-10-01T01:00:00.000Z' }
+      : n === 130 ? { ...msg(n), deleted: true, content: '' }
+      : msg(n)
+    const all = Array.from({ length: 250 }, (_, i) => now(i + 1))
+    invoke.mockImplementation(async (cmd: string, a?: { before?: string | null; messageId?: string }) => {
+      if (cmd === 'list_messages') return (a?.before ? all.filter((m) => m.id < a.before!) : all).slice(-50)
+      if (cmd === 'list_messages_after') return all.filter((m) => m.id > a!.messageId!).slice(0, 50)
+      if (cmd === 'list_messages_around') {
+        const i = all.findIndex((m) => m.id === a!.messageId)
+        return i < 0 ? null : all.slice(Math.max(0, i - 25), i + 25)
+      }
+      return undefined
+    })
+    handleReady(testReady([C1]))
+    flushSync()
+    await vi.waitFor(() => expect(app.state.messages['C1'].find((m) => m.id === 'M0120')?.content).toBe('edited while away'))
+    flushSync()
+    const shown = (id: string) => document.querySelector(`[data-message-id="${id}"]`)
+    expect(shown('M0110')?.querySelector('.reactions .chip:not(.add):not(.suggest) .n')?.textContent).toBe('1')
+    expect(shown('M0120')?.textContent).toContain('edited while away')
+    expect(app.state.messages['C1'].find((m) => m.id === 'M0130')?.deleted).toBe(true)
+    expect(app.state.messages['C1'][0].id).toBe('M0101') // nothing older was pulled in
+    unmount(c)
+  })
+
+  it('scrolled up, the message on screen stays where it is as an edit above it changes height', async () => {
+    app.state = markHistory(addHistory(app.state, 'C1', page(101, 100)), 'C1', false) // M0101..M0200
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    const list = document.querySelector<HTMLElement>('.list')!
+    // scrolled up: M0150 is the top one in view, 100px down; M0120 above it grows by 40px once edited
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 5000 })
+    Object.defineProperty(list, 'clientHeight', { configurable: true, value: 500 })
+    list.scrollTop = 1000
+    list.dispatchEvent(new Event('scroll'))
+    const rect = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const id = this.dataset.messageId
+      if (!id) return rect.call(this)
+      const grown = app.state.messages['C1'].find((m) => m.id === 'M0120')?.content === 'longer now' ? 40 : 0
+      const y = id < 'M0150' ? -200 : id === 'M0150' ? 100 + grown : 1000
+      return { top: y, bottom: y + 20, left: 0, right: 0, width: 0, height: 20, x: 0, y, toJSON() {} } as DOMRect
+    }
+    const all = Array.from({ length: 200 }, (_, i) => (i + 1 === 120 ? { ...msg(120), content: 'longer now' } : msg(i + 1)))
+    invoke.mockImplementation(async (cmd: string, a?: { before?: string | null; messageId?: string }) => {
+      if (cmd === 'list_messages') return all.slice(-50)
+      if (cmd === 'list_messages_after') return all.filter((m) => m.id > a!.messageId!).slice(0, 50)
+      if (cmd === 'list_messages_around') {
+        const i = all.findIndex((m) => m.id === a!.messageId)
+        return i < 0 ? null : all.slice(Math.max(0, i - 25), i + 25)
+      }
+      return undefined
+    })
+    try {
+      handleReady(testReady([C1]))
+      flushSync()
+      await vi.waitFor(() => expect(app.state.messages['C1'].find((m) => m.id === 'M0120')?.content).toBe('longer now'))
+      expect(list.scrollTop).toBe(1040)
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = rect
+      unmount(c)
+    }
+  })
+})
