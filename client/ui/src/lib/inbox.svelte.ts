@@ -1,7 +1,7 @@
 // The inbox (#306): the unread count on the top bar's button (from Ready, then every inbox event), and the popover's
 // lists, one per tab, fetched when first shown and kept live by events. The pure parts are in inbox.ts.
 import { appendPage, applyToList, arrived, INBOX_PAGE, loadTab, markRead, saveTab, type InboxTab } from './inbox'
-import { jumpTo } from './jump'
+import { openMessage } from './openMessage'
 import type { Event } from './protocol/Event'
 import type { InboxItem } from './protocol/InboxItem'
 import { app, onAppEvent, onAppReady, ui } from './store.svelte'
@@ -87,8 +87,8 @@ function readHere(pick: (i: InboxItem) => boolean) {
   }
 }
 
-/** Open an item: show the message (a reply: its quote's replies panel; a clip's reply: its clips channel) and read
- *  it. The popover closes. */
+/** Open an item: show the message where it lives (lib/openMessage.ts: a clip, or a clip's reply, opens that clip's
+ *  panel; a quote's reply its replies panel; anything else the message in its chat) and read it. The popover closes. */
 export function openItem(item: InboxItem): void {
   const m = item.message
   closeInbox()
@@ -97,11 +97,7 @@ export function openItem(item: InboxItem): void {
     inbox.unread = Math.max(0, inbox.unread - 1)
     api.inboxRead(m.id).catch(() => void refreshCount())
   }
-  if (!m.thread_root_id) return void jumpTo(m.channel_id, m.id)
-  const ch = app.state.channels[m.channel_id]
-  if (!ch) return void (ui.notice = 'That channel was deleted.')
-  ui.goTo = m.channel_id
-  if (ch.kind === 'quotes') ui.openReplies = { channelId: m.channel_id, rootId: m.thread_root_id }
+  if (!openMessage(m)) ui.notice = 'That channel was deleted.'
 }
 
 /** Mark all read: everything up to the newest item shown (or all of it, when none is). */
