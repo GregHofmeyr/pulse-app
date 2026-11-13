@@ -84,6 +84,11 @@ pub struct CardProfile {
     pub theme_bottom: String,
     pub pronouns: Option<String>,
     pub bio: Option<String>,
+    /// The card glows in its two colours (#156): the owner's choice, the same for everyone who sees
+    /// it. Absent from older servers, which always drew the glow: on.
+    #[serde(default = "yes")]
+    #[ts(as = "Option<bool>", optional)]
+    pub glow: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -283,6 +288,10 @@ pub struct UpdateProfileRequest {
     /// The new display name; absent keeps the current one (older clients don't send it).
     #[serde(default)]
     pub display_name: Option<String>,
+    /// Whether the card glows (#156); absent keeps the current setting (older clients don't send it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub glow: Option<bool>,
 }
 
 /// `PUT /servers/{id}/members/{user}/nickname` and `PUT /me/private-nicknames/{user}`: `None`
@@ -2299,6 +2308,45 @@ pub struct SearchResults {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The card glow (#156) next to 0.2.x: an older server's card (no `glow`) reads as glowing, a
+    /// card with it still reads in an older client (serde skips the field it doesn't know), and an
+    /// older client's save (no `glow`) keeps the current setting.
+    #[test]
+    fn card_glow_is_optional_both_ways() {
+        let old_card = serde_json::json!({
+            "banner_hash": null, "banner_still": null, "theme_top": "#3a3d46",
+            "theme_bottom": "#16171b", "pronouns": null, "bio": null,
+        });
+        let card: CardProfile = serde_json::from_value(old_card).unwrap();
+        assert!(card.glow);
+
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct OldCardProfile {
+            banner_hash: Option<String>,
+            banner_still: Option<String>,
+            theme_top: String,
+            theme_bottom: String,
+            pronouns: Option<String>,
+            bio: Option<String>,
+        }
+        let off = CardProfile { glow: false, ..card };
+        let json = serde_json::to_value(&off).unwrap();
+        assert_eq!(json["glow"], false);
+        let old: OldCardProfile = serde_json::from_value(json).unwrap();
+        assert_eq!(old.theme_top, "#3a3d46");
+
+        let old_save = serde_json::json!({
+            "avatar_hash": null, "banner_hash": null, "theme_top": "#3a3d46",
+            "theme_bottom": "#16171b", "style": {"font": null, "colors": []},
+            "pronouns": null, "bio": null,
+        });
+        let req: UpdateProfileRequest = serde_json::from_value(old_save).unwrap();
+        assert_eq!(req.glow, None);
+        // and a save that doesn't touch it says nothing about it
+        assert!(serde_json::to_value(&req).unwrap().get("glow").is_none());
+    }
 
     fn plain_message() -> Message {
         serde_json::from_value(serde_json::json!({

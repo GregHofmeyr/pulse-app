@@ -93,7 +93,7 @@ async fn save(
     sqlx::query(
         "UPDATE users SET avatar_hash = ?, banner_hash = ?, theme_top = ?, theme_bottom = ?, \
          name_font = ?, name_color = ?, pronouns = ?, bio = ?, \
-         display_name = COALESCE(?, display_name) WHERE id = ?",
+         display_name = COALESCE(?, display_name), card_glow = COALESCE(?, card_glow) WHERE id = ?",
     )
     .bind(&v.avatar_hash)
     .bind(&v.banner_hash)
@@ -104,6 +104,7 @@ async fn save(
     .bind(&v.pronouns)
     .bind(&v.bio)
     .bind(&v.display_name)
+    .bind(v.glow)
     .bind(me.to_string())
     .execute(&mut *tx)
     .await?;

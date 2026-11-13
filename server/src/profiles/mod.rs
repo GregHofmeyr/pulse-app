@@ -26,6 +26,7 @@ struct ProfileRow {
     theme_bottom: String,
     pronouns: Option<String>,
     bio: Option<String>,
+    card_glow: bool,
     created_at: String,
 }
 
@@ -44,7 +45,7 @@ pub async fn load_profile(
     let mut tx = db.begin().await?;
     let Some(row) = sqlx::query_as::<_, ProfileRow>(&format!(
         "SELECT {USER_COLS}, u.banner_hash, bn.still_hash AS banner_still, u.theme_top, \
-         u.theme_bottom, u.pronouns, u.bio, u.created_at \
+         u.theme_bottom, u.pronouns, u.bio, u.card_glow, u.created_at \
          FROM users u {USER_JOIN} LEFT JOIN media bn ON bn.hash = u.banner_hash WHERE u.id = ?"
     ))
     .bind(&id)
@@ -115,6 +116,7 @@ pub async fn load_profile(
             theme_bottom: row.theme_bottom,
             pronouns: row.pronouns,
             bio: row.bio,
+            glow: row.card_glow,
         },
         stats: ProfileStats {
             voice_seconds: voice.max(0.0).round() as u64,
@@ -166,6 +168,8 @@ pub struct Validated {
     pub bio: Option<String>,
     /// `None`: keep the current display name.
     pub display_name: Option<String>,
+    /// `None`: keep the current card glow (#156).
+    pub glow: Option<bool>,
 }
 
 fn bad(msg: &str) -> AppError {
@@ -254,6 +258,7 @@ pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
         pronouns,
         bio,
         display_name,
+        glow: req.glow,
     })
 }
 

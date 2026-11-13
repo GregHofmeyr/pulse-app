@@ -1222,6 +1222,7 @@ mod tests {
                 theme_bottom: "#16171b".into(),
                 pronouns: None,
                 bio: None,
+                glow: true,
             },
         };
         assert_eq!((e.channel_id(), e.only_for()), (None, None));
