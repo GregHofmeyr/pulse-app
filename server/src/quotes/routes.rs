@@ -65,6 +65,7 @@ async fn post_quote(
     let _order = s.hub.in_order().await;
     // One transaction: the message, the quote, its lines and your read point land together.
     let mut tx = crate::db::begin_write(&s.db).await?;
+    crate::access::channel_live_in(&mut tx, id).await?; // channel deleted since (#109)
     // An outbox retry of a post that already landed: hand back the original (see `send`).
     if let Some(existing) =
         crate::messages::nonce::existing(&mut tx, me, id, req.nonce.as_deref()).await?
@@ -197,7 +198,8 @@ async fn edit_quote(
     // Awards counts change with the lines, so publish in commit order (as reactions do).
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
-    // A delete that committed since the check wins.
+    // A delete (of the quote, or its channel: #109) that committed since the check wins.
+    crate::access::channel_live_in(&mut tx, ch.id).await?;
     let live: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM messages WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
     )

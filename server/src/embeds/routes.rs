@@ -26,7 +26,7 @@ async fn hide(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
-    own_message(&s.db, me, id).await?;
+    let (_, ch) = own_message(&s.db, me, id).await?;
     // Stored links are normalised; a link that isn't one has no preview.
     let url = match req.url.as_deref() {
         Some(u) => Some(super::links::normalise(u).ok_or(AppError::NotFound)?),
@@ -35,6 +35,7 @@ async fn hide(
     // In order with the unfurl's and edits' publishes, so the last update out is the newest.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    crate::access::channel_live_in(&mut tx, ch.id).await?; // channel deleted since (#109)
     // The message must still be live: a delete that committed since the check above wins.
     let hidden = sqlx::query(
         "UPDATE link_embeds SET hidden = 1

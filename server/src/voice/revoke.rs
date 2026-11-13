@@ -167,10 +167,40 @@ pub fn end_stream_access(s: &AppState, channel: ChannelId, user: UserId) {
     });
 }
 
-/// `channel` was deleted with `people` in its call: remove them from its voice room and their
-/// connections (`#v`, `#a`) from its stream room. Never fails; problems are logged. A join
-/// racing this is refused anyway, as the channel is gone ([`may_be_in`]).
-pub async fn close_call(s: &AppState, channel: ChannelId, people: &[UserId]) {
+/// `channel` is gone (deleted, or its server is): close its call at LiveKit, deleting its voice
+/// room and its stream room (`<channel>~s`), which disconnects everyone in them (#109). Not a
+/// removal of the people a snapshot of our voice state listed: a join whose webhook hadn't applied
+/// yet isn't in it, nor is anyone whose join webhook was lost, and the stream room's ghosts and
+/// shares go too. A later join is refused, as the channel is gone ([`may_be_in`]). Both rooms in
+/// parallel, within [`BUDGET`]. Never fails; problems are logged.
+///
+/// Needs the API key to sign a `roomCreate` grant (LiveKit's DeleteRoom), as a self-hosted
+/// LiveKit's keys may.
+pub async fn close_call(s: &AppState, channel: ChannelId) {
+    let client = client(s);
+    let (voice, stream) = (channel.to_string(), format!("{channel}~s"));
+    if tokio::time::timeout(
+        BUDGET,
+        futures::future::join(delete_room(&client, &voice), delete_room(&client, &stream)),
+    )
+    .await
+    .is_err()
+    {
+        tracing::warn!(room = %voice, "LiveKit didn't answer in time; its call may still be connected");
+    }
+}
+
+async fn delete_room(client: &RoomClient, room: &str) {
+    match client.delete_room(room).await {
+        Ok(()) => tracing::info!(room, "closed LiveKit room"),
+        Err(e) if not_found(&e) => tracing::debug!(room, "LiveKit room already closed"),
+        Err(e) => tracing::warn!(error = %e, room, "couldn't close LiveKit room"),
+    }
+}
+
+/// Take `people` out of `channel`'s call: out of its voice room, and their connections (`#v`,
+/// `#a`) out of its stream room. Never fails; problems are logged.
+pub async fn remove_from_call(s: &AppState, channel: ChannelId, people: &[UserId]) {
     if people.is_empty() {
         return;
     }

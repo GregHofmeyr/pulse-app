@@ -107,6 +107,7 @@ async fn pin(
     // The pin's event and its line go out in commit order with other pins, unpins and the sweep's expiries.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    crate::access::channel_live_in(&mut tx, ch.id).await?; // channel deleted since (#109)
     // Still live: a delete may have committed since the check above.
     let live: Option<i64> =
         sqlx::query_scalar("SELECT 1 FROM messages WHERE id = ? AND deleted_at IS NULL")

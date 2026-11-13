@@ -153,58 +153,19 @@ async fn webhook(
         crate::voice::revoke::left(&s, p).await?;
     }
     let Some(ch) = load_channel(&s.db, channel_id).await? else {
+        // A gone channel's call was ended by its delete, but a join that applied after the
+        // delete's snapshot of it can still be in the voice state (#109): its leave (LiveKit
+        // closing the room) takes it out.
+        if left {
+            crate::servers::channels::out_of_gone_call(&s, channel_id, user_id, &p.sid).await;
+        }
         return Ok(StatusCode::OK);
     };
     // Only server voice channels feed stats; DM/group calls are never recorded (spec §8).
     let record = ch.server_id.is_some();
 
     match ev.event.as_str() {
-        "participant_joined" if s.voice.join(channel_id, user_id, &p.sid) => {
-            // The session is recorded and the join published before any badge bookkeeping,
-            // which runs after and never fails the webhook.
-            let mut opened = None;
-            if let Some(server) = ch.server_id {
-                let (id, at) = (pulse_protocol::ids::next_ulid().to_string(), Utc::now());
-                sqlx::query("INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES (?, ?, ?, ?)")
-                        .bind(&id)
-                        .bind(user_id.to_string())
-                        .bind(channel_id.to_string())
-                        .bind(stamp(at))
-                        .execute(&s.db)
-                        .await?;
-                opened = Some((server, id, at));
-            }
-            // their join sound (#121), server voice channels only: a lookup that fails just leaves the normal cue
-            let join_sound = match ch.server_id {
-                Some(server) => crate::sounds::join_sound_for(&s, server, channel_id, user_id)
-                    .await
-                    .unwrap_or_else(|e| {
-                        tracing::error!(error = ?e, user = %user_id, "join sound not looked up");
-                        None
-                    }),
-                None => None,
-            };
-            s.hub
-                .publish(
-                    &s.db,
-                    Event::VoiceJoined {
-                        channel_id,
-                        user_id,
-                        flags: s.voice.declared(user_id),
-                        join_sound,
-                    },
-                )
-                .await;
-            // a ghost here joining the call: that ghost goes (the client reconnects as them)
-            if record {
-                crate::streams::ghosts::joined_voice(&s, channel_id, user_id).await;
-            }
-            // a DM or group: the call starts (or carries on), and this person's ring is answered
-            crate::calls::joined(&s, &ch, user_id).await;
-            if let Some((server, id, at)) = opened {
-                crate::badges::voice::opened(&s, server, user_id, &id, at).await;
-            }
-        }
+        "participant_joined" => joined(&s, &ch, user_id, &p.sid).await?,
         _ if left => {
             let in_memory = match s.voice.leave(channel_id, user_id, &p.sid) {
                 Left::Stale => return Ok(StatusCode::OK),
@@ -266,4 +227,117 @@ async fn webhook(
         crate::voice::moderation::reconcile_join(&s, server, channel_id, user_id, p).await;
     }
     Ok(StatusCode::OK)
+}
+
+/// An admitted `participant_joined` for `user`'s connection `sid` in the call of `ch`, as the
+/// webhook loaded it: into the voice state, a session row (server channels), the join published.
+async fn joined(s: &AppState, ch: &Channel, user_id: UserId, sid: &str) -> AppResult<()> {
+    let channel_id = ch.id;
+    if !s.voice.join(channel_id, user_id, sid) {
+        return Ok(());
+    }
+    // The channel may have been deleted since the webhook loaded it, its call ended from a
+    // snapshot of the voice state taken before this join (#109). In the voice state first, then
+    // checked (and the session opened) under the write lock: either the delete commits after this
+    // and its snapshot has them, or this sees the delete and undoes the join. Nothing is published.
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    if !crate::access::channel_is_live_in(&mut tx, channel_id).await? {
+        drop(tx);
+        tracing::info!(channel = %channel_id, user = %user_id, "join to a channel deleted meanwhile; undone");
+        crate::servers::channels::out_of_gone_call(s, channel_id, user_id, sid).await;
+        return Ok(());
+    }
+    // The session is recorded and the join published before any badge bookkeeping,
+    // which runs after and never fails the webhook.
+    let mut opened = None;
+    if let Some(server) = ch.server_id {
+        let (id, at) = (pulse_protocol::ids::next_ulid().to_string(), Utc::now());
+        sqlx::query(
+            "INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(user_id.to_string())
+        .bind(channel_id.to_string())
+        .bind(stamp(at))
+        .execute(&mut *tx)
+        .await?;
+        opened = Some((server, id, at));
+    }
+    tx.commit().await?;
+    // their join sound (#121), server voice channels only: a lookup that fails just leaves the normal cue
+    let join_sound = match ch.server_id {
+        Some(server) => crate::sounds::join_sound_for(s, server, channel_id, user_id)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = ?e, user = %user_id, "join sound not looked up");
+                None
+            }),
+        None => None,
+    };
+    s.hub
+        .publish(
+            &s.db,
+            Event::VoiceJoined {
+                channel_id,
+                user_id,
+                flags: s.voice.declared(user_id),
+                join_sound,
+            },
+        )
+        .await;
+    // a ghost here joining the call: that ghost goes (the client reconnects as them)
+    if ch.server_id.is_some() {
+        crate::streams::ghosts::joined_voice(s, channel_id, user_id).await;
+    }
+    // a DM or group: the call starts (or carries on), and this person's ring is answered
+    crate::calls::joined(s, ch, user_id).await;
+    if let Some((server, id, at)) = opened {
+        crate::badges::voice::opened(s, server, user_id, &id, at).await;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing;
+
+    /// A join webhook that loaded its channel just before a delete committed, and applies after
+    /// the delete took its snapshot of the call (#109): the snapshot missed them, so the join must
+    /// not put them in the voice state of a channel that's gone, nor open a session there.
+    #[tokio::test]
+    async fn a_join_applying_after_its_channels_delete_is_undone() {
+        let app = testing::spawn().await;
+        let (alex, token) = testing::register(&app, "alex").await;
+        let server = testing::create_server(&app, &token, "Main").await;
+        let chans: Vec<Channel> =
+            testing::get_json(&app, &token, &format!("/servers/{}/channels", server.id)).await;
+        let lounge = chans
+            .into_iter()
+            .find(|c| c.name.as_deref() == Some("Lounge"))
+            .unwrap();
+        let s = app.state();
+        // what the webhook loaded, before the delete
+        let ch = load_channel(&s.db, lounge.id).await.unwrap().unwrap();
+        let r = app
+            .http
+            .delete(app.url(&format!("/channels/{}", lounge.id)))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 204);
+
+        joined(&s, &ch, alex, "PA_a").await.unwrap();
+
+        assert!(!s.voice.members(lounge.id).contains(&alex));
+        let open: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM voice_sessions WHERE channel_id = ? AND left_at IS NULL",
+        )
+        .bind(lounge.id.to_string())
+        .fetch_one(&s.db)
+        .await
+        .unwrap();
+        assert_eq!(open, 0, "no session opened in the deleted channel");
+    }
 }

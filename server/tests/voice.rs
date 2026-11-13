@@ -222,3 +222,33 @@ async fn webhook_left_without_memory_closes_open_session() {
         .unwrap();
     assert_eq!(open, 0);
 }
+
+/// A join that applied after its channel's delete took its snapshot of the call (#109) leaves
+/// someone in the voice state of a channel that's gone. LiveKit drops them when the delete closes
+/// the room; that leave must take them out of the voice state too, although the channel is gone.
+#[tokio::test]
+async fn a_leave_from_a_deleted_channel_still_clears_its_voice_state() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    let r = app
+        .http
+        .delete(app.url(&format!("/channels/{}", l.id)))
+        .bearer_auth(&a)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    // the racing join, applied after the delete's snapshot
+    assert!(app.voice.join(l.id, a_id, "PA_a"));
+
+    let left =
+        json!({"event": "participant_left", "id": "EV_test", "room": {"name": l.id.to_string()},
+        "participant": {"identity": a_id.to_string(), "sid": "PA_a"}})
+        .to_string();
+    assert_eq!(
+        webhook(&app, &left, &signed(&app, &left)).await.status(),
+        200
+    );
+    assert!(!app.voice_members(l.id).contains(&a_id));
+}

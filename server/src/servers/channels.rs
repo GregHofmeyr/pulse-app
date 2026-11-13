@@ -197,23 +197,34 @@ pub async fn delete(
 
 /// Take everyone out of the call of voice channel `id`, which has just become impossible to find
 /// (deleted, or its server deleted, #184): out of voice state, their streams ended (badges told)
-/// and their viewing dropped, its ghost viewers gone, and LiveKit told to close the call in the
-/// background. A join webhook finds nothing to join now. Its events can't reach anyone (they'd be
+/// and their viewing dropped, its ghost viewers gone, and LiveKit told to close its voice and
+/// stream rooms in the background (everyone in them, whether this snapshot of the voice state had
+/// them or not: #109). A join webhook finds nothing to join now, and one that loaded the channel
+/// before the delete undoes itself (`voice::routes`). Its events can't reach anyone (they'd be
 /// scoped to a channel that can't be found): clients drop its voice presence and streams on
 /// `ChannelDeleted`.
 pub(crate) async fn end_gone_call(s: &AppState, id: ChannelId) {
     let people: Vec<UserId> = s.voice.members(id).into_iter().collect();
-    for u in &people {
-        s.voice.leave(id, *u, "");
-        let ended = s.streams.end(id, *u);
-        s.streams.remove_viewer_everywhere(id, *u);
-        if let Some(info) = ended {
-            crate::badges::streams::ended(s, &info).await;
-        }
+    for u in people {
+        out_of_gone_call(s, id, u, "").await;
     }
     crate::streams::ghosts::channel_gone(s, id).await;
     let s = s.clone();
-    tokio::spawn(async move { crate::voice::revoke::close_call(&s, id, &people).await });
+    tokio::spawn(async move { crate::voice::revoke::close_call(&s, id).await });
+}
+
+/// `user`'s connection `sid` (empty: any) leaves the call of gone channel `id`: out of voice
+/// state, their stream there ended (badges told) and their viewing dropped. Nothing is published
+/// (see [`end_gone_call`]). A stale `sid` (they're in on a newer connection) leaves them be.
+pub(crate) async fn out_of_gone_call(s: &AppState, id: ChannelId, user: UserId, sid: &str) {
+    if s.voice.leave(id, user, sid) == crate::voice::state::Left::Stale {
+        return;
+    }
+    let ended = s.streams.end(id, user);
+    s.streams.remove_viewer_everywhere(id, user);
+    if let Some(info) = ended {
+        crate::badges::streams::ended(s, &info).await;
+    }
 }
 
 /// How long a deleted channel waits in Recently deleted before the sweeper purges it.

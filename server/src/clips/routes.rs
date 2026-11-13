@@ -98,6 +98,7 @@ async fn create_ticket(
     let key = crate::media::new_key();
     // Count and insert under the write lock, so two tickets can't both take the last slot.
     let mut tx = begin_write(&s.db).await?;
+    crate::access::channel_live_in(&mut tx, channel).await?; // channel deleted since (#109)
     if started_this_hour(&mut tx, me).await? >= PER_HOUR {
         return Err(AppError::TooManyRequests(Some(format!(
             "That's {PER_HOUR} clips this hour. Try again later."
@@ -343,6 +344,7 @@ async fn confirm(
     // As in `send`: publishes (and the absolute unread counts) go out in commit order.
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
+    crate::access::channel_live_in(&mut tx, channel).await?; // channel deleted since (#109)
     if let Some(existing) = nonce::existing(&mut tx, me, channel, req.nonce.as_deref()).await? {
         tx.rollback().await?;
         return replay(&s, me, id, existing.to_string()).await;
@@ -497,8 +499,9 @@ async fn edit(
     {
         return Err(bad("That game isn't in this server."));
     }
-    // Guarded: a delete that commits between our read and this write wins.
+    // Guarded: a delete (of the clip, or its channel: #109) that commits between our read and this write wins.
     let mut tx = begin_write(&s.db).await?;
+    crate::access::channel_live_in(&mut tx, ch.id).await?;
     let changed = sqlx::query(
         "UPDATE messages SET content = ?, edited_at = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
     )

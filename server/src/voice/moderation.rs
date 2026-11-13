@@ -296,7 +296,7 @@ async fn set(
 }
 
 /// `POST /servers/{server}/voice/{user}/disconnect`: take them out of the call now (voice room
-/// and their stream connections), like the channel-deleted path. Nothing is stored; they may
+/// and their stream connections). Nothing is stored; they may
 /// rejoin. They are told who did it first, so the notice is there when their call drops.
 async fn disconnect(
     State(s): State<AppState>,
@@ -318,7 +318,7 @@ async fn disconnect(
             },
         )
         .await;
-    crate::voice::revoke::close_call(&s, channel, &[target]).await;
+    crate::voice::revoke::remove_from_call(&s, channel, &[target]).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
