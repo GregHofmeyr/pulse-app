@@ -2509,11 +2509,36 @@ pub struct SpeakerCount {
     pub count: u32,
 }
 
+/// `GET /servers/{id}/quotes/leaderboard?period=…&today=YYYY-MM-DD`: which quotes `top` and
+/// `most_quoted` count, by the day they were posted, in the caller's local time. A week starts on
+/// Monday.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum LeaderboardPeriod {
+    Week,
+    Month,
+    Year,
+    All,
+}
+
+/// A quote on the leaderboard and its score: how many people reacted to it (one each, however
+/// many emoji they used; replies don't count).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct RankedQuote {
+    pub message: Message,
+    pub score: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct Leaderboard {
     pub winners: Vec<LeaderboardWin>,
+    /// Without a `period`: this year's best and the all-time best. Empty with one.
     pub top_year: Vec<Message>,
     pub top_all_time: Vec<Message>,
+    /// With a `period`: that period's best, with scores. Empty without one, and from older servers.
+    #[serde(default)]
+    pub top: Vec<RankedQuote>,
+    /// Quotes per person (a quote counts once for each person in it), over the `period` if given.
     pub most_quoted: Vec<SpeakerCount>,
     pub most_awarded: Vec<SpeakerCount>,
 }

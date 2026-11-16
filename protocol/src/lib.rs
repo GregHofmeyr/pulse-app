@@ -127,6 +127,8 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::QuoteSpeaker::export_all(&cfg)?;
     rest::SpeakerCount::export_all(&cfg)?;
     rest::Leaderboard::export_all(&cfg)?;
+    rest::LeaderboardPeriod::export_all(&cfg)?;
+    rest::RankedQuote::export_all(&cfg)?;
     rest::LeaderboardWin::export_all(&cfg)?;
     rest::Clip::export_all(&cfg)?;
     rest::Game::export_all(&cfg)?;

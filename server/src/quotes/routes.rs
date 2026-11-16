@@ -5,8 +5,8 @@ use futures::TryStreamExt;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
-    ChannelKind, EditQuoteRequest, Leaderboard, LeaderboardWin, Message, PostQuoteRequest,
-    QuoteSpeaker, SpeakerCount,
+    ChannelKind, EditQuoteRequest, Leaderboard, LeaderboardPeriod, LeaderboardWin, Message,
+    PostQuoteRequest, QuoteSpeaker, RankedQuote, SpeakerCount,
 };
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
@@ -327,6 +327,27 @@ const SEARCH_MAX: u32 = 20;
 #[derive(serde::Deserialize)]
 struct BoardQuery {
     year: Option<i32>,
+    /// The window for `top` and `most_quoted`. Without one, the older shape: `top_year` and
+    /// `top_all_time`, and `most_quoted` over all time.
+    period: Option<LeaderboardPeriod>,
+    /// The caller's local `YYYY-MM-DD`, which the period counts back from (as a posted quote's
+    /// `today`: within a day of UTC's, else UTC's).
+    today: Option<String>,
+}
+
+/// The first day of `period` around `day`, as `quotes.posted_on` stores days; `None` for all time.
+/// A week starts on Monday.
+fn period_start(period: LeaderboardPeriod, day: chrono::NaiveDate) -> Option<String> {
+    use chrono::Datelike;
+    let start = match period {
+        LeaderboardPeriod::Week => {
+            day - chrono::Duration::days(i64::from(day.weekday().num_days_from_monday()))
+        }
+        LeaderboardPeriod::Month => day.with_day(1)?,
+        LeaderboardPeriod::Year => chrono::NaiveDate::from_ymd_opt(day.year(), 1, 1)?,
+        LeaderboardPeriod::All => return None,
+    };
+    Some(start.to_string())
 }
 
 /// `me` must be a member of `server` (404 for no such server, 403 for not a member).
@@ -334,32 +355,38 @@ async fn members_only(s: &AppState, server: ServerId, me: UserId) -> AppResult<(
     crate::servers::routes::require_member(&s.db, server, me).await
 }
 
-/// The best live quotes of `server` (optionally of one year): see [`super::ranked`].
+/// The best live quotes of `server` (of one year, or posted since a day, or all): see
+/// [`super::ranked`]. Returns (message id, score).
 async fn top_quotes(
     db: &SqlitePool,
     server: ServerId,
     year: Option<i32>,
-) -> AppResult<Vec<String>> {
-    Ok(super::ranked(db, server, year, false, Some(BOARD_LEN))
-        .await?
-        .into_iter()
-        .map(|(id, _)| id)
-        .collect())
+    since: Option<&str>,
+) -> AppResult<Vec<(String, i64)>> {
+    super::ranked(db, server, year, since, false, Some(BOARD_LEN)).await
 }
 
-/// Quotes per person over the live quotes of `server`, most first. A quote counts once for each
-/// person in it, however many of its lines they say and whether a line names them as a member or by name (see [`super::awards::Names::person`]).
-async fn most_quoted(db: &SqlitePool, server: ServerId) -> AppResult<Vec<SpeakerCount>> {
+/// Quotes per person over the live quotes of `server` posted since `since` (all, for `None`),
+/// most first. A quote counts once for each person in it, however many of its lines they say and
+/// whether a line names them as a member or by name (see [`super::awards::Names::person`]).
+async fn most_quoted(
+    db: &SqlitePool,
+    server: ServerId,
+    since: Option<&str>,
+) -> AppResult<Vec<SpeakerCount>> {
     type LineRow = (Option<String>, Option<String>, Option<String>, String);
     let rows: Vec<LineRow> = sqlx::query_as(
         "SELECT l.speaker_id, l.speaker_name, l.speaker_key, l.message_id
          FROM quote_lines l
+         JOIN quotes q ON q.message_id = l.message_id
          JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
          JOIN channels c ON c.id = msg.channel_id AND c.deleted_at IS NULL
-         WHERE c.server_id = ?
+         WHERE c.server_id = ? AND (? IS NULL OR q.posted_on >= ?)
          ORDER BY msg.id, l.position",
     )
     .bind(server.to_string())
+    .bind(since)
+    .bind(since)
     .fetch_all(db)
     .await?;
     let mut seen = HashSet::new();
@@ -393,8 +420,24 @@ async fn leaderboard(
     if !YEARS.contains(&year) {
         return Err(AppError::BadRequest("that isn't a year we can show".into()));
     }
-    let top_year = top_quotes(&s.db, server, Some(year)).await?;
-    let top_all_time = top_quotes(&s.db, server, None).await?;
+    let since = q
+        .period
+        .and_then(|p| period_start(p, posted_on(q.today.as_deref())));
+    // With a period, one ranked list for it; without, the older pair.
+    let (top, top_year, top_all_time) = match q.period {
+        Some(_) => (
+            top_quotes(&s.db, server, None, since.as_deref()).await?,
+            vec![],
+            vec![],
+        ),
+        None => (
+            vec![],
+            top_quotes(&s.db, server, Some(year), None).await?,
+            top_quotes(&s.db, server, None, None).await?,
+        ),
+    };
+    let ids = |v: &[(String, i64)]| v.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>();
+    let (top_year, top_all_time) = (ids(&top_year), ids(&top_all_time));
 
     // Winners: newest year first, a tie's co-winners newest quote first. Deleted quotes stay (the
     // win is history); a quote in a deleted channel is hidden like the rest of that channel, until
@@ -453,6 +496,7 @@ async fn leaderboard(
     let mut wanted: Vec<&String> = top_year
         .iter()
         .chain(&top_all_time)
+        .chain(top.iter().map(|t| &t.0))
         .chain(wins.iter().map(|w| &w.1))
         .collect();
     wanted.sort();
@@ -499,7 +543,16 @@ async fn leaderboard(
         winners,
         top_year: pick(&top_year),
         top_all_time: pick(&top_all_time),
-        most_quoted: most_quoted(&s.db, server).await?,
+        top: top
+            .iter()
+            .filter_map(|(id, score)| {
+                Some(RankedQuote {
+                    message: messages.get(id)?.clone(),
+                    score: *score as u32,
+                })
+            })
+            .collect(),
+        most_quoted: most_quoted(&s.db, server, since.as_deref()).await?,
         most_awarded,
     }))
 }
@@ -586,4 +639,31 @@ async fn search(
     qb.push(") ORDER BY id DESC");
     let rows: Vec<Row> = qb.build_query_as().fetch_all(&s.db).await?;
     Ok(Json(fill(&s.db, Some(me), rows).await?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(s: &str) -> chrono::NaiveDate {
+        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn periods_start_on_monday_the_first_and_new_year() {
+        use LeaderboardPeriod::*;
+        let start = |p, day| period_start(p, d(day));
+        // Wednesday 18 November 2026.
+        assert_eq!(start(Week, "2026-11-18").as_deref(), Some("2026-11-16"));
+        assert_eq!(start(Month, "2026-11-18").as_deref(), Some("2026-11-01"));
+        assert_eq!(start(Year, "2026-11-18").as_deref(), Some("2026-01-01"));
+        assert_eq!(start(All, "2026-11-18"), None);
+        // A Monday is its own week's start; a Sunday belongs to the week before it.
+        assert_eq!(start(Week, "2026-11-16").as_deref(), Some("2026-11-16"));
+        assert_eq!(start(Week, "2026-11-15").as_deref(), Some("2026-11-09"));
+        // A week can start in last month, or last year.
+        assert_eq!(start(Week, "2026-12-02").as_deref(), Some("2026-11-30"));
+        assert_eq!(start(Week, "2027-01-01").as_deref(), Some("2026-12-28"));
+        assert_eq!(start(Month, "2027-01-01").as_deref(), Some("2027-01-01"));
+    }
 }

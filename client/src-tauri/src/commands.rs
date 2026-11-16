@@ -10,10 +10,10 @@ use pulse_protocol::ids::{
 use pulse_protocol::rest::{
     BadgeCatalogue, Category, Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji,
     DeletedChannel, DeletedServer, EditClipRequest, EditQuoteRequest, Game, Gif, InboxPage,
-    Leaderboard, LinkSpeakerRequest, MediaInfo, Member, Message, MuteTarget, NameArchivePage,
-    NotifyLevel, Pin, PinDuration, PinnedMessage, PostQuoteRequest, Profile, QotyEvent,
-    RecoveryCodesResponse, SaveLayoutRequest, SearchRequest, SearchResults, Server, ServerLayout,
-    SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare, StartQotyRequest,
+    Leaderboard, LeaderboardPeriod, LinkSpeakerRequest, MediaInfo, Member, Message, MuteTarget,
+    NameArchivePage, NotifyLevel, Pin, PinDuration, PinnedMessage, PostQuoteRequest, Profile,
+    QotyEvent, RecoveryCodesResponse, SaveLayoutRequest, SearchRequest, SearchResults, Server,
+    ServerLayout, SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare, StartQotyRequest,
     TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
     WatchParty, WatchPartyAction,
 };
@@ -3468,10 +3468,15 @@ pub async fn leaderboard(
     app: AppHandle,
     core: State<'_, Core>,
     server_id: ServerId,
-    year: Option<i32>,
+    period: Option<LeaderboardPeriod>,
+    today: Option<String>,
 ) -> Result<Leaderboard, ApiError> {
     let (api, token) = core.current()?;
-    core.check(&app, api.leaderboard(&token, server_id, year).await)
+    core.check(
+        &app,
+        api.leaderboard(&token, server_id, period, today.as_deref())
+            .await,
+    )
 }
 
 #[tauri::command]
