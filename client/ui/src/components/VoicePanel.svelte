@@ -32,6 +32,8 @@
   import StageSpotify from './StageSpotify.svelte'
   import { stageShareIn } from '../lib/state'
   import { modeFor, setMode } from '../lib/stageShareView.svelte'
+  import WatchPartyPanel from './WatchPartyPanel.svelte'
+  import { partyIn, watchPrefs } from '../lib/watchParty.svelte'
 
   let { channelId, serverId, onMessage, onVoiceSettings }: {
     channelId: string
@@ -205,6 +207,8 @@
     if (share && shareHidden) setMode(share.id, 'strip')
     else shareBoxOpen = !shareBoxOpen
   }
+  // A YouTube watch party here (#384): shown unless you've turned watch parties off on this device.
+  const party = $derived(watchPrefs.on ? partyIn(channelId) : null)
   const canGoLive = $derived(inCall && !stream.live)
   const windows = isWindows()
 </script>
@@ -243,6 +247,7 @@
   {:else}
     <!-- a stream in full view keeps the room: the share stays hidden for you until you leave it, then comes back as it was -->
     {#if share}<StageSpotify {share} {serverId} {inCall} place="top" />{/if}
+    {#if party}<WatchPartyPanel {party} {serverId} {inCall} />{/if}
     <div class="stage-area">
     <div class="grid-wrap" bind:this={stageEl}>
       {#if nobodyStreaming(tiles, showEveryone)}

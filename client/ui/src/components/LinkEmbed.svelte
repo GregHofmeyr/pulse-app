@@ -12,6 +12,8 @@
   import type { LinkEmbed } from '../lib/protocol/LinkEmbed'
   import { app } from '../lib/store.svelte'
   import { voice } from '../lib/voice.svelte'
+  import { mayControl, watching, youtubeIdOf } from '../lib/watchParty'
+  import { partyIn, startWatchParty, watchPartyAction, watchPrefs } from '../lib/watchParty.svelte'
 
   let { embed, messageId, channelId = null, mine, onError = () => {} }: {
     embed: LinkEmbed
@@ -57,6 +59,34 @@
       onError(errorText(e))
     } finally {
       sharing = false
+    }
+  }
+
+  // Watch party (#384): a YouTube card, while you're in a server voice channel's call, starts one there (or, with one
+  // on, plays in it or joins its queue).
+  const ytId = $derived(youtubeIdOf(embed))
+  const callCh = $derived(voice.connection === 'connected' && voice.channelId ? app.state.channels[voice.channelId] : null)
+  const canWatch = $derived(!!ytId && watchPrefs.on && callCh?.kind === 'voice' && !!callCh.server_id)
+  const party = $derived(canWatch ? partyIn(callCh!.id) : null)
+  const meId = $derived(app.state.me?.id ?? null)
+  const partyPlaying = $derived(!!party && party.video_id === ytId)
+  const partyControl = $derived(!!party && mayControl(party, meId))
+  const partyQueue = $derived(!!party && !partyPlaying && (partyControl || watching(party, meId)))
+  let starting = $state(false)
+  async function watchTogether(how: 'start' | 'queue') {
+    if (!callCh || !ytId || starting) return
+    starting = true
+    try {
+      if (how === 'queue') await watchPartyAction(callCh.id, { action: 'enqueue', video_id: ytId, title: embed.title ?? null })
+      else {
+        await startWatchParty(callCh.id, ytId, embed.title ?? null)
+        // the party's player takes over from the card's
+        stop(key)
+      }
+    } catch (e) {
+      onError(errorText(e))
+    } finally {
+      starting = false
     }
   }
 
@@ -174,6 +204,19 @@
       <span class="label">{label}{#if embed.author}<span class="by"> · {embed.author}</span>{/if}</span>
       <a class="title" href={embed.url} target="_blank" rel="noopener noreferrer">{embed.title ?? embed.url}</a>
       {#if embed.description}<p class="desc">{embed.description}</p>{/if}
+      {#if canWatch}
+        <div class="actions">
+          {#if partyPlaying}
+            <span class="btn btn-quiet on-stage" aria-disabled="true">In the watch party</span>
+          {:else if !party || partyControl}
+            <button class="btn btn-primary watch-start" disabled={starting} data-tip={party ? 'Play it in the watch party now' : `Watch it together with everyone in ${callCh?.name ?? 'the call'}`}
+              onclick={() => void watchTogether('start')}><Icon name="film" size={14} />{party ? 'Play in watch party' : 'Start watch party'}</button>
+          {/if}
+          {#if partyQueue}
+            <button class="btn btn-quiet watch-queue" disabled={starting} onclick={() => void watchTogether('queue')}>Add to queue</button>
+          {/if}
+        </div>
+      {/if}
     </div>
     {#if active}
       <div class="player-actions">

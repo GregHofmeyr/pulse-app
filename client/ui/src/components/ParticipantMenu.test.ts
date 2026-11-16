@@ -636,3 +636,47 @@ describe('join sound mute', () => {
     expect(item()).toBeNull()
   })
 })
+
+describe('watch party in the call (#384)', () => {
+  const party = (host_id: string) => ({
+    channel_id: 'V1', host_id, video_id: 'dQw4w9WgXcQ', title: 'A video', position_ms: 0, playing: false, set_at_ms: 0,
+    everyone_controls: false, viewers: [host_id], queue: [],
+  })
+
+  it('the host hands it to someone from their right-click menu', async () => {
+    app.state = { ...app.state, watchParties: { V1: party('U1') } }
+    mountPanel()
+    // the panel is above the tiles
+    expect(document.body.textContent).toContain('you’re hosting')
+    rightClick(q('[data-user="U2"]')!)
+    const item = items().find((i) => i.dataset.item === 'watch-host')!
+    expect(item.textContent).toBe('Make watch party host')
+    item.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('watch_party_action', { channelId: 'V1', action: { action: 'hand_off', user_id: 'U2' } })
+  })
+
+  it('not on yourself, not for someone else’s party', () => {
+    app.state = { ...app.state, watchParties: { V1: party('U1') } }
+    mountPanel()
+    rightClick(q('[data-user="U1"]')!)
+    expect(items().some((i) => i.dataset.item === 'watch-host')).toBe(false)
+    key(menu()!, 'Escape')
+    app.state = { ...app.state, watchParties: { V1: party('U2') } }
+    flushSync()
+    rightClick(q('[data-user="U2"]')!)
+    expect(items().some((i) => i.dataset.item === 'watch-host')).toBe(false)
+  })
+
+  it('the channel list says one is on', () => {
+    app.state = { ...app.state, watchParties: { V1: party('U2') } }
+    cmp = mount(ChannelList, {
+      target: document.body,
+      props: { serverId: 'S1', activeChannelId: null, voiceChannelId: 'V1', speaking: new Set<string>(), onSelect: () => {}, onJoinVoice: () => {}, onMessage, onVoiceSettings },
+    })
+    flushSync()
+    const tag = q('[data-channel="V1"] .watching')!
+    expect(tag.textContent).toBe('📺 watching')
+    expect(tag.dataset.tip).toBe('Watch party: A video')
+  })
+})
