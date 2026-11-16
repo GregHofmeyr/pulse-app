@@ -130,6 +130,7 @@ async fn create(
         achievement: None,
         plan: None,
         plan_reminder: None,
+        f1: None,
     };
     let stored = Stored {
         message_id: msg.id,

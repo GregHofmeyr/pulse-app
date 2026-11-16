@@ -4,6 +4,7 @@ import type { Attachment } from "./Attachment";
 import type { CallLine } from "./CallLine";
 import type { ChannelId } from "./ChannelId";
 import type { Clip } from "./Clip";
+import type { F1Card } from "./F1Card";
 import type { Gif } from "./Gif";
 import type { LinkEmbed } from "./LinkEmbed";
 import type { MessageId } from "./MessageId";
@@ -110,4 +111,9 @@ plan?: Plan,
 /**
  * Set on a plan's reminder line (#387), the system line that pings its Going and Maybe people an hour before.
  */
-plan_reminder?: PlanReminder, };
+plan_reminder?: PlanReminder, 
+/**
+ * Set on an F1 card (#386), a system line in a server's F1 channel. A weekend card carries everyone's podium
+ * predictions.
+ */
+f1?: F1Card, };

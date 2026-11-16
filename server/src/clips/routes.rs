@@ -341,6 +341,7 @@ async fn confirm(
         achievement: None,
         plan: None,
         plan_reminder: None,
+        f1: None,
         embeds: vec![],
         call: None,
         wheel: None,

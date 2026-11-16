@@ -58,12 +58,14 @@ pub struct Config {
     pub steam: SteamConfig,
     /// Plan something's forecast (#387): where Open-Meteo is.
     pub plans: PlansConfig,
+    /// F1 race weekends (#386): where Jolpica-F1 is.
+    pub f1: F1Config,
 }
 
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
     limits, stream_media_timeout, media_dir, media_min_free_bytes, updates_dir, totp_key, clips, embeds,
-    launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock, steam, plans ;
+    launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock, steam, plans, f1 ;
     livekit_secret
 });
 
@@ -82,6 +84,28 @@ impl Default for PlansConfig {
         Self {
             geocode_base: "https://geocoding-api.open-meteo.com".into(),
             forecast_base: "https://api.open-meteo.com".into(),
+        }
+    }
+}
+
+/// F1 race weekends (#386): Jolpica-F1 (the Ergast successor; free, no key). Only the server calls it, spaced out and
+/// within an hourly budget well under its limits (4 a second, 500 an hour), and it caches every answer.
+#[derive(Clone, Debug)]
+pub struct F1Config {
+    /// `https://api.jolpi.ca/ergast/f1`; tests point it at a fake.
+    pub api_base: String,
+    /// The least time between two calls.
+    pub min_gap: std::time::Duration,
+    /// The most calls in any hour (the rest wait for the next tick, answered from the cache meanwhile).
+    pub hourly_budget: usize,
+}
+
+impl Default for F1Config {
+    fn default() -> Self {
+        Self {
+            api_base: "https://api.jolpi.ca/ergast/f1".into(),
+            min_gap: std::time::Duration::from_secs(1),
+            hourly_budget: 120,
         }
     }
 }
@@ -217,6 +241,7 @@ impl Config {
             quote_clock: None,
             steam: steam(|k| std::env::var(k).ok()),
             plans: PlansConfig::default(),
+            f1: F1Config::default(),
         })
     }
 }
@@ -541,6 +566,7 @@ mod tests {
                 ..SteamConfig::default()
             },
             plans: PlansConfig::default(),
+            f1: F1Config::default(),
         };
         let d = format!("{cfg:?}");
         assert!(!d.contains("SECRET"), "{d}");

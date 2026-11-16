@@ -48,6 +48,8 @@ pub mod stat {
     pub const STEAM_COMPLETION_PCT: &str = "steam_completion_pct";
     /// The most time in Steam games over any two weeks read (#383), in seconds (Steam's `playtime_2weeks`, summed).
     pub const STEAM_FORTNIGHT_SECS: &str = "steam_fortnight_secs";
+    /// The most podium prediction points in one F1 season in any one server (#386).
+    pub const F1_SEASON_POINTS: &str = "f1_season_points";
 
     /// Every fixed key (the prefixed ones excluded).
     pub const ALL: &[&str] = &[
@@ -79,6 +81,7 @@ pub mod stat {
         STEAM_PERFECT_GAMES,
         STEAM_FORTNIGHT_SECS,
         STEAM_COMPLETION_PCT,
+        F1_SEASON_POINTS,
     ];
 }
 
@@ -629,6 +632,21 @@ pub static CATALOGUE: &[Def] = &[
             (200 * HOUR, Legendary),
         ],
     )),
+    // F1 race weekends (#386): 9 a race at most, about 24 races a season
+    counter(
+        "podium_prophet",
+        "Podium Prophet",
+        "Podium prediction points in one F1 season.",
+        "🔮",
+        stat::F1_SEASON_POINTS,
+        &[
+            (10, Uncommon),
+            (25, Rare),
+            (50, Epic),
+            (100, Legendary),
+            (150, Mythical),
+        ],
+    ),
     hidden(counter(
         "logo_egg",
         "Egg Hunter",
@@ -865,6 +883,26 @@ mod tests {
         );
         // a rate that drops never takes a tier away: what's held stands (and the engine only ever raises it)
         assert_eq!(tier(60, 3), 3);
+    }
+
+    #[test]
+    fn podium_prophet_tiers_count_a_season_s_prediction_points() {
+        use Rarity::*;
+        let def = find("podium_prophet").unwrap();
+        assert_eq!(def.unit, Unit::Count);
+        assert_eq!(thresholds(def), [10, 25, 50, 100, 150]);
+        assert_eq!(rarities(def), [Uncommon, Rare, Epic, Legendary, Mythical]);
+        let held = HashMap::new();
+        let tier = |n: i64| {
+            evaluate(&stats(&[(stat::F1_SEASON_POINTS, n)]), &held)
+                .get("podium_prophet")
+                .copied()
+                .unwrap_or(0)
+        };
+        assert_eq!(
+            [tier(0), tier(9), tier(10), tier(49), tier(150)],
+            [0, 0, 1, 2, 5]
+        );
     }
 
     #[test]

@@ -769,6 +769,11 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub plan_reminder: Option<Box<PlanReminder>>,
+    /// Set on an F1 card (#386), a system line in a server's F1 channel. A weekend card carries everyone's podium
+    /// predictions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub f1: Option<Box<F1Card>>,
 }
 
 /// How long a pin lasts (#178).
@@ -3098,4 +3103,214 @@ pub struct AchievementEntry {
     pub icon: Option<EmbedThumb>,
     /// The share of all players who have it, 0 to 100.
     pub global_percent: Option<f32>,
+}
+
+/// F1 race weekends (#386): the numbers both sides use.
+pub mod f1_limits {
+    /// Picks in a podium prediction: P1, P2, P3.
+    pub const PODIUM: usize = 3;
+    /// How long before lights out the "lights out in 1 hour" line goes, in minutes.
+    pub const LIGHTS_OUT_MINUTES: i64 = 60;
+    /// Points for a pick in its exact place.
+    pub const EXACT_POINTS: u32 = 3;
+    /// Points for a pick on the podium, in another place.
+    pub const PODIUM_POINTS: u32 = 1;
+    /// Rows on a results card (the top 10) and in its standings snapshot.
+    pub const RESULT_ROWS: usize = 10;
+}
+
+/// One session of a race weekend (#386).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum F1SessionKind {
+    Practice1,
+    Practice2,
+    Practice3,
+    SprintQualifying,
+    Sprint,
+    Qualifying,
+    Race,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct F1Session {
+    pub kind: F1SessionKind,
+    /// UTC, RFC 3339; clients show it in the viewer's own time.
+    pub starts_at: String,
+}
+
+/// A race weekend from the season's calendar (Jolpica-F1, through the server).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct F1Weekend {
+    pub season: u16,
+    pub round: u16,
+    pub race_name: String,
+    pub circuit: String,
+    /// The town ("Las Vegas").
+    pub locality: String,
+    /// As Jolpica names it ("USA", "UK", "Australia"); clients pick the flag.
+    pub country: String,
+    /// Every session with a time, in order; the race is last.
+    pub sessions: Vec<F1Session>,
+    /// Lights out (UTC, RFC 3339). Podium predictions close then.
+    pub race_at: String,
+}
+
+/// A driver as a card shows them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct F1Driver {
+    /// Jolpica's `driverId` ("max_verstappen"): what a prediction names.
+    pub id: String,
+    /// The three letters ("VER").
+    #[serde(default)]
+    pub code: Option<String>,
+    /// "Given Family".
+    pub name: String,
+    #[serde(default)]
+    pub team: Option<String>,
+}
+
+/// Someone's podium prediction on a weekend card.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct F1Prediction {
+    pub user_id: UserId,
+    /// Driver ids for P1, P2, P3.
+    pub picks: Vec<String>,
+    /// Once the race is scored: 3 a pick in its exact place, 1 a pick on the podium elsewhere.
+    #[serde(default)]
+    pub points: Option<u32>,
+}
+
+/// The "race weekend" card, posted in the server's F1 channel as the weekend starts. Everyone sees the same card
+/// (predictions are open), so `F1PredictionsChanged` carries the predictions whole.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct F1WeekendCard {
+    pub weekend: F1Weekend,
+    /// Who can be picked: the last race's field (or the season's entry list before the first race).
+    pub drivers: Vec<F1Driver>,
+    /// In the order they were made; filled when read (never stored on the line).
+    #[serde(default)]
+    pub predictions: Vec<F1Prediction>,
+}
+
+/// The "lights out in 1 hour" line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct F1LightsOut {
+    pub season: u16,
+    pub round: u16,
+    pub race_name: String,
+    pub race_at: String,
+    /// The weekend card in the same channel, to jump to (none when it was never posted).
+    #[serde(default)]
+    pub weekend_message_id: Option<MessageId>,
+}
+
+/// One finisher on a results card.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct F1ResultRow {
+    pub position: u16,
+    pub driver: F1Driver,
+    /// The race time for the winner, the gap for the rest ("+5.2s"), or the status ("+1 Lap", "Retired").
+    pub time: String,
+    pub points: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct F1FastestLap {
+    pub driver: F1Driver,
+    #[serde(default)]
+    pub lap: Option<u16>,
+    /// "1:12.983".
+    pub time: String,
+}
+
+/// One row of the drivers' championship.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct F1StandingRow {
+    pub position: u16,
+    pub driver: F1Driver,
+    pub points: f32,
+    pub wins: u16,
+}
+
+/// The podium and results card, posted once the race's results are in.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct F1ResultsCard {
+    pub season: u16,
+    pub round: u16,
+    pub race_name: String,
+    pub country: String,
+    /// The top 10, in order.
+    pub results: Vec<F1ResultRow>,
+    #[serde(default)]
+    pub fastest_lap: Option<F1FastestLap>,
+    /// The drivers' championship after this round, top 10 (empty when it wasn't out in time).
+    #[serde(default)]
+    pub standings: Vec<F1StandingRow>,
+}
+
+/// One person's score for a race.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct F1Score {
+    pub user_id: UserId,
+    pub picks: Vec<String>,
+    pub points: u32,
+}
+
+/// One person's season total of prediction points in this server.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct F1SeasonRow {
+    pub user_id: UserId,
+    pub points: u32,
+    /// Races they predicted and were scored on.
+    pub races: u32,
+}
+
+/// The predictions' scores for a race, posted after its results card.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct F1ScoresCard {
+    pub season: u16,
+    pub round: u16,
+    pub race_name: String,
+    /// The real podium, P1 to P3.
+    pub podium: Vec<F1Driver>,
+    /// Highest first.
+    pub scores: Vec<F1Score>,
+    /// The season so far in this server, highest first.
+    pub season_table: Vec<F1SeasonRow>,
+    #[serde(default)]
+    pub weekend_message_id: Option<MessageId>,
+}
+
+/// An F1 card (#386): a system line in the server's F1 channel.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum F1Card {
+    Weekend(F1WeekendCard),
+    LightsOut(F1LightsOut),
+    Results(F1ResultsCard),
+    Scores(F1ScoresCard),
+}
+
+/// `GET /servers/{id}/f1`: the server's F1 channel (`None` = no F1 cards), the next race weekend for the countdown
+/// banner (`None` between seasons, or when Jolpica can't be reached and nothing is cached), and the season's
+/// prediction table.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct F1Status {
+    pub channel_id: Option<ChannelId>,
+    pub next: Option<F1Weekend>,
+    pub season_table: Vec<F1SeasonRow>,
+}
+
+/// `PUT /servers/{id}/f1-channel` (the server's owner only): a text channel of that server, or `None`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SetF1ChannelRequest {
+    pub channel_id: Option<ChannelId>,
+}
+
+/// `PUT /messages/{id}/f1/prediction`: your P1, P2, P3 (three different drivers from the card), replacing any before;
+/// `None` takes it back. Closed at lights out.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct F1PredictionRequest {
+    pub picks: Option<Vec<String>>,
 }

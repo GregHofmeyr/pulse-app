@@ -101,6 +101,7 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         achievement: None,
         plan: None,
         plan_reminder: None,
+        f1: None,
     }
 }
 

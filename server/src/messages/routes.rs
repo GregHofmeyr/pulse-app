@@ -136,6 +136,11 @@ fn from_row(r: Row) -> AppResult<Message> {
             Some(p) if system && deleted_at.is_none() => crate::plans::reminder(p).map(Box::new),
             _ => None,
         },
+        // a weekend card's predictions are set by `f1::attach`
+        f1: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => crate::f1::card(p).map(Box::new),
+            _ => None,
+        },
     })
 }
 
@@ -169,6 +174,7 @@ pub(crate) async fn load(
     crate::pins::attach(db, &mut one).await?;
     crate::polls::attach(db, me, &mut one).await?;
     crate::plans::attach(db, &mut one).await?;
+    crate::f1::attach(db, &mut one).await?;
     crate::attachments::attach(db, &mut one).await?;
     let [m] = one;
     Ok(Some(m))
@@ -241,6 +247,7 @@ pub(crate) async fn fill(
     crate::pins::attach(db, &mut page).await?;
     crate::polls::attach(db, me, &mut page).await?;
     crate::plans::attach(db, &mut page).await?;
+    crate::f1::attach(db, &mut page).await?;
     crate::attachments::attach(db, &mut page).await?;
     Ok(page)
 }
@@ -553,6 +560,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         achievement: None,
         plan: None,
         plan_reminder: None,
+        f1: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -997,6 +1005,7 @@ mod tests {
             achievement: None,
             plan: None,
             plan_reminder: None,
+            f1: None,
         }
     }
 
