@@ -13,9 +13,9 @@
   import VoterStack from './VoterStack.svelte'
   import { modal } from '../lib/actions'
   import { mediaUrl, reactionKey, type Std } from '../lib/emoji'
-  import { isMenuKey, menuPoint } from '../lib/participantMenu'
+  import { isMenuKey, menuPoint, personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
   import { messagePerson } from '../lib/messagePerson'
-  import MemberMenu from './MemberMenu.svelte'
+  import PersonMenu from './PersonMenu.svelte'
   import { hasNewReplies, nameKey, quoteText, speakerOf } from '../lib/quotes'
   import { blockedReason, pickAdds, react } from '../lib/reactions'
   import { app, clock } from '../lib/store.svelte'
@@ -88,7 +88,7 @@
   }
   function lineKey(e: KeyboardEvent, line: QuoteLine) {
     if (e.target !== e.currentTarget) return
-    if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+    if (isMenuKey(e)) {
       e.preventDefault()
       openMenu(line, e, e.currentTarget as HTMLElement)
     }
@@ -151,14 +151,9 @@
 
   // --- a person's menu (#135): right-click (or ContextMenu / Shift+F10 on) the poster's name or avatar, or a member
   // speaker's name (which then isn't the line's menu) ---
-  let personMenu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
+  let personMenu = $state<PersonMenuAt | null>(null)
   function openPersonMenu(userId: string | null, e: MouseEvent | KeyboardEvent, zone: HTMLElement) {
-    if (!userId) return
-    if (e instanceof KeyboardEvent && !isMenuKey(e)) return
-    e.preventDefault()
-    e.stopPropagation()
-    const opener = zone.querySelector<HTMLElement>('button') ?? zone
-    personMenu = { userId, ...menuPoint(e, opener), opener }
+    personMenu = personMenuAt(e, userId, sid, zone) ?? personMenu
   }
 
   // --- the full-size image ---
@@ -257,9 +252,7 @@
         onClose={() => (menu = null)} />
     {/key}
   {/if}
-  {#if personMenu}
-    {#key personMenu}<MemberMenu serverId={sid} userId={personMenu.userId} x={personMenu.x} y={personMenu.y} opener={personMenu.opener} onMessage={messagePerson} onClose={() => (personMenu = null)} />{/key}
-  {/if}
+  <PersonMenu menu={personMenu} onMessage={messagePerson} onClose={() => (personMenu = null)} />
   {#if open}
     {@const shown = open}
     <!-- svelte-ignore a11y_click_events_have_key_events -->

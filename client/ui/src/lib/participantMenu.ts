@@ -79,3 +79,32 @@ export function rowMenuAt(e: MouseEvent | KeyboardEvent, row: HTMLElement): { x:
   const opener = (e instanceof KeyboardEvent && focused) || row.querySelector<HTMLElement>('.name') || row
   return { ...menuPoint(e, opener), opener }
 }
+
+/** A person's menu, where it opens (#135, #349): whose, in which server (null: none, as a DM's or group's), where, and
+ *  what gets focus back. */
+export type PersonMenuAt = { userId: string; serverId: string | null; x: number; y: number; opener: HTMLElement }
+
+/** What a person menu opened on `zone` (a name, an avatar, a row) hands focus back to: the zone if it's a button, else
+ *  the first button in it, else the zone. */
+export function menuOpener(zone: HTMLElement): HTMLElement {
+  return zone.matches('button, [role=button]') ? zone : (zone.querySelector<HTMLElement>('button') ?? zone)
+}
+
+/** Every person menu's opener (#349): a right-click, or ContextMenu / Shift+F10, on `zone` opens `userId`'s menu;
+ *  anything else (another key, or no one to show: a system line) opens nothing and is left alone. An event that opens
+ *  it is claimed (no system menu, and no surrounding menu, such as a message's or a quote line's, opens too). `row`:
+ *  `zone` is a person row, placed as `rowMenuAt` does. */
+export function personMenuAt(
+  e: MouseEvent | KeyboardEvent,
+  userId: string | null | undefined,
+  serverId: string | null,
+  zone: HTMLElement,
+  { row = false }: { row?: boolean } = {},
+): PersonMenuAt | null {
+  if (!userId || (e instanceof KeyboardEvent && !isMenuKey(e))) return null
+  e.preventDefault()
+  e.stopPropagation()
+  if (row) return { userId, serverId, ...rowMenuAt(e, zone) }
+  const opener = menuOpener(zone)
+  return { userId, serverId, ...menuPoint(e, opener), opener }
+}

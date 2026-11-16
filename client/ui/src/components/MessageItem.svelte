@@ -38,14 +38,14 @@
   import { callLineText } from '../lib/calls'
   import { appearance } from '../lib/appearance.svelte'
   import { openCard } from '../lib/profileCard.svelte'
-  import MemberMenu from './MemberMenu.svelte'
+  import PersonMenu from './PersonMenu.svelte'
   import MessageMenu from './MessageMenu.svelte'
   import { quoteRequest, quotesChannelsFor } from '../lib/quoteFromMessage'
   import { livePin, pinFor, pinTip, pinnedNoun, pinsPlainMessages } from '../lib/pins'
   import { refreshPins } from '../lib/pinSync.svelte'
   import { serverNow } from '../lib/serverClock'
   import { jumpTo } from '../lib/jump'
-  import { isMenuKey, menuPoint } from '../lib/participantMenu'
+  import { isMenuKey, menuPoint, personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
   import { nameOpts } from '../lib/theme.svelte'
   import type { Attachment } from 'svelte/attachments'
   import type { Message } from '../lib/protocol/Message'
@@ -139,7 +139,7 @@
   // profile, Message, the nickname items. In a DM or group too (#189), with no server nickname; Message only in a
   // group (a DM is already that), and in a DM Mute conversation, as the DM list's menu. ---
   // The same menu for the other people a message names (#135): a mention pill, and the replied-to author's name.
-  let authorMenu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
+  let authorMenu = $state<PersonMenuAt | null>(null)
   const authorMenuOn = $derived(!!message.author_id && !pending)
   const channelKind = $derived(app.state.channels[message.channel_id]?.kind)
   /** The menu is for the DM's other person (not a third person a DM message names, #346): the DM is already them, so
@@ -150,17 +150,11 @@
   )
   /** `zone`: the avatar or the name line; the menu returns focus to its button. */
   function openAuthorMenu(e: MouseEvent | KeyboardEvent, zone: HTMLElement, userId = message.author_id) {
-    if (!userId || (userId === message.author_id && !authorMenuOn)) return
-    const opener = zone.matches('button, [role=button]') ? zone : (zone.querySelector<HTMLElement>('button') ?? zone)
-    e.preventDefault()
-    authorMenu = { userId, ...menuPoint(e, opener), opener }
+    if (userId === message.author_id && !authorMenuOn) return
+    authorMenu = personMenuAt(e, userId, serverId, zone) ?? authorMenu
   }
-  function authorKey(e: KeyboardEvent) {
-    if (isMenuKey(e)) openAuthorMenu(e, e.currentTarget as HTMLElement)
-  }
-  function replyKey(e: KeyboardEvent) {
-    if (isMenuKey(e) && replyTo?.author_id) openAuthorMenu(e, e.currentTarget as HTMLElement, replyTo.author_id)
-  }
+  const authorKey = (e: KeyboardEvent) => openAuthorMenu(e, e.currentTarget as HTMLElement)
+  const replyKey = (e: KeyboardEvent) => openAuthorMenu(e, e.currentTarget as HTMLElement, replyTo?.author_id ?? null)
   /** A right-click (or ContextMenu / Shift+F10) on a known mention pill: that person's menu, not the message's. */
   function mentionMenu(e: MouseEvent | KeyboardEvent) {
     if (e instanceof KeyboardEvent && !isMenuKey(e)) return
@@ -420,10 +414,8 @@
     onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
     onEndPoll={endable ? endPoll : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
 {/if}
-{#if authorMenu}
-  {#key authorMenu}<MemberMenu {serverId} userId={authorMenu.userId} x={authorMenu.x} y={authorMenu.y} opener={authorMenu.opener}
-    onMessage={menuIsDmPeer ? undefined : messageAuthor} muteChannelId={menuIsDmPeer ? message.channel_id : null} onClose={() => (authorMenu = null)} />{/key}
-{/if}
+<PersonMenu menu={authorMenu} onMessage={menuIsDmPeer ? undefined : messageAuthor} muteChannelId={menuIsDmPeer ? message.channel_id : null}
+  onClose={() => (authorMenu = null)} />
 
 <style>
   .author { display: contents; }

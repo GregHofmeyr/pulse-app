@@ -15,8 +15,8 @@
   import Avatar from './Avatar.svelte'
   import Loading from './Loading.svelte'
   import Segmented from './Segmented.svelte'
-  import MemberMenu from './MemberMenu.svelte'
-  import { isMenuKey, menuPoint } from '../lib/participantMenu'
+  import PersonMenu from './PersonMenu.svelte'
+  import { personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
   import { messagePerson } from '../lib/messagePerson'
 
   let { onClose }: { onClose: (e?: Event) => void } = $props()
@@ -42,12 +42,9 @@
 
   // A row's person menu (#135): its author's, in the server it was said in. Right-click the row, or ContextMenu /
   // Shift+F10 on it. Its Esc stays in the menu (the popover closes on any Esc that reaches the window).
-  let menu = $state<{ userId: string; serverId: string | null; x: number; y: number; opener: HTMLElement } | null>(null)
-  function openMenu(item: InboxItem, e: MouseEvent | KeyboardEvent, opener: HTMLElement) {
-    const id = item.message.author_id
-    if (!id || (e instanceof KeyboardEvent && !isMenuKey(e))) return
-    e.preventDefault()
-    menu = { userId: id, serverId: app.state.channels[item.message.channel_id]?.server_id ?? null, ...menuPoint(e, opener), opener }
+  let menu = $state<PersonMenuAt | null>(null)
+  function openMenu(item: InboxItem, e: MouseEvent | KeyboardEvent, row: HTMLElement) {
+    menu = personMenuAt(e, item.message.author_id, app.state.channels[item.message.channel_id]?.server_id ?? null, row) ?? menu
   }
 
   /** Near the end of the list: fetch the next page. */
@@ -88,18 +85,13 @@
       <Loading />
     {/if}
   </div>
-  {#if menu}
-    <!-- inside the popover (a press on it isn't outside); its Esc goes no further than the menu -->
-    <div class="person-menu" role="presentation" onkeydown={(e) => { if (e.key === 'Escape') e.stopPropagation() }}>
-      {#key menu}<MemberMenu serverId={menu.serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} onMessage={messagePerson} onClose={() => (menu = null)} />{/key}
-    </div>
-  {/if}
+  <!-- inside the popover (a press on it isn't outside); its Esc goes no further than the menu -->
+  <PersonMenu {menu} onMessage={messagePerson} onClose={() => (menu = null)} />
 </div>
 
 <style>
   /* the pins popover's surface, dropped from the top bar's button on the right */
   .inbox-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; width: min(420px, calc(100vw - 24px)); max-height: min(70vh, 640px); padding: 14px 6px 6px; gap: 8px; color: var(--text); }
-  .person-menu { display: contents; }
   .head { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
   h2 { flex: 1; margin: 0; font-size: 15px; display: flex; align-items: center; gap: 6px; }
   .count { min-width: 16px; height: 16px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-block; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((16px - 1cap) / 2) 4px; }

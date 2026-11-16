@@ -13,9 +13,9 @@
   import { channelLabel, displayName } from '../lib/selectors'
   import { mediaUrl } from '../lib/emoji'
   import type { SearchHit } from '../lib/protocol/SearchHit'
-  import { isMenuKey, menuPoint } from '../lib/participantMenu'
+  import { personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
   import { messagePerson } from '../lib/messagePerson'
-  import MemberMenu from './MemberMenu.svelte'
+  import PersonMenu from './PersonMenu.svelte'
 
   const serverId = $derived(search.scope?.kind === 'server' ? search.scope.serverId : null)
   const count = $derived(search.total === null ? '' : search.total > 50 ? '50+ results' : `${search.total} ${search.total === 1 ? 'result' : 'results'}`)
@@ -42,12 +42,9 @@
 
   // A result's person menu (#135): its author's, in the server it was said in. Right-click the result, or ContextMenu /
   // Shift+F10 on it. Drawn outside the results so its Esc closes only it.
-  let menu = $state<{ userId: string; serverId: string | null; x: number; y: number; opener: HTMLElement } | null>(null)
-  function openMenu(h: SearchHit, e: MouseEvent | KeyboardEvent, opener: HTMLElement) {
-    if (!h.message.author_id || (e instanceof KeyboardEvent && !isMenuKey(e))) return
-    e.preventDefault()
-    const sid = app.state.channels[h.message.channel_id]?.server_id ?? null
-    menu = { userId: h.message.author_id, serverId: sid, ...menuPoint(e, opener), opener }
+  let menu = $state<PersonMenuAt | null>(null)
+  function openMenu(h: SearchHit, e: MouseEvent | KeyboardEvent, row: HTMLElement) {
+    menu = personMenuAt(e, h.message.author_id, app.state.channels[h.message.channel_id]?.server_id ?? null, row) ?? menu
   }
 
   function keydown(e: KeyboardEvent) {
@@ -107,9 +104,7 @@
     {/if}
   </div>
 </section>
-{#if menu}
-  {#key menu}<MemberMenu serverId={menu.serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} onMessage={messagePerson} onClose={() => (menu = null)} />{/key}
-{/if}
+<PersonMenu {menu} onMessage={messagePerson} onClose={() => (menu = null)} />
 
 <style>
   .search-results { width: var(--right-w, 340px); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-radius: var(--radius); background: var(--bg-1); }
