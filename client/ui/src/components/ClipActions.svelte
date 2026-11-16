@@ -9,7 +9,7 @@
   import MenuFlyout from './MenuFlyout.svelte'
   import { clickOutside, modal } from '../lib/actions'
   import { livePin, PIN_FOR } from '../lib/pins'
-  import { refreshPins } from '../lib/pinSync.svelte'
+  import { reportPin } from '../lib/pinSync.svelte'
   import { serverNow } from '../lib/serverClock'
   import { clock } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
@@ -62,11 +62,7 @@
     menuTop = r.bottom + 4
   })
   // A refused pin or unpin means the pin here was out of date: say why, and fetch the channel's pins to set it right.
-  const report = (p: Promise<unknown>) =>
-    p.catch((e) => {
-      onError(errorText(e))
-      void refreshPins(message.channel_id)
-    })
+  const report = (p: Promise<unknown>) => reportPin(p, message.channel_id, onError)
   function pin(d: PinDuration) {
     menu = false
     opener?.focus()

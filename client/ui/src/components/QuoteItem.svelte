@@ -21,7 +21,7 @@
   import { app, clock } from '../lib/store.svelte'
   import { serverPeople } from '../lib/selectors'
   import { livePin, pinTip } from '../lib/pins'
-  import { refreshPins } from '../lib/pinSync.svelte'
+  import { reportPin } from '../lib/pinSync.svelte'
   import { serverNow } from '../lib/serverClock'
   import type { PinDuration } from '../lib/protocol/PinDuration'
   import { api, errorText } from '../lib/tauri'
@@ -110,11 +110,7 @@
   const pinMark = $derived(pin ? pinTip(nameOf(pin.pinned_by), pin.expires_at, now) : '')
   const pinItem = $derived<'pin' | 'unpin' | null>(compact || message.deleted ? null : pin ? 'unpin' : 'pin')
   // A refused pin or unpin means the pin here was out of date: show why, and fetch the chat's pins to set it right.
-  const report = (p: Promise<unknown>) =>
-    p.catch((e) => {
-      showError(errorText(e))
-      void refreshPins(message.channel_id)
-    })
+  const report = (p: Promise<unknown>) => reportPin(p, message.channel_id, showError)
   const pinQuote = (d: PinDuration) => report(api.pinMessage(message.id, d))
   const unpinQuote = () => report(api.unpinMessage(message.id))
   /** Whether the line's menu would have anything in it: award, copy, save (an image), pin, or link. */

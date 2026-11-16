@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
-import { notePinEvent, pinSync, refreshPins } from './pinSync.svelte'
+import { notePinEvent, pinSync, refreshPins, reportPin } from './pinSync.svelte'
 import { app, handleReady, resetState } from './store.svelte'
 import { resetServerClock, serverNow } from './serverClock'
 import { addHistory, applyEvent } from './state'
@@ -98,5 +98,24 @@ describe('pins after a reconnect (#258)', () => {
     invoke.mockImplementation(async (c: string) => { if (c === 'list_pins') throw "can't reach the server" })
     await refreshPins('C1')
     expect(pinOf('M1')).toEqual(pin())
+  })
+})
+
+describe('reportPin (#349): a pin or unpin from a menu', () => {
+  it('a refusal says why and fetches the chat\'s pins to set the copy here right', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_pins' ? [] : undefined))
+    const said: string[] = []
+    await reportPin(Promise.reject('That message is already pinned.'), 'C1', (t) => said.push(t))
+    await settle()
+    expect(said).toEqual(['That message is already pinned.'])
+    expect(invoke).toHaveBeenCalledWith('list_pins', expect.anything())
+    expect(pinOf('M1')).toBeNull()
+  })
+  it('one that lands says nothing and fetches nothing', async () => {
+    const said: string[] = []
+    await reportPin(Promise.resolve(), 'C1', (t) => said.push(t))
+    await settle()
+    expect(said).toEqual([])
+    expect(invoke).not.toHaveBeenCalled()
   })
 })

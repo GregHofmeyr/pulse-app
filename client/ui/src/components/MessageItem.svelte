@@ -42,7 +42,7 @@
   import MessageMenu from './MessageMenu.svelte'
   import { quoteRequest, quotesChannelsFor } from '../lib/quoteFromMessage'
   import { livePin, pinFor, pinTip, pinnedNoun, pinsPlainMessages } from '../lib/pins'
-  import { refreshPins } from '../lib/pinSync.svelte'
+  import { reportPin } from '../lib/pinSync.svelte'
   import { serverNow } from '../lib/serverClock'
   import { jumpTo } from '../lib/jump'
   import { isMenuKey, menuPoint, personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
@@ -186,11 +186,7 @@
   const pin = $derived(livePin(message, now))
   const pinMark = $derived(pin ? pinTip(nameOf(pin.pinned_by), pin.expires_at, now) : '')
   // A refused pin or unpin means the pin here was out of date: show why, and fetch the chat's pins to set it right.
-  const report = (p: Promise<unknown>) =>
-    p.catch((e) => {
-      showError(errorText(e))
-      void refreshPins(message.channel_id)
-    })
+  const report = (p: Promise<unknown>) => reportPin(p, message.channel_id, showError)
   // your own poll, still open, can be ended from the message's menu (#157); a refusal fetches the poll afresh
   const endable = $derived(!!message.poll && mine && !pollOver(message.poll, now))
   const endPoll = () => closePoll(message).catch((e) => showError(errorText(e)))

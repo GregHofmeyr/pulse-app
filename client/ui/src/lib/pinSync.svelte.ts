@@ -8,7 +8,7 @@ import type { Event } from './protocol/Event'
 import { noteServerTime, resetServerClock } from './serverClock'
 import { applyPinList } from './state'
 import { app, onAppEvent, onAppReady } from './store.svelte'
-import { api } from './tauri'
+import { api, errorText } from './tauri'
 
 /** Chats whose loaded messages may show pins from before a reconnect. */
 export const pinSync = $state({ stale: {} as Record<string, true> })
@@ -59,4 +59,16 @@ export async function refreshPins(channel: string): Promise<void> {
   }
   // a Ready came while it loaded: the list may be from before it
   if (pinSync.stale[channel]) await refreshPins(channel)
+}
+
+/** A pin or unpin from a message's, a quote's or a clip's menu (#349). A refusal means the pin shown here was out of
+ *  date: say why (`onError`) and fetch the chat's pins to set it right. */
+export function reportPin(p: Promise<unknown>, channel: string, onError: (text: string) => void): Promise<void> {
+  return p.then(
+    () => {},
+    (e) => {
+      onError(errorText(e))
+      void refreshPins(channel)
+    },
+  )
 }
