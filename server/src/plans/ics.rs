@@ -1,15 +1,26 @@
 //! A plan as a calendar file (#387): one VEVENT in a VCALENDAR (RFC 5545), times in UTC, text escaped and long lines
 //! folded. Its UID is the plan's message id, so downloading it again after an edit updates the same event in a
 //! calendar instead of adding another.
+//!
+//! DTEND is the plan's end, or (#399) an hour after its start when it has none: an event with DTSTART alone is a
+//! zero-length point that calendar apps draw as a sliver or not at all, so a plan shows as an hour's block, as a new
+//! event does when it's added in a calendar app.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use pulse_protocol::ids::MessageId;
-use pulse_protocol::rest::Plan;
+use pulse_protocol::rest::{Plan, plan_limits};
+
+fn parse(t: &str) -> Option<DateTime<Utc>> {
+    Some(DateTime::parse_from_rfc3339(t).ok()?.with_timezone(&Utc))
+}
+
+fn ical(t: DateTime<Utc>) -> String {
+    t.format("%Y%m%dT%H%M%SZ").to_string()
+}
 
 /// A stored time (RFC 3339) in iCalendar's UTC form, `20261120T163000Z`.
 fn utc(t: &str) -> Option<String> {
-    let t = DateTime::parse_from_rfc3339(t).ok()?.with_timezone(&Utc);
-    Some(t.format("%Y%m%dT%H%M%SZ").to_string())
+    parse(t).map(ical)
 }
 
 /// A TEXT value escaped (RFC 5545 §3.3.11): backslash, semicolon, comma and line breaks.
@@ -65,8 +76,15 @@ pub fn calendar(id: MessageId, plan: &Plan, host: &str, now: DateTime<Utc>) -> S
         format!("UID:{id}@{host}"),
         format!("DTSTAMP:{}", now.format("%Y%m%dT%H%M%SZ")),
     ];
-    if let Some(start) = utc(&plan.starts_at) {
-        lines.push(format!("DTSTART:{start}"));
+    if let Some(start) = parse(&plan.starts_at) {
+        lines.push(format!("DTSTART:{}", ical(start)));
+        let end = plan
+            .ends_at
+            .as_deref()
+            .and_then(parse)
+            .filter(|e| *e > start)
+            .unwrap_or(start + TimeDelta::minutes(plan_limits::DEFAULT_MINUTES));
+        lines.push(format!("DTEND:{}", ical(end)));
     }
     lines.push(format!("SUMMARY:{}", escape(&plan.title)));
     if let Some(place) = &plan.place {
@@ -118,6 +136,7 @@ mod tests {
         Plan {
             title: "Braai, games; drinks".into(),
             starts_at: "2026-11-20T16:30:00.000Z".into(),
+            ends_at: None,
             place: Some("kim's place\\back yard".into()),
             note: Some("bring ice\nand chairs".into()),
             going: vec![],
@@ -159,6 +178,8 @@ mod tests {
         assert!(ics.contains(&format!("\r\nUID:{id}@pulse.test\r\n")));
         assert!(ics.contains("\r\nDTSTAMP:20261116T100000Z\r\n"));
         assert!(ics.contains("\r\nDTSTART:20261120T163000Z\r\n"));
+        // no end: an hour's block
+        assert!(ics.contains("\r\nDTEND:20261120T173000Z\r\n"));
         assert!(ics.contains("\r\nSUMMARY:Braai\\, games\\; drinks\r\n"));
         assert!(ics.contains("\r\nLOCATION:kim's place\\\\back yard\r\n"));
         assert!(ics.contains("\r\nDESCRIPTION:bring ice\\nand chairs\r\n"));
@@ -175,6 +196,13 @@ mod tests {
         assert!(ics.contains("\r\nSTATUS:CANCELLED\r\n"));
         assert!(ics.contains("\r\nLAST-MODIFIED:20261117T080000Z\r\n"));
         assert!(!ics.contains("LOCATION"));
+
+        // its own end, when it has one
+        let mut ends = plan();
+        ends.ends_at = Some("2026-11-20T21:00:00.000Z".into());
+        let ics = calendar(id, &ends, "pulse.test", now);
+        assert!(ics.contains("\r\nDTEND:20261120T210000Z\r\n"));
+        assert_eq!(ics.matches("DTEND").count(), 1);
     }
 
     #[test]

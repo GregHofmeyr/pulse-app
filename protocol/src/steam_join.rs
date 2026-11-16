@@ -1,7 +1,7 @@
 //! One-click Join (#381): the strict checks on what Steam says can be joined, and the `steam://` URL built only from
 //! parts that pass them. The server checks what it reads from Steam; the client checks again before opening anything.
 
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 
 use crate::rest::SteamJoin;
 
@@ -30,11 +30,8 @@ pub fn valid_lobby(raw: &str) -> bool {
     universe == 1 && kind == 8 && instance & LOBBY_FLAG != 0 && id & 0xFFFF_FFFF != 0
 }
 
-/// A game server's `ip:port`, rebuilt from its parts: dotted-quad IPv4 (no leading zeros) that could be reached
-/// (not unspecified, loopback, link-local, broadcast or multicast) and a port from 1 to 65535 (digits only, no
-/// leading zero). `None` for anything else.
-pub fn valid_server(raw: &str) -> Option<String> {
-    let (ip, port) = raw.split_once(':')?;
+/// A port from 1 to 65535: digits only, no leading zero.
+fn valid_port(port: &str) -> Option<u16> {
     if port.is_empty()
         || port.len() > 5
         || port.starts_with('0')
@@ -42,7 +39,33 @@ pub fn valid_server(raw: &str) -> Option<String> {
     {
         return None;
     }
-    let port: u16 = port.parse().ok().filter(|p| *p != 0)?;
+    port.parse().ok().filter(|p| *p != 0)
+}
+
+/// A game server's address, rebuilt from its parts: `ip:port` with a dotted-quad IPv4 (no leading zeros) that could
+/// be reached (not unspecified, loopback, link-local, broadcast or multicast), or (#397) `[ip]:port` with an IPv6
+/// address that could be reached over the internet (not unspecified, loopback, link-local, multicast, unique-local
+/// or IPv4-mapped; no zone), in its canonical form; and a port from 1 to 65535 (digits only, no leading zero).
+/// `None` for anything else.
+pub fn valid_server(raw: &str) -> Option<String> {
+    if let Some(rest) = raw.strip_prefix('[') {
+        let (ip, port) = rest.split_once("]:")?;
+        let port = valid_port(port)?;
+        // the standard parser refuses zones (`%eth0`), brackets and anything else around the address
+        let ip: Ipv6Addr = ip.parse().ok()?;
+        if ip.is_unspecified()
+            || ip.is_loopback()
+            || ip.is_unicast_link_local()
+            || ip.is_multicast()
+            || ip.is_unique_local()
+            || ip.to_ipv4_mapped().is_some()
+        {
+            return None;
+        }
+        return Some(SocketAddrV6::new(ip, port, 0, 0).to_string());
+    }
+    let (ip, port) = raw.split_once(':')?;
+    let port = valid_port(port)?;
     // the standard parser takes exactly four decimal octets and refuses leading zeros
     let ip: Ipv4Addr = ip.parse().ok()?;
     if ip.is_unspecified()
@@ -164,12 +187,69 @@ mod tests {
             "169.254.1.1:27015",
             "255.255.255.255:27015",
             "224.0.0.1:27015",
-            "[2001:db8::1]:27015",
             "example.com:27015",
             "203.0.113.7:27015/../x",
             "203.0.113.7:27015 ",
         ] {
             assert_eq!(valid_server(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn ipv6_server_addresses_are_checked_as_strictly() {
+        assert_eq!(
+            valid_server("[2001:db8::1]:27015").as_deref(),
+            Some("[2001:db8::1]:27015")
+        );
+        // rebuilt in its canonical form (lower case, zeros compressed)
+        assert_eq!(
+            valid_server("[2001:DB8:0:0:0:0:0:7]:27015").as_deref(),
+            Some("[2001:db8::7]:27015")
+        );
+        // on a tie, the first run of zeros is the one compressed (RFC 5952, as the client checks it)
+        assert_eq!(
+            valid_server("[2001:db8:0:0:1:0:0:1]:1").as_deref(),
+            Some("[2001:db8::1:0:0:1]:1")
+        );
+        for bad in [
+            "2001:db8::1:27015",
+            "[2001:db8::1]",
+            "[2001:db8::1]:",
+            "[2001:db8::1]:0",
+            "[2001:db8::1]:65536",
+            "[2001:db8::1]:027015",
+            "[2001:db8::1]:27015:1",
+            "[2001:db8::1]27015",
+            "[[2001:db8::1]]:27015",
+            "[2001:db8::1%eth0]:27015",
+            "[2001:db8::g]:27015",
+            "[2001:db8::1]:27015 ",
+            "[203.0.113.7]:27015",
+            // unspecified, loopback, link-local, multicast, unique-local, IPv4-mapped loopback
+            "[::]:27015",
+            "[::1]:27015",
+            "[fe80::1]:27015",
+            "[ff02::1]:27015",
+            "[fd00::1]:27015",
+            "[fc00::1]:27015",
+            "[::ffff:127.0.0.1]:27015",
+            "[::ffff:203.0.113.7]:27015",
+        ] {
+            assert_eq!(valid_server(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn an_ipv6_server_url_needs_the_canonical_address() {
+        let server = |a: &str| SteamJoin::Server {
+            app_id: 440,
+            address: a.into(),
+        };
+        assert_eq!(
+            server("[2001:db8::1]:27015").url().as_deref(),
+            Some("steam://connect/[2001:db8::1]:27015")
+        );
+        assert_eq!(server("[2001:DB8::1]:27015").url(), None);
+        assert_eq!(server("[fd00::1]:27015").url(), None);
     }
 }

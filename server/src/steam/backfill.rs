@@ -72,6 +72,12 @@ enum End {
 
 async fn one(s: &AppState, user: UserId, steam_id: &str) -> crate::error::AppResult<()> {
     let end = read_games(s, user, steam_id).await?;
+    let linked = still_linked(s, user, steam_id).await?;
+    // The numbers (and any badge they earn) first, then the done mark (#403): whoever sees the backfill done sees its
+    // completion stats too.
+    if linked {
+        store::recompute(s, user).await?;
+    }
     match end {
         End::Done => {
             store::set_backfill(&s.db, user, store::DONE).await?;
@@ -83,8 +89,7 @@ async fn one(s: &AppState, user: UserId, steam_id: &str) -> crate::error::AppRes
         }
         End::Stopped => {}
     }
-    if still_linked(s, user, steam_id).await? {
-        store::recompute(s, user).await?;
+    if linked {
         store::tell(s, user).await;
     }
     Ok(())

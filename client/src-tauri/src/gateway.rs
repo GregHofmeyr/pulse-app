@@ -1049,6 +1049,7 @@ mod tests {
                         appear_offline_to: vec![],
                         live_notify: vec![],
                         server_order: vec![],
+                        plan_reminders: None,
                         calls: vec![],
                         ringing: vec![],
                         layouts: vec![],

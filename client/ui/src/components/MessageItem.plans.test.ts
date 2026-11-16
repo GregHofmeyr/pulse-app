@@ -113,6 +113,16 @@ describe('the plan card', () => {
     expect(card().querySelector('[role=alert]')!.textContent).toBe('this plan was cancelled')
   })
 
+  it('with an end (#399), shows the range, and says Ended once it has', () => {
+    show(msg(plan({ ends_at: '2026-11-20T19:00:00.000Z' })))
+    const end = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(Date.parse('2026-11-20T19:00:00.000Z'))
+    expect(card().querySelector('time')!.textContent).toMatch(new RegExp(`–${end}$`))
+    unmount(cmp!)
+    vi.setSystemTime(Date.parse('2026-11-20T19:30:00.000Z'))
+    show(msg(plan({ starts_at: '2026-11-20T16:30:00.000Z', ends_at: '2026-11-20T19:00:00.000Z' })))
+    expect(card().querySelector('.when')!.textContent).toContain('Ended')
+  })
+
   it('a cancelled plan says so and takes no answers', () => {
     show(msg(plan({ cancelled_at: '2026-11-17T08:00:00.000Z' })), true)
     expect(card().classList.contains('cancelled')).toBe(true)
@@ -145,6 +155,25 @@ describe('the forecast', () => {
     expect(card().querySelector('.forecast')!.textContent).toContain('Rain · 14°–25° · 70% chance of rain')
   })
 
+  it('a failed fetch says so with Retry (#399), which asks again', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'plan_forecast') throw 'the server is unavailable'
+      return undefined
+    })
+    show(msg(plan()))
+    await settle()
+    flushSync()
+    const retry = card().querySelector<HTMLButtonElement>('.forecast button.retry')!
+    expect(card().querySelector('.forecast')!.textContent).toContain("Couldn't get the forecast.")
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'plan_forecast' ? { place: 'Cape Town, South Africa', date: '2026-11-20', code: 0, temp_max: 25, temp_min: 15, rain_chance: 0 } : undefined))
+    retry.click()
+    await settle()
+    flushSync()
+    expect(invoke.mock.calls.filter(([c]) => c === 'plan_forecast').length).toBe(2)
+    expect(card().querySelector('.retry')).toBeNull()
+    expect(card().querySelector('.forecast')!.textContent).toContain('Clear · 15°–25°')
+  })
+
   it('not for a plan beyond reach, one without a place, or with Plan something off', async () => {
     show(msg(plan({ starts_at: '2026-12-30T10:00:00.000Z' })))
     await settle()
@@ -172,6 +201,8 @@ describe("its creator's menu", () => {
     const title = form.querySelector<HTMLInputElement>('input[aria-label="Title"]')!
     expect(title.value).toBe("Braai at kim's")
     expect(form.querySelector<HTMLInputElement>('input[aria-label="Place"]')!.value).toBe('Cape Town')
+    // no end yet: blank, and none is sent
+    expect(form.querySelector<HTMLInputElement>('input[aria-label="Ends (optional)"]')!.value).toBe('')
     title.value = 'Braai (moved)'
     title.dispatchEvent(new Event('input'))
     flushSync()
@@ -181,6 +212,7 @@ describe("its creator's menu", () => {
     await settle()
     const call = invoke.mock.calls.find(([c]) => c === 'edit_plan')!
     expect(call[1]).toMatchObject({ messageId: 'M1', request: { title: 'Braai (moved)', starts_at: '2026-11-20T16:30:00.000Z', place: 'Cape Town', note: 'bring ice' } })
+    expect((call[1] as { request: object }).request).not.toHaveProperty('ends_at')
   })
 
   it('Cancel plan cancels it; nobody else gets either item', async () => {

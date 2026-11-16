@@ -154,4 +154,9 @@ inbox_unread?: number,
  * The order you dragged the servers into in your server rail (#185). Yours only. Servers missing from it
  * (new ones, or none ever dragged) follow it in their usual order. Absent from older servers.
  */
-server_order?: Array<ServerId>, };
+server_order?: Array<ServerId>, 
+/**
+ * Whether plans' reminder lines ping you (#399), on every device; on unless you turned it off. Yours only.
+ * Absent from older servers (they ping everyone).
+ */
+plan_reminders?: boolean, };

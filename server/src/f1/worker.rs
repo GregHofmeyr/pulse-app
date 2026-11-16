@@ -9,6 +9,9 @@
 //!   never otherwise.
 //!
 //! Each line goes out with its `f1_posts` row in one transaction, so a restart neither loses nor repeats one.
+//!
+//! The scores line mentions everyone who predicted and is still in the server (#403), as a plan's reminder does, so
+//! it reaches their inbox and notifications the way a typed `@name` does.
 
 use std::time::Duration;
 
@@ -262,15 +265,18 @@ async fn post_results(
                 weekend_message_id: Some(wid),
             };
             let text = super::scores_text(&card, &names);
-            scores_msg = Some(
-                system::insert(
-                    &mut tx,
-                    t.channel,
-                    text,
-                    super::payload(&F1Card::Scores(card))?,
-                )
-                .await?,
-            );
+            let mut msg = system::insert(
+                &mut tx,
+                t.channel,
+                text,
+                super::payload(&F1Card::Scores(card))?,
+            )
+            .await?;
+            // a typed mention each, for the predictors still in the server: the inbox and notifications take it
+            let told = still_members(&mut tx, t.server, &users).await?;
+            crate::messages::mentions::store(&mut tx, msg.id, &told, true).await?;
+            msg.mentions = told;
+            scores_msg = Some(msg);
         }
     }
     tx.commit().await?;
@@ -293,6 +299,27 @@ async fn post_results(
         crate::badges::engine::after(s, &scorers).await;
     }
     Ok(true)
+}
+
+/// Those of `users` still in `server`, in order.
+async fn still_members(
+    tx: &mut SqliteConnection,
+    server: ServerId,
+    users: &[UserId],
+) -> AppResult<Vec<UserId>> {
+    let mut out = Vec::with_capacity(users.len());
+    for u in users {
+        let member: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?")
+                .bind(server.to_string())
+                .bind(u.to_string())
+                .fetch_optional(&mut *tx)
+                .await?;
+        if member.is_some() && !out.contains(u) {
+            out.push(*u);
+        }
+    }
+    Ok(out)
 }
 
 fn t(at: &str) -> Option<DateTime<Utc>> {

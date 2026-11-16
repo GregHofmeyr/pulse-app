@@ -2451,6 +2451,19 @@ impl Api {
         .await
     }
 
+    /// Plan reminders (#399): whether plans' reminder lines ping you, on every device.
+    pub async fn set_plan_reminders(&self, token: &str, on: bool) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .put(self.url(&["me", "plan-reminders"])?)
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::PlanRemindersRequest { on })
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// `emoji`: a Unicode emoji or `custom:<id>`.
     pub async fn add_reaction(
         &self,

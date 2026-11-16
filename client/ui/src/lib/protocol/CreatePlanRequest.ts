@@ -7,4 +7,8 @@ export type CreatePlanRequest = { title: string,
 /**
  * RFC 3339, any offset (stored as UTC).
  */
-starts_at: string, place: string | null, note: string | null, };
+starts_at: string, 
+/**
+ * RFC 3339, any offset (#399): an end after the start; none (or absent) = no end.
+ */
+ends_at?: string, place: string | null, note: string | null, };

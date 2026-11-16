@@ -14,6 +14,6 @@ lobby_id: string,
  */
 steam_id: string, } | { "kind": "server", app_id: number, 
 /**
- * `a.b.c.d:port` (IPv4, as Steam reports it).
+ * `a.b.c.d:port` (IPv4, as Steam reports it), or `[ipv6]:port` in its canonical form (#397).
  */
 address: string, };

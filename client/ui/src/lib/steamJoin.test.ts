@@ -23,10 +23,27 @@ describe('steam join', () => {
     expect(validServer('192.168.1.20:27016')).toBe(true)
     for (const bad of ['', '203.0.113.7', '203.0.113.7:', '203.0.113.7:0', '203.0.113.7:65536', '203.0.113.7:027015',
       '203.0.113.007:27015', '203.0.113:27015', '256.0.113.7:27015', '0.0.0.0:27015', '127.0.0.1:27015', '169.254.1.1:27015',
-      '255.255.255.255:27015', '224.0.0.1:27015', '[2001:db8::1]:27015', 'example.com:27015', '203.0.113.7:27015/x',
+      '255.255.255.255:27015', '224.0.0.1:27015', 'example.com:27015', '203.0.113.7:27015/x',
       '203.0.113.7:27015 ', ' 203.0.113.7:27015']) {
       expect([bad, validServer(bad)]).toEqual([bad, false])
     }
+  })
+
+  it('IPv6 server addresses (#397), in the canonical form the server writes, as strictly', () => {
+    for (const ok of ['[2001:db8::1]:27015', '[2001:db8:0:1:2:3:4:5]:1', '[2001:db8::1:0:0:1]:27015', '[2001:0:0:1::1]:27015', '[2606:4700::6810:84e5]:65535']) {
+      expect([ok, validServer(ok)]).toEqual([ok, true])
+    }
+    for (const bad of ['[2001:db8::1]', '[2001:db8::1]:', '[2001:db8::1]:0', '[2001:db8::1]:65536', '[2001:db8::1]:027015',
+      '[2001:db8::1]:27015:1', '[2001:db8::1]27015', '2001:db8::1:27015', '[2001:db8::1%eth0]:27015', '[2001:db8::g]:27015',
+      // not canonical: upper case, leading zeros, a single zero group compressed, zeros left uncompressed
+      '[2001:DB8::1]:27015', '[2001:0db8::1]:27015', '[2001:db8::1:2:3:4:5]:27015', '[2001:db8:0:0:0:0:0:1]:27015',
+      '[1::2::3]:27015', '[1:2:3:4:5:6:7]:27015', '[1:2:3:4:5:6:7:8:9]:27015', '[203.0.113.7]:27015',
+      // unspecified, loopback, link-local, multicast, unique-local, IPv4-mapped
+      '[::]:27015', '[::1]:27015', '[fe80::1]:27015', '[febf::1]:27015', '[ff02::1]:27015', '[fd00::1]:27015', '[fc00::1]:27015',
+      '[::ffff:7f00:1]:27015', '[::ffff:127.0.0.1]:27015']) {
+      expect([bad, validServer(bad)]).toEqual([bad, false])
+    }
+    expect(joinUrl({ kind: 'server', app_id: 440, address: '[2001:db8::1]:27015' })).toBe('steam://connect/[2001:db8::1]:27015')
   })
 
   it('urls only from parts that check out', () => {

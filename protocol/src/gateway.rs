@@ -216,6 +216,11 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub server_order: Vec<ServerId>,
+    /// Whether plans' reminder lines ping you (#399), on every device; on unless you turned it off. Yours only.
+    /// Absent from older servers (they ping everyone).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub plan_reminders: Option<bool>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -387,6 +392,12 @@ pub enum Event {
     ServerOrderChanged {
         user_id: UserId,
         server_ids: Vec<ServerId>,
+    },
+    /// Only to the owner's own sessions: they turned plan reminders on or off (#399), the new
+    /// [`Ready::plan_reminders`].
+    PlanRemindersChanged {
+        user_id: UserId,
+        on: bool,
     },
     /// Someone saved their profile; goes to everyone, like presence.
     ProfileUpdated {
@@ -822,6 +833,7 @@ impl Event {
             | Self::LiveNotifyChanged { .. }
             | Self::SteamLinkChanged { .. }
             | Self::ServerOrderChanged { .. }
+            | Self::PlanRemindersChanged { .. }
             | Self::BadgeEarned { .. } => None,
         }
     }
@@ -844,6 +856,7 @@ impl Event {
             | Self::LiveNotifyChanged { user_id, .. }
             | Self::SteamLinkChanged { user_id, .. }
             | Self::ServerOrderChanged { user_id, .. }
+            | Self::PlanRemindersChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
             | Self::CallRingEnded { user_id, .. }
@@ -970,6 +983,7 @@ mod tests {
             appear_offline_to: vec![],
             live_notify: vec![],
             server_order: vec![],
+            plan_reminders: None,
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1058,6 +1072,7 @@ mod tests {
             appear_offline_to: vec![],
             live_notify: vec![],
             server_order: vec![],
+            plan_reminders: None,
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1195,6 +1210,7 @@ mod tests {
             appear_offline_to: vec![],
             live_notify: vec![],
             server_order: vec![],
+            plan_reminders: None,
             calls: vec![],
             ringing: vec![],
             layouts: vec![],

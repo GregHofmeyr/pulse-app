@@ -9,7 +9,7 @@ use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{
     Channel, ChannelKind, CreatePlanRequest, Message, MessageKind, Plan, PlanForecast,
-    PlanRsvpRequest,
+    PlanRemindersRequest, PlanRsvpRequest,
 };
 
 use super::{Cleaned, Stored, announce, clean, fallback_text, reminded_at_for, rsvp_str};
@@ -28,6 +28,46 @@ pub fn router() -> Router<AppState> {
         .route("/messages/{id}/plan/cancel", post(cancel))
         .route("/messages/{id}/plan/forecast", get(forecast))
         .route("/messages/{id}/plan/ics", get(ics))
+        .route("/me/plan-reminders", put(set_reminders))
+}
+
+/// Whether `user` gets plans' reminder pings (#399): on unless they turned it off.
+pub async fn reminders_on(db: &sqlx::SqlitePool, user: UserId) -> AppResult<bool> {
+    let on: Option<i64> = sqlx::query_scalar("SELECT plan_reminders FROM users WHERE id = ?")
+        .bind(user.to_string())
+        .fetch_optional(db)
+        .await?;
+    Ok(on.is_none_or(|v| v != 0))
+}
+
+/// `PUT /me/plan-reminders` (#399): turn plans' reminder pings on or off for you, on every device. Your own sessions
+/// hear it (`PlanRemindersChanged`).
+async fn set_reminders(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Json(req): Json<PlanRemindersRequest>,
+) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    let _order = s.hub.in_order().await;
+    let mut tx = begin_write(&s.db).await?;
+    sqlx::query("UPDATE users SET plan_reminders = ? WHERE id = ?")
+        .bind(i64::from(req.on))
+        .bind(me.to_string())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    s.hub
+        .publish(
+            &s.db,
+            Event::PlanRemindersChanged {
+                user_id: me,
+                on: req.on,
+            },
+        )
+        .await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn is_cancelled() -> AppError {
@@ -136,13 +176,14 @@ async fn create(
         .execute(&mut *tx)
         .await?;
     sqlx::query(
-        "INSERT INTO plans (message_id, channel_id, title, starts_at, place, note, reminded_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO plans (message_id, channel_id, title, starts_at, ends_at, place, note, reminded_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(msg.id.to_string())
     .bind(id.to_string())
     .bind(&c.title)
     .bind(&c.starts_at)
+    .bind(&c.ends_at)
     .bind(&c.place)
     .bind(&c.note)
     .bind(reminded_at_for(&c.starts_at, at))
@@ -166,6 +207,7 @@ async fn create(
     msg.plan = Some(Box::new(Plan {
         title: c.title,
         starts_at: c.starts_at,
+        ends_at: c.ends_at,
         place: c.place,
         note: c.note,
         going: vec![],
@@ -252,12 +294,13 @@ async fn edit(
     let p = mine_open(&mut tx, me, id).await?;
     let edited = stamp(at);
     sqlx::query(
-        "UPDATE plans SET title = ?, starts_at = ?, place = ?, note = ?, edited_at = ?,
+        "UPDATE plans SET title = ?, starts_at = ?, ends_at = ?, place = ?, note = ?, edited_at = ?,
            reminded_at = CASE WHEN starts_at = ? THEN reminded_at ELSE ? END
          WHERE message_id = ?",
     )
     .bind(&c.title)
     .bind(&c.starts_at)
+    .bind(&c.ends_at)
     .bind(&c.place)
     .bind(&c.note)
     .bind(&edited)

@@ -1,12 +1,13 @@
 <script lang="ts">
-  // A plan in the chat (#387), in its message's body: a date badge, the title and when it is in your own time, the
-  // place (with the forecast for its day there, once it's within reach), the note, then Going / Maybe / Can't with
+  // A plan in the chat (#387), in its message's body: a date badge, the title and when it is in your own time (to
+  // its end, when it has one: #399), the place (with the forecast for its day there, once it's within reach, and
+  // Retry when asking for it failed), the note, then Going / Maybe / Can't with
   // their counts (your answer filled with the accent; click it again to take it back) and who picked each, and Add to
   // calendar. Answers from everyone land live (PlanChanged). A cancelled plan says so and takes no answers. Its
   // creator edits or cancels it from the message's menu.
   import Icon from './Icon.svelte'
   import VoterStack from './VoterStack.svelte'
-  import { RSVPS, answered, forecastLine, inForecastWindow, myRsvp, nextRsvp, planStarted, planWhen, weatherOf } from '../lib/plan'
+  import { RSVPS, answered, forecastLine, inForecastWindow, myRsvp, nextRsvp, planEnded, planRange, planStarted, weatherOf } from '../lib/plan'
   import { forecast, loadForecast, planPrefs, rsvpPlan, saveIcs } from '../lib/plans.svelte'
   import { app, clock } from '../lib/store.svelte'
   import { serverNow } from '../lib/serverClock'
@@ -25,13 +26,15 @@
   const mine = $derived(myRsvp(plan, me))
   const cancelled = $derived(!!plan.cancelled_at)
   const started = $derived(planStarted(plan, now))
-  const when = $derived(planWhen(plan.starts_at, now))
+  const ended = $derived(planEnded(plan, now))
+  const when = $derived(planRange(plan, now))
   const badge = $derived.by(() => {
     const t = Date.parse(plan.starts_at)
     return { month: new Intl.DateTimeFormat(undefined, { month: 'short' }).format(t), day: new Date(t).getDate() }
   })
   const wantForecast = $derived(planPrefs.on && inForecastWindow(plan, now))
   const fc = $derived(wantForecast ? forecast.byId[message.id] : undefined)
+  const fcFailed = $derived(wantForecast && !fc && !!forecast.failed[message.id])
   $effect(() => {
     if (wantForecast) loadForecast(message.id)
   })
@@ -65,7 +68,7 @@
     <span class="badge" aria-hidden="true"><span class="month">{badge.month}</span><span class="day">{badge.day}</span></span>
     <div class="what">
       <p class="title" id="{uid}-t">{plan.title}</p>
-      <p class="when"><time datetime={plan.starts_at}>{when}</time>{#if cancelled} · <span class="state">Cancelled</span>{:else if started} · <span class="state">Started</span>{/if}</p>
+      <p class="when"><time datetime={plan.starts_at}>{when}</time>{#if cancelled} · <span class="state">Cancelled</span>{:else if ended} · <span class="state">Ended</span>{:else if started} · <span class="state">Started</span>{/if}</p>
     </div>
   </div>
   {#if plan.place}
@@ -73,6 +76,8 @@
   {/if}
   {#if fc}
     <p class="forecast" data-tip="Forecast for {fc.place} from Open-Meteo"><span aria-hidden="true">{weatherOf(fc.code).emoji}</span> {forecastLine(fc)}</p>
+  {:else if fcFailed}
+    <p class="forecast">Couldn't get the forecast. <button type="button" class="retry" onclick={() => loadForecast(message.id)}>Retry</button></p>
   {/if}
   {#if plan.note}<p class="note">{plan.note}</p>{/if}
   <div class="rsvps" role="group" aria-label="Your answer">
@@ -130,6 +135,8 @@
   .foot:empty { display: none; }
   .add { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 6px; margin-left: -6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--accent-text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
   .add:hover { background: var(--bg-3); }
+  .retry { min-height: 24px; padding: 0 6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer; transition: background var(--dur-fast) var(--ease); }
+  .retry:hover { background: var(--bg-3); }
   .edited { color: var(--text-3); }
   .err { margin: 0; font-size: 12px; color: var(--danger-text); }
 </style>

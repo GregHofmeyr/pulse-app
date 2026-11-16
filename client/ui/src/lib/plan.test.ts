@@ -2,12 +2,13 @@
 // reads, answers, the forecast's words, the reducer's PlanChanged and a reminder's alert.
 import { describe, expect, it } from 'vitest'
 import {
-  answered, defaultStart, fieldsToIso, forecastLine, inForecastWindow, isoToFields, myRsvp, nextRsvp, parsePlanArgs,
-  planReady, planWhen, weatherOf,
+  answered, defaultStart, endToIso, fieldsToIso, forecastLine, inForecastWindow, isoToFields, myRsvp, nextRsvp,
+  parsePlanArgs, planEnded, planRange, planReady, planWhen, weatherOf,
 } from './plan'
 import { shouldAlert, type AlertInput } from './conversations'
 import { shownText } from './poll'
-import { applyEvent, emptyState } from './state'
+import { applyEvent, applyReady, emptyState } from './state'
+import { testReady } from './testReady'
 import type { Message } from './protocol/Message'
 import type { Plan } from './protocol/Plan'
 
@@ -47,6 +48,26 @@ describe('the form', () => {
     expect(planReady('Braai', '2026-11-20T16:30:00.000Z', '', 'n'.repeat(501), now)).toBe(false)
   })
 
+  it('an optional end time (#399) on the start day, or the next when it is earlier', () => {
+    expect(endToIso('2026-11-20', '18:30', '')).toBeNull()
+    expect(endToIso('2026-11-20', '18:30', '22:00')).toBe(new Date(2026, 10, 20, 22, 0).toISOString())
+    // past midnight, and the same time as the start (a whole day)
+    expect(endToIso('2026-11-20', '19:00', '02:00')).toBe(new Date(2026, 10, 21, 2, 0).toISOString())
+    expect(endToIso('2026-11-30', '19:00', '19:00')).toBe(new Date(2026, 11, 1, 19, 0).toISOString())
+    expect(endToIso('', '19:00', '22:00')).toBeNull()
+  })
+
+  it('an end has to be after the start and within a week', () => {
+    const now = Date.parse('2026-11-16T10:00:00.000Z')
+    const start = '2026-11-20T16:30:00.000Z'
+    expect(planReady('Braai', start, '', '', now, '2026-11-20T19:00:00.000Z')).toBe(true)
+    expect(planReady('Braai', start, '', '', now, null)).toBe(true)
+    expect(planReady('Braai', start, '', '', now, start)).toBe(false)
+    expect(planReady('Braai', start, '', '', now, '2026-11-20T16:00:00.000Z')).toBe(false)
+    expect(planReady('Braai', start, '', '', now, '2026-11-27T16:30:00.000Z')).toBe(true)
+    expect(planReady('Braai', start, '', '', now, '2026-11-27T16:31:00.000Z')).toBe(false)
+  })
+
   it('/plan fills the title', () => {
     expect(parsePlanArgs("  Braai at   kim's ")).toBe("Braai at kim's")
     expect([...parsePlanArgs('é'.repeat(150))].length).toBe(100)
@@ -63,6 +84,20 @@ describe('how it reads', () => {
     expect(later.endsWith(`, ${time(18, 30)}`)).toBe(true)
     expect(later).not.toMatch(/2026/)
     expect(planWhen(new Date(2027, 0, 5, 18, 30).toISOString(), now)).toMatch(/2027/)
+  })
+
+  it('with its end (#399): the time on the same day, the day too on another', () => {
+    const now = new Date(2026, 10, 16, 10, 0).getTime()
+    const time = (h: number, m: number) => new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(2026, 0, 1, h, m))
+    const starts_at = new Date(2026, 10, 16, 19, 0).toISOString()
+    expect(planRange(plan({ starts_at }), now)).toBe(`Today, ${time(19, 0)}`)
+    expect(planRange(plan({ starts_at, ends_at: new Date(2026, 10, 16, 22, 0).toISOString() }), now)).toBe(`Today, ${time(19, 0)}–${time(22, 0)}`)
+    const sat = new Date(2026, 10, 17, 2, 0)
+    const day = new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(sat)
+    expect(planRange(plan({ starts_at, ends_at: sat.toISOString() }), now)).toBe(`Today, ${time(19, 0)} – ${day}, ${time(2, 0)}`)
+    expect(planEnded(plan({ starts_at, ends_at: sat.toISOString() }), sat.getTime())).toBe(true)
+    expect(planEnded(plan({ starts_at, ends_at: sat.toISOString() }), now)).toBe(false)
+    expect(planEnded(plan({ starts_at }), sat.getTime())).toBe(false)
   })
 
   it('a forecast only for a place within the forecast reach, not cancelled', () => {
@@ -105,6 +140,16 @@ describe('answers', () => {
     expect(next.messages.C1[0].plan).toEqual(changed)
     // one this client doesn't hold changes nothing
     expect(applyEvent(s, { t: 'PlanChanged', d: { channel_id: 'C1', message_id: 'NOPE', plan: changed } }, 0)).toBe(s)
+  })
+})
+
+describe('Plan reminders (#399)', () => {
+  it('on unless the server says off; your own sessions hear a change', () => {
+    expect(emptyState().planReminders).toBe(true)
+    expect(applyReady(emptyState(), testReady([])).planReminders).toBe(true)
+    const off = applyReady(emptyState(), testReady([], { plan_reminders: false }))
+    expect(off.planReminders).toBe(false)
+    expect(applyEvent(off, { t: 'PlanRemindersChanged', d: { user_id: 'U1', on: true } }, 0).planReminders).toBe(true)
   })
 })
 
