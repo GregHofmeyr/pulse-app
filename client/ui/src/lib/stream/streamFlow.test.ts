@@ -88,7 +88,7 @@ async function load() {
   vi.resetModules()
   const mod = await import('./stream.svelte')
   const { app } = await import('../store.svelte')
-  app.state = { ...app.state, me: { id: 'me', username: 'me' } as never }
+  app.state = { ...app.state, me: { id: 'me', username: 'me' } as never, conn: 'connected' }
   // in c1's call: watches there are as ourselves (out of it they'd be a ghost's)
   const { voice } = await import('../voice.svelte')
   voice.channelId = 'c1'
@@ -1041,6 +1041,65 @@ describe('ghost viewers (#46)', () => {
     app.state = { ...app.state, streams: { c1: { alex: info('alex', false) } } }
     streamApi.onEvent({ t: 'StreamUpdated', d: { stream: info('alex', false) } } as never)
     await until(() => /voice-only/.test(stream.notice), 'the voice-only notice')
+  })
+
+  /** The server restarts: the gateway drops, and its startup join check removes our ghost connection (#150). */
+  async function restarted() {
+    const mod = await ghosting()
+    mod.streamApi.setView('c1', 'alex', 'full')
+    mod.app.state = { ...mod.app.state, conn: 'reconnecting' }
+    mod.room.lose()
+    await until(() => mod.stream.watching.length === 0, 'the ghost watch to end')
+    const again = fakeRoom()
+    fake.connect = async () => again
+    core.calls = []
+    mod.app.state = { ...mod.app.state, conn: 'connected' }
+    return { ...mod, again }
+  }
+
+  it('a_ghost_watch_a_server_restart_drops_is_watched_again_once_it_is_back', async () => {
+    const { streamApi, stream, findWatch } = await restarted()
+    expect(stream.notice).toBe('')
+    await streamApi.onReady({ me: { id: 'me' }, streams: [info('alex')] } as never)
+    await until(() => stream.watching.length === 1, 'the watch to start again')
+    expect(fake.args.at(-1)).toEqual(['c1', true]) // a fresh ghost connection
+    expect(calls('stream_watch')).toEqual([{ channelId: 'c1', streamer: 'alex', ghost: true }])
+    expect(findWatch('c1', 'alex')).toMatchObject({ ghost: true, view: 'full' })
+    expect(stream.notice).toBe('')
+  })
+
+  it('a_ghost_watch_dropped_by_a_restart_waits_for_the_stream_to_come_back', async () => {
+    const { streamApi, stream } = await restarted()
+    // the streamer isn't back yet when we are
+    await streamApi.onReady({ me: { id: 'me' }, streams: [] } as never)
+    await settle()
+    expect(stream.watching).toHaveLength(0)
+    streamApi.onEvent({ t: 'StreamStarted', d: { stream: info('alex') } } as never)
+    await until(() => stream.watching.length === 1, 'the watch to start again')
+    expect(stream.watching[0]).toMatchObject({ streamer: 'alex', ghost: true })
+  })
+
+  it('a_ghost_watch_dropped_by_a_restart_is_not_watched_again_once_ghosts_are_off', async () => {
+    const { streamApi, stream } = await restarted()
+    await streamApi.onReady({ me: { id: 'me' }, streams: [info('alex', false)] } as never)
+    await settle()
+    expect(stream.watching).toHaveLength(0)
+    expect(stream.notice).toMatch(/switched to voice-only$/)
+  })
+
+  it('a_ghost_watch_dropped_by_a_restart_whose_stream_never_comes_back_says_so', async () => {
+    const { streamApi, stream } = await restarted()
+    vi.useFakeTimers()
+    try {
+      await streamApi.onReady({ me: { id: 'me' }, streams: [] } as never)
+      await vi.advanceTimersByTimeAsync(61_000)
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(stream.notice).toBe('Stopped watching: the connection was lost')
+    streamApi.onEvent({ t: 'StreamStarted', d: { stream: info('alex') } } as never)
+    await settle()
+    expect(stream.watching).toHaveLength(0)
   })
 
   it('a_voice_only_stream_elsewhere_or_while_watching_as_yourself_says_nothing', async () => {

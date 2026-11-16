@@ -103,6 +103,14 @@ let connecting: { channelId: string; ghost: boolean; p: Promise<StreamRoom> } | 
 /** A ghost connection LiveKit dropped: where, and when (the voice-only notice may come after). */
 let ghostLost: { channelId: string; at: number } | null = null
 const GHOST_LOST_WINDOW_MS = 10_000
+/**
+ * Ghost watches a server restart dropped (#150): ghost identities live only in the server's memory, so its startup
+ * join check removes our ghost connection while the gateway is down. They're watched again, with a fresh ghost
+ * connection, once the server is back and the stream is too (within `BACK_WITHIN_MS` of the Ready).
+ */
+let restartLost: Watching[] = []
+let restartGiveUp: ReturnType<typeof setTimeout> | null = null
+const LOST = 'Stopped watching: the connection was lost'
 const VOICE_ONLY = (name: string) => `${name} switched to voice-only`
 /** A ghost who joined the call waits this long for it to connect before watching as themselves. */
 const UPGRADE_WAIT_MS = 15_000
@@ -213,13 +221,20 @@ async function roomLost(mine: number) {
     // switched off (say so, now or when the event that says why arrives)
     const channelId = was.channelId
     if (voice.channelId === channelId) return upgrade(channelId)
+    if (app.state.conn !== 'connected') {
+      // the gateway is down too: a server restart (or our network), so watch again once it's back
+      restartLost = stream.watching.filter((w) => w.channelId === channelId && w.ghost).map((w) => ({ ...w }))
+      streamCmd.log({ ev: 'ghost_lost_in_restart', watches: restartLost.length })
+      await endWatches((w) => w.channelId === channelId && !!w.ghost, false)
+      return
+    }
     const blocker = voiceOnlyStreamer(app.state.streams[channelId])
     ghostLost = blocker ? null : { channelId, at: Date.now() }
-    stream.notice = blocker ? VOICE_ONLY(nameOf(channelId, blocker)) : 'Stopped watching: the connection was lost'
+    stream.notice = blocker ? VOICE_ONLY(nameOf(channelId, blocker)) : LOST
     await endWatches((w) => w.channelId === channelId && !!w.ghost, false)
     return
   }
-  stream.notice = stream.live ? 'Streaming stopped: the connection was lost' : 'Stopped watching: the connection was lost'
+  stream.notice = stream.live ? 'Streaming stopped: the connection was lost' : LOST
   // only what was on the lost connection: a watch started on a new one meanwhile stays
   const lost = new Set(stream.watching.map((w) => streamKey(w.channelId, w.streamer)))
   if (stream.live) {
@@ -227,6 +242,33 @@ async function roomLost(mine: number) {
     await endLive(true)
   }
   await endWatches((w) => lost.has(streamKey(w.channelId, w.streamer)), true)
+}
+
+/** Watch again what a restart dropped, for each of `streams` (now listed, or just started) it was on. */
+async function rewatchAfterRestart(streams: StreamInfo[]) {
+  for (const s of streams) {
+    const i = restartLost.findIndex((w) => w.channelId === s.channel_id && w.streamer === s.user_id)
+    if (i < 0) continue
+    const [w] = restartLost.splice(i, 1)
+    if (!restartLost.length && restartGiveUp) {
+      clearTimeout(restartGiveUp)
+      restartGiveUp = null
+    }
+    if (voice.channelId !== w.channelId && !s.settings.allow_ghosts) {
+      stream.notice = VOICE_ONLY(nameOf(w.channelId, w.streamer))
+      continue
+    }
+    if (stream.watching.length >= MAX_WATCHED) continue // they picked something else meanwhile
+    streamCmd.log({ ev: 'ghost_rewatch_after_restart' })
+    await watch(w.channelId, w.streamer)
+    const now = findWatch(w.channelId, w.streamer)
+    if (now) {
+      now.quality = w.quality
+      now.view = w.view
+      applyLayer(now)
+      syncInDiag()
+    }
+  }
 }
 
 /** Nothing to publish or watch: let the connection go. */
@@ -843,6 +885,7 @@ export const streamApi = {
       // restarted server lost its viewers, so list us again
       const w = findWatch(channelId, streamer)
       if (w) void streamCmd.watch(channelId, streamer, !!w.ghost).catch(logError('rewatch_error'))
+      void rewatchAfterRestart([e.d.stream])
     } else if (e.t === 'StreamEnded') {
       removeToast(e.d.channel_id, e.d.user_id)
       // before onStreamEnded ends the watch
@@ -869,6 +912,18 @@ export const streamApi = {
       const watched = ready.streams.find((s) => s.channel_id === w.channelId && s.user_id === w.streamer)
       // a ghost can't tell from the count whether it's among it: listing it again is harmless (idempotent)
       if (watched && (w.ghost || !watched.viewers.includes(ready.me.id))) await streamCmd.watch(w.channelId, w.streamer, !!w.ghost).catch(logError('rewatch_error'))
+    }
+    if (restartLost.length) {
+      // what isn't back yet may come with its streamer's re-announce; past that, say what happened
+      if (restartGiveUp) clearTimeout(restartGiveUp)
+      restartGiveUp = setTimeout(() => {
+        restartGiveUp = null
+        if (!restartLost.length) return
+        restartLost = []
+        stream.notice = LOST
+        void releaseIfIdle()
+      }, BACK_WITHIN_MS)
+      await rewatchAfterRestart(ready.streams)
     }
     const live = stream.live
     if (!live || !needsReannounce(ready.me.id, live, ready.streams)) return
