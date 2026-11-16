@@ -306,6 +306,8 @@ async fn create(
         joined: vec![],
     })?;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    // The group may have gone with its last member since the caller's check (#364): no line, no call.
+    crate::access::channel_live_in(&mut tx, channel).await?;
     let line = system::insert(
         &mut tx,
         channel,

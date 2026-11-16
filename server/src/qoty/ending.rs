@@ -81,7 +81,8 @@ pub(crate) async fn finish(
         for ch in channels {
             let content =
                 format!("Nobody voted in Quote of the Year {year}, so there's no winner.");
-            cards.push(post_card(tx, parse_id(&ch)?, content, card(None, vec![], vec![])).await?);
+            let c = card(None, vec![], vec![]);
+            cards.extend(post_card(tx, parse_id(&ch)?, content, c).await?);
         }
         return Ok(Some(Ended {
             event: id,
@@ -118,7 +119,7 @@ pub(crate) async fn finish(
             }
         }
         let c = card(Some(parse_id(&message)?), voters, speakers);
-        cards.push(post_card(tx, parse_id(&channel)?, content, c).await?);
+        cards.extend(post_card(tx, parse_id(&channel)?, content, c).await?);
     }
     // A win each, however many lines or co-winning quotes they said.
     for &who in &won {
@@ -168,14 +169,21 @@ async fn snapshot_speakers(
     Ok(out)
 }
 
+/// Post a card in `channel`, unless it went to Recently deleted (or its server did) by now (#364):
+/// then no card, as no line lands in a deleted channel, but the ending (and any win) still stands,
+/// so a vote never waits on a channel. A channel with an option on the ballot can't be deleted, so
+/// this is the backstop for a delete that raced the ending under the write lock.
 async fn post_card(
     tx: &mut SqliteConnection,
     channel: ChannelId,
     content: String,
     card: QotyCard,
-) -> AppResult<Message> {
+) -> AppResult<Option<Message>> {
+    if !crate::access::channel_is_live_in(tx, channel).await? {
+        return Ok(None);
+    }
     let payload = system::qoty_card_payload(&card)?;
-    system::insert(tx, channel, content, payload).await
+    Ok(Some(system::insert(tx, channel, content, payload).await?))
 }
 
 /// On `tx`, end the server's live vote by time if its deadline has passed but no sweep has ended

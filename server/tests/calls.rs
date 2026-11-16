@@ -668,3 +668,31 @@ async fn a_call_that_began_while_down_is_opened_by_the_restore() {
     assert_eq!(ready.calls[0].started_by, Some(p.sam.0));
     assert!(ready.ringing.is_empty(), "only the start route rings");
 }
+
+/// A group that went (with its last member) after a join's check gets no line and no call (#364):
+/// `create` re-checks the channel under the write lock.
+#[tokio::test]
+async fn a_join_racing_the_group_going_makes_no_call() {
+    let app = spawn().await;
+    let p = people(&app).await;
+    let group = create_dm(&app, &p.alex.1, &[p.sam.0, p.jo.0]).await;
+    // The join looked the group up just before it went.
+    sqlx::query("UPDATE channels SET deleted_at = '2026-01-01T00:00:00.000Z' WHERE id = ?")
+        .bind(group.id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    pulse_server::calls::joined(&app.state(), &group, p.alex.0).await;
+    let calls: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calls")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let lines: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM messages WHERE channel_id = ? AND content LIKE '%started a call'",
+    )
+    .bind(group.id.to_string())
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!((calls, lines), (0, 0));
+}

@@ -876,6 +876,48 @@ async fn co_winners_get_a_card_each() {
     );
 }
 
+/// A winner's channel that went to Recently deleted as the vote ended (past the delete's own
+/// check) gets no card, but the vote still ends and the win stands (#364).
+#[tokio::test]
+async fn a_winner_in_a_just_deleted_channel_wins_without_a_card() {
+    let f = fixture().await;
+    let ch2 = create_quotes(&f.app, &f.alex_t, f.server, "more-quotes").await;
+    let e = f.started().await;
+    let a = f.quote("a").await;
+    let b = f.quote_in(ch2.id, "b").await;
+    for m in [&a, &b] {
+        assert_eq!(f.add(&f.alex_t, e.id, m.id).await.status(), 200);
+    }
+    f.voted(&f.alex_t, e.id, a.id).await;
+    f.voted(&f.sam_t, e.id, b.id).await;
+    f.sql(&format!(
+        "UPDATE channels SET deleted_at = '2026-01-01T00:00:00.000Z' WHERE id = '{}'",
+        ch2.id
+    ))
+    .await;
+    f.ended(&f.alex_t, e.id).await;
+    let in_ch: Vec<MessageId> = f
+        .cards(f.ch.id)
+        .await
+        .iter()
+        .map(|m| m.qoty_card.clone().unwrap().message_id.unwrap())
+        .collect();
+    assert_eq!(in_ch, vec![a.id]);
+    let q = format!(
+        "SELECT COUNT(*) FROM messages WHERE channel_id = '{}' AND kind = 'system'",
+        ch2.id
+    );
+    assert_eq!(f.count(&q).await, 0, "no card in the deleted channel");
+    assert_eq!(
+        f.count(&format!(
+            "SELECT COUNT(*) FROM qoty_winners WHERE event_id = '{}'",
+            e.id
+        ))
+        .await,
+        2
+    );
+}
+
 #[tokio::test]
 async fn no_votes_says_so() {
     let f = fixture().await;
