@@ -72,8 +72,8 @@ pub async fn sessions_revoked(s: &AppState) {
 }
 
 /// `user` left or was removed from `server`: their stream-room connections in its channels go,
-/// ghost and named. A join they make later is refused anyway (`voice::revoke::admit`). For the
-/// leave / remove-member route when there is one (no such route yet).
+/// ghost and named. A join they make later is refused anyway (`voice::revoke::admit`). Called by
+/// the leave and remove-member routes (#371, `servers::membership`) once the membership row is gone.
 pub async fn member_removed(s: &AppState, server: ServerId, user: UserId) {
     let mut channels = Vec::new();
     for c in s.streams.all().iter().map(|i| i.channel_id) {

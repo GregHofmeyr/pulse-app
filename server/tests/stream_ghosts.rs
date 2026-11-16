@@ -723,6 +723,65 @@ async fn leaving_the_server_removes_their_stream_connections() {
     assert!(app.streams.get(ch, w.alex.0).unwrap().viewers.is_empty());
 }
 
+/// #149 through the routes (#371): leaving the server, or being removed from it, ends that person's stream-room
+/// connections there, ghost and named, and their viewing.
+#[tokio::test]
+async fn leaving_or_being_removed_ends_their_stream_room_connections() {
+    let (app, lk) = spawn_lk(test_config()).await;
+    let w = world(&app).await;
+    let ch = w.lounge.id;
+    let room = format!("{ch}~s");
+    go_live(&app, &w.alex.1, ch, true).await;
+    // sam watches as a ghost from outside the call, and leaves
+    let id = ghost_watching(&app, &lk, &w).await;
+    let r = post_json(
+        &app,
+        &w.sam.1,
+        &format!("/servers/{}/leave", w.server),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 204);
+    assert!(
+        eventually(|| {
+            let r = lk.removed();
+            r.contains(&(room.clone(), format!("{id}#v")))
+                && r.contains(&(room.clone(), format!("{id}#a")))
+        })
+        .await,
+        "{:?}",
+        lk.removed()
+    );
+    assert_eq!(app.streams.get(ch, w.alex.0).unwrap().ghosts, 0);
+    // kim, in the call and watching by name, is removed by the owner: out of the voice room and the stream room
+    lk.connect(&ch.to_string(), &w.kim.0.to_string(), "PA_kim", "");
+    let grant = grant_livekit(&app, &room, &format!("{}#v", w.kim.0)).await;
+    lk.connect(&room, &format!("{}#v", w.kim.0), "PA_kv", &grant);
+    watch(&app, &w.kim.1, ch, w.alex.0, false).await;
+    let r = app
+        .http
+        .delete(app.url(&format!("/servers/{}/members/{}", w.server, w.kim.0)))
+        .bearer_auth(&w.alex.1)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    assert!(
+        eventually(|| {
+            let r = lk.removed();
+            r.contains(&(room.clone(), format!("{}#v", w.kim.0)))
+                && r.contains(&(ch.to_string(), w.kim.0.to_string()))
+        })
+        .await,
+        "{:?}",
+        lk.removed()
+    );
+    assert!(app.streams.get(ch, w.alex.0).unwrap().viewers.is_empty());
+    assert!(!app.voice_members(ch).contains(&w.kim.0));
+    // a stream ticket is refused now
+    assert_eq!(ticket(&app, &w.kim.1, ch, "v", false).await.status(), 403);
+}
+
 #[tokio::test]
 async fn previews_follow_the_ghost_rule() {
     let app = spawn().await;

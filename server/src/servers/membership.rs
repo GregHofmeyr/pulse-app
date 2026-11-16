@@ -1,13 +1,15 @@
 //! Leaving a server, and its owner removing someone from it (#371).
 //!
-//! Anyone but the owner may leave; the owner may remove anyone else. There is no ownership transfer, so the owner
-//! can't leave (they can delete the server instead, #184). Both take the same way out ([`take_out`]): the membership
-//! row goes, with their read points, replies seen, inbox reads and reminders in its channels (their inbox drops the
-//! server's mentions, which only count for members), and everyone hears `MemberLeft`. Anyone in one of its calls is taken out
-//! of it (voice state, their stream, watching, stage share and watch party place) and their LiveKit connections for
-//! the server are removed (#149). Their messages stay. Everything that checks membership as it acts (posting,
-//! reacting, voice and stream tokens, the posting workers, scheduled messages at their time) refuses them from then
-//! on, and mentions in its channels no longer reach them (`messages::mentions`).
+//! Anyone but the owner may leave; the owner may remove anyone else. There is no ownership transfer, so the owner can't
+//! leave (they can delete the server instead, #184). Both take the same way out ([`take_out`]): the membership row
+//! goes, with their read points, replies seen, inbox reads and reminders in its channels (their inbox drops the
+//! server's mentions, which only count for members), and everyone hears `MemberLeft`. Anyone in one of its calls is
+//! taken out of it (voice state, their stream, watching, stage share and watch party place), and their LiveKit
+//! connections for the server go (#149): the voice room, and every stream room of its channels (ghost and named,
+//! `streams::ghosts::member_removed`). A join they try later is refused anyway (`voice::revoke::admit` checks
+//! membership). Their messages stay. Everything that checks membership as it acts (posting, reacting, voice and stream
+//! tokens, the posting workers, scheduled messages at their time) refuses them from then on, and mentions in its
+//! channels no longer reach them (`messages::mentions`).
 //!
 //! Nothing stops a rejoin: servers are public to the group, and Join server works as before, starting at "all read".
 
@@ -167,6 +169,9 @@ pub(crate) async fn take_out(
     }
     drop(order);
     out_of_calls(s, server, user, by).await;
+    // Their stream-room connections in its channels go too (#149): a ghost viewer isn't in the call, and a named
+    // viewer's `#v` / `#a` may outlive their voice connection.
+    crate::streams::ghosts::member_removed(s, server, user).await;
     Ok(())
 }
 
@@ -206,5 +211,6 @@ async fn out_of_calls(s: &AppState, server: ServerId, user: UserId, by: Option<U
     if let Err(e) = crate::voice::routes::left_call(s, &ch, user, "", false).await {
         tracing::error!(error = ?e, channel = %channel, user = %user, "couldn't take a leaver out of their call");
     }
-    crate::voice::revoke::remove_identities(s, &channel.to_string(), &[user.to_string()]).await;
+    // out of its LiveKit voice room, and their connections out of its stream room
+    crate::voice::revoke::remove_from_call(s, channel, &[user]).await;
 }
