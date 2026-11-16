@@ -1,6 +1,7 @@
 // Message search: the last search run and its results (a snapshot: nothing updates them live), and
 // where a clicked result goes.
 import { openMessage } from './openMessage'
+import { ui } from './store.svelte'
 import { api, errorText } from './tauri'
 import { toRequest, type Chip } from './searchQuery'
 import type { SearchHit } from './protocol/SearchHit'
@@ -74,7 +75,7 @@ export function closeSearch(): void {
 }
 
 /** Show a result where it lives (lib/openMessage.ts: a clip's panel, a quote's replies, or the message in its
- *  channel); the results stay open for the next one. */
+ *  channel); the results stay open for the next one. A chat that's gone since says so, as the inbox does (#347). */
 export function openHit(hit: SearchHit): void {
-  openMessage(hit.message, hit.root)
+  if (!openMessage(hit.message, hit.root)) ui.notice = 'That channel was deleted.'
 }

@@ -111,6 +111,10 @@ pub struct LimitsConfig {
     /// Message searches per user. Reads are otherwise free, but a search can scan far more rows
     /// than a page of history.
     pub search_user: Rate,
+    /// Searches everywhere you can read (`GET /search`, #331), per user. Its own bucket (#347):
+    /// the quick switcher sends one of these with each search for where you are, so sharing
+    /// `search_user` would halve how many pauses either section gets.
+    pub search_everywhere_user: Rate,
     /// Messages per user whose links get previews fetched (sends and edits with links). Over
     /// it, the message still posts; it just gets no previews.
     pub unfurl_user: Rate,
@@ -186,6 +190,8 @@ impl Default for LimitsConfig {
             attachment_user: Rate::new(60, 1.0),
             // The box searches on Enter (and Load more), so a person stays far below this.
             search_user: Rate::new(20, 2.0),
+            // the quick switcher's second search on each pause (#347): the same allowance
+            search_everywhere_user: Rate::new(20, 2.0),
             unfurl_user: Rate::per_minute(20),
             link_thumb_user: Rate::per_hour(60),
             rename_user: Rate::per_minute(30),
@@ -238,6 +244,7 @@ impl LimitsConfig {
             clip_url_user: r,
             attachment_user: r,
             search_user: r,
+            search_everywhere_user: r,
             unfurl_user: r,
             link_thumb_user: r,
             rename_user: r,
@@ -398,6 +405,7 @@ pub struct Limits {
     pub clip_url_user: Limiter,
     pub attachment_user: Limiter,
     pub search_user: Limiter,
+    pub search_everywhere_user: Limiter,
     pub unfurl_user: Limiter,
     pub link_thumb_user: Limiter,
     pub rename_user: Limiter,
@@ -441,6 +449,7 @@ impl Limits {
             clip_url_user: Limiter::new(c.clip_url_user),
             attachment_user: Limiter::new(c.attachment_user),
             search_user: Limiter::new(c.search_user),
+            search_everywhere_user: Limiter::new(c.search_everywhere_user),
             unfurl_user: Limiter::new(c.unfurl_user),
             link_thumb_user: Limiter::new(c.link_thumb_user),
             rename_user: Limiter::new(c.rename_user),

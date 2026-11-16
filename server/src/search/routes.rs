@@ -15,6 +15,7 @@ use crate::AppState;
 use crate::access::{channel_for, readable_channel_ids_everywhere, readable_server_channels};
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
+use crate::limits::Limiter;
 use crate::messages::routes::{COLS, Row, fill};
 
 use super::text::{self, Term};
@@ -256,7 +257,7 @@ async fn everywhere(
     AuthUser(me): AuthUser,
     Query(p): Query<Params>,
 ) -> AppResult<Json<SearchResults>> {
-    limit(&s, me)?;
+    limit_on(&s.limits.search_everywhere_user, me)?;
     if p.in_channel.is_some() {
         return Err(AppError::BadRequest("in: is for server search".into()));
     }
@@ -280,7 +281,11 @@ fn ids(channels: &[Channel]) -> Vec<String> {
 }
 
 fn limit(s: &AppState, me: UserId) -> AppResult<()> {
-    if s.limits.search_user.hit(&me.to_string()) {
+    limit_on(&s.limits.search_user, me)
+}
+
+fn limit_on(limiter: &Limiter, me: UserId) -> AppResult<()> {
+    if limiter.hit(&me.to_string()) {
         Ok(())
     } else {
         Err(AppError::TooManyRequests(None))

@@ -141,6 +141,13 @@ describe('search store', () => {
     expect(invoke).toHaveBeenCalledWith('list_messages_around', { channelId: 'K1', messageId: 'V1' })
   })
 
+  it("a hit in a chat that's gone says so, as the inbox does (#347)", () => {
+    ui.notice = null
+    openHit(hit(msg('M1', 'GONE')))
+    expect(ui.goTo).toBeNull()
+    expect(ui.notice).toBe('That channel was deleted.')
+  })
+
   it('the results stay open after a click', () => {
     search.open = true
     openHit(hit(msg('R1', 'Q1', { thread_root_id: 'Q9' }), msg('Q9', 'Q1')))

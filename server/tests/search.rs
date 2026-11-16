@@ -561,6 +561,26 @@ async fn rate_limited_429() {
     assert_eq!(get(&app, &alex, &path).await.status(), 429);
 }
 
+/// The quick switcher sends a search for where you are and one everywhere on each pause (#347):
+/// everywhere has its own bucket, so the pair doesn't drain the first section's twice as fast.
+#[tokio::test]
+async fn everywhere_has_its_own_rate_limit() {
+    let mut cfg = test_config();
+    cfg.limits.search_user = pulse_server::limits::Rate::new(2, 0.0001);
+    cfg.limits.search_everywhere_user = pulse_server::limits::Rate::new(2, 0.0001);
+    let app = spawn_with(cfg).await;
+    let (_, alex) = register(&app, "alex").await;
+    let s = create_server(&app, &alex, "Main").await;
+    let here = format!("/servers/{}/search?q=pizza", s.id);
+    let all = "/search?q=pizza";
+    for _ in 0..2 {
+        assert_eq!(get(&app, &alex, &here).await.status(), 200);
+        assert_eq!(get(&app, &alex, all).await.status(), 200);
+    }
+    assert_eq!(get(&app, &alex, all).await.status(), 429);
+    assert_eq!(get(&app, &alex, &here).await.status(), 429);
+}
+
 // ---------- everywhere (#331): every channel you can read, in one walk ----------
 
 async fn everywhere(f: &Fx, token: &str, query: &str) -> SearchResults {
