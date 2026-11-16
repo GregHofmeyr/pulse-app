@@ -188,7 +188,7 @@ describe('VoiceSettings echo cancellation (#76)', () => {
     const c = mount(VoiceSettings, { target: document.body })
     flushSync()
     const line = () => document.querySelector('[data-echo-decision]')?.textContent?.trim() ?? null
-    expect(line()).toBe('Off for now: your output is headphones or a headset')
+    expect(line()).toBe('Off for now: your output is headphones or a headset. Speakers in a headphone jack? Choose On')
     voice.echo = { mode: 'auto', running: true, output: 'unknown' }
     flushSync()
     expect(line()).toBe("On: your output doesn't say it's headphones")

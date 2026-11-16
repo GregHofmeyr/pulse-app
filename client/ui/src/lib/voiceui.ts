@@ -195,10 +195,12 @@ export function serverVoiceSound(c: Flags, next: { muted: boolean; deafened: boo
 
 export type EchoReport = { mode: EchoMode; running: boolean; output: 'headphones' | 'other' | 'unknown' }
 
-/** The line under echo cancellation's Auto (#172): what Auto decided for the output open now, from the core. */
+/** The line under echo cancellation's Auto (#172): what Auto decided for the output open now, from the core. Off
+ * trusts the device's word that it's headphones, which a headphone jack says whatever is plugged in (#354): the
+ * line says how to turn it on for speakers there. */
 export function echoDecision(e: EchoReport | null, chosen: EchoMode): string | null {
   if (chosen !== 'auto' || !e || e.mode !== 'auto') return null
-  if (!e.running) return 'Off for now: your output is headphones or a headset'
+  if (!e.running) return 'Off for now: your output is headphones or a headset. Speakers in a headphone jack? Choose On'
   return e.output === 'other' ? "On: your output isn't headphones or a headset" : "On: your output doesn't say it's headphones"
 }
 

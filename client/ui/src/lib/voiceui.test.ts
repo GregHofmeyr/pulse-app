@@ -57,7 +57,7 @@ describe('serverVoiceSound (#147)', () => {
 
 describe('echoDecision (#172)', () => {
   it('under Auto, says what it decided and why', () => {
-    expect(echoDecision({ mode: 'auto', running: false, output: 'headphones' }, 'auto')).toBe('Off for now: your output is headphones or a headset')
+    expect(echoDecision({ mode: 'auto', running: false, output: 'headphones' }, 'auto')).toBe('Off for now: your output is headphones or a headset. Speakers in a headphone jack? Choose On')
     expect(echoDecision({ mode: 'auto', running: true, output: 'other' }, 'auto')).toBe("On: your output isn't headphones or a headset")
     expect(echoDecision({ mode: 'auto', running: true, output: 'unknown' }, 'auto')).toBe("On: your output doesn't say it's headphones")
   })

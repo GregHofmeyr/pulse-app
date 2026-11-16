@@ -21,17 +21,32 @@ use crate::models::{LoadError, ModelStore};
 const OVERLOAD_WINDOW: usize = 300; // 3 s of 10 ms blocks
 const OVERLOAD_MEAN: Duration = Duration::from_micros(7_000); // 70% of the 10 ms budget
 
-/// Detects a PC that can't keep up: the mean over a full 3 s window above 70% of the budget.
+/// After a too-heavy step down (#354): the PC must be calm this long before one level up is tried again, doubling
+/// (up to [`RECOVER_MAX`]) each time it proves too heavy again, until a level is picked.
+const RECOVER_FIRST: Duration = Duration::from_secs(5 * 60);
+const RECOVER_MAX: Duration = Duration::from_secs(40 * 60);
+/// Not calm: the running engine's mean over a full 3 s window above 35% of the budget (half the overload mark). On
+/// Standard this mostly measures the PC being busy elsewhere, since the time is wall-clock.
+const BUSY_MEAN: Duration = Duration::from_micros(3_500);
+
+/// Detects a PC that can't keep up: the mean over a full 3 s window above 70% of the budget (or another mark).
 pub struct OverloadDetector {
     times: VecDeque<Duration>,
     sum: Duration,
+    mean: Duration,
 }
 
 impl OverloadDetector {
     pub fn new() -> Self {
+        Self::with_mean(OVERLOAD_MEAN)
+    }
+
+    /// Trips when a full window's mean is above `mean`.
+    pub fn with_mean(mean: Duration) -> Self {
         Self {
             times: VecDeque::with_capacity(OVERLOAD_WINDOW),
             sum: Duration::ZERO,
+            mean,
         }
     }
 
@@ -46,11 +61,80 @@ impl OverloadDetector {
         if self.times.len() > OVERLOAD_WINDOW {
             self.sum -= self.times.pop_front().unwrap_or_default();
         }
-        self.times.len() == OVERLOAD_WINDOW && self.sum / OVERLOAD_WINDOW as u32 > OVERLOAD_MEAN
+        self.times.len() == OVERLOAD_WINDOW && self.sum / OVERLOAD_WINDOW as u32 > self.mean
     }
 }
 
 impl Default for OverloadDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// When to step back up after a too-heavy step down (pure): once the PC has been calm for the current wait.
+pub struct Recovery {
+    /// Set while a step up is pending: calm since then, for `calm_needed`.
+    calm_since: Option<Instant>,
+    calm_needed: Duration,
+    /// The wait the next step down will need.
+    next_wait: Duration,
+}
+
+impl Recovery {
+    pub fn new() -> Self {
+        Self {
+            calm_since: None,
+            calm_needed: RECOVER_FIRST,
+            next_wait: RECOVER_FIRST,
+        }
+    }
+
+    /// Stepped down for being too heavy at `now`: a step up is pending, and the next one will wait longer.
+    pub fn stepped_down(&mut self, now: Instant) {
+        self.calm_since = Some(now);
+        self.calm_needed = self.next_wait;
+        self.next_wait = (self.next_wait * 2).min(RECOVER_MAX);
+    }
+
+    /// Stepped up at `now` but not yet to what's wanted: the next level up after the same wait again.
+    pub fn again(&mut self, now: Instant) {
+        self.calm_since = Some(now);
+    }
+
+    /// The PC was busy at `now`: the calm starts over.
+    pub fn busy(&mut self, now: Instant) {
+        if let Some(since) = &mut self.calm_since {
+            *since = now;
+        }
+    }
+
+    pub fn pending(&self) -> bool {
+        self.calm_since.is_some()
+    }
+
+    /// Whether to step up now (once: the step up is no longer pending).
+    pub fn due(&mut self, now: Instant) -> bool {
+        let due = self
+            .calm_since
+            .is_some_and(|since| now.duration_since(since) >= self.calm_needed);
+        if due {
+            self.calm_since = None;
+        }
+        due
+    }
+
+    /// Nothing to step back up to (a failure, not the PC, chose the level).
+    pub fn cancel(&mut self) {
+        self.calm_since = None;
+    }
+
+    /// A level was picked: start over.
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+}
+
+impl Default for Recovery {
     fn default() -> Self {
         Self::new()
     }
@@ -306,6 +390,9 @@ pub struct NsControl {
     models: Option<Arc<ModelStore>>,
     /// The models' epoch last seen: a download that finishes mid-call is picked up.
     epoch: u64,
+    /// Stepping back up after a too-heavy step down (#354), and whether the PC is calm meanwhile.
+    recovery: Recovery,
+    busy: OverloadDetector,
 }
 
 impl NsControl {
@@ -317,6 +404,8 @@ impl NsControl {
             load_rx,
             epoch: models.as_ref().map_or(0, |m| m.epoch()),
             models,
+            recovery: Recovery::new(),
+            busy: OverloadDetector::with_mean(BUSY_MEAN),
         }
     }
 
@@ -335,6 +424,12 @@ impl NsControl {
     /// The user picked `level` (also at start). Between Strong and low delay the running model carries on until the
     /// other has loaded; from Off or Standard, Standard runs meanwhile.
     pub fn choose(&mut self, level: NsLevel, chain: &mut MicChain, shared: &Shared) {
+        self.recovery.reset();
+        self.aim(level, chain, shared);
+    }
+
+    /// Aim for `level` as [`Self::choose`] does, keeping the recovery's backoff.
+    fn aim(&mut self, level: NsLevel, chain: &mut MicChain, shared: &Shared) {
         let g = self.switcher.request(level);
         let running = chain.level();
         let model = match level {
@@ -389,12 +484,14 @@ impl NsControl {
                     set_status(shared, model.level(), self.switcher.note());
                 }
                 (Model::LowDelay, Err(e)) => {
+                    self.recovery.cancel();
                     let missing = e.downcast_ref::<LoadError>() == Some(&LoadError::Missing);
                     tracing::warn!(error = %e, "noise suppression: Strong (low delay) failed to load, using Strong");
                     let note = if missing { LL_MISSING } else { LL_UNAVAILABLE };
                     self.fall_back_to_strong(note, chain, shared);
                 }
                 (Model::Normal, Err(e)) => {
+                    self.recovery.cancel();
                     report_load_failure(shared, &e.to_string());
                     self.switcher
                         .fall_back(NsLevel::Standard, STRONG_UNAVAILABLE);
@@ -433,8 +530,11 @@ impl NsControl {
         chain.level().is_deep_filter() && chain.level() == self.switcher.target()
     }
 
-    /// This PC can't keep up: low delay → Strong, Strong → Standard.
-    pub fn overloaded(&mut self, chain: &mut MicChain, shared: &Shared) {
+    /// This PC can't keep up: low delay → Strong, Strong → Standard. One level up is tried again once the PC has
+    /// been calm for a while ([`Self::tick`]).
+    pub fn overloaded(&mut self, chain: &mut MicChain, shared: &Shared, now: Instant) {
+        self.recovery.stepped_down(now);
+        self.busy.reset();
         if chain.level() == NsLevel::StrongLowDelay {
             tracing::warn!(
                 "noise suppression: this PC can't keep up with Strong (low delay), switching to Strong"
@@ -453,12 +553,47 @@ impl NsControl {
         if !chain.denoiser_failed() {
             return false;
         }
+        self.recovery.cancel();
         if chain.level() == NsLevel::StrongLowDelay {
             tracing::warn!("noise suppression: Strong (low delay) stopped working, using Strong");
             self.fall_back_to_strong(LL_STOPPED, chain, shared);
         } else {
             recover_failed(chain, shared);
             self.switcher.fall_back(NsLevel::Standard, STRONG_STOPPED);
+        }
+        true
+    }
+}
+
+impl NsControl {
+    /// A block took `took` at `now`, whatever ran: while a step up is pending, a busy stretch restarts the calm.
+    pub fn block_time(&mut self, took: Duration, now: Instant) {
+        if self.recovery.pending() && self.busy.record(took) {
+            self.recovery.busy(now);
+            self.busy.reset();
+        }
+    }
+
+    /// After a too-heavy step down and a calm spell: try one level up (Standard → Strong, Strong → low delay), never
+    /// past what's wanted. Not while a model loads. True if it stepped up.
+    pub fn tick(&mut self, now: Instant, chain: &mut MicChain, shared: &Shared) -> bool {
+        if chain.level() != self.switcher.target() || !self.recovery.due(now) {
+            return false;
+        }
+        self.busy.reset();
+        let wanted = self.switcher.wanted();
+        let up = match chain.level() {
+            NsLevel::Standard if wanted.is_deep_filter() => NsLevel::Strong,
+            NsLevel::Strong if wanted == NsLevel::StrongLowDelay => NsLevel::StrongLowDelay,
+            _ => return false,
+        };
+        tracing::info!(level = ?up, "noise suppression: the PC has been calm, trying a stronger level again");
+        if up == wanted {
+            self.aim(wanted, chain, shared);
+        } else {
+            // Strong on the way back to low delay: low delay is still the one that was too heavy
+            self.fall_back_to_strong(LL_TOO_HEAVY, chain, shared);
+            self.recovery.again(now);
         }
         true
     }
@@ -735,8 +870,11 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
                 overload.reset();
             }
         }
-        // the low-delay model finished downloading; a finished model load
+        // the low-delay model finished downloading; a finished model load; back up after a calm spell (#354)
         ns.check_models(&chain, &shared);
+        if ns.tick(Instant::now(), &mut chain, &shared) {
+            overload.reset();
+        }
         if ns.take_loaded(&mut chain, &shared) {
             overload.reset();
         }
@@ -824,8 +962,9 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
             shared
                 .stats
                 .record_mic_block(out.ns_in, out.ns_out, out.judged, out.sent);
+            ns.block_time(t.elapsed(), t);
             if ns.measures(&chain) && overload.record(t.elapsed()) {
-                ns.overloaded(&mut chain, &shared);
+                ns.overloaded(&mut chain, &shared, t);
                 overload.reset();
             }
             if ns.recover(&mut chain, &shared) {
@@ -1778,7 +1917,7 @@ mod tests {
         assert!(ns.measures(&c));
         sh.take_ns_status_change();
 
-        ns.overloaded(&mut c, &sh);
+        ns.overloaded(&mut c, &sh, Instant::now());
         assert_eq!(status(&sh), (NsLevel::Standard, Some(LL_TOO_HEAVY.into())));
         assert!(!ns.measures(&c));
         settle(&mut ns, &mut c, &sh);
@@ -1786,13 +1925,143 @@ mod tests {
         assert_eq!(status(&sh), (NsLevel::Strong, Some(LL_TOO_HEAVY.into())));
         assert!(ns.measures(&c));
 
-        ns.overloaded(&mut c, &sh);
+        ns.overloaded(&mut c, &sh, Instant::now());
         assert_eq!(c.level(), NsLevel::Standard);
         assert_eq!(
             status(&sh),
             (NsLevel::Standard, Some(STRONG_TOO_HEAVY.into()))
         );
         assert!(!ns.measures(&c), "Standard isn't measured");
+    }
+
+    const MIN: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn recovery_waits_for_calm_and_backs_off() {
+        let t0 = Instant::now();
+        let mut r = Recovery::new();
+        assert!(!r.due(t0 + 60 * MIN), "nothing stepped down");
+        r.stepped_down(t0);
+        assert!(!r.due(t0 + 4 * MIN));
+        // busy at 3 min: five calm minutes from then
+        r.busy(t0 + 3 * MIN);
+        assert!(!r.due(t0 + 7 * MIN));
+        assert!(r.due(t0 + 8 * MIN));
+        assert!(!r.due(t0 + 9 * MIN), "once");
+        // too heavy again: twice the wait, up to 40 minutes
+        r.stepped_down(t0);
+        assert!(!r.due(t0 + 9 * MIN));
+        assert!(r.due(t0 + 10 * MIN));
+        for _ in 0..5 {
+            r.stepped_down(t0);
+        }
+        assert!(!r.due(t0 + 39 * MIN));
+        assert!(r.due(t0 + 40 * MIN));
+        // a failure: nothing to step back up to
+        r.stepped_down(t0);
+        r.cancel();
+        assert!(!r.due(t0 + 600 * MIN));
+        // a level picked: back to five minutes
+        r.reset();
+        r.stepped_down(t0);
+        assert!(r.due(t0 + 5 * MIN));
+    }
+
+    #[test]
+    fn a_busy_spell_restarts_the_calm_only_while_a_step_up_is_pending() {
+        let sh = shared_with(AudioConfig::default());
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        let t0 = Instant::now();
+        // nothing pending: busy blocks are ignored
+        for _ in 0..OVERLOAD_WINDOW {
+            ns.block_time(Duration::from_millis(5), t0);
+        }
+        assert!(!ns.recovery.pending());
+        let mut c = off_chain();
+        ns.switcher.request(NsLevel::Strong);
+        c.set_denoiser(NsLevel::Strong, Box::new(Halve));
+        ns.overloaded(&mut c, &sh, t0);
+        assert_eq!(c.level(), NsLevel::Standard);
+        // 3 s at 5 ms (busy) ending at 4 min: calm from then
+        for _ in 0..OVERLOAD_WINDOW {
+            ns.block_time(Duration::from_millis(5), t0 + 4 * MIN);
+        }
+        // quiet blocks don't count as busy
+        for _ in 0..OVERLOAD_WINDOW {
+            ns.block_time(Duration::from_millis(1), t0 + 5 * MIN);
+        }
+        assert!(!ns.tick(t0 + 8 * MIN, &mut c, &sh));
+        assert!(ns.tick(t0 + 9 * MIN, &mut c, &sh), "steps back up");
+        assert_eq!(ns.switcher().target(), NsLevel::Strong);
+        assert_eq!(ns.switcher().note(), None);
+    }
+
+    /// #354: too heavy steps down; after calm minutes it steps back up one level at a time, never past what's
+    /// wanted, and a level that proves too heavy again waits twice as long.
+    #[test]
+    fn after_a_calm_spell_overload_steps_back_up_one_level_at_a_time() {
+        let sh = shared_with(AudioConfig::default());
+        let (_d, store) = ll_store();
+        store.put_for_test(&crate::models::checkout_low_delay_model());
+        let mut ns = NsControl::new(NsLevel::Off, Some(store));
+        let mut c = off_chain();
+        ns.choose(NsLevel::StrongLowDelay, &mut c, &sh);
+        settle(&mut ns, &mut c, &sh);
+        let t0 = Instant::now();
+        ns.overloaded(&mut c, &sh, t0);
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong);
+        ns.overloaded(&mut c, &sh, t0);
+        assert_eq!(c.level(), NsLevel::Standard);
+        sh.take_ns_status_change();
+
+        // the second step down waits ten calm minutes
+        assert!(!ns.tick(t0 + 9 * MIN, &mut c, &sh));
+        assert!(ns.tick(t0 + 10 * MIN, &mut c, &sh));
+        assert_eq!(status(&sh), (NsLevel::Standard, Some(LL_TOO_HEAVY.into())));
+        assert!(
+            !ns.tick(t0 + 30 * MIN, &mut c, &sh),
+            "not while Strong loads"
+        );
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong);
+        assert_eq!(status(&sh), (NsLevel::Strong, Some(LL_TOO_HEAVY.into())));
+
+        // then low delay, after the same wait again
+        let t1 = t0 + 10 * MIN;
+        assert!(!ns.tick(t1 + 9 * MIN, &mut c, &sh));
+        assert!(ns.tick(t1 + 10 * MIN, &mut c, &sh));
+        assert_eq!(c.level(), NsLevel::Strong, "Strong runs while it loads");
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::StrongLowDelay);
+        assert_eq!(status(&sh), (NsLevel::StrongLowDelay, None));
+        assert!(
+            !ns.tick(t1 + 600 * MIN, &mut c, &sh),
+            "nothing above what's wanted"
+        );
+
+        // too heavy a third time: twenty minutes
+        let t2 = t1 + 20 * MIN;
+        ns.overloaded(&mut c, &sh, t2);
+        settle(&mut ns, &mut c, &sh);
+        assert!(!ns.tick(t2 + 19 * MIN, &mut c, &sh));
+        assert!(ns.tick(t2 + 20 * MIN, &mut c, &sh));
+    }
+
+    #[test]
+    fn a_failure_fallback_never_steps_back_up() {
+        let sh = shared_with(AudioConfig::default());
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        let mut c = off_chain();
+        let t0 = Instant::now();
+        ns.switcher.request(NsLevel::Strong);
+        c.set_denoiser(NsLevel::Strong, Box::new(Halve));
+        ns.overloaded(&mut c, &sh, t0);
+        // the standard engine then stops working too: recovered, and nothing pending
+        c.set_denoiser(NsLevel::Standard, Box::new(Dead));
+        ns.switcher.fall_back(NsLevel::Standard, STRONG_TOO_HEAVY);
+        assert!(ns.recover(&mut c, &sh));
+        assert!(!ns.tick(t0 + 600 * MIN, &mut c, &sh));
     }
 
     #[test]
