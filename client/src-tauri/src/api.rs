@@ -1942,6 +1942,113 @@ impl Api {
         .await
     }
 
+    /// Your sports follows and switch, and whether sports are set up on this server (#385).
+    pub async fn sports_status(
+        &self,
+        token: &str,
+    ) -> Result<pulse_protocol::rest::SportsStatus, ApiError> {
+        let url = self.url(&["me", "sports"])?;
+        Self::parse(self.http.get(url).bearer_auth(token).send().await).await
+    }
+
+    /// Your "Sports score pings" switch.
+    pub async fn set_sports_pings(
+        &self,
+        token: &str,
+        on: bool,
+    ) -> Result<pulse_protocol::rest::SportsStatus, ApiError> {
+        let url = self.url(&["me", "sports"])?;
+        let body = pulse_protocol::rest::SportsSettingsRequest { pings: Some(on) };
+        Self::parse(
+            self.http
+                .put(url)
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Follow a team from a league's list.
+    pub async fn follow_team(
+        &self,
+        token: &str,
+        league: pulse_protocol::rest::SportsLeague,
+        team_id: u32,
+    ) -> Result<pulse_protocol::rest::SportsStatus, ApiError> {
+        let url = self.url(&["me", "sports", "follows"])?;
+        let body = pulse_protocol::rest::FollowTeamRequest { league, team_id };
+        Self::parse(
+            self.http
+                .post(url)
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn unfollow_team(
+        &self,
+        token: &str,
+        league: pulse_protocol::rest::SportsLeague,
+        team_id: u32,
+    ) -> Result<pulse_protocol::rest::SportsStatus, ApiError> {
+        let url = self.url(&[
+            "me",
+            "sports",
+            "follows",
+            league.key(),
+            &team_id.to_string(),
+        ])?;
+        Self::parse(self.http.delete(url).bearer_auth(token).send().await).await
+    }
+
+    /// A league's teams this season (the server caches them).
+    pub async fn sports_teams(
+        &self,
+        token: &str,
+        league: pulse_protocol::rest::SportsLeague,
+    ) -> Result<pulse_protocol::rest::SportsTeams, ApiError> {
+        let mut url = self.url(&["sports", "teams"])?;
+        url.query_pairs_mut().append_pair("league", league.key());
+        Self::parse(self.http.get(url).bearer_auth(token).send().await).await
+    }
+
+    /// A server's Sports channel (#385); `None`: none.
+    pub async fn sports_channel(
+        &self,
+        token: &str,
+        server: ServerId,
+    ) -> Result<pulse_protocol::rest::SportsChannel, ApiError> {
+        let url = self.url(&["servers", &server.to_string(), "sports-channel"])?;
+        Self::parse(self.http.get(url).bearer_auth(token).send().await).await
+    }
+
+    /// Pick a server's Sports channel (its owner only), or none.
+    pub async fn set_sports_channel(
+        &self,
+        token: &str,
+        server: ServerId,
+        channel: Option<ChannelId>,
+    ) -> Result<pulse_protocol::rest::SportsChannel, ApiError> {
+        let url = self.url(&["servers", &server.to_string(), "sports-channel"])?;
+        let body = pulse_protocol::rest::SetSportsChannelRequest {
+            channel_id: channel,
+        };
+        Self::parse(
+            self.http
+                .put(url)
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// A server's Deadlock channel and which posts go there (#390).
     pub async fn deadlock_channel(
         &self,
@@ -5424,6 +5531,44 @@ mod tests {
             api.set_steam_settings(&alex, &deadlock).await.is_err(),
             "nothing linked"
         );
+    }
+
+    #[tokio::test]
+    async fn sports_round_trip_through_the_core() {
+        let fake = testing::fake_sports::FakeSports::start().await;
+        let mut cfg = testing::test_config();
+        fake.configure(&mut cfg);
+        fake.add_team(288, 10, "Coastal City");
+        let app = testing::spawn_with(cfg).await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        use pulse_protocol::rest::SportsLeague;
+        let st = api.sports_status(&alex).await.unwrap();
+        assert!(st.available && st.pings && st.follows.is_empty());
+        let teams = api.sports_teams(&alex, SportsLeague::Psl).await.unwrap();
+        assert_eq!(teams.teams.len(), 1);
+        let st = api.follow_team(&alex, SportsLeague::Psl, 10).await.unwrap();
+        assert_eq!(st.follows[0].name, "Coastal City");
+        assert!(!api.set_sports_pings(&alex, false).await.unwrap().pings);
+        let st = api
+            .unfollow_team(&alex, SportsLeague::Psl, 10)
+            .await
+            .unwrap();
+        assert!(st.follows.is_empty());
+        let server = testing::create_server(&app, &alex, "Squad").await;
+        let general = testing::general(&app, &alex, server.id).await;
+        assert_eq!(
+            api.sports_channel(&alex, server.id)
+                .await
+                .unwrap()
+                .channel_id,
+            None
+        );
+        let set = api
+            .set_sports_channel(&alex, server.id, Some(general.id))
+            .await
+            .unwrap();
+        assert_eq!(set.channel_id, Some(general.id));
     }
 
     #[tokio::test]

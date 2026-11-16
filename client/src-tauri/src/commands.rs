@@ -2407,6 +2407,82 @@ pub async fn set_achievements_channel(
     )
 }
 
+/// Your sports follows and switch (#385).
+#[tauri::command]
+pub async fn sports_status(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<pulse_protocol::rest::SportsStatus, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.sports_status(&token).await)
+}
+
+#[tauri::command]
+pub async fn set_sports_pings(
+    app: AppHandle,
+    core: State<'_, Core>,
+    on: bool,
+) -> Result<pulse_protocol::rest::SportsStatus, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_sports_pings(&token, on).await)
+}
+
+#[tauri::command]
+pub async fn follow_team(
+    app: AppHandle,
+    core: State<'_, Core>,
+    league: pulse_protocol::rest::SportsLeague,
+    team_id: u32,
+) -> Result<pulse_protocol::rest::SportsStatus, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.follow_team(&token, league, team_id).await)
+}
+
+#[tauri::command]
+pub async fn unfollow_team(
+    app: AppHandle,
+    core: State<'_, Core>,
+    league: pulse_protocol::rest::SportsLeague,
+    team_id: u32,
+) -> Result<pulse_protocol::rest::SportsStatus, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.unfollow_team(&token, league, team_id).await)
+}
+
+#[tauri::command]
+pub async fn sports_teams(
+    app: AppHandle,
+    core: State<'_, Core>,
+    league: pulse_protocol::rest::SportsLeague,
+) -> Result<pulse_protocol::rest::SportsTeams, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.sports_teams(&token, league).await)
+}
+
+#[tauri::command]
+pub async fn sports_channel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<pulse_protocol::rest::SportsChannel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.sports_channel(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn set_sports_channel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    channel_id: Option<ChannelId>,
+) -> Result<pulse_protocol::rest::SportsChannel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_sports_channel(&token, server_id, channel_id).await,
+    )
+}
+
 #[tauri::command]
 pub async fn name_archive(
     app: AppHandle,
