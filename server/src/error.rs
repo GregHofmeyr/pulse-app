@@ -61,6 +61,11 @@ impl From<sqlx::Error> for AppError {
 /// Whether `e` failed a foreign key: a row the write refers to (its channel, message, poll...)
 /// was deleted between the request's check and its write. Writes re-check their channel under the
 /// write lock (`access::channel_live_in`), so this is the backstop for any write that doesn't.
+///
+/// Kept for every route rather than only #109's writes (#349): only a write can fail a foreign
+/// key, so "every route" already means "every write", and opting each write in would leave the next
+/// new one a 500 again. What it can hide is a bug's foreign key failure, so each one is logged (a
+/// warning, with the error) for a burst in the logs to show.
 fn foreign_key_failure(e: &anyhow::Error) -> bool {
     e.chain().any(|c| {
         matches!(c.downcast_ref::<sqlx::Error>(),
