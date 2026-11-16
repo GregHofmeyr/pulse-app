@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { applyCommand, commandQuery, COMMANDS, parseCommand, suggestCommands, typingCommand, type CommandContext } from './commands'
 
-const ctx = (): CommandContext => ({ spinWheel: vi.fn(), openWheel: vi.fn(), openPoll: vi.fn() })
+const ctx = (): CommandContext => ({ spinWheel: vi.fn(), openWheel: vi.fn(), openPoll: vi.fn(), openPlan: vi.fn() })
 
 describe('the command registry', () => {
   it('has /wheel with its usage, description and tip', () => {
@@ -22,6 +22,18 @@ describe('the command registry', () => {
     const d = ctx()
     parseCommand('/POLL')!.command.run('', d)
     expect(d.openPoll).toHaveBeenCalledWith({ question: '', options: [] })
+  })
+  it('has /plan, which opens the plan form with the title typed (never posts) (#387)', () => {
+    const p = COMMANDS.find((c) => c.name === 'plan')!
+    expect(p.usage).toBe('/plan What to do')
+    expect(p.hint).toBe('Enter to set it up')
+    const c = ctx()
+    const parsed = parseCommand("/plan   Braai at  kim's ")!
+    parsed.command.run(parsed.args, c)
+    expect(c.openPlan).toHaveBeenCalledWith("Braai at kim's")
+    const d = ctx()
+    parseCommand('/PLAN')!.command.run('', d)
+    expect(d.openPlan).toHaveBeenCalledWith('')
   })
   it('names are unique, lower case words', () => {
     const names = COMMANDS.map((c) => c.name)

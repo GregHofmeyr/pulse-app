@@ -33,6 +33,10 @@
   import PollCard from './PollCard.svelte'
   import { endedSummary, pollOver, shownText } from '../lib/poll'
   import { closePoll } from '../lib/polls.svelte'
+  import PlanCard from './PlanCard.svelte'
+  import PlanComposer from './PlanComposer.svelte'
+  import { cancelPlan } from '../lib/plans.svelte'
+  import { planWhen } from '../lib/plan'
   import { mentionLookup, mentionName, showMentions, styleMentions } from '../lib/mentionStyles'
   import { nameCss, resolveNameStyle } from '../lib/nameStyle'
   import { displayName, roleColorFor, userOf } from '../lib/selectors'
@@ -191,6 +195,13 @@
   // your own poll, still open, can be ended from the message's menu (#157); a refusal fetches the poll afresh
   const endable = $derived(!!message.poll && mine && !pollOver(message.poll, now))
   const endPoll = () => closePoll(message).catch((e) => showError(errorText(e)))
+  // your own plan, not cancelled, can be changed or cancelled from the message's menu or its Edit button (#387)
+  const planOpen = $derived(!!message.plan && mine && !message.plan.cancelled_at)
+  let planEdit = $state<HTMLElement | null>(null)
+  const editPlanCard = (anchor?: HTMLElement) => {
+    planEdit = anchor ?? document.querySelector<HTMLElement>(`[data-message-id="${message.id}"] .plan`)
+  }
+  const cancelThisPlan = () => cancelPlan(message).catch((e) => showError(errorText(e)))
   // Add to quotes (#316): the message as a quote, its author speaking, in one of its server's quotes channels (none in
   // a DM or group: no item there). One request id per message, so a double pick posts it once.
   const quotesChannels = $derived(msgMenu ? quotesChannelsFor(app.state, message).map((c) => ({ id: c.id, name: c.name ?? '' })) : [])
@@ -315,6 +326,11 @@
     {@const pe = message.poll_ended}
     <div class="system pin-line" data-message-id={message.id}><Icon name="poll" size={14} /> {nameOf(pe.author_id)}'s poll ended{endedSummary(pe.winners, pe.votes)} ·
       <button type="button" class="link-btn" onclick={() => void jumpTo(message.channel_id, pe.poll_message_id)}>See poll</button> <span class="time">{time}</span></div>
+  {:else if message.plan_reminder}
+    <!-- a plan's reminder (#387), in your own time: See plan jumps to the plan -->
+    {@const pr = message.plan_reminder}
+    <div class="system pin-line" data-message-id={message.id}><Icon name="calendar" size={14} /> {pr.title} starts in an hour ({planWhen(pr.starts_at, now)}) ·
+      <button type="button" class="link-btn" onclick={() => void jumpTo(message.channel_id, pr.plan_message_id)}>See plan</button> <span class="time">{time}</span></div>
   {:else if message.stage_share_line}
     <!-- a share to the voice stage (#234), with today's names: "🎵 alex shared a Jam to the stage" -->
     {@const sl = message.stage_share_line}
@@ -350,6 +366,9 @@
         {:else if message.poll}
           <!-- a poll (#157): the card stands in for its text (which is the poll for clients that don't know polls) -->
           <PollCard {message} {nameOf} />
+        {:else if message.plan}
+          <!-- a plan (#387): the card stands in for its text (which is the plan for clients that don't know plans) -->
+          <PlanCard {message} {nameOf} />
         {:else}
           <!-- renderMessage output is DOMPurify-sanitised (allow-list, cached per message); the only {@html} in the app. -->
           {@const html = renderMessage(message, mentionNames, customEmoji)}
@@ -378,7 +397,8 @@
           <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={16} /></button>
           <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={16} /></button>
           {#if mine}
-            {#if !message.poll}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
+            {#if message.plan}{#if planOpen}<button aria-label="Edit plan" onclick={(e) => editPlanCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
+            {:else if !message.poll}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
             {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
             <DeleteButton what={message.thread_root_id ? 'reply' : 'message'} onConfirm={() => void del()} />
           {/if}
@@ -416,7 +436,10 @@
 {#if msgMenu}
   {#key msgMenu}<MessageMenu pinned={!!pin} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
     onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
-    onEndPoll={endable ? endPoll : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
+    onEndPoll={endable ? endPoll : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
+{/if}
+{#if planEdit}
+  <PlanComposer anchor={planEdit} channelId={message.channel_id} editing={message} onClose={() => (planEdit = null)} />
 {/if}
 <PersonMenu menu={authorMenu} onMessage={menuIsDmPeer ? undefined : messageAuthor} muteChannelId={menuIsDmPeer ? message.channel_id : null}
   onClose={() => (authorMenu = null)} />

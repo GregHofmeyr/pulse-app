@@ -80,9 +80,10 @@ const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 export const totalLabel = (p: Poll) => plural(p.voters, p.multi ? 'voter' : 'vote')
 
 /** A message's text for one-line previews (the conversation list, notifications, pins, reply snippets): a poll's
- *  question, not the fuller text its `content` carries for clients that don't know polls; "GIF" for a message that is
+ *  question (a plan's title, #387), not the fuller text its `content` carries for clients that don't know them; "GIF" for a message that is
  *  only a GIPHY link (#58). */
-export const shownText = (m: Message): string => (m.poll ? `📊 ${m.poll.question}` : gifOnly(m) ? 'GIF' : m.content)
+export const shownText = (m: Message): string =>
+  m.poll ? `📊 ${m.poll.question}` : m.plan ? `📅 ${m.plan.title}` : gifOnly(m) ? 'GIF' : m.content
 
 /** "a", "a and b", "a, b and c". */
 const joinNames = (names: string[]) => (names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`)

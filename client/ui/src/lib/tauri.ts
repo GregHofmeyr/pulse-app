@@ -11,6 +11,10 @@ import type { Server } from './protocol/Server'
 import type { Channel } from './protocol/Channel'
 import type { Category } from './protocol/Category'
 import type { SaveLayoutRequest } from './protocol/SaveLayoutRequest'
+import type { CreatePlanRequest } from './protocol/CreatePlanRequest'
+import type { Plan } from './protocol/Plan'
+import type { PlanForecast } from './protocol/PlanForecast'
+import type { Rsvp } from './protocol/Rsvp'
 import type { ServerLayout } from './protocol/ServerLayout'
 import type { DeletedChannel } from './protocol/DeletedChannel'
 import type { DeletedServer } from './protocol/DeletedServer'
@@ -629,6 +633,19 @@ export const pollCmd = {
   get: (messageId: string) => invoke<Poll>('get_poll', { messageId }),
   vote: (messageId: string, options: number[]) => invoke<Poll>('vote_poll', { messageId, options }),
   close: (messageId: string) => invoke<Poll>('close_poll', { messageId }),
+}
+
+/** Plan something (#387): post one, fetch it, change or cancel yours, answer one (none takes it back), its forecast (the
+ *  server asks Open-Meteo; the app never does), and Add to calendar (the system Save dialog, an `.ics` file the server
+ *  makes; the saved path, or null when cancelled; progress `download://progress`, key `plan:<message id>`). */
+export const planCmd = {
+  create: (channelId: string, request: CreatePlanRequest) => invoke<Message>('create_plan', { channelId, request }),
+  get: (messageId: string) => invoke<Plan>('get_plan', { messageId }),
+  edit: (messageId: string, request: CreatePlanRequest) => invoke<Plan>('edit_plan', { messageId, request }),
+  rsvp: (messageId: string, rsvp: Rsvp | null) => invoke<Plan>('rsvp_plan', { messageId, rsvp }),
+  cancel: (messageId: string) => invoke<Plan>('cancel_plan', { messageId }),
+  forecast: (messageId: string) => invoke<PlanForecast | null>('plan_forecast', { messageId }),
+  saveIcs: (messageId: string, title: string) => invoke<string | null>('save_plan_ics', { messageId, title }),
 }
 
 /** Tauri rejects with the command's error string. */
