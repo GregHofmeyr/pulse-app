@@ -83,6 +83,39 @@ repository.
 **Microphone.** The microphone is opened when the user joins a voice channel or runs the microphone test in Settings.
 Audio goes to the SFU (section 2).
 
+**OS notifications: only while the Pulse window isn't focused.**
+- **What goes out.** A notification for a new message the user would hear the message sound for, for someone they
+  follow going live, and for a call ringing them. They are shown by the operating system: Windows toasts (Action
+  Center), or freedesktop notifications over the Linux session D-Bus. They are local: nothing goes through a push
+  service or any third party.
+- **What they show.** The title names who and where (the author, and the channel and server, or the group). The body
+  is the message on one line, at most 140 characters, with mentions shown as names. With Settings → Notifications →
+  **Show message text** off, the body says only "New message" or "Mentioned you". With **Desktop notifications** off,
+  none are shown. Both are per device and profile, and on by default.
+- **The author's avatar.** Notification services want a local file, so the avatar is written once as a small PNG in
+  that account's media cache, and deleted with it on sign-out. If it isn't to hand quickly, the notification goes
+  without it.
+- **How long they stay.** Each conversation keeps one notification, replaced by its newest. A ring's notification is
+  taken back when the ring ends. Otherwise the operating system keeps them by its own rules (Action Center, a
+  notification history, the lock screen if its settings allow), where anyone at the desktop can read them.
+- **Clicks.** A click brings Pulse up and opens that conversation. The notification carries only the conversation's
+  and thread's ids for that.
+
+**Instagram pop-out window: only when the user presses play on an Instagram preview.**
+- **What it is.** Instagram's embed misbehaves in an iframe, so its preview's play button opens Instagram's own embed
+  page (`https://www.instagram.com/p/<code>/embed/` or `/reel/<code>/embed/`) in a separate window. The Rust core
+  builds that address from the preview's id, checked against the server's rules for one, so nothing else can open
+  there. One pop-out at a time: a new one replaces it.
+- **No reach into Pulse.** The window shows a remote page and gets no IPC: no capability names it (a test checks
+  this), and Tauri refuses every command from a remote origin unless a `remote` capability grants it. It never sees
+  the session token.
+- **Where it may go.** Only https pages on `instagram.com` and `facebook.com` (and their subdomains, for login and
+  consent pages) and media on `*.cdninstagram.com`. Any other navigation, including `javascript:` and `data:` URLs,
+  is refused. A link that would open a new window opens in the default browser instead, if it's a web link.
+- **What Instagram sees.** The page loads straight from Instagram (and maybe Facebook), so they see the user's IP
+  address and what was opened, and may set cookies. The window shares the main window's webview profile, so those
+  cookies are kept there; signing out of Pulse clears the webview's caches, not its cookies.
+
 ## 2. Network
 
 The client makes outbound connections only: to the Pulse server and its LiveKit SFU, to the server's file storage,
@@ -109,7 +142,8 @@ and to GIPHY when GIFs are used:
     LiveKit, checks that the ICE servers in the join response are only our own.
 - **Webview limits.** The UI's Content Security Policy (section 4) also limits where the webview itself may connect.
 - **Updates and models** come from the signed-in Pulse server (section 4, *App updates*), never from a third party.
-- **Links.** Web links open in the user's default browser, never in a Pulse window.
+- **Links.** Web links open in the user's default browser, never in a Pulse window. The one exception is an Instagram
+  preview's pop-out (section 1), which connects to Instagram's and Facebook's own hosts.
 
 **No listening network ports.** The client opens no listening TCP or UDP port that another machine can connect to.
 WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
@@ -395,17 +429,37 @@ past that, the least recently used bucket is dropped.
 | Two-factor checks (sign-in code, the password or code for turning it on or off or making new recovery codes, and the current password and code for changing the password) | 5/minute per IP, and 10/hour per account; spent up front, kept only for a wrong password or code or a bad ticket |
 | Real-time connection attempts | 20/minute per IP (refunded once the connection authenticates) |
 | Concurrent real-time connections | 8 per user; further connections are refused, and the client tells the user why |
-| New messages | burst of 20, then 5/second per user |
-| Message edits and deletes, reaction adds and removes, renaming a group, Go Live and watching a stream (together) | burst of 30, then 2/second per user (stopping a stream and unwatching are never limited) |
+| New messages, polls and quotes (together; replies in a quote or clip thread are messages) | burst of 20, then 5/second per user |
+| Changes other people hear about (together): message and quote edits and deletes, reaction adds and removes, pins and unpins, ending a poll, hiding a link preview, marking read (Mark all read, inbox items, quote reply seen points), a group's name and icon, notification levels, profile saves, badge updates, quote awards and speaker links, Quote of the Year (starting, voting, adding options, reopening), clip edits and clip view settings, adding a game, deleting, restoring and purging channels and servers, a voice channel's bitrate, Go Live and watching a stream | burst of 30, then 2/second per user (stopping a stream and unwatching are never limited) |
 | Typing notifications | 1/second per user (extras dropped) |
 | Mute and deafen updates sent to others | burst of 10, then 2/second per user. Every update is still stored; past the limit, others get one update with the latest state once the limit allows. An update that changes nothing is not sent on. |
-| New servers, server channels, DMs and groups, and members added to a group (together) | 20/hour per user (opening a DM that already exists is free) |
+| New servers, server channels, DMs and groups, notes to self (made on first open), and members added to a group (together) | 20/hour per user (opening a DM that already exists is free) |
 | Invite codes | 10/hour per user |
 | Bug / crash reports | 5/hour per user |
-| Custom emoji uploads | 30/hour per user |
+| Image and sound uploads (custom emoji, quote pictures, clip thumbnails, avatars, banners, sounds) | 30/hour per user |
 | Custom emoji creates, renames and deletes (together) | 30/hour per user |
+| Soundboard sound creates, edits, deletes and favourites, and setting or clearing a join sound (together) | 120/hour per user |
+| Soundboard plays | burst of 20, then 8/second per user |
+| Attachment uploads (starting one, and asking for more upload URLs) | burst of 60, then 1/second per user |
+| Clip play and attachment download links (each signs a storage URL) | burst of 60, then 1/second per user |
 | Go Live preview uploads | burst of 6, then one every 5 seconds per user |
-| Voice and stream tokens (together) | burst of 60, then 1/second per user |
+| Voice tokens and stream tickets (together, watching from elsewhere included) | burst of 60, then 1/second per user |
+| Calls started or joined in DMs and groups | burst of 6, then one every 20 seconds per user |
+| Message search in a server or conversation | burst of 20, then 2/second per user |
+| Search everywhere (`GET /search`, the quick switcher's) | its own bucket: burst of 20, then 2/second per user |
+| Messages whose links get previews fetched (sends and edits) | 20/minute per user; past it, the message still posts, without previews |
+| Link preview thumbnails stored (chat previews and stage share cards) | 60/hour per user; past it, previews come without one |
+| Server nicknames and private nicknames | 30/minute per user |
+| Status changes and Appear offline toggles | 30/minute per user |
+| "Notify me when they go live" toggles | 30/minute per user |
+| Category and channel layout changes | burst of 30, then 1/second per user |
+| Saved picker wheel creates, edits and deletes (together) | burst of 30, then 1/second per user |
+| Picker wheel spins | one every 3 seconds per user |
+| Poll votes | burst of 20, then 2/second per user |
+| Spotify shares to a voice stage | burst of 6, then one every 10 seconds per user |
+| "Listening to" updates | burst of 10, then one every 2 seconds per user; a held-back update is sent once the limit allows, so the latest one lands |
+| "Listening to" album art fetched | 60/hour per user, its own budget apart from link previews |
+| GIF settings reads and favourite adds and removes (together) | burst of 30, then one every 2 seconds per user |
 
 Real-time frames from the client are capped at 64 KB, and messages at 4,000 characters.
 
