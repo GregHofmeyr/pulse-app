@@ -149,6 +149,42 @@ async fn tiktok_short_link_resolves_to_a_vertical_player() {
     assert!(requested(&env, &want), "{reqs:?}");
 }
 
+/// TikTok's real oEmbed gives no title, author or thumbnail (#90): the card is still a player,
+/// named for the link's user when the link has one.
+#[tokio::test]
+async fn tiktok_bare_oembed_is_a_player_named_for_the_links_user() {
+    let env = setup().await;
+    let u = env
+        .unfurl(
+            &env.fake
+                .url("www.tiktok.com", &format!("/@kim/video/{TIKTOK_ID}")),
+        )
+        .await
+        .unwrap();
+    assert_eq!(u.provider, EmbedProvider::Tiktok);
+    assert_eq!(u.kind, EmbedKind::Player);
+    assert_eq!(u.provider_id.as_deref(), Some(TIKTOK_ID));
+    assert!(u.vertical);
+    assert_eq!(u.title, None);
+    assert_eq!(u.author.as_deref(), Some("kim"));
+    assert_eq!(u.site_name.as_deref(), Some("TikTok"));
+    assert!(u.thumb.is_none());
+    // No user in the link: oEmbed is asked about `@_`, and the card names nobody.
+    let u = env
+        .unfurl(
+            &env.fake
+                .url("www.tiktok.com", &format!("/embed/v2/{TIKTOK_ID}")),
+        )
+        .await
+        .unwrap();
+    assert_eq!(u.kind, EmbedKind::Player);
+    assert_eq!(u.author, None);
+    let want = format!(
+        "/oembed/tiktok?url=https%3A%2F%2Fwww.tiktok.com%2F%40_%2Fvideo%2F{TIKTOK_ID}&format=json"
+    );
+    assert!(requested(&env, &want), "{:?}", env.fake.requests());
+}
+
 #[tokio::test]
 async fn spotify_soundcloud_and_twitch_cards() {
     let env = setup().await;

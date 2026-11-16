@@ -4,7 +4,9 @@
 //!
 //! - `http://oembed.test:<port>/oembed/<provider>?url=…`: an oEmbed answer whose thumbnail is
 //!   [`FakeProvider::thumb_url`]. A `url` containing `missing` gets a 404, and Instagram answers
-//!   only for a `url` containing `Ccaption` (as its tokenless endpoint often refuses).
+//!   only for a `url` containing `Ccaption` (as its tokenless endpoint often refuses). TikTok
+//!   answers a video of `@_` or `@kim` with its real, bare shape (no title, author or
+//!   thumbnail: `embeds/fixtures/tiktok_oembed.json`, #90).
 //! - `http://site.test:<port>/page`: an OpenGraph page with a relative `og:image`; `/bare` has no
 //!   metadata; `/held` answers like `/page` once [`FakeProvider::release`] is called.
 //! - `http://www.twitch.tv:<port>/<user>/clip/<slug>`: a clip page's OpenGraph.
@@ -200,6 +202,13 @@ async fn oembed(
         return StatusCode::NOT_FOUND.into_response();
     }
     let thumb = format!("http://site.test:{}/thumb.png", s.port);
+    if provider == "tiktok" && (target.contains("/@_/") || target.contains("/@kim/")) {
+        return (
+            [(header::CONTENT_TYPE, "application/json")],
+            include_str!("../embeds/fixtures/tiktok_oembed.json"),
+        )
+            .into_response();
+    }
     let body = match provider.as_str() {
         "youtube" => serde_json::json!({
             "type": "video", "title": "A video with a <b>tag</b>", "author_name": "alex",

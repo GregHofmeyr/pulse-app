@@ -6,7 +6,10 @@
 //! else the sender's link carried, such as tracking parameters, never reaches the provider):
 //! - YouTube `https://www.youtube.com/watch?v=<id>` (Shorts too; YouTube answers for either);
 //! - TikTok `https://www.tiktok.com/@<user>/video/<id>`, with the link's user when it has one
-//!   (`@_` otherwise: TikTok finds the video by its id);
+//!   (`@_` otherwise: TikTok finds the video by its id). Checked against the real endpoint on
+//!   2026-11-16 (#90): both forms answer the same, but with no title, author or thumbnail
+//!   (`fixtures/tiktok_oembed.json`), so a TikTok card names the link's user as its author when
+//!   oEmbed doesn't;
 //! - Spotify `https://open.spotify.com/<type>/<id>`, SoundCloud `https://soundcloud.com/<path>`,
 //!   Instagram `https://www.instagram.com/<p|reel>/<code>/`.
 //!
@@ -111,6 +114,9 @@ pub(super) async fn run(
                     };
                     let mut t = oembed(fetcher, endpoint, &canonical(&d, &link), true).await?;
                     t.site_name = t.site_name.or_else(|| Some(name(p).into()));
+                    if p == EmbedProvider::Tiktok && t.author.is_none() {
+                        t.author = tiktok_user(&link).map(str::to_owned);
+                    }
                     t
                 }
             };
@@ -198,16 +204,7 @@ fn canonical(d: &Detected, link: &Url) -> String {
     match d.provider {
         EmbedProvider::Youtube => format!("https://www.youtube.com/watch?v={}", d.id),
         EmbedProvider::Tiktok => {
-            let user = link
-                .path_segments()
-                .and_then(|mut s| s.next())
-                .and_then(|u| u.strip_prefix('@'))
-                .filter(|u| {
-                    !u.is_empty()
-                        && u.bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.')
-                })
-                .unwrap_or("_");
+            let user = tiktok_user(link).unwrap_or("_");
             format!("https://www.tiktok.com/@{user}/video/{}", d.id)
         }
         EmbedProvider::Spotify => {
@@ -223,6 +220,19 @@ fn canonical(d: &Detected, link: &Url) -> String {
     }
 }
 
+/// The user a TikTok link names (`tiktok.com/@<user>/…`), when it names a plausible one.
+fn tiktok_user(link: &Url) -> Option<&str> {
+    link.path_segments()
+        .and_then(|mut s| s.next())
+        .and_then(|u| u.strip_prefix('@'))
+        .filter(|u| {
+            !u.is_empty()
+                && *u != "_"
+                && u.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.')
+        })
+}
+
 /// The card text an oEmbed `endpoint` gives for `target`, `None` when the call fails.
 async fn oembed(fetcher: &Fetcher, endpoint: &str, target: &str, json: bool) -> Option<Text> {
     let mut params = vec![("url", target)];
@@ -231,8 +241,12 @@ async fn oembed(fetcher: &Fetcher, endpoint: &str, target: &str, json: bool) -> 
     }
     let q = Url::parse_with_params(endpoint, &params).ok()?;
     let got = fetcher.get(q.as_str(), Want::Json).await.ok()?;
-    let o = OEmbed::parse(&got.body)?;
-    Some(Text {
+    Some(oembed_text(OEmbed::parse(&got.body)?, &got.final_url))
+}
+
+/// An oEmbed answer's card text; a relative thumbnail is resolved against `base`.
+fn oembed_text(o: OEmbed, base: &Url) -> Text {
+    Text {
         title: o.title.and_then(|s| meta::clean(&s, meta::TITLE_MAX)),
         description: o
             .description
@@ -243,8 +257,8 @@ async fn oembed(fetcher: &Fetcher, endpoint: &str, target: &str, json: bool) -> 
         author: o
             .author_name
             .and_then(|s| meta::clean(&s, meta::AUTHOR_MAX)),
-        image: o.thumbnail_url.and_then(|u| got.final_url.join(&u).ok()),
-    })
+        image: o.thumbnail_url.and_then(|u| base.join(&u).ok()),
+    }
 }
 
 /// The card text of the page at `url`, `None` when it can't be fetched.
@@ -293,5 +307,73 @@ async fn thumb(
             tracing::warn!(error = %e, "link thumbnail not stored");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TT: &str = "7000000000000000001";
+
+    fn tiktok(link: &str) -> String {
+        let link = Url::parse(link).unwrap();
+        let Detection::Known(d) = providers::detect(&link) else {
+            panic!("not a TikTok video: {link}");
+        };
+        canonical(&d, &link)
+    }
+
+    #[test]
+    fn tiktok_canonical_keeps_the_user_and_drops_the_rest() {
+        assert_eq!(
+            tiktok(&format!(
+                "https://m.tiktok.com/@alex.sam_1/video/{TT}?is_from_webapp=1#x"
+            )),
+            format!("https://www.tiktok.com/@alex.sam_1/video/{TT}")
+        );
+        for no_user in [
+            format!("https://www.tiktok.com/embed/v2/{TT}"),
+            format!("https://www.tiktok.com/player/v1/{TT}"),
+            format!("https://m.tiktok.com/v/{TT}.html"),
+        ] {
+            assert_eq!(
+                tiktok(&no_user),
+                format!("https://www.tiktok.com/@_/video/{TT}"),
+                "{no_user}"
+            );
+        }
+    }
+
+    #[test]
+    fn tiktok_user_is_only_a_plausible_name() {
+        let user = |u: &str| tiktok_user(&Url::parse(u).unwrap()).map(str::to_owned);
+        assert_eq!(
+            user(&format!("https://www.tiktok.com/@kim/video/{TT}")).as_deref(),
+            Some("kim")
+        );
+        for none in [
+            format!("https://www.tiktok.com/@_/video/{TT}"),
+            format!("https://www.tiktok.com/@/video/{TT}"),
+            format!("https://www.tiktok.com/@k%20im/video/{TT}"),
+            format!("https://www.tiktok.com/embed/v2/{TT}"),
+        ] {
+            assert_eq!(user(&none), None, "{none}");
+        }
+    }
+
+    /// TikTok's real answer for a canonical `@_` URL (2026-11-16, #90): the parser takes it, and
+    /// all it gives a card is the provider's name.
+    #[test]
+    fn tiktok_real_oembed_shape_parses_to_a_bare_card() {
+        let body = include_bytes!("fixtures/tiktok_oembed.json");
+        let o = OEmbed::parse(body).expect("a JSON object");
+        let base = Url::parse("https://www.tiktok.com/oembed").unwrap();
+        let t = oembed_text(o, &base);
+        assert_eq!(t.site_name.as_deref(), Some("TikTok"));
+        assert_eq!(t.title, None);
+        assert_eq!(t.author, None);
+        assert_eq!(t.description, None);
+        assert!(t.image.is_none());
     }
 }
