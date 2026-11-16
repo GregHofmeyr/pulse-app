@@ -646,16 +646,13 @@ pub async fn purge_partly(
     purge(s, id, &due, batch, Some(batches)).await
 }
 
-/// A deleted server channel due by `due` and everything in it, for good (a hard delete, like a
-/// group whose last member leaves): 404 unless it is in Recently deleted and due, 409 while it is
+/// A deleted server channel due by `due` and everything in it, for good (as an emptied group is,
+/// `dms::purge`): 404 unless it is in Recently deleted and due, 409 while it is
 /// [`held`]. Its messages go first, `batch` per transaction (`servers::purge::messages`: their
 /// search entries, reactions, mentions, quotes, clips rows and objects, polls, pins, previews,
 /// inbox and thread reads, options of ended Quote of the Year votes and wheel spins with them),
-/// stopping after `max_batches` if given. Then, in one last short transaction, its mutes (they
-/// have no foreign key) and the channel, whose cascades take its read states, voice sessions,
-/// calls, clip views and stream sessions; its open clip tickets keep no channel (their confirm
-/// then refuses). Every file started in it (#57) is deleted after that commit (the attachments
-/// sweep retries a failure). Disk media nothing uses any more is left to the media cleanup. Nobody
+/// stopping after `max_batches` if given. Then, in one last short transaction, its mutes and the
+/// channel row (`servers::purge::channel_row`), and its files after that. Disk media nothing uses any more is left to the media cleanup. Nobody
 /// hears of it: the channel left everyone's view when it was deleted.
 async fn purge(
     s: &AppState,
@@ -672,29 +669,7 @@ async fn purge(
     if !crate::servers::purge::messages(s, id, &what, batch, max_batches).await? {
         return Ok(()); // cut off (tests)
     }
-    // Unread and mention counts others publish as absolutes span channels: in commit order.
-    let _order = s.hub.in_order().await;
-    let mut tx = crate::db::begin_write(&s.db).await?;
-    what.check(&mut tx).await?;
-    // Every file started in the channel, sent or not (#57): deleted after the commit.
-    let files = crate::attachments::stored_in_channels(&mut tx, &[id]).await?;
-    sqlx::query("DELETE FROM notification_prefs WHERE target_kind = 'channel' AND target_id = ?")
-        .bind(id.to_string())
-        .execute(&mut *tx)
-        .await?;
-    // No write reaches a deleted channel (#109), so it is empty by now; were a message left, the
-    // cascade would take it (its search entry by trigger).
-    sqlx::query("DELETE FROM channels WHERE id = ? AND deleted_at IS NOT NULL")
-        .bind(id.to_string())
-        .execute(&mut *tx)
-        .await?;
-    tx.commit().await?;
-    drop(_order);
-    if !files.is_empty() {
-        let s = s.clone();
-        tokio::spawn(async move { crate::attachments::remove_objects(&s, files).await });
-    }
-    Ok(())
+    crate::servers::purge::channel_row(s, id, &what).await
 }
 
 /// Purge every channel deleted [`RECENTLY_DELETED_DAYS`] or more before `now` (or made due by
@@ -712,9 +687,10 @@ pub async fn purge_expired_batched(
     batch: i64,
 ) -> AppResult<u32> {
     let due = due(now);
+    // (an emptied group, with no server, is `dms::purge`'s)
     let ids: Vec<String> = sqlx::query_scalar(&format!(
         "SELECT id FROM channels WHERE deleted_at IS NOT NULL AND deleted_at <= ?
-         AND server_id NOT IN {DELETED_SERVERS} ORDER BY deleted_at"
+         AND server_id IS NOT NULL AND server_id NOT IN {DELETED_SERVERS} ORDER BY deleted_at"
     ))
     .bind(&due)
     .fetch_all(&s.db)

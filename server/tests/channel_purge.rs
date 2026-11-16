@@ -428,3 +428,115 @@ async fn a_delete_now_racing_the_sweep_answers_204() {
     );
     assert_no_orphans(&w.app).await;
 }
+
+// ---------- a group whose last member leaves (#336) ----------
+
+/// alex, sam and kim's group.
+async fn group_of_three(w: &World) -> (Channel, (UserId, String)) {
+    let kim = register(&w.app, "kim").await;
+    let g = create_dm(&w.app, &w.alex.1, &[w.sam.0, kim.0]).await;
+    (g, kim)
+}
+
+async fn leave(w: &World, g: ChannelId, who: &(UserId, String)) {
+    let r = w
+        .app
+        .http
+        .delete(w.app.url(&format!("/channels/{g}/members/{}", who.0)));
+    assert_eq!(status(r, &who.1).await, 204);
+}
+
+/// The last one out marks the group deleted in the leave's own transaction and its messages go in
+/// short batches after it: a big group is gone, with nothing left behind, by the time the leave
+/// answers (it waits for a small one).
+#[tokio::test]
+async fn an_emptied_group_is_purged_in_batches() {
+    let w = world().await;
+    let (g, kim) = group_of_three(&w).await;
+    send(&w.app, &w.alex.1, g.id, "hello @sam").await;
+    fill(&w.app, g.id, w.sam.0, 1_007).await; // two batches of 500 and a bit
+    for who in [w.alex.clone(), w.sam.clone(), kim] {
+        leave(&w, g.id, &who).await;
+    }
+    let id = g.id.to_string();
+    assert_eq!(
+        count(&w.app, "SELECT COUNT(*) FROM channels WHERE id = ?", &id).await,
+        0
+    );
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM messages WHERE channel_id = ?",
+            &id
+        )
+        .await,
+        0
+    );
+    assert_no_orphans(&w.app).await;
+}
+
+/// A purge of an emptied group cut off part-way (a restart) leaves it deleted: nobody who was in
+/// it can reach it, Recently deleted's sweep leaves it alone, and the group sweep finishes it.
+#[tokio::test]
+async fn an_emptied_group_cut_off_part_way_stays_gone_and_the_sweep_finishes_it() {
+    let w = world().await;
+    let (g, kim) = group_of_three(&w).await;
+    fill(&w.app, g.id, w.sam.0, 10).await;
+    leave(&w, g.id, &w.alex).await;
+    leave(&w, g.id, &kim).await;
+    let id = g.id.to_string();
+    // the filler and the group's system lines
+    let before = count(
+        &w.app,
+        "SELECT COUNT(*) FROM messages WHERE channel_id = ?",
+        &id,
+    )
+    .await;
+    // what the last leave leaves behind when its purge is cut off after its first batch
+    let s = w.app.state();
+    pulse_server::dms::purge::empty_partly(&s, g.id, w.sam.0, 3, 1)
+        .await
+        .unwrap();
+    let left = |q: &'static str| {
+        let (app, id) = (&w.app, id.clone());
+        async move { count(app, q, &id).await }
+    };
+    assert_eq!(
+        left("SELECT COUNT(*) FROM channels WHERE id = ? AND deleted_at IS NOT NULL").await,
+        1
+    );
+    assert_eq!(
+        left("SELECT COUNT(*) FROM messages WHERE channel_id = ?").await,
+        before - 3
+    );
+    for t in [&w.alex.1, &w.sam.1, &kim.1] {
+        let r = w
+            .app
+            .http
+            .get(w.app.url(&format!("/channels/{}/messages", g.id)));
+        assert_eq!(status(r, t).await, 404, "unreachable");
+    }
+    // Recently deleted's sweep is for server channels
+    let later = chrono::Utc::now() + chrono::Duration::days(30);
+    assert_eq!(
+        pulse_server::servers::channels::purge_expired_batched(&s, later, 3)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        pulse_server::dms::purge::purge_emptied_batched(&s, 3)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(left("SELECT COUNT(*) FROM channels WHERE id = ?").await, 0);
+    assert_no_orphans(&w.app).await;
+    assert_eq!(
+        pulse_server::dms::purge::purge_emptied_batched(&s, 3)
+            .await
+            .unwrap(),
+        0,
+        "nothing left"
+    );
+}

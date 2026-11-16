@@ -29,6 +29,8 @@ pub(crate) enum Purging<'a> {
     },
     /// A deleted server, due by `due` (`servers::deleted`); its channels go one after another.
     Server { id: ServerId, due: &'a str },
+    /// A group whose last member left (#336, `dms::purge`): deleted at once, never restorable.
+    Group { id: ChannelId },
 }
 
 impl Purging<'_> {
@@ -49,6 +51,16 @@ impl Purging<'_> {
                 } else {
                     Err(AppError::NotFound)
                 }
+            }
+            Purging::Group { id } => {
+                let hit: Option<i64> = sqlx::query_scalar(
+                    "SELECT 1 FROM channels
+                     WHERE id = ? AND server_id IS NULL AND deleted_at IS NOT NULL",
+                )
+                .bind(id.to_string())
+                .fetch_optional(&mut *tx)
+                .await?;
+                hit.map(|_| ()).ok_or(AppError::NotFound)
             }
         }
     }
@@ -150,6 +162,37 @@ pub(crate) async fn messages(
         // busy timeout. At most half the time, then, goes to the purge.
         tokio::time::sleep(held).await;
     }
+}
+
+/// A purge's last step, once [`messages`] has emptied deleted channel `id`: in one short
+/// transaction (checking `what` first), its mutes (they have no foreign key) and the channel,
+/// whose cascades take its read states, voice sessions, calls, clip views and stream sessions; its
+/// open clip tickets keep no channel (their confirm then refuses). Every file started in it (#57)
+/// is deleted after that commit (the attachments sweep retries a failure).
+pub(crate) async fn channel_row(s: &AppState, id: ChannelId, what: &Purging<'_>) -> AppResult<()> {
+    // Unread and mention counts others publish as absolutes span channels: in commit order.
+    let order = s.hub.in_order().await;
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    what.check(&mut tx).await?;
+    // Every file started in the channel, sent or not (#57): deleted after the commit.
+    let files = crate::attachments::stored_in_channels(&mut tx, &[id]).await?;
+    sqlx::query("DELETE FROM notification_prefs WHERE target_kind = 'channel' AND target_id = ?")
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    // No write reaches a deleted channel (#109), so it is empty by now; were a message left, the
+    // cascade would take it (its search entry by trigger).
+    sqlx::query("DELETE FROM channels WHERE id = ? AND deleted_at IS NOT NULL")
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    drop(order);
+    if !files.is_empty() {
+        let s = s.clone();
+        tokio::spawn(async move { crate::attachments::remove_objects(&s, files).await });
+    }
+    Ok(())
 }
 
 /// Delete clip objects from R2 in the background (the clip sweeper retries a failure).
