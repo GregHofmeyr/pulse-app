@@ -70,8 +70,23 @@ export function playable(e: LinkEmbed): boolean {
   return e.kind === 'player' && isPlayerProvider(e.provider) && !!e.provider_id
 }
 
-/** Instagram plays in a capability-free pop-out window, not inline. */
-export const popsOut = (e: LinkEmbed): boolean => e.provider === 'instagram'
+/** Players that always open in the capability-free pop-out window, never inline: Instagram (its embed misbehaves in
+ * an iframe). If Twitch turns out to refuse the app as its parent everywhere, adding it here makes that the default. */
+const ALWAYS_POPS_OUT: readonly EmbedProvider[] = ['instagram']
+
+/** Players the pop-out window can show (the Rust core's `popout_url`): YouTube and Twitch as a fallback (#88). */
+const CAN_POP_OUT: readonly EmbedProvider[] = ['instagram', 'youtube', 'twitch']
+
+/** Plays in the pop-out window, not inline: always for Instagram, and for YouTube once it has refused to play framed
+ * in the app this session (`fallen`, error 153, #88). */
+export const popsOut = (e: LinkEmbed, fallen: Partial<Record<EmbedProvider, boolean>> = {}): boolean =>
+  ALWAYS_POPS_OUT.includes(e.provider) || (canPopOut(e) && !!fallen[e.provider])
+
+/** Whether this player can open in the pop-out window. */
+export const canPopOut = (e: LinkEmbed): boolean => CAN_POP_OUT.includes(e.provider)
+
+/** YouTube's "this player can't be framed here" error (153): no Referer it trusts. */
+export const YOUTUBE_FRAMING_ERROR = 153
 
 /** The longest start the embed page takes (a week, the server's `page::MAX_START`). */
 export const MAX_START = 7 * 86400

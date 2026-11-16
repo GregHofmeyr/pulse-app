@@ -7,8 +7,8 @@
   import SpotifyIcon from './SpotifyIcon.svelte'
   import { api, errorText } from '../lib/tauri'
   import { isMediaHash, mediaUrl } from '../lib/emoji'
-  import { aspect, audioHeight, JAM_SUBTITLE, playable, playerSrc, popsOut, providerLabel, sandboxFor, spotifyCard } from '../lib/embeds'
-  import { embed as origin, loadEmbedOrigin, play, player, playerKey, stop } from '../lib/linkPreviews.svelte'
+  import { aspect, audioHeight, canPopOut, JAM_SUBTITLE, playable, playerSrc, popsOut, providerLabel, sandboxFor, spotifyCard, YOUTUBE_FRAMING_ERROR } from '../lib/embeds'
+  import { embed as origin, fallBack, fallen, loadEmbedOrigin, play, player, playerKey, stop } from '../lib/linkPreviews.svelte'
   import type { LinkEmbed } from '../lib/protocol/LinkEmbed'
   import { app } from '../lib/store.svelte'
   import { voice } from '../lib/voice.svelte'
@@ -29,7 +29,9 @@
   const key = $derived(playerKey(messageId, embed.url))
   const label = $derived(providerLabel(embed))
   const canPlay = $derived(playable(embed))
-  const pops = $derived(popsOut(embed))
+  const pops = $derived(popsOut(embed, fallen.providers))
+  // a playing YouTube or Twitch player can move to the pop-out window (#88: Twitch's refusal can't be seen from here)
+  const canMove = $derived(canPopOut(embed))
   const shape = $derived(aspect(embed))
   const active = $derived(canPlay && !pops && !!origin.origin && player.active === key)
   const thumbSrc = $derived(embed.thumb && isMediaHash(embed.thumb.hash) ? mediaUrl(embed.thumb.hash) : null)
@@ -58,16 +60,24 @@
     }
   }
 
-  async function start() {
-    if (pops) {
-      try {
-        await api.openEmbedWindow(embed.provider, embed.provider_id!)
-      } catch (e) {
-        onError(errorText(e))
-      }
-      return
+  async function popOut() {
+    const start = embed.provider === 'youtube' && embed.start ? Math.floor(embed.start) : null
+    try {
+      await api.openEmbedWindow(embed.provider, embed.provider_id!, start)
+    } catch (e) {
+      onError(errorText(e))
     }
+  }
+
+  async function start() {
+    if (pops) return popOut()
     play(key)
+  }
+
+  /** The inline player out, the pop-out window in. */
+  function moveToWindow() {
+    stop(key)
+    void popOut()
   }
 
   async function hide() {
@@ -102,7 +112,13 @@
     const onMessage = (e: MessageEvent) => {
       if (e.origin !== from || !frameEl || e.source !== frameEl.contentWindow) return
       const d: unknown = e.data
-      if (d && typeof d === 'object' && (d as { pulse?: unknown }).pulse === 'player' && ['ended', 'error'].includes((d as { state?: unknown }).state as string)) stop(k)
+      if (!d || typeof d !== 'object' || (d as { pulse?: unknown }).pulse !== 'player') return
+      const { state, code } = d as { state?: unknown; code?: unknown }
+      // #88: YouTube refused to play framed in the app. Its videos open in the pop-out window from now on, this one now.
+      if (state === 'error' && code === YOUTUBE_FRAMING_ERROR && embed.provider === 'youtube') {
+        fallBack('youtube')
+        moveToWindow()
+      } else if (state === 'ended' || state === 'error') stop(k)
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
@@ -160,8 +176,13 @@
       {#if embed.description}<p class="desc">{embed.description}</p>{/if}
     </div>
     {#if active}
-      <!-- back to the card: always a way out of a player, whatever it shows -->
-      <button class="close-player" aria-label="Close player" data-tip="Close player" onclick={() => stop(key)}><Icon name="x" size={14} /></button>
+      <div class="player-actions">
+        {#if canMove}
+          <button class="pop-out" aria-label="Open in a window" data-tip="Not playing? Open it in a window" onclick={moveToWindow}><Icon name="expand" size={14} /></button>
+        {/if}
+        <!-- back to the card: always a way out of a player, whatever it shows -->
+        <button class="close-player" aria-label="Close player" data-tip="Close player" onclick={() => stop(key)}><Icon name="x" size={14} /></button>
+      </div>
       {@render frame()}
     {:else if hasMedia}
       <div class="media" class:vertical={big && shape === '9 / 16'} style:aspect-ratio={big ? shape : undefined}>
@@ -246,11 +267,12 @@
   .art img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; display: block; border-radius: 4px; }
   .art.tile { color: var(--text-3); background: linear-gradient(135deg, var(--bg-3), var(--bg-4)); }
   .spotify .frame { grid-column: 1 / -1; }
-  .close-player {
+  .player-actions { display: flex; gap: 2px; }
+  .close-player, .pop-out {
     width: 24px; height: 24px; border: 0; border-radius: var(--radius-xs); padding: 0; background: transparent; color: var(--text-3);
     display: grid; place-items: center;
   }
-  .close-player:hover, .close-player:focus-visible { color: var(--text); background: var(--bg-3); }
+  .close-player:hover, .close-player:focus-visible, .pop-out:hover, .pop-out:focus-visible { color: var(--text); background: var(--bg-3); }
   .hide {
     width: 24px; height: 24px; border: 0; border-radius: var(--radius-xs); padding: 0; background: transparent; color: var(--text-3);
     /* its own layer for good, as the entrances (#103): a fade that makes and drops one flashes on WebKitGTK */

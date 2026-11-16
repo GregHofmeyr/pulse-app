@@ -36,21 +36,23 @@ const FRAME_ANCESTORS: &str = "http://tauri.localhost https://tauri.localhost ta
 
 /// YouTube's page script: listens to the player (YouTube's iframe API messages, on the player's
 /// own origin, from this page's one frame) and tells the app (`parent`) only that the video ended
-/// or the player failed. Nothing else is read or passed on. [`RELAY_HASH`] allows exactly it.
+/// or the player failed, with YouTube's error code (a number, or null): error 153 means YouTube
+/// refused to play framed in the app, and the app pops the video out instead (#88). Nothing else
+/// is read or passed on. [`RELAY_HASH`] allows exactly it.
 pub const RELAY: &str = concat!(
     "(function(){var f=document.querySelector('iframe'),o=new URL(f.src).origin,n=0,t;",
     "function say(m){try{f.contentWindow.postMessage(JSON.stringify(m),o)}catch(_){}}",
     "function hello(){say({event:'listening',id:1,channel:'widget'});",
     "say({event:'command',func:'addEventListener',args:['onStateChange'],id:1,channel:'widget'});",
     "say({event:'command',func:'addEventListener',args:['onError'],id:1,channel:'widget'})}",
-    "function tell(s){parent.postMessage({pulse:'player',state:s},'*')}",
+    "function tell(s,c){parent.postMessage({pulse:'player',state:s,code:c},'*')}",
     "f.addEventListener('load',function(){clearInterval(t);n=0;hello();",
     "t=setInterval(function(){if(++n>20)clearInterval(t);else hello()},250)});",
     "addEventListener('message',function(e){if(e.origin!==o||e.source!==f.contentWindow)return;",
     "var d;try{d=typeof e.data==='string'?JSON.parse(e.data):e.data}catch(_){return}",
     "if(!d||typeof d!=='object')return;clearInterval(t);",
     "var s=d.event==='onStateChange'?d.info:d.event==='infoDelivery'&&d.info?d.info.playerState:null;",
-    "if(s===0)tell('ended');else if(d.event==='onError')tell('error')})})();"
+    "if(s===0)tell('ended',null);else if(d.event==='onError')tell('error',typeof d.info==='number'?d.info:null)})})();"
 );
 
 /// The CSP source that allows [`RELAY`] and nothing else.

@@ -103,7 +103,9 @@ fn the_relay_hash_is_the_relays_sha256() {
     let want = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(RELAY.as_bytes()));
     assert_eq!(*RELAY_HASH, format!("'sha256-{want}'"));
     // It only ever tells the app "ended" or "error", and talks to the player on its own origin.
-    assert!(RELAY.contains("parent.postMessage({pulse:'player',state:s},'*')"));
+    assert!(RELAY.contains("parent.postMessage({pulse:'player',state:s,code:c},'*')"));
+    // only YouTube's numeric error code goes with an error (#88)
+    assert!(RELAY.contains("tell('error',typeof d.info==='number'?d.info:null)"));
     assert!(RELAY.contains("e.origin!==o||e.source!==f.contentWindow"));
 }
 

@@ -281,7 +281,9 @@ export const api = {
   /** Our embed page's origin, only when signed in to the server the app's CSP allows framing; else null. */
   embedOrigin: () => invoke<string | null>('embed_origin'),
   /** Instagram plays in a capability-free pop-out window (one at a time). */
-  openEmbedWindow: (provider: EmbedProvider, id: string) => invoke<void>('open_embed_window', { provider, id }),
+  /** `start`: a YouTube start time in seconds. */
+  openEmbedWindow: (provider: EmbedProvider, id: string, start: number | null = null) =>
+    invoke<void>('open_embed_window', { provider, id, start }),
   sendTyping: (channelId: string) => invoke<void>('send_typing', { channelId }),
   /** The raw file goes as the request body (a JSON number array would be slow at 2 MB). */
   uploadEmojiMedia: (bytes: Uint8Array) => invoke<MediaInfo>('upload_emoji_media', bytes),

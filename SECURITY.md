@@ -101,20 +101,28 @@ Audio goes to the SFU (section 2).
 - **Clicks.** A click brings Pulse up and opens that conversation. The notification carries only the conversation's
   and thread's ids for that.
 
-**Instagram pop-out window: only when the user presses play on an Instagram preview.**
+**Pop-out window: only when the user presses play on an Instagram preview, or a YouTube or Twitch player falls back
+to it.**
 - **What it is.** Instagram's embed misbehaves in an iframe, so its preview's play button opens Instagram's own embed
-  page (`https://www.instagram.com/p/<code>/embed/` or `/reel/<code>/embed/`) in a separate window. The Rust core
-  builds that address from the preview's id, checked against the server's rules for one, so nothing else can open
-  there. One pop-out at a time: a new one replaces it.
+  page (`https://www.instagram.com/p/<code>/embed/` or `/reel/<code>/embed/`) in a separate window. YouTube and Twitch
+  play inline, but can fall back to the same window (#88): a YouTube video whose player fails with error 153 (YouTube
+  refusing to play framed in the app) opens its watch page (`https://www.youtube.com/watch?v=<id>`) there, and YouTube
+  previews keep doing so until sign-out; a playing YouTube or Twitch player also has an "Open in a window" button
+  (Twitch's refusal of the app as a parent can't be seen from outside its frame), which opens the watch page or the
+  clip's page (`https://clips.twitch.tv/<slug>`). The Rust core builds each address from the preview's id, checked
+  against the server's rules for one, so nothing else can open there. One pop-out at a time: a new one replaces it.
 - **No reach into Pulse.** The window shows a remote page and gets no IPC: no capability names it (a test checks
   this), and Tauri refuses every command from a remote origin unless a `remote` capability grants it. It never sees
   the session token.
-- **Where it may go.** Only https pages on `instagram.com` and `facebook.com` (and their subdomains, for login and
-  consent pages) and media on `*.cdninstagram.com`. Any other navigation, including `javascript:` and `data:` URLs,
-  is refused. A link that would open a new window opens in the default browser instead, if it's a web link.
-- **What Instagram sees.** The page loads straight from Instagram (and maybe Facebook), so they see the user's IP
-  address and what was opened, and may set cookies. The window shares the main window's webview profile, so those
-  cookies are kept there; signing out of Pulse clears the webview's caches, not its cookies.
+- **Where it may go.** Only https pages of the provider it opened for: for Instagram, `instagram.com` and
+  `facebook.com` (and their subdomains, for login and consent pages) and media on `*.cdninstagram.com`; for YouTube,
+  `youtube.com`, `youtu.be` and `google.com` (and their subdomains, for consent, sign-in and Google's "unusual
+  traffic" check); for Twitch, `twitch.tv` and its subdomains. Any other navigation, including `javascript:` and
+  `data:` URLs, is refused. A link that would open a new window opens in the default browser instead, if it's a web
+  link.
+- **What the provider sees.** The page loads straight from the provider (and maybe Facebook or Google), so they see
+  the user's IP address and what was opened, and may set cookies. The window shares the main window's webview
+  profile, so those cookies are kept there; signing out of Pulse clears the webview's caches, not its cookies.
 
 ## 2. Network
 
@@ -142,8 +150,9 @@ and to GIPHY when GIFs are used:
     LiveKit, checks that the ICE servers in the join response are only our own.
 - **Webview limits.** The UI's Content Security Policy (section 4) also limits where the webview itself may connect.
 - **Updates and models** come from the signed-in Pulse server (section 4, *App updates*), never from a third party.
-- **Links.** Web links open in the user's default browser, never in a Pulse window. The one exception is an Instagram
-  preview's pop-out (section 1), which connects to Instagram's and Facebook's own hosts.
+- **Links.** Web links open in the user's default browser, never in a Pulse window. The one exception is a preview's
+  pop-out window (section 1), which connects to Instagram's and Facebook's, YouTube's and Google's, or Twitch's own
+  hosts.
 
 **No listening network ports.** The client opens no listening TCP or UDP port that another machine can connect to.
 WebRTC uses ephemeral UDP sockets for its own connection to the SFU.

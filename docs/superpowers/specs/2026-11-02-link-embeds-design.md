@@ -125,6 +125,11 @@ recommendation below and asked how Instagram and TikTok in particular would work
 - **Fallback if the embed page doesn't fix YouTube error 153, or Twitch refuses the app as an ancestor:** no
   Windows-only native Referer injection. That provider's play button uses the capability-free pop-out window
   instead (built in phase 1 in that case, rather than phase 3).
+  - Built (#88), as a fallback rather than a switch: the embed page passes YouTube's error code on; error 153 stops
+    the inline player and opens the video's watch page in the pop-out, and YouTube previews keep popping out until
+    sign-out. Twitch's refusal can't be seen from outside its frame, so a playing YouTube or Twitch player has an
+    "Open in a window" button (the clip's own page for Twitch). If Twitch never plays inline in the Windows app, adding
+    it to `ALWAYS_POPS_OUT` in `client/ui/src/lib/embeds.ts` makes the pop-out its default.
 - **Retention:** a card and its thumbnail live as long as the message. They come from oEmbed/OpenGraph, not
   YouTube's Data API, so its storage limits don't apply. No TTL or refresh sweep.
 - **Remove preview and edits:** hidden is kept per URL. A link the sender hid stays hidden through edits.

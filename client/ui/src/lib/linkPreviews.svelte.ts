@@ -1,5 +1,6 @@
 // Link previews: the per-device "Show link previews" setting, the one player playing app-wide,
 // and the origin our embed page is served from (only when signed in to pulsechat.co.za).
+import type { EmbedProvider } from './protocol/EmbedProvider'
 import { api } from './tauri'
 
 const SHOW_KEY = 'pulse.linkPreviews'
@@ -37,6 +38,14 @@ export function stop(key: string): void {
   if (player.active === key) player.active = null
 }
 
+/** Providers whose players refused to play framed in the app this session (YouTube's error 153, #88): their play
+ * buttons open the pop-out window instead until sign-out. */
+export const fallen = $state({ providers: {} as Partial<Record<EmbedProvider, boolean>> })
+
+export function fallBack(provider: EmbedProvider): void {
+  fallen.providers[provider] = true
+}
+
 /** Where players load from; null = no inline players (the play button opens the link). */
 export const embed = $state({ origin: null as string | null })
 
@@ -61,4 +70,5 @@ export function forgetEmbedOrigin(): void {
   loading = null
   embed.origin = null
   player.active = null
+  fallen.providers = {}
 }

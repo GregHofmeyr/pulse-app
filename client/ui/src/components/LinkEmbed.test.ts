@@ -174,8 +174,63 @@ describe('LinkEmbed', () => {
     expect(host.textContent).toContain('Instagram · reel')
     host.querySelector<HTMLButtonElement>('button.play')!.click()
     flushSync()
-    expect(invoke).toHaveBeenCalledWith('open_embed_window', { provider: 'instagram', id: 'reel:Abc_12' })
+    expect(invoke).toHaveBeenCalledWith('open_embed_window', { provider: 'instagram', id: 'reel:Abc_12', start: null })
     expect(iframes()).toHaveLength(0)
+    // Instagram never plays inline, so there's no player to move
+    expect(host.querySelector('button.pop-out')).toBeNull()
+  })
+
+  // #88: YouTube's error 153 means it won't play framed in the app (no Referer it trusts).
+  it('YouTube refusing to play framed (error 153) moves it to the pop-out window, and the rest follow', async () => {
+    const host = show(yt({ start: 42 }))
+    const other = show(yt({ url: 'https://youtu.be/aaaaaaaaaaa', provider_id: 'aaaaaaaaaaa' }), { messageId: 'M2' })
+    await settle()
+    host.querySelector<HTMLButtonElement>('button.play')!.click()
+    flushSync()
+    const f = host.querySelector('iframe')!
+    fromPage({ pulse: 'player', state: 'error', code: 153 }, f.contentWindow)
+    flushSync()
+    expect(iframes()).toHaveLength(0)
+    expect(player.active).toBeNull()
+    expect(invoke).toHaveBeenCalledWith('open_embed_window', { provider: 'youtube', id: 'dQw4w9WgXcQ', start: 42 })
+    // another YouTube card now opens the window too, never an iframe
+    invoke.mockClear()
+    other.querySelector<HTMLButtonElement>('button.play')!.click()
+    flushSync()
+    expect(iframes()).toHaveLength(0)
+    expect(invoke).toHaveBeenCalledWith('open_embed_window', { provider: 'youtube', id: 'aaaaaaaaaaa', start: null })
+  })
+
+  it('any other player error only brings the card back', async () => {
+    const host = show(yt())
+    await settle()
+    host.querySelector<HTMLButtonElement>('button.play')!.click()
+    flushSync()
+    fromPage({ pulse: 'player', state: 'error', code: 150 }, host.querySelector('iframe')!.contentWindow)
+    flushSync()
+    expect(iframes()).toHaveLength(0)
+    expect(invoke).not.toHaveBeenCalledWith('open_embed_window', expect.anything())
+    host.querySelector<HTMLButtonElement>('button.play')!.click()
+    flushSync()
+    expect(iframes()).toHaveLength(1)
+  })
+
+  it("a playing Twitch clip can move to the pop-out window (its refusal can't be seen from outside)", async () => {
+    const host = show(yt({ url: 'https://clips.twitch.tv/FunnyClip', provider: 'twitch', provider_id: 'FunnyClip', site_name: 'Twitch' }))
+    await settle()
+    host.querySelector<HTMLButtonElement>('button.play')!.click()
+    flushSync()
+    expect(iframes()).toHaveLength(1)
+    const move = host.querySelector<HTMLButtonElement>('button.pop-out')!
+    expect(move.getAttribute('aria-label')).toBe('Open in a window')
+    move.click()
+    flushSync()
+    expect(iframes()).toHaveLength(0)
+    expect(invoke).toHaveBeenCalledWith('open_embed_window', { provider: 'twitch', id: 'FunnyClip', start: null })
+    // just this once: the next play is inline again
+    host.querySelector<HTMLButtonElement>('button.play')!.click()
+    flushSync()
+    expect(iframes()).toHaveLength(1)
   })
 
   it('a generic card has no play control', async () => {
