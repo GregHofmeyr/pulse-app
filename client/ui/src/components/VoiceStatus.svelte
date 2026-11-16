@@ -115,7 +115,7 @@
         </span>
       {/if}
       {#if micTip}<span class="vc-chip" role="status" aria-label={micTip} data-tip={micTip}><Icon name="micOff" size={12} />No mic</span>{/if}
-      {#if soundTip}<span class="vc-chip" role="status" aria-label={soundTip} data-tip={soundTip}><Icon name="headphonesOff" size={12} />No sound</span>{/if}
+      {#if soundTip}<span class="vc-chip" role="status" aria-label={soundTip} data-tip={soundTip}><Icon name="soundOff" size={12} />No sound</span>{/if}
       <button class="vc-leave" aria-label="Leave voice" onclick={() => voiceApi.leave()}><Icon name="hangup" size={17} /></button>
     {/if}
     {#if open && clickable}<LinkStatsPanel {channelName} onClose={close} triggerSelector={TRIGGER} />{/if}

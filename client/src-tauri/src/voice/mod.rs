@@ -473,6 +473,9 @@ struct Reopener {
     failed: Mutex<devices::FailedTargets>,
     /// How many reopens so far (diagnostics: following mustn't churn).
     count: std::sync::atomic::AtomicU32,
+    /// A join connected while a reopen had the devices out, so it couldn't say what's missing:
+    /// the watchdog says so once they're back, even if nothing changed (#362).
+    gaps_owed: AtomicBool,
 }
 
 impl Reopener {
@@ -546,12 +549,12 @@ impl Reopener {
         &self,
         probe: &mut Option<JoinHandle<DeviceProbe>>,
     ) -> Option<(&'static str, Sides, devices::Targets)> {
-        let opened = self
+        let (opened, missing) = self
             .io
             .lock()
             .unwrap()
             .as_ref()
-            .map(|io| io.opened().clone())?;
+            .map(|io| (io.opened().clone(), io.gaps().sides()))?;
         let cfg = self.cfg.lock().unwrap().clone();
         let handle = match probe.take() {
             // still stuck from last time: don't pile up blocked threads
@@ -592,7 +595,7 @@ impl Reopener {
                 return Some(("chosen device is back", back, targets));
             }
         }
-        let moved = devices::moved_sides(&cfg, &opened, defaults.clone());
+        let moved = devices::moved_sides(&cfg, &opened, defaults.clone(), missing);
         let moved = failed.filter(moved, &defaults, now);
         moved
             .any()
@@ -665,6 +668,7 @@ impl Pipeline {
             one_at_a_time: tokio::sync::Mutex::new(()),
             failed: Default::default(),
             count: Default::default(),
+            gaps_owed: AtomicBool::new(false),
         });
         let mut tasks = Vec::new();
         let stalled = Arc::new(AtomicBool::new(false));
@@ -752,7 +756,8 @@ fn spawn_watchdog(
         // streams at once)
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut stall = devices::StallPolicy::default();
-        let (mut gap_retry, mut last_gaps) = (devices::GapRetry::default(), None);
+        let (mut gap_retry, mut notice) =
+            (devices::GapRetry::default(), devices::GapNotice::default());
         loop {
             tick.tick().await;
             if !reopener.alive.load(Ordering::SeqCst) {
@@ -762,11 +767,10 @@ fn spawn_watchdog(
             // a side that isn't open (#351) has no callbacks: tried again on its own clock, never
             // reported as a stall. Unknown (`None`) while a reopen has the devices out.
             let gaps = reopener.gaps();
-            if let Some(g) = &gaps
-                && last_gaps.as_ref() != Some(g)
-            {
-                events(VoiceEvent::DeviceGaps(g.clone()));
-                last_gaps = Some(g.clone());
+            // taken only once there's something to tell
+            let owed = gaps.is_some() && reopener.gaps_owed.swap(false, Ordering::SeqCst);
+            if let Some(g) = notice.check(gaps.as_ref(), owed) {
+                events(VoiceEvent::DeviceGaps(g));
             }
             let missing = gaps.as_ref().map(|g| g.sides()).unwrap_or_default();
             if gap_retry.due(missing.any(), now) {
@@ -1364,9 +1368,12 @@ impl VoiceManager {
                 if pipeline.stalled.load(Ordering::SeqCst) {
                     (self.events)(VoiceEvent::DeviceStalled);
                 }
-                // what's missing (#351), for this call's UI (the watchdog says when it changes)
-                if let Some(gaps) = pipeline.reopener.gaps() {
-                    (self.events)(VoiceEvent::DeviceGaps(gaps));
+                // what's missing (#351), for this call's UI (the watchdog says when it changes).
+                // Mid-reopen (a kept pipeline on a switch) it can't be known yet: the watchdog
+                // owes it, so the chip is never left stale (#362).
+                match pipeline.reopener.gaps() {
+                    Some(gaps) => (self.events)(VoiceEvent::DeviceGaps(gaps)),
+                    None => pipeline.reopener.gaps_owed.store(true, Ordering::SeqCst),
                 }
                 // the mic publish reports from here on, so never before "connected"
                 let _ = connected.send(());
@@ -2887,6 +2894,7 @@ mod tests {
             one_at_a_time: tokio::sync::Mutex::new(()),
             failed: Default::default(),
             count: Default::default(),
+            gaps_owed: AtomicBool::new(false),
         });
         let p = Pipeline {
             shared,
@@ -4257,6 +4265,7 @@ mod tests {
             one_at_a_time: tokio::sync::Mutex::new(()),
             failed: Default::default(),
             count: Default::default(),
+            gaps_owed: AtomicBool::new(false),
         })
     }
 

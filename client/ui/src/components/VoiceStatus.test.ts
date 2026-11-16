@@ -384,6 +384,9 @@ describe('VoiceStatus panel behaviour', () => {
       gaps(null, 'device in use')
       expect(chip('No mic')).toBeNull()
       expect(chip('No sound')?.getAttribute('data-tip')).toContain('device in use')
+      // the speaker struck through (#362), not the deafen headphones
+      const d = chip('No sound')?.querySelector('path')?.getAttribute('d') ?? ''
+      expect(d.startsWith('M11 5 6 9H3v6h3l5 4V5z') && d.endsWith('M3 3l18 18')).toBe(true)
     })
 
     it('leaving_the_call_forgets_it', () => {

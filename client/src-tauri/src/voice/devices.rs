@@ -873,22 +873,25 @@ pub fn default_moved(
     opened: &OpenedDevices,
     defaults: (Option<String>, Option<String>),
 ) -> bool {
-    moved_sides(cfg, opened, defaults).any()
+    moved_sides(cfg, opened, defaults, Sides::default()).any()
 }
 
-/// Which sides `default_moved` applies to.
+/// Which sides `default_moved` applies to. `missing`: sides that aren't open at all (#351); one
+/// on the system default moves to whatever default there is now (#362), rather than waiting for
+/// the gap retry's next go.
 pub fn moved_sides(
     cfg: &AudioConfig,
     opened: &OpenedDevices,
     defaults: (Option<String>, Option<String>),
+    missing: Sides,
 ) -> Sides {
-    // an empty name couldn't be read: unknown, never "different"
-    let moved = |chosen: &Option<String>, now: Option<String>, open: &str| {
-        chosen.is_none() && !open.is_empty() && now.is_some_and(|n| n != open)
+    // an open side's empty name couldn't be read: unknown, never "different"
+    let moved = |chosen: &Option<String>, now: Option<String>, open: &str, missing: bool| {
+        chosen.is_none() && now.is_some_and(|n| missing || (!open.is_empty() && n != open))
     };
     Sides {
-        input: moved(&cfg.input, defaults.0, &opened.input),
-        output: moved(&cfg.output, defaults.1, &opened.output),
+        input: moved(&cfg.input, defaults.0, &opened.input, missing.input),
+        output: moved(&cfg.output, defaults.1, &opened.output, missing.output),
     }
 }
 
@@ -1018,6 +1021,27 @@ impl GapRetry {
         self.tries += 1;
         self.next = Some(now + Self::BACKOFF[self.tries.min(Self::BACKOFF.len() - 1)]);
         true
+    }
+}
+
+/// When the UI must hear which sides are missing (#362): whenever that changes, and once more
+/// when a join asks for it (`owed`), so a join that found the devices mid-reopen still gets told
+/// though nothing changed since the last report.
+#[derive(Default)]
+pub struct GapNotice {
+    last: Option<DeviceGaps>,
+}
+
+impl GapNotice {
+    /// What to send, given the gaps now (`None` while a reopen has the devices out: nothing to
+    /// say yet, and anything owed stays owed).
+    pub fn check(&mut self, now: Option<&DeviceGaps>, owed: bool) -> Option<DeviceGaps> {
+        let now = now?;
+        if !owed && self.last.as_ref() == Some(now) {
+            return None;
+        }
+        self.last = Some(now.clone());
+        Some(now.clone())
     }
 }
 
@@ -1936,6 +1960,71 @@ mod tests {
         assert!(r.is_err());
     }
 
+    /// A side that never opened (no device then, or it wouldn't open) follows the system default
+    /// once there is one (#362); a side whose name couldn't be read still never counts as moved.
+    #[test]
+    fn a_missing_side_on_the_default_follows_whatever_default_there_is() {
+        let never_opened = opened("Arctis Mic", "");
+        let speakers = (Some("Arctis Mic".to_string()), Some("Speakers".to_string()));
+        let out = Sides {
+            input: false,
+            output: true,
+        };
+        assert_eq!(
+            moved_sides(
+                &AudioConfig::default(),
+                &never_opened,
+                speakers.clone(),
+                out
+            ),
+            out
+        );
+        // open but unnamed: unknown, left alone
+        assert!(
+            !moved_sides(
+                &AudioConfig::default(),
+                &never_opened,
+                speakers.clone(),
+                Sides::default()
+            )
+            .any()
+        );
+        // no default to go to yet: nothing to do (the gap retry keeps trying)
+        assert!(
+            !moved_sides(
+                &AudioConfig::default(),
+                &never_opened,
+                (Some("Arctis Mic".into()), None),
+                out
+            )
+            .any()
+        );
+        // a device the user picked is theirs: the gap retry reopens it, following doesn't
+        let picked = AudioConfig {
+            output: Some("USB Speakers".into()),
+            ..Default::default()
+        };
+        assert!(!moved_sides(&picked, &never_opened, speakers, out).any());
+    }
+
+    #[test]
+    fn device_gaps_are_told_on_a_change_or_when_a_join_asks() {
+        let mut n = GapNotice::default();
+        let no_mic = DeviceGaps {
+            input: Some("device in use".into()),
+            output: None,
+        };
+        assert_eq!(n.check(Some(&no_mic), false), Some(no_mic.clone()));
+        assert_eq!(n.check(Some(&no_mic), false), None, "unchanged");
+        // a join found the devices mid-reopen: nothing to say until they're back
+        assert_eq!(n.check(None, true), None);
+        // back, the same as before: told anyway, because the join asked
+        assert_eq!(n.check(Some(&no_mic), true), Some(no_mic.clone()));
+        assert_eq!(n.check(Some(&no_mic), false), None);
+        let all = DeviceGaps::default();
+        assert_eq!(n.check(Some(&all), false), Some(all));
+    }
+
     #[test]
     fn a_device_that_wont_open_isnt_retried_every_check() {
         let t0 = Instant::now();
@@ -1976,7 +2065,8 @@ mod tests {
             moved_sides(
                 &AudioConfig::default(),
                 &now,
-                (Some("Arctis Mic".into()), Some("Arctis".into()))
+                (Some("Arctis Mic".into()), Some("Arctis".into())),
+                Sides::default()
             ),
             Sides {
                 input: false,

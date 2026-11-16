@@ -50,3 +50,13 @@ describe('the spin line icons (#273)', () => {
     expect(pathOf('bookmark')).not.toBe(pathOf('pin'))
   })
 })
+
+describe('the no-sound icon (#362)', () => {
+  it('is the speaker struck through like micOff, so "No sound" never reads as deafened or as "Muted for you"', () => {
+    const d = pathOf('soundOff')
+    expect(d).toBe(`${pathOf('speaker')}M3 3l18 18`)
+    expect(pathOf('micOff')).toBe(`${pathOf('mic')}M3 3l18 18`)
+    expect(d).not.toBe(pathOf('headphonesOff'))
+    expect(d).not.toBe(pathOf('speakerOff'))
+  })
+})
