@@ -17,6 +17,7 @@ import type { NotifyLevelPref } from './protocol/NotifyLevelPref'
 import type { PinnedMessage } from './protocol/PinnedMessage'
 import type { Poll } from './protocol/Poll'
 import type { Plan } from './protocol/Plan'
+import type { F1Prediction } from './protocol/F1Prediction'
 import type { Mute } from './protocol/Mute'
 import type { Person } from './protocol/Person'
 import type { OwnStatus } from './protocol/OwnStatus'
@@ -402,6 +403,15 @@ export function setPoll(s: AppState, channel: string, id: string, poll: Poll): A
  * it whole. The state is returned as is when it isn't loaded. */
 export function setPlan(s: AppState, channel: string, id: string, plan: Plan): AppState {
   const put = (m: Message): Message => (m.plan && !m.deleted ? { ...m, plan } : m)
+  const shown = mapShown(s, channel, id, put)
+  const prev = shown.latest[channel]
+  return prev?.id === id ? { ...shown, latest: { ...shown.latest, [channel]: put(prev) } } : shown
+}
+
+/** Put an F1 weekend card's predictions as they are now on its message, wherever it shows (#386): everyone sees the
+ * same, so the event carries them whole. The state is returned as is when the card isn't loaded. */
+export function setF1Predictions(s: AppState, channel: string, id: string, predictions: F1Prediction[]): AppState {
+  const put = (m: Message): Message => (m.f1?.kind === 'weekend' && !m.deleted ? { ...m, f1: { ...m.f1, predictions } } : m)
   const shown = mapShown(s, channel, id, put)
   const prev = shown.latest[channel]
   return prev?.id === id ? { ...shown, latest: { ...shown.latest, [channel]: put(prev) } } : shown
@@ -1026,6 +1036,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     // A plan's answers, edit or cancel (#387), the card whole.
     case 'PlanChanged':
       return setPlan(s, e.d.channel_id, e.d.message_id, e.d.plan)
+    // An F1 weekend card's predictions (#386), whole.
+    case 'F1PredictionsChanged':
+      return setF1Predictions(s, e.d.channel_id, e.d.message_id, e.d.predictions)
     case 'StageShared':
       return { ...s, stageShares: withStageShare(s.stageShares, e.d.share) }
     case 'StageShareCleared': {

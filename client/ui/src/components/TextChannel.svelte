@@ -41,6 +41,7 @@
   import { takeChatFocus, voiceChat } from '../lib/voiceChat.svelte'
   import { COMMANDS, parseCommand, type CommandContext } from '../lib/commands'
   import { planPrefs } from '../lib/plans.svelte'
+  import F1Banner from './F1Banner.svelte'
   import QuietSpinCard from './QuietSpinCard.svelte'
   import { onOwnSpin, provideChatShown, quietSpins, spinQuick } from '../lib/wheels.svelte'
 
@@ -849,6 +850,8 @@
   </div>
   <!-- not in the chat strip beside a DM or group stream in full view (#51): the call is all around it there -->
   {#if isPrivate && !panel && !notes}<CallBand {channelId} {onVoiceSettings} />{/if}
+  <!-- the F1 countdown (#386), only in the server's F1 channel -->
+  {#if serverId && !isPrivate}<F1Banner {serverId} {channelId} {nameOf} />{/if}
   <!-- tabindex -1: a place to put the focus back when nothing better is left (not a tab stop) -->
   <div class="list" tabindex="-1" bind:this={list} onscroll={onScroll}>
     {#if reachedStart && !from}<div class="start">

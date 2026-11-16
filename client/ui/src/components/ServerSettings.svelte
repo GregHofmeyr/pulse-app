@@ -10,16 +10,17 @@
   import NotifyLevelSettings from './NotifyLevelSettings.svelte'
   import DeleteServer from './DeleteServer.svelte'
   import AchievementsChannelSettings from './AchievementsChannelSettings.svelte'
+  import F1ChannelSettings from './F1ChannelSettings.svelte'
   import { app } from '../lib/store.svelte'
   import type { Server } from '../lib/protocol/Server'
 
   let { server, onClose }: { server: Server; onClose: () => void } = $props()
   // Notifications (#203): your own level for the server, as its tab's right-click menu sets it. Delete server (#184):
   // its owner's only, last.
-  type Section = 'Emoji' | 'Soundboard' | 'Wheels' | 'Quote speakers' | 'Achievements' | 'Notifications' | 'Storage' | 'Recently deleted' | 'Delete server'
+  type Section = 'Emoji' | 'Soundboard' | 'Wheels' | 'Quote speakers' | 'Achievements' | 'F1' | 'Notifications' | 'Storage' | 'Recently deleted' | 'Delete server'
   const owner = $derived(!!server.owner_id && server.owner_id === app.state.me?.id)
   const sections = $derived<Section[]>([
-    'Emoji', 'Soundboard', 'Wheels', 'Quote speakers', 'Achievements', 'Notifications', 'Storage', 'Recently deleted',
+    'Emoji', 'Soundboard', 'Wheels', 'Quote speakers', 'Achievements', 'F1', 'Notifications', 'Storage', 'Recently deleted',
     ...(owner ? (['Delete server'] as const) : []),
   ])
   let section = $state<Section>('Emoji')
@@ -36,7 +37,7 @@
   </nav>
   <div class="content">
     <button class="close icon-btn round modal-close" aria-label="Close server settings" onclick={onClose}><Icon name="x" size={16} /></button>
-    {#if section === 'Emoji'}<EmojiSettings {server} />{:else if section === 'Soundboard'}<SoundboardSettings {server} />{:else if section === 'Wheels'}<WheelSettings {server} />{:else if section === 'Achievements'}<AchievementsChannelSettings {server} />{:else if section === 'Notifications'}<NotifyLevelSettings {server} />{:else if section === 'Storage'}<StorageSettings {server} />{:else if section === 'Recently deleted'}<RecentlyDeleted {server} />{:else if section === 'Delete server' && owner}<DeleteServer {server} onDeleted={onClose} />{:else}<SpeakerLinkSettings {server} />{/if}
+    {#if section === 'Emoji'}<EmojiSettings {server} />{:else if section === 'Soundboard'}<SoundboardSettings {server} />{:else if section === 'Wheels'}<WheelSettings {server} />{:else if section === 'Achievements'}<AchievementsChannelSettings {server} />{:else if section === 'F1'}<F1ChannelSettings {server} />{:else if section === 'Notifications'}<NotifyLevelSettings {server} />{:else if section === 'Storage'}<StorageSettings {server} />{:else if section === 'Recently deleted'}<RecentlyDeleted {server} />{:else if section === 'Delete server' && owner}<DeleteServer {server} onDeleted={onClose} />{:else}<SpeakerLinkSettings {server} />{/if}
   </div>
 </div>
 </div>

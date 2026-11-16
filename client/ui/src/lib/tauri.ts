@@ -15,6 +15,8 @@ import type { CreatePlanRequest } from './protocol/CreatePlanRequest'
 import type { Plan } from './protocol/Plan'
 import type { PlanForecast } from './protocol/PlanForecast'
 import type { Rsvp } from './protocol/Rsvp'
+import type { F1Prediction } from './protocol/F1Prediction'
+import type { F1Status } from './protocol/F1Status'
 import type { ServerLayout } from './protocol/ServerLayout'
 import type { DeletedChannel } from './protocol/DeletedChannel'
 import type { DeletedServer } from './protocol/DeletedServer'
@@ -646,6 +648,15 @@ export const planCmd = {
   cancel: (messageId: string) => invoke<Plan>('cancel_plan', { messageId }),
   forecast: (messageId: string) => invoke<PlanForecast | null>('plan_forecast', { messageId }),
   saveIcs: (messageId: string, title: string) => invoke<string | null>('save_plan_ics', { messageId, title }),
+}
+
+/** F1 race weekends (#386): a server's status (its F1 channel, the next race weekend, the season's prediction table;
+ *  the server asks Jolpica-F1, the app never does), its owner's pick of channel (or none), and your podium prediction
+ *  on a weekend card (three driver ids, P1 first; null takes it back), answered with everyone's. */
+export const f1Cmd = {
+  status: (serverId: string) => invoke<F1Status>('f1_status', { serverId }),
+  setChannel: (serverId: string, channelId: string | null) => invoke<F1Status>('set_f1_channel', { serverId, channelId }),
+  predict: (messageId: string, picks: string[] | null) => invoke<F1Prediction[]>('f1_predict', { messageId, picks }),
 }
 
 /** Tauri rejects with the command's error string. */
