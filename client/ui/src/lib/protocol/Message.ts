@@ -49,6 +49,11 @@ clip: Clip | null,
  */
 embeds: Array<LinkEmbed>, 
 /**
+ * True when the sender removed a preview of a link still in the content, so it can be shown
+ * again (#94, `POST /messages/{id}/embeds/show`).
+ */
+embeds_hidden?: boolean, 
+/**
  * Set on a DM or group's call line (#50): who started it, when it ended, who joined.
  */
 call?: CallLine, 

@@ -973,6 +973,23 @@ impl Api {
         .await
     }
 
+    /// Shows your message's removed previews again (#94): those whose link is still in it.
+    pub async fn show_embeds(
+        &self,
+        token: &str,
+        message_id: MessageId,
+    ) -> Result<Message, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/messages/{message_id}/embeds/show", self.base))
+                .bearer_auth(token)
+                .json(&serde_json::json!({}))
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Pin a message for `duration` (#178).
     pub async fn pin_message(
         &self,
@@ -3997,6 +4014,19 @@ mod tests {
         assert_eq!(urls, ["https://example.com/b"]);
         let after = api.hide_embed(&token, m.id, None).await.unwrap();
         assert!(after.embeds.is_empty());
+        // shown again (#94): only links still in the message count, so "look" has none to show
+        assert!(!after.embeds_hidden);
+        assert!(api.show_embeds(&token, m.id).await.is_err());
+        // edited to hold both links (they have rows, so nothing is fetched): offered, and back
+        let edited = api
+            .edit_message(&token, m.id, "https://example.com/a https://example.com/b")
+            .await
+            .unwrap();
+        assert!(edited.embeds_hidden);
+        let shown = api.show_embeds(&token, m.id).await.unwrap();
+        let urls: Vec<_> = shown.embeds.iter().map(|e| e.url.as_str()).collect();
+        assert_eq!(urls, ["https://example.com/a", "https://example.com/b"]);
+        assert!(!shown.embeds_hidden);
     }
 
     #[tokio::test]

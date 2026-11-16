@@ -123,6 +123,7 @@ async fn create(
         poll: None,
         poll_ended: None,
         stage_share_line: None,
+        embeds_hidden: false,
         gif: None,
         attachments: vec![],
         caption_is_fallback: false,

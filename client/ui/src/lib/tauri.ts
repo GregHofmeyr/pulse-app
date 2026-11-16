@@ -276,6 +276,8 @@ export const api = {
   stopStageShare: (channelId: string, shareId: string) => invoke<void>('stop_stage_share', { channelId, shareId }),
   /** Hides one link's preview on your own message, or all of them (`url` null); the update also arrives as MessageUpdated. */
   hideEmbed: (messageId: string, url: string | null) => invoke<Message>('hide_embed', { messageId, url }),
+  /** Your message's removed previews back, for everyone (#94): those whose link is still in it. */
+  showEmbeds: (messageId: string) => invoke<Message>('show_embeds', { messageId }),
   /** Our embed page's origin, only when signed in to the server the app's CSP allows framing; else null. */
   embedOrigin: () => invoke<string | null>('embed_origin'),
   /** Instagram plays in a capability-free pop-out window (one at a time). */

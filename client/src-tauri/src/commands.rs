@@ -1323,6 +1323,17 @@ pub async fn hide_embed(
     )
 }
 
+/// Shows your message's removed previews again, for everyone (#94).
+#[tauri::command]
+pub async fn show_embeds(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.show_embeds(&token, message_id).await)
+}
+
 /// Where link-preview players load from: the embed page's origin, only when signed in to the
 /// server the app CSP allows framing (`None` otherwise: play opens the link instead).
 #[tauri::command]

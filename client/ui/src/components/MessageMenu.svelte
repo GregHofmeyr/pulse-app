@@ -1,7 +1,7 @@
 <script lang="ts">
   // A message's menu (#178): from its action bar's More, or a right-click (Shift+F10, the menu key) on the message.
   // Pin message, with its lengths as the shared hover flyout (MenuFlyout, as Mute's), or Unpin message on a pinned
-  // one; End poll on your own open poll (#157); and Add to quotes (#316), a flyout of the server's quotes channels when
+  // one; End poll on your own open poll (#157); Show previews again on your own message with a removed one (#94); and Add to quotes (#316), a flyout of the server's quotes channels when
   // it has several. Built like the channel menu: placed by placeMenu, arrows move, Escape closes a hover-opened flyout first.
   import { onMount, untrack } from 'svelte'
   import { clickOutside } from '../lib/actions'
@@ -10,7 +10,7 @@
   import MenuFlyout from './MenuFlyout.svelte'
   import type { PinDuration } from '../lib/protocol/PinDuration'
 
-  let { pinned, x, y, opener, onPin, onUnpin, onEndPoll, quotesChannels = [], onQuote, onClose }: {
+  let { pinned, x, y, opener, onPin, onUnpin, onEndPoll, onShowPreviews, quotesChannels = [], onQuote, onClose }: {
     /** The message is pinned: Unpin message instead of Pin message. */
     pinned: boolean
     x: number
@@ -21,6 +21,8 @@
     onUnpin: () => unknown
     /** Set on your own open poll (#157): End poll. */
     onEndPoll?: () => unknown
+    /** Set on your own message with a removed link preview (#94): Show previews again. */
+    onShowPreviews?: () => unknown
     /** Add to quotes (#316): the server's quotes channels this message can become a quote in (none: no item). One
      *  is a plain item; several, a flyout to pick from. */
     quotesChannels?: readonly { id: string; name: string }[]
@@ -103,6 +105,9 @@
   {/if}
   {#if onEndPoll}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onEndPoll)}>End poll</button>
+  {/if}
+  {#if onShowPreviews}
+    <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onShowPreviews)}>Show previews again</button>
   {/if}
   {#if onQuote && quotesChannels.length === 1}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(() => onQuote(quotesChannels[0].id))}>Add to quotes</button>

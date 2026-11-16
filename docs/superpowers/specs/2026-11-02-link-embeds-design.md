@@ -127,8 +127,11 @@ recommendation below and asked how Instagram and TikTok in particular would work
   instead (built in phase 1 in that case, rather than phase 3).
 - **Retention:** a card and its thumbnail live as long as the message. They come from oEmbed/OpenGraph, not
   YouTube's Data API, so its storage limits don't apply. No TTL or refresh sweep.
-- **Remove preview and edits:** hidden is kept per URL. A link the sender hid stays hidden through edits, and
-  there's no un-hide.
+- **Remove preview and edits:** hidden is kept per URL. A link the sender hid stays hidden through edits.
+  - Un-hide (#94, added later): the sender's message menu has "Show previews again" while a hidden link is still in
+    the message (`embeds_hidden` on the message); `POST /messages/{id}/embeds/show` brings back every hidden preview
+    whose link is still there, with the same permission and rate limit as hiding. A hidden link edited out stays
+    hidden, in case it comes back.
 - **Builder's own calls, recorded:**
   - quotes and clips messages get no link previews;
   - no backfill for messages sent before this ships;

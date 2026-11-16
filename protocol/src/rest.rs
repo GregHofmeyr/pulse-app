@@ -689,6 +689,11 @@ pub struct Message {
     /// after the send; the sender can hide them).
     #[serde(default)]
     pub embeds: Vec<LinkEmbed>,
+    /// True when the sender removed a preview of a link still in the content, so it can be shown
+    /// again (#94, `POST /messages/{id}/embeds/show`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub embeds_hidden: bool,
     /// Set on a DM or group's call line (#50): who started it, when it ended, who joined.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -2209,7 +2214,9 @@ pub struct LinkEmbed {
     pub vertical: bool,
 }
 
-/// `POST /messages/{id}/embeds/hide`: the sender hides one preview, or all of them.
+/// `POST /messages/{id}/embeds/hide`: the sender hides one preview, or all of them. `POST
+/// /messages/{id}/embeds/show` (no body) brings back every hidden one whose link is still in the
+/// message (#94).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
 pub struct HideEmbedRequest {
     /// The preview's `url`; `None` hides every preview on the message.

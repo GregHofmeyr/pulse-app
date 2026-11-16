@@ -1,5 +1,6 @@
 //! Link previews on messages: unfurled after a send or an edit (against the fake provider,
-//! `testing::fake_provider`), hidden by the sender, rate limited, and never on quotes or clips.
+//! `testing::fake_provider`), hidden by the sender (and shown again, #94), rate limited, and never on
+//! quotes or clips.
 mod common;
 
 use std::time::{Duration, Instant};
@@ -53,6 +54,16 @@ impl Env {
             token,
             &format!("/messages/{id}/embeds/hide"),
             json!({ "url": url }),
+        )
+        .await
+    }
+
+    async fn show(&self, token: &str, id: MessageId) -> reqwest::Response {
+        post_json(
+            &self.app,
+            token,
+            &format!("/messages/{id}/embeds/show"),
+            json!({}),
         )
         .await
     }
@@ -399,6 +410,62 @@ async fn hidden_stays_hidden_through_edits_and_for_everyone() {
     assert_eq!(r.status(), 200);
     assert!(r.json::<Message>().await.unwrap().embeds.is_empty());
     assert!(env.read(&env.sam_t, env.ch, m.id).await.embeds.is_empty());
+}
+
+#[tokio::test]
+async fn the_sender_can_show_removed_previews_again() {
+    let env = setup().await;
+    let (one, two) = (env.page(1), env.page(2));
+    let m = send(&env.app, &env.alex_t, env.ch, &format!("{one} {YOUTUBE}")).await;
+    let got = wait_for_embeds(&env, &env.alex_t, env.ch, m.id, 2).await;
+    assert!(!got.embeds_hidden);
+
+    // A removed preview is marked on the message, for everyone (only the sender is offered it back).
+    let hidden: Message = env
+        .hide(&env.alex_t, m.id, Some(&one))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert!(hidden.embeds_hidden);
+    assert!(env.read(&env.sam_t, env.ch, m.id).await.embeds_hidden);
+
+    // Same rules as removing: someone else's message is a 403, one that doesn't exist a 404.
+    assert_eq!(env.show(&env.sam_t, m.id).await.status(), 403);
+    assert_eq!(env.show(&env.alex_t, MessageId::new()).await.status(), 404);
+
+    let mut ws = hello(&env.app, &env.sam_t).await;
+    let r = env.show(&env.alex_t, m.id).await;
+    assert_eq!(r.status(), 200);
+    let shown: Message = r.json().await.unwrap();
+    assert_eq!(urls(&shown), vec![one.as_str(), YOUTUBE]);
+    assert!(!shown.embeds_hidden);
+    let update = next_update(&mut ws, m.id).await;
+    assert_eq!(urls(&update), vec![one.as_str(), YOUTUBE]);
+    assert!(!update.embeds_hidden);
+    // Nothing left to bring back.
+    assert_eq!(env.show(&env.alex_t, m.id).await.status(), 404);
+
+    // A removed preview whose link was edited out isn't offered or brought back (it has nowhere to go)…
+    env.hide(&env.alex_t, m.id, None).await;
+    let r = env
+        .edit(&env.alex_t, m.id, &format!("{YOUTUBE} {two}"))
+        .await;
+    assert_eq!(r.status(), 200);
+    let got = wait_for_embeds(&env, &env.alex_t, env.ch, m.id, 1).await;
+    assert_eq!(urls(&got), vec![two.as_str()]);
+    assert!(got.embeds_hidden, "YOUTUBE is still in it, removed");
+    let shown: Message = env.show(&env.alex_t, m.id).await.json().await.unwrap();
+    assert_eq!(urls(&shown), vec![YOUTUBE, two.as_str()]);
+    assert!(!shown.embeds_hidden, "the edited-out link doesn't count");
+    assert!(env.rows(m.id).await.contains(&(one.clone(), true)));
+    assert_eq!(env.show(&env.alex_t, m.id).await.status(), 404);
+    // …and if the link comes back it is still removed, and offered again.
+    env.edit(&env.alex_t, m.id, &format!("{YOUTUBE} {two} {one}"))
+        .await;
+    let got = env.read(&env.alex_t, env.ch, m.id).await;
+    assert_eq!(urls(&got), vec![YOUTUBE, two.as_str()]);
+    assert!(got.embeds_hidden);
 }
 
 #[tokio::test]

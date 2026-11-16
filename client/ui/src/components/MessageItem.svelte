@@ -221,6 +221,9 @@
       showError(errorText(e))
     }
   }
+  // your own message with a removed preview whose link is still in it (#94): Show previews again, in its menu
+  const showable = $derived(mine && !!message.embeds_hidden && previews.show)
+  const showEmbeds = () => api.showEmbeds(message.id).catch((e) => showError(errorText(e)))
   // a GIPHY link shows as the GIF (#58), never as a preview card (an older server may have made one)
   const embeds = $derived(!pending && !message.deleted && previews.show ? (message.embeds ?? []).filter((e) => !gifIdOf(e.url)) : [])
   // GIFs (#58): a picked one, or the GIPHY links in the text; a message that is only the link shows only the GIF
@@ -409,7 +412,7 @@
 {#if msgMenu}
   {#key msgMenu}<MessageMenu pinned={!!pin} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
     onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
-    onEndPoll={endable ? endPoll : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
+    onEndPoll={endable ? endPoll : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
 {/if}
 <PersonMenu menu={authorMenu} onMessage={menuIsDmPeer ? undefined : messageAuthor} muteChannelId={menuIsDmPeer ? message.channel_id : null}
   onClose={() => (authorMenu = null)} />

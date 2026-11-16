@@ -685,6 +685,56 @@ describe('link previews', () => {
     expect(btn('Remove previews')).toBeNull()
   })
 
+  describe('Show previews again (#94)', () => {
+    function showHidden(mine: boolean, over: Partial<Message> = { embeds_hidden: true }) {
+      const m = msg({ content: 'see https://example.com/a', embeds: [], ...over })
+      app.state = { ...emptyState(), channels: { C1: { id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 } }, messages: { C1: [m] } }
+      cmp = mount(MessageItem, { target: document.body, props: {
+        message: m, serverId: null, name: 'alex', nameOf: (id: string | null) => id ?? '', replyTo: null,
+        grouped: false, mine, onReply: () => {}, onEdit, onDelete, meId: mine ? 'U1' : 'U9',
+      } })
+      flushSync()
+    }
+    const openMenu = () => {
+      btn('More').click()
+      flushSync()
+    }
+    const menuItem = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find((b) => b.textContent!.trim() === label)
+
+    it('is in the menu of your own message with a removed preview, and brings them back', async () => {
+      showHidden(true)
+      openMenu()
+      menuItem('Show previews again')!.click()
+      await settle()
+      expect(invoke).toHaveBeenCalledWith('show_embeds', { messageId: 'M1' })
+      expect(document.querySelector('[role=menu]')).toBeNull()
+    })
+
+    it("isn't offered on someone else's message, with nothing removed, or with previews off", () => {
+      showHidden(false)
+      openMenu()
+      expect(menuItem('Show previews again')).toBeUndefined()
+      unmount(cmp!); cmp = undefined; document.body.innerHTML = ''
+      showHidden(true, {})
+      openMenu()
+      expect(menuItem('Show previews again')).toBeUndefined()
+      unmount(cmp!); cmp = undefined; document.body.innerHTML = ''
+      setShowPreviews(false)
+      showHidden(true)
+      openMenu()
+      expect(menuItem('Show previews again')).toBeUndefined()
+    })
+
+    it('a failure shows why', async () => {
+      showHidden(true)
+      invoke.mockImplementation(async (c: string) => { if (c === 'show_embeds') throw 'nope' })
+      openMenu()
+      menuItem('Show previews again')!.click()
+      await settle()
+      expect(alert()?.textContent).toBe('nope')
+    })
+  })
+
   it('a failed "Remove previews" shows why', async () => {
     showEmbeds(true)
     invoke.mockImplementation(async (c: string) => { if (c === 'hide_embed') throw 'nope' })

@@ -90,6 +90,7 @@ fn from_row(r: Row) -> AppResult<Message> {
         quote: None,
         clip: None,
         embeds: vec![],
+        embeds_hidden: false,
         call: match &system_payload {
             Some(p) if system && deleted_at.is_none() => super::system::call_line(p),
             _ => None,
@@ -531,6 +532,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         poll: None,
         poll_ended: None,
         stage_share_line: None,
+        embeds_hidden: false,
         gif,
         attachments,
         caption_is_fallback,
@@ -964,6 +966,7 @@ mod tests {
             poll: None,
             poll_ended: None,
             stage_share_line: None,
+            embeds_hidden: false,
             gif: None,
             attachments: vec![],
             caption_is_fallback: false,

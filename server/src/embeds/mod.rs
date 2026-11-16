@@ -361,9 +361,11 @@ type EmbedRow = (
     Option<i64>,
     Option<i64>,
     bool,
+    bool,
 );
 
-/// Fill `embeds` on every live message in `msgs`: its rows that aren't hidden, in link order.
+/// Fill `embeds` on every live message in `msgs`: its rows that aren't hidden, in link order; and
+/// `embeds_hidden` when a hidden one's link is still in its content (#94: it can be shown again).
 pub async fn attach(db: &SqlitePool, msgs: &mut [Message]) -> AppResult<()> {
     let ids: Vec<String> = msgs
         .iter()
@@ -375,8 +377,8 @@ pub async fn attach(db: &SqlitePool, msgs: &mut [Message]) -> AppResult<()> {
     }
     let mut q = sqlx::QueryBuilder::new(
         "SELECT message_id, url, provider, provider_id, kind, title, description, site_name,
-                author, thumb_hash, thumb_width, thumb_height, start_secs, vertical
-         FROM link_embeds WHERE hidden = 0 AND message_id IN (",
+                author, thumb_hash, thumb_width, thumb_height, start_secs, vertical, hidden
+         FROM link_embeds WHERE message_id IN (",
     );
     let mut list = q.separated(", ");
     for id in &ids {
@@ -385,6 +387,7 @@ pub async fn attach(db: &SqlitePool, msgs: &mut [Message]) -> AppResult<()> {
     q.push(") ORDER BY message_id, position");
     let rows: Vec<EmbedRow> = q.build_query_as().fetch_all(db).await?;
     let mut by_msg: HashMap<String, Vec<LinkEmbed>> = HashMap::new();
+    let mut hidden_by_msg: HashMap<String, Vec<String>> = HashMap::new();
     for (
         message_id,
         url,
@@ -400,8 +403,13 @@ pub async fn attach(db: &SqlitePool, msgs: &mut [Message]) -> AppResult<()> {
         thumb_height,
         start_secs,
         vertical,
+        hidden,
     ) in rows
     {
+        if hidden {
+            hidden_by_msg.entry(message_id).or_default().push(url);
+            continue;
+        }
         // A thumbnail needs all three; a row written without its size has none.
         let thumb = match (thumb_hash, thumb_width, thumb_height) {
             (Some(hash), Some(w), Some(h)) => Some(EmbedThumb {
@@ -426,7 +434,14 @@ pub async fn attach(db: &SqlitePool, msgs: &mut [Message]) -> AppResult<()> {
         });
     }
     for m in msgs.iter_mut().filter(|m| !m.deleted) {
-        m.embeds = by_msg.remove(&m.id.to_string()).unwrap_or_default();
+        let id = m.id.to_string();
+        m.embeds = by_msg.remove(&id).unwrap_or_default();
+        // a hidden link edited out of the message stays hidden (in case it comes back) but has
+        // nowhere to show
+        m.embeds_hidden = hidden_by_msg.remove(&id).is_some_and(|hidden| {
+            let links = links::extract(&m.content);
+            hidden.iter().any(|url| links.contains(url))
+        });
     }
     Ok(())
 }

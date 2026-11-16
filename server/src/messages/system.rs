@@ -59,6 +59,7 @@ pub async fn insert(
         quote: None,
         clip: None,
         embeds: vec![],
+        embeds_hidden: false,
         call: call_line(&stored),
         qoty_card: qoty_card(&stored),
         pin: None,

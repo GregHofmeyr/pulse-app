@@ -357,6 +357,7 @@ pub fn run() {
             commands::edit_message,
             commands::delete_message,
             commands::hide_embed,
+            commands::show_embeds,
             commands::pin_message,
             commands::unpin_message,
             commands::list_pins,
