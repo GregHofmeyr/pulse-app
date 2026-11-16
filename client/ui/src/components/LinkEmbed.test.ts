@@ -13,6 +13,8 @@ import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { voice } from '../lib/voice.svelte'
 import { forgetEmbedOrigin, player } from '../lib/linkPreviews.svelte'
+import { watchPrefs } from '../lib/watchParty.svelte'
+import type { WatchParty } from '../lib/protocol/WatchParty'
 
 const HASH = 'a'.repeat(64)
 const yt = (over: Partial<Embed> = {}): Embed => ({
@@ -430,5 +432,69 @@ describe('LinkEmbed', () => {
     show(yt(), { messageId: 'M2' })
     await settle()
     expect(invoke.mock.calls.filter(([c]) => c === 'embed_origin')).toHaveLength(1)
+  })
+})
+
+describe('watch party (#384)', () => {
+  const btn = (host: HTMLElement, text: string) => [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === text)
+  const party = (over: Partial<WatchParty> = {}): WatchParty => ({
+    channel_id: 'V1', host_id: 'U1', video_id: 'aaaaaaaaaaa', position_ms: 0, playing: true, set_at_ms: 0, everyone_controls: false,
+    viewers: ['U1'], queue: [], ...over,
+  })
+  beforeEach(() => {
+    app.state = { ...emptyState(), me: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, channels: {
+      V1: { id: 'V1', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 0 },
+      D1: { id: 'D1', server_id: null, kind: 'dm', name: '', position: 0 },
+    } }
+    voice.channelId = 'V1'
+    voice.connection = 'connected'
+    watchPrefs.on = true
+  })
+  afterEach(() => {
+    voice.channelId = null
+    voice.connection = 'disconnected'
+    watchPrefs.on = true
+  })
+
+  it('a YouTube card starts one in the voice channel you are in, from any chat', async () => {
+    const host = show(yt({ provider_id: 'dQw4w9WgXcQ' }), { channelId: 'C9' })
+    await settle()
+    btn(host, 'Start watch party')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('start_watch_party', { channelId: 'V1', videoId: 'dQw4w9WgXcQ', title: 'A video' })
+  })
+
+  it('not out of a server call, with watch parties off, or for a bad id', async () => {
+    voice.connection = 'connecting'
+    expect(btn(show(yt()), 'Start watch party')).toBeUndefined()
+    voice.connection = 'connected'
+    voice.channelId = 'D1'
+    expect(btn(show(yt()), 'Start watch party')).toBeUndefined()
+    voice.channelId = 'V1'
+    watchPrefs.on = false
+    expect(btn(show(yt()), 'Start watch party')).toBeUndefined()
+    watchPrefs.on = true
+    expect(btn(show(yt({ provider_id: 'bad' })), 'Start watch party')).toBeUndefined()
+    expect(btn(show(yt()), 'Start watch party')).toBeDefined()
+  })
+
+  it('with one on: the host plays it there or queues it, a viewer queues it, and the video playing says so', async () => {
+    app.state = { ...app.state, watchParties: { V1: party() } }
+    let host = show(yt())
+    expect(btn(host, 'Play in watch party')).toBeDefined()
+    btn(host, 'Add to queue')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('watch_party_action', { channelId: 'V1', action: { action: 'enqueue', video_id: 'dQw4w9WgXcQ', title: 'A video' } })
+    // sam hosts, alex watches: queue only
+    app.state = { ...app.state, watchParties: { V1: party({ host_id: 'U2', viewers: ['U2', 'U1'] }) } }
+    host = show(yt())
+    expect(btn(host, 'Play in watch party')).toBeUndefined()
+    expect(btn(host, 'Add to queue')).toBeDefined()
+    // not watching: neither (Join is on the panel)
+    app.state = { ...app.state, watchParties: { V1: party({ host_id: 'U2', viewers: ['U2'] }) } }
+    host = show(yt())
+    expect(btn(host, 'Add to queue')).toBeUndefined()
+    app.state = { ...app.state, watchParties: { V1: party({ video_id: 'dQw4w9WgXcQ' }) } }
+    expect(show(yt()).textContent).toContain('In the watch party')
   })
 })

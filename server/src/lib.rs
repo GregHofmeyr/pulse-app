@@ -40,6 +40,7 @@ pub mod steam;
 pub mod streams;
 pub mod updates;
 pub mod voice;
+pub mod watch;
 pub mod wheels;
 
 #[cfg(feature = "testing")]
@@ -78,6 +79,7 @@ pub fn router(state: AppState) -> Router {
         .merge(streams::routes::router())
         .merge(streams::notify::router())
         .merge(stage::routes::router())
+        .merge(watch::routes::router())
         .merge(reports::routes::router())
         .merge(media::routes::router())
         .merge(emoji::routes::router())

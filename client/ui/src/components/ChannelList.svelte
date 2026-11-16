@@ -549,6 +549,7 @@
   {@const people = member ? callRoster(app.state, serverId, c.id, self) : []}
   {@const badge = chatBadge(app.state, c, clock.nowIso)}
   {@const stage = stageShareIn(app.state, c.id)}
+  {@const party = app.state.watchParties[c.id]}
   {#if renaming === c.id}
     {@render renameField(c, 'speaker')}
   {:else}
@@ -562,6 +563,8 @@
     <!-- something shared to its stage (#277, #234), for people outside the call. Text, not Spotify's icon: theirs has
          to be at least 21px (#196), too big beside the row's 14-17px icons -->
     {#if stage}<span class="on-stage" data-tip="On the stage: {stageCard(stage, '', Date.parse(clock.nowIso)).title}">Spotify</span>{/if}
+    <!-- a YouTube watch party on in it (#384) -->
+    {#if party}<span class="on-stage watching" data-tip="Watch party: {party.title ?? 'a YouTube video'}">📺 watching</span>{/if}
     {#if isMuted(app.state, c, clock.nowIso)}<span class="mic"><Icon name="bellOff" size={14} /></span>{/if}
     {#if people.length}<span class="count">{people.length}</span>{/if}
   </button>
@@ -693,6 +696,7 @@
   .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { font-size: 11px; color: var(--text-3); }
   .on-stage { font-size: 11px; font-weight: 600; color: var(--text-2); white-space: nowrap; }
+  .watching { color: var(--accent-text); }
   /* a voice channel's chat icon (#226): over the row's end (its 34px, less 4px each side), shown while the row is
      hovered, focused or open, and always while its chat has something new */
   .row.with-chat { padding-right: 38px; }

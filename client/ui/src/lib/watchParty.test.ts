@@ -1,0 +1,72 @@
+import { describe, expect, it } from 'vitest'
+import { clockText, correction, DRIFT_S, mayControl, partyPlayerSrc, partySeconds, validVideoId, watching, youtubeIdOf, YT } from './watchParty'
+import type { WatchParty } from './protocol/WatchParty'
+import type { LinkEmbed } from './protocol/LinkEmbed'
+
+const party = (over: Partial<WatchParty> = {}): WatchParty => ({
+  channel_id: 'V1', host_id: 'U1', video_id: 'dQw4w9WgXcQ', position_ms: 10_000, playing: true, set_at_ms: 1_000_000,
+  everyone_controls: false, viewers: ['U1', 'U2'], queue: [], ...over,
+})
+const info = (state: number | null, time: number | null, duration: number | null = 300) => ({ state, time, duration })
+
+describe('watch party sync (#384)', () => {
+  it('video ids are strict', () => {
+    expect(validVideoId('dQw4w9WgXcQ')).toBe(true)
+    expect(validVideoId('a-b_c-d_e-f')).toBe(true)
+    for (const bad of ['', 'short', 'dQw4w9WgXcQQ', 'dQw4w9WgXc!', '../../admin', null, undefined]) expect(validVideoId(bad)).toBe(false)
+    const e = { provider: 'youtube', provider_id: 'dQw4w9WgXcQ' } as LinkEmbed
+    expect(youtubeIdOf(e)).toBe('dQw4w9WgXcQ')
+    expect(youtubeIdOf({ ...e, provider_id: 'x' })).toBeNull()
+    expect(youtubeIdOf({ ...e, provider: 'twitch' })).toBeNull()
+  })
+
+  it('the position runs on by the server clock while playing, not while paused', () => {
+    expect(partySeconds(party(), 1_000_000)).toBe(10)
+    expect(partySeconds(party(), 1_004_500)).toBe(14.5)
+    // a server stamp from just ahead of our guess never runs it backwards
+    expect(partySeconds(party(), 999_000)).toBe(10)
+    expect(partySeconds(party({ playing: false }), 9_999_999)).toBe(10)
+  })
+
+  it('who controls and who watches', () => {
+    expect(mayControl(party(), 'U1')).toBe(true)
+    expect(mayControl(party(), 'U2')).toBe(false)
+    expect(mayControl(party({ everyone_controls: true }), 'U2')).toBe(true)
+    expect(mayControl(party({ everyone_controls: true }), 'U3')).toBe(false)
+    expect(mayControl(party(), null)).toBe(false)
+    expect(watching(party(), 'U2')).toBe(true)
+    expect(watching(party(), 'U3')).toBe(false)
+    expect(watching(null, 'U1')).toBe(false)
+  })
+
+  it('corrects drift beyond DRIFT_S, and only then', () => {
+    const now = 1_010_000 // the party is at 20 s
+    expect(correction(party(), info(YT.playing, 20 + DRIFT_S - 0.1), now)).toEqual([])
+    expect(correction(party(), info(YT.playing, 20 - DRIFT_S - 0.1), now)).toEqual([{ func: 'seek', to: 20 }])
+    expect(correction(party(), info(YT.playing, 40), now)).toEqual([{ func: 'seek', to: 20 }])
+  })
+
+  it('plays and pauses to match, and waits while the player says nothing or buffers', () => {
+    const now = 1_000_000
+    expect(correction(party(), info(null, null), now)).toEqual([])
+    expect(correction(party(), info(YT.paused, 10), now)).toEqual([{ func: 'play' }])
+    expect(correction(party(), info(YT.unstarted, 0), now)).toEqual([{ func: 'play' }, { func: 'seek', to: 10 }])
+    expect(correction(party({ playing: false }), info(YT.playing, 10), now)).toEqual([{ func: 'pause' }])
+    expect(correction(party(), info(YT.buffering, 2), now)).toEqual([])
+    expect(correction(party({ playing: false }), info(YT.buffering, 2), now)).toEqual([{ func: 'pause' }])
+  })
+
+  it('an ended video stays ended while the party runs past its end', () => {
+    expect(correction(party(), info(YT.ended, 300, 300), 1_000_000 + 295_000)).toEqual([])
+    // but a party seeked back into it restarts it
+    expect(correction(party({ position_ms: 30_000 }), info(YT.ended, 300, 300), 1_000_000)).toEqual([{ func: 'play' }, { func: 'seek', to: 30 }])
+  })
+
+  it('the party page and the clock text', () => {
+    expect(partyPlayerSrc('https://pulsechat.co.za/', 'dQw4w9WgXcQ', 42.9)).toBe('https://pulsechat.co.za/embed/youtube/dQw4w9WgXcQ?party=1&start=42')
+    expect(partyPlayerSrc('https://pulsechat.co.za', 'dQw4w9WgXcQ')).toBe('https://pulsechat.co.za/embed/youtube/dQw4w9WgXcQ?party=1')
+    expect(clockText(65)).toBe('1:05')
+    expect(clockText(3723)).toBe('1:02:03')
+    expect(clockText(-3)).toBe('0:00')
+  })
+})

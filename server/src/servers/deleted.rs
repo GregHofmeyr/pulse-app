@@ -108,6 +108,7 @@ pub async fn delete(
     for (channel_id, voice) in &live {
         if *voice {
             crate::stage::channel_gone(&s, *channel_id);
+            crate::watch::channel_gone(&s, *channel_id);
         }
     }
     drop(_order);

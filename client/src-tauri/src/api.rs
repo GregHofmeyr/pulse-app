@@ -23,11 +23,11 @@ use pulse_protocol::rest::{
     SetChannelBitrateRequest, SetClipViewRequest, SetCustomStatusRequest, SetJoinSoundRequest,
     SetMuteRequest, SetNicknameRequest, SetNotifyLevelRequest, SetServerVoiceRequest,
     SetShowcaseRequest, SetStatusRequest, Sound, SpinAgainRequest, SpinWheelRequest, StageShare,
-    StageShareRequest, StartAttachmentRequest, StartQotyRequest, Status, StreamInfo, StreamRole,
-    StreamSettings, StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest,
-    TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus,
-    UpdateProfileRequest, UpdateSoundRequest, UpdateWheelRequest, UploadedPart, User,
-    VoiceTokenResponse, WatchRequest, Wheel,
+    StageShareRequest, StartAttachmentRequest, StartQotyRequest, StartWatchPartyRequest, Status,
+    StreamInfo, StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest,
+    TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse,
+    TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, UpdateWheelRequest, UploadedPart,
+    User, VoiceTokenResponse, WatchParty, WatchPartyAction, WatchRequest, Wheel,
 };
 use serde::de::DeserializeOwned;
 
@@ -93,6 +93,14 @@ pub enum ApiError {
     /// again, the video is fine.
     #[error("{0}")]
     PosterGone(String),
+}
+
+/// A YouTube video id (#384): exactly 11 of `[A-Za-z0-9_-]`, as the server checks.
+pub fn watch_video_id(id: &str) -> bool {
+    id.len() == 11
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 impl ApiError {
@@ -1078,6 +1086,69 @@ impl Api {
                 .put(format!("{}/channels/{channel}/stage-share", self.base))
                 .bearer_auth(token)
                 .json(&StageShareRequest { url: url.into() })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Start a YouTube watch party in a server voice channel (#384), or change its video; you must be in its call.
+    pub async fn start_watch_party(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        video_id: &str,
+        title: Option<String>,
+    ) -> Result<WatchParty, ApiError> {
+        if !watch_video_id(video_id) {
+            return Err(ApiError::Rejected("that isn't a YouTube video".into()));
+        }
+        Self::parse(
+            self.http
+                .put(format!("{}/channels/{channel}/watch-party", self.base))
+                .bearer_auth(token)
+                .json(&StartWatchPartyRequest {
+                    video_id: video_id.into(),
+                    title,
+                })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// One change to a voice channel's watch party (#384).
+    pub async fn watch_party_action(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        action: &WatchPartyAction,
+    ) -> Result<(), ApiError> {
+        let id_ok = match action {
+            WatchPartyAction::Load { video_id, .. }
+            | WatchPartyAction::Enqueue { video_id, .. } => watch_video_id(video_id),
+            _ => true,
+        };
+        if !id_ok {
+            return Err(ApiError::Rejected("that isn't a YouTube video".into()));
+        }
+        Self::ok_empty(
+            self.http
+                .post(format!("{}/channels/{channel}/watch-party", self.base))
+                .bearer_auth(token)
+                .json(action)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// End a voice channel's watch party for everyone (#384; the host only).
+    pub async fn end_watch_party(&self, token: &str, channel: ChannelId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/channels/{channel}/watch-party", self.base))
+                .bearer_auth(token)
                 .send()
                 .await,
         )
@@ -5912,6 +5983,45 @@ mod tests {
         assert!(api.list_pins(&token, g.id).await.unwrap().is_empty());
         let again = api.unpin_message(&token, m.id).await.unwrap_err();
         assert!(matches!(again, ApiError::Rejected(_)), "{again:?}");
+    }
+
+    #[tokio::test]
+    async fn watch_parties_need_the_call_and_a_youtube_id() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let chans: Vec<Channel> =
+            testing::get_json(&app, &token, &format!("/servers/{}/channels", s.id)).await;
+        let lounge = chans.iter().find(|c| c.kind == ChannelKind::Voice).unwrap();
+        let api = Api::new(&format!("http://{}", app.addr));
+        // a bad id never leaves the client
+        let e = api
+            .start_watch_party(&token, lounge.id, "../pins/xx", None)
+            .await
+            .unwrap_err();
+        assert!(matches!(e, ApiError::Rejected(_)), "{e:?}");
+        let load = WatchPartyAction::Load {
+            video_id: "short".into(),
+            title: None,
+        };
+        let e = api
+            .watch_party_action(&token, lounge.id, &load)
+            .await
+            .unwrap_err();
+        assert!(matches!(e, ApiError::Rejected(_)), "{e:?}");
+        // not in the call
+        let e = api
+            .start_watch_party(&token, lounge.id, "dQw4w9WgXcQ", Some("A video".into()))
+            .await
+            .unwrap_err();
+        assert!(matches!(e, ApiError::Forbidden(_)), "{e:?}");
+        let e = api
+            .watch_party_action(&token, lounge.id, &WatchPartyAction::Join)
+            .await
+            .unwrap_err();
+        assert!(matches!(e, ApiError::Forbidden(_)), "{e:?}");
+        let e = api.end_watch_party(&token, lounge.id).await.unwrap_err();
+        assert!(matches!(e, ApiError::Forbidden(_)), "{e:?}");
     }
 
     #[tokio::test]

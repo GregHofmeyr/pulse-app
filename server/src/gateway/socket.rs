@@ -287,6 +287,7 @@ async fn ready_for(
         layouts,
         server_now: Some(now()),
         stage_shares: voice_state.stage.visible(&visible),
+        watch_parties: voice_state.watch.visible(&visible),
         inbox_unread: Some(inbox_unread),
     })
 }

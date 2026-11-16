@@ -10,7 +10,7 @@ use crate::rest::{
     MyCustomStatus, NotifyLevelPref, OwnStatus, Person, PinnedMessage, Plan, Playing,
     PlayingUpdate, PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason,
     Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare, SteamStatus,
-    StreamEndReason, StreamInfo, User, Wheel,
+    StreamEndReason, StreamInfo, User, WatchParty, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -207,6 +207,10 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub stage_shares: Vec<StageShare>,
+    /// The YouTube watch parties on in voice channels you may see (#384).
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub watch_parties: Vec<WatchParty>,
     /// How many items in your inbox are unread (#306). Absent from older servers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -744,6 +748,16 @@ pub enum Event {
         share_id: String,
         now_playing: Option<Listening>,
     },
+    /// A voice channel's watch party started or changed (#384), whole. `server_now_ms` is the server's clock as it
+    /// went out, for the receivers' clock offset. Clients from before it skip the frame.
+    WatchPartyChanged {
+        party: WatchParty,
+        server_now_ms: i64,
+    },
+    /// A voice channel's watch party ended (#384): its last viewer left it or the call.
+    WatchPartyEnded {
+        channel_id: ChannelId,
+    },
 }
 
 impl Event {
@@ -773,8 +787,10 @@ impl Event {
             | Self::PlanChanged { channel_id, .. }
             | Self::F1PredictionsChanged { channel_id, .. }
             | Self::StageShareCleared { channel_id, .. }
-            | Self::StageNowPlaying { channel_id, .. } => Some(*channel_id),
+            | Self::StageNowPlaying { channel_id, .. }
+            | Self::WatchPartyEnded { channel_id } => Some(*channel_id),
             Self::StageShared { share } => Some(share.channel_id),
+            Self::WatchPartyChanged { party, .. } => Some(party.channel_id),
             Self::WheelSpunQuietly { spin } => Some(spin.channel_id),
             Self::CallStarted { call } => Some(call.channel_id),
             Self::CallRinging { ring } => Some(ring.channel_id),
@@ -991,6 +1007,7 @@ mod tests {
             layouts: vec![],
             server_now: None,
             stage_shares: vec![],
+            watch_parties: vec![],
             inbox_unread: None,
         })
         .unwrap();
@@ -1080,6 +1097,7 @@ mod tests {
             layouts: vec![],
             server_now: None,
             stage_shares: vec![],
+            watch_parties: vec![],
             inbox_unread: None,
         })
         .unwrap();
@@ -1218,6 +1236,7 @@ mod tests {
             layouts: vec![],
             server_now: None,
             stage_shares: vec![],
+            watch_parties: vec![],
             inbox_unread: None,
         })
         .unwrap();
@@ -1775,6 +1794,45 @@ mod tests {
         assert!(ready.layouts.is_empty());
         assert_eq!(ready.server_now, None, "nor the server's time (#258)");
         assert!(ready.stage_shares.is_empty(), "nor stage shares (#234)");
+        assert!(ready.watch_parties.is_empty(), "nor watch parties (#384)");
+    }
+
+    /// Watch parties (#384): scoped to their channel, and the actions' wire shape.
+    #[test]
+    fn watch_party_events_and_actions() {
+        use crate::rest::{WatchParty, WatchPartyAction};
+        let (ch, u) = (ChannelId::new(), UserId::new());
+        let party = WatchParty {
+            channel_id: ch,
+            host_id: u,
+            video_id: "dQw4w9WgXcQ".into(),
+            title: None,
+            position_ms: 0,
+            playing: true,
+            set_at_ms: 1,
+            everyone_controls: false,
+            viewers: vec![u],
+            queue: vec![],
+        };
+        let changed = Event::WatchPartyChanged {
+            party,
+            server_now_ms: 2,
+        };
+        let ended = Event::WatchPartyEnded { channel_id: ch };
+        for e in [&changed, &ended] {
+            assert_eq!((e.channel_id(), e.only_for()), (Some(ch), None), "{e:?}");
+        }
+        let v = serde_json::to_value(&changed).unwrap();
+        assert_eq!(v["t"], "WatchPartyChanged");
+        assert!(v["d"]["party"].get("title").is_none());
+        let a: WatchPartyAction =
+            serde_json::from_str(r#"{"action":"seek","position_ms":90000}"#).unwrap();
+        assert_eq!(a, WatchPartyAction::Seek { position_ms: 90000 });
+        let a: WatchPartyAction = serde_json::from_str(r#"{"action":"next"}"#).unwrap();
+        assert_eq!(a, WatchPartyAction::Next);
+        let a: WatchPartyAction =
+            serde_json::from_str(r#"{"action":"load","video_id":"dQw4w9WgXcQ"}"#).unwrap();
+        assert!(matches!(a, WatchPartyAction::Load { title: None, .. }));
     }
 
     /// A server's layout is public like its channels: everyone hears it, as `ChannelDeleted`.

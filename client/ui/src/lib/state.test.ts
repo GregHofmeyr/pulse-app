@@ -11,6 +11,7 @@ import type { ServerLayout } from './protocol/ServerLayout'
 import type { Quote } from './protocol/Quote'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { StageShare } from './protocol/StageShare'
+import type { WatchParty } from './protocol/WatchParty'
 
 const ch = (id: string, kind: Channel['kind'] = 'text', server_id: string | null = 'S1', position = 0): Channel => ({
   id, server_id, kind, name: id, position,
@@ -362,6 +363,34 @@ describe('streams', () => {
     let s = applyEvent(base(), { t: 'StreamStarted', d: { stream: info('U2') } }, 0)
     s = applyEvent(s, { t: 'VoiceLeft', d: { channel_id: 'V1', user_id: 'U2' } }, 0)
     expect(s.streams['V1']['U2']).toBeDefined() // the server follows up with StreamEnded
+  })
+})
+
+describe('watch parties (#384)', () => {
+  const party = (over: Partial<WatchParty> = {}): WatchParty => ({
+    channel_id: 'V1', host_id: 'U1', video_id: 'dQw4w9WgXcQ', position_ms: 0, playing: true, set_at_ms: 1, everyone_controls: false,
+    viewers: ['U1'], queue: [], ...over,
+  })
+
+  it('ready_lists_them_and_an_older_server_sends_none', () => {
+    const s = applyReady(emptyState(), ready({ watch_parties: [party()] }))
+    expect(s.watchParties['V1']?.host_id).toBe('U1')
+    expect(applyReady(s, ready()).watchParties).toEqual({})
+  })
+
+  it('a_change_replaces_it_whole_and_an_end_removes_it', () => {
+    let s = applyEvent(applyReady(emptyState(), ready()), { t: 'WatchPartyChanged', d: { party: party(), server_now_ms: 2 } }, 0)
+    s = applyEvent(s, { t: 'WatchPartyChanged', d: { party: party({ playing: false, host_id: 'U2' }), server_now_ms: 3 } }, 0)
+    expect(s.watchParties['V1']).toMatchObject({ playing: false, host_id: 'U2' })
+    s = applyEvent(s, { t: 'WatchPartyEnded', d: { channel_id: 'V1' } }, 0)
+    expect(s.watchParties).toEqual({})
+    expect(applyEvent(s, { t: 'WatchPartyEnded', d: { channel_id: 'V1' } }, 0)).toBe(s)
+  })
+
+  it('goes_with_a_deleted_channel', () => {
+    const s = applyReady(emptyState(), ready({ watch_parties: [party()] }))
+    const gone = applyEvent(s, { t: 'ChannelDeleted', d: { channel_id: 'V1', server_id: 'S1' } }, 0)
+    expect(gone.watchParties).toEqual({})
   })
 })
 

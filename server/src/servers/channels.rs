@@ -191,6 +191,7 @@ pub async fn delete(
     publish_layout(&s, server).await;
     // Its stage goes in the same order as shares (#234): a share finishing its card now finds the channel gone.
     crate::stage::channel_gone(&s, id);
+    crate::watch::channel_gone(&s, id);
     drop(_order);
     // Badge bookkeeping in its own transaction, after the delete: it never fails it.
     crate::badges::voice::closed(&s, id, &closed).await;

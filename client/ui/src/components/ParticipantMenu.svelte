@@ -21,6 +21,7 @@
   import JoinGameItem from './JoinGameItem.svelte'
   import MessageSoundItem from './MessageSoundItem.svelte'
   import ServerVoiceItem from './ServerVoiceItem.svelte'
+  import WatchPartyItem from './WatchPartyItem.svelte'
 
   let {
     channelId,
@@ -217,6 +218,7 @@
       <button type="button" class="menu-item" role="menuitem" data-item="voice-settings" onclick={() => pick(onVoiceSettings)}>Voice settings</button>
     {/if}
   {/each}
+  <WatchPartyItem {channelId} {userId} {pick} />
   <NicknameItems {serverId} {userId} {pick} />
   <LiveNotifyItem {userId} {pick} />
   <AppearOfflineItem {userId} {pick} />

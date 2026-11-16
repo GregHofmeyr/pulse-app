@@ -197,6 +197,10 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::StageShare::export_all(&cfg)?;
     rest::StageShareRequest::export_all(&cfg)?;
     rest::StageShareLine::export_all(&cfg)?;
+    rest::WatchParty::export_all(&cfg)?;
+    rest::WatchPartyItem::export_all(&cfg)?;
+    rest::StartWatchPartyRequest::export_all(&cfg)?;
+    rest::WatchPartyAction::export_all(&cfg)?;
     rest::SteamStatus::export_all(&cfg)?;
     rest::SteamLinked::export_all(&cfg)?;
     rest::SteamLinkStart::export_all(&cfg)?;

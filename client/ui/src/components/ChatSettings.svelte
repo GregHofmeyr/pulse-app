@@ -6,6 +6,7 @@
   import { app } from '../lib/store.svelte'
   import { errorText } from '../lib/tauri'
   import { f1Prefs, setF1RaceWeekends } from '../lib/f1Prefs.svelte'
+  import { setWatchParties, watchPrefs } from '../lib/watchParty.svelte'
 
   const modes: { value: AnimateMode; label: string; help: string }[] = [
     { value: 'always', label: 'Always', help: 'Animated emoji play while Pulse is in focus.' },
@@ -38,6 +39,10 @@
   <div class="settings-field"><span class="settings-label">SHOW LINK PREVIEWS</span>
     <Segmented label="Show link previews" options={onOff} value={previews.show} onchange={setShowPreviews} />
     <small>{previews.show ? 'Links in messages show a preview card; videos and music play when you click them.' : 'Links show as plain links.'} This device only.</small>
+  </div>
+  <div class="settings-field"><span class="settings-label">WATCH PARTIES</span>
+    <Segmented label="Watch parties" options={onOff} value={watchPrefs.on} onchange={setWatchParties} />
+    <small>{watchPrefs.on ? 'In a voice channel, a YouTube card can start a watch party: everyone in the call who joins it watches the same video at the same moment.' : 'No Start or Join watch party, and a party handed to you is passed on. The channel list still shows when one is on.'} This device only.</small>
   </div>
   <div class="settings-field"><span class="settings-label">PLAN SOMETHING</span>
     <Segmented label="Plan something" options={onOff} value={planPrefs.on} onchange={setPlanSomething} />
