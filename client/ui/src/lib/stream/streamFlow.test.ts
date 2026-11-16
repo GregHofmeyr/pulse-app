@@ -160,6 +160,26 @@ describe('go live', () => {
   })
 })
 
+describe('stop', () => {
+  // viewers mustn't keep seeing the share while stream sound's capture winds down (#341)
+  it('video_and_the_server_go_first_stream_sound_stops_alongside', async () => {
+    const { streamApi, stream, room } = await goneLive(true)
+    const soundStopped = deferred()
+    core.handlers.stream_audio_stop = () => soundStopped.p
+    let done = false
+    const stopping = streamApi.stop().then(() => (done = true))
+    await until(() => room.unpublish.mock.calls.length > 0, 'the video to be unpublished')
+    expect(calls('stream_stop')).toEqual([{ channelId: 'c1' }])
+    expect(calls('stream_audio_stop')).toHaveLength(1)
+    expect(stream.live).toBeNull()
+    await settle()
+    expect(done).toBe(false) // the stop is over once stream sound is too
+    soundStopped.resolve(undefined)
+    await stopping
+    expect(room.disconnect).toHaveBeenCalled()
+  })
+})
+
 describe('stream audio mute', () => {
   it('a_muted_stream_audio_stays_muted_next_go_live', async () => {
     const { streamApi, stream } = await goneLive(true)

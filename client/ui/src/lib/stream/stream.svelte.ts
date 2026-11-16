@@ -320,7 +320,9 @@ async function endLive(announce: boolean) {
   stream.sound = null
   stopPreview?.()
   stopPreview = null
-  if (live.audio) await streamCmd.audioStop().catch(logError('audio_stop_error'))
+  // stream sound winds down alongside (its capture teardown can take a while): viewers stop
+  // seeing the share, and the server hears of it, without waiting for it
+  const sound = live.audio ? streamCmd.audioStop().catch(logError('audio_stop_error')) : undefined
   // the server call never holds up the local stop
   const server = announce
     ? streamCmd.stop(live.channelId).catch((e) => {
@@ -330,7 +332,7 @@ async function endLive(announce: boolean) {
       })
     : Promise.resolve()
   await stream.room?.unpublish().catch(logError('unpublish_error'))
-  await server
+  await Promise.all([server, sound])
   streamCmd.log({ ev: 'stopped' })
   await releaseIfIdle()
 }

@@ -37,6 +37,9 @@ const RESCAN_EVERY: Duration = Duration::from_secs(2);
 const LOG_EVERY: Duration = Duration::from_secs(5);
 /// How long connecting `#a` may take.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long closing `#a` may take before we drop it anyway: a stuck close holds the state lock,
+/// so every stream-sound command would wait on it (as voice's `CLOSE_TIMEOUT`).
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How often a receive task with no current mixer asks for one again.
 const REBIND_EVERY: Duration = Duration::from_secs(1);
 
@@ -84,12 +87,16 @@ impl serde::Serialize for StreamAudioError {
 /// Told the channel whose `#a` connection LiveKit closed under us (never when we leave).
 pub type OnClosed = Arc<dyn Fn(ChannelId) + Send + Sync>;
 
-/// The `#a` connection. Every operation takes `state`, so two quick clicks can't both connect
-/// or both publish (the first one's capture would be orphaned).
+/// The `#a` connection. Every operation takes `state`, so two quick clicks can't both publish
+/// (the first one's capture would be orphaned); connecting takes `connecting` instead for the
+/// whole connect, and `state` only around it, so a slow connect (ticket retries, LiveKit) never
+/// holds up stopping, muting or leaving.
 #[derive(Default)]
 pub struct StreamAudio {
     /// In an `Arc` so the room's event task can tear down a connection LiveKit closed.
     state: Arc<tokio::sync::Mutex<State>>,
+    /// One connect at a time: two quick clicks can't both connect.
+    connecting: tokio::sync::Mutex<()>,
     /// Stream volume per person (percent), kept with no connection so a slider set early applies.
     volumes: Arc<Mutex<HashMap<String, u16>>>,
     on_closed: Option<OnClosed>,
@@ -101,6 +108,10 @@ struct State {
     publishing: Option<Publishing>,
     /// Numbers connections, so a late "room closed" can't tear down a newer one.
     next_conn_id: u64,
+    /// Moved on by every leave: a connect that finishes after one isn't wanted any more.
+    epoch: u64,
+    /// The channel a connect in flight is for.
+    pending: Option<ChannelId>,
 }
 
 struct Conn {
@@ -697,24 +708,44 @@ impl StreamAudio {
         ghost: bool,
         mixer: MixerSource,
     ) -> Result<(), StreamAudioError> {
-        let mut st = self.state.lock().await;
-        if let Some(c) = &st.conn {
-            if reuses(c.channel, c.ghost, channel, ghost)
-                && c.room.connection_state() != ConnectionState::Disconnected
-            {
-                return Ok(());
+        let _one = self.connecting.lock().await;
+        let epoch = {
+            let mut st = self.state.lock().await;
+            if let Some(c) = &st.conn {
+                if reuses(c.channel, c.ghost, channel, ghost)
+                    && c.room.connection_state() != ConnectionState::Disconnected
+                {
+                    return Ok(());
+                }
+                Self::leave_locked(&mut st).await;
             }
-            Self::leave_locked(&mut st).await;
-        }
-        let t = super::ticket_with_retry(api, token, channel, StreamRole::A, ghost).await?;
-        let mut opts = crate::voice::room_options();
-        opts.auto_subscribe = false; // only the streams we watch
-        // bounded: the state lock is held meanwhile, and leave (on exit, too) waits for it
-        let (room, events) =
+            st.pending = Some(channel);
+            st.epoch
+        };
+        // without the state lock: stopping, muting and leaving don't wait for the ticket's
+        // retries or LiveKit (a leave meanwhile moves `epoch` on, and this connection is dropped)
+        let connected = async {
+            let t = super::ticket_with_retry(api, token, channel, StreamRole::A, ghost).await?;
+            let mut opts = crate::voice::room_options();
+            opts.auto_subscribe = false; // only the streams we watch
             tokio::time::timeout(CONNECT_TIMEOUT, Room::connect(&t.url, &t.token, opts))
                 .await
-                .map_err(|_| "stream audio timed out connecting".to_string())?
-                .map_err(|e| e.to_string())?;
+                .map_err(|_| {
+                    StreamAudioError::from("stream audio timed out connecting".to_string())
+                })?
+                .map_err(|e| StreamAudioError::from(e.to_string()))
+        }
+        .await;
+        let mut st = self.state.lock().await;
+        st.pending = None;
+        let (room, events) = connected?;
+        if st.epoch != epoch {
+            drop(st);
+            Self::close_room(room).await;
+            return Err("stream audio was stopped while it connected"
+                .to_string()
+                .into());
+        }
         let watch = Arc::new(Watch {
             streamers: Mutex::new(HashSet::new()),
             subs: Mutex::new(HashMap::new()),
@@ -980,22 +1011,38 @@ impl StreamAudio {
         Self::leave_locked(&mut st).await;
     }
 
-    /// Leaves unless connected to `keep` (the voice channel we are in now, if any).
+    /// Leaves unless connected (or connecting) to `keep` (the voice channel we are in now, if any).
     pub async fn leave_unless_in(&self, keep: Option<ChannelId>) {
         let mut st = self.state.lock().await;
-        if st.conn.as_ref().is_some_and(|c| Some(c.channel) == keep) {
+        let here = match &st.conn {
+            Some(c) => Some(c.channel),
+            None => st.pending,
+        };
+        if keep.is_some() && here == keep {
             return;
         }
         Self::leave_locked(&mut st).await;
     }
 
+    /// Also ends a connect in flight (it is dropped when it lands).
     async fn leave_locked(st: &mut State) {
+        st.epoch += 1;
         Self::stop_publishing_locked(st).await;
         if let Some(c) = st.conn.take() {
             c.events.abort();
             c.watch.clear();
-            let _ = c.room.close().await;
+            Self::close_room(c.room).await;
             log(json!({"ev": "audio_left"}));
+        }
+    }
+
+    /// Closes `room`, waiting at most `CLOSE_TIMEOUT`.
+    async fn close_room(room: Room) {
+        if tokio::time::timeout(CLOSE_TIMEOUT, room.close())
+            .await
+            .is_err()
+        {
+            log(json!({"ev": "audio_close_timeout"}));
         }
     }
 }
@@ -1042,6 +1089,51 @@ mod tests {
             matches!(r, Err(StreamAudioError::Api(ApiError::Unauthorized))),
             "{r:?}"
         );
+    }
+
+    /// A connect that hangs (here the ticket: a server that never answers) doesn't hold up
+    /// stopping or leaving, and the leave ends it (#341).
+    #[tokio::test]
+    async fn a_slow_connect_does_not_hold_up_stop_or_leave() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let held = tokio::spawn(async move {
+            let mut socks = Vec::new();
+            while let Ok((s, _)) = listener.accept().await {
+                socks.push(s); // accepted, never answered
+            }
+        });
+        let api = Api::new(&format!("http://{addr}"));
+        let channel: ChannelId = "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap();
+        let none: MixerSource = Arc::new(|| Box::pin(async { None }));
+        let audio = Arc::new(StreamAudio::default());
+        let a2 = audio.clone();
+        let connect =
+            tokio::spawn(async move { a2.ensure_connected(&api, "t", channel, false, none).await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !connect.is_finished(),
+            "the ticket request should still hang"
+        );
+        let quick = Duration::from_secs(1);
+        tokio::time::timeout(quick, audio.stop_publishing())
+            .await
+            .expect("stop waited for the connect");
+        // still connecting there: voice in that channel keeps it
+        tokio::time::timeout(quick, audio.leave_unless_in(Some(channel)))
+            .await
+            .expect("leave_unless_in waited for the connect");
+        assert_eq!(audio.state.lock().await.pending, Some(channel));
+        let epoch = audio.state.lock().await.epoch;
+        tokio::time::timeout(quick, audio.leave())
+            .await
+            .expect("leave waited for the connect");
+        assert!(
+            audio.state.lock().await.epoch > epoch,
+            "the leave ends the connect in flight"
+        );
+        connect.abort();
+        held.abort();
     }
 
     #[test]
