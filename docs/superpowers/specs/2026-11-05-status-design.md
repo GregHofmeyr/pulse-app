@@ -23,7 +23,7 @@ One status per account, set by you and applied everywhere:
 - The status is saved on the account. It follows you to every device and survives restarts and sign-outs **(owner)**.
 - When none of your apps is connected you're offline, whatever your status says. Invisible therefore never looks
   different from really being offline.
-- **No automatic Idle or Away** in this push. It gets a parked issue.
+- **No automatic Idle or Away** in this push. (Automatic Idle after 30 minutes without input came later, #53: Windows-only, Online only, all devices idle.)
 
 ## Invisible (owner)
 
@@ -119,7 +119,7 @@ One status per account, set by you and applied everywhere:
 
 ## Out of scope (deferred → issues)
 
-- Automatic Idle or Away after inactivity.
+- Automatic Idle or Away after inactivity (Idle done later, #53).
 - Custom status text and emoji ("Gaming 🎮").
 - Timers for Invisible (done later, #153).
 - Per-server statuses.
