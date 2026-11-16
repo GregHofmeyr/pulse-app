@@ -10,6 +10,7 @@
   import { displayName } from '../lib/selectors'
   import { activityPrefs, mediaActivity, setReadMedia, setShowActivity } from '../lib/activityPrefs.svelte'
   import { songLine } from '../lib/activity'
+  import GameActivitySettings from './GameActivitySettings.svelte'
   const uid = $props.id()
 
   let error = $state('')
@@ -68,6 +69,7 @@
       <p class="reading" aria-live="polite">{mediaActivity.playing ? `Spotify is playing ${songLine(mediaActivity.playing)}` : 'Nothing playing in Spotify right now.'}</p>
     {/if}
   </div>
+  <GameActivitySettings />
   <div class="settings-field">
     <h3 class="settings-section-title">Appear offline to</h3>
     <p class="hint">They see you offline, whatever your status, with your last seen frozen at when you hid. They're never told.</p>

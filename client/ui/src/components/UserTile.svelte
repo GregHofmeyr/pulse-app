@@ -8,6 +8,7 @@
   import Name from './Name.svelte'
   import { volumeLabel } from '../lib/voiceui'
   import { tileScale } from '../lib/stagelayout'
+  import { gameArt, playingOf } from '../lib/game'
 
   let {
     entry,
@@ -42,6 +43,9 @@
   const badgeIcon = $derived(scale ? scale.icon : compact ? 11 : 14)
   // a joining entry (yours) has no menu yet
   const locked = $derived(entry.pending)
+  // the game they're playing (#380): its wide art dimmed behind the avatar, when the server has some
+  const game = $derived(playingOf(app.state, entry.userId))
+  const backdrop = $derived(game ? gameArt(game).wide : null)
   // the avatar animates while the pointer is over the tile
   let over = $state(false)
 
@@ -64,6 +68,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="tile" class:compact class:pending={entry.pending} class:speaking={voice.speaking.has(entry.userId) || soundboard.playing.has(entry.userId)} data-user={entry.userId} style:--badge={scale ? `${scale.badge}px` : undefined} oncontextmenu={contextMenu}
   onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}>
+  {#if backdrop}<img class="backdrop" src={backdrop} alt="" aria-hidden="true" data-game={game?.name} />{/if}
   <button bind:this={avatar} type="button" class="avatar-btn" data-menu-toggle aria-disabled={locked} aria-haspopup="menu" aria-label={entry.name} data-tip={isMe ? undefined : `Options for ${entry.name}`}
     onkeydown={key} onclick={ask}>
     <Avatar id={entry.userId} name={entry.name} size={scale ? scale.avatar : compact ? 36 : 84} hovered={() => over} />
@@ -90,6 +95,11 @@
 <style>
   .tile { position: relative; aspect-ratio: 16 / 9; min-width: 0; background: var(--bg-1); border-radius: var(--radius-xl); border: 2px solid transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
   .tile.speaking { border-color: var(--ok); }
+  /* game art (#380): behind everything, dimmed by the tile's own colour over it, so the avatar and name stay clear */
+  .tile { isolation: isolate; }
+  .backdrop { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; opacity: .3; z-index: -1; pointer-events: none; }
+  .avatar-btn, .name { z-index: 1; }
+  .name { position: relative; }
   .tile.pending { opacity: .6; }
   .avatar-btn { position: relative; border: 0; padding: 0; background: none; border-radius: 50%; }
   .avatar-btn[aria-disabled='true'] { cursor: default; }

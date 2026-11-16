@@ -20,6 +20,7 @@
   import { screenFor } from './lib/screen'
   import { installUpdate, startUpdateListening, updates } from './lib/updates.svelte'
   import { startMediaActivity } from './lib/activityPrefs.svelte'
+  import { startGameActivity } from './lib/gamePrefs.svelte'
 
   let user = $state<User | null>(null)
   let booting = $state(true)
@@ -52,7 +53,9 @@
     // Listen before restoring so the first Ready can't slip past us.
     // "Listening to" (#275): the core reads nothing until it's told the saved switches
     const media = startMediaActivity().catch(() => () => {})
-    Promise.all([startListening(), startVoiceListening(), startUpdateListening(), media]).then(async ([unlisten, unlistenVoice, unlistenUpdates, unlistenMedia]) => {
+    // "Playing" (#380): likewise, nothing is looked for until the core has the saved switches
+    const games = startGameActivity().catch(() => () => {})
+    Promise.all([startListening(), startVoiceListening(), startUpdateListening(), media, games]).then(async ([unlisten, unlistenVoice, unlistenUpdates, unlistenMedia, unlistenGames]) => {
       const unlistenBadges = startBadgeListening()
       const unlistenSounds = startSoundboardListening()
       off = () => {
@@ -62,6 +65,7 @@
         unlistenBadges()
         unlistenSounds()
         unlistenMedia()
+        unlistenGames()
       }
       // A newer Pulse (#82): the check started with the app; install it now ("Updating Pulse…", then Pulse reopens
       // on it). No offer, or a failed install, boots as usual on this version.

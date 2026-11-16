@@ -1078,13 +1078,20 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       if (!p) return s
       // someone who looks offline shows no activity (#275; the server says so too, right after)
       const listening = e.d.online ? p.listening : undefined
-      return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, online: e.d.online, last_seen_at: e.d.last_seen_at ?? p.last_seen_at, status: presenceStatus(e.d.status, e.d.online), idle: e.d.idle ?? false, listening } } }
+      const playing = e.d.online ? p.playing : undefined
+      return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, online: e.d.online, last_seen_at: e.d.last_seen_at ?? p.last_seen_at, status: presenceStatus(e.d.status, e.d.online), idle: e.d.idle ?? false, listening, playing } } }
     }
     // What someone's Spotify plays (#275), as the server lets you see it.
     case 'ListeningChanged': {
       const p = s.people[e.d.user_id]
       if (!p) return s
       return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, listening: e.d.listening ?? undefined } } }
+    }
+    // The game someone plays (#380), as the server lets you see it.
+    case 'PlayingChanged': {
+      const p = s.people[e.d.user_id]
+      if (!p) return s
+      return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, playing: e.d.playing ?? undefined } } }
     }
     // your own status and hidden list reach only your own sessions; anything else isn't ours to keep
     case 'StatusChanged':

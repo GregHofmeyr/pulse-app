@@ -12,6 +12,8 @@
   import { presenceOf } from '../lib/presence'
   import { listeningOf } from '../lib/activity'
   import ListeningPanel from './ListeningPanel.svelte'
+  import PlayingPanel from './PlayingPanel.svelte'
+  import { playingOf } from '../lib/game'
   import { errorText } from '../lib/tauri'
   import { baseName, displayName } from '../lib/selectors'
   import { cardTheme, nameStop } from '../lib/cardTheme'
@@ -74,6 +76,8 @@
   const presence = $derived(mine || app.state.people[user.id] ? presenceOf(app.state, user.id, clock.nowIso) : null)
   // what they're listening to (#275), as the server lets you see it; never on the profile editor's preview
   const listening = $derived(preview ? null : listeningOf(app.state, user.id))
+  // and the game they're playing (#380), beside it
+  const playing = $derived(preview ? null : playingOf(app.state, user.id))
   const bioHtml = $derived(card.bio ? renderMarkdown(card.bio, [], app.state.customEmoji) : '')
   // The server voice room they're in, only if it is one of your channels (one you can see); a
   // group call is never named.
@@ -180,6 +184,7 @@
       <!-- renderMarkdown output is DOMPurify-sanitised (the message renderer's allow-list) -->
       <div class="bio" {@attach animateEmojiIn(bioHtml)}>{@html bioHtml}</div>
     {/if}
+    {#if playing}<PlayingPanel {playing} />{/if}
     {#if listening}<ListeningPanel {listening} />{/if}
     {#if loading && !stats}
       <!-- where Member since and Voice will be -->

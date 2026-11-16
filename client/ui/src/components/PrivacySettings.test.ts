@@ -78,7 +78,7 @@ describe('PrivacySettings', () => {
   it('lists everyone you appear offline to, by the name you see them by, with their avatar', () => {
     cmp = mount(PrivacySettings, { target: document.body })
     flushSync()
-    expect([...document.querySelectorAll('h3')].map((h) => h.textContent)).toEqual(['Activity', 'Appear offline to'])
+    expect([...document.querySelectorAll('h3')].map((h) => h.textContent)).toEqual(['Activity', 'Game activity', 'Appear offline to'])
     expect(rows().map((r) => r.querySelector('.who')!.textContent?.trim())).toEqual(['Kimmy', 'sam'])
     expect(rows().every((r) => r.querySelector('.av'))).toBe(true)
   })

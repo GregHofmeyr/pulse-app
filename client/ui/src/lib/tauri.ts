@@ -160,6 +160,12 @@ export type ModelStatus =
 export type NowPlaying = { title: string; artist: string | null; album: string | null; spotify_id: string | null }
 /** Whether this device reads Spotify, and what it last read (`pulse://media-activity`). */
 export type MediaState = { reading: boolean; playing: NowPlaying | null }
+/** A game added by hand (#380): the exe stays on this device, only the name is ever sent. */
+export type ManualGame = { name: string; exe: string }
+/** Settings → Game activity (#380), the core's `games::GameSettings`. */
+export type GameSettings = { enabled: boolean; art: boolean; time: boolean; games: ManualGame[] }
+/** Whether this device looks for games, and the one it sees (`pulse://game-activity`). */
+export type GameState = { detecting: boolean; playing: string | null }
 export type Restored = { status: 'ready'; user: User } | { status: 'logged_out' } | { status: 'refused' }
 
 function uploadProfileMedia(cmd: string, bytes: Uint8Array, crop: CropRect | null) {
@@ -330,6 +336,12 @@ export const api = {
   setMediaActivity: (read: boolean, show: boolean) => invoke<void>('set_media_activity', { read, show }),
   /** Whether this device reads Spotify now, and what it last read. */
   mediaActivity: () => invoke<MediaState>('media_activity'),
+  /** Settings → Game activity (#380): master off runs no poller at all. */
+  setGameActivity: (settings: GameSettings) => invoke<void>('set_game_activity', { settings }),
+  /** Whether this device looks for games now, and the one it sees. */
+  gameActivity: () => invoke<GameState>('game_activity'),
+  /** "Add a game": the system file dialog for an .exe; null when cancelled. */
+  pickGameExe: () => invoke<{ exe: string; name: string } | null>('pick_game_exe'),
   /** Get a notification when someone goes live, or stop (#60). A LiveNotifyChanged follows to your sessions. */
   setLiveNotify: (userId: string, on: boolean) => invoke<void>('set_live_notify', { userId, on }),
   /** A group's icon (#56): an avatar-pipeline media hash, or null for the members' faces. Any member may. */
