@@ -161,16 +161,16 @@
   .spoiler-box:has(.blurred) { border-radius: var(--radius-xs); overflow: hidden; }
   .spoiler-cover {
     position: absolute; inset: 0; padding: 0; border: 0; border-radius: var(--radius-xs); cursor: pointer;
-    display: grid; place-items: center; background: color-mix(in srgb, var(--bg-1) 35%, transparent);
+    display: grid; place-items: center; background: var(--scrim);
   }
   .spoiler-tag {
     position: absolute; inset: 0; margin: auto; width: max-content; height: max-content;
     display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px;
-    font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #fff;
-    background: rgba(10, 11, 13, .72);
+    font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--tooltip-text);
+    background: var(--scrim-strong);
   }
   .spoiler-cover:hover .spoiler-tag, .spoiler-cover:focus-visible .spoiler-tag,
-  .covered:hover .spoiler-tag, .covered:focus-visible .spoiler-tag { background: rgba(10, 11, 13, .88); }
+  .covered:hover .spoiler-tag, .covered:focus-visible .spoiler-tag { background: var(--tooltip-bg); }
   @media (prefers-reduced-motion: no-preference) {
     .single img, .tile img, .spoiler-content { transition: filter var(--dur) var(--ease); }
   }
