@@ -336,6 +336,8 @@ export const api = {
   }) => invoke<void>('send_with_attachments', a),
   cancelAttachmentSend: (nonce: string) => invoke<void>('cancel_attachment_send', { nonce }),
   attachmentUrls: (messageId: string) => invoke<AttachmentUrl[]>('attachment_urls', { messageId }),
+  /** A small text file's contents for its inline preview (#318); null when it can't be previewed (too big, not UTF-8, binary). */
+  attachmentText: (messageId: string, attachmentId: string) => invoke<string | null>('attachment_text', { messageId, attachmentId }),
   /** The saved path; null when the Save dialog or the download is cancelled (or this file is already downloading). Progress: `download://progress`, key `file:<attachment id>`. */
   saveAttachment: (messageId: string, attachmentId: string, name: string) =>
     invoke<string | null>('save_attachment', { messageId, attachmentId, name }),

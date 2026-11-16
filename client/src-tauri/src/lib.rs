@@ -584,6 +584,7 @@ pub fn run() {
             attachments::commands::cancel_attachment_send,
             attachments::commands::attachment_urls,
             attachments::commands::save_attachment,
+            attachments::commands::attachment_text,
             // clips
             commands::add_game,
             commands::edit_clip,

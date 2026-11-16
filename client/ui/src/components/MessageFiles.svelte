@@ -1,6 +1,6 @@
 <script lang="ts">
   // A message's files (#57): images inline (one large, several in a grid; click for the viewer), videos in the clip
-  // player, audio in a compact player, everything else (and an image that won't load) as a file card. A file the sender
+  // player, audio in a compact player, everything else (and an image that won't load) as a file card, a small text file with its preview under it (#318). A file the sender
   // marked as a spoiler (#289) shows blurred, and can't be used, until it's clicked; revealed stays revealed here.
   import type { Message } from '../lib/protocol/Message'
   import type { Attachment } from '../lib/protocol/Attachment'
@@ -12,6 +12,9 @@
   import ProgressRing from './ProgressRing.svelte'
   import ClipPlayer from './ClipPlayer.svelte'
   import FileCard from './FileCard.svelte'
+  import TextPreview from './TextPreview.svelte'
+  import { previewKind } from '../lib/textPreview'
+  import { clock } from '../lib/store.svelte'
   import ImageViewer from './ImageViewer.svelte'
   import Icon from './Icon.svelte'
 
@@ -116,8 +119,13 @@
   </div>
 {/each}
 {#each [...parts.files, ...parts.images.filter((a) => broken[a.id]), ...parts.audio.filter((a) => broken[a.id])] as a (a.id)}
+  {@const preview = previewKind(a, Date.parse(clock.nowIso))}
   <div class="spoiler-box file-box">
-    <div class="spoiler-content" class:blurred={covered(a)} inert={covered(a)}><FileCard file={a} messageId={message.id} {onError} /></div>
+    <div class="spoiler-content" class:blurred={covered(a)} inert={covered(a)}>
+      <FileCard file={a} messageId={message.id} {onError} />
+      <!-- a small text file's preview (#318): read only once a spoiler is shown -->
+      {#if preview && !covered(a)}<TextPreview file={a} messageId={message.id} kind={preview} />{/if}
+    </div>
     {#if covered(a)}{@render cover(a)}{/if}
   </div>
 {/each}
