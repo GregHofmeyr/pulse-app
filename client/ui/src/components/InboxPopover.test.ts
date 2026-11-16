@@ -254,12 +254,13 @@ describe('where an inbox item opens (#324)', () => {
     expect(ui.openClip).toEqual({ channelId: 'K1', clip })
   })
 
-  it('a clip that mentions you opens its own panel', async () => {
+  it('a clip that mentions you is jumped to in its feed (#120)', async () => {
     const mention = item('V2', {}, { channel_id: 'K1', content: 'gg @alex' })
     await openOnly(mention)
     expect(invoke).not.toHaveBeenCalledWith('list_messages_around', expect.anything())
     expect(ui.goTo).toBe('K1')
-    expect(ui.openClip).toEqual({ channelId: 'K1', clip: mention.message })
+    expect(ui.jumpClip).toEqual({ channelId: 'K1', clip: mention.message })
+    expect(ui.openClip).toBeNull()
   })
 
   it('a reply to a deleted clip says so and opens no panel', async () => {

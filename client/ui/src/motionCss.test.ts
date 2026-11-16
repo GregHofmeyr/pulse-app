@@ -74,6 +74,8 @@ describe('motion', () => {
     'components/ProgressRing.svelte': /^ring-spin /,
     // the jumped-to message's highlight is held, then fades over three seconds, long enough to find it
     'components/TextChannel.svelte': /^jump-flash /,
+    // a jumped-to clip's, the same (#120)
+    'components/ClipFeed.svelte': /^jump-flash /,
     // reduced motion: everything finishes at once
     'app.css': /^\.01ms !important$/,
   }

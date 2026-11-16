@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-// A search result in a clips channel: there is no history list to jump in, so the clip's panel opens.
+// A search result in a clips channel: a clip is scrolled to in the feed and flashed (#120); the panel opens for a reply's
+// clip, a pinned clip, or a clip the feed can't reach.
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
@@ -35,6 +36,7 @@ afterEach(() => {
   cmp = undefined
   document.body.innerHTML = ''
   ui.openClip = null
+  ui.jumpClip = null
   if (realScrollTo) Object.defineProperty(Element.prototype, 'scrollTo', realScrollTo)
   else delete (Element.prototype as { scrollTo?: unknown }).scrollTo
 })
@@ -86,5 +88,63 @@ describe('a clip opened from search', () => {
     flushSync()
     expect(document.querySelector('.replies-panel')).toBeNull()
     expect(ui.openClip).not.toBeNull()
+  })
+})
+
+describe('a clip jumped to from search (#120)', () => {
+  const older = (n: number): Message => ({ ...clip, id: `V0${n}`, content: `older ${n}` })
+  const setup = (pages: Message[][]) => {
+    const queue = [...pages]
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'list_clips' ? (queue.shift() ?? [])
+      : cmd === 'list_replies' ? []
+      : cmd === 'clip_facets' ? { games: [], authors: [] }
+      : undefined)
+    app.state = applyReady(emptyState(), testReady([{ id: 'C1', server_id: 'S1', kind: 'clips', name: 'highlights', position: 0 }], {
+      members: [{ server_id: 'S1', members: [{ user: testMe, nickname: null }] }],
+    }))
+  }
+  let scrolled: string[] = []
+  const realScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView')
+  beforeEach(() => {
+    scrolled = []
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true, writable: true,
+      value(this: HTMLElement) { if (this.dataset.clipId) scrolled.push(this.dataset.clipId) },
+    })
+  })
+  afterEach(() => {
+    if (realScrollIntoView) Object.defineProperty(Element.prototype, 'scrollIntoView', realScrollIntoView)
+    else delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
+  })
+
+  it('scrolls the feed to the clip and flashes it, without opening its panel', async () => {
+    setup([[{ ...clip, id: 'V9' }, clip]])
+    ui.jumpClip = { channelId: 'C1', clip }
+    cmp = mount(ClipsChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    await vi.waitFor(() => expect(scrolled).toEqual(['V1']))
+    expect(document.querySelector('[data-clip-id="V1"]')?.classList.contains('jump-flash')).toBe(true)
+    expect(document.querySelector('.replies-panel')).toBeNull()
+    expect(ui.jumpClip).toBeNull()
+  })
+
+  it('pages back through the feed until the clip is in it', async () => {
+    // a full first page (30) without it: the feed has more, so it pages back once
+    setup([Array.from({ length: 30 }, (_, i) => older(31 - i)), [older(1), clip]])
+    ui.jumpClip = { channelId: 'C1', clip }
+    cmp = mount(ClipsChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    await vi.waitFor(() => expect(scrolled).toEqual(['V1']))
+    expect(invoke.mock.calls.filter((c) => c[0] === 'list_clips')).toHaveLength(2)
+  })
+
+  it("opens the clip's panel when the feed doesn't have it (gone, or past the start)", async () => {
+    setup([[older(2)], []])
+    ui.jumpClip = { channelId: 'C1', clip }
+    cmp = mount(ClipsChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    await vi.waitFor(() => expect(document.querySelector('.replies-panel')).not.toBeNull())
+    expect(scrolled).toEqual([])
   })
 })
