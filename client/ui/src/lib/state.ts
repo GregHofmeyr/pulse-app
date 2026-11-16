@@ -31,6 +31,7 @@ import type { Server } from './protocol/Server'
 import type { SpeakerLink } from './protocol/SpeakerLink'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { StageShare } from './protocol/StageShare'
+import type { WatchParty } from './protocol/WatchParty'
 import type { User } from './protocol/User'
 import type { VoiceMember } from './protocol/VoiceMember'
 import type { ServerVoiceMod } from './protocol/ServerVoiceMod'
@@ -142,6 +143,8 @@ export type AppState = {
   pins: Record<string, PinnedMessage[]>
   /** channelId -> the Spotify shares on its stage, oldest first (#234; one per channel today). */
   stageShares: Record<string, StageShare[]>
+  /** channelId -> its YouTube watch party, while one is on (#384). */
+  watchParties: Record<string, WatchParty>
 }
 
 export type ClipFeed = { channelId: string; filter: ClipFilter; items: Message[] /* newest first */; start: boolean; loading: boolean; /** Clips deleted while a page was being fetched (it may still carry them). */ gone?: string[] }
@@ -171,7 +174,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], serverOrder: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], serverOrder: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -263,6 +266,7 @@ export function applyReady(s: AppState, r: Ready): AppState {
     pins: {},
     // absent from older servers
     stageShares: (r.stage_shares ?? []).reduce<AppState['stageShares']>((acc, x) => withStageShare(acc, x), {}),
+    watchParties: Object.fromEntries((r.watch_parties ?? []).map((p) => [p.channel_id, p])),
   }
 }
 
@@ -907,6 +911,7 @@ function dropChannel(s: AppState, c: string): AppState {
     clipFeeds: Object.fromEntries(Object.entries(s.clipFeeds).filter(([, f]) => f.channelId !== c)),
     pins: drop(s.pins),
     stageShares: drop(s.stageShares),
+    watchParties: drop(s.watchParties),
   }
 }
 
@@ -1055,6 +1060,14 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const list = s.stageShares[c]
       if (!list?.some((x) => x.id === e.d.share_id)) return s
       return { ...s, stageShares: { ...s.stageShares, [c]: list.map((x) => (x.id === e.d.share_id ? { ...x, now_playing: e.d.now_playing ?? undefined } : x)) } }
+    }
+    // A watch party started or changed (#384), whole; or ended.
+    case 'WatchPartyChanged':
+      return { ...s, watchParties: { ...s.watchParties, [e.d.party.channel_id]: e.d.party } }
+    case 'WatchPartyEnded': {
+      if (!s.watchParties[e.d.channel_id]) return s
+      const { [e.d.channel_id]: _gone, ...others } = s.watchParties
+      return { ...s, watchParties: others }
     }
     case 'LayoutChanged':
       return applyLayout(s, e.d.layout)
