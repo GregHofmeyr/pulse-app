@@ -196,6 +196,11 @@ pub struct Ready {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub inbox_unread: Option<u32>,
+    /// The order you dragged the servers into in your server rail (#185). Yours only. Servers missing from it
+    /// (new ones, or none ever dragged) follow it in their usual order. Absent from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub server_order: Vec<ServerId>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -356,6 +361,11 @@ pub enum Event {
         user_id: UserId,
         target_id: UserId,
         on: bool,
+    },
+    /// Only to the owner's own sessions: their new server rail order (#185), the new [`Ready::server_order`].
+    ServerOrderChanged {
+        user_id: UserId,
+        server_ids: Vec<ServerId>,
     },
     /// Someone saved their profile; goes to everyone, like presence.
     ProfileUpdated {
@@ -754,6 +764,7 @@ impl Event {
             | Self::StatusChanged { .. }
             | Self::AppearOfflineChanged { .. }
             | Self::LiveNotifyChanged { .. }
+            | Self::ServerOrderChanged { .. }
             | Self::BadgeEarned { .. } => None,
         }
     }
@@ -774,6 +785,7 @@ impl Event {
             | Self::StatusChanged { user_id, .. }
             | Self::AppearOfflineChanged { user_id, .. }
             | Self::LiveNotifyChanged { user_id, .. }
+            | Self::ServerOrderChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
             | Self::CallRingEnded { user_id, .. }
@@ -899,6 +911,7 @@ mod tests {
             status: Default::default(),
             appear_offline_to: vec![],
             live_notify: vec![],
+            server_order: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -985,6 +998,7 @@ mod tests {
             status: Default::default(),
             appear_offline_to: vec![],
             live_notify: vec![],
+            server_order: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1120,6 +1134,7 @@ mod tests {
             status: Default::default(),
             appear_offline_to: vec![],
             live_notify: vec![],
+            server_order: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],

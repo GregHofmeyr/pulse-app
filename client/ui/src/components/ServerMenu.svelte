@@ -1,7 +1,8 @@
 <script lang="ts">
   // The right-click menu on a server tab (#161): Server settings (as the sidebar header's menu opens them), Mute
   // server as a durations flyout, the channel menu's (#131), or Unmute server, and Notifications: the server's level
-  // as a flyout with yours ticked (#195). Keyboard as in the channel menu.
+  // as a flyout with yours ticked (#195), and Move left / Move right in your rail (#185: dragging's keyboard and menu
+  // way). Keyboard as in the channel menu.
   import { onMount, untrack } from 'svelte'
   import { app, clock } from '../lib/store.svelte'
   import { placeMenu } from '../lib/menuPlace'
@@ -14,7 +15,7 @@
   import MuteFlyout from './MuteFlyout.svelte'
   import { isMember } from '../lib/selectors'
 
-  let { serverId, name, x, y, opener, onClose, onSettings, onCreateCategory, onError }: {
+  let { serverId, name, x, y, opener, onClose, onSettings, onCreateCategory, onMoveLeft, onMoveRight, onError }: {
     serverId: string
     name: string
     x: number
@@ -25,6 +26,9 @@
     onSettings: () => void
     /** Create category (#54): members of a server with categories; the channel list opens the field. */
     onCreateCategory?: () => void
+    /** Move it one place in your rail (#185): given only when it can go that way. */
+    onMoveLeft?: () => void
+    onMoveRight?: () => void
     /** An action failed after the menu had gone. */
     onError: (message: string) => void
   } = $props()
@@ -111,6 +115,11 @@
   {/if}
   <MenuFlyout bind:this={levelFlyout} label="Notifications" flyoutLabel="Notifications for {name}" menuLeft={left} menuTop={top}
     choices={levelChoices} onPick={pickLevel} />
+  {#if onMoveLeft || onMoveRight}
+    <span class="menu-sep" role="separator"></span>
+    {#if onMoveLeft}<button type="button" class="menu-item" role="menuitem" data-item="move-left" onclick={() => pick(onMoveLeft)}>Move left</button>{/if}
+    {#if onMoveRight}<button type="button" class="menu-item" role="menuitem" data-item="move-right" onclick={() => pick(onMoveRight)}>Move right</button>{/if}
+  {/if}
 </div>
 
 <style>

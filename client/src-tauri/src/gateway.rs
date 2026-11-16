@@ -1048,6 +1048,7 @@ mod tests {
                         status: Default::default(),
                         appear_offline_to: vec![],
                         live_notify: vec![],
+                        server_order: vec![],
                         calls: vec![],
                         ringing: vec![],
                         layouts: vec![],

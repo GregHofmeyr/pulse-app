@@ -4362,6 +4362,17 @@ pub async fn set_sound_favourite(
     core.check(&app, api.set_sound_favourite(&token, &id, on).await)
 }
 
+/// Your server rail order (#185), after a drag or a Move left / right.
+#[tauri::command]
+pub async fn set_server_order(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_ids: Vec<ServerId>,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_server_order(&token, server_ids).await)
+}
+
 /// Your join sound in a server (#121): one of its soundboard's sounds, or none (the normal join cue).
 #[tauri::command]
 pub async fn set_join_sound(

@@ -467,6 +467,7 @@ pub fn run() {
             commands::list_sounds,
             commands::play_sound_to_call,
             commands::set_sound_favourite,
+            commands::set_server_order,
             commands::set_join_sound,
             commands::add_reaction,
             commands::remove_reaction,

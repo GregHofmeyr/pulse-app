@@ -19,7 +19,7 @@ use pulse_protocol::rest::{
     PinnedMessage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, QuietSpin,
     RecoveryCodesResponse, RegisterRequest, RenameCategoryRequest, RenameChannelRequest,
     RenameEmojiRequest, ReopenQotyRequest, SaveLayoutRequest, SearchRequest, SearchResults,
-    SendMessageRequest, Server, ServerLayout, ServerVoiceMod, SessionResponse,
+    SendMessageRequest, Server, ServerLayout, ServerOrderRequest, ServerVoiceMod, SessionResponse,
     SetChannelBitrateRequest, SetClipViewRequest, SetJoinSoundRequest, SetMuteRequest,
     SetNicknameRequest, SetNotifyLevelRequest, SetServerVoiceRequest, SetShowcaseRequest,
     SetStatusRequest, Sound, SpinAgainRequest, SpinWheelRequest, StageShare, StageShareRequest,
@@ -2062,6 +2062,23 @@ impl Api {
             None => self.http.delete(url),
         };
         Self::ok_empty(req.bearer_auth(token).send().await).await
+    }
+
+    /// Your server rail order (#185): every server, first to last.
+    pub async fn set_server_order(
+        &self,
+        token: &str,
+        server_ids: Vec<ServerId>,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .put(self.url(&["me", "server-order"])?)
+                .bearer_auth(token)
+                .json(&ServerOrderRequest { server_ids })
+                .send()
+                .await,
+        )
+        .await
     }
 
     /// `emoji`: a Unicode emoji or `custom:<id>`.

@@ -224,6 +224,8 @@ export const api = {
   deleteCategory: (categoryId: string) => invoke<void>('delete_category', { categoryId }),
   /** The server's whole order; refused when `layout.revision` isn't the server's current one. */
   saveLayout: (serverId: string, layout: SaveLayoutRequest) => invoke<ServerLayout>('save_layout', { serverId, layout }),
+  /** Your server rail order (#185): every server id, first to last. */
+  setServerOrder: (serverIds: string[]) => invoke<void>('set_server_order', { serverIds }),
   joinServer: (serverId: string) => invoke<void>('join_server', { serverId }),
   listChannels: (serverId: string) => invoke<Channel[]>('list_channels', { serverId }),
   listMembers: (serverId: string) => invoke<Member[]>('list_members', { serverId }),

@@ -505,12 +505,38 @@ describe('account menu', () => {
     tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
     flushSync()
     const menu = document.querySelector<HTMLElement>('[role=menu][aria-label="Actions for Beta"]')!
-    expect([...menu.querySelectorAll(':scope > [role=menuitem]')].map((b) => b.textContent?.trim())).toEqual(['Server settings', 'Mute server', 'Notifications'])
+    expect([...menu.querySelectorAll(':scope > [role=menuitem]')].map((b) => b.textContent?.trim())).toEqual(['Server settings', 'Mute server', 'Notifications', 'Move left'])
     ;[...menu.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find((b) => b.textContent?.trim() === 'Server settings')!.click()
     flushSync()
     expect(document.querySelector('[role=menu][aria-label="Actions for Beta"]')).toBeNull()
     expect(document.querySelector('[role=dialog][aria-label="Server settings"]')).not.toBeNull()
     expect(document.querySelector('[role=dialog][aria-label="Server settings"]')!.textContent).toContain('Beta')
+  })
+
+  it('server rail order (#185): your order, Move left / right in the tab menu, and Alt+Left / Alt+Right on a tab', async () => {
+    invoke.mockImplementation(async () => undefined)
+    app.state = { ...emptyState(), servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }, { id: 'S2', name: 'Beta', icon_hash: null }, { id: 'S3', name: 'Gamma', icon_hash: null }], serverOrder: ['S3'] }
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
+    flushSync()
+    const names = () => [...document.querySelectorAll<HTMLButtonElement>('.tab[data-server]')].map((t) => t.textContent!.trim())
+    const tab = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('.tab[data-server]')].find((t) => t.textContent!.includes(name))!
+    expect(names()).toEqual(['GGamma', 'AAlpha', 'BBeta'])
+    // the first one can only go right
+    tab('Gamma').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
+    flushSync()
+    const items = () => [...document.querySelectorAll<HTMLButtonElement>('[role=menu] [data-item^="move-"]')].map((b) => b.textContent!.trim())
+    expect(items()).toEqual(['Move right'])
+    document.querySelector<HTMLButtonElement>('[data-item="move-right"]')!.click()
+    flushSync()
+    expect(names()).toEqual(['AAlpha', 'GGamma', 'BBeta'])
+    expect(invoke).toHaveBeenCalledWith('set_server_order', { serverIds: ['S1', 'S3', 'S2'] })
+    tab('Beta').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, bubbles: true, cancelable: true }))
+    flushSync()
+    expect(names()).toEqual(['AAlpha', 'BBeta', 'GGamma'])
+    // without Alt, an arrow does nothing to the order
+    tab('Beta').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(names()).toEqual(['AAlpha', 'BBeta', 'GGamma'])
   })
 
   describe('Create category (#54)', () => {

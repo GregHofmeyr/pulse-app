@@ -16,6 +16,7 @@ import type { PrivateNickname } from "./PrivateNickname";
 import type { QotyEvent } from "./QotyEvent";
 import type { ReadState } from "./ReadState";
 import type { Server } from "./Server";
+import type { ServerId } from "./ServerId";
 import type { ServerLayout } from "./ServerLayout";
 import type { ServerMembers } from "./ServerMembers";
 import type { ServerVoiceMod } from "./ServerVoiceMod";
@@ -143,4 +144,9 @@ stage_shares?: Array<StageShare>,
 /**
  * How many items in your inbox are unread (#306). Absent from older servers.
  */
-inbox_unread?: number, };
+inbox_unread?: number, 
+/**
+ * The order you dragged the servers into in your server rail (#185). Yours only. Servers missing from it
+ * (new ones, or none ever dragged) follow it in their usual order. Absent from older servers.
+ */
+server_order?: Array<ServerId>, };

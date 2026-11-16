@@ -83,6 +83,9 @@
   import InboxPopover from '../components/InboxPopover.svelte'
   import { closeInbox, inbox, openInbox, toggleInbox } from '../lib/inbox.svelte'
   import { badgeText } from '../lib/inbox'
+  import { orderedServers } from '../lib/serverOrder'
+  import { moveServerTo, stepServer } from '../lib/serverOrder.svelte'
+  import { railDrag } from '../lib/railDrag'
 
   let { user, onLogout }: { user: User; onLogout: () => void } = $props()
   // rings in the voice list: who's talking, plus whose soundboard sound is playing (render only: never voice.speaking)
@@ -401,7 +404,14 @@
   }
   let error = $state('')
 
-  const servers = $derived(app.state.servers)
+  // in your own order (#185): drag a tab, Alt+Left / Alt+Right on it, or Move left / right in its menu
+  const servers = $derived(orderedServers(app.state.servers, app.state.serverOrder))
+  const moved = (p: Promise<string | null>) => void p.then((msg) => msg && say(msg))
+  function tabKeys(e: KeyboardEvent, id: string) {
+    if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return
+    e.preventDefault()
+    moved(stepServer(id, e.key === 'ArrowLeft' ? -1 : 1))
+  }
   const activeServer = $derived(servers.find((s) => s.id === activeServerId) ?? null)
   const member = $derived(activeServerId ? isMember(app.state, activeServerId) : false)
   const activeChannel = $derived(activeChannelId ? app.state.channels[activeChannelId] : null)
@@ -730,7 +740,7 @@
     <span class="logo" aria-hidden="true" onclick={() => logoClick()}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" /></svg>
     </span>
-    <nav aria-label="Servers">
+    <nav aria-label="Servers" use:railDrag={{ onDrop: (id, i) => moved(moveServerTo(id, i)), disabled: servers.length < 2 }}>
       <button class="tab" class:active={activeServerId === null} aria-label={callAt === 'home' ? "Home (you're in a call here)" : undefined} onclick={() => { activeServerId = null; activeChannelId = null }}>
         {#if callAt === 'home'}<span class="call-here call-home"><Icon name="home" size={16} />{@render callBadge()}</span>{:else}<Icon name="home" size={16} />{/if} Home{#if home > 0}<span class="pill">{home > 99 ? '99+' : home}</span>{/if}
       </button>
@@ -738,8 +748,8 @@
       {#each servers as s (s.id)}
         {@const badge = serverBadge(app.state, s.id, nowIso)}
         {@const talking = inVoice(app.state, s.id)}
-        <button class="tab" class:active={activeServerId === s.id} aria-label={callAt === s.id ? `${s.name} (you're in a call here)` : undefined} onclick={() => selectServer(s.id)}
-          oncontextmenu={(e) => { e.preventDefault(); serverMenu = { id: s.id, x: e.clientX, y: e.clientY, opener: e.currentTarget } }}>
+        <button class="tab" data-server={s.id} class:active={activeServerId === s.id} aria-label={callAt === s.id ? `${s.name} (you're in a call here)` : undefined} onclick={() => selectServer(s.id)}
+          onkeydown={(e) => tabKeys(e, s.id)} oncontextmenu={(e) => { e.preventDefault(); serverMenu = { id: s.id, x: e.clientX, y: e.clientY, opener: e.currentTarget } }}>
           {#if callAt === s.id}
             <span class="chip call-here" style:background={avatarColor(s.id)}>{initial(s.name)}{@render callBadge()}</span>{s.name}
           {:else}
@@ -915,9 +925,12 @@
 {#if serverMenu}
   {@const m = serverMenu}
   {@const srv = app.state.servers.find((x) => x.id === m.id)}
+  {@const at = servers.findIndex((x) => x.id === m.id)}
   {#if srv}
     {#key m}
       <ServerMenu serverId={m.id} name={srv.name} x={m.x} y={m.y} opener={m.opener} onClose={() => (serverMenu = null)}
+        onMoveLeft={at > 0 ? () => moved(stepServer(m.id, -1)) : undefined}
+        onMoveRight={at >= 0 && at < servers.length - 1 ? () => moved(stepServer(m.id, 1)) : undefined}
         onSettings={() => (serverSettingsId = m.id)} onError={(msg) => (error = msg)}
         onCreateCategory={() => { if (activeServerId !== m.id) selectServer(m.id); requestCreateCategory(m.id) }} />
     {/key}
@@ -939,6 +952,13 @@
   .tab:hover { background: var(--bg-2); }
   /* background and colour only: a bolder weight would widen the tab and nudge the ones after it */
   .tab.active { background: var(--bg-3); border-color: var(--bg-4); color: var(--text); }
+  /* dragging a server tab (#185, lib/railDrag.ts): transforms only; the others slide aside, the lifted one follows the
+     pointer */
+  nav :global([data-server]) { transition: transform var(--dur) var(--ease); }
+  nav:global(.dragging) { user-select: none; touch-action: none; }
+  nav:global(.dragging) :global(*) { cursor: grabbing; }
+  nav :global([data-server].lifted) { position: relative; z-index: 2; background: var(--bg-2); box-shadow: var(--shadow-1); transition: none; }
+  nav:global(.settling) :global([data-server]) { transition: none !important; }
   .chip { width: 22px; height: 22px; border-radius: var(--radius-xs); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
   .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
   .grow { flex: 1; align-self: stretch; }

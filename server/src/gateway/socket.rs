@@ -279,6 +279,7 @@ async fn ready_for(
             .unwrap_or_default(),
         appear_offline_to: crate::presence::hidden_list(db, me).await?,
         live_notify: crate::streams::notify::list(db, me).await?,
+        server_order: crate::servers::order::of(db, me).await?,
         layouts,
         server_now: Some(now()),
         stage_shares: voice_state.stage.visible(&visible),

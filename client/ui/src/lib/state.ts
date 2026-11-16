@@ -86,6 +86,8 @@ export type AppState = {
   appearOfflineTo: string[]
   /** The people whose going live you're notified of (#60), yours only, in the order you added them. */
   liveNotify: string[]
+  /** Your server rail order (#185): server ids, first to last (lib/serverOrder.ts). */
+  serverOrder: string[]
   /** channelId -> the call going on in that DM or group (#50), from Ready and CallStarted / CallEnded. */
   calls: Record<string, CallInfo>
   profiles: Record<string, Profile> // userId -> opened profile (cache)
@@ -167,7 +169,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], serverOrder: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -223,6 +225,8 @@ export function applyReady(s: AppState, r: Ready): AppState {
     myStatus: r.status ?? { status: 'online', dnd_until: null },
     appearOfflineTo: r.appear_offline_to ?? [],
     liveNotify: r.live_notify ?? [],
+    // absent from older servers: the usual order
+    serverOrder: r.server_order ?? [],
     // absent from older servers: no calls
     calls: Object.fromEntries((r.calls ?? []).map((c) => [c.channel_id, c])),
     // absent from older servers
@@ -1184,6 +1188,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     }
     case 'SoundPlayed':
       return s // played by the listener in soundboard.svelte.ts; nothing to keep
+    case 'ServerOrderChanged':
+      return { ...s, serverOrder: e.d.server_ids }
     case 'SoundFavourites':
       return { ...s, soundFavourites: e.d.favourites }
     case 'FrequentSounds':

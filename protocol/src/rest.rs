@@ -302,6 +302,12 @@ pub struct SetNicknameRequest {
     pub nickname: Option<String>,
 }
 
+/// `PUT /me/server-order` (#185): every server in the order you want them in your server rail.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ServerOrderRequest {
+    pub server_ids: Vec<ServerId>,
+}
+
 /// A name you gave someone that only you see. Only ever sent to its owner.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PrivateNickname {
