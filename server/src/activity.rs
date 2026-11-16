@@ -193,13 +193,22 @@ pub async fn with_game_art(
 }
 
 /// Connection `conn` of `me` says what game it's playing (`None`: none): checked, given its art (in the background),
-/// held, and announced per viewer. A newer update wins over one still fetching its art, as for "Listening to".
+/// held, and announced per viewer. With `hide_art` (#379) the app id is noted for the achievement poller only: no art,
+/// and nobody is shown the id. A newer update wins over one still fetching its art, as for "Listening to".
 pub fn playing_received(s: &AppState, conn: ConnId, me: UserId, update: Option<PlayingUpdate>) {
     let ticket = s.hub.playing_ticket(conn);
     let s = s.clone();
     tokio::spawn(async move {
+        let hide_art = update.as_ref().is_some_and(|u| u.hide_art);
         let playing = match update.and_then(|u| clean_playing(u, chrono::Utc::now())) {
-            Some(p) => {
+            Some(mut p) => {
+                // achievements (#379) follow the app id even when art (and so the id) isn't shown
+                if let Some(id) = p.steam_app_id {
+                    s.steam.note_playing(me, &p.name, id);
+                    if hide_art {
+                        p.steam_app_id = None;
+                    }
+                }
                 let known = s
                     .hub
                     .playing_held(conn)
@@ -223,6 +232,7 @@ mod tests {
             name: name.into(),
             steam_app_id: None,
             elapsed_secs: None,
+            hide_art: false,
         }
     }
 

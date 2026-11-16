@@ -3,6 +3,7 @@
 pub mod fake_giphy;
 pub mod fake_provider;
 pub mod fake_s3;
+pub mod fake_steam;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -24,6 +25,8 @@ pub struct TestApp {
     pub limits: Arc<crate::limits::Limits>,
     /// The server's link unfurler (the same one its routes use), for calling it directly.
     pub embeds: Arc<crate::embeds::Unfurler>,
+    /// The server's Steam state (the same one its routes use).
+    pub steam: crate::steam::Steam,
     /// The fake S3 behind `cfg.clips`, unless the test brought its own store or none.
     pub s3: Option<fake_s3::FakeS3>,
     _dir: tempfile::TempDir,
@@ -52,6 +55,7 @@ impl TestApp {
             streams: self.streams.clone(),
             limits: self.limits.clone(),
             embeds: self.embeds.clone(),
+            steam: self.steam.clone(),
             r2: self
                 .cfg
                 .clips
@@ -85,6 +89,12 @@ pub fn test_config() -> Config {
         part_size: pulse_protocol::rest::attachment_limits::PART_SIZE,
         giphy: crate::config::GiphyConfig::default(), // no key unless a test sets one
         quote_clock: Some(QUOTE_CLOCK_DAY),
+        // no key and Steam unreachable unless a test points it at `fake_steam`
+        steam: crate::config::SteamConfig {
+            api_base: "http://127.0.0.1:1".into(),
+            openid_endpoint: "http://127.0.0.1:1/openid/login".into(),
+            ..Default::default()
+        },
     }
 }
 
@@ -155,8 +165,10 @@ async fn spawn_inner(mut cfg: Config, dir: tempfile::TempDir, with_clips: bool) 
     let streams = crate::streams::state::StreamState::default();
     let limits = Arc::new(crate::limits::Limits::new(&cfg.limits));
     let embeds = Arc::new(crate::embeds::Unfurler::new(&cfg.embeds));
+    let steam = crate::steam::Steam::new(&cfg.steam);
     let state = AppState {
         embeds: embeds.clone(),
+        steam: steam.clone(),
         r2: cfg
             .clips
             .as_ref()
@@ -186,6 +198,7 @@ async fn spawn_inner(mut cfg: Config, dir: tempfile::TempDir, with_clips: bool) 
         streams,
         limits,
         embeds,
+        steam,
         s3,
         _dir: dir,
     }

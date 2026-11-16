@@ -98,6 +98,7 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         gif: None,
         attachments: vec![],
         caption_is_fallback: false,
+        achievement: None,
     }
 }
 

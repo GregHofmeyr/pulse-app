@@ -54,14 +54,66 @@ pub struct Config {
     /// real clock. Only tests set it: `test_config` pins midday, so a quote test run in the small
     /// hours never earns the badge by accident, and the 3 am tests pin night themselves.
     pub quote_clock: Option<chrono::DateTime<chrono::Utc>>,
+    /// Steam linking and achievements (#379).
+    pub steam: SteamConfig,
 }
 
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
     limits, stream_media_timeout, media_dir, media_min_free_bytes, updates_dir, totp_key, clips, embeds,
-    launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock ;
+    launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock, steam ;
     livekit_secret
 });
+
+/// Steam (#379): account linking with OpenID (no key needed) and achievements through the Steam Web API (the key).
+#[derive(Clone)]
+pub struct SteamConfig {
+    /// `PULSE_STEAM_API_KEY`; `None` (unset or empty) = no achievements on this server. A secret: never logged.
+    pub api_key: Option<String>,
+    /// The Steam Web API's base (`https://api.steampowered.com`); tests point it at a fake.
+    pub api_base: String,
+    /// Steam's OpenID 2.0 endpoint; tests point it at a fake.
+    pub openid_endpoint: String,
+    /// How often a playing person's achievements are read (2 min).
+    pub poll_every: Duration,
+    /// How long after a game ends it is still read (10 min): the last unlocks land.
+    pub tail: Duration,
+    /// The pause between a backfill's calls (2 s), so a big library is read slowly.
+    pub backfill_gap: Duration,
+    /// Most Steam Web API calls a day, server-wide, whatever goes wrong.
+    pub daily_cap: u32,
+    /// How long a link's sign-in may take (10 min).
+    pub link_ttl: Duration,
+}
+
+pulse_protocol::redacting_debug!(SteamConfig {
+    api_base, openid_endpoint, poll_every, tail, backfill_gap, daily_cap, link_ttl ; api_key
+});
+
+impl Default for SteamConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            api_base: "https://api.steampowered.com".into(),
+            openid_endpoint: "https://steamcommunity.com/openid/login".into(),
+            poll_every: Duration::from_secs(120),
+            tail: Duration::from_secs(600),
+            backfill_gap: Duration::from_secs(2),
+            daily_cap: 50_000,
+            link_ttl: Duration::from_secs(600),
+        }
+    }
+}
+
+/// The Steam settings from `PULSE_STEAM_API_KEY`: unset or blank = no key.
+fn steam(get: impl Fn(&str) -> Option<String>) -> SteamConfig {
+    SteamConfig {
+        api_key: get("PULSE_STEAM_API_KEY")
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty()),
+        ..SteamConfig::default()
+    }
+}
 
 /// GIPHY (#58). The server never calls GIPHY (its terms forbid proxying): it hands the key to signed-in apps.
 #[derive(Clone)]
@@ -142,6 +194,7 @@ impl Config {
             part_size: pulse_protocol::rest::attachment_limits::PART_SIZE,
             giphy: giphy(|k| std::env::var(k).ok())?,
             quote_clock: None,
+            steam: steam(|k| std::env::var(k).ok()),
         })
     }
 }
@@ -372,6 +425,19 @@ mod tests {
     }
 
     #[test]
+    fn steam_env() {
+        assert!(steam(|_| None).api_key.is_none());
+        assert!(steam(|_| Some("   ".into())).api_key.is_none());
+        let set = steam(|_| Some(" k3y-value ".into()));
+        assert_eq!(set.api_key.as_deref(), Some("k3y-value"));
+        assert_eq!(set.daily_cap, 50_000);
+        assert!(
+            !format!("{set:?}").contains("k3y-value"),
+            "the key is redacted"
+        );
+    }
+
+    #[test]
     fn launch_date_env() {
         assert!(launch_date(None).unwrap().is_none());
         assert!(launch_date(Some("")).unwrap().is_none());
@@ -448,6 +514,10 @@ mod tests {
                 rating: "pg-13".into(),
             },
             quote_clock: None,
+            steam: SteamConfig {
+                api_key: Some("SECRET-STEAM".into()),
+                ..SteamConfig::default()
+            },
         };
         let d = format!("{cfg:?}");
         assert!(!d.contains("SECRET"), "{d}");

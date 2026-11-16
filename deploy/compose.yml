@@ -51,6 +51,8 @@ services:
       # GIFs (#58): handed to signed-in apps, which call GIPHY directly (its terms forbid proxying). Empty = GIFs off.
       GIPHY_API_KEY: ${GIPHY_API_KEY:-}
       GIPHY_RATING: ${GIPHY_RATING:-pg-13}
+      # Steam achievements (#379): the Steam Web API key. Empty = achievements off (linking still works).
+      PULSE_STEAM_API_KEY: ${PULSE_STEAM_API_KEY:-}
       RUST_LOG: info,sqlx=warn
     volumes:
       - ./data:/data

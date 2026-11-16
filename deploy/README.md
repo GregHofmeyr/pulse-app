@@ -151,6 +151,14 @@ terms forbid proxying its API or media) and keeps favourites. Get a key at devel
 `/srv/pulse/.env` as `GIPHY_API_KEY` (and optionally `GIPHY_RATING`: `g`, `pg`, `pg-13` (the default) or `r`), and
 `just deploy`. Without a key GIFs are off; the picker says "GIFs aren't set up on this server yet".
 
+### Steam achievements (optional)
+
+Linking Steam accounts (#379) works with no setup (it uses `PULSE_PUBLIC_URL`, which compose sets). Live achievements
+need a Steam Web API key: get one at steamcommunity.com/dev/apikey, put it in `/srv/pulse/.env` as
+`PULSE_STEAM_API_KEY`, and `just deploy`. Without it Settings says achievements need the server owner to add a key.
+Each server's owner then picks its Achievements channel in Server settings (none by default). The server makes at
+most 50,000 Steam calls a day.
+
 ## 7. Deploying and rolling back
 
 - Every push to `main` that passes CI builds `ghcr.io/greghofmeyr/pulse-server:<7-char commit>` and `:latest`

@@ -42,6 +42,8 @@ pub mod stat {
     pub const STREAM_SECS: &str = "stream_secs";
     pub const LOGO_EGG: &str = "logo_egg";
     pub const EARLY_ADOPTER: &str = "early_adopter";
+    /// Steam games completed 100 % (#379), from the linked account's stored achievements.
+    pub const STEAM_PERFECT_GAMES: &str = "steam_perfect_games";
 
     /// Every fixed key (the prefixed ones excluded).
     pub const ALL: &[&str] = &[
@@ -70,6 +72,7 @@ pub mod stat {
         STREAM_SECS,
         LOGO_EGG,
         EARLY_ADOPTER,
+        STEAM_PERFECT_GAMES,
     ];
 }
 
@@ -582,6 +585,15 @@ pub static CATALOGUE: &[Def] = &[
             ],
         },
     },
+    // Games (#379)
+    counter(
+        "completionist",
+        "Completionist",
+        "Got every achievement in a Steam game.",
+        "💯",
+        stat::STEAM_PERFECT_GAMES,
+        &[(1, Epic)],
+    ),
     hidden(counter(
         "logo_egg",
         "Egg Hunter",

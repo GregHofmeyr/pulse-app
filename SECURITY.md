@@ -80,6 +80,25 @@ repository.
   a Spotify Jam the user shared to a voice stage themselves (its "Now playing" line). With a Spotify id,
   the server fetches the album art from Spotify's public link preview, as for any Spotify link.
 
+**Steam account and achievements (#379): only when the user links Steam.**
+- **Linking.** Settings opens Steam's own sign-in page (OpenID 2.0) in the default browser; Pulse never sees a Steam
+  password. Steam sends the browser back to the Pulse server with a one-time token (random, 10-minute lifetime, kept
+  hashed in memory, bound to the user who asked). The server accepts the answer only if it is for exactly that return
+  address from Steam's endpoint, its claimed id is `https://steamcommunity.com/openid/id/` and 17 digits, and Steam
+  itself confirms the signature (`check_authentication`). It stores the 64-bit SteamID (and the persona name, read
+  with the Web API key when there is one). One Steam account per person; one already linked to someone else is
+  refused. Unlinking deletes the link and every stored achievement state.
+- **What the server reads.** With a key (`PULSE_STEAM_API_KEY`) and **Share Steam achievements** on, the server reads
+  the user's achievements in the Steam game they're playing (and for 10 minutes after) every 2 minutes, and once after
+  linking their played games' achievements, slowly. Steam requires the user's game details to be public for any of
+  it. The client's part is only the game's Steam app id it already sends for "Playing"; with **Show game art** off
+  it's still sent for achievements, marked so the server keeps it to itself.
+- **What others see.** New unlocks and 100 % completions become cards in the Achievements channel of each server the
+  user is in whose owner picked one (none by default); the completion rate shows on their profile card while they
+  share achievements. Icons and game art are fetched and re-encoded by the server; clients never contact Valve.
+- **Budget.** Every Web API call counts against a server-wide allowance (50,000 a day); past it, achievements pause
+  until the next UTC day.
+
 **Microphone.** The microphone is opened when the user joins a voice channel or runs the microphone test in Settings.
 Audio goes to the SFU (section 2).
 
@@ -468,6 +487,8 @@ past that, the least recently used bucket is dropped.
 | Spotify shares to a voice stage | burst of 6, then one every 10 seconds per user |
 | "Listening to" updates | burst of 10, then one every 2 seconds per user; a held-back update is sent once the limit allows, so the latest one lands |
 | "Listening to" album art fetched | 60/hour per user, its own budget apart from link previews |
+| Starting a Steam link, unlinking, the Steam setting, an Achievements channel change | in the "changes other people hear about" bucket above |
+| Steam Web API calls (achievements) | 50,000/day, server-wide |
 | GIF settings reads and favourite adds and removes (together) | burst of 30, then one every 2 seconds per user |
 
 Real-time frames from the client are capped at 64 KB, and messages at 4,000 characters.
@@ -665,7 +686,9 @@ and the app frames it, so the player gets an HTTPS parent with a real origin.
     host (see the known gaps).
   - Images are pinned by digest. LiveKit and Caddy are pinned in the compose file. The Pulse server image is pinned to
     the digest pulled at deploy time, so a moved tag cannot change what runs.
-- **Secrets.** The server's secrets live in a mode-`0600` file owned by the service user.
+- **Secrets.** The server's secrets live in a mode-`0600` file owned by the service user: the LiveKit secret,
+  `PULSE_TOTP_KEY`, the clips bucket's keys, `GIPHY_API_KEY` and `PULSE_STEAM_API_KEY` (optional; the server never
+  logs it or prints it in its config's debug output).
 - **Backups.** Provisioning leaves backups off until the operator sets the encryption key and object-store details.
   Once configured, every night and before each deploy, the database and uploaded media are encrypted with `age` and
   stored in an S3-compatible object store. That object store is with a different provider from the VM. The

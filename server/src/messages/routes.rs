@@ -124,6 +124,12 @@ fn from_row(r: Row) -> AppResult<Message> {
             .and_then(|g| serde_json::from_str(&g).ok()),
         attachments: vec![],
         caption_is_fallback: false,
+        achievement: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => {
+                super::system::achievement(p).map(Box::new)
+            }
+            _ => None,
+        },
     })
 }
 
@@ -536,6 +542,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         gif,
         attachments,
         caption_is_fallback,
+        achievement: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -970,6 +977,7 @@ mod tests {
             gif: None,
             attachments: vec![],
             caption_is_fallback: false,
+            achievement: None,
         }
     }
 

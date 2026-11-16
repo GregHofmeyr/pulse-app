@@ -9,7 +9,7 @@ use crate::rest::{
     InboxItem, Listening, ListeningUpdate, Member, Message, Mute, NotifyLevelPref, OwnStatus,
     Person, PinnedMessage, Playing, PlayingUpdate, PresenceStatus, PrivateNickname, QotyEvent,
     QuietSpin, ReadState, RingEndReason, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink,
-    StageShare, StreamEndReason, StreamInfo, User, Wheel,
+    StageShare, SteamStatus, StreamEndReason, StreamInfo, User, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -371,6 +371,12 @@ pub enum Event {
         user_id: UserId,
         target_id: UserId,
         on: bool,
+    },
+    /// Only to the owner's own sessions: their Steam link changed (#379): linked from the browser, unlinked, a
+    /// setting saved, or Steam's answers changed what Settings shows. Clients from before it skip it.
+    SteamLinkChanged {
+        user_id: UserId,
+        status: SteamStatus,
     },
     /// Only to the owner's own sessions: their new server rail order (#185), the new [`Ready::server_order`].
     ServerOrderChanged {
@@ -781,6 +787,7 @@ impl Event {
             | Self::StatusChanged { .. }
             | Self::AppearOfflineChanged { .. }
             | Self::LiveNotifyChanged { .. }
+            | Self::SteamLinkChanged { .. }
             | Self::ServerOrderChanged { .. }
             | Self::BadgeEarned { .. } => None,
         }
@@ -802,6 +809,7 @@ impl Event {
             | Self::StatusChanged { user_id, .. }
             | Self::AppearOfflineChanged { user_id, .. }
             | Self::LiveNotifyChanged { user_id, .. }
+            | Self::SteamLinkChanged { user_id, .. }
             | Self::ServerOrderChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }

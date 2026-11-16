@@ -89,6 +89,7 @@ fn game(name: &str) -> PlayingUpdate {
         name: name.into(),
         steam_app_id: None,
         elapsed_secs: None,
+        hide_art: false,
     }
 }
 

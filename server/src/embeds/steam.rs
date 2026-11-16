@@ -107,6 +107,25 @@ impl Unfurler {
         art
     }
 
+    /// The picture at `url` (an achievement's icon, #379, from Steam's own answer), fetched through the guarded fetcher
+    /// within the link deadline, re-encoded and stored like a link thumbnail. `None` if any of that fails.
+    pub async fn remote_thumb(
+        &self,
+        db: &SqlitePool,
+        media_dir: &Path,
+        by: UserId,
+        url: &str,
+    ) -> Option<EmbedThumb> {
+        let url = Url::parse(url).ok()?;
+        tokio::time::timeout(
+            self.deadline,
+            unfurl::thumb(&self.fetcher, db, media_dir, by, &url),
+        )
+        .await
+        .ok()
+        .flatten()
+    }
+
     /// `Some(art)` when `app_id` is cached, fresh, and its files are all still there.
     async fn steam_cached(&self, db: &SqlitePool, app_id: u32) -> Option<Option<GameArt>> {
         let hit = {

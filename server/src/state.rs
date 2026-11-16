@@ -19,4 +19,6 @@ pub struct AppState {
     pub r2: Option<crate::media::r2::R2>,
     /// Link previews: the guarded fetcher and its cache.
     pub embeds: Arc<crate::embeds::Unfurler>,
+    /// Steam linking and achievements (#379): sign-ins in progress, the poller's memory, the Web API client.
+    pub steam: crate::steam::Steam,
 }

@@ -8,4 +8,9 @@ export type PlayingUpdate = { name: string, steam_app_id: number | null,
  * How long they've been playing, in seconds, when they share play time (the server turns it into `started_at`
  * on its own clock).
  */
-elapsed_secs: number | null, };
+elapsed_secs: number | null, 
+/**
+ * "Show game art" is off but Steam achievements are shared (#379): the server keeps `steam_app_id` for the
+ * achievement poller only, fetches no art and shows nobody the id. Older clients never send it.
+ */
+hide_art?: boolean, };

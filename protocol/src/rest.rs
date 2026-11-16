@@ -91,13 +91,22 @@ pub struct CardProfile {
     pub glow: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct ProfileStats {
     #[ts(type = "number")]
     pub voice_seconds: u64,
     pub member_since: String,
     pub top_reaction: Option<String>,
     pub times_renamed: u32,
+    /// Steam account completion rate (#379), 0 to 100: the average completion over games with at least one
+    /// achievement unlocked. Only while they share Steam achievements and once there's a game to count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub steam_completion: Option<f32>,
+    /// Steam games they've completed 100 % (#379), with `steam_completion`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub steam_perfect_games: Option<u32>,
 }
 
 /// How rare a badge (or one tier of it) is, from common up to mythical.
@@ -743,6 +752,10 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[ts(as = "Option<bool>", optional)]
     pub caption_is_fallback: bool,
+    /// Set on a Steam achievement card (#379), a system line in a server's Achievements channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub achievement: Option<Box<AchievementCard>>,
 }
 
 /// How long a pin lasts (#178).
@@ -1232,6 +1245,11 @@ pub struct PlayingUpdate {
     /// on its own clock).
     #[serde(default)]
     pub elapsed_secs: Option<u64>,
+    /// "Show game art" is off but Steam achievements are shared (#379): the server keeps `steam_app_id` for the
+    /// achievement poller only, fetches no art and shows nobody the id. Older clients never send it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub hide_art: bool,
 }
 
 /// What a viewer sees of someone (#45). Never `Invisible`: that looks exactly like `Offline`.
@@ -2826,4 +2844,92 @@ mod sound_tests {
             serde_json::from_str(r#"{"name":"a","media_hash":"h"}"#).unwrap();
         assert_eq!((r.volume, r.emoji), (100, None));
     }
+}
+
+// ---------- Steam (#379) ----------
+
+/// `GET /me/steam` and friends: what this server can do with Steam, and your link.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SteamStatus {
+    /// The server can link Steam accounts (it knows its public URL, which Steam sends you back to).
+    pub linking_available: bool,
+    /// The server has a Steam Web API key, which achievements need.
+    pub achievements_available: bool,
+    /// Your linked account; `None` when you haven't linked one.
+    pub link: Option<SteamLinked>,
+}
+
+/// A linked Steam account, as its owner sees it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SteamLinked {
+    /// The 64-bit SteamID, as digits.
+    pub steam_id: String,
+    /// The Steam persona name, when the server could read it.
+    pub persona: Option<String>,
+    /// "Share Steam achievements" (default on).
+    pub share_achievements: bool,
+    /// Steam refuses to show this account's game details: achievements can't be read until they're public.
+    pub private: bool,
+    /// The one-time read of the games already played has finished.
+    pub backfill_done: bool,
+    /// Account completion rate, 0 to 100, once there's a game to count.
+    pub completion_rate: Option<f32>,
+    pub perfect_games: u32,
+}
+
+/// `POST /me/steam/link`: the Steam sign-in page to open in the browser.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SteamLinkStart {
+    pub url: String,
+}
+
+/// `PUT /me/steam/settings`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SteamSettingsRequest {
+    pub share_achievements: bool,
+}
+
+/// `GET /servers/{id}/achievements-channel`: where the server's Steam achievement cards go; `None` = nowhere.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AchievementsChannel {
+    pub channel_id: Option<ChannelId>,
+}
+
+/// `PUT /servers/{id}/achievements-channel` (the server's owner only): a text channel of that server, or `None`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SetAchievementsChannelRequest {
+    pub channel_id: Option<ChannelId>,
+}
+
+/// A Steam achievement card (#379): someone's new unlocks in one game, or (`complete`) their 100 % of it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct AchievementCard {
+    pub user_id: UserId,
+    pub app_id: u32,
+    pub game: String,
+    /// The unlocks shown (at most 5); empty on a 100 % card.
+    #[serde(default)]
+    pub achievements: Vec<AchievementEntry>,
+    /// Unlocked in the same go but not shown.
+    #[serde(default)]
+    pub more: u32,
+    pub unlocked: u32,
+    pub total: u32,
+    /// The 100 % card.
+    #[serde(default)]
+    pub complete: bool,
+    /// The game's header art on a 100 % card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub art: Option<EmbedThumb>,
+}
+
+/// One achievement on a card.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct AchievementEntry {
+    pub name: String,
+    pub description: Option<String>,
+    pub icon: Option<EmbedThumb>,
+    /// The share of all players who have it, 0 to 100.
+    pub global_percent: Option<f32>,
 }

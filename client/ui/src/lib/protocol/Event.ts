@@ -33,6 +33,7 @@ import type { ServerVoiceMod } from "./ServerVoiceMod";
 import type { Sound } from "./Sound";
 import type { SpeakerLink } from "./SpeakerLink";
 import type { StageShare } from "./StageShare";
+import type { SteamStatus } from "./SteamStatus";
 import type { StreamEndReason } from "./StreamEndReason";
 import type { StreamInfo } from "./StreamInfo";
 import type { User } from "./User";
@@ -67,7 +68,7 @@ status: PresenceStatus,
  * Online with every device idle (#53); only ever with `status: Online`. Omitted when false, so older
  * clients see plain Online.
  */
-idle?: boolean, } } | { "t": "StatusChanged", "d": { user_id: UserId, status: OwnStatus, } } | { "t": "AppearOfflineChanged", "d": { user_id: UserId, target_id: UserId, hidden: boolean, } } | { "t": "LiveNotifyChanged", "d": { user_id: UserId, target_id: UserId, on: boolean, } } | { "t": "ServerOrderChanged", "d": { user_id: UserId, server_ids: Array<ServerId>, } } | { "t": "ProfileUpdated", "d": { user: User, card: CardProfile, } } | { "t": "GroupMembersChanged", "d": { channel_id: ChannelId, user_ids: Array<UserId>, } } | { "t": "ChannelUpdated", "d": { channel: Channel, } } | { "t": "ChannelDeleted", "d": { channel_id: ChannelId, server_id: ServerId, } } | { "t": "ChannelRestored", "d": { channel: Channel, } } | { "t": "LayoutChanged", "d": { layout: ServerLayout, } } | { "t": "ChannelRemoved", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "ReadStateUpdated", "d": { user_id: UserId, channel_id: ChannelId, last_read_message_id: MessageId | null, 
+idle?: boolean, } } | { "t": "StatusChanged", "d": { user_id: UserId, status: OwnStatus, } } | { "t": "AppearOfflineChanged", "d": { user_id: UserId, target_id: UserId, hidden: boolean, } } | { "t": "LiveNotifyChanged", "d": { user_id: UserId, target_id: UserId, on: boolean, } } | { "t": "SteamLinkChanged", "d": { user_id: UserId, status: SteamStatus, } } | { "t": "ServerOrderChanged", "d": { user_id: UserId, server_ids: Array<ServerId>, } } | { "t": "ProfileUpdated", "d": { user: User, card: CardProfile, } } | { "t": "GroupMembersChanged", "d": { channel_id: ChannelId, user_ids: Array<UserId>, } } | { "t": "ChannelUpdated", "d": { channel: Channel, } } | { "t": "ChannelDeleted", "d": { channel_id: ChannelId, server_id: ServerId, } } | { "t": "ChannelRestored", "d": { channel: Channel, } } | { "t": "LayoutChanged", "d": { layout: ServerLayout, } } | { "t": "ChannelRemoved", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "ReadStateUpdated", "d": { user_id: UserId, channel_id: ChannelId, last_read_message_id: MessageId | null, 
 /**
  * The user's absolute mention count in the channel after this change (main list and
  * quote replies, as the ready snapshot counts it). Absent from older servers.

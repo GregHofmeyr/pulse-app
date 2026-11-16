@@ -127,6 +127,7 @@ async fn create(
         gif: None,
         attachments: vec![],
         caption_is_fallback: false,
+        achievement: None,
     };
     let stored = Stored {
         message_id: msg.id,

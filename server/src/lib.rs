@@ -32,6 +32,7 @@ pub mod servers;
 pub mod sounds;
 pub mod stage;
 pub mod state;
+pub mod steam;
 pub mod streams;
 pub mod updates;
 pub mod voice;
@@ -88,6 +89,7 @@ pub fn router(state: AppState) -> Router {
         .merge(updates::router())
         .merge(models::router())
         .merge(wheels::routes::router())
+        .merge(steam::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
@@ -127,6 +129,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
         r2,
         limits: std::sync::Arc::new(limits::Limits::new(&cfg.limits)),
         embeds: std::sync::Arc::new(embeds::Unfurler::new(&cfg.embeds)),
+        steam: steam::Steam::new(&cfg.steam),
         cfg: std::sync::Arc::new(cfg),
         hub: hub.clone(),
         voice: voice::VoiceState::default(),
@@ -154,6 +157,9 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     dms::purge::spawn_sweeper(state.clone());
     presence::sweep::spawn_sweeper(state.clone());
     dms::sweep::spawn_sweeper(state.clone());
+    // Steam achievements (#379): the poller, and any backfill a restart cut off.
+    steam::poller::spawn(state.clone());
+    steam::backfill::kick(&state);
     streams::liveness::spawn(
         state.clone(),
         streams::liveness::CHECK_EVERY,

@@ -3,7 +3,8 @@
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId};
 use pulse_protocol::rest::{
-    CallLine, Message, MessageKind, PinLine, PollEnded, QotyCard, StageShareLine, WheelSpin,
+    AchievementCard, CallLine, Message, MessageKind, PinLine, PollEnded, QotyCard, StageShareLine,
+    WheelSpin,
 };
 use sqlx::SqliteConnection;
 
@@ -71,6 +72,7 @@ pub async fn insert(
         gif: None,
         attachments: vec![],
         caption_is_fallback: false,
+        achievement: achievement(&stored).map(Box::new),
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
         .bind(msg.id.to_string())
@@ -188,6 +190,25 @@ pub fn poll_ended(payload: &str) -> Option<PollEnded> {
     serde_json::from_value(v).ok()
 }
 
+/// The payload `type` of a Steam achievement card (#379).
+pub const ACHIEVEMENT: &str = "achievement";
+
+/// An achievement card's stored payload.
+pub fn achievement_payload(card: &AchievementCard) -> AppResult<serde_json::Value> {
+    let mut v = serde_json::to_value(card).map_err(anyhow::Error::from)?;
+    v["type"] = ACHIEVEMENT.into();
+    Ok(v)
+}
+
+/// The achievement card in a stored payload, if it is one.
+pub fn achievement(payload: &str) -> Option<AchievementCard> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    if v.get("type")?.as_str()? != ACHIEVEMENT {
+        return None;
+    }
+    serde_json::from_value(v).ok()
+}
+
 /// "a", "a and b", "a, b and c".
 pub fn join_names(names: &[String]) -> String {
     match names {
@@ -264,6 +285,32 @@ mod tests {
         assert_eq!(poll_ended(&stored), Some(line));
         assert_eq!(wheel_spin(&stored), None);
         assert_eq!(poll_ended(r#"{"type":"pin"}"#), None);
+    }
+
+    #[test]
+    fn an_achievement_card_round_trips_through_its_payload() {
+        use pulse_protocol::ids::UserId;
+        use pulse_protocol::rest::AchievementEntry;
+        let card = AchievementCard {
+            user_id: UserId::new(),
+            app_id: 4_000_001,
+            game: "Space Game".into(),
+            achievements: vec![AchievementEntry {
+                name: "First Steps".into(),
+                description: Some("Walk.".into()),
+                icon: None,
+                global_percent: Some(12.5),
+            }],
+            more: 0,
+            unlocked: 1,
+            total: 10,
+            complete: false,
+            art: None,
+        };
+        let stored = achievement_payload(&card).unwrap().to_string();
+        assert_eq!(achievement(&stored), Some(card));
+        assert_eq!(poll_ended(&stored), None);
+        assert_eq!(achievement(r#"{"type":"pin"}"#), None);
     }
 
     #[test]
