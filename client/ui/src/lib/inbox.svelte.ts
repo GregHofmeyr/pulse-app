@@ -1,6 +1,7 @@
 // The inbox (#306): the unread count on the top bar's button (from Ready, then every inbox event), and the popover's
 // lists, one per tab, fetched when first shown and kept live by events. The pure parts are in inbox.ts.
-import { appendPage, applyToList, arrived, INBOX_PAGE, loadTab, markRead, saveTab, type InboxTab } from './inbox'
+import { appendPage, applyToList, arrived, INBOX_PAGE, isItemTab, loadTab, markRead, saveTab, type InboxTab, type InboxView } from './inbox'
+import { reminders, seeAllReminders } from './reminders.svelte'
 import { openMessage } from './openMessage'
 import type { Event } from './protocol/Event'
 import type { InboxItem } from './protocol/InboxItem'
@@ -12,7 +13,7 @@ export type InboxList = { items: InboxItem[]; end: boolean; loading: boolean; er
 export const inbox = $state({
   unread: 0,
   open: false,
-  tab: loadTab() as InboxTab,
+  tab: loadTab() as InboxView,
   /** Each tab's list once fetched (null until then; a Ready forgets them, so a reopened popover fetches again). */
   lists: { all: null, mentions: null } as Record<InboxTab, InboxList | null>,
 })
@@ -58,7 +59,7 @@ export async function refreshCount(): Promise<void> {
 
 export function openInbox(): void {
   inbox.open = true
-  if (!inbox.lists[inbox.tab]) void loadMore(inbox.tab)
+  if (isItemTab(inbox.tab) && !inbox.lists[inbox.tab]) void loadMore(inbox.tab)
   else void refreshCount()
 }
 
@@ -71,10 +72,15 @@ export function toggleInbox(): void {
   else openInbox()
 }
 
-export function setTab(tab: InboxTab): void {
+export function setTab(tab: InboxView): void {
   inbox.tab = tab
   saveTab(tab)
-  if (!inbox.lists[tab]) void loadMore(tab)
+  if (isItemTab(tab) && !inbox.lists[tab]) void loadMore(tab)
+}
+
+/** The open tab's next page, when it lists inbox items. */
+function loadOpenTab() {
+  if (inbox.open && isItemTab(inbox.tab)) void loadMore(inbox.tab)
 }
 
 /** Mark an item read here at once, and on the server (whose event then tells every device the count). */
@@ -100,10 +106,11 @@ export function openItem(item: InboxItem): void {
   if (!openMessage(m)) ui.notice = 'That channel was deleted.'
 }
 
-/** Mark all read: everything up to the newest item shown (or all of it, when none is). */
+/** Mark all read: everything up to the newest item shown (or all of it, when none is), and every due reminder. */
 export async function markAllRead(): Promise<void> {
   const newest = TABS.map((t) => inbox.lists[t]?.items[0]?.message.id ?? '').reduce((a, b) => (b > a ? b : a), '')
   readHere((i) => !newest || i.message.id <= newest)
+  seeAllReminders()
   inbox.unread = 0
   try {
     await api.inboxReadAll(newest || null)
@@ -132,7 +139,13 @@ export function noteInboxEvent(event: Event): void {
   if (e.t === 'MutesChanged') {
     epoch++
     inbox.lists = { all: null, mentions: null }
-    if (inbox.open) void loadMore(inbox.tab)
+    loadOpenTab()
+  }
+  // a deleted message's reminders go (#300); one that was unread leaves the count, which the server has
+  if (e.t === 'MessageDeleted' && reminders.list.some((r) => r.message_id === e.d.message_id)) {
+    const unread = reminders.list.some((r) => r.message_id === e.d.message_id && r.due && !r.seen)
+    reminders.list = reminders.list.filter((r) => r.message_id !== e.d.message_id)
+    if (unread) void refreshCount()
   }
   // gone or back without an inbox event: the count comes from the server, the lists drop what's no longer here
   if (e.t === 'ChannelDeleted' || e.t === 'ServerDeleted' || e.t === 'ChannelRemoved' || e.t === 'ServerRestored' || e.t === 'ChannelRestored') {
@@ -151,7 +164,7 @@ export function noteInboxReady(unread: number | undefined): void {
   epoch++
   inbox.unread = unread ?? 0
   inbox.lists = { all: null, mentions: null }
-  if (inbox.open) void loadMore(inbox.tab)
+  loadOpenTab()
 }
 
 onAppReady((r) => noteInboxReady(r.inbox_unread))

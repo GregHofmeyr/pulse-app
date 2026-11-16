@@ -6,7 +6,15 @@ import type { AppState } from './state'
 import type { Event } from './protocol/Event'
 import type { InboxItem } from './protocol/InboxItem'
 
+/** The tabs that list inbox items, page by page. */
 export type InboxTab = 'all' | 'mentions'
+/** Every tab: those, your reminders (#300) and your scheduled messages (#299), which come from their own lists. */
+export type InboxView = InboxTab | 'reminders' | 'scheduled'
+
+const VIEWS: readonly InboxView[] = ['all', 'mentions', 'reminders', 'scheduled']
+
+/** Whether a tab lists inbox items (fetched in pages). */
+export const isItemTab = (v: InboxView): v is InboxTab => v === 'all' || v === 'mentions'
 
 /** Items per page (the server's). */
 export const INBOX_PAGE = 30
@@ -14,15 +22,16 @@ export const INBOX_PAGE = 30
 const TAB_KEY = 'pulse.inbox.tab'
 
 /** The tab last picked on this device (All when none, or storage is out of reach). */
-export function loadTab(): InboxTab {
+export function loadTab(): InboxView {
   try {
-    return localStorage.getItem(TAB_KEY) === 'mentions' ? 'mentions' : 'all'
+    const v = localStorage.getItem(TAB_KEY)
+    return VIEWS.find((x) => x === v) ?? 'all'
   } catch {
     return 'all'
   }
 }
 
-export function saveTab(tab: InboxTab): void {
+export function saveTab(tab: InboxView): void {
   try {
     localStorage.setItem(TAB_KEY, tab)
   } catch {
@@ -33,7 +42,12 @@ export function saveTab(tab: InboxTab): void {
 /** Where an item is: `Server › #channel` (a voice channel's chat by its name), a group's name, or a DM; a reply adds
  *  `› replies`. A chat no longer known here reads `a deleted chat`. */
 export function whereLabel(s: AppState, item: InboxItem): string {
-  const m = item.message
+  return placeLabel(s, item.message.channel_id, item.message.thread_root_id)
+}
+
+/** [whereLabel] for a message by where it is (a reminder's, #300). */
+export function placeLabel(s: AppState, channelId: string, threadRootId: string | null): string {
+  const m = { channel_id: channelId, thread_root_id: threadRootId }
   const ch = s.channels[m.channel_id]
   let place: string
   if (!ch) place = 'a deleted chat'

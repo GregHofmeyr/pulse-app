@@ -3,10 +3,19 @@
   // replies) and Mentions, remembered per device; newest first, the next page loading as you scroll near the end.
   // Each row: who, where, when, a one-line preview with your mention picked out, and for a reply the line it answered.
   // Unread rows stand out. A click shows the message and reads it; Mark all read reads everything shown.
+  // Reminders (#300): those come due sit at the top of All (unread until opened) and the Reminders tab lists them with
+  // those still to come (Done or Cancel). Scheduled (#299) lists every chat's scheduled messages.
   import { clickOutside } from '../lib/actions'
   import { relativeTime } from '../lib/conversations'
-  import { badgeText, highlightParts, oneLine, whereLabel, type InboxTab } from '../lib/inbox'
-  import { inbox, loadMore, markAllRead, openItem, setTab } from '../lib/inbox.svelte'
+  import { badgeText, highlightParts, isItemTab, oneLine, placeLabel, whereLabel, type InboxView } from '../lib/inbox'
+  import Icon from './Icon.svelte'
+  import { closeInbox, inbox, loadMore, markAllRead, openItem, setTab } from '../lib/inbox.svelte'
+  import { openReminder, reminderAuthor, reminders, removeReminder } from '../lib/reminders.svelte'
+  import { scheduled } from '../lib/scheduled.svelte'
+  import { whenLabel } from '../lib/schedule'
+  import { errorText } from '../lib/tauri'
+  import type { MessageReminder } from '../lib/protocol/MessageReminder'
+  import ScheduledList from './ScheduledList.svelte'
   import { mentionLookup, showMentions } from '../lib/mentionStyles'
   import { shownText } from '../lib/poll'
   import { displayName } from '../lib/selectors'
@@ -21,11 +30,35 @@
 
   let { onClose }: { onClose: (e?: Event) => void } = $props()
 
-  const TABS: { value: InboxTab; label: string }[] = [
+  const TABS: { value: InboxView; label: string }[] = [
     { value: 'all', label: 'All' },
     { value: 'mentions', label: 'Mentions' },
+    { value: 'reminders', label: 'Reminders' },
+    { value: 'scheduled', label: 'Scheduled' },
   ]
-  const list = $derived(inbox.lists[inbox.tab])
+  const itemTab = $derived(isItemTab(inbox.tab) ? inbox.tab : null)
+  const list = $derived(itemTab ? inbox.lists[itemTab] : null)
+  // the All tab's reminders: those come due (unread first); the Reminders tab's: every one
+  const dueReminders = $derived(reminders.list.filter((r) => r.due))
+  const shownReminders = $derived(inbox.tab === 'reminders' ? reminders.list : inbox.tab === 'all' ? dueReminders : [])
+  let reminderError = $state('')
+  /** Where a reminder's message is, as an inbox item's place reads. */
+  const reminderWhere = (r: MessageReminder) => placeLabel(app.state, r.channel_id, r.thread_root_id)
+  function reminderMenu(r: MessageReminder, e: MouseEvent | KeyboardEvent, row: HTMLElement) {
+    menu = personMenuAt(e, r.message.author_id, app.state.channels[r.channel_id]?.server_id ?? null, row) ?? menu
+  }
+  function open(r: MessageReminder) {
+    closeInbox()
+    openReminder(r)
+  }
+  async function done(r: MessageReminder) {
+    reminderError = ''
+    try {
+      await removeReminder(r.id)
+    } catch (e) {
+      reminderError = errorText(e)
+    }
+  }
   const lookup = $derived(mentionLookup(app.state))
   const meId = $derived(app.state.me?.id ?? null)
   const nowMs = $derived(Date.parse(clock.nowIso))
@@ -50,7 +83,7 @@
   /** Near the end of the list: fetch the next page. */
   function scrolled(e: Event) {
     const el = e.currentTarget as HTMLElement
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) void loadMore(inbox.tab)
+    if (itemTab && el.scrollHeight - el.scrollTop - el.clientHeight < 120) void loadMore(itemTab)
   }
 </script>
 
@@ -61,7 +94,29 @@
   </div>
   <div class="tabs"><Segmented label="Show" options={TABS} value={inbox.tab} onchange={setTab} /></div>
   <div class="list" onscroll={scrolled}>
-    {#if list?.items.length}
+    {#each shownReminders as r (r.id)}
+      {@const unread = r.due && !r.seen}
+      {@const who = reminderAuthor(r)}
+      <div class="item reminder" class:unread>
+        <button type="button" class="open" onclick={() => open(r)}
+          oncontextmenu={(e) => reminderMenu(r, e, e.currentTarget)} onkeydown={(e) => reminderMenu(r, e, e.currentTarget)}
+          aria-label="{unread ? 'Unread: ' : ''}reminder{r.due ? '' : ` for ${whenLabel(r.remind_at, nowMs)}`} about a message from {who} in {reminderWhere(r)}">
+          <span class="av" aria-hidden="true"><Avatar id={r.message.author_id ?? ''} name={who} size={32} /></span>
+          <span class="text" aria-hidden="true">
+            <span class="top"><span class="author">{who}</span><span class="where">{reminderWhere(r)}</span></span>
+            <span class="snippet"><Icon name="clock" size={12} /> {r.due ? `Reminder · ${whenLabel(r.remind_at, nowMs)}` : `Reminds you ${whenLabel(r.remind_at, nowMs)}`}</span>
+            <span class="said">{oneLine(showMentions(r.message.content, lookup, (id) => displayName(app.state, app.state.channels[r.channel_id]?.server_id ?? null, id)))}</span>
+          </span>
+        </button>
+        <button type="button" class="btn btn-quiet sm done" onclick={() => void done(r)}>{r.due ? 'Done' : 'Cancel'}</button>
+      </div>
+    {/each}
+    {#if reminderError}<p class="error" role="alert">{reminderError}</p>{/if}
+    {#if inbox.tab === 'reminders'}
+      {#if !reminders.list.length}<p class="none">No reminders. Right-click a message (or its More) and pick Remind me.</p>{/if}
+    {:else if inbox.tab === 'scheduled'}
+      <ScheduledList items={scheduled.list} showWhere empty="Nothing scheduled. Use the clock beside the message box to send a message later." />
+    {:else if list?.items.length}
       {#each list.items as item (item.message.id)}
         {@const m = item.message}
         {@const reply = snippet(item)}
@@ -76,12 +131,12 @@
           </span>
         </button>
       {/each}
-    {:else if list && !list.loading && !list.error}
+    {:else if list && !list.loading && !list.error && !shownReminders.length}
       <p class="none">{inbox.tab === 'mentions' ? 'No mentions in the last 30 days.' : 'Nothing for you in the last 30 days. Mentions and replies to you land here.'}</p>
     {/if}
-    {#if list?.error}
-      <p class="error" role="alert">{list.error} <button type="button" class="link" onclick={() => void loadMore(inbox.tab)}>Try again</button></p>
-    {:else if !list || list.loading}
+    {#if itemTab && list?.error}
+      <p class="error" role="alert">{list.error} <button type="button" class="link" onclick={() => void loadMore(itemTab)}>Try again</button></p>
+    {:else if itemTab && (!list || list.loading)}
       <Loading />
     {/if}
   </div>
@@ -102,6 +157,12 @@
   /* unread: as a message that mentions you is marked in chat */
   .item.unread { background: var(--accent-faint); box-shadow: inset 2px 0 0 var(--focus-ring); }
   .item.unread:hover, .item.unread:focus-visible { background: var(--bg-4); }
+  /* a reminder (#300): the row opens its message; Done (or Cancel) sits at its end */
+  .item.reminder { align-items: center; gap: 4px; padding: 0 8px 0 0; }
+  .item.reminder:focus-within { background: var(--bg-4); }
+  .open { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 10px; padding: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; border-radius: var(--radius-sm); }
+  .done { flex-shrink: 0; }
+  .snippet :global(svg) { vertical-align: -1px; }
   .av { flex-shrink: 0; }
   .text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; font-size: 13px; }
   .top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }

@@ -65,14 +65,19 @@ const READ: &str = "(m.id <= COALESCE(ic.upto, '')
     OR CASE WHEN m.thread_root_id IS NULL THEN m.id <= COALESCE(rs.last_read_message_id, '')
             ELSE m.id <= COALESCE(tr.last_seen_id, '') END)";
 
-/// How many of `me`'s items are unread.
+/// How many of `me`'s items are unread: mentions and replies, and reminders come due and not yet seen (#300).
 pub async fn unread<'e>(db: impl SqliteExecutor<'e>, me: UserId) -> AppResult<u32> {
-    let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) {ITEMS} AND NOT {READ}"))
-        .bind(me.to_string())
-        .bind(cutoff(Utc::now()).to_string())
-        .bind(now())
-        .fetch_one(db)
-        .await?;
+    let n: i64 = sqlx::query_scalar(&format!(
+        "SELECT (SELECT COUNT(*) {ITEMS} AND NOT {READ})
+           + (SELECT COUNT(*) {} AND r.fired_at IS NOT NULL AND r.seen_at IS NULL)",
+        crate::reminders::VISIBLE
+    ))
+    .bind(me.to_string())
+    .bind(cutoff(Utc::now()).to_string())
+    .bind(now())
+    .bind(me.to_string())
+    .fetch_one(db)
+    .await?;
     Ok(n as u32)
 }
 

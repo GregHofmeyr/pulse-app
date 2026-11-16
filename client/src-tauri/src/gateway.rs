@@ -1051,6 +1051,8 @@ mod tests {
                         live_notify: vec![],
                         server_order: vec![],
                         plan_reminders: None,
+                        scheduled: vec![],
+                        reminders: vec![],
                         calls: vec![],
                         ringing: vec![],
                         layouts: vec![],

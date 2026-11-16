@@ -284,6 +284,8 @@ async fn ready_for(
         live_notify: crate::streams::notify::list(db, me).await?,
         server_order: crate::servers::order::of(db, me).await?,
         plan_reminders: Some(crate::plans::routes::reminders_on(db, me).await?),
+        scheduled: crate::scheduled::list_for(db, me).await?,
+        reminders: crate::reminders::list_for(db, me).await?,
         layouts,
         server_now: Some(now()),
         stage_shares: voice_state.stage.visible(&visible),

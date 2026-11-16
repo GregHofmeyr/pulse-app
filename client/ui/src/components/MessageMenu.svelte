@@ -2,15 +2,16 @@
   // A message's menu (#178): from its action bar's More, or a right-click (Shift+F10, the menu key) on the message.
   // Pin message, with its lengths as the shared hover flyout (MenuFlyout, as Mute's), or Unpin message on a pinned
   // one; End poll on your own open poll (#157); Edit plan and Cancel plan on your own plan (#387); Show previews again on your own message with a removed one (#94); and Add to quotes (#316), a flyout of the server's quotes channels when
-  // it has several. Built like the channel menu: placed by placeMenu, arrows move, Escape closes a hover-opened flyout first.
+  // it has several; and Remind me (#300), a flyout of times. Built like the channel menu: placed by placeMenu, arrows move, Escape closes a hover-opened flyout first.
   import { onMount, untrack } from 'svelte'
   import { clickOutside } from '../lib/actions'
   import { placeMenu } from '../lib/menuPlace'
   import { PIN_FOR } from '../lib/pins'
+  import { remindPicks } from '../lib/schedule'
   import MenuFlyout from './MenuFlyout.svelte'
   import type { PinDuration } from '../lib/protocol/PinDuration'
 
-  let { pinned, x, y, opener, onPin, onUnpin, onEndPoll, onEditPlan, onCancelPlan, onShowPreviews, quotesChannels = [], onQuote, onClose }: {
+  let { pinned, x, y, opener, onPin, onUnpin, onRemind, onEndPoll, onEditPlan, onCancelPlan, onShowPreviews, quotesChannels = [], onQuote, onClose }: {
     /** The message is pinned: Unpin message instead of Pin message. */
     pinned: boolean
     x: number
@@ -19,6 +20,8 @@
     opener: HTMLElement
     onPin: (duration: PinDuration) => unknown
     onUnpin: () => unknown
+    /** Remind me (#300), a flyout of times: one of them (an instant), or `null` for Custom… (the caller asks). */
+    onRemind?: (at: string | null) => unknown
     /** Set on your own open poll (#157): End poll. */
     onEndPoll?: () => unknown
     /** Set on your own plan, not cancelled (#387): Edit plan and Cancel plan. */
@@ -33,6 +36,8 @@
     onClose: () => void
   } = $props()
   const quoteChoices = $derived(quotesChannels.map((c) => ({ label: `#${c.name}` })))
+  // read when the menu opens: "in 20 minutes" is from now
+  const remindChoices = untrack(() => remindPicks(Date.now()))
 
   let el = $state<HTMLElement>()
   let left = $state(untrack(() => x))
@@ -57,7 +62,8 @@
 
   let flyout = $state<ReturnType<typeof MenuFlyout>>()
   let quoteFlyout = $state<ReturnType<typeof MenuFlyout>>()
-  const flyouts = () => [flyout, quoteFlyout]
+  let remindFlyout = $state<ReturnType<typeof MenuFlyout>>()
+  const flyouts = () => [flyout, quoteFlyout, remindFlyout]
   const closeSub = (refocus: boolean | 'if-inside') => flyouts().forEach((f) => f?.close(refocus))
 
   function close(restoreFocus: boolean) {
@@ -105,6 +111,10 @@
   {:else}
     <MenuFlyout bind:this={flyout} label="Pin message" flyoutLabel="Pin message for" menuLeft={left} menuTop={top} item="pin"
       choices={PIN_FOR} onPick={(i) => pick(() => onPin(PIN_FOR[i].duration))} />
+  {/if}
+  {#if onRemind}
+    <MenuFlyout bind:this={remindFlyout} label="Remind me" flyoutLabel="Remind me about this" menuLeft={left} menuTop={top} item="remind"
+      choices={[...remindChoices, { label: 'Custom…' }]} onPick={(i) => pick(() => onRemind(remindChoices[i]?.at ?? null))} />
   {/if}
   {#if onEndPoll}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onEndPoll)}>End poll</button>

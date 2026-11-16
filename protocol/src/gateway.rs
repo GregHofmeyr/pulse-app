@@ -3,14 +3,14 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::ids::{CallId, ChannelId, LineId, MessageId, ServerId, UserId};
+use crate::ids::{CallId, ChannelId, LineId, MessageId, ReminderId, ScheduledId, ServerId, UserId};
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji,
-    CustomStatus, F1Prediction, Game, InboxItem, Listening, ListeningUpdate, Member, Message, Mute,
-    MyCustomStatus, NotifyLevelPref, OwnStatus, Person, PinnedMessage, Plan, Playing,
-    PlayingUpdate, PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason,
-    Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare, SteamStatus,
-    StreamEndReason, StreamInfo, User, WatchParty, Wheel,
+    CustomStatus, F1Prediction, Game, InboxItem, Listening, ListeningUpdate, Member, Message,
+    MessageReminder, Mute, MyCustomStatus, NotifyLevelPref, OwnStatus, Person, PinnedMessage, Plan,
+    Playing, PlayingUpdate, PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState,
+    RingEndReason, ScheduledMessage, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink,
+    StageShare, SteamStatus, StreamEndReason, StreamInfo, User, WatchParty, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -225,6 +225,15 @@ pub struct Ready {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub plan_reminders: Option<bool>,
+    /// Your scheduled messages (#299), soonest first, failed ones included. Yours only. Absent from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub scheduled: Vec<ScheduledMessage>,
+    /// Your reminders (#300), soonest first: those still to come and those due (in your inbox) you haven't marked
+    /// done. Yours only. Absent from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub reminders: Vec<MessageReminder>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -413,6 +422,31 @@ pub enum Event {
     PlanRemindersChanged {
         user_id: UserId,
         on: bool,
+    },
+    /// Only to the author's own sessions: a scheduled message was made, edited, or couldn't be posted when its time
+    /// came (`failed` set: it stays in their list until they delete it) (#299).
+    ScheduledSaved {
+        user_id: UserId,
+        scheduled: ScheduledMessage,
+    },
+    /// Only to the author's own sessions: a scheduled message is gone: deleted, or posted (`sent`: the message it
+    /// became, whose own `MessageCreated` comes first) (#299).
+    ScheduledRemoved {
+        user_id: UserId,
+        id: ScheduledId,
+        #[serde(default)]
+        sent: Option<MessageId>,
+    },
+    /// Only to its person's own sessions: a reminder was set, came due (`due`: it's in their inbox, and this is the
+    /// moment to notify them; their inbox count follows as `InboxUpdated`), or was seen (#300).
+    ReminderSaved {
+        user_id: UserId,
+        reminder: MessageReminder,
+    },
+    /// Only to its person's own sessions: a reminder was cancelled or marked done (#300).
+    ReminderRemoved {
+        user_id: UserId,
+        id: ReminderId,
     },
     /// Someone saved their profile; goes to everyone, like presence.
     ProfileUpdated {
@@ -850,6 +884,10 @@ impl Event {
             | Self::SteamLinkChanged { .. }
             | Self::ServerOrderChanged { .. }
             | Self::PlanRemindersChanged { .. }
+            | Self::ScheduledSaved { .. }
+            | Self::ScheduledRemoved { .. }
+            | Self::ReminderSaved { .. }
+            | Self::ReminderRemoved { .. }
             | Self::BadgeEarned { .. } => None,
         }
     }
@@ -874,6 +912,10 @@ impl Event {
             | Self::SteamLinkChanged { user_id, .. }
             | Self::ServerOrderChanged { user_id, .. }
             | Self::PlanRemindersChanged { user_id, .. }
+            | Self::ScheduledSaved { user_id, .. }
+            | Self::ScheduledRemoved { user_id, .. }
+            | Self::ReminderSaved { user_id, .. }
+            | Self::ReminderRemoved { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
             | Self::CallRingEnded { user_id, .. }
@@ -1002,6 +1044,8 @@ mod tests {
             live_notify: vec![],
             server_order: vec![],
             plan_reminders: None,
+            scheduled: vec![],
+            reminders: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1092,6 +1136,8 @@ mod tests {
             live_notify: vec![],
             server_order: vec![],
             plan_reminders: None,
+            scheduled: vec![],
+            reminders: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1231,6 +1277,8 @@ mod tests {
             live_notify: vec![],
             server_order: vec![],
             plan_reminders: None,
+            scheduled: vec![],
+            reminders: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],

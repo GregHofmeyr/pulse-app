@@ -52,6 +52,9 @@ pub struct Notice {
     pub channel_id: String,
     #[serde(default)]
     pub thread_id: Option<String>,
+    /// The message a click jumps to (a reminder's, #300); missing: the conversation (or thread) opens.
+    #[serde(default)]
+    pub message_id: Option<String>,
     /// The author's avatar (a media hash; an animated one's still), shown beside the text.
     #[serde(default)]
     pub avatar: Option<String>,
@@ -122,6 +125,8 @@ fn clean_key(key: &str) -> Option<String> {
 pub struct Click {
     pub channel_id: String,
     pub thread_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
 }
 
 pub type OnClick = Arc<dyn Fn(Click) + Send + Sync>;
@@ -157,6 +162,7 @@ fn clean(n: Notice) -> Option<Notice> {
         title: flat(&n.title, TITLE_MAX),
         body: flat(&n.body, BODY_MAX),
         thread_id: n.thread_id.filter(|t| id_ok(t)),
+        message_id: n.message_id.filter(|m| id_ok(m)),
         channel_id: n.channel_id,
         avatar: n.avatar.filter(|h| crate::media::is_hash(h)),
         image: n.image,
@@ -311,6 +317,7 @@ mod tests {
                 body: "hello".into(),
                 channel_id: "C1".into(),
                 thread_id: Some("Q1".into()),
+                message_id: None,
                 avatar: None,
                 image: None,
                 tag: None,
@@ -346,6 +353,7 @@ mod tests {
             body: "hi".into(),
             channel_id: "C1".into(),
             thread_id: None,
+            message_id: None,
             avatar: None,
             image: Some(PathBuf::from("/x/a.png")),
             tag: None,
@@ -387,6 +395,7 @@ mod tests {
         let c = Click {
             channel_id: "C1".into(),
             thread_id: None,
+            message_id: None,
         };
         assert_eq!(
             serde_json::to_string(&c).unwrap(),
@@ -402,6 +411,7 @@ mod tests {
             body: "b".repeat(1000),
             channel_id: "C1".into(),
             thread_id: Some("Q1".into()),
+            message_id: None,
             avatar: None,
             image: None,
             tag: None,
@@ -422,6 +432,7 @@ mod tests {
             body: body.clone(),
             channel_id: "C1".into(),
             thread_id: None,
+            message_id: None,
             avatar: None,
             image: None,
             tag: None,
@@ -438,6 +449,7 @@ mod tests {
             body: "😀".repeat(BODY_MAX + 50),
             channel_id: "C1".into(),
             thread_id: None,
+            message_id: None,
             avatar: None,
             image: None,
             tag: None,
@@ -456,6 +468,7 @@ mod tests {
             body: "hi".into(),
             channel_id: String::new(),
             thread_id: None,
+            message_id: None,
             avatar: None,
             image: None,
             tag: None,
@@ -472,6 +485,7 @@ mod tests {
         let n = clean(Notice {
             channel_id: "C1".into(),
             thread_id: Some("Q".repeat(65)),
+            message_id: None,
             ..base
         })
         .unwrap();
@@ -484,6 +498,7 @@ mod tests {
             body: "Incoming call".into(),
             channel_id: channel.into(),
             thread_id: None,
+            message_id: None,
             avatar: None,
             image: None,
             tag: tag.map(Into::into),

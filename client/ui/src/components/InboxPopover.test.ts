@@ -9,7 +9,9 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import InboxPopover from './InboxPopover.svelte'
-import { closeInbox, inbox, noteInboxEvent, openInbox } from '../lib/inbox.svelte'
+import { closeInbox, inbox, noteInboxEvent, openInbox, setTab } from '../lib/inbox.svelte'
+import { reminders } from '../lib/reminders.svelte'
+import { scheduled } from '../lib/scheduled.svelte'
 import { INBOX_PAGE } from '../lib/inbox'
 import { app, clock, handleReady, resetState, ui } from '../lib/store.svelte'
 import { testMe, testReady } from '../lib/testReady'
@@ -294,5 +296,52 @@ describe('where an inbox item opens (#324)', () => {
     await openOnly(item('M8', {}, { channel_id: 'GONE', thread_root_id: 'X' }))
     expect(ui.notice).toBe('That channel was deleted.')
     expect(ui.openReplies).toBeNull()
+  })
+})
+
+describe('reminders and scheduled messages in the inbox (#300, #299)', () => {
+  const rem = (id: string, due: boolean, seen = false) => ({
+    id, message_id: `M-${id}`, channel_id: 'C1', thread_root_id: null, remind_at: due ? '2026-11-12T10:00:00.000Z' : '2026-11-12T20:00:00.000Z',
+    created_at: '2026-11-12T09:00:00.000Z', due, seen, message: { message_id: `M-${id}`, author_id: 'SAM', content: `about ${id}`, deleted: false },
+  })
+
+  it('a due reminder sits at the top of All; the Reminders tab lists every one, with Done or Cancel', async () => {
+    reminders.list = [rem('R1', true), rem('R2', false)]
+    await show()
+    expect(rows()[0].classList.contains('reminder')).toBe(true)
+    expect(rows()[0].classList.contains('unread')).toBe(true)
+    expect(ids()).toEqual(['about R1', 'look @alex', 'agreed'])
+    setTab('reminders')
+    flushSync()
+    expect(ids()).toEqual(['about R1', 'about R2'])
+    const buttons = rows().map((r) => r.querySelector<HTMLButtonElement>('.done')!.textContent)
+    expect(buttons).toEqual(['Done', 'Cancel'])
+    rows()[1].querySelector<HTMLButtonElement>('.done')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('delete_reminder', { id: 'R2' })
+    expect(ids()).toEqual(['about R1'])
+  })
+
+  it('opening a due reminder reads it and shows its message', async () => {
+    reminders.list = [rem('R1', true)]
+    await show()
+    rows()[0].querySelector<HTMLButtonElement>('.open')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('reminder_seen', { id: 'R1' })
+    expect(ui.goTo).toBe('C1')
+    expect(reminders.list[0].seen).toBe(true)
+  })
+
+  it('the Scheduled tab lists every chat\'s scheduled messages', async () => {
+    scheduled.list = [{ id: 'S1', channel_id: 'C1', content: 'see you at 8', reply_to_id: null, send_at: '2026-11-12T18:00:00.000Z', created_at: '2026-11-12T09:00:00.000Z', edited_at: null, failed: null }]
+    await show()
+    setTab('scheduled')
+    flushSync()
+    const list = document.querySelector('.sched')!
+    expect(list.textContent).toContain('#general')
+    expect(list.textContent).toContain('see you at 8')
+    ;[...list.querySelectorAll('button')].find((b) => b.textContent === 'Delete')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('delete_scheduled', { id: 'S1' })
   })
 })

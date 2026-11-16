@@ -1,6 +1,8 @@
 // Typed wrappers over Tauri commands. The UI never calls the network itself.
 import { invoke } from '@tauri-apps/api/core'
 import type { User } from './protocol/User'
+import type { ScheduledMessage } from './protocol/ScheduledMessage'
+import type { MessageReminder } from './protocol/MessageReminder'
 import type { Profile } from './protocol/Profile'
 import type { SeenBadge } from './protocol/SeenBadge'
 import type { UpdateProfileRequest } from './protocol/UpdateProfileRequest'
@@ -268,6 +270,22 @@ export const api = {
   setServerOrder: (serverIds: string[]) => invoke<void>('set_server_order', { serverIds }),
   /** Plan reminders (#399): whether plans' reminder lines ping you, on every device. */
   setPlanReminders: (on: boolean) => invoke<void>('set_plan_reminders', { on }),
+  // Scheduled messages (#299): text only; the server posts them at `sendAt` (RFC 3339).
+  listScheduled: () => invoke<ScheduledMessage[]>('list_scheduled'),
+  scheduleMessage: (channelId: string, content: string, replyToId: string | null, sendAt: string) =>
+    invoke<ScheduledMessage>('schedule_message', { channelId, content, replyToId, sendAt }),
+  editScheduled: (id: string, change: { content?: string; sendAt?: string }) =>
+    invoke<ScheduledMessage>('edit_scheduled', { id, content: change.content ?? null, sendAt: change.sendAt ?? null }),
+  /** Post it now; the message it became (its MessageCreated comes too). */
+  sendScheduledNow: (id: string) => invoke<Message>('send_scheduled_now', { id }),
+  deleteScheduled: (id: string) => invoke<void>('delete_scheduled', { id }),
+  // Message reminders (#300): private to you.
+  listReminders: () => invoke<MessageReminder[]>('list_reminders'),
+  createReminder: (messageId: string, remindAt: string) => invoke<MessageReminder>('create_reminder', { messageId, remindAt }),
+  /** Cancel one still to come, or mark a due one done. */
+  deleteReminder: (id: string) => invoke<void>('delete_reminder', { id }),
+  /** A due one opened: read on every device. */
+  reminderSeen: (id: string) => invoke<void>('reminder_seen', { id }),
   joinServer: (serverId: string) => invoke<void>('join_server', { serverId }),
   listChannels: (serverId: string) => invoke<Channel[]>('list_channels', { serverId }),
   listMembers: (serverId: string) => invoke<Member[]>('list_members', { serverId }),

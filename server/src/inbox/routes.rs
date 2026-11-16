@@ -92,8 +92,8 @@ async fn read_one(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Mark all read: every item up to `upto` (never past now; none: now). An older mark than the one you have
-/// changes nothing. `204` either way.
+/// Mark all read: every item up to `upto` (never past now; none: now), and every reminder that's come due (#300). An
+/// older mark than the one you have changes nothing. `204` either way.
 async fn read_all(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -114,7 +114,9 @@ async fn read_all(
     .execute(&s.db)
     .await?
     .rows_affected();
-    if moved > 0 {
+    // due reminders (#300) are read with everything else
+    let reminders = crate::reminders::mark_all_seen(&s, me).await?;
+    if moved > 0 || reminders {
         tell(&s.db, &s.hub, me, true, |n| {
             updated(me, n, vec![], Some(upto), vec![])
         })

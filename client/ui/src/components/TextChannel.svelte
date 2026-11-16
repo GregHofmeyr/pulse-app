@@ -9,6 +9,8 @@
   import Leaderboard from './Leaderboard.svelte'
   import PinsPopover from './PinsPopover.svelte'
   import Composer from './Composer.svelte'
+  import ScheduledPopover from './ScheduledPopover.svelte'
+  import { scheduleMessage, scheduledIn } from '../lib/scheduled.svelte'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
@@ -717,6 +719,14 @@
     replyTo = null
     post(text, r, null, files, tempDays)
   }
+  // Send later (#299): the box's text as a reply to whatever is being replied to, posted by the server at `at`
+  async function schedule(text: string, at: string) {
+    await scheduleMessage(channelId, text, replyTo?.id ?? null, at)
+    replyTo = null
+  }
+  const scheduledHere = $derived(scheduledIn(channelId))
+  let scheduledOpen = $state(false)
+  let scheduledBtn: HTMLButtonElement | undefined = $state()
   // a GIF from the picker (#58) goes at once, as a reply to whatever is being replied to
   function sendGif(gif: Gif, link: string) {
     const r = replyTo?.id ?? null
@@ -909,8 +919,19 @@
       {/key}
     {/if}
   {:else}
+  {#if scheduledHere.length}
+    <div class="sched-line">
+      <button bind:this={scheduledBtn} type="button" class="sched-btn" data-menu-toggle aria-haspopup="dialog" aria-expanded={scheduledOpen}
+        onclick={() => (scheduledOpen = !scheduledOpen)}><Icon name="clock" size={14} />
+        {scheduledHere.length === 1 ? '1 scheduled message' : `${scheduledHere.length} scheduled messages`}{#if scheduledHere.some((x) => x.failed)}<span class="sched-failed"> · couldn't send</span>{/if}</button>
+    </div>
+  {/if}
+  {#if scheduledOpen && scheduledBtn && scheduledHere.length}
+    <ScheduledPopover anchor={scheduledBtn} {channelId} onClose={() => (scheduledOpen = false)} />
+  {/if}
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate || isVoice ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
-    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} pollChannel={channelId} planChannel={channelId} {commands} onSendGif={sendGif} {stageNudge} files />
+    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} pollChannel={channelId} planChannel={channelId} {commands} onSendGif={sendGif} {stageNudge} files
+    onSchedule={schedule} scheduledCount={scheduledHere.length} onShowScheduled={() => (scheduledOpen = true)} />
   {/if}
   {#if repliesRoot}
     {#key repliesRoot.id}
@@ -949,6 +970,11 @@
   .list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 0 8px; display: flex; flex-direction: column; }
   .list:focus { outline: none; } /* focused only from code, as a fallback: no ring */
   .start { padding: 16px 18px; color: var(--text-3); font-size: 13px; }
+  /* Send later (#299): this chat's scheduled messages, a quiet line above the box */
+  .sched-line { padding: 0 18px 4px; }
+  .sched-btn { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); font: inherit; font-size: 12px; }
+  .sched-btn:hover, .sched-btn[aria-expanded='true'] { background: var(--bg-3); color: var(--text); }
+  .sched-failed { color: var(--danger-text); }
   .typing { height: 22px; padding: 0 18px; font-size: 12px; color: var(--text-3); }
   .typing strong { color: var(--text); }
   .error { margin: 0 18px 4px; color: var(--danger-text); font-size: 13px; }

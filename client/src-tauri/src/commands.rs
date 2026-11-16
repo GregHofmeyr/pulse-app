@@ -4875,6 +4875,115 @@ pub async fn set_plan_reminders(
     core.check(&app, api.set_plan_reminders(&token, on).await)
 }
 
+/// Your scheduled messages (#299), soonest first.
+#[tauri::command]
+pub async fn list_scheduled(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<Vec<pulse_protocol::rest::ScheduledMessage>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.list_scheduled(&token).await)
+}
+
+/// Write a message now for the server to post at `send_at` (#299). Text only.
+#[tauri::command]
+pub async fn schedule_message(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    content: String,
+    reply_to_id: Option<MessageId>,
+    send_at: String,
+) -> Result<pulse_protocol::rest::ScheduledMessage, ApiError> {
+    let (api, token) = core.current()?;
+    let body = pulse_protocol::rest::ScheduleMessageRequest {
+        content,
+        reply_to_id,
+        send_at,
+    };
+    core.check(&app, api.schedule_message(&token, channel_id, &body).await)
+}
+
+/// A scheduled message's new text and/or time (#299).
+#[tauri::command]
+pub async fn edit_scheduled(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::ScheduledId,
+    content: Option<String>,
+    send_at: Option<String>,
+) -> Result<pulse_protocol::rest::ScheduledMessage, ApiError> {
+    let (api, token) = core.current()?;
+    let body = pulse_protocol::rest::EditScheduledRequest { content, send_at };
+    core.check(&app, api.edit_scheduled(&token, id, &body).await)
+}
+
+/// Post a scheduled message now (#299).
+#[tauri::command]
+pub async fn send_scheduled_now(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::ScheduledId,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.send_scheduled_now(&token, id).await)
+}
+
+#[tauri::command]
+pub async fn delete_scheduled(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::ScheduledId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_scheduled(&token, id).await)
+}
+
+/// Your reminders (#300), soonest first.
+#[tauri::command]
+pub async fn list_reminders(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<Vec<pulse_protocol::rest::MessageReminder>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.list_reminders(&token).await)
+}
+
+/// "Remind me about this" (#300).
+#[tauri::command]
+pub async fn create_reminder(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    remind_at: String,
+) -> Result<pulse_protocol::rest::MessageReminder, ApiError> {
+    let (api, token) = core.current()?;
+    let body = pulse_protocol::rest::CreateReminderRequest { remind_at };
+    core.check(&app, api.create_reminder(&token, message_id, &body).await)
+}
+
+/// Cancel a reminder, or mark a due one done (#300).
+#[tauri::command]
+pub async fn delete_reminder(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::ReminderId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_reminder(&token, id).await)
+}
+
+/// A due reminder opened (#300).
+#[tauri::command]
+pub async fn reminder_seen(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::ReminderId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.reminder_seen(&token, id).await)
+}
+
 /// Your join sound in a server (#121): one of its soundboard's sounds, or none (the normal join cue).
 #[tauri::command]
 pub async fn set_join_sound(

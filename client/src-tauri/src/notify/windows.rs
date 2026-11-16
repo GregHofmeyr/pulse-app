@@ -83,6 +83,7 @@ impl Backend {
         let click = Click {
             channel_id: n.channel_id.clone(),
             thread_id: n.thread_id.clone(),
+            message_id: n.message_id.clone(),
         };
         let on_click = self.on_click.clone();
         toast.Activated(&TypedEventHandler::<ToastNotification, IInspectable>::new(
