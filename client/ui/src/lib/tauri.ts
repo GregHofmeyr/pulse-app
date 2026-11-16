@@ -286,6 +286,8 @@ export const api = {
   /** A due one opened: read on every device. */
   reminderSeen: (id: string) => invoke<void>('reminder_seen', { id }),
   joinServer: (serverId: string) => invoke<void>('join_server', { serverId }),
+  leaveServer: (serverId: string) => invoke<void>('leave_server', { serverId }),
+  removeServerMember: (serverId: string, userId: string) => invoke<void>('remove_server_member', { serverId, userId }),
   listChannels: (serverId: string) => invoke<Channel[]>('list_channels', { serverId }),
   listMembers: (serverId: string) => invoke<Member[]>('list_members', { serverId }),
   listMessages: (channelId: string, before?: string) =>

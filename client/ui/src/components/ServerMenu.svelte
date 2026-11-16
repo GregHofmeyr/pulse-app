@@ -2,9 +2,9 @@
   // The right-click menu on a server tab (#161): Server settings (as the sidebar header's menu opens them), Mute
   // server as a durations flyout, the channel menu's (#131), or Unmute server, and Notifications: the server's level
   // as a flyout with yours ticked (#195), and Move left / Move right in your rail (#185: dragging's keyboard and menu
-  // way). Keyboard as in the channel menu.
+  // way), and Leave server (#371, asked first; not its owner's). Keyboard as in the channel menu.
   import { onMount, untrack } from 'svelte'
-  import { app, clock } from '../lib/store.svelte'
+  import { app, clock, ui } from '../lib/store.svelte'
   import { placeMenu } from '../lib/menuPlace'
   import { api, errorText } from '../lib/tauri'
   import { clickOutside } from '../lib/actions'
@@ -36,6 +36,8 @@
   const muted = $derived(
     app.state.mutes.some((m) => m.target_kind === 'server' && m.target_id === serverId && (m.until === null || m.until > clock.nowIso)),
   )
+  // Leave server (#371): anyone in it but its owner (there's no handing a server over, so the owner can't)
+  const canLeave = $derived(isMember(app.state, serverId) && app.state.servers.find((s) => s.id === serverId)?.owner_id !== app.state.me?.id)
   // an older server has no categories to add to
   const canCreateCategory = $derived(!!onCreateCategory && isMember(app.state, serverId) && !!app.state.layouts[serverId])
 
@@ -115,6 +117,10 @@
   {/if}
   <MenuFlyout bind:this={levelFlyout} label="Notifications" flyoutLabel="Notifications for {name}" menuLeft={left} menuTop={top}
     choices={levelChoices} onPick={pickLevel} />
+  {#if canLeave}
+    <span class="menu-sep" role="separator"></span>
+    <button type="button" class="menu-item danger" role="menuitem" data-item="leave" onclick={() => pick(() => (ui.serverAction = { kind: 'leave', serverId }))}>Leave server</button>
+  {/if}
   {#if onMoveLeft || onMoveRight}
     <span class="menu-sep" role="separator"></span>
     {#if onMoveLeft}<button type="button" class="menu-item" role="menuitem" data-item="move-left" onclick={() => pick(onMoveLeft)}>Move left</button>{/if}

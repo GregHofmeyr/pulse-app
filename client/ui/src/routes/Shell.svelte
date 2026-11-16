@@ -19,6 +19,7 @@
   import CustomStatusDialog from '../components/CustomStatusDialog.svelte'
   import ServerMenu from '../components/ServerMenu.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
+  import ServerActionDialog from '../components/ServerActionDialog.svelte'
   import { requestCreateCategory } from '../lib/categoryUi.svelte'
   import { clickOutside, modal, narrowerThan } from '../lib/actions'
   import { exitFade } from '../lib/exit'
@@ -885,6 +886,7 @@
 <BadgeToast />
 <GroupIconCrop />
 {#if settingsServer}<ServerSettings server={settingsServer} onClose={() => (serverSettingsId = null)} />{/if}
+{#if ui.serverAction}<ServerActionDialog action={ui.serverAction} onClose={() => (ui.serverAction = null)} />{/if}
 {#if settingsOpen}<Settings section={settingsSection} onLogout={logout} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if stream.clash}<StreamClashDialog clash={stream.clash} />{/if}

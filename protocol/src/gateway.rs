@@ -324,6 +324,16 @@ pub enum Event {
         server_id: ServerId,
         member: Member,
     },
+    /// Someone is no longer in a server (#371): they left, or its owner removed them (`removed_by`). Everyone, like
+    /// `MemberJoined`: member lists drop them, and the person themselves sees the server as one they aren't in (its
+    /// counts and calls go from their rail). Clients from before it skip it and catch up on their next Ready.
+    MemberLeft {
+        server_id: ServerId,
+        user_id: UserId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        removed_by: Option<UserId>,
+    },
     /// Someone's server nickname changed (everyone, like `MemberJoined`).
     MemberUpdated {
         server_id: ServerId,
@@ -848,6 +858,7 @@ impl Event {
             | Self::ChannelDeleted { .. }
             | Self::LayoutChanged { .. }
             | Self::MemberJoined { .. }
+            | Self::MemberLeft { .. }
             | Self::MemberUpdated { .. }
             | Self::UserCreated { .. }
             | Self::PresenceChanged { .. }

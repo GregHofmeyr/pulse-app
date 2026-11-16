@@ -161,63 +161,11 @@ async fn webhook(
         }
         return Ok(StatusCode::OK);
     };
-    // Only server voice channels feed stats; DM/group calls are never recorded (spec §8).
-    let record = ch.server_id.is_some();
-
     match ev.event.as_str() {
         "participant_joined" => joined(&s, &ch, user_id, &p.sid).await?,
-        _ if left => {
-            let in_memory = match s.voice.leave(channel_id, user_id, &p.sid) {
-                Left::Stale => return Ok(StatusCode::OK),
-                Left::NotPresent if aborted => return Ok(StatusCode::OK),
-                Left::Removed => true,
-                // Still close the open row (e.g. we restarted mid-call).
-                Left::NotPresent => false,
-            };
-            let sessions: Vec<(UserId, String, String)> = if record {
-                let rows: Vec<(String, String)> = sqlx::query_as(
-                    "UPDATE voice_sessions SET left_at = ? WHERE user_id = ? AND channel_id = ? AND left_at IS NULL
-                     RETURNING joined_at, left_at",
-                )
-                .bind(now())
-                .bind(user_id.to_string())
-                .bind(channel_id.to_string())
-                .fetch_all(&s.db)
-                .await?;
-                rows.into_iter().map(|(j, l)| (user_id, j, l)).collect()
-            } else {
-                Vec::new()
-            };
-            let closed = !sessions.is_empty();
-            let mut ended = None;
-            if in_memory {
-                // Their stream and watches here end, and their stream-room access with them.
-                ended = crate::streams::routes::left_call(&s, channel_id, user_id).await;
-                // Their Spotify share on the stage goes with them (#234).
-                crate::stage::left_call(&s, channel_id, user_id).await;
-                // and they're out of its watch party (#384)
-                crate::watch::left_call(&s, channel_id, user_id).await;
-            }
-            if in_memory || closed {
-                s.hub
-                    .publish(
-                        &s.db,
-                        Event::VoiceLeft {
-                            channel_id,
-                            user_id,
-                        },
-                    )
-                    .await;
-            }
-            // a DM or group's room now empty: its call waits a moment, then ends
-            if in_memory {
-                crate::calls::left(&s, &ch).await;
-            }
-            // Badge bookkeeping last, once everything above is committed and published.
-            crate::badges::voice::closed(&s, channel_id, &sessions).await;
-            if let Some(info) = ended {
-                crate::badges::streams::ended(&s, &info).await;
-            }
+        // a stale or aborted leave ends nothing, and stops here
+        _ if left && !left_call(&s, &ch, user_id, &p.sid, aborted).await? => {
+            return Ok(StatusCode::OK);
         }
         _ => {}
     }
@@ -229,6 +177,77 @@ async fn webhook(
         crate::voice::moderation::reconcile_join(&s, server, channel_id, user_id, p).await;
     }
     Ok(StatusCode::OK)
+}
+
+/// `user_id`'s connection `sid` (empty: whichever they're in on) left the call of `ch`, as the webhook loaded it: out
+/// of the voice state, their session row closed (server channels), their stream, watching, stage share and watch party
+/// place there ended, and the leave published. `aborted`: a connection that never came up, which only ends presence
+/// holding that very sid. False when nothing was theirs to end (a stale or aborted leave).
+///
+/// Also how leaving a server (or being removed from it, #371) takes someone out of its call, before LiveKit is told:
+/// the leave webhook that follows then finds nothing left to end.
+pub(crate) async fn left_call(
+    s: &AppState,
+    ch: &Channel,
+    user_id: UserId,
+    sid: &str,
+    aborted: bool,
+) -> AppResult<bool> {
+    let channel_id = ch.id;
+    // Only server voice channels feed stats; DM/group calls are never recorded (spec §8).
+    let record = ch.server_id.is_some();
+    let in_memory = match s.voice.leave(channel_id, user_id, sid) {
+        Left::Stale => return Ok(false),
+        Left::NotPresent if aborted => return Ok(false),
+        Left::Removed => true,
+        // Still close the open row (e.g. we restarted mid-call).
+        Left::NotPresent => false,
+    };
+    let sessions: Vec<(UserId, String, String)> = if record {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "UPDATE voice_sessions SET left_at = ? WHERE user_id = ? AND channel_id = ? AND left_at IS NULL
+             RETURNING joined_at, left_at",
+        )
+        .bind(now())
+        .bind(user_id.to_string())
+        .bind(channel_id.to_string())
+        .fetch_all(&s.db)
+        .await?;
+        rows.into_iter().map(|(j, l)| (user_id, j, l)).collect()
+    } else {
+        Vec::new()
+    };
+    let closed = !sessions.is_empty();
+    let mut ended = None;
+    if in_memory {
+        // Their stream and watches here end, and their stream-room access with them.
+        ended = crate::streams::routes::left_call(s, channel_id, user_id).await;
+        // Their Spotify share on the stage goes with them (#234).
+        crate::stage::left_call(s, channel_id, user_id).await;
+        // and they're out of its watch party (#384)
+        crate::watch::left_call(s, channel_id, user_id).await;
+    }
+    if in_memory || closed {
+        s.hub
+            .publish(
+                &s.db,
+                Event::VoiceLeft {
+                    channel_id,
+                    user_id,
+                },
+            )
+            .await;
+    }
+    // a DM or group's room now empty: its call waits a moment, then ends
+    if in_memory {
+        crate::calls::left(s, ch).await;
+    }
+    // Badge bookkeeping last, once everything above is committed and published.
+    crate::badges::voice::closed(s, channel_id, &sessions).await;
+    if let Some(info) = ended {
+        crate::badges::streams::ended(s, &info).await;
+    }
+    Ok(true)
 }
 
 /// An admitted `participant_joined` for `user`'s connection `sid` in the call of `ch`, as the

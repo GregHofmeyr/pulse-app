@@ -371,6 +371,8 @@ pub fn run() {
             commands::delete_category,
             commands::save_layout,
             commands::join_server,
+            commands::leave_server,
+            commands::remove_server_member,
             commands::list_channels,
             commands::list_members,
             commands::list_messages,
