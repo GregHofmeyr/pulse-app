@@ -58,7 +58,7 @@ describe('Add to quotes (#316)', () => {
   it('with one quotes channel: Add to quotes posts the message as a quote by its author there', async () => {
     show(msg(), { extra: [quotes('Q1', 'quotes', 1)] })
     more()
-    expect(items()).toEqual(['Pin message', 'Remind me', 'Save message', 'Add to quotes'])
+    expect(items()).toEqual(['Pin message', 'Remind me', 'Save message', 'Forward…', 'Add to quotes'])
     item('Add to quotes')!.click()
     await settle()
     const call = invoke.mock.calls.find(([c]) => c === 'post_quote')!
@@ -98,10 +98,10 @@ describe('Add to quotes (#316)', () => {
     unmount(cmp!); document.body.innerHTML = ''
     show(msg())
     more()
-    expect(items()).toEqual(['Pin message', 'Remind me', 'Save message'])
+    expect(items()).toEqual(['Pin message', 'Remind me', 'Save message', 'Forward…'])
     unmount(cmp!); document.body.innerHTML = ''
     show(msg({ content: '', caption_is_fallback: true }), { extra: [quotes('Q1', 'quotes', 1)] })
     more()
-    expect(items()).toEqual(['Pin message', 'Remind me', 'Save message'])
+    expect(items()).toEqual(['Pin message', 'Remind me', 'Save message', 'Forward…'])
   })
 })

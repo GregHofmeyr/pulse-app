@@ -784,6 +784,54 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub f1: Option<Box<F1Card>>,
+    /// Set on a forward (#302): where the original was said, by whom and when, and what it said. The forward's own
+    /// `content` is the forwarder's comment, or a stand-in when they wrote none (`caption_is_fallback`), and its
+    /// `attachments` are the original's (by reference, while it is there).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub forwarded: Option<Box<Forwarded>>,
+}
+
+/// The original of a forwarded message (#302), as it was when forwarded.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Forwarded {
+    /// The original (never itself a forward: forwarding a forward forwards its original).
+    pub message_id: MessageId,
+    pub channel_id: ChannelId,
+    /// The kind of chat it was said in: a DM or group is never named.
+    pub channel_kind: ChannelKind,
+    /// The channel's name, for a server's channel only.
+    pub channel_name: Option<String>,
+    pub server_id: Option<ServerId>,
+    /// The thread it was a reply in, if any (to open it there).
+    pub thread_root_id: Option<MessageId>,
+    pub author_id: Option<UserId>,
+    pub created_at: String,
+    /// Its text when forwarded (empty when it was only files, or it is unavailable).
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub gif: Option<Gif>,
+    /// Its link previews.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<LinkEmbed>>", optional)]
+    pub embeds: Vec<LinkEmbed>,
+    /// The original was deleted (or its chat was): nothing of it is shown.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub unavailable: bool,
+}
+
+/// `POST /messages/{id}/forward` (#302): forward a message you can see to a chat you can post in.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ForwardMessageRequest {
+    pub channel_id: ChannelId,
+    /// Your words above it (may be empty), up to a message's length.
+    #[serde(default)]
+    pub comment: String,
+    /// As a send's: a retry with the same nonce gets the first forward back.
+    #[serde(default)]
+    pub nonce: Option<String>,
 }
 
 /// How long a pin lasts (#178).

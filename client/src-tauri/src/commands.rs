@@ -4945,6 +4945,25 @@ pub async fn message_edits(
     core.check(&app, api.message_edits(&token, message_id).await)
 }
 
+/// Forward a message (#302) to a chat you can post in, with an optional comment. `nonce` makes a retry land once.
+#[tauri::command]
+pub async fn forward_message(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    channel_id: ChannelId,
+    comment: String,
+    nonce: Option<String>,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    let body = pulse_protocol::rest::ForwardMessageRequest {
+        channel_id,
+        comment,
+        nonce,
+    };
+    core.check(&app, api.forward_message(&token, message_id, &body).await)
+}
+
 /// Your saved messages (#315), newest first.
 #[tauri::command]
 pub async fn list_bookmarks(

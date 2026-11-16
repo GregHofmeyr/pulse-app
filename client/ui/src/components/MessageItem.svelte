@@ -50,6 +50,8 @@
   import MessageMenu from './MessageMenu.svelte'
   import WhenPicker from './WhenPicker.svelte'
   import EditHistoryDialog from './EditHistoryDialog.svelte'
+  import ForwardPicker from './ForwardPicker.svelte'
+  import ForwardedCard from './ForwardedCard.svelte'
   import { remindMe } from '../lib/reminders.svelte'
   import { bookmarkOf, removeBookmark, saveMessage } from '../lib/bookmarks.svelte'
   import { whenLabel } from '../lib/schedule'
@@ -222,6 +224,12 @@
   const savedOne = $derived(msgMenu ? bookmarkOf(message.id) : null)
   const saveToVault = () => saveMessage(message.id).then(() => (ui.notice = 'Saved. Find it in your inbox under Saved.'), (e) => showError(errorText(e)))
   const unsave = () => savedOne && removeBookmark(savedOne.id).then(() => (ui.notice = 'Removed from saved'), (e) => showError(errorText(e)))
+  // Forward… (#302): words, files or a GIF (not a poll or plan, nor a forward whose original is gone), to a chat picked
+  // by where the menu opened from
+  const forwardable = $derived(!message.poll && !message.plan && !message.forwarded?.unavailable)
+  let forwardAt = $state<HTMLElement | null>(null)
+  const openForward = (opener: HTMLElement) =>
+    (forwardAt = opener.isConnected ? opener : document.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`))
   // Edit history (#301): "(edited)" opens the message's versions
   let historyAt = $state<HTMLElement | null>(null)
   // Add to quotes (#316): the message as a quote, its author speaking, in one of its server's quotes channels (none in
@@ -409,6 +417,8 @@
             {#if !onlyGif}<div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention} onkeydown={(e) => { openMention(e); mentionMenu(e) }} oncontextmenu={mentionMenu}>{@html html}</div>{/if}
             {#each gifs as g (g.id)}<GifView gif={g} onError={showError} onFail={() => (failedGifs = [...failedGifs, g.id])} />{/each}
           {/if}
+          <!-- a forward (#302): the original, under the forwarder's comment -->
+          {#if message.forwarded}<ForwardedCard {message} {nameOf} {mentionNames} onError={showError} />{/if}
           <!-- files with no caption were still edited if the caption was cleared (#297) -->
           {#if message.edited_at}<button type="button" class="edited" aria-haspopup="dialog" aria-expanded={!!historyAt} data-tip="See edit history" data-menu-toggle
             onclick={(e) => (historyAt = historyAt ? null : e.currentTarget)}>(edited)</button>{/if}
@@ -417,7 +427,7 @@
         {#if pending?.files?.length}
           <ComposerFiles files={pending.files} progress={pending.status === 'pending' ? (attachmentSends.fraction(pending.nonce) ?? 0) : null}
             error={pending.status === 'failed' ? attachmentSends.error(pending.nonce) : null} />
-        {:else if !pending && !message.deleted && message.attachments?.length}
+        {:else if !pending && !message.deleted && !message.forwarded && message.attachments?.length}
           <MessageFiles {message} onError={showError} />
         {/if}
         {#each embeds as e (e.url)}<LinkEmbed embed={e} messageId={message.id} channelId={message.channel_id} {mine} onError={showError} />{/each}
@@ -430,7 +440,7 @@
           <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={16} /></button>
           {#if mine}
             {#if message.plan}{#if planOpen}<button aria-label="Edit plan" onclick={(e) => editPlanCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
-            {:else if !message.poll}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
+            {:else if !message.poll && !message.forwarded}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
             {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
             <DeleteButton what={message.thread_root_id ? 'reply' : 'message'} onConfirm={() => void del()} />
           {/if}
@@ -470,10 +480,14 @@
     onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
     onRemind={(at) => msgMenu && remind(at, msgMenu.opener)}
     saved={!!savedOne} onSave={saveToVault} onUnsave={unsave}
+    onForward={forwardable ? () => msgMenu && openForward(msgMenu.opener) : undefined}
     onEndPoll={endable ? endPoll : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
 {/if}
 {#if remindCustom}
   <WhenPicker anchor={remindCustom} title="Remind me about this" confirm="Set reminder" onPick={remindAt} onClose={() => (remindCustom = null)} />
+{/if}
+{#if forwardAt}
+  <ForwardPicker anchor={forwardAt} {message} author={message.forwarded ? nameOf(message.forwarded.author_id) : name} onClose={() => (forwardAt = null)} />
 {/if}
 {#if historyAt}
   <EditHistoryDialog anchor={historyAt} messageId={message.id} onClose={() => (historyAt = null)} />

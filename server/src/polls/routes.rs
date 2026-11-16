@@ -133,6 +133,7 @@ async fn create(
         plan_reminder: None,
         sports: None,
         f1: None,
+        forwarded: None,
     };
     let stored = Stored {
         message_id: msg.id,

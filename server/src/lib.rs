@@ -14,6 +14,7 @@ pub mod embeds;
 pub mod emoji;
 pub mod error;
 pub mod f1;
+pub mod forwards;
 pub mod gateway;
 pub mod gifs;
 pub mod hygiene;
@@ -75,6 +76,7 @@ pub fn router(state: AppState) -> Router {
         .merge(scheduled::router())
         .merge(reminders::router())
         .merge(bookmarks::router())
+        .merge(forwards::router())
         .merge(f1::router())
         .merge(gifs::router())
         .merge(quotes::routes::router())

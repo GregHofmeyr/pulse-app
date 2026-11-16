@@ -2,7 +2,7 @@
   // A message's menu (#178): from its action bar's More, or a right-click (Shift+F10, the menu key) on the message.
   // Pin message, with its lengths as the shared hover flyout (MenuFlyout, as Mute's), or Unpin message on a pinned
   // one; End poll on your own open poll (#157); Edit plan and Cancel plan on your own plan (#387); Show previews again on your own message with a removed one (#94); and Add to quotes (#316), a flyout of the server's quotes channels when
-  // it has several; Remind me (#300), a flyout of times; and Save message (#315), or Remove from saved on one you saved. Built like the channel menu: placed by placeMenu, arrows move, Escape closes a hover-opened flyout first.
+  // it has several; Remind me (#300), a flyout of times; and Save message (#315), or Remove from saved on one you saved; and Forward… (#302), which opens the chat picker. Built like the channel menu: placed by placeMenu, arrows move, Escape closes a hover-opened flyout first.
   import { onMount, untrack } from 'svelte'
   import { clickOutside } from '../lib/actions'
   import { placeMenu } from '../lib/menuPlace'
@@ -11,7 +11,7 @@
   import MenuFlyout from './MenuFlyout.svelte'
   import type { PinDuration } from '../lib/protocol/PinDuration'
 
-  let { pinned, x, y, opener, onPin, onUnpin, onRemind, saved = false, onSave, onUnsave, onEndPoll, onEditPlan, onCancelPlan, onShowPreviews, quotesChannels = [], onQuote, onClose }: {
+  let { pinned, x, y, opener, onPin, onUnpin, onRemind, saved = false, onSave, onUnsave, onForward, onEndPoll, onEditPlan, onCancelPlan, onShowPreviews, quotesChannels = [], onQuote, onClose }: {
     /** The message is pinned: Unpin message instead of Pin message. */
     pinned: boolean
     x: number
@@ -27,6 +27,8 @@
     /** Save message (#315), private to you. */
     onSave?: () => unknown
     onUnsave?: () => unknown
+    /** Forward… (#302): the caller opens the chat picker. */
+    onForward?: () => unknown
     /** Set on your own open poll (#157): End poll. */
     onEndPoll?: () => unknown
     /** Set on your own plan, not cancelled (#387): Edit plan and Cancel plan. */
@@ -125,6 +127,9 @@
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onUnsave)}>Remove from saved</button>
   {:else if !saved && onSave}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onSave)}>Save message</button>
+  {/if}
+  {#if onForward}
+    <button type="button" class="menu-item" role="menuitem" aria-haspopup="dialog" data-item onclick={() => pick(onForward)}>Forward…</button>
   {/if}
   {#if onEndPoll}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onEndPoll)}>End poll</button>

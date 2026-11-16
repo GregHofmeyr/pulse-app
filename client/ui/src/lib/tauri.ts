@@ -282,6 +282,10 @@ export const api = {
   deleteScheduled: (id: string) => invoke<void>('delete_scheduled', { id }),
   /** A message's versions (#301): the current text first, then the earlier ones, newest first. */
   messageEdits: (messageId: string) => invoke<MessageVersion[]>('message_edits', { messageId }),
+  /** Forward a message (#302) to a chat you can post in, with your comment (may be empty); the forward (its
+   *  MessageCreated comes too). One nonce per forward, so a retry lands once. */
+  forwardMessage: (messageId: string, channelId: string, comment: string, nonce: string) =>
+    invoke<Message>('forward_message', { messageId, channelId, comment, nonce }),
   // Saved messages (#315): private to you.
   listBookmarks: () => invoke<MessageBookmark[]>('list_bookmarks'),
   /** The one you already have when it was saved before. */

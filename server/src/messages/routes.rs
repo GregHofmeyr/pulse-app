@@ -150,6 +150,8 @@ fn from_row(r: Row) -> AppResult<Message> {
             Some(p) if system && deleted_at.is_none() => crate::f1::card(p).map(Box::new),
             _ => None,
         },
+        // set by `forwards::attach`
+        forwarded: None,
     })
 }
 
@@ -185,6 +187,7 @@ pub(crate) async fn load(
     crate::plans::attach(db, &mut one).await?;
     crate::f1::attach(db, &mut one).await?;
     crate::attachments::attach(db, &mut one).await?;
+    crate::forwards::attach(db, &mut one).await?;
     let [m] = one;
     Ok(Some(m))
 }
@@ -200,7 +203,7 @@ pub(crate) fn clean(content: &str) -> AppResult<String> {
 }
 
 /// A message's text when it carries files: trimmed, possibly empty, at most [`MAX_LEN`].
-fn caption(content: &str) -> AppResult<String> {
+pub(crate) fn caption(content: &str) -> AppResult<String> {
     let c = content.trim();
     if c.chars().count() > MAX_LEN {
         return Err(AppError::BadRequest(format!(
@@ -258,6 +261,7 @@ pub(crate) async fn fill(
     crate::plans::attach(db, &mut page).await?;
     crate::f1::attach(db, &mut page).await?;
     crate::attachments::attach(db, &mut page).await?;
+    crate::forwards::attach(db, &mut page).await?;
     Ok(page)
 }
 
@@ -474,6 +478,7 @@ pub(crate) async fn send_as(
             attachment_ids: req.attachments,
             attachments: claimed,
             caption_is_fallback,
+            forward: None,
         },
     )
     .await
@@ -495,8 +500,10 @@ pub(crate) struct Outgoing {
     /// The uploads it carries (#57), checked by `attachments::claim` (whose answer is `attachments`).
     pub attachment_ids: Vec<AttachmentId>,
     pub attachments: Vec<Attachment>,
-    /// `content` is the stand-in text for files sent with no caption.
+    /// `content` is the stand-in text for files sent with no caption, or for a forward with no comment.
     pub caption_is_fallback: bool,
+    /// Set on a forward (#302): its original, stored with it (its files are `attachments`, not bound to it).
+    pub forward: Option<crate::forwards::Outgoing>,
 }
 
 /// Post a plain message from `me` in `ch` as the sharer's own words: Share to stage's chat message (#288). The same
@@ -523,13 +530,19 @@ pub(crate) async fn post_plain(
             attachment_ids: vec![],
             attachments: vec![],
             caption_is_fallback: false,
+            forward: None,
         },
     )
     .await
 }
 
 /// Store `out` from `me` in `ch` and fan it out: the send path after its checks.
-async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppResult<Message> {
+pub(crate) async fn deliver(
+    s: &AppState,
+    me: UserId,
+    ch: &Channel,
+    out: Outgoing,
+) -> AppResult<Message> {
     let id = ch.id;
     let Outgoing {
         content,
@@ -542,6 +555,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         attachment_ids,
         attachments,
         caption_is_fallback,
+        forward,
     } = out;
     let gif_json = gif
         .as_ref()
@@ -582,6 +596,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         plan_reminder: None,
         sports: None,
         f1: None,
+        forwarded: forward.as_ref().map(|f| Box::new(f.view.clone())),
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -629,6 +644,9 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         .execute(&mut *tx)
         .await?;
     crate::attachments::bind(&mut tx, me, msg.id, &attachment_ids, &mut msg.attachments).await?;
+    if let Some(f) = &forward {
+        crate::forwards::store(&mut tx, msg.id, &f.stored).await?;
+    }
     mentions::store(&mut tx, msg.id, &mentioned, true).await?;
     mentions::store(&mut tx, msg.id, &pinged, false).await?;
     let used = reactions::live_keys(&mut tx, me, reactions::used_in(&msg.content)).await?;
@@ -748,6 +766,10 @@ async fn edit(
     // A poll's text is the poll for older clients (#157); a poll isn't edited after posting.
     if msg.poll.is_some() {
         return Err(AppError::BadRequest("polls can't be edited".into()));
+    }
+    // A forward (#302) is the original's words, not the forwarder's to change.
+    if msg.forwarded.is_some() {
+        return Err(AppError::BadRequest("forwards can't be edited".into()));
     }
     // Nor is a plan's (#387): its creator changes the plan itself (`PUT /messages/{id}/plan`).
     if msg.plan.is_some() {
@@ -918,6 +940,8 @@ async fn remove(
         events.append(&mut c.replies);
     }
     s.hub.publish_all(&s.db, events).await;
+    // Its forwards (#302) now show nothing of it: their viewers hear so.
+    crate::forwards::tell_deleted(&s, id).await;
     if let Some(deleted) = deleted {
         // The delete has landed: a card that can't be read back is logged, not a failed request.
         for card in deleted.cards {
@@ -1033,6 +1057,7 @@ mod tests {
             plan_reminder: None,
             sports: None,
             f1: None,
+            forwarded: None,
         }
     }
 

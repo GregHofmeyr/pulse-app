@@ -772,3 +772,61 @@ async fn a_file_marked_as_a_spoiler_says_so() {
     assert_eq!(raw["attachments"][0]["spoiler"], true);
     assert!(raw["attachments"][1].get("spoiler").is_none(), "{raw}");
 }
+
+#[tokio::test]
+async fn a_forward_shows_the_originals_files_by_reference_spoilers_and_all() {
+    let w = world().await;
+    let (app, t, ch) = (&w.app, &w.alex.1, w.text.id);
+    let bytes = webp(100);
+    let r = post_json(
+        app,
+        t,
+        &format!("/channels/{ch}/attachments"),
+        json!({ "name": "ending.webp", "size": bytes.len(), "content_type": "image/webp", "spoiler": true }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let up: AttachmentUpload = r.json().await.unwrap();
+    put(&up, &bytes).await;
+    let m = send_ok(app, t, ch, "", &[up.id]).await;
+    // sam forwards it to a DM with kim, who isn't in the server
+    let (kim_id, kim) = register(app, "kim").await;
+    let dm = create_dm(app, &w.sam.1, &[kim_id]).await;
+    let r = post_json(
+        app,
+        &w.sam.1,
+        &format!("/messages/{}/forward", m.id),
+        json!({ "channel_id": dm.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let fwd: Message = r.json().await.unwrap();
+    // the same file, not a copy: still a spoiler, nothing new stored
+    assert_eq!(fwd.attachments, m.attachments);
+    assert!(fwd.attachments[0].spoiler);
+    assert!(keys(app, fwd.id).await.is_empty());
+    assert_eq!(fwd.forwarded.as_ref().unwrap().content, "");
+    // kim opens it through the forward, never through the original
+    let r = urls(app, &kim, fwd.id).await;
+    assert_eq!(r.status(), 200);
+    let links: Vec<AttachmentUrl> = r.json().await.unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].id, up.id);
+    assert!(links[0].url.is_some());
+    assert_eq!(urls(app, &kim, m.id).await.status(), 403);
+    // the original deleted: its files go, and the forward has none
+    let r = app
+        .http
+        .delete(app.url(&format!("/messages/{}", m.id)))
+        .bearer_auth(t)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    let list: Vec<Message> = get_json(app, &kim, &format!("/channels/{}/messages", dm.id)).await;
+    let got = list.iter().find(|x| x.id == fwd.id).unwrap();
+    assert!(got.attachments.is_empty());
+    assert!(got.forwarded.as_ref().unwrap().unavailable);
+    let links: Vec<AttachmentUrl> = urls(app, &kim, fwd.id).await.json().await.unwrap();
+    assert!(links.is_empty());
+}

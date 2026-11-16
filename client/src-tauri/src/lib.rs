@@ -539,6 +539,7 @@ pub fn run() {
             commands::delete_reminder,
             commands::reminder_seen,
             commands::message_edits,
+            commands::forward_message,
             commands::list_bookmarks,
             commands::save_message,
             commands::edit_bookmark,

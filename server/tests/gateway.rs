@@ -104,6 +104,7 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         plan_reminder: None,
         sports: None,
         f1: None,
+        forwarded: None,
     }
 }
 

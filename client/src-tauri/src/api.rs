@@ -2588,6 +2588,24 @@ impl Api {
         .await
     }
 
+    /// Forward a message (#302) to a chat you can post in; the forward, as a send answers.
+    pub async fn forward_message(
+        &self,
+        token: &str,
+        message: MessageId,
+        body: &pulse_protocol::rest::ForwardMessageRequest,
+    ) -> Result<Message, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/messages/{message}/forward", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Your saved messages (#315), newest first.
     pub async fn list_bookmarks(
         &self,
