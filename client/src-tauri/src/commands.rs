@@ -1369,10 +1369,51 @@ pub fn media_activity(m: State<'_, crate::activity::MediaActivity>) -> crate::ac
 /// on every change. Master off: no poller at all.
 #[tauri::command]
 pub fn set_game_activity(
+    app: AppHandle,
     g: State<'_, crate::games::GameActivity>,
+    clips: State<'_, crate::games::clipdrop::ClipDrop>,
     settings: crate::games::GameSettings,
 ) {
+    // clip drop (#382): under the master switch, watching the chosen folders or the defaults under Videos
+    let folders = match &settings.clip_folders {
+        Some(f) => f.iter().map(std::path::PathBuf::from).collect(),
+        None => clip_drop_default_paths(&app),
+    };
+    clips.set(settings.enabled && settings.clips, folders);
     g.set(settings);
+}
+
+fn clip_drop_default_paths(app: &AppHandle) -> Vec<std::path::PathBuf> {
+    crate::games::clipdrop::default_folders(app.path().video_dir().ok())
+}
+
+/// The folders clip drop watches when none were chosen (#382): Game Bar's `Videos\Captures` and NVIDIA's `Videos`
+/// (its per-game subfolders). None outside Windows: nothing is watched there.
+#[tauri::command]
+pub fn clip_drop_defaults(app: AppHandle) -> Vec<String> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    clip_drop_default_paths(&app)
+        .into_iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
+}
+
+/// A folder picked for clip drop to watch (#382); `None` when cancelled.
+#[tauri::command]
+pub async fn pick_clip_folder(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app.dialog().file();
+    if let Some(win) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&win);
+    }
+    dialog.pick_folder(move |f| {
+        let _ = tx.send(f);
+    });
+    let picked = rx.await.ok().flatten()?.into_path().ok()?;
+    Some(picked.to_string_lossy().into_owned())
 }
 
 /// Whether Pulse looks for games now, and the one it sees (Settings shows it).

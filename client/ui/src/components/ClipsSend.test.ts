@@ -26,7 +26,8 @@ vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
 vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 
 import ClipsChannel from './ClipsChannel.svelte'
-import { app } from '../lib/store.svelte'
+import { app, ui } from '../lib/store.svelte'
+import { clipDrop } from '../lib/clipDrop.svelte'
 import { applyEvent, applyReady, emptyState, setClipJob } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
 import { positionAt } from '../lib/composerDom'
@@ -233,6 +234,26 @@ describe('ClipsSend', () => {
     expect(calls('pick_clip_file')).toHaveLength(1)
     expect(calls('open_clip')).toEqual([['open_clip', { path: '/v/picked.mp4' }]])
     expect(editor()).not.toBeNull()
+  })
+
+  // #382: an offered recording's Share opens the same editor on that file, and the channel is remembered for the next
+  it('an offered recording opens in the editor here, and this channel is remembered', async () => {
+    clipDrop.last = null
+    await show()
+    ui.shareClip = { channelId: 'C9', path: '/v/elsewhere.mp4' } // another channel's: not ours
+    flushSync()
+    await settle()
+    expect(calls('open_clip')).toEqual([])
+    ui.shareClip = { channelId: 'C1', path: '/v/Apex/new.mp4' }
+    flushSync()
+    await settle()
+    await settle()
+    flushSync()
+    expect(ui.shareClip).toBeNull()
+    expect(calls('open_clip')).toEqual([['open_clip', { path: '/v/Apex/new.mp4' }]])
+    expect(editor()).not.toBeNull()
+    expect(clipDrop.last).toBe('C1')
+    ui.shareClip = null
   })
 
   it('cancelling the picker opens nothing', async () => {

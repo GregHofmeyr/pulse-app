@@ -24,7 +24,7 @@ beforeEach(() => {
   invoke.mockReset()
   invoke.mockResolvedValue(undefined)
   localStorage.clear()
-  Object.assign(gamePrefs, { enabled: true, art: true, time: true, games: [] })
+  Object.assign(gamePrefs, { enabled: true, art: true, time: true, games: [], clips: true, clip_folders: null })
   Object.assign(gameActivity, { detecting: false, playing: null })
   cmp = mount(GameActivitySettings, { target: document.body })
   flushSync()
@@ -37,15 +37,15 @@ afterEach(() => {
 
 describe('switches', () => {
   it('all on by default', () => {
-    for (const k of ['enabled', 'art', 'time']) expect([k, sw(k).checked, sw(k).disabled]).toEqual([k, true, false])
+    for (const k of ['enabled', 'art', 'time', 'clips']) expect([k, sw(k).checked, sw(k).disabled]).toEqual([k, true, false])
   })
 
   it('master off: told to the core, saved, and the finer ones disabled', () => {
     sw('enabled').click()
     flushSync()
-    expect(told().at(-1)).toEqual({ enabled: false, art: true, time: true, games: [] })
+    expect(told().at(-1)).toEqual({ enabled: false, art: true, time: true, games: [], clips: true, clip_folders: null })
     expect(JSON.parse(localStorage.getItem('pulse.games')!).enabled).toBe(false)
-    expect(sw('art').disabled && sw('time').disabled).toBe(true)
+    expect(sw('art').disabled && sw('time').disabled && sw('clips').disabled).toBe(true)
   })
 
   it('art and play time each switch on their own', () => {
@@ -76,7 +76,7 @@ describe('games added by hand', () => {
     flushSync()
     button('Add')!.click()
     flushSync()
-    expect(told().at(-1)).toEqual({ enabled: true, art: true, time: true, games: [{ name: 'Old Game', exe: 'D:\\Games\\Old\\old.exe' }] })
+    expect(told().at(-1)).toMatchObject({ enabled: true, art: true, time: true, games: [{ name: 'Old Game', exe: 'D:\\Games\\Old\\old.exe' }] })
     expect(document.querySelector('.settings-list-item .nm')!.textContent).toBe('Old Game')
     expect(document.querySelector('.settings-list-item small')!.textContent).toBe('old.exe')
     document.querySelector<HTMLButtonElement>('button[aria-label="Remove Old Game"]')!.click()
@@ -91,5 +91,59 @@ describe('games added by hand', () => {
     await settle()
     expect(document.querySelector('input[aria-label="Game name"]')).toBeNull()
     expect(told()).toEqual([])
+  })
+})
+
+// #382: "Offer new recordings as clips" under the master switch, and the folders it watches (Windows only).
+describe('clip drop', () => {
+  const realUA = navigator.userAgent
+  const remount = () => {
+    if (cmp) unmount(cmp)
+    document.body.innerHTML = ''
+    cmp = mount(GameActivitySettings, { target: document.body })
+    flushSync()
+  }
+  const folderPaths = () => [...document.querySelectorAll('.folders .path')].map((e) => e.textContent)
+  afterEach(() => Object.defineProperty(navigator, 'userAgent', { configurable: true, value: realUA }))
+
+  it('its switch is told to the core and saved', () => {
+    sw('clips').click()
+    flushSync()
+    expect(told().at(-1)).toMatchObject({ enabled: true, clips: false })
+    expect(JSON.parse(localStorage.getItem('pulse.games')!).clips).toBe(false)
+  })
+
+  it('no folder list outside Windows', () => {
+    expect(document.querySelector('.folders')).toBeNull()
+  })
+
+  it('on Windows: the defaults show; adding one, removing one and going back to the defaults are told', async () => {
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' })
+    const defaults = ['C:\\Users\\alex\\Videos\\Captures', 'C:\\Users\\alex\\Videos']
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'clip_drop_defaults' ? defaults : cmd === 'pick_clip_folder' ? 'D:\\Clips' : undefined))
+    remount()
+    await settle()
+    expect(folderPaths()).toEqual(defaults)
+    expect(button('Use the defaults')).toBeUndefined()
+
+    button('Add a folder')!.click()
+    await settle()
+    expect(told().at(-1)).toMatchObject({ clip_folders: [...defaults, 'D:\\Clips'] })
+    expect(folderPaths()).toEqual([...defaults, 'D:\\Clips'])
+
+    // (backslashes in a path: found by its label, not a CSS selector)
+    ;[...document.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === `Stop watching ${defaults[0]}`)!.click()
+    flushSync()
+    expect(told().at(-1)).toMatchObject({ clip_folders: [defaults[1], 'D:\\Clips'] })
+
+    button('Use the defaults')!.click()
+    flushSync()
+    expect(told().at(-1)).toMatchObject({ clip_folders: null })
+    expect(folderPaths()).toEqual(defaults)
+
+    // the switch off (or the master one): no folder list
+    sw('clips').click()
+    flushSync()
+    expect(document.querySelector('.folders')).toBeNull()
   })
 })

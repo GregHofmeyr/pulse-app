@@ -5,6 +5,7 @@
   import { voice } from '../lib/voice.svelte'
   import { stream } from '../lib/stream/stream.svelte'
   import Icon from './Icon.svelte'
+  import ClipDropToast from './ClipDropToast.svelte'
   import { exitFade } from '../lib/exit'
   import { toastShown } from '../lib/toastPrefs.svelte'
 
@@ -37,6 +38,8 @@
       <button type="button" class="icon-btn icon-btn-xs" aria-label="Dismiss" onclick={() => removeToast(t.channelId, t.streamer)}><Icon name="x" size={14} /></button>
     </div>
   {/each}
+  <!-- #382: new recordings offered as clips share the stack -->
+  <ClipDropToast />
   {#if message}<div class="toast notice fade-in" role="status" class:err={!!stream.watchError} out:exitFade><span>{message}</span></div>{/if}
 </div>
 

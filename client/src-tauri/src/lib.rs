@@ -239,6 +239,14 @@ pub fn run() {
                     let _ = h2.emit("pulse://game-activity", state);
                 }),
             ));
+            // Clip drop (#382): offers new NVIDIA / Game Bar recordings; nothing runs until the page's switches say so
+            let h = app.handle().clone();
+            app.manage(games::clipdrop::ClipDrop::new(std::sync::Arc::new(
+                move |offer| {
+                    use tauri::Emitter;
+                    let _ = h.emit("pulse://clip-drop", offer);
+                },
+            )));
             // Idle (#53): polls the system's last input on Windows; nothing runs elsewhere
             let h = app.handle().clone();
             app.manage(idle::Idle::start(std::sync::Arc::new(move |f| {
@@ -459,6 +467,8 @@ pub fn run() {
             commands::set_game_activity,
             commands::game_activity,
             commands::pick_game_exe,
+            commands::clip_drop_defaults,
+            commands::pick_clip_folder,
             commands::name_archive,
             commands::upload_avatar_media,
             commands::upload_banner_media,

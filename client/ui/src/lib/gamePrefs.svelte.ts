@@ -2,17 +2,18 @@
 // by hand, per device (each profile has its own webview storage), all on by default. The master switch off means the
 // core runs nothing and sends nothing. The core is told at boot and on every change, and tells back the game it sees
 // (`pulse://game-activity`) for Settings to show. A hand-added game's exe path stays here and in the core: only its name
-// is ever sent. Later switches (Join, achievements, clip drop) are one more key in `GameSettings`, defaulting on.
+// is ever sent. "Offer new recordings as clips" (#382) watches `clip_folders` (null: the core's defaults under Videos).
+// Later switches (Join, achievements) are one more key in `GameSettings`, defaulting on.
 import { listen } from '@tauri-apps/api/event'
 import { api, type GameSettings, type GameState, type ManualGame } from './tauri'
 
 const KEY = 'pulse.games'
 
 /** The switches a game activity group has; each defaults on. */
-export type GameSwitch = 'enabled' | 'art' | 'time'
+export type GameSwitch = 'enabled' | 'art' | 'time' | 'clips'
 
 export function defaults(): GameSettings {
-  return { enabled: true, art: true, time: true, games: [] }
+  return { enabled: true, art: true, time: true, games: [], clips: true, clip_folders: null }
 }
 
 /** What's saved, filled in with the defaults (a switch an older save lacks is on); junk is the defaults. */
@@ -25,7 +26,8 @@ export function parseSaved(raw: string | null): GameSettings {
     const games = Array.isArray(v.games)
       ? v.games.filter((g): g is ManualGame => !!g && typeof g.name === 'string' && typeof g.exe === 'string' && !!g.name.trim() && !!g.exe)
       : []
-    return { enabled: flag('enabled'), art: flag('art'), time: flag('time'), games }
+    const folders = Array.isArray(v.clip_folders) ? v.clip_folders.filter((f): f is string => typeof f === 'string' && !!f.trim()) : null
+    return { enabled: flag('enabled'), art: flag('art'), time: flag('time'), games, clips: flag('clips'), clip_folders: folders }
   } catch {
     return d
   }
@@ -45,7 +47,14 @@ export const gamePrefs = $state<GameSettings>(load())
 export const gameActivity = $state<GameState>({ detecting: false, playing: null })
 
 function snapshot(): GameSettings {
-  return { enabled: gamePrefs.enabled, art: gamePrefs.art, time: gamePrefs.time, games: gamePrefs.games.map((g) => ({ ...g })) }
+  return {
+    enabled: gamePrefs.enabled,
+    art: gamePrefs.art,
+    time: gamePrefs.time,
+    games: gamePrefs.games.map((g) => ({ ...g })),
+    clips: gamePrefs.clips,
+    clip_folders: gamePrefs.clip_folders ? [...gamePrefs.clip_folders] : null,
+  }
 }
 
 function saveAndTell(): void {
@@ -75,6 +84,12 @@ export function addGame(name: string, exe: string): void {
 
 export function removeGame(exe: string): void {
   gamePrefs.games = gamePrefs.games.filter((g) => g.exe !== exe)
+  saveAndTell()
+}
+
+/** Clip drop's folders (#382): `list` replaces the defaults (`null` goes back to them). */
+export function setClipFolders(list: string[] | null): void {
+  gamePrefs.clip_folders = list ? [...new Set(list.filter((f) => !!f.trim()))] : null
   saveAndTell()
 }
 
