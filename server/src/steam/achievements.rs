@@ -222,13 +222,9 @@ mod tests {
         let mut g = vec![(9, 10); 19];
         g.push((8998, 10000)); // (19 * 0.9 + 0.8998) / 20 = 89.999 %
         assert_eq!(hunter_percent(&g), 89);
-        assert_eq!(
-            hunter_percent(&vec![(9, 10); 20]),
-            90,
-            "an exact 90 % is 90"
-        );
+        assert_eq!(hunter_percent(&[(9, 10); 20]), 90, "an exact 90 % is 90");
         // more unlocked than the total (a changed schema) is 100 %
-        assert_eq!(hunter_percent(&vec![(12, 10); 20]), 100);
+        assert_eq!(hunter_percent(&[(12, 10); 20]), 100);
     }
 
     #[test]
