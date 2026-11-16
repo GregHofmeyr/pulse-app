@@ -346,7 +346,7 @@ pub static CATALOGUE: &[Def] = &[
     counter(
         "early_bird",
         "Early Bird",
-        "First into voice in a server on 10 different days.",
+        "First into voice in a server on 10 different days, with someone joining you later.",
         "🐦",
         stat::EARLY_BIRD_DAYS,
         &[(10, Uncommon)],
@@ -354,7 +354,7 @@ pub static CATALOGUE: &[Def] = &[
     counter(
         "ghost",
         "Ghost",
-        "Joined and left voice within 5 seconds, 10 times.",
+        "Popped into voice and out again within 5 seconds, 10 times. Quick reconnects don't count.",
         "👻",
         stat::GHOST,
         &[(10, Rare)],

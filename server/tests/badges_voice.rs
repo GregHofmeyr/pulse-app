@@ -12,7 +12,7 @@ use livekit_api::access_token::AccessToken;
 use pulse_protocol::ids::{ChannelId, ServerId, UserId};
 use pulse_protocol::rest::{BadgeCatalogue, Channel, Profile, StreamInfo};
 use pulse_server::badges::catalogue::{HOUR, stat};
-use pulse_server::badges::time::sast_day;
+use pulse_server::badges::time::{sast_day, sast_day_start};
 use pulse_server::badges::{stats, streams, sweep};
 use pulse_server::db::stamp;
 use serde_json::json;
@@ -84,6 +84,22 @@ async fn backdate(app: &TestApp, user: UserId, secs: i64) {
     .unwrap()
     .rows_affected();
     assert_eq!(n, 1, "one open session to backdate");
+}
+
+/// Move all of `user`'s closed voice sessions `secs` into the past, as if they'd left that long ago.
+async fn age_closed(app: &TestApp, user: UserId, secs: i64) {
+    let by = format!("-{secs} seconds");
+    sqlx::query(
+        "UPDATE voice_sessions SET joined_at = strftime('%Y-%m-%dT%H:%M:%fZ', joined_at, ?),
+           left_at = strftime('%Y-%m-%dT%H:%M:%fZ', left_at, ?)
+         WHERE user_id = ? AND left_at IS NOT NULL",
+    )
+    .bind(&by)
+    .bind(&by)
+    .bind(user.to_string())
+    .execute(&app.db)
+    .await
+    .unwrap();
 }
 
 async fn stat_of(app: &TestApp, user: UserId, key: &str) -> i64 {
@@ -191,11 +207,49 @@ async fn ghost_at_under_five_seconds() {
     vleave(&app, l.id, alex).await;
     assert_eq!(stat_of(&app, alex, stat::GHOST).await, 9);
     assert!(!holds(&app, &a, alex, "ghost").await);
-    // in and straight out is
+    // in and straight out is (a minute after that visit, so not a reconnect)
+    age_closed(&app, alex, 60).await;
     vjoin(&app, l.id, alex).await;
     vleave(&app, l.id, alex).await;
     assert_eq!(stat_of(&app, alex, stat::GHOST).await, 10);
     assert!(holds(&app, &a, alex, "ghost").await);
+}
+
+/// #130: back within a few seconds of leaving the same channel is a reconnect (a network blip),
+/// so a quick visit then isn't a Ghost visit.
+#[tokio::test]
+async fn ghost_ignores_quick_reconnects() {
+    let app = spawn().await;
+    let (alex, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    // In a while, dropped, back at once and dropped again: a reconnect, not a drop-in.
+    vjoin(&app, l.id, alex).await;
+    backdate(&app, alex, 600).await;
+    vleave(&app, l.id, alex).await;
+    vjoin(&app, l.id, alex).await;
+    vleave(&app, l.id, alex).await;
+    assert_eq!(stat_of(&app, alex, stat::GHOST).await, 0);
+    // Spamming join and leave counts once, not every time.
+    age_closed(&app, alex, 60).await;
+    for _ in 0..3 {
+        vjoin(&app, l.id, alex).await;
+        vleave(&app, l.id, alex).await;
+    }
+    assert_eq!(stat_of(&app, alex, stat::GHOST).await, 1);
+    // A quick visit to another channel isn't a reconnect to this one.
+    let s = l.server_id.unwrap();
+    let r = post_json(
+        &app,
+        &a,
+        &format!("/servers/{s}/channels"),
+        json!({ "kind": "voice", "name": "Den" }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "create voice channel");
+    let den = r.json::<Channel>().await.unwrap();
+    vjoin(&app, den.id, alex).await;
+    vleave(&app, den.id, alex).await;
+    assert_eq!(stat_of(&app, alex, stat::GHOST).await, 2);
 }
 
 /// `user`'s connection `sid` joins or leaves `room`, shaped as LiveKit sends it (every
@@ -214,7 +268,7 @@ async fn vevent(app: &TestApp, event: &str, room: ChannelId, user: UserId, sid: 
 }
 
 /// "Ghost doesn't seem to track": ten quick visits, each its own connection (as a real
-/// leave-and-rejoin is), with someone else in the call, are ten Ghost visits; your trophy case
+/// leave-and-rejoin is) and a while apart, with someone else in the call, are ten Ghost visits; your trophy case
 /// shows the count as it goes, and the tenth earns it.
 #[tokio::test]
 async fn ghost_counts_every_quick_visit_and_shows_progress() {
@@ -233,6 +287,8 @@ async fn ghost_counts_every_quick_visit_and_shows_progress() {
     };
     for n in 1..=10 {
         let sid = format!("PA_alex{n}");
+        // each a minute after the last (back within seconds is a reconnect, #130)
+        age_closed(&app, alex, 60).await;
         vevent(&app, "participant_joined", l.id, alex, &sid).await;
         tokio::time::sleep(Duration::from_millis(300)).await;
         vevent(&app, "participant_left", l.id, alex, &sid).await;
@@ -253,6 +309,7 @@ async fn ghost_counts_every_quick_visit_and_shows_progress() {
     assert_eq!(rows, 10, "one closed session per visit");
 }
 
+/// #130: first into voice in the server today counts once someone else joins later that day.
 #[tokio::test]
 async fn early_bird_first_in_the_server_today() {
     let app = spawn().await;
@@ -261,7 +318,12 @@ async fn early_bird_first_in_the_server_today() {
     let l = lounge(&app, &a).await;
     join_server(&app, &b, l.server_id.unwrap()).await;
     set_stat(&app, alex, stat::EARLY_BIRD_DAYS, 9).await;
+    // first in, but alone so far: not yet
     vjoin(&app, l.id, alex).await;
+    assert_eq!(stat_of(&app, alex, stat::EARLY_BIRD_DAYS).await, 9);
+    assert!(!holds(&app, &a, alex, "early_bird").await);
+    // sam joins later: alex was the early bird
+    vjoin(&app, l.id, sam).await;
     assert_eq!(stat_of(&app, alex, stat::EARLY_BIRD_DAYS).await, 10);
     assert_eq!(
         stat_of(&app, alex, stat::EARLY_BIRD_LAST_DAY).await,
@@ -269,13 +331,55 @@ async fn early_bird_first_in_the_server_today() {
     );
     assert!(holds(&app, &a, alex, "early_bird").await);
     // second in isn't first
-    vjoin(&app, l.id, sam).await;
     assert_eq!(stat_of(&app, sam, stat::EARLY_BIRD_DAYS).await, 0);
-    // nor is the first back again the same day
+    // and it's once a day
     vleave(&app, l.id, alex).await;
     vleave(&app, l.id, sam).await;
     vjoin(&app, l.id, alex).await;
+    vjoin(&app, l.id, sam).await;
     assert_eq!(stat_of(&app, alex, stat::EARLY_BIRD_DAYS).await, 10);
+    assert_eq!(stat_of(&app, sam, stat::EARLY_BIRD_DAYS).await, 0);
+}
+
+/// #130: alone in voice all day is no Early Bird day.
+#[tokio::test]
+async fn early_bird_needs_someone_else_to_join() {
+    let app = spawn().await;
+    let (alex, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    vjoin(&app, l.id, alex).await;
+    vleave(&app, l.id, alex).await;
+    vjoin(&app, l.id, alex).await;
+    assert_eq!(stat_of(&app, alex, stat::EARLY_BIRD_DAYS).await, 0);
+}
+
+/// #130: someone in voice since before midnight means nobody was first in today.
+#[tokio::test]
+async fn early_bird_not_when_voice_ran_past_midnight() {
+    let app = spawn().await;
+    let (alex, a) = register(&app, "alex").await;
+    let (sam, b) = register(&app, "sam").await;
+    let (kim, k) = register(&app, "kim").await;
+    let l = lounge(&app, &a).await;
+    join_server(&app, &b, l.server_id.unwrap()).await;
+    join_server(&app, &k, l.server_id.unwrap()).await;
+    // kim was in from 23:00 until just after midnight (South African time)
+    let midnight = sast_day_start(Utc::now());
+    sqlx::query(
+        "INSERT INTO voice_sessions (id, user_id, channel_id, joined_at, left_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(pulse_protocol::ids::next_ulid().to_string())
+    .bind(kim.to_string())
+    .bind(l.id.to_string())
+    .bind(stamp(midnight - chrono::Duration::hours(1)))
+    .bind(stamp(midnight + chrono::Duration::milliseconds(1)))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    vjoin(&app, l.id, alex).await;
+    vjoin(&app, l.id, sam).await;
+    assert_eq!(stat_of(&app, alex, stat::EARLY_BIRD_DAYS).await, 0);
+    assert_eq!(stat_of(&app, kim, stat::EARLY_BIRD_DAYS).await, 0);
 }
 
 #[tokio::test]

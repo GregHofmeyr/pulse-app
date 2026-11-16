@@ -70,8 +70,10 @@ Rarity in brackets (tiered badges: per tier, tuned on the badge page). ⓗ = hid
 **Voice**
 - **Night Owl** [Rare] — in a voice channel with at least one other person at 03:00 South African time
   (Africa/Johannesburg, UTC+2, no DST).
-- **Early Bird** [Uncommon] — first person into voice on 10 different days.
-- **Ghost** [Rare] — joined and left voice within 5 s, 10 times.
+- **Early Bird** [Uncommon] — first person into voice on 10 different days. Tightened (#130): the day counts once
+  someone else joins that server's voice later that day, and not at all if someone was in its voice across midnight.
+- **Ghost** [Rare] — joined and left voice within 5 s, 10 times. Tightened (#130): a visit that starts within 10 s of
+  leaving the same channel is a reconnect (a network blip, or spamming join) and doesn't count.
 - **The Regular** [tiers: Common → Mythical] — hours in voice with at least one other person: 10 / 50 / 100 / 250 / 500
   / 1000 h.
 - **The Doos** [Epic] — talked into a muted mic (the "you're muted" detector fired) 10 times. Client-reported.
