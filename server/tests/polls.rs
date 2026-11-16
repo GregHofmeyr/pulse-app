@@ -570,6 +570,39 @@ async fn closing_twice_at_once_posts_one_line() {
     assert_eq!(ended_lines(&app, &alex, g.id).await.len(), 1);
 }
 
+/// #334: a due poll in a channel in Recently deleted isn't closed (no "poll ended" line lands in the
+/// deleted channel); restored, the next sweep closes it.
+#[tokio::test]
+async fn the_sweep_leaves_a_due_poll_in_a_deleted_channel_alone() {
+    let (app, [alex, ..], g) = setup().await;
+    let m = create_ok(&app, &alex, g.id, poll_body("Q", &["a", "b"])).await;
+    sqlx::query("UPDATE polls SET ends_at = '2000-01-01T00:00:00.000Z' WHERE message_id = ?")
+        .bind(m.id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let set_deleted = |at: Option<String>| {
+        sqlx::query("UPDATE channels SET deleted_at = ? WHERE id = ?")
+            .bind(at)
+            .bind(g.id.to_string())
+            .execute(&app.db)
+    };
+    set_deleted(Some(pulse_server::db::now())).await.unwrap();
+    let s = app.state();
+    let now = pulse_server::db::now();
+    assert_eq!(pulse_server::polls::close_due(&s, &now).await.unwrap(), 0);
+    let closed: Option<String> =
+        sqlx::query_scalar("SELECT closed_at FROM polls WHERE message_id = ?")
+            .bind(m.id.to_string())
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(closed.is_none(), "left open while deleted");
+    set_deleted(None).await.unwrap();
+    assert_eq!(pulse_server::polls::close_due(&s, &now).await.unwrap(), 1);
+    assert_eq!(ended_lines(&app, &alex, g.id).await.len(), 1);
+}
+
 #[tokio::test]
 async fn deleting_a_poll_drops_it_and_its_votes() {
     let (app, [alex, sam, ..], g) = setup().await;

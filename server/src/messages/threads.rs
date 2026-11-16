@@ -217,6 +217,7 @@ async fn seen(
     }
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    crate::access::channel_live_in(&mut tx, channel.id).await?; // channel deleted since (#334)
     let cleared = mark_seen(&mut tx, me, root, req.message_id).await?;
     tx.commit().await?;
     if let Some(mentions_cleared) = cleared

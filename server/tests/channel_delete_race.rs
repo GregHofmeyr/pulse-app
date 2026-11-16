@@ -146,6 +146,26 @@ async fn a_write_that_raced_a_channel_delete_writes_nothing() {
     .await;
     assert_eq!(r.status(), 200, "quote");
     let quote: Message = r.json().await.unwrap();
+    // #334: a pinned message to unpin, and a reply in the quote's thread to mark seen
+    let pinned = send(&w.app, &w.alex.1, general, "pin me").await;
+    let r = request(
+        &w.app,
+        &w.alex.1,
+        reqwest::Method::PUT,
+        &format!("/messages/{}/pin", pinned.id),
+        Some(json!({ "duration": "day" })),
+    )
+    .await;
+    assert!(r.status().is_success(), "pin {}", r.status());
+    let r = post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/channels/{quotes}/messages"),
+        json!({ "content": "a reply", "thread_root_id": quote.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "reply");
+    let thread_reply: Message = r.json().await.unwrap();
 
     use reqwest::Method;
     let messages = "SELECT COUNT(*) FROM messages WHERE channel_id = ?";
@@ -198,6 +218,23 @@ async fn a_write_that_raced_a_channel_delete_writes_nothing() {
             format!("/messages/{}/pin", m.id),
             Some(json!({ "duration": "day" })),
             "SELECT COUNT(*) FROM pins WHERE channel_id = ?",
+        ),
+        (
+            "unpin",
+            general,
+            Method::DELETE,
+            format!("/messages/{}/pin", pinned.id),
+            None,
+            "SELECT COUNT(*) FROM pins WHERE channel_id = ?",
+        ),
+        (
+            "thread seen point",
+            quotes,
+            Method::POST,
+            format!("/messages/{}/replies/seen", quote.id),
+            Some(json!({ "message_id": thread_reply.id })),
+            "SELECT COUNT(*) FROM thread_reads WHERE last_seen_id IN
+             (SELECT id FROM messages WHERE channel_id = ?)",
         ),
         (
             "poll",

@@ -267,18 +267,22 @@ async fn unpin(
     }
     let (_, ch) = target(&s, me, id).await?;
     let _order = s.hub.in_order().await;
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    // channel deleted since (#334): its pins stay as they were, for a restore
+    crate::access::channel_live_in(&mut tx, ch.id).await?;
     // A pin that has run out is already gone, as far as anyone can see.
     let gone = sqlx::query(
         "DELETE FROM pins WHERE message_id = ? AND (expires_at IS NULL OR expires_at > ?)",
     )
     .bind(id.to_string())
     .bind(now())
-    .execute(&s.db)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
     if gone == 0 {
         return Err(AppError::NotFound);
     }
+    tx.commit().await?;
     s.hub
         .publish(
             &s.db,
