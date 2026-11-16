@@ -449,6 +449,8 @@ async fn a_race_weekend_from_the_card_to_the_scores() {
         "🚦 Lights out in 1 hour: Harbour Grand Prix"
     );
 
+    // sam has read the chat (the inbox lists mentions in chats you have a read point in)
+    send(&app, &sam, g.id, "come on racer_a").await;
     // during the race nothing is asked; after it, the results are polled until they're in
     tick(&s, lights_out + TimeDelta::minutes(30)).await.unwrap();
     assert_eq!(fake.asked("2030/2/"), 0);
@@ -498,6 +500,23 @@ async fn a_race_weekend_from_the_card_to_the_scores() {
         "🔮 Podium predictions, Harbour Grand Prix: sam 5, kim 2"
     );
     assert_eq!(sc.weekend_message_id, Some(card.id));
+    // the predictors are pinged (#403): a mention each, so it's in their inbox
+    let predictors: Vec<_> = sc.scores.iter().map(|x| x.user_id).collect();
+    assert_eq!(predictors.len(), 2);
+    assert_eq!(lines[3].mentions, predictors);
+    assert!(
+        lines[2].mentions.is_empty(),
+        "the results card pings nobody"
+    );
+    let inbox: Value = get_json(&app, &sam, "/inbox").await;
+    assert!(
+        inbox["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["message"]["id"] == json!(lines[3].id)),
+        "{inbox}"
+    );
     assert_eq!(
         sc.drivers.len(),
         5,

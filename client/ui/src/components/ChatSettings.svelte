@@ -50,7 +50,7 @@
   </div>
   <div class="settings-field"><span class="settings-label">F1 RACE WEEKENDS</span>
     <Segmented label="F1 race weekends" options={onOff} value={f1Prefs.on} onchange={setF1RaceWeekends} />
-    <small>{f1Prefs.on ? "A server's F1 channel shows a countdown to the next race, and F1 cards open in full: the race weekend with podium predictions, the results and the scores." : 'No countdown, and F1 cards fold to one line (click one to open it).'} This device only.</small>
+    <small>{f1Prefs.on ? "A server's F1 channel shows a countdown to the next race, and F1 cards open in full: the race weekend with podium predictions, the results and the scores. You get a notification when your predictions are scored." : 'No countdown, F1 cards fold to one line (click one to open it), and no notification when your predictions are scored (it still reaches your inbox).'} This device only.</small>
   </div>
 </section>
 

@@ -28,6 +28,7 @@ import { forgetEmbedOrigin } from './linkPreviews.svelte'
 import { forgetClipLinks } from './clipLinks'
 import { forgetAttachmentLinks } from './attachmentLinks'
 import { planPrefs } from './planPrefs.svelte'
+import { f1Prefs } from './f1Prefs.svelte'
 
 // The reducer (state.ts) is pure and never mutates: hold its output as-is (`$state.raw`) instead
 // of deep-proxying it. Reassigning `app.state` is the only way to change it, and the only way that
@@ -126,6 +127,7 @@ export function maybeAlert(e: Event) {
     // the real time, not the clock: a DND timer ends exactly when it ends
     dnd: dndActive(app.state, nowIso),
     planReminders: planPrefs.on,
+    f1Scores: f1Prefs.on,
     lastPlayedAt,
     now,
   }

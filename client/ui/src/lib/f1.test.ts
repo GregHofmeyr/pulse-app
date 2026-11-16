@@ -2,6 +2,8 @@
 import { describe, expect, it } from 'vitest'
 import { countdown, driverShort, flagOf, ordinal, picksOpen, picksReady, placeLine, pointsText, predictionOf, randomPodium, sessionWhen } from './f1'
 import type { F1Weekend } from './protocol/F1Weekend'
+import type { Message } from './protocol/Message'
+import { shouldAlert, type AlertInput } from './conversations'
 
 const weekend: F1Weekend = {
   season: 2030, round: 2, race_name: 'Harbour Grand Prix', circuit: 'Harbour Street Circuit', locality: 'Port Town', country: 'UK',
@@ -61,5 +63,26 @@ describe('F1 helpers', () => {
     expect([pointsText(1), pointsText(5)]).toEqual(['1 pt', '5 pts'])
     expect(predictionOf([{ user_id: 'U1', picks: ['a', 'b', 'c'], points: null }], 'U1')?.picks).toEqual(['a', 'b', 'c'])
     expect(predictionOf([], 'U1')).toBeUndefined()
+  })
+})
+
+describe('the scores line (#403)', () => {
+  const line = (mentions: string[]) => ({
+    id: 'S9', channel_id: 'C1', author_id: null, kind: 'system', content: '🔮 Podium predictions, Harbour Grand Prix: sam 5',
+    reply_to_id: null, created_at: '2030-03-15T09:00:00.000Z', edited_at: null, deleted: false, mentions, reactions: [],
+    thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [],
+    f1: { kind: 'scores', season: 2030, round: 2, race_name: 'Harbour Grand Prix', podium: [], drivers: [], scores: [], season_table: [], weekend_message_id: null },
+  }) as Message
+  const input = (m: Message, over: Partial<AlertInput> = {}): AlertInput => ({
+    message: m, me: 'U2', channel: { id: 'C1', server_id: 'S1', kind: 'text', name: 'f1', position: 0 } as AlertInput['channel'],
+    open: false, openThread: null, focused: false, muted: false, level: 'mentions', ...over,
+  })
+  it('alerts the predictors it pings, as a mention, unless F1 race weekends is off', () => {
+    expect(shouldAlert(input(line(['U2', 'U3'])))).toBe(true)
+    expect(shouldAlert(input(line(['U3'])))).toBe(false)
+    expect(shouldAlert(input(line(['U2']), { f1Scores: false }))).toBe(false)
+    expect(shouldAlert(input(line(['U2']), { dnd: true }))).toBe(false)
+    // the other F1 lines never alert
+    expect(shouldAlert(input({ ...line(['U2']), f1: { kind: 'lights_out' } } as unknown as Message))).toBe(false)
   })
 })

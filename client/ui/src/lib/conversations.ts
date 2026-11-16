@@ -122,6 +122,8 @@ export type AlertInput = {
   dnd?: boolean
   /** "Plan something" is on (#387): a plan's reminder line that pings you alerts like a mention. Missing = on. */
   planReminders?: boolean
+  /** "F1 race weekends" is on (#403): the scores line that pings the predictors alerts like a mention. Missing = on. */
+  f1Scores?: boolean
 }
 
 /** Whether a new message is worth alerting you to (the message sound and the desktop notification):
@@ -133,7 +135,9 @@ export function shouldAlert(v: AlertInput): boolean {
   const m = v.message
   // a plan's reminder (#387) is a system line, but it pings its Going and Maybe people as a mention does
   const reminder = !!m.plan_reminder && v.planReminders !== false && m.mentions.includes(v.me)
-  if ((m.kind !== 'normal' && !reminder) || m.deleted || m.author_id === v.me) return false
+  // so does the F1 scores line (#403) for those who predicted
+  const scores = m.f1?.kind === 'scores' && v.f1Scores !== false && m.mentions.includes(v.me)
+  if ((m.kind !== 'normal' && !reminder && !scores) || m.deleted || m.author_id === v.me) return false
   if (onScreen(v) && v.focused) return false
   const mentioned = m.mentions.includes(v.me)
   const isPrivate = v.channel.server_id === null
