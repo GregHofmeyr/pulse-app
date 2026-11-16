@@ -356,6 +356,32 @@ async fn the_cache_serves_a_second_unfurl_without_fetching() {
     assert_eq!(env.fake.hits(), hits);
 }
 
+#[tokio::test]
+async fn a_link_posted_several_times_at_once_is_fetched_once() {
+    let env = setup().await;
+    let page = env.fake.url("site.test", "/held");
+    let held = |env: &Env| {
+        env.fake
+            .requests()
+            .iter()
+            .filter(|r| r.starts_with("/held"))
+            .count()
+    };
+    let all = futures::future::join_all((0..3).map(|_| env.unfurl(&page)));
+    let release = async {
+        // The first fetch is under way; give the other two time to arrive and find it.
+        while held(&env) == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        env.fake.release();
+    };
+    let (cards, ()) = tokio::join!(all, release);
+    assert_eq!(held(&env), 1, "the link was fetched more than once");
+    let first = cards[0].clone().unwrap();
+    assert!(cards.iter().all(|c| c.as_ref() == Some(&first)));
+}
+
 async fn thumb_row(env: &Env, msg: &Message) -> Option<String> {
     sqlx::query_scalar("SELECT thumb_hash FROM link_embeds WHERE message_id = ?")
         .bind(msg.id.to_string())

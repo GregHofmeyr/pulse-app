@@ -11,8 +11,8 @@ pub mod unfurl;
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use pulse_protocol::gateway::Event;
@@ -43,6 +43,9 @@ pub struct Unfurler {
     fetcher: fetch::Fetcher,
     endpoints: Endpoints,
     cache: Mutex<HashMap<String, Cached>>,
+    /// The links being fetched now, by cache key: a second unfurl of one waits for the first
+    /// and takes its preview from the cache rather than fetching it again.
+    fetching: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     slots: Semaphore,
     /// Links waiting for a slot now.
     waiting: AtomicUsize,
@@ -84,6 +87,45 @@ impl Drop for Waiting<'_> {
     }
 }
 
+/// Holds a link's turn to be fetched; on drop, forgets the link's lock once no one else wants it.
+struct Fetching<'a> {
+    unfurler: &'a Unfurler,
+    key: String,
+    lock: Arc<tokio::sync::Mutex<()>>,
+    _turn: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl<'a> Fetching<'a> {
+    async fn enter(unfurler: &'a Unfurler, key: String) -> Fetching<'a> {
+        let lock = {
+            let mut map = unfurler.fetching.lock().unwrap_or_else(|e| e.into_inner());
+            map.entry(key.clone()).or_default().clone()
+        };
+        let turn = lock.clone().lock_owned().await;
+        Fetching {
+            unfurler,
+            key,
+            lock,
+            _turn: turn,
+        }
+    }
+}
+
+impl Drop for Fetching<'_> {
+    fn drop(&mut self) {
+        let mut map = self
+            .unfurler
+            .fetching
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Ours, the map's and the turn's: no one else is waiting (a newcomer clones it under
+        // this same lock, so it can't appear between the check and the removal).
+        if Arc::strong_count(&self.lock) <= 3 {
+            map.remove(&self.key);
+        }
+    }
+}
+
 struct Cached {
     at: Instant,
     /// `None`: the link gave no preview.
@@ -107,6 +149,7 @@ impl Unfurler {
             fetcher: fetch::Fetcher::new(cfg),
             endpoints: cfg.endpoints.clone(),
             cache: Mutex::new(HashMap::new()),
+            fetching: Mutex::new(HashMap::new()),
             slots: Semaphore::new(cfg.max_concurrent),
             waiting: AtomicUsize::new(0),
             max_waiting: cfg.max_waiting,
@@ -134,7 +177,8 @@ impl Unfurler {
     /// `url`'s preview, from the cache when it's fresh there, else built (thumbnail stored as
     /// media uploaded `by` the sender, if `thumbs` lets them have one more). `None` for no
     /// preview, also when too many links are already waiting for a slot. A cached thumbnail may
-    /// have been cleaned up since: [`store`] checks before keeping it.
+    /// have been cleaned up since: [`store`] checks before keeping it. Several unfurls of the
+    /// same link at once fetch it once: the rest wait for that one and share its preview.
     pub async fn unfurl(
         &self,
         db: &SqlitePool,
@@ -144,6 +188,12 @@ impl Unfurler {
         url: &str,
     ) -> Option<Unfurled> {
         let key = links::normalise(url)?;
+        if let Some(hit) = self.cached(&key) {
+            return hit;
+        }
+        // One fetch per link at a time: whoever comes second waits here, then finds the first
+        // one's preview in the cache (unless it wasn't remembered, and then fetches it itself).
+        let _fetching = Fetching::enter(self, key.clone()).await;
         if let Some(hit) = self.cached(&key) {
             return hit;
         }
