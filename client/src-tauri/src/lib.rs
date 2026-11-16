@@ -467,6 +467,8 @@ pub fn run() {
             commands::set_nickname,
             commands::set_private_nickname,
             commands::set_status,
+            commands::set_custom_status,
+            commands::clear_custom_status,
             commands::set_appear_offline,
             commands::set_live_notify,
             commands::steam_status,

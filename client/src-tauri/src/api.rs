@@ -20,14 +20,14 @@ use pulse_protocol::rest::{
     RecoveryCodesResponse, RegisterRequest, RenameCategoryRequest, RenameChannelRequest,
     RenameEmojiRequest, ReopenQotyRequest, SaveLayoutRequest, SearchRequest, SearchResults,
     SendMessageRequest, Server, ServerLayout, ServerOrderRequest, ServerVoiceMod, SessionResponse,
-    SetChannelBitrateRequest, SetClipViewRequest, SetJoinSoundRequest, SetMuteRequest,
-    SetNicknameRequest, SetNotifyLevelRequest, SetServerVoiceRequest, SetShowcaseRequest,
-    SetStatusRequest, Sound, SpinAgainRequest, SpinWheelRequest, StageShare, StageShareRequest,
-    StartAttachmentRequest, StartQotyRequest, Status, StreamInfo, StreamRole, StreamSettings,
-    StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
-    TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest,
-    UpdateSoundRequest, UpdateWheelRequest, UploadedPart, User, VoiceTokenResponse, WatchRequest,
-    Wheel,
+    SetChannelBitrateRequest, SetClipViewRequest, SetCustomStatusRequest, SetJoinSoundRequest,
+    SetMuteRequest, SetNicknameRequest, SetNotifyLevelRequest, SetServerVoiceRequest,
+    SetShowcaseRequest, SetStatusRequest, Sound, SpinAgainRequest, SpinWheelRequest, StageShare,
+    StageShareRequest, StartAttachmentRequest, StartQotyRequest, Status, StreamInfo, StreamRole,
+    StreamSettings, StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest,
+    TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus,
+    UpdateProfileRequest, UpdateSoundRequest, UpdateWheelRequest, UploadedPart, User,
+    VoiceTokenResponse, WatchRequest, Wheel,
 };
 use serde::de::DeserializeOwned;
 
@@ -1822,6 +1822,32 @@ impl Api {
                 .await,
         )
         .await
+    }
+
+    /// Set your custom status (#152): `until` is when it clears (`None`: never).
+    pub async fn set_custom_status(
+        &self,
+        token: &str,
+        text: String,
+        emoji: Option<String>,
+        until: Option<String>,
+    ) -> Result<(), ApiError> {
+        let url = self.url(&["me", "custom-status"])?;
+        Self::ok_empty(
+            self.http
+                .put(url)
+                .bearer_auth(token)
+                .json(&SetCustomStatusRequest { text, emoji, until })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Clear your custom status (#152).
+    pub async fn clear_custom_status(&self, token: &str) -> Result<(), ApiError> {
+        let url = self.url(&["me", "custom-status"])?;
+        Self::ok_empty(self.http.delete(url).bearer_auth(token).send().await).await
     }
 
     /// Appear offline to `user` (`hidden`), or stop.
@@ -5442,6 +5468,32 @@ mod tests {
         api.decline_call(&sam, dm.id).await.unwrap();
         assert!(api.start_call(&kim, dm.id).await.is_err(), "not kim's DM");
         assert!(api.decline_call(&kim, dm.id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn custom_status_round_trips_through_the_core() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        api.set_custom_status(&alex, "Gaming".into(), Some("🎮".into()), None)
+            .await
+            .unwrap();
+        let err = api
+            .set_custom_status(&alex, " ".into(), None, None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("text or an emoji"), "{err}");
+        assert!(
+            api.set_custom_status(
+                &alex,
+                "hi".into(),
+                None,
+                Some("2000-01-01T00:00:00Z".into())
+            )
+            .await
+            .is_err()
+        );
+        api.clear_custom_status(&alex).await.unwrap();
     }
 
     #[tokio::test]
