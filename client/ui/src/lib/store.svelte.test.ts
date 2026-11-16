@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }))
 
 import { invoke } from '@tauri-apps/api/core'
-import { app, handleReady, loadProfile, noteProfileUpdate, PROFILE_STALE_MS, queueMessage, resetState, revalidateProfile } from './store.svelte'
-import { addPending, applyEvent, emptyState, removePending, type Pending } from './state'
+import { app, handleReady, loadProfile, noteProfileUpdate, PROFILE_STALE_MS, queueMessage, resetState, retryFiles, revalidateProfile } from './store.svelte'
+import { addPending, applyEvent, emptyState, removePending, setPendingStatus, type Pending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 import { clipLink } from './clipLinks'
@@ -174,6 +174,24 @@ describe('queueMessage', () => {
     expect(p).toMatchObject({ content: 'https://giphy.com/gifs/yes-abc', gif })
     const sent = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'send_message')
     expect(sent[0][1]).toEqual({ channelId: 'C1', content: 'https://giphy.com/gifs/yes-abc', replyToId: null, nonce: p.nonce, gif })
+  })
+})
+
+describe('retryFiles', () => {
+  it('a double-clicked Retry on a message with files sends it once (#297)', () => {
+    resetState()
+    vi.mocked(invoke).mockReset()
+    vi.mocked(invoke).mockImplementation((async () => undefined) as never)
+    const file = { id: 'S1', name: 'report.pdf', size: 10, kind: 'file' as const, preview: null }
+    queueMessage('C1', '', null, null, [file as never])
+    const nonce = app.state.pending.C1[0].nonce
+    app.state = setPendingStatus(app.state, 'C1', nonce, 'failed')
+    const failed = app.state.pending.C1[0]
+    vi.mocked(invoke).mockClear()
+    retryFiles('C1', failed)
+    retryFiles('C1', failed)
+    const sent = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'send_with_attachments')
+    expect(sent).toHaveLength(1)
   })
 })
 

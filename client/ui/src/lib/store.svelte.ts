@@ -184,6 +184,8 @@ function sendFiles(channelId: string, nonce: string, text: string, replyToId: st
 /** Try a failed message with files again under its own nonce: what was already uploaded isn't uploaded again. */
 export function retryFiles(channelId: string, p: Pending): void {
   if (!p.files?.length) return
+  // a second click while the first retry is going: that one carries on (#297)
+  if (app.state.pending[channelId]?.find((x) => x.nonce === p.nonce)?.status === 'pending') return
   app.state = setPendingStatus(app.state, channelId, p.nonce, 'pending')
   sendFiles(channelId, p.nonce, p.content, p.reply_to_id, p.files, p.temp_days ?? null)
 }

@@ -166,6 +166,8 @@ pub async fn send_with_attachments(
         };
         match result {
             Ok(m) => core.outbox.report(&out.nonce, Status::Sent, Some(&m)),
+            // a second Retry while the first is still going: that one reports
+            Err(SendError::AlreadySending) => {}
             Err(e) => {
                 if let SendError::Api(ApiError::Unauthorized) = e {
                     let _ = core.check::<()>(&app, Err(ApiError::Unauthorized));

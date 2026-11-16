@@ -45,6 +45,10 @@ struct Shared {
     delay_ms: std::sync::atomic::AtomicU64,
     /// Unix seconds to treat as "now"; 0 means the real clock.
     now: AtomicI64,
+    /// Part uploads signed before this (unix seconds) are refused as expired; 0 means none.
+    refuse_before: AtomicI64,
+    /// How many requests were refused that way.
+    refused: std::sync::atomic::AtomicU64,
 }
 
 pub struct FakeS3 {
@@ -77,6 +81,8 @@ impl FakeS3 {
             down: AtomicBool::new(false),
             delay_ms: std::sync::atomic::AtomicU64::new(0),
             now: AtomicI64::new(0),
+            refuse_before: AtomicI64::new(0),
+            refused: std::sync::atomic::AtomicU64::new(0),
         });
         let app = axum::Router::new()
             .fallback(handle)
@@ -132,6 +138,19 @@ impl FakeS3 {
     /// Fix the verifier's clock at this unix time (`None`: the real clock again).
     pub fn set_now(&self, unix: Option<i64>) {
         self.shared.now.store(unix.unwrap_or(0), Ordering::SeqCst);
+    }
+
+    /// Refuse (403, expired) every multipart part upload whose URL was signed before `unix`, as if
+    /// those had run out while newer ones still work; `None` stops. [`FakeS3::refused`] counts them.
+    pub fn refuse_parts_signed_before(&self, unix: Option<i64>) {
+        self.shared
+            .refuse_before
+            .store(unix.unwrap_or(0), Ordering::SeqCst);
+    }
+
+    /// How many part uploads [`FakeS3::refuse_parts_signed_before`] refused.
+    pub fn refused(&self) -> u64 {
+        self.shared.refused.load(Ordering::SeqCst)
     }
 }
 
@@ -262,6 +281,12 @@ async fn handle(State(s): State<Arc<Shared>>, req: Request<Body>) -> Response {
         s.now(),
     ) {
         return xml_error(StatusCode::FORBIDDEN, code, msg);
+    }
+    let before = s.refuse_before.load(Ordering::SeqCst);
+    let part_put = parts.method == Method::PUT && query.contains("partNumber=");
+    if before > 0 && part_put && signed_at(query).is_some_and(|t| t < before) {
+        s.refused.fetch_add(1, Ordering::SeqCst);
+        return xml_error(StatusCode::FORBIDDEN, "AccessDenied", "Request has expired");
     }
 
     let path = percent_decode(parts.uri.path());
@@ -575,6 +600,16 @@ fn percent_decode(s: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// When a presigned request's URL was signed (its `X-Amz-Date`), in unix seconds.
+fn signed_at(query: &str) -> Option<i64> {
+    let date = query
+        .split('&')
+        .find_map(|p| p.strip_prefix("X-Amz-Date="))?;
+    chrono::NaiveDateTime::parse_from_str(&percent_decode(date), "%Y%m%dT%H%M%SZ")
+        .ok()
+        .map(|t| t.and_utc().timestamp())
 }
 
 /// Check a presigned request as of unix time `now`. `path` and `query` are as sent (encoded);
