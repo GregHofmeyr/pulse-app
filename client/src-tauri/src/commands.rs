@@ -489,6 +489,11 @@ impl Core {
                     app.try_state::<crate::activity::MediaActivity>()
                         .and_then(|m| m.after_ready()),
                 );
+                // the game running (#380): the server forgets it with the connection too
+                frames.extend(
+                    app.try_state::<crate::games::GameActivity>()
+                        .and_then(|g| g.after_ready()),
+                );
                 // idle (#53): the server forgets it with the connection too
                 frames.extend(
                     app.try_state::<crate::idle::Idle>()
@@ -1358,6 +1363,52 @@ pub fn set_media_activity(m: State<'_, crate::activity::MediaActivity>, read: bo
 #[tauri::command]
 pub fn media_activity(m: State<'_, crate::activity::MediaActivity>) -> crate::activity::MediaState {
     m.state()
+}
+
+/// Settings → Game activity (#380): the switches and the hand-added games, from the page's saved settings at boot and
+/// on every change. Master off: no poller at all.
+#[tauri::command]
+pub fn set_game_activity(
+    g: State<'_, crate::games::GameActivity>,
+    settings: crate::games::GameSettings,
+) {
+    g.set(settings);
+}
+
+/// Whether Pulse looks for games now, and the one it sees (Settings shows it).
+#[tauri::command]
+pub fn game_activity(g: State<'_, crate::games::GameActivity>) -> crate::games::GameState {
+    g.state()
+}
+
+/// A game's exe picked for "Add a game" (#380): its path (kept on this computer) and a name to start from (the
+/// file's, without `.exe`). `None` when cancelled.
+#[derive(serde::Serialize)]
+pub struct PickedGame {
+    pub exe: String,
+    pub name: String,
+}
+
+#[tauri::command]
+pub async fn pick_game_exe(app: AppHandle) -> Option<PickedGame> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app.dialog().file().add_filter("Game", &["exe"]);
+    if let Some(win) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&win);
+    }
+    dialog.pick_file(move |f| {
+        let _ = tx.send(f);
+    });
+    let picked = rx.await.ok().flatten()?.into_path().ok()?;
+    let name = picked
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Some(PickedGame {
+        exe: picked.to_string_lossy().into_owned(),
+        name,
+    })
 }
 
 /// Tell others you're typing (the UI throttles to 1 per 3 s).

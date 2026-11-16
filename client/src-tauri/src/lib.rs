@@ -6,6 +6,7 @@ pub mod bindmatch;
 pub mod clips;
 pub mod commands;
 pub mod embed_window;
+pub mod games;
 pub mod gateway;
 pub mod gifs;
 pub mod hookwatch;
@@ -229,6 +230,15 @@ pub fn run() {
                     let _ = h2.emit("pulse://media-activity", state);
                 }),
             ));
+            // "Playing" (#380): nothing runs until the page sends its switches, and never outside Windows
+            let (h, h2) = (app.handle().clone(), app.handle().clone());
+            app.manage(games::GameActivity::new(
+                std::sync::Arc::new(move |f| h.state::<commands::Core>().send_frame(f)),
+                std::sync::Arc::new(move |state| {
+                    use tauri::Emitter;
+                    let _ = h2.emit("pulse://game-activity", state);
+                }),
+            ));
             // Idle (#53): polls the system's last input on Windows; nothing runs elsewhere
             let h = app.handle().clone();
             app.manage(idle::Idle::start(std::sync::Arc::new(move |f| {
@@ -446,6 +456,9 @@ pub fn run() {
             commands::set_live_notify,
             commands::set_media_activity,
             commands::media_activity,
+            commands::set_game_activity,
+            commands::game_activity,
+            commands::pick_game_exe,
             commands::name_archive,
             commands::upload_avatar_media,
             commands::upload_banner_media,

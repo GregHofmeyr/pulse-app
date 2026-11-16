@@ -143,6 +143,8 @@ windows = { version = "0.62", features = [
     # "Listening to" (#275, activity/gsmtc.rs): the Spotify app's session in the system media transport controls.
     "Media_Control",
     "Foundation_Collections",
+    # "Playing" (#380, games/win.rs): Steam's RunningAppID and SteamPath under HKCU.
+    "Win32_System_Registry",
 ] }
 # WebView2 memory target (webview_memory.rs). Keep these on the versions tauri/wry use (see
 # Cargo.lock), or the COM types don't match (E0308).
