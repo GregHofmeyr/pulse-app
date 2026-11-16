@@ -254,6 +254,7 @@ const NOUNS: Record<string, string> = {
   badge_collector: 'badges',
   how_did_we_get_here: 'hidden badges',
   perfectionist: 'maxed badges',
+  completionist: 'games',
 }
 
 /** "412 / 500 messages" toward the next tier (the top one once all are reached); hours as "12 / 50 h". */

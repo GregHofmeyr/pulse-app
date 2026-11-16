@@ -314,6 +314,29 @@ pub async fn recompute(s: &AppState, user: UserId) -> AppResult<(Option<f32>, u3
     Ok((rate, perfect))
 }
 
+/// [`recompute`] everyone linked, once at start: a badge whose tiers changed (Completionist got tiers) is awarded to
+/// those whose stored games already reach it, without waiting for their next unlock.
+pub async fn recompute_all(s: &AppState) {
+    let users: Vec<String> = match sqlx::query_scalar("SELECT user_id FROM steam_links")
+        .fetch_all(&s.db)
+        .await
+    {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::warn!(error = %e, "Steam links not read for badges");
+            return;
+        }
+    };
+    for user in users {
+        let Ok(user) = user.parse::<UserId>() else {
+            continue;
+        };
+        if let Err(e) = recompute(s, user).await {
+            tracing::warn!(error = ?e, "Steam badges not rechecked");
+        }
+    }
+}
+
 /// `user`'s Steam hours over the last two weeks, as the profile card shows them (#383): while they share hours and
 /// once read.
 pub async fn profile_hours(conn: &mut SqliteConnection, user: UserId) -> sqlx::Result<Option<u32>> {

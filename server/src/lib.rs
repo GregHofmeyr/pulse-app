@@ -160,6 +160,11 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     // Steam achievements (#379): the poller, and any backfill a restart cut off.
     steam::poller::spawn(state.clone());
     steam::backfill::kick(&state);
+    // badges whose Steam tiers changed reach those whose stored games already earn them
+    {
+        let s = state.clone();
+        tokio::spawn(async move { steam::store::recompute_all(&s).await });
+    }
     streams::liveness::spawn(
         state.clone(),
         streams::liveness::CHECK_EVERY,

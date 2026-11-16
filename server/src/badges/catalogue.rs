@@ -592,10 +592,16 @@ pub static CATALOGUE: &[Def] = &[
     counter(
         "completionist",
         "Completionist",
-        "Got every achievement in a Steam game.",
+        "Steam games completed to 100 %.",
         "💯",
         stat::STEAM_PERFECT_GAMES,
-        &[(1, Epic)],
+        &[
+            (1, Uncommon),
+            (5, Rare),
+            (25, Epic),
+            (50, Legendary),
+            (100, Mythical),
+        ],
     ),
     // Steam hours (#383): the best two weeks read; 336 h is the whole fortnight
     hours(counter(
@@ -796,6 +802,26 @@ mod tests {
         assert_eq!(
             rarities(def),
             [Common, Uncommon, Rare, Epic, Legendary, Mythical]
+        );
+    }
+
+    #[test]
+    fn completionist_tiers_count_perfect_steam_games() {
+        use Rarity::*;
+        let def = find("completionist").unwrap();
+        assert_eq!(def.unit, Unit::Count);
+        assert_eq!(thresholds(def), [1, 5, 25, 50, 100]);
+        assert_eq!(rarities(def), [Uncommon, Rare, Epic, Legendary, Mythical]);
+        let held = HashMap::new();
+        let tier = |n: i64| {
+            evaluate(&stats(&[(stat::STEAM_PERFECT_GAMES, n)]), &held)
+                .get("completionist")
+                .copied()
+                .unwrap_or(0)
+        };
+        assert_eq!(
+            [tier(0), tier(1), tier(4), tier(5), tier(99), tier(100)],
+            [0, 1, 1, 2, 4, 5]
         );
     }
 

@@ -1044,3 +1044,32 @@ async fn join_is_on_by_default_and_follows_stopping() {
     assert_eq!(join_of(&app, alex), None);
     assert!(app.hub.steam_joiners().is_empty());
 }
+
+// ---------- Completionist tiers ----------
+
+#[tokio::test]
+async fn completionist_holders_get_the_higher_tiers_on_the_next_check() {
+    let (app, fake) = setup().await;
+    let (alex, _token, _) = linked_alex(&app, &fake).await;
+    let tier = || async {
+        pulse_server::testing::count(
+            &app,
+            &format!("SELECT COALESCE(MAX(tier), 0) FROM user_badges WHERE user_id = '{alex}' AND badge_key = 'completionist'"),
+        )
+        .await
+    };
+    // someone who held the old one-tier badge, with five 100 % games already counted
+    sqlx::query("INSERT INTO user_badges (user_id, badge_key, tier, earned_at) VALUES (?, 'completionist', 1, '2026-11-01T00:00:00.000Z')")
+        .bind(alex.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO badge_stats (user_id, key, value) VALUES (?, 'steam_perfect_games', 5) ON CONFLICT (user_id, key) DO UPDATE SET value = 5")
+        .bind(alex.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(tier().await, 1, "kept");
+    pulse_server::steam::store::recompute_all(&app.state()).await;
+    assert_eq!(tier().await, 2, "5 games: Rare");
+}
