@@ -55,7 +55,8 @@ impl Purging<'_> {
             Purging::Group { id } => {
                 let hit: Option<i64> = sqlx::query_scalar(
                     "SELECT 1 FROM channels
-                     WHERE id = ? AND server_id IS NULL AND deleted_at IS NOT NULL",
+                     WHERE id = ?1 AND server_id IS NULL AND deleted_at IS NOT NULL
+                       AND NOT EXISTS (SELECT 1 FROM channel_members WHERE channel_id = ?1)",
                 )
                 .bind(id.to_string())
                 .fetch_optional(&mut *tx)
