@@ -567,7 +567,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
             .await?
             .ok_or(AppError::NotFound);
     }
-    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at, nonce, thread_root_id, gif) VALUES (?, ?, ?, 'normal', ?, ?, ?, ?, ?, ?)")
+    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at, nonce, thread_root_id, gif, caption_is_fallback) VALUES (?, ?, ?, 'normal', ?, ?, ?, ?, ?, ?, ?)")
         .bind(msg.id.to_string())
         .bind(id.to_string())
         .bind(me.to_string())
@@ -577,6 +577,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         .bind(&req_nonce)
         .bind(thread_root_id.map(|r| r.to_string()))
         .bind(&gif_json)
+        .bind(msg.caption_is_fallback)
         .execute(&mut *tx)
         .await?;
     crate::attachments::bind(&mut tx, me, msg.id, &attachment_ids, &mut msg.attachments).await?;
@@ -736,11 +737,12 @@ async fn edit(
     crate::access::channel_live_in(&mut tx, msg.channel_id).await?; // channel deleted since (#109)
     // Guarded: a delete that commits between our read and this write wins.
     let changed = sqlx::query(
-        "UPDATE messages SET content = ?, edited_at = ?, gif = CASE WHEN ? THEN gif END WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
+        "UPDATE messages SET content = ?, edited_at = ?, gif = CASE WHEN ? THEN gif END, caption_is_fallback = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
     )
     .bind(&msg.content)
     .bind(&msg.edited_at)
     .bind(msg.gif.is_some())
+    .bind(msg.caption_is_fallback)
     .bind(id.to_string())
     .bind(me.to_string())
     .execute(&mut *tx)

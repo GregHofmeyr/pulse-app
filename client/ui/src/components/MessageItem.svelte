@@ -351,8 +351,9 @@
           {#if !message.caption_is_fallback}
             {#if !onlyGif}<div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention} onkeydown={(e) => { openMention(e); mentionMenu(e) }} oncontextmenu={mentionMenu}>{@html html}</div>{/if}
             {#each gifs as g (g.id)}<GifView gif={g} onError={showError} onFail={() => (failedGifs = [...failedGifs, g.id])} />{/each}
-            {#if message.edited_at}<span class="edited">(edited)</span>{/if}
           {/if}
+          <!-- files with no caption were still edited if the caption was cleared (#297) -->
+          {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
         <!-- files (#57): a sent message's, or the chips and upload bar of one on its way -->
         {#if pending?.files?.length}

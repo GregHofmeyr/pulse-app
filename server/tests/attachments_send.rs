@@ -325,6 +325,87 @@ async fn an_attachment_can_only_be_sent_once_but_a_retry_gets_the_message() {
 }
 
 #[tokio::test]
+async fn a_typed_caption_equal_to_the_stand_in_stays_a_caption() {
+    let w = world().await;
+    let (app, t, ch) = (&w.app, &w.alex.1, w.text.id);
+    let id = upload(app, t, ch, "report.pdf", "application/pdf", b"%PDF").await;
+    let m = send_ok(app, t, ch, "📎 report.pdf", &[id]).await;
+    assert_eq!(m.content, "📎 report.pdf");
+    assert!(!m.caption_is_fallback);
+    // read back, it's still the words alex typed
+    let list: Vec<Message> = get_json(app, &w.sam.1, &format!("/channels/{ch}/messages")).await;
+    let got = list.iter().find(|x| x.id == m.id).unwrap();
+    assert!(!got.caption_is_fallback);
+    // and an empty caption read back is still the stand-in
+    let id = upload(app, t, ch, "notes.txt", "text/plain", b"hi").await;
+    let f = send_ok(app, t, ch, "", &[id]).await;
+    let list: Vec<Message> = get_json(app, &w.sam.1, &format!("/channels/{ch}/messages")).await;
+    assert!(
+        list.iter()
+            .find(|x| x.id == f.id)
+            .unwrap()
+            .caption_is_fallback
+    );
+    // editing the stand-in's message to the same words as a caption keeps them shown
+    let r = app
+        .http
+        .patch(app.url(&format!("/messages/{}", f.id)))
+        .bearer_auth(t)
+        .json(&json!({ "content": "📎 notes.txt" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let e: Message = r.json().await.unwrap();
+    assert!(!e.caption_is_fallback);
+    let list: Vec<Message> = get_json(app, &w.sam.1, &format!("/channels/{ch}/messages")).await;
+    assert!(
+        !list
+            .iter()
+            .find(|x| x.id == f.id)
+            .unwrap()
+            .caption_is_fallback
+    );
+}
+
+/// Migration 0040's backfill marks the stand-ins of messages sent before the flag was stored, and only those.
+#[tokio::test]
+async fn the_backfill_marks_older_stand_ins() {
+    let w = world().await;
+    let (app, t, ch) = (&w.app, &w.alex.1, w.text.id);
+    let one = upload(app, t, ch, "report.pdf", "application/pdf", b"%PDF").await;
+    let one = send_ok(app, t, ch, "", &[one]).await;
+    let imgs = futures_ids(app, t, ch, 2).await;
+    let imgs = send_ok(app, t, ch, "", &imgs).await;
+    let a = upload(app, t, ch, "a.webp", "image/webp", &webp(40)).await;
+    let b = upload(app, t, ch, "b.txt", "text/plain", b"hi").await;
+    let mixed = send_ok(app, t, ch, "", &[a, b]).await;
+    let c = upload(app, t, ch, "c.txt", "text/plain", b"hi").await;
+    let worded = send_ok(app, t, ch, "notes", &[c]).await;
+    let plain = send(app, t, ch, "📎 1 files").await;
+    sqlx::query("UPDATE messages SET caption_is_fallback = 0")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let sql = include_str!("../migrations/0040_caption_is_fallback.sql");
+    let backfill = &sql[sql.find("UPDATE messages").unwrap()..];
+    sqlx::query(backfill).execute(&app.db).await.unwrap();
+    let marked: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM messages WHERE caption_is_fallback = 1 ORDER BY id")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    let mut want = vec![
+        one.id.to_string(),
+        imgs.id.to_string(),
+        mixed.id.to_string(),
+    ];
+    want.sort();
+    assert_eq!(marked, want);
+    assert!(!marked.contains(&worded.id.to_string()) && !marked.contains(&plain.id.to_string()));
+}
+
+#[tokio::test]
 async fn editing_can_clear_the_caption() {
     let w = world().await;
     let (app, t, ch) = (&w.app, &w.alex.1, w.text.id);

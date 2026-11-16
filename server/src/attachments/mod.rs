@@ -260,9 +260,25 @@ pub async fn attach(db: &SqlitePool, msgs: &mut [Message]) -> AppResult<()> {
             &now,
         )?);
     }
+    // Stored at send and edit (#297): a typed caption that reads like the stand-in is still a caption.
+    let mut q = sqlx::QueryBuilder::new(
+        "SELECT id FROM messages WHERE caption_is_fallback = 1 AND id IN (",
+    );
+    let mut list = q.separated(", ");
+    for id in by_msg.keys() {
+        list.push_bind(id);
+    }
+    q.push(")");
+    let fallback: std::collections::HashSet<String> = q
+        .build_query_scalar()
+        .fetch_all(db)
+        .await?
+        .into_iter()
+        .collect();
     for m in msgs.iter_mut().filter(|m| !m.deleted) {
-        if let Some(atts) = by_msg.remove(&m.id.to_string()) {
-            m.caption_is_fallback = m.content == fallback_text(&atts);
+        let id = m.id.to_string();
+        if let Some(atts) = by_msg.remove(&id) {
+            m.caption_is_fallback = fallback.contains(&id);
             m.attachments = atts;
         }
     }

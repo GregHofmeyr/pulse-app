@@ -43,6 +43,12 @@ describe('MessageItem with files', () => {
     expect(document.querySelector('.card .name')!.textContent).toBe('report.pdf')
   })
 
+  it('says (edited) on a message with files and no caption', () => {
+    show(msg({ content: '📎 report.pdf', caption_is_fallback: true, edited_at: '2026-10-01T00:01:00.000Z' }))
+    expect(document.querySelector('.content')).toBeNull()
+    expect(document.querySelector('.edited')!.textContent).toBe('(edited)')
+  })
+
   it('shows a caption above the files', () => {
     show(msg({ content: 'the numbers' }))
     expect(document.querySelector('.content')!.textContent).toBe('the numbers')
