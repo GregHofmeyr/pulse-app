@@ -970,3 +970,78 @@ async fn a_mute_that_ran_out_offline_is_cleared_quietly() {
     assert_eq!(ready.inbox_unread, Some(1));
     assert!(ready.mutes.is_empty());
 }
+
+/// #348: one owner whose mutes can't be read back (here a row whose owner id isn't an id) is logged and skipped;
+/// every other owner of a run-out mute is still told, and the sweep doesn't fail.
+#[tokio::test]
+async fn one_owner_failing_to_be_told_does_not_skip_the_rest() {
+    let f = fx().await;
+    let later = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(1));
+    let ch = f.ch.id.to_string();
+    f.mute_for(&f.alex_t, "channel", &ch, &later).await;
+    f.run_out(f.alex, &ch).await;
+    // a run-out mute owned by "0" (sorts before every real id): only possible with foreign keys off
+    let mut c = f.app.db.acquire().await.unwrap();
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *c)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO notification_prefs (user_id, target_kind, target_id, muted, muted_until)
+         VALUES ('0', 'channel', ?, 1, '2000-01-01T00:00:00.000Z')",
+    )
+    .bind(&ch)
+    .execute(&mut *c)
+    .await
+    .unwrap();
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *c)
+        .await
+        .unwrap();
+    drop(c);
+    let (mut ws, _) = hello(&f.app, &f.alex_t).await;
+    assert_eq!(f.sweep().await, 2);
+    assert_eq!(
+        next_mutes(&mut ws).await,
+        Some(vec![]),
+        "alex is still told"
+    );
+}
+
+/// #348: a mute's end time is stored in the one format reads and the sweep compare against (an
+/// offset or no milliseconds is re-stamped as UTC with milliseconds); one that isn't a time is a
+/// 400, not a mute that never runs out.
+#[tokio::test]
+async fn a_mute_end_time_is_stored_canonically_or_refused() {
+    let f = fx().await;
+    let ch = f.ch.id.to_string();
+    let put = |until: &str| {
+        f.app
+            .http
+            .put(f.app.url("/mutes"))
+            .bearer_auth(&f.alex_t)
+            .json(&json!({"target_kind": "channel", "target_id": ch, "until": until}))
+            .send()
+    };
+    for bad in ["tomorrow", "", "2099-13-01T00:00:00Z"] {
+        assert_eq!(put(bad).await.unwrap().status(), 400, "{bad:?}");
+    }
+    assert!(f.prefs(f.alex).await.is_empty(), "nothing stored");
+    let stored = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT muted_until FROM notification_prefs WHERE user_id = ? AND target_id = ?",
+        )
+        .bind(f.alex.to_string())
+        .bind(&ch)
+        .fetch_one(&f.app.db)
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        put("2099-01-01T12:00:00+02:00").await.unwrap().status(),
+        204
+    );
+    assert_eq!(stored().await.as_deref(), Some("2099-01-01T10:00:00.000Z"));
+    assert_eq!(put("2099-01-01T12:00:00Z").await.unwrap().status(), 204);
+    assert_eq!(stored().await.as_deref(), Some("2099-01-01T12:00:00.000Z"));
+}

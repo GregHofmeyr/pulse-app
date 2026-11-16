@@ -649,12 +649,23 @@ async fn set_mute(
     AuthUser(me): AuthUser,
     Json(req): Json<SetMuteRequest>,
 ) -> AppResult<StatusCode> {
+    // Stored as `stamp` writes times (#348): reads and the sweep compare it as a string against
+    // `now()`, so any other spelling of a time would never run out.
+    let until = req
+        .until
+        .as_deref()
+        .map(|t| {
+            chrono::DateTime::parse_from_rfc3339(t)
+                .map(|t| crate::db::stamp(t.with_timezone(&chrono::Utc)))
+                .map_err(|_| AppError::BadRequest("until must be an RFC 3339 time".into()))
+        })
+        .transpose()?;
     check_target(&s, me, req.target_kind, &req.target_id).await?;
     sqlx::query(
         "INSERT INTO notification_prefs (user_id, target_kind, target_id, muted, muted_until) VALUES (?, ?, ?, 1, ?)
          ON CONFLICT (user_id, target_kind, target_id) DO UPDATE SET muted = 1, muted_until = excluded.muted_until",
     )
-    .bind(me.to_string()).bind(req.target_kind.as_str()).bind(&req.target_id).bind(&req.until)
+    .bind(me.to_string()).bind(req.target_kind.as_str()).bind(&req.target_id).bind(&until)
     .execute(&s.db).await?;
     s.hub
         .publish(

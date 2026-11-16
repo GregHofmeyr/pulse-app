@@ -43,25 +43,35 @@ pub async fn sweep_mutes(s: &AppState) -> AppResult<usize> {
         .await?;
     }
     tx.commit().await?;
-    let mut told: Vec<UserId> = Vec::new();
+    // Each owner is told on their own (#348): the rows are already cleared, so one that fails is logged and the
+    // rest are still told (a failure here is never retried; their next Ready or fetch is right regardless).
+    let mut told: Vec<&str> = Vec::new();
     for (user, _, _) in &ended {
-        let user: UserId = user.parse().map_err(anyhow::Error::from)?;
-        if told.contains(&user) {
+        if told.contains(&user.as_str()) {
             continue;
         }
         told.push(user);
-        let mutes = super::routes::mutes_of(&s.db, user).await?;
-        s.hub
-            .publish(
-                &s.db,
-                Event::MutesChanged {
-                    user_id: user,
-                    mutes,
-                },
-            )
-            .await;
+        if let Err(e) = tell(s, user).await {
+            tracing::warn!(error = ?e, user, "telling a run-out mute failed");
+        }
     }
     Ok(ended.len())
+}
+
+/// Publish `user`'s mutes as they now are.
+async fn tell(s: &AppState, user: &str) -> AppResult<()> {
+    let user: UserId = user.parse().map_err(anyhow::Error::from)?;
+    let mutes = super::routes::mutes_of(&s.db, user).await?;
+    s.hub
+        .publish(
+            &s.db,
+            Event::MutesChanged {
+                user_id: user,
+                mutes,
+            },
+        )
+        .await;
+    Ok(())
 }
 
 /// Sweep now and then every [`SWEEP_EVERY`]. Call after binding the listener.
