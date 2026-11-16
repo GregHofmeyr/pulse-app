@@ -8,6 +8,7 @@ import type { DeadlockCard } from "./DeadlockCard";
 import type { F1Card } from "./F1Card";
 import type { Forwarded } from "./Forwarded";
 import type { Gif } from "./Gif";
+import type { GroupLine } from "./GroupLine";
 import type { LinkEmbed } from "./LinkEmbed";
 import type { MessageId } from "./MessageId";
 import type { MessageKind } from "./MessageKind";
@@ -135,4 +136,10 @@ f1?: F1Card,
  * `content` is the forwarder's comment, or a stand-in when they wrote none (`caption_is_fallback`), and its
  * `attachments` are the original's (by reference, while it is there).
  */
-forwarded?: Forwarded, };
+forwarded?: Forwarded, 
+/**
+ * Set on a group chat's own system line (#114): who created it, added, left or was removed, or renamed it or
+ * changed its icon, by id, so clients write it with the names that apply today. `content` keeps the line as
+ * written (the fallback for older clients, and for anyone a client doesn't know).
+ */
+group_line?: GroupLine, };

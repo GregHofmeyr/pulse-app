@@ -3,6 +3,10 @@
 import { mentionSpans } from './composerDom'
 import type { AppState } from './state'
 import { setMentionLabel } from './mentionLabel'
+import { relabelMentions } from './highlight'
+import { displayName } from './selectors'
+import type { HighlightRange } from './protocol/HighlightRange'
+import type { SearchHit } from './protocol/SearchHit'
 
 const WRAP = 'mention-wrap'
 
@@ -85,4 +89,11 @@ export function styleMentions(root: HTMLElement, lookup: (name: string) => strin
       wrap.replaceWith(pill)
     }
   }
+}
+
+/** A search hit's text as shown (#114): its `@username` mentions written as the names that apply where it was said,
+ *  its highlights kept on the visible text (`relabelMentions`). */
+export function hitShown(s: AppState, hit: SearchHit): { text: string; highlights: HighlightRange[] } {
+  const serverId = s.channels[hit.message.channel_id]?.server_id ?? null
+  return relabelMentions(hit.text, hit.highlights, mentionLookup(s), (id) => displayName(s, serverId, id))
 }

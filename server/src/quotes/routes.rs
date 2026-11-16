@@ -546,6 +546,7 @@ fn purged_winner(id: &str) -> AppResult<Message> {
         sports: None,
         f1: None,
         forwarded: None,
+        group_line: None,
     })
 }
 

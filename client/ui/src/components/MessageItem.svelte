@@ -44,6 +44,7 @@
   import { nameCss, resolveNameStyle } from '../lib/nameStyle'
   import { displayName, roleColorFor, userOf } from '../lib/selectors'
   import { callLineText } from '../lib/calls'
+  import { groupLineText } from '../lib/groupLines'
   import { appearance } from '../lib/appearance.svelte'
   import { openCard } from '../lib/profileCard.svelte'
   import PersonMenu from './PersonMenu.svelte'
@@ -376,6 +377,9 @@
     <!-- a share to the voice stage (#234), with today's names: "🎵 alex shared a Jam to the stage" -->
     {@const sl = message.stage_share_line}
     <div class="system" data-message-id={message.id}>🎵 {nameOf(sl.by)} shared {sharePhrase(sl.kind)} to the stage <span class="time">{time}</span></div>
+  {:else if message.group_line}
+    <!-- a group's own line (#114), with today's names: "alex added sam" -->
+    <div class="system" data-message-id={message.id}>{groupLineText(app.state, message)} <span class="time">{time}</span></div>
   {:else}
   <div class="system" data-message-id={message.id}>{message.content} <span class="time">{time}</span></div>
   {/if}
