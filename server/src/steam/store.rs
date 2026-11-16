@@ -277,7 +277,7 @@ pub async fn save_state(
 }
 
 /// Recompute `user`'s completion rate and 100 % games from every stored game, store them, and raise the
-/// Completionist counter (badges are checked after). Returns the two.
+/// Completionist counter and set Achievement Hunter's (badges are checked after). Returns the two.
 pub async fn recompute(s: &AppState, user: UserId) -> AppResult<(Option<f32>, u32)> {
     let rows: Vec<(String, i64)> =
         sqlx::query_as("SELECT unlocked, total FROM steam_achievement_state WHERE user_id = ?")
@@ -295,6 +295,7 @@ pub async fn recompute(s: &AppState, user: UserId) -> AppResult<(Option<f32>, u3
         .collect();
     let rate = completion_rate(&games);
     let perfect = perfect_games(&games);
+    let hunter = super::achievements::hunter_percent(&games);
     let mut tx = crate::db::begin_write(&s.db).await?;
     sqlx::query("UPDATE steam_links SET completion_rate = ?, perfect_games = ? WHERE user_id = ?")
         .bind(rate.map(f64::from))
@@ -307,6 +308,14 @@ pub async fn recompute(s: &AppState, user: UserId) -> AppResult<(Option<f32>, u3
         user,
         crate::badges::catalogue::stat::STEAM_PERFECT_GAMES,
         perfect as i64,
+    )
+    .await?;
+    // the current rate (progress may go down); the badge's tiers never do
+    crate::badges::stats::set(
+        &mut tx,
+        user,
+        crate::badges::catalogue::stat::STEAM_COMPLETION_PCT,
+        hunter as i64,
     )
     .await?;
     tx.commit().await?;

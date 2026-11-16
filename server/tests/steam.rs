@@ -1073,3 +1073,83 @@ async fn completionist_holders_get_the_higher_tiers_on_the_next_check() {
     pulse_server::steam::store::recompute_all(&app.state()).await;
     assert_eq!(tier().await, 2, "5 games: Rare");
 }
+
+// ---------- Achievement Hunter ----------
+
+#[tokio::test]
+async fn achievement_hunter_counts_from_20_started_games_and_keeps_its_tier() {
+    let (app, fake) = setup().await;
+    let (alex, token) = register(&app, "alex").await;
+    // 19 games at 100 %, and Space Game at 1 / 3 (from setup): (19 + 1/3) / 20 = 96.67 %, so 96
+    for i in 0..19u32 {
+        let app_id = 5_000_000 + i;
+        fake.add_game(
+            app_id,
+            &format!("Game {i}"),
+            &[("ONLY", "Only One", "Do it.")],
+            50.0,
+        );
+        fake.own(ALEX_STEAM, app_id, 60);
+        fake.unlock(ALEX_STEAM, app_id, "ONLY", LONG_AGO);
+    }
+    fake.own(ALEX_STEAM, SPACE, 60);
+    fake.unlock(ALEX_STEAM, SPACE, "FIRST", LONG_AGO);
+    link(&app, &fake, &token, ALEX_STEAM).await;
+    wait_backfill(&app, &token).await;
+    let q = |sql: String| {
+        let app = &app;
+        async move { pulse_server::testing::count(app, &sql).await }
+    };
+    let stat = || {
+        q(format!(
+            "SELECT value FROM badge_stats WHERE user_id = '{alex}' AND key = 'steam_completion_pct'"
+        ))
+    };
+    let tier = || {
+        q(format!(
+            "SELECT COALESCE(MAX(tier), 0) FROM user_badges WHERE user_id = '{alex}' AND badge_key = 'achievement_hunter'"
+        ))
+    };
+    assert_eq!(stat().await, 96);
+    assert_eq!(tier().await, 4, "95 % and up: the top tier");
+
+    // a 21st started game at 1 / 2 pulls the rate down: the stat follows, the tier stays
+    let mut ws = hello(&app, &token).await;
+    play(&app, &mut ws, alex, Some(steam_game("Racer", RACER, false))).await;
+    fake.unlock(ALEX_STEAM, RACER, "LAP", now());
+    tick(&app).await;
+    // (19 + 1/3 + 1/2) / 21 = 94.4 %
+    assert_eq!(stat().await, 94);
+    assert_eq!(tier().await, 4, "never taken away");
+}
+
+#[tokio::test]
+async fn achievement_hunter_needs_20_started_games() {
+    let (app, fake) = setup().await;
+    let (alex, token) = register(&app, "alex").await;
+    for i in 0..19u32 {
+        let app_id = 5_000_000 + i;
+        fake.add_game(
+            app_id,
+            &format!("Game {i}"),
+            &[("ONLY", "Only One", "Do it.")],
+            50.0,
+        );
+        fake.own(ALEX_STEAM, app_id, 60);
+        fake.unlock(ALEX_STEAM, app_id, "ONLY", LONG_AGO);
+    }
+    link(&app, &fake, &token, ALEX_STEAM).await;
+    wait_backfill(&app, &token).await;
+    let stat: i64 = pulse_server::testing::count(
+        &app,
+        &format!("SELECT COALESCE(MAX(value), -1) FROM badge_stats WHERE user_id = '{alex}' AND key = 'steam_completion_pct'"),
+    )
+    .await;
+    assert_eq!(stat, 0, "19 perfect games are not enough");
+    let tier: i64 = pulse_server::testing::count(
+        &app,
+        &format!("SELECT COALESCE(MAX(tier), 0) FROM user_badges WHERE user_id = '{alex}' AND badge_key = 'achievement_hunter'"),
+    )
+    .await;
+    assert_eq!(tier, 0);
+}

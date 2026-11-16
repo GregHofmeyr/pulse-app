@@ -51,6 +51,26 @@ pub fn completion_rate(games: &[Progress]) -> Option<f32> {
     Some(((avg * 10.0).round() / 10.0) as f32)
 }
 
+/// The fewest started games (at least one achievement) before Achievement Hunter counts the completion rate.
+pub const HUNTER_MIN_GAMES: usize = 20;
+
+/// Achievement Hunter's stat: the completion rate as a whole percent, rounded down (89.99 % is 89, never 90), over
+/// the same games as [`completion_rate`]; 0 with fewer than [`HUNTER_MIN_GAMES`] of them, so one easy 100 % can't
+/// earn it.
+pub fn hunter_percent(games: &[Progress]) -> u32 {
+    let counted: Vec<f64> = games
+        .iter()
+        .filter(|(u, t)| *u > 0 && *t > 0)
+        .map(|(u, t)| (*u).min(*t) as f64 / *t as f64)
+        .collect();
+    if counted.len() < HUNTER_MIN_GAMES {
+        return 0;
+    }
+    let pct = counted.iter().sum::<f64>() / counted.len() as f64 * 100.0;
+    // the epsilon keeps an exact 90 % (which floats may hold as 89.999…) at 90
+    (pct + 1e-9).floor().clamp(0.0, 100.0) as u32
+}
+
 /// Games at 100 %.
 pub fn perfect_games(games: &[Progress]) -> u32 {
     games.iter().filter(|(u, t)| *t > 0 && u >= t).count() as u32
@@ -181,6 +201,34 @@ mod tests {
         );
         assert_eq!(completion_rate(&[(1, 3)]), Some(33.3));
         assert_eq!(perfect_games(&[(10, 10), (5, 10), (0, 0), (3, 3)]), 2);
+    }
+
+    #[test]
+    fn hunter_percent_needs_20_started_games_and_rounds_down() {
+        let full = |n: usize| vec![(10u32, 10u32); n];
+        // 19 started games: nothing, however complete; unstarted and achievement-less games never count
+        let mut g = full(19);
+        g.extend([(0, 10), (0, 0)]);
+        assert_eq!(hunter_percent(&g), 0);
+        assert_eq!(hunter_percent(&full(20)), 100);
+        // 20 games: 18 at 100 % and 2 at 50 % = exactly 95 %
+        let mut g = full(18);
+        g.extend([(5, 10), (5, 10)]);
+        assert_eq!(hunter_percent(&g), 95);
+        // just under 90 %: 89.99 % is 89
+        let mut g = full(19);
+        g.push((7998, 10000)); // (19 + 0.7998) / 20 = 98.99 %
+        assert_eq!(hunter_percent(&g), 98);
+        let mut g = vec![(9, 10); 19];
+        g.push((8998, 10000)); // (19 * 0.9 + 0.8998) / 20 = 89.999 %
+        assert_eq!(hunter_percent(&g), 89);
+        assert_eq!(
+            hunter_percent(&vec![(9, 10); 20]),
+            90,
+            "an exact 90 % is 90"
+        );
+        // more unlocked than the total (a changed schema) is 100 %
+        assert_eq!(hunter_percent(&vec![(12, 10); 20]), 100);
     }
 
     #[test]

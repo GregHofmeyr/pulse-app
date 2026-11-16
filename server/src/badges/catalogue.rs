@@ -44,6 +44,8 @@ pub mod stat {
     pub const EARLY_ADOPTER: &str = "early_adopter";
     /// Steam games completed 100 % (#379), from the linked account's stored achievements.
     pub const STEAM_PERFECT_GAMES: &str = "steam_perfect_games";
+    /// The Steam completion rate as a whole percent (rounded down), once there are 20 started games; else 0.
+    pub const STEAM_COMPLETION_PCT: &str = "steam_completion_pct";
     /// The most time in Steam games over any two weeks read (#383), in seconds (Steam's `playtime_2weeks`, summed).
     pub const STEAM_FORTNIGHT_SECS: &str = "steam_fortnight_secs";
 
@@ -76,6 +78,7 @@ pub mod stat {
         EARLY_ADOPTER,
         STEAM_PERFECT_GAMES,
         STEAM_FORTNIGHT_SECS,
+        STEAM_COMPLETION_PCT,
     ];
 }
 
@@ -603,6 +606,14 @@ pub static CATALOGUE: &[Def] = &[
             (100, Mythical),
         ],
     ),
+    counter(
+        "achievement_hunter",
+        "Achievement Hunter",
+        "Average Steam achievement completion, over at least 20 games you've started.",
+        "🏆",
+        stat::STEAM_COMPLETION_PCT,
+        &[(50, Rare), (75, Epic), (90, Legendary), (95, Mythical)],
+    ),
     // Steam hours (#383): the best two weeks read; 336 h is the whole fortnight
     hours(counter(
         "touch_grass",
@@ -823,6 +834,37 @@ mod tests {
             [tier(0), tier(1), tier(4), tier(5), tier(99), tier(100)],
             [0, 1, 1, 2, 4, 5]
         );
+    }
+
+    #[test]
+    fn achievement_hunter_tiers_by_completion_and_never_drop() {
+        use Rarity::*;
+        let def = find("achievement_hunter").unwrap();
+        assert_eq!(thresholds(def), [50, 75, 90, 95]);
+        assert_eq!(rarities(def), [Rare, Epic, Legendary, Mythical]);
+        let tier = |pct: i64, held: u8| {
+            let current: HashMap<String, u8> = [("achievement_hunter".to_owned(), held)].into();
+            evaluate(&stats(&[(stat::STEAM_COMPLETION_PCT, pct)]), &current)
+                .get("achievement_hunter")
+                .copied()
+                .unwrap_or(0)
+        };
+        assert_eq!(
+            [
+                tier(0, 0),
+                tier(49, 0),
+                tier(50, 0),
+                tier(74, 0),
+                tier(75, 0),
+                tier(89, 0),
+                tier(90, 0),
+                tier(94, 0),
+                tier(95, 0)
+            ],
+            [0, 0, 1, 1, 2, 2, 3, 3, 4]
+        );
+        // a rate that drops never takes a tier away: what's held stands (and the engine only ever raises it)
+        assert_eq!(tier(60, 3), 3);
     }
 
     #[test]
