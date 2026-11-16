@@ -239,13 +239,14 @@ describe('a message author menu in a DM or group (#189)', () => {
 
 describe('the person menu on the other people a message names (#135)', () => {
   const kim = { id: 'U3', username: 'kim', display_name: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
-  function showWith(serverId: string | null, over: Partial<Message>, replyTo: Message | null = null) {
+  function showWith(serverId: string | null, over: Partial<Message>, replyTo: Message | null = null, dm = false) {
     const m = msg(over)
     app.state = {
       ...emptyState(), me: alex,
       people: { U1: { user: alex, online: true, last_seen_at: null }, U2: { user: sam, online: true, last_seen_at: null }, U3: { user: kim, online: true, last_seen_at: null } },
       members: { S1: [{ user: alex, nickname: null }, { user: sam, nickname: 'Sammy' }, { user: kim, nickname: null }] },
-      channels: { C1: { id: 'C1', server_id: serverId, kind: serverId ? 'text' : 'group', name: 'c', position: 0 } },
+      channels: { C1: { id: 'C1', server_id: serverId, kind: dm ? 'dm' : serverId ? 'text' : 'group', name: 'c', position: 0 } },
+      dmMembers: dm ? { C1: ['U1', 'U2'] } : {},
       messages: { C1: replyTo ? [replyTo, m] : [m] },
     } as never
     cmp = mount(MessageItem, { target: document.body, props: {
@@ -282,6 +283,29 @@ describe('the person menu on the other people a message names (#135)', () => {
     showWith('S1', { content: 'hi @alex' })
     rightClick(pill())
     expect(ids()).toEqual(['profile', 'nick'])
+  })
+
+  // #346: in a DM with sam, @kim's menu is kim's own: Message kim, and no Mute (that would mute the DM with sam)
+  it("a mention of someone else in a DM: their usual menu, with Message and without the DM's Mute", () => {
+    showWith(null, { content: 'hi @kim' }, null, true)
+    rightClick(pill())
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for kim')
+    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'appear-offline'])
+    pick('message')
+    expect(invoke.mock.calls.some(([c]) => c === 'set_mute')).toBe(false)
+  })
+
+  it("a reply to someone else in a DM: their usual menu too", () => {
+    const original = msg({ id: 'M0', author_id: 'U3', content: 'first' })
+    showWith(null, { reply_to_id: 'M0' }, original, true)
+    rightClick(document.querySelector<HTMLElement>('.reply .name')!)
+    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'appear-offline'])
+  })
+
+  it("a mention of the DM's other person: the DM's menu (Mute conversation, no Message)", () => {
+    showWith(null, { content: 'hi @sam' }, null, true)
+    rightClick(pill())
+    expect(ids()).toEqual(['profile', 'private-nick', 'live-notify', 'appear-offline', 'mute'])
   })
 
   it("the replied-to author's name: their menu", () => {

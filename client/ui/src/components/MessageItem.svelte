@@ -142,6 +142,12 @@
   let authorMenu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
   const authorMenuOn = $derived(!!message.author_id && !pending)
   const channelKind = $derived(app.state.channels[message.channel_id]?.kind)
+  /** The menu is for the DM's other person (not a third person a DM message names, #346): the DM is already them, so
+   * no Message, and Mute conversation mutes this DM. */
+  const menuIsDmPeer = $derived(
+    !!authorMenu && channelKind === 'dm' && authorMenu.userId !== meId &&
+      (app.state.dmMembers[message.channel_id] ?? []).includes(authorMenu.userId),
+  )
   /** `zone`: the avatar or the name line; the menu returns focus to its button. */
   function openAuthorMenu(e: MouseEvent | KeyboardEvent, zone: HTMLElement, userId = message.author_id) {
     if (!userId || (userId === message.author_id && !authorMenuOn)) return
@@ -416,7 +422,7 @@
 {/if}
 {#if authorMenu}
   {#key authorMenu}<MemberMenu {serverId} userId={authorMenu.userId} x={authorMenu.x} y={authorMenu.y} opener={authorMenu.opener}
-    onMessage={channelKind === 'dm' ? undefined : messageAuthor} muteChannelId={channelKind === 'dm' ? message.channel_id : null} onClose={() => (authorMenu = null)} />{/key}
+    onMessage={menuIsDmPeer ? undefined : messageAuthor} muteChannelId={menuIsDmPeer ? message.channel_id : null} onClose={() => (authorMenu = null)} />{/key}
 {/if}
 
 <style>
