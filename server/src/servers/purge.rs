@@ -74,7 +74,8 @@ impl Purging<'_> {
 /// their channel). Quote lines go before their messages (the search triggers rewrite a quote's
 /// entry, which the message's then drops); the message's trigger drops its search entry, and the
 /// cascades take its reactions, mentions, quote, clips row, poll, pin, previews, inbox reads,
-/// thread reads, Quote of the Year options and wheel spin; its files keep their channel (and lose
+/// thread reads, Quote of the Year options and wheel spin (a Quote of the Year win stays, with its
+/// voters copied onto it first: #110); its files keep their channel (and lose
 /// their message), so the purge's last transaction still finds them. Each batch's clip objects are
 /// deleted from R2 after its commit (the clip sweeper retries a failure).
 ///
@@ -137,6 +138,19 @@ pub(crate) async fn messages(
         ))
         .bind(&ids)
         .fetch_all(&mut *tx)
+        .await?;
+        // A Quote of the Year win outlives its quote (#110): it keeps who voted for it before the
+        // message's cascade takes its options and votes (its speakers are snapshotted already).
+        sqlx::query(&format!(
+            "UPDATE qoty_winners SET voters = (
+                 SELECT json_group_array(user_id) FROM (
+                     SELECT v.user_id FROM qoty_votes v
+                     WHERE v.event_id = qoty_winners.event_id AND v.message_id = qoty_winners.message_id
+                     ORDER BY v.rowid))
+             WHERE voters IS NULL AND message_id IN {PAGE}"
+        ))
+        .bind(&ids)
+        .execute(&mut *tx)
         .await?;
         sqlx::query(&format!(
             "DELETE FROM quote_lines WHERE message_id IN {PAGE}"
