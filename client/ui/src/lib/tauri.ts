@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { User } from './protocol/User'
 import type { ScheduledMessage } from './protocol/ScheduledMessage'
 import type { MessageReminder } from './protocol/MessageReminder'
+import type { MessageVersion } from './protocol/MessageVersion'
 import type { Profile } from './protocol/Profile'
 import type { SeenBadge } from './protocol/SeenBadge'
 import type { UpdateProfileRequest } from './protocol/UpdateProfileRequest'
@@ -278,6 +279,8 @@ export const api = {
   /** Post it now; the message it became (its MessageCreated comes too). */
   sendScheduledNow: (id: string) => invoke<Message>('send_scheduled_now', { id }),
   deleteScheduled: (id: string) => invoke<void>('delete_scheduled', { id }),
+  /** A message's versions (#301): the current text first, then the earlier ones, newest first. */
+  messageEdits: (messageId: string) => invoke<MessageVersion[]>('message_edits', { messageId }),
   // Message reminders (#300): private to you.
   listReminders: () => invoke<MessageReminder[]>('list_reminders'),
   createReminder: (messageId: string, remindAt: string) => invoke<MessageReminder>('create_reminder', { messageId, remindAt }),

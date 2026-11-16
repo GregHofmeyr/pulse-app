@@ -2572,6 +2572,22 @@ impl Api {
         .await
     }
 
+    /// A message's versions (#301): the current text first, then the earlier ones, newest first.
+    pub async fn message_edits(
+        &self,
+        token: &str,
+        message: MessageId,
+    ) -> Result<Vec<pulse_protocol::rest::MessageVersion>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/messages/{message}/edits", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Your reminders (#300), soonest first.
     pub async fn list_reminders(
         &self,

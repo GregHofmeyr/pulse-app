@@ -1815,6 +1815,16 @@ pub struct EditMessageRequest {
     pub content: String,
 }
 
+/// How many earlier versions of an edited message are kept (#301): older ones go as new edits come.
+pub const MAX_EDIT_VERSIONS: i64 = 20;
+
+/// One version of an edited message (#301): its text, and when it was written (sent, or the edit that made it).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct MessageVersion {
+    pub content: String,
+    pub written_at: String,
+}
+
 // ---------- Attachments (#57) ----------
 
 /// What an attachment is, which decides how the UI shows it.

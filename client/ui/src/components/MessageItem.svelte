@@ -49,6 +49,7 @@
   import PersonMenu from './PersonMenu.svelte'
   import MessageMenu from './MessageMenu.svelte'
   import WhenPicker from './WhenPicker.svelte'
+  import EditHistoryDialog from './EditHistoryDialog.svelte'
   import { remindMe } from '../lib/reminders.svelte'
   import { whenLabel } from '../lib/schedule'
   import { quoteRequest, quotesChannelsFor } from '../lib/quoteFromMessage'
@@ -216,6 +217,8 @@
     if (!at) return void (remindCustom = opener.isConnected ? opener : document.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`))
     remindAt(at).catch((e) => showError(errorText(e)))
   }
+  // Edit history (#301): "(edited)" opens the message's versions
+  let historyAt = $state<HTMLElement | null>(null)
   // Add to quotes (#316): the message as a quote, its author speaking, in one of its server's quotes channels (none in
   // a DM or group: no item there). One request id per message, so a double pick posts it once.
   const quotesChannels = $derived(msgMenu ? quotesChannelsFor(app.state, message).map((c) => ({ id: c.id, name: c.name ?? '' })) : [])
@@ -402,7 +405,8 @@
             {#each gifs as g (g.id)}<GifView gif={g} onError={showError} onFail={() => (failedGifs = [...failedGifs, g.id])} />{/each}
           {/if}
           <!-- files with no caption were still edited if the caption was cleared (#297) -->
-          {#if message.edited_at}<span class="edited">(edited)</span>{/if}
+          {#if message.edited_at}<button type="button" class="edited" aria-haspopup="dialog" aria-expanded={!!historyAt} data-tip="See edit history" data-menu-toggle
+            onclick={(e) => (historyAt = historyAt ? null : e.currentTarget)}>(edited)</button>{/if}
         {/if}
         <!-- files (#57): a sent message's, or the chips and upload bar of one on its way -->
         {#if pending?.files?.length}
@@ -465,6 +469,9 @@
 {#if remindCustom}
   <WhenPicker anchor={remindCustom} title="Remind me about this" confirm="Set reminder" onPick={remindAt} onClose={() => (remindCustom = null)} />
 {/if}
+{#if historyAt}
+  <EditHistoryDialog anchor={historyAt} messageId={message.id} onClose={() => (historyAt = null)} />
+{/if}
 {#if planEdit}
   <PlanComposer anchor={planEdit} channelId={message.channel_id} editing={message} onClose={() => (planEdit = null)} />
 {/if}
@@ -496,7 +503,8 @@
   .content :global(pre code) { border: 0; padding: 0; }
   .content :global(a) { color: var(--accent-text); }
   .content :global(blockquote) { margin: 4px 0; padding-left: 10px; border-left: 3px solid var(--bg-4); color: var(--text-2); }
-  .edited { font-size: 11px; color: var(--text-3); }
+  .edited { font-size: 11px; color: var(--text-3); border: 0; padding: 0; background: none; font-family: inherit; cursor: pointer; }
+  .edited:hover, .edited:focus-visible { color: var(--text-2); text-decoration: underline; }
   .deleted { margin: 0; font-style: italic; color: var(--text-3); }
   .reply { display: flex; align-items: center; gap: 6px; padding-left: 20px; margin-bottom: 4px; font-size: 13px; color: var(--text-3); min-width: 0; }
   .reply strong { color: var(--text-2); }

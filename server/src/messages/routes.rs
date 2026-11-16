@@ -24,6 +24,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/channels/{id}/messages", get(list).post(send))
         .route("/messages/{id}", patch(edit).delete(remove))
+        .merge(super::history::router())
 }
 
 pub(crate) type Row = (
@@ -788,6 +789,9 @@ async fn edit(
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, msg.channel_id).await?; // channel deleted since (#109)
+    // The text it replaces is kept (#301), read under the write lock so two quick edits each keep the one before.
+    let edited_at = msg.edited_at.clone().unwrap_or_default();
+    super::history::record(&mut tx, id, &msg.content, &edited_at).await?;
     // Guarded: a delete that commits between our read and this write wins.
     let changed = sqlx::query(
         "UPDATE messages SET content = ?, edited_at = ?, gif = CASE WHEN ? THEN gif END, caption_is_fallback = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
@@ -872,6 +876,7 @@ async fn remove(
         None
     };
     crate::embeds::on_delete(&mut tx, id).await?;
+    super::history::on_delete(&mut tx, id).await?;
     // The files' objects are deleted after the commit (the sweep retries a failure).
     let files = crate::attachments::stored_of_message(&mut tx, id).await?;
     let unpinned = crate::pins::on_delete(&mut tx, id).await?;

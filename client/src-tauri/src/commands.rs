@@ -4934,6 +4934,17 @@ pub async fn delete_scheduled(
     core.check(&app, api.delete_scheduled(&token, id).await)
 }
 
+/// A message's versions (#301): the current text first, then the earlier ones, newest first.
+#[tauri::command]
+pub async fn message_edits(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<Vec<pulse_protocol::rest::MessageVersion>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.message_edits(&token, message_id).await)
+}
+
 /// Your reminders (#300), soonest first.
 #[tauri::command]
 pub async fn list_reminders(

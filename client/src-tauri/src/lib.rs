@@ -538,6 +538,7 @@ pub fn run() {
             commands::create_reminder,
             commands::delete_reminder,
             commands::reminder_seen,
+            commands::message_edits,
             commands::set_join_sound,
             commands::add_reaction,
             commands::remove_reaction,
