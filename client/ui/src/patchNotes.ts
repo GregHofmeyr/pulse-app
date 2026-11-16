@@ -24,6 +24,47 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.11',
+  version: '0.2.11',
+  date: '16 November 2026',
+  new: [
+    'Idle status: after 30 minutes away from your PC (Windows), you show an amber moon until you\'re back',
+    'Invisible can end on a timer, just like Do Not Disturb',
+    'Spoilers: mark images and files as spoilers before sending, and they stay blurred until someone clicks',
+    'Drag your servers into your own order in the server rail (or Alt+Left/Right), on every device',
+    'Give someone their own message sound: right-click them and pick Message sound',
+    '"Show in folder" after you download a clip, image or file',
+    'Share a friend\'s song to the stage straight from their Listening to',
+    'Removed a link preview by accident? "Show previews again" is in your message\'s menu',
+    'A new badge for quotes from the small hours: 3 am Thoughts',
+  ],
+  fixes: [
+    'Watching a stream in another channel no longer silently ends your own stream: Pulse asks first (and the same for going live while you watch elsewhere)',
+    '60 fps streams really stream at 60 now (they were capped at 30)',
+    'No mic, or mic blocked? You can still join voice and listen; a No mic chip shows and Pulse picks the mic up once it works',
+    'When a call ends on its own, Pulse says why: another device, lost connection (with Rejoin), removed, or channel deleted',
+    'Muting from someone\'s menu in a DM no longer mutes the wrong conversation',
+    'A caption that looked like a file name no longer disappears, and (edited) shows on file-only messages',
+    'Quick switcher searches no longer run out of steam after a few tries',
+    'Stopping a stream ends the video straight away',
+    'YouTube videos that refuse to play inside Pulse open in a window instead',
+  ],
+  qol: [
+    'Drop several folders at once and Pulse offers to zip them all',
+    'Big uploads go faster, and a stalled part retries with a fresh link',
+    'Ghost watches come back on their own after a server hiccup',
+    'Screen readers announce channel and category moves',
+    'Ghost and Early Bird badges are fairer: quick reconnects don\'t count, and Early Bird needs someone joining you later',
+  ],
+  soon: [
+    'A fresh profile editor: edit right inside your big profile card',
+    'More fresh and reworked designs on the way',
+  ],
+  message: 'Less waiting, more knowing. Pulse tells you what\'s going on now 🌙',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.10',
   version: '0.2.10',
   date: '13 November 2026',
@@ -53,28 +94,4 @@ export const patchNotes: PatchNotes = {
     'More fresh and reworked designs on the way',
   ],
   message: 'Pin it, find it, download it. Pulse has a filing cabinet now 🗂️',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.9',
-  version: '0.2.9',
-  date: '12 November 2026',
-  new: [
-    'Inbox: every @mention and reply to you, across every server and DM, in one place (top bar). All and Mentions tabs, click to jump',
-    'Listening to: show what you\'re playing on Spotify on your profile, and a Jam on the stage shows the current song and art. Off until you turn it on in Settings › Privacy',
-    'Notes to self: a private chat with just you, pinned at the top of your DMs',
-    'Add to quotes from any message\'s menu',
-  ],
-  fixes: [],
-  qol: [
-    'Jumped away to read a reply? "Back to where you were" takes you back before jumping to the present',
-    'The quick switcher now searches messages too',
-    'Bind a global key to open the quick switcher from any app (Settings › Keybinds)',
-  ],
-  soon: [
-    'A fresh profile editor: edit right inside your big profile card',
-    'More fresh and reworked designs on the way',
-  ],
-  message: 'Your inbox is now in Pulse. Sorry 📬',
 }
