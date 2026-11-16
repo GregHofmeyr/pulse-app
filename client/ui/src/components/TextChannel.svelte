@@ -838,9 +838,6 @@
     {:else}
       <SearchBox {serverId} {channelId} compact={narrowHead} />
     {/if}
-    {#if leaderboardOpen && serverId}
-      <Leaderboard {serverId} onOpen={openLeaderboardEntry} onClose={() => (leaderboardOpen = false)} />
-    {/if}
     {#if pinsOpen && pinsOn}
       <PinsPopover {channelId} {serverId} onJump={(m) => openPinned(m.id)} onClose={() => (pinsOpen = false)} />
     {/if}
@@ -919,6 +916,10 @@
     {#key repliesRoot.id}
       <RepliesPanel root={repliesRoot} serverId={serverId ?? ''} onClose={closeReplies} onEditQuote={() => (editingQuote = repliesRoot)} />
     {/key}
+  {/if}
+  <!-- the quotes leaderboard (#410): a panel down the right, over the chat and the replies panel, under the header -->
+  {#if leaderboardOpen && serverId}
+    <Leaderboard {serverId} onOpen={openLeaderboardEntry} onClose={() => (leaderboardOpen = false)} />
   {/if}
 </div>
 
