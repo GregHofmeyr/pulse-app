@@ -1102,9 +1102,16 @@ async fn achievement_hunter_counts_from_20_started_games_and_keeps_its_tier() {
     };
     let stat = || {
         q(format!(
-            "SELECT value FROM badge_stats WHERE user_id = '{alex}' AND key = 'steam_completion_pct'"
+            "SELECT COALESCE(MAX(value), -1) FROM badge_stats WHERE user_id = '{alex}' AND key = 'steam_completion_pct'"
         ))
     };
+    // the backfill says it's done a moment before its stats are written
+    for _ in 0..200 {
+        if stat().await >= 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let tier = || {
         q(format!(
             "SELECT COALESCE(MAX(tier), 0) FROM user_badges WHERE user_id = '{alex}' AND badge_key = 'achievement_hunter'"
@@ -1140,11 +1147,18 @@ async fn achievement_hunter_needs_20_started_games() {
     }
     link(&app, &fake, &token, ALEX_STEAM).await;
     wait_backfill(&app, &token).await;
-    let stat: i64 = pulse_server::testing::count(
-        &app,
-        &format!("SELECT COALESCE(MAX(value), -1) FROM badge_stats WHERE user_id = '{alex}' AND key = 'steam_completion_pct'"),
-    )
-    .await;
+    let sql = format!(
+        "SELECT COALESCE(MAX(value), -1) FROM badge_stats WHERE user_id = '{alex}' AND key = 'steam_completion_pct'"
+    );
+    // the backfill says it's done a moment before its stats are written
+    let mut stat: i64 = -1;
+    for _ in 0..200 {
+        stat = pulse_server::testing::count(&app, &sql).await;
+        if stat >= 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     assert_eq!(stat, 0, "19 perfect games are not enough");
     let tier: i64 = pulse_server::testing::count(
         &app,
