@@ -281,6 +281,10 @@ badge-art-clear $key:
     [[ "$key" =~ ^[a-z0-9_]{1,64}$ ]] || { echo "badge-art-clear: a badge key is lowercase letters, digits and _" >&2; exit 1; }
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server badge clear-art '"$key"
 
+# edit the server's /srv/pulse/.env in nano (TERM set so kitty works); takes effect on the next deploy
+edit-env:
+    ssh -t {{prod}} 'TERM=xterm-256color nano /srv/pulse/.env'
+
 # run a backup right now
 backup-now:
     ssh {{prod}} '/srv/pulse/backup.sh run'
