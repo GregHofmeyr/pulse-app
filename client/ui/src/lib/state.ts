@@ -90,6 +90,9 @@ export type AppState = {
   liveNotify: string[]
   /** Your server rail order (#185): server ids, first to last (lib/serverOrder.ts). */
   serverOrder: string[]
+  /** Plan reminders (#399): whether plans' reminder lines ping you, on every device (the server leaves you out of
+   *  them when off). From Ready and PlanRemindersChanged; on when the server doesn't say. */
+  planReminders: boolean
   /** channelId -> the call going on in that DM or group (#50), from Ready and CallStarted / CallEnded. */
   calls: Record<string, CallInfo>
   profiles: Record<string, Profile> // userId -> opened profile (cache)
@@ -171,7 +174,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], serverOrder: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], serverOrder: [], planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -229,6 +232,8 @@ export function applyReady(s: AppState, r: Ready): AppState {
     liveNotify: r.live_notify ?? [],
     // absent from older servers: the usual order
     serverOrder: r.server_order ?? [],
+    // absent from older servers: they ping everyone
+    planReminders: r.plan_reminders ?? true,
     // absent from older servers: no calls
     calls: Object.fromEntries((r.calls ?? []).map((c) => [c.channel_id, c])),
     // absent from older servers
@@ -1226,6 +1231,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return s // played by the listener in soundboard.svelte.ts; nothing to keep
     case 'ServerOrderChanged':
       return { ...s, serverOrder: e.d.server_ids }
+    case 'PlanRemindersChanged':
+      return { ...s, planReminders: e.d.on }
     case 'SoundFavourites':
       return { ...s, soundFavourites: e.d.favourites }
     case 'FrequentSounds':

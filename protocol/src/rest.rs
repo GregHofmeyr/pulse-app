@@ -1032,6 +1032,16 @@ pub mod plan_limits {
     pub const REMIND_MINUTES: i64 = 60;
     /// How far ahead a forecast reaches, in days (Open-Meteo's daily forecast).
     pub const FORECAST_DAYS: i64 = 16;
+    /// How long a plan with an end may run, in hours (#399).
+    pub const MAX_HOURS_LONG: i64 = 7 * 24;
+    /// How long a plan without an end lasts in a calendar, in minutes (#399): a block, not a point.
+    pub const DEFAULT_MINUTES: i64 = 60;
+}
+
+/// `PUT /me/plan-reminders` (#399): whether plans' reminder lines ping you (mention you), on every device.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct PlanRemindersRequest {
+    pub on: bool,
 }
 
 /// An answer to a plan (#387).
@@ -1049,6 +1059,11 @@ pub struct Plan {
     pub title: String,
     /// When it starts (UTC, RFC 3339); clients show it in the viewer's own time.
     pub starts_at: String,
+    /// When it ends (UTC, RFC 3339), when its creator gave an end (#399): after the start, at most
+    /// [`plan_limits::MAX_HOURS_LONG`] later. Absent: a point in time (the calendar file gives it an hour).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ends_at: Option<String>,
     #[serde(default)]
     pub place: Option<String>,
     #[serde(default)]
@@ -1071,6 +1086,10 @@ pub struct CreatePlanRequest {
     pub title: String,
     /// RFC 3339, any offset (stored as UTC).
     pub starts_at: String,
+    /// RFC 3339, any offset (#399): an end after the start; none (or absent) = no end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ends_at: Option<String>,
     #[serde(default)]
     pub place: Option<String>,
     #[serde(default)]

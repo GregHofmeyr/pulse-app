@@ -5,7 +5,7 @@ import type { PlanForecast } from './protocol/PlanForecast'
 import type { Rsvp } from './protocol/Rsvp'
 
 /** As the server's `plan_limits` (protocol/src/rest.rs). */
-export const PLAN_LIMITS = { titleChars: 100, placeChars: 100, noteChars: 500, forecastDays: 16, remindMinutes: 60 } as const
+export const PLAN_LIMITS = { titleChars: 100, placeChars: 100, noteChars: 500, forecastDays: 16, remindMinutes: 60, maxHoursLong: 7 * 24 } as const
 
 /** The answers, in the card's order, with their buttons' words. */
 export const RSVPS: readonly { value: Rsvp; label: string }[] = [
@@ -31,6 +31,20 @@ export function fieldsToIso(date: string, time: string): string | null {
   return t.toISOString()
 }
 
+/** The form's optional end time (#399, `HH:MM`, blank = none) on the start's day, as an instant (RFC 3339, UTC); a
+ *  time at or before the start's is the next day's (19:00 to 02:00 runs past midnight). Null when there's no end or
+ *  the fields don't make one. */
+export function endToIso(date: string, time: string, endTime: string): string | null {
+  if (!endTime) return null
+  const start = fieldsToIso(date, time)
+  const end = fieldsToIso(date, endTime)
+  if (!start || !end) return null
+  if (Date.parse(end) > Date.parse(start)) return end
+  const t = new Date(end)
+  t.setDate(t.getDate() + 1)
+  return t.toISOString()
+}
+
 const pad = (n: number) => String(n).padStart(2, '0')
 
 /** An instant as the form's date and time fields, in the viewer's own time. */
@@ -47,11 +61,16 @@ export function defaultStart(now: number): { date: string; time: string } {
   return isoToFields(t.toISOString())
 }
 
-/** Post plan's gate: a title within the limit, a time that isn't over, and a place and note within theirs. */
-export function planReady(title: string, startsAt: string | null, place: string, note: string, now: number): boolean {
+/** Post plan's gate: a title within the limit, a time that isn't over, an end (when there is one) after it and
+ *  within a week, and a place and note within theirs. */
+export function planReady(title: string, startsAt: string | null, place: string, note: string, now: number, endsAt: string | null = null): boolean {
   const t = title.trim()
   if (!t || chars(t) > PLAN_LIMITS.titleChars) return false
   if (!startsAt || Date.parse(startsAt) < now - 5 * 60 * 1000) return false
+  if (endsAt) {
+    const long = Date.parse(endsAt) - Date.parse(startsAt)
+    if (!(long > 0) || long > PLAN_LIMITS.maxHoursLong * 60 * 60 * 1000) return false
+  }
   return chars(place.trim()) <= PLAN_LIMITS.placeChars && chars(note.trim()) <= PLAN_LIMITS.noteChars
 }
 
@@ -74,6 +93,21 @@ export function planWhen(iso: string, now: number): string {
   const day = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) }).format(t)
   return `${day}, ${time}`
 }
+
+/** When a plan runs, in the viewer's own time (#399): its start as [planWhen] says it, then its end when it has one:
+ *  "Today, 19:00–22:00", or with the end's day when that's another: "Fri 20 Nov, 22:00 – Sat, 02:00". */
+export function planRange(p: Plan, now: number): string {
+  const start = planWhen(p.starts_at, now)
+  if (!p.ends_at) return start
+  const t = Date.parse(p.ends_at)
+  const time = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(t)
+  if (startOfDay(t) === startOfDay(Date.parse(p.starts_at))) return `${start}–${time}`
+  const day = new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(t)
+  return `${start} – ${day}, ${time}`
+}
+
+/** Over: its end (#399) has passed. */
+export const planEnded = (p: Plan, now: number) => !!p.ends_at && Date.parse(p.ends_at) <= now
 
 /** Over: it has started (a plan stays answerable, but reads as past). */
 export const planStarted = (p: Plan, now: number) => Date.parse(p.starts_at) <= now

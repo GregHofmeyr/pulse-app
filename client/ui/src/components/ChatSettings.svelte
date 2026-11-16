@@ -2,7 +2,9 @@
   import Segmented from './Segmented.svelte'
   import { motion, setAnimateMode, type AnimateMode } from '../lib/animate.svelte'
   import { previews, setShowPreviews } from '../lib/linkPreviews.svelte'
-  import { planPrefs, setPlanSomething } from '../lib/plans.svelte'
+  import { planPrefs, setPlanReminders, setPlanSomething } from '../lib/plans.svelte'
+  import { app } from '../lib/store.svelte'
+  import { errorText } from '../lib/tauri'
   import { f1Prefs, setF1RaceWeekends } from '../lib/f1Prefs.svelte'
 
   const modes: { value: AnimateMode; label: string; help: string }[] = [
@@ -14,6 +16,17 @@
     { value: true, label: 'On' },
     { value: false, label: 'Off' },
   ]
+
+  // Plan reminders (#399): kept by the server, so it follows you to every device
+  let remindersError = $state('')
+  async function changeReminders(on: boolean) {
+    remindersError = ''
+    try {
+      await setPlanReminders(on)
+    } catch (e) {
+      remindersError = errorText(e)
+    }
+  }
 </script>
 
 <section class="settings-pane">
@@ -28,10 +41,19 @@
   </div>
   <div class="settings-field"><span class="settings-label">PLAN SOMETHING</span>
     <Segmented label="Plan something" options={onOff} value={planPrefs.on} onchange={setPlanSomething} />
-    <small>{planPrefs.on ? 'The Plan button and /plan post invites with RSVPs. Plans show the forecast for their place, and you get a notification an hour before one you said Going or Maybe to.' : "No Plan button, forecasts or reminder notifications. Plans others post still show, and reminders still reach your inbox."} This device only.</small>
+    <small>{planPrefs.on ? 'The Plan button and /plan post invites with RSVPs. Plans show the forecast for their place, and you get a notification an hour before one you said Going or Maybe to.' : "No Plan button, forecasts or reminder notifications. Plans others post still show, and reminders still reach your inbox (unless Plan reminders is off)."} This device only.</small>
+  </div>
+  <div class="settings-field"><span class="settings-label">PLAN REMINDERS</span>
+    <Segmented label="Plan reminders" options={onOff} value={app.state.planReminders} onchange={(v) => void changeReminders(v)} />
+    <small>{app.state.planReminders ? "An hour before a plan you said Going or Maybe to, its reminder line pings you (your inbox, and a notification while Plan something is on)." : "Plans' reminder lines don't ping you: nothing in your inbox, no notification."} Every device.</small>
+    {#if remindersError}<small class="err" role="alert">{remindersError}</small>{/if}
   </div>
   <div class="settings-field"><span class="settings-label">F1 RACE WEEKENDS</span>
     <Segmented label="F1 race weekends" options={onOff} value={f1Prefs.on} onchange={setF1RaceWeekends} />
     <small>{f1Prefs.on ? "A server's F1 channel shows a countdown to the next race, and F1 cards open in full: the race weekend with podium predictions, the results and the scores." : 'No countdown, and F1 cards fold to one line (click one to open it).'} This device only.</small>
   </div>
 </section>
+
+<style>
+  .err { color: var(--danger-text); }
+</style>

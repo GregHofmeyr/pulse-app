@@ -4716,6 +4716,17 @@ pub async fn set_server_order(
     core.check(&app, api.set_server_order(&token, server_ids).await)
 }
 
+/// Plan reminders (#399): whether plans' reminder lines ping you, on every device.
+#[tauri::command]
+pub async fn set_plan_reminders(
+    app: AppHandle,
+    core: State<'_, Core>,
+    on: bool,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_plan_reminders(&token, on).await)
+}
+
 /// Your join sound in a server (#121): one of its soundboard's sounds, or none (the normal join cue).
 #[tauri::command]
 pub async fn set_join_sound(

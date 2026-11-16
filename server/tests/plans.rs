@@ -522,6 +522,111 @@ async fn the_calendar_file_is_one_utc_event() {
     assert_eq!(r.status(), 404, "jo isn't in the DM");
 }
 
+#[tokio::test]
+async fn an_end_time_is_kept_shown_and_given_to_calendars() {
+    let (app, [alex, sam, _, _], _, g) = setup().await;
+    let (posted, stored, _) = later_day();
+    let day = &stored[..10];
+    let ends = format!("{day}T21:00:00+02:00");
+    let m = create_ok(
+        &app,
+        &alex,
+        g.id,
+        json!({"title": "Braai", "starts_at": posted, "ends_at": ends}),
+    )
+    .await;
+    let plan = m.plan.as_ref().unwrap();
+    assert_eq!(
+        plan.ends_at.as_deref(),
+        Some(&*format!("{day}T19:00:00.000Z"))
+    );
+    assert!(m.content.contains("16:30–19:00 UTC"), "{}", m.content);
+    let read: Plan = get_json(&app, &sam, &format!("/messages/{}/plan", m.id)).await;
+    assert_eq!(read.ends_at, plan.ends_at);
+    let ics = app
+        .http
+        .get(app.url(&format!("/messages/{}/plan/ics", m.id)))
+        .bearer_auth(&sam)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let compact = day.replace('-', "");
+    assert!(
+        ics.contains(&format!("\r\nDTEND:{compact}T190000Z\r\n")),
+        "{ics}"
+    );
+    // an edit without one drops it (every field, as a new post): the calendar gets an hour
+    let r = put_json(
+        &app,
+        &alex,
+        &format!("/messages/{}/plan", m.id),
+        body("Braai", &posted),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let edited: Plan = r.json().await.unwrap();
+    assert_eq!(edited.ends_at, None);
+    // an end before the start is refused
+    let r = create(
+        &app,
+        &alex,
+        g.id,
+        json!({"title": "Braai", "starts_at": posted, "ends_at": format!("{day}T17:00:00+02:00")}),
+    )
+    .await;
+    assert_eq!(r.status(), 400);
+}
+
+#[tokio::test]
+async fn people_who_turned_plan_reminders_off_are_not_pinged() {
+    let (app, [alex, sam, kim, _], [_, sam_id, kim_id, _], g) = setup().await;
+    let m = create_ok(&app, &alex, g.id, body("Braai", &at(TimeDelta::hours(3)))).await;
+    rsvp_ok(&app, &sam, m.id, json!("going")).await;
+    rsvp_ok(&app, &kim, m.id, json!("going")).await;
+    // kim turns it off: her own sessions hear it, and her next Ready says so
+    let mut ws = hello(&app, &kim).await;
+    let r = put_json(&app, &kim, "/me/plan-reminders", json!({"on": false})).await;
+    assert_eq!(r.status(), 204);
+    let ev = next_raw(&mut ws, |d| d["t"] == "PlanRemindersChanged")
+        .await
+        .unwrap();
+    assert_eq!(ev["d"], json!({"user_id": kim_id, "on": false}));
+    assert!(
+        !pulse_server::plans::routes::reminders_on(&app.db, kim_id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        pulse_server::plans::routes::reminders_on(&app.db, sam_id)
+            .await
+            .unwrap()
+    );
+
+    let s = app.state();
+    let later = Utc::now() + TimeDelta::hours(2) + TimeDelta::minutes(1);
+    assert_eq!(pulse_server::plans::remind_due(&s, later).await.unwrap(), 1);
+    let lines = reminders(&app, &alex, g.id).await;
+    assert_eq!(lines[0].mentions, vec![sam_id]);
+
+    // with everyone off, the plan is marked done quietly: no line at all
+    put_json(&app, &sam, "/me/plan-reminders", json!({"on": false})).await;
+    let m = create_ok(&app, &alex, g.id, body("Darts", &at(TimeDelta::hours(3)))).await;
+    rsvp_ok(&app, &sam, m.id, json!("going")).await;
+    assert_eq!(pulse_server::plans::remind_due(&s, later).await.unwrap(), 0);
+    assert_eq!(reminders(&app, &alex, g.id).await.len(), 1);
+    // and back on
+    let r = put_json(&app, &kim, "/me/plan-reminders", json!({"on": true})).await;
+    assert_eq!(r.status(), 204);
+    assert!(
+        pulse_server::plans::routes::reminders_on(&app.db, kim_id)
+            .await
+            .unwrap()
+    );
+}
+
 /// A stand-in for Open-Meteo: geocoding knows "Cape Town" only; the forecast covers the next 16 days from today.
 /// Counts the calls of each.
 #[derive(Clone, Default)]

@@ -8,7 +8,12 @@ export type Plan = { title: string,
 /**
  * When it starts (UTC, RFC 3339); clients show it in the viewer's own time.
  */
-starts_at: string, place: string | null, note: string | null, 
+starts_at: string, 
+/**
+ * When it ends (UTC, RFC 3339), when its creator gave an end (#399): after the start, at most
+ * [`plan_limits::MAX_HOURS_LONG`] later. Absent: a point in time (the calendar file gives it an hour).
+ */
+ends_at?: string, place: string | null, note: string | null, 
 /**
  * Who answered what, in the order they did.
  */

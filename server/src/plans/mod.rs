@@ -47,6 +47,7 @@ pub(crate) struct Stored {
     pub author_id: Option<UserId>,
     pub title: String,
     pub starts_at: String,
+    pub ends_at: Option<String>,
     pub place: Option<String>,
     pub note: Option<String>,
     pub cancelled_at: Option<String>,
@@ -63,14 +64,25 @@ type StoredRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
 );
 
-const STORED_COLS: &str = "p.message_id, p.channel_id, m.author_id, p.title, p.starts_at, p.place, p.note, \
-     p.cancelled_at, p.edited_at FROM plans p JOIN messages m ON m.id = p.message_id";
+const STORED_COLS: &str = "p.message_id, p.channel_id, m.author_id, p.title, p.starts_at, p.ends_at, p.place, \
+     p.note, p.cancelled_at, p.edited_at FROM plans p JOIN messages m ON m.id = p.message_id";
 
 fn stored_from(r: StoredRow) -> AppResult<Stored> {
-    let (message_id, channel_id, author_id, title, starts_at, place, note, cancelled_at, edited_at) =
-        r;
+    let (
+        message_id,
+        channel_id,
+        author_id,
+        title,
+        starts_at,
+        ends_at,
+        place,
+        note,
+        cancelled_at,
+        edited_at,
+    ) = r;
     Ok(Stored {
         message_id: message_id.parse().map_err(anyhow::Error::from)?,
         channel_id: channel_id.parse().map_err(anyhow::Error::from)?,
@@ -80,6 +92,7 @@ fn stored_from(r: StoredRow) -> AppResult<Stored> {
             .map_err(anyhow::Error::from)?,
         title,
         starts_at,
+        ends_at,
         place,
         note,
         cancelled_at,
@@ -157,6 +170,7 @@ pub(crate) fn view(p: &Stored, answers: &[(Rsvp, UserId)]) -> Plan {
     Plan {
         title: p.title.clone(),
         starts_at: p.starts_at.clone(),
+        ends_at: p.ends_at.clone(),
         place: p.place.clone(),
         note: p.note.clone(),
         going: who(Rsvp::Going),
@@ -235,6 +249,7 @@ pub(crate) async fn on_delete(tx: &mut SqliteConnection, id: MessageId) -> AppRe
 pub struct Cleaned {
     pub title: String,
     pub starts_at: String,
+    pub ends_at: Option<String>,
     pub place: Option<String>,
     pub note: Option<String>,
 }
@@ -251,7 +266,8 @@ fn one_line(raw: &str, max: usize, what: &str) -> AppResult<String> {
 }
 
 /// The request's fields, trimmed and checked at `at`: a title, a start that isn't over (a few minutes' grace for a
-/// slow form) and at most [`plan_limits::MAX_DAYS_AHEAD`] away, and an optional place and note (blank = none).
+/// slow form) and at most [`plan_limits::MAX_DAYS_AHEAD`] away, an optional end after the start (at most
+/// [`plan_limits::MAX_HOURS_LONG`] later), and an optional place and note (blank = none).
 pub fn clean(req: &CreatePlanRequest, at: DateTime<Utc>) -> AppResult<Cleaned> {
     let title = one_line(&req.title, plan_limits::TITLE_CHARS, "title")?;
     let starts = DateTime::parse_from_rfc3339(req.starts_at.trim())
@@ -265,6 +281,25 @@ pub fn clean(req: &CreatePlanRequest, at: DateTime<Utc>) -> AppResult<Cleaned> {
             "a plan can be at most two years ahead".into(),
         ));
     }
+    let ends_at = match req.ends_at.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(e) => {
+            let ends = DateTime::parse_from_rfc3339(e)
+                .map_err(|_| AppError::BadRequest("a plan's end isn't a date and time".into()))?
+                .with_timezone(&Utc);
+            if ends <= starts {
+                return Err(AppError::BadRequest(
+                    "a plan has to end after it starts".into(),
+                ));
+            }
+            if ends > starts + TimeDelta::hours(plan_limits::MAX_HOURS_LONG) {
+                return Err(AppError::BadRequest(
+                    "a plan can run for at most a week".into(),
+                ));
+            }
+            Some(stamp(ends))
+        }
+    };
     let place = match req.place.as_deref().map(str::trim) {
         None | Some("") => None,
         Some(p) => Some(one_line(p, plan_limits::PLACE_CHARS, "place")?),
@@ -286,6 +321,7 @@ pub fn clean(req: &CreatePlanRequest, at: DateTime<Utc>) -> AppResult<Cleaned> {
     Ok(Cleaned {
         title,
         starts_at: stamp(starts),
+        ends_at,
         place,
         note,
     })
@@ -303,13 +339,27 @@ pub fn reminded_at_for(starts_at: &str, now: DateTime<Utc>) -> Option<String> {
 /// The plan as text, for clients that don't know plans (and previews, search and notifications). The time is UTC:
 /// the one time everyone can read the same way.
 pub fn fallback_text(c: &Cleaned) -> String {
-    let when = DateTime::parse_from_rfc3339(&c.starts_at)
-        .map(|t| {
-            t.with_timezone(&Utc)
-                .format("%a %-d %b %Y, %H:%M UTC")
-                .to_string()
-        })
-        .unwrap_or_else(|_| c.starts_at.clone());
+    let utc = |s: &str| DateTime::parse_from_rfc3339(s).map(|t| t.with_timezone(&Utc));
+    let when = match utc(&c.starts_at) {
+        Ok(start) => {
+            let end = c.ends_at.as_deref().and_then(|e| utc(e).ok());
+            match end {
+                // the same day: just the end's time; another day: its day too
+                Some(end) if end.date_naive() == start.date_naive() => format!(
+                    "{}–{} UTC",
+                    start.format("%a %-d %b %Y, %H:%M"),
+                    end.format("%H:%M")
+                ),
+                Some(end) => format!(
+                    "{} – {} UTC",
+                    start.format("%a %-d %b %Y, %H:%M"),
+                    end.format("%a %-d %b, %H:%M")
+                ),
+                None => start.format("%a %-d %b %Y, %H:%M UTC").to_string(),
+            }
+        }
+        Err(_) => c.starts_at.clone(),
+    };
     let mut t = format!("📅 Plan: {}\n🕒 {when}", c.title);
     if let Some(p) = &c.place {
         t.push_str("\n📍 ");
@@ -368,11 +418,13 @@ pub(crate) async fn announce(s: &AppState, channel_id: ChannelId, message_id: Me
     }
 }
 
-/// The plan's Going and Maybe people who can still see its chat: a DM or group's members, a server's members.
+/// The plan's Going and Maybe people who can still see its chat (a DM or group's members, a server's members) and
+/// haven't turned Plan reminders off (#399).
 async fn to_remind(db: &mut SqliteConnection, p: &Stored) -> AppResult<Vec<UserId>> {
     let rows: Vec<String> = sqlx::query_scalar(
         "SELECT r.user_id FROM plan_rsvps r JOIN channels c ON c.id = ?
-         WHERE r.message_id = ? AND r.rsvp IN ('going', 'maybe')
+         JOIN users u ON u.id = r.user_id
+         WHERE r.message_id = ? AND r.rsvp IN ('going', 'maybe') AND u.plan_reminders = 1
            AND (EXISTS (SELECT 1 FROM channel_members cm WHERE cm.channel_id = c.id AND cm.user_id = r.user_id)
                 OR (c.server_id IS NOT NULL AND EXISTS (SELECT 1 FROM server_members sm
                      WHERE sm.server_id = c.server_id AND sm.user_id = r.user_id)))
@@ -490,6 +542,7 @@ mod tests {
         CreatePlanRequest {
             title: title.into(),
             starts_at: starts_at.into(),
+            ends_at: None,
             place: None,
             note: None,
         }
@@ -538,6 +591,30 @@ mod tests {
     }
 
     #[test]
+    fn an_end_is_optional_after_the_start_and_at_most_a_week_on() {
+        let mut r = req("ok", "2026-11-20T18:00:00+02:00");
+        r.ends_at = Some(" 2026-11-20T22:30:00+02:00 ".into());
+        assert_eq!(
+            clean(&r, at()).unwrap().ends_at.as_deref(),
+            Some("2026-11-20T20:30:00.000Z")
+        );
+        r.ends_at = Some("".into());
+        assert_eq!(clean(&r, at()).unwrap().ends_at, None);
+        // at or before the start, past a week, or not a time
+        for bad in [
+            "2026-11-20T18:00:00+02:00",
+            "2026-11-20T17:00:00+02:00",
+            "2026-11-27T18:00:01+02:00",
+            "later",
+        ] {
+            r.ends_at = Some(bad.into());
+            assert!(clean(&r, at()).is_err(), "{bad}");
+        }
+        r.ends_at = Some("2026-11-27T18:00:00+02:00".into());
+        assert!(clean(&r, at()).is_ok());
+    }
+
+    #[test]
     fn the_reminder_is_already_done_for_a_plan_less_than_an_hour_away() {
         assert_eq!(reminded_at_for("2026-11-16T12:00:00.000Z", at()), None);
         assert_eq!(
@@ -552,6 +629,7 @@ mod tests {
         let c = Cleaned {
             title: "Braai".into(),
             starts_at: "2026-11-20T16:30:00.000Z".into(),
+            ends_at: None,
             place: Some("Cape Town".into()),
             note: Some("bring ice".into()),
         };
@@ -560,6 +638,24 @@ mod tests {
             "📅 Plan: Braai\n🕒 Fri 20 Nov 2026, 16:30 UTC\n📍 Cape Town\nbring ice\n(Update Pulse to RSVP)"
         );
         assert_eq!(reminder_text("Braai"), "⏰ Braai starts in an hour");
+        // an end the same day shows its time; another day, its day too
+        let same_day = Cleaned {
+            ends_at: Some("2026-11-20T19:00:00.000Z".into()),
+            place: None,
+            note: None,
+            ..c.clone()
+        };
+        assert_eq!(
+            fallback_text(&same_day),
+            "📅 Plan: Braai\n🕒 Fri 20 Nov 2026, 16:30–19:00 UTC\n(Update Pulse to RSVP)"
+        );
+        let overnight = Cleaned {
+            ends_at: Some("2026-11-21T01:00:00.000Z".into()),
+            ..same_day
+        };
+        assert!(
+            fallback_text(&overnight).contains("🕒 Fri 20 Nov 2026, 16:30 – Sat 21 Nov, 01:00 UTC")
+        );
         let line = PlanReminder {
             plan_message_id: MessageId::new(),
             title: "Braai".into(),
@@ -579,6 +675,7 @@ mod tests {
             author_id: Some(alex),
             title: "T".into(),
             starts_at: "2026-11-20T16:30:00.000Z".into(),
+            ends_at: None,
             place: None,
             note: None,
             cancelled_at: None,

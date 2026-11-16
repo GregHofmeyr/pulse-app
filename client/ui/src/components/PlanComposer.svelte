@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  type Draft = { title: string; date: string; time: string; place: string; note: string }
+  type Draft = { title: string; date: string; time: string; ends: string; place: string; note: string }
   // An unposted plan per chat, kept while the app runs (closing the form doesn't lose it).
   const drafts = new Map<string, Draft>()
   /** For tests: forget every chat's draft. */
@@ -8,13 +8,14 @@
 
 <script lang="ts">
   // The plan form above the message box (#387), the poll composer's sibling: same frame, same place. The title across
-  // the top, then the day and time (your own time; the server keeps it in UTC), the place (optional; it gets a
+  // the top, then the day, the time and an optional end time (#399: your own time; the server keeps it in UTC; an
+  // end at or before the start runs past midnight), the place (optional; it gets a
   // forecast when the day is near) and a note (optional), and Post plan, which waits for a title and a time that
   // isn't over. `/plan Braai at kim's` opens it with the title filled in. Its creator's Edit plan opens the same
   // form, filled from the plan, with Save changes.
   import { onMount, tick, untrack } from 'svelte'
   import { clickOutside } from '../lib/actions'
-  import { PLAN_LIMITS, defaultStart, fieldsToIso, isoToFields, planReady } from '../lib/plan'
+  import { PLAN_LIMITS, defaultStart, endToIso, fieldsToIso, isoToFields, planReady } from '../lib/plan'
   import { editPlan, postPlan } from '../lib/plans.svelte'
   import { popoverStyle } from '../lib/reactions'
   import { errorText } from '../lib/tauri'
@@ -33,18 +34,19 @@
   } = $props()
   const uid = $props.id()
 
-  const SIZE = { width: 400, height: 470 }
+  const SIZE = { width: 420, height: 470 }
   const style = untrack(() => popoverStyle(anchor.getBoundingClientRect(), SIZE, { width: window.innerWidth, height: window.innerHeight }))
 
   const start = untrack((): Draft => {
     const p = editing?.plan
-    if (p) return { title: p.title, ...isoToFields(p.starts_at), place: p.place ?? '', note: p.note ?? '' }
-    const base = drafts.get(channelId) ?? { title: '', ...defaultStart(Date.now()), place: '', note: '' }
+    if (p) return { title: p.title, ...isoToFields(p.starts_at), ends: p.ends_at ? isoToFields(p.ends_at).time : '', place: p.place ?? '', note: p.note ?? '' }
+    const base = drafts.get(channelId) ?? { title: '', ...defaultStart(Date.now()), ends: '', place: '', note: '' }
     return prefill ? { ...base, title: prefill } : base
   })
   let title = $state(start.title)
   let date = $state(start.date)
   let time = $state(start.time)
+  let ends = $state(start.ends)
   let place = $state(start.place)
   let note = $state(start.note)
   let busy = $state(false)
@@ -53,7 +55,7 @@
 
   $effect(() => {
     if (editing) return
-    const d = { title, date, time, place, note }
+    const d = { title, date, time, ends, place, note }
     if (d.title.trim() || d.place.trim() || d.note.trim()) drafts.set(channelId, d)
     else drafts.delete(channelId)
   })
@@ -61,13 +63,14 @@
   onMount(() => void tick().then(() => titleField?.focus()))
 
   const startsAt = $derived(fieldsToIso(date, time))
-  const ready = $derived(planReady(title, startsAt, place, note, Date.now()) && !busy)
+  const endsAt = $derived(endToIso(date, time, ends))
+  const ready = $derived(planReady(title, startsAt, place, note, Date.now(), endsAt) && !busy)
 
   async function post() {
     if (!ready || !startsAt) return
     busy = true
     error = ''
-    const request = { title: title.trim(), starts_at: startsAt, place: place.trim() || null, note: note.trim() || null }
+    const request = { title: title.trim(), starts_at: startsAt, ...(endsAt ? { ends_at: endsAt } : {}), place: place.trim() || null, note: note.trim() || null }
     try {
       if (editing) await editPlan(editing, request)
       else {
@@ -92,8 +95,9 @@
     <div class="row">
       <label class="field"><span class="menu-label">Day</span><input class="input input-sm" type="date" bind:value={date} aria-label="Day" /></label>
       <label class="field"><span class="menu-label">Time</span><input class="input input-sm" type="time" bind:value={time} aria-label="Time" /></label>
+      <label class="field"><span class="menu-label">Ends</span><input class="input input-sm" type="time" bind:value={ends} aria-label="Ends (optional)" /></label>
     </div>
-    <small class="help">In your own time; everyone sees it in theirs.</small>
+    <small class="help">In your own time; everyone sees it in theirs. The end is optional.</small>
     <label class="field"><span class="menu-label">Place</span>
       <input class="input input-sm" bind:value={place} maxlength={PLAN_LIMITS.placeChars} placeholder="Optional: a town or venue" aria-label="Place" aria-describedby="{uid}-place" />
     </label>
@@ -110,7 +114,7 @@
 
 <style>
   /* the poll composer's frame: the menus' border, radius and shadow round a bg-2 panel */
-  .plan-composer { width: 400px; max-width: calc(100vw - 12px); height: 470px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line-menu); border-radius: var(--radius-lg); box-shadow: var(--shadow-3); color: var(--text); overflow: hidden; --pop-origin: bottom left; }
+  .plan-composer { width: 420px; max-width: calc(100vw - 12px); height: 470px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line-menu); border-radius: var(--radius-lg); box-shadow: var(--shadow-3); color: var(--text); overflow: hidden; --pop-origin: bottom left; }
   .title { padding: 12px; background: var(--bg-1); border-bottom: 1px solid var(--line); }
   .name { width: 100%; font-weight: 600; }
   .body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 12px; }

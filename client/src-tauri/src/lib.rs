@@ -516,6 +516,7 @@ pub fn run() {
             commands::play_sound_to_call,
             commands::set_sound_favourite,
             commands::set_server_order,
+            commands::set_plan_reminders,
             commands::set_join_sound,
             commands::add_reaction,
             commands::remove_reaction,

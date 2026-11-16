@@ -259,6 +259,8 @@ export const api = {
   saveLayout: (serverId: string, layout: SaveLayoutRequest) => invoke<ServerLayout>('save_layout', { serverId, layout }),
   /** Your server rail order (#185): every server id, first to last. */
   setServerOrder: (serverIds: string[]) => invoke<void>('set_server_order', { serverIds }),
+  /** Plan reminders (#399): whether plans' reminder lines ping you, on every device. */
+  setPlanReminders: (on: boolean) => invoke<void>('set_plan_reminders', { on }),
   joinServer: (serverId: string) => invoke<void>('join_server', { serverId }),
   listChannels: (serverId: string) => invoke<Channel[]>('list_channels', { serverId }),
   listMembers: (serverId: string) => invoke<Member[]>('list_members', { serverId }),
