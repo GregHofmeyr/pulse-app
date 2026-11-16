@@ -15,6 +15,7 @@ use pulse_protocol::rest::{
     RecoveryCodesResponse, SaveLayoutRequest, SearchRequest, SearchResults, Server, ServerLayout,
     SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare, StartQotyRequest,
     TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
+    WatchParty, WatchPartyAction,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -1290,6 +1291,49 @@ pub async fn share_to_stage(
 ) -> Result<StageShare, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.share_to_stage(&token, channel_id, &url).await)
+}
+
+/// Start a YouTube watch party in a voice channel (#384), or change its video.
+#[tauri::command]
+pub async fn start_watch_party(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    video_id: String,
+    title: Option<String>,
+) -> Result<WatchParty, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.start_watch_party(&token, channel_id, &video_id, title)
+            .await,
+    )
+}
+
+/// One change to a voice channel's watch party (#384).
+#[tauri::command]
+pub async fn watch_party_action(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    action: WatchPartyAction,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.watch_party_action(&token, channel_id, &action).await,
+    )
+}
+
+/// End a voice channel's watch party for everyone (#384).
+#[tauri::command]
+pub async fn end_watch_party(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.end_watch_party(&token, channel_id).await)
 }
 
 /// Stop a stage share for everyone (#234).
