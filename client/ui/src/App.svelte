@@ -22,6 +22,7 @@
   import { installUpdate, startUpdateListening, updates } from './lib/updates.svelte'
   import { startMediaActivity } from './lib/activityPrefs.svelte'
   import { startGameActivity } from './lib/gamePrefs.svelte'
+  import { startSteamListening } from './lib/steam.svelte'
 
   let user = $state<User | null>(null)
   let booting = $state(true)
@@ -59,6 +60,7 @@
     Promise.all([startListening(), startVoiceListening(), startUpdateListening(), media, games]).then(async ([unlisten, unlistenVoice, unlistenUpdates, unlistenMedia, unlistenGames]) => {
       const unlistenBadges = startBadgeListening()
       const unlistenSounds = startSoundboardListening()
+      const unlistenSteam = startSteamListening()
       off = () => {
         unlisten()
         unlistenVoice()
@@ -67,6 +69,7 @@
         unlistenSounds()
         unlistenMedia()
         unlistenGames()
+        unlistenSteam()
       }
       // A newer Pulse (#82): the check started with the app; install it now ("Updating Pulse…", then Pulse reopens
       // on it). No offer, or a failed install, boots as usual on this version.

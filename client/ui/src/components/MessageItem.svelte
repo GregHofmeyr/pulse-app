@@ -29,6 +29,7 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import WheelLine from './WheelLine.svelte'
+  import AchievementCard from './AchievementCard.svelte'
   import PollCard from './PollCard.svelte'
   import { endedSummary, pollOver, shownText } from '../lib/poll'
   import { closePoll } from '../lib/polls.svelte'
@@ -292,7 +293,10 @@
 
 {#snippet item()}
 {#if message.kind === 'system'}
-  {#if message.call}
+  {#if message.achievement}
+    <!-- a Steam achievement card (#379), with today's name for its person -->
+    <AchievementCard card={message.achievement} name={nameOf(message.achievement.user_id)} {time} messageId={message.id} />
+  {:else if message.call}
     <!-- a call line (#50) reads per member: "Missed call from sam" for those who never joined -->
     {@const text = callLineText(app.state, message)}
     <div class="system call-line" class:missed={text.startsWith('Missed')} data-message-id={message.id}><Icon name="phone" size={14} /> {text} <span class="time">{time}</span></div>

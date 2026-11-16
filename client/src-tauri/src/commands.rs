@@ -2225,6 +2225,72 @@ pub async fn set_live_notify(
     core.check(&app, api.set_live_notify(&token, user_id, on).await)
 }
 
+/// Your Steam link (#379).
+#[tauri::command]
+pub async fn steam_status(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<pulse_protocol::rest::SteamStatus, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.steam_status(&token).await)
+}
+
+/// "Link Steam account": Steam's sign-in page opens in the default browser; the server tells this session when it's
+/// done (`SteamLinkChanged`).
+#[tauri::command]
+pub async fn link_steam(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    let start = core.check(&app, api.steam_link_start(&token).await)?;
+    let url = url::Url::parse(&start.url)
+        .map_err(|_| ApiError::Rejected("the server's Steam link isn't a web address".into()))?;
+    crate::links::open(&url);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn unlink_steam(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<pulse_protocol::rest::SteamStatus, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.steam_unlink(&token).await)
+}
+
+#[tauri::command]
+pub async fn set_steam_share(
+    app: AppHandle,
+    core: State<'_, Core>,
+    on: bool,
+) -> Result<pulse_protocol::rest::SteamStatus, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_steam_share(&token, on).await)
+}
+
+#[tauri::command]
+pub async fn achievements_channel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<pulse_protocol::rest::AchievementsChannel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.achievements_channel(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn set_achievements_channel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    channel_id: Option<ChannelId>,
+) -> Result<pulse_protocol::rest::AchievementsChannel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_achievements_channel(&token, server_id, channel_id)
+            .await,
+    )
+}
+
 #[tauri::command]
 pub async fn name_archive(
     app: AppHandle,

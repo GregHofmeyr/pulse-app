@@ -197,6 +197,13 @@ describe('ProfileCard', () => {
     expect(el.querySelector('.info')!.textContent).toContain('2.5 h')
   })
 
+  it('shows the Steam completion rate only when they share it (#379)', () => {
+    expect(show().querySelector('[data-steam-completion]')).toBeNull()
+    unmount(cmp!)
+    const el = show({ stats: { ...stats, steam_completion: 62.5, steam_perfect_games: 2 } })
+    expect(el.querySelector('[data-steam-completion]')!.textContent).toBe('Steam62.5 % completion · 2 perfect games')
+  })
+
   it("shows In <channel> when they're in voice", () => {
     app.state = {
       ...app.state,

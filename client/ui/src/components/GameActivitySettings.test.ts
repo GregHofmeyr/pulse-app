@@ -43,7 +43,7 @@ describe('switches', () => {
   it('master off: told to the core, saved, and the finer ones disabled', () => {
     sw('enabled').click()
     flushSync()
-    expect(told().at(-1)).toEqual({ enabled: false, art: true, time: true, games: [], clips: true, clip_folders: null })
+    expect(told().at(-1)).toEqual({ enabled: false, art: true, time: true, games: [], clips: true, clip_folders: null, steam_achievements: false })
     expect(JSON.parse(localStorage.getItem('pulse.games')!).enabled).toBe(false)
     expect(sw('art').disabled && sw('time').disabled && sw('clips').disabled).toBe(true)
   })
@@ -145,5 +145,78 @@ describe('clip drop', () => {
     sw('clips').click()
     flushSync()
     expect(document.querySelector('.folders')).toBeNull()
+  })
+})
+
+describe('Steam account (#379)', () => {
+  const linked = (over: Record<string, unknown> = {}) => ({
+    linking_available: true,
+    achievements_available: true,
+    link: { steam_id: '76500000000000001', persona: 'alex on steam', share_achievements: true, private: false, backfill_done: true, completion_rate: 62.5, perfect_games: 3, ...over },
+  })
+  const steamRows = () => document.querySelector('[data-steam]')!
+  async function withStatus(status: unknown) {
+    const { setSteamStatus } = await import('../lib/steam.svelte')
+    setSteamStatus(status as never)
+    flushSync()
+  }
+
+  it('not linked: Link Steam account opens the browser sign-in; the share switch waits for a link', async () => {
+    await withStatus({ linking_available: true, achievements_available: true, link: null })
+    expect(steamRows().textContent).toContain("Pulse never sees your Steam password")
+    expect(sw('steam').disabled).toBe(true)
+    button('Link Steam account')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('link_steam', undefined)
+  })
+
+  it('linked: the persona, Unlink, the share switch on by default, and the completion rate', async () => {
+    await withStatus(linked())
+    expect(steamRows().textContent).toContain('alex on steam')
+    expect(sw('steam').checked && !sw('steam').disabled).toBe(true)
+    expect(steamRows().textContent).toContain('62.5 % completion · 3 perfect games')
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'unlink_steam' ? { linking_available: true, achievements_available: true, link: null } : undefined))
+    button('Unlink')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('unlink_steam', undefined)
+    expect(button('Link Steam account')).toBeTruthy()
+  })
+
+  it('sharing off is the server setting; on also tells the core to send the app id for achievements', async () => {
+    await withStatus(linked())
+    expect(gamePrefs.steam_achievements).toBe(true)
+    expect(told().at(-1)).toMatchObject({ steam_achievements: true })
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'set_steam_share' ? linked({ share_achievements: false }) : undefined))
+    sw('steam').click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_steam_share', { on: false })
+    expect(gamePrefs.steam_achievements).toBe(false)
+    expect(told().at(-1)).toMatchObject({ steam_achievements: false })
+  })
+
+  it('obeys the master switch', async () => {
+    await withStatus(linked())
+    sw('enabled').click()
+    flushSync()
+    expect(sw('steam').disabled).toBe(true)
+  })
+
+  it('no key, private game details, or no linking on this server each say so', async () => {
+    await withStatus(linked({}) && { ...linked(), achievements_available: false })
+    expect(steamRows().textContent).toContain('Achievements need the server owner to add a Steam key.')
+    expect(sw('steam').disabled).toBe(true)
+    await withStatus(linked({ private: true }))
+    expect(steamRows().textContent).toContain('Make your Steam game details public to share achievements.')
+    await withStatus({ linking_available: false, achievements_available: true, link: null })
+    expect(steamRows().textContent).toContain("Linking Steam isn't set up on this server.")
+    expect(button('Link Steam account')!.disabled).toBe(true)
+  })
+
+  it('a SteamLinkChanged updates the rows', async () => {
+    await withStatus({ linking_available: true, achievements_available: true, link: null })
+    const { handleSteamEvent } = await import('../lib/steam.svelte')
+    handleSteamEvent({ t: 'SteamLinkChanged', d: { user_id: 'U1', status: linked() } } as never)
+    flushSync()
+    expect(steamRows().textContent).toContain('alex on steam')
   })
 })

@@ -1,12 +1,22 @@
 <script lang="ts">
   // Settings → Privacy → Game activity (#380): the master switch, the finer ones under it (each its own row, so Join
-  // and achievements can join them later), clip drop's watched folders (#382), and the games added by hand. All on by
-  // default. Windows only: elsewhere Pulse never looks.
+  // can join them later), clip drop's watched folders (#382), the Steam account and its achievements (#379), and the
+  // games added by hand. All on by default. Windows only: elsewhere Pulse never looks.
   import Icon from './Icon.svelte'
   import { api, errorText } from '../lib/tauri'
   import { addGame, gameActivity, gamePrefs, removeGame, setClipFolders, setGameSwitch, type GameSwitch } from '../lib/gamePrefs.svelte'
   import { isWindows } from '../lib/stream/platform'
+  import { linkSteam, loadSteam, setSteamShare, steam, steamNote, unlinkSteam } from '../lib/steam.svelte'
+  import { completionLine } from '../lib/achievements'
   const uid = $props.id()
+
+  // Steam (#379): the link and "Share Steam achievements", which the server keeps (it does the reading)
+  $effect(() => {
+    if (!steam.status) void loadSteam()
+  })
+  const steamLink = $derived(steam.status?.link ?? null)
+  const steamHint = $derived(steamNote(steam.status))
+  const steamRate = $derived(steamLink?.share_achievements ? completionLine(steamLink.completion_rate, steamLink.perfect_games) : null)
 
   /** The finer switches under the master one; a new feature adds its row here and its key in GameSettings. */
   const finer: { key: Exclude<GameSwitch, 'enabled'>; label: string; help: string }[] = [
@@ -101,6 +111,30 @@
       </div>
     </div>
   {/if}
+  {#if steam.status}
+    <div class="steam" data-steam>
+      <h4 class="games-title">Steam account</h4>
+      {#if steamLink}
+        <div class="settings-list-item">
+          <span class="who"><span class="nm">{steamLink.persona ?? 'Steam account linked'}</span>{#if steamLink.persona}<small>Linked Steam account</small>{/if}</span>
+          <button type="button" class="btn btn-secondary" disabled={steam.busy} onclick={() => void unlinkSteam()}>Unlink</button>
+        </div>
+      {:else}
+        <p class="hint">Opens Steam's sign-in in your browser. Pulse never sees your Steam password.</p>
+        <button type="button" class="btn btn-secondary add" disabled={!steam.status.linking_available || steam.busy} onclick={() => void linkSteam()}>Link Steam account</button>
+      {/if}
+      <label class="row sub">
+        <input type="checkbox" role="switch" class="switch" data-switch="steam" checked={!!steamLink?.share_achievements} aria-describedby="{uid}-steam-help"
+          disabled={!gamePrefs.enabled || !steamLink || !steam.status.achievements_available || steam.busy}
+          onchange={(e) => void setSteamShare(e.currentTarget.checked)} />
+        <span>Share Steam achievements</span>
+      </label>
+      <small class="sub" id="{uid}-steam-help">While you play, new unlocks and 100 % completions post in the Achievements channel of servers that have one, and your completion rate shows on your profile. Off, your Pulse server stops reading them.</small>
+      {#if steamHint}<p class="note sub" role="status">{steamHint}</p>{/if}
+      {#if steamRate}<p class="seen sub">{steamRate}</p>{/if}
+      {#if steam.error}<p class="error" role="alert">{steam.error}</p>{/if}
+    </div>
+  {/if}
   {#if gamePrefs.enabled && gameActivity.detecting}
     <p class="seen" aria-live="polite">{gameActivity.playing ? `Pulse sees you playing ${gameActivity.playing}` : 'No game running right now.'}</p>
   {/if}
@@ -136,7 +170,8 @@
   p { margin: 0; color: var(--text-2); font-size: 13px; }
   .row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
   .sub { margin-left: 24px; }
-  .folders { display: flex; flex-direction: column; gap: 6px; }
+  .folders, .steam { display: flex; flex-direction: column; gap: 6px; }
+  .note { color: var(--warn-text); }
   .who .path { color: var(--text-2); }
   .seen { color: var(--text-3); }
   .games-title { margin: 8px 0 0; font-size: 13px; font-weight: 600; }

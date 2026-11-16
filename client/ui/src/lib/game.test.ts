@@ -37,11 +37,13 @@ describe('how it reads', () => {
 
 describe('saved switches', () => {
   it('all on by default; an older save fills in; junk is the defaults', () => {
-    expect(parseSaved(null)).toEqual({ enabled: true, art: true, time: true, games: [], clips: true, clip_folders: null })
+    expect(parseSaved(null)).toEqual({ enabled: true, art: true, time: true, games: [], clips: true, clip_folders: null, steam_achievements: false })
     expect(parseSaved('{oops')).toEqual(parseSaved(null))
     expect(parseSaved(JSON.stringify({ enabled: false, games: [{ name: 'Old', exe: 'C:\\old.exe' }, { name: '', exe: 'x' }, 7] }))).toEqual({
-      enabled: false, art: true, time: true, games: [{ name: 'Old', exe: 'C:\\old.exe' }], clips: true, clip_folders: null,
+      enabled: false, art: true, time: true, games: [{ name: 'Old', exe: 'C:\\old.exe' }], clips: true, clip_folders: null, steam_achievements: false,
     })
+    // the Steam flag is the server's to say: a save never turns it on
+    expect(parseSaved(JSON.stringify({ steam_achievements: true })).steam_achievements).toBe(false)
   })
 
   it('clip drop: its switch and chosen folders are kept; junk folders are dropped', () => {

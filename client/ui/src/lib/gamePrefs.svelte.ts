@@ -13,7 +13,7 @@ const KEY = 'pulse.games'
 export type GameSwitch = 'enabled' | 'art' | 'time' | 'clips'
 
 export function defaults(): GameSettings {
-  return { enabled: true, art: true, time: true, games: [], clips: true, clip_folders: null }
+  return { enabled: true, art: true, time: true, games: [], clips: true, clip_folders: null, steam_achievements: false }
 }
 
 /** What's saved, filled in with the defaults (a switch an older save lacks is on); junk is the defaults. */
@@ -27,7 +27,8 @@ export function parseSaved(raw: string | null): GameSettings {
       ? v.games.filter((g): g is ManualGame => !!g && typeof g.name === 'string' && typeof g.exe === 'string' && !!g.name.trim() && !!g.exe)
       : []
     const folders = Array.isArray(v.clip_folders) ? v.clip_folders.filter((f): f is string => typeof f === 'string' && !!f.trim()) : null
-    return { enabled: flag('enabled'), art: flag('art'), time: flag('time'), games, clips: flag('clips'), clip_folders: folders }
+    // steam_achievements is the server's to say (lib/steam.svelte.ts), never read from a save
+    return { enabled: flag('enabled'), art: flag('art'), time: flag('time'), games, clips: flag('clips'), clip_folders: folders, steam_achievements: false }
   } catch {
     return d
   }
@@ -54,6 +55,7 @@ function snapshot(): GameSettings {
     games: gamePrefs.games.map((g) => ({ ...g })),
     clips: gamePrefs.clips,
     clip_folders: gamePrefs.clip_folders ? [...gamePrefs.clip_folders] : null,
+    steam_achievements: gamePrefs.steam_achievements,
   }
 }
 
@@ -70,6 +72,13 @@ function saveAndTell(): void {
 export function setGameSwitch(k: GameSwitch, on: boolean): void {
   gamePrefs[k] = on
   saveAndTell()
+}
+
+/** A linked Steam account shares achievements, or stopped (#379): the server says; the core is told, nothing saved. */
+export function setSteamAchievements(on: boolean): void {
+  if (gamePrefs.steam_achievements === on) return
+  gamePrefs.steam_achievements = on
+  void api.setGameActivity(snapshot()).catch(() => {})
 }
 
 /** Add a hand-picked game; one already listed (the same exe, any case) is renamed instead. */

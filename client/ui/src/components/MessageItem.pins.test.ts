@@ -224,6 +224,22 @@ describe('the pin line (#178)', () => {
   })
 })
 
+describe('a Steam achievement card (#379)', () => {
+  it("draws the card with today's name instead of the fallback text", () => {
+    const line = msg({
+      id: 'A1', author_id: null, kind: 'system', content: '🏆 sam unlocked Second Wind in Space Game',
+      achievement: { user_id: 'U2', app_id: 4000001, game: 'Space Game', achievements: [{ name: 'Second Wind', description: null, icon: null, global_percent: 20 }], more: 0, unlocked: 2, total: 3, complete: false },
+    })
+    names.U2 = 'samantha'
+    show(line)
+    const card = document.querySelector('.ach')!
+    expect(card.textContent).toContain('samantha unlocked in Space Game')
+    expect(card.textContent).toContain('Second Wind')
+    expect(document.querySelector('.system')).toBeNull()
+    names.U2 = 'sam'
+  })
+})
+
 describe('a stage share line (#234)', () => {
   it('reads with today\'s name; older clients read its content as it is', () => {
     const line = msg({ id: 'L1', author_id: null, kind: 'system', content: '🎵 sam shared a Jam to the stage', stage_share_line: { by: 'U2', kind: 'jam' } })

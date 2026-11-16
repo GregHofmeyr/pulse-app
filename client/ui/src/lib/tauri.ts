@@ -60,6 +60,8 @@ import type { Sound } from './protocol/Sound'
 import type { NotifyLevel } from './protocol/NotifyLevel'
 import type { Notice } from './notify'
 import type { EmbedProvider } from './protocol/EmbedProvider'
+import type { SteamStatus } from './protocol/SteamStatus'
+import type { AchievementsChannel } from './protocol/AchievementsChannel'
 import type { Sound as StreamSound, SoundProbe, SoundStatus, WindowRef } from './stream/sound'
 
 /** `login` / `login_mfa`: signed in, waiting for the second step, or (second step only) the ticket is gone. */
@@ -172,6 +174,8 @@ export type GameSettings = {
   clips: boolean
   /** The folders clip drop watches; null: the defaults under Videos (`clipDropDefaults`). */
   clip_folders: string[] | null
+  /** A linked Steam account shares achievements (#379): the app id goes even with art off, marked for the server only. */
+  steam_achievements: boolean
 }
 /** `pulse://clip-drop` (#382): a recording that just finished in a watched folder. */
 export type ClipOffer = { path: string; name: string }
@@ -357,6 +361,16 @@ export const api = {
   pickClipFolder: () => invoke<string | null>('pick_clip_folder'),
   /** Get a notification when someone goes live, or stop (#60). A LiveNotifyChanged follows to your sessions. */
   setLiveNotify: (userId: string, on: boolean) => invoke<void>('set_live_notify', { userId, on }),
+  /** Your Steam link and what this server can do with Steam (#379). */
+  steamStatus: () => invoke<SteamStatus>('steam_status'),
+  /** Opens Steam's sign-in in the browser; a SteamLinkChanged follows when it's done. */
+  linkSteam: () => invoke<void>('link_steam'),
+  unlinkSteam: () => invoke<SteamStatus>('unlink_steam'),
+  setSteamShare: (on: boolean) => invoke<SteamStatus>('set_steam_share', { on }),
+  /** A server's Achievements channel (#379); the owner may pick one of its text channels, or none. */
+  achievementsChannel: (serverId: string) => invoke<AchievementsChannel>('achievements_channel', { serverId }),
+  setAchievementsChannel: (serverId: string, channelId: string | null) =>
+    invoke<AchievementsChannel>('set_achievements_channel', { serverId, channelId }),
   /** A group's icon (#56): an avatar-pipeline media hash, or null for the members' faces. Any member may. */
   setGroupIcon: (channelId: string, hash: string | null) => invoke<Channel>('set_group_icon', { channelId, hash }),
   /** A page of someone's Name Archive in a server, newest first. */

@@ -1856,6 +1856,85 @@ impl Api {
         Self::ok_empty(req.bearer_auth(token).send().await).await
     }
 
+    /// Your Steam link and what this server can do with Steam (#379).
+    pub async fn steam_status(
+        &self,
+        token: &str,
+    ) -> Result<pulse_protocol::rest::SteamStatus, ApiError> {
+        let url = self.url(&["me", "steam"])?;
+        Self::parse(self.http.get(url).bearer_auth(token).send().await).await
+    }
+
+    /// Start linking Steam: the sign-in page to open in the browser.
+    pub async fn steam_link_start(
+        &self,
+        token: &str,
+    ) -> Result<pulse_protocol::rest::SteamLinkStart, ApiError> {
+        let url = self.url(&["me", "steam", "link"])?;
+        Self::parse(self.http.post(url).bearer_auth(token).send().await).await
+    }
+
+    pub async fn steam_unlink(
+        &self,
+        token: &str,
+    ) -> Result<pulse_protocol::rest::SteamStatus, ApiError> {
+        let url = self.url(&["me", "steam"])?;
+        Self::parse(self.http.delete(url).bearer_auth(token).send().await).await
+    }
+
+    /// "Share Steam achievements" (#379).
+    pub async fn set_steam_share(
+        &self,
+        token: &str,
+        on: bool,
+    ) -> Result<pulse_protocol::rest::SteamStatus, ApiError> {
+        let url = self.url(&["me", "steam", "settings"])?;
+        let body = pulse_protocol::rest::SteamSettingsRequest {
+            share_achievements: on,
+        };
+        Self::parse(
+            self.http
+                .put(url)
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A server's Achievements channel (#379); `None`: none.
+    pub async fn achievements_channel(
+        &self,
+        token: &str,
+        server: ServerId,
+    ) -> Result<pulse_protocol::rest::AchievementsChannel, ApiError> {
+        let url = self.url(&["servers", &server.to_string(), "achievements-channel"])?;
+        Self::parse(self.http.get(url).bearer_auth(token).send().await).await
+    }
+
+    /// Pick a server's Achievements channel (its owner only), or none.
+    pub async fn set_achievements_channel(
+        &self,
+        token: &str,
+        server: ServerId,
+        channel: Option<ChannelId>,
+    ) -> Result<pulse_protocol::rest::AchievementsChannel, ApiError> {
+        let url = self.url(&["servers", &server.to_string(), "achievements-channel"])?;
+        let body = pulse_protocol::rest::SetAchievementsChannelRequest {
+            channel_id: channel,
+        };
+        Self::parse(
+            self.http
+                .put(url)
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// A page of someone's Name Archive in a server (`cursor`: the last page's `next_cursor`).
     pub async fn name_archive(
         &self,
@@ -5076,6 +5155,42 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn steam_and_achievements_channel_round_trip_through_the_core() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let st = api.steam_status(&alex).await.unwrap();
+        // the test server has no public URL and no key
+        assert!(!st.linking_available && !st.achievements_available);
+        assert_eq!(st.link, None);
+        assert!(api.steam_link_start(&alex).await.is_err());
+        assert_eq!(api.steam_unlink(&alex).await.unwrap().link, None);
+        assert!(
+            api.set_steam_share(&alex, false).await.is_err(),
+            "nothing linked"
+        );
+        let server = testing::create_server(&app, &alex, "Gamers").await;
+        let general = testing::general(&app, &alex, server.id).await;
+        assert_eq!(
+            api.achievements_channel(&alex, server.id)
+                .await
+                .unwrap()
+                .channel_id,
+            None
+        );
+        let set = api
+            .set_achievements_channel(&alex, server.id, Some(general.id))
+            .await
+            .unwrap();
+        assert_eq!(set.channel_id, Some(general.id));
+        let off = api
+            .set_achievements_channel(&alex, server.id, None)
+            .await
+            .unwrap();
+        assert_eq!(off.channel_id, None);
     }
 
     #[tokio::test]

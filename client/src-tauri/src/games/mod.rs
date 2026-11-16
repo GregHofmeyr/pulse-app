@@ -41,6 +41,10 @@ pub struct GameSettings {
     pub clips: bool,
     /// The folders it watches; `None`: the defaults under Videos ([`clipdrop::default_folders`]).
     pub clip_folders: Option<Vec<String>>,
+    /// A linked Steam account shares achievements (#379; the server's setting, told by the page): the Steam app id
+    /// is sent even with "Show game art" off, marked `hide_art` so the server shows it to nobody. Off by default: the
+    /// page turns it on only for a linked account.
+    pub steam_achievements: bool,
 }
 
 impl Default for GameSettings {
@@ -52,6 +56,7 @@ impl Default for GameSettings {
             games: Vec::new(),
             clips: true,
             clip_folders: None,
+            steam_achievements: false,
         }
     }
 }
@@ -76,14 +81,20 @@ pub fn changed(
     Some(seen.map(|game| Current { game, since: now }))
 }
 
-/// What leaves this computer for `current`: only what the switches allow.
+/// What leaves this computer for `current`: only what the switches allow. The Steam app id goes with art on, or for
+/// shared achievements (then marked `hide_art`: the server keeps it to itself).
 pub fn update(current: &Current, s: &GameSettings, now: Instant) -> PlayingUpdate {
+    let steam_app_id = current
+        .game
+        .steam_app_id
+        .filter(|_| s.art || s.steam_achievements);
     PlayingUpdate {
         name: current.game.name.clone(),
-        steam_app_id: current.game.steam_app_id.filter(|_| s.art),
+        steam_app_id,
         elapsed_secs: s
             .time
             .then(|| now.saturating_duration_since(current.since).as_secs()),
+        hide_art: steam_app_id.is_some() && !s.art,
     }
 }
 
@@ -313,7 +324,8 @@ mod tests {
             PlayingUpdate {
                 name: "A".into(),
                 steam_app_id: Some(570),
-                elapsed_secs: Some(95)
+                elapsed_secs: Some(95),
+                hide_art: false,
             }
         );
         let bare = GameSettings {
@@ -326,9 +338,32 @@ mod tests {
             PlayingUpdate {
                 name: "A".into(),
                 steam_app_id: None,
-                elapsed_secs: None
+                elapsed_secs: None,
+                hide_art: false,
             }
         );
+        // art off but achievements shared (#379): the id goes, marked for the server only
+        let achievements = GameSettings {
+            steam_achievements: true,
+            ..bare
+        };
+        assert_eq!(
+            update(&c, &achievements, now),
+            PlayingUpdate {
+                name: "A".into(),
+                steam_app_id: Some(570),
+                elapsed_secs: None,
+                hide_art: true,
+            }
+        );
+        let manual = Current {
+            game: Detected {
+                name: "B".into(),
+                steam_app_id: None,
+            },
+            since: t0,
+        };
+        assert!(!update(&manual, &achievements, now).hide_art);
     }
 
     #[test]

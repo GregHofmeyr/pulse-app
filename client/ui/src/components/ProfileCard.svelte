@@ -4,6 +4,7 @@
   // where they are in voice. Used by the quick
   // card popover, the full profile and the editor's preview.
   import { untrack } from 'svelte'
+  import { completionLine } from '../lib/achievements'
   import type { Attachment } from 'svelte/attachments'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
@@ -195,6 +196,10 @@
         {#if stats}
           <div><dt>Member since</dt><dd>{formatMemberSince(stats.member_since)}</dd></div>
           <div><dt>Voice</dt><dd>{formatVoice(stats.voice_seconds)}</dd></div>
+          {#if stats.steam_completion != null}
+            <!-- Steam account completion rate (#379), while they share achievements -->
+            <div data-steam-completion><dt>Steam</dt><dd>{completionLine(stats.steam_completion, stats.steam_perfect_games)}</dd></div>
+          {/if}
         {/if}
         {#if voiceRoom}<div class="room"><Icon name="speaker" size={quick ? 16 : 14} /><span>In {voiceRoom}</span></div>{/if}
       </dl>

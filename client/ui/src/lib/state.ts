@@ -997,6 +997,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     // Toasts and the [NEW] count live outside the reducer.
     case 'BadgeEarned':
       return s
+    // Your Steam link (#379) is kept in lib/steam.svelte.ts.
+    case 'SteamLinkChanged':
+      return s
     // The inbox (#306) is kept in lib/inbox.svelte.ts.
     case 'InboxItemAdded':
     case 'InboxUpdated':
