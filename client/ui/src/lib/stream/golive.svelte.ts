@@ -2,6 +2,7 @@
 import { StreamRoom, type Picked } from './room'
 import { isWindows } from './platform'
 import { errorText } from '../tauri'
+import { streamApi } from './stream.svelte'
 
 export const goLiveUi = $state({
   /** The captured source the dialog is configuring; the dialog owns the track until it hands it off. */
@@ -15,6 +16,8 @@ export const goLiveUi = $state({
 /** Asks for a screen/window to share; the dialog opens once one is picked. */
 export async function pickSource(channelId: string): Promise<void> {
   if (!isWindows()) return
+  // watching a stream elsewhere as a ghost: going live would end it, so that's asked first
+  if (streamApi.goLiveClashes(channelId, () => pickSource(channelId))) return
   goLiveUi.error = ''
   try {
     const picked = await StreamRoom.pick()

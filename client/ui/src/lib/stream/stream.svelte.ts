@@ -29,6 +29,15 @@ type Live = { channelId: string; res: Res; fps: Fps; audio: boolean; allowGhosts
 /** `ghost`: watched from outside that voice channel, under an anonymous identity (counted, never named). */
 export type Watching = { channelId: string; streamer: string; quality: Quality; view: View; ghost?: boolean }
 
+/**
+ * A stream action that would end another of yours, put to you first (#339): one `#v` connection
+ * either shares in your call or watches elsewhere as a ghost, never both. `watch`: you're live in
+ * `liveIn`, and watching `streamer` in `channelId` would end it. `live`: you watch `streamer` in
+ * `channelId` as a ghost, and going live in `liveIn` would end that. `run` is the action itself,
+ * run once you choose to stop the other.
+ */
+export type StreamClash = { kind: 'watch' | 'live'; liveIn: string; channelId: string; streamer: string; run: () => unknown }
+
 /** How many streams you can watch at once; at the cap, a new watch stops the oldest first. */
 export const MAX_WATCHED = 1
 
@@ -48,6 +57,8 @@ export const stream = $state({
   volumes: loadStreamVolumes() as Record<string, number>,
   /** While live with stream audio: the source heard and whether it has been (from Rust, every `SOUND_POLL_MS`). */
   sound: null as SoundStatus | null,
+  /** A choice waiting on you before an action ends another stream of yours (the shell asks). */
+  clash: null as StreamClash | null,
 })
 
 const SOUND_POLL_MS = 2_000
@@ -446,6 +457,7 @@ async function endWatches(pred: (w: Watching) => boolean, announce: boolean) {
  *  checked the stream allows ghosts). */
 async function watch(channelId: string, streamer: string): Promise<void> {
   if (findWatch(channelId, streamer)) return // a second click
+  if (watchClashes(channelId, streamer, () => watch(channelId, streamer))) return
   const ghost = voice.channelId !== channelId
   const k = streamKey(channelId, streamer)
   const gen = generation()
@@ -493,6 +505,18 @@ async function watch(channelId: string, streamer: string): Promise<void> {
     await endWatch(channelId, streamer, true)
     await releaseIfIdle()
   }
+}
+
+/** The channel we're live in, or going live in. */
+const liveChannel = () => stream.live?.channelId ?? pendingLive?.channelId ?? null
+
+/** Watching `streamer` in `channelId` would be a ghost's watch and end the stream we're live with
+ *  (or going live with) in our call: ask first (`stream.clash`, with `run` to run on Stop & watch). */
+function watchClashes(channelId: string, streamer: string, run: () => unknown): boolean {
+  const liveIn = liveChannel()
+  if (!liveIn || liveIn === channelId || voice.channelId === channelId) return false
+  stream.clash = { kind: 'watch', liveIn, channelId, streamer, run }
+  return true
 }
 
 const CAPTURE_ENDED = 'The shared window or screen closed'
@@ -606,8 +630,38 @@ export const streamApi = {
   /**
    * Watches `streamer` into a `<video>` this store owns (`videoOf`); a second call for the same
    * stream does nothing. At `MAX_WATCHED` the oldest watch stops first. Errors land in `stream.watchError`.
+   * While we're live, a ghost's watch elsewhere asks first instead (`stream.clash`).
    */
   watch,
+
+  /** Whether a watch of `streamer` in `channelId` must ask first (and now does); `run` runs on Stop & watch. */
+  watchClashes,
+
+  /** Going live in `channelId` would end a ghost watch elsewhere: ask first (`stream.clash`) and say
+   *  so (true); `run` (going live) runs on Stop & go live. */
+  goLiveClashes(channelId: string, run: () => unknown): boolean {
+    const w = stream.watching.find((x) => x.ghost && x.channelId !== channelId)
+    if (!w) return false
+    stream.clash = { kind: 'live', liveIn: channelId, channelId: w.channelId, streamer: w.streamer, run }
+    return true
+  },
+
+  /** The answer to `stream.clash`: `go` stops the other stream and runs the action; else nothing changes. */
+  async resolveClash(go: boolean): Promise<void> {
+    const c = stream.clash
+    stream.clash = null
+    if (!c || !go) return
+    streamCmd.log({ ev: 'stream_clash', kind: c.kind })
+    if (c.kind === 'watch') {
+      liveGen.cancel()
+      await endLive(true)
+      await c.run()
+      return
+    }
+    // straight from the click (the picker wants it), with the ghost watches ending alongside
+    const ending = endWatches((w) => !!w.ghost && w.channelId !== c.liveIn, true)
+    await Promise.all([ending.then(releaseIfIdle), c.run()])
+  },
 
   async unwatch(channelId: string, streamer: string): Promise<void> {
     await endWatch(channelId, streamer, true)

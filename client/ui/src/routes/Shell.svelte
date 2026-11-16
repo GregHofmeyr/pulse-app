@@ -34,6 +34,7 @@
   import CrashReportPrompt from '../components/CrashReportPrompt.svelte'
   import ConversationList from '../components/ConversationList.svelte'
   import GoLiveDialog from '../components/GoLiveDialog.svelte'
+  import StreamClashDialog from '../components/StreamClashDialog.svelte'
   import QotyBanner from '../components/QotyBanner.svelte'
   import QotyStart from '../components/QotyStart.svelte'
   import PeopleBoard from '../components/PeopleBoard.svelte'
@@ -875,6 +876,7 @@
 {#if settingsServer}<ServerSettings server={settingsServer} onClose={() => (serverSettingsId = null)} />{/if}
 {#if settingsOpen}<Settings section={settingsSection} onLogout={logout} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
+{#if stream.clash}<StreamClashDialog clash={stream.clash} />{/if}
 {#if qotyStart}<QotyStart serverId={qotyStart} onClose={() => (qotyStart = null)} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
 {#if switcherOpen}<QuickSwitcher context={quickContext} {recents} {here} messages={quickMessages} everywhere={quickEverywhere} onGo={switcherGo} onClose={() => (switcherOpen = false)} />{/if}

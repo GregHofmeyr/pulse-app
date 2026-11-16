@@ -1135,6 +1135,102 @@ describe('ghost viewers (#46)', () => {
   })
 })
 
+describe('one stream connection: sharing here or a ghost watch elsewhere, never both (#339)', () => {
+  it('watching_elsewhere_while_live_asks_first_and_cancel_keeps_the_share', async () => {
+    const { streamApi, stream, room } = await goneLive()
+    fake.args = []
+    core.calls = []
+    await streamApi.watch('c2', 'alex') // the participant menu, a tile, the LIVE popover
+    expect(stream.clash).toMatchObject({ kind: 'watch', liveIn: 'c1', channelId: 'c2', streamer: 'alex' })
+    expect(fake.args).toEqual([]) // nothing connected yet: the share's connection is untouched
+    expect(room.disconnect).not.toHaveBeenCalled()
+    expect(stream.watching).toEqual([])
+    await streamApi.resolveClash(false)
+    expect(stream.clash).toBeNull()
+    expect(stream.live?.channelId).toBe('c1')
+    expect(calls('stream_watch')).toEqual([])
+    expect(calls('stream_stop')).toEqual([])
+  })
+
+  it('stop_and_watch_ends_the_share_then_watches_as_a_ghost', async () => {
+    const { streamApi, stream, findWatch } = await goneLive(true)
+    await streamApi.watch('c2', 'alex')
+    core.calls = []
+    fake.connect = async () => fakeRoom()
+    await streamApi.resolveClash(true)
+    expect(stream.clash).toBeNull()
+    expect(stream.live).toBeNull()
+    expect(calls('stream_stop')).toEqual([{ channelId: 'c1' }])
+    expect(calls('stream_audio_stop')).toHaveLength(1)
+    expect(fake.args.at(-1)).toEqual(['c2', true])
+    expect(findWatch('c2', 'alex')?.ghost).toBe(true)
+    expect(calls('stream_watch')).toEqual([{ channelId: 'c2', streamer: 'alex', ghost: true }])
+  })
+
+  it('a_go_live_in_flight_counts_as_live', async () => {
+    const { streamApi, stream } = await load()
+    fake.connect = async () => fakeRoom()
+    const announcing = deferred()
+    core.handlers.stream_go_live = () => announcing.p
+    const going = streamApi.goLive('c1', fakeTrack() as never, 'Game', settings(false))
+    await until(() => calls('stream_go_live').length === 1, 'the announce')
+    await streamApi.watch('c2', 'alex')
+    expect(stream.clash?.kind).toBe('watch')
+    announcing.resolve(undefined)
+    await going
+    await streamApi.resolveClash(false)
+  })
+
+  it('watching_in_your_own_call_while_live_just_watches', async () => {
+    const { streamApi, stream, findWatch } = await goneLive()
+    await streamApi.watch('c1', 'sam')
+    expect(stream.clash).toBeNull()
+    expect(findWatch('c1', 'sam')).toBeDefined()
+    expect(stream.live).not.toBeNull()
+  })
+
+  /** In c1's call, watching alex in c2 as a ghost. */
+  async function ghostingElsewhere() {
+    const mod = await load()
+    const room = fakeRoom()
+    fake.connect = async () => room
+    await mod.streamApi.watch('c2', 'alex')
+    expect(mod.findWatch('c2', 'alex')?.ghost).toBe(true)
+    return { ...mod, room }
+  }
+
+  it('going_live_while_ghost_watching_elsewhere_asks_first_and_cancel_keeps_the_watch', async () => {
+    const { streamApi, stream, room } = await ghostingElsewhere()
+    const run = vi.fn()
+    expect(streamApi.goLiveClashes('c1', run)).toBe(true)
+    expect(stream.clash).toMatchObject({ kind: 'live', liveIn: 'c1', channelId: 'c2', streamer: 'alex' })
+    await streamApi.resolveClash(false)
+    expect(run).not.toHaveBeenCalled()
+    expect(stream.watching).toHaveLength(1)
+    expect(room.disconnect).not.toHaveBeenCalled()
+  })
+
+  it('stop_and_go_live_ends_the_ghost_watch_and_goes_on_to_the_picker', async () => {
+    const { streamApi, stream, room } = await ghostingElsewhere()
+    const run = vi.fn()
+    streamApi.goLiveClashes('c1', run)
+    core.calls = []
+    await streamApi.resolveClash(true)
+    expect(run).toHaveBeenCalledOnce()
+    expect(stream.watching).toEqual([])
+    expect(calls('stream_unwatch')).toEqual([{ channelId: 'c2', streamer: 'alex' }])
+    expect(room.disconnect).toHaveBeenCalled()
+  })
+
+  it('going_live_with_no_ghost_watch_elsewhere_just_goes', async () => {
+    const { streamApi, stream } = await load()
+    fake.connect = async () => fakeRoom()
+    await streamApi.watch('c1', 'sam') // as yourself, in the call you go live in
+    expect(streamApi.goLiveClashes('c1', vi.fn())).toBe(false)
+    expect(stream.clash).toBeNull()
+  })
+})
+
 describe('the stream connection lost for good', () => {
   it('ends our share, says so, and tells the server', async () => {
     const { stream, room } = await goneLive()

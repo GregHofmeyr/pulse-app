@@ -67,6 +67,8 @@ export function watchModeFor(channelId: string, streamer: string) {
  *  the call, as a ghost when the stream allows it; else by joining the call first. */
 export function watchStream(channelId: string, streamer: string) {
   if (watchModeFor(channelId, streamer) === 'join') return joinAndWatch(channelId, streamer)
+  // live in your call: watching here would end it, so that's asked first (and this runs again on yes)
+  if (streamApi.watchClashes(channelId, streamer, () => watchStream(channelId, streamer))) return
   removeToast(channelId, streamer)
   void streamApi.watch(channelId, streamer)
   openFull({ channelId, streamer })
