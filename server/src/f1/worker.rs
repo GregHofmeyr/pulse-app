@@ -212,6 +212,10 @@ async fn post_results(
     let mut scorers: Vec<UserId> = vec![];
     let mut scores_msg = None;
     if let Some(wid) = weekend {
+        let field = super::weekend_card(&mut tx, wid)
+            .await?
+            .map(|(_, _, c)| c.drivers)
+            .unwrap_or_default();
         let predictions = super::predictions_of(&mut tx, wid).await?;
         let mut scores: Vec<F1Score> = Vec::with_capacity(predictions.len());
         for p in predictions {
@@ -252,6 +256,7 @@ async fn post_results(
                 round: w.round,
                 race_name: w.race_name.clone(),
                 podium: podium_drivers,
+                drivers: field,
                 scores,
                 season_table,
                 weekend_message_id: Some(wid),

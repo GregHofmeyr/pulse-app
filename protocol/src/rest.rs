@@ -3274,6 +3274,9 @@ pub struct F1ScoresCard {
     pub race_name: String,
     /// The real podium, P1 to P3.
     pub podium: Vec<F1Driver>,
+    /// The weekend card's field, to name everyone's picks.
+    #[serde(default)]
+    pub drivers: Vec<F1Driver>,
     /// Highest first.
     pub scores: Vec<F1Score>,
     /// The season so far in this server, highest first.

@@ -499,6 +499,11 @@ async fn a_race_weekend_from_the_card_to_the_scores() {
     );
     assert_eq!(sc.weekend_message_id, Some(card.id));
     assert_eq!(
+        sc.drivers.len(),
+        5,
+        "the field, to name picks off the podium"
+    );
+    assert_eq!(
         sc.season_table.iter().map(|r| r.points).collect::<Vec<_>>(),
         [5, 2]
     );

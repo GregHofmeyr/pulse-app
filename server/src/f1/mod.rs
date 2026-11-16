@@ -370,6 +370,7 @@ mod tests {
                 round: 1,
                 race_name: "Desert Grand Prix".into(),
                 podium: vec![d("a")],
+                drivers: vec![d("a")],
                 scores: vec![F1Score {
                     user_id: UserId::new(),
                     picks: picks(&["a", "b", "c"]),
@@ -425,6 +426,7 @@ mod tests {
             round: 1,
             race_name: "Desert GP".into(),
             podium: vec![],
+            drivers: vec![],
             scores: vec![
                 F1Score {
                     user_id: UserId::new(),

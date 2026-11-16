@@ -13,6 +13,10 @@ export type F1ScoresCard = { season: number, round: number, race_name: string,
  */
 podium: Array<F1Driver>, 
 /**
+ * The weekend card's field, to name everyone's picks.
+ */
+drivers: Array<F1Driver>, 
+/**
  * Highest first.
  */
 scores: Array<F1Score>, 
