@@ -4,6 +4,7 @@ pub mod fake_deadlock;
 pub mod fake_giphy;
 pub mod fake_provider;
 pub mod fake_s3;
+pub mod fake_sports;
 pub mod fake_steam;
 
 use std::net::SocketAddr;
@@ -30,6 +31,8 @@ pub struct TestApp {
     pub steam: crate::steam::Steam,
     /// The server's Deadlock state (the same one its routes use).
     pub deadlock: crate::deadlock::Deadlock,
+    /// The server's sports state (the same one its routes use).
+    pub sports: crate::sports::Sports,
     /// The fake S3 behind `cfg.clips`, unless the test brought its own store or none.
     pub s3: Option<fake_s3::FakeS3>,
     _dir: tempfile::TempDir,
@@ -60,6 +63,7 @@ impl TestApp {
             embeds: self.embeds.clone(),
             steam: self.steam.clone(),
             deadlock: self.deadlock.clone(),
+            sports: self.sports.clone(),
             r2: self
                 .cfg
                 .clips
@@ -109,6 +113,12 @@ pub fn test_config() -> Config {
         plans: crate::config::PlansConfig {
             geocode_base: "http://127.0.0.1:1".into(),
             forecast_base: "http://127.0.0.1:1".into(),
+        },
+        // no key (sports dormant) and API-Sports unreachable unless a test points it at `fake_sports`
+        sports: crate::config::SportsConfig {
+            football_base: "http://127.0.0.1:1".into(),
+            rugby_base: "http://127.0.0.1:1".into(),
+            ..Default::default()
         },
         // Jolpica unreachable unless a test points it at a fake; no spacing between calls
         f1: crate::config::F1Config {
@@ -188,10 +198,12 @@ async fn spawn_inner(mut cfg: Config, dir: tempfile::TempDir, with_clips: bool) 
     let embeds = Arc::new(crate::embeds::Unfurler::new(&cfg.embeds));
     let steam = crate::steam::Steam::new(&cfg.steam);
     let deadlock = crate::deadlock::Deadlock::new(&cfg.deadlock);
+    let sports = crate::sports::Sports::new(&cfg.sports);
     let state = AppState {
         embeds: embeds.clone(),
         steam: steam.clone(),
         deadlock: deadlock.clone(),
+        sports: sports.clone(),
         r2: cfg
             .clips
             .as_ref()
@@ -223,6 +235,7 @@ async fn spawn_inner(mut cfg: Config, dir: tempfile::TempDir, with_clips: bool) 
         embeds,
         steam,
         deadlock,
+        sports,
         s3,
         _dir: dir,
     }

@@ -131,6 +131,7 @@ async fn create(
         deadlock: None,
         plan: None,
         plan_reminder: None,
+        sports: None,
         f1: None,
     };
     let stored = Stored {

@@ -74,6 +74,10 @@ import type { SetDeadlockChannelRequest } from './protocol/SetDeadlockChannelReq
 import type { DeadlockRanks } from './protocol/DeadlockRanks'
 import type { DeadlockProfile } from './protocol/DeadlockProfile'
 import type { AchievementsChannel } from './protocol/AchievementsChannel'
+import type { SportsStatus } from './protocol/SportsStatus'
+import type { SportsTeams } from './protocol/SportsTeams'
+import type { SportsChannel } from './protocol/SportsChannel'
+import type { SportsLeague } from './protocol/SportsLeague'
 import type { Sound as StreamSound, SoundProbe, SoundStatus, WindowRef } from './stream/sound'
 
 /** `login` / `login_mfa`: signed in, waiting for the second step, or (second step only) the ticket is gone. */
@@ -673,6 +677,18 @@ export const f1Cmd = {
   status: (serverId: string) => invoke<F1Status>('f1_status', { serverId }),
   setChannel: (serverId: string, channelId: string | null) => invoke<F1Status>('set_f1_channel', { serverId, channelId }),
   predict: (messageId: string, picks: string[] | null) => invoke<F1Prediction[]>('f1_predict', { messageId, picks }),
+}
+
+/** Sports score pings (#385): your follows and switch, a league's teams (the server caches them; the app never calls
+ *  API-Sports), and a server's Sports channel (its owner's pick, or none). */
+export const sportsCmd = {
+  status: () => invoke<SportsStatus>('sports_status'),
+  setPings: (on: boolean) => invoke<SportsStatus>('set_sports_pings', { on }),
+  follow: (league: SportsLeague, teamId: number) => invoke<SportsStatus>('follow_team', { league, teamId }),
+  unfollow: (league: SportsLeague, teamId: number) => invoke<SportsStatus>('unfollow_team', { league, teamId }),
+  teams: (league: SportsLeague) => invoke<SportsTeams>('sports_teams', { league }),
+  channel: (serverId: string) => invoke<SportsChannel>('sports_channel', { serverId }),
+  setChannel: (serverId: string, channelId: string | null) => invoke<SportsChannel>('set_sports_channel', { serverId, channelId }),
 }
 
 /** Tauri rejects with the command's error string. */

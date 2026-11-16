@@ -117,6 +117,18 @@ repository.
 - **The bot.** For fresh match data a user friends one of deadlock-api's Steam bots. Settings links deadlock-api's own
   site for the invite and warns that the real bot never asks for logins, codes or trades.
 
+**Sports score pings (#385): only on a server with an API-Sports key; each person's own switch (on by default).**
+- **What the server reads.** API-Sports (api-football and api-rugby): each followed league's schedule about once a day,
+  the league's team list when someone first searches it (kept a week), and the live score of a followed team's match
+  from kick-off to full time. Nothing is read without the key (`PULSE_API_SPORTS_KEY`), nor while nobody with the switch
+  on follows a team in a server with a Sports channel.
+- **What it sends.** League and fixture ids, seasons and dates: nothing about any user. The key goes in the
+  `x-apisports-key` header and is never logged. A server-wide count keeps each sport under 90 requests a UTC day (the
+  free plan allows 100); API-Sports' refusals back the client off.
+- **What others see.** The teams you follow are kept on the server and shown to nobody but you, except that a match
+  card in a server's Sports channel (the owner's pick, none by default) names the members who follow either team.
+  With **Sports score pings** off your follows bring no cards and you aren't named. Clients never contact API-Sports.
+
 **Microphone.** The microphone is opened when the user joins a voice channel or runs the microphone test in Settings.
 Audio goes to the SFU (section 2).
 
@@ -508,6 +520,7 @@ past that, the least recently used bucket is dropped.
 | Starting a Steam link, unlinking, the Steam setting, an Achievements channel change | in the "changes other people hear about" bucket above |
 | Steam Web API calls (achievements) | 50,000/day, server-wide |
 | deadlock-api match-history reads | 8/hour without a key, 240/hour with one, server-wide; paused for `Retry-After` on a 429 |
+| API-Sports requests (sports score pings) | 90/day per sport (football, rugby), server-wide, counted in the database |
 | GIF settings reads and favourite adds and removes (together) | burst of 30, then one every 2 seconds per user |
 
 Real-time frames from the client are capped at 64 KB, and messages at 4,000 characters.
@@ -706,8 +719,8 @@ and the app frames it, so the player gets an HTTPS parent with a real origin.
   - Images are pinned by digest. LiveKit and Caddy are pinned in the compose file. The Pulse server image is pinned to
     the digest pulled at deploy time, so a moved tag cannot change what runs.
 - **Secrets.** The server's secrets live in a mode-`0600` file owned by the service user: the LiveKit secret,
-  `PULSE_TOTP_KEY`, the clips bucket's keys, `GIPHY_API_KEY`, `PULSE_STEAM_API_KEY` and `PULSE_DEADLOCK_API_KEY` (both
-  optional; the server never logs them or prints them in its config's debug output).
+  `PULSE_TOTP_KEY`, the clips bucket's keys, `GIPHY_API_KEY`, `PULSE_STEAM_API_KEY`, `PULSE_DEADLOCK_API_KEY` and
+  `PULSE_API_SPORTS_KEY` (all three optional; the server never logs them or prints them in its config's debug output).
 - **Backups.** Provisioning leaves backups off until the operator sets the encryption key and object-store details.
   Once configured, every night and before each deploy, the database and uploaded media are encrypted with `age` and
   stored in an S3-compatible object store. That object store is with a different provider from the VM. The

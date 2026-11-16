@@ -60,6 +60,8 @@ pub struct Config {
     pub deadlock: DeadlockConfig,
     /// Plan something's forecast (#387): where Open-Meteo is.
     pub plans: PlansConfig,
+    /// Sports score pings (#385) from API-Sports.
+    pub sports: SportsConfig,
     /// F1 race weekends (#386): where Jolpica-F1 is.
     pub f1: F1Config,
 }
@@ -67,7 +69,7 @@ pub struct Config {
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
     limits, stream_media_timeout, media_dir, media_min_free_bytes, updates_dir, totp_key, clips, embeds,
-    launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock, steam, deadlock, plans, f1 ;
+    launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock, steam, deadlock, plans, sports, f1 ;
     livekit_secret
 });
 
@@ -220,6 +222,70 @@ fn deadlock(get: impl Fn(&str) -> Option<String>) -> DeadlockConfig {
     }
 }
 
+/// Sports score pings (#385): fixtures, live scores and team lists from API-Sports (api-football v3 and api-rugby v1),
+/// whose free plan allows 100 requests a day per sport. Without a key nothing is ever fetched or posted.
+#[derive(Clone)]
+pub struct SportsConfig {
+    /// `PULSE_API_SPORTS_KEY` (sent as `x-apisports-key`); `None` (unset or empty) = sports aren't set up on this
+    /// server. A secret: never logged.
+    pub api_key: Option<String>,
+    /// api-football's base (`https://v3.football.api-sports.io`); tests point it at a fake.
+    pub football_base: String,
+    /// api-rugby's base (`https://v1.rugby.api-sports.io`); tests point it at a fake.
+    pub rugby_base: String,
+    /// How often the poller wakes (1 min): what's due is decided each round.
+    pub poll_every: Duration,
+    /// How often a followed league's schedule is read (20 h: about once a day).
+    pub schedule_every: Duration,
+    /// How long a league's team list is kept (7 days).
+    pub teams_every: Duration,
+    /// The shortest gap between live reads of one sport (5 min); longer when the day's allowance runs short.
+    pub live_every: Duration,
+    /// How long after kick-off a match is read live (2.5 h), and the longest while it still isn't over (4 h).
+    pub window: Duration,
+    pub max_window: Duration,
+    /// How long before kick-off the match-day banner posts (6 h).
+    pub banner_lead: Duration,
+    /// Most requests a UTC day per sport, whatever goes wrong (90: the free plan's 100 less headroom).
+    pub daily_cap: u32,
+    /// The first wait after API-Sports fails (1 min), doubling per failure in a row up to an hour; tests shorten it.
+    pub retry_base: Duration,
+}
+
+pulse_protocol::redacting_debug!(SportsConfig {
+    football_base, rugby_base, poll_every, schedule_every, teams_every, live_every, window, max_window, banner_lead,
+    daily_cap, retry_base ; api_key
+});
+
+impl Default for SportsConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            football_base: "https://v3.football.api-sports.io".into(),
+            rugby_base: "https://v1.rugby.api-sports.io".into(),
+            poll_every: Duration::from_secs(60),
+            schedule_every: Duration::from_secs(20 * 3600),
+            teams_every: Duration::from_secs(7 * 24 * 3600),
+            live_every: Duration::from_secs(300),
+            window: Duration::from_secs(150 * 60),
+            max_window: Duration::from_secs(4 * 3600),
+            banner_lead: Duration::from_secs(6 * 3600),
+            daily_cap: 90,
+            retry_base: Duration::from_secs(60),
+        }
+    }
+}
+
+/// The sports settings from `PULSE_API_SPORTS_KEY`: unset or blank = no key (sports stay dormant).
+fn sports(get: impl Fn(&str) -> Option<String>) -> SportsConfig {
+    SportsConfig {
+        api_key: get("PULSE_API_SPORTS_KEY")
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty()),
+        ..SportsConfig::default()
+    }
+}
+
 /// GIPHY (#58). The server never calls GIPHY (its terms forbid proxying): it hands the key to signed-in apps.
 #[derive(Clone)]
 pub struct GiphyConfig {
@@ -302,6 +368,7 @@ impl Config {
             steam: steam(|k| std::env::var(k).ok()),
             deadlock: deadlock(|k| std::env::var(k).ok()),
             plans: PlansConfig::default(),
+            sports: sports(|k| std::env::var(k).ok()),
             f1: F1Config::default(),
         })
     }
@@ -558,6 +625,19 @@ mod tests {
     }
 
     #[test]
+    fn sports_env() {
+        assert!(sports(|_| None).api_key.is_none());
+        assert!(sports(|_| Some("  ".into())).api_key.is_none());
+        let set = sports(|k| (k == "PULSE_API_SPORTS_KEY").then(|| " as-k3y ".into()));
+        assert_eq!(set.api_key.as_deref(), Some("as-k3y"));
+        assert!(set.daily_cap < 100, "below the free plan's 100 a day");
+        assert!(
+            !format!("{set:?}").contains("as-k3y"),
+            "the key is redacted"
+        );
+    }
+
+    #[test]
     fn launch_date_env() {
         assert!(launch_date(None).unwrap().is_none());
         assert!(launch_date(Some("")).unwrap().is_none());
@@ -643,6 +723,10 @@ mod tests {
                 ..DeadlockConfig::default()
             },
             plans: PlansConfig::default(),
+            sports: SportsConfig {
+                api_key: Some("SECRET-SPORTS".into()),
+                ..SportsConfig::default()
+            },
             f1: F1Config::default(),
         };
         let d = format!("{cfg:?}");

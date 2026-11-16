@@ -4,7 +4,7 @@ use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId};
 use pulse_protocol::rest::{
     AchievementCard, CallLine, DeadlockCard, Message, MessageKind, PinLine, PollEnded, QotyCard,
-    StageShareLine, WheelSpin,
+    SportsCard, StageShareLine, WheelSpin,
 };
 use sqlx::SqliteConnection;
 
@@ -76,6 +76,7 @@ pub async fn insert(
         deadlock: deadlock(&stored).map(Box::new),
         plan: None,
         plan_reminder: crate::plans::reminder(&stored).map(Box::new),
+        sports: sports(&stored).map(Box::new),
         f1: crate::f1::card(&stored).map(Box::new),
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
@@ -232,6 +233,25 @@ pub fn deadlock(payload: &str) -> Option<DeadlockCard> {
     serde_json::from_value(v).ok()
 }
 
+/// The payload `type` of a sports card (#385).
+pub const SPORTS: &str = "sports";
+
+/// A sports card's stored payload.
+pub fn sports_payload(card: &SportsCard) -> AppResult<serde_json::Value> {
+    let mut v = serde_json::to_value(card).map_err(anyhow::Error::from)?;
+    v["type"] = SPORTS.into();
+    Ok(v)
+}
+
+/// The sports card in a stored payload, if it is one.
+pub fn sports(payload: &str) -> Option<SportsCard> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    if v.get("type")?.as_str()? != SPORTS {
+        return None;
+    }
+    serde_json::from_value(v).ok()
+}
+
 /// "a", "a and b", "a, b and c".
 pub fn join_names(names: &[String]) -> String {
     match names {
@@ -358,6 +378,40 @@ mod tests {
         );
         assert_eq!(deadlock(r#"{"type":"achievement"}"#), None);
         assert_eq!(achievement(&stored), None);
+    }
+
+    #[test]
+    fn a_sports_card_round_trips_through_its_payload() {
+        use pulse_protocol::rest::{SportsLeague, SportsPhase, SportsScorer, SportsSide};
+        let card = SportsCard {
+            league: SportsLeague::Psl,
+            fixture_id: 1_200_001,
+            phase: SportsPhase::Live,
+            kickoff: "2026-11-21T17:30:00Z".into(),
+            status: "2H".into(),
+            minute: Some(63),
+            home: SportsSide {
+                team_id: 1,
+                name: "Home FC".into(),
+                score: Some(1),
+            },
+            away: SportsSide {
+                team_id: 2,
+                name: "Away FC".into(),
+                score: Some(0),
+            },
+            scorers: vec![SportsScorer {
+                home: true,
+                name: "A. Striker".into(),
+                minute: Some(41),
+                note: Some("pen".into()),
+            }],
+            followers: vec![],
+        };
+        let stored = sports_payload(&card).unwrap().to_string();
+        assert_eq!(sports(&stored), Some(card));
+        assert_eq!(deadlock(&stored), None);
+        assert_eq!(sports(r#"{"type":"deadlock","kind":"patch"}"#), None);
     }
 
     #[test]
