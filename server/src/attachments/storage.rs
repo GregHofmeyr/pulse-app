@@ -1,9 +1,12 @@
 //! The `storage` command (#57, `just storage`): what the bucket holds by kind (message files,
-//! temporary files, clips) and what's on disk (sounds, emoji), with R2's estimated monthly cost.
+//! temporary files, unsent uploads, clips) and what's on disk (clip thumbnails, sounds, emoji,
+//! profile pictures and banners, quote pictures, link preview thumbnails, badge art), with R2's
+//! estimated monthly cost.
 
 use sqlx::SqlitePool;
 
 use crate::error::AppResult;
+use crate::media::{Location, MediaKind};
 
 /// One line of the report.
 #[derive(Debug, PartialEq)]
@@ -24,34 +27,27 @@ async fn sum(db: &SqlitePool, sql: &str) -> AppResult<(u64, u64)> {
 pub async fn usage(db: &SqlitePool) -> AppResult<Vec<Kind>> {
     let rows = [
         (
-            // unsent uploads too, until the sweep removes them
             "attachments",
-            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM attachments WHERE expires_at IS NULL",
+            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM attachments
+             WHERE expires_at IS NULL AND message_id IS NOT NULL",
             true,
         ),
         (
             "temp",
             "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM attachments
-             WHERE expires_at IS NOT NULL AND purged_at IS NULL",
+             WHERE expires_at IS NOT NULL AND message_id IS NOT NULL AND purged_at IS NULL",
             true,
         ),
         (
-            "clips",
-            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE kind = 'clip'",
+            // started and not sent (normal and temporary), until sent or swept; for a big file
+            // its declared size, whatever of it is stored so far (#297)
+            "unsent",
+            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM attachments
+             WHERE message_id IS NULL AND purged_at IS NULL",
             true,
-        ),
-        (
-            "sounds",
-            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE kind = 'sound'",
-            false,
-        ),
-        (
-            "emoji",
-            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE kind = 'emoji'",
-            false,
         ),
     ];
-    let mut out = Vec::with_capacity(rows.len());
+    let mut out = Vec::with_capacity(rows.len() + 9);
     for (label, sql, r2) in rows {
         let (count, bytes) = sum(db, sql).await?;
         out.push(Kind {
@@ -59,6 +55,30 @@ pub async fn usage(db: &SqlitePool) -> AppResult<Vec<Kind>> {
             count,
             bytes,
             r2,
+        });
+    }
+    // Stored media by kind (only clips are in the bucket).
+    for (label, kind) in [
+        ("clips", MediaKind::Clip),
+        ("clip thumbs", MediaKind::ClipThumb),
+        ("sounds", MediaKind::Sound),
+        ("emoji", MediaKind::Emoji),
+        ("avatars", MediaKind::Avatar),
+        ("banners", MediaKind::Banner),
+        ("quote images", MediaKind::Quote),
+        ("link thumbs", MediaKind::LinkThumb),
+        ("badge art", MediaKind::BadgeArt),
+    ] {
+        let (count, bytes): (i64, i64) =
+            sqlx::query_as("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE kind = ?")
+                .bind(kind.as_str())
+                .fetch_one(db)
+                .await?;
+        out.push(Kind {
+            label,
+            count: count as u64,
+            bytes: bytes as u64,
+            r2: kind.location() == Location::R2,
         });
     }
     Ok(out)

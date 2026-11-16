@@ -19,8 +19,9 @@ enum Cmd {
     /// Print each server's live clip storage and the estimated monthly cost (needs only
     /// PULSE_DB_URL)
     ClipStorage,
-    /// Print what the bucket holds by kind (message files, temporary files, clips) and what's on
-    /// disk (sounds, emoji), with the estimated monthly cost (needs only PULSE_DB_URL)
+    /// Print what the bucket holds by kind (message files, temporary files, unsent uploads, clips)
+    /// and what's on disk (thumbnails, sounds, emoji, avatars, …), with the estimated monthly cost
+    /// (needs only PULSE_DB_URL)
     Storage,
     /// Print a fresh single-use invite code (bootstraps the first account)
     CreateInvite,

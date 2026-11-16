@@ -425,33 +425,74 @@ async fn sweep_and_cancel_abort_unfinished_multipart_uploads() {
 async fn the_storage_report_counts_each_kind() {
     let w = world().await;
     let (app, t, ch) = (&w.app, &w.alex.1, w.text.id);
-    let r = post_json(
-        app,
-        t,
-        &format!("/channels/{ch}/attachments"),
-        json!({ "name": "a.txt", "size": 10 * MB, "content_type": "text/plain" }),
-    )
-    .await;
-    assert_eq!(r.status(), 200);
-    start_ok(app, t, ch, BIG, 1).await;
+    let path = format!("/channels/{ch}/attachments");
+    let small = |size: u64| {
+        post_json(
+            app,
+            t,
+            &path,
+            json!({ "name": "a.txt", "size": size, "content_type": "text/plain" }),
+        )
+    };
+    let sent: AttachmentUpload = small(10 * MB).await.json().await.unwrap();
+    small(3 * MB).await; // started, never sent
+    let temp = start_ok(app, t, ch, BIG, 1).await;
+    start_ok(app, t, ch, BIG, 1).await; // started, never sent
     let purged = start_ok(app, t, ch, BIG, 1).await;
+    // two of them sent (straight in the database: the report reads only rows)
+    let m = send(app, t, ch, "files").await;
+    for id in [sent.id, temp.id, purged.id] {
+        sqlx::query("UPDATE attachments SET message_id = ? WHERE id = ?")
+            .bind(m.id.to_string())
+            .bind(id.to_string())
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
     sqlx::query("UPDATE attachments SET purged_at = ? WHERE id = ?")
         .bind(pulse_server::db::now())
         .bind(purged.id.to_string())
         .execute(&app.db)
         .await
         .unwrap();
+    // pictures on disk: a clip's poster, two profile pictures, a banner
+    for (hash, kind, size) in [
+        ("h1", "clip_thumb", 100),
+        ("h2", "avatar", 200),
+        ("h3", "avatar", 300),
+        ("h4", "banner", 400),
+    ] {
+        sqlx::query(
+            "INSERT INTO media (hash, kind, location, content_type, size, width, height, frames, created_at)
+             VALUES (?, ?, 'disk', 'image/webp', ?, 1, 1, 1, ?)",
+        )
+        .bind(hash)
+        .bind(kind)
+        .bind(size)
+        .bind(pulse_server::db::now())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
     let kinds = pulse_server::attachments::storage::usage(&app.db)
         .await
         .unwrap();
     let of = |label: &str| {
-        let k = kinds.iter().find(|k| k.label == label).unwrap();
+        let k = kinds
+            .iter()
+            .find(|k| k.label == label)
+            .unwrap_or_else(|| panic!("no {label} line"));
         (k.count, k.bytes, k.r2)
     };
     assert_eq!(of("attachments"), (1, 10 * MB, true));
     // the purged one no longer counts
     assert_eq!(of("temp"), (1, BIG, true));
+    // unsent uploads apart, until they're sent or swept
+    assert_eq!(of("unsent"), (2, 3 * MB + BIG, true));
     assert_eq!(of("clips"), (0, 0, true));
+    assert_eq!(of("clip thumbs"), (1, 100, false));
+    assert_eq!(of("avatars"), (2, 500, false));
+    assert_eq!(of("banners"), (1, 400, false));
     assert!(!of("sounds").2 && !of("emoji").2);
 }
 

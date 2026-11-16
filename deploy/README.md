@@ -402,8 +402,9 @@ Setup, once, in the Cloudflare dashboard and on the server:
    (the longest temporary send is 7 days), and abort incomplete multipart uploads after 2 days (a crash between
    starting a big upload and recording it would otherwise leave one open).
 
-`just storage` shows what the bucket holds by kind (message files, temporary files, clips) and what's on the server's
-disk (sounds, emoji), with R2's estimated monthly cost. `just clips-storage` shows how many clips each server holds,
+`just storage` shows what the bucket holds by kind (sent message files, sent temporary files, uploads not sent yet,
+clips) and what's on the server's disk (clip thumbnails, sounds, emoji, profile pictures and banners, quote pictures,
+link preview thumbnails, badge art), with R2's estimated monthly cost. `just clips-storage` shows how many clips each server holds,
 their size and the estimated monthly cost (R2's free tier taken into account).
 
 **No CORS rule is needed on the bucket.** Uploads come from the Tauri client's Rust core (not a browser origin), and
