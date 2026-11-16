@@ -392,7 +392,7 @@ describe('ClipFeed', () => {
 
     it('cancelling the dialog does nothing; a failure shows on the clip', async () => {
       pages = [[clip('M003')]]
-      let answer: () => Promise<unknown> = async () => false
+      let answer: () => Promise<unknown> = async () => null
       const base = invoke.getMockImplementation()!
       invoke.mockImplementation(async (cmd: string, args?: unknown) => (cmd === 'save_clip' ? answer() : base(cmd, args)))
       await show({ layout: 'list' })
@@ -411,7 +411,7 @@ describe('ClipFeed', () => {
       // by class: once saved it is labelled Saved for a moment (#205), and a click then saves it again
       const overlay = (cid: string) => card(cid).querySelector<HTMLButtonElement>('button.clip-dl')
       pages = [[clip('M003')]]
-      let finish: (v: boolean) => void = () => {}
+      let finish: (v: string | null) => void = () => {}
       const base = invoke.getMockImplementation()!
       invoke.mockImplementation(async (cmd: string, args?: unknown) =>
         cmd === 'save_clip' ? new Promise((r) => (finish = r)) : base(cmd, args))
@@ -420,14 +420,14 @@ describe('ClipFeed', () => {
       overlay('M003')!.click()
       await settle()
       expect(saves()).toHaveLength(1)
-      finish(true)
+      finish('/home/kim/Videos/clip.mp4')
       await settle()
       overlay('M003')!.click()
       await settle()
       expect(saves()).toHaveLength(2)
       // let that one land too: the one-at-a-time guard is module state, and a save left open would ignore the
       // next test's clicks on this clip
-      finish(true)
+      finish('/home/kim/Videos/clip.mp4')
       await settle()
     })
   })
@@ -439,7 +439,7 @@ describe('ClipFeed', () => {
       card(cid).querySelector<HTMLButtonElement>('button[aria-label="Clip actions"]')!.click()
       flushSync()
     }
-    let finish: (v: boolean) => void = () => {}
+    let finish: (v: string | null) => void = () => {}
     beforeEach(() => {
       const base = invoke.getMockImplementation()!
       invoke.mockImplementation(async (cmd: string, args?: unknown) =>
@@ -467,7 +467,7 @@ describe('ClipFeed', () => {
       const fill = icon('M003').querySelector<SVGCircleElement>('.fill')!
       const c = Number(fill.getAttribute('stroke-dasharray'))
       expect(Number(fill.getAttribute('stroke-dashoffset'))).toBeCloseTo(c * 0.58, 3)
-      finish(true)
+      finish('/home/kim/Videos/clip.mp4')
       await settle()
     })
 
@@ -475,7 +475,7 @@ describe('ClipFeed', () => {
       await downloading('M003', 2048, null)
       expect(icon('M003').querySelector('.ring')!.classList.contains('spin')).toBe(true)
       expect(icon('M003').getAttribute('aria-label')).toBe('Cancel download')
-      finish(true)
+      finish('/home/kim/Videos/clip.mp4')
       await settle()
     })
 
@@ -485,7 +485,7 @@ describe('ClipFeed', () => {
       await settle()
       expect(calls('cancel_download').map((c) => c[1])).toEqual([{ key: 'clip:M003' }])
       expect(calls('save_clip')).toHaveLength(1)
-      finish(false) // the core stopped and deleted the partial file
+      finish(null) // the core stopped and deleted the partial file
       await settle()
       flushSync()
       expect(icon('M003').getAttribute('aria-label')).toBe('Download clip')
@@ -500,7 +500,7 @@ describe('ClipFeed', () => {
       ;[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === 'Cancel download')!.click()
       await settle()
       expect(calls('cancel_download').map((c) => c[1])).toEqual([{ key: 'clip:M003' }])
-      finish(false)
+      finish(null)
       await settle()
       flushSync()
       openMenu('M003')
@@ -509,14 +509,46 @@ describe('ClipFeed', () => {
 
     it('a finished download says Saved, quietly', async () => {
       await downloading('M003', 100, 100)
-      finish(true)
+      finish('/home/kim/Videos/clip.mp4')
       await settle()
       flushSync()
       expect(icon('M003').getAttribute('aria-label')).toBe('Saved')
       expect(icon('M003').dataset.tip).toBe('Saved')
       expect(card('M003').querySelector('[role="alert"]')).toBeNull()
       openMenu('M003')
-      expect(items()).toEqual(['Saved', 'Pin clip'])
+      expect(items()).toEqual(['Saved', 'Show in folder', 'Pin clip'])
+    })
+
+    it('Saved offers Show in folder (#333), on the video and in the menu, for the file it saved', async () => {
+      await downloading('M003', 100, 100)
+      finish('/home/kim/Videos/clip.mp4')
+      await settle()
+      flushSync()
+      const pill = card('M003').querySelector<HTMLButtonElement>('button.clip-dl-folder')!
+      expect(pill.textContent?.trim()).toBe('Show in folder')
+      pill.click()
+      await settle()
+      expect(calls('reveal_path').map((c) => c[1])).toEqual([{ path: '/home/kim/Videos/clip.mp4' }])
+      openMenu('M003')
+      ;[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === 'Show in folder')!.click()
+      await settle()
+      flushSync()
+      expect(calls('reveal_path')).toHaveLength(2)
+      expect(document.querySelector('[role="menu"]')).toBeNull()
+    })
+
+    it("Show in folder that can't open the folder says so on the clip", async () => {
+      await downloading('M003', 100, 100)
+      finish('/home/kim/Videos/clip.mp4')
+      await settle()
+      flushSync()
+      const base = invoke.getMockImplementation()!
+      invoke.mockImplementation(async (cmd: string, args?: unknown) =>
+        cmd === 'reveal_path' ? Promise.reject("Couldn't open that folder. The file may have moved.") : base(cmd, args))
+      card('M003').querySelector<HTMLButtonElement>('button.clip-dl-folder')!.click()
+      await settle()
+      flushSync()
+      expect(card('M003').querySelector('[role="alert"]')?.textContent).toBe("Couldn't open that folder. The file may have moved.")
     })
   })
 

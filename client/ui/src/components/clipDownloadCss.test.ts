@@ -26,7 +26,7 @@ describe('the clip download icon', () => {
   it('shows while the pointer is over the wall card, left of its full-screen button', () => {
     const card = css('ClipCard.svelte')
     expect(rule(card, /\.card\.[\w-]+:hover \.clip-dl/)).toMatch(/opacity: ?1/)
-    expect(readFileSync(resolve(__dirname, 'ClipCard.svelte'), 'utf8')).toContain('<ClipDownload onclick={download} key={clipKey(message.id)} beside />')
+    expect(readFileSync(resolve(__dirname, 'ClipCard.svelte'), 'utf8')).toContain('<ClipDownload onclick={download} key={clipKey(message.id)} onError={inlineError.show} beside />')
     expect(rule(own, /\.clip-dl\.beside\.[\w-]+/)).toMatch(/right: ?40px/) // .fs is 28px wide at right: 8px
   })
 
@@ -34,5 +34,6 @@ describe('the clip download icon', () => {
     const player = css('ClipPlayer.svelte')
     expect(rule(player, /\.clip\.[\w-]+:hover \.clip-dl/)).toMatch(/opacity: ?1/)
     expect(rule(player, /\.clip\.[\w-]+:fullscreen \.clip-dl/)).toMatch(/display: ?none/)
+    expect(rule(player, /\.clip\.[\w-]+:fullscreen \.clip-dl-folder/)).toMatch(/display: ?none/) // Show in folder (#333)
   })
 })

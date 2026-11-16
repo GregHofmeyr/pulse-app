@@ -1,6 +1,7 @@
 <script lang="ts">
   import { actionBarFocus } from '../lib/focus'
   import { saveImage } from '../lib/clipDownload'
+  import { imageKey } from '../lib/downloads.svelte'
   import Avatar from './Avatar.svelte'
   import ClipDownload from './ClipDownload.svelte'
   import DeleteButton from './DeleteButton.svelte'
@@ -181,7 +182,7 @@
                       <button type="button" class="picbtn" aria-label="Open image full size" onclick={() => (open = { media: line.media!, caption: line.caption })}>
                         <QuoteImage media={line.media} caption={line.caption} />
                       </button>
-                      <ClipDownload label="Save image" tip="Save image" onclick={() => save(line.media!, line.caption)} />
+                      <ClipDownload label="Save image" tip="Save image" key={imageKey(line.media.hash)} onError={showError} onclick={() => save(line.media!, line.caption)} />
                     </div>
                     {#if line.caption}<p class="caption">{line.caption}</p>{/if}
                   {:else}
@@ -256,7 +257,7 @@
       <div class="pic">
         <QuoteImage media={open.media} caption={open.caption} full />
         <!-- saving leaves the view open -->
-        <ClipDownload label="Save image" tip="Save image" onclick={(e) => { e.stopPropagation(); save(shown.media, shown.caption) }} />
+        <ClipDownload label="Save image" tip="Save image" key={imageKey(shown.media.hash)} onError={showError} onclick={(e) => { e.stopPropagation(); save(shown.media, shown.caption) }} />
       </div>
       <button type="button" class="close icon-btn round modal-close" aria-label="Close" onclick={() => (open = null)}><Icon name="x" size={16} /></button>
     </div>

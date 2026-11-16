@@ -1,6 +1,6 @@
 // Download a clip (#204), save an image (#206) or a message's file (#57): the menus' Download / Save image and the
 // icons and buttons all come here. The Rust core opens the Save dialog and streams the original file to disk,
-// reporting progress (#205, `downloads`); a cancelled dialog is a quiet `false`. One per file at a time: a second
+// reporting progress (#205, `downloads`); a cancelled dialog is a quiet `null`. One per file at a time: a second
 // click while its dialog is open does nothing, and while it downloads it cancels it.
 import { api } from './tauri'
 import { clipKey, downloads, fileKey, imageKey } from './downloads.svelte'

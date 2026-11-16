@@ -102,7 +102,7 @@
               {@const media = line.media}
               <div class="shot">
                 <QuoteImage {media} caption={line.caption} />
-                <ClipDownload label="Save image" tip="Save image" key={imageKey(media.hash)} onclick={() => void saveImage(media, line.caption, inlineError.show)} />
+                <ClipDownload label="Save image" tip="Save image" key={imageKey(media.hash)} onError={inlineError.show} onclick={() => void saveImage(media, line.caption, inlineError.show)} />
               </div>
               {#if line.caption}<p class="caption">{line.caption}</p>{/if}
             {:else}

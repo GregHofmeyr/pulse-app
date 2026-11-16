@@ -1,13 +1,15 @@
 // Files being saved to disk (#205): a clip, a quoted image or a message's file. The Rust core opens the Save dialog,
 // streams the file and reports how far it is (`download://progress`, at most ten a second); here each download's
 // key maps to what its icon or button shows. A second click while it downloads cancels it (the core deletes the
-// partial file and answers false: no error). Kept out of the app state so a progress tick redraws only that button.
+// partial file and answers null: no error). Saved offers "Show in folder" (#333), which reveals the path the core
+// saved to. Kept out of the app state so a progress tick redraws only that button.
 import { api, errorText, type DownloadProgress } from './tauri'
 
 export type DownloadView =
   /** `fraction` 0..1; null when the server didn't say how big it is (an indeterminate ring). */
   | { phase: 'downloading'; fraction: number | null }
-  | { phase: 'saved' }
+  /** `path`: where the core saved it, for Show in folder. */
+  | { phase: 'saved'; path: string }
 
 /** How long a finished download says Saved. */
 export const SAVED_MS = 2_500
@@ -44,18 +46,18 @@ class Downloads {
   }
 
   /**
-   * The download button: starts `save` (the core's command: true when saved, false when its dialog or the download
+   * The download button: starts `save` (the core's command: the saved path, or null when its dialog or the download
    * was cancelled), or cancels the one downloading under `key`. A click while its Save dialog is open does nothing.
    * `label` names it for screen readers ("clip", a file's name).
    */
-  async toggle(key: string, label: string, save: () => Promise<boolean>, onError: (text: string) => void): Promise<void> {
+  async toggle(key: string, label: string, save: () => Promise<string | null>, onError: (text: string) => void): Promise<void> {
     if (this.#running.has(key)) {
       if (this.#by[key]?.phase === 'downloading') this.cancel(key)
       return
     }
     const run: Running = { label, cancelled: false }
     this.#running.set(key, run)
-    let saved = false
+    let saved: string | null = null
     try {
       saved = await save()
     } catch (e) {
@@ -69,17 +71,34 @@ class Downloads {
     this.#running.delete(key)
     const wasDownloading = this.#by[key]?.phase === 'downloading'
     if (saved) {
-      this.#by[key] = { phase: 'saved' }
+      this.#by[key] = { phase: 'saved', path: saved }
       this.announcement = `Saved ${label}`
-      this.#clearTimer(key)
-      this.#timers.set(key, setTimeout(() => {
-        this.#timers.delete(key)
-        if (this.#by[key]?.phase === 'saved') delete this.#by[key]
-      }, SAVED_MS))
+      this.#fadeSaved(key)
     } else {
       delete this.#by[key]
       if (run.cancelled && wasDownloading) this.announcement = `Stopped downloading ${label}`
     }
+  }
+
+  /** Show in folder (#333): the system file manager opens on the file `key` just saved. */
+  async reveal(key: string, onError: (text: string) => void): Promise<void> {
+    const v = this.#by[key]
+    if (v?.phase !== 'saved') return
+    try {
+      await api.revealPath(v.path)
+    } catch (e) {
+      onError(errorText(e))
+    }
+  }
+
+  /** The pointer or focus is on Show in folder: Saved stays until `release`. */
+  hold(key: string) {
+    if (this.#by[key]?.phase === 'saved') this.#clearTimer(key)
+  }
+
+  /** The pointer or focus left Show in folder: Saved goes a moment later. */
+  release(key: string) {
+    if (this.#by[key]?.phase === 'saved') this.#fadeSaved(key)
   }
 
   /** Stop the download under `key` (the core deletes its partial file). */
@@ -99,6 +118,14 @@ class Downloads {
     this.announcement = ''
   }
 
+  #fadeSaved(key: string) {
+    this.#clearTimer(key)
+    this.#timers.set(key, setTimeout(() => {
+      this.#timers.delete(key)
+      if (this.#by[key]?.phase === 'saved') delete this.#by[key]
+    }, SAVED_MS))
+  }
+
   #clearTimer(key: string) {
     clearTimeout(this.#timers.get(key))
     this.#timers.delete(key)
@@ -106,3 +133,31 @@ class Downloads {
 }
 
 export const downloads = new Downloads()
+
+/**
+ * On a Show in folder control (#333): Saved stays while the pointer or keyboard focus is on it, and goes a moment
+ * after both leave (or it goes, e.g. its menu closes), so the link doesn't vanish under the pointer.
+ */
+export function holdSaved(node: HTMLElement, key: string) {
+  let hovered = false
+  let focused = false
+  const sync = () => (hovered || focused ? downloads.hold(key) : downloads.release(key))
+  const on = (type: string, f: () => void) => node.addEventListener(type, f)
+  on('pointerenter', () => ((hovered = true), sync()))
+  on('pointerleave', () => ((hovered = false), sync()))
+  on('focusin', () => ((focused = true), sync()))
+  on('focusout', () => ((focused = false), sync()))
+  return {
+    update(next: string) {
+      if (next === key) return
+      if (hovered || focused) {
+        downloads.release(key)
+        downloads.hold(next)
+      }
+      key = next
+    },
+    destroy() {
+      if (hovered || focused) downloads.release(key)
+    },
+  }
+}

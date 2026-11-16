@@ -28,7 +28,7 @@ describe('DownloadAnnouncer', () => {
   it('says a download started and finished, not each percent', async () => {
     cmp = mount(DownloadAnnouncer, { target: document.body })
     const region = document.querySelector<HTMLElement>('[data-downloads]')!
-    let finish: (v: boolean) => void = () => {}
+    let finish: (v: string | null) => void = () => {}
     const done = downloads.toggle('file:A1', 'notes.txt', () => new Promise((r) => (finish = r)), () => {})
     downloads.progress({ key: 'file:A1', received: 0, total: 100 })
     flushSync()
@@ -42,7 +42,7 @@ describe('DownloadAnnouncer', () => {
     }
     await Promise.resolve()
     expect(changes).toEqual([])
-    finish(true)
+    finish('/home/kim/Downloads/notes.txt')
     await done
     flushSync()
     expect(region.textContent).toBe('Saved notes.txt')

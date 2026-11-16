@@ -23,7 +23,7 @@ import type { Attachment } from '../lib/protocol/Attachment'
 import type { Message } from '../lib/protocol/Message'
 
 let current: Attachment[] = []
-let saveAnswer: () => Promise<boolean> = async () => true
+let saveAnswer: () => Promise<string | null> = async () => '/home/kim/Downloads/report.pdf'
 const att = (id: string, name: string, kind: Attachment['kind'], extra: Partial<Attachment> = {}): Attachment => ({
   id, name, kind, content_type: 'application/octet-stream', size: 2048, width: null, height: null, duration_ms: null, expires_at: null, expired: false, ...extra,
 })
@@ -44,7 +44,7 @@ const settle = async () => {
 }
 
 beforeEach(() => {
-  saveAnswer = async () => true
+  saveAnswer = async () => '/home/kim/Downloads/report.pdf'
   calls.length = 0
   forgetAttachmentLinks()
 })
@@ -97,7 +97,7 @@ describe('MessageFiles', () => {
   })
 
   it('a file card shows how far it has saved, cancels, and says Saved (#205)', async () => {
-    let finish: (v: boolean) => void = () => {}
+    let finish: (v: string | null) => void = () => {}
     saveAnswer = () => new Promise((r) => (finish = r))
     show([att('f', 'world.zip', 'file', { size: 300 * 1024 * 1024 })])
     document.querySelector<HTMLButtonElement>('[aria-label="Download world.zip"]')!.click()
@@ -111,7 +111,7 @@ describe('MessageFiles', () => {
     button.click()
     await settle()
     expect(calls.filter((c) => c.cmd === 'cancel_download').map((c) => c.args)).toEqual([{ key: 'file:f' }])
-    finish(false)
+    finish(null)
     await settle()
     expect(button.textContent?.trim()).toBe('Download')
     // and again, to the end
@@ -121,10 +121,50 @@ describe('MessageFiles', () => {
     flushSync()
     expect(button.textContent?.trim()).toBe('Cancel')
     expect(button.querySelector('.ring')!.classList.contains('spin')).toBe(true)
-    finish(true)
+    finish('/home/kim/Downloads/world.zip')
     await settle()
     expect(button.textContent?.trim()).toBe('Saved')
     expect(button.getAttribute('aria-label')).toBe('Saved world.zip')
+    // Show in folder (#333) reveals where it went
+    const folder = document.querySelector<HTMLButtonElement>('.card .folder')!
+    expect(folder.textContent?.trim()).toBe('Show in folder')
+    folder.click()
+    await settle()
+    expect(calls.filter((c) => c.cmd === 'reveal_path').map((c) => c.args)).toEqual([{ path: '/home/kim/Downloads/world.zip' }])
+  })
+
+  it('Show in folder keeps Saved up while the pointer is on it, then goes with it (#333)', async () => {
+    vi.useFakeTimers()
+    try {
+      show([att('f', 'report.pdf', 'file')])
+      document.querySelector<HTMLButtonElement>('[aria-label="Download report.pdf"]')!.click()
+      await vi.runAllTicks(); await settle()
+      const folder = () => document.querySelector<HTMLButtonElement>('.card .folder')
+      folder()!.dispatchEvent(new PointerEvent('pointerenter'))
+      vi.advanceTimersByTime(60_000)
+      flushSync()
+      expect(folder()).not.toBeNull()
+      folder()!.dispatchEvent(new PointerEvent('pointerleave'))
+      vi.advanceTimersByTime(60_000)
+      flushSync()
+      expect(folder()).toBeNull()
+      expect(document.querySelector('.card .download')!.textContent?.trim()).toBe('Download')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('an audio file and a video file offer Show in folder once saved (#333)', async () => {
+    show([att('s', 'song.mp3', 'audio'), att('v', 'match.mp4', 'video')])
+    document.querySelector<HTMLButtonElement>('[aria-label="Download song.mp3"]')!.click()
+    await settle()
+    document.querySelector<HTMLButtonElement>('.audio .folder')!.click()
+    await settle()
+    document.querySelector<HTMLButtonElement>('button.clip-dl')!.click()
+    await settle()
+    document.querySelector<HTMLButtonElement>('.video button.clip-dl-folder')!.click()
+    await settle()
+    expect(calls.filter((c) => c.cmd === 'reveal_path')).toHaveLength(2)
   })
 
   it('a video file shows its progress on the player\'s download icon (#205)', async () => {
@@ -184,6 +224,10 @@ describe('ImageViewer', () => {
     ;[...document.querySelectorAll('button')].find((b) => b.textContent?.includes('Save image'))!.click()
     await settle()
     expect(calls.find((c) => c.cmd === 'save_attachment')!.args).toMatchObject({ messageId: 'M1', attachmentId: 'a', name: '1.webp' })
+    flushSync()
+    ;[...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Show in folder')!.click()
+    await settle()
+    expect(calls.filter((c) => c.cmd === 'reveal_path').map((c) => c.args)).toEqual([{ path: '/home/kim/Downloads/report.pdf' }])
     document.querySelector<HTMLButtonElement>('.modal-close')!.click()
     expect(onClose).toHaveBeenCalled()
     unmount(v)

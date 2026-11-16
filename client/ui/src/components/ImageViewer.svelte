@@ -7,7 +7,7 @@
   import { api, errorText } from '../lib/tauri'
   import { attachmentLink } from '../lib/attachmentLinks'
   import { saveFile } from '../lib/clipDownload'
-  import { downloads, fileKey } from '../lib/downloads.svelte'
+  import { downloads, fileKey, holdSaved } from '../lib/downloads.svelte'
   import ProgressRing from './ProgressRing.svelte'
 
   let { images, messageId, start = 0, onClose, onError }: {
@@ -63,6 +63,7 @@
   }
 
   const save = () => void saveFile(messageId, img, (text) => onError?.(text))
+  const reveal = () => void downloads.reveal(fileKey(img.id), (text) => onError?.(text))
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -94,6 +95,9 @@
         <Icon name="download" size={14} /> Save image
       {/if}
     </button>
+    {#if dl?.phase === 'saved'}
+      <button type="button" class="btn btn-quiet" use:holdSaved={fileKey(img.id)} onclick={reveal}><Icon name="folder" size={14} /> Show in folder</button>
+    {/if}
   </div>
   <button type="button" class="close icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" size={16} /></button>
 </div>

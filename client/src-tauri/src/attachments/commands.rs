@@ -211,9 +211,9 @@ pub async fn attachment_urls(
 }
 
 /// Download one file of a message to where the system Save dialog says, suggesting its name, its
-/// progress as `download://progress` events keyed `file:<attachment id>` (#205). `false` when the
-/// dialog or the download is cancelled, or this file is already downloading. Pulse never opens
-/// what it saves.
+/// progress as `download://progress` events keyed `file:<attachment id>` (#205). The saved path
+/// (#333); `None` when the dialog or the download is cancelled, or this file is already
+/// downloading. Pulse never opens what it saves (it only shows it in its folder).
 #[tauri::command]
 pub async fn save_attachment(
     app: AppHandle,
@@ -221,11 +221,11 @@ pub async fn save_attachment(
     message_id: MessageId,
     attachment_id: AttachmentId,
     name: String,
-) -> Result<bool, String> {
+) -> Result<Option<String>, String> {
     use crate::clips::download;
-    use crate::commands::save_reporting;
+    use crate::commands::{save_reporting, saved_to};
     let Some(run) = core.downloads.begin(format!("file:{attachment_id}")) else {
-        return Ok(false);
+        return Ok(None);
     };
     let (api, token) = core.current().map_err(|e| e.to_string())?;
     let link = async || -> Result<String, String> {
@@ -240,10 +240,10 @@ pub async fn save_attachment(
     // asked first: a file that is gone (or expired) says so before any dialog
     let first = link().await?;
     let Some(dest) = ask_save_path(&app, safe_name(&name)).await else {
-        return Ok(false);
+        return Ok(None);
     };
     let http = crate::clips::upload::client();
-    match save_reporting(&app, &run, http.get(&first), &dest).await {
+    let saved = match save_reporting(&app, &run, http.get(&first), &dest).await {
         // the link lasts an hour; a dialog left open longer gets a fresh one
         Err(download::DownloadError::Rejected(403)) => {
             let fresh = link().await?;
@@ -251,7 +251,8 @@ pub async fn save_attachment(
         }
         other => other,
     }
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    Ok(saved_to(&core, dest, saved))
 }
 
 const GONE: &str = "That file isn't available any more.";

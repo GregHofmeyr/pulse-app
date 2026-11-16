@@ -13,7 +13,7 @@
   import { serverNow } from '../lib/serverClock'
   import { clock } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
-  import { clipKey, downloads } from '../lib/downloads.svelte'
+  import { clipKey, downloads, holdSaved } from '../lib/downloads.svelte'
   import type { Message } from '../lib/protocol/Message'
   import type { PinDuration } from '../lib/protocol/PinDuration'
 
@@ -76,6 +76,11 @@
     menu = false
     onDownload()
   }
+  function reveal() {
+    menu = false
+    opener?.focus()
+    void downloads.reveal(clipKey(message.id), (text) => onError?.(text))
+  }
   function cancelDownload() {
     menu = false
     downloads.cancel(clipKey(message.id))
@@ -130,6 +135,9 @@
         <button type="button" class="menu-item" role="menuitem" onclick={cancelDownload}><Icon name="x" size={14} />Cancel download</button>
       {:else}
         <button type="button" class="menu-item" role="menuitem" onclick={download}><Icon name={dl?.phase === 'saved' ? 'check' : 'download'} size={14} />{dl?.phase === 'saved' ? 'Saved' : 'Download'}</button>
+        {#if dl?.phase === 'saved'}
+          <button type="button" class="menu-item" role="menuitem" use:holdSaved={clipKey(message.id)} onclick={reveal}><Icon name="folder" size={14} />Show in folder</button>
+        {/if}
       {/if}
       {#if pinned}
         <button type="button" class="menu-item" role="menuitem" onclick={unpin}><Icon name="pin" size={14} />Unpin clip</button>

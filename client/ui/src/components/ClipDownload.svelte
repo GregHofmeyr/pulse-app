@@ -2,18 +2,20 @@
   // The download icon on a clip's video (#204) or a quoted image (#206), Discord-style: top right, shown while the
   // pointer is over it (the parent's :hover rule) or when it has keyboard focus. `beside`: left of the wall card's
   // full-screen button. With a download `key` (#205) it stays shown while that file saves: a ring round a stop
-  // cross (click again to cancel), then a check for a moment.
+  // cross (click again to cancel), then a check for a moment, with Show in folder beside it (#333).
   import Icon from './Icon.svelte'
   import ProgressRing from './ProgressRing.svelte'
-  import { downloads } from '../lib/downloads.svelte'
+  import { downloads, holdSaved } from '../lib/downloads.svelte'
 
-  let { onclick, beside = false, label = 'Download clip', tip = 'Download', key }: {
+  let { onclick, beside = false, label = 'Download clip', tip = 'Download', key, onError }: {
     onclick: (e: MouseEvent) => void
     beside?: boolean
     label?: string
     tip?: string
     /** The download this icon starts (`clipKey`, `imageKey`, `fileKey`): shows its progress. */
     key?: string
+    /** Says why Show in folder couldn't open the folder. */
+    onError?: (text: string) => void
   } = $props()
 
   const view = $derived(key ? downloads.view(key) : null)
@@ -36,6 +38,10 @@
     <Icon name="download" size={16} />
   {/if}
 </button>
+{#if key && view?.phase === 'saved'}
+  <button type="button" class="clip-dl-folder" class:beside use:holdSaved={key}
+    onclick={(e) => { e.stopPropagation(); void downloads.reveal(key, (text) => onError?.(text)) }}><Icon name="folder" size={14} />Show in folder</button>
+{/if}
 
 <style>
   /* the wall card's full-screen button's look (ClipCard .fs) */
@@ -45,4 +51,8 @@
   /* downloading or just saved: shown without the pointer, so it can be watched and stopped */
   .clip-dl.active { opacity: 1; }
   .clip-dl.beside { right: 40px; }
+  /* Show in folder, left of the icon while it says Saved */
+  .clip-dl-folder { position: absolute; z-index: 1; right: 40px; top: 8px; height: 28px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: rgba(0, 0, 0, .6); color: #fff; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: background-color var(--dur) var(--ease); }
+  .clip-dl-folder:hover { background: rgba(0, 0, 0, .75); }
+  .clip-dl-folder.beside { right: 72px; }
 </style>

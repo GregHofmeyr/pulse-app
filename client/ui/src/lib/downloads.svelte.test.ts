@@ -10,12 +10,14 @@ import { clipKey, downloads, fileKey, imageKey, SAVED_MS } from './downloads.sve
 const settle = async () => {
   for (let i = 0; i < 5; i++) await Promise.resolve()
 }
-/** A save the test finishes: `finish(true)` saved, `finish(false)` cancelled, `fail(text)` failed. */
+const SAVED_TO = '/home/alex/Videos/ace.mp4'
+/** A save the test finishes: `finish(true)` saved (to SAVED_TO, or the path given), `finish(false)` cancelled, `fail(text)` failed. */
 function held() {
-  let finish: (v: boolean) => void = () => {}
+  let finish: (v: string | null) => void = () => {}
   let fail: (e: unknown) => void = () => {}
-  const save = vi.fn(() => new Promise<boolean>((res, rej) => ((finish = res), (fail = rej))))
-  return { save, finish: (v: boolean) => finish(v), fail: (e: unknown) => fail(e) }
+  const save = vi.fn(() => new Promise<string | null>((res, rej) => ((finish = res), (fail = rej))))
+  const answer = (v: boolean | string) => (v === true ? SAVED_TO : v === false ? null : v)
+  return { save, finish: (v: boolean | string) => finish(answer(v)), fail: (e: unknown) => fail(e) }
 }
 
 beforeEach(() => {
@@ -63,10 +65,10 @@ describe('downloads', () => {
     downloads.progress({ key: 'clip:M1', received: 0, total: 10 })
     s.finish(true)
     await settle()
-    expect(downloads.view('clip:M1')).toEqual({ phase: 'saved' })
+    expect(downloads.view('clip:M1')).toEqual({ phase: 'saved', path: SAVED_TO })
     // a late progress event changes nothing
     downloads.progress({ key: 'clip:M1', received: 10, total: 10 })
-    expect(downloads.view('clip:M1')).toEqual({ phase: 'saved' })
+    expect(downloads.view('clip:M1')).toEqual({ phase: 'saved', path: SAVED_TO })
     vi.advanceTimersByTime(SAVED_MS)
     expect(downloads.view('clip:M1')).toBeNull()
   })
@@ -133,6 +135,48 @@ describe('downloads', () => {
     s.finish(false)
     await settle()
     expect(downloads.announcement).toBe('Stopped downloading notes.txt')
+  })
+
+  it('Show in folder (#333) reveals the file it saved', async () => {
+    const s = held()
+    void downloads.toggle('file:A1', 'notes.txt', s.save, vi.fn())
+    s.finish('/home/sam/Downloads/notes.txt')
+    await settle()
+    const onError = vi.fn()
+    await downloads.reveal('file:A1', onError)
+    expect(invoke).toHaveBeenCalledWith('reveal_path', { path: '/home/sam/Downloads/notes.txt' })
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('Show in folder says why it could not', async () => {
+    const s = held()
+    void downloads.toggle('clip:M1', 'clip', s.save, vi.fn())
+    s.finish(true)
+    await settle()
+    invoke.mockRejectedValueOnce("Couldn't open that folder. The file may have moved.")
+    const onError = vi.fn()
+    await downloads.reveal('clip:M1', onError)
+    expect(onError).toHaveBeenCalledWith("Couldn't open that folder. The file may have moved.")
+  })
+
+  it('Show in folder does nothing once Saved has gone', async () => {
+    await downloads.reveal('clip:M9', vi.fn())
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('Saved stays while the pointer or focus is on Show in folder, then goes a moment after', async () => {
+    const s = held()
+    void downloads.toggle('clip:M1', 'clip', s.save, vi.fn())
+    s.finish(true)
+    await settle()
+    downloads.hold('clip:M1')
+    vi.advanceTimersByTime(SAVED_MS * 4)
+    expect(downloads.view('clip:M1')).toEqual({ phase: 'saved', path: SAVED_TO })
+    downloads.release('clip:M1')
+    vi.advanceTimersByTime(SAVED_MS - 1)
+    expect(downloads.view('clip:M1')?.phase).toBe('saved')
+    vi.advanceTimersByTime(1)
+    expect(downloads.view('clip:M1')).toBeNull()
   })
 
   it('a dialog closed without saving announces nothing', async () => {

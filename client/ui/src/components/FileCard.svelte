@@ -1,13 +1,13 @@
 <script lang="ts">
   // A file in a message that isn't shown inline (#57): icon, name, size and Download, on the link preview's card
   // (LinkEmbed). Files that can run programs say so beside Download. Pulse saves files; it never opens them. A temporary
-  // send says when it expires, and once it has, Expired (its bytes are gone).
+  // send says when it expires, and once it has, Expired (its bytes are gone). Saved offers Show in folder (#333).
   import Icon from './Icon.svelte'
   import type { Attachment } from '../lib/protocol/Attachment'
   import { expiresLabel, formatSize, isExecutable, isExpired, RUNS_PROGRAMS } from '../lib/attachments'
   import ProgressRing from './ProgressRing.svelte'
   import { saveFile } from '../lib/clipDownload'
-  import { downloads, fileKey } from '../lib/downloads.svelte'
+  import { downloads, fileKey, holdSaved } from '../lib/downloads.svelte'
   import { clock } from '../lib/store.svelte'
 
   let { file, messageId, onError }: {
@@ -29,6 +29,7 @@
     : `Download ${file.name}`,
   )
   const download = () => void saveFile(messageId, file, (text) => onError?.(text))
+  const reveal = () => void downloads.reveal(fileKey(file.id), (text) => onError?.(text))
 </script>
 
 <div class="card">
@@ -40,6 +41,10 @@
   {#if expired}
     <span class="expired">Expired</span>
   {:else}
+    <span class="actions">
+    {#if dl?.phase === 'saved'}
+      <button class="btn btn-quiet folder" type="button" use:holdSaved={fileKey(file.id)} onclick={reveal}><Icon name="folder" size={14} /> Show in folder</button>
+    {/if}
     <button class="btn btn-quiet download" type="button" aria-label={label} onclick={download}>
       {#if dl?.phase === 'downloading'}
         <span class="ring-box"><ProgressRing fraction={dl.fraction} size={16} /></span>{percent === null ? '' : `${percent}% · `}Cancel
@@ -49,6 +54,7 @@
         <Icon name="download" size={14} /> Download
       {/if}
     </button>
+    </span>
   {/if}
   {#if runs && !expired}
     <p class="warn"><Icon name="alert" size={14} /> {RUNS_PROGRAMS}</p>
@@ -66,6 +72,8 @@
   .text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .name { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .size { font-size: 12px; color: var(--text-3); }
+  .actions { display: inline-flex; align-items: center; gap: 4px; }
+  .folder { height: 28px; padding: 0 10px; font-size: 12px; }
   .download { height: 28px; padding: 0 10px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
   .ring-box { position: relative; width: 16px; height: 16px; flex: none; }
   .expired { font-size: 12px; font-weight: 600; color: var(--text-3); }

@@ -2,7 +2,7 @@
 //! the GET of the original file streamed straight to the chosen path (a clip can be 200 MiB; none
 //! of it is held in memory, and none of it passes through the webview).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -226,9 +226,13 @@ async fn fetch_to(
 }
 
 /// The downloads running now, by key (`clip:<message>`, `image:<hash>`, `file:<attachment>`): one
-/// at a time per key, and each one's cancel switch. Cloning shares the map.
+/// at a time per key, and each one's cancel switch; and the files they saved this session, the only
+/// paths "Show in folder" reveals (#333). Cloning shares both.
 #[derive(Clone, Default)]
-pub struct Downloads(Arc<Mutex<HashMap<String, CancellationFlag>>>);
+pub struct Downloads {
+    running: Arc<Mutex<HashMap<String, CancellationFlag>>>,
+    saved: Arc<Mutex<HashSet<PathBuf>>>,
+}
 
 /// A download that holds its key until it is dropped.
 pub struct Running {
@@ -241,7 +245,7 @@ impl Downloads {
     /// Claim `key` for a new download; `None` while one with that key runs.
     pub fn begin(&self, key: impl Into<String>) -> Option<Running> {
         let key = key.into();
-        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut map = self.running.lock().unwrap_or_else(|e| e.into_inner());
         if map.contains_key(&key) {
             return None;
         }
@@ -256,8 +260,20 @@ impl Downloads {
 
     /// Stop the download with `key`; `false` when none runs.
     pub fn cancel(&self, key: &str) -> bool {
-        let map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let map = self.running.lock().unwrap_or_else(|e| e.into_inner());
         map.get(key).inspect(|f| f.cancel()).is_some()
+    }
+
+    /// Remember a file a download finished saving, so it can be shown in its folder.
+    pub fn saved(&self, path: PathBuf) {
+        let mut saved = self.saved.lock().unwrap_or_else(|e| e.into_inner());
+        saved.insert(path);
+    }
+
+    /// Whether a download saved `path` this session.
+    pub fn was_saved(&self, path: &Path) -> bool {
+        let saved = self.saved.lock().unwrap_or_else(|e| e.into_inner());
+        saved.contains(path)
     }
 }
 
@@ -273,7 +289,7 @@ impl Running {
 
 impl Drop for Running {
     fn drop(&mut self) {
-        let mut map = self.all.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut map = self.all.running.lock().unwrap_or_else(|e| e.into_inner());
         map.remove(&self.key);
     }
 }
@@ -659,6 +675,20 @@ mod tests {
         assert!(!all.cancel("clip:3"), "nothing to stop");
         drop(first);
         assert!(all.begin("clip:1").is_some(), "free again once it ends");
+    }
+
+    #[test]
+    fn only_paths_pulse_saved_can_be_shown() {
+        let all = Downloads::default();
+        let saved = PathBuf::from("/home/alex/Videos/ace.mp4");
+        assert!(!all.was_saved(&saved), "nothing saved yet");
+        all.saved(saved.clone());
+        assert!(all.was_saved(&saved));
+        assert!(
+            !all.was_saved(Path::new("/home/alex/.ssh/id_ed25519")),
+            "a path Pulse didn't save is refused"
+        );
+        assert!(all.clone().was_saved(&saved), "clones share what was saved");
     }
 
     #[tokio::test]

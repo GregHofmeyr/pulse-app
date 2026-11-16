@@ -7,7 +7,7 @@
   import { attachmentLink } from '../lib/attachmentLinks'
   import { api } from '../lib/tauri'
   import { saveFile } from '../lib/clipDownload'
-  import { downloads, fileKey } from '../lib/downloads.svelte'
+  import { downloads, fileKey, holdSaved } from '../lib/downloads.svelte'
   import ProgressRing from './ProgressRing.svelte'
   import ClipPlayer from './ClipPlayer.svelte'
   import FileCard from './FileCard.svelte'
@@ -48,6 +48,7 @@
   }
 
   const save = (a: Attachment) => saveFile(message.id, a, (text) => onError?.(text))
+  const reveal = (a: Attachment) => downloads.reveal(fileKey(a.id), (text) => onError?.(text))
   // the audio row's download icon (#205): a ring round a stop cross while it saves, a check once saved
   const dlLabel = (a: Attachment) => {
     const v = downloads.view(fileKey(a.id))
@@ -82,7 +83,7 @@
   </div>
 {/if}
 {#each parts.videos as a (a.id)}
-  <div class="video"><ClipPlayer {message} source={video(a)} onDownload={() => void save(a)} downloadKey={fileKey(a.id)} /></div>
+  <div class="video"><ClipPlayer {message} source={video(a)} onDownload={() => void save(a)} downloadKey={fileKey(a.id)} onDownloadError={onError} /></div>
 {/each}
 {#each parts.audio.filter((a) => !broken[a.id]) as a (a.id)}
   {@const dl = downloads.view(fileKey(a.id))}
@@ -90,7 +91,8 @@
     <span class="audio-name"><Icon name="music" size={14} /> <span class="audio-title">{a.name}</span>
       <button type="button" class="icon-btn icon-btn-xs dl" aria-label={dlLabel(a)} data-tip={dl?.phase === 'downloading' ? 'Cancel download' : dl?.phase === 'saved' ? 'Saved' : 'Download'} onclick={() => void save(a)}>
         {#if dl?.phase === 'downloading'}<ProgressRing fraction={dl.fraction} size={20} /><Icon name="x" size={10} />{:else}<Icon name={dl?.phase === 'saved' ? 'check' : 'download'} size={14} />{/if}
-      </button></span>
+      </button>
+      {#if dl?.phase === 'saved'}<button type="button" class="folder" use:holdSaved={fileKey(a.id)} onclick={() => void reveal(a)}>Show in folder</button>{/if}</span>
     {#if urls[a.id]}<audio controls preload="metadata" src={urls[a.id]} onerror={() => failed(a)}></audio>{/if}
   </div>
 {/each}
@@ -114,6 +116,8 @@
   }
   .audio-name { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); min-width: 0; }
   .dl { position: relative; }
+  .folder { flex: none; padding: 0; border: 0; background: none; font-size: 12px; color: var(--text-3); cursor: pointer; }
+  .folder:hover, .folder:focus-visible { color: var(--text); text-decoration: underline; }
   .audio-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .audio audio { width: 100%; height: 32px; }
 </style>

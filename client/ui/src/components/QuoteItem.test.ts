@@ -12,6 +12,7 @@ const media = fakeMatchMedia(false)
 vi.stubGlobal('matchMedia', media.matchMedia)
 
 import QuoteItem from './QuoteItem.svelte'
+import { downloads } from '../lib/downloads.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { motion, setAnimateMode } from '../lib/animate.svelte'
@@ -74,7 +75,7 @@ beforeEach(() => {
   media.set(false)
   Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => {}) } })
 })
-afterEach(() => { if (cmp) unmount(cmp); cmp = undefined; document.body.innerHTML = '' })
+afterEach(() => { if (cmp) unmount(cmp); cmp = undefined; document.body.innerHTML = ''; downloads.reset() })
 
 /** jsdom never reports :focus-visible; say what a browser would for this element. */
 function stubFocusVisible(el: HTMLElement, visible: boolean) {
@@ -447,6 +448,20 @@ describe('QuoteItem', () => {
       expect(document.querySelector('[role=dialog]')).toBeNull()
     })
 
+    it('the icon shows Saved, then Show in folder for the saved file (#333)', async () => {
+      invoke.mockImplementation(async (cmd: string) => (cmd === 'save_image' ? '/home/kim/Pictures/a cat.webp' : undefined))
+      show(quote([pic()]))
+      overlay()!.click()
+      await settle(); flushSync()
+      const folder = document.querySelector<HTMLButtonElement>('.line button.clip-dl-folder')!
+      folder.click()
+      await settle()
+      expect(calls('reveal_path').map((c) => c[1])).toEqual([{ path: '/home/kim/Pictures/a cat.webp' }])
+      // it isn't the open-full-size button's click
+      flushSync()
+      expect(document.querySelector('[role=dialog]')).toBeNull()
+    })
+
     it('the full-size view has it too', async () => {
       show(quote([pic()]))
       document.querySelector<HTMLElement>('.line .picbtn')!.click(); flushSync()
@@ -460,7 +475,7 @@ describe('QuoteItem', () => {
     })
 
     it('cancelling the dialog does nothing; a failure shows on the quote; a second click while saving is ignored', async () => {
-      let answer: () => Promise<unknown> = async () => false
+      let answer: () => Promise<unknown> = async () => null
       invoke.mockImplementation(async (cmd: string) => (cmd === 'save_image' ? answer() : undefined))
       show(quote([pic()]))
       overlay()!.click()
@@ -470,14 +485,14 @@ describe('QuoteItem', () => {
       overlay()!.click()
       await settle(); flushSync()
       expect(document.querySelector('[role=alert]')?.textContent).toBe("couldn't save the file: denied")
-      let finish: (v: boolean) => void = () => {}
+      let finish: (v: string | null) => void = () => {}
       answer = () => new Promise((r) => (finish = r))
       const before = saves().length
       overlay()!.click()
       overlay()!.click()
       await settle()
       expect(saves().length).toBe(before + 1)
-      finish(true)
+      finish('/home/kim/Pictures/a cat.webp')
     })
   })
 

@@ -504,6 +504,7 @@ pub fn run() {
             commands::save_clip,
             commands::save_image,
             commands::cancel_download,
+            commands::reveal_path,
             commands::set_fullscreen,
             commands::list_clips,
             commands::clip_facets,

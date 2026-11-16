@@ -13,7 +13,7 @@
   import Icon from './Icon.svelte'
   import type { VideoSource } from '../lib/attachments'
 
-  let { message, autoplay = false, compact = false, onDownload, downloadKey, source }: {
+  let { message, autoplay = false, compact = false, onDownload, downloadKey, onDownloadError, source }: {
     message: Message
     autoplay?: boolean
     compact?: boolean
@@ -21,6 +21,8 @@
     onDownload?: () => void
     /** The download that icon starts (#205): its progress shows on the icon. */
     downloadKey?: string
+    /** Says why Show in folder (#333) couldn't open the folder. */
+    onDownloadError?: (text: string) => void
     /** Plays this video instead of the message's clip; its first frame stands in for a thumbnail. */
     source?: VideoSource
   } = $props()
@@ -229,7 +231,7 @@
     {#if !playing && !loading && !failed}
       <button class="big" aria-label={source ? 'Play video' : 'Play clip'} onclick={play}><Icon name="play" size={28} /></button>
     {/if}
-    {#if onDownload}<ClipDownload onclick={onDownload} key={downloadKey} />{/if}
+    {#if onDownload}<ClipDownload onclick={onDownload} key={downloadKey} onError={onDownloadError} />{/if}
   </div>
   <div class="bar">
     <button class="ico" aria-label={playing || loading ? 'Pause' : 'Play'} onclick={toggle}><Icon name={playing || loading ? 'pause' : 'play'} /></button>
@@ -272,6 +274,7 @@
   /* the download icon shows while the pointer is over the player; full screen is for watching */
   .clip:hover :global(.clip-dl) { opacity: 1; }
   .clip:fullscreen :global(.clip-dl) { display: none; }
+  .clip:fullscreen :global(.clip-dl-folder) { display: none; }
   .compact .bar { padding: 4px 6px; gap: 4px; }
   /* the compact speaker's vertical volume (#208): the bar's own look, straight above the speaker with no gap so the
      hover carries from one to the other; short enough to stay clear of the download icon at the top right */

@@ -77,7 +77,7 @@
     onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}>
     <div class="media" class:still={!playing}>
       {#if playing}
-        <ClipPlayer {message} autoplay compact onDownload={download} downloadKey={clipKey(message.id)} />
+        <ClipPlayer {message} autoplay compact onDownload={download} downloadKey={clipKey(message.id)} onDownloadError={inlineError.show} />
       {:else}
         <button type="button" class="thumb" aria-label="Play clip" onclick={onPlay}>
           <img src={mediaUrl(clip.thumb_hash)} alt="" loading="lazy" decoding="async" />
@@ -85,7 +85,7 @@
         </button>
         <span class="duration">{formatDuration(clip.duration_ms)}</span>
         <button type="button" class="fs" aria-label="Play full screen" onclick={() => void playFullscreen()}><Icon name="fullscreen" size={16} /></button>
-        <ClipDownload onclick={download} key={clipKey(message.id)} beside />
+        <ClipDownload onclick={download} key={clipKey(message.id)} onError={inlineError.show} beside />
         {#if isNew}<span class="badge-new">new</span>{/if}
       {/if}
     </div>

@@ -2444,8 +2444,37 @@ pub(crate) async fn save_reporting(
     }
 }
 
+/// What a save command answers (#333): the path it saved to, now one "Show in folder" may reveal;
+/// `None` when it was cancelled.
+pub(crate) fn saved_to(core: &Core, dest: std::path::PathBuf, saved: bool) -> Option<String> {
+    if !saved {
+        return None;
+    }
+    let shown = dest.to_string_lossy().into_owned();
+    core.downloads.saved(dest);
+    Some(shown)
+}
+
+/// "Show in folder" (#333): the system file manager opens the file's folder with it selected
+/// (Explorer on Windows, the FileManager1 D-Bus service or the desktop portal on Linux). Only a
+/// path a download saved this session is shown.
+#[tauri::command]
+pub async fn reveal_path(core: State<'_, Core>, path: String) -> Result<(), String> {
+    let path = std::path::PathBuf::from(path);
+    if !core.downloads.was_saved(&path) {
+        return Err("Pulse can only show files it saved.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || tauri_plugin_opener::reveal_item_in_dir(&path))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| {
+            tracing::warn!("show in folder: {e}");
+            "Couldn't open that folder. The file may have moved.".to_owned()
+        })
+}
+
 /// Stop a download started by `save_clip`, `save_image` or `save_attachment` (#205): the read
-/// stops and the partial file is deleted; that command then returns `false`.
+/// stops and the partial file is deleted; that command then returns `null`.
 #[tauri::command]
 pub fn cancel_download(core: State<'_, Core>, key: String) {
     core.downloads.cancel(&key);
@@ -2453,18 +2482,18 @@ pub fn cancel_download(core: State<'_, Core>, key: String) {
 
 /// Download a clip (#204): the system Save dialog, suggesting the caption as the file name, then the
 /// original file streamed to the chosen path, its progress as `download://progress` events keyed
-/// `clip:<message id>` (#205). `false` when the dialog or the download is cancelled, or one of
-/// this clip is already running.
+/// `clip:<message id>` (#205). The saved path (#333); `None` when the dialog or the download is
+/// cancelled, or one of this clip is already running.
 #[tauri::command]
 pub async fn save_clip(
     app: AppHandle,
     core: State<'_, Core>,
     message_id: MessageId,
     caption: String,
-) -> Result<bool, String> {
+) -> Result<Option<String>, String> {
     use crate::clips::download;
     let Some(run) = core.downloads.begin(format!("clip:{message_id}")) else {
-        return Ok(false);
+        return Ok(None);
     };
     let (api, token) = core.current().map_err(|e| e.to_string())?;
     let link = async || {
@@ -2476,10 +2505,10 @@ pub async fn save_clip(
     let ext = download::extension_of(&first.url);
     let name = format!("{}.{ext}", download::suggested_stem(&caption));
     let Some(dest) = ask_save_path(&app, name, "Video", &ext).await else {
-        return Ok(false);
+        return Ok(None);
     };
     let http = crate::clips::upload::client();
-    match save_reporting(&app, &run, http.get(&first.url), &dest).await {
+    let saved = match save_reporting(&app, &run, http.get(&first.url), &dest).await {
         // the link lasts an hour; a dialog left open longer gets a fresh one
         Err(download::DownloadError::Rejected(403)) => {
             let fresh = link().await?;
@@ -2487,22 +2516,24 @@ pub async fn save_clip(
         }
         other => other,
     }
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    Ok(saved_to(&core, dest, saved))
 }
 
 /// Save image (#206): a quoted image's stored file (the original, not its still frame) to the
 /// path the system Save dialog picks, named after its caption; progress keyed `image:<hash>`
-/// (#205). `false` when the dialog or the download is cancelled. Stored images are WebP.
+/// (#205). The saved path (#333); `None` when the dialog or the download is cancelled. Stored
+/// images are WebP.
 #[tauri::command]
 pub async fn save_image(
     app: AppHandle,
     core: State<'_, Core>,
     hash: String,
     caption: String,
-) -> Result<bool, String> {
+) -> Result<Option<String>, String> {
     use crate::clips::download;
     let Some(run) = core.downloads.begin(format!("image:{hash}")) else {
-        return Ok(false);
+        return Ok(None);
     };
     let (api, token) = core.current().map_err(|e| e.to_string())?;
     // a bad hash says so before any dialog
@@ -2511,15 +2542,16 @@ pub async fn save_image(
         .map_err(|e| e.to_string())?;
     let name = format!("{}.webp", download::stem_or(&caption, download::IMAGE_NAME));
     let Some(dest) = ask_save_path(&app, name, "Image", "webp").await else {
-        return Ok(false);
+        return Ok(None);
     };
-    match save_reporting(&app, &run, req, &dest).await {
+    let saved = match save_reporting(&app, &run, req, &dest).await {
         // the server refused our token: the session is dead, same as any other 401
         Err(download::DownloadError::Rejected(401)) => core
             .check::<bool>(&app, Err(ApiError::Unauthorized))
             .map_err(|e| e.to_string()),
         other => other.map_err(|e| e.to_string()),
-    }
+    }?;
+    Ok(saved_to(&core, dest, saved))
 }
 
 /// The system Save dialog over the main window, suggesting `name` and filtered to `ext`; `None`

@@ -76,7 +76,7 @@
         <ClipActions {message} {serverId} {mine} onDownload={download} onError={inlineError.show} />
       </div>
       <ClipCaption {message} />
-      <div class="player"><ClipPlayer {message} {compact} onDownload={download} downloadKey={clipKey(message.id)} /></div>
+      <div class="player"><ClipPlayer {message} {compact} onDownload={download} downloadKey={clipKey(message.id)} onDownloadError={inlineError.show} /></div>
       <ReactionRow {message} {meId} {nameOf} onError={inlineError.show} {suggest} alwaysAdd />
       {#if onOpenReplies && !compact}<ClipReplies {message} {onOpenReplies} {unsentReplies} />{/if}
       {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
