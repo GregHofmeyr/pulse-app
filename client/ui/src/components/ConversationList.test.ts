@@ -195,3 +195,18 @@ describe('Notes to self (#308)', () => {
     expect(document.querySelector('[role=menu]')).toBeNull()
   })
 })
+
+describe('custom status in the DM list (#152)', () => {
+  it("a 1:1 DM shows their custom status on the preview's line; something unread takes it back; a group never shows one", () => {
+    app.state = {
+      ...app.state,
+      people: { ...app.state.people, U2: { ...app.state.people.U2, custom_status: { text: 'Gaming', emoji: '🎮' } }, U3: { ...app.state.people.U3, custom_status: { text: 'Away', emoji: null } } },
+    }
+    flushSync()
+    expect(rowFor('sam').querySelector('.prev .custom-status')?.textContent?.trim()).toBe('Gaming')
+    expect(rowFor('squad').querySelector('.custom-status')).toBeNull()
+    app.state = { ...app.state, reads: { D1: { channel_id: 'D1', last_read_message_id: null, unread: 2, mentions: 0 } } }
+    flushSync()
+    expect(rowFor('sam').querySelector('.custom-status')).toBeNull()
+  })
+})

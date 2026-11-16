@@ -216,3 +216,16 @@ describe('GroupMembers row menu (#135): the server member list\'s person menu, w
     expect(menu()).toBeNull()
   })
 })
+
+describe('GroupMembers: custom status (#152)', () => {
+  it("someone's custom status takes the line under the name, over Listening to (and without its Spotify icon)", () => {
+    const listening = { title: 'Song', artist: null, album: null, spotify_id: null, art: null }
+    show({ U1: p(alex, 'online'), U2: { ...p(sam, 'online'), custom_status: { text: 'Gaming', emoji: '🎮' }, listening } as never, U3: { ...p(kim, 'online'), listening } as never })
+    const row = (name: string) => [...document.querySelectorAll<HTMLElement>('.members .row')].find((r) => r.querySelector('.name')?.textContent === name)!
+    expect(row('sam').querySelector('.custom-status')?.textContent?.trim()).toBe('Gaming')
+    expect(row('sam').querySelector('.custom-status img')?.getAttribute('alt')).toBe('🎮')
+    expect(row('sam').querySelector('.listening-line')).toBeNull()
+    expect(row('sam').querySelector('.spotify-icon')).toBeNull()
+    expect(row('kim').querySelector('.listening-line')).not.toBeNull()
+  })
+})

@@ -14,9 +14,9 @@ function rules(css: string) {
 }
 const zOf = (file: string, sel: string) => rules(files.find((f) => f.name === file)!.css).find((r) => r.sel === sel)!.z
 // Full-window layers that can't hold a name: the quote image viewer and a message's image viewer (#57) show pictures; the nickname
-// dialog asks for one, opened from the card (so above it: checked below). "Updating Pulse…" (#82) covers everything on
+// dialog asks for one, opened from the card (so above it: checked below), as is the custom status dialog (#152). "Updating Pulse…" (#82) covers everything on
 // purpose while Pulse closes for the installer, and holds nothing to click.
-const NO_NAMES = new Set(['./QuoteItem.svelte .lightbox', './ImageViewer.svelte .viewer', './NicknameDialog.svelte .overlay', '../routes/Updating.svelte .updating'])
+const NO_NAMES = new Set(['./QuoteItem.svelte .lightbox', './ImageViewer.svelte .viewer', './NicknameDialog.svelte .overlay', './CustomStatusDialog.svelte .overlay', '../routes/Updating.svelte .updating'])
 
 describe('stacking', () => {
   it('the full profile sits above every full-window layer, and the quick card above it', () => {
@@ -31,5 +31,6 @@ describe('stacking', () => {
     for (const l of layers) expect(full, l.id).toBeGreaterThan(l.z)
     expect(card).toBeGreaterThan(full)
     expect(zOf('./NicknameDialog.svelte', '.overlay')).toBeGreaterThan(card)
+    expect(zOf('./CustomStatusDialog.svelte', '.overlay')).toBeGreaterThan(card)
   })
 })

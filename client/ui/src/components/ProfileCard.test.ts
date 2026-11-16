@@ -152,6 +152,22 @@ describe('ProfileCard', () => {
     expect(el.querySelector('.bio')!.innerHTML).toContain('<strong>there</strong>')
   })
 
+  it('a custom status (#152) under the handle, in full and as plain text; yours from your own copy; none on the preview', () => {
+    app.state = { ...app.state, people: { ...app.state.people, U2: { ...app.state.people.U2, custom_status: { text: '<i>on</i> a break', emoji: '☕' } } } }
+    let el = show()
+    const line = el.querySelector<HTMLElement>('[data-custom-status]')!
+    expect(line.textContent?.trim()).toBe('<i>on</i> a break')
+    expect(line.querySelector('i')).toBeNull()
+    expect(line.querySelector('img')?.getAttribute('alt')).toBe('☕')
+    unmount(cmp!)
+    el = show({ preview: true })
+    expect(el.querySelector('[data-custom-status]')).toBeNull()
+    unmount(cmp!)
+    app.state = { ...app.state, myCustomStatus: { current: { text: 'Mine', emoji: null }, until: null, recent: [] } }
+    el = show({ user: alex })
+    expect(el.querySelector('[data-custom-status]')?.textContent?.trim()).toBe('Mine')
+  })
+
   it('no banner still renders', () => {
     const el = show()
     expect(el.querySelector('.banner img')).toBeNull()

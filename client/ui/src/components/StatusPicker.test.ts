@@ -11,7 +11,9 @@ import StatusPicker from './StatusPicker.svelte'
 import { app, clock, resetState, ui } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { tomorrowMorning } from '../lib/status'
+import { profileUi } from '../lib/profileCard.svelte'
 import type { OwnStatus } from '../lib/protocol/OwnStatus'
+import type { MyCustomStatus } from '../lib/protocol/MyCustomStatus'
 
 const NOW = Date.UTC(2026, 10, 5, 10)
 const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -19,8 +21,8 @@ let cmp: ReturnType<typeof mount> | undefined
 let opener: HTMLButtonElement
 const onClose = vi.fn()
 
-function show(myStatus: OwnStatus = { status: 'online', dnd_until: null }) {
-  app.state = { ...emptyState(), me: alex, myStatus }
+function show(myStatus: OwnStatus = { status: 'online', dnd_until: null }, myCustomStatus: MyCustomStatus = { current: null, until: null, recent: [] }) {
+  app.state = { ...emptyState(), me: alex, myStatus, myCustomStatus }
   opener = document.createElement('button')
   document.body.append(opener)
   cmp = mount(StatusPicker, { target: document.body, props: { opener, onClose } })
@@ -53,9 +55,10 @@ afterEach(() => {
 })
 
 describe('StatusPicker', () => {
-  it('the three statuses with their dots and nothing else (it lives on your card, #168); the current one ticked; focus on the first', () => {
+  it('the custom status row, then the three statuses with their dots (it lives on your card, #168); the current one ticked; focus on Online', () => {
     show()
-    expect(ids()).toEqual(['online', 'dnd', 'invisible'])
+    expect(ids()).toEqual(['custom', 'online', 'dnd', 'invisible'])
+    expect(item('custom').textContent).toContain('Set a custom status')
     expect(item('online').textContent).toContain('Online')
     expect(item('dnd').textContent).toContain('Do Not Disturb')
     expect(item('invisible').textContent).toContain('Invisible')
@@ -171,6 +174,37 @@ describe('StatusPicker', () => {
     key(document.activeElement!, 'Escape')
     expect(onClose).toHaveBeenCalled()
     expect(document.activeElement).toBe(opener)
+  })
+
+  it('your custom status (#152): its row shows it and opens the dialog; Clear clears it; a run-out one is gone', () => {
+    const until = new Date(NOW + 60_000).toISOString()
+    show(undefined, { current: { text: 'Gaming', emoji: '🎮' }, until, recent: [] })
+    expect(ids()).toEqual(['custom', 'clear-custom', 'online', 'dnd', 'invisible'])
+    expect(item('custom').textContent).toContain('Gaming')
+    expect(item('custom').querySelector('img.status-emoji')).not.toBeNull()
+    profileUi.card = { userId: 'U1', serverId: null, anchor: new DOMRect(), opener }
+    item('custom').click()
+    flushSync()
+    expect(profileUi.customStatus).toBe(true)
+    expect(profileUi.card).toBeNull()
+    expect(onClose).toHaveBeenCalled()
+    profileUi.customStatus = false
+    unmount(cmp!)
+    document.body.innerHTML = ''
+    show(undefined, { current: { text: 'Gaming', emoji: null }, until, recent: [] })
+    item('clear-custom').click()
+    flushSync()
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual(['clear_custom_status'])
+    unmount(cmp!)
+    document.body.innerHTML = ''
+    show(undefined, { current: { text: 'Gaming', emoji: null }, until: new Date(NOW - 1).toISOString(), recent: [] })
+    expect(ids()).toEqual(['custom', 'online', 'dnd', 'invisible'])
+  })
+
+  it('ArrowUp from Online reaches the custom status row', () => {
+    show()
+    key(document.activeElement!, 'ArrowUp')
+    expect(document.activeElement).toBe(item('custom'))
   })
 
   it('a failure says why', async () => {

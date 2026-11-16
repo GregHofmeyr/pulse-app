@@ -12,6 +12,8 @@
   import { app, clock, openDm, queueMessage, ui } from '../lib/store.svelte'
   import { presenceOf } from '../lib/presence'
   import { listeningOf } from '../lib/activity'
+  import { customStatusOf } from '../lib/customStatus'
+  import StatusEmoji from './StatusEmoji.svelte'
   import ListeningPanel from './ListeningPanel.svelte'
   import PlayingPanel from './PlayingPanel.svelte'
   import DeadlockPanel from './DeadlockPanel.svelte'
@@ -79,6 +81,8 @@
   const presence = $derived(mine || app.state.people[user.id] ? presenceOf(app.state, user.id, clock.nowIso) : null)
   // what they're listening to (#275), as the server lets you see it; never on the profile editor's preview
   const listening = $derived(preview ? null : listeningOf(app.state, user.id))
+  // their custom status (#152), as the server lets you see it (yours always); never on the editor's preview
+  const custom = $derived(preview ? null : customStatusOf(app.state, user.id, clock.nowIso))
   // and the game they're playing (#380), beside it
   const playing = $derived(preview ? null : playingOf(app.state, user.id))
   const bioHtml = $derived(card.bio ? renderMarkdown(card.bio, [], app.state.customEmoji) : '')
@@ -173,6 +177,10 @@
       <Name userId={user.id} serverId={null} text={name} interactive={false} size="card" bg={nameBg} user={preview ? user : undefined} />
       <div class="handle">@{user.username}{card.pronouns ? ` · ${card.pronouns}` : ''}</div>
     </div>
+    {#if custom}
+      <!-- plain text, in full (the lists cut it to one line) -->
+      <div class="custom-status" data-custom-status>{#if custom.emoji}<StatusEmoji emoji={custom.emoji} size={quick ? 18 : 16} />{/if}{#if custom.text}<span>{custom.text}</span>{/if}</div>
+    {/if}
     {#if shown.length}
       <div class="badges">
         {#each shown as b (b.key)}
@@ -278,6 +286,7 @@
   .who :global(.name) { font-weight: 700; }
   .who { font-size: calc(20px * var(--k) / 1.15); }
   .handle { font-size: calc(13px * var(--k)); color: var(--card-text-2); }
+  .custom-status { display: flex; align-items: center; gap: 6px; margin-top: calc(-4px * var(--k)); font-size: calc(13px * var(--k)); color: var(--card-text); overflow-wrap: anywhere; min-width: 0; }
   .badges { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 0; }
   /* a touch smaller than the shared showcase size; zoom keeps the ring, glyph, spark and tier in proportion */
   .badges :global(.badge-icon.show) { zoom: .84; }

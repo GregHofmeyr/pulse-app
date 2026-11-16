@@ -120,6 +120,8 @@ One status per account, set by you and applied everywhere:
 ## Out of scope (deferred → issues)
 
 - Automatic Idle or Away after inactivity (Idle done later, #53).
-- Custom status text and emoji ("Gaming 🎮").
+- Custom status text and emoji ("Gaming 🎮") (done later, #152: up to 128 characters of plain text and an optional
+  emoji, clearing after 30 minutes, 1 hour, 4 hours, today, this week or never, server-side; it rides on the presence
+  view, so whoever sees you offline, Invisible or hidden from included, sees no custom status).
 - Timers for Invisible (done later, #153).
 - Per-server statuses.

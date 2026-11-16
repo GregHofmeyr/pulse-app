@@ -354,6 +354,9 @@ export const api = {
   setPrivateNickname: (userId: string, nickname: string | null) => invoke<void>('set_private_nickname', { userId, nickname }),
   /** Your status (#45); `dndUntil` only with 'dnd' or 'invisible' (#153; null: until turned off). A StatusChanged follows to every session. */
   setStatus: (status: Status, dndUntil: string | null) => invoke<void>('set_status', { status, dndUntil }),
+  /** Your custom status (#152): `until` is when it clears (null: never). */
+  setCustomStatus: (text: string, emoji: string | null, until: string | null) => invoke<void>('set_custom_status', { text, emoji, until }),
+  clearCustomStatus: () => invoke<void>('clear_custom_status'),
   /** Start a call in a DM or group, ringing the others, or join the one going on (#50: `rang` false). Then join its voice room. */
   startCall: (channelId: string) => invoke<StartCallResponse>('start_call', { channelId }),
   /** Stop a call ringing you, on all your devices; the caller isn't told (#50). */

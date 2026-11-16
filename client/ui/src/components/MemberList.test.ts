@@ -457,6 +457,25 @@ describe('MemberList: Listening to (#275)', () => {
   })
 })
 
+describe('MemberList: custom status (#152)', () => {
+  it('one muted line under the name, cut to fit, the whole text in its tooltip; plain text, never markup', () => {
+    const samRow = () => [...document.querySelectorAll<HTMLElement>('.members .row')].find((r) => r.textContent?.includes('Sammy'))!
+    const text = '<b>Gaming</b> with **everyone** for a very long time indeed'
+    app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online', custom_status: { text, emoji: null } } } }
+    flushSync()
+    const line = samRow().querySelector<HTMLElement>('.who .custom-status')!
+    expect(line.textContent?.trim()).toBe(text)
+    expect(line.querySelector('b')).toBeNull()
+    expect(line.dataset.tip).toBe(text)
+    expect(samRow().querySelector('.name-clip')).toBeNull()
+    // gone (the server sends none to someone they look offline to): the name clip is back
+    app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online' } } }
+    flushSync()
+    expect(samRow().querySelector('.custom-status')).toBeNull()
+    expect(samRow().querySelector('.name-clip')?.textContent).toBe('sam')
+  })
+})
+
 describe('MemberList: Deadlock ranks (#390)', () => {
   it("asks for the server's ranks and shows a badge after the name of those who have one", async () => {
     expect(invoke).toHaveBeenCalledWith('deadlock_ranks', { serverId: 'S1' })

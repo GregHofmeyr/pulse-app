@@ -49,6 +49,15 @@ describe('PeopleBoard', () => {
     expect(card('jo').querySelector('.status')!.textContent?.trim()).toBe('last seen 3h ago')
   })
 
+  it('a custom status (#152) shows on its own line under the presence line', () => {
+    const card = (name: string) => [...document.querySelectorAll<HTMLElement>('.card')].find((c) => c.textContent?.includes(name))!
+    expect(card('sam').querySelector('.custom-status')).toBeNull()
+    app.state = { ...app.state, people: { ...app.state.people, U2: { ...app.state.people.U2, custom_status: { text: 'Out for lunch', emoji: '🍕' } } } }
+    flushSync()
+    expect(card('sam').querySelector('.text .custom-status')?.textContent?.trim()).toBe('Out for lunch')
+    expect(card('sam').querySelector('.status')!.textContent?.trim()).toBe('online')
+  })
+
   it('Idle (#53) counts as online, after the active, with an amber moon and an "idle" line', () => {
     // ari sorts first by name, but idle puts her after the active
     app.state = { ...app.state, people: { ...app.state.people, U5: { user: user('U5', 'ari'), online: true, last_seen_at: null, status: 'online', idle: true } } }

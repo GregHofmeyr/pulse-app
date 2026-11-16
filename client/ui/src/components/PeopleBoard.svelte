@@ -15,6 +15,8 @@
   import { isMenuKey, rowMenuAt } from '../lib/participantMenu'
   import MemberMenu from './MemberMenu.svelte'
   import { joinOf } from '../lib/steamJoin'
+  import CustomStatusLine from './CustomStatusLine.svelte'
+  import { customStatusOf } from '../lib/customStatus'
   import { api } from '../lib/tauri'
 
   let { onOpen, onJoinVoice }: {
@@ -112,6 +114,7 @@
           {@const voice = voiceOf(p.user.id)}
           {@const unread = dmUnread(p.user.id)}
           {@const game = joinOf(app.state, p.user.id)}
+          {@const custom = customStatusOf(app.state, p.user.id, clock.nowIso)}
           <div class="card" class:unread={unread > 0} class:away={!isOn(p.presence)} role="presentation"
             onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}
             oncontextmenu={(e) => openMenu(p.user.id, e, e.currentTarget)} onkeydown={(e) => { if (isMenuKey(e)) openMenu(p.user.id, e, e.currentTarget) }}>
@@ -126,6 +129,8 @@
                   {:else if p.presence.lastSeen}last seen {relativeTime(p.presence.lastSeen, Date.parse(clock.nowIso))}
                   {:else}offline{/if}
                 </span>
+                <!-- their custom status (#152), on its own line: the server sends it only while they look online -->
+                {#if custom}<CustomStatusLine status={custom} />{/if}
               </div>
             </div>
             <div class="acts">
