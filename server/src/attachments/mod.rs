@@ -148,15 +148,15 @@ pub fn fallback_text(atts: &[Attachment]) -> String {
     }
 }
 
-/// How many parts a big upload of `size` bytes has.
-pub fn part_count(size: u64) -> u16 {
-    size.div_ceil(attachment_limits::PART_SIZE).max(1) as u16
+/// How many parts of `part_size` (`Config::part_size`) a big upload of `size` bytes has.
+pub fn part_count(size: u64, part_size: u64) -> u16 {
+    size.div_ceil(part_size).max(1) as u16
 }
 
 /// The length of part `part` (from 1) of a big upload of `size` bytes: the last is the rest.
-pub fn part_len(size: u64, part: u16) -> u64 {
-    let start = (part as u64 - 1) * attachment_limits::PART_SIZE;
-    attachment_limits::PART_SIZE.min(size.saturating_sub(start))
+pub fn part_len(size: u64, part: u16, part_size: u64) -> u64 {
+    let start = (part as u64 - 1) * part_size;
+    part_size.min(size.saturating_sub(start))
 }
 
 /// An attachment's stored object, for deleting it: the row's key and which prefix it lives under.

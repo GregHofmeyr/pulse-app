@@ -45,6 +45,9 @@ pub struct Config {
     pub calls: CallTimings,
     /// How long a Spotify share stays on a voice stage at most (#234; `stage::SHARE_TTL`).
     pub stage_share_ttl: Duration,
+    /// A big upload's part size (#57; `attachment_limits::PART_SIZE`). Only tests change it, to
+    /// span several batches of part URLs without a file hundreds of MB big (#367).
+    pub part_size: u64,
     /// GIPHY (#58): the key signed-in apps search with, and the rating they ask for.
     pub giphy: GiphyConfig,
 }
@@ -52,7 +55,7 @@ pub struct Config {
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
     limits, stream_media_timeout, media_dir, media_min_free_bytes, updates_dir, totp_key, clips, embeds,
-    launch_date, calls, stage_share_ttl, giphy ;
+    launch_date, calls, stage_share_ttl, part_size, giphy ;
     livekit_secret
 });
 
@@ -132,6 +135,7 @@ impl Config {
             launch_date: launch_date(std::env::var("PULSE_LAUNCH_DATE").ok().as_deref())?,
             calls: CallTimings::default(),
             stage_share_ttl: crate::stage::SHARE_TTL,
+            part_size: pulse_protocol::rest::attachment_limits::PART_SIZE,
             giphy: giphy(|k| std::env::var(k).ok())?,
         })
     }
@@ -430,6 +434,7 @@ mod tests {
             launch_date: None,
             calls: CallTimings::default(),
             stage_share_ttl: crate::stage::SHARE_TTL,
+            part_size: pulse_protocol::rest::attachment_limits::PART_SIZE,
             giphy: GiphyConfig {
                 api_key: Some("SECRET-GIPHY".into()),
                 rating: "pg-13".into(),

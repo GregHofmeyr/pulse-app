@@ -512,7 +512,11 @@ mod tests {
     }
 
     async fn setup() -> Setup {
-        let app = testing::spawn().await;
+        setup_with(testing::test_config()).await
+    }
+
+    async fn setup_with(cfg: pulse_server::config::Config) -> Setup {
+        let app = testing::spawn_with(cfg).await;
         let (_, token) = testing::register(&app, "alex").await;
         let s = testing::create_server(&app, &token, "Main").await;
         let channel = testing::general(&app, &token, s.id).await.id;
@@ -833,6 +837,68 @@ mod tests {
         )
         .await;
         assert_eq!(posted, 0);
+    }
+
+    /// More parts than one ask signs (#367): small parts make the same big file 26 of them, so the
+    /// next batch's URLs are asked for while this one's last parts go up, and none is missed.
+    #[tokio::test]
+    async fn a_big_file_spanning_two_batches_of_part_urls_goes_up_whole() {
+        let mut cfg = testing::test_config();
+        cfg.part_size = 2 * 1024 * 1024;
+        let s = setup_with(cfg).await;
+        let mut out = outgoing(&s, vec![stage_big(&s)], "");
+        out.temp_days = Some(1);
+        let m = Jobs::default()
+            .run(&s.api, &s.token, &s.stager, &out, |_| {})
+            .await
+            .unwrap();
+        let parts = (MAX_BYTES + 1).div_ceil(2 * 1024 * 1024) as usize;
+        assert!(parts > pulse_protocol::rest::attachment_limits::PARTS_PER_ASK);
+        assert_eq!(m.attachments[0].size, MAX_BYTES + 1);
+        assert_eq!(part_puts(&s), parts);
+    }
+
+    /// A cancel that lands while the message itself is on its way takes the message back once the
+    /// send returns (#367): nothing stays posted.
+    #[tokio::test]
+    async fn a_cancel_while_the_message_is_sending_takes_it_back() {
+        let s = setup().await;
+        let out = outgoing(&s, stage(&s), "hello");
+        let jobs = Arc::new(Jobs::default());
+        let (dropped, cancel) = canceller(&jobs);
+        // The server holds every send while this is held: the message waits on its way.
+        let held = s.app.hub.in_order().await;
+        let up = Arc::new(tokio::sync::Notify::new());
+        let on_up = up.clone();
+        let canceller = async move {
+            up.notified().await;
+            // past the check before the send, now waiting on the server
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            cancel("n-1");
+            drop(held);
+        };
+        let (r, ()) = futures::join!(
+            jobs.run(&s.api, &s.token, &s.stager, &out, move |p| {
+                if p.sent == p.total {
+                    on_up.notify_one();
+                }
+            }),
+            canceller,
+        );
+        assert!(r.as_ref().is_err_and(|e| e.cancelled()), "{r:?}");
+        drop_on_server(&s, &dropped).await;
+        let sent = testing::count(
+            &s.app,
+            "SELECT COUNT(*) FROM messages WHERE kind = 'normal'",
+        )
+        .await;
+        assert_eq!(sent, 1, "the message did go out");
+        let posted = testing::count(
+            &s.app,
+            "SELECT COUNT(*) FROM messages WHERE kind = 'normal' AND deleted_at IS NULL",
+        )
+        .await;
+        assert_eq!(posted, 0, "and was taken back");
     }
 
     #[tokio::test]

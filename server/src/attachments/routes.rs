@@ -198,8 +198,8 @@ async fn start(
                 now_at + chrono::Duration::from_std(URL_TTL).map_err(anyhow::Error::from)?,
             ),
             multipart: Some(MultipartInfo {
-                part_size: attachment_limits::PART_SIZE,
-                parts: part_count(req.size),
+                part_size: s.cfg.part_size,
+                parts: part_count(req.size, s.cfg.part_size),
             }),
         }));
     }
@@ -346,14 +346,14 @@ async fn part_urls(
     if req.parts.is_empty() || req.parts.len() > attachment_limits::PARTS_PER_ASK {
         return Err(bad("Ask for 1 to 16 parts at a time."));
     }
-    let count = part_count(size);
+    let count = part_count(size, s.cfg.part_size);
     req.parts
         .iter()
         .map(|&part| {
             if part == 0 || part > count {
                 return Err(bad("That part isn't in this upload."));
             }
-            let len = part_len(size, part);
+            let len = part_len(size, part, s.cfg.part_size);
             let (url, _) = r2.part_url(&stored.object_key(), &upload, part, len, URL_TTL);
             Ok(PartUrl {
                 part,
@@ -420,12 +420,11 @@ async fn complete(
         .list_parts(&stored.object_key(), &upload)
         .await?
         .ok_or_else(|| AppError::Conflict("That upload expired. Try again.".into()))?;
-    let count = part_count(size);
+    let count = part_count(size, s.cfg.part_size);
     let whole = parts.len() == count as usize
-        && parts
-            .iter()
-            .enumerate()
-            .all(|(i, (n, _, len))| *n as usize == i + 1 && *len == part_len(size, *n));
+        && parts.iter().enumerate().all(|(i, (n, _, len))| {
+            *n as usize == i + 1 && *len == part_len(size, *n, s.cfg.part_size)
+        });
     if !whole {
         return Err(AppError::Conflict("The upload isn't finished yet.".into()));
     }
