@@ -10,6 +10,7 @@ pub mod gateway;
 pub mod gifs;
 pub mod hookwatch;
 pub mod hotkeys;
+pub mod idle;
 pub mod ipc;
 pub mod keybinds;
 pub mod links;
@@ -228,6 +229,11 @@ pub fn run() {
                     let _ = h2.emit("pulse://media-activity", state);
                 }),
             ));
+            // Idle (#53): polls the system's last input on Windows; nothing runs elsewhere
+            let h = app.handle().clone();
+            app.manage(idle::Idle::start(std::sync::Arc::new(move |f| {
+                h.state::<commands::Core>().send_frame(f)
+            })));
             app.manage(voice::mictest::MicTest::default());
             app.manage(soundboard::Cache::default());
             app.manage(soundboard::Prepared::default());

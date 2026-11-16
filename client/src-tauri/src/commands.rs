@@ -489,6 +489,11 @@ impl Core {
                     app.try_state::<crate::activity::MediaActivity>()
                         .and_then(|m| m.after_ready()),
                 );
+                // idle (#53): the server forgets it with the connection too
+                frames.extend(
+                    app.try_state::<crate::idle::Idle>()
+                        .and_then(|i| i.after_ready()),
+                );
                 frames
             })
         };
