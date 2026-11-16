@@ -279,6 +279,7 @@ async fn ready_for(
             .await?
             .map(|x| x.own(&now()))
             .unwrap_or_default(),
+        my_custom_status: crate::presence::custom::mine(db, me, &now()).await?,
         appear_offline_to: crate::presence::hidden_list(db, me).await?,
         live_notify: crate::streams::notify::list(db, me).await?,
         server_order: crate::servers::order::of(db, me).await?,

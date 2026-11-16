@@ -5,13 +5,14 @@
 //! so a viewer someone is invisible or hidden to gets exactly what they'd get if that person had
 //! left: offline, with the last seen frozen at the moment they stopped looking online.
 
+pub mod custom;
 pub mod routes;
 pub mod sweep;
 
 use std::collections::HashMap;
 
 use pulse_protocol::ids::UserId;
-use pulse_protocol::rest::{OwnStatus, PresenceStatus, Status};
+use pulse_protocol::rest::{CustomStatus, OwnStatus, PresenceStatus, Status};
 use sqlx::SqlitePool;
 
 /// A freeze moment for someone who had never been seen (never connected) when they stopped
@@ -33,6 +34,9 @@ pub struct Subject {
     /// target → (frozen last seen, still on the owner's list). An off-list row only counts while
     /// Invisible (see the migration).
     pub hidden: HashMap<UserId, (String, bool)>,
+    /// Their custom status (#152), and when it clears (`None`: never).
+    pub custom: Option<CustomStatus>,
+    pub custom_until: Option<String>,
 }
 
 /// What one viewer sees of one person.
@@ -42,6 +46,8 @@ pub struct PresenceView {
     pub last_seen_at: Option<String>,
     /// Online with every device idle (#53): only ever with `status: Online`.
     pub idle: bool,
+    /// Their custom status (#152): only while they look online to the viewer (and always to themselves).
+    pub custom: Option<CustomStatus>,
 }
 
 impl PresenceView {
@@ -58,6 +64,13 @@ impl Subject {
             timed if self.dnd_until.as_deref().is_none_or(|u| u > now) => timed,
             _ => Status::Online,
         }
+    }
+
+    /// The custom status in force at `now` (#152): a run-out one is none.
+    pub fn custom_at(&self, now: &str) -> Option<CustomStatus> {
+        self.custom
+            .clone()
+            .filter(|_| self.custom_until.as_deref().is_none_or(|u| u > now))
     }
 
     /// DND in force at `now` (an expired timer is Online).
@@ -121,13 +134,16 @@ pub fn view_for(
         status: PresenceStatus::Offline,
         last_seen_at,
         idle: false,
+        custom: None,
     };
+    // a custom status shows only with the dot (#152): nobody it's hidden from, or who sees them offline, gets it
     let live = |last_seen_at| {
         if s.dnd(now) {
             PresenceView {
                 status: PresenceStatus::Dnd,
                 last_seen_at,
                 idle: false,
+                custom: s.custom_at(now),
             }
         } else {
             PresenceView {
@@ -135,15 +151,20 @@ pub fn view_for(
                 last_seen_at,
                 // your own sessions see you Online while you're Invisible: never Idle then either
                 idle: idle && s.status_at(now) == Status::Online,
+                custom: s.custom_at(now),
             }
         }
     };
     if viewer == s.id {
-        // You always see the truth about yourself (the client draws Invisible from your own status).
+        // You always see the truth about yourself (the client draws Invisible from your own status), your custom
+        // status included.
         return if connected {
             live(s.last_seen_at.clone())
         } else {
-            offline(s.last_seen_at.clone())
+            PresenceView {
+                custom: s.custom_at(now),
+                ..offline(s.last_seen_at.clone())
+            }
         };
     }
     if s.hides_from(viewer, now) {
@@ -163,8 +184,12 @@ type Row = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
 );
-const SUBJECT_COLS: &str = "id, presence, dnd_until, invisible_at, last_seen_at";
+const SUBJECT_COLS: &str =
+    "id, presence, dnd_until, invisible_at, last_seen_at, custom_text, custom_emoji, custom_until";
 
 fn subject(r: Row) -> anyhow::Result<Subject> {
     Ok(Subject {
@@ -174,6 +199,8 @@ fn subject(r: Row) -> anyhow::Result<Subject> {
         invisible_at: r.3,
         last_seen_at: r.4,
         hidden: HashMap::new(),
+        custom: r.5.map(|text| CustomStatus { text, emoji: r.6 }),
+        custom_until: r.7,
     })
 }
 
@@ -245,6 +272,8 @@ mod tests {
             invisible_at: None,
             last_seen_at: Some("2026-11-05T09:00:00.000Z".into()),
             hidden: HashMap::new(),
+            custom: None,
+            custom_until: None,
         }
     }
 
@@ -258,6 +287,7 @@ mod tests {
                 status: PresenceStatus::Online,
                 last_seen_at: None,
                 idle: false,
+                custom: None,
             }
         );
         assert_eq!(
@@ -266,6 +296,7 @@ mod tests {
                 status: PresenceStatus::Offline,
                 last_seen_at: s.last_seen_at.clone(),
                 idle: false,
+                custom: None,
             }
         );
     }
@@ -279,6 +310,7 @@ mod tests {
             status: PresenceStatus::Offline,
             last_seen_at: Some("2026-11-05T10:00:00.000Z".into()),
             idle: false,
+            custom: None,
         };
         // connected or not, and whatever their real last disconnect says
         assert_eq!(view_for(&s, UserId::new(), true, false, NOW), want);
@@ -298,6 +330,7 @@ mod tests {
                 status: PresenceStatus::Offline,
                 last_seen_at: Some("2026-11-05T10:30:00.000Z".into()),
                 idle: false,
+                custom: None,
             }
         );
         assert!(view_for(&s, UserId::new(), true, false, NOW).online());
@@ -396,6 +429,7 @@ mod tests {
                 status: PresenceStatus::Online,
                 last_seen_at: None,
                 idle: false,
+                custom: None,
             }
         );
         assert_eq!(
@@ -442,7 +476,8 @@ mod tests {
             PresenceView {
                 status: PresenceStatus::Online,
                 last_seen_at: None,
-                idle: true
+                idle: true,
+                custom: None,
             }
         );
         // you see your own Idle
@@ -468,5 +503,52 @@ mod tests {
             .insert(sam, ("2026-11-05T10:30:00.000Z".into(), true));
         assert!(!view_for(&s, sam, true, true, NOW).idle);
         assert!(view_for(&s, UserId::new(), true, true, NOW).idle);
+    }
+
+    #[test]
+    fn custom_status_shows_only_with_the_dot_and_until_it_runs_out() {
+        let mut s = alex();
+        let sam = UserId::new();
+        let gaming = CustomStatus {
+            text: "Gaming".into(),
+            emoji: Some("🎮".into()),
+        };
+        s.custom = Some(gaming.clone());
+        // online and DND show it
+        assert_eq!(
+            view_for(&s, sam, true, false, NOW).custom,
+            Some(gaming.clone())
+        );
+        s.status = Status::Dnd;
+        assert_eq!(
+            view_for(&s, sam, true, true, NOW).custom,
+            Some(gaming.clone())
+        );
+        // offline doesn't
+        assert_eq!(view_for(&s, sam, false, false, NOW).custom, None);
+        // Invisible doesn't, but you still see your own
+        s.status = Status::Invisible;
+        s.invisible_at = Some("2026-11-05T10:00:00.000Z".into());
+        assert_eq!(view_for(&s, sam, true, false, NOW).custom, None);
+        assert_eq!(
+            view_for(&s, s.id, true, false, NOW).custom,
+            Some(gaming.clone())
+        );
+        // hidden from one viewer: not to them
+        s.status = Status::Online;
+        s.invisible_at = None;
+        s.hidden
+            .insert(sam, ("2026-11-05T10:30:00.000Z".into(), true));
+        assert_eq!(view_for(&s, sam, true, false, NOW).custom, None);
+        assert_eq!(
+            view_for(&s, UserId::new(), true, false, NOW).custom,
+            Some(gaming.clone())
+        );
+        // a run-out timer is none, to everyone
+        s.custom_until = Some("2026-11-05T11:59:59.999Z".into());
+        assert_eq!(view_for(&s, UserId::new(), true, false, NOW).custom, None);
+        assert_eq!(view_for(&s, s.id, true, false, NOW).custom, None);
+        s.custom_until = Some("2026-11-05T12:30:00.000Z".into());
+        assert_eq!(view_for(&s, s.id, true, false, NOW).custom, Some(gaming));
     }
 }

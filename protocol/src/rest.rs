@@ -1310,6 +1310,11 @@ pub struct Person {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub playing: Option<Playing>,
+    /// Their custom status (#152), by the same rule as `listening`: only while they look online to this viewer (and
+    /// always to themselves). Absent otherwise, and from older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub custom_status: Option<CustomStatus>,
 }
 
 /// What someone's Spotify app is playing (#275), read by their own Pulse from the OS media session (MPRIS on Linux,
@@ -1469,6 +1474,42 @@ pub struct SetStatusRequest {
     pub status: Status,
     #[serde(default)]
     pub dnd_until: Option<String>,
+}
+
+/// A custom status (#152): a short line of plain text and an optional emoji, a standard one as Unicode or a server's
+/// as `custom:<id>` (like a reaction). The server keeps the text sanitised (trimmed, whitespace collapsed, no control
+/// or bidi characters, at most [`CUSTOM_STATUS_MAX`] characters); `text` may be empty when there's an emoji.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct CustomStatus {
+    pub text: String,
+    #[serde(default)]
+    pub emoji: Option<String>,
+}
+
+/// The longest custom status text, in characters (#152).
+pub const CUSTOM_STATUS_MAX: usize = 128;
+
+/// Your own custom status (#152), for your own sessions only: what it is, when it clears (RFC 3339 UTC; `None`:
+/// never), and the last few you set, newest first, for picking again.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MyCustomStatus {
+    #[serde(default)]
+    pub current: Option<CustomStatus>,
+    #[serde(default)]
+    pub until: Option<String>,
+    #[serde(default)]
+    pub recent: Vec<CustomStatus>,
+}
+
+/// `PUT /me/custom-status` (#152): `until` is when it clears, a time in the next 8 days (the client works out "today"
+/// and "this week" in local time), or `None` to keep it until you clear it (`DELETE /me/custom-status`).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct SetCustomStatusRequest {
+    pub text: String,
+    #[serde(default)]
+    pub emoji: Option<String>,
+    #[serde(default)]
+    pub until: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]

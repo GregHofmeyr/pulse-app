@@ -9,6 +9,7 @@ import type { DmMembers } from "./DmMembers";
 import type { Game } from "./Game";
 import type { Message } from "./Message";
 import type { Mute } from "./Mute";
+import type { MyCustomStatus } from "./MyCustomStatus";
 import type { NotifyLevelPref } from "./NotifyLevelPref";
 import type { OwnStatus } from "./OwnStatus";
 import type { Person } from "./Person";
@@ -111,6 +112,10 @@ server_voice: Array<ServerVoiceMod>,
  * Your own status and DND end (#45).
  */
 status: OwnStatus, 
+/**
+ * Your own custom status, when it clears and your recent ones (#152). Yours only. Absent from older servers.
+ */
+my_custom_status?: MyCustomStatus, 
 /**
  * The people you appear offline to (#45). Yours only; nobody else ever receives it.
  */
