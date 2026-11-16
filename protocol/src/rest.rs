@@ -511,6 +511,11 @@ pub struct Channel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub bitrate: Option<u32>,
+    /// When its owner archived it (#303): a text channel that is read-only (nobody posts, reacts or edits there) and
+    /// sits in the list's collapsed Archived group. Absent: not archived (and from older servers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub archived_at: Option<String>,
 }
 
 /// The bitrates a voice channel may set (#75), in kbps, above Default's 64. 256 is as much as the

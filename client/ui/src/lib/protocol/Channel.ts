@@ -25,4 +25,9 @@ icon_still?: string,
  * A voice channel's audio bitrate in kbps (#75), one of [`CHANNEL_BITRATES_KBPS`]: everyone
  * publishing there sends at it. Absent: Default (64 kbps), which older clients always send.
  */
-bitrate?: number, };
+bitrate?: number, 
+/**
+ * When its owner archived it (#303): a text channel that is read-only (nobody posts, reacts or edits there) and
+ * sits in the list's collapsed Archived group. Absent: not archived (and from older servers).
+ */
+archived_at?: string, };

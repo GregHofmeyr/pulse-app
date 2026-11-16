@@ -1962,6 +1962,20 @@ pub async fn delete_channel(
 }
 
 #[tauri::command]
+pub async fn set_channel_archived(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    archived: bool,
+) -> Result<Channel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_channel_archived(&token, channel_id, archived).await,
+    )
+}
+
+#[tauri::command]
 pub async fn list_deleted_channels(
     app: AppHandle,
     core: State<'_, Core>,

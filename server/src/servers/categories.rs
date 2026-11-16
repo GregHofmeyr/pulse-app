@@ -374,19 +374,31 @@ async fn save_layout(
             .await?
             .into_iter()
             .collect();
-    let channels: HashSet<String> =
-        sqlx::query_scalar("SELECT id FROM channels WHERE server_id = ? AND deleted_at IS NULL")
-            .bind(server.to_string())
-            .fetch_all(&mut *tx)
-            .await?
-            .into_iter()
-            .collect();
+    let channels: HashSet<String> = sqlx::query_scalar(
+        "SELECT id FROM channels WHERE server_id = ? AND deleted_at IS NULL AND archived_at IS NULL",
+    )
+    .bind(server.to_string())
+    .fetch_all(&mut *tx)
+    .await?
+    .into_iter()
+    .collect();
+    // Archived channels (#303) sit apart, in the Archived group: a save needn't name them (today's clients don't),
+    // and one from before archiving that does still places them.
+    let archived: HashSet<String> = sqlx::query_scalar(
+        "SELECT id FROM channels WHERE server_id = ? AND deleted_at IS NULL AND archived_at IS NOT NULL",
+    )
+    .bind(server.to_string())
+    .fetch_all(&mut *tx)
+    .await?
+    .into_iter()
+    .collect();
     let named_categories: Vec<String> = req.categories.iter().map(|c| c.id.to_string()).collect();
     let named_channels: Vec<String> = req
         .uncategorised
         .iter()
         .chain(req.categories.iter().flat_map(|c| &c.channels))
         .map(|c| c.to_string())
+        .filter(|c| !archived.contains(c))
         .collect();
     if req.revision != revision
         || !exactly(&named_categories, &categories)

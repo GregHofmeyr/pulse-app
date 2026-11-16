@@ -208,6 +208,7 @@ pub async fn toggle(
     // Access checks read through the pool, so they run before the write lock: holding it while
     // waiting for a second pool connection could starve the pool under concurrent toggles.
     let ch = visible_message(&s.db, me, msg).await?;
+    crate::access::require_open(&ch)?; // archived (#303): no reacting, nor taking one back
     let channel_id = ch.id;
     match (ch.kind, ch.server_id) {
         (kind, Some(server)) if kind.has_chat() && !is_server_member(&s.db, server, me).await? => {
@@ -225,6 +226,7 @@ pub async fn toggle(
     let mut tx = crate::db::begin_write(&s.db).await?;
     // A delete (of the message, or its channel: #109) that committed since the check wins.
     crate::access::channel_live_in(&mut tx, channel_id).await?;
+    crate::access::open_in(&mut tx, channel_id).await?; // archived (#303): read-only
     let live: Option<i64> =
         sqlx::query_scalar("SELECT 1 FROM messages WHERE id = ? AND deleted_at IS NULL")
             .bind(msg.to_string())

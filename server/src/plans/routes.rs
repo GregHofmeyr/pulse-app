@@ -164,6 +164,7 @@ async fn create(
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, id).await?; // channel deleted since (#109)
+    crate::access::open_in(&mut tx, id).await?; // archived (#303): read-only
     // minted under the write lock, so ids keep commit order (as a send)
     msg.id = MessageId::new();
     msg.created_at = now();
@@ -291,6 +292,7 @@ async fn edit(
     let c: Cleaned = clean(&req, at)?;
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, p.channel_id).await?;
+    crate::access::open_in(&mut tx, p.channel_id).await?; // archived (#303): read-only
     let p = mine_open(&mut tx, me, id).await?;
     let edited = stamp(at);
     sqlx::query(
@@ -338,6 +340,7 @@ async fn rsvp(
     let mut tx = begin_write(&s.db).await?;
     // Read again under the write lock: a cancel (or a delete, of it or its channel) may have landed since.
     crate::access::channel_live_in(&mut tx, p.channel_id).await?;
+    crate::access::open_in(&mut tx, p.channel_id).await?; // archived (#303): read-only
     match super::load(&mut tx, id).await? {
         None => return Err(AppError::NotFound),
         Some(p) if p.cancelled_at.is_some() => return Err(is_cancelled()),
@@ -385,6 +388,7 @@ async fn cancel(
     let p = visible(&s, me, id).await?;
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, p.channel_id).await?;
+    crate::access::open_in(&mut tx, p.channel_id).await?; // archived (#303): read-only
     mine_open(&mut tx, me, id).await?;
     sqlx::query("UPDATE plans SET cancelled_at = ? WHERE message_id = ? AND cancelled_at IS NULL")
         .bind(now())

@@ -430,6 +430,7 @@ pub fn run() {
             commands::rename_channel,
             commands::set_group_icon,
             commands::delete_channel,
+            commands::set_channel_archived,
             commands::list_deleted_channels,
             commands::restore_channel,
             commands::purge_channel,

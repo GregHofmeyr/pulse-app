@@ -921,6 +921,9 @@
         <div class="edit-quote"><QuoteComposer {channelId} serverId={serverId ?? ''} editing={editingQuote} onDone={() => (editingQuote = null)} /></div>
       {/key}
     {/if}
+  {:else if channel?.archived_at}
+    <!-- archived (#303): read-only for everyone until its owner unarchives it; the server refuses posts anyway -->
+    <p class="archived-note" role="status">This channel is archived, so it's read-only.</p>
   {:else}
   {#if scheduledHere.length}
     <div class="sched-line">
@@ -945,6 +948,7 @@
 
 <style>
   .chan { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .archived-note { margin: 0 16px 16px; padding: 12px 14px; border-radius: var(--radius-md); background: var(--bg-1); color: var(--text-2); font-size: 14px; text-align: center; }
   /* the replies panel sits on the right (RepliesPanel, absolutely placed); the channel keeps the rest */
   .chan { position: relative; --replies-w: min(380px, 45%); }
   .chan.with-replies { padding-right: var(--replies-w); }

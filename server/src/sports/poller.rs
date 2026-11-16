@@ -172,7 +172,7 @@ pub async fn active_leagues(s: &AppState) -> AppResult<Vec<SportsLeague>> {
          JOIN server_members m ON m.user_id = f.user_id
          JOIN server_sports_channels d ON d.server_id = m.server_id
          JOIN servers sv ON sv.id = d.server_id AND sv.deleted_at IS NULL
-         JOIN channels c ON c.id = d.channel_id AND c.deleted_at IS NULL
+         JOIN channels c ON c.id = d.channel_id AND c.deleted_at IS NULL AND c.archived_at IS NULL
          WHERE COALESCE(p.pings, 1) = 1
          ORDER BY f.league",
     )
@@ -483,7 +483,7 @@ pub async fn targets(s: &AppState, f: &Fixture) -> AppResult<Vec<(ChannelId, Vec
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT d.channel_id, f.user_id FROM server_sports_channels d
          JOIN servers sv ON sv.id = d.server_id AND sv.deleted_at IS NULL
-         JOIN channels c ON c.id = d.channel_id AND c.deleted_at IS NULL AND c.kind = 'text'
+         JOIN channels c ON c.id = d.channel_id AND c.deleted_at IS NULL AND c.archived_at IS NULL AND c.kind = 'text'
          JOIN server_members m ON m.server_id = d.server_id
          JOIN sports_follows f ON f.user_id = m.user_id AND f.league = ?1 AND f.team_id IN (?2, ?3)
          LEFT JOIN sports_prefs p ON p.user_id = f.user_id

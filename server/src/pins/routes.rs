@@ -110,6 +110,7 @@ async fn pin(
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, ch.id).await?; // channel deleted since (#109)
+    crate::access::open_in(&mut tx, ch.id).await?; // archived (#303): read-only
     // Still live: a delete may have committed since the check above.
     let live: Option<i64> =
         sqlx::query_scalar("SELECT 1 FROM messages WHERE id = ? AND deleted_at IS NULL")
@@ -270,6 +271,7 @@ async fn unpin(
     let mut tx = crate::db::begin_write(&s.db).await?;
     // channel deleted since (#334): its pins stay as they were, for a restore
     crate::access::channel_live_in(&mut tx, ch.id).await?;
+    crate::access::open_in(&mut tx, ch.id).await?; // archived (#303): read-only
     // A pin that has run out is already gone, as far as anyone can see.
     let gone = sqlx::query(
         "DELETE FROM pins WHERE message_id = ? AND (expires_at IS NULL OR expires_at > ?)",

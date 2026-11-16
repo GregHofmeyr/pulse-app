@@ -1,5 +1,6 @@
 //! Renaming and deleting server channels. Anyone in the server may (the v1 trust model, as for
-//! creating them). DMs and groups have their own rules (`dms::routes`).
+//! creating them). DMs and groups have their own rules (`dms::routes`). Archiving a text channel (#303) is the
+//! server owner's.
 //!
 //! A delete moves the channel to its server's Recently deleted (#112): invisible everywhere (the
 //! access rule and the channel listings skip it), nothing purged. From there the server owner or
@@ -126,6 +127,92 @@ pub async fn set_bitrate(
         )
         .await;
     Ok(Json(channel))
+}
+
+/// `PUT /channels/{id}/archive`: the server owner archives a text channel (#303). It turns read-only (posting,
+/// reacting, editing and the rest are refused: `access::require_open`) and the clients move it to the list's collapsed
+/// Archived group; it stays readable and searchable. Everyone hears `ChannelUpdated` with its `archived_at`. Archiving
+/// one already archived changes nothing.
+pub async fn archive(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ChannelId>,
+) -> AppResult<Json<Channel>> {
+    set_archived(&s, me, id, true).await.map(Json)
+}
+
+/// `DELETE /channels/{id}/archive`: the owner unarchives it (#303): it takes messages again and goes back to the
+/// bottom of its category, or of the uncategorised channels.
+pub async fn unarchive(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ChannelId>,
+) -> AppResult<Json<Channel>> {
+    set_archived(&s, me, id, false).await.map(Json)
+}
+
+async fn set_archived(s: &AppState, me: UserId, id: ChannelId, on: bool) -> AppResult<Channel> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    let (ch, server) = server_channel_for(s, me, id).await?;
+    if ch.kind != ChannelKind::Text {
+        return Err(AppError::BadRequest(
+            "only text channels can be archived".into(),
+        ));
+    }
+    if ch.archived_at.is_some() == on {
+        return Ok(ch);
+    }
+    // An unarchive moves it in the layout: published in revision order.
+    let _order = s.hub.in_order().await;
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    if owner_of(&mut tx, server).await? != me {
+        return Err(AppError::ForbiddenMsg(
+            "Only the server's owner can archive channels.".into(),
+        ));
+    }
+    crate::access::channel_live_in(&mut tx, id).await?; // deleted since the check
+    let moved = if on {
+        sqlx::query("UPDATE channels SET archived_at = ? WHERE id = ? AND archived_at IS NULL")
+            .bind(crate::db::now())
+            .bind(id.to_string())
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+    } else {
+        let position = bottom_of(&mut tx, server, ch.category_id).await?;
+        let changed = sqlx::query(
+            "UPDATE channels SET archived_at = NULL, position = ? WHERE id = ? AND archived_at IS NOT NULL",
+        )
+        .bind(position)
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if changed > 0 {
+            bump(&mut tx, server).await?;
+        }
+        changed
+    };
+    tx.commit().await?;
+    let channel = load_channel(&s.db, id).await?.ok_or(AppError::NotFound)?;
+    if moved == 0 {
+        return Ok(channel); // a racing request did it
+    }
+    tracing::info!(channel = %id, by = %me, archived = on, "channel archive changed");
+    s.hub
+        .publish(
+            &s.db,
+            Event::ChannelUpdated {
+                channel: channel.clone(),
+            },
+        )
+        .await;
+    if !on {
+        publish_layout(s, server).await;
+    }
+    Ok(channel)
 }
 
 /// `DELETE /channels/{id}`: move a server channel to its server's Recently deleted (#112). It goes
@@ -314,6 +401,7 @@ type DeletedRow = (
     Option<String>,
     Option<i64>,
     Option<String>,
+    Option<String>,
     String,
 );
 
@@ -331,10 +419,10 @@ async fn deleted_channel(
     .bind(id.to_string())
     .fetch_optional(&mut *db)
     .await?;
-    let (id, server, kind, name, position, category, icon, still, bitrate, by, at) =
+    let (id, server, kind, name, position, category, icon, still, bitrate, archived, by, at) =
         row.ok_or(AppError::NotFound)?;
     let ch = channel_from_row((
-        id, server, kind, name, position, category, icon, still, bitrate,
+        id, server, kind, name, position, category, icon, still, bitrate, archived,
     ))?;
     let server = ch.server_id.ok_or(AppError::NotFound)?;
     Ok((ch, server, parse_user(by)?, at))
@@ -396,9 +484,9 @@ pub async fn list_deleted(
     .await?;
     let due = due(chrono::Utc::now());
     let mut out = Vec::with_capacity(rows.len());
-    for (id, sid, kind, name, position, category, icon, still, bitrate, by, at) in rows {
+    for (id, sid, kind, name, position, category, icon, still, bitrate, archived, by, at) in rows {
         let channel = channel_from_row((
-            id, sid, kind, name, position, category, icon, still, bitrate,
+            id, sid, kind, name, position, category, icon, still, bitrate, archived,
         ))?;
         let deleted_by = parse_user(by)?;
         let held = held(&mut db, channel.id, channel.kind).await?;

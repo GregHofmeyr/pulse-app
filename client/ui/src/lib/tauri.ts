@@ -218,6 +218,7 @@ export const api = {
   setChannelBitrate: (channelId: string, bitrate: number | null) => invoke<Channel>('set_channel_bitrate', { channelId, bitrate }),
   /** A server channel, to its server's Recently deleted; everyone hears ChannelDeleted. */
   deleteChannel: (channelId: string) => invoke<void>('delete_channel', { channelId }),
+  setChannelArchived: (channelId: string, archived: boolean) => invoke<Channel>('set_channel_archived', { channelId, archived }),
   listDeletedChannels: (serverId: string) => invoke<DeletedChannel[]>('list_deleted_channels', { serverId }),
   /** Back from Recently deleted, with everything in it; everyone hears ChannelRestored. */
   restoreChannel: (channelId: string) => invoke<Channel>('restore_channel', { channelId }),

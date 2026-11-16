@@ -366,6 +366,7 @@ pub(crate) async fn send_as(
 ) -> AppResult<Message> {
     crate::media::writes_ok(&s.cfg)?;
     let ch = channel_for(&s.db, me, id).await?;
+    crate::access::require_open(&ch)?; // archived (#303); checked again under the write lock
     // A voice channel's chat (#226) takes messages as a text channel does.
     match (ch.kind, ch.server_id) {
         (kind, Some(server)) if kind.has_chat() && !is_server_member(&s.db, server, me).await? => {
@@ -591,6 +592,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
     let mut tx = crate::db::begin_write(&s.db).await?;
     // A delete of the channel may have committed since the early check (#109).
     crate::access::channel_live_in(&mut tx, id).await?;
+    crate::access::open_in(&mut tx, id).await?; // archived (#303): read-only
     // Under the write lock the id is minted in commit order, so a seen point can never pass a
     // reply that hasn't committed yet.
     msg.id = MessageId::new();
@@ -788,6 +790,7 @@ async fn edit(
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, msg.channel_id).await?; // channel deleted since (#109)
+    crate::access::open_in(&mut tx, msg.channel_id).await?; // archived (#303): read-only
     // Guarded: a delete that commits between our read and this write wins.
     let changed = sqlx::query(
         "UPDATE messages SET content = ?, edited_at = ?, gif = CASE WHEN ? THEN gif END, caption_is_fallback = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
