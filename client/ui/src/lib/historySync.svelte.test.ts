@@ -174,4 +174,13 @@ describe('applyRefreshed', () => {
     const s = applyRefreshed(app.state, 'C1', [msg(100), msg(101, { content: 'x' }), msg(103)], (m) => m >= id(101) && m <= id(103), new Set())
     expect(s.messages['C1'].slice(0, 3).map((m) => [m.id, m.content])).toEqual([[id(101), 'x'], [id(103), 'm103'], [id(104), 'm104']])
   })
+  it('a copy that differs only in key order, or an absent field against an undefined one, is the same (#349)', () => {
+    const held = app.state.messages['C1'].filter((m) => m.id >= id(101) && m.id <= id(103))
+    const page = held.map((m) => ({ ...Object.fromEntries(Object.entries(m).reverse()), pin: undefined }) as typeof m)
+    const inSpan = (m: string) => m >= id(101) && m <= id(103)
+    expect(applyRefreshed(app.state, 'C1', page, inSpan, new Set())).toBe(app.state)
+    // a nested change still counts
+    const reacted = page.map((m, i) => (i === 0 ? { ...m, reactions: [{ emoji: '👍', count: 1, me: false }] } as typeof m : m))
+    expect(applyRefreshed(app.state, 'C1', reacted, inSpan, new Set())).not.toBe(app.state)
+  })
 })

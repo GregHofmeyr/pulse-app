@@ -1345,6 +1345,28 @@ export function addHistory(s: AppState, channel: string, older: Message[]): AppS
   return withoutDeadReplies({ ...s, messages: { ...s.messages, [channel]: list } }, channel)
 }
 
+/** Two copies of one message (same id, so same chat and time) that read the same (#349): every other field, compared
+ *  by value, in any key order, an absent field the same as an undefined one. */
+function sameMessage(a: Message, b: Message): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+  for (const k of keys) {
+    if (k === 'id' || k === 'channel_id' || k === 'created_at') continue
+    if (!sameValue(a[k as keyof Message], b[k as keyof Message])) return false
+  }
+  return true
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (Array.isArray(a) !== Array.isArray(b)) return false
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((v, i) => sameValue(v, b[i]))
+  const x = a as Record<string, unknown>
+  const y = b as Record<string, unknown>
+  for (const k of new Set([...Object.keys(x), ...Object.keys(y)])) if (!sameValue(x[k], y[k])) return false
+  return true
+}
+
 /** Set `channel`'s loaded messages by a page fetched again (#263): within the span the page covers (`inSpan`), a held
  * message takes the page's copy, and one the page doesn't have is gone (removed for good). Nothing is added (the loaded
  * list is contiguous, so the span holds nothing it lacks) and nothing outside the span moves; `skip` (changed live while
@@ -1365,7 +1387,7 @@ export function applyRefreshed(
     const f = fresh.get(m.id)
     if (skip.has(m.id) || (!f && !inSpan(m.id))) next.push(m)
     else if (!f) changed = true
-    else if (JSON.stringify(f) === JSON.stringify(m)) next.push(m)
+    else if (sameMessage(f, m)) next.push(m)
     else {
       changed = true
       next.push(f)
