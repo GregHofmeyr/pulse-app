@@ -5,6 +5,8 @@
   import Name from './Name.svelte'
   import { app, clock } from '../lib/store.svelte'
   import { presenceOf } from '../lib/presence'
+  import CustomStatusLine from './CustomStatusLine.svelte'
+  import { customStatusOf } from '../lib/customStatus'
   import { displayName, liveIn } from '../lib/selectors'
   import ConversationMenu from './ConversationMenu.svelte'
   import LiveBadge from './LiveBadge.svelte'
@@ -85,6 +87,7 @@
     {@const people = others(c.members)}
     {@const badge = c.muted ? c.mentions : c.unread}
     {@const live = streamers(c.channel.id)}
+    {@const custom = c.channel.kind === 'dm' && people[0] && !(c.unread > 0 && !c.muted) ? customStatusOf(app.state, people[0], clock.nowIso) : null}
     <button class="row" class:active={c.channel.id === activeId} class:unread={c.unread > 0 && !c.muted} class:muted={c.muted}
       onclick={() => onOpen(c.channel.id)}
       onpointerenter={() => (hovered = c.channel.id)} onpointerleave={() => { if (hovered === c.channel.id) hovered = null }}
@@ -98,7 +101,10 @@
       <span class="meta">
         <!-- the row is a button: the DM's name is styled but not a button of its own -->
         <span class="name">{#if c.channel.kind === 'dm' && people[0]}<Name userId={people[0]} serverId={null} text={c.name} interactive={false} surface="side" />{:else}<span class="name-clip">{c.name}</span>{/if}</span>
-        {#if c.latest}
+        {#if custom}
+          <!-- a 1:1 DM's other person's custom status (#152) takes the preview's line, unless there's something new -->
+          <span class="prev"><CustomStatusLine status={custom} /></span>
+        {:else if c.latest}
           {@const p = previewText(app.state, c.latest)}
           <span class="prev" class:sys={p.system}>{#each previewParts(app.state, p.text) as part, i (i)}{#if 'emoji' in part}<img class="emoji" src={mediaUrl(part.emoji.hash)} alt=":{part.emoji.name}:" draggable="false" />{:else}{part.text}{/if}{/each}</span>
         {/if}

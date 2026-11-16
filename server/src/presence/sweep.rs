@@ -1,5 +1,6 @@
-//! Status timers (#45 DND, #153 Invisible). Views already treat an expired timer as Online; this
-//! turns the stored status back to Online and tells everyone whose view changed.
+//! Status timers (#45 DND, #153 Invisible, #152 custom status). Views already treat an expired timer as Online (or
+//! no custom status); this turns the stored status back to Online, clears the custom status, and tells everyone
+//! whose view changed.
 
 use std::time::Duration;
 
@@ -41,12 +42,13 @@ pub(super) async fn end_expired(
     Ok(ended.into_iter().map(|(id, _)| id).collect())
 }
 
-/// End every DND and Invisible whose timer ran out; returns how many.
+/// End every DND, Invisible and custom status whose timer ran out; returns how many timers ended.
 pub async fn sweep_timers(s: &AppState) -> anyhow::Result<usize> {
     // A cheap look first, so an idle sweep takes no write lock.
     let any: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM users WHERE presence IN ('dnd', 'invisible') \
-         AND dnd_until IS NOT NULL AND dnd_until <= ? LIMIT 1",
+        "SELECT 1 FROM users WHERE (presence IN ('dnd', 'invisible') \
+         AND dnd_until IS NOT NULL AND dnd_until <= ?1) \
+         OR (custom_until IS NOT NULL AND custom_until <= ?1) LIMIT 1",
     )
     .bind(now())
     .fetch_optional(&s.db)
@@ -55,14 +57,24 @@ pub async fn sweep_timers(s: &AppState) -> anyhow::Result<usize> {
         return Ok(0);
     }
     let mut tx = begin_write(&s.db).await?;
-    let ended = end_expired(&mut tx, &now(), None).await?;
+    let at = now();
+    let ended = end_expired(&mut tx, &at, None).await?;
+    let custom = super::custom::end_expired(&mut tx, &at, None).await?;
     tx.commit().await?;
     for id in &ended {
+        super::routes::announce_own(s, id.parse()?).await;
+    }
+    for id in &custom {
+        super::custom::announce_own(s, id.parse()?).await;
+    }
+    let mut whose: Vec<&String> = ended.iter().chain(&custom).collect();
+    whose.sort();
+    whose.dedup();
+    for id in whose {
         let id: UserId = id.parse()?;
-        super::routes::announce_own(s, id).await;
         s.hub.sync_presence(&s.db, id).await;
     }
-    Ok(ended.len())
+    Ok(ended.len() + custom.len())
 }
 
 pub fn spawn_sweeper(state: AppState) {

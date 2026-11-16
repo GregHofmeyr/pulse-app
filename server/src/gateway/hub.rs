@@ -705,7 +705,8 @@ impl Hub {
     /// [`view_for`]), but only those whose view changed since they were last told. Connections are
     /// read under the same lock that sends, so racing connects and disconnects can neither repeat
     /// an announcement nor reorder two of them. Returns whether `user` is connected, if anyone was
-    /// told anything new about their presence.
+    /// told anything new about their presence. Their custom status (#152) is part of the presence view, so it reaches
+    /// exactly those who see them online.
     ///
     /// Then what they're listening to (#275) and playing (#380), by the same rule: only to viewers they look online to
     /// (and to themselves), so going Invisible or hiding from someone takes it from them (`None`) as it takes the dot.
@@ -765,6 +766,7 @@ impl Hub {
                             last_seen_at: view.last_seen_at.clone(),
                             status: view.status,
                             idle: view.idle,
+                            custom_status: view.custom.clone(),
                         })
                     })
                     .clone();
@@ -811,6 +813,7 @@ impl Hub {
                         },
                         last_seen_at: (!connected).then_some(last_seen_at).flatten(),
                         idle: false,
+                        custom: None,
                     },
                 };
                 let sees = user.id == viewer || view.online();
@@ -831,6 +834,7 @@ impl Hub {
                     idle: view.idle,
                     listening,
                     playing,
+                    custom_status: view.custom,
                 }
             })
             .collect())

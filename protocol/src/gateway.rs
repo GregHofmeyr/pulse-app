@@ -6,11 +6,11 @@ use ts_rs::TS;
 use crate::ids::{CallId, ChannelId, LineId, MessageId, ReminderId, ScheduledId, ServerId, UserId};
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji,
-    F1Prediction, Game, InboxItem, Listening, ListeningUpdate, Member, Message, MessageReminder,
-    Mute, NotifyLevelPref, OwnStatus, Person, PinnedMessage, Plan, Playing, PlayingUpdate,
-    PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason,
-    ScheduledMessage, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare,
-    SteamStatus, StreamEndReason, StreamInfo, User, WatchParty, Wheel,
+    CustomStatus, F1Prediction, Game, InboxItem, Listening, ListeningUpdate, Member, Message,
+    MessageReminder, Mute, MyCustomStatus, NotifyLevelPref, OwnStatus, Person, PinnedMessage, Plan,
+    Playing, PlayingUpdate, PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState,
+    RingEndReason, ScheduledMessage, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink,
+    StageShare, SteamStatus, StreamEndReason, StreamInfo, User, WatchParty, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -175,6 +175,10 @@ pub struct Ready {
     /// Your own status and DND end (#45).
     #[serde(default)]
     pub status: OwnStatus,
+    /// Your own custom status, when it clears and your recent ones (#152). Yours only. Absent from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub my_custom_status: MyCustomStatus,
     /// The people you appear offline to (#45). Yours only; nobody else ever receives it.
     #[serde(default)]
     pub appear_offline_to: Vec<UserId>,
@@ -371,6 +375,17 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         #[ts(as = "Option<bool>", optional)]
         idle: bool,
+        /// Their custom status (#152) as this receiver may see it: only while they look online to them. Omitted when
+        /// there's none (and by older servers).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        custom_status: Option<CustomStatus>,
+    },
+    /// Only to your own sessions: your custom status, its end or your recent ones changed (#152): you set or cleared
+    /// it, or its timer ran out. Clients from before it skip it.
+    MyCustomStatusChanged {
+        user_id: UserId,
+        status: MyCustomStatus,
     },
     /// Only to your own sessions: your status or DND end changed (you set it, or a DND timer ran out).
     StatusChanged {
@@ -863,6 +878,7 @@ impl Event {
             | Self::PrivateNicknameChanged { .. }
             | Self::ServerVoiceChanged { .. }
             | Self::StatusChanged { .. }
+            | Self::MyCustomStatusChanged { .. }
             | Self::AppearOfflineChanged { .. }
             | Self::LiveNotifyChanged { .. }
             | Self::SteamLinkChanged { .. }
@@ -890,6 +906,7 @@ impl Event {
             | Self::FrequentSounds { user_id, .. }
             | Self::PrivateNicknameChanged { user_id, .. }
             | Self::StatusChanged { user_id, .. }
+            | Self::MyCustomStatusChanged { user_id, .. }
             | Self::AppearOfflineChanged { user_id, .. }
             | Self::LiveNotifyChanged { user_id, .. }
             | Self::SteamLinkChanged { user_id, .. }
@@ -1022,6 +1039,7 @@ mod tests {
             frequent_sounds: vec![],
             server_voice: vec![],
             status: Default::default(),
+            my_custom_status: Default::default(),
             appear_offline_to: vec![],
             live_notify: vec![],
             server_order: vec![],
@@ -1113,6 +1131,7 @@ mod tests {
             frequent_sounds: vec![],
             server_voice: vec![],
             status: Default::default(),
+            my_custom_status: Default::default(),
             appear_offline_to: vec![],
             live_notify: vec![],
             server_order: vec![],
@@ -1253,6 +1272,7 @@ mod tests {
             frequent_sounds: vec![],
             server_voice: vec![],
             status: Default::default(),
+            my_custom_status: Default::default(),
             appear_offline_to: vec![],
             live_notify: vec![],
             server_order: vec![],
@@ -1740,6 +1760,39 @@ mod tests {
         assert!(serde_json::to_value(&p).unwrap().get("playing").is_none());
         assert!(!p.idle);
         assert!(serde_json::to_value(&p).unwrap().get("idle").is_none());
+        assert_eq!(p.custom_status, None);
+        assert!(
+            serde_json::to_value(&p)
+                .unwrap()
+                .get("custom_status")
+                .is_none()
+        );
+    }
+
+    /// Custom status (#152): rides on PresenceChanged only when there is one; your own goes to you alone.
+    #[test]
+    fn custom_status_frames() {
+        let u = UserId::new();
+        let e = Event::PresenceChanged {
+            user_id: u,
+            online: true,
+            last_seen_at: None,
+            status: PresenceStatus::Online,
+            idle: false,
+            custom_status: Some(CustomStatus {
+                text: "Gaming".into(),
+                emoji: Some("🎮".into()),
+            }),
+        };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["d"]["custom_status"]["text"], "Gaming");
+        let back: Event = serde_json::from_value(v).unwrap();
+        assert_eq!(back, e);
+        let mine = Event::MyCustomStatusChanged {
+            user_id: u,
+            status: MyCustomStatus::default(),
+        };
+        assert_eq!((mine.channel_id(), mine.only_for()), (None, Some(u)));
     }
 
     /// Idle (#53): the frame's wire shape, and `idle` rides next to Online only when true, so older clients (and
@@ -1759,6 +1812,7 @@ mod tests {
             last_seen_at: None,
             status: PresenceStatus::Online,
             idle,
+            custom_status: None,
         };
         let on = serde_json::to_value(e(true)).unwrap();
         assert_eq!(on["d"]["idle"], true);

@@ -1,4 +1,4 @@
-//! `PUT /me/status` and `PUT|DELETE /me/appear-offline/{id}` (#45). Each change is saved, told to
+//! `PUT /me/status` and `PUT|DELETE /me/appear-offline/{id}` (#45), and `PUT|DELETE /me/custom-status` (#152). Each change is saved, told to
 //! your own sessions only, and then re-announced per viewer through [`crate::gateway::hub::Hub::sync_presence`].
 
 use axum::extract::{Path, State};
@@ -8,7 +8,7 @@ use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::UserId;
-use pulse_protocol::rest::{SetStatusRequest, Status};
+use pulse_protocol::rest::{CustomStatus, SetCustomStatusRequest, SetStatusRequest, Status};
 
 use super::{NEVER_SEEN, load_subject, view_for};
 use crate::AppState;
@@ -24,6 +24,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/me/status", put(set_status))
         .route("/me/appear-offline/{id}", put(hide).delete(unhide))
+        .route("/me/custom-status", put(set_custom).delete(clear_custom))
 }
 
 fn too_fast() -> AppError {
@@ -34,16 +35,22 @@ fn too_fast() -> AppError {
 
 /// A timer's end as stored, if it's a real time in the next [`MAX_DND`].
 fn dnd_end(raw: &str, at: DateTime<Utc>) -> AppResult<String> {
+    timer_end(raw, at, MAX_DND)
+}
+
+/// A timer's end as stored, if it's a real time in the next `max`.
+fn timer_end(raw: &str, at: DateTime<Utc>, max: chrono::Duration) -> AppResult<String> {
     let t = DateTime::parse_from_rfc3339(raw)
         .map_err(|_| AppError::BadRequest("That end time isn't a time.".into()))?
         .with_timezone(&Utc);
     if t <= at {
         return Err(AppError::BadRequest("That end time has passed.".into()));
     }
-    if t > at + MAX_DND {
-        return Err(AppError::BadRequest(
-            "A status can be timed for up to 7 days.".into(),
-        ));
+    if t > at + max {
+        return Err(AppError::BadRequest(format!(
+            "A status can be timed for up to {} days.",
+            max.num_days()
+        )));
     }
     Ok(stamp(t))
 }
@@ -231,4 +238,52 @@ async fn changed(s: &AppState, me: UserId, target: UserId, hidden: bool) {
         )
         .await;
     s.hub.sync_presence(&s.db, me).await;
+}
+
+/// Set your custom status (#152): sanitised text, an optional emoji and when it clears. Told to your own sessions,
+/// then re-announced per viewer like a status change (only those you look online to see it).
+async fn set_custom(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Json(req): Json<SetCustomStatusRequest>,
+) -> AppResult<StatusCode> {
+    let at = Utc::now();
+    let text = super::custom::clean_text(&req.text)?;
+    let emoji = match req.emoji.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(raw) => Some(super::custom::clean_emoji(&s.db, me, raw).await?),
+    };
+    if text.is_empty() && emoji.is_none() {
+        return Err(AppError::BadRequest(
+            "A custom status needs some text or an emoji.".into(),
+        ));
+    }
+    let until = req
+        .until
+        .as_deref()
+        .map(|raw| timer_end(raw, at, super::custom::MAX_CUSTOM))
+        .transpose()?;
+    if !s.limits.status_user.hit(&me.to_string()) {
+        return Err(too_fast());
+    }
+    let status = CustomStatus { text, emoji };
+    let mut tx = begin_write(&s.db).await?;
+    super::custom::save(&mut tx, me, &status, until.as_deref(), &stamp(at)).await?;
+    tx.commit().await?;
+    super::custom::announce_own(&s, me).await;
+    s.hub.sync_presence(&s.db, me).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Clear your custom status (#152); your recent ones stay.
+async fn clear_custom(State(s): State<AppState>, AuthUser(me): AuthUser) -> AppResult<StatusCode> {
+    if !s.limits.status_user.hit(&me.to_string()) {
+        return Err(too_fast());
+    }
+    let mut tx = begin_write(&s.db).await?;
+    super::custom::clear(&mut tx, me).await?;
+    tx.commit().await?;
+    super::custom::announce_own(&s, me).await;
+    s.hub.sync_presence(&s.db, me).await;
+    Ok(StatusCode::NO_CONTENT)
 }

@@ -21,6 +21,7 @@ import type { F1Prediction } from './protocol/F1Prediction'
 import type { Mute } from './protocol/Mute'
 import type { Person } from './protocol/Person'
 import type { OwnStatus } from './protocol/OwnStatus'
+import type { MyCustomStatus } from './protocol/MyCustomStatus'
 import type { PresenceStatus } from './protocol/PresenceStatus'
 import type { Profile } from './protocol/Profile'
 import type { QotyEvent } from './protocol/QotyEvent'
@@ -85,6 +86,8 @@ export type AppState = {
   people: Record<string, Person> // userId -> person (presence, as the server lets you see it; status always set here)
   /** Your own status and DND end (#45): from Ready and StatusChanged, your sessions only. */
   myStatus: OwnStatus
+  /** Your own custom status, when it clears and your recent ones (#152): from Ready and MyCustomStatusChanged. */
+  myCustomStatus: MyCustomStatus
   /** The people you appear offline to (#45), yours only. */
   appearOfflineTo: string[]
   /** The people whose going live you're notified of (#60), yours only, in the order you added them. */
@@ -177,7 +180,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], serverOrder: [], planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -231,6 +234,8 @@ export function applyReady(s: AppState, r: Ready): AppState {
     people: Object.fromEntries(r.people.map((p) => [p.user.id, { ...p, status: presenceStatus(p.status, p.online) }])),
     // absent from older servers: online, hidden from nobody
     myStatus: r.status ?? { status: 'online', dnd_until: null },
+    // absent from older servers: none
+    myCustomStatus: r.my_custom_status ?? { current: null, until: null, recent: [] },
     appearOfflineTo: r.appear_offline_to ?? [],
     liveNotify: r.live_notify ?? [],
     // absent from older servers: the usual order
@@ -1126,7 +1131,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       // someone who looks offline shows no activity (#275; the server says so too, right after)
       const listening = e.d.online ? p.listening : undefined
       const playing = e.d.online ? p.playing : undefined
-      return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, online: e.d.online, last_seen_at: e.d.last_seen_at ?? p.last_seen_at, status: presenceStatus(e.d.status, e.d.online), idle: e.d.idle ?? false, listening, playing } } }
+      // their custom status rides on every presence change (#152): absent is none
+      const custom_status = e.d.online ? (e.d.custom_status ?? undefined) : undefined
+      return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, online: e.d.online, last_seen_at: e.d.last_seen_at ?? p.last_seen_at, status: presenceStatus(e.d.status, e.d.online), idle: e.d.idle ?? false, listening, playing, custom_status } } }
     }
     // What someone's Spotify plays (#275), as the server lets you see it.
     case 'ListeningChanged': {
@@ -1143,6 +1150,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     // your own status and hidden list reach only your own sessions; anything else isn't ours to keep
     case 'StatusChanged':
       return e.d.user_id === s.me?.id ? { ...s, myStatus: e.d.status } : s
+    case 'MyCustomStatusChanged':
+      return e.d.user_id === s.me?.id ? { ...s, myCustomStatus: e.d.status } : s
     case 'AppearOfflineChanged': {
       if (e.d.user_id !== s.me?.id) return s
       const rest = s.appearOfflineTo.filter((id) => id !== e.d.target_id)

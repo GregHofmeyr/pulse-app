@@ -2245,6 +2245,29 @@ pub async fn set_status(
     core.check(&app, api.set_status(&token, status, dnd_until).await)
 }
 
+/// Your custom status (#152); `until` is when it clears (`None`: never).
+#[tauri::command]
+pub async fn set_custom_status(
+    app: AppHandle,
+    core: State<'_, Core>,
+    text: String,
+    emoji: Option<String>,
+    until: Option<String>,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_custom_status(&token, text, emoji, until).await,
+    )
+}
+
+/// Clear your custom status (#152).
+#[tauri::command]
+pub async fn clear_custom_status(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.clear_custom_status(&token).await)
+}
+
 /// Appear offline (`hidden`) to someone, or stop (#45).
 #[tauri::command]
 pub async fn set_appear_offline(

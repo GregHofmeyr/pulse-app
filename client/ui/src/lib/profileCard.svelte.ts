@@ -8,7 +8,7 @@ export type RenameTarget = { kind: 'server'; userId: string; serverId: string } 
 
 /** `edit`: your own card asked for Settings → Profile; `settings`: for Settings (#168). The shell opens it and clears
  *  the flag. `rename`: the nickname dialog (the shell shows it, above the full profile). */
-export const profileUi: { card: CardTarget | null; full: FullTarget | null; edit: boolean; settings: boolean; rename: RenameTarget | null } = $state({ card: null, full: null, edit: false, settings: false, rename: null })
+export const profileUi: { card: CardTarget | null; full: FullTarget | null; edit: boolean; settings: boolean; rename: RenameTarget | null; customStatus: boolean } = $state({ card: null, full: null, edit: false, settings: false, rename: null, customStatus: false })
 
 /** Asks for a nickname. The quick card gives way first (a click in the dialog would close it). */
 export function openRename(target: RenameTarget): void {
@@ -18,6 +18,17 @@ export function openRename(target: RenameTarget): void {
 
 export function closeRename(): void {
   profileUi.rename = null
+}
+
+/** Your custom status dialog (#152), from the status menu: the quick card gives way first, like the nickname
+ *  dialog (the shell shows it, above the full profile). */
+export function openCustomStatus(): void {
+  profileUi.card = null
+  profileUi.customStatus = true
+}
+
+export function closeCustomStatus(): void {
+  profileUi.customStatus = false
 }
 
 /** Opens the quick card for `userId` next to `el`; the same name or avatar again closes it. Inside a

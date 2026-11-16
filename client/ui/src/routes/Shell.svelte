@@ -16,6 +16,7 @@
   import Settings, { type Section } from '../components/Settings.svelte'
   import FullProfile from '../components/FullProfile.svelte'
   import NicknameDialog from '../components/NicknameDialog.svelte'
+  import CustomStatusDialog from '../components/CustomStatusDialog.svelte'
   import ServerMenu from '../components/ServerMenu.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
   import { requestCreateCategory } from '../lib/categoryUi.svelte'
@@ -45,7 +46,7 @@
   import { toRequest } from '../lib/searchQuery'
   // Profiles: the quick card and the full profile
   import ProfileCardPopover from '../components/ProfileCardPopover.svelte'
-  import { closeFull, closeRename, openCard, profileUi } from '../lib/profileCard.svelte'
+  import { closeCustomStatus, closeFull, closeRename, openCard, profileUi } from '../lib/profileCard.svelte'
   import { onMount, tick, untrack } from 'svelte'
   import { myServerTips, voice, voiceApi } from '../lib/voice.svelte'
   import { soundboard } from '../lib/soundboard.svelte'
@@ -895,6 +896,7 @@
 <ProfileCardPopover />
 {#if profileUi.full}<FullProfile userId={profileUi.full.userId} serverId={profileUi.full.serverId} onClose={closeFull} />{/if}
 {#if profileUi.rename}<NicknameDialog target={profileUi.rename} onClose={closeRename} />{/if}
+{#if profileUi.customStatus}<CustomStatusDialog onClose={closeCustomStatus} />{/if}
 {#if creating}
   <div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={() => (creating = false)}></div>

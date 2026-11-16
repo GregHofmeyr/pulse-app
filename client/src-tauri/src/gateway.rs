@@ -1046,6 +1046,7 @@ mod tests {
                         frequent_sounds: vec![],
                         server_voice: vec![],
                         status: Default::default(),
+                        my_custom_status: Default::default(),
                         appear_offline_to: vec![],
                         live_notify: vec![],
                         server_order: vec![],

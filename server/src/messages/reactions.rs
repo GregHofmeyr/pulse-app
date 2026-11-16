@@ -130,7 +130,7 @@ static STANDARD: LazyLock<HashSet<String>> = LazyLock::new(|| {
         .collect()
 });
 
-fn is_standard(s: &str) -> bool {
+pub(crate) fn is_standard(s: &str) -> bool {
     STANDARD.contains(&canonical_key(s))
 }
 

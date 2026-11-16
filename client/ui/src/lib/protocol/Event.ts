@@ -8,6 +8,7 @@ import type { Channel } from "./Channel";
 import type { ChannelId } from "./ChannelId";
 import type { ClipView } from "./ClipView";
 import type { CustomEmoji } from "./CustomEmoji";
+import type { CustomStatus } from "./CustomStatus";
 import type { F1Prediction } from "./F1Prediction";
 import type { Game } from "./Game";
 import type { InboxItem } from "./InboxItem";
@@ -19,6 +20,7 @@ import type { Message } from "./Message";
 import type { MessageId } from "./MessageId";
 import type { MessageReminder } from "./MessageReminder";
 import type { Mute } from "./Mute";
+import type { MyCustomStatus } from "./MyCustomStatus";
 import type { NotifyLevelPref } from "./NotifyLevelPref";
 import type { OwnStatus } from "./OwnStatus";
 import type { PinnedMessage } from "./PinnedMessage";
@@ -75,7 +77,12 @@ status: PresenceStatus,
  * Online with every device idle (#53); only ever with `status: Online`. Omitted when false, so older
  * clients see plain Online.
  */
-idle?: boolean, } } | { "t": "StatusChanged", "d": { user_id: UserId, status: OwnStatus, } } | { "t": "AppearOfflineChanged", "d": { user_id: UserId, target_id: UserId, hidden: boolean, } } | { "t": "LiveNotifyChanged", "d": { user_id: UserId, target_id: UserId, on: boolean, } } | { "t": "SteamLinkChanged", "d": { user_id: UserId, status: SteamStatus, } } | { "t": "ServerOrderChanged", "d": { user_id: UserId, server_ids: Array<ServerId>, } } | { "t": "PlanRemindersChanged", "d": { user_id: UserId, on: boolean, } } | { "t": "ScheduledSaved", "d": { user_id: UserId, scheduled: ScheduledMessage, } } | { "t": "ScheduledRemoved", "d": { user_id: UserId, id: ScheduledId, sent: MessageId | null, } } | { "t": "ReminderSaved", "d": { user_id: UserId, reminder: MessageReminder, } } | { "t": "ReminderRemoved", "d": { user_id: UserId, id: ReminderId, } } | { "t": "ProfileUpdated", "d": { user: User, card: CardProfile, } } | { "t": "GroupMembersChanged", "d": { channel_id: ChannelId, user_ids: Array<UserId>, } } | { "t": "ChannelUpdated", "d": { channel: Channel, } } | { "t": "ChannelDeleted", "d": { channel_id: ChannelId, server_id: ServerId, } } | { "t": "ChannelRestored", "d": { channel: Channel, } } | { "t": "LayoutChanged", "d": { layout: ServerLayout, } } | { "t": "ChannelRemoved", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "ReadStateUpdated", "d": { user_id: UserId, channel_id: ChannelId, last_read_message_id: MessageId | null, 
+idle?: boolean, 
+/**
+ * Their custom status (#152) as this receiver may see it: only while they look online to them. Omitted when
+ * there's none (and by older servers).
+ */
+custom_status?: CustomStatus, } } | { "t": "MyCustomStatusChanged", "d": { user_id: UserId, status: MyCustomStatus, } } | { "t": "StatusChanged", "d": { user_id: UserId, status: OwnStatus, } } | { "t": "AppearOfflineChanged", "d": { user_id: UserId, target_id: UserId, hidden: boolean, } } | { "t": "LiveNotifyChanged", "d": { user_id: UserId, target_id: UserId, on: boolean, } } | { "t": "SteamLinkChanged", "d": { user_id: UserId, status: SteamStatus, } } | { "t": "ServerOrderChanged", "d": { user_id: UserId, server_ids: Array<ServerId>, } } | { "t": "PlanRemindersChanged", "d": { user_id: UserId, on: boolean, } } | { "t": "ScheduledSaved", "d": { user_id: UserId, scheduled: ScheduledMessage, } } | { "t": "ScheduledRemoved", "d": { user_id: UserId, id: ScheduledId, sent: MessageId | null, } } | { "t": "ReminderSaved", "d": { user_id: UserId, reminder: MessageReminder, } } | { "t": "ReminderRemoved", "d": { user_id: UserId, id: ReminderId, } } | { "t": "ProfileUpdated", "d": { user: User, card: CardProfile, } } | { "t": "GroupMembersChanged", "d": { channel_id: ChannelId, user_ids: Array<UserId>, } } | { "t": "ChannelUpdated", "d": { channel: Channel, } } | { "t": "ChannelDeleted", "d": { channel_id: ChannelId, server_id: ServerId, } } | { "t": "ChannelRestored", "d": { channel: Channel, } } | { "t": "LayoutChanged", "d": { layout: ServerLayout, } } | { "t": "ChannelRemoved", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "ReadStateUpdated", "d": { user_id: UserId, channel_id: ChannelId, last_read_message_id: MessageId | null, 
 /**
  * The user's absolute mention count in the channel after this change (main list and
  * quote replies, as the ready snapshot counts it). Absent from older servers.

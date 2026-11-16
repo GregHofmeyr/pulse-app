@@ -233,6 +233,15 @@ $effect.root(() => {
     const t = setTimeout(() => (clock.nowIso = new Date(Math.max(Date.now(), end)).toISOString()), Math.min(Math.max(0, end - Date.now()), 2 ** 31 - 1))
     return () => clearTimeout(t)
   })
+  // Your custom status clears on time the same way (#152): the clock moves to its end, so your line goes then.
+  $effect(() => {
+    const { current, until } = app.state.myCustomStatus
+    if (!current || !until) return
+    const end = Date.parse(until)
+    // the server caps it at 8 days, well inside setTimeout's ~24.8
+    const t = setTimeout(() => (clock.nowIso = new Date(Math.max(Date.now(), end)).toISOString()), Math.min(Math.max(0, end - Date.now()), 2 ** 31 - 1))
+    return () => clearTimeout(t)
+  })
   $effect(() => {
     const me = app.state.me
     const pending = app.state.pending

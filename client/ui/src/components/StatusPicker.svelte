@@ -1,5 +1,6 @@
 <script lang="ts">
-  // Your status (#45): opens from the status row on your own profile card (#168), above it. Online, Do Not Disturb and
+  // Your status (#45): opens from the status row on your own profile card (#168), above it. Your custom status first
+  // (#152: set or edit it in its dialog, or clear it), then Online, Do Not Disturb and
   // Invisible (each with its timers in a flyout, like a channel's Mute; Invisible's since #153), each with its dot and
   // the current one ticked. The server answers with a StatusChanged to every session, which
   // ticks the new one; nothing is set here meanwhile.
@@ -9,6 +10,9 @@
   import { clickOutside } from '../lib/actions'
   import { closeTimer } from '../lib/hoverIntent'
   import { STATUS_FOR, statusUntil, ownStatus, type TimerChoice } from '../lib/status'
+  import { myCustomStatus } from '../lib/customStatus'
+  import { openCustomStatus } from '../lib/profileCard.svelte'
+  import CustomStatusLine from './CustomStatusLine.svelte'
   import Icon from './Icon.svelte'
   import type { Status } from '../lib/protocol/Status'
 
@@ -24,6 +28,8 @@
     { id: 'invisible', label: 'Invisible' },
   ]
   const current = $derived(ownStatus(app.state, clock.nowIso))
+  // your custom status (#152): set or edit it in its dialog, or clear it here
+  const custom = $derived(myCustomStatus(app.state, clock.nowIso))
 
   let el = $state<HTMLElement>()
   let left = $state(8)
@@ -35,7 +41,8 @@
     const r = opener.getBoundingClientRect()
     left = Math.max(8, Math.min(r.left, window.innerWidth - el.offsetWidth - 8))
     top = Math.max(8, r.top - el.offsetHeight - 8)
-    focusItem(0)
+    // focus on Online, as before the custom status rows (#152) went above it
+    focusItem(Math.max(0, items().findIndex((i) => i.dataset.item === 'online')))
   })
 
   const items = () => (el ? [...el.querySelectorAll<HTMLButtonElement>(':scope > [data-item]')] : [])
@@ -115,6 +122,14 @@
   const set = (status: Status, until: string | null = null) =>
     pick(() => api.setStatus(status, until).catch((e: unknown) => (ui.notice = `Couldn't change your status: ${errorText(e)}`)))
   const setTimed = (t: Timed, d: TimerChoice) => set(t, statusUntil(d, new Date()))
+  const clearCustom = () =>
+    pick(() => api.clearCustomStatus().catch((e: unknown) => (ui.notice = `Couldn't clear your custom status: ${errorText(e)}`)))
+  /** The dialog takes over from the menu (and the card, which a click in it would close). */
+  function editCustom() {
+    if (closed) return
+    close(false)
+    openCustomStatus()
+  }
   const FLYOUT_LABEL: Record<Timed, string> = { dnd: 'Do Not Disturb for', invisible: 'Invisible for' }
 
   function keydown(e: KeyboardEvent) {
@@ -147,6 +162,15 @@
     const t = (e.target as Element).closest?.('[data-item]')
     if (t && t.parentElement === el && t !== subEl && subOpen) later.schedule(() => closeSub(!!sub?.contains(document.activeElement)))
   }}>
+  <!-- your custom status (#152): first, as on Discord; the dialog sets it, with its emoji and when it clears -->
+  <button type="button" class="menu-item custom" data-item="custom" role="menuitem" onclick={editCustom}>
+    {#if custom}<span class="grow line"><CustomStatusLine status={custom} size={16} /></span><Icon name="pencil" size={14} />
+    {:else}<Icon name="smile" size={14} /><span class="grow">Set a custom status</span>{/if}
+  </button>
+  {#if custom}
+    <button type="button" class="menu-item" data-item="clear-custom" role="menuitem" onclick={clearCustom}><Icon name="x" size={14} /><span class="grow">Clear custom status</span></button>
+  {/if}
+  <div class="menu-sep" role="separator"></div>
   {#each STATUSES as s (s.id)}
     {#if isTimed(s.id)}
       {@const t = s.id}
@@ -175,6 +199,9 @@
 <style>
   .status-menu { position: fixed; z-index: 60; width: max-content; min-width: 220px; max-width: 280px; gap: 2px; font-size: 13px; outline: none; --pop-origin: bottom left; }
   .grow { flex: 1; }
+  .line { display: flex; min-width: 0; }
+  .custom :global(.custom-status) { font-size: 13px; color: var(--text); }
+  .custom :global(svg) { color: var(--text-3); }
   .menu-item { gap: 10px; }
   .has-sub :global(svg:last-child) { color: var(--text-3); }
   /* the dots as Avatar draws them (Avatar.svelte .pres), on the menu's own surface */
