@@ -18,6 +18,7 @@
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
+  import MessageSoundItem from './MessageSoundItem.svelte'
   import ServerVoiceItem from './ServerVoiceItem.svelte'
 
   let {
@@ -112,7 +113,13 @@
     else void voiceApi.setVolume(userId, next)
   }
 
+  // the message sound flyout (#312)
+  let soundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
+
   function keydown(e: KeyboardEvent) {
+    // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
+    if (e.key === 'Escape' && soundFlyout?.isOpen()) { e.preventDefault(); e.stopPropagation(); soundFlyout.close(false); return }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End', 'ArrowLeft'].includes(e.key)) soundFlyout?.close(false)
     const list = items()
     const at = list.indexOf(document.activeElement as HTMLElement)
     switch (e.key) {
@@ -145,7 +152,12 @@
 </script>
 
 <div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Actions for {name}" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px" style:--pop-origin={origin}
-  onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
+  onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}
+  onpointerover={(e) => {
+    // another of the menu's own items under the pointer closes the flyout
+    const t = (e.target as Element).closest?.('[data-item]')
+    if (t && t.parentElement === el && t !== soundFlyout?.trigger()) soundFlyout?.closeSoon()
+  }}>
   <!-- the card opens beside the row or tile the menu came from -->
   <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>
   {#each ids as id (id)}
@@ -161,6 +173,7 @@
     {:else if id === 'sound-mute'}
       <button type="button" class="menu-item" role="menuitem" data-item="sound-mute" onclick={() => pick(() => setSoundMute(userId, !soundMuted))}>{soundMuted ? 'Unmute soundboard' : 'Mute soundboard'}</button>
       <JoinSoundMuteItem {userId} {pick} />
+      <MessageSoundItem bind:this={soundFlyout} {userId} {pick} menuLeft={left} menuTop={top} />
     {:else if id === 'message'}
       <button type="button" class="menu-item" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>
     {:else if id === 'stream-volume'}

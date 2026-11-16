@@ -19,6 +19,7 @@
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
+  import MessageSoundItem from './MessageSoundItem.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
 
   let { serverId, userId, x, y, opener, onClose, onMessage, onRemove, fromCard = false, muteChannelId = null }: {
@@ -56,9 +57,11 @@
     })
   })
   const reportMute =(f: () => Promise<unknown>) => () => f().catch((e: unknown) => (ui.notice = errorText(e)))
-  // the mute flyout (the channel menu's, #131)
+  // the mute flyout (the channel menu's, #131) and the message sound one (#312)
   let flyout = $state<ReturnType<typeof MuteFlyout>>()
-  const closeSub = (refocus: boolean | 'if-inside') => flyout?.close(refocus)
+  let soundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
+  const flyouts = () => [flyout, soundFlyout]
+  const closeSub = (refocus: boolean | 'if-inside') => { for (const f of flyouts()) f?.close(refocus) }
 
   let el = $state<HTMLElement>()
   let left = $state(untrack(() => x))
@@ -99,7 +102,7 @@
     const at = list.indexOf(document.activeElement as HTMLElement)
     if (e.key === 'ArrowLeft') { e.preventDefault(); closeSub(false); return }
     // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
-    if (e.key === 'Escape' && flyout?.isOpen()) { e.preventDefault(); e.stopPropagation(); closeSub(false); return }
+    if (e.key === 'Escape' && flyouts().some((f) => f?.isOpen())) { e.preventDefault(); e.stopPropagation(); closeSub(false); return }
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) closeSub(false)
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); focusItem(at + 1); break
@@ -126,7 +129,7 @@
   onpointerover={(e) => {
     // another of the menu's own items under the pointer closes the flyout
     const t = (e.target as Element).closest?.('[data-item]')
-    if (t && t.parentElement === el && t !== flyout?.trigger()) flyout?.closeSoon()
+    if (t && t.parentElement === el) for (const f of flyouts()) if (t !== f?.trigger()) f?.closeSoon()
   }}>
   <!-- the card opens beside the row the menu came from -->
   {#if !fromCard}
@@ -141,6 +144,7 @@
   <NicknameItems {serverId} {userId} {pick} />
   <LiveNotifyItem {userId} {pick} />
   <JoinSoundMuteItem {userId} {pick} />
+  <MessageSoundItem bind:this={soundFlyout} {userId} {pick} menuLeft={left} menuTop={top} />
   <AppearOfflineItem {userId} {pick} />
   {#if muteChannelId && !self}
     <span class="menu-sep" role="separator"></span>

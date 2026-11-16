@@ -9,6 +9,7 @@ import { app, handleNotificationClick, handleReady, maybeAlert, resetState, ui }
 import { windowFocus } from './windowFocus.svelte'
 import { setNotificationsEnabled, setNotificationText } from './notifyPrefs.svelte'
 import { NOTIFY_WINDOW_MS } from './notify'
+import { setMessageSound } from './messageSounds.svelte'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 
@@ -183,5 +184,20 @@ describe('a clicked notification', () => {
     handleNotificationClick({ channelId: 'DM1', threadId: null })
     expect(ui.goTo).toBeNull()
     expect(app.state.me).toBeNull()
+  })
+})
+
+describe('message sounds per person (#312)', () => {
+  const sets = () => vi.mocked(invoke).mock.calls.filter(([c, a]) => c === 'play_sound' && (a as { name: string }).name === 'message').map(([, a]) => (a as { set: string }).set)
+  afterEach(() => setMessageSound('U1', null, { preview: false }))
+
+  it("someone's own sound plays for their message; without one, the set from Settings", () => {
+    // well past the message sound's gap from earlier tests (module state, which moved the clock on)
+    vi.setSystemTime(Date.now() + 3_600_000)
+    maybeAlert(created('DM1', 'hello'))
+    vi.setSystemTime(Date.now() + 10_000)
+    setMessageSound('U1', 'goofy', { preview: false })
+    maybeAlert(created('DM1', 'hello again'))
+    expect(sets()).toEqual(['classic', 'goofy'])
   })
 })

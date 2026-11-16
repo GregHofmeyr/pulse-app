@@ -80,7 +80,7 @@ describe('a message author menu (#137)', () => {
     const e = rightClick(authorName())
     expect(e.defaultPrevented).toBe(true)
     expect(menu()).not.toBeNull()
-    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'appear-offline'])
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
     expect(label('nick')).toBe('Change server nickname')
     expect(label('private-nick')).toBe('Change private nickname')
     expect(document.activeElement).toBe(document.querySelector('[role=menu] [data-item="profile"]'))
@@ -95,7 +95,7 @@ describe('a message author menu (#137)', () => {
     }
     flushSync()
     rightClick(authorName())
-    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'join-sound-mute', 'appear-offline'])
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'join-sound-mute', 'message-sound', 'appear-offline'])
     expect(label('join-sound-mute')).toContain('Mute join sound')
     pick('join-sound-mute')
     expect(JSON.parse(localStorage.getItem('pulse.joinSounds.mutes')!)).toEqual({ U2: true })
@@ -105,10 +105,34 @@ describe('a message author menu (#137)', () => {
     expect(JSON.parse(localStorage.getItem('pulse.joinSounds.mutes')!)).toEqual({})
   })
 
+  it('Message sound (#312): a flyout of sounds, Default ticked; picking one keeps it for them and plays it once', () => {
+    show('S1')
+    rightClick(authorName())
+    const item = document.querySelector<HTMLButtonElement>('[role=menu] [data-item="message-sound"]')!
+    expect(item.textContent).toContain('Message sound')
+    item.click()
+    flushSync()
+    const choices = [...document.querySelectorAll<HTMLButtonElement>('[role=menuitemradio]')]
+    expect(choices.map((c) => c.textContent!.trim())[0]).toBe('Default (Classic)')
+    expect(choices.filter((c) => c.getAttribute('aria-checked') === 'true').map((c) => c.textContent!.trim())).toEqual(['Default (Classic)'])
+    choices.find((c) => c.textContent!.trim() === 'Goofy')!.click()
+    flushSync()
+    expect(menu()).toBeNull()
+    expect(JSON.parse(localStorage.getItem('pulse.messageSounds')!)).toEqual({ U2: 'goofy' })
+    expect(invoke).toHaveBeenCalledWith('play_sound', expect.objectContaining({ name: 'message', set: 'goofy' }))
+    rightClick(authorName())
+    document.querySelector<HTMLButtonElement>('[role=menu] [data-item="message-sound"]')!.click()
+    flushSync()
+    const ticked = [...document.querySelectorAll('[role=menuitemradio][aria-checked=true]')].map((c) => c.textContent!.trim())
+    expect(ticked).toEqual(['Goofy'])
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role=menuitemradio]')][0].click()
+    expect(JSON.parse(localStorage.getItem('pulse.messageSounds')!)).toEqual({})
+  })
+
   it('right-click the avatar opens it too', () => {
     show('S1')
     rightClick(avatar())
-    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'appear-offline'])
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
   })
 
   it('Change server nickname opens the dialog for their server nickname', () => {
@@ -178,7 +202,7 @@ describe('a message author menu in a DM or group (#189)', () => {
     inChannel('dm')
     const e = rightClick(authorName())
     expect(e.defaultPrevented).toBe(true)
-    expect(ids()).toEqual(['profile', 'private-nick', 'live-notify', 'appear-offline', 'mute'])
+    expect(ids()).toEqual(['profile', 'private-nick', 'live-notify', 'message-sound', 'appear-offline', 'mute'])
     expect(label('private-nick')).toBe('Change nickname')
     expect(label('appear-offline')).toBe('Appear offline to them')
     expect(label('mute')).toBe('Mute conversation')
@@ -226,7 +250,7 @@ describe('a message author menu in a DM or group (#189)', () => {
     show(null)
     inChannel('group')
     rightClick(authorName())
-    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'appear-offline'])
+    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
   })
 
   it('your own message in a DM: only View profile', () => {
@@ -262,7 +286,7 @@ describe('the person menu on the other people a message names (#135)', () => {
     const e = rightClick(pill())
     expect(e.defaultPrevented).toBe(true)
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for kim')
-    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'appear-offline'])
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
     pick('profile')
     expect(profileUi.card).toMatchObject({ userId: 'U3', serverId: 'S1' })
   })
@@ -273,7 +297,7 @@ describe('the person menu on the other people a message names (#135)', () => {
     p.focus()
     key(p, 'F10', { shiftKey: true })
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for kim')
-    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'appear-offline'])
+    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
     key(document.activeElement!, 'Escape')
     expect(menu()).toBeNull()
     expect(document.activeElement).toBe(p)
@@ -290,7 +314,7 @@ describe('the person menu on the other people a message names (#135)', () => {
     showWith(null, { content: 'hi @kim' }, null, true)
     rightClick(pill())
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for kim')
-    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'appear-offline'])
+    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
     pick('message')
     expect(invoke.mock.calls.some(([c]) => c === 'set_mute')).toBe(false)
   })
@@ -299,13 +323,13 @@ describe('the person menu on the other people a message names (#135)', () => {
     const original = msg({ id: 'M0', author_id: 'U3', content: 'first' })
     showWith(null, { reply_to_id: 'M0' }, original, true)
     rightClick(document.querySelector<HTMLElement>('.reply .name')!)
-    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'appear-offline'])
+    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
   })
 
   it("a mention of the DM's other person: the DM's menu (Mute conversation, no Message)", () => {
     showWith(null, { content: 'hi @sam' }, null, true)
     rightClick(pill())
-    expect(ids()).toEqual(['profile', 'private-nick', 'live-notify', 'appear-offline', 'mute'])
+    expect(ids()).toEqual(['profile', 'private-nick', 'live-notify', 'message-sound', 'appear-offline', 'mute'])
   })
 
   it("the replied-to author's name: their menu", () => {

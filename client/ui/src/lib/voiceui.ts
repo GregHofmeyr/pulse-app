@@ -232,13 +232,13 @@ function invokeSound(name: SoundName, set: SoundSetId, gain: number) {
 
 /** Played by the Rust core (never an <audio> element: WebKitGTK + missing GStreamer sink aborts the renderer), at its
  * volume mixer level (section × sound; 0 % plays nothing). */
-export function playSound(name: SoundName) {
-  invokeSound(name, loadSoundPrefs().set, soundGain(loadMixer(), name))
+export function playSound(name: SoundName, set: SoundSetId = loadSoundPrefs().set) {
+  invokeSound(name, set, soundGain(loadMixer(), name))
 }
 
-/** One sound at a given linear gain (the mixer's ▶ test buttons). */
-export function playSoundAt(name: SoundName, gain: number) {
-  invokeSound(name, loadSoundPrefs().set, gain)
+/** One sound at a given linear gain (the mixer's ▶ test buttons), from the set picked in Settings unless `set` says. */
+export function playSoundAt(name: SoundName, gain: number, set: SoundSetId = loadSoundPrefs().set) {
+  invokeSound(name, set, gain)
 }
 
 function invokeRinging(ringtone: RingtoneId, gain: number) {

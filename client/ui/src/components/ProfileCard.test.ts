@@ -280,7 +280,7 @@ describe('ProfileCard', () => {
       flushSync()
       expect(e.defaultPrevented).toBe(true)
       const ids = () => [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')].map((i) => i.dataset.item)
-      expect(ids()).toEqual(['nick', 'private-nick', 'live-notify', 'appear-offline'])
+      expect(ids()).toEqual(['nick', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
       const item = document.querySelector<HTMLElement>('[role=menu] [data-item="private-nick"]')!
       expect(item.textContent).toBe('Set private nickname')
       item.click()
@@ -295,7 +295,7 @@ describe('ProfileCard', () => {
       el.querySelector('.who')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
       flushSync()
       const ids = [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')].map((i) => i.dataset.item)
-      expect(ids).toEqual(['private-nick', 'live-notify', 'appear-offline'])
+      expect(ids).toEqual(['private-nick', 'live-notify', 'message-sound', 'appear-offline'])
       expect(document.querySelector('[role=menu] [data-item="private-nick"]')!.textContent).toBe('Change nickname')
     })
 

@@ -11,6 +11,7 @@
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
+  import MessageSoundItem from './MessageSoundItem.svelte'
   import MenuFlyout from './MenuFlyout.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
   import { pickGroupIcon, removeGroupIcon } from '../lib/groupIcon.svelte'
@@ -64,7 +65,8 @@
   // the mute flyout (#190; the channel menu's, #131) and the levels one
   let flyout = $state<ReturnType<typeof MuteFlyout>>()
   let levelFlyout = $state<ReturnType<typeof MenuFlyout>>()
-  const flyouts = () => [flyout, levelFlyout]
+  let soundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
+  const flyouts = () => [flyout, levelFlyout, soundFlyout]
   // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
   function keydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && flyouts().some((f) => f?.isOpen())) {
@@ -143,6 +145,7 @@
         <button class="menu-item" role="menuitem" onclick={() => { openRename({ kind: 'private', userId: dmWith }); onClose() }}>Change nickname</button>
         <LiveNotifyItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
         <JoinSoundMuteItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
+        <MessageSoundItem bind:this={soundFlyout} userId={dmWith} pick={(action) => { void action(); onClose() }} menuLeft={place?.left ?? 0} menuTop={place?.top ?? 0} />
         <AppearOfflineItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
       {/if}
       {#if isPrivate}
