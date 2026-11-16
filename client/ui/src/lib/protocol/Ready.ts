@@ -28,6 +28,7 @@ import type { ThreadSeenPoint } from "./ThreadSeenPoint";
 import type { User } from "./User";
 import type { UserId } from "./UserId";
 import type { VoiceRoom } from "./VoiceRoom";
+import type { WatchParty } from "./WatchParty";
 
 export type Ready = { me: User, servers: Array<Server>, channels: Array<Channel>, members: Array<ServerMembers>, dm_members: Array<DmMembers>, 
 /**
@@ -141,6 +142,10 @@ server_now?: string,
  * What's shared on each voice channel's stage (#234), in channels you may see.
  */
 stage_shares?: Array<StageShare>, 
+/**
+ * The YouTube watch parties on in voice channels you may see (#384).
+ */
+watch_parties?: Array<WatchParty>, 
 /**
  * How many items in your inbox are unread (#306). Absent from older servers.
  */

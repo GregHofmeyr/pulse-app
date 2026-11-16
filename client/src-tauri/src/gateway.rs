@@ -1054,6 +1054,7 @@ mod tests {
                         layouts: vec![],
                         server_now: None,
                         stage_shares: vec![],
+                        watch_parties: vec![],
                         inbox_unread: None,
                     });
                     ws.send(tokio_tungstenite::tungstenite::Message::text(

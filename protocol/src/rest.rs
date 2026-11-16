@@ -1115,6 +1115,100 @@ pub struct PlanReminder {
     pub starts_at: String,
 }
 
+/// A YouTube watch party in a server voice channel (#384): one per channel, its state held in memory on the server.
+/// Each viewer's player is at `position_ms + (server now - set_at_ms)` while `playing`, else at `position_ms`. Gone
+/// when its last viewer leaves it or the call. Everyone sees that it's on (the channel list shows it); only the
+/// people in the call may watch or control it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct WatchParty {
+    pub channel_id: ChannelId,
+    /// Who controls it (with everyone else too, while `everyone_controls`).
+    pub host_id: UserId,
+    /// The YouTube video: 11 of `[A-Za-z0-9_-]`.
+    pub video_id: String,
+    /// The video's title as the starter's card showed it; absent when it had none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title: Option<String>,
+    /// Where the video was at `set_at_ms`, in milliseconds.
+    pub position_ms: u64,
+    pub playing: bool,
+    /// When `position_ms` and `playing` were set, by the server's clock (Unix milliseconds).
+    pub set_at_ms: i64,
+    /// "Let everyone control": anyone watching may play, pause, seek and change the video, not only the host.
+    pub everyone_controls: bool,
+    /// Who has the player open, in the order they joined it (the host passes to the next of them).
+    pub viewers: Vec<UserId>,
+    /// What plays next, in order.
+    #[serde(default)]
+    pub queue: Vec<WatchPartyItem>,
+}
+
+/// A video waiting in a watch party's queue (#384).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct WatchPartyItem {
+    pub video_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title: Option<String>,
+    pub added_by: UserId,
+}
+
+/// `PUT /channels/{id}/watch-party` (#384): start a watch party of a YouTube video (or, if one is on and you may
+/// control it, change its video).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct StartWatchPartyRequest {
+    pub video_id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+/// `POST /channels/{id}/watch-party` (#384): one change to the party. Positions are the sender's player's, in
+/// milliseconds.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum WatchPartyAction {
+    Play {
+        position_ms: u64,
+    },
+    Pause {
+        position_ms: u64,
+    },
+    Seek {
+        position_ms: u64,
+    },
+    /// Play another video now, from the start.
+    Load {
+        video_id: String,
+        #[serde(default)]
+        title: Option<String>,
+    },
+    /// Add a video to the end of the queue (anyone watching may).
+    Enqueue {
+        video_id: String,
+        #[serde(default)]
+        title: Option<String>,
+    },
+    /// Take the queue's `index`th video out (whoever may control, or whoever added it).
+    Unqueue {
+        index: u32,
+    },
+    /// The queue's next video now (or, with none, stop at the end).
+    Next,
+    /// "Let everyone control" (the host only).
+    EveryoneControls {
+        on: bool,
+    },
+    /// Make someone in the call the host (the host only).
+    HandOff {
+        user_id: UserId,
+    },
+    /// Open the player: you're one of its viewers.
+    Join,
+    /// Close the player, staying in the call. A host who leaves passes it on, and the last viewer out ends it.
+    Leave,
+}
+
 /// A Spotify link shared to a server voice channel's stage (#234): at most one per channel, gone when its sharer
 /// stops it or leaves the call, someone in the call stops it, or at `expires_at`. In memory on the server only.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
