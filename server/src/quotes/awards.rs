@@ -197,10 +197,12 @@ async fn counted_awarders(
     Ok(counted(givers, speaker))
 }
 
-/// Counted awards per effective speaker in `server`, most first (ties by name, for a stable
-/// order). A linked name counts for its member; a plain name with no link counts under its
-/// stored key, shown with the spelling of its most recent quote. Deleted quotes and a speaker's
-/// own awards don't count.
+/// Counted awards per person in `server`, most first (ties by name, for a stable order). A linked
+/// name counts for its member, and so does a plain name that is a member's name (see [`Names`]);
+/// any other plain name counts under its stored key, shown with the spelling of its most recent
+/// quote. Deleted quotes don't count, and neither does a speaker's own award: by the line's
+/// effective speaker, as the quote itself counts them, and by the person the board shows, so
+/// nobody climbs this board by awarding a line that names them.
 pub async fn award_totals(db: &SqlitePool, server: ServerId) -> AppResult<Vec<SpeakerCount>> {
     type Row = (Option<String>, Option<String>, Option<String>, String);
     let rows: Vec<Row> = sqlx::query_as(
@@ -227,28 +229,69 @@ pub async fn award_totals(db: &SqlitePool, server: ServerId) -> AppResult<Vec<Sp
 
 /// A line's speaker as stored: (speaker_id, speaker_name, speaker_key), plus `T`.
 pub(super) type StoredSpeaker<T> = (Option<String>, Option<String>, Option<String>, T);
-/// A line's (effective speaker, speaker_key, speaker_name), plus `T`.
+/// A line's (person, speaker_key, speaker_name), plus `T`. The person is [`Names::person`].
 pub(super) type Speaker<T> = (Option<UserId>, Option<String>, Option<String>, T);
 
-/// Put each row's effective speaker in `server` first.
+/// Who the boards count a line for in one server.
+pub(super) struct Names {
+    /// `name_key` to member, from the server's speaker links.
+    links: HashMap<String, UserId>,
+    /// `name_key` of each member's username, display name and nickname here, to that member. A key
+    /// two members share is left out: it could be either of them.
+    members: HashMap<String, UserId>,
+}
+
+impl Names {
+    pub(super) async fn of(db: &SqlitePool, server: ServerId) -> AppResult<Self> {
+        let links = links_for(db, &[server.to_string()])
+            .await?
+            .remove(&server.to_string())
+            .unwrap_or_default();
+        let rows: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+            "SELECT u.id, u.username, u.display_name, sm.nickname
+             FROM server_members sm JOIN users u ON u.id = sm.user_id
+             WHERE sm.server_id = ?",
+        )
+        .bind(server.to_string())
+        .fetch_all(db)
+        .await?;
+        let mut keys: HashMap<String, Option<UserId>> = HashMap::new();
+        for (id, username, display, nick) in rows {
+            let id: UserId = parse_id(&id)?;
+            for name in [Some(username), Some(display), nick].into_iter().flatten() {
+                let slot = keys.entry(super::name_key(&name)).or_insert(Some(id));
+                if *slot != Some(id) {
+                    *slot = None;
+                }
+            }
+        }
+        let members = keys
+            .into_iter()
+            .filter_map(|(k, who)| Some((k, who?)))
+            .collect();
+        Ok(Self { links, members })
+    }
+
+    /// The line's effective speaker (its member, or the member its name is linked to), else the
+    /// member whose name it is: a name typed as "Sam" when sam is a member is sam, linked or not.
+    /// A link always wins, so a name can be pointed at someone else.
+    pub(super) fn person(&self, speaker: Option<UserId>, key: Option<&str>) -> Option<UserId> {
+        effective_speaker(speaker, key, &self.links)
+            .or_else(|| key.and_then(|k| self.members.get(k).copied()))
+    }
+}
+
+/// Put each row's person in `server` ([`Names::person`]) first.
 pub(super) async fn with_speakers<T>(
     db: &SqlitePool,
     server: ServerId,
     rows: Vec<StoredSpeaker<T>>,
 ) -> AppResult<Vec<Speaker<T>>> {
-    let links = links_for(db, &[server.to_string()])
-        .await?
-        .remove(&server.to_string())
-        .unwrap_or_default();
+    let names = Names::of(db, server).await?;
     rows.into_iter()
         .map(|(speaker, name, key, extra)| {
             let speaker: Option<UserId> = parse_opt(speaker.as_deref())?;
-            Ok((
-                effective_speaker(speaker, key.as_deref(), &links),
-                key,
-                name,
-                extra,
-            ))
+            Ok((names.person(speaker, key.as_deref()), key, name, extra))
         })
         .collect()
 }

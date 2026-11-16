@@ -3389,13 +3389,16 @@ async fn most_quoted_merges_linked_names() {
     f.say_one("mine").await;
     f.post_lines(json!([{ "speaker_name": "Someone Else", "text": "z" }]))
         .await;
+    f.post_lines(json!([{ "speaker_name": "A FRIEND", "text": "later" }]))
+        .await;
     let name = |c: &pulse_protocol::rest::SpeakerCount| (c.user_id, c.name.clone(), c.count);
     let b = f.board("").await;
-    // The two spellings are one person; the latest spelling shows; ties by name.
+    // The spellings are one person, counted once per quote (#410: the friend quote's two lines
+    // are one quote); the latest quote's spelling shows; ties by name.
     assert_eq!(
         b.most_quoted.iter().map(name).collect::<Vec<_>>(),
         vec![
-            (None, Some("a  friend".into()), 2),
+            (None, Some("A FRIEND".into()), 2),
             (Some(f.sam), None, 1),
             (None, Some("Someone Else".into()), 1),
         ]
@@ -3409,6 +3412,117 @@ async fn most_quoted_merges_linked_names() {
             (None, Some("Someone Else".into()), 1)
         ]
     );
+}
+
+/// (#410) A quote counts once per person in "most quoted", however many of its lines they say:
+/// the board says "quotes", and the quote badges count a person once per quote too.
+#[tokio::test]
+async fn most_quoted_counts_quotes_not_lines() {
+    let f = fixture().await;
+    let (kim, _) = f.kim().await;
+    // sam and kim go back and forth: sam says three lines, kim one.
+    f.post_lines(json!([
+        f.say(f.sam, "a"),
+        f.say(kim, "b"),
+        f.say(f.sam, "c"),
+        f.say(f.sam, "d"),
+    ]))
+    .await;
+    f.say_one("e").await;
+    let b = f.board("").await;
+    let n = |c: &pulse_protocol::rest::SpeakerCount| (c.user_id, c.count);
+    assert_eq!(
+        b.most_quoted.iter().map(n).collect::<Vec<_>>(),
+        vec![(Some(f.sam), 2), (Some(kim), 1)]
+    );
+}
+
+/// (#410) A name typed for a member ("Sam", "SAM", their nickname) is that member on the boards,
+/// linked or not; a name two members share is nobody's; a link still wins.
+#[tokio::test]
+async fn typed_member_names_count_for_the_member() {
+    let f = fixture().await;
+    let (kim, kim_t) = f.kim().await;
+    // kim goes by "Jo" here.
+    f.sql(format!(
+        "UPDATE server_members SET nickname = 'Jo' WHERE user_id = '{kim}'"
+    ))
+    .await;
+    f.say_one("picked").await;
+    f.post_lines(json!([{ "speaker_name": "Sam", "text": "typed" }]))
+        .await;
+    f.post_lines(json!([{ "speaker_name": " SAM ", "text": "typed again" }]))
+        .await;
+    f.post_lines(json!([{ "speaker_name": "jo", "text": "nick" }]))
+        .await;
+    // Both sam and kim can be found by "pal": nobody's.
+    f.sql(format!(
+        "UPDATE users SET display_name = 'pal' WHERE id IN ('{}', '{kim}')",
+        f.sam
+    ))
+    .await;
+    f.post_lines(json!([{ "speaker_name": "Pal", "text": "who?" }]))
+        .await;
+    let n = |c: &pulse_protocol::rest::SpeakerCount| (c.user_id, c.name.clone(), c.count);
+    let b = f.board("").await;
+    assert_eq!(
+        b.most_quoted.iter().map(n).collect::<Vec<_>>(),
+        vec![
+            (Some(f.sam), None, 3),
+            (Some(kim), None, 1),
+            (None, Some("Pal".into()), 1)
+        ]
+    );
+    // A link points "jo" at alex instead.
+    assert_eq!(f.link(&kim_t, "jo", f.alex).await, 204);
+    let b = f.board("").await;
+    assert!(
+        b.most_quoted
+            .iter()
+            .any(|c| c.user_id == Some(f.alex) && c.count == 1),
+        "{:?}",
+        b.most_quoted
+    );
+    assert!(!b.most_quoted.iter().any(|c| c.user_id == Some(kim)));
+}
+
+/// (#410) Awards follow the same people, and an award on a line typed with your own name doesn't
+/// lift you on the board.
+#[tokio::test]
+async fn award_totals_fold_typed_member_names() {
+    let f = fixture().await;
+    let (kim, _) = f.kim().await;
+    let typed: Message = f
+        .post_lines(json!([{ "speaker_name": "Sam", "text": "typed" }]))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let picked = f.say_one("picked").await;
+    f.award(f.line_of(&typed, 0), f.alex).await;
+    f.award(f.line_of(&typed, 0), f.sam).await; // sam's own: doesn't count here
+    f.award(f.line_of(&picked, 0), kim).await;
+    let b = f.board("").await;
+    let n = |c: &pulse_protocol::rest::SpeakerCount| (c.user_id, c.name.clone(), c.count);
+    assert_eq!(
+        b.most_awarded.iter().map(n).collect::<Vec<_>>(),
+        vec![(Some(f.sam), None, 2)]
+    );
+}
+
+/// (#410) A Quote of the Year win in a deleted channel is hidden like the rest of that channel.
+#[tokio::test]
+async fn wins_in_a_deleted_channel_are_hidden() {
+    let f = fixture().await;
+    let a = f.say_one("a").await;
+    seed_event(&f, 2025, &[(a.id, &[f.alex])]).await;
+    assert_eq!(f.board("").await.winners.len(), 1);
+    f.sql(format!(
+        "UPDATE channels SET deleted_at = '2026-01-02T00:00:00.000Z' WHERE id = '{}'",
+        f.ch.id
+    ))
+    .await;
+    assert!(f.board("").await.winners.is_empty());
 }
 
 #[tokio::test]

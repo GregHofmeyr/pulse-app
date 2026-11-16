@@ -347,16 +347,12 @@ async fn top_quotes(
         .collect())
 }
 
-/// Lines per effective speaker over the live quotes of `server`, most first.
+/// Quotes per person over the live quotes of `server`, most first. A quote counts once for each
+/// person in it, however many of its lines they say and whether a line names them as a member or by name (see [`super::awards::Names::person`]).
 async fn most_quoted(db: &SqlitePool, server: ServerId) -> AppResult<Vec<SpeakerCount>> {
-    type LineRow = (
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    );
+    type LineRow = (Option<String>, Option<String>, Option<String>, String);
     let rows: Vec<LineRow> = sqlx::query_as(
-        "SELECT l.speaker_id, l.speaker_name, l.speaker_key, NULL
+        "SELECT l.speaker_id, l.speaker_name, l.speaker_key, l.message_id
          FROM quote_lines l
          JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
          JOIN channels c ON c.id = msg.channel_id AND c.deleted_at IS NULL
@@ -366,10 +362,18 @@ async fn most_quoted(db: &SqlitePool, server: ServerId) -> AppResult<Vec<Speaker
     .bind(server.to_string())
     .fetch_all(db)
     .await?;
+    let mut seen = HashSet::new();
     let mut out = super::awards::ranked(
         super::awards::with_speakers(db, server, rows)
             .await?
             .into_iter()
+            .filter(|(who, key, _, msg)| {
+                let person = match who {
+                    Some(u) => format!("u:{u}"),
+                    None => format!("n:{}", key.as_deref().unwrap_or_default()),
+                };
+                seen.insert((msg.clone(), person))
+            })
             .map(|(who, key, name, _)| (who, key, name)),
     );
     out.truncate(BOARD_LEN);
@@ -392,11 +396,15 @@ async fn leaderboard(
     let top_year = top_quotes(&s.db, server, Some(year)).await?;
     let top_all_time = top_quotes(&s.db, server, None).await?;
 
-    // Winners: newest year first, a tie's co-winners newest quote first. Deleted ones stay.
+    // Winners: newest year first, a tie's co-winners newest quote first. Deleted quotes stay (the
+    // win is history); a quote in a deleted channel is hidden like the rest of that channel, until
+    // it is restored or purged.
     let wins: Vec<(i64, String, i64, String)> = sqlx::query_as(
         "SELECT e.year, w.message_id, w.votes, e.id
          FROM qoty_winners w JOIN qoty_events e ON e.id = w.event_id
          WHERE e.server_id = ?
+           AND NOT EXISTS (SELECT 1 FROM messages m JOIN channels c ON c.id = m.channel_id
+                           WHERE m.id = w.message_id AND c.deleted_at IS NOT NULL)
          ORDER BY e.year DESC, w.message_id DESC",
     )
     .bind(server.to_string())
