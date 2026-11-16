@@ -140,6 +140,25 @@ pub fn app_name(exe: &str) -> String {
     }
 }
 
+/// An app's name for the stream controls from its exe's version info (#229): the file description (`Google
+/// Chrome`, `VLC media player`), else the product name, else [`app_name`]. A field that's empty, longer than a
+/// label should be, or just an exe name doesn't count.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn friendly_name(description: Option<&str>, product: Option<&str>, exe: &str) -> String {
+    const MAX: usize = 40;
+    let usable = |v: &&str| {
+        let n = v.chars().count();
+        n > 0 && n <= MAX && !v.to_ascii_lowercase().ends_with(".exe")
+    };
+    [description, product]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(usable)
+        .map(str::to_string)
+        .unwrap_or_else(|| app_name(exe))
+}
+
 /// For a UWP window (owned by ApplicationFrameHost): the app, the first other process owning
 /// one of its child windows. `None` for any other owner.
 pub fn frame_host_app(owner_pid: u32, owner_exe: &str, child_pids: &[u32]) -> Option<u32> {
@@ -360,15 +379,43 @@ pub fn capture_plan(i: &PlanInput) -> (Vec<Capture>, Tier) {
     (sorted(plan), tier)
 }
 
-/// Whether the window's app (its trees or its family) has an active audio session: the
-/// picker's "is it playing" hint. False when it can't be identified.
-pub fn playing(i: &PlanInput) -> bool {
+/// The processes whose active audio sessions count as the window's app playing (its trees, else its family): the
+/// picker's hint. Empty when it can't be identified.
+pub fn playing_pids(i: &PlanInput) -> Vec<u32> {
     let owners = owners(i);
     if owners.is_empty() {
-        return false;
+        return Vec::new();
     }
     let own = trees(&owners, i.procs);
-    i.session_pids.iter().any(|p| own.contains(p)) || !related(i, &owners).is_empty()
+    let mine: Vec<u32> = i
+        .session_pids
+        .iter()
+        .copied()
+        .filter(|p| own.contains(p))
+        .collect();
+    if mine.is_empty() {
+        related(i, &owners)
+    } else {
+        mine
+    }
+}
+
+/// Whether the window's app (its trees or its family) has an active audio session: the
+/// picker's "is it playing" hint. False when it can't be identified.
+#[cfg(test)]
+pub fn playing(i: &PlanInput) -> bool {
+    !playing_pids(i).is_empty()
+}
+
+/// The picker's level meter (#229): the loudest of `pids`' session peaks (0.0–1.0, each session's) as a percent.
+pub fn level_percent(pids: &[u32], peaks: &[(u32, f32)]) -> u8 {
+    let peak = peaks
+        .iter()
+        .filter(|(p, _)| pids.contains(p))
+        .map(|(_, v)| *v)
+        .filter(|v| v.is_finite())
+        .fold(0.0f32, f32::max);
+    (peak.clamp(0.0, 1.0) * 100.0).round() as u8
 }
 
 /// What to start and what to stop to get from `old` to `new`.
@@ -643,6 +690,21 @@ mod tests {
     }
 
     #[test]
+    fn the_level_is_the_loudest_session_of_the_app() {
+        let c = Case::new(&[41, 60]);
+        let peaks = [(41, 0.25), (60, 0.9)];
+        let mine = playing_pids(&c.input(window(&[40]), Sound::App));
+        assert_eq!(mine, vec![41], "Spotify isn't the app");
+        assert_eq!(level_percent(&mine, &peaks), 25);
+        // the family's, when the app's own trees are silent
+        let fam = playing_pids(&c.input(window(&[45]), Sound::App));
+        assert_eq!(level_percent(&fam, &peaks), 25);
+        assert_eq!(level_percent(&[], &peaks), 0);
+        assert_eq!(level_percent(&[41], &[(41, 1.7)]), 100, "clamped");
+        assert_eq!(level_percent(&[41], &[(41, f32::NAN)]), 0);
+    }
+
+    #[test]
     fn skip_list_is_named_and_case_insensitive() {
         for exe in [
             r"C:\x\Spotify.exe",
@@ -666,6 +728,28 @@ mod tests {
         assert_eq!(app_name("Game.EXE"), "Game");
         assert_eq!(app_name("/usr/bin/mpv"), "Mpv");
         assert_eq!(app_name(""), "");
+    }
+
+    #[test]
+    fn friendly_names_come_from_version_info() {
+        let chrome = r"C:\x\chrome.exe";
+        assert_eq!(
+            friendly_name(Some("Google Chrome"), Some("Google Chrome"), chrome),
+            "Google Chrome"
+        );
+        // the product name when there's no description
+        assert_eq!(
+            friendly_name(Some("  "), Some("VLC media player"), "vlc.exe"),
+            "VLC media player"
+        );
+        // an exe name or an essay isn't a name: the exe's
+        assert_eq!(
+            friendly_name(Some("GAME.EXE"), None, r"C:\g\game.exe"),
+            "Game"
+        );
+        let long = "A very long description of what this executable does in detail";
+        assert_eq!(friendly_name(Some(long), None, chrome), "Chrome");
+        assert_eq!(friendly_name(None, None, r"C:\x\msedge.exe"), "Edge");
     }
 
     #[test]

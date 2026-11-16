@@ -173,7 +173,7 @@ describe('GoLiveDialog capture ownership', () => {
     })
 
     it('a_window_share_offers_this_app_everything_and_no_sound_defaulting_to_this_app', async () => {
-      live.probe = { identified: true, app: 'Game', playing: false }
+      live.probe = { identified: true, app: 'Game', playing: false, level: 0 }
       const c = open({ ...picked(), hwnd: 1312 })
       await settle()
       expect(document.querySelector('fieldset:has(input[name="sound"]) legend')!.textContent).toBe('Sound')
@@ -185,15 +185,29 @@ describe('GoLiveDialog capture ownership', () => {
     })
 
     it('a_playing_app_says_so', async () => {
-      live.probe = { identified: true, app: 'Game', playing: true }
+      live.probe = { identified: true, app: 'Game', playing: true, level: 40 }
       const c = open()
       await settle()
       expect(labels()[0]).toBe('This app Playing sound')
       unmount(c)
     })
 
+    it('a_playing_app_shows_its_level_and_a_silent_one_no_meter', async () => {
+      live.probe = { identified: true, app: 'Game', playing: true, level: 40 }
+      const c = open()
+      await settle()
+      const fill = document.querySelector<HTMLElement>('[data-sound-level] .fill')!
+      expect(fill.style.transform).toBe('scaleX(0.4)')
+      unmount(c)
+      live.probe = { identified: true, app: 'Game', playing: false, level: 0 }
+      const c2 = open()
+      await settle()
+      expect(document.querySelector('[data-sound-level]')).toBeNull()
+      unmount(c2)
+    })
+
     it('this_app_is_greyed_out_only_when_its_app_cannot_be_identified', async () => {
-      live.probe = { identified: false, app: null, playing: false }
+      live.probe = { identified: false, app: null, playing: false, level: 0 }
       const c = open()
       await settle()
       const app = choice('This app')
@@ -213,7 +227,7 @@ describe('GoLiveDialog capture ownership', () => {
     })
 
     it('the_choice_goes_with_go_live', async () => {
-      live.probe = { identified: true, app: 'Game', playing: false }
+      live.probe = { identified: true, app: 'Game', playing: false, level: 0 }
       const c = open()
       await settle()
       choice('No sound').click()

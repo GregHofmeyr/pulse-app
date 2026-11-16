@@ -20,7 +20,9 @@ use serde_json::json;
 use tokio::task::JoinHandle;
 
 use super::loopback::Engine;
-use super::plan::{Capture, PlanInput, Proc, Sound, Source, Tier, app_name, capture_plan, playing};
+use super::plan::{
+    Capture, PlanInput, Proc, Sound, Source, Tier, capture_plan, level_percent, playing_pids,
+};
 use super::procs;
 use crate::api::{Api, ApiError};
 use crate::voice::devices::INTERNAL_RATE;
@@ -189,6 +191,8 @@ pub struct Probe {
     pub identified: bool,
     pub app: Option<String>,
     pub playing: bool,
+    /// The app's loudest session peak now, 0–100 (#229: the picker's level meter).
+    pub level: u8,
 }
 
 /// While live: which source is heard, and whether anything has been since it began.
@@ -518,7 +522,7 @@ fn target_for(w: &WindowRef, pulse: &[u32], all: &[Proc]) -> (Target, procs::How
     let app = owners
         .first()
         .and_then(|o| all.iter().find(|p| p.pid == *o))
-        .map(|p| app_name(&p.exe))
+        .map(|p| procs::app_name(&p.exe))
         .filter(|n| !n.is_empty());
     let target = Target {
         window: true,
@@ -555,8 +559,11 @@ pub fn probe(window: &WindowRef) -> Probe {
     let pulse_pids = procs::pulse_pids();
     let all = procs::processes();
     let (target, _) = target_for(window, &pulse_pids, &all);
-    let session_pids = procs::audio_session_pids();
-    let playing = playing(&PlanInput {
+    let sessions = procs::audio_sessions();
+    let mut session_pids: Vec<u32> = sessions.iter().map(|(p, _)| *p).collect();
+    session_pids.sort_unstable();
+    session_pids.dedup();
+    let playing = playing_pids(&PlanInput {
         own_pid: std::process::id(),
         pulse_pids: &pulse_pids,
         pulse_roots: &[],
@@ -568,7 +575,8 @@ pub fn probe(window: &WindowRef) -> Probe {
     Probe {
         identified: !target.owners.is_empty(),
         app: target.app,
-        playing,
+        playing: !playing.is_empty(),
+        level: level_percent(&playing, &sessions),
     }
 }
 

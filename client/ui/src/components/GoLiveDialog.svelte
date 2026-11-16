@@ -155,7 +155,7 @@
         {#if c === 'app'}
           <label class:unknown={appUnknown} data-tip={appUnknown ? UNIDENTIFIED_TIP : undefined}>
             <input type="radio" name="sound" value={c} bind:group={sound} disabled={appUnknown} onchange={() => choose(c)} /> {CHOICE_LABEL[c]}
-            {#if probe?.identified}<span class="hint">{probe.playing ? 'Playing sound' : 'Not playing sound right now'}</span>{/if}
+            {#if probe?.identified}<span class="hint">{#if probe.playing}<span class="level" data-sound-level aria-hidden="true"><span class="fill" style:transform="scaleX({Math.min(1, Math.max(0, probe.level / 100))})"></span></span>{/if}{probe.playing ? 'Playing sound' : 'Not playing sound right now'}</span>{/if}
           </label>
         {:else}
           <label><input type="radio" name="sound" value={c} bind:group={sound} onchange={() => choose(c)} /> {CHOICE_LABEL[c]}</label>
@@ -186,6 +186,9 @@
   .unknown { opacity: .5; cursor: not-allowed; }
   /* wide enough for either hint, so the choices don't shift when playback starts or stops */
   .hint { min-width: 150px; color: var(--text-3); font-size: 12px; }
+  /* the app's level when the hint was last asked for (#229): scaled, not sized, so it moves without a layout */
+  .level { display: inline-block; width: 28px; height: 6px; margin-right: 6px; vertical-align: middle; border-radius: var(--radius-xs); background: var(--line); overflow: hidden; }
+  .level .fill { display: block; width: 100%; height: 100%; background: var(--ok); transform-origin: left; transition: transform .3s; }
   .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

@@ -7,8 +7,9 @@ export type SoundChoice = Sound | 'off'
 
 /** The picked window, for finding its app: the capture source's window handle when the webview gives one. */
 export type WindowRef = { hwnd: number | null; title: string }
-/** Before going live: whether the window's app can be told apart, and whether it is playing now. */
-export type SoundProbe = { identified: boolean; app: string | null; playing: boolean }
+/** Before going live: whether the window's app can be told apart, whether it is playing now, and how loud (its
+ * loudest audio session's peak, 0-100: the picker's level meter, #229). */
+export type SoundProbe = { identified: boolean; app: string | null; playing: boolean; level: number }
 /** While live, from Rust: which source is heard (see `plan::Tier`), and whether anything has been since it began. */
 export type SoundStatus = { tier: 'app' | 'related' | 'everything' | 'lastResort'; app: string | null; heard: boolean; ms: number }
 
