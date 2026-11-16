@@ -148,6 +148,9 @@ pub struct LimitsConfig {
     pub listening_user: Rate,
     /// Album art fetched for "Listening to" per person (#275): its own budget, apart from chat link previews.
     pub listening_art_user: Rate,
+    /// "Playing" updates per person (#380): the app polls every 15 s and sends only a change (a new game, or none); a
+    /// held-back one is sent when the bucket allows, so the latest always lands. Game art spends `listening_art_user`.
+    pub playing_user: Rate,
     /// Idle changes per person (#53): a device sends one when its input stops or resumes; a held-back one is
     /// announced when the bucket allows, so the latest always lands.
     pub idle_user: Rate,
@@ -213,6 +216,8 @@ impl Default for LimitsConfig {
             listening_user: Rate::new(10, 0.5),
             // a song every 3 minutes is 20 an hour; skipping through a playlist gets a few dozen
             listening_art_user: Rate::per_hour(60),
+            // ten at once, then one every 5 s: games change a few times an evening
+            playing_user: Rate::new(10, 0.2),
             // ten at once, then one every 2 s: going idle and back is a couple an hour
             idle_user: Rate::new(10, 0.5),
             // 30 at once, then one every 2 s
@@ -264,6 +269,7 @@ impl LimitsConfig {
             stage_share_user: r,
             listening_user: r,
             listening_art_user: r,
+            playing_user: r,
             idle_user: r,
             gif_user: r,
         }
@@ -426,6 +432,7 @@ pub struct Limits {
     pub stage_share_user: Limiter,
     pub listening_user: Limiter,
     pub listening_art_user: Limiter,
+    pub playing_user: Limiter,
     pub idle_user: Limiter,
     pub gif_user: Limiter,
 }
@@ -471,6 +478,7 @@ impl Limits {
             stage_share_user: Limiter::new(c.stage_share_user),
             listening_user: Limiter::new(c.listening_user),
             listening_art_user: Limiter::new(c.listening_art_user),
+            playing_user: Limiter::new(c.playing_user),
             idle_user: Limiter::new(c.idle_user),
             gif_user: Limiter::new(c.gif_user),
         }

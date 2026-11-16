@@ -6,9 +6,15 @@
 //! online to them, from the same per-viewer pass that announces presence (`Hub::sync_presence`), so Invisible,
 //! "appear offline to" and offline never show any. The album art comes from the embed resolver's card for the
 //! song's Spotify link (no Spotify API keys), never from a URL the client names.
+//!
+//! "Playing" (#380): the game someone's Pulse detects on Windows (`ClientFrame::Playing`), held and announced the same
+//! way, beside "Listening to". Its art comes from Steam's CDN by app id ([`crate::embeds::steam`]), fetched by the
+//! server, never by clients.
 
 use pulse_protocol::ids::UserId;
-use pulse_protocol::rest::{EmbedProvider, EmbedThumb, Listening, ListeningUpdate};
+use pulse_protocol::rest::{
+    EmbedProvider, EmbedThumb, GameArt, Listening, ListeningUpdate, Playing, PlayingUpdate,
+};
 
 use crate::AppState;
 use crate::embeds::providers;
@@ -137,9 +143,128 @@ pub fn received(
     });
 }
 
+/// The longest play time believed, in seconds (a month): a bigger one is a broken clock, shown as none.
+pub const MAX_ELAPSED: u64 = 30 * 24 * 3600;
+
+/// What a client's "Playing" says, checked: `None` when there's no name. A Steam app id that can't be one is dropped
+/// (no art); `started_at` is `now` less the seconds played. The art is the server's to add.
+pub fn clean_playing(u: PlayingUpdate, now: chrono::DateTime<chrono::Utc>) -> Option<Playing> {
+    Some(Playing {
+        name: text(&u.name)?,
+        steam_app_id: u
+            .steam_app_id
+            .filter(|id| crate::embeds::steam::valid_app_id(*id)),
+        started_at: u
+            .elapsed_secs
+            .filter(|s| *s <= MAX_ELAPSED)
+            .map(|s| crate::db::stamp(now - chrono::Duration::seconds(s as i64))),
+        art: None,
+    })
+}
+
+/// `p` with its Steam art: `known` when it's for the same app id (the same game again fetches nothing), else from the
+/// server's Steam art cache or fetched within `me`'s art budget.
+pub async fn with_game_art(
+    s: &AppState,
+    me: UserId,
+    mut p: Playing,
+    known: Option<(u32, Option<GameArt>)>,
+) -> Playing {
+    let Some(id) = p.steam_app_id else {
+        return p;
+    };
+    if let Some((was, art)) = known
+        && was == id
+    {
+        p.art = art;
+        return p;
+    }
+    p.art = s
+        .embeds
+        .steam_art(
+            &s.db,
+            &s.cfg.media_dir,
+            me,
+            &s.limits.listening_art_user,
+            id,
+        )
+        .await;
+    p
+}
+
+/// Connection `conn` of `me` says what game it's playing (`None`: none): checked, given its art (in the background),
+/// held, and announced per viewer. A newer update wins over one still fetching its art, as for "Listening to".
+pub fn playing_received(s: &AppState, conn: ConnId, me: UserId, update: Option<PlayingUpdate>) {
+    let ticket = s.hub.playing_ticket(conn);
+    let s = s.clone();
+    tokio::spawn(async move {
+        let playing = match update.and_then(|u| clean_playing(u, chrono::Utc::now())) {
+            Some(p) => {
+                let known = s
+                    .hub
+                    .playing_held(conn)
+                    .and_then(|h| Some((h.steam_app_id?, h.art)));
+                Some(with_game_art(&s, me, p, known).await)
+            }
+            None => None,
+        };
+        if s.hub.set_playing(conn, me, ticket, playing) {
+            s.hub.sync_presence(&s.db, me).await;
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn game(name: &str) -> PlayingUpdate {
+        PlayingUpdate {
+            name: name.into(),
+            steam_app_id: None,
+            elapsed_secs: None,
+        }
+    }
+
+    #[test]
+    fn playing_is_cleaned_and_its_start_is_server_time() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-16T20:00:00Z")
+            .unwrap()
+            .to_utc();
+        let p = clean_playing(
+            PlayingUpdate {
+                steam_app_id: Some(570),
+                elapsed_secs: Some(90),
+                ..game("  Space\u{0007}  Game\n")
+            },
+            now,
+        )
+        .unwrap();
+        assert_eq!(p.name, "Space Game");
+        assert_eq!(p.steam_app_id, Some(570));
+        assert_eq!(p.started_at.as_deref(), Some("2026-11-16T19:58:30.000Z"));
+        assert_eq!(p.art, None);
+        // no name: nothing; a shortcut's id or a silly play time: left out
+        assert_eq!(clean_playing(game(" \u{0000} "), now), None);
+        let odd = clean_playing(
+            PlayingUpdate {
+                steam_app_id: Some(0x8000_0001),
+                elapsed_secs: Some(u64::MAX),
+                ..game("Chess")
+            },
+            now,
+        )
+        .unwrap();
+        assert_eq!((odd.steam_app_id, odd.started_at), (None, None));
+        assert_eq!(
+            clean_playing(game(&"g".repeat(500)), now)
+                .unwrap()
+                .name
+                .chars()
+                .count(),
+            MAX_TEXT
+        );
+    }
 
     fn update(title: &str) -> ListeningUpdate {
         ListeningUpdate {

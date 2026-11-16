@@ -7,6 +7,7 @@ pub mod meta;
 pub mod page;
 pub mod providers;
 pub mod routes;
+pub mod steam;
 pub mod unfurl;
 
 use std::collections::HashMap;
@@ -54,6 +55,8 @@ pub struct Unfurler {
     /// Messages each user has previews being fetched for.
     in_flight: Mutex<HashMap<UserId, usize>>,
     per_user_in_flight: usize,
+    /// Steam games' art by app id (#380, [`steam`]).
+    steam: Mutex<HashMap<u32, steam::CachedArt>>,
 }
 
 /// A message's place among its sender's in-flight unfurls, given back on drop.
@@ -156,6 +159,7 @@ impl Unfurler {
             deadline: cfg.link_deadline,
             in_flight: Mutex::new(HashMap::new()),
             per_user_in_flight: cfg.per_user_in_flight,
+            steam: Mutex::new(HashMap::new()),
         }
     }
 

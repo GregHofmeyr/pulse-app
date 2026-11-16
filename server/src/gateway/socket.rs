@@ -121,11 +121,13 @@ async fn disconnected(s: &AppState, conn: ConnId, me: UserId, since: &str) {
     let at = now();
     // what this connection was listening to goes with it (#275)
     let was_listening = s.hub.listening_held(conn).is_some();
+    // and the game it was playing (#380)
+    let was_playing = s.hub.playing_held(conn).is_some();
     let was_idle = s.hub.is_idle(me);
     s.hub.unregister(conn);
     if s.hub.is_online(me) {
         // the device still in use left (#53): the idle ones left behind make them Idle
-        if was_listening || s.hub.is_idle(me) != was_idle {
+        if was_listening || was_playing || s.hub.is_idle(me) != was_idle {
             // another device's activity (or none) is theirs now
             s.hub.sync_presence(&s.db, me).await;
             crate::stage::listening_changed(s, me).await;
@@ -353,6 +355,10 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
     let mut listening_pending: Option<ClientFrame> = None;
     let mut listening_retry = tokio::time::Instant::now();
     let listening_wait = voice_retry_wait(s.cfg.limits.listening_user);
+    // "Playing" updates held back by the limit (#380), the same way.
+    let mut playing_pending: Option<Option<pulse_protocol::rest::PlayingUpdate>> = None;
+    let mut playing_retry = tokio::time::Instant::now();
+    let playing_wait = voice_retry_wait(s.cfg.limits.playing_user);
     // An Idle change held back by the limit (#53): the flag is set at once, and one announcement of how they look
     // then goes out when the bucket next allows it.
     let mut idle_pending = false;
@@ -395,6 +401,15 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
                     }
                 } else {
                     listening_retry = tokio::time::Instant::now() + listening_wait;
+                }
+            }
+            _ = tokio::time::sleep_until(playing_retry), if playing_pending.is_some() => {
+                if s.limits.playing_user.hit(&me.to_string()) {
+                    if let Some(playing) = playing_pending.take() {
+                        crate::activity::playing_received(&s, conn, me, playing);
+                    }
+                } else {
+                    playing_retry = tokio::time::Instant::now() + playing_wait;
                 }
             }
             _ = tokio::time::sleep_until(idle_retry), if idle_pending => {
@@ -449,6 +464,17 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
                                 listening_retry = tokio::time::Instant::now() + listening_wait;
                             }
                             listening_pending = Some(ClientFrame::Listening { listening, show });
+                        }
+                    }
+                    Ok(ClientFrame::Playing { playing }) => {
+                        // a newer one replaces one held back; over the limit, it waits for the retry above
+                        if playing_pending.is_none() && s.limits.playing_user.hit(&me.to_string()) {
+                            crate::activity::playing_received(&s, conn, me, playing);
+                        } else {
+                            if playing_pending.is_none() {
+                                playing_retry = tokio::time::Instant::now() + playing_wait;
+                            }
+                            playing_pending = Some(playing);
                         }
                     }
                     Ok(ClientFrame::Idle { idle }) => {

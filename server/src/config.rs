@@ -263,6 +263,8 @@ pub struct Endpoints {
     pub spotify: String,
     pub soundcloud: String,
     pub instagram: String,
+    /// Steam's public store CDN, for game art by app id (#380): `<base>/<appid>/header.jpg` and so on.
+    pub steam_cdn: String,
 }
 
 impl Default for Endpoints {
@@ -273,6 +275,7 @@ impl Default for Endpoints {
             spotify: "https://open.spotify.com/oembed".into(),
             soundcloud: "https://soundcloud.com/oembed".into(),
             instagram: "https://graph.facebook.com/v25.0/instagram_oembed".into(),
+            steam_cdn: "https://cdn.cloudflare.steamstatic.com/steam/apps".into(),
         }
     }
 }

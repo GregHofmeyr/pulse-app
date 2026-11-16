@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use pulse_protocol::gateway::{Event, ServerFrame};
 use pulse_protocol::ids::UserId;
-use pulse_protocol::rest::{Listening, Person, User};
+use pulse_protocol::rest::{Listening, Person, Playing, User};
 use sqlx::SqlitePool;
 use tokio::sync::{mpsc, oneshot};
 
@@ -88,14 +88,127 @@ impl Conn {
     }
 }
 
-/// One connection's "Listening to" (#275).
-struct Held {
+/// One connection's activity of one kind: its "Listening to" (#275) or its "Playing" (#380).
+struct Held<T> {
     user: UserId,
-    /// When it was set (the hub's listening counter): a person's most recent one is theirs.
+    /// When it was set (the slot's counter): a person's most recent one is theirs.
     at: u64,
-    /// Others may see it as the person's activity; either way it feeds their Jam on the stage.
+    /// Others may see it as the person's activity (a "Listening to" that isn't shown still feeds their Jam on the
+    /// stage; a "Playing" is always shown).
     show: bool,
-    listening: Listening,
+    value: T,
+}
+
+/// One kind of activity, held per connection (#275, #380): what each connection holds, each one's newest update by
+/// ticket ([`Slot::ticket`]: one that took longer to get its art than a later one never lands over it), and what each
+/// connection was last told each person has (absent: nothing), like `Inner::announced`. Its locks are taken only while
+/// `conns` is held (after it), and never two slots' at once.
+struct Slot<T> {
+    held: Mutex<HashMap<ConnId, Held<T>>>,
+    seq: Mutex<HashMap<ConnId, u64>>,
+    next: AtomicU64,
+    announced: Mutex<HashMap<(UserId, ConnId), T>>,
+}
+
+impl<T> Default for Slot<T> {
+    fn default() -> Self {
+        Slot {
+            held: Mutex::default(),
+            seq: Mutex::default(),
+            next: AtomicU64::new(0),
+            announced: Mutex::default(),
+        }
+    }
+}
+
+impl<T: Clone + PartialEq> Slot<T> {
+    /// Everything about connection `conn`, which has gone.
+    fn forget(&self, conn: ConnId) {
+        self.held.lock().unwrap().remove(&conn);
+        self.seq.lock().unwrap().remove(&conn);
+        self.announced
+            .lock()
+            .unwrap()
+            .retain(|(_, c), _| *c != conn);
+    }
+
+    /// A ticket for `conn`'s next update: only the newest may land. A connection already gone (not in `conns`) gets
+    /// one that never can.
+    fn ticket(&self, conns: &HashMap<ConnId, Conn>, conn: ConnId) -> u64 {
+        let seq = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+        if conns.contains_key(&conn) {
+            self.seq.lock().unwrap().insert(conn, seq);
+        }
+        seq
+    }
+
+    /// Set (or clear) what `user`'s connection `conn` holds, if it's still theirs and `ticket` is its newest.
+    fn set(
+        &self,
+        conns: &HashMap<ConnId, Conn>,
+        conn: ConnId,
+        user: UserId,
+        ticket: u64,
+        value: Option<(T, bool)>,
+    ) -> bool {
+        if conns.get(&conn).is_none_or(|c| c.user != user)
+            || self.seq.lock().unwrap().get(&conn) != Some(&ticket)
+        {
+            return false;
+        }
+        let mut held = self.held.lock().unwrap();
+        match value {
+            Some((value, show)) => {
+                let at = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+                held.insert(
+                    conn,
+                    Held {
+                        user,
+                        at,
+                        show,
+                        value,
+                    },
+                );
+            }
+            None => {
+                held.remove(&conn);
+            }
+        }
+        true
+    }
+
+    /// `user`'s most recent one among the connections still in `conns` (`shown_only`: only one they share).
+    fn latest(&self, conns: &HashMap<ConnId, Conn>, user: UserId, shown_only: bool) -> Option<T> {
+        self.held
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(id, h)| h.user == user && (h.show || !shown_only) && conns.contains_key(id))
+            .max_by_key(|(_, h)| h.at)
+            .map(|(_, h)| h.value.clone())
+    }
+
+    /// What connection `conn` itself holds.
+    fn held(&self, conn: ConnId) -> Option<T> {
+        self.held
+            .lock()
+            .unwrap()
+            .get(&conn)
+            .map(|h| h.value.clone())
+    }
+
+    /// Record that connection `conn` is told `user` has `want`; whether that's news to it.
+    fn tell(&self, user: UserId, conn: ConnId, want: Option<&T>) -> bool {
+        let mut told = self.announced.lock().unwrap();
+        if told.get(&(user, conn)) == want {
+            return false;
+        }
+        match want {
+            Some(v) => told.insert((user, conn), v.clone()),
+            None => told.remove(&(user, conn)),
+        };
+        true
+    }
 }
 
 #[derive(Clone, Default)]
@@ -122,14 +235,10 @@ struct Inner {
     /// The inbox workers' queues (#327, #328, [`Hub::publish_all`]), each started on first use (and again if it
     /// ever ends).
     inbox_queue: Mutex<[Option<InboxShard>; INBOX_SHARDS]>,
-    /// Each connection's "Listening to" (#275). Locked only while `conns` is held (after it).
-    listening: Mutex<HashMap<ConnId, Held>>,
-    /// Each connection's newest listening update, by ticket ([`Hub::listening_ticket`]): one that took longer to
-    /// get its art than a later one never lands over it. Locked like `listening`.
-    listening_seq: Mutex<HashMap<ConnId, u64>>,
-    listening_next: AtomicU64,
-    /// What each connection was last told each person is listening to (absent: nothing), like `announced`.
-    announced_listening: Mutex<HashMap<(UserId, ConnId), Listening>>,
+    /// Each connection's "Listening to" (#275).
+    listening: Slot<Listening>,
+    /// Each connection's "Playing" (#380).
+    playing: Slot<Playing>,
 }
 
 /// Whether `user` is connected, and whether every connection of theirs is idle (#53): one device in use is enough
@@ -138,19 +247,6 @@ fn live(conns: &HashMap<ConnId, Conn>, user: UserId) -> (bool, bool) {
     let mut theirs = conns.values().filter(|c| c.user == user).peekable();
     let connected = theirs.peek().is_some();
     (connected, connected && theirs.all(|c| c.idle))
-}
-
-/// `user`'s most recent "Listening to" among the connections still in `conns` (`shown_only`: only one they share).
-fn latest(
-    conns: &HashMap<ConnId, Conn>,
-    held: &HashMap<ConnId, Held>,
-    user: UserId,
-    shown_only: bool,
-) -> Option<Listening> {
-    held.iter()
-        .filter(|(id, h)| h.user == user && (h.show || !shown_only) && conns.contains_key(id))
-        .max_by_key(|(_, h)| h.at)
-        .map(|(_, h)| h.listening.clone())
 }
 
 impl Hub {
@@ -199,13 +295,8 @@ impl Hub {
             .lock()
             .unwrap()
             .retain(|(_, conn), _| *conn != id);
-        self.inner.listening.lock().unwrap().remove(&id);
-        self.inner.listening_seq.lock().unwrap().remove(&id);
-        self.inner
-            .announced_listening
-            .lock()
-            .unwrap()
-            .retain(|(_, conn), _| *conn != id);
+        self.inner.listening.forget(id);
+        self.inner.playing.forget(id);
         if gone.is_some() {
             self.prune_inbox(&conns);
         }
@@ -242,12 +333,7 @@ impl Hub {
     /// ticket's update may land ([`Hub::set_listening`]).
     pub fn listening_ticket(&self, conn: ConnId) -> u64 {
         let conns = self.inner.conns.lock().unwrap();
-        let seq = self.inner.listening_next.fetch_add(1, Ordering::Relaxed) + 1;
-        // a connection already gone gets a ticket that can never land
-        if conns.contains_key(&conn) {
-            self.inner.listening_seq.lock().unwrap().insert(conn, seq);
-        }
-        seq
+        self.inner.listening.ticket(&conns, conn)
     }
 
     /// Set (or clear, `None`) what `user`'s connection `conn` is listening to, if it's still connected and `ticket`
@@ -260,54 +346,55 @@ impl Hub {
         listening: Option<(Listening, bool)>,
     ) -> bool {
         let conns = self.inner.conns.lock().unwrap();
-        if conns.get(&conn).is_none_or(|c| c.user != user)
-            || self.inner.listening_seq.lock().unwrap().get(&conn) != Some(&ticket)
-        {
-            return false;
-        }
-        let mut held = self.inner.listening.lock().unwrap();
-        match listening {
-            Some((listening, show)) => {
-                let at = self.inner.listening_next.fetch_add(1, Ordering::Relaxed) + 1;
-                held.insert(
-                    conn,
-                    Held {
-                        user,
-                        at,
-                        show,
-                        listening,
-                    },
-                );
-            }
-            None => {
-                held.remove(&conn);
-            }
-        }
-        true
+        self.inner
+            .listening
+            .set(&conns, conn, user, ticket, listening)
     }
 
     /// What `user` is listening to (#275), from their most recently updated connection: only one they share
     /// (`shown_only`, for their activity), or any (for their Jam on the stage).
     pub fn listening_of(&self, user: UserId, shown_only: bool) -> Option<Listening> {
         let conns = self.inner.conns.lock().unwrap();
-        latest(
-            &conns,
-            &self.inner.listening.lock().unwrap(),
-            user,
-            shown_only,
-        )
+        self.inner.listening.latest(&conns, user, shown_only)
     }
 
     /// What connection `conn` itself holds (a pause and resume of the same song keeps its art without fetching it
     /// again).
     pub fn listening_held(&self, conn: ConnId) -> Option<Listening> {
         let _conns = self.inner.conns.lock().unwrap();
+        self.inner.listening.held(conn)
+    }
+
+    /// A ticket for connection `conn`'s next "Playing" update (#380), as [`Hub::listening_ticket`].
+    pub fn playing_ticket(&self, conn: ConnId) -> u64 {
+        let conns = self.inner.conns.lock().unwrap();
+        self.inner.playing.ticket(&conns, conn)
+    }
+
+    /// Set (or clear) what game `user`'s connection `conn` is playing (#380), as [`Hub::set_listening`]; always shown.
+    pub fn set_playing(
+        &self,
+        conn: ConnId,
+        user: UserId,
+        ticket: u64,
+        playing: Option<Playing>,
+    ) -> bool {
+        let conns = self.inner.conns.lock().unwrap();
         self.inner
-            .listening
-            .lock()
-            .unwrap()
-            .get(&conn)
-            .map(|h| h.listening.clone())
+            .playing
+            .set(&conns, conn, user, ticket, playing.map(|p| (p, true)))
+    }
+
+    /// What game `user` is playing (#380), from their most recently updated connection.
+    pub fn playing_of(&self, user: UserId) -> Option<Playing> {
+        let conns = self.inner.conns.lock().unwrap();
+        self.inner.playing.latest(&conns, user, true)
+    }
+
+    /// What connection `conn` itself holds (the same game again keeps its art without fetching it).
+    pub fn playing_held(&self, conn: ConnId) -> Option<Playing> {
+        let _conns = self.inner.conns.lock().unwrap();
+        self.inner.playing.held(conn)
     }
 
     /// `user`'s [`InboxSlot`] (made on first use) while they are connected; `None` when they aren't, so a count
@@ -579,8 +666,8 @@ impl Hub {
     /// an announcement nor reorder two of them. Returns whether `user` is connected, if anyone was
     /// told anything new about their presence.
     ///
-    /// Then what they're listening to (#275), by the same rule: only to viewers they look online to (and to
-    /// themselves), so going Invisible or hiding from someone takes it from them (`None`) as it takes the dot.
+    /// Then what they're listening to (#275) and playing (#380), by the same rule: only to viewers they look online to
+    /// (and to themselves), so going Invisible or hiding from someone takes it from them (`None`) as it takes the dot.
     pub async fn sync_presence(&self, db: &SqlitePool, user: UserId) -> Option<bool> {
         let _order = self.inner.presence.lock().await;
         let subject = match load_subject(db, user).await {
@@ -597,26 +684,31 @@ impl Hub {
         let mut views: HashMap<UserId, ServerFrame> = HashMap::new();
         let mut to: HashMap<ConnId, ServerFrame> = HashMap::new();
         let mut listening_to: HashMap<ConnId, ServerFrame> = HashMap::new();
+        let mut playing_to: HashMap<ConnId, ServerFrame> = HashMap::new();
         {
             let mut announced = self.inner.announced.lock().unwrap();
-            let shown = latest(&conns, &self.inner.listening.lock().unwrap(), user, true);
-            let mut told = self.inner.announced_listening.lock().unwrap();
+            let shown = self.inner.listening.latest(&conns, user, true);
+            let game = self.inner.playing.latest(&conns, user, true);
             for (id, c) in conns.iter() {
                 let view = view_for(&subject, c.user, connected, idle, &now);
-                let want = shown
-                    .as_ref()
-                    .filter(|_| c.user == user || view.online())
-                    .cloned();
-                if told.get(&(user, *id)) != want.as_ref() {
-                    match &want {
-                        Some(l) => told.insert((user, *id), l.clone()),
-                        None => told.remove(&(user, *id)),
-                    };
+                let sees = c.user == user || view.online();
+                let want = shown.as_ref().filter(|_| sees);
+                if self.inner.listening.tell(user, *id, want) {
                     listening_to.insert(
                         *id,
                         ServerFrame::Event(Event::ListeningChanged {
                             user_id: user,
-                            listening: want,
+                            listening: want.cloned(),
+                        }),
+                    );
+                }
+                let want = game.as_ref().filter(|_| sees);
+                if self.inner.playing.tell(user, *id, want) {
+                    playing_to.insert(
+                        *id,
+                        ServerFrame::Event(Event::PlayingChanged {
+                            user_id: user,
+                            playing: want.cloned(),
                         }),
                     );
                 }
@@ -640,7 +732,9 @@ impl Hub {
             }
         }
         // the presence first: a client drops the activity of someone who went offline
-        let dropped = send_each(&mut conns, &to) | send_each(&mut conns, &listening_to);
+        let dropped = send_each(&mut conns, &to)
+            | send_each(&mut conns, &listening_to)
+            | send_each(&mut conns, &playing_to);
         if dropped {
             self.prune_inbox(&conns);
         }
@@ -661,8 +755,6 @@ impl Hub {
         let now = crate::db::now();
         let conns = self.inner.conns.lock().unwrap();
         let mut announced = self.inner.announced.lock().unwrap();
-        let held = self.inner.listening.lock().unwrap();
-        let mut told = self.inner.announced_listening.lock().unwrap();
         Ok(users
             .into_iter()
             .map(|(user, last_seen_at)| {
@@ -680,15 +772,17 @@ impl Hub {
                         idle: false,
                     },
                 };
-                let listening = (user.id == viewer || view.online())
-                    .then(|| latest(&conns, &held, user.id, true))
+                let sees = user.id == viewer || view.online();
+                let listening = sees
+                    .then(|| self.inner.listening.latest(&conns, user.id, true))
+                    .flatten();
+                let playing = sees
+                    .then(|| self.inner.playing.latest(&conns, user.id, true))
                     .flatten();
                 if let Some(conn) = conn {
                     announced.insert((user.id, conn), view.clone());
-                    match &listening {
-                        Some(l) => told.insert((user.id, conn), l.clone()),
-                        None => told.remove(&(user.id, conn)),
-                    };
+                    self.inner.listening.tell(user.id, conn, listening.as_ref());
+                    self.inner.playing.tell(user.id, conn, playing.as_ref());
                 }
                 Person {
                     user,
@@ -697,6 +791,7 @@ impl Hub {
                     status: view.status,
                     idle: view.idle,
                     listening,
+                    playing,
                 }
             })
             .collect())

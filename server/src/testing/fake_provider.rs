@@ -14,6 +14,8 @@
 //! - `http://spotify.link:<port>/<code>`: a short link redirecting to [`SPOTIFY_JAM_URL`]; `/Page<…>` answers
 //!   with a landing page naming it instead, as a real one does.
 //! - `/thumb.png`: a 1280×720 PNG.
+//! - `http://steamcdn.test:<port>/steam/apps/<appid>/<file>`: Steam's store CDN (#380). App [`STEAM_APP_FULL`] has
+//!   `header.jpg`, `library_hero.jpg` and `logo.png`; [`STEAM_APP_HEADER_ONLY`] only `header.jpg`; any other is 404.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -39,8 +41,14 @@ pub const SPOTIFY_JAM_ID: &str = "ABC123abc123ABC123abc123";
 /// Where the fake's `spotify.link` short link leads: a Jam invite (never requested).
 pub const SPOTIFY_JAM_URL: &str = "https://open.spotify.com/socialsession/ABC123abc123ABC123abc123";
 
+/// A Steam app with all three pieces of art on the fake CDN.
+pub const STEAM_APP_FULL: u32 = 570;
+/// A Steam app with only its header on the fake CDN.
+pub const STEAM_APP_HEADER_ONLY: u32 = 440;
+
 /// The fake's names, all answered with 127.0.0.1.
-pub const HOSTS: [&str; 6] = [
+pub const HOSTS: [&str; 7] = [
+    "steamcdn.test",
     "oembed.test",
     "spotify.link",
     "site.test",
@@ -95,6 +103,7 @@ impl FakeProvider {
             )
             // spotify.link's short links are one segment; any other host's are not found.
             .route("/{code}", get(spotify_short))
+            .route("/steam/apps/{appid}/{file}", get(steam_art))
             .route(
                 "/thumb.png",
                 get(|State(s): State<Shared>| async move {
@@ -117,6 +126,7 @@ impl FakeProvider {
                 spotify: base("spotify"),
                 soundcloud: base("soundcloud"),
                 instagram: base("instagram"),
+                steam_cdn: format!("http://steamcdn.test:{}/steam/apps", self.port),
             },
             allowed_ips: vec![LOOPBACK],
             extra_ports: vec![self.port],
@@ -238,6 +248,27 @@ async fn oembed(
         body.to_string(),
     )
         .into_response()
+}
+
+async fn steam_art(Path((appid, file)): Path<(u32, String)>) -> Response {
+    let has = match appid {
+        STEAM_APP_FULL => matches!(
+            file.as_str(),
+            "header.jpg" | "library_hero.jpg" | "logo.png"
+        ),
+        STEAM_APP_HEADER_ONLY => file == "header.jpg",
+        _ => false,
+    };
+    if !has {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    // a PNG whatever the name says: the pipeline reads the bytes, not the extension
+    let (w, h) = match file.as_str() {
+        "library_hero.jpg" => (1920, 620),
+        "logo.png" => (640, 360),
+        _ => (460, 215),
+    };
+    ([(header::CONTENT_TYPE, "image/png")], png(w, h)).into_response()
 }
 
 /// A plain `w`×`h` PNG.

@@ -285,7 +285,7 @@ async fn page(fetcher: &Fetcher, url: &str) -> Option<Text> {
 
 /// The thumbnail at `url`, fetched, re-encoded and stored; `None` if any of that fails (the card
 /// goes without one).
-async fn thumb(
+pub(super) async fn thumb(
     fetcher: &Fetcher,
     db: &SqlitePool,
     media_dir: &Path,
