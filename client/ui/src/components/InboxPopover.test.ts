@@ -12,6 +12,8 @@ import InboxPopover from './InboxPopover.svelte'
 import { closeInbox, inbox, noteInboxEvent, openInbox, setTab } from '../lib/inbox.svelte'
 import { reminders } from '../lib/reminders.svelte'
 import { scheduled } from '../lib/scheduled.svelte'
+import { bookmarks } from '../lib/bookmarks.svelte'
+import type { MessageBookmark } from '../lib/protocol/MessageBookmark'
 import { INBOX_PAGE } from '../lib/inbox'
 import { app, clock, handleReady, resetState, ui } from '../lib/store.svelte'
 import { testMe, testReady } from '../lib/testReady'
@@ -343,5 +345,79 @@ describe('reminders and scheduled messages in the inbox (#300, #299)', () => {
     ;[...list.querySelectorAll('button')].find((b) => b.textContent === 'Delete')!.click()
     await settle()
     expect(invoke).toHaveBeenCalledWith('delete_scheduled', { id: 'S1' })
+  })
+})
+
+describe('saved messages in the inbox (#315)', () => {
+  const saved = (id: string, content: string | null, note: string | null = null): MessageBookmark => ({
+    id, message_id: `M-${id}`, note, created_at: '2026-11-12T09:00:00.000Z',
+    message: content === null ? null : { channel_id: 'C1', thread_root_id: null, author_id: 'SAM', content, created_at: '2026-11-12T08:00:00.000Z' },
+  })
+  const items = () => [...document.querySelectorAll<HTMLElement>('.saved .item')]
+
+  it('the Saved tab lists them with notes; an unavailable one shows nothing of its message', async () => {
+    bookmarks.list = [saved('B1', 'the gate code is 4321', 'for saturday'), saved('B2', null, 'that recipe')]
+    await show()
+    setTab('saved')
+    flushSync()
+    expect(items()).toHaveLength(2)
+    expect(items()[0].querySelector('.said')!.textContent).toBe('the gate code is 4321')
+    expect(items()[0].querySelector('.where')!.textContent).toContain('#general')
+    expect(items()[0].querySelector('.note')!.textContent).toBe('for saturday')
+    expect(items()[1].querySelector('.unavailable')!.textContent).toContain('no longer available')
+    expect(items()[1].querySelector('.open')).toBeNull()
+    expect(items()[1].querySelector('.note')!.textContent).toBe('that recipe')
+  })
+
+  it('a search keeps those whose note or text matches', async () => {
+    bookmarks.list = [saved('B1', 'the gate code is 4321', 'for saturday'), saved('B2', 'pizza place on main', null)]
+    await show()
+    setTab('saved')
+    flushSync()
+    const box = document.querySelector<HTMLInputElement>('input[aria-label="Search saved messages"]')!
+    box.value = 'SATURDAY'
+    box.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    expect(items().map((i) => i.querySelector('.said')!.textContent)).toEqual(['the gate code is 4321'])
+    box.value = 'nothing like it'
+    box.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    expect(document.querySelector('.none')!.textContent).toContain('matches')
+  })
+
+  it('a click opens the message; the note is edited in place; Remove drops it', async () => {
+    bookmarks.list = [saved('B1', 'the gate code is 4321')]
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'edit_bookmark') return { ...saved('B1', 'the gate code is 4321'), note: (args as { note: string }).note }
+      return undefined
+    })
+    await show()
+    setTab('saved')
+    flushSync()
+    const button = (label: string) => [...items()[0].querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === label)!
+    button('Add note').click()
+    flushSync()
+    const box = items()[0].querySelector<HTMLTextAreaElement>('textarea')!
+    box.value = 'side door'
+    box.dispatchEvent(new Event('input', { bubbles: true }))
+    button('Save').click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('edit_bookmark', { id: 'B1', note: 'side door' })
+    expect(items()[0].querySelector('.note')!.textContent).toBe('side door')
+    button('Remove').click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('delete_bookmark', { id: 'B1' })
+    expect(bookmarks.list).toEqual([])
+  })
+
+  it('opening one closes the inbox and shows the message', async () => {
+    bookmarks.list = [saved('B1', 'the gate code is 4321')]
+    await show()
+    setTab('saved')
+    flushSync()
+    items()[0].querySelector<HTMLButtonElement>('.open')!.click()
+    await settle()
+    expect(inbox.open).toBe(false)
+    expect(ui.goTo).toBe('C1')
   })
 })

@@ -1261,6 +1261,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'ScheduledRemoved':
     case 'ReminderSaved':
     case 'ReminderRemoved':
+    // saved messages (#315) are kept by lib/bookmarks.svelte.ts
+    case 'BookmarkSaved':
+    case 'BookmarkRemoved':
       return s
     case 'SoundFavourites':
       return { ...s, soundFavourites: e.d.favourites }

@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::ids::{
-    AttachmentId, CallId, CategoryId, ChannelId, ClipUploadId, GameId, LineId, MessageId,
-    QotyEventId, ReminderId, ScheduledId, ServerId, UserId,
+    AttachmentId, BookmarkId, CallId, CategoryId, ChannelId, ClipUploadId, GameId, LineId,
+    MessageId, QotyEventId, ReminderId, ScheduledId, ServerId, UserId,
 };
 
 /// A `Debug` that names every field but prints the secret ones as `<redacted>`, for types that
@@ -1121,6 +1121,56 @@ pub struct MessageReminder {
 pub struct CreateReminderRequest {
     /// When (RFC 3339, any offset): in the future, at most [`schedule_limits::MAX_DAYS_AHEAD`] away.
     pub remind_at: String,
+}
+
+/// Saved message limits (#315), shared so the client can say them before the server refuses.
+pub mod bookmark_limits {
+    /// Saved messages one person may have.
+    pub const MAX_BOOKMARKS: i64 = 500;
+    /// The longest note on one, in characters.
+    pub const NOTE_MAX_CHARS: usize = 500;
+    /// How much of the message a saved one shows, in characters.
+    pub const SNIPPET_CHARS: usize = 300;
+}
+
+/// What a saved message shows of the message while its person can still see it (#315).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SavedMessage {
+    pub channel_id: ChannelId,
+    /// The thread the message is a reply in, if any (to open it there).
+    pub thread_root_id: Option<MessageId>,
+    pub author_id: Option<UserId>,
+    /// At most [`bookmark_limits::SNIPPET_CHARS`] characters of it.
+    pub content: String,
+    pub created_at: String,
+}
+
+/// A saved message (#315): a private bookmark, with an optional note. Only its person ever sees it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct MessageBookmark {
+    pub id: BookmarkId,
+    pub message_id: MessageId,
+    pub note: Option<String>,
+    /// When it was saved.
+    pub created_at: String,
+    /// The message, while they can see it; `None` once it is deleted or out of their reach (left the chat, the chat
+    /// deleted): nothing of it is shown then.
+    pub message: Option<SavedMessage>,
+}
+
+/// `POST /messages/{id}/bookmark` (#315).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct SaveMessageRequest {
+    /// At most [`bookmark_limits::NOTE_MAX_CHARS`] characters; empty or none: no note.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// `PATCH /bookmarks/{id}` (#315): the new note (empty or none: no note).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct EditBookmarkRequest {
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// An answer to a plan (#387).

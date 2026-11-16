@@ -3,6 +3,7 @@ pub mod activity;
 pub mod attachments;
 pub mod auth;
 pub mod badges;
+pub mod bookmarks;
 pub mod calls;
 pub mod clips;
 pub mod config;
@@ -73,6 +74,7 @@ pub fn router(state: AppState) -> Router {
         .merge(plans::router())
         .merge(scheduled::router())
         .merge(reminders::router())
+        .merge(bookmarks::router())
         .merge(f1::router())
         .merge(gifs::router())
         .merge(quotes::routes::router())

@@ -4,6 +4,7 @@ import type { User } from './protocol/User'
 import type { ScheduledMessage } from './protocol/ScheduledMessage'
 import type { MessageReminder } from './protocol/MessageReminder'
 import type { MessageVersion } from './protocol/MessageVersion'
+import type { MessageBookmark } from './protocol/MessageBookmark'
 import type { Profile } from './protocol/Profile'
 import type { SeenBadge } from './protocol/SeenBadge'
 import type { UpdateProfileRequest } from './protocol/UpdateProfileRequest'
@@ -281,6 +282,13 @@ export const api = {
   deleteScheduled: (id: string) => invoke<void>('delete_scheduled', { id }),
   /** A message's versions (#301): the current text first, then the earlier ones, newest first. */
   messageEdits: (messageId: string) => invoke<MessageVersion[]>('message_edits', { messageId }),
+  // Saved messages (#315): private to you.
+  listBookmarks: () => invoke<MessageBookmark[]>('list_bookmarks'),
+  /** The one you already have when it was saved before. */
+  saveMessage: (messageId: string, note: string | null = null) => invoke<MessageBookmark>('save_message', { messageId, note }),
+  /** A new note; empty clears it. */
+  editBookmark: (id: string, note: string) => invoke<MessageBookmark>('edit_bookmark', { id, note }),
+  deleteBookmark: (id: string) => invoke<void>('delete_bookmark', { id }),
   // Message reminders (#300): private to you.
   listReminders: () => invoke<MessageReminder[]>('list_reminders'),
   createReminder: (messageId: string, remindAt: string) => invoke<MessageReminder>('create_reminder', { messageId, remindAt }),

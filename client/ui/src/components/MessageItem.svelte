@@ -51,6 +51,7 @@
   import WhenPicker from './WhenPicker.svelte'
   import EditHistoryDialog from './EditHistoryDialog.svelte'
   import { remindMe } from '../lib/reminders.svelte'
+  import { bookmarkOf, removeBookmark, saveMessage } from '../lib/bookmarks.svelte'
   import { whenLabel } from '../lib/schedule'
   import { quoteRequest, quotesChannelsFor } from '../lib/quoteFromMessage'
   import { livePin, pinFor, pinTip, pinnedNoun, pinsPlainMessages } from '../lib/pins'
@@ -217,6 +218,10 @@
     if (!at) return void (remindCustom = opener.isConnected ? opener : document.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`))
     remindAt(at).catch((e) => showError(errorText(e)))
   }
+  // Save message (#315): a private bookmark, listed in the inbox's Saved tab
+  const savedOne = $derived(msgMenu ? bookmarkOf(message.id) : null)
+  const saveToVault = () => saveMessage(message.id).then(() => (ui.notice = 'Saved. Find it in your inbox under Saved.'), (e) => showError(errorText(e)))
+  const unsave = () => savedOne && removeBookmark(savedOne.id).then(() => (ui.notice = 'Removed from saved'), (e) => showError(errorText(e)))
   // Edit history (#301): "(edited)" opens the message's versions
   let historyAt = $state<HTMLElement | null>(null)
   // Add to quotes (#316): the message as a quote, its author speaking, in one of its server's quotes channels (none in
@@ -464,6 +469,7 @@
   {#key msgMenu}<MessageMenu pinned={!!pin} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
     onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
     onRemind={(at) => msgMenu && remind(at, msgMenu.opener)}
+    saved={!!savedOne} onSave={saveToVault} onUnsave={unsave}
     onEndPoll={endable ? endPoll : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
 {/if}
 {#if remindCustom}

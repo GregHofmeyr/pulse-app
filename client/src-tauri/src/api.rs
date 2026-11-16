@@ -2588,6 +2588,72 @@ impl Api {
         .await
     }
 
+    /// Your saved messages (#315), newest first.
+    pub async fn list_bookmarks(
+        &self,
+        token: &str,
+    ) -> Result<Vec<pulse_protocol::rest::MessageBookmark>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/bookmarks", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Save a message (#315); the one you already have when it was saved before.
+    pub async fn save_message(
+        &self,
+        token: &str,
+        message: MessageId,
+        body: &pulse_protocol::rest::SaveMessageRequest,
+    ) -> Result<pulse_protocol::rest::MessageBookmark, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/messages/{message}/bookmark", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A saved message's new note (#315).
+    pub async fn edit_bookmark(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::BookmarkId,
+        body: &pulse_protocol::rest::EditBookmarkRequest,
+    ) -> Result<pulse_protocol::rest::MessageBookmark, ApiError> {
+        Self::parse(
+            self.http
+                .patch(format!("{}/bookmarks/{id}", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn delete_bookmark(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::BookmarkId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/bookmarks/{id}", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Your reminders (#300), soonest first.
     pub async fn list_reminders(
         &self,

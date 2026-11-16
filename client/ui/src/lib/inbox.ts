@@ -9,9 +9,9 @@ import type { InboxItem } from './protocol/InboxItem'
 /** The tabs that list inbox items, page by page. */
 export type InboxTab = 'all' | 'mentions'
 /** Every tab: those, your reminders (#300) and your scheduled messages (#299), which come from their own lists. */
-export type InboxView = InboxTab | 'reminders' | 'scheduled'
+export type InboxView = InboxTab | 'reminders' | 'scheduled' | 'saved'
 
-const VIEWS: readonly InboxView[] = ['all', 'mentions', 'reminders', 'scheduled']
+const VIEWS: readonly InboxView[] = ['all', 'mentions', 'reminders', 'scheduled', 'saved']
 
 /** Whether a tab lists inbox items (fetched in pages). */
 export const isItemTab = (v: InboxView): v is InboxTab => v === 'all' || v === 'mentions'

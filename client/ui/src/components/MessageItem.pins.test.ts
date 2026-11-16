@@ -61,7 +61,7 @@ describe('the message menu (#178)', () => {
   it('More on the action bar opens it with Pin message, whose flyout offers the four lengths', async () => {
     show(msg())
     btn('More')!.click(); flushSync()
-    expect(items().map((b) => b.textContent?.trim())).toEqual(['Pin message', 'Remind me'])
+    expect(items().map((b) => b.textContent?.trim())).toEqual(['Pin message', 'Remind me', 'Save message'])
     hover(item('Pin message')!)
     expect(choices().map((b) => b.textContent?.trim())).toEqual(['1 hour', '1 day', '1 week', 'Forever'])
     choices()[1].click()
@@ -116,7 +116,7 @@ describe('the message menu (#178)', () => {
   it('a pinned message offers Unpin message instead', async () => {
     show(msg({ pin: { pinned_by: 'U2', pinned_at: '2026-11-09T08:00:00.000Z', expires_at: null } }))
     btn('More')!.click(); flushSync()
-    expect(items().map((b) => b.textContent?.trim())).toEqual(['Unpin message', 'Remind me'])
+    expect(items().map((b) => b.textContent?.trim())).toEqual(['Unpin message', 'Remind me', 'Save message'])
     item('Unpin message')!.click()
     await settle()
     expect(invoke).toHaveBeenCalledWith('unpin_message', { messageId: 'M1' })
@@ -185,7 +185,7 @@ describe('the pin marker (#178)', () => {
     show(msg({ pin: { pinned_by: 'U2', pinned_at: '2026-11-09T08:59:00.000Z', expires_at: '2026-11-09T09:59:00.000Z' } }))
     expect(document.querySelector<HTMLElement>('.meta .pin-mark')?.dataset.tip).toBe('Pinned by sam · 4 minutes left')
     btn('More')!.click(); flushSync()
-    expect(items().map((b) => b.textContent?.trim())).toEqual(['Unpin message', 'Remind me'])
+    expect(items().map((b) => b.textContent?.trim())).toEqual(['Unpin message', 'Remind me', 'Save message'])
   })
 })
 
