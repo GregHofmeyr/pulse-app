@@ -440,7 +440,7 @@ past that, the least recently used bucket is dropped.
 | Custom emoji creates, renames and deletes (together) | 30/hour per user |
 | Soundboard sound creates, edits, deletes and favourites, and setting or clearing a join sound (together) | 120/hour per user |
 | Soundboard plays | burst of 20, then 8/second per user |
-| Attachment uploads (starting one, and asking for more upload URLs) | burst of 60, then 1/second per user |
+| Attachment uploads (together: starting one, asking for more upload URLs, checking which parts are stored, and finishing one) | burst of 60, then 1/second per user |
 | Clip play and attachment download links (each signs a storage URL) | burst of 60, then 1/second per user |
 | Go Live preview uploads | burst of 6, then one every 5 seconds per user |
 | Voice tokens and stream tickets (together, watching from elsewhere included) | burst of 60, then 1/second per user |

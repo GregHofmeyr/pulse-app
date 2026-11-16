@@ -371,6 +371,10 @@ async fn uploaded_parts(
     AuthUser(me): AuthUser,
     Path(id): Path<AttachmentId>,
 ) -> AppResult<Json<Vec<UploadedPart>>> {
+    // a store call each (#297)
+    if !s.limits.attachment_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
     let r2 = storage(&s)?;
     let (stored, upload, _) = my_multipart(&s.db, me, id).await?;
     let parts = r2
@@ -391,6 +395,10 @@ async fn complete(
     AuthUser(me): AuthUser,
     Path(id): Path<AttachmentId>,
 ) -> AppResult<StatusCode> {
+    // up to three store calls (#297)
+    if !s.limits.attachment_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
     let r2 = storage(&s)?;
     // A retry after a lost answer: already joined (no upload id left) and whole is done.
     let joined: Option<(String, Option<String>, i64)> = sqlx::query_as(

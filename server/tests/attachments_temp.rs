@@ -454,3 +454,33 @@ async fn the_storage_report_counts_each_kind() {
     assert_eq!(of("clips"), (0, 0, true));
     assert!(!of("sounds").2 && !of("emoji").2);
 }
+
+#[tokio::test]
+async fn reading_parts_and_completing_share_the_upload_limit() {
+    let mut cfg = test_config();
+    cfg.limits = pulse_server::limits::LimitsConfig::default();
+    cfg.limits.attachment_user = pulse_server::limits::Rate::new(3, 0.0);
+    let app = spawn_with(cfg).await;
+    let (_, t) = register(&app, "alex").await;
+    let s = create_server(&app, &t, "Main").await;
+    let ch = general(&app, &t, s.id).await.id;
+    let up = start_ok(&app, &t, ch, BIG, 1).await;
+    let parts = format!("/attachment-uploads/{}/parts", up.id);
+    let get = |p: String| {
+        let (app, t) = (&app, &t);
+        async move {
+            app.http
+                .get(app.url(&p))
+                .bearer_auth(t)
+                .send()
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+    assert_eq!(get(parts.clone()).await, 200);
+    // nothing stored yet: refused as unfinished, but it still counts
+    assert_eq!(complete(&app, &t, up.id).await.status(), 409);
+    assert_eq!(get(parts).await, 429);
+    assert_eq!(complete(&app, &t, up.id).await.status(), 429);
+}

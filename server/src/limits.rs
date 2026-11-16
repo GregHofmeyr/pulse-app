@@ -106,7 +106,8 @@ pub struct LimitsConfig {
     pub voice_state_user: Rate,
     /// Clip play links minted per user (each signs a storage URL).
     pub clip_url_user: Rate,
-    /// Attachment uploads started per user (each signs a storage URL).
+    /// Attachment upload calls per user: starting one, asking for part URLs (each signs storage
+    /// URLs), reading which parts are stored and completing one (each calls the store).
     pub attachment_user: Rate,
     /// Message searches per user. Reads are otherwise free, but a search can scan far more rows
     /// than a page of history.
