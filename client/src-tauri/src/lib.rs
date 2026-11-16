@@ -451,6 +451,7 @@ pub fn run() {
             commands::get_poll,
             commands::vote_poll,
             commands::close_poll,
+            commands::edit_poll,
             commands::create_plan,
             commands::get_plan,
             commands::edit_plan,

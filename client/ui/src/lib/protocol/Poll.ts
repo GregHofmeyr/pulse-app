@@ -36,4 +36,9 @@ mine: Array<number>,
 /**
  * Per option, in order. `None` until you may see results: after you vote, as its creator, or once it closes.
  */
-results: Array<PollTally> | null, };
+results: Array<PollTally> | null, 
+/**
+ * When its creator last changed its question or options (#265); the card says "(edited)". Absent from older
+ * servers: never edited.
+ */
+edited_at?: string, };

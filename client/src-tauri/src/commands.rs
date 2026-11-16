@@ -5202,6 +5202,18 @@ pub async fn vote_poll(
     core.check(&app, api.vote_poll(&token, message_id, options).await)
 }
 
+/// Change your open poll's question and options (#265).
+#[tauri::command]
+pub async fn edit_poll(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    request: pulse_protocol::rest::EditPollRequest,
+) -> Result<pulse_protocol::rest::Poll, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.edit_poll(&token, message_id, &request).await)
+}
+
 /// End your poll now.
 #[tauri::command]
 pub async fn close_poll(

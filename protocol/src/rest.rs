@@ -1038,6 +1038,32 @@ pub struct Poll {
     pub mine: Vec<u32>,
     /// Per option, in order. `None` until you may see results: after you vote, as its creator, or once it closes.
     pub results: Option<Vec<PollTally>>,
+    /// When its creator last changed its question or options (#265); the card says "(edited)". Absent from older
+    /// servers: never edited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub edited_at: Option<String>,
+}
+
+/// One option in a poll edit (#265): its text, and which of the poll's options (by index, before the edit) it is.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct PollOptionEdit {
+    pub text: String,
+    /// The option it keeps (its place before the edit), or `None` for a new one. Each at most once; an option no
+    /// entry keeps is removed. A kept option whose text changes loses its votes, as a removed one does.
+    #[serde(default)]
+    pub from: Option<u32>,
+}
+
+/// `PUT /messages/{id}/poll` (#265): its creator changes an open poll's question and options. Multiple choice,
+/// Anonymous and the end time stay as posted. An edit that would take votes away (an option with votes removed or
+/// reworded) is refused with 409 unless `clear_votes` says the creator agreed to it.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct EditPollRequest {
+    pub question: String,
+    pub options: Vec<PollOptionEdit>,
+    #[serde(default)]
+    pub clear_votes: bool,
 }
 
 /// `POST /channels/{id}/polls`.

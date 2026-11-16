@@ -40,6 +40,7 @@ pub(crate) struct Stored {
     pub anonymous: bool,
     pub ends_at: Option<String>,
     pub closed_at: Option<String>,
+    pub edited_at: Option<String>,
 }
 
 impl Stored {
@@ -59,10 +60,11 @@ type StoredRow = (
     i64,
     Option<String>,
     Option<String>,
+    Option<String>,
 );
 
 const STORED_COLS: &str = "p.message_id, p.channel_id, m.author_id, p.question, p.options, p.multi, \
-     p.anonymous, p.ends_at, p.closed_at FROM polls p JOIN messages m ON m.id = p.message_id";
+     p.anonymous, p.ends_at, p.closed_at, p.edited_at FROM polls p JOIN messages m ON m.id = p.message_id";
 
 fn stored_from(r: StoredRow) -> AppResult<Stored> {
     let (
@@ -75,6 +77,7 @@ fn stored_from(r: StoredRow) -> AppResult<Stored> {
         anonymous,
         ends_at,
         closed_at,
+        edited_at,
     ) = r;
     Ok(Stored {
         message_id: message_id.parse().map_err(anyhow::Error::from)?,
@@ -89,6 +92,7 @@ fn stored_from(r: StoredRow) -> AppResult<Stored> {
         anonymous: anonymous != 0,
         ends_at,
         closed_at,
+        edited_at,
     })
 }
 
@@ -200,6 +204,7 @@ pub(crate) fn view(
         voters: u32::try_from(people.len()).unwrap_or(u32::MAX),
         mine,
         results,
+        edited_at: p.edited_at.clone(),
     }
 }
 
@@ -313,6 +318,43 @@ pub fn clean_options(raw: Vec<String>) -> AppResult<Vec<String>> {
             Ok(o.to_string())
         })
         .collect()
+}
+
+/// A poll edit worked out (#265): the options after it and, for each option before it, where its votes go (`None`:
+/// they are cleared, because the option was removed or reworded).
+#[derive(Debug, PartialEq)]
+pub struct EditPlan {
+    pub options: Vec<String>,
+    pub moves: Vec<Option<u32>>,
+}
+
+/// Work out an edit of `before` into `edits`, cleaned as a new poll's options are. Rules: a new option (no `from`) is
+/// always fine; an option kept with the same text (after trimming) keeps its votes, wherever it now sits; an option
+/// removed, or kept with new text, loses its votes (votes are for what the option said). Each old option is kept at
+/// most once.
+pub fn plan_edit(
+    before: &[String],
+    edits: &[pulse_protocol::rest::PollOptionEdit],
+) -> AppResult<EditPlan> {
+    let options = clean_options(edits.iter().map(|e| e.text.clone()).collect())?;
+    let mut moves: Vec<Option<u32>> = vec![None; before.len()];
+    let mut kept = vec![false; before.len()];
+    for (new_at, (e, text)) in edits.iter().zip(&options).enumerate() {
+        let Some(from) = e.from else { continue };
+        let from = from as usize;
+        if from >= before.len() {
+            return Err(AppError::BadRequest("no such option".into()));
+        }
+        if std::mem::replace(&mut kept[from], true) {
+            return Err(AppError::BadRequest(
+                "an option is kept at most once".into(),
+            ));
+        }
+        if before[from] == *text {
+            moves[from] = Some(new_at as u32);
+        }
+    }
+    Ok(EditPlan { options, moves })
 }
 
 /// The poll as text, for clients that don't know polls (and previews, search and notifications).
@@ -518,6 +560,35 @@ mod tests {
     }
 
     #[test]
+    fn an_edit_keeps_votes_only_on_options_that_still_say_the_same() {
+        use pulse_protocol::rest::PollOptionEdit as E;
+        let e = |text: &str, from: Option<u32>| E {
+            text: text.into(),
+            from,
+        };
+        let before = s(&["Pizza", "Tacos", "Sushi"]);
+        // reorder, reword one, drop one, add one
+        let p = plan_edit(
+            &before,
+            &[
+                e("Sushi", Some(2)),
+                e("Tacos!", Some(1)),
+                e(" Curry ", None),
+            ],
+        )
+        .unwrap();
+        assert_eq!(p.options, s(&["Sushi", "Tacos!", "Curry"]));
+        assert_eq!(p.moves, vec![None, None, Some(0)]);
+        // the same text after trimming keeps its votes
+        let p = plan_edit(&before, &[e(" Pizza ", Some(0)), e("Tacos", Some(1))]).unwrap();
+        assert_eq!(p.moves, vec![Some(0), Some(1), None]);
+        // an option kept twice, or one that isn't there, is refused; so are the usual limits
+        assert!(plan_edit(&before, &[e("a", Some(0)), e("b", Some(0))]).is_err());
+        assert!(plan_edit(&before, &[e("a", Some(0)), e("b", Some(9))]).is_err());
+        assert!(plan_edit(&before, &[e("a", Some(0))]).is_err());
+    }
+
+    #[test]
     fn the_winners_and_the_line() {
         let u = UserId::new();
         let opts = s(&["Valheim", "Apex", "Rust"]);
@@ -561,6 +632,7 @@ mod tests {
             anonymous: false,
             ends_at: Some("2100-01-01T00:00:00.000Z".into()),
             closed_at: None,
+            edited_at: None,
         };
         let votes = vec![(1, sam)];
         let now = "2026-01-01T00:00:00.000Z";

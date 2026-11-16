@@ -3,7 +3,7 @@
   // and the time left, and the total. Results (a bar, the count and the percent, and who voted unless it's
   // anonymous) show once you may see them: after you vote, as its creator, or once it closes. Click a row to vote;
   // single choice moves your vote (or, on yours, takes it back), multiple choice toggles each. Closed, it shows the
-  // final results with the winner(s) emphasised. The bars grow only when motion is allowed.
+  // final results with the winner(s) emphasised. One its creator changed (#265) says "(edited)". The bars grow only when motion is allowed.
   import Icon from './Icon.svelte'
   import VoterStack from './VoterStack.svelte'
   import { motion } from '../lib/animate.svelte'
@@ -43,7 +43,7 @@
 
 <div class="poll" class:animated={!motion.reducedMotion} class:over role="group" aria-labelledby="{uid}-q">
   <p class="q" id="{uid}-q">{poll.question}</p>
-  <p class="status">{pollStatus(poll, now)}</p>
+  <p class="status">{pollStatus(poll, now)}{#if poll.edited_at} · <span class="edited">(edited)</span>{/if}</p>
   <ul class="options">
     {#each poll.options as option, i (i)}
       {@const mine = poll.mine.includes(i)}
@@ -95,6 +95,7 @@
   .count { font-weight: 700; color: var(--text); }
   .pct { min-width: 34px; text-align: right; }
   .foot { margin: 8px 0 0; font-size: 12px; color: var(--text-3); }
+  .edited { color: var(--text-3); }
   .final { color: var(--text-2); font-weight: 600; }
   .err { margin: 6px 0 0; font-size: 12px; color: var(--danger-text); }
   /* motion (off under reduced motion: no .animated) */

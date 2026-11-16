@@ -45,6 +45,7 @@ import type { UpdateWheelRequest } from './protocol/UpdateWheelRequest'
 import type { SpinWheelRequest } from './protocol/SpinWheelRequest'
 import type { QuietSpin } from './protocol/QuietSpin'
 import type { CreatePollRequest } from './protocol/CreatePollRequest'
+import type { EditPollRequest } from './protocol/EditPollRequest'
 import type { Poll } from './protocol/Poll'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { StreamSettings } from './protocol/StreamSettings'
@@ -694,12 +695,15 @@ export const wheelCmd = {
   spinQuietly: (channelId: string, request: SpinWheelRequest) => invoke<QuietSpin>('spin_wheel_quietly', { channelId, request }),
 }
 
-/** Polls (#157): post one, fetch your view of one, vote (your full set of choices; none takes it back), end yours. */
+/** Polls (#157): post one, fetch your view of one, vote (your full set of choices; none takes it back), end yours,
+ *  change yours (#265). */
 export const pollCmd = {
   create: (channelId: string, request: CreatePollRequest) => invoke<Message>('create_poll', { channelId, request }),
   get: (messageId: string) => invoke<Poll>('get_poll', { messageId }),
   vote: (messageId: string, options: number[]) => invoke<Poll>('vote_poll', { messageId, options }),
   close: (messageId: string) => invoke<Poll>('close_poll', { messageId }),
+  /** Change your open poll's question and options (#265). */
+  edit: (messageId: string, request: EditPollRequest) => invoke<Poll>('edit_poll', { messageId, request }),
 }
 
 /** Plan something (#387): post one, fetch it, change or cancel yours, answer one (none takes it back), its forecast (the

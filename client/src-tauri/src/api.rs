@@ -3667,6 +3667,24 @@ impl Api {
         .await
     }
 
+    /// Change your open poll's question and options (#265).
+    pub async fn edit_poll(
+        &self,
+        token: &str,
+        poll: MessageId,
+        body: &pulse_protocol::rest::EditPollRequest,
+    ) -> Result<pulse_protocol::rest::Poll, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/messages/{poll}/poll", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// End your poll now.
     pub async fn close_poll(
         &self,

@@ -190,6 +190,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::Rsvp::export_all(&cfg)?;
     rest::Plan::export_all(&cfg)?;
     rest::CreatePlanRequest::export_all(&cfg)?;
+    rest::EditPollRequest::export_all(&cfg)?;
     rest::PlanRsvpRequest::export_all(&cfg)?;
     rest::PlanForecast::export_all(&cfg)?;
     rest::PlanReminder::export_all(&cfg)?;
