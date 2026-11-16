@@ -37,8 +37,9 @@ const RESCAN_EVERY: Duration = Duration::from_secs(2);
 const LOG_EVERY: Duration = Duration::from_secs(5);
 /// How long connecting `#a` may take.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long closing `#a` may take before we drop it anyway: a stuck close holds the state lock,
-/// so every stream-sound command would wait on it (as voice's `CLOSE_TIMEOUT`).
+/// How long closing `#a`, or unpublishing the stream-sound track (#360), may take before we go on
+/// anyway: a stuck one holds the state lock, so every stream-sound command would wait on it (as
+/// voice's `CLOSE_TIMEOUT`).
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How often a receive task with no current mixer asks for one again.
 const REBIND_EVERY: Duration = Duration::from_secs(1);
@@ -922,7 +923,9 @@ impl StreamAudio {
         // capture first: nothing is fed into a track being unpublished
         p.capturing.stop().await;
         if let Some(c) = &st.conn {
-            let _ = c.room.local_participant().unpublish_track(&p.sid).await;
+            let participant = c.room.local_participant();
+            let unpublish = participant.unpublish_track(&p.sid);
+            let _ = within(CLOSE_TIMEOUT, "audio_unpublish_timeout", unpublish).await;
         }
     }
 
@@ -1038,13 +1041,18 @@ impl StreamAudio {
 
     /// Closes `room`, waiting at most `CLOSE_TIMEOUT`.
     async fn close_room(room: Room) {
-        if tokio::time::timeout(CLOSE_TIMEOUT, room.close())
-            .await
-            .is_err()
-        {
-            log(json!({"ev": "audio_close_timeout"}));
-        }
+        let _ = within(CLOSE_TIMEOUT, "audio_close_timeout", room.close()).await;
     }
+}
+
+/// `f`'s output, unless it takes longer than `limit`: then `None`, logged as `ev`, and `f` is
+/// dropped (a LiveKit call stuck on a dead connection gives up rather than hold the state lock).
+async fn within<F: std::future::Future>(limit: Duration, ev: &str, f: F) -> Option<F::Output> {
+    let out = tokio::time::timeout(limit, f).await.ok();
+    if out.is_none() {
+        log(json!({ "ev": ev }));
+    }
+    out
 }
 
 /// An `#a` connection to `have` (as a ghost or not) serves a call for `want`: the same channel
@@ -1057,6 +1065,21 @@ fn reuses(have: ChannelId, have_ghost: bool, want: ChannelId, want_ghost: bool) 
 mod tests {
     use super::*;
     use crate::voice::mixer::{SourceKind, mixer, percent_to_gain};
+
+    /// #360: unpublishing the stream-sound track (and closing `#a`) gives up after
+    /// `CLOSE_TIMEOUT` instead of holding the state lock for as long as LiveKit hangs.
+    #[tokio::test(start_paused = true)]
+    async fn a_stuck_unpublish_or_close_gives_up_after_the_close_limit() {
+        let started = tokio::time::Instant::now();
+        let out = within(CLOSE_TIMEOUT, "test_timeout", std::future::pending::<()>()).await;
+        assert_eq!(out, None);
+        assert_eq!(started.elapsed(), CLOSE_TIMEOUT);
+        // one that finishes in time hands back its result
+        assert_eq!(
+            within(CLOSE_TIMEOUT, "test_timeout", async { 7 }).await,
+            Some(7)
+        );
+    }
 
     #[test]
     fn a_ghost_connection_is_reused_only_by_a_ghost_in_that_channel() {

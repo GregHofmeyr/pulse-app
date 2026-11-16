@@ -96,7 +96,11 @@
     }
   }
 
-  async function goLive() {
+  /** `confirmed`: a clash with a ghost watch elsewhere was answered "Stop & go live". */
+  async function goLive(confirmed = false) {
+    if (busy || destroyed) return
+    // a ghost watch started elsewhere since the picker opened (#360): going live would end it, so that's asked first
+    if (!confirmed && streamApi.goLiveClashes(channelId, () => goLive(true))) return
     busy = true
     const settings = { res, fps, audio: sound !== 'off', allowGhosts, sound: sound === 'off' ? preferred : sound }
     // a screen share's Everything is not a choice against This app next time
@@ -163,7 +167,7 @@
     {#if pickError || stream.error}<p class="err" role="alert">{pickError || stream.error}</p>{/if}
     <div class="actions">
       <button type="button" class="btn btn-lg btn-secondary" disabled={busy} onclick={cancel}>Cancel</button>
-      <button type="button" class="btn btn-lg btn-primary" disabled={busy} onclick={goLive}>{busy ? 'Starting…' : stream.error ? 'Retry' : 'Go Live'}</button>
+      <button type="button" class="btn btn-lg btn-primary" disabled={busy} onclick={() => goLive()}>{busy ? 'Starting…' : stream.error ? 'Retry' : 'Go Live'}</button>
     </div>
   </div>
 </div>

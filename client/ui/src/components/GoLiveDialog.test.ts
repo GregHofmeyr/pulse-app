@@ -4,7 +4,7 @@
 import { flushSync, mount, unmount } from 'svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const live = vi.hoisted(() => ({ goLive: null as null | (() => Promise<void>), settings: [] as unknown[], probe: null as unknown, probed: [] as unknown[] }))
+const live = vi.hoisted(() => ({ goLive: null as null | (() => Promise<void>), settings: [] as unknown[], probe: null as unknown, probed: [] as unknown[], clash: null as null | (() => unknown), clashes: false }))
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (cmd: string, args: { window?: unknown }) => {
     if (cmd !== 'stream_audio_probe') return undefined
@@ -15,6 +15,12 @@ vi.mock('@tauri-apps/api/core', () => ({
 vi.mock('../lib/stream/stream.svelte', () => ({
   stream: { error: '' },
   streamApi: {
+    // a ghost watch elsewhere (#360): the clash is asked about, `run` going live once it's settled
+    goLiveClashes: (_c: string, run: () => unknown) => {
+      if (!live.clashes) return false
+      live.clash = run
+      return true
+    },
     goLive: (_c: string, _t: unknown, _l: string, settings: unknown) => {
       live.settings.push(settings)
       return live.goLive!()
@@ -57,6 +63,36 @@ describe('GoLiveDialog capture ownership', () => {
     document.body.innerHTML = ''
     resetState()
     app.state = { ...app.state, channels: { c1: LOUNGE, DM1: DM } }
+  })
+
+  it('a_ghost_watch_started_while_the_dialog_was_open_is_asked_about_at_the_go_live_press', async () => {
+    live.clashes = true
+    live.clash = null
+    live.settings = []
+    const { going } = startGoLive()
+    // asked first: nothing has gone live, and the button is still there to press
+    expect(live.clash).not.toBeNull()
+    expect(live.settings).toEqual([])
+    expect(document.querySelector('.btn-primary')?.textContent).toBe('Go Live')
+    // "Stop & go live": it goes live, without asking again
+    live.clashes = false
+    void live.clash!()
+    flushSync()
+    expect(live.settings).toHaveLength(1)
+    going.resolve()
+    await going.p
+  })
+
+  it('a_clash_answered_after_the_dialog_closed_goes_live_with_nothing', () => {
+    live.clashes = true
+    live.clash = null
+    live.settings = []
+    const { c, track } = startGoLive()
+    unmount(c) // the dialog went (left voice) while the clash dialog was up
+    void live.clash!()
+    expect(live.settings).toEqual([])
+    expect(track.stop).toHaveBeenCalledTimes(1)
+    live.clashes = false
   })
 
   it('a_failed_go_live_after_the_dialog_closed_stops_the_capture', async () => {
