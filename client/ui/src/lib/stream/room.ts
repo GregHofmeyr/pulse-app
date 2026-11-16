@@ -45,6 +45,11 @@ export function isScreenOf(identity: string, source: Track.Source, streamer: str
   return source === Track.Source.ScreenShare && identity === `${streamer}#v`
 }
 
+/** The capture's own constraints: the top frame rate Go Live offers, scaled down on publish. */
+const MAX_FPS: Fps = 60
+// `resizeMode` is in the spec and Chromium, not yet in TypeScript's DOM types
+const CAPTURE_VIDEO: MediaTrackConstraints & { resizeMode: 'none' | 'crop-and-scale' } = { frameRate: { ideal: MAX_FPS }, resizeMode: 'crop-and-scale' }
+
 // createScreenTracks lives on LocalParticipant but needs no connection: an unconnected Room's is enough.
 let pickerRoom: Room | null = null
 
@@ -127,11 +132,15 @@ export class StreamRoom {
     await streamCmd.pickerWindow(true).catch(() => {})
     let tracks: LocalTrack[]
     try {
-      // resolution 0×0 = uncapped: livekit-client otherwise asks for 1080p, and we offer up to the source size
+      // resolution 0×0 = uncapped: livekit-client otherwise asks for 1080p, and we offer up to the source size.
+      // With it, livekit-client passes `video` through as is: Chromium captures a screen at 30 fps unless
+      // asked for more, and applyConstraints can't raise it later, so ask for the most we offer up front;
+      // publish caps it (and the size) to what Go Live chose, which crop-and-scale lets it do (#340)
       tracks = await pickerRoom.localParticipant.createScreenTracks({
         audio: false,
         selfBrowserSurface: 'exclude',
         resolution: { width: 0, height: 0 },
+        video: CAPTURE_VIDEO as unknown as true, // livekit-client types only `displaySurface`
       })
     } finally {
       await streamCmd.pickerWindow(false).catch(() => {})

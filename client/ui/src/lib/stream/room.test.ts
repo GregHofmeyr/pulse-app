@@ -14,13 +14,21 @@ vi.mock('@tauri-apps/api/core', () => ({
 }))
 
 const rooms = vi.hoisted(() => [] as unknown[])
+/** What `pick` asked livekit-client's createScreenTracks for. */
+const screenCalls = vi.hoisted(() => [] as unknown[])
 vi.mock('livekit-client', async (importOriginal) => {
   const real = await importOriginal<typeof import('livekit-client')>()
   const { EventEmitter } = await import('node:events')
   class FakeRoom extends EventEmitter {
     state = real.ConnectionState.Connected
     remoteParticipants = new Map<string, unknown>()
-    localParticipant = {}
+    localParticipant = {
+      createScreenTracks: async (opts: unknown) => {
+        screenCalls.push(opts)
+        const mediaStreamTrack = { label: 'Screen 1', getSettings: () => ({ displaySurface: 'monitor', width: 2560, height: 1440 }) }
+        return [{ kind: real.Track.Kind.Video, mediaStreamTrack, stop: () => {} }]
+      },
+    }
     constructor() {
       super()
       rooms.push(this)
@@ -86,6 +94,21 @@ describe('isScreenOf', () => {
     expect(isScreenOf('alex#a', Track.Source.ScreenShare, 'alex')).toBe(false)
     expect(isScreenOf('alex#v', Track.Source.Camera, 'alex')).toBe(false)
     expect(isScreenOf('kim#v', Track.Source.ScreenShare, 'alex')).toBe(false)
+  })
+})
+
+describe('StreamRoom.pick', () => {
+  // Chromium captures a screen at 30 fps unless asked for more, and applyConstraints can't raise it
+  // later: ask for 60 up front (publish caps it to the chosen fps), uncapped in size (#340)
+  it('asks_the_capture_for_60_fps_and_lets_publish_scale_it_down', async () => {
+    screenCalls.length = 0
+    const picked = await StreamRoom.pick()
+    expect(picked.height).toBe(1440)
+    expect(screenCalls).toHaveLength(1)
+    const opts = screenCalls[0] as { resolution: { width: number; height: number }; video: { frameRate: unknown; resizeMode: unknown } }
+    expect(opts.resolution).toEqual({ width: 0, height: 0 })
+    expect(opts.video.frameRate).toEqual({ ideal: 60 })
+    expect(opts.video.resizeMode).toBe('crop-and-scale')
   })
 })
 
