@@ -24,6 +24,32 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.12',
+  version: '0.2.12',
+  date: '16 November 2026',
+  new: [
+    'Game activity (Windows): Pulse shows what you\'re playing ("Playing Deadlock · 1h 12m") on your profile card, with the game\'s art, and behind your tile in voice calls. Steam games are found on any drive, and you can add other games by hand. Switch it off, or turn off the art or play time, in Settings › Privacy › Game activity',
+    'Steam achievements: link your Steam account and your unlocks show up live in your server\'s Achievements channel, with the icon and how rare each one is. Finish a game and Pulse celebrates the 100%. Your completion rate appears on your profile card',
+    'New badge: Completionist, for your first 100% game',
+    'Auto clip drop: when NVIDIA or Game Bar saves a new recording, Pulse offers to share it to #clips',
+  ],
+  fixes: [
+    'If something breaks while showing a screen, you now get a Reload button instead of a blank window',
+    'Noise suppression steps back up on its own after a CPU spike forced it down',
+  ],
+  qol: [
+    'The stream sound picker shows proper app names and a little level meter',
+    'Echo cancellation explains itself when it switches off for headphones',
+  ],
+  soon: [
+    'Deadlock: post-match cards, rank badges and squad stats',
+    'A fresh profile editor: edit right inside your big profile card',
+  ],
+  message: 'GG. Pulse knows what you\'re playing now 🎮',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.11',
   version: '0.2.11',
   date: '16 November 2026',
@@ -61,37 +87,4 @@ export const patchNotes: PatchNotes = {
     'More fresh and reworked designs on the way',
   ],
   message: 'Less waiting, more knowing. Pulse tells you what\'s going on now 🌙',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.10',
-  version: '0.2.10',
-  date: '13 November 2026',
-  new: [
-    'Profile cards in your own colours: light colours finally look like themselves, text switches dark or light to stay readable, and there\'s a Card glow switch in Settings › Profile',
-    'Pin quotes and clips: right-click a quote or use a clip\'s ⋯ menu, and find them under Pins in the channel header',
-    'The quick switcher searches messages everywhere you are, not just the server you\'re in',
-    'Downloads show progress: clips, images and files get a progress ring, you can cancel, and they say Saved when done',
-  ],
-  fixes: [
-    'Coming back after a busy spell opens where you stopped reading, with nothing silently skipped',
-    'Reactions, edits and deletes from while you were offline now show on older messages too',
-    'The delete confirm on the bottom message or quote no longer hides under the message box',
-    'Settings no longer flashes while you pick colours (Linux)',
-    'Server names in the quick switcher line up neatly',
-    'Unread counts in the Inbox stay right after deletes, mutes and reconnects',
-  ],
-  qol: [
-    'Right-click a person almost anywhere for their menu: group members, @mentions, reply names, quote speakers, search results and the Inbox. Remove from group lives there now too',
-    'Small profile cards are a little bigger',
-    'A message you jump to now gets a clearer highlight',
-    'Clips and clip replies in the Inbox open the clip',
-    'The Inbox count catches up on its own when a timed mute runs out',
-  ],
-  soon: [
-    'A fresh profile editor: edit right inside your big profile card',
-    'More fresh and reworked designs on the way',
-  ],
-  message: 'Pin it, find it, download it. Pulse has a filing cabinet now 🗂️',
 }
