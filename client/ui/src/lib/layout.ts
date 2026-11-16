@@ -143,3 +143,19 @@ export function stepCategory(o: Order, categoryId: string, dir: -1 | 1): Order |
   if (i < 0 || !o.cats[i + dir]) return null
   return moveCategory(o, categoryId, i + dir)
 }
+
+/** What a screen reader hears after a keyboard or menu move (#197): "Moved #memes to Gaming, position 2" (a voice
+ *  channel without the #), "Moved #general above the categories, position 1", or "Moved the Gaming category to
+ *  position 3". Positions count from 1 within where it landed in `o`; '' for one not in it. */
+export function channelMoveText(o: Order, channel: Pick<Channel, 'id' | 'name' | 'kind'>, categoryName: (id: string) => string): string {
+  const label = channel.kind === 'voice' ? channel.name : `#${channel.name}`
+  const top = o.top.indexOf(channel.id)
+  if (top >= 0) return `Moved ${label} above the categories, position ${top + 1}`
+  const cat = o.cats.find((c) => c.channels.includes(channel.id))
+  if (!cat) return ''
+  return `Moved ${label} to ${categoryName(cat.id)}, position ${cat.channels.indexOf(channel.id) + 1}`
+}
+export function categoryMoveText(o: Order, category: Pick<Category, 'id' | 'name'>): string {
+  const i = o.cats.findIndex((c) => c.id === category.id)
+  return i < 0 ? '' : `Moved the ${category.name} category to position ${i + 1}`
+}

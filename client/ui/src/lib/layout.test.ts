@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { NARROW_BODY, applyOrder, moveCategory, moveChannel, orderOf, searchMakesRoom, sidebarLayout, stepCategory, stepChannel, toRequest, type Order } from './layout'
+import { NARROW_BODY, applyOrder, categoryMoveText, channelMoveText, moveCategory, moveChannel, orderOf, searchMakesRoom, sidebarLayout, stepCategory, stepChannel, toRequest, type Order } from './layout'
 import { emptyState, type AppState } from './state'
 import type { Category } from './protocol/Category'
 import type { Channel } from './protocol/Channel'
@@ -185,5 +185,22 @@ describe('steps', () => {
     expect(stepCategory(base, 'K1', -1)).toBeNull()
     expect(stepCategory(base, 'K3', 1)).toBeNull()
     expect(stepCategory(base, 'NOPE', 1)).toBeNull()
+  })
+})
+
+// #197: a keyboard or menu move is said out loud, naming where it landed.
+describe('move announcements', () => {
+  const o: Order = { top: ['t0', 't1'], cats: [{ id: 'c1', channels: ['t2', 'v1'] }, { id: 'c2', channels: [] }] }
+  const names: Record<string, string> = { c1: 'Gaming', c2: 'Music' }
+  const name = (id: string) => names[id]
+  it('names the category and the position within it, with # for all but voice', () => {
+    expect(channelMoveText(o, { id: 't2', name: 'memes', kind: 'text' }, name)).toBe('Moved #memes to Gaming, position 1')
+    expect(channelMoveText(o, { id: 'v1', name: 'Lounge', kind: 'voice' }, name)).toBe('Moved Lounge to Gaming, position 2')
+    expect(channelMoveText(o, { id: 't1', name: 'general', kind: 'text' }, name)).toBe('Moved #general above the categories, position 2')
+    expect(channelMoveText(o, { id: 'gone', name: 'gone', kind: 'text' }, name)).toBe('')
+  })
+  it('a category says its place among the categories', () => {
+    expect(categoryMoveText(o, { id: 'c2', name: 'Music' })).toBe('Moved the Music category to position 2')
+    expect(categoryMoveText(o, { id: 'nope', name: 'Nope' })).toBe('')
   })
 })

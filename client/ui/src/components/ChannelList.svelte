@@ -17,7 +17,7 @@
   import { api, errorText } from '../lib/tauri'
   import { chatBadge, isMuted } from '../lib/conversations'
   import { isCollapsed, setCollapsed, toggleSection } from '../lib/sidebarSections.svelte'
-  import { applyOrder, moveCategory as placeCategory, moveChannel as placeChannel, orderOf, sidebarLayout, stepCategory, stepChannel, type Order, type Section } from '../lib/layout'
+  import { applyOrder, categoryMoveText, channelMoveText, moveCategory as placeCategory, moveChannel as placeChannel, orderOf, sidebarLayout, stepCategory, stepChannel, type Order, type Section } from '../lib/layout'
   import { cancelDrag, sortableList, type Drop } from '../lib/drag'
   import { drafts, saveOrder } from '../lib/layoutDraft.svelte'
   import { categoryUi } from '../lib/categoryUi.svelte'
@@ -219,9 +219,22 @@
     })
     void refocus(selector)
   }
+  /** The polite live region's text (#197): where a keyboard or menu move put what moved. Cleared first, so the same
+   *  words twice are still read. */
+  let moveSaid = $state('')
+  async function sayMove(text: string) {
+    moveSaid = ''
+    await tick()
+    moveSaid = text
+  }
   function moveChannel(id: string, dir: -1 | 1) {
     const next = stepChannel(order(), id, dir)
     if (!next) return
+    const c = app.state.channels[id]
+    if (c) {
+      const catName = (cid: string) => layout.sections.find((x) => x.category?.id === cid)?.name ?? ''
+      void sayMove(channelMoveText(next, c, catName))
+    }
     // in or into a collapsed category: it opens, so the move shows and the row doesn't vanish from under you
     const to = next.cats.find((c) => c.channels.includes(id))?.id
     if (to) setCollapsed(`cat:${to}`, false)
@@ -230,6 +243,8 @@
   function moveCategory(id: string, dir: -1 | 1) {
     const next = stepCategory(order(), id, dir)
     if (!next) return
+    const cat = layout.sections.find((x) => x.category?.id === id)?.category
+    if (cat) void sayMove(categoryMoveText(next, cat))
     saveMove(next, headingSelector(id))
   }
 
@@ -588,6 +603,8 @@
   {#if c.kind === 'voice'}{@render voiceRow(c)}{:else}{@render channelRow(c, ICON[c.kind] ?? 'hash')}{/if}
 {/snippet}
 
+<!-- always in the page: a region added along with its text often isn't read -->
+<p class="sr-only" aria-live="polite" data-moves>{moveSaid}</p>
 <div class="list" bind:this={listEl} use:sortableList={dragOpts}>
   <div class="cat top">
     {#each layout.top as c (c.id)}{@render chan(c)}{/each}

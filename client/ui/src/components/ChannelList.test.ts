@@ -689,6 +689,25 @@ describe('ChannelList by categories', () => {
     expect(savedLayout().length).toBe(before)
   })
 
+  it('keyboard and menu moves are announced to screen readers (#197)', async () => {
+    showLive()
+    const said = () => document.querySelector('[aria-live="polite"][data-moves]')?.textContent?.trim()
+    expect(said()).toBe('')
+    press(rowOf('T2'), 'ArrowDown', { altKey: true })
+    await flush()
+    expect(said()).toBe('Moved #memes to Gaming, position 1')
+    press(rowOf('T1'), 'ArrowUp', { altKey: true })
+    await flush()
+    expect(said()).toBe('Moved #general above the categories, position 2')
+    press(rowOf('V1'), 'ArrowUp', { altKey: true })
+    await flush()
+    expect(said()).toBe('Moved Lounge to Gaming, position 4')
+    rightClick(headingOf('C1'))
+    menuItem('Move down').click()
+    await flush()
+    expect(said()).toBe('Moved the Text Channels category to position 2')
+  })
+
   it('Alt+Up on a heading moves the category; focus stays on its heading', async () => {
     showLive()
     headingOf('C3').focus()
