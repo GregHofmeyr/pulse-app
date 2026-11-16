@@ -99,6 +99,8 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         attachments: vec![],
         caption_is_fallback: false,
         achievement: None,
+        plan: None,
+        plan_reminder: None,
     }
 }
 

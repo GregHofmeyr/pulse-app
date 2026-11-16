@@ -95,6 +95,11 @@ pub fn test_config() -> Config {
             openid_endpoint: "http://127.0.0.1:1/openid/login".into(),
             ..Default::default()
         },
+        // Open-Meteo unreachable unless a test points it at a fake
+        plans: crate::config::PlansConfig {
+            geocode_base: "http://127.0.0.1:1".into(),
+            forecast_base: "http://127.0.0.1:1".into(),
+        },
     }
 }
 

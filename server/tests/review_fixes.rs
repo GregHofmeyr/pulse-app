@@ -181,6 +181,8 @@ async fn silent_client_times_out_despite_outbound_traffic() {
                 attachments: vec![],
                 caption_is_fallback: false,
                 achievement: None,
+                plan: None,
+                plan_reminder: None,
             };
             hub.publish(
                 &db,

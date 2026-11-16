@@ -7,9 +7,9 @@ use crate::ids::{CallId, ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game,
     InboxItem, Listening, ListeningUpdate, Member, Message, Mute, NotifyLevelPref, OwnStatus,
-    Person, PinnedMessage, Playing, PlayingUpdate, PresenceStatus, PrivateNickname, QotyEvent,
-    QuietSpin, ReadState, RingEndReason, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink,
-    StageShare, SteamStatus, StreamEndReason, StreamInfo, User, Wheel,
+    Person, PinnedMessage, Plan, Playing, PlayingUpdate, PresenceStatus, PrivateNickname,
+    QotyEvent, QuietSpin, ReadState, RingEndReason, Server, ServerLayout, ServerVoiceMod, Sound,
+    SpeakerLink, StageShare, SteamStatus, StreamEndReason, StreamInfo, User, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -669,6 +669,13 @@ pub enum Event {
         channel_id: ChannelId,
         message_id: MessageId,
     },
+    /// A plan was answered, changed or cancelled (#387), with the plan as it is now (everyone sees the same card).
+    /// Clients from before it skip the frame.
+    PlanChanged {
+        channel_id: ChannelId,
+        message_id: MessageId,
+        plan: Box<Plan>,
+    },
     /// A quiet picker wheel spin (#270): the chat watches it land as with any spin, but nothing is saved (no line,
     /// no history), so it reaches only whoever is connected now. Clients from before it skip the frame.
     WheelSpunQuietly {
@@ -729,6 +736,7 @@ impl Event {
             | Self::MessagePinned { channel_id, .. }
             | Self::MessageUnpinned { channel_id, .. }
             | Self::PollChanged { channel_id, .. }
+            | Self::PlanChanged { channel_id, .. }
             | Self::StageShareCleared { channel_id, .. }
             | Self::StageNowPlaying { channel_id, .. } => Some(*channel_id),
             Self::StageShared { share } => Some(share.channel_id),

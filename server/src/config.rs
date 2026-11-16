@@ -56,14 +56,35 @@ pub struct Config {
     pub quote_clock: Option<chrono::DateTime<chrono::Utc>>,
     /// Steam linking and achievements (#379).
     pub steam: SteamConfig,
+    /// Plan something's forecast (#387): where Open-Meteo is.
+    pub plans: PlansConfig,
 }
 
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
     limits, stream_media_timeout, media_dir, media_min_free_bytes, updates_dir, totp_key, clips, embeds,
-    launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock, steam ;
+    launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock, steam, plans ;
     livekit_secret
 });
+
+/// Plan something's forecast (#387): Open-Meteo's geocoding and forecast APIs (free, no key). The server calls them
+/// and caches the answers; apps never do.
+#[derive(Clone, Debug)]
+pub struct PlansConfig {
+    /// `https://geocoding-api.open-meteo.com`; tests point it at a fake.
+    pub geocode_base: String,
+    /// `https://api.open-meteo.com`; tests point it at a fake.
+    pub forecast_base: String,
+}
+
+impl Default for PlansConfig {
+    fn default() -> Self {
+        Self {
+            geocode_base: "https://geocoding-api.open-meteo.com".into(),
+            forecast_base: "https://api.open-meteo.com".into(),
+        }
+    }
+}
 
 /// Steam (#379): account linking with OpenID (no key needed) and achievements through the Steam Web API (the key).
 #[derive(Clone)]
@@ -195,6 +216,7 @@ impl Config {
             giphy: giphy(|k| std::env::var(k).ok())?,
             quote_clock: None,
             steam: steam(|k| std::env::var(k).ok()),
+            plans: PlansConfig::default(),
         })
     }
 }
@@ -518,6 +540,7 @@ mod tests {
                 api_key: Some("SECRET-STEAM".into()),
                 ..SteamConfig::default()
             },
+            plans: PlansConfig::default(),
         };
         let d = format!("{cfg:?}");
         assert!(!d.contains("SECRET"), "{d}");
