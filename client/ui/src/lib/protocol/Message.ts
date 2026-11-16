@@ -11,6 +11,8 @@ import type { MessageId } from "./MessageId";
 import type { MessageKind } from "./MessageKind";
 import type { Pin } from "./Pin";
 import type { PinLine } from "./PinLine";
+import type { Plan } from "./Plan";
+import type { PlanReminder } from "./PlanReminder";
 import type { Poll } from "./Poll";
 import type { PollEnded } from "./PollEnded";
 import type { QotyCard } from "./QotyCard";
@@ -106,4 +108,12 @@ achievement?: AchievementCard,
  * Set on a Deadlock card (#390), a system line in a server's Deadlock channel: a match, the weekly rank movers or
  * a patch.
  */
-deadlock?: DeadlockCard, };
+deadlock?: DeadlockCard, 
+/**
+ * Set on a plan (#387): the invite card, with everyone's RSVPs (nothing on it is per person).
+ */
+plan?: Plan, 
+/**
+ * Set on a plan's reminder line (#387), the system line that pings its Going and Maybe people an hour before.
+ */
+plan_reminder?: PlanReminder, };

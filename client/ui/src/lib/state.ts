@@ -16,6 +16,7 @@ import type { Message } from './protocol/Message'
 import type { NotifyLevelPref } from './protocol/NotifyLevelPref'
 import type { PinnedMessage } from './protocol/PinnedMessage'
 import type { Poll } from './protocol/Poll'
+import type { Plan } from './protocol/Plan'
 import type { Mute } from './protocol/Mute'
 import type { Person } from './protocol/Person'
 import type { OwnStatus } from './protocol/OwnStatus'
@@ -392,6 +393,15 @@ function withHeldPoll(m: Message, held: Message | undefined): Message {
  * loaded. */
 export function setPoll(s: AppState, channel: string, id: string, poll: Poll): AppState {
   const put = (m: Message): Message => (m.poll && !m.deleted ? { ...m, poll } : m)
+  const shown = mapShown(s, channel, id, put)
+  const prev = shown.latest[channel]
+  return prev?.id === id ? { ...shown, latest: { ...shown.latest, [channel]: put(prev) } } : shown
+}
+
+/** Put a plan as it is now on its message, wherever it shows (#387): everyone sees the same card, so its event carries
+ * it whole. The state is returned as is when it isn't loaded. */
+export function setPlan(s: AppState, channel: string, id: string, plan: Plan): AppState {
+  const put = (m: Message): Message => (m.plan && !m.deleted ? { ...m, plan } : m)
   const shown = mapShown(s, channel, id, put)
   const prev = shown.latest[channel]
   return prev?.id === id ? { ...shown, latest: { ...shown.latest, [channel]: put(prev) } } : shown
@@ -1013,6 +1023,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     // Carries no view: lib/polls.svelte.ts fetches ours (#157).
     case 'PollChanged':
       return s
+    // A plan's answers, edit or cancel (#387), the card whole.
+    case 'PlanChanged':
+      return setPlan(s, e.d.channel_id, e.d.message_id, e.d.plan)
     case 'StageShared':
       return { ...s, stageShares: withStageShare(s.stageShares, e.d.share) }
     case 'StageShareCleared': {

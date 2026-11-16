@@ -36,6 +36,7 @@ export function noteMessageEvent(e: Event): void {
     case 'QuoteAwardChanged':
     case 'MessageUnpinned':
     case 'PollChanged':
+    case 'PlanChanged':
       return void note(e.d.channel_id, e.d.message_id)
     case 'MessagePinned':
       return void note(e.d.channel_id, e.d.pinned.message.id)

@@ -100,6 +100,8 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         caption_is_fallback: false,
         achievement: None,
         deadlock: None,
+        plan: None,
+        plan_reminder: None,
     }
 }
 

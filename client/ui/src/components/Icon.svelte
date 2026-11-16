@@ -49,6 +49,10 @@
     bookmark: 'M6 3h12v18l-6-4-6 4z',
     // three result bars of different lengths: a poll (#157)
     poll: 'M4 6h12M4 12h16M4 18h8',
+    // a calendar page with its two rings: Plan something (#387)
+    calendar: 'M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM3 10h18M8 3v4M16 3v4',
+    // a pin on a map: a plan's place (#387)
+    place: 'M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21zM12 7.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
     // a rounded tag with G I F in it: the composer's GIF button (#58)
     gif: 'M5 5h14a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3zM10 9.5H8a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1h2v-2.5M13 9.5v5M16 14.5v-5h2.5M16 12h2',
     // a line rising to the right with an arrowhead: trending (the GIF picker's GIPHY trending, #58)

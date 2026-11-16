@@ -22,6 +22,8 @@
   import GifPopover from './GifPopover.svelte'
   import WheelPopover from './WheelPopover.svelte'
   import PollComposer from './PollComposer.svelte'
+  import PlanComposer from './PlanComposer.svelte'
+  import { planPrefs } from '../lib/plans.svelte'
   import { customToken, savedTone, search, twemojiUrl, withSkin, type Std } from '../lib/emoji'
   import { applyEmoji, emojiQuery, insertAt } from '../lib/emojiComplete'
   import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
@@ -51,6 +53,7 @@
     serverId = null,
     wheelChannel = null,
     pollChannel = null,
+    planChannel = null,
     commands = [],
     onSendGif,
     stageNudge = null,
@@ -71,6 +74,8 @@
     wheelChannel?: string | null
     /** The chat a poll posts in (#157): shows the poll button. None where polls don't go (threads). */
     pollChannel?: string | null
+    /** The chat a plan posts in (#387): shows the Plan button (while "Plan something" is on). None where plans don't go. */
+    planChannel?: string | null
     /** Slash commands that run here (#262, lib/commands.ts): suggested on `/`, with a usage tip. None where they don't. */
     commands?: readonly SlashCommand[]
     /** Sends a GIF picked in the GIF picker (#58) at once (`link`: its GIPHY page, the message's text): shows the GIF button. */
@@ -305,6 +310,11 @@
   let polling = $state(false)
   let pollPrefill = $state<{ question: string; options: string[] } | null>(null)
   let pollBtn: HTMLButtonElement | undefined = $state()
+  // the plan form (#387); `planPrefill`: the title `/plan` was given
+  let planning = $state(false)
+  let planPrefill = $state<string | null>(null)
+  let planBtn: HTMLButtonElement | undefined = $state()
+  const planHere = $derived(!!planChannel && planPrefs.on)
 
   function syncCaret() {
     caret = box.readSel()?.start ?? text.length
@@ -410,6 +420,7 @@
   /** Open the wheel popover (`/wheel` with fewer than two options), starting a quick wheel with `prefill`. */
   export function openWheel(prefill: string[] = []) {
     polling = false
+    planning = false
     wheelPrefill = prefill
     wheeling = true
   }
@@ -417,8 +428,17 @@
   /** Open the poll composer (`/poll`), filled with what was typed after it. */
   export function openPoll(prefill: { question: string; options: string[] }) {
     wheeling = false
+    planning = false
     pollPrefill = prefill
     polling = true
+  }
+
+  /** Open the plan form (`/plan`), its title filled with what was typed after it. */
+  export function openPlan(prefill: string) {
+    wheeling = false
+    polling = false
+    planPrefill = prefill || null
+    planning = true
   }
 
   /** Focus the box: the caret where it was, or (`atEnd`) after all of the text. */
@@ -427,7 +447,7 @@
   }
 </script>
 
-<div class="wrap" class:has-gif={!!onSendGif} class:has-wheel={!!wheelChannel} class:has-poll={!!pollChannel} class:has-files={filesHere} bind:this={wrap} onfocusout={focusOut}
+<div class="wrap" class:has-gif={!!onSendGif} class:has-wheel={!!wheelChannel} class:has-poll={!!pollChannel} class:has-plan={planHere} class:has-files={filesHere} bind:this={wrap} onfocusout={focusOut}
   onpastecapture={pasteFiles}>
   {#if open}
     <div class="mentions menu-surface pop-in" role="listbox" aria-label="Mention someone">
@@ -536,6 +556,15 @@
       {/key}
     {/if}
   {/if}
+  {#if planHere && planChannel}
+    <button bind:this={planBtn} class="emoji-btn plan-btn" class:on={planning} type="button" aria-label="Plan something" data-tip="Plan something" data-menu-toggle
+      aria-haspopup="dialog" aria-expanded={planning} onclick={() => { planPrefill = null; planning = !planning }}><Icon name="calendar" size={20} /></button>
+    {#if planning && planBtn}
+      {#key planPrefill}
+        <PlanComposer anchor={planBtn} channelId={planChannel} prefill={planPrefill} onClose={() => (planning = false)} />
+      {/key}
+    {/if}
+  {/if}
 </div>
 
 <style>
@@ -581,6 +610,12 @@
   .wrap.has-gif :global(.composer-input) { padding-right: 84px; }
   .wrap.has-gif.has-wheel :global(.composer-input) { padding-right: 120px; }
   .wrap.has-gif.has-poll :global(.composer-input) { padding-right: 156px; }
+  /* the Plan something button (#387), left of the poll button */
+  .plan-btn { right: 116px; }
+  .plan-btn.on { background: var(--bg-4); color: var(--text); }
+  .wrap.has-plan :global(.composer-input) { padding-right: 156px; }
+  .wrap.has-gif .plan-btn { right: 152px; }
+  .wrap.has-gif.has-plan :global(.composer-input) { padding-right: 192px; }
   /* a dropped folder's offer to zip it (#57) */
   .folder { display: flex; align-items: center; gap: 8px; padding: 8px 12px 0; font-size: 12px; color: var(--text-3); }
   .folder .btn { height: 24px; padding: 0 8px; font-size: 12px; }

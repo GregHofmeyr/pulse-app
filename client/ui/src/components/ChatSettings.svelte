@@ -2,6 +2,7 @@
   import Segmented from './Segmented.svelte'
   import { motion, setAnimateMode, type AnimateMode } from '../lib/animate.svelte'
   import { previews, setShowPreviews } from '../lib/linkPreviews.svelte'
+  import { planPrefs, setPlanSomething } from '../lib/plans.svelte'
 
   const modes: { value: AnimateMode; label: string; help: string }[] = [
     { value: 'always', label: 'Always', help: 'Animated emoji play while Pulse is in focus.' },
@@ -23,5 +24,9 @@
   <div class="settings-field"><span class="settings-label">SHOW LINK PREVIEWS</span>
     <Segmented label="Show link previews" options={onOff} value={previews.show} onchange={setShowPreviews} />
     <small>{previews.show ? 'Links in messages show a preview card; videos and music play when you click them.' : 'Links show as plain links.'} This device only.</small>
+  </div>
+  <div class="settings-field"><span class="settings-label">PLAN SOMETHING</span>
+    <Segmented label="Plan something" options={onOff} value={planPrefs.on} onchange={setPlanSomething} />
+    <small>{planPrefs.on ? 'The Plan button and /plan post invites with RSVPs. Plans show the forecast for their place, and you get a notification an hour before one you said Going or Maybe to.' : "No Plan button, forecasts or reminder notifications. Plans others post still show, and reminders still reach your inbox."} This device only.</small>
   </div>
 </section>

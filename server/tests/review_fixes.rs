@@ -182,6 +182,8 @@ async fn silent_client_times_out_despite_outbound_traffic() {
                 caption_is_fallback: false,
                 achievement: None,
                 deadlock: None,
+                plan: None,
+                plan_reminder: None,
             };
             hub.publish(
                 &db,

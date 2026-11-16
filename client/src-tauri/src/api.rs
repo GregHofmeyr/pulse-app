@@ -3169,6 +3169,120 @@ impl Api {
         .await
     }
 
+    /// Post a plan (#387): its message, with the plan.
+    pub async fn create_plan(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &pulse_protocol::rest::CreatePlanRequest,
+    ) -> Result<Message, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/channels/{channel}/plans", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A plan as it is now.
+    pub async fn get_plan(
+        &self,
+        token: &str,
+        plan: MessageId,
+    ) -> Result<pulse_protocol::rest::Plan, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/messages/{plan}/plan", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Change your plan (every field).
+    pub async fn edit_plan(
+        &self,
+        token: &str,
+        plan: MessageId,
+        body: &pulse_protocol::rest::CreatePlanRequest,
+    ) -> Result<pulse_protocol::rest::Plan, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/messages/{plan}/plan", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Your answer to a plan, replacing any before (none takes it back).
+    pub async fn rsvp_plan(
+        &self,
+        token: &str,
+        plan: MessageId,
+        rsvp: Option<pulse_protocol::rest::Rsvp>,
+    ) -> Result<pulse_protocol::rest::Plan, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/messages/{plan}/plan/rsvp", self.base))
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::PlanRsvpRequest { rsvp })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Cancel your plan.
+    pub async fn cancel_plan(
+        &self,
+        token: &str,
+        plan: MessageId,
+    ) -> Result<pulse_protocol::rest::Plan, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/messages/{plan}/plan/cancel", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// The forecast for a plan's place and day, through the server (`None`: there's none).
+    pub async fn plan_forecast(
+        &self,
+        token: &str,
+        plan: MessageId,
+    ) -> Result<Option<pulse_protocol::rest::PlanForecast>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/messages/{plan}/plan/forecast", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// The request for a plan's calendar file (`text/calendar`), for a download to save.
+    pub fn plan_ics_request(
+        &self,
+        token: &str,
+        plan: MessageId,
+    ) -> Result<reqwest::RequestBuilder, ApiError> {
+        Ok(self
+            .http
+            .get(self.url(&["messages", &plan.to_string(), "plan", "ics"])?)
+            .bearer_auth(token))
+    }
+
     /// `base/seg/seg…`, each segment percent-encoded on its own (an emoji or id can't add a `/`).
     /// A `.` or `..` segment is refused: the URL parser would drop it (or the one before it) and
     /// send the request somewhere else.

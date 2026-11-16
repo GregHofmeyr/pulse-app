@@ -120,6 +120,8 @@ export type AlertInput = {
   level: NotifyLevel
   /** Do Not Disturb is on (#45): nothing alerts, mentions included; unread and mention counts still count. */
   dnd?: boolean
+  /** "Plan something" is on (#387): a plan's reminder line that pings you alerts like a mention. Missing = on. */
+  planReminders?: boolean
 }
 
 /** Whether a new message is worth alerting you to (the message sound and the desktop notification):
@@ -129,7 +131,9 @@ export type AlertInput = {
 export function shouldAlert(v: AlertInput): boolean {
   if (v.dnd) return false
   const m = v.message
-  if (m.kind !== 'normal' || m.deleted || m.author_id === v.me) return false
+  // a plan's reminder (#387) is a system line, but it pings its Going and Maybe people as a mention does
+  const reminder = !!m.plan_reminder && v.planReminders !== false && m.mentions.includes(v.me)
+  if ((m.kind !== 'normal' && !reminder) || m.deleted || m.author_id === v.me) return false
   if (onScreen(v) && v.focused) return false
   const mentioned = m.mentions.includes(v.me)
   const isPrivate = v.channel.server_id === null

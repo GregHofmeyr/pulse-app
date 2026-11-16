@@ -340,6 +340,8 @@ async fn confirm(
         caption_is_fallback: false,
         achievement: None,
         deadlock: None,
+        plan: None,
+        plan_reminder: None,
         embeds: vec![],
         call: None,
         wheel: None,

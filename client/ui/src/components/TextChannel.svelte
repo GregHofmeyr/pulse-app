@@ -40,6 +40,7 @@
   import type { Gif } from '../lib/protocol/Gif'
   import { takeChatFocus, voiceChat } from '../lib/voiceChat.svelte'
   import { COMMANDS, parseCommand, type CommandContext } from '../lib/commands'
+  import { planPrefs } from '../lib/plans.svelte'
   import QuietSpinCard from './QuietSpinCard.svelte'
   import { onOwnSpin, provideChatShown, quietSpins, spinQuick } from '../lib/wheels.svelte'
 
@@ -700,10 +701,13 @@
     },
     openWheel: (prefill) => composer?.openWheel(prefill),
     openPoll: (prefill) => composer?.openPoll(prefill),
+    openPlan: (title) => composer?.openPlan(title),
   }
+  // `/plan` only while "Plan something" is on (#387)
+  const commands = $derived(planPrefs.on ? COMMANDS : COMMANDS.filter((c) => c.name !== 'plan'))
   function send(text: string, files: StagedFile[] = [], tempDays: number | null = null) {
     // a slash command (`/wheel a, b, c`, lib/commands.ts) runs instead of being sent (#158, #262); with files it's text
-    const cmd = files.length ? null : parseCommand(text)
+    const cmd = files.length ? null : parseCommand(text, commands)
     if (cmd) {
       cmd.command.run(cmd.args, commandContext)
       return
@@ -906,7 +910,7 @@
     {/if}
   {:else}
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate || isVoice ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
-    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} pollChannel={channelId} commands={COMMANDS} onSendGif={sendGif} {stageNudge} files />
+    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} pollChannel={channelId} planChannel={channelId} {commands} onSendGif={sendGif} {stageNudge} files />
   {/if}
   {#if repliesRoot}
     {#key repliesRoot.id}

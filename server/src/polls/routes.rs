@@ -129,6 +129,8 @@ async fn create(
         caption_is_fallback: false,
         achievement: None,
         deadlock: None,
+        plan: None,
+        plan_reminder: None,
     };
     let stored = Stored {
         message_id: msg.id,

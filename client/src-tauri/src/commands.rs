@@ -2844,6 +2844,37 @@ pub async fn save_image(
     Ok(saved_to(&core, dest, saved))
 }
 
+/// Add to calendar (#387): a plan's calendar file (`.ics`, made by the server) to the path the system Save dialog
+/// picks, named after its title; progress keyed `plan:<message id>` (#205). The saved path (#333); `None` when the
+/// dialog or the download is cancelled.
+#[tauri::command]
+pub async fn save_plan_ics(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    title: String,
+) -> Result<Option<String>, String> {
+    use crate::clips::download;
+    let Some(run) = core.downloads.begin(format!("plan:{message_id}")) else {
+        return Ok(None);
+    };
+    let (api, token) = core.current().map_err(|e| e.to_string())?;
+    let req = api
+        .plan_ics_request(&token, message_id)
+        .map_err(|e| e.to_string())?;
+    let name = format!("{}.ics", download::stem_or(&title, "plan"));
+    let Some(dest) = ask_save_path(&app, name, "Calendar", "ics").await else {
+        return Ok(None);
+    };
+    let saved = match save_reporting(&app, &run, req, &dest).await {
+        Err(download::DownloadError::Rejected(401)) => core
+            .check::<bool>(&app, Err(ApiError::Unauthorized))
+            .map_err(|e| e.to_string()),
+        other => other.map_err(|e| e.to_string()),
+    }?;
+    Ok(saved_to(&core, dest, saved))
+}
+
 /// The system Save dialog over the main window, suggesting `name` and filtered to `ext`; `None`
 /// when it is cancelled.
 async fn ask_save_path(
@@ -4802,4 +4833,73 @@ pub async fn close_poll(
 ) -> Result<pulse_protocol::rest::Poll, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.close_poll(&token, message_id).await)
+}
+
+/// Post a plan in a chat (#387).
+#[tauri::command]
+pub async fn create_plan(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    request: pulse_protocol::rest::CreatePlanRequest,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.create_plan(&token, channel_id, &request).await)
+}
+
+/// A plan as it is now.
+#[tauri::command]
+pub async fn get_plan(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<pulse_protocol::rest::Plan, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.get_plan(&token, message_id).await)
+}
+
+/// Change your plan.
+#[tauri::command]
+pub async fn edit_plan(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    request: pulse_protocol::rest::CreatePlanRequest,
+) -> Result<pulse_protocol::rest::Plan, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.edit_plan(&token, message_id, &request).await)
+}
+
+/// Your answer to a plan (none takes it back).
+#[tauri::command]
+pub async fn rsvp_plan(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    rsvp: Option<pulse_protocol::rest::Rsvp>,
+) -> Result<pulse_protocol::rest::Plan, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.rsvp_plan(&token, message_id, rsvp).await)
+}
+
+/// Cancel your plan.
+#[tauri::command]
+pub async fn cancel_plan(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<pulse_protocol::rest::Plan, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.cancel_plan(&token, message_id).await)
+}
+
+/// A plan's forecast, through the server (#387): the app never calls Open-Meteo itself.
+#[tauri::command]
+pub async fn plan_forecast(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<Option<pulse_protocol::rest::PlanForecast>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.plan_forecast(&token, message_id).await)
 }

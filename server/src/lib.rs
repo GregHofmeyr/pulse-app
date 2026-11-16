@@ -21,6 +21,7 @@ pub mod media;
 pub mod messages;
 pub mod models;
 pub mod pins;
+pub mod plans;
 pub mod polls;
 pub mod presence;
 pub mod profiles;
@@ -64,6 +65,7 @@ pub fn router(state: AppState) -> Router {
         .merge(inbox::router())
         .merge(pins::router())
         .merge(polls::router())
+        .merge(plans::router())
         .merge(gifs::router())
         .merge(quotes::routes::router())
         .merge(qoty::router())
@@ -154,6 +156,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     attachments::sweep::spawn(state.clone());
     pins::spawn_sweeper(state.clone());
     polls::spawn_sweeper(state.clone());
+    plans::spawn_sweeper(state.clone());
     badges::sweep::spawn(state.clone());
     servers::channels::spawn_sweeper(state.clone());
     servers::deleted::spawn_sweeper(state.clone());

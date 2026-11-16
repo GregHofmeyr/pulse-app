@@ -4,6 +4,7 @@
 // To add a command, add one entry to COMMANDS below (`/poll` is the simplest to copy), and, if `run` needs something new from the chat (a popover to open, say), add it to CommandContext and pass it
 // where TextChannel builds its context (`commandContext`).
 
+import { parsePlanArgs } from './plan'
 import { parsePollArgs } from './poll'
 import { addOptions, WHEEL_LIMITS } from './wheel'
 
@@ -15,6 +16,8 @@ export interface CommandContext {
   openWheel: (prefill: string[]) => void
   /** Open the poll composer (#157), filled with what was typed after `/poll`. */
   openPoll: (prefill: { question: string; options: string[] }) => void
+  /** Open the plan form (#387), its title filled with what was typed after `/plan`. */
+  openPlan: (title: string) => void
 }
 
 export interface SlashCommand {
@@ -51,6 +54,14 @@ export const COMMANDS: SlashCommand[] = [
     hint: 'Enter to set it up',
     // fills the poll composer (question up to the `?`, options after it) so the toggles can still be set (#157)
     run: (args, ctx) => ctx.openPoll(parsePollArgs(args)),
+  },
+  {
+    name: 'plan',
+    usage: '/plan What to do',
+    description: 'Plan something: a time, a place and RSVPs',
+    hint: 'Enter to set it up',
+    // fills the plan form's title so the day, time and place can still be set (#387)
+    run: (args, ctx) => ctx.openPlan(parsePlanArgs(args)),
   },
 ]
 

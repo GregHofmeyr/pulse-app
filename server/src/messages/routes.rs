@@ -134,6 +134,12 @@ fn from_row(r: Row) -> AppResult<Message> {
             Some(p) if system && deleted_at.is_none() => super::system::deadlock(p).map(Box::new),
             _ => None,
         },
+        // set by `plans::attach`
+        plan: None,
+        plan_reminder: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => crate::plans::reminder(p).map(Box::new),
+            _ => None,
+        },
     })
 }
 
@@ -166,6 +172,7 @@ pub(crate) async fn load(
     crate::embeds::attach(db, &mut one).await?;
     crate::pins::attach(db, &mut one).await?;
     crate::polls::attach(db, me, &mut one).await?;
+    crate::plans::attach(db, &mut one).await?;
     crate::attachments::attach(db, &mut one).await?;
     let [m] = one;
     Ok(Some(m))
@@ -237,6 +244,7 @@ pub(crate) async fn fill(
     crate::embeds::attach(db, &mut page).await?;
     crate::pins::attach(db, &mut page).await?;
     crate::polls::attach(db, me, &mut page).await?;
+    crate::plans::attach(db, &mut page).await?;
     crate::attachments::attach(db, &mut page).await?;
     Ok(page)
 }
@@ -548,6 +556,8 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         caption_is_fallback,
         achievement: None,
         deadlock: None,
+        plan: None,
+        plan_reminder: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -715,6 +725,12 @@ async fn edit(
     if msg.poll.is_some() {
         return Err(AppError::BadRequest("polls can't be edited".into()));
     }
+    // Nor is a plan's (#387): its creator changes the plan itself (`PUT /messages/{id}/plan`).
+    if msg.plan.is_some() {
+        return Err(AppError::BadRequest(
+            "plans are changed from their card, not edited as text".into(),
+        ));
+    }
     let is_clip: Option<i64> = sqlx::query_scalar("SELECT 1 FROM clips WHERE message_id = ?")
         .bind(id.to_string())
         .fetch_optional(&s.db)
@@ -837,6 +853,7 @@ async fn remove(
     let files = crate::attachments::stored_of_message(&mut tx, id).await?;
     let unpinned = crate::pins::on_delete(&mut tx, id).await?;
     crate::polls::on_delete(&mut tx, id).await?;
+    crate::plans::on_delete(&mut tx, id).await?;
     tx.commit().await?;
     let mut deleted = deleted;
     if let Some(mut ended) = overdue {
@@ -984,6 +1001,8 @@ mod tests {
             caption_is_fallback: false,
             achievement: None,
             deadlock: None,
+            plan: None,
+            plan_reminder: None,
         }
     }
 

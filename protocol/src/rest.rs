@@ -766,6 +766,14 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub deadlock: Option<Box<DeadlockCard>>,
+    /// Set on a plan (#387): the invite card, with everyone's RSVPs (nothing on it is per person).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub plan: Option<Box<Plan>>,
+    /// Set on a plan's reminder line (#387), the system line that pings its Going and Maybe people an hour before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub plan_reminder: Option<Box<PlanReminder>>,
 }
 
 /// How long a pin lasts (#178).
@@ -1003,6 +1011,98 @@ pub struct PollEnded {
     pub winners: Vec<String>,
     /// The winners' vote count (each, on a tie).
     pub votes: u32,
+}
+
+/// Plan limits (#387), shared so the client can say them before the server refuses.
+pub mod plan_limits {
+    /// Characters in the title, after trimming.
+    pub const TITLE_CHARS: usize = 100;
+    /// Characters in the place, after trimming.
+    pub const PLACE_CHARS: usize = 100;
+    /// Characters in the note, after trimming.
+    pub const NOTE_CHARS: usize = 500;
+    /// How far ahead a plan may be, in days.
+    pub const MAX_DAYS_AHEAD: i64 = 730;
+    /// How long before it starts its Going and Maybe people are reminded, in minutes.
+    pub const REMIND_MINUTES: i64 = 60;
+    /// How far ahead a forecast reaches, in days (Open-Meteo's daily forecast).
+    pub const FORECAST_DAYS: i64 = 16;
+}
+
+/// An answer to a plan (#387).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum Rsvp {
+    Going,
+    Maybe,
+    Cant,
+}
+
+/// A plan (#387): an invite card posted in a chat. Everyone sees the same card, so events carry it whole.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Plan {
+    pub title: String,
+    /// When it starts (UTC, RFC 3339); clients show it in the viewer's own time.
+    pub starts_at: String,
+    #[serde(default)]
+    pub place: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+    /// Who answered what, in the order they did.
+    pub going: Vec<UserId>,
+    pub maybe: Vec<UserId>,
+    pub cant: Vec<UserId>,
+    /// Set once its creator cancelled it: no more answers, no reminder.
+    #[serde(default)]
+    pub cancelled_at: Option<String>,
+    /// When its creator last changed it.
+    #[serde(default)]
+    pub edited_at: Option<String>,
+}
+
+/// `POST /channels/{id}/plans`, and `PUT /messages/{id}/plan` (its creator's edit, replacing every field).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CreatePlanRequest {
+    pub title: String,
+    /// RFC 3339, any offset (stored as UTC).
+    pub starts_at: String,
+    #[serde(default)]
+    pub place: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// `PUT /messages/{id}/plan/rsvp`: your answer, replacing any before (`None` takes it back).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct PlanRsvpRequest {
+    pub rsvp: Option<Rsvp>,
+}
+
+/// `GET /messages/{id}/plan/forecast` (#387): Open-Meteo's daily forecast for the plan's place on its day, through
+/// the server (cached there). `None` when there's none: no place, a place Open-Meteo doesn't know, a day outside
+/// the forecast's reach, or the forecast unavailable.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct PlanForecast {
+    /// The place as Open-Meteo found it ("Cape Town, South Africa").
+    pub place: String,
+    /// The day at the place (`YYYY-MM-DD`).
+    pub date: String,
+    /// The WMO weather code (0 clear … 99 thunderstorm with hail).
+    pub code: u8,
+    /// Degrees Celsius.
+    pub temp_max: f32,
+    pub temp_min: f32,
+    /// The day's highest chance of rain, in percent.
+    #[serde(default)]
+    pub rain_chance: Option<u8>,
+}
+
+/// A plan's reminder line (#387): "⏰ Braai at kim's starts in an hour · See plan".
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct PlanReminder {
+    pub plan_message_id: MessageId,
+    pub title: String,
+    pub starts_at: String,
 }
 
 /// A Spotify link shared to a server voice channel's stage (#234): at most one per channel, gone when its sharer
