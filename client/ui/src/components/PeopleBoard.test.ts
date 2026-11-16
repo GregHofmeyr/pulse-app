@@ -49,6 +49,21 @@ describe('PeopleBoard', () => {
     expect(card('jo').querySelector('.status')!.textContent?.trim()).toBe('last seen 3h ago')
   })
 
+  it('Idle (#53) counts as online, after the active, with an amber moon and an "idle" line', () => {
+    // ari sorts first by name, but idle puts her after the active
+    app.state = { ...app.state, people: { ...app.state.people, U5: { user: user('U5', 'ari'), online: true, last_seen_at: null, status: 'online', idle: true } } }
+    flushSync()
+    expect([...document.querySelectorAll('.lbl')].map((l) => l.textContent)).toEqual(['ONLINE — 3', 'OFFLINE — 1'])
+    const cards = [...document.querySelectorAll<HTMLElement>('.card')]
+    const names = ['ari', 'kim', 'sam', 'jo']
+    expect(cards.map((c) => names.find((n) => c.textContent?.includes(n)))).toEqual(['kim', 'sam', 'ari', 'jo'])
+    const ari = cards[2]
+    const dot = ari.querySelector('.pres')!
+    expect(dot.classList.contains('idle')).toBe(true)
+    expect(dot.getAttribute('aria-label')).toBe('Idle')
+    expect(ari.querySelector('.status')!.textContent?.trim()).toBe('idle')
+  })
+
   it('Call (#50) is enabled: it opens your DM with them and starts its call', async () => {
     const dm = { id: 'DM2', server_id: null, kind: 'dm' as const, name: null, position: 0 }
     vi.mocked(invoke).mockImplementation(async (c) => (c === 'create_dm' ? dm : undefined) as never)

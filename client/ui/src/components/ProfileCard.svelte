@@ -288,6 +288,9 @@
   .status.dnd { background: var(--danger); }
   .status.dnd::after { content: ''; position: absolute; left: 18%; right: 18%; top: 50%; height: 26%; transform: translateY(-50%); border-radius: 999px; background: var(--panel-top); }
   .status.invisible { background: var(--presence-off); }
+  /* your own Idle (#53): the avatar's amber moon */
+  .status.idle { background: var(--warn); }
+  .status.idle::after { content: ''; position: absolute; left: -10%; top: -10%; width: 62%; height: 62%; border-radius: 50%; background: var(--panel-top); }
   .full-link { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--card-text); font: inherit; font-size: calc(13px * var(--k)); font-weight: 600; cursor: pointer; }
   .full-link:hover { text-decoration: underline; }
   /* the message box: a translucent field with a faint edge, the card showing through */

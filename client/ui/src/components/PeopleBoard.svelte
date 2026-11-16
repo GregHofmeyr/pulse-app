@@ -3,7 +3,7 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import { app, clock, openDm } from '../lib/store.svelte'
-  import { isOn, presenceOf } from '../lib/presence'
+  import { isOn, presenceOf, presenceRank } from '../lib/presence'
   import { relativeTime } from '../lib/conversations'
   import { errorText } from '../lib/tauri'
   import { displayName } from '../lib/selectors'
@@ -20,12 +20,13 @@
   // the card under the pointer: its avatar animates
   let hovered = $state<string | null>(null)
 
-  // by the name you see them by (#47); on (online or DND) first, then the most recently seen (#45: presenceOf)
+  // by the name you see them by (#47); on (online or DND) first, then idle (#53), then the most recently seen (#45:
+  // presenceOf)
   const people = $derived(
     Object.values(app.state.people)
       .filter((p) => p.user.id !== app.state.me?.id)
       .map((p) => ({ ...p, name: displayName(app.state, null, p.user.id), presence: presenceOf(app.state, p.user.id, clock.nowIso) }))
-      .sort((a, b) => Number(isOn(b.presence)) - Number(isOn(a.presence))
+      .sort((a, b) => presenceRank(b.presence) - presenceRank(a.presence)
         || (b.presence.lastSeen ?? '').localeCompare(a.presence.lastSeen ?? '')
         || a.name.localeCompare(b.name)),
   )

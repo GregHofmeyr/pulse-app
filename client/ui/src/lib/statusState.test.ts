@@ -49,6 +49,14 @@ describe('status events', () => {
     s = applyEvent(s, { t: 'PresenceChanged', d: { user_id: 'U2', online: true, last_seen_at: null } as never }, 0)
     expect(s.people.U2.status).toBe('online')
   })
+  it('PresenceChanged carries Idle (#53) and a change without it clears it; Ready keeps it', () => {
+    let s = applyEvent(base(), { t: 'PresenceChanged', d: { user_id: 'U2', online: true, last_seen_at: null, status: 'online', idle: true } }, 0)
+    expect(s.people.U2).toMatchObject({ status: 'online', idle: true })
+    s = applyEvent(s, { t: 'PresenceChanged', d: { user_id: 'U2', online: true, last_seen_at: null, status: 'online' } }, 0)
+    expect(s.people.U2.idle).toBe(false)
+    const r = applyReady(emptyState(), testReady([], { people: [{ user: sam, online: true, last_seen_at: null, status: 'online', idle: true }] }))
+    expect(r.people.U2.idle).toBe(true)
+  })
   it('a new user starts offline', () => {
     const s = applyEvent(base(), { t: 'UserCreated', d: { user: kim } }, 0)
     expect(s.people.U3).toMatchObject({ online: false, status: 'offline' })

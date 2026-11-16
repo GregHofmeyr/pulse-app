@@ -43,6 +43,24 @@ describe('presenceOf (#45): what to draw for a person', () => {
     expect(presenceOf(s, 'U1', NOW).kind).toBe('dnd')
     expect(presenceOf(s, 'U1', '2026-11-05T10:30:00.000Z').kind).toBe('online')
   })
+  it('Idle (#53): only over Online, for others and for yourself', () => {
+    const s = state()
+    s.people.U2 = { ...s.people.U2, idle: true }
+    expect(presenceOf(s, 'U2', NOW)).toEqual({ kind: 'idle', label: 'Idle', lastSeen: null })
+    // a stray idle on DND or offline changes nothing
+    s.people.U3 = { ...s.people.U3, idle: true }
+    s.people.U4 = { ...s.people.U4, idle: true }
+    expect(presenceOf(s, 'U3', NOW).kind).toBe('dnd')
+    expect(presenceOf(s, 'U4', NOW).kind).toBe('offline')
+    // yourself: Idle while Online; your DND and Invisible win
+    s.people.U1 = { ...s.people.U1, idle: true }
+    expect(presenceOf(s, 'U1', NOW)).toEqual({ kind: 'idle', label: 'Idle', lastSeen: null })
+    expect(presenceOf({ ...s, myStatus: { status: 'dnd', dnd_until: null } }, 'U1', NOW).kind).toBe('dnd')
+    expect(presenceOf({ ...s, myStatus: { status: 'invisible', dnd_until: null } }, 'U1', NOW).kind).toBe('invisible')
+    // an older server sends no idle: Online
+    s.people.U2 = { ...s.people.U2, idle: undefined }
+    expect(presenceOf(s, 'U2', NOW).kind).toBe('online')
+  })
   it('never invisible for anyone else', () => {
     const s = state()
     s.people.U2 = { ...s.people.U2, status: 'invisible' as never }
@@ -63,6 +81,14 @@ describe('byPresence (#170): a member list split into Online and Offline', () =>
     // even a stray 'invisible' for someone else
     s.people.U2 = { ...s.people.U2, status: 'invisible' as never }
     expect(byPresence(s, ['U2'], (id) => id, NOW).offline).toEqual(['U2'])
+  })
+  it('Idle (#53) is Online, after the active (online and DND), each keeping the list order', () => {
+    const s = state()
+    s.people.U2 = { ...s.people.U2, idle: true }
+    s.people.U1 = { ...s.people.U1, idle: true }
+    const { online, offline } = byPresence(s, ['U2', 'U4', 'U1', 'U3'], (id) => id, NOW)
+    expect(online).toEqual(['U3', 'U2', 'U1'])
+    expect(offline).toEqual(['U4'])
   })
   it('yourself while Invisible: Offline, where everyone else sees you', () => {
     const s = state({ myStatus: { status: 'invisible', dnd_until: null } })

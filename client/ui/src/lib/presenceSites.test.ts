@@ -41,6 +41,19 @@ describe('presence is drawn in one way', () => {
     expect(readers).toEqual([])
   })
 
+  it('every dot site draws every kind: the avatar dot (and your card\'s status row) style each one', () => {
+    // 'online' is the dot's own colour; each other kind needs its rule, or it would look online
+    const kinds = ['idle', 'dnd', 'offline', 'invisible'] // keep in step with PresenceKind
+    const presence = sources.find(({ f }) => f === 'lib/presence.ts')!.text
+    expect(presence).toMatch(new RegExp(`PresenceKind = 'online'${kinds.map((k) => ` \\| '${k}'`).join('')}`))
+    const avatar = sources.find(({ f }) => f === 'components/Avatar.svelte')!.text
+    const card = sources.find(({ f }) => f === 'components/ProfileCard.svelte')!.text
+    for (const k of kinds) {
+      expect(avatar, k).toMatch(new RegExp(`\\.pres\\.${k}\\b`))
+      expect(card, k).toMatch(new RegExp(`\\.status\\.${k === 'offline' ? 'invisible' : k}\\b`))
+    }
+  })
+
   it('the scan sees the sources', () => {
     expect(sources.some(({ f }) => f === 'lib/presence.ts')).toBe(true)
     expect(sources.some(({ f }) => f === 'routes/Shell.svelte')).toBe(true)

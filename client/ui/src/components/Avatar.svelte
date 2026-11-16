@@ -86,5 +86,8 @@
   .pres.offline, .pres.invisible { background: var(--presence-off); }
   /* Do Not Disturb (#45): red, with a bar across it in the cut-out colour, as on Discord */
   .pres.dnd { background: var(--danger); }
+  /* Idle (#53): an amber moon, a disc with a bite out of its top left in the cut-out colour, as on Discord */
+  .pres.idle { background: var(--warn); }
+  .pres.idle::after { content: ''; position: absolute; left: -10%; top: -10%; width: 62%; height: 62%; border-radius: 50%; background: var(--ring); }
   .pres.dnd::after { content: ''; position: absolute; left: 18%; right: 18%; top: 50%; height: 26%; transform: translateY(-50%); border-radius: 999px; background: var(--ring); }
 </style>
