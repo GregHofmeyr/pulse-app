@@ -967,6 +967,67 @@ async fn the_sweeper_purges_after_seven_days() {
     );
 }
 
+/// Clients drop a quotes channel's reply seen points with it, so a restore sends them back (#115).
+#[tokio::test]
+async fn a_restore_brings_back_your_quote_reply_seen_points() {
+    let w = world().await;
+    let quotes = create_channel(&w.app, &w.alex.1, w.server, "quotes", "quotes").await;
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/quotes", quotes.id),
+        json!({ "lines": [{ "speaker_id": w.sam.0, "text": "first" }] }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "quote");
+    let quote: Message = r.json().await.unwrap();
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/messages", quotes.id),
+        json!({ "content": "a reply", "thread_root_id": quote.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "reply");
+    let reply: Message = r.json().await.unwrap();
+    let r = post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/messages/{}/replies/seen", quote.id),
+        json!({ "message_id": reply.id }),
+    )
+    .await;
+    assert!(r.status().is_success(), "seen {}", r.status());
+    assert_eq!(
+        delete(&w.app, &w.alex.1, &format!("/channels/{}", quotes.id)).await,
+        204
+    );
+    let mut rx = w.app.hub.register(w.sam.0, String::new()).rx;
+    assert_eq!(restore(&w, &w.alex.1, quotes.id).await.status(), 200);
+    loop {
+        match next_event(&mut rx).await {
+            Event::ThreadSeen {
+                user_id,
+                channel_id,
+                root_id,
+                last_seen_id,
+                mentions_cleared,
+                ..
+            } => {
+                assert_eq!(
+                    (user_id, channel_id, root_id, last_seen_id, mentions_cleared),
+                    (w.sam.0, quotes.id, quote.id, reply.id, 0)
+                );
+                break;
+            }
+            Event::ChannelRestored { .. }
+            | Event::LayoutChanged { .. }
+            | Event::ReadStateUpdated { .. } => {}
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+}
+
 /// Clients drop a channel's clip view with it, so a restore sends it back to whoever set one.
 #[tokio::test]
 async fn a_restore_brings_back_your_clip_view() {

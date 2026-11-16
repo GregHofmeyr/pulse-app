@@ -44,16 +44,28 @@
 
   let confirming = $state<string | null>(null)
   let busy = $state(false)
+  /** What became of a row someone else restored or purged meanwhile (#115). */
+  let note = $state('')
   async function act(d: DeletedChannel, run: (id: string) => Promise<unknown>) {
     if (busy) return
     busy = true
     error = ''
+    note = ''
     try {
       await run(d.channel.id)
       items = (items ?? []).filter((x) => x.channel.id !== d.channel.id)
       confirming = null
     } catch (e) {
-      error = errorText(e)
+      const why = errorText(e)
+      // a refusal may mean someone else restored or purged it since the list loaded: the list says
+      const list = await api.listDeletedChannels(server.id).catch(() => null)
+      if (list) items = list
+      if (list && !list.some((x) => x.channel.id === d.channel.id)) {
+        confirming = null
+        note = app.state.channels[d.channel.id] ? `${label(d.channel)} is already back.` : `${label(d.channel)} was already deleted for good.`
+      } else {
+        error = why
+      }
     } finally {
       busy = false
     }
@@ -64,6 +76,7 @@
   <h2>Recently deleted</h2>
   <p class="hint">Deleted channels stay here for 7 days, with everything in them, then go for good. The server owner, or whoever deleted one, can restore it.</p>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if note}<p class="note" role="status">{note}</p>{/if}
   {#if !items}
     {#if !error}<Loading />{/if}
   {:else if items.length === 0}
@@ -98,7 +111,8 @@
 <style>
   .hint { margin: -12px 0 0; color: var(--text-3); font-size: 12px; }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
-  .empty { margin: 0; color: var(--text-3); }
+  .empty, .note { margin: 0; color: var(--text-3); }
+  .note { font-size: 13px; }
   /* the list is the shared .settings-list (app.css) */
   .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .name { font-weight: 600; overflow-wrap: anywhere; }

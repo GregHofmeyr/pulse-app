@@ -242,7 +242,8 @@ async fn snapshot_of(s: &AppState, id: ServerId) -> AppResult<ServerSnapshot> {
     })
 }
 
-/// Each member's read state in the server's live channels, the clip views they set there, and the
+/// Each member's read state in the server's live channels, their quote reply seen points there
+/// (#115), the clip views they set there, and the
 /// mutes and notification levels of each who has one on the server or one of its channels.
 async fn republish_own_state(s: &AppState, server: ServerId) -> AppResult<()> {
     const LIVE: &str = "(SELECT id FROM channels WHERE server_id = ? AND deleted_at IS NULL)";
@@ -269,6 +270,19 @@ async fn republish_own_state(s: &AppState, server: ServerId) -> AppResult<()> {
                 )
                 .await;
         }
+    }
+    // their quote reply seen points (#115)
+    let seen: Vec<(String, String, String, String)> = sqlx::query_as(&format!(
+        "SELECT m.channel_id, t.user_id, t.root_id, t.last_seen_id FROM thread_reads t
+         JOIN messages m ON m.id = t.root_id WHERE m.channel_id IN {LIVE}"
+    ))
+    .bind(server.to_string())
+    .fetch_all(&s.db)
+    .await?;
+    for (c, user, root, last) in seen {
+        let channel: ChannelId = c.parse().map_err(anyhow::Error::from)?;
+        let event = crate::servers::channels::thread_seen_again(channel, &user, &root, &last)?;
+        s.hub.publish(&s.db, event).await;
     }
     let views: Vec<(String, String, String)> = sqlx::query_as(&format!(
         "SELECT user_id, channel_id, view FROM clip_view_prefs WHERE channel_id IN {LIVE}"

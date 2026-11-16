@@ -471,9 +471,27 @@ pub async fn restore(
     Ok(Json(channel))
 }
 
-/// Each member's read state in `channel`, the mutes of each who has muted it, and the clip view of
-/// each who set one (clients drop all three with the channel). Quote reply seen points come back
-/// on the next Ready.
+/// A stored quote reply seen point sent again (#115): it clears nothing (the read states sent with
+/// it carry the mention counts), it only puts back the point the client dropped.
+pub(crate) fn thread_seen_again(
+    channel: ChannelId,
+    user: &str,
+    root: &str,
+    last: &str,
+) -> AppResult<Event> {
+    Ok(Event::ThreadSeen {
+        user_id: user.parse().map_err(anyhow::Error::from)?,
+        channel_id: channel,
+        root_id: root.parse().map_err(anyhow::Error::from)?,
+        last_seen_id: last.parse().map_err(anyhow::Error::from)?,
+        mentions_cleared: 0,
+        mentions: None,
+    })
+}
+
+/// Each member's read state in `channel`, their quote reply seen points (#115), the mutes of each
+/// who has muted it, and the clip view of each who set one (clients drop them all with the
+/// channel).
 pub(crate) async fn republish_own_state(s: &AppState, channel: ChannelId) -> AppResult<()> {
     let readers: Vec<String> =
         sqlx::query_scalar("SELECT user_id FROM read_states WHERE channel_id = ?")
@@ -496,6 +514,18 @@ pub(crate) async fn republish_own_state(s: &AppState, channel: ChannelId) -> App
                 )
                 .await;
         }
+    }
+    let seen: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT t.user_id, t.root_id, t.last_seen_id FROM thread_reads t
+         JOIN messages m ON m.id = t.root_id WHERE m.channel_id = ?",
+    )
+    .bind(channel.to_string())
+    .fetch_all(&s.db)
+    .await?;
+    for (user, root, last) in seen {
+        s.hub
+            .publish(&s.db, thread_seen_again(channel, &user, &root, &last)?)
+            .await;
     }
     let views: Vec<(String, String)> =
         sqlx::query_as("SELECT user_id, view FROM clip_view_prefs WHERE channel_id = ?")

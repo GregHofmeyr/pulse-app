@@ -80,6 +80,39 @@ describe('RecentlyDeleted', () => {
     expect(document.querySelectorAll('li')).toHaveLength(0)
   })
 
+  it('a restore refused because someone else purged it reloads the list and drops the row, saying so (#115)', async () => {
+    await show([gone('T1', 'old-stuff', 'text'), gone('T2', 'other', 'text')])
+    // purged elsewhere meanwhile: the server says it isn't there, and the list no longer has it
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'restore_channel') throw 'not found'
+      return cmd === 'list_deleted_channels' ? [gone('T2', 'other', 'text')] : undefined
+    })
+    button('Restore #old-stuff')!.click()
+    await settle()
+    flushSync()
+    expect(invoke).toHaveBeenCalledTimes(3) // the first load, the restore, and the reload
+    expect([...document.querySelectorAll('li')].map((li) => li.textContent)).toEqual([expect.stringContaining('#other')])
+    expect(document.querySelector('[role=alert]')).toBeNull()
+    expect(document.querySelector('[role=status]')?.textContent).toBe('#old-stuff was already deleted for good.')
+  })
+
+  it('one restored by someone else meanwhile says that instead', async () => {
+    await show([gone('T1', 'old-stuff', 'text')])
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'restore_channel') {
+        // their restore's event came first: the channel is live again
+        app.state = { ...app.state, channels: { T1: { id: 'T1', server_id: 'S1', kind: 'text', name: 'old-stuff', position: 3 } } }
+        throw 'not found'
+      }
+      return cmd === 'list_deleted_channels' ? [] : undefined
+    })
+    button('Restore #old-stuff')!.click()
+    await settle()
+    flushSync()
+    expect(document.querySelectorAll('li')).toHaveLength(0)
+    expect(document.querySelector('[role=status]')?.textContent).toBe('#old-stuff is already back.')
+  })
+
   it('deletes for good only once confirmed', async () => {
     await show([gone('T1', 'old-stuff', 'text', { can_purge: true })])
     button('Delete #old-stuff now')!.click()

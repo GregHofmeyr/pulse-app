@@ -451,6 +451,70 @@ async fn the_owner_restores_and_everyone_gets_it_back() {
     );
 }
 
+/// Clients drop a deleted server's quote reply seen points with it, so a restore sends them back
+/// (#115).
+#[tokio::test]
+async fn a_server_restore_brings_back_quote_reply_seen_points() {
+    let w = world().await;
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/servers/{}/channels", w.server),
+        json!({ "kind": "quotes", "name": "quotes" }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "quotes channel");
+    let quotes: Channel = r.json().await.unwrap();
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/quotes", quotes.id),
+        json!({ "lines": [{ "speaker_id": w.sam.0, "text": "first" }] }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "quote");
+    let quote: Message = r.json().await.unwrap();
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/messages", quotes.id),
+        json!({ "content": "a reply", "thread_root_id": quote.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "reply");
+    let reply: Message = r.json().await.unwrap();
+    let r = post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/messages/{}/replies/seen", quote.id),
+        json!({ "message_id": reply.id }),
+    )
+    .await;
+    assert!(r.status().is_success(), "seen {}", r.status());
+    assert_eq!(delete_server(&w, &w.alex.1, w.server, "Main").await, 204);
+
+    let mut sam_rx = w.app.hub.register(w.sam.0, String::new()).rx;
+    assert_eq!(restore(&w, &w.alex.1, w.server).await.status(), 200);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        assert!(tokio::time::Instant::now() < deadline, "no seen point");
+        if let Event::ThreadSeen {
+            user_id,
+            channel_id,
+            root_id,
+            last_seen_id,
+            ..
+        } = next_event(&mut sam_rx).await
+        {
+            assert_eq!(
+                (user_id, channel_id, root_id, last_seen_id),
+                (w.sam.0, quotes.id, quote.id, reply.id)
+            );
+            break;
+        }
+    }
+}
+
 async fn insert_media(app: &TestApp, hash: &str, kind: &str) {
     sqlx::query(
         "INSERT INTO media (hash, kind, content_type, size, width, height, frames, created_at)
