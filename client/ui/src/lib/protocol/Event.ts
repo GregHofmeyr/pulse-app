@@ -62,7 +62,7 @@ author_id: UserId | null, mentions: Array<UserId>,
 /**
  * Set when the deleted message was a reply: the quote whose thread it was in.
  */
-thread_root_id: MessageId | null, } } | { "t": "ChannelCreated", "d": { channel: Channel, } } | { "t": "ServerCreated", "d": { server: Server, } } | { "t": "ServerDeleted", "d": { server_id: ServerId, } } | { "t": "ServerRestored", "d": { snapshot: ServerSnapshot, } } | { "t": "MemberJoined", "d": { server_id: ServerId, member: Member, } } | { "t": "MemberUpdated", "d": { server_id: ServerId, member: Member, } } | { "t": "PrivateNicknameChanged", "d": { user_id: UserId, target_id: UserId, nickname: string | null, } } | { "t": "Typing", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceJoined", "d": { channel_id: ChannelId, user_id: UserId, 
+thread_root_id: MessageId | null, } } | { "t": "ChannelCreated", "d": { channel: Channel, } } | { "t": "ServerCreated", "d": { server: Server, } } | { "t": "ServerDeleted", "d": { server_id: ServerId, } } | { "t": "ServerRestored", "d": { snapshot: ServerSnapshot, } } | { "t": "MemberJoined", "d": { server_id: ServerId, member: Member, } } | { "t": "MemberLeft", "d": { server_id: ServerId, user_id: UserId, removed_by?: UserId, } } | { "t": "MemberUpdated", "d": { server_id: ServerId, member: Member, } } | { "t": "PrivateNicknameChanged", "d": { user_id: UserId, target_id: UserId, nickname: string | null, } } | { "t": "Typing", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceJoined", "d": { channel_id: ChannelId, user_id: UserId, 
 /**
  * The joiner's current mute/deafen (they may have declared it before the join landed).
  */

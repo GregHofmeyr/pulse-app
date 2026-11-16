@@ -1189,6 +1189,30 @@ pub async fn join_server(
 }
 
 #[tauri::command]
+pub async fn leave_server(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.leave_server(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn remove_server_member(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    user_id: UserId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.remove_server_member(&token, server_id, user_id).await,
+    )
+}
+
+#[tauri::command]
 pub async fn list_channels(
     app: AppHandle,
     core: State<'_, Core>,
@@ -1935,6 +1959,20 @@ pub async fn delete_channel(
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.delete_channel(&token, channel_id).await)
+}
+
+#[tauri::command]
+pub async fn set_channel_archived(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    archived: bool,
+) -> Result<Channel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_channel_archived(&token, channel_id, archived).await,
+    )
 }
 
 #[tauri::command]

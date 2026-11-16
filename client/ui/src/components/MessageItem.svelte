@@ -111,6 +111,8 @@
 
   // --- names and avatars: the avatar animates while the pointer is over the row; pills take the person's style ---
   let rowHover = $state(false)
+  /** Its channel is archived (#303): read-only, so no reacting, replying or editing. */
+  const archived = $derived(!!app.state.channels[message.channel_id]?.archived_at)
   // Pills restyle only when the HTML or a mentioned person's style changes, not on every state update:
   // the lookup is rebuilt only when people or members change, and the styles are compared as one string.
   const lookup = $derived(mentionLookup(app.state))
@@ -442,10 +444,13 @@
       </div>
       {#if !pending && !message.deleted && !editing}
         <div class="actions" class:open={picking || focusIn || !!msgMenu}>
-          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={16} /></button>
-          <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={16} /></button>
+          <!-- an archived channel (#303) is read-only: no reacting, replying or editing there -->
+          {#if !archived}
+            <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={16} /></button>
+            <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={16} /></button>
+          {/if}
           {#if mine}
-            {#if message.plan}{#if planOpen}<button aria-label="Edit plan" onclick={(e) => editPlanCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
+            {#if archived}{:else if message.plan}{#if planOpen}<button aria-label="Edit plan" onclick={(e) => editPlanCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
             {:else if message.poll}{#if endable}<button aria-label="Edit poll" onclick={(e) => editPollCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
             {:else if !message.forwarded}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
             {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
@@ -488,7 +493,7 @@
     onRemind={(at) => msgMenu && remind(at, msgMenu.opener)}
     saved={!!savedOne} onSave={saveToVault} onUnsave={unsave}
     onForward={forwardable ? () => msgMenu && openForward(msgMenu.opener) : undefined}
-    onEndPoll={endable ? endPoll : undefined} onEditPoll={endable ? () => editPollCard() : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
+    onEndPoll={endable ? endPoll : undefined} onEditPoll={endable && !archived ? () => editPollCard() : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
 {/if}
 {#if remindCustom}
   <WhenPicker anchor={remindCustom} title="Remind me about this" confirm="Set reminder" onPick={remindAt} onClose={() => (remindCustom = null)} />

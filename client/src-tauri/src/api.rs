@@ -647,6 +647,22 @@ impl Api {
         .await
     }
 
+    /// Archive (`true`) or unarchive a text channel (#303): the server owner only.
+    pub async fn set_channel_archived(
+        &self,
+        token: &str,
+        ch: ChannelId,
+        archived: bool,
+    ) -> Result<Channel, ApiError> {
+        let url = format!("{}/channels/{ch}/archive", self.base);
+        let req = if archived {
+            self.http.put(url)
+        } else {
+            self.http.delete(url)
+        };
+        Self::parse(req.bearer_auth(token).send().await).await
+    }
+
     pub async fn list_deleted_channels(
         &self,
         token: &str,
@@ -893,6 +909,35 @@ impl Api {
         Self::ok_empty(
             self.http
                 .post(format!("{}/servers/{server}/join", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Leave a server (#371). Its owner can't.
+    pub async fn leave_server(&self, token: &str, server: ServerId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(format!("{}/servers/{server}/leave", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Remove someone from a server (#371): its owner only.
+    pub async fn remove_server_member(
+        &self,
+        token: &str,
+        server: ServerId,
+        user: UserId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/servers/{server}/members/{user}", self.base))
                 .bearer_auth(token)
                 .send()
                 .await,
@@ -4148,6 +4193,50 @@ mod tests {
             api.rename_category(&alex, made.id, "Again").await.is_err(),
             "deleted"
         );
+    }
+
+    #[tokio::test]
+    async fn leaving_and_removing_from_a_server() {
+        let app = testing::spawn().await;
+        let (alex_id, alex) = testing::register(&app, "alex").await;
+        let (sam_id, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        api.join_server(&sam, s.id).await.unwrap();
+        // the owner can't leave, in the server's words
+        match api.leave_server(&alex, s.id).await {
+            Err(ApiError::Forbidden(m)) => assert!(m.contains("owner"), "{m}"),
+            other => panic!("the owner's leave should be refused, got {other:?}"),
+        }
+        api.leave_server(&sam, s.id).await.unwrap();
+        assert!(api.leave_server(&sam, s.id).await.is_err(), "already out");
+        api.join_server(&sam, s.id).await.unwrap();
+        // only the owner removes, and not themselves
+        assert!(api.remove_server_member(&sam, s.id, alex_id).await.is_err());
+        assert!(
+            api.remove_server_member(&alex, s.id, alex_id)
+                .await
+                .is_err()
+        );
+        api.remove_server_member(&alex, s.id, sam_id).await.unwrap();
+        let members = api.members(&alex, s.id).await.unwrap();
+        assert!(members.iter().all(|m| m.user.id != sam_id));
+    }
+
+    #[tokio::test]
+    async fn archiving_a_channel() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (_, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        api.join_server(&sam, s.id).await.unwrap();
+        let g = testing::general(&app, &alex, s.id).await;
+        assert!(api.set_channel_archived(&sam, g.id, true).await.is_err());
+        let ch = api.set_channel_archived(&alex, g.id, true).await.unwrap();
+        assert!(ch.archived_at.is_some());
+        let ch = api.set_channel_archived(&alex, g.id, false).await.unwrap();
+        assert!(ch.archived_at.is_none());
     }
 
     #[tokio::test]

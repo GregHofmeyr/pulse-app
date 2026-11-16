@@ -1099,6 +1099,18 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       if (list.some((m) => m.user.id === e.d.member.user.id)) return s
       return { ...s, members: { ...s.members, [e.d.server_id]: [...list, e.d.member] } }
     }
+    // Someone left a server or was removed from it (#371). For you, its counts go from your rail too (the server
+    // stays listed: you can join it again).
+    case 'MemberLeft': {
+      const sid = e.d.server_id
+      const list = s.members[sid]
+      const next = list?.some((m) => m.user.id === e.d.user_id)
+        ? { ...s, members: { ...s.members, [sid]: list.filter((m) => m.user.id !== e.d.user_id) } }
+        : s
+      if (e.d.user_id !== s.me?.id) return next
+      const reads = Object.fromEntries(Object.entries(next.reads).filter(([c]) => next.channels[c]?.server_id !== sid))
+      return { ...next, reads }
+    }
     case 'MemberUpdated': {
       const list = s.members[e.d.server_id]
       if (!list?.some((m) => m.user.id === e.d.member.user.id)) return s

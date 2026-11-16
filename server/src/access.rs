@@ -16,10 +16,11 @@ pub type ChannelRow = (
     Option<String>,
     Option<String>,
     Option<i64>,
+    Option<String>,
 );
 
 pub fn channel_from_row(
-    (id, server_id, kind, name, position, category_id, icon_hash, icon_still, bitrate): ChannelRow,
+    (id, server_id, kind, name, position, category_id, icon_hash, icon_still, bitrate, archived_at): ChannelRow,
 ) -> AppResult<Channel> {
     Ok(Channel {
         id: id.parse().map_err(anyhow::Error::from)?,
@@ -39,13 +40,14 @@ pub fn channel_from_row(
         icon_still,
         // only ever one of the presets (#75); anything else reads as Default
         bitrate: bitrate.and_then(|b| u32::try_from(b).ok()),
+        archived_at,
     })
 }
 
 /// The columns [`channel_from_row`] reads, from `channels` (unaliased): a group's icon (#56) comes
-/// with its still, for an animated one; a voice channel's bitrate (#75) last.
+/// with its still, for an animated one; a voice channel's bitrate (#75), then when it was archived (#303).
 pub const CHANNEL_COLS: &str = "id, server_id, kind, name, position, category_id, icon_hash, \
-     (SELECT m.still_hash FROM media m WHERE m.hash = icon_hash) AS icon_still, bitrate";
+     (SELECT m.still_hash FROM media m WHERE m.hash = icon_hash) AS icon_still, bitrate, archived_at";
 
 /// [`DELETED_SERVERS`] as a literal, for `concat!`.
 macro_rules! deleted_servers {
@@ -99,6 +101,31 @@ pub async fn channel_live_in(db: &mut SqliteConnection, id: ChannelId) -> AppRes
         Ok(())
     } else {
         Err(AppError::NotFound)
+    }
+}
+
+/// 403 (in words the client shows) when `ch` is archived (#303): nobody posts, reacts, edits, votes, pins or spins
+/// there until its owner unarchives it.
+pub fn require_open(ch: &Channel) -> AppResult<()> {
+    if ch.archived_at.is_some() {
+        return Err(AppError::ForbiddenMsg(ARCHIVED.into()));
+    }
+    Ok(())
+}
+
+const ARCHIVED: &str = "This channel is archived, so it's read-only.";
+
+/// [`require_open`] again inside a write transaction, so an archive that committed after the request's early check
+/// wins.
+pub async fn open_in(db: &mut SqliteConnection, id: ChannelId) -> AppResult<()> {
+    let archived: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM channels WHERE id = ? AND archived_at IS NOT NULL")
+            .bind(id.to_string())
+            .fetch_optional(&mut *db)
+            .await?;
+    match archived {
+        Some(_) => Err(AppError::ForbiddenMsg(ARCHIVED.into())),
+        None => Ok(()),
     }
 }
 

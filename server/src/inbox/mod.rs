@@ -38,7 +38,7 @@ pub fn cutoff(now: DateTime<Utc>) -> MessageId {
 }
 
 /// The user's visible items, the way the mention badges count them: a chat they have a read point in, not
-/// in Recently deleted (nor its server), a DM or group they're still in, the message (and a reply's quote)
+/// in Recently deleted (nor its server), a DM or group they're still in, a server they're still in (#371), the message (and a reply's quote)
 /// not deleted, not their own, within [`DAYS`]. In a muted chat (or server) only typed mentions count.
 /// Binds: user, cutoff, now (for timed mutes).
 const ITEMS: &str = "FROM mentions mn
@@ -55,6 +55,8 @@ const ITEMS: &str = "FROM mentions mn
       AND (c.server_id IS NULL OR c.server_id NOT IN (SELECT id FROM servers WHERE deleted_at IS NOT NULL))
       AND (c.server_id IS NOT NULL OR EXISTS (SELECT 1 FROM channel_members cm
                                                WHERE cm.channel_id = c.id AND cm.user_id = mn.user_id))
+      AND (c.server_id IS NULL OR EXISTS (SELECT 1 FROM server_members sm
+                                           WHERE sm.server_id = c.server_id AND sm.user_id = mn.user_id))
       AND (mn.explicit = 1 OR NOT EXISTS (
             SELECT 1 FROM notification_prefs np
             WHERE np.user_id = mn.user_id AND np.muted = 1
@@ -219,7 +221,7 @@ pub enum Job {
     Removed { user: UserId, ids: Vec<MessageId> },
     /// A read point, seen point or mute moved: the count, if it changed from what they were told.
     Recount { user: UserId },
-    /// Their count changed with no inbox event of its own (a conversation left): the count, whatever it is.
+    /// Their count changed with no inbox event of its own (a conversation or server left): the count, whatever it is.
     Retell { user: UserId },
     /// A server channel was deleted or restored: [`Job::Retell`] whoever is connected and has items in it.
     Channel { channel: ChannelId },
@@ -308,6 +310,7 @@ pub fn follow_ups<'a>(hub: &Hub, events: impl Iterator<Item = &'a Event>) -> Vec
                 | Event::ThreadSeen { .. }
                 | Event::MutesChanged { .. }
                 | Event::ChannelRemoved { .. }
+                | Event::MemberLeft { .. }
                 | Event::ChannelDeleted { .. }
                 | Event::ChannelRestored { .. }
                 | Event::ServerDeleted { .. }
@@ -355,7 +358,7 @@ pub fn follow_ups<'a>(hub: &Hub, events: impl Iterator<Item = &'a Event>) -> Vec
                     out.push(Job::Recount { user: *user_id });
                 }
             }
-            Event::ChannelRemoved { user_id, .. } => {
+            Event::ChannelRemoved { user_id, .. } | Event::MemberLeft { user_id, .. } => {
                 if online.contains(user_id) {
                     out.push(Job::Retell { user: *user_id });
                 }

@@ -225,6 +225,7 @@ export const api = {
   setChannelBitrate: (channelId: string, bitrate: number | null) => invoke<Channel>('set_channel_bitrate', { channelId, bitrate }),
   /** A server channel, to its server's Recently deleted; everyone hears ChannelDeleted. */
   deleteChannel: (channelId: string) => invoke<void>('delete_channel', { channelId }),
+  setChannelArchived: (channelId: string, archived: boolean) => invoke<Channel>('set_channel_archived', { channelId, archived }),
   listDeletedChannels: (serverId: string) => invoke<DeletedChannel[]>('list_deleted_channels', { serverId }),
   /** Back from Recently deleted, with everything in it; everyone hears ChannelRestored. */
   restoreChannel: (channelId: string) => invoke<Channel>('restore_channel', { channelId }),
@@ -306,6 +307,8 @@ export const api = {
   /** A due one opened: read on every device. */
   reminderSeen: (id: string) => invoke<void>('reminder_seen', { id }),
   joinServer: (serverId: string) => invoke<void>('join_server', { serverId }),
+  leaveServer: (serverId: string) => invoke<void>('leave_server', { serverId }),
+  removeServerMember: (serverId: string, userId: string) => invoke<void>('remove_server_member', { serverId, userId }),
   listChannels: (serverId: string) => invoke<Channel[]>('list_channels', { serverId }),
   listMembers: (serverId: string) => invoke<Member[]>('list_members', { serverId }),
   listMessages: (channelId: string, before?: string) =>

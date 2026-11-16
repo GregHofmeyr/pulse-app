@@ -282,6 +282,7 @@ pub(crate) async fn tell_deleted(s: &AppState, original: MessageId) {
 /// plain messages (not a quotes or clips channel).
 async fn target(s: &AppState, me: UserId, id: ChannelId) -> AppResult<Channel> {
     let ch = channel_for(&s.db, me, id).await?;
+    crate::access::require_open(&ch)?; // archived (#303): read-only
     if !ch.kind.has_chat() && !ch.kind.is_private() {
         return Err(AppError::BadRequest(
             "messages can't be forwarded there".into(),

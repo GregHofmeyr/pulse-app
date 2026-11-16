@@ -782,3 +782,23 @@ async fn a_closed_poll_cant_be_edited_and_bad_edits_are_refused() {
     assert_eq!(close(&app, &alex, m.id).await.status(), 200);
     assert_eq!(edit(&app, &alex, m.id, same).await.status(), 409);
 }
+
+#[tokio::test]
+async fn a_poll_in_an_archived_channel_cant_be_edited() {
+    let (app, [alex, ..], g) = setup().await;
+    let m = create_ok(&app, &alex, g.id, poll_body("Q", &["a", "b"])).await;
+    let r = app
+        .http
+        .put(app.url(&format!("/channels/{}/archive", g.id)))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    let body =
+        json!({"question": "Q2", "options": [{"text": "a", "from": 0}, {"text": "b", "from": 1}]});
+    let (status, msg) = error(edit(&app, &alex, m.id, body).await).await;
+    assert_eq!(status, 403);
+    assert!(msg.contains("archived"), "{msg}");
+    assert_eq!(view(&app, &alex, m.id).await.question, "Q");
+}

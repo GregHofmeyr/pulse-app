@@ -1,4 +1,5 @@
-//! `@username` mentions: parsed on send, kept only for people who can see the channel.
+//! `@username` mentions: parsed on send, kept only for people who can see the channel: a conversation's members,
+//! a server channel's server members (#371).
 
 use std::collections::HashMap;
 
@@ -37,7 +38,8 @@ pub fn parse(content: &str) -> Vec<String> {
     out
 }
 
-/// Names → user ids of people who can see `channel`, excluding the author.
+/// Names → user ids of people who can see `channel` (in a server channel: who is in the server), excluding the
+/// author.
 pub async fn resolve(
     db: &SqlitePool,
     channel: &Channel,
@@ -52,6 +54,16 @@ pub async fn resolve(
                  WHERE cm.channel_id = ? AND lower(u.username) = ?",
             )
             .bind(channel.id.to_string())
+            .bind(name)
+            .fetch_optional(db)
+            .await?
+        } else if let Some(server) = channel.server_id {
+            // only people in the server (#371): someone who left (or never joined) isn't pinged
+            sqlx::query_scalar(
+                "SELECT u.id FROM users u JOIN server_members sm ON sm.user_id = u.id
+                 WHERE sm.server_id = ? AND lower(u.username) = ?",
+            )
+            .bind(server.to_string())
             .bind(name)
             .fetch_optional(db)
             .await?
@@ -73,6 +85,9 @@ pub async fn resolve(
 
 /// Whether `user` can see `channel` (the same rule `resolve` applies to typed names).
 pub async fn can_see(db: &SqlitePool, channel: &Channel, user: UserId) -> AppResult<bool> {
+    if let Some(server) = channel.server_id {
+        return crate::servers::routes::is_server_member(db, server, user).await;
+    }
     if !channel.kind.is_private() {
         return Ok(true);
     }

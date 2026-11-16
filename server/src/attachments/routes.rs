@@ -98,6 +98,7 @@ async fn start(
     // Count and insert under the write lock, so two starts can't both take the last slot.
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, channel).await?; // channel deleted since (#109)
+    crate::access::open_in(&mut tx, channel).await?; // archived (#303): read-only
     // Only uploads a send could still take count: not one whose channel is gone, nor one past
     // its time (the sweep removes those).
     let open: i64 = sqlx::query_scalar(

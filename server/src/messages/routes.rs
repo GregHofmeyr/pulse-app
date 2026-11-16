@@ -371,6 +371,7 @@ pub(crate) async fn send_as(
 ) -> AppResult<Message> {
     crate::media::writes_ok(&s.cfg)?;
     let ch = channel_for(&s.db, me, id).await?;
+    crate::access::require_open(&ch)?; // archived (#303); checked again under the write lock
     // A voice channel's chat (#226) takes messages as a text channel does.
     match (ch.kind, ch.server_id) {
         (kind, Some(server)) if kind.has_chat() && !is_server_member(&s.db, server, me).await? => {
@@ -607,6 +608,7 @@ pub(crate) async fn deliver(
     let mut tx = crate::db::begin_write(&s.db).await?;
     // A delete of the channel may have committed since the early check (#109).
     crate::access::channel_live_in(&mut tx, id).await?;
+    crate::access::open_in(&mut tx, id).await?; // archived (#303): read-only
     // Under the write lock the id is minted in commit order, so a seen point can never pass a
     // reply that hasn't committed yet.
     msg.id = MessageId::new();
@@ -811,6 +813,7 @@ async fn edit(
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, msg.channel_id).await?; // channel deleted since (#109)
+    crate::access::open_in(&mut tx, msg.channel_id).await?; // archived (#303): read-only
     // The text it replaces is kept (#301), read under the write lock so two quick edits each keep the one before.
     let edited_at = msg.edited_at.clone().unwrap_or_default();
     super::history::record(&mut tx, id, &msg.content, &edited_at).await?;

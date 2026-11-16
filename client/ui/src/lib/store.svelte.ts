@@ -65,6 +65,9 @@ export const ui = $state({
   /** The quick switcher's global keybind fired (#319; the core already brought the window up): the shell opens the
    *  switcher, or closes it if Pulse was in front with it open, and clears this. */
   quickSwitch: null as { wasFocused: boolean } | null,
+  /** A server membership change waiting for its confirm (#371): you leaving a server, or its owner removing someone.
+   *  The shell asks (ServerActionDialog) and clears it. */
+  serverAction: null as { kind: 'leave'; serverId: string } | { kind: 'remove'; serverId: string; userId: string } | null,
   /** A short line for the shell to show for a moment (it shows it and clears it). */
   notice: null as string | null,
   autoReported: false,

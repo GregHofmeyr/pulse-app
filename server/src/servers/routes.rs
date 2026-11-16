@@ -46,6 +46,10 @@ pub fn router() -> Router<AppState> {
         .route("/channels/{id}/restore", post(super::channels::restore))
         .route("/channels/{id}/bitrate", put(super::channels::set_bitrate))
         .route(
+            "/channels/{id}/archive",
+            put(super::channels::archive).delete(super::channels::unarchive),
+        )
+        .route(
             "/channels/{id}/permanent",
             axum::routing::delete(super::channels::purge_now),
         )
@@ -145,6 +149,7 @@ async fn insert_channel(
         icon_hash: None,
         icon_still: None,
         bitrate: None,
+        archived_at: None,
     })
 }
 

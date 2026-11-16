@@ -452,7 +452,7 @@ pub async fn remind_due(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
     let rows: Vec<StoredRow> = sqlx::query_as(&format!(
         "SELECT {STORED_COLS} WHERE p.reminded_at IS NULL AND p.cancelled_at IS NULL AND p.starts_at <= ? \
          AND m.deleted_at IS NULL AND p.channel_id IN (SELECT id FROM channels WHERE deleted_at IS NULL \
-         AND (server_id IS NULL OR server_id NOT IN {}))",
+         AND archived_at IS NULL AND (server_id IS NULL OR server_id NOT IN {}))",
         crate::access::DELETED_SERVERS
     ))
     .bind(&due_by)

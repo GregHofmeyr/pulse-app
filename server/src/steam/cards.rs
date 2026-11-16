@@ -80,7 +80,7 @@ pub async fn channels_for(s: &AppState, user: UserId) -> AppResult<Vec<ChannelId
         "SELECT a.channel_id FROM server_achievement_channels a
          JOIN server_members m ON m.server_id = a.server_id AND m.user_id = ?
          JOIN servers sv ON sv.id = a.server_id AND sv.deleted_at IS NULL
-         JOIN channels c ON c.id = a.channel_id AND c.deleted_at IS NULL AND c.kind = 'text'
+         JOIN channels c ON c.id = a.channel_id AND c.deleted_at IS NULL AND c.archived_at IS NULL AND c.kind = 'text'
          ORDER BY a.server_id",
     )
     .bind(user.to_string())

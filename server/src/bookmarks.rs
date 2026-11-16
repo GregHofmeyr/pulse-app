@@ -28,13 +28,15 @@ pub fn router() -> Router<AppState> {
 }
 
 /// A person's bookmarks with each message's parts, and whether they can still see it: not deleted, in a chat that
-/// isn't in Recently deleted (nor its server), and a DM or group they're still in (the rule reminders use). Binds: the
-/// person.
+/// isn't in Recently deleted (nor its server), a DM or group they're still in (the rule reminders use), and a server
+/// they're still in (#371: someone who left sees its messages as unavailable until they rejoin). Binds: the person.
 const SELECT: &str = "SELECT b.id, b.message_id, b.note, b.created_at,
        (m.id IS NOT NULL AND m.deleted_at IS NULL AND c.id IS NOT NULL AND c.deleted_at IS NULL
         AND (c.server_id IS NULL OR c.server_id NOT IN (SELECT id FROM servers WHERE deleted_at IS NOT NULL))
         AND (c.server_id IS NOT NULL OR EXISTS (SELECT 1 FROM channel_members cm
-                                                WHERE cm.channel_id = c.id AND cm.user_id = b.user_id))) AS visible,
+                                                WHERE cm.channel_id = c.id AND cm.user_id = b.user_id))
+        AND (c.server_id IS NULL OR EXISTS (SELECT 1 FROM server_members sm
+                                            WHERE sm.server_id = c.server_id AND sm.user_id = b.user_id))) AS visible,
        m.channel_id, m.thread_root_id, m.author_id, m.content, m.created_at
     FROM message_bookmarks b
     LEFT JOIN messages m ON m.id = b.message_id
@@ -163,7 +165,13 @@ async fn create(
             .fetch_optional(&s.db)
             .await?;
     let channel = parse(&channel.ok_or(AppError::NotFound)?)?;
-    channel_for(&s.db, me, channel).await?;
+    let ch = channel_for(&s.db, me, channel).await?;
+    // a server's messages: as a member (#371), as `SELECT` shows them
+    if let Some(server) = ch.server_id
+        && !crate::servers::routes::is_server_member(&s.db, server, me).await?
+    {
+        return Err(AppError::NotFound);
+    }
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
     let have: Option<String> =

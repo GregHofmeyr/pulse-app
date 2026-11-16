@@ -395,6 +395,7 @@ async fn post_spin(
     let channel = ch.id;
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, channel).await?; // channel deleted since (#109)
+    crate::access::open_in(&mut tx, channel).await?; // archived (#303): read-only
     let line = system::insert(&mut tx, channel, content, payload).await?;
     let inserted = sqlx::query(
         "INSERT INTO wheel_spins (message_id, channel_id, spinner_id, wheel_id, name, options, winner, angle, created_at)
