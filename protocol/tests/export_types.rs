@@ -50,6 +50,7 @@ fn owner_only_events_name_their_owner() {
         online: true,
         last_seen_at: None,
         status: Default::default(),
+        idle: false,
     };
     assert_eq!(p.only_for(), None);
     assert_eq!(p.channel_id(), None);

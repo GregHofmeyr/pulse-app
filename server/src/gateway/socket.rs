@@ -121,9 +121,11 @@ async fn disconnected(s: &AppState, conn: ConnId, me: UserId, since: &str) {
     let at = now();
     // what this connection was listening to goes with it (#275)
     let was_listening = s.hub.listening_held(conn).is_some();
+    let was_idle = s.hub.is_idle(me);
     s.hub.unregister(conn);
     if s.hub.is_online(me) {
-        if was_listening {
+        // the device still in use left (#53): the idle ones left behind make them Idle
+        if was_listening || s.hub.is_idle(me) != was_idle {
             // another device's activity (or none) is theirs now
             s.hub.sync_presence(&s.db, me).await;
             crate::stage::listening_changed(s, me).await;
@@ -350,6 +352,11 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
     let mut listening_pending: Option<ClientFrame> = None;
     let mut listening_retry = tokio::time::Instant::now();
     let listening_wait = voice_retry_wait(s.cfg.limits.listening_user);
+    // An Idle change held back by the limit (#53): the flag is set at once, and one announcement of how they look
+    // then goes out when the bucket next allows it.
+    let mut idle_pending = false;
+    let mut idle_retry = tokio::time::Instant::now();
+    let idle_wait = voice_retry_wait(s.cfg.limits.idle_user);
     loop {
         tokio::select! {
             // A kick closes the queue too; check it first so the client gets the close code.
@@ -387,6 +394,14 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
                     }
                 } else {
                     listening_retry = tokio::time::Instant::now() + listening_wait;
+                }
+            }
+            _ = tokio::time::sleep_until(idle_retry), if idle_pending => {
+                if s.limits.idle_user.hit(&me.to_string()) {
+                    idle_pending = false;
+                    s.hub.sync_presence(&s.db, me).await;
+                } else {
+                    idle_retry = tokio::time::Instant::now() + idle_wait;
                 }
             }
             inc = socket.recv() => {
@@ -433,6 +448,17 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
                                 listening_retry = tokio::time::Instant::now() + listening_wait;
                             }
                             listening_pending = Some(ClientFrame::Listening { listening, show });
+                        }
+                    }
+                    Ok(ClientFrame::Idle { idle }) => {
+                        // a change while one is held back rides on that one's announcement
+                        if s.hub.set_idle(conn, me, idle) && !idle_pending {
+                            if s.limits.idle_user.hit(&me.to_string()) {
+                                s.hub.sync_presence(&s.db, me).await;
+                            } else {
+                                idle_pending = true;
+                                idle_retry = tokio::time::Instant::now() + idle_wait;
+                            }
                         }
                     }
                     Ok(ClientFrame::Hello { .. }) | Err(_) => {}

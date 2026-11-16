@@ -79,6 +79,7 @@ fn about(events: &[Event], who: UserId) -> Vec<(PresenceStatus, Option<String>)>
                 status,
                 last_seen_at,
                 online,
+                ..
             } if *user_id == who => {
                 assert_eq!(*online, *status != PresenceStatus::Offline);
                 Some((*status, last_seen_at.clone()))

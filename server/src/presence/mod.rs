@@ -40,6 +40,8 @@ pub struct Subject {
 pub struct PresenceView {
     pub status: PresenceStatus,
     pub last_seen_at: Option<String>,
+    /// Online with every device idle (#53): only ever with `status: Online`.
+    pub idle: bool,
 }
 
 impl PresenceView {
@@ -106,46 +108,52 @@ impl Subject {
     }
 }
 
-/// What `viewer` may see of `s`. `connected`: `s` has at least one live gateway connection.
-pub fn view_for(s: &Subject, viewer: UserId, connected: bool, now: &str) -> PresenceView {
-    let live = |s: &Subject| {
+/// What `viewer` may see of `s`. `connected`: `s` has at least one live gateway connection; `idle`:
+/// every one of them says it's idle (#53). Idle only ever modifies Online: DND and Invisible win.
+pub fn view_for(
+    s: &Subject,
+    viewer: UserId,
+    connected: bool,
+    idle: bool,
+    now: &str,
+) -> PresenceView {
+    let offline = |last_seen_at| PresenceView {
+        status: PresenceStatus::Offline,
+        last_seen_at,
+        idle: false,
+    };
+    let live = |last_seen_at| {
         if s.dnd(now) {
-            PresenceStatus::Dnd
+            PresenceView {
+                status: PresenceStatus::Dnd,
+                last_seen_at,
+                idle: false,
+            }
         } else {
-            PresenceStatus::Online
+            PresenceView {
+                status: PresenceStatus::Online,
+                last_seen_at,
+                // your own sessions see you Online while you're Invisible: never Idle then either
+                idle: idle && s.status_at(now) == Status::Online,
+            }
         }
     };
     if viewer == s.id {
         // You always see the truth about yourself (the client draws Invisible from your own status).
         return if connected {
-            PresenceView {
-                status: live(s),
-                last_seen_at: s.last_seen_at.clone(),
-            }
+            live(s.last_seen_at.clone())
         } else {
-            PresenceView {
-                status: PresenceStatus::Offline,
-                last_seen_at: s.last_seen_at.clone(),
-            }
+            offline(s.last_seen_at.clone())
         };
     }
     if s.hides_from(viewer, now) {
-        return PresenceView {
-            status: PresenceStatus::Offline,
-            last_seen_at: s.frozen_for(viewer, now),
-        };
+        return offline(s.frozen_for(viewer, now));
     }
     if connected {
-        PresenceView {
-            status: live(s),
-            // Never anything that changes while hidden: an online person's last seen isn't shown.
-            last_seen_at: None,
-        }
+        // Never anything that changes while hidden: an online person's last seen isn't shown.
+        live(None)
     } else {
-        PresenceView {
-            status: PresenceStatus::Offline,
-            last_seen_at: s.last_seen_at.clone(),
-        }
+        offline(s.last_seen_at.clone())
     }
 }
 
@@ -245,17 +253,19 @@ mod tests {
         let s = alex();
         let sam = UserId::new();
         assert_eq!(
-            view_for(&s, sam, true, NOW),
+            view_for(&s, sam, true, false, NOW),
             PresenceView {
                 status: PresenceStatus::Online,
-                last_seen_at: None
+                last_seen_at: None,
+                idle: false,
             }
         );
         assert_eq!(
-            view_for(&s, sam, false, NOW),
+            view_for(&s, sam, false, false, NOW),
             PresenceView {
                 status: PresenceStatus::Offline,
-                last_seen_at: s.last_seen_at.clone()
+                last_seen_at: s.last_seen_at.clone(),
+                idle: false,
             }
         );
     }
@@ -268,11 +278,12 @@ mod tests {
         let want = PresenceView {
             status: PresenceStatus::Offline,
             last_seen_at: Some("2026-11-05T10:00:00.000Z".into()),
+            idle: false,
         };
         // connected or not, and whatever their real last disconnect says
-        assert_eq!(view_for(&s, UserId::new(), true, NOW), want);
+        assert_eq!(view_for(&s, UserId::new(), true, false, NOW), want);
         s.last_seen_at = Some("2026-11-05T11:30:00.000Z".into());
-        assert_eq!(view_for(&s, UserId::new(), false, NOW), want);
+        assert_eq!(view_for(&s, UserId::new(), false, false, NOW), want);
     }
 
     #[test]
@@ -282,13 +293,14 @@ mod tests {
         s.hidden
             .insert(sam, ("2026-11-05T10:30:00.000Z".into(), true));
         assert_eq!(
-            view_for(&s, sam, true, NOW),
+            view_for(&s, sam, true, false, NOW),
             PresenceView {
                 status: PresenceStatus::Offline,
-                last_seen_at: Some("2026-11-05T10:30:00.000Z".into())
+                last_seen_at: Some("2026-11-05T10:30:00.000Z".into()),
+                idle: false,
             }
         );
-        assert!(view_for(&s, UserId::new(), true, NOW).online());
+        assert!(view_for(&s, UserId::new(), true, false, NOW).online());
     }
 
     #[test]
@@ -300,13 +312,13 @@ mod tests {
         s.hidden
             .insert(sam, ("2026-11-05T08:00:00.000Z".into(), true));
         assert_eq!(
-            view_for(&s, sam, true, NOW).last_seen_at.as_deref(),
+            view_for(&s, sam, true, false, NOW).last_seen_at.as_deref(),
             Some("2026-11-05T08:00:00.000Z")
         );
         s.hidden
             .insert(sam, ("2026-11-05T11:00:00.000Z".into(), true));
         assert_eq!(
-            view_for(&s, sam, true, NOW).last_seen_at.as_deref(),
+            view_for(&s, sam, true, false, NOW).last_seen_at.as_deref(),
             Some("2026-11-05T10:00:00.000Z")
         );
     }
@@ -320,12 +332,12 @@ mod tests {
         s.hidden
             .insert(sam, ("2026-11-05T08:00:00.000Z".into(), false));
         assert_eq!(
-            view_for(&s, sam, true, NOW).last_seen_at.as_deref(),
+            view_for(&s, sam, true, false, NOW).last_seen_at.as_deref(),
             Some("2026-11-05T08:00:00.000Z")
         );
         s.status = Status::Online;
         s.invisible_at = None;
-        assert!(view_for(&s, sam, true, NOW).online());
+        assert!(view_for(&s, sam, true, false, NOW).online());
     }
 
     #[test]
@@ -333,15 +345,24 @@ mod tests {
         let mut s = alex();
         s.status = Status::Dnd;
         let sam = UserId::new();
-        assert_eq!(view_for(&s, sam, true, NOW).status, PresenceStatus::Dnd);
+        assert_eq!(
+            view_for(&s, sam, true, false, NOW).status,
+            PresenceStatus::Dnd
+        );
         s.dnd_until = Some("2026-11-05T13:00:00.000Z".into());
-        assert_eq!(view_for(&s, sam, true, NOW).status, PresenceStatus::Dnd);
+        assert_eq!(
+            view_for(&s, sam, true, false, NOW).status,
+            PresenceStatus::Dnd
+        );
         s.dnd_until = Some("2026-11-05T11:59:59.999Z".into());
-        assert_eq!(view_for(&s, sam, true, NOW).status, PresenceStatus::Online);
+        assert_eq!(
+            view_for(&s, sam, true, false, NOW).status,
+            PresenceStatus::Online
+        );
         assert_eq!(s.own(NOW), OwnStatus::default());
         // DND never shows while offline
         assert_eq!(
-            view_for(&s, sam, false, NOW).status,
+            view_for(&s, sam, false, false, NOW).status,
             PresenceStatus::Offline
         );
     }
@@ -355,7 +376,10 @@ mod tests {
         let sam = UserId::new();
         s.hidden
             .insert(sam, ("2026-11-05T08:00:00.000Z".into(), false));
-        assert_eq!(view_for(&s, sam, true, NOW).status, PresenceStatus::Offline);
+        assert_eq!(
+            view_for(&s, sam, true, false, NOW).status,
+            PresenceStatus::Offline
+        );
         assert_eq!(
             s.own(NOW),
             OwnStatus {
@@ -367,14 +391,15 @@ mod tests {
         // last disconnect
         s.dnd_until = Some("2026-11-05T11:59:59.999Z".into());
         assert_eq!(
-            view_for(&s, sam, true, NOW),
+            view_for(&s, sam, true, false, NOW),
             PresenceView {
                 status: PresenceStatus::Online,
-                last_seen_at: None
+                last_seen_at: None,
+                idle: false,
             }
         );
         assert_eq!(
-            view_for(&s, UserId::new(), false, NOW).last_seen_at,
+            view_for(&s, UserId::new(), false, false, NOW).last_seen_at,
             s.last_seen_at
         );
         assert_eq!(s.own(NOW), OwnStatus::default());
@@ -386,10 +411,16 @@ mod tests {
         s.last_seen_at = None;
         s.status = Status::Invisible;
         s.invisible_at = Some(NEVER_SEEN.into());
-        assert_eq!(view_for(&s, UserId::new(), true, NOW).last_seen_at, None);
+        assert_eq!(
+            view_for(&s, UserId::new(), true, false, NOW).last_seen_at,
+            None
+        );
         // a later real disconnect doesn't show either
         s.last_seen_at = Some(NOW.into());
-        assert_eq!(view_for(&s, UserId::new(), false, NOW).last_seen_at, None);
+        assert_eq!(
+            view_for(&s, UserId::new(), false, false, NOW).last_seen_at,
+            None
+        );
     }
 
     #[test]
@@ -398,7 +429,44 @@ mod tests {
         s.status = Status::Invisible;
         s.invisible_at = Some("2026-11-05T10:00:00.000Z".into());
         s.hidden.insert(s.id, ("x".into(), true));
-        assert!(view_for(&s, s.id, true, NOW).online());
+        assert!(view_for(&s, s.id, true, false, NOW).online());
         assert_eq!(s.own(NOW).status, Status::Invisible);
+    }
+
+    #[test]
+    fn idle_only_modifies_online() {
+        let mut s = alex();
+        let sam = UserId::new();
+        assert_eq!(
+            view_for(&s, sam, true, true, NOW),
+            PresenceView {
+                status: PresenceStatus::Online,
+                last_seen_at: None,
+                idle: true
+            }
+        );
+        // you see your own Idle
+        assert!(view_for(&s, s.id, true, true, NOW).idle);
+        // never while offline
+        assert!(!view_for(&s, sam, false, true, NOW).idle);
+        // DND wins
+        s.status = Status::Dnd;
+        let v = view_for(&s, sam, true, true, NOW);
+        assert_eq!((v.status, v.idle), (PresenceStatus::Dnd, false));
+        assert!(!view_for(&s, s.id, true, true, NOW).idle);
+        // Invisible wins, for others and on your own sessions (which see you Online)
+        s.status = Status::Invisible;
+        s.invisible_at = Some("2026-11-05T10:00:00.000Z".into());
+        let v = view_for(&s, sam, true, true, NOW);
+        assert_eq!((v.status, v.idle), (PresenceStatus::Offline, false));
+        let mine = view_for(&s, s.id, true, true, NOW);
+        assert_eq!((mine.status, mine.idle), (PresenceStatus::Online, false));
+        // hidden from one viewer: offline to them, Idle to the rest
+        s.status = Status::Online;
+        s.invisible_at = None;
+        s.hidden
+            .insert(sam, ("2026-11-05T10:30:00.000Z".into(), true));
+        assert!(!view_for(&s, sam, true, true, NOW).idle);
+        assert!(view_for(&s, UserId::new(), true, true, NOW).idle);
     }
 }

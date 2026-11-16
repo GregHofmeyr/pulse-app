@@ -7,4 +7,4 @@ export type ClientFrame = { "op": "Hello", "d": { token: string,
 /**
  * [`crate::PROTOCOL_VERSION`] of the client; absent (0) from pre-versioning clients.
  */
-client_version: number, } } | { "op": "Heartbeat" } | { "op": "Typing", "d": { channel_id: ChannelId, } } | { "op": "VoiceState", "d": { flags: VoiceFlags, } } | { "op": "Listening", "d": { listening: ListeningUpdate | null, show: boolean, } };
+client_version: number, } } | { "op": "Heartbeat" } | { "op": "Typing", "d": { channel_id: ChannelId, } } | { "op": "VoiceState", "d": { flags: VoiceFlags, } } | { "op": "Listening", "d": { listening: ListeningUpdate | null, show: boolean, } } | { "op": "Idle", "d": { idle: boolean, } };

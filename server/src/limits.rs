@@ -148,6 +148,9 @@ pub struct LimitsConfig {
     pub listening_user: Rate,
     /// Album art fetched for "Listening to" per person (#275): its own budget, apart from chat link previews.
     pub listening_art_user: Rate,
+    /// Idle changes per person (#53): a device sends one when its input stops or resumes; a held-back one is
+    /// announced when the bucket allows, so the latest always lands.
+    pub idle_user: Rate,
     /// GIF config reads and favourite adds and removes, together per person (#58). The app asks for the config
     /// once a session; a burst of starring is normal use.
     pub gif_user: Rate,
@@ -210,6 +213,8 @@ impl Default for LimitsConfig {
             listening_user: Rate::new(10, 0.5),
             // a song every 3 minutes is 20 an hour; skipping through a playlist gets a few dozen
             listening_art_user: Rate::per_hour(60),
+            // ten at once, then one every 2 s: going idle and back is a couple an hour
+            idle_user: Rate::new(10, 0.5),
             // 30 at once, then one every 2 s
             gif_user: Rate::new(30, 0.5),
         }
@@ -259,6 +264,7 @@ impl LimitsConfig {
             stage_share_user: r,
             listening_user: r,
             listening_art_user: r,
+            idle_user: r,
             gif_user: r,
         }
     }
@@ -420,6 +426,7 @@ pub struct Limits {
     pub stage_share_user: Limiter,
     pub listening_user: Limiter,
     pub listening_art_user: Limiter,
+    pub idle_user: Limiter,
     pub gif_user: Limiter,
 }
 
@@ -464,6 +471,7 @@ impl Limits {
             stage_share_user: Limiter::new(c.stage_share_user),
             listening_user: Limiter::new(c.listening_user),
             listening_art_user: Limiter::new(c.listening_art_user),
+            idle_user: Limiter::new(c.idle_user),
             gif_user: Limiter::new(c.gif_user),
         }
     }

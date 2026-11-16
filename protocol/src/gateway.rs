@@ -37,6 +37,11 @@ pub enum ClientFrame {
         listening: Option<ListeningUpdate>,
         show: bool,
     },
+    /// This device has had no input for a while (#53), or has again (`false`). Held per connection, gone with it:
+    /// a person looks Idle only while every device of theirs says so. Servers from before it ignore the frame.
+    Idle {
+        idle: bool,
+    },
 }
 
 impl std::fmt::Debug for ClientFrame {
@@ -61,6 +66,7 @@ impl std::fmt::Debug for ClientFrame {
                 .field("listening", &listening.as_ref().map(|_| "<playing>"))
                 .field("show", show)
                 .finish(),
+            Self::Idle { idle } => f.debug_struct("Idle").field("idle", idle).finish(),
         }
     }
 }
@@ -326,6 +332,11 @@ pub enum Event {
         /// Absent from older servers: go by `online` then.
         #[serde(default)]
         status: PresenceStatus,
+        /// Online with every device idle (#53); only ever with `status: Online`. Omitted when false, so older
+        /// clients see plain Online.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[ts(as = "Option<bool>", optional)]
+        idle: bool,
     },
     /// Only to your own sessions: your status or DND end changed (you set it, or a DND timer ran out).
     StatusChanged {
@@ -1545,6 +1556,41 @@ mod tests {
         .unwrap();
         assert_eq!(p.listening, None);
         assert!(serde_json::to_value(&p).unwrap().get("listening").is_none());
+        assert!(!p.idle);
+        assert!(serde_json::to_value(&p).unwrap().get("idle").is_none());
+    }
+
+    /// Idle (#53): the frame's wire shape, and `idle` rides next to Online only when true, so older clients (and
+    /// older servers' payloads) keep parsing.
+    #[test]
+    fn idle_frame_and_flag() {
+        let f: ClientFrame = serde_json::from_str(r#"{"op":"Idle","d":{"idle":true}}"#).unwrap();
+        assert!(matches!(f, ClientFrame::Idle { idle: true }));
+        assert_eq!(
+            serde_json::to_string(&ClientFrame::Idle { idle: false }).unwrap(),
+            r#"{"op":"Idle","d":{"idle":false}}"#
+        );
+        let u = UserId::new();
+        let e = |idle| Event::PresenceChanged {
+            user_id: u,
+            online: true,
+            last_seen_at: None,
+            status: PresenceStatus::Online,
+            idle,
+        };
+        let on = serde_json::to_value(e(true)).unwrap();
+        assert_eq!(on["d"]["idle"], true);
+        assert_eq!(on["d"]["status"], "online");
+        assert!(
+            serde_json::to_value(e(false)).unwrap()["d"]
+                .get("idle")
+                .is_none()
+        );
+        let older: Event = serde_json::from_str(&format!(
+            r#"{{"t":"PresenceChanged","d":{{"user_id":"{u}","online":true,"last_seen_at":null,"status":"online"}}}}"#
+        ))
+        .unwrap();
+        assert_eq!(older, e(false));
     }
 
     /// A `Ready` from an older server (no categories yet) parses with no layouts.

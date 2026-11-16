@@ -1138,6 +1138,11 @@ pub struct Person {
     /// Absent from older servers: go by `online` then.
     #[serde(default)]
     pub status: PresenceStatus,
+    /// Online with every device idle (#53); only ever with `status: Online`. Omitted when false, and absent from
+    /// older servers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub idle: bool,
     /// What they're listening to on Spotify (#275), only while they share it and look online to this viewer.
     /// Absent otherwise, and from older servers.
     #[serde(default, skip_serializing_if = "Option::is_none")]

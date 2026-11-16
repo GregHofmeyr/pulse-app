@@ -18,6 +18,11 @@ online: boolean, last_seen_at: string | null,
  */
 status: PresenceStatus, 
 /**
+ * Online with every device idle (#53); only ever with `status: Online`. Omitted when false, and absent from
+ * older servers.
+ */
+idle?: boolean, 
+/**
  * What they're listening to on Spotify (#275), only while they share it and look online to this viewer.
  * Absent otherwise, and from older servers.
  */

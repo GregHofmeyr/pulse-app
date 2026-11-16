@@ -64,6 +64,8 @@ struct Conn {
     /// Its Ready's inbox count has been read: inbox events reach it from then on (one read before would be
     /// older than its Ready, which supersedes it).
     inbox: bool,
+    /// This device says it has had no input for a while (#53, `ClientFrame::Idle`).
+    idle: bool,
 }
 
 impl Conn {
@@ -117,6 +119,14 @@ struct Inner {
     announced_listening: Mutex<HashMap<(UserId, ConnId), Listening>>,
 }
 
+/// Whether `user` is connected, and whether every connection of theirs is idle (#53): one device in use is enough
+/// to look active.
+fn live(conns: &HashMap<ConnId, Conn>, user: UserId) -> (bool, bool) {
+    let mut theirs = conns.values().filter(|c| c.user == user).peekable();
+    let connected = theirs.peek().is_some();
+    (connected, connected && theirs.all(|c| c.idle))
+}
+
 /// `user`'s most recent "Listening to" among the connections still in `conns` (`shown_only`: only one they share).
 fn latest(
     conns: &HashMap<ConnId, Conn>,
@@ -160,6 +170,7 @@ impl Hub {
                 tx,
                 kick: Some(ktx),
                 inbox: false,
+                idle: false,
             },
         );
         Some(Registration { id, rx, kick: krx })
@@ -195,6 +206,23 @@ impl Hub {
             .lock()
             .unwrap()
             .retain(|u, _| conns.values().any(|c| c.user == *u));
+    }
+
+    /// Set whether `user`'s connection `conn` is idle (#53); whether that changed whether `user` looks idle (then
+    /// announce it with [`Hub::sync_presence`]). A connection that's gone, or isn't theirs, changes nothing.
+    pub fn set_idle(&self, conn: ConnId, user: UserId, idle: bool) -> bool {
+        let mut conns = self.inner.conns.lock().unwrap();
+        let before = live(&conns, user).1;
+        match conns.get_mut(&conn) {
+            Some(c) if c.user == user => c.idle = idle,
+            _ => return false,
+        }
+        live(&conns, user).1 != before
+    }
+
+    /// Whether `user` is connected and every connection of theirs is idle (#53).
+    pub fn is_idle(&self, user: UserId) -> bool {
+        live(&self.inner.conns.lock().unwrap(), user).1
     }
 
     /// A ticket for connection `conn`'s next listening update (#275), taken as the frame arrives: only the newest
@@ -519,7 +547,7 @@ impl Hub {
         };
         let now = crate::db::now();
         let mut conns = self.inner.conns.lock().unwrap();
-        let connected = conns.values().any(|c| c.user == user);
+        let (connected, idle) = live(&conns, user);
         let mut views: HashMap<UserId, ServerFrame> = HashMap::new();
         let mut to: HashMap<ConnId, ServerFrame> = HashMap::new();
         let mut listening_to: HashMap<ConnId, ServerFrame> = HashMap::new();
@@ -528,7 +556,7 @@ impl Hub {
             let shown = latest(&conns, &self.inner.listening.lock().unwrap(), user, true);
             let mut told = self.inner.announced_listening.lock().unwrap();
             for (id, c) in conns.iter() {
-                let view = view_for(&subject, c.user, connected, &now);
+                let view = view_for(&subject, c.user, connected, idle, &now);
                 let want = shown
                     .as_ref()
                     .filter(|_| c.user == user || view.online())
@@ -557,6 +585,7 @@ impl Hub {
                             online: view.online(),
                             last_seen_at: view.last_seen_at.clone(),
                             status: view.status,
+                            idle: view.idle,
                         })
                     })
                     .clone();
@@ -591,9 +620,9 @@ impl Hub {
         Ok(users
             .into_iter()
             .map(|(user, last_seen_at)| {
-                let connected = conns.values().any(|c| c.user == user.id);
+                let (connected, idle) = live(&conns, user.id);
                 let view = match all.get(&user.id) {
-                    Some(s) => view_for(s, viewer, connected, &now),
+                    Some(s) => view_for(s, viewer, connected, idle, &now),
                     // Someone who registered between the two reads: no status yet.
                     None => PresenceView {
                         status: if connected {
@@ -602,6 +631,7 @@ impl Hub {
                             pulse_protocol::rest::PresenceStatus::Offline
                         },
                         last_seen_at: (!connected).then_some(last_seen_at).flatten(),
+                        idle: false,
                     },
                 };
                 let listening = (user.id == viewer || view.online())
@@ -619,6 +649,7 @@ impl Hub {
                     online: view.online(),
                     last_seen_at: view.last_seen_at,
                     status: view.status,
+                    idle: view.idle,
                     listening,
                 }
             })

@@ -167,7 +167,7 @@ async fn hide(
         announce_own(&s, me).await;
     }
     let subject = load_subject(&s.db, me).await?.ok_or(AppError::NotFound)?;
-    let seen = view_for(&subject, target, s.hub.is_online(me), &now);
+    let seen = view_for(&subject, target, s.hub.is_online(me), false, &now);
     let hidden_at = if seen.online() {
         now.clone()
     } else {
