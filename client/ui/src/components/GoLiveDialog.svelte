@@ -188,7 +188,7 @@
   .hint { min-width: 150px; color: var(--text-3); font-size: 12px; }
   /* the app's level when the hint was last asked for (#229): scaled, not sized, so it moves without a layout */
   .level { display: inline-block; width: 28px; height: 6px; margin-right: 6px; vertical-align: middle; border-radius: var(--radius-xs); background: var(--line); overflow: hidden; }
-  .level .fill { display: block; width: 100%; height: 100%; background: var(--ok); transform-origin: left; transition: transform .3s; }
+  .level .fill { display: block; width: 100%; height: 100%; background: var(--accent); transform-origin: left; transition: transform var(--dur); }
   .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>
