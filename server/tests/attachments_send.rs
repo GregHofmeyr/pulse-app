@@ -741,3 +741,34 @@ async fn purged_rows_dont_count_toward_open_uploads() {
         .unwrap();
     assert_eq!(r.pending, 1);
 }
+
+/// #289: a file marked as a spoiler when its upload starts says so on the message, for everyone;
+/// the rest don't, and unmarked files leave the field off the wire.
+#[tokio::test]
+async fn a_file_marked_as_a_spoiler_says_so() {
+    let w = world().await;
+    let (app, t, ch) = (&w.app, &w.alex.1, w.text.id);
+    let bytes = webp(100);
+    let r = post_json(
+        app,
+        t,
+        &format!("/channels/{ch}/attachments"),
+        json!({ "name": "ending.webp", "size": bytes.len(), "content_type": "image/webp", "spoiler": true }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "start a spoiler");
+    let up: AttachmentUpload = r.json().await.unwrap();
+    put(&up, &bytes).await;
+    let plain = upload(app, t, ch, "notes.pdf", "application/pdf", b"%PDF-1.4").await;
+    let m = send_ok(app, t, ch, "no peeking", &[up.id, plain]).await;
+    assert!(m.attachments[0].spoiler);
+    assert!(!m.attachments[1].spoiler);
+    let list: Vec<Message> = get_json(app, &w.sam.1, &format!("/channels/{ch}/messages")).await;
+    let got = list.iter().find(|x| x.id == m.id).unwrap();
+    assert_eq!(got.attachments, m.attachments);
+    let raw: Vec<serde_json::Value> =
+        get_json(app, &w.sam.1, &format!("/channels/{ch}/messages")).await;
+    let raw = raw.iter().find(|x| x["id"] == m.id.to_string()).unwrap();
+    assert_eq!(raw["attachments"][0]["spoiler"], true);
+    assert!(raw["attachments"][1].get("spoiler").is_none(), "{raw}");
+}

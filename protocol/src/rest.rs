@@ -1398,6 +1398,10 @@ pub struct Attachment {
     pub expires_at: Option<String>,
     /// A temporary send whose bytes are gone.
     pub expired: bool,
+    /// The sender marked it as a spoiler (#289): shown blurred until clicked. Off the wire when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub spoiler: bool,
 }
 
 /// `POST /attachments`: what is about to be uploaded.
@@ -1415,6 +1419,10 @@ pub struct StartAttachmentRequest {
     /// Keep the file for this many days, then delete it (a temporary send).
     #[serde(default)]
     pub temp_days: Option<u8>,
+    /// Show it blurred until clicked (#289).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub spoiler: bool,
 }
 
 /// Where to put the bytes. `url` is `None` when the upload has no single PUT URL (big sends).
@@ -2395,6 +2403,7 @@ mod tests {
                 duration_ms: None,
                 expires_at: None,
                 expired: false,
+                spoiler: false,
             }],
             caption_is_fallback: true,
             ..m

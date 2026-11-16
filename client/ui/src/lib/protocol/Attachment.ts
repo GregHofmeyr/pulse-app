@@ -13,4 +13,8 @@ expires_at: string | null,
 /**
  * A temporary send whose bytes are gone.
  */
-expired: boolean, };
+expired: boolean, 
+/**
+ * The sender marked it as a spoiler (#289): shown blurred until clicked. Off the wire when false.
+ */
+spoiler?: boolean, };

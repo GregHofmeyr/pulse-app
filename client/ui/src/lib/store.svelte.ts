@@ -164,7 +164,7 @@ export async function openDm(userId: string): Promise<string> {
  *  With `files` (#57) the core uploads them first, then sends (its outcome arrives on the same `pulse://outbox`). */
 export function queueMessage(channelId: string, text: string, replyToId: string | null, gif: Gif | null = null, files: readonly StagedFile[] = [], tempDays: number | null = null): void {
   const nonce = crypto.randomUUID()
-  const pendingFiles: PendingFile[] = files.map((f) => ({ id: f.id, name: f.name, size: f.size, kind: f.kind, preview: f.preview }))
+  const pendingFiles: PendingFile[] = files.map((f) => ({ id: f.id, name: f.name, size: f.size, kind: f.kind, preview: f.preview, ...(f.spoiler ? { spoiler: true } : {}) }))
   app.state = addPending(app.state, channelId, {
     nonce, content: text, reply_to_id: replyToId, thread_root_id: null, status: 'pending', created_at: new Date().toISOString(),
     ...(gif ? { gif } : {}),
@@ -177,7 +177,10 @@ export function queueMessage(channelId: string, text: string, replyToId: string 
 function sendFiles(channelId: string, nonce: string, text: string, replyToId: string | null, files: PendingFile[], tempDays: number | null) {
   attachmentSends.start(nonce)
   api
-    .sendWithAttachments({ channelId, content: text, replyToId, threadRootId: null, nonce, staged: files.map((f) => f.id), tempDays })
+    .sendWithAttachments({
+      channelId, content: text, replyToId, threadRootId: null, nonce, staged: files.map((f) => f.id), tempDays,
+      spoilers: files.filter((f) => f.spoiler).map((f) => f.id),
+    })
     .catch(() => (app.state = setPendingStatus(app.state, channelId, nonce, 'failed')))
 }
 

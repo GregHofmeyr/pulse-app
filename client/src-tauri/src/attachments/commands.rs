@@ -134,6 +134,7 @@ pub async fn send_with_attachments(
     nonce: String,
     staged: Vec<String>,
     temp_days: Option<u8>,
+    spoilers: Option<Vec<String>>,
 ) -> Result<(), ApiError> {
     let out = Outgoing {
         channel: channel_id,
@@ -143,6 +144,7 @@ pub async fn send_with_attachments(
         nonce,
         staged,
         temp_days,
+        spoilers: spoilers.unwrap_or_default(),
     };
     tauri::async_runtime::spawn(async move {
         let core = app.state::<Core>();

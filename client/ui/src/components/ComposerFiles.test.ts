@@ -98,6 +98,37 @@ describe('Composer files', () => {
     expect(chips()).toEqual([])
   })
 
+  // #289
+  it('marks a queued file as a spoiler, and sends it marked', async () => {
+    answers.pick_attachment_files = () => ['/home/alex/a.webp', '/home/alex/b.pdf']
+    answers.stage_attachment_paths = () => [
+      { status: 'staged', file: file('s1', 'a.webp', 1000, { kind: 'image', preview: 'data:image/png;base64,AA' }) },
+      { status: 'staged', file: file('s2', 'b.pdf') },
+    ]
+    const box = show()
+    document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
+    await settle()
+    const mark = document.querySelector<HTMLButtonElement>('[aria-label="Mark a.webp as a spoiler"]')!
+    expect(mark.getAttribute('aria-pressed')).toBe('false')
+    mark.click()
+    flushSync()
+    const on = document.querySelector<HTMLButtonElement>('[aria-label="Unmark a.webp as a spoiler"]')!
+    expect(on.getAttribute('aria-pressed')).toBe('true')
+    expect(document.querySelector('.chip.spoiler .size')!.textContent).toContain('Spoiler')
+    enter(box)
+    expect(onSend).toHaveBeenCalledWith('', [
+      file('s1', 'a.webp', 1000, { kind: 'image', preview: 'data:image/png;base64,AA', spoiler: true }),
+      file('s2', 'b.pdf'),
+    ], null)
+  })
+
+  it('a message on its way shows its spoiler mark but can\'t change it', () => {
+    cmp = mount(ComposerFiles, { target: document.body, props: { files: [{ ...file('s1', 'a.webp'), spoiler: true }], progress: 0.5 } })
+    flushSync()
+    expect(document.querySelector('.chip.spoiler')).not.toBeNull()
+    expect(document.querySelector('[aria-label^="Unmark"]')).toBeNull()
+  })
+
   it('takes a pasted screenshot as a file, not as text', async () => {
     answers.stage_attachment_bytes = () => file('p1', 'image.webp', 500, { kind: 'image' })
     const box = show()

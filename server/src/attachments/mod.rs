@@ -182,8 +182,8 @@ fn kind_of(s: &str) -> AttachmentKind {
 }
 
 /// `attachments` columns read into an [`Attachment`], in this order.
-const COLS: &str =
-    "id, name, content_type, kind, size, width, height, duration_ms, expires_at, purged_at";
+const COLS: &str = "id, name, content_type, kind, size, width, height, duration_ms, expires_at, \
+                    purged_at, spoiler";
 type Row = (
     String,
     String,
@@ -195,6 +195,7 @@ type Row = (
     Option<i64>,
     Option<String>,
     Option<String>,
+    bool,
 );
 
 /// [`Row`] with its message id first, as [`attach`] reads it.
@@ -210,10 +211,23 @@ type MessageRow = (
     Option<i64>,
     Option<String>,
     Option<String>,
+    bool,
 );
 
 fn to_attachment(r: Row, now: &str) -> AppResult<Attachment> {
-    let (id, name, content_type, kind, size, width, height, duration_ms, expires_at, purged_at) = r;
+    let (
+        id,
+        name,
+        content_type,
+        kind,
+        size,
+        width,
+        height,
+        duration_ms,
+        expires_at,
+        purged_at,
+        spoiler,
+    ) = r;
     // Past its time it reads as expired at once; the sweep deletes the bytes within minutes.
     let expired = purged_at.is_some() || expires_at.as_deref().is_some_and(|e| e <= now);
     Ok(Attachment {
@@ -227,6 +241,7 @@ fn to_attachment(r: Row, now: &str) -> AppResult<Attachment> {
         duration_ms: duration_ms.map(|v| v as u32),
         expires_at,
         expired,
+        spoiler,
     })
 }
 
@@ -254,9 +269,9 @@ pub async fn attach(db: &SqlitePool, msgs: &mut [Message]) -> AppResult<()> {
     }
     let now = crate::db::now();
     let mut by_msg: HashMap<String, Vec<Attachment>> = HashMap::new();
-    for (message_id, id, name, ct, kind, size, w, h, d, exp, purged) in rows {
+    for (message_id, id, name, ct, kind, size, w, h, d, exp, purged, spoiler) in rows {
         by_msg.entry(message_id).or_default().push(to_attachment(
-            (id, name, ct, kind, size, w, h, d, exp, purged),
+            (id, name, ct, kind, size, w, h, d, exp, purged, spoiler),
             &now,
         )?);
     }
@@ -502,6 +517,7 @@ mod tests {
             duration_ms: None,
             expires_at: None,
             expired: false,
+            spoiler: false,
         }
     }
 

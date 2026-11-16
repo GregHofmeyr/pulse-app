@@ -30,6 +30,8 @@ pub struct Outgoing {
     pub nonce: String,
     pub staged: Vec<String>,
     pub temp_days: Option<u8>,
+    /// Staged ids the sender marked as spoilers (#289).
+    pub spoilers: Vec<String>,
 }
 
 /// `attachments://progress`: bytes stored so far over all of a send's files.
@@ -247,6 +249,7 @@ impl Jobs {
                                     } else {
                                         None
                                     },
+                                    spoiler: out.spoilers.contains(&f.id),
                                 },
                             )
                             .await?
@@ -560,7 +563,27 @@ mod tests {
             nonce: "n-1".into(),
             staged,
             temp_days: None,
+            spoilers: vec![],
         }
+    }
+
+    /// #289: the files marked as spoilers go up marked; the rest don't.
+    #[tokio::test]
+    async fn files_marked_as_spoilers_are_sent_as_spoilers() {
+        let s = setup().await;
+        let staged = stage(&s);
+        let mut out = outgoing(&s, staged.clone(), "");
+        out.spoilers = vec![staged[0].clone()];
+        let m = Jobs::default()
+            .run(&s.api, &s.token, &s.stager, &out, |_| {})
+            .await
+            .unwrap();
+        let marked: Vec<(&str, bool)> = m
+            .attachments
+            .iter()
+            .map(|a| (a.name.as_str(), a.spoiler))
+            .collect();
+        assert_eq!(marked, [("shot.webp", true), ("notes.txt", false)]);
     }
 
     #[tokio::test]
@@ -675,6 +698,7 @@ mod tests {
                     height: None,
                     duration_ms: None,
                     temp_days: Some(7),
+                    spoiler: false,
                 },
             )
             .await

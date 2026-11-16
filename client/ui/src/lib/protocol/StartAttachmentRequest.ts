@@ -7,4 +7,8 @@ export type StartAttachmentRequest = { name: string, size: number, content_type:
 /**
  * Keep the file for this many days, then delete it (a temporary send).
  */
-temp_days: number | null, };
+temp_days: number | null, 
+/**
+ * Show it blurred until clicked (#289).
+ */
+spoiler?: boolean, };

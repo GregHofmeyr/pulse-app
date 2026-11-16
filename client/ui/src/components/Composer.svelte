@@ -208,6 +208,11 @@
     }
   }
 
+  /** Mark or unmark a queued file as a spoiler (#289): it shows blurred until someone clicks it. */
+  function toggleSpoiler(id: string) {
+    files = files.map((f) => (f.id === id ? { ...f, spoiler: !f.spoiler } : f))
+  }
+
   function removeFile(id: string) {
     files = files.filter((f) => f.id !== id)
     fileError = null
@@ -474,7 +479,7 @@
     {@const name = `/${c.name}`}
     {name}{#if c.usage.startsWith(name)}<span class="arg">{c.usage.slice(name.length)}</span>{:else}<span class="arg">{` ${c.usage}`}</span>{/if}
   {/snippet}
-  <ComposerFiles {files} onRemove={removeFile} error={fileError} />
+  <ComposerFiles {files} onRemove={removeFile} onToggleSpoiler={toggleSpoiler} error={fileError} />
   {#if folderOffers.length}
     <!-- a folder can't go as it is: zip it, and the zip joins the queued files (#57) -->
     <div class="folder" role="status">

@@ -39,4 +39,12 @@ Friends can't post a screenshot or share a file today. Discord-style attachments
 
 ## Out of scope
 
-- Image editing/cropping before send, spoiler blur (follow-up issue if wanted), per-user storage quotas.
+- Image editing/cropping before send, per-user storage quotas.
+
+## Added later
+
+- **Spoilers (#289):** each queued file's chip has an eye toggle, "Mark as spoiler". A spoiler goes up with
+  `spoiler: true` on its upload start (migration 0041, `attachments.spoiler`), and every message carrying it says so
+  (`Attachment.spoiler`, off the wire when false, so older clients just show the file). It shows blurred under a
+  "Spoiler" cover and can't be used (inert) until clicked; revealed stays revealed for that view. The image viewer
+  only pages through images you can already see. The sender's own chip and pending row show it blurred too.

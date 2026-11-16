@@ -1,6 +1,7 @@
 <script lang="ts">
   // A message's files (#57): images inline (one large, several in a grid; click for the viewer), videos in the clip
-  // player, audio in a compact player, everything else (and an image that won't load) as a file card.
+  // player, audio in a compact player, everything else (and an image that won't load) as a file card. A file the sender
+  // marked as a spoiler (#289) shows blurred, and can't be used, until it's clicked; revealed stays revealed here.
   import type { Message } from '../lib/protocol/Message'
   import type { Attachment } from '../lib/protocol/Attachment'
   import { arrange, gridColumns, singleBox, type VideoSource } from '../lib/attachments'
@@ -24,6 +25,16 @@
   const images = $derived(parts.images.filter((a) => !broken[a.id]))
   const cols = $derived(gridColumns(images.length))
   let viewing = $state<number | null>(null)
+  // spoilers clicked open, by attachment id
+  let revealed = $state<Record<string, boolean>>({})
+  const covered = (a: Attachment) => !!a.spoiler && !revealed[a.id]
+  // the viewer only ever pages through images you can already see
+  const viewable = $derived(images.filter((a) => !covered(a)))
+  function openImage(a: Attachment) {
+    if (covered(a)) revealed[a.id] = true
+    else viewing = viewable.indexOf(a)
+  }
+  const imageLabel = (a: Attachment) => (covered(a) ? `Show spoiler: ${a.name}` : `Open ${a.name}`)
 
   const link = (a: Attachment, fresh = false) => attachmentLink(message.id, a.id, api.attachmentUrls, { fresh })
 
@@ -69,25 +80,31 @@
 {#if images.length === 1}
   {@const a = images[0]}
   {@const box = singleBox(a.width, a.height)}
-  <button type="button" class="single" style:width="{box.width}px" style:aspect-ratio="{box.width} / {box.height}"
-    aria-label={`Open ${a.name}`} onclick={() => (viewing = 0)}>
-    {#if urls[a.id]}<img src={urls[a.id]} alt={a.name} draggable="false" decoding="async" onerror={() => failed(a)} />{/if}
+  <button type="button" class="single" class:covered={covered(a)} style:width="{box.width}px" style:aspect-ratio="{box.width} / {box.height}"
+    aria-label={imageLabel(a)} onclick={() => openImage(a)}>
+    {#if urls[a.id]}<img src={urls[a.id]} alt={covered(a) ? '' : a.name} draggable="false" decoding="async" onerror={() => failed(a)} />{/if}
+    {#if covered(a)}{@render tag()}{/if}
   </button>
 {:else if images.length > 1}
   <div class="grid" style:--cols={cols}>
-    {#each images as a, i (a.id)}
-      <button type="button" class="tile" aria-label={`Open ${a.name}`} onclick={() => (viewing = i)}>
-        {#if urls[a.id]}<img src={urls[a.id]} alt={a.name} draggable="false" decoding="async" loading="lazy" onerror={() => failed(a)} />{/if}
+    {#each images as a (a.id)}
+      <button type="button" class="tile" class:covered={covered(a)} aria-label={imageLabel(a)} onclick={() => openImage(a)}>
+        {#if urls[a.id]}<img src={urls[a.id]} alt={covered(a) ? '' : a.name} draggable="false" decoding="async" loading="lazy" onerror={() => failed(a)} />{/if}
+        {#if covered(a)}{@render tag()}{/if}
       </button>
     {/each}
   </div>
 {/if}
 {#each parts.videos as a (a.id)}
-  <div class="video"><ClipPlayer {message} source={video(a)} onDownload={() => void save(a)} downloadKey={fileKey(a.id)} onDownloadError={onError} /></div>
+  <div class="video spoiler-box">
+    <div class="spoiler-content" class:blurred={covered(a)} inert={covered(a)}><ClipPlayer {message} source={video(a)} onDownload={() => void save(a)} downloadKey={fileKey(a.id)} onDownloadError={onError} /></div>
+    {#if covered(a)}{@render cover(a)}{/if}
+  </div>
 {/each}
 {#each parts.audio.filter((a) => !broken[a.id]) as a (a.id)}
   {@const dl = downloads.view(fileKey(a.id))}
-  <div class="audio">
+  <div class="spoiler-box audio-box">
+  <div class="audio spoiler-content" class:blurred={covered(a)} inert={covered(a)}>
     <span class="audio-name"><Icon name="music" size={14} /> <span class="audio-title">{a.name}</span>
       <button type="button" class="icon-btn icon-btn-xs dl" aria-label={dlLabel(a)} data-tip={dl?.phase === 'downloading' ? 'Cancel download' : dl?.phase === 'saved' ? 'Saved' : 'Download'} onclick={() => void save(a)}>
         {#if dl?.phase === 'downloading'}<ProgressRing fraction={dl.fraction} size={20} /><Icon name="x" size={10} />{:else}<Icon name={dl?.phase === 'saved' ? 'check' : 'download'} size={14} />{/if}
@@ -95,13 +112,26 @@
       {#if dl?.phase === 'saved'}<button type="button" class="folder" use:holdSaved={fileKey(a.id)} onclick={() => void reveal(a)}>Show in folder</button>{/if}</span>
     {#if urls[a.id]}<audio controls preload="metadata" src={urls[a.id]} onerror={() => failed(a)}></audio>{/if}
   </div>
+  {#if covered(a)}{@render cover(a)}{/if}
+  </div>
 {/each}
 {#each [...parts.files, ...parts.images.filter((a) => broken[a.id]), ...parts.audio.filter((a) => broken[a.id])] as a (a.id)}
-  <FileCard file={a} messageId={message.id} {onError} />
+  <div class="spoiler-box file-box">
+    <div class="spoiler-content" class:blurred={covered(a)} inert={covered(a)}><FileCard file={a} messageId={message.id} {onError} /></div>
+    {#if covered(a)}{@render cover(a)}{/if}
+  </div>
 {/each}
-{#if viewing !== null && images.length}
-  <ImageViewer {images} messageId={message.id} start={Math.min(viewing, images.length - 1)} onClose={() => (viewing = null)} {onError} />
+{#if viewing !== null && viewable.length}
+  <ImageViewer images={viewable} messageId={message.id} start={Math.min(Math.max(viewing, 0), viewable.length - 1)} onClose={() => (viewing = null)} {onError} />
 {/if}
+
+{#snippet tag()}
+  <span class="spoiler-tag"><Icon name="eye" size={14} /> Spoiler</span>
+{/snippet}
+
+{#snippet cover(a: Attachment)}
+  <button type="button" class="spoiler-cover" aria-label={`Show spoiler: ${a.name}`} onclick={() => (revealed[a.id] = true)}>{@render tag()}</button>
+{/snippet}
 
 <style>
   .single, .tile { padding: 0; border: 0; background: var(--bg-3); border-radius: var(--radius-xs); overflow: hidden; cursor: zoom-in; display: block; }
@@ -120,4 +150,28 @@
   .folder:hover, .folder:focus-visible { color: var(--text); text-decoration: underline; }
   .audio-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .audio audio { width: 100%; height: 32px; }
+  /* spoilers (#289): blurred and out of reach under a cover until clicked */
+  .single, .tile { position: relative; }
+  .covered { cursor: pointer; }
+  .covered img, .blurred { filter: blur(44px); }
+  .covered img { transform: scale(1.1); }
+  .spoiler-box { position: relative; max-width: 432px; }
+  .spoiler-box.file-box, .spoiler-box.audio-box { margin-top: 6px; }
+  .file-box :global(.card), .audio-box .audio { margin-top: 0; }
+  .spoiler-box:has(.blurred) { border-radius: var(--radius-xs); overflow: hidden; }
+  .spoiler-cover {
+    position: absolute; inset: 0; padding: 0; border: 0; border-radius: var(--radius-xs); cursor: pointer;
+    display: grid; place-items: center; background: color-mix(in srgb, var(--bg-1) 35%, transparent);
+  }
+  .spoiler-tag {
+    position: absolute; inset: 0; margin: auto; width: max-content; height: max-content;
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #fff;
+    background: rgba(10, 11, 13, .72);
+  }
+  .spoiler-cover:hover .spoiler-tag, .spoiler-cover:focus-visible .spoiler-tag,
+  .covered:hover .spoiler-tag, .covered:focus-visible .spoiler-tag { background: rgba(10, 11, 13, .88); }
+  @media (prefers-reduced-motion: no-preference) {
+    .single img, .tile img, .spoiler-content { transition: filter var(--dur) var(--ease); }
+  }
 </style>

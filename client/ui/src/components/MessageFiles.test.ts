@@ -79,6 +79,49 @@ describe('MessageFiles', () => {
     expect(dialog.getAttribute('aria-label')).toBe('3.webp')
   })
 
+  // #289: a spoiler shows blurred under a cover until clicked; then it's the file as usual
+  it('a spoiler image is blurred until clicked, and only then opens the viewer', async () => {
+    show([att('a', 'ending.webp', 'image', { spoiler: true }), att('b', 'cat.webp', 'image')])
+    await settle()
+    const tile = document.querySelector<HTMLButtonElement>('[aria-label="Show spoiler: ending.webp"]')!
+    expect(tile.classList.contains('covered')).toBe(true)
+    expect(tile.textContent).toContain('Spoiler')
+    expect(tile.querySelector('img')!.getAttribute('alt')).toBe('')
+    // the viewer from the other image doesn't page onto the hidden one
+    document.querySelector<HTMLButtonElement>('[aria-label="Open cat.webp"]')!.click()
+    await settle()
+    expect(document.querySelector('[role=dialog]')!.getAttribute('aria-label')).toBe('cat.webp')
+    expect(document.querySelectorAll('[role=dialog] img').length).toBeLessThanOrEqual(1)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await settle()
+    // first click reveals, it doesn't open
+    tile.click()
+    await settle()
+    expect(tile.classList.contains('covered')).toBe(false)
+    expect(tile.getAttribute('aria-label')).toBe('Open ending.webp')
+    expect(tile.querySelector('img')!.getAttribute('alt')).toBe('ending.webp')
+    tile.click()
+    await settle()
+    expect(document.querySelector('[role=dialog]')!.getAttribute('aria-label')).toBe('ending.webp')
+  })
+
+  it('a spoiler file card is covered and out of reach until clicked', async () => {
+    show([att('f', 'plot.pdf', 'file', { spoiler: true }), att('g', 'menu.pdf', 'file')])
+    await settle()
+    const boxes = [...document.querySelectorAll<HTMLElement>('.file-box')]
+    // Svelte sets `inert` as a property where the DOM has one (jsdom doesn't reflect it)
+    const inert = (b: HTMLElement) => { const el = b.querySelector<HTMLElement>('.spoiler-content')!; return el.hasAttribute('inert') || el.inert === true }
+    expect(inert(boxes[0])).toBe(true)
+    expect(boxes[0].querySelector('.blurred')).not.toBeNull()
+    expect(boxes[1].querySelector('.spoiler-cover')).toBeNull()
+    expect(inert(boxes[1])).toBe(false)
+    boxes[0].querySelector<HTMLButtonElement>('[aria-label="Show spoiler: plot.pdf"]')!.click()
+    await settle()
+    expect(boxes[0].querySelector('.spoiler-cover')).toBeNull()
+    expect(inert(boxes[0])).toBe(false)
+    expect(boxes[0].querySelector('[aria-label="Download plot.pdf"]')).not.toBeNull()
+  })
+
   it('plays a video in the clip player, audio in an audio player', async () => {
     show([att('v', 'clip.mp4', 'video', { width: 1280, height: 720 }), att('s', 'song.mp3', 'audio')])
     await settle()

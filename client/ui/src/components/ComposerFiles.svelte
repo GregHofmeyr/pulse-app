@@ -4,17 +4,20 @@
   import Icon from './Icon.svelte'
   import { formatSize } from '../lib/attachments'
 
-  type ChipFile = { id: string; name: string; size: number; kind: string; preview: string | null }
+  type ChipFile = { id: string; name: string; size: number; kind: string; preview: string | null; spoiler?: boolean }
 
   let {
     files,
     onRemove,
+    onToggleSpoiler,
     error = null,
     progress = null,
   }: {
     files: readonly ChipFile[]
     /** Absent: the chips can't be removed (a message on its way). */
     onRemove?: (id: string) => void
+    /** Absent: the spoiler mark can't be changed (a message on its way). */
+    onToggleSpoiler?: (id: string) => void
     /** Why the last file couldn't be added. */
     error?: string | null
     /** 0..1 while uploading. */
@@ -27,7 +30,7 @@
     {#if files.length}
       <ul class="chips" aria-label="Files">
         {#each files as f (f.id)}
-          <li class="chip">
+          <li class="chip" class:spoiler={f.spoiler}>
             {#if f.preview}
               <img class="thumb" src={f.preview} alt="" draggable="false" />
             {:else}
@@ -35,8 +38,15 @@
             {/if}
             <span class="meta">
               <span class="name">{f.name}</span>
-              <span class="size">{formatSize(f.size)}</span>
+              <span class="size">{f.spoiler ? `Spoiler · ${formatSize(f.size)}` : formatSize(f.size)}</span>
             </span>
+            {#if onToggleSpoiler}
+              <button class="icon-btn icon-btn-xs mark" class:on={f.spoiler} type="button" aria-pressed={!!f.spoiler}
+                aria-label={f.spoiler ? `Unmark ${f.name} as a spoiler` : `Mark ${f.name} as a spoiler`}
+                data-tip={f.spoiler ? 'Spoiler: hidden until clicked' : 'Mark as spoiler'} onclick={() => onToggleSpoiler(f.id)}>
+                <Icon name="eye" size={14} />
+              </button>
+            {/if}
             {#if onRemove}
               <button class="icon-btn icon-btn-xs remove" type="button" aria-label={`Remove ${f.name}`} onclick={() => onRemove(f.id)}>
                 <Icon name="x" size={14} />
@@ -67,9 +77,12 @@
   .meta { display: flex; flex-direction: column; min-width: 0; }
   .name { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .size { font-size: 11px; color: var(--text-3); }
-  .remove { flex: none; }
+  .remove, .mark { flex: none; }
+  .mark.on { color: var(--accent-text); }
+  /* a spoiler's thumbnail is blurred here too, so the sender sees what others will */
+  .spoiler .thumb { filter: blur(6px); clip-path: inset(0 round var(--radius-xs)); }
   /* one step up from the chip's bg-2 */
-  .remove:hover { background: var(--bg-4); }
+  .remove:hover, .mark:hover { background: var(--bg-4); }
   .bar { margin-top: 8px; height: 4px; border-radius: var(--radius-xs); background: var(--bg-4); overflow: hidden; }
   .bar span { display: block; height: 100%; background: var(--accent); transform-origin: left; transition: transform var(--dur) var(--ease); }
   .error { margin: 6px 0 0; font-size: 12px; color: var(--danger-text); }

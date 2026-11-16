@@ -151,8 +151,8 @@ async fn start(
     sqlx::query(
         "INSERT INTO attachments
              (id, key, user_id, channel_id, name, content_type, kind, size, width, height,
-              duration_ms, expires_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              duration_ms, expires_at, spoiler, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id.to_string())
     .bind(&key)
@@ -166,6 +166,7 @@ async fn start(
     .bind(side(req.height).filter(|_| media))
     .bind(length.filter(|_| media))
     .bind(&expires_at)
+    .bind(req.spoiler)
     .bind(crate::db::stamp(now_at))
     .execute(&mut *tx)
     .await?;

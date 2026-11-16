@@ -178,6 +178,24 @@ describe('queueMessage', () => {
 })
 
 describe('retryFiles', () => {
+  it('files marked as spoilers go to the core marked, on the first try and on a retry (#289)', () => {
+    resetState()
+    vi.mocked(invoke).mockReset()
+    vi.mocked(invoke).mockImplementation((async () => undefined) as never)
+    const files = [
+      { id: 'S1', name: 'ending.webp', size: 10, kind: 'image' as const, preview: null, spoiler: true },
+      { id: 'S2', name: 'notes.pdf', size: 10, kind: 'file' as const, preview: null },
+    ]
+    queueMessage('C1', '', null, null, files as never)
+    const p = app.state.pending.C1[0]
+    expect(p.files!.map((f) => !!f.spoiler)).toEqual([true, false])
+    app.state = setPendingStatus(app.state, 'C1', p.nonce, 'failed')
+    retryFiles('C1', app.state.pending.C1[0])
+    const sent = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'send_with_attachments')
+    expect(sent).toHaveLength(2)
+    for (const c of sent) expect((c[1] as { spoilers: string[] }).spoilers).toEqual(['S1'])
+  })
+
   it('a double-clicked Retry on a message with files sends it once (#297)', () => {
     resetState()
     vi.mocked(invoke).mockReset()

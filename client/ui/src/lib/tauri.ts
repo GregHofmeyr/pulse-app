@@ -122,6 +122,8 @@ export type StagedFile = {
   height: number | null
   /** A small PNG thumbnail of an image (a data URL). */
   preview: string | null
+  /** Marked as a spoiler in the composer (#289); the UI's own, not the core's. */
+  spoiler?: boolean
 }
 /** Mirrors `attachments::StageResult`. */
 export type StageResult =
@@ -250,6 +252,8 @@ export const api = {
     nonce: string
     staged: string[]
     tempDays: number | null
+    /** Staged ids marked as spoilers (#289). */
+    spoilers: string[]
   }) => invoke<void>('send_with_attachments', a),
   cancelAttachmentSend: (nonce: string) => invoke<void>('cancel_attachment_send', { nonce }),
   attachmentUrls: (messageId: string) => invoke<AttachmentUrl[]>('attachment_urls', { messageId }),
