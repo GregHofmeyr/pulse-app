@@ -2,8 +2,10 @@
 // Theming step 1 (#42, docs/superpowers/specs/2026-11-03-theming-design.md "S — tokens only"): every
 // UI colour comes from an app.css :root token, so a theme only has to swap token values. Colours
 // that are fixed on purpose (video chrome, the QR code, skin tones, the profile
-// card's own theme, avatar initials) are listed below, each with its reason. The token values are
-// pinned to what the app looked like before the tokens existed: this step changes no pixel.
+// card's own theme, avatar initials) are listed below, each with its reason and how many times it is
+// used (#116), so a new use of an allowed literal is caught too. Components, the .ts colour sources and
+// the other stylesheets are all scanned. The token values are pinned to what the app looked like
+// before the tokens existed: this step changes no pixel.
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -23,17 +25,22 @@ beforeAll(() => {
 const norm = (v: string) => v.trim().replace(/,\s+/g, ',')
 const token = (name: string) => norm(root.getPropertyValue(name))
 
-const svelteFiles = (() => {
+const filesWhere = (keep: (name: string) => boolean) => {
   const files: string[] = []
   const walk = (dir: string) => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       if (e.isDirectory()) walk(join(dir, e.name))
-      else if (e.name.endsWith('.svelte')) files.push(join(dir, e.name))
+      else if (keep(e.name)) files.push(join(dir, e.name))
     }
   }
   walk(__dirname)
   return files
-})()
+}
+const svelteFiles = filesWhere((n) => n.endsWith('.svelte'))
+/** Code that can hold a colour: not tests, not type declarations. */
+const tsFiles = filesWhere((n) => n.endsWith('.ts') && !n.endsWith('.test.ts') && !n.endsWith('.d.ts'))
+/** app.css has its own check below (colours only in the theme blocks). */
+const cssFiles = filesWhere((n) => n.endsWith('.css') && n !== 'app.css')
 const rel = (f: string) => f.slice(__dirname.length + 1)
 
 /** Colour literals: hex, the colour functions, and white/black as a CSS value (not white-space). */
@@ -44,67 +51,147 @@ const styleBlocks = (text: string) => [...text.matchAll(/<style[^>]*>([\s\S]*?)<
  *  preceding `:` (so a URL's `://` stays). */
 const withoutComments = (text: string) =>
   text.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
-const literalsIn = (text: string) => {
-  const found = new Set(withoutComments(text).match(LITERAL) ?? [])
+/** The CSS a file holds: its <style> blocks, inline `style="…"` strings and `style:prop="…"` values (a .svelte
+ *  file), or all of it (a stylesheet). */
+const cssIn = (text: string, file: string) => {
+  if (file.endsWith('.css')) return [text]
+  const markup = withoutComments(text.replace(/<style[^>]*>[\s\S]*?<\/style>/g, ''))
+  const inline = [...markup.matchAll(/\bstyle=(["'])([\s\S]*?)\1/g)].map((m) => `{${m[2]}}`)
+  const directives = [...markup.matchAll(/\bstyle:([\w-]+)(?:\|important)?=(?:(["'])([\s\S]*?)\2|\{\s*(["'`])([\s\S]*?)\4\s*\})/g)]
+    .map((m) => `{${m[1]}: ${m[3] ?? m[5]}}`)
+  return [...styleBlocks(text), ...inline, ...directives]
+}
+/** A named colour set from script: a canvas fill or stroke, or a style property (`el.style.color = 'white'`). */
+const SCRIPT_NAMED = /\b(?:fillStyle|strokeStyle|color|background(?:Color)?|borderColor|outlineColor|fill|stroke)\s*[:=]\s*(["'`])([^"'`]*)\1/g
+
+/** Every colour literal in a file, with how many times it appears. */
+const literalCounts = (text: string, file: string) => {
+  const found = new Map<string, number>()
+  const add = (lit: string) => found.set(lit, (found.get(lit) ?? 0) + 1)
+  for (const lit of withoutComments(text).match(LITERAL) ?? []) add(lit)
   // named colours only inside declarations (comments and markup text say "white" too)
-  for (const css of styleBlocks(text)) {
-    for (const decl of css.replace(/\/\*[\s\S]*?\*\//g, '').match(/:[^;{}]*/g) ?? []) for (const n of decl.match(NAMED) ?? []) found.add(n)
+  for (const css of cssIn(text, file)) {
+    for (const decl of css.replace(/\/\*[\s\S]*?\*\//g, '').match(/:[^;{}]*/g) ?? []) for (const n of decl.match(NAMED) ?? []) add(n)
+  }
+  if (file.endsWith('.ts')) {
+    for (const m of withoutComments(text).matchAll(SCRIPT_NAMED)) for (const n of m[2].match(NAMED) ?? []) add(n)
   }
   return found
 }
+const literalsIn = (text: string, file = 'x.svelte') => new Set(literalCounts(text, file).keys())
 
 const VIDEO = 'video chrome: drawn over black video, frames or a thumbnail, so white-on-black in every theme'
 const AVATAR = 'initials on the fixed fallback avatar palette (lib/avatar.ts): white reads on every swatch'
 
-/** Colour literals allowed to stay in a component, each with why it is fixed. */
-const ALLOWED: Record<string, { literals: string[]; reason: string }[]> = {
-  'components/Avatar.svelte': [{ literals: ['#fff'], reason: AVATAR }],
-  'routes/Shell.svelte': [{ literals: ['#fff'], reason: AVATAR + ' (the server chip)' }],
-  'components/QuickSwitcher.svelte': [{ literals: ['#fff'], reason: AVATAR + " (a server row's chip, as the tab's)" }],
-  'components/ClipCard.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .55)', 'rgba(0, 0, 0, .75)', 'rgba(0, 0, 0, .6)'], reason: VIDEO }],
-  'components/ClipDownload.svelte': [{ literals: ['#fff', 'rgba(0, 0, 0, .6)', 'rgba(0, 0, 0, .75)', 'rgba(255, 255, 255, .25)'], reason: VIDEO }],
-  'components/ClipPlayer.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, 0.6)', 'rgba(0, 0, 0, 0.8)', 'rgba(0, 0, 0, 0.85)'], reason: VIDEO }],
-  'components/ClipEditor.svelte': [{ literals: ['#000'], reason: VIDEO }],
-  'components/ClipTimeline.svelte': [{ literals: ['rgba(0, 0, 0, 0.5)', 'rgba(0, 0, 0, 0.6)'], reason: VIDEO + ' (the filmstrip)' }],
-  'components/PendingClip.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .75)'], reason: VIDEO }],
-  'components/FullView.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .5)'], reason: VIDEO }],
-  'components/StreamTile.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .5)', 'rgba(0, 0, 0, .55)', 'rgba(0, 0, 0, .75)', 'rgba(255, 255, 255, .16)'], reason: VIDEO }],
-  'components/MiniPreview.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .55)'], reason: VIDEO }],
-  'components/LiveCard.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .55)', 'rgba(0, 0, 0, .7)', 'rgba(255, 255, 255, .4)', 'rgba(255, 255, 255, .8)'], reason: VIDEO }],
-  'components/GoLiveDialog.svelte': [{ literals: ['#000'], reason: VIDEO + ' (the preview)' }],
-  'components/CropDialog.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .6)'], reason: VIDEO + ' (the image being cropped, its mask and crop box)' }],
-  'components/StreamDiagOverlay.svelte': [{ literals: ['rgba(0, 0, 0, .65)', '#e6e6e6'], reason: 'developer stream diagnostics, a fixed dark box over the video' }],
-  'components/LinkEmbed.svelte': [
-    { literals: ['#000', '#fff', 'rgba(10, 11, 13, .62)', 'rgba(10, 11, 13, .82)', 'rgba(0, 0, 0, .35)'], reason: VIDEO + ' (the player frame and the play button on the thumbnail)' },
+const CONTENT = 'content colours, not UI: a theme never recolours them'
+
+/** Colour literals allowed to stay in a file: each with why it is fixed and how many times it is used. A new use of
+ *  an allowed literal changes the count and fails, so it gets looked at (#116). */
+type Allowed = { uses: Record<string, number>; reason: string }
+/** A palette file (a table of content colours): only its number of literals is pinned. */
+type Palette = { total: number; reason: string }
+const ALLOWED: Record<string, (Allowed | Palette)[]> = {
+  'components/Avatar.svelte': [{ uses: { '#fff': 1 }, reason: AVATAR }],
+  'routes/Shell.svelte': [{ uses: { '#fff': 1 }, reason: AVATAR + ' (the server chip)' }],
+  'components/QuickSwitcher.svelte': [{ uses: { '#fff': 1 }, reason: AVATAR + " (a server row's chip, as the tab's)" }],
+  'components/ClipCard.svelte': [{ uses: { '#000': 2, '#fff': 3, 'rgba(0, 0, 0, .55)': 1, 'rgba(0, 0, 0, .75)': 2, 'rgba(0, 0, 0, .6)': 1 }, reason: VIDEO }],
+  'components/ClipDownload.svelte': [
+    { uses: { '#fff': 2, 'rgba(0, 0, 0, .6)': 2, 'rgba(0, 0, 0, .75)': 2, 'rgba(255, 255, 255, .25)': 1 }, reason: VIDEO + ' (the download icon and Show in folder)' },
   ],
-  'components/TwoFactorSettings.svelte': [{ literals: ['#fff', '#000'], reason: 'the QR code: white quiet zone, black modules, or scanners fail' }],
-  'components/EmojiPicker.svelte': [{ literals: ['#f7c948', '#f7dbc0', '#e8c29a', '#c89369', '#9a6a45', '#5f402c'], reason: 'skin-tone swatches: content colours' }],
-  'components/AppearanceSettings.svelte': [{ literals: ['#3b4bd8'], reason: 'a sample role colour in the Name readability preview (user data, not UI)' }],
-  'components/ProfileSettings.svelte': [{ literals: ['#ffffff'], reason: "the first custom name colour's starting value (user data, not UI)" }],
-  'components/FullProfile.svelte': [{ literals: ['#000'], reason: "the right column's round-cornered scroll mask: only its alpha counts, never shown as a colour" }],
+  'components/ClipPlayer.svelte': [{ uses: { '#000': 2, '#fff': 3, 'rgba(0, 0, 0, 0.6)': 1, 'rgba(0, 0, 0, 0.8)': 1, 'rgba(0, 0, 0, 0.85)': 2 }, reason: VIDEO }],
+  'components/ClipEditor.svelte': [{ uses: { '#000': 1 }, reason: VIDEO }],
+  'components/ClipTimeline.svelte': [{ uses: { 'rgba(0, 0, 0, 0.5)': 1, 'rgba(0, 0, 0, 0.6)': 1 }, reason: VIDEO + ' (the filmstrip)' }],
+  'components/PendingClip.svelte': [{ uses: { '#000': 1, '#fff': 1, 'rgba(0, 0, 0, .75)': 1 }, reason: VIDEO }],
+  'components/FullView.svelte': [{ uses: { '#000': 2, '#fff': 1, 'rgba(0, 0, 0, .5)': 1 }, reason: VIDEO }],
+  'components/StreamTile.svelte': [
+    { uses: { '#000': 2, '#fff': 4, 'rgba(0, 0, 0, .5)': 1, 'rgba(0, 0, 0, .55)': 1, 'rgba(0, 0, 0, .75)': 1, 'rgba(255, 255, 255, .16)': 1 }, reason: VIDEO },
+  ],
+  'components/MiniPreview.svelte': [{ uses: { '#000': 2, '#fff': 1, 'rgba(0, 0, 0, .55)': 1 }, reason: VIDEO }],
+  'components/LiveCard.svelte': [
+    { uses: { '#000': 2, '#fff': 3, 'rgba(0, 0, 0, .55)': 3, 'rgba(0, 0, 0, .7)': 1, 'rgba(255, 255, 255, .4)': 1, 'rgba(255, 255, 255, .8)': 1 }, reason: VIDEO },
+  ],
+  'components/GoLiveDialog.svelte': [{ uses: { '#000': 1 }, reason: VIDEO + ' (the preview)' }],
+  'components/CropDialog.svelte': [{ uses: { '#000': 1, '#fff': 1, 'rgba(0, 0, 0, .6)': 1 }, reason: VIDEO + ' (the image being cropped, its mask and crop box)' }],
+  'components/StreamDiagOverlay.svelte': [{ uses: { 'rgba(0, 0, 0, .65)': 1, '#e6e6e6': 1 }, reason: 'developer stream diagnostics, a fixed dark box over the video' }],
+  'components/LinkEmbed.svelte': [
+    { uses: { '#000': 1, '#fff': 1, 'rgba(10, 11, 13, .62)': 1, 'rgba(10, 11, 13, .82)': 1, 'rgba(0, 0, 0, .35)': 1 }, reason: VIDEO + ' (the player frame and the play button on the thumbnail)' },
+  ],
+  'components/TwoFactorSettings.svelte': [{ uses: { '#fff': 1, '#000': 1 }, reason: 'the QR code: white quiet zone, black modules, or scanners fail' }],
+  'components/EmojiPicker.svelte': [
+    { uses: { '#f7c948': 1, '#f7dbc0': 1, '#e8c29a': 1, '#c89369': 1, '#9a6a45': 1, '#5f402c': 1 }, reason: 'skin-tone swatches: content colours' },
+  ],
+  'components/AppearanceSettings.svelte': [{ uses: { '#3b4bd8': 1 }, reason: 'a sample role colour in the Name readability preview (user data, not UI)' }],
+  'components/ProfileSettings.svelte': [{ uses: { '#ffffff': 1 }, reason: "the first custom name colour's starting value (user data, not UI)" }],
+  'components/FullProfile.svelte': [{ uses: { '#000': 7 }, reason: "the right column's round-cornered scroll mask: only its alpha counts, never shown as a colour" }],
+  // the .ts colour sources
+  'lib/stream/stream.svelte.ts': [{ uses: { '#000': 1 }, reason: VIDEO + ' (the letterbox the stream canvas paints round a frame)' }],
+  'lib/theme.svelte.ts': [{ uses: { '#000000': 1 }, reason: 'a dummy accent, only to list the token names deriveAccent sets (never shown)' }],
+  'lib/color.ts': [
+    { uses: { 'rgba(hex: string, alpha: number)': 1, 'rgba(${r}, ${g}, ${b}, ${String(alpha)': 1 }, reason: 'the rgba() helper itself: its signature and the string it builds, no colour of its own' },
+  ],
+  'lib/avatar.ts': [{ total: 8, reason: 'the fallback avatar palette: ' + CONTENT }],
+  'lib/nameStyle.ts': [{ total: 15, reason: 'the name colour presets people pick from: ' + CONTENT }],
+  'lib/cardTheme.ts': [{ total: 28, reason: "the profile card's own themes, drawn the same in every app theme: " + CONTENT }],
+  'lib/themes.ts': [{ total: 79, reason: 'the theme table app.css mirrors (themeCss.test.ts keeps the two equal) and the accent presets' }],
+  'lib/wheelColours.ts': [{ total: 3, reason: "the picker wheel's slices and their label colours (see below): " + CONTENT }],
 }
 
 describe('colour literals', () => {
-  it('no component hard-codes a colour outside the allow-list', () => {
+  const scanned = [...svelteFiles, ...tsFiles, ...cssFiles]
+  const pinned = (file: string) => {
+    const uses = new Map<string, number>()
+    let total: number | null = null
+    for (const e of ALLOWED[file] ?? []) {
+      if ('total' in e) total = (total ?? 0) + e.total
+      else for (const [lit, n] of Object.entries(e.uses)) uses.set(lit, (uses.get(lit) ?? 0) + n)
+    }
+    return { uses, total }
+  }
+
+  it('no file hard-codes a colour outside the allow-list, nor uses an allowed one more often', () => {
     expect(svelteFiles.length).toBeGreaterThan(50)
+    expect(tsFiles.length).toBeGreaterThan(50)
+    expect(cssFiles.map(rel).sort()).toEqual(['fonts.css', 'nameFonts.css'])
     const offenders: string[] = []
-    for (const f of svelteFiles) {
-      const allowed = new Set((ALLOWED[rel(f)] ?? []).flatMap((e) => e.literals))
-      for (const lit of literalsIn(readFileSync(f, 'utf8'))) if (!allowed.has(lit)) offenders.push(`${rel(f)}: ${lit}`)
+    for (const f of scanned) {
+      const found = literalCounts(readFileSync(f, 'utf8'), f)
+      const { uses, total } = pinned(rel(f))
+      if (total !== null) {
+        const n = [...found.values()].reduce((a, b) => a + b, 0)
+        if (n !== total) offenders.push(`${rel(f)}: ${n} colour literals, ${total} allowed`)
+        continue
+      }
+      for (const [lit, n] of found) {
+        const allowed = uses.get(lit) ?? 0
+        if (n > allowed) offenders.push(`${rel(f)}: ${lit}${allowed ? ` used ${n} times, ${allowed} allowed` : ''}`)
+      }
     }
     expect(offenders).toEqual([])
   })
 
-  it('every allow-list entry still exists and says why (no stale entries)', () => {
+  it('every allow-list entry still exists, as often as it says, and says why (no stale entries)', () => {
     const stale: string[] = []
     for (const [file, entries] of Object.entries(ALLOWED)) {
-      const found = literalsIn(src(file))
-      for (const e of entries) {
-        expect(e.reason.length, file).toBeGreaterThan(10)
-        for (const lit of e.literals) if (!found.has(lit)) stale.push(`${file}: ${lit}`)
-      }
+      for (const e of entries) expect(e.reason.length, file).toBeGreaterThan(10)
+      const found = literalCounts(src(file), file)
+      const { uses } = pinned(file)
+      for (const [lit, n] of uses) if ((found.get(lit) ?? 0) !== n) stale.push(`${file}: ${lit} used ${found.get(lit) ?? 0} times, ${n} allowed`)
     }
     expect(stale).toEqual([])
+  })
+
+  it('finds colours in inline styles, style: directives, stylesheets and script', () => {
+    const svelte = (t: string) => [...literalsIn(t, 'X.svelte')]
+    expect(svelte('<div style="color: white; gap: 4px"></div>')).toEqual(['white'])
+    expect(svelte("<div style='background:black'></div>")).toEqual(['black'])
+    expect(svelte('<div style:color="white" style:background-color={\'black\'}></div>')).toEqual(['white', 'black'])
+    expect(svelte('<div style:color={`#123456`}></div>')).toEqual(['#123456'])
+    // words in markup text and attribute names aren't colours
+    expect(svelte('<p class="white-space">Black or white?</p>')).toEqual([])
+    expect([...literalsIn('.a { color: white; }', 'x.css')]).toEqual(['white'])
+    expect([...literalsIn("ctx.fillStyle = 'black'\nel.style.color = 'white'", 'x.ts')]).toEqual(['black', 'white'])
+    expect([...literalsIn("const kind = 'white'; say('black')", 'x.ts')]).toEqual([])
+    expect([...literalCounts('<style>.a { color: #fff; } .b { color: #fff; }</style>', 'X.svelte')]).toEqual([['#fff', 2]])
   })
 
   it('app.css keeps its colour values in the theme blocks only', () => {
@@ -214,6 +301,29 @@ describe('text vs fill', () => {
       }
     }
     expect(offenders).toEqual([])
+  })
+
+  // An SVG's fill or stroke in the accent family is a mark drawn like text (an icon, a glyph, a thin line), so it
+  // uses the -text token too (#116), in a rule, a style: directive or an attribute. Shapes and areas keep the fill.
+  const FILL_AS_FILL: Record<string, RegExp> = {
+    'components/ProgressRing.svelte': /^\s*\.fill /, // the download ring: often over video (the clip icon), where the bright accent reads
+    'components/SoundDialog.svelte': /^\s*\.(bar\.on|grip|sel) /, // the waveform's played bars, its handles and the selection: areas
+  }
+  it('accent, warn, ok and quote green as an SVG fill or stroke use their -text token', () => {
+    const FILL_STROKE = /(?:(?:^|[\s;{])(?:fill|stroke):\s*|\b(?:fill|stroke)=["{]\s*["'`]?|\bstyle:(?:fill|stroke)=["{]\s*["'`]?)var\(--(?:accent|warn|ok|quote-green)\)/
+    const offenders: string[] = []
+    for (const f of [...svelteFiles, ...tsFiles, resolve(__dirname, 'app.css')]) {
+      const allowed = FILL_AS_FILL[rel(f)]
+      for (const line of readFileSync(f, 'utf8').split('\n')) {
+        if (FILL_STROKE.test(line) && !(allowed && allowed.test(line))) offenders.push(`${rel(f)}: ${line.trim()}`)
+      }
+    }
+    expect(offenders).toEqual([])
+    // and the check sees each form
+    for (const line of ['  .x { fill: var(--accent); }', '<path stroke="var(--ok)" />', "<circle style:fill={'var(--warn)'} />", '<rect fill={`var(--quote-green)`} />']) {
+      expect(FILL_STROKE.test(line), line).toBe(true)
+    }
+    expect(FILL_STROKE.test('  .x { fill: var(--accent-text); }')).toBe(false)
   })
 })
 
