@@ -2464,6 +2464,153 @@ impl Api {
         .await
     }
 
+    /// Your scheduled messages (#299), soonest first.
+    pub async fn list_scheduled(
+        &self,
+        token: &str,
+    ) -> Result<Vec<pulse_protocol::rest::ScheduledMessage>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/scheduled", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Write a message now for the server to post at `send_at` (#299).
+    pub async fn schedule_message(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &pulse_protocol::rest::ScheduleMessageRequest,
+    ) -> Result<pulse_protocol::rest::ScheduledMessage, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/channels/{channel}/scheduled", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A scheduled message's new text and/or time (#299).
+    pub async fn edit_scheduled(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::ScheduledId,
+        body: &pulse_protocol::rest::EditScheduledRequest,
+    ) -> Result<pulse_protocol::rest::ScheduledMessage, ApiError> {
+        Self::parse(
+            self.http
+                .patch(format!("{}/scheduled/{id}", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Post a scheduled message now (#299); the message it became.
+    pub async fn send_scheduled_now(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::ScheduledId,
+    ) -> Result<Message, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/scheduled/{id}/send", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn delete_scheduled(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::ScheduledId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/scheduled/{id}", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Your reminders (#300), soonest first.
+    pub async fn list_reminders(
+        &self,
+        token: &str,
+    ) -> Result<Vec<pulse_protocol::rest::MessageReminder>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/reminders", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// "Remind me about this" (#300).
+    pub async fn create_reminder(
+        &self,
+        token: &str,
+        message: MessageId,
+        body: &pulse_protocol::rest::CreateReminderRequest,
+    ) -> Result<pulse_protocol::rest::MessageReminder, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/messages/{message}/reminders", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Cancel a reminder, or mark a due one done (#300).
+    pub async fn delete_reminder(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::ReminderId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/reminders/{id}", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A due reminder opened: read on every device (#300).
+    pub async fn reminder_seen(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::ReminderId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(format!("{}/reminders/{id}/seen", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// `emoji`: a Unicode emoji or `custom:<id>`.
     pub async fn add_reaction(
         &self,

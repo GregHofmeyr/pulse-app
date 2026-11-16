@@ -146,6 +146,7 @@ impl Backend {
             Click {
                 channel_id: n.channel_id.clone(),
                 thread_id: n.thread_id.clone(),
+                message_id: n.message_id.clone(),
             },
         );
         Ok(())
@@ -223,6 +224,7 @@ mod tests {
         Click {
             channel_id: channel.into(),
             thread_id: thread.map(Into::into),
+            message_id: None,
         }
     }
 
@@ -341,6 +343,7 @@ mod tests {
             body: "Sent by a test; nothing to do.".into(),
             channel_id: "TEST".into(),
             thread_id: None,
+            message_id: None,
             avatar: None,
             image: None,
             tag: None,
@@ -359,6 +362,7 @@ mod tests {
             body: "Sent by a test; it should close by itself in 3 s.".into(),
             channel_id: "TEST".into(),
             thread_id: None,
+            message_id: None,
             avatar: None,
             image: None,
             tag: Some("call-TEST".into()),
