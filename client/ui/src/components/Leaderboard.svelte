@@ -1,6 +1,7 @@
 <script lang="ts">
   // The quotes leaderboard (spec §4.3): a popover under the header's trophy button. Each quote
-  // entry opens that quote in its channel (the caller jumps to it).
+  // entry opens that quote in its channel (the caller jumps to it). Below the quotes, the server's
+  // most Steam hours over the last two weeks (#383), when anyone shares some.
   import VoterStack from './VoterStack.svelte'
   import { clickOutside } from '../lib/actions'
   import { plural, quotePreview, score, snapshotSpeakers } from '../lib/quotes'
@@ -12,6 +13,8 @@
   import type { Message } from '../lib/protocol/Message'
   import type { QuoteSpeaker } from '../lib/protocol/QuoteSpeaker'
   import type { SpeakerCount } from '../lib/protocol/SpeakerCount'
+  import type { SteamHoursEntry } from '../lib/protocol/SteamHoursEntry'
+  import { hoursText } from '../lib/achievements'
 
   let { serverId, onOpen, onClose }: {
     serverId: string
@@ -29,6 +32,19 @@
         if (id === serverId) board = b
       },
       (e) => (error = errorText(e)),
+    )
+  })
+
+  // Steam hours (#383): an older server (or one without Steam) simply has no section
+  let hours = $state<SteamHoursEntry[]>([])
+  $effect(() => {
+    const id = serverId
+    hours = []
+    api.steamHours(id).then(
+      (h) => {
+        if (id === serverId) hours = h?.entries ?? []
+      },
+      () => {},
     )
   })
 
@@ -70,6 +86,17 @@
   </section>
 {/snippet}
 
+{#snippet steam()}
+  {#if hours.length}
+    <section data-steam-hours>
+      <h3>Most Steam hours: last 2 weeks</h3>
+      {#each hours as h, i (h.user_id)}
+        <div class="person"><span class="name"><span class="rank">{i + 1}</span>{nameOf(h.user_id)}</span><span class="note">{hoursText(h.minutes)}</span></div>
+      {/each}
+    </section>
+  {/if}
+{/snippet}
+
 <div class="leaderboard menu-surface pop-in" role="dialog" aria-label="Leaderboard" use:clickOutside={onClose}>
   <h2>Leaderboard</h2>
   {#if error}
@@ -78,6 +105,7 @@
     <Loading />
   {:else if empty}
     <p class="none">No quotes yet. Post one and get the board going.</p>
+    {@render steam()}
   {:else}
     <section>
       <h3>Quote of the Year</h3>
@@ -106,6 +134,7 @@
     {@render quotes('Most reacted: all time', board.top_all_time)}
     {@render people('Most quoted', board.most_quoted, 'quote', 'quotes')}
     {@render people('Most quote awards', board.most_awarded, 'award', 'awards')}
+    {@render steam()}
   {/if}
 </div>
 
@@ -126,6 +155,7 @@
   .win .entry { flex: 1; }
   .year { flex-shrink: 0; padding: 1px 7px; border-radius: var(--radius-md); background: var(--quote-green); color: var(--on-quote-green); font-size: 11px; font-weight: 700; }
   .person { display: flex; justify-content: space-between; gap: 8px; padding: 4px 8px; font-size: 13px; }
+  .rank { display: inline-block; min-width: 1.5em; color: var(--text-3); font-variant-numeric: tabular-nums; }
   .none { margin: 2px 8px; color: var(--text-3); font-size: 13px; }
   .error { margin: 2px 8px; color: var(--danger-text); font-size: 13px; }
 </style>

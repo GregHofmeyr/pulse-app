@@ -1,7 +1,7 @@
 //! Live achievements (#379): every [`crate::config::SteamConfig::poll_every`], each linked person who shares
 //! achievements and plays a Steam game (or stopped less than `tail` ago) gets one `GetPlayerAchievements` call; what's
 //! new since the stored state becomes a card. Steam refusing (private game details) backs them off for an hour and
-//! tells their Settings.
+//! tells their Settings. Steam hours (#383) are read from the same loop, about hourly.
 
 use pulse_protocol::ids::UserId;
 
@@ -14,6 +14,8 @@ use crate::AppState;
 const SESSION_SLACK_SECS: i64 = 120;
 /// How often the poller also retries backfills that met a private profile.
 const BACKFILL_RETRY_EVERY: u32 = 30;
+/// How often (in rounds) everyone's Steam hours are read (#383): about hourly, and at start.
+const HOURS_EVERY: u32 = 30;
 
 /// Poll forever.
 pub fn spawn(s: AppState) {
@@ -27,6 +29,10 @@ pub fn spawn(s: AppState) {
         every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             every.tick().await;
+            if n.is_multiple_of(HOURS_EVERY) {
+                let s = s.clone();
+                tokio::spawn(async move { super::hours::tick(&s).await });
+            }
             tick(&s).await;
             n = n.wrapping_add(1);
             if n.is_multiple_of(BACKFILL_RETRY_EVERY) {

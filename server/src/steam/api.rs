@@ -67,6 +67,14 @@ pub struct OwnedGame {
     pub has_stats: bool,
 }
 
+/// A game someone played in the last two weeks (#383).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecentGame {
+    pub app_id: u32,
+    /// Minutes in the last two weeks.
+    pub minutes_2weeks: u64,
+}
+
 /// The daily allowance: `cap` calls per UTC day, server-wide.
 pub struct Budget {
     cap: u32,
@@ -231,6 +239,17 @@ impl Api {
             true,
         )?;
         self.call("GetOwnedGames", url, parse_owned).await
+    }
+
+    /// What `steam_id` played in the last two weeks (#383); `Err(Private)` when Steam shows nothing (a private
+    /// profile answers an empty response, someone who played nothing a `total_count` of 0).
+    pub async fn recent_games(&self, steam_id: &str) -> Result<Vec<RecentGame>, ApiError> {
+        let url = self.url(
+            "/IPlayerService/GetRecentlyPlayedGames/v1/",
+            &[("steamid", steam_id)],
+            true,
+        )?;
+        self.call("GetRecentlyPlayedGames", url, parse_recent).await
     }
 
     /// `steam_id`'s persona name; `None` without a key or when Steam doesn't say.
@@ -494,6 +513,52 @@ pub fn parse_owned(status: u16, body: &[u8]) -> Result<Vec<OwnedGame>, ApiError>
         .collect())
 }
 
+/// `GetRecentlyPlayedGames`: `response.games` (absent when they played nothing, with `total_count` 0); an empty
+/// `response` is a private profile.
+pub fn parse_recent(status: u16, body: &[u8]) -> Result<Vec<RecentGame>, ApiError> {
+    if status == 403 {
+        return Err(ApiError::Private);
+    }
+    if status != 200 {
+        return Err(ApiError::Failed(format!(
+            "GetRecentlyPlayedGames: HTTP {status}"
+        )));
+    }
+    #[derive(Deserialize)]
+    struct Outer {
+        response: Option<Inner>,
+    }
+    #[derive(Deserialize)]
+    struct Inner {
+        #[serde(default)]
+        total_count: Option<u64>,
+        #[serde(default)]
+        games: Option<Vec<G>>,
+    }
+    #[derive(Deserialize)]
+    struct G {
+        appid: u32,
+        #[serde(default)]
+        playtime_2weeks: u64,
+    }
+    let o: Outer = json("GetRecentlyPlayedGames", body)?;
+    let Some(r) = o.response else {
+        return Err(ApiError::Private);
+    };
+    match (r.total_count, r.games) {
+        (_, Some(games)) => Ok(games
+            .into_iter()
+            .map(|g| RecentGame {
+                app_id: g.appid,
+                // two weeks at most: anything more is nonsense
+                minutes_2weeks: g.playtime_2weeks.min(14 * 24 * 60),
+            })
+            .collect()),
+        (Some(_), None) => Ok(vec![]),
+        (None, None) => Err(ApiError::Private),
+    }
+}
+
 /// `GetPlayerSummaries`: the persona name of `steam_id`.
 pub fn parse_persona(status: u16, body: &[u8], steam_id: &str) -> Option<String> {
     if status != 200 {
@@ -611,6 +676,32 @@ mod tests {
         let body = br#"{"response":{"players":[{"steamid":"2","personaname":"other"},{"steamid":"1","personaname":" alex\n "}]}}"#;
         assert_eq!(parse_persona(200, body, "1").as_deref(), Some("alex"));
         assert_eq!(parse_persona(200, body, "3"), None);
+    }
+
+    #[test]
+    fn recent_games_none_and_a_private_profile() {
+        let body = br#"{"response":{"total_count":2,"games":[
+            {"appid":10,"name":"G","playtime_2weeks":90,"playtime_forever":500},
+            {"appid":20,"playtime_2weeks":999999}]}}"#;
+        let g = parse_recent(200, body).unwrap();
+        assert_eq!(
+            g[0],
+            RecentGame {
+                app_id: 10,
+                minutes_2weeks: 90
+            }
+        );
+        assert_eq!(g[1].minutes_2weeks, 14 * 24 * 60, "capped at two weeks");
+        assert_eq!(
+            parse_recent(200, br#"{"response":{"total_count":0}}"#),
+            Ok(vec![])
+        );
+        assert_eq!(
+            parse_recent(200, br#"{"response":{}}"#),
+            Err(ApiError::Private)
+        );
+        assert_eq!(parse_recent(403, b""), Err(ApiError::Private));
+        assert!(matches!(parse_recent(500, b""), Err(ApiError::Failed(_))));
     }
 
     #[test]

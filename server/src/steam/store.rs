@@ -28,9 +28,11 @@ pub struct Link {
     pub private_since: Option<String>,
     pub completion_rate: Option<f64>,
     pub perfect_games: i64,
+    pub share_hours: bool,
+    pub recent_minutes: Option<i64>,
 }
 
-const LINK_COLS: &str = "user_id, steam_id, persona, share_achievements, backfill, private_since, completion_rate, perfect_games";
+const LINK_COLS: &str = "user_id, steam_id, persona, share_achievements, backfill, private_since, completion_rate, perfect_games, share_hours, recent_minutes";
 
 pub async fn link_of(db: &SqlitePool, user: UserId) -> sqlx::Result<Option<Link>> {
     sqlx::query_as(&format!(
@@ -55,6 +57,11 @@ pub async fn status(s: &AppState, user: UserId) -> AppResult<SteamStatus> {
             backfill_done: l.backfill == DONE,
             completion_rate: l.completion_rate.map(|r| r as f32),
             perfect_games: l.perfect_games.max(0) as u32,
+            share_hours: l.share_hours,
+            recent_minutes: l
+                .recent_minutes
+                .filter(|_| l.share_hours)
+                .map(|m| m.max(0) as u32),
         }),
     })
 }
@@ -151,16 +158,29 @@ async fn clear(conn: &mut SqliteConnection, user: UserId) -> sqlx::Result<bool> 
     Ok(n > 0)
 }
 
-pub async fn set_share(db: &SqlitePool, user: UserId, on: bool) -> sqlx::Result<bool> {
-    Ok(
-        sqlx::query("UPDATE steam_links SET share_achievements = ? WHERE user_id = ?")
-            .bind(on)
-            .bind(user.to_string())
-            .execute(db)
-            .await?
-            .rows_affected()
-            > 0,
+/// Change the switches `req` names (one left out stays); whether `user` is linked. Turning "Share Steam hours" off
+/// forgets the hours read (#383).
+pub async fn set_switches(
+    db: &SqlitePool,
+    user: UserId,
+    req: &pulse_protocol::rest::SteamSettingsRequest,
+) -> sqlx::Result<bool> {
+    Ok(sqlx::query(
+        "UPDATE steam_links SET share_achievements = COALESCE(?, share_achievements),
+                share_hours = COALESCE(?, share_hours),
+                recent_minutes = CASE WHEN ? = 0 THEN NULL ELSE recent_minutes END,
+                recent_at = CASE WHEN ? = 0 THEN NULL ELSE recent_at END
+         WHERE user_id = ?",
     )
+    .bind(req.share_achievements)
+    .bind(req.share_hours)
+    .bind(req.share_hours)
+    .bind(req.share_hours)
+    .bind(user.to_string())
+    .execute(db)
+    .await?
+    .rows_affected()
+        > 0)
 }
 
 /// Steam refused `user`'s game details: marked (once). Whether that's news.
@@ -288,6 +308,18 @@ pub async fn recompute(s: &AppState, user: UserId) -> AppResult<(Option<f32>, u3
     tx.commit().await?;
     crate::badges::engine::after(s, &[user]).await;
     Ok((rate, perfect))
+}
+
+/// `user`'s Steam hours over the last two weeks, as the profile card shows them (#383): while they share hours and
+/// once read.
+pub async fn profile_hours(conn: &mut SqliteConnection, user: UserId) -> sqlx::Result<Option<u32>> {
+    let m: Option<Option<i64>> = sqlx::query_scalar(
+        "SELECT recent_minutes FROM steam_links WHERE user_id = ? AND share_hours = 1",
+    )
+    .bind(user.to_string())
+    .fetch_optional(conn)
+    .await?;
+    Ok(m.flatten().map(|m| m.max(0) as u32))
 }
 
 /// The profile card's Steam stat: the completion rate and 100 % games, while `user` shares achievements and there's

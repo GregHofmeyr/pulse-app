@@ -37,5 +37,11 @@ export function completionLine(rate: number | null | undefined, perfect: number 
   return `${formatRate(rate)} completion${games}`
 }
 
+/** Steam hours (#383): 45 → "45 min", 1290 → "21.5 h". */
+export function hoursText(minutes: number): string {
+  const m = Math.max(0, Math.round(minutes))
+  return m < 60 ? `${m} min` : `${Math.round(m / 6) / 10} h`
+}
+
 /** 62.5 → "62.5 %", 100 → "100 %". */
 export const formatRate = (rate: number): string => `${Math.round(rate * 10) / 10} %`

@@ -61,6 +61,7 @@ import type { NotifyLevel } from './protocol/NotifyLevel'
 import type { Notice } from './notify'
 import type { EmbedProvider } from './protocol/EmbedProvider'
 import type { SteamStatus } from './protocol/SteamStatus'
+import type { SteamHours } from './protocol/SteamHours'
 import type { AchievementsChannel } from './protocol/AchievementsChannel'
 import type { Sound as StreamSound, SoundProbe, SoundStatus, WindowRef } from './stream/sound'
 
@@ -367,6 +368,10 @@ export const api = {
   linkSteam: () => invoke<void>('link_steam'),
   unlinkSteam: () => invoke<SteamStatus>('unlink_steam'),
   setSteamShare: (on: boolean) => invoke<SteamStatus>('set_steam_share', { on }),
+  /** "Share Steam hours" (#383). */
+  setSteamHours: (on: boolean) => invoke<SteamStatus>('set_steam_hours', { on }),
+  /** A server's Steam hours board (#383): who played the most over the last two weeks. */
+  steamHours: (serverId: string) => invoke<SteamHours>('steam_hours', { serverId }),
   /** A server's Achievements channel (#379); the owner may pick one of its text channels, or none. */
   achievementsChannel: (serverId: string) => invoke<AchievementsChannel>('achievements_channel', { serverId }),
   setAchievementsChannel: (serverId: string, channelId: string | null) =>

@@ -748,3 +748,145 @@ async fn general_of(
 ) -> ChannelId {
     general(app, token, server).await.id
 }
+
+// ---------- Steam hours (#383) ----------
+
+/// `name` registered and linked to `steam_id` (backfilled).
+async fn linked(app: &TestApp, fake: &FakeSteam, name: &str, steam_id: &str) -> (UserId, String) {
+    let (id, token) = register(app, name).await;
+    let page = link(app, fake, &token, steam_id).await;
+    assert!(page.contains("Steam linked"), "{page}");
+    wait_backfill(app, &token).await;
+    (id, token)
+}
+
+async fn hours_tick(app: &TestApp) {
+    pulse_server::steam::hours::tick(&app.state()).await;
+}
+
+async fn set_steam(app: &TestApp, token: &str, body: serde_json::Value) -> SteamStatus {
+    let r = app
+        .http
+        .put(app.url("/me/steam/settings"))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn steam_hours_show_on_profiles_the_board_and_touch_grass() {
+    let (app, fake) = setup().await;
+    let (alex, alex_t) = linked(&app, &fake, "alex", ALEX_STEAM).await;
+    let (sam, sam_t) = linked(&app, &fake, "sam", SAM_STEAM).await;
+    let (_, kim_t) = register(&app, "kim").await;
+    let server = create_server(&app, &alex_t, "Gamers").await;
+    for t in [&sam_t, &kim_t] {
+        let r = post_json(&app, t, &format!("/servers/{}/join", server.id), json!({})).await;
+        assert!(r.status().is_success());
+    }
+    fake.played_recently(ALEX_STEAM, SPACE, 20 * 60);
+    fake.played_recently(ALEX_STEAM, RACER, 90);
+    fake.played_recently(SAM_STEAM, RACER, 45);
+    hours_tick(&app).await;
+
+    let p: Profile = get_json(&app, &kim_t, &format!("/users/{alex}/profile")).await;
+    assert_eq!(p.stats.steam_recent_minutes, Some(20 * 60 + 90));
+    assert_eq!(
+        status(&app, &alex_t).await.link.unwrap().recent_minutes,
+        Some(1290)
+    );
+    // most first; kim (not linked) isn't on it
+    let board: pulse_protocol::rest::SteamHours =
+        get_json(&app, &kim_t, &format!("/servers/{}/steam-hours", server.id)).await;
+    let got: Vec<_> = board
+        .entries
+        .iter()
+        .map(|e| (e.user_id, e.minutes))
+        .collect();
+    assert_eq!(got, [(alex, 1290), (sam, 45)]);
+    // 21.5 h in two weeks: Touch Grass's first tier; sam's 45 minutes earn nothing
+    let tier = |who: UserId| {
+        let app = &app;
+        async move {
+            pulse_server::testing::count(
+                app,
+                &format!("SELECT COALESCE(MAX(tier), 0) FROM user_badges WHERE user_id = '{who}' AND badge_key = 'touch_grass'"),
+            )
+            .await
+        }
+    };
+    assert_eq!(tier(alex).await, 1);
+    assert_eq!(tier(sam).await, 0);
+    // a quiet fortnight later: the card follows, the badge stays
+    fake.clear_recent(ALEX_STEAM);
+    hours_tick(&app).await;
+    let p: Profile = get_json(&app, &kim_t, &format!("/users/{alex}/profile")).await;
+    assert_eq!(p.stats.steam_recent_minutes, Some(0));
+    assert_eq!(tier(alex).await, 1);
+    let board: pulse_protocol::rest::SteamHours =
+        get_json(&app, &kim_t, &format!("/servers/{}/steam-hours", server.id)).await;
+    assert_eq!(board.entries.len(), 1, "nobody with no hours");
+    // a stranger can't look
+    let (_, jo_t) = register(&app, "jo").await;
+    let r = app
+        .http
+        .get(app.url(&format!("/servers/{}/steam-hours", server.id)))
+        .bearer_auth(&jo_t)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+}
+
+#[tokio::test]
+async fn steam_hours_off_hides_them_and_stops_reading() {
+    let (app, fake) = setup().await;
+    let (alex, token) = linked(&app, &fake, "alex", ALEX_STEAM).await;
+    let server = create_server(&app, &token, "Gamers").await;
+    fake.played_recently(ALEX_STEAM, SPACE, 600);
+    hours_tick(&app).await;
+    assert!(
+        status(&app, &token).await.link.unwrap().share_hours,
+        "on by default"
+    );
+
+    let st = set_steam(&app, &token, json!({ "share_hours": false })).await;
+    let l = st.link.unwrap();
+    assert!(!l.share_hours);
+    assert_eq!(l.recent_minutes, None);
+    assert!(l.share_achievements, "the other switch stays");
+    let calls = fake.calls("GetRecentlyPlayedGames");
+    hours_tick(&app).await;
+    assert_eq!(fake.calls("GetRecentlyPlayedGames"), calls, "not read");
+    let p: Profile = get_json(&app, &token, &format!("/users/{alex}/profile")).await;
+    assert_eq!(p.stats.steam_recent_minutes, None);
+    let board: pulse_protocol::rest::SteamHours =
+        get_json(&app, &token, &format!("/servers/{}/steam-hours", server.id)).await;
+    assert!(board.entries.is_empty());
+
+    // back on: read again straight away
+    set_steam(&app, &token, json!({ "share_hours": true })).await;
+    for _ in 0..200 {
+        if status(&app, &token).await.link.unwrap().recent_minutes == Some(600) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("the hours were never read again");
+}
+
+#[tokio::test]
+async fn a_private_profile_shows_no_hours() {
+    let (app, fake) = setup().await;
+    let (alex, token) = linked(&app, &fake, "alex", ALEX_STEAM).await;
+    fake.played_recently(ALEX_STEAM, SPACE, 600);
+    hours_tick(&app).await;
+    fake.set_private(ALEX_STEAM, true);
+    hours_tick(&app).await;
+    let p: Profile = get_json(&app, &token, &format!("/users/{alex}/profile")).await;
+    assert_eq!(p.stats.steam_recent_minutes, None);
+}

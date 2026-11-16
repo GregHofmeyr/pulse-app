@@ -194,11 +194,30 @@ describe('Steam account (#379)', () => {
     expect(told().at(-1)).toMatchObject({ steam_achievements: false })
   })
 
+  it('Steam hours (#383): on by default, the hours shown, and off is the server setting', async () => {
+    await withStatus(linked({ share_hours: true, recent_minutes: 1290 }))
+    expect(sw('steam-hours').checked && !sw('steam-hours').disabled).toBe(true)
+    expect(steamRows().querySelector('[data-steam-hours]')!.textContent).toBe('21.5 h in Steam games over the last two weeks')
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'set_steam_hours' ? linked({ share_hours: false }) : undefined))
+    sw('steam-hours').click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_steam_hours', { on: false })
+    expect(sw('steam-hours').checked).toBe(false)
+    expect(steamRows().querySelector('[data-steam-hours]')).toBeNull()
+  })
+
+  it('an older server that never says is on; no link is off and disabled', async () => {
+    await withStatus(linked())
+    expect(sw('steam-hours').checked).toBe(true)
+    await withStatus({ linking_available: true, achievements_available: true, link: null })
+    expect(sw('steam-hours').checked || !sw('steam-hours').disabled).toBe(false)
+  })
+
   it('obeys the master switch', async () => {
     await withStatus(linked())
     sw('enabled').click()
     flushSync()
-    expect(sw('steam').disabled).toBe(true)
+    expect(sw('steam').disabled && sw('steam-hours').disabled).toBe(true)
   })
 
   it('no key, private game details, or no linking on this server each say so', async () => {

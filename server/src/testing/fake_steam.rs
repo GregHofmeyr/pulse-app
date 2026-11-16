@@ -7,6 +7,7 @@
 //!   without achievements or one never added.
 //! - `/ISteamUserStats/GetSchemaForGame/v2/`, `/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/`.
 //! - `/IPlayerService/GetOwnedGames/v1/`: the games given [`FakeSteam::own`]; an empty response when private.
+//! - `/IPlayerService/GetRecentlyPlayedGames/v1/`: the games given [`FakeSteam::played_recently`] (#383).
 //! - `/ISteamUser/GetPlayerSummaries/v2/`: the persona from [`FakeSteam::player`].
 //! - `/openid/login`: `checkid_setup` redirects to `return_to` signed in as [`FakeSteam::sign_in_as`]; a POST with
 //!   `check_authentication` says `is_valid:true` once for a signature it issued.
@@ -49,6 +50,8 @@ struct Player {
     private: bool,
     /// app → playtime minutes
     owned: Vec<(u32, u64)>,
+    /// app → minutes over the last two weeks (#383)
+    recent: Vec<(u32, u64)>,
     /// app → api name → unlock time
     unlocked: HashMap<u32, HashMap<String, i64>>,
 }
@@ -96,6 +99,7 @@ impl FakeSteam {
                 get(percentages),
             )
             .route("/IPlayerService/GetOwnedGames/v1/", get(owned))
+            .route("/IPlayerService/GetRecentlyPlayedGames/v1/", get(recent))
             .route("/ISteamUser/GetPlayerSummaries/v2/", get(summaries))
             .route("/openid/login", get(login).post(check))
             .route("/icons/{file}", get(picture))
@@ -163,6 +167,22 @@ impl FakeSteam {
             .or_default()
             .owned
             .push((app, minutes));
+    }
+
+    /// `steam_id` played `app` for `minutes` over the last two weeks (#383).
+    pub fn played_recently(&self, steam_id: &str, app: u32, minutes: u64) {
+        let mut w = self.world.lock().unwrap();
+        w.players
+            .entry(steam_id.into())
+            .or_default()
+            .recent
+            .push((app, minutes));
+    }
+
+    /// `steam_id` played nothing over the last two weeks.
+    pub fn clear_recent(&self, steam_id: &str) {
+        let mut w = self.world.lock().unwrap();
+        w.players.entry(steam_id.into()).or_default().recent.clear();
     }
 
     /// `steam_id` unlocked `api` in `app` at `at` (unix seconds).
@@ -350,6 +370,33 @@ async fn owned(State(s): State<Shared>, RawQuery(q): RawQuery) -> Response {
     json(
         StatusCode::OK,
         serde_json::json!({"response": {"game_count": games.len(), "games": games}}),
+    )
+}
+
+async fn recent(State(s): State<Shared>, RawQuery(q): RawQuery) -> Response {
+    let q = query(q);
+    if let Some(r) = keyed(&s, "GetRecentlyPlayedGames", &q, true) {
+        return r;
+    }
+    let w = s.world.lock().unwrap();
+    let steam_id = q.get("steamid").cloned().unwrap_or_default();
+    let Some(p) = w.players.get(&steam_id).filter(|p| !p.private) else {
+        return json(StatusCode::OK, serde_json::json!({"response": {}}));
+    };
+    if p.recent.is_empty() {
+        return json(
+            StatusCode::OK,
+            serde_json::json!({"response": {"total_count": 0}}),
+        );
+    }
+    let games: Vec<_> = p
+        .recent
+        .iter()
+        .map(|(app, minutes)| serde_json::json!({"appid": app, "playtime_2weeks": minutes, "playtime_forever": minutes}))
+        .collect();
+    json(
+        StatusCode::OK,
+        serde_json::json!({"response": {"total_count": games.len(), "games": games}}),
     )
 }
 

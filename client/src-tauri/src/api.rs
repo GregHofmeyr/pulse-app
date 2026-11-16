@@ -1882,25 +1882,32 @@ impl Api {
         Self::parse(self.http.delete(url).bearer_auth(token).send().await).await
     }
 
-    /// "Share Steam achievements" (#379).
-    pub async fn set_steam_share(
+    /// Your Steam switches (#379, #383): the ones `body` names change.
+    pub async fn set_steam_settings(
         &self,
         token: &str,
-        on: bool,
+        body: &pulse_protocol::rest::SteamSettingsRequest,
     ) -> Result<pulse_protocol::rest::SteamStatus, ApiError> {
         let url = self.url(&["me", "steam", "settings"])?;
-        let body = pulse_protocol::rest::SteamSettingsRequest {
-            share_achievements: on,
-        };
         Self::parse(
             self.http
                 .put(url)
                 .bearer_auth(token)
-                .json(&body)
+                .json(body)
                 .send()
                 .await,
         )
         .await
+    }
+
+    /// A server's Steam hours board (#383).
+    pub async fn steam_hours(
+        &self,
+        token: &str,
+        server: ServerId,
+    ) -> Result<pulse_protocol::rest::SteamHours, ApiError> {
+        let url = self.url(&["servers", &server.to_string(), "steam-hours"])?;
+        Self::parse(self.http.get(url).bearer_auth(token).send().await).await
     }
 
     /// A server's Achievements channel (#379); `None`: none.
@@ -5168,11 +5175,22 @@ mod tests {
         assert_eq!(st.link, None);
         assert!(api.steam_link_start(&alex).await.is_err());
         assert_eq!(api.steam_unlink(&alex).await.unwrap().link, None);
+        let off = pulse_protocol::rest::SteamSettingsRequest {
+            share_achievements: Some(false),
+            ..Default::default()
+        };
         assert!(
-            api.set_steam_share(&alex, false).await.is_err(),
+            api.set_steam_settings(&alex, &off).await.is_err(),
             "nothing linked"
         );
         let server = testing::create_server(&app, &alex, "Gamers").await;
+        assert!(
+            api.steam_hours(&alex, server.id)
+                .await
+                .unwrap()
+                .entries
+                .is_empty()
+        );
         let general = testing::general(&app, &alex, server.id).await;
         assert_eq!(
             api.achievements_channel(&alex, server.id)

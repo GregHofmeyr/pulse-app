@@ -8,7 +8,7 @@ use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use pulse_protocol::ids::{ServerId, UserId};
 use pulse_protocol::rest::{
-    AchievementsChannel, ChannelKind, SetAchievementsChannelRequest, SteamLinkStart,
+    AchievementsChannel, ChannelKind, SetAchievementsChannelRequest, SteamHours, SteamLinkStart,
     SteamSettingsRequest, SteamStatus,
 };
 use reqwest::Url;
@@ -30,6 +30,19 @@ pub fn router() -> Router<AppState> {
             "/servers/{id}/achievements-channel",
             get(get_channel).put(set_channel),
         )
+        .route("/servers/{id}/steam-hours", get(steam_hours))
+}
+
+/// `GET /servers/{id}/steam-hours` (#383): the members who played the most Steam hours in the last two weeks.
+async fn steam_hours(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ServerId>,
+) -> AppResult<Json<SteamHours>> {
+    crate::servers::routes::require_member(&s.db, id, me).await?;
+    Ok(Json(SteamHours {
+        entries: super::hours::board(&s.db, id).await?,
+    }))
 }
 
 async fn mine(State(s): State<AppState>, AuthUser(me): AuthUser) -> AppResult<Json<SteamStatus>> {
@@ -75,14 +88,18 @@ async fn settings(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
-    if !store::set_share(&s.db, me, req.share_achievements).await? {
+    if !store::set_switches(&s.db, me, &req).await? {
         return Err(AppError::NotFound);
     }
-    if req.share_achievements {
-        backfill::kick(&s);
-    } else {
-        s.steam.forget(me);
+    match req.share_achievements {
+        Some(true) => backfill::kick(&s),
+        Some(false) => s.steam.forget(me),
+        None => {}
     }
+    if req.share_hours == Some(true) {
+        super::hours::kick_one(&s, me);
+    }
+
     store::tell(&s, me).await;
     Ok(Json(store::status(&s, me).await?))
 }
@@ -169,6 +186,7 @@ async fn finish(s: &AppState, user: UserId, steam_id: &str) -> AppResult<store::
     if linked == store::Linked::New {
         s.steam.forget(user);
         backfill::kick(s);
+        super::hours::kick_one(s, user);
     }
     if linked != store::Linked::Taken {
         store::tell(s, user).await;

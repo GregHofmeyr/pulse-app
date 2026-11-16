@@ -2263,7 +2263,37 @@ pub async fn set_steam_share(
     on: bool,
 ) -> Result<pulse_protocol::rest::SteamStatus, ApiError> {
     let (api, token) = core.current()?;
-    core.check(&app, api.set_steam_share(&token, on).await)
+    let body = pulse_protocol::rest::SteamSettingsRequest {
+        share_achievements: Some(on),
+        ..Default::default()
+    };
+    core.check(&app, api.set_steam_settings(&token, &body).await)
+}
+
+/// "Share Steam hours" (#383).
+#[tauri::command]
+pub async fn set_steam_hours(
+    app: AppHandle,
+    core: State<'_, Core>,
+    on: bool,
+) -> Result<pulse_protocol::rest::SteamStatus, ApiError> {
+    let (api, token) = core.current()?;
+    let body = pulse_protocol::rest::SteamSettingsRequest {
+        share_hours: Some(on),
+        ..Default::default()
+    };
+    core.check(&app, api.set_steam_settings(&token, &body).await)
+}
+
+/// A server's Steam hours board (#383).
+#[tauri::command]
+pub async fn steam_hours(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<pulse_protocol::rest::SteamHours, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.steam_hours(&token, server_id).await)
 }
 
 #[tauri::command]

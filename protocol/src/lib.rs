@@ -190,6 +190,8 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::SteamLinked::export_all(&cfg)?;
     rest::SteamLinkStart::export_all(&cfg)?;
     rest::SteamSettingsRequest::export_all(&cfg)?;
+    rest::SteamHours::export_all(&cfg)?;
+    rest::SteamHoursEntry::export_all(&cfg)?;
     rest::AchievementsChannel::export_all(&cfg)?;
     rest::SetAchievementsChannelRequest::export_all(&cfg)?;
     rest::AchievementCard::export_all(&cfg)?;

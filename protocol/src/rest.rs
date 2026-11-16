@@ -107,6 +107,11 @@ pub struct ProfileStats {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub steam_perfect_games: Option<u32>,
+    /// Minutes played in Steam games over the last two weeks (#383). Only while they share Steam hours and once
+    /// the server has read them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub steam_recent_minutes: Option<u32>,
 }
 
 /// How rare a badge (or one tier of it) is, from common up to mythical.
@@ -2875,6 +2880,14 @@ pub struct SteamLinked {
     /// Account completion rate, 0 to 100, once there's a game to count.
     pub completion_rate: Option<f32>,
     pub perfect_games: u32,
+    /// "Share Steam hours" (#383, default on). Absent from older servers: on.
+    #[serde(default = "yes")]
+    #[ts(as = "Option<bool>", optional)]
+    pub share_hours: bool,
+    /// Minutes played in Steam games over the last two weeks, once read (with `share_hours`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recent_minutes: Option<u32>,
 }
 
 /// `POST /me/steam/link`: the Steam sign-in page to open in the browser.
@@ -2883,10 +2896,30 @@ pub struct SteamLinkStart {
     pub url: String,
 }
 
-/// `PUT /me/steam/settings`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+/// `PUT /me/steam/settings`: the switches to change; one left out stays as it is.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SteamSettingsRequest {
-    pub share_achievements: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub share_achievements: Option<bool>,
+    /// "Share Steam hours" (#383).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub share_hours: Option<bool>,
+}
+
+/// `GET /servers/{id}/steam-hours` (#383): the server's members who played the most Steam hours over the last two
+/// weeks, most first (only those who share Steam hours and played some).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SteamHours {
+    pub entries: Vec<SteamHoursEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SteamHoursEntry {
+    pub user_id: UserId,
+    /// Minutes over the last two weeks.
+    pub minutes: u32,
 }
 
 /// `GET /servers/{id}/achievements-channel`: where the server's Steam achievement cards go; `None` = nowhere.

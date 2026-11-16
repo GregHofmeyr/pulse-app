@@ -6,8 +6,8 @@
   import { api, errorText } from '../lib/tauri'
   import { addGame, gameActivity, gamePrefs, removeGame, setClipFolders, setGameSwitch, type GameSwitch } from '../lib/gamePrefs.svelte'
   import { isWindows } from '../lib/stream/platform'
-  import { linkSteam, loadSteam, setSteamShare, steam, steamNote, unlinkSteam } from '../lib/steam.svelte'
-  import { completionLine } from '../lib/achievements'
+  import { linkSteam, loadSteam, setSteamHours, setSteamShare, steam, steamNote, unlinkSteam } from '../lib/steam.svelte'
+  import { completionLine, hoursText } from '../lib/achievements'
   const uid = $props.id()
 
   // Steam (#379): the link and "Share Steam achievements", which the server keeps (it does the reading)
@@ -17,6 +17,10 @@
   const steamLink = $derived(steam.status?.link ?? null)
   const steamHint = $derived(steamNote(steam.status))
   const steamRate = $derived(steamLink?.share_achievements ? completionLine(steamLink.completion_rate, steamLink.perfect_games) : null)
+  // Steam hours (#383): on unless the server says off (an older server never says)
+  const shareHours = $derived(!!steamLink && steamLink.share_hours !== false)
+  const steamHours = $derived(shareHours && steamLink?.recent_minutes != null ? `${hoursText(steamLink.recent_minutes)} in Steam games over the last two weeks` : null)
+  const steamOff = $derived(!gamePrefs.enabled || !steamLink || !steam.status?.achievements_available || steam.busy)
 
   /** The finer switches under the master one; a new feature adds its row here and its key in GameSettings. */
   const finer: { key: Exclude<GameSwitch, 'enabled'>; label: string; help: string }[] = [
@@ -125,13 +129,20 @@
       {/if}
       <label class="row sub">
         <input type="checkbox" role="switch" class="switch" data-switch="steam" checked={!!steamLink?.share_achievements} aria-describedby="{uid}-steam-help"
-          disabled={!gamePrefs.enabled || !steamLink || !steam.status.achievements_available || steam.busy}
+          disabled={steamOff}
           onchange={(e) => void setSteamShare(e.currentTarget.checked)} />
         <span>Share Steam achievements</span>
       </label>
       <small class="sub" id="{uid}-steam-help">While you play, new unlocks and 100 % completions post in the Achievements channel of servers that have one, and your completion rate shows on your profile. Off, your Pulse server stops reading them.</small>
       {#if steamHint}<p class="note sub" role="status">{steamHint}</p>{/if}
       {#if steamRate}<p class="seen sub">{steamRate}</p>{/if}
+      <label class="row sub">
+        <input type="checkbox" role="switch" class="switch" data-switch="steam-hours" checked={shareHours} aria-describedby="{uid}-steam-hours-help"
+          disabled={steamOff} onchange={(e) => void setSteamHours(e.currentTarget.checked)} />
+        <span>Share Steam hours</span>
+      </label>
+      <small class="sub" id="{uid}-steam-hours-help">Your hours in Steam games over the last two weeks show on your profile and your servers' leaderboards, and count toward Touch Grass. Off, your Pulse server stops reading them.</small>
+      {#if steamHours}<p class="seen sub" data-steam-hours>{steamHours}</p>{/if}
       {#if steam.error}<p class="error" role="alert">{steam.error}</p>{/if}
     </div>
   {/if}

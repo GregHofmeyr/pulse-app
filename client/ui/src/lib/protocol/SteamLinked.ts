@@ -27,4 +27,12 @@ backfill_done: boolean,
 /**
  * Account completion rate, 0 to 100, once there's a game to count.
  */
-completion_rate: number | null, perfect_games: number, };
+completion_rate: number | null, perfect_games: number, 
+/**
+ * "Share Steam hours" (#383, default on). Absent from older servers: on.
+ */
+share_hours?: boolean, 
+/**
+ * Minutes played in Steam games over the last two weeks, once read (with `share_hours`).
+ */
+recent_minutes?: number, };

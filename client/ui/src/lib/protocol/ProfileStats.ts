@@ -9,4 +9,9 @@ steam_completion?: number,
 /**
  * Steam games they've completed 100 % (#379), with `steam_completion`.
  */
-steam_perfect_games?: number, };
+steam_perfect_games?: number, 
+/**
+ * Minutes played in Steam games over the last two weeks (#383). Only while they share Steam hours and once
+ * the server has read them.
+ */
+steam_recent_minutes?: number, };

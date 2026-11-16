@@ -466,6 +466,8 @@ pub fn run() {
             commands::link_steam,
             commands::unlink_steam,
             commands::set_steam_share,
+            commands::set_steam_hours,
+            commands::steam_hours,
             commands::achievements_channel,
             commands::set_achievements_channel,
             commands::set_media_activity,

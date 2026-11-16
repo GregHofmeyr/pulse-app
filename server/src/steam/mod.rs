@@ -12,6 +12,7 @@ pub mod achievements;
 pub mod api;
 pub mod backfill;
 pub mod cards;
+pub mod hours;
 pub mod openid;
 pub mod poller;
 pub mod routes;

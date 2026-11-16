@@ -1,6 +1,6 @@
 // Steam achievement cards (#379): rarity, percentages, progress and the profile's completion line.
 import { describe, expect, it } from 'vitest'
-import { completionLine, formatRate, percentText, progressShare, progressText, rarityOf } from './achievements'
+import { completionLine, formatRate, hoursText, percentText, progressShare, progressText, rarityOf } from './achievements'
 
 describe('achievement text', () => {
   it('rarity by the share of players', () => {
@@ -22,5 +22,9 @@ describe('achievement text', () => {
     expect(completionLine(100, 1)).toBe('100 % completion · 1 perfect game')
     expect(completionLine(33.33, 3)).toBe('33.3 % completion · 3 perfect games')
     expect(formatRate(100)).toBe('100 %')
+  })
+
+  it('Steam hours (#383)', () => {
+    expect([hoursText(0), hoursText(45), hoursText(60), hoursText(1290), hoursText(20 * 60 + 2)]).toEqual(['0 min', '45 min', '1 h', '21.5 h', '20 h'])
   })
 })

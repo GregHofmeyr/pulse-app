@@ -107,6 +107,7 @@ pub async fn load_profile(
         crate::badges::view::profile_badges(&mut tx, user, viewer).await?;
     let (steam_completion, steam_perfect_games) =
         crate::steam::store::profile_stat(&mut tx, user).await?;
+    let steam_recent_minutes = crate::steam::store::profile_hours(&mut tx, user).await?;
     tx.commit().await?;
 
     Ok(Some(Profile {
@@ -127,6 +128,7 @@ pub async fn load_profile(
             times_renamed,
             steam_completion,
             steam_perfect_games,
+            steam_recent_minutes,
         },
         badges,
         showcase,

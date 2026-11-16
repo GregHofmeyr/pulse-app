@@ -157,6 +157,20 @@ describe('Leaderboard', () => {
     }
   })
 
+  it('the most Steam hours over two weeks, when anyone shares some (#383)', async () => {
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'leaderboard' ? board : cmd === 'steam_hours' ? { entries: [{ user_id: 'U3', minutes: 1290 }, { user_id: 'U2', minutes: 45 }] } : undefined)
+    await show()
+    expect(invoke).toHaveBeenCalledWith('steam_hours', { serverId: 'S1' })
+    const rows = [...section('Most Steam hours: last 2 weeks')!.querySelectorAll('.person')].map((r) => r.textContent)
+    expect(rows).toEqual(['1kim21.5 h', '2sam45 min'])
+  })
+
+  it('no Steam hours section when nobody has any, or the server has no such board', async () => {
+    await show()
+    expect(document.querySelector('[data-steam-hours]')).toBeNull()
+  })
+
   it('Escape closes', async () => {
     await show()
     await settle() // the outside-click listener attaches on the next tick

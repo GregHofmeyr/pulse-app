@@ -44,6 +44,8 @@ pub mod stat {
     pub const EARLY_ADOPTER: &str = "early_adopter";
     /// Steam games completed 100 % (#379), from the linked account's stored achievements.
     pub const STEAM_PERFECT_GAMES: &str = "steam_perfect_games";
+    /// The most time in Steam games over any two weeks read (#383), in seconds (Steam's `playtime_2weeks`, summed).
+    pub const STEAM_FORTNIGHT_SECS: &str = "steam_fortnight_secs";
 
     /// Every fixed key (the prefixed ones excluded).
     pub const ALL: &[&str] = &[
@@ -73,6 +75,7 @@ pub mod stat {
         LOGO_EGG,
         EARLY_ADOPTER,
         STEAM_PERFECT_GAMES,
+        STEAM_FORTNIGHT_SECS,
     ];
 }
 
@@ -594,6 +597,21 @@ pub static CATALOGUE: &[Def] = &[
         stat::STEAM_PERFECT_GAMES,
         &[(1, Epic)],
     ),
+    // Steam hours (#383): the best two weeks read; 336 h is the whole fortnight
+    hours(counter(
+        "touch_grass",
+        "Touch Grass",
+        "Hours in Steam games over two weeks.",
+        "🌱",
+        stat::STEAM_FORTNIGHT_SECS,
+        &[
+            (20 * HOUR, Common),
+            (50 * HOUR, Uncommon),
+            (100 * HOUR, Rare),
+            (150 * HOUR, Epic),
+            (200 * HOUR, Legendary),
+        ],
+    )),
     hidden(counter(
         "logo_egg",
         "Egg Hunter",
@@ -779,6 +797,15 @@ mod tests {
             rarities(def),
             [Common, Uncommon, Rare, Epic, Legendary, Mythical]
         );
+    }
+
+    #[test]
+    fn touch_grass_counts_steam_hours_over_two_weeks() {
+        use Rarity::*;
+        let def = find("touch_grass").unwrap();
+        assert_eq!(def.unit, Unit::Hours);
+        assert_eq!(thresholds(def), [20, 50, 100, 150, 200].map(|h| h * HOUR));
+        assert_eq!(rarities(def), [Common, Uncommon, Rare, Epic, Legendary]);
     }
 
     #[test]

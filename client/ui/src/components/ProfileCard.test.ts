@@ -204,6 +204,15 @@ describe('ProfileCard', () => {
     expect(el.querySelector('[data-steam-completion]')!.textContent).toBe('Steam62.5 % completion · 2 perfect games')
   })
 
+  it('shows Steam hours over two weeks only when they share some (#383)', () => {
+    expect(show().querySelector('[data-steam-hours]')).toBeNull()
+    unmount(cmp!)
+    expect(show({ stats: { ...stats, steam_recent_minutes: 0 } }).querySelector('[data-steam-hours]')).toBeNull()
+    unmount(cmp!)
+    const el = show({ stats: { ...stats, steam_recent_minutes: 1290 } })
+    expect(el.querySelector('[data-steam-hours]')!.textContent).toBe('Steam, 2 weeks21.5 h')
+  })
+
   it("shows In <channel> when they're in voice", () => {
     app.state = {
       ...app.state,
