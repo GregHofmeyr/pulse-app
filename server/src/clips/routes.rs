@@ -344,6 +344,7 @@ async fn confirm(
         plan_reminder: None,
         sports: None,
         f1: None,
+        forwarded: None,
         embeds: vec![],
         call: None,
         wheel: None,

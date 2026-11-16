@@ -198,6 +198,13 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::ScheduleMessageRequest::export_all(&cfg)?;
     rest::EditScheduledRequest::export_all(&cfg)?;
     rest::MessageReminder::export_all(&cfg)?;
+    rest::MessageVersion::export_all(&cfg)?;
+    rest::SavedMessage::export_all(&cfg)?;
+    rest::MessageBookmark::export_all(&cfg)?;
+    rest::SaveMessageRequest::export_all(&cfg)?;
+    rest::EditBookmarkRequest::export_all(&cfg)?;
+    rest::Forwarded::export_all(&cfg)?;
+    rest::ForwardMessageRequest::export_all(&cfg)?;
     rest::CreateReminderRequest::export_all(&cfg)?;
     rest::StageShare::export_all(&cfg)?;
     rest::StageShareRequest::export_all(&cfg)?;

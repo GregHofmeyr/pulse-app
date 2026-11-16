@@ -2617,6 +2617,106 @@ impl Api {
         .await
     }
 
+    /// A message's versions (#301): the current text first, then the earlier ones, newest first.
+    pub async fn message_edits(
+        &self,
+        token: &str,
+        message: MessageId,
+    ) -> Result<Vec<pulse_protocol::rest::MessageVersion>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/messages/{message}/edits", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Forward a message (#302) to a chat you can post in; the forward, as a send answers.
+    pub async fn forward_message(
+        &self,
+        token: &str,
+        message: MessageId,
+        body: &pulse_protocol::rest::ForwardMessageRequest,
+    ) -> Result<Message, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/messages/{message}/forward", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Your saved messages (#315), newest first.
+    pub async fn list_bookmarks(
+        &self,
+        token: &str,
+    ) -> Result<Vec<pulse_protocol::rest::MessageBookmark>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/bookmarks", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Save a message (#315); the one you already have when it was saved before.
+    pub async fn save_message(
+        &self,
+        token: &str,
+        message: MessageId,
+        body: &pulse_protocol::rest::SaveMessageRequest,
+    ) -> Result<pulse_protocol::rest::MessageBookmark, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/messages/{message}/bookmark", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A saved message's new note (#315).
+    pub async fn edit_bookmark(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::BookmarkId,
+        body: &pulse_protocol::rest::EditBookmarkRequest,
+    ) -> Result<pulse_protocol::rest::MessageBookmark, ApiError> {
+        Self::parse(
+            self.http
+                .patch(format!("{}/bookmarks/{id}", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn delete_bookmark(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::BookmarkId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/bookmarks/{id}", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Your reminders (#300), soonest first.
     pub async fn list_reminders(
         &self,

@@ -135,6 +135,18 @@ async fn an_archived_channel_is_read_only_but_readable_and_searchable() {
     .await;
     assert_eq!(poll.status(), 403);
 
+    // nor can anything be forwarded into it (#302)
+    let dm = create_dm(&f.app, &f.sam.1, &[f.alex.0]).await;
+    let elsewhere = send(&f.app, &f.sam.1, dm.id, "look at this").await;
+    let r = post_json(
+        &f.app,
+        &f.sam.1,
+        &format!("/messages/{}/forward", elsewhere.id),
+        json!({"channel_id": g, "comment": ""}),
+    )
+    .await;
+    assert_eq!(r.status(), 403);
+
     // still readable and searchable
     let history: Vec<Message> =
         get_json(&f.app, &f.alex.1, &format!("/channels/{g}/messages")).await;

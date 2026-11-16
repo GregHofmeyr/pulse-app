@@ -4972,6 +4972,83 @@ pub async fn delete_scheduled(
     core.check(&app, api.delete_scheduled(&token, id).await)
 }
 
+/// A message's versions (#301): the current text first, then the earlier ones, newest first.
+#[tauri::command]
+pub async fn message_edits(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<Vec<pulse_protocol::rest::MessageVersion>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.message_edits(&token, message_id).await)
+}
+
+/// Forward a message (#302) to a chat you can post in, with an optional comment. `nonce` makes a retry land once.
+#[tauri::command]
+pub async fn forward_message(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    channel_id: ChannelId,
+    comment: String,
+    nonce: Option<String>,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    let body = pulse_protocol::rest::ForwardMessageRequest {
+        channel_id,
+        comment,
+        nonce,
+    };
+    core.check(&app, api.forward_message(&token, message_id, &body).await)
+}
+
+/// Your saved messages (#315), newest first.
+#[tauri::command]
+pub async fn list_bookmarks(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<Vec<pulse_protocol::rest::MessageBookmark>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.list_bookmarks(&token).await)
+}
+
+/// Save a message (#315), with an optional note.
+#[tauri::command]
+pub async fn save_message(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    note: Option<String>,
+) -> Result<pulse_protocol::rest::MessageBookmark, ApiError> {
+    let (api, token) = core.current()?;
+    let body = pulse_protocol::rest::SaveMessageRequest { note };
+    core.check(&app, api.save_message(&token, message_id, &body).await)
+}
+
+/// A saved message's new note (#315); none or empty clears it.
+#[tauri::command]
+pub async fn edit_bookmark(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::BookmarkId,
+    note: Option<String>,
+) -> Result<pulse_protocol::rest::MessageBookmark, ApiError> {
+    let (api, token) = core.current()?;
+    let body = pulse_protocol::rest::EditBookmarkRequest { note };
+    core.check(&app, api.edit_bookmark(&token, id, &body).await)
+}
+
+/// Remove a saved message (#315).
+#[tauri::command]
+pub async fn delete_bookmark(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::BookmarkId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_bookmark(&token, id).await)
+}
+
 /// Your reminders (#300), soonest first.
 #[tauri::command]
 pub async fn list_reminders(

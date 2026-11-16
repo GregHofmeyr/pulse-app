@@ -1053,6 +1053,7 @@ mod tests {
                         plan_reminders: None,
                         scheduled: vec![],
                         reminders: vec![],
+                        bookmarks: vec![],
                         calls: vec![],
                         ringing: vec![],
                         layouts: vec![],

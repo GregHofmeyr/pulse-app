@@ -6,6 +6,7 @@ import type { ChannelId } from "./ChannelId";
 import type { Clip } from "./Clip";
 import type { DeadlockCard } from "./DeadlockCard";
 import type { F1Card } from "./F1Card";
+import type { Forwarded } from "./Forwarded";
 import type { Gif } from "./Gif";
 import type { LinkEmbed } from "./LinkEmbed";
 import type { MessageId } from "./MessageId";
@@ -128,4 +129,10 @@ sports?: SportsCard,
  * Set on an F1 card (#386), a system line in a server's F1 channel. A weekend card carries everyone's podium
  * predictions.
  */
-f1?: F1Card, };
+f1?: F1Card, 
+/**
+ * Set on a forward (#302): where the original was said, by whom and when, and what it said. The forward's own
+ * `content` is the forwarder's comment, or a stand-in when they wrote none (`caption_is_fallback`), and its
+ * `attachments` are the original's (by reference, while it is there).
+ */
+forwarded?: Forwarded, };

@@ -144,6 +144,14 @@ async fn leaving_takes_their_place_but_keeps_their_messages_and_a_rejoin_works()
     assert_eq!(r.status(), 201);
     let unread: InboxUnread = get_json(&w.app, &w.sam.1, "/inbox/unread").await;
     assert_eq!(unread.unread, 1);
+    let r = post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/messages/{}/bookmark", theirs.id),
+        json!({"note": "the goodbye"}),
+    )
+    .await;
+    assert!(r.status().is_success(), "{}", r.status());
     let mut kim_rx = w.app.hub.register(w.kim.0, String::new()).rx;
     let mut sam_rx = w.app.hub.register(w.sam.0, String::new()).rx;
 
@@ -211,8 +219,24 @@ async fn leaving_takes_their_place_but_keeps_their_messages_and_a_rejoin_works()
         .unwrap();
     assert_eq!(r.status(), 403);
 
+    // their bookmark of one of its messages reads as unavailable while they're out (#315), and a new one is refused
+    let saved: Vec<pulse_protocol::rest::MessageBookmark> =
+        get_json(&w.app, &w.sam.1, "/bookmarks").await;
+    assert!(saved.iter().all(|b| b.message.is_none()), "{saved:?}");
+    let r = post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/messages/{}/bookmark", theirs.id),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 404);
+
     // back in by joining, as before, at "all read"
     assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
+    let saved: Vec<pulse_protocol::rest::MessageBookmark> =
+        get_json(&w.app, &w.sam.1, "/bookmarks").await;
+    assert!(saved.iter().all(|b| b.message.is_some()), "{saved:?}");
     assert!(members(&w).await.contains(&w.sam.0));
     send(&w.app, &w.sam.1, g, "back").await;
     let m = send(&w.app, &w.kim.1, g, "@sam welcome back").await;

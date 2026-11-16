@@ -186,6 +186,7 @@ async fn silent_client_times_out_despite_outbound_traffic() {
                 plan_reminder: None,
                 sports: None,
                 f1: None,
+                forwarded: None,
             };
             hub.publish(
                 &db,

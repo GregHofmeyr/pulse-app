@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core'
 import type { User } from './protocol/User'
 import type { ScheduledMessage } from './protocol/ScheduledMessage'
 import type { MessageReminder } from './protocol/MessageReminder'
+import type { MessageVersion } from './protocol/MessageVersion'
+import type { MessageBookmark } from './protocol/MessageBookmark'
 import type { Profile } from './protocol/Profile'
 import type { SeenBadge } from './protocol/SeenBadge'
 import type { UpdateProfileRequest } from './protocol/UpdateProfileRequest'
@@ -279,6 +281,19 @@ export const api = {
   /** Post it now; the message it became (its MessageCreated comes too). */
   sendScheduledNow: (id: string) => invoke<Message>('send_scheduled_now', { id }),
   deleteScheduled: (id: string) => invoke<void>('delete_scheduled', { id }),
+  /** A message's versions (#301): the current text first, then the earlier ones, newest first. */
+  messageEdits: (messageId: string) => invoke<MessageVersion[]>('message_edits', { messageId }),
+  /** Forward a message (#302) to a chat you can post in, with your comment (may be empty); the forward (its
+   *  MessageCreated comes too). One nonce per forward, so a retry lands once. */
+  forwardMessage: (messageId: string, channelId: string, comment: string, nonce: string) =>
+    invoke<Message>('forward_message', { messageId, channelId, comment, nonce }),
+  // Saved messages (#315): private to you.
+  listBookmarks: () => invoke<MessageBookmark[]>('list_bookmarks'),
+  /** The one you already have when it was saved before. */
+  saveMessage: (messageId: string, note: string | null = null) => invoke<MessageBookmark>('save_message', { messageId, note }),
+  /** A new note; empty clears it. */
+  editBookmark: (id: string, note: string) => invoke<MessageBookmark>('edit_bookmark', { id, note }),
+  deleteBookmark: (id: string) => invoke<void>('delete_bookmark', { id }),
   // Message reminders (#300): private to you.
   listReminders: () => invoke<MessageReminder[]>('list_reminders'),
   createReminder: (messageId: string, remindAt: string) => invoke<MessageReminder>('create_reminder', { messageId, remindAt }),

@@ -3,14 +3,17 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::ids::{CallId, ChannelId, LineId, MessageId, ReminderId, ScheduledId, ServerId, UserId};
+use crate::ids::{
+    BookmarkId, CallId, ChannelId, LineId, MessageId, ReminderId, ScheduledId, ServerId, UserId,
+};
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji,
     CustomStatus, F1Prediction, Game, InboxItem, Listening, ListeningUpdate, Member, Message,
-    MessageReminder, Mute, MyCustomStatus, NotifyLevelPref, OwnStatus, Person, PinnedMessage, Plan,
-    Playing, PlayingUpdate, PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState,
-    RingEndReason, ScheduledMessage, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink,
-    StageShare, SteamStatus, StreamEndReason, StreamInfo, User, WatchParty, Wheel,
+    MessageBookmark, MessageReminder, Mute, MyCustomStatus, NotifyLevelPref, OwnStatus, Person,
+    PinnedMessage, Plan, Playing, PlayingUpdate, PresenceStatus, PrivateNickname, QotyEvent,
+    QuietSpin, ReadState, RingEndReason, ScheduledMessage, Server, ServerLayout, ServerVoiceMod,
+    Sound, SpeakerLink, StageShare, SteamStatus, StreamEndReason, StreamInfo, User, WatchParty,
+    Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -234,6 +237,11 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub reminders: Vec<MessageReminder>,
+    /// Your saved messages (#315), newest first (one out of your reach has no message). Yours only. Absent from older
+    /// servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub bookmarks: Vec<MessageBookmark>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -457,6 +465,16 @@ pub enum Event {
     ReminderRemoved {
         user_id: UserId,
         id: ReminderId,
+    },
+    /// Only to its person's own sessions: a message was saved, or its note changed (#315).
+    BookmarkSaved {
+        user_id: UserId,
+        bookmark: MessageBookmark,
+    },
+    /// Only to its person's own sessions: a saved message was removed (#315).
+    BookmarkRemoved {
+        user_id: UserId,
+        id: BookmarkId,
     },
     /// Someone saved their profile; goes to everyone, like presence.
     ProfileUpdated {
@@ -899,6 +917,8 @@ impl Event {
             | Self::ScheduledRemoved { .. }
             | Self::ReminderSaved { .. }
             | Self::ReminderRemoved { .. }
+            | Self::BookmarkSaved { .. }
+            | Self::BookmarkRemoved { .. }
             | Self::BadgeEarned { .. } => None,
         }
     }
@@ -927,6 +947,8 @@ impl Event {
             | Self::ScheduledRemoved { user_id, .. }
             | Self::ReminderSaved { user_id, .. }
             | Self::ReminderRemoved { user_id, .. }
+            | Self::BookmarkSaved { user_id, .. }
+            | Self::BookmarkRemoved { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
             | Self::CallRingEnded { user_id, .. }
@@ -1057,6 +1079,7 @@ mod tests {
             plan_reminders: None,
             scheduled: vec![],
             reminders: vec![],
+            bookmarks: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1149,6 +1172,7 @@ mod tests {
             plan_reminders: None,
             scheduled: vec![],
             reminders: vec![],
+            bookmarks: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1290,6 +1314,7 @@ mod tests {
             plan_reminders: None,
             scheduled: vec![],
             reminders: vec![],
+            bookmarks: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],

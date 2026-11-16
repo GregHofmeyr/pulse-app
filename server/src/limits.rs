@@ -101,6 +101,8 @@ pub struct LimitsConfig {
     /// Message edits and deletes, reaction adds and removes, Go Live and watch, together per
     /// user (each one fans out an event). Stop and unwatch are teardown and never limited.
     pub mutate_user: Rate,
+    /// Forwards per user (#302), on top of `send_user`: each copies a message somewhere new.
+    pub forward_user: Rate,
     /// Published `VoiceState` changes per user. Every frame is still stored; past the limit,
     /// one trailing publish of the latest flags goes out when the bucket allows.
     pub voice_state_user: Rate,
@@ -192,6 +194,7 @@ impl Default for LimitsConfig {
             sound_play_user: Rate::new(20, 8.0),
             invite_user: Rate::per_hour(10),
             mutate_user: Rate::new(30, 2.0),
+            forward_user: Rate::new(10, 0.2),
             voice_state_user: Rate::new(10, 2.0),
             // A clips wall plays one link per tile opened; 60 at once and one a second after.
             clip_url_user: Rate::new(60, 1.0),
@@ -255,6 +258,7 @@ impl LimitsConfig {
             sound_play_user: r,
             invite_user: r,
             mutate_user: r,
+            forward_user: r,
             voice_state_user: r,
             clip_url_user: r,
             attachment_user: r,
@@ -419,6 +423,7 @@ pub struct Limits {
     pub sound_play_user: Limiter,
     pub invite_user: Limiter,
     pub mutate_user: Limiter,
+    pub forward_user: Limiter,
     pub voice_state_user: Limiter,
     pub clip_url_user: Limiter,
     pub attachment_user: Limiter,
@@ -466,6 +471,7 @@ impl Limits {
             sound_play_user: Limiter::new(c.sound_play_user),
             invite_user: Limiter::new(c.invite_user),
             mutate_user: Limiter::new(c.mutate_user),
+            forward_user: Limiter::new(c.forward_user),
             voice_state_user: Limiter::new(c.voice_state_user),
             clip_url_user: Limiter::new(c.clip_url_user),
             attachment_user: Limiter::new(c.attachment_user),

@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::ids::{
-    AttachmentId, CallId, CategoryId, ChannelId, ClipUploadId, GameId, LineId, MessageId,
-    QotyEventId, ReminderId, ScheduledId, ServerId, UserId,
+    AttachmentId, BookmarkId, CallId, CategoryId, ChannelId, ClipUploadId, GameId, LineId,
+    MessageId, QotyEventId, ReminderId, ScheduledId, ServerId, UserId,
 };
 
 /// A `Debug` that names every field but prints the secret ones as `<redacted>`, for types that
@@ -789,6 +789,54 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub f1: Option<Box<F1Card>>,
+    /// Set on a forward (#302): where the original was said, by whom and when, and what it said. The forward's own
+    /// `content` is the forwarder's comment, or a stand-in when they wrote none (`caption_is_fallback`), and its
+    /// `attachments` are the original's (by reference, while it is there).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub forwarded: Option<Box<Forwarded>>,
+}
+
+/// The original of a forwarded message (#302), as it was when forwarded.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Forwarded {
+    /// The original (never itself a forward: forwarding a forward forwards its original).
+    pub message_id: MessageId,
+    pub channel_id: ChannelId,
+    /// The kind of chat it was said in: a DM or group is never named.
+    pub channel_kind: ChannelKind,
+    /// The channel's name, for a server's channel only.
+    pub channel_name: Option<String>,
+    pub server_id: Option<ServerId>,
+    /// The thread it was a reply in, if any (to open it there).
+    pub thread_root_id: Option<MessageId>,
+    pub author_id: Option<UserId>,
+    pub created_at: String,
+    /// Its text when forwarded (empty when it was only files, or it is unavailable).
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub gif: Option<Gif>,
+    /// Its link previews.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<LinkEmbed>>", optional)]
+    pub embeds: Vec<LinkEmbed>,
+    /// The original was deleted (or its chat was): nothing of it is shown.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub unavailable: bool,
+}
+
+/// `POST /messages/{id}/forward` (#302): forward a message you can see to a chat you can post in.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ForwardMessageRequest {
+    pub channel_id: ChannelId,
+    /// Your words above it (may be empty), up to a message's length.
+    #[serde(default)]
+    pub comment: String,
+    /// As a send's: a retry with the same nonce gets the first forward back.
+    #[serde(default)]
+    pub nonce: Option<String>,
 }
 
 /// How long a pin lasts (#178).
@@ -1126,6 +1174,56 @@ pub struct MessageReminder {
 pub struct CreateReminderRequest {
     /// When (RFC 3339, any offset): in the future, at most [`schedule_limits::MAX_DAYS_AHEAD`] away.
     pub remind_at: String,
+}
+
+/// Saved message limits (#315), shared so the client can say them before the server refuses.
+pub mod bookmark_limits {
+    /// Saved messages one person may have.
+    pub const MAX_BOOKMARKS: i64 = 500;
+    /// The longest note on one, in characters.
+    pub const NOTE_MAX_CHARS: usize = 500;
+    /// How much of the message a saved one shows, in characters.
+    pub const SNIPPET_CHARS: usize = 300;
+}
+
+/// What a saved message shows of the message while its person can still see it (#315).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SavedMessage {
+    pub channel_id: ChannelId,
+    /// The thread the message is a reply in, if any (to open it there).
+    pub thread_root_id: Option<MessageId>,
+    pub author_id: Option<UserId>,
+    /// At most [`bookmark_limits::SNIPPET_CHARS`] characters of it.
+    pub content: String,
+    pub created_at: String,
+}
+
+/// A saved message (#315): a private bookmark, with an optional note. Only its person ever sees it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct MessageBookmark {
+    pub id: BookmarkId,
+    pub message_id: MessageId,
+    pub note: Option<String>,
+    /// When it was saved.
+    pub created_at: String,
+    /// The message, while they can see it; `None` once it is deleted or out of their reach (left the chat, the chat
+    /// deleted): nothing of it is shown then.
+    pub message: Option<SavedMessage>,
+}
+
+/// `POST /messages/{id}/bookmark` (#315).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct SaveMessageRequest {
+    /// At most [`bookmark_limits::NOTE_MAX_CHARS`] characters; empty or none: no note.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// `PATCH /bookmarks/{id}` (#315): the new note (empty or none: no note).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct EditBookmarkRequest {
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// An answer to a plan (#387).
@@ -1818,6 +1916,16 @@ pub struct SendMessageRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct EditMessageRequest {
     pub content: String,
+}
+
+/// How many earlier versions of an edited message are kept (#301): older ones go as new edits come.
+pub const MAX_EDIT_VERSIONS: i64 = 20;
+
+/// One version of an edited message (#301): its text, and when it was written (sent, or the edit that made it).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct MessageVersion {
+    pub content: String,
+    pub written_at: String,
 }
 
 // ---------- Attachments (#57) ----------

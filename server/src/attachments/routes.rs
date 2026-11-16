@@ -279,11 +279,36 @@ async fn urls(
     {
         return Err(AppError::Forbidden);
     }
+    // A forward's files are its original's (#302), while that is there: seeing the forward is enough to open them.
+    let files = match crate::forwards::files_of(&s.db, id).await? {
+        Some(original) => {
+            let live: Option<String> = sqlx::query_scalar(
+                "SELECT channel_id FROM messages WHERE id = ? AND deleted_at IS NULL",
+            )
+            .bind(original.to_string())
+            .fetch_optional(&s.db)
+            .await?;
+            match live {
+                Some(ch)
+                    if crate::access::load_channel(
+                        &s.db,
+                        ch.parse().map_err(anyhow::Error::from)?,
+                    )
+                    .await?
+                    .is_some() =>
+                {
+                    original
+                }
+                _ => return Ok(Json(vec![])),
+            }
+        }
+        None => id,
+    };
     let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT id, key, expires_at, purged_at FROM attachments WHERE message_id = ?
          ORDER BY position",
     )
-    .bind(id.to_string())
+    .bind(files.to_string())
     .fetch_all(&s.db)
     .await?;
     let now = crate::db::now();
