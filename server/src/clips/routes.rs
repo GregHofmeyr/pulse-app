@@ -342,6 +342,7 @@ async fn confirm(
         deadlock: None,
         plan: None,
         plan_reminder: None,
+        sports: None,
         embeds: vec![],
         call: None,
         wheel: None,

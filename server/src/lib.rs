@@ -32,6 +32,7 @@ pub mod reports;
 pub mod search;
 pub mod servers;
 pub mod sounds;
+pub mod sports;
 pub mod stage;
 pub mod state;
 pub mod steam;
@@ -94,6 +95,7 @@ pub fn router(state: AppState) -> Router {
         .merge(wheels::routes::router())
         .merge(steam::routes::router())
         .merge(deadlock::routes::router())
+        .merge(sports::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
@@ -135,6 +137,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
         embeds: std::sync::Arc::new(embeds::Unfurler::new(&cfg.embeds)),
         steam: steam::Steam::new(&cfg.steam),
         deadlock: deadlock::Deadlock::new(&cfg.deadlock),
+        sports: sports::Sports::new(&cfg.sports),
         cfg: std::sync::Arc::new(cfg),
         hub: hub.clone(),
         voice: voice::VoiceState::default(),
@@ -168,6 +171,8 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     steam::backfill::kick(&state);
     // Deadlock (#390): match cards, ranks, rank movers and patch notes from deadlock-api.com
     deadlock::poller::spawn(state.clone());
+    // Sports score pings (#385): never started without an API-Sports key
+    sports::poller::spawn(state.clone());
     // badges whose Steam tiers changed reach those whose stored games already earn them
     {
         let s = state.clone();

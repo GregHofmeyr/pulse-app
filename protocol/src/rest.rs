@@ -774,6 +774,11 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub plan_reminder: Option<Box<PlanReminder>>,
+    /// Set on a sports card (#385), a system line in a server's Sports channel: a followed team's match, from the
+    /// match-day banner through the live score to full time, edited in place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sports: Option<Box<SportsCard>>,
 }
 
 /// How long a pin lasts (#178).
@@ -3299,4 +3304,150 @@ pub struct DeadlockProfile {
     pub with_you: Option<DeadlockDuo>,
     /// Their best teammate among this server's members: the best win rate over at least a few games together.
     pub best_duo: Option<DeadlockDuo>,
+}
+
+// ---------- Sports (#385) ----------
+
+/// A league people can follow teams in. Football from api-football, rugby from api-rugby (API-Sports).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SportsLeague {
+    /// South Africa's Premiership (PSL), football.
+    Psl,
+    /// The United Rugby Championship.
+    Urc,
+    /// England's Premier League, football.
+    Epl,
+}
+
+impl SportsLeague {
+    pub const ALL: [SportsLeague; 3] = [SportsLeague::Psl, SportsLeague::Urc, SportsLeague::Epl];
+
+    /// The key stored and sent (`psl`, `urc`, `epl`).
+    pub fn key(self) -> &'static str {
+        match self {
+            SportsLeague::Psl => "psl",
+            SportsLeague::Urc => "urc",
+            SportsLeague::Epl => "epl",
+        }
+    }
+
+    pub fn parse(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|l| l.key() == key)
+    }
+
+    /// Rugby (api-rugby) rather than football (api-football).
+    pub fn rugby(self) -> bool {
+        matches!(self, SportsLeague::Urc)
+    }
+}
+
+/// A team in a league.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SportsTeam {
+    pub league: SportsLeague,
+    pub team_id: u32,
+    pub name: String,
+}
+
+/// `GET /me/sports`: what this server can do with sports and your own follows and switch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SportsStatus {
+    /// The server has an API-Sports key: false = sports aren't set up on this server (nothing is fetched or posted).
+    pub available: bool,
+    /// "Sports score pings" (default on): off, your follows bring no cards to your servers' Sports channels.
+    pub pings: bool,
+    pub follows: Vec<SportsTeam>,
+    /// The leagues teams can be followed in.
+    pub leagues: Vec<SportsLeague>,
+    /// A quiet line when scores are paused (the day's requests are spent, the provider isn't answering).
+    pub note: Option<String>,
+}
+
+/// `PUT /me/sports`: your switch; left out stays as it is.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SportsSettingsRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pings: Option<bool>,
+}
+
+/// `POST /me/sports/follows`: follow one of the league's teams (from `GET /sports/teams`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct FollowTeamRequest {
+    pub league: SportsLeague,
+    pub team_id: u32,
+}
+
+/// `GET /sports/teams?league=…`: the league's teams this season (cached on the server for days), by name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SportsTeams {
+    pub teams: Vec<SportsTeam>,
+}
+
+/// `GET /servers/{id}/sports-channel`: where the server's sports cards go; `None` = nowhere (the default).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SportsChannel {
+    pub channel_id: Option<ChannelId>,
+}
+
+/// `PUT /servers/{id}/sports-channel` (the server's owner only): a text channel of that server, or `None`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SetSportsChannelRequest {
+    pub channel_id: Option<ChannelId>,
+}
+
+/// Where a match is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SportsPhase {
+    /// Match day, not kicked off yet.
+    Upcoming,
+    Live,
+    /// Full time (after extra time or penalties too).
+    Final,
+    /// Postponed, cancelled or abandoned.
+    Off,
+}
+
+/// One side of a match.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SportsSide {
+    pub team_id: u32,
+    pub name: String,
+    /// `None` until kick-off.
+    pub score: Option<u32>,
+}
+
+/// A goal (football only: api-rugby names no try scorers).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SportsScorer {
+    /// For the home side.
+    pub home: bool,
+    pub name: String,
+    pub minute: Option<u32>,
+    /// `pen` or `og`.
+    pub note: Option<String>,
+}
+
+/// A sports card (#385): a followed team's match in a server's Sports channel, one card per match, edited in place
+/// from the match-day banner through the live score to full time.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SportsCard {
+    pub league: SportsLeague,
+    pub fixture_id: u32,
+    pub phase: SportsPhase,
+    /// Kick-off, RFC 3339 (UTC): apps show it in local time.
+    pub kickoff: String,
+    /// The provider's short status (`NS`, `1H`, `HT`, `FT`, …).
+    pub status: String,
+    /// The match minute while live (football).
+    pub minute: Option<u32>,
+    pub home: SportsSide,
+    pub away: SportsSide,
+    #[serde(default)]
+    pub scorers: Vec<SportsScorer>,
+    /// The server's members who follow either team (with pings on).
+    #[serde(default)]
+    pub followers: Vec<UserId>,
 }

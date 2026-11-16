@@ -18,6 +18,7 @@ import type { PollEnded } from "./PollEnded";
 import type { QotyCard } from "./QotyCard";
 import type { Quote } from "./Quote";
 import type { ReactionSummary } from "./ReactionSummary";
+import type { SportsCard } from "./SportsCard";
 import type { StageShareLine } from "./StageShareLine";
 import type { UserId } from "./UserId";
 import type { WheelSpin } from "./WheelSpin";
@@ -116,4 +117,9 @@ plan?: Plan,
 /**
  * Set on a plan's reminder line (#387), the system line that pings its Going and Maybe people an hour before.
  */
-plan_reminder?: PlanReminder, };
+plan_reminder?: PlanReminder, 
+/**
+ * Set on a sports card (#385), a system line in a server's Sports channel: a followed team's match, from the
+ * match-day banner through the live score to full time, edited in place.
+ */
+sports?: SportsCard, };

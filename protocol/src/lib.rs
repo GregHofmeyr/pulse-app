@@ -220,6 +220,18 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::DeadlockHeroLine::export_all(&cfg)?;
     rest::DeadlockDuo::export_all(&cfg)?;
     rest::DeadlockProfile::export_all(&cfg)?;
+    rest::SportsLeague::export_all(&cfg)?;
+    rest::SportsTeam::export_all(&cfg)?;
+    rest::SportsStatus::export_all(&cfg)?;
+    rest::SportsSettingsRequest::export_all(&cfg)?;
+    rest::FollowTeamRequest::export_all(&cfg)?;
+    rest::SportsTeams::export_all(&cfg)?;
+    rest::SportsChannel::export_all(&cfg)?;
+    rest::SetSportsChannelRequest::export_all(&cfg)?;
+    rest::SportsPhase::export_all(&cfg)?;
+    rest::SportsSide::export_all(&cfg)?;
+    rest::SportsScorer::export_all(&cfg)?;
+    rest::SportsCard::export_all(&cfg)?;
     Ok(())
 }
 

@@ -140,6 +140,10 @@ fn from_row(r: Row) -> AppResult<Message> {
             Some(p) if system && deleted_at.is_none() => crate::plans::reminder(p).map(Box::new),
             _ => None,
         },
+        sports: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => super::system::sports(p).map(Box::new),
+            _ => None,
+        },
     })
 }
 
@@ -558,6 +562,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         deadlock: None,
         plan: None,
         plan_reminder: None,
+        sports: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -1003,6 +1008,7 @@ mod tests {
             deadlock: None,
             plan: None,
             plan_reminder: None,
+            sports: None,
         }
     }
 

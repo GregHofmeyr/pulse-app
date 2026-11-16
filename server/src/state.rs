@@ -23,4 +23,6 @@ pub struct AppState {
     pub steam: crate::steam::Steam,
     /// Deadlock stats (#390): the deadlock-api client, its health, and the poller's memory.
     pub deadlock: crate::deadlock::Deadlock,
+    /// Sports score pings (#385): the API-Sports client, its allowance and health.
+    pub sports: crate::sports::Sports,
 }
