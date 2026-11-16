@@ -80,15 +80,18 @@ describe('the mic event', () => {
     await startVoiceListening()
   })
 
-  it('a mic that failed to publish shows its error, and you are still in the room', () => {
+  // #351: the call carries on listen-only; the No mic chip shows why
+  it('a mic that failed to publish keeps its error for the chip, and you are still in the room', () => {
     mic(false, 'Microphone unavailable')
-    expect(voice.error).toBe('Microphone unavailable')
+    expect(voice.micError).toBe('Microphone unavailable')
     expect(voice.stage.stage).toBe('connected')
   })
 
-  it('a mic that went live leaves the error alone', () => {
+  it('a mic that went live clears its error and leaves other errors alone', () => {
     voice.error = 'earlier trouble'
+    voice.micError = 'Microphone unavailable'
     mic(true, null)
+    expect(voice.micError).toBeNull()
     expect(voice.error).toBe('earlier trouble')
   })
 })

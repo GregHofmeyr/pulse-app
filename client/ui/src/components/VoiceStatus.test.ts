@@ -54,6 +54,8 @@ beforeEach(async () => {
   voice.link = null
   voice.connection = 'disconnected'
   voice.micSilent = false
+  voice.deviceGaps = { input: null, output: null }
+  voice.micError = null
   windowFocus.focused = true
   cmp = mount(VoiceStatus, { target: document.body })
   flushSync()
@@ -343,6 +345,52 @@ describe('VoiceStatus panel behaviour', () => {
       flushSync()
       expect(voice.disconnectedBy).toBeNull()
       expect(document.querySelector('.vc-kicked')).toBeNull()
+    })
+  })
+
+  // #351: joined without a working mic (listen-only): a chip says so, its tooltip says why
+  describe('the No mic chip', () => {
+    const chip = (text: string) => [...document.querySelectorAll<HTMLElement>('.vc-chip')].find((c) => c.textContent?.includes(text)) ?? null
+    const gaps = (input: string | null, output: string | null) => {
+      emit({ kind: 'device_gaps', input, output })
+      flushSync()
+    }
+
+    it('shows_why_and_clears_once_a_mic_opens', () => {
+      connect()
+      expect(chip('No mic')).toBeNull()
+      gaps('no input device available', null)
+      const tip = chip('No mic')?.getAttribute('data-tip') ?? ''
+      expect(tip).toContain('no input device available')
+      expect(tip).toContain('You can still listen')
+      gaps(null, null)
+      expect(chip('No mic')).toBeNull()
+    })
+
+    it('a_mic_that_could_not_be_sent_shows_it_until_it_goes_live', () => {
+      connect()
+      emit({ kind: 'mic', live: false, error: "Couldn't send your mic: timed out" })
+      flushSync()
+      expect(chip('No mic')?.getAttribute('data-tip')).toContain("Couldn't send your mic: timed out")
+      emit({ kind: 'mic', live: true, error: null })
+      flushSync()
+      expect(chip('No mic')).toBeNull()
+    })
+
+    it('speakers_that_did_not_open_get_their_own_chip', () => {
+      connect()
+      gaps(null, 'device in use')
+      expect(chip('No mic')).toBeNull()
+      expect(chip('No sound')?.getAttribute('data-tip')).toContain('device in use')
+    })
+
+    it('leaving_the_call_forgets_it', () => {
+      connect()
+      gaps('no input device available', null)
+      emit({ kind: 'state', channel_id: null, connection: 'disconnected', controls: { muted: false, deafened: false } })
+      flushSync()
+      expect(voice.deviceGaps).toEqual({ input: null, output: null })
+      expect(voice.micError).toBeNull()
     })
   })
 

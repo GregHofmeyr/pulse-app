@@ -721,6 +721,8 @@ pub struct AudioIo {
     input: Option<Half>,
     output: Option<Half>,
     null: Option<tokio::task::JoinHandle<()>>,
+    /// Why a side isn't open (its last open's error), for the call's "No mic" chip (#351).
+    errors: DeviceGaps,
     shared: Arc<Shared>,
     raw_tx: RawTx,
 }
@@ -945,12 +947,77 @@ impl Sides {
         }
     }
 
+    /// These sides without `o`'s.
+    pub fn minus(self, o: Self) -> Self {
+        Self {
+            input: self.input && !o.input,
+            output: self.output && !o.output,
+        }
+    }
+
     /// The device choices that differ between two settings.
     pub fn changed(old: &AudioConfig, new: &AudioConfig) -> Self {
         Self {
             input: old.input != new.input,
             output: old.output != new.output,
         }
+    }
+}
+
+/// The sides of a call that aren't open, each with why (#351): the UI's "No mic" chip.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct DeviceGaps {
+    pub input: Option<String>,
+    pub output: Option<String>,
+}
+
+impl DeviceGaps {
+    pub fn sides(&self) -> Sides {
+        Sides {
+            input: self.input.is_some(),
+            output: self.output.is_some(),
+        }
+    }
+}
+
+/// An open's error as the chip's tooltip says it (without our own "audio input: " prefix).
+fn gap_reason(e: &anyhow::Error) -> String {
+    let s = e.to_string();
+    s.strip_prefix("audio input: ")
+        .or_else(|| s.strip_prefix("audio output: "))
+        .unwrap_or(&s)
+        .to_string()
+}
+
+/// When to try a missing side again (#351): a mic another app holds, or privacy off, comes back
+/// whenever the user fixes it. Soon at first, then backing off (each try can block up to 5 s).
+#[derive(Default)]
+pub struct GapRetry {
+    tries: usize,
+    next: Option<Instant>,
+}
+
+impl GapRetry {
+    const BACKOFF: [Duration; 4] = [
+        Duration::from_secs(2),
+        Duration::from_secs(5),
+        Duration::from_secs(10),
+        Duration::from_secs(30),
+    ];
+
+    /// Whether to try now, given whether anything is `missing`.
+    pub fn due(&mut self, missing: bool, now: Instant) -> bool {
+        if !missing {
+            *self = Self::default();
+            return false;
+        }
+        let next = *self.next.get_or_insert(now + Self::BACKOFF[0]);
+        if now < next {
+            return false;
+        }
+        self.tries += 1;
+        self.next = Some(now + Self::BACKOFF[self.tries.min(Self::BACKOFF.len() - 1)]);
+        true
     }
 }
 
@@ -1258,7 +1325,8 @@ pub fn build_output(
 }
 
 impl AudioIo {
-    pub fn start(cfg: &AudioConfig, shared: Arc<Shared>, raw_tx: RawTx) -> anyhow::Result<Self> {
+    /// Open both sides; a side that fails is left out (`gaps` says why), never the whole call.
+    pub fn start(cfg: &AudioConfig, shared: Arc<Shared>, raw_tx: RawTx) -> Self {
         // both directions at once: each waits on its own device thread anyway
         let (input, output) = std::thread::scope(|s| {
             let (sh, tx, name) = (shared.clone(), raw_tx.clone(), cfg.input.clone());
@@ -1269,13 +1337,51 @@ impl AudioIo {
                 .unwrap_or_else(|_| Err(anyhow!("audio input: opening thread panicked")));
             (input, output)
         });
-        Ok(Self {
-            input: Some(input?),
-            output: Some(output?),
+        Self::from_halves(input, output, shared, raw_tx)
+    }
+
+    /// Whatever opened (#351): no mic still joins (listen-only), no speakers still joins (nothing
+    /// plays). A missing side is reported (`gaps`) and tried again later (the pipeline's watchdog).
+    fn from_halves(
+        input: anyhow::Result<Half>,
+        output: anyhow::Result<Half>,
+        shared: Arc<Shared>,
+        raw_tx: RawTx,
+    ) -> Self {
+        let mut errors = DeviceGaps::default();
+        let keep = |r: anyhow::Result<Half>, err: &mut Option<String>, side: &str| match r {
+            Ok(h) => Some(h),
+            Err(e) => {
+                tracing::warn!(error = %e, side, "voice: a device didn't open; joining without it");
+                *err = Some(gap_reason(&e));
+                None
+            }
+        };
+        let input = keep(input, &mut errors.input, "input");
+        let output = keep(output, &mut errors.output, "output");
+        Self {
+            input,
+            output,
             null: None,
+            errors,
             shared,
             raw_tx,
-        })
+        }
+    }
+
+    /// The sides that aren't open, and why (nothing for test audio).
+    pub fn gaps(&self) -> DeviceGaps {
+        if self.null.is_some() {
+            return DeviceGaps::default();
+        }
+        let why = |h: &Option<Half>, e: &Option<String>| {
+            h.is_none()
+                .then(|| e.clone().unwrap_or_else(|| "not open".into()))
+        };
+        DeviceGaps {
+            input: why(&self.input, &self.errors.input),
+            output: why(&self.output, &self.errors.output),
+        }
     }
 
     /// Reopen just `sides` on the devices `cfg` names (blocking). A side that fails goes back to
@@ -1311,9 +1417,18 @@ impl AudioIo {
             } else {
                 cfg.output.clone()
             };
+            let error = if input {
+                &mut self.errors.input
+            } else {
+                &mut self.errors.output
+            };
             match open_half(input, name, self.shared.clone(), self.raw_tx.clone()) {
-                Ok(h) => *slot = Some(h),
+                Ok(h) => {
+                    *slot = Some(h);
+                    *error = None;
+                }
                 Err(e) => {
+                    *error = Some(gap_reason(&e));
                     tracing::error!(error = %e, input, "voice: reopening a device failed");
                     let back = previous.filter(|n| !n.is_empty());
                     if let Ok(h) = open_half(input, back, self.shared.clone(), self.raw_tx.clone())
@@ -1345,6 +1460,7 @@ impl AudioIo {
             input: None,
             output: None,
             null: None,
+            errors: DeviceGaps::default(),
             shared,
             raw_tx,
         }
@@ -1370,6 +1486,7 @@ impl AudioIo {
             input: None,
             output: None,
             null: Some(h),
+            errors: DeviceGaps::default(),
             shared,
             raw_tx,
         }
@@ -1406,6 +1523,7 @@ impl AudioIo {
             input: Some(half),
             output: None,
             null: None,
+            errors: DeviceGaps::default(),
             shared,
             raw_tx,
         }
@@ -2252,6 +2370,112 @@ mod tests {
         assert!(
             gone.load(Ordering::SeqCst),
             "returned before the stream closed"
+        );
+    }
+
+    fn opened_half(name: &str) -> Half {
+        let name = name.to_string();
+        Parked::spawn("test-half", Duration::from_secs(1), move || {
+            Ok((
+                (),
+                HalfInfo {
+                    rate: 48_000,
+                    name,
+                    generation: 0,
+                },
+            ))
+        })
+        .expect("a test half opens")
+    }
+
+    /// #351: no mic (privacy off, held exclusively, none plugged in) still joins: the speakers
+    /// open on their own and the mic's side says why it's missing.
+    #[test]
+    fn a_start_without_a_mic_keeps_the_speakers() {
+        let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
+        let shared = Shared::new(&AudioConfig::default(), Default::default(), 200);
+        let io = AudioIo::from_halves(
+            Err(anyhow!("audio input: no input device")),
+            Ok(opened_half("Speakers")),
+            shared,
+            raw_tx,
+        );
+        assert_eq!(io.opened().output, "Speakers");
+        assert_eq!(io.input_rate(), None);
+        let gaps = io.gaps();
+        assert_eq!(gaps.input.as_deref(), Some("no input device"));
+        assert_eq!(gaps.output, None);
+        assert_eq!(
+            gaps.sides(),
+            Sides {
+                input: true,
+                output: false
+            }
+        );
+    }
+
+    /// #351: and the mirror image: speakers that won't open still join with the mic.
+    #[test]
+    fn a_start_without_speakers_keeps_the_mic() {
+        let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
+        let shared = Shared::new(&AudioConfig::default(), Default::default(), 200);
+        let io = AudioIo::from_halves(
+            Ok(opened_half("Headset mic")),
+            Err(anyhow!("audio output: device in use")),
+            shared,
+            raw_tx,
+        );
+        assert_eq!(io.opened().input, "Headset mic");
+        let gaps = io.gaps();
+        assert_eq!(gaps.input, None);
+        assert_eq!(gaps.output.as_deref(), Some("device in use"));
+    }
+
+    /// Test audio (no devices at all) is never "missing" anything.
+    #[tokio::test]
+    async fn null_audio_has_no_gaps() {
+        let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
+        let shared = Shared::new(&AudioConfig::default(), Default::default(), 200);
+        let io = AudioIo::start_null(48_000, shared, raw_tx);
+        assert_eq!(io.gaps(), DeviceGaps::default());
+    }
+
+    /// A missing side is tried again on a backoff (a mic held by another app, privacy off): soon
+    /// at first, then every 30 s, and from scratch once it's back.
+    #[test]
+    fn a_missing_side_is_retried_with_backoff() {
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        let mut r = GapRetry::default();
+        assert!(!r.due(false, t0), "nothing missing: nothing to do");
+        assert!(!r.due(true, t0), "first seen: give it a moment");
+        assert!(!r.due(true, at(1)));
+        assert!(r.due(true, at(2)));
+        assert!(!r.due(true, at(6)));
+        assert!(r.due(true, at(7)));
+        assert!(r.due(true, at(17)));
+        assert!(r.due(true, at(47)));
+        assert!(!r.due(true, at(70)));
+        assert!(r.due(true, at(77)), "capped at 30 s");
+        assert!(!r.due(false, at(78)), "back");
+        assert!(!r.due(true, at(79)));
+        assert!(r.due(true, at(81)), "a new gap starts over");
+    }
+
+    /// A side that isn't open has no callbacks: that's a gap (retried), not a stall (reported).
+    #[test]
+    fn missing_sides_are_not_stalls() {
+        let stalled = Sides::BOTH;
+        let missing = Sides {
+            input: true,
+            output: false,
+        };
+        assert_eq!(
+            stalled.minus(missing),
+            Sides {
+                input: false,
+                output: true
+            }
         );
     }
 }

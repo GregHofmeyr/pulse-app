@@ -7,6 +7,7 @@
   import { conversationName } from '../lib/conversations'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { stageLabel } from '../lib/voicestage'
+  import { noMicTip, noSoundTip } from '../lib/voiceui'
   import { isWindows } from '../lib/stream/platform'
 
   // during a switch, the channel being joined
@@ -32,6 +33,9 @@
     const where = app.state.channels[kicked.channelId]?.name
     return `${displayName(app.state, server, kicked.by)} disconnected you${where ? ` from ${where}` : ''}.`
   })
+  // #351: in the call without a working mic or speakers
+  const micTip = $derived(voice.channelId ? noMicTip(voice.deviceGaps.input, voice.micError) : null)
+  const soundTip = $derived(voice.channelId ? noSoundTip(voice.deviceGaps.output) : null)
   let open = $state(false)
   let trigger = $state<HTMLButtonElement>()
   const TRIGGER = '[data-voice-status-trigger]'
@@ -101,6 +105,8 @@
           <span class="vc-text"><strong class:warn>{stageLabel(voice.stage)}</strong><small>{channelName}</small></span>
         </span>
       {/if}
+      {#if micTip}<span class="vc-chip" role="status" aria-label={micTip} data-tip={micTip}><Icon name="micOff" size={12} />No mic</span>{/if}
+      {#if soundTip}<span class="vc-chip" role="status" aria-label={soundTip} data-tip={soundTip}><Icon name="headphonesOff" size={12} />No sound</span>{/if}
       <button class="vc-leave" aria-label="Leave voice" onclick={() => voiceApi.leave()}><Icon name="hangup" size={17} /></button>
     {/if}
     {#if open && clickable}<LinkStatsPanel {channelName} onClose={close} triggerSelector={TRIGGER} />{/if}
@@ -124,6 +130,7 @@
   .vc-text strong.warn { color: var(--warn-text); }
   .vc-text strong.bad { color: var(--danger-text); }
   .vc-text small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vc-chip { flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--warn-text); font-size: 11px; font-weight: 600; white-space: nowrap; cursor: default; }
   .vc-leave { width: 34px; height: 34px; border: 0; border-radius: var(--radius-sm); background: var(--surface-menu); color: var(--danger); display: grid; place-items: center; }
   .vc-leave:hover { background: var(--bg-4); }
   .vc-note { margin: 0 8px 6px; padding: 8px 12px; border-radius: var(--radius-md); background: var(--danger-soft); font-size: 12px; line-height: 1.4; color: var(--danger-text); display: flex; align-items: flex-start; gap: 8px; }

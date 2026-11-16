@@ -8,7 +8,7 @@ import { displayName, type SelfVoice } from './selectors'
 import { app, onAppEvent, onAppReady } from './store.svelte'
 import { api } from './tauri'
 import { pushCallMixQuietly } from './mixer.svelte'
-import { loadAudioConfig, loadLocalMutes, loadVolumes, peerCallSound, playSound, saveLocalMutes, saveVolumes, serverVoiceSound, transitionSounds, type AudioConfig, type Connection, type EchoReport, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
+import { loadAudioConfig, loadLocalMutes, loadVolumes, peerCallSound, playSound, saveLocalMutes, saveVolumes, serverVoiceSound, transitionSounds, type AudioConfig, type Connection, type DeviceGaps, type EchoReport, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
 import { isJoining, reduceStage, type StageState } from './voicestage'
 import { holdOwnCue, ownJoin, peerJoin } from './joinSounds'
 import { joinSounds, playJoin } from './joinSounds.svelte'
@@ -29,6 +29,10 @@ export const voice = $state({
   stalled: false,
   /** Unmuted, yet the mic delivers only digital silence (privacy switch, hardware mute, dead mic). */
   micSilent: false,
+  /** Devices that didn't open, and why (#351): the call goes on without them (No mic / No sound chips). */
+  deviceGaps: { input: null, output: null } as DeviceGaps,
+  /** Why the mic couldn't be sent to the call (#351): listen-only while the core tries again. */
+  micError: null as string | null,
   error: '',
   /** Join progress, folded from the core's stage and state events. */
   stage: { stage: 'disconnected', attempt: null } as StageState,
@@ -199,6 +203,8 @@ export async function startVoiceListening() {
         if (prev.channelId !== e.channel_id) void streamApi.onVoiceChanged(e.channel_id)
         if (!e.channel_id) voice.speaking = new Set()
         if (!e.channel_id) voice.micSilent = false
+        if (!e.channel_id) voice.deviceGaps = { input: null, output: null }
+        if (!e.channel_id) voice.micError = null
         break
       }
       case 'link':
@@ -227,12 +233,15 @@ export async function startVoiceListening() {
       case 'device_recovered':
         voice.stalled = false
         break
+      case 'device_gaps':
+        voice.deviceGaps = { input: e.input, output: e.output }
+        break
       case 'mic_silent':
         voice.micSilent = e.silent
         break
       case 'mic':
-        // only a failure matters to the UI: a live mic needs no indicator of its own
-        if (e.error) voice.error = e.error
+        // a failure keeps the call listen-only (#351): the No mic chip says why until the mic goes out
+        voice.micError = e.error
         break
       case 'muted_talk':
         // The Doos (#49): the server counts it, rate-limited; nothing to show here

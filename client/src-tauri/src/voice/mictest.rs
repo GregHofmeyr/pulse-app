@@ -82,8 +82,16 @@ impl MicTest {
         // The mixer runs at 48 kHz; the output edge resamples to the device.
         shared.set_mic_sink(Some(Box::new(Loopback::new(shared.mix_in.clone()))));
         let (raw_tx, _processor) = super::processor::spawn(shared.clone());
-        let io = AudioIo::start(cfg, shared.clone(), raw_tx)
-            .map_err(|e| VoiceError::Device(e.to_string()))?;
+        let io = AudioIo::start(cfg, shared.clone(), raw_tx);
+        // a test needs both sides (a call joins without one, #351)
+        let gaps = io.gaps();
+        if let Some(e) = gaps
+            .input
+            .map(|e| format!("audio input: {e}"))
+            .or(gaps.output.map(|e| format!("audio output: {e}")))
+        {
+            return Err(VoiceError::Device(e));
+        }
         let queue = self.queue.clone();
         queue.record(0); // this run's worst starts from nothing, not the last run's queue
         queue.take_worst();

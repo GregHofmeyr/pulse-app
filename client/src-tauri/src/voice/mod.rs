@@ -82,7 +82,6 @@ async fn start_audio(
     let cfg = cfg.clone();
     tokio::task::spawn_blocking(move || AudioIo::start(&cfg, shared, raw_tx))
         .await
-        .map_err(|e| VoiceError::Device(e.to_string()))?
         .map_err(|e| VoiceError::Device(e.to_string()))
 }
 
@@ -331,27 +330,46 @@ struct PublishWatch<R: CloseRoom> {
     retries: Arc<AtomicU32>,
 }
 
+/// What the publish loop does after a report.
+#[derive(Debug, PartialEq, Eq)]
+enum AfterPublish {
+    Done,
+    /// Still in the call, listen-only (#351): try the mic again after a while.
+    Retry,
+}
+
 /// Tell the UI how the background mic publish went, once its join has shown "connected"
-/// (`connected` fires; dropped = the join never got there: say nothing, its room guard closes the
-/// room). A session already torn down (`alive` cleared by a leave, a drop, or a rejoin replacing
-/// it) says nothing either. A failed publish ends the session: `teardown` stops its audio and the
-/// room is closed. A rejoin's goes back to the rejoin loop (still "reconnecting": right after a
-/// drop is when a publish most likely times out), at most `PUBLISH_RETRIES` times in a row;
-/// otherwise the call ends and the UI is told why. `Ok(false)`: not published, and not a failure
-/// (server muted, #140): the call is up, the mic not live (#147).
+/// (`connected`: `Some` for the first report, which waits for it; dropped = the join never got
+/// there: say nothing, its room guard closes the room; `None` = a retry, long since connected).
+/// A session already torn down (`alive` cleared by a leave, a drop, or a rejoin replacing it) says
+/// nothing either. A rejoin's failed publish goes back to the rejoin loop (still "reconnecting":
+/// right after a drop is when a publish most likely times out), at most `PUBLISH_RETRIES` times in
+/// a row; `teardown` stops its audio and the room is closed. Any other failed publish keeps the
+/// call, listen-only (#351): the UI is told why, and the mic is tried again (`Retry`).
+/// `Ok(false)`: not published, and not a failure (server muted, #140): the call is up, the mic not
+/// live (#147).
 async fn report_publish<R: CloseRoom>(
     published: Result<bool, String>,
-    connected: tokio::sync::oneshot::Receiver<()>,
+    connected: Option<tokio::sync::oneshot::Receiver<()>>,
     w: &PublishWatch<R>,
     teardown: impl FnOnce(),
-) {
-    if connected.await.is_err() {
-        return;
+) -> AfterPublish {
+    let first = connected.is_some();
+    if let Some(connected) = connected
+        && connected.await.is_err()
+    {
+        return AfterPublish::Done;
     }
     let state = |connection, channel_id| VoiceEvent::State {
         channel_id,
         connection,
         controls: *w.controls.lock().unwrap(),
+    };
+    let connected_stage = || {
+        (w.events)(VoiceEvent::Stage {
+            stage: JoinStage::Connected,
+            attempt: None,
+        })
     };
     let e = match published {
         Ok(live) => {
@@ -360,37 +378,79 @@ async fn report_publish<R: CloseRoom>(
             if w.alive.load(Ordering::SeqCst) {
                 // only a live session's publish ends a streak (not a late one from a dead session)
                 w.retries.store(0, Ordering::SeqCst);
-                (w.events)(VoiceEvent::Stage {
-                    stage: JoinStage::Connected,
-                    attempt: None,
-                });
+                if first {
+                    connected_stage();
+                }
                 (w.events)(VoiceEvent::Mic { live, error: None });
             }
-            return;
+            return AfterPublish::Done;
         }
         Err(e) => e,
     };
-    if !w.alive.swap(false, Ordering::SeqCst) {
-        return;
+    if !w.alive.load(Ordering::SeqCst) {
+        return AfterPublish::Done;
     }
-    teardown();
-    let _ = tokio::time::timeout(CLOSE_TIMEOUT, w.room.close_room()).await;
-    if let Some((epoch, dropped)) = &w.rejoin
+    if let Some((epoch, Some(dropped))) = &w.rejoin
         && w.retries.load(Ordering::SeqCst) < PUBLISH_RETRIES
-        && dropped.as_ref().is_some_and(|d| d.send(*epoch).is_ok())
     {
-        w.retries.fetch_add(1, Ordering::SeqCst);
-        tracing::warn!(error = %e, "voice: publishing the mic failed; rejoining again");
-        (w.events)(state(Connection::Reconnecting, Some(w.channel)));
-        return;
+        if !w.alive.swap(false, Ordering::SeqCst) {
+            return AfterPublish::Done;
+        }
+        teardown();
+        let _ = tokio::time::timeout(CLOSE_TIMEOUT, w.room.close_room()).await;
+        if dropped.send(*epoch).is_ok() {
+            w.retries.fetch_add(1, Ordering::SeqCst);
+            tracing::warn!(error = %e, "voice: publishing the mic failed; rejoining again");
+            (w.events)(state(Connection::Reconnecting, Some(w.channel)));
+        } else {
+            // no rejoin loop to hand it to (the app is closing): the call is over
+            tracing::warn!(error = %e, "voice: publishing the mic failed; leaving");
+            (w.events)(state(Connection::Disconnected, None));
+        }
+        return AfterPublish::Done;
     }
-    // a call nobody can hear us in isn't a call: end it, and say why
-    tracing::warn!(error = %e, "voice: publishing the mic failed; leaving");
+    // others can still be heard: stay, listen-only, and try the mic again (#351)
+    tracing::warn!(error = %e, "voice: publishing the mic failed; listen-only, trying again");
+    if first {
+        connected_stage();
+    }
     (w.events)(VoiceEvent::Mic {
         live: false,
         error: Some(format!("Couldn't send your mic: {e}")),
     });
-    (w.events)(state(Connection::Disconnected, None));
+    AfterPublish::Retry
+}
+
+/// Publish the mic and report it (`report_publish`); a failure that keeps the call listen-only is
+/// tried again on a backoff (1 s, 2 s, 4 s … 30 s) until it's out or the session ends (#351).
+async fn publish_until_out<R, F, Fut>(
+    mut attempt: F,
+    connected: tokio::sync::oneshot::Receiver<()>,
+    w: &PublishWatch<R>,
+    teardown: impl FnOnce(),
+) where
+    R: CloseRoom,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<bool, String>>,
+{
+    let mut published = attempt().await;
+    let (mut connected, mut teardown) = (Some(connected), Some(teardown));
+    for n in 0u32.. {
+        let after = report_publish(published, connected.take(), w, || {
+            if let Some(t) = teardown.take() {
+                t()
+            }
+        })
+        .await;
+        if after == AfterPublish::Done {
+            return;
+        }
+        tokio::time::sleep(crate::backoff::backoff_delay(n, rand::random::<f64>())).await;
+        if !w.alive.load(Ordering::SeqCst) {
+            return;
+        }
+        published = attempt().await;
+    }
 }
 
 /// Reopens the pipeline's devices (stays in the room). Stall recovery, device following and
@@ -456,6 +516,11 @@ impl Reopener {
             None => {}
         }
         result.map_err(|e| VoiceError::Device(e.to_string()))
+    }
+
+    /// The sides that aren't open and why; `None` while a reopen has the devices out.
+    fn gaps(&self) -> Option<devices::DeviceGaps> {
+        self.io.lock().unwrap().as_ref().map(|io| io.gaps())
     }
 
     /// Wait (bounded) until no reopen is in flight. Call after clearing `alive`: a reopen that
@@ -681,13 +746,30 @@ fn spawn_watchdog(
         // streams at once)
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut stall = devices::StallPolicy::default();
+        let (mut gap_retry, mut last_gaps) = (devices::GapRetry::default(), None);
         loop {
             tick.tick().await;
             if !reopener.alive.load(Ordering::SeqCst) {
                 break;
             }
             let now = Instant::now();
-            match stall.check(shared.watchdog.stalled(now), now) {
+            // a side that isn't open (#351) has no callbacks: tried again on its own clock, never
+            // reported as a stall. Unknown (`None`) while a reopen has the devices out.
+            let gaps = reopener.gaps();
+            if let Some(g) = &gaps
+                && last_gaps.as_ref() != Some(g)
+            {
+                events(VoiceEvent::DeviceGaps(g.clone()));
+                last_gaps = Some(g.clone());
+            }
+            let missing = gaps.as_ref().map(|g| g.sides()).unwrap_or_default();
+            if gap_retry.due(missing.any(), now) {
+                tracing::info!(?missing, "voice: trying a missing device again");
+                let _ = reopener.reopen(missing, (None, None)).await;
+                continue;
+            }
+            let quiet = shared.watchdog.stalled_sides(now).minus(missing);
+            match stall.check(quiet.any(), now) {
                 None => {}
                 Some(devices::StallAction::Report) => {
                     tracing::error!("audio device still stalled after reopening");
@@ -700,9 +782,10 @@ fn spawn_watchdog(
                     events(VoiceEvent::DeviceRecovered);
                 }
                 Some(devices::StallAction::Reopen) => {
-                    let mut sides = shared.watchdog.stalled_sides(Instant::now());
+                    let mut sides = shared.watchdog.stalled_sides(Instant::now()).minus(missing);
                     if !sides.any() {
-                        sides = Sides::BOTH; // recovered meanwhile: be thorough anyway
+                        // recovered meanwhile: be thorough anyway (what's open)
+                        sides = Sides::BOTH.minus(missing);
                     }
                     tracing::warn!(?sides, "audio device stalled; reopening");
                     let _ = reopener.reopen(sides, (None, None)).await;
@@ -814,6 +897,9 @@ pub enum VoiceEvent {
     },
     DeviceStalled,
     DeviceRecovered,
+    /// The devices that aren't open, and why (#351): no mic = listen-only, no speakers = nothing
+    /// plays. Sent on joining and whenever it changes (a missing side is tried again).
+    DeviceGaps(devices::DeviceGaps),
     /// Our unmuted mic is delivering nothing but digital silence (or is again delivering sound).
     MicSilent {
         silent: bool,
@@ -1258,6 +1344,10 @@ impl VoiceManager {
                 if pipeline.stalled.load(Ordering::SeqCst) {
                     (self.events)(VoiceEvent::DeviceStalled);
                 }
+                // what's missing (#351), for this call's UI (the watchdog says when it changes)
+                if let Some(gaps) = pipeline.reopener.gaps() {
+                    (self.events)(VoiceEvent::DeviceGaps(gaps));
+                }
                 // the mic publish reports from here on, so never before "connected"
                 let _ = connected.send(());
                 Ok(())
@@ -1526,43 +1616,55 @@ impl VoiceManager {
             tasks.push(tokio::spawn(async move {
                 let t = Instant::now();
                 let local = watch.room.local_participant();
-                // held through the publish: a permission change waits for it, then sees the truth
-                let mut out = mic_out.lock().await;
-                // Server muted (#140): LiveKit refuses the publish. Not a failed call: the mic
-                // goes out once LiveKit gives publishing back (`follow_permission`).
-                // Ok(Ok(live)): whether the mic is out now
-                let published = if *out {
-                    // a permission change got the lock first and published it
-                    Ok(Ok(true))
-                } else if !publish_allowed(local.permission().as_ref()) {
-                    tracing::info!("voice: server muted; the mic is published once allowed");
-                    Ok(Ok(false))
-                } else {
-                    let r = tokio::time::timeout(
-                        PUBLISH_TIMEOUT,
-                        local.publish_track(
-                            LocalTrack::Audio(track),
-                            mic_publish_options(kbps.load(Ordering::SeqCst)),
-                        ),
-                    )
-                    .await
-                    .map(|r| r.map(|_| true));
-                    *out = matches!(r, Ok(Ok(true)));
-                    r
-                };
-                drop(out);
-                let published = match published {
-                    Ok(Ok(live)) => {
-                        if live {
-                            let (publish_ms, since_join_ms) = (ms(t), ms(started));
-                            tracing::info!(publish_ms, since_join_ms, "voice: mic published");
+                let attempt = || {
+                    let (local, track, mic_out, kbps) =
+                        (local.clone(), track.clone(), mic_out.clone(), kbps.clone());
+                    async move {
+                        // held through the publish: a permission change waits for it, then sees the truth
+                        let mut out = mic_out.lock().await;
+                        // Server muted (#140): LiveKit refuses the publish. Not a failed call: the mic
+                        // goes out once LiveKit gives publishing back (`follow_permission`).
+                        // Ok(Ok(live)): whether the mic is out now
+                        let published = if *out {
+                            // a permission change got the lock first and published it
+                            Ok(Ok(true))
+                        } else if !publish_allowed(local.permission().as_ref()) {
+                            tracing::info!(
+                                "voice: server muted; the mic is published once allowed"
+                            );
+                            Ok(Ok(false))
+                        } else {
+                            let r = tokio::time::timeout(
+                                PUBLISH_TIMEOUT,
+                                local.publish_track(
+                                    LocalTrack::Audio(track),
+                                    mic_publish_options(kbps.load(Ordering::SeqCst)),
+                                ),
+                            )
+                            .await
+                            .map(|r| r.map(|_| true));
+                            *out = matches!(r, Ok(Ok(true)));
+                            r
+                        };
+                        drop(out);
+                        match published {
+                            Ok(Ok(live)) => {
+                                if live {
+                                    let (publish_ms, since_join_ms) = (ms(t), ms(started));
+                                    tracing::info!(
+                                        publish_ms,
+                                        since_join_ms,
+                                        "voice: mic published"
+                                    );
+                                }
+                                Ok(live)
+                            }
+                            Ok(Err(e)) => Err(e.to_string()),
+                            Err(_) => Err("timed out".to_string()),
                         }
-                        Ok(live)
                     }
-                    Ok(Err(e)) => Err(e.to_string()),
-                    Err(_) => Err("timed out".to_string()),
                 };
-                report_publish(published, connected_rx, &watch, || {
+                publish_until_out(attempt, connected_rx, &watch, || {
                     stop_audio(&pipeline_alive, &shared, &io, &rx)
                 })
                 .await;
@@ -3144,6 +3246,7 @@ mod tests {
         handed_back: Vec<u64>,
         /// `publish_retries` afterwards.
         retries: u32,
+        after: AfterPublish,
     }
 
     /// `rejoin`: Some(epoch) for a rejoin's session. `retries`: `publish_retries` before.
@@ -3175,7 +3278,7 @@ mod tests {
             retries: Arc::new(AtomicU32::new(retries)),
         };
         let torn_down = AtomicBool::new(false);
-        report_publish(published, rx, &watch, || {
+        let after = report_publish(published, Some(rx), &watch, || {
             torn_down.store(true, Ordering::SeqCst)
         })
         .await;
@@ -3190,6 +3293,7 @@ mod tests {
             torn_down: torn_down.into_inner(),
             handed_back,
             retries: watch.retries.load(Ordering::SeqCst),
+            after,
         }
     }
 
@@ -3265,23 +3369,127 @@ mod tests {
         assert!(r.events.is_empty(), "{:?}", r.events);
     }
 
-    /// "Connected" was already shown: a mic that never made it in ends the call, and says why.
+    /// #351: a mic that never made it in doesn't end the call: others can still be heard. It's
+    /// connected, listen-only, says why, and the mic is tried again.
     #[tokio::test]
-    async fn a_failed_publish_ends_the_call_with_an_error() {
+    async fn a_failed_publish_keeps_the_call_listen_only() {
         let r = reported_as(Err("timed out".into()), true, true, None, 0).await;
-        assert!(r.closed && r.torn_down);
-        assert!(r.handed_back.is_empty(), "a user's join isn't retried");
+        assert!(!r.closed && !r.torn_down, "the call stays up");
+        assert!(r.handed_back.is_empty(), "a user's join isn't rejoined");
+        assert_eq!(r.after, AfterPublish::Retry);
         let seen = r.events;
         assert!(
             matches!(
                 &seen[..],
                 [
+                    VoiceEvent::Stage { stage: JoinStage::Connected, attempt: None },
                     VoiceEvent::Mic { live: false, error: Some(e) },
-                    VoiceEvent::State { channel_id: None, connection: Connection::Disconnected, .. },
                 ] if e == "Couldn't send your mic: timed out"
             ),
             "{seen:?}"
         );
+    }
+
+    /// A watch on a fresh session, its events collected.
+    fn watch_collecting(
+        rejoin: Option<(u64, Option<mpsc::UnboundedSender<u64>>)>,
+    ) -> (PublishWatch<FakeRoom>, Arc<Mutex<Vec<VoiceEvent>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let watch = PublishWatch {
+            alive: Arc::new(AtomicBool::new(true)),
+            room: Arc::new(FakeRoom(Arc::new(AtomicBool::new(false)))),
+            events: Arc::new(move |e| sink.lock().unwrap().push(e)),
+            controls: Arc::new(Mutex::new(Controls::default())),
+            channel: ChannelId::new(),
+            rejoin,
+            retries: Arc::new(AtomicU32::new(0)),
+        };
+        (watch, seen)
+    }
+
+    /// #351: after a failed publish the mic is tried again on a backoff, and goes live once it's
+    /// in; "connected" is said once.
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_publish_is_retried_until_the_mic_is_out() {
+        let (watch, seen) = watch_collecting(None);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tx.send(()).unwrap();
+        let tries = AtomicU32::new(0);
+        let started = tokio::time::Instant::now();
+        let torn_down = AtomicBool::new(false);
+        publish_until_out(
+            || {
+                let n = tries.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if n < 2 {
+                        Err("timed out".to_string())
+                    } else {
+                        Ok(true)
+                    }
+                }
+            },
+            rx,
+            &watch,
+            || torn_down.store(true, Ordering::SeqCst),
+        )
+        .await;
+        assert_eq!(tries.load(Ordering::SeqCst), 3);
+        // 1 s then 2 s (±20 %)
+        let waited = started.elapsed();
+        assert!(
+            waited >= Duration::from_millis(2400) && waited <= Duration::from_millis(3600),
+            "{waited:?}"
+        );
+        assert!(!torn_down.load(Ordering::SeqCst));
+        let seen = seen.lock().unwrap().clone();
+        let connected = seen
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    VoiceEvent::Stage {
+                        stage: JoinStage::Connected,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(connected, 1, "{seen:?}");
+        assert!(
+            matches!(
+                seen.last(),
+                Some(VoiceEvent::Mic {
+                    live: true,
+                    error: None
+                })
+            ),
+            "{seen:?}"
+        );
+    }
+
+    /// The retrying stops once the session is over (a leave, a drop).
+    #[tokio::test(start_paused = true)]
+    async fn publish_retries_stop_when_the_session_ends() {
+        let (watch, _seen) = watch_collecting(None);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tx.send(()).unwrap();
+        let tries = AtomicU32::new(0);
+        let alive = watch.alive.clone();
+        publish_until_out(
+            || {
+                let n = tries.fetch_add(1, Ordering::SeqCst);
+                if n == 1 {
+                    alive.store(false, Ordering::SeqCst); // left during the second try
+                }
+                async { Err("timed out".to_string()) }
+            },
+            rx,
+            &watch,
+            || {},
+        )
+        .await;
+        assert_eq!(tries.load(Ordering::SeqCst), 2);
     }
 
     /// Right after a drop is when a publish most likely times out: a rejoin's failed publish goes
@@ -3306,9 +3514,10 @@ mod tests {
         );
     }
 
-    /// Bounded: a rejoin whose publish keeps failing ends the call once the retries are used up.
+    /// Bounded: a rejoin whose publish keeps failing stops rejoining once the retries are used
+    /// up, and stays in the call listen-only (#351).
     #[tokio::test]
-    async fn a_rejoins_publish_failing_past_the_cap_ends_the_call() {
+    async fn a_rejoins_publish_failing_past_the_cap_stays_listen_only() {
         let r = reported_as(
             Err("timed out".into()),
             true,
@@ -3317,21 +3526,21 @@ mod tests {
             PUBLISH_RETRIES,
         )
         .await;
-        assert!(r.closed && r.torn_down);
+        assert!(!r.closed && !r.torn_down);
         assert!(r.handed_back.is_empty());
+        assert_eq!(r.after, AfterPublish::Retry);
         let seen = r.events;
         assert!(
             matches!(
                 &seen[..],
                 [
+                    VoiceEvent::Stage {
+                        stage: JoinStage::Connected,
+                        ..
+                    },
                     VoiceEvent::Mic {
                         live: false,
                         error: Some(_)
-                    },
-                    VoiceEvent::State {
-                        channel_id: None,
-                        connection: Connection::Disconnected,
-                        ..
                     },
                 ]
             ),

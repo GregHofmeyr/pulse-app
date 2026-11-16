@@ -130,6 +130,8 @@ export type VoiceEvent =
   | ({ kind: 'echo' } & EchoReport)
   | { kind: 'device_stalled' }
   | { kind: 'device_recovered' }
+  /** The devices that aren't open, and why (#351): no mic = listen-only, no speakers = nothing plays. */
+  | ({ kind: 'device_gaps' } & DeviceGaps)
   | { kind: 'mic_silent'; silent: boolean }
   | { kind: 'mic'; live: boolean; error: string | null }
   /** You've been talking into a muted mic (reported for The Doos badge). */
@@ -137,6 +139,21 @@ export type VoiceEvent =
   /** You're talking into your own muted mic: play the "you're muted" double ding (#252). The core paces it (every
    * 12 s while you keep talking, again at once after a re-mute) and never sends it while you're deafened. */
   | { kind: 'muted_cue' }
+
+/** Why each side isn't open (null = it is), from the core (#351). */
+export type DeviceGaps = { input: string | null; output: string | null }
+
+/** The No mic chip's tooltip (#351): a mic that didn't open, or one that couldn't be sent to the call; null = no chip. */
+export function noMicTip(gap: string | null, sendError: string | null): string | null {
+  if (gap) return `Your mic didn't open (${gap}). You can still listen, and your mic switches on by itself once it's available.`
+  if (sendError) return `${sendError}. You can still listen while Pulse keeps trying.`
+  return null
+}
+
+/** The No sound chip's tooltip (#351): speakers that didn't open; null = no chip. */
+export function noSoundTip(gap: string | null): string | null {
+  return gap ? `Your speakers didn't open (${gap}). You won't hear anyone until they do; Pulse keeps trying.` : null
+}
 
 export const clampVolume = (pct: number) => Math.round(Math.min(200, Math.max(0, pct)))
 
