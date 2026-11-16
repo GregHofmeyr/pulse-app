@@ -105,6 +105,20 @@ describe('a message author menu (#137)', () => {
     expect(JSON.parse(localStorage.getItem('pulse.joinSounds.mutes')!)).toEqual({})
   })
 
+  it('Join game (#381): while their Steam server is public, right below Message; Steam opens through the core', async () => {
+    show('S1')
+    const join = { kind: 'server' as const, app_id: 440, address: '203.0.113.7:27015' }
+    app.state = { ...app.state, people: { ...app.state.people, U2: { ...app.state.people.U2, playing: { name: 'Hat Game', steam_app_id: 440, started_at: null, art: null, join } } } } as never
+    flushSync()
+    rightClick(authorName())
+    expect(ids().slice(0, 3)).toEqual(['profile', 'message', 'join-game'])
+    expect(label('join-game')).toBe('Join game')
+    pick('join-game')
+    await Promise.resolve()
+    expect(invoke).toHaveBeenCalledWith('join_steam_game', { join })
+    expect(menu()).toBeNull()
+  })
+
   it('Message sound (#312): a flyout of sounds, Default ticked; picking one keeps it for them and plays it once', () => {
     show('S1')
     rightClick(authorName())

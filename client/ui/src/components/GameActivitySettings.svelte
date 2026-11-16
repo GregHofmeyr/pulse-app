@@ -6,7 +6,7 @@
   import { api, errorText } from '../lib/tauri'
   import { addGame, gameActivity, gamePrefs, removeGame, setClipFolders, setGameSwitch, type GameSwitch } from '../lib/gamePrefs.svelte'
   import { isWindows } from '../lib/stream/platform'
-  import { linkSteam, loadSteam, setSteamHours, setSteamShare, steam, steamNote, unlinkSteam } from '../lib/steam.svelte'
+  import { linkSteam, loadSteam, setSteamHours, setSteamJoin, setSteamShare, steam, steamNote, unlinkSteam } from '../lib/steam.svelte'
   import { completionLine, hoursText } from '../lib/achievements'
   const uid = $props.id()
 
@@ -20,6 +20,8 @@
   // Steam hours (#383): on unless the server says off (an older server never says)
   const shareHours = $derived(!!steamLink && steamLink.share_hours !== false)
   const steamHours = $derived(shareHours && steamLink?.recent_minutes != null ? `${hoursText(steamLink.recent_minutes)} in Steam games over the last two weeks` : null)
+  // Join (#381): the same rule
+  const shareJoin = $derived(!!steamLink && steamLink.share_join !== false)
   const steamOff = $derived(!gamePrefs.enabled || !steamLink || !steam.status?.achievements_available || steam.busy)
 
   /** The finer switches under the master one; a new feature adds its row here and its key in GameSettings. */
@@ -143,6 +145,12 @@
       </label>
       <small class="sub" id="{uid}-steam-hours-help">Your hours in Steam games over the last two weeks show on your profile and your servers' leaderboards, and count toward Touch Grass. Off, your Pulse server stops reading them.</small>
       {#if steamHours}<p class="seen sub" data-steam-hours>{steamHours}</p>{/if}
+      <label class="row sub">
+        <input type="checkbox" role="switch" class="switch" data-switch="steam-join" checked={shareJoin} aria-describedby="{uid}-steam-join-help"
+          disabled={steamOff} onchange={(e) => void setSteamJoin(e.currentTarget.checked)} />
+        <span>Let friends join your game</span>
+      </label>
+      <small class="sub" id="{uid}-steam-join-help">When Steam shows your lobby or game server publicly, people who can see you playing get Join on your profile card and in your right-click menu. That shares the lobby or the server's address with them. Off, your Pulse server stops looking.</small>
       {#if steam.error}<p class="error" role="alert">{steam.error}</p>{/if}
     </div>
   {/if}

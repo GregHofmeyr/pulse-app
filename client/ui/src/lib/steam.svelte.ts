@@ -43,6 +43,7 @@ export const linkSteam = () => act(() => api.linkSteam())
 export const unlinkSteam = () => act(() => api.unlinkSteam())
 export const setSteamShare = (on: boolean) => act(() => api.setSteamShare(on))
 export const setSteamHours = (on: boolean) => act(() => api.setSteamHours(on))
+export const setSteamJoin = (on: boolean) => act(() => api.setSteamJoin(on))
 
 export function handleSteamEvent(e: Event): void {
   if (e.t === 'SteamLinkChanged') setSteamStatus(e.d.status)

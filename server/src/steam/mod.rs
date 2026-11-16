@@ -13,6 +13,7 @@ pub mod api;
 pub mod backfill;
 pub mod cards;
 pub mod hours;
+pub mod join;
 pub mod openid;
 pub mod poller;
 pub mod routes;
@@ -238,6 +239,7 @@ mod tests {
             steam_app_id: id,
             started_at: None,
             art: None,
+            join: None,
         };
         assert_eq!(s.app_of(u, None), None);
         assert_eq!(s.app_of(u, Some(&game("Space Game", Some(10)))), Some(10));

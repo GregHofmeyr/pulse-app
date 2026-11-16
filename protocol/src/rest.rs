@@ -1223,6 +1223,30 @@ pub struct Playing {
     /// The game's art from Steam's CDN, fetched and stored by the server; none without a `steam_app_id`.
     #[serde(default)]
     pub art: Option<GameArt>,
+    /// Their Steam lobby or game server others can join (#381), when Steam shows one publicly and they share Join.
+    /// Set by the server only (never from a client's update). Older servers never send it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub join: Option<SteamJoin>,
+}
+
+/// Where a friend's Steam game can be joined (#381), checked by the server: `Lobby` becomes
+/// `steam://joinlobby/<app_id>/<lobby_id>/<steam_id>`, `Server` becomes `steam://connect/<address>`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SteamJoin {
+    Lobby {
+        app_id: u32,
+        /// The lobby's 64-bit SteamID, as digits.
+        lobby_id: String,
+        /// The host's (the friend's) 64-bit SteamID, as digits.
+        steam_id: String,
+    },
+    Server {
+        app_id: u32,
+        /// `a.b.c.d:port` (IPv4, as Steam reports it).
+        address: String,
+    },
 }
 
 /// A Steam game's art (#380), each re-encoded like a link thumbnail; any may be missing (not every game has a hero or
@@ -2888,6 +2912,11 @@ pub struct SteamLinked {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub recent_minutes: Option<u32>,
+    /// "Share Join" (#381, default on): friends are offered Join on your public Steam lobby or server. Absent from
+    /// older servers: on.
+    #[serde(default = "yes")]
+    #[ts(as = "Option<bool>", optional)]
+    pub share_join: bool,
 }
 
 /// `POST /me/steam/link`: the Steam sign-in page to open in the browser.
@@ -2906,6 +2935,10 @@ pub struct SteamSettingsRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub share_hours: Option<bool>,
+    /// "Share Join" (#381).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub share_join: Option<bool>,
 }
 
 /// `GET /servers/{id}/steam-hours` (#383): the server's members who played the most Steam hours over the last two

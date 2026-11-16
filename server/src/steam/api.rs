@@ -75,6 +75,22 @@ pub struct RecentGame {
     pub minutes_2weeks: u64,
 }
 
+/// What a player's summary says of the game they're in (#381): raw, as Steam gives it; the poller checks it
+/// ([`super::join`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InGame {
+    pub steam_id: String,
+    /// `gameid`: the app they're in, when Steam shows it.
+    pub game_id: Option<String>,
+    /// `lobbysteamid`.
+    pub lobby: Option<String>,
+    /// `gameserverip`: `ip:port`.
+    pub server: Option<String>,
+}
+
+/// The most SteamIDs one `GetPlayerSummaries` call takes.
+pub const SUMMARIES_MAX: usize = 100;
+
 /// The daily allowance: `cap` calls per UTC day, server-wide.
 pub struct Budget {
     cap: u32,
@@ -250,6 +266,21 @@ impl Api {
             true,
         )?;
         self.call("GetRecentlyPlayedGames", url, parse_recent).await
+    }
+
+    /// The game each of `steam_ids` (at most [`SUMMARIES_MAX`]) is in, from one `GetPlayerSummaries` (#381). Players
+    /// Steam leaves out (private, unknown) are missing.
+    pub async fn in_game(&self, steam_ids: &[&str]) -> Result<Vec<InGame>, ApiError> {
+        if steam_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let ids = steam_ids[..steam_ids.len().min(SUMMARIES_MAX)].join(",");
+        let url = self.url(
+            "/ISteamUser/GetPlayerSummaries/v2/",
+            &[("steamids", &ids)],
+            true,
+        )?;
+        self.call("GetPlayerSummaries", url, parse_in_game).await
     }
 
     /// `steam_id`'s persona name; `None` without a key or when Steam doesn't say.
@@ -559,6 +590,46 @@ pub fn parse_recent(status: u16, body: &[u8]) -> Result<Vec<RecentGame>, ApiErro
     }
 }
 
+/// `GetPlayerSummaries`: each player's `gameid`, `lobbysteamid` and `gameserverip` (empty strings as none).
+pub fn parse_in_game(status: u16, body: &[u8]) -> Result<Vec<InGame>, ApiError> {
+    if status != 200 {
+        return Err(ApiError::Failed(format!(
+            "GetPlayerSummaries: HTTP {status}"
+        )));
+    }
+    #[derive(Deserialize)]
+    struct Outer {
+        response: Inner,
+    }
+    #[derive(Deserialize)]
+    struct Inner {
+        #[serde(default)]
+        players: Vec<P>,
+    }
+    #[derive(Deserialize)]
+    struct P {
+        steamid: String,
+        #[serde(default)]
+        gameid: Option<String>,
+        #[serde(default)]
+        lobbysteamid: Option<String>,
+        #[serde(default)]
+        gameserverip: Option<String>,
+    }
+    let o: Outer = json("GetPlayerSummaries", body)?;
+    let some = |v: Option<String>| v.filter(|x| !x.trim().is_empty());
+    Ok(o.response
+        .players
+        .into_iter()
+        .map(|p| InGame {
+            steam_id: p.steamid,
+            game_id: some(p.gameid),
+            lobby: some(p.lobbysteamid),
+            server: some(p.gameserverip),
+        })
+        .collect())
+}
+
 /// `GetPlayerSummaries`: the persona name of `steam_id`.
 pub fn parse_persona(status: u16, body: &[u8], steam_id: &str) -> Option<String> {
     if status != 200 {
@@ -702,6 +773,27 @@ mod tests {
         );
         assert_eq!(parse_recent(403, b""), Err(ApiError::Private));
         assert!(matches!(parse_recent(500, b""), Err(ApiError::Failed(_))));
+    }
+
+    #[test]
+    fn in_game_reads_lobbies_and_servers() {
+        let body = br#"{"response":{"players":[
+            {"steamid":"1","gameid":"10","lobbysteamid":"109775240917155841"},
+            {"steamid":"2","gameid":"20","gameserverip":"203.0.113.7:27015","lobbysteamid":""},
+            {"steamid":"3","personaname":"kim"}]}}"#;
+        let p = parse_in_game(200, body).unwrap();
+        assert_eq!(p.len(), 3);
+        assert_eq!(p[0].lobby.as_deref(), Some("109775240917155841"));
+        assert_eq!(p[1].server.as_deref(), Some("203.0.113.7:27015"));
+        assert_eq!(p[1].lobby, None, "an empty string is none");
+        assert_eq!(
+            p[2],
+            InGame {
+                steam_id: "3".into(),
+                ..InGame::default()
+            }
+        );
+        assert!(matches!(parse_in_game(500, b""), Err(ApiError::Failed(_))));
     }
 
     #[test]

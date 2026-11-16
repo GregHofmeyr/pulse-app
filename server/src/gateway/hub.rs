@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use pulse_protocol::gateway::{Event, ServerFrame};
 use pulse_protocol::ids::UserId;
-use pulse_protocol::rest::{Listening, Person, Playing, User};
+use pulse_protocol::rest::{Listening, Person, Playing, SteamJoin, User};
 use sqlx::SqlitePool;
 use tokio::sync::{mpsc, oneshot};
 
@@ -239,6 +239,9 @@ struct Inner {
     listening: Slot<Listening>,
     /// Each connection's "Playing" (#380).
     playing: Slot<Playing>,
+    /// Each person's joinable Steam lobby or game server (#381), from the Steam poller: shown inside their "Playing"
+    /// (so only to those it's shown to, and only while they play). Locked only while `conns` is held (after it).
+    steam_join: Mutex<HashMap<UserId, SteamJoin>>,
 }
 
 /// Whether `user` is connected, and whether every connection of theirs is idle (#53): one device in use is enough
@@ -372,6 +375,7 @@ impl Hub {
     }
 
     /// Set (or clear) what game `user`'s connection `conn` is playing (#380), as [`Hub::set_listening`]; always shown.
+    /// Another game (or none) drops their Steam Join (#381) until the poller finds one for it.
     pub fn set_playing(
         &self,
         conn: ConnId,
@@ -380,15 +384,52 @@ impl Hub {
         playing: Option<Playing>,
     ) -> bool {
         let conns = self.inner.conns.lock().unwrap();
-        self.inner
+        let game = |p: Option<Playing>| p.map(|p| (p.name, p.steam_app_id));
+        let before = game(self.inner.playing.latest(&conns, user, true));
+        let set = self
+            .inner
             .playing
-            .set(&conns, conn, user, ticket, playing.map(|p| (p, true)))
+            .set(&conns, conn, user, ticket, playing.map(|p| (p, true)));
+        if set && game(self.inner.playing.latest(&conns, user, true)) != before {
+            self.inner.steam_join.lock().unwrap().remove(&user);
+        }
+        set
     }
 
-    /// What game `user` is playing (#380), from their most recently updated connection.
+    /// What game `user` is playing (#380), from their most recently updated connection, with its Join (#381).
     pub fn playing_of(&self, user: UserId) -> Option<Playing> {
         let conns = self.inner.conns.lock().unwrap();
-        self.inner.playing.latest(&conns, user, true)
+        self.shown_playing(&conns, user)
+    }
+
+    /// `user`'s "Playing" as others are shown it: the latest one held, with their Steam Join (#381) if any.
+    fn shown_playing(&self, conns: &HashMap<ConnId, Conn>, user: UserId) -> Option<Playing> {
+        let mut p = self.inner.playing.latest(conns, user, true)?;
+        p.join = self.inner.steam_join.lock().unwrap().get(&user).cloned();
+        Some(p)
+    }
+
+    /// Set (or clear) `user`'s joinable Steam lobby or server (#381); whether it changed (then
+    /// [`Hub::sync_presence`] tells those who see their "Playing").
+    pub fn set_steam_join(&self, user: UserId, join: Option<SteamJoin>) -> bool {
+        let _conns = self.inner.conns.lock().unwrap();
+        let mut joins = self.inner.steam_join.lock().unwrap();
+        match join {
+            Some(j) => joins.insert(user, j.clone()) != Some(j),
+            None => joins.remove(&user).is_some(),
+        }
+    }
+
+    /// Who has a joinable Steam lobby or server now (#381).
+    pub fn steam_joiners(&self) -> Vec<UserId> {
+        let _conns = self.inner.conns.lock().unwrap();
+        self.inner
+            .steam_join
+            .lock()
+            .unwrap()
+            .keys()
+            .copied()
+            .collect()
     }
 
     /// What connection `conn` itself holds (the same game again keeps its art without fetching it).
@@ -688,7 +729,7 @@ impl Hub {
         {
             let mut announced = self.inner.announced.lock().unwrap();
             let shown = self.inner.listening.latest(&conns, user, true);
-            let game = self.inner.playing.latest(&conns, user, true);
+            let game = self.shown_playing(&conns, user);
             for (id, c) in conns.iter() {
                 let view = view_for(&subject, c.user, connected, idle, &now);
                 let sees = c.user == user || view.online();
@@ -776,9 +817,7 @@ impl Hub {
                 let listening = sees
                     .then(|| self.inner.listening.latest(&conns, user.id, true))
                     .flatten();
-                let playing = sees
-                    .then(|| self.inner.playing.latest(&conns, user.id, true))
-                    .flatten();
+                let playing = sees.then(|| self.shown_playing(&conns, user.id)).flatten();
                 if let Some(conn) = conn {
                     announced.insert((user.id, conn), view.clone());
                     self.inner.listening.tell(user.id, conn, listening.as_ref());

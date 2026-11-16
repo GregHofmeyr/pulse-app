@@ -19,6 +19,7 @@
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
+  import JoinGameItem from './JoinGameItem.svelte'
   import MessageSoundItem from './MessageSoundItem.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
 
@@ -138,6 +139,7 @@
   {#if onMessage && !self}
     <button type="button" class="menu-item" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>
   {/if}
+  <JoinGameItem {userId} {pick} />
   {#if serverId}
     {#each voiceIds as id (id)}<ServerVoiceItem {id} {serverId} {userId} {pick} />{/each}
   {/if}

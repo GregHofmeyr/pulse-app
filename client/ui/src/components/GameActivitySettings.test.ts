@@ -213,11 +213,21 @@ describe('Steam account (#379)', () => {
     expect(sw('steam-hours').checked || !sw('steam-hours').disabled).toBe(false)
   })
 
+  it('Join (#381): on by default (an older server never says), and off is the server setting', async () => {
+    await withStatus(linked())
+    expect(sw('steam-join').checked && !sw('steam-join').disabled).toBe(true)
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'set_steam_join' ? linked({ share_join: false }) : undefined))
+    sw('steam-join').click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_steam_join', { on: false })
+    expect(sw('steam-join').checked).toBe(false)
+  })
+
   it('obeys the master switch', async () => {
     await withStatus(linked())
     sw('enabled').click()
     flushSync()
-    expect(sw('steam').disabled && sw('steam-hours').disabled).toBe(true)
+    expect(sw('steam').disabled && sw('steam-hours').disabled && sw('steam-join').disabled).toBe(true)
   })
 
   it('no key, private game details, or no linking on this server each say so', async () => {

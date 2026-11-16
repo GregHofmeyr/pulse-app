@@ -7,4 +7,8 @@ export type SteamSettingsRequest = { share_achievements?: boolean,
 /**
  * "Share Steam hours" (#383).
  */
-share_hours?: boolean, };
+share_hours?: boolean, 
+/**
+ * "Share Join" (#381).
+ */
+share_join?: boolean, };

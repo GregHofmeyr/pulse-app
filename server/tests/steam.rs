@@ -890,3 +890,157 @@ async fn a_private_profile_shows_no_hours() {
     let p: Profile = get_json(&app, &token, &format!("/users/{alex}/profile")).await;
     assert_eq!(p.stats.steam_recent_minutes, None);
 }
+
+// ---------- One-click Join (#381) ----------
+
+/// An obviously fake lobby (account 1).
+const LOBBY: &str = "109775240917155841";
+/// A documentation address (RFC 5737), never a real server.
+const SERVER: &str = "203.0.113.7:27015";
+
+async fn join_tick(app: &TestApp) {
+    pulse_server::steam::join::tick(&app.state()).await;
+}
+
+fn join_of(app: &TestApp, who: UserId) -> Option<pulse_protocol::rest::SteamJoin> {
+    app.hub.playing_of(who).and_then(|p| p.join)
+}
+
+#[tokio::test]
+async fn a_public_lobby_or_server_offers_join_to_those_who_see_them_playing() {
+    use pulse_protocol::rest::SteamJoin;
+    let (app, fake) = setup().await;
+    let (alex, alex_t) = linked(&app, &fake, "alex", ALEX_STEAM).await;
+    let (_, sam_t) = register(&app, "sam").await;
+    let server = create_server(&app, &alex_t, "Gamers").await;
+    let r = post_json(
+        &app,
+        &sam_t,
+        &format!("/servers/{}/join", server.id),
+        json!({}),
+    )
+    .await;
+    assert!(r.status().is_success());
+    let mut alex_ws = hello(&app, &alex_t).await;
+    let mut sam_ws = hello(&app, &sam_t).await;
+
+    // not playing: nobody is asked about
+    fake.in_game(ALEX_STEAM, Some((SPACE, Some(LOBBY), None)));
+    join_tick(&app).await;
+    assert_eq!(
+        fake.calls("GetPlayerSummaries"),
+        1,
+        "only the persona at link time"
+    );
+
+    play(
+        &app,
+        &mut alex_ws,
+        alex,
+        Some(steam_game("Space Game", SPACE, false)),
+    )
+    .await;
+    drain(&mut sam_ws, 200).await;
+    join_tick(&app).await;
+    let lobby = SteamJoin::Lobby {
+        app_id: SPACE,
+        lobby_id: LOBBY.into(),
+        steam_id: ALEX_STEAM.into(),
+    };
+    assert_eq!(join_of(&app, alex), Some(lobby.clone()));
+    let told = drain(&mut sam_ws, 300).await;
+    assert!(
+        told.iter().any(
+            |e| matches!(e, Event::PlayingChanged { user_id, playing: Some(p) }
+            if *user_id == alex && p.join.as_ref() == Some(&lobby))
+        ),
+        "{told:?}"
+    );
+
+    // a game server instead
+    fake.in_game(ALEX_STEAM, Some((SPACE, None, Some(SERVER))));
+    join_tick(&app).await;
+    assert_eq!(
+        join_of(&app, alex),
+        Some(SteamJoin::Server {
+            app_id: SPACE,
+            address: SERVER.into()
+        })
+    );
+    // an address that can't be joined, or Steam showing another game than the one played: no Join
+    fake.in_game(ALEX_STEAM, Some((SPACE, None, Some("127.0.0.1:27015"))));
+    join_tick(&app).await;
+    assert_eq!(join_of(&app, alex), None);
+    fake.in_game(ALEX_STEAM, Some((RACER, Some(LOBBY), None)));
+    join_tick(&app).await;
+    assert_eq!(join_of(&app, alex), None);
+
+    // another game drops it straight away
+    fake.in_game(ALEX_STEAM, Some((SPACE, Some(LOBBY), None)));
+    join_tick(&app).await;
+    assert!(join_of(&app, alex).is_some());
+    play(
+        &app,
+        &mut alex_ws,
+        alex,
+        Some(steam_game("Racer", RACER, false)),
+    )
+    .await;
+    for _ in 0..200 {
+        if app.hub.playing_of(alex).is_some_and(|p| p.name == "Racer") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(join_of(&app, alex), None);
+    play(
+        &app,
+        &mut alex_ws,
+        alex,
+        Some(steam_game("Space Game", SPACE, false)),
+    )
+    .await;
+    for _ in 0..200 {
+        if app
+            .hub
+            .playing_of(alex)
+            .is_some_and(|p| p.name == "Space Game")
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    join_tick(&app).await;
+    assert!(join_of(&app, alex).is_some());
+
+    // Join off: taken away now, and never asked again
+    let st = set_steam(&app, &alex_t, json!({ "share_join": false })).await;
+    assert!(!st.link.unwrap().share_join);
+    assert_eq!(join_of(&app, alex), None);
+    let calls = fake.calls("GetPlayerSummaries");
+    join_tick(&app).await;
+    assert_eq!(fake.calls("GetPlayerSummaries"), calls);
+    assert_eq!(join_of(&app, alex), None);
+}
+
+#[tokio::test]
+async fn join_is_on_by_default_and_follows_stopping() {
+    let (app, fake) = setup().await;
+    let (alex, token) = linked(&app, &fake, "alex", ALEX_STEAM).await;
+    assert!(status(&app, &token).await.link.unwrap().share_join);
+    let mut ws = hello(&app, &token).await;
+    play(
+        &app,
+        &mut ws,
+        alex,
+        Some(steam_game("Space Game", SPACE, true)),
+    )
+    .await;
+    fake.in_game(ALEX_STEAM, Some((SPACE, None, Some(SERVER))));
+    join_tick(&app).await;
+    assert!(join_of(&app, alex).is_some(), "with art hidden too");
+    play(&app, &mut ws, alex, None).await;
+    join_tick(&app).await;
+    assert_eq!(join_of(&app, alex), None);
+    assert!(app.hub.steam_joiners().is_empty());
+}

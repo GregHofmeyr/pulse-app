@@ -8,7 +8,8 @@
 //! - `/ISteamUserStats/GetSchemaForGame/v2/`, `/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/`.
 //! - `/IPlayerService/GetOwnedGames/v1/`: the games given [`FakeSteam::own`]; an empty response when private.
 //! - `/IPlayerService/GetRecentlyPlayedGames/v1/`: the games given [`FakeSteam::played_recently`] (#383).
-//! - `/ISteamUser/GetPlayerSummaries/v2/`: the persona from [`FakeSteam::player`].
+//! - `/ISteamUser/GetPlayerSummaries/v2/`: the persona from [`FakeSteam::player`] and the game from
+//!   [`FakeSteam::in_game`], for each of the comma-separated `steamids`.
 //! - `/openid/login`: `checkid_setup` redirects to `return_to` signed in as [`FakeSteam::sign_in_as`]; a POST with
 //!   `check_authentication` says `is_valid:true` once for a signature it issued.
 //! - `/icons/<file>` and `/steam/apps/<appid>/<file>`: a PNG.
@@ -52,6 +53,8 @@ struct Player {
     owned: Vec<(u32, u64)>,
     /// app → minutes over the last two weeks (#383)
     recent: Vec<(u32, u64)>,
+    /// The summary's `gameid`, `lobbysteamid` and `gameserverip` (#381).
+    in_game: Option<(u32, Option<String>, Option<String>)>,
     /// app → api name → unlock time
     unlocked: HashMap<u32, HashMap<String, i64>>,
 }
@@ -177,6 +180,14 @@ impl FakeSteam {
             .or_default()
             .recent
             .push((app, minutes));
+    }
+
+    /// `steam_id`'s summary shows them in `app` (#381), with a lobby or a game server to join, or neither; `None`: in
+    /// no game.
+    pub fn in_game(&self, steam_id: &str, game: Option<(u32, Option<&str>, Option<&str>)>) {
+        let mut w = self.world.lock().unwrap();
+        w.players.entry(steam_id.into()).or_default().in_game =
+            game.map(|(app, lobby, server)| (app, lobby.map(Into::into), server.map(Into::into)));
     }
 
     /// `steam_id` played nothing over the last two weeks.
@@ -406,12 +417,23 @@ async fn summaries(State(s): State<Shared>, RawQuery(q): RawQuery) -> Response {
         return r;
     }
     let w = s.world.lock().unwrap();
-    let id = q.get("steamids").cloned().unwrap_or_default();
-    let players: Vec<_> = w
-        .players
-        .get(&id)
-        .map(|p| serde_json::json!({"steamid": id, "personaname": p.persona}))
-        .into_iter()
+    let ids = q.get("steamids").cloned().unwrap_or_default();
+    let players: Vec<_> = ids
+        .split(',')
+        .filter_map(|id| {
+            let p = w.players.get(id)?;
+            let mut v = serde_json::json!({"steamid": id, "personaname": p.persona});
+            if let Some((app, lobby, server)) = &p.in_game {
+                v["gameid"] = serde_json::json!(app.to_string());
+                if let Some(l) = lobby {
+                    v["lobbysteamid"] = serde_json::json!(l);
+                }
+                if let Some(s) = server {
+                    v["gameserverip"] = serde_json::json!(s);
+                }
+            }
+            Some(v)
+        })
         .collect();
     json(
         StatusCode::OK,

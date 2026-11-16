@@ -99,6 +99,9 @@ async fn settings(
     if req.share_hours == Some(true) {
         super::hours::kick_one(&s, me);
     }
+    if req.share_join == Some(false) && s.hub.set_steam_join(me, None) {
+        s.hub.sync_presence(&s.db, me).await;
+    }
 
     store::tell(&s, me).await;
     Ok(Json(store::status(&s, me).await?))

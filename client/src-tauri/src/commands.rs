@@ -2270,6 +2270,28 @@ pub async fn set_steam_share(
     core.check(&app, api.set_steam_settings(&token, &body).await)
 }
 
+/// "Join game" (#381): Steam opens on a friend's lobby or server. The URL is built here, only from parts that pass
+/// [`pulse_protocol::rest::SteamJoin::url`]'s checks.
+#[tauri::command]
+pub fn join_steam_game(join: pulse_protocol::rest::SteamJoin) -> Result<(), String> {
+    crate::links::open_steam_join(&join)
+}
+
+/// "Share Join" (#381).
+#[tauri::command]
+pub async fn set_steam_join(
+    app: AppHandle,
+    core: State<'_, Core>,
+    on: bool,
+) -> Result<pulse_protocol::rest::SteamStatus, ApiError> {
+    let (api, token) = core.current()?;
+    let body = pulse_protocol::rest::SteamSettingsRequest {
+        share_join: Some(on),
+        ..Default::default()
+    };
+    core.check(&app, api.set_steam_settings(&token, &body).await)
+}
+
 /// "Share Steam hours" (#383).
 #[tauri::command]
 pub async fn set_steam_hours(

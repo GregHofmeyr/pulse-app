@@ -159,6 +159,8 @@ pub fn clean_playing(u: PlayingUpdate, now: chrono::DateTime<chrono::Utc>) -> Op
             .filter(|s| *s <= MAX_ELAPSED)
             .map(|s| crate::db::stamp(now - chrono::Duration::seconds(s as i64))),
         art: None,
+        // only the Steam poller sets it (#381)
+        join: None,
     })
 }
 

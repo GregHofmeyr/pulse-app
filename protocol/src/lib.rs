@@ -4,6 +4,7 @@ pub mod gateway;
 pub mod ids;
 pub mod rest;
 pub mod sound;
+pub mod steam_join;
 
 use std::path::Path;
 
@@ -192,6 +193,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::SteamSettingsRequest::export_all(&cfg)?;
     rest::SteamHours::export_all(&cfg)?;
     rest::SteamHoursEntry::export_all(&cfg)?;
+    rest::SteamJoin::export_all(&cfg)?;
     rest::AchievementsChannel::export_all(&cfg)?;
     rest::SetAchievementsChannelRequest::export_all(&cfg)?;
     rest::AchievementCard::export_all(&cfg)?;

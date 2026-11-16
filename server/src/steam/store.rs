@@ -30,9 +30,10 @@ pub struct Link {
     pub perfect_games: i64,
     pub share_hours: bool,
     pub recent_minutes: Option<i64>,
+    pub share_join: bool,
 }
 
-const LINK_COLS: &str = "user_id, steam_id, persona, share_achievements, backfill, private_since, completion_rate, perfect_games, share_hours, recent_minutes";
+const LINK_COLS: &str = "user_id, steam_id, persona, share_achievements, backfill, private_since, completion_rate, perfect_games, share_hours, recent_minutes, share_join";
 
 pub async fn link_of(db: &SqlitePool, user: UserId) -> sqlx::Result<Option<Link>> {
     sqlx::query_as(&format!(
@@ -62,6 +63,7 @@ pub async fn status(s: &AppState, user: UserId) -> AppResult<SteamStatus> {
                 .recent_minutes
                 .filter(|_| l.share_hours)
                 .map(|m| m.max(0) as u32),
+            share_join: l.share_join,
         }),
     })
 }
@@ -168,12 +170,14 @@ pub async fn set_switches(
     Ok(sqlx::query(
         "UPDATE steam_links SET share_achievements = COALESCE(?, share_achievements),
                 share_hours = COALESCE(?, share_hours),
+                share_join = COALESCE(?, share_join),
                 recent_minutes = CASE WHEN ? = 0 THEN NULL ELSE recent_minutes END,
                 recent_at = CASE WHEN ? = 0 THEN NULL ELSE recent_at END
          WHERE user_id = ?",
     )
     .bind(req.share_achievements)
     .bind(req.share_hours)
+    .bind(req.share_join)
     .bind(req.share_hours)
     .bind(req.share_hours)
     .bind(user.to_string())

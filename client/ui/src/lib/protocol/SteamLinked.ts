@@ -35,4 +35,9 @@ share_hours?: boolean,
 /**
  * Minutes played in Steam games over the last two weeks, once read (with `share_hours`).
  */
-recent_minutes?: number, };
+recent_minutes?: number, 
+/**
+ * "Share Join" (#381, default on): friends are offered Join on your public Steam lobby or server. Absent from
+ * older servers: on.
+ */
+share_join?: boolean, };

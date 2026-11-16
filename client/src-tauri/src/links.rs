@@ -58,6 +58,28 @@ pub fn open(u: &url::Url) {
     }
 }
 
+/// Opens Steam on a friend's lobby or game server (#381): only the `steam://joinlobby/…` or `steam://connect/…` URL
+/// [`SteamJoin::url`] builds from parts that pass its checks; anything else is refused. Logs the kind only.
+pub fn open_steam_join(join: &pulse_protocol::rest::SteamJoin) -> Result<(), String> {
+    let url = join
+        .url()
+        .ok_or_else(|| "That game can't be joined.".to_string())?;
+    let kind = match join {
+        pulse_protocol::rest::SteamJoin::Lobby { .. } => "lobby",
+        pulse_protocol::rest::SteamJoin::Server { .. } => "server",
+    };
+    match platform::open(&url) {
+        Ok(()) => {
+            tracing::info!(kind, "steam join: opened");
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!(kind, error = %e, "steam join: Steam didn't open");
+            Err("Steam didn't open. Is it installed?".into())
+        }
+    }
+}
+
 #[cfg(windows)]
 mod platform {
     use windows::Win32::UI::Shell::ShellExecuteW;
@@ -65,7 +87,7 @@ mod platform {
     use windows::core::{HSTRING, PCWSTR, w};
 
     pub fn open(url: &str) -> Result<(), String> {
-        // The shell's "open" verb on an http(s) URL starts the default browser.
+        // The shell's "open" verb on an http(s) URL starts the default browser (on a steam:// one, Steam).
         let r = unsafe {
             ShellExecuteW(
                 None,
@@ -91,7 +113,7 @@ mod platform {
 
     pub fn open(url: &str) -> Result<(), String> {
         // The URL is one argument (no shell); `--` would be read as a file by some openers, and the
-        // URL always starts with http, so it can't pass for an option.
+        // URL always starts with http or steam://, so it can't pass for an option.
         let mut child = Command::new("xdg-open")
             .arg(url)
             .stdin(Stdio::null())
@@ -131,6 +153,33 @@ mod tests {
             "https://example.com:8443/a?b#c",
         ] {
             assert!(for_browser(&u(ok)), "{ok}");
+        }
+    }
+
+    #[test]
+    fn a_steam_join_that_doesnt_check_out_is_refused_before_anything_opens() {
+        use pulse_protocol::rest::SteamJoin;
+        for bad in [
+            SteamJoin::Server {
+                app_id: 440,
+                address: "203.0.113.7:27015 +exec evil".into(),
+            },
+            SteamJoin::Server {
+                app_id: 440,
+                address: "127.0.0.1:27015".into(),
+            },
+            SteamJoin::Lobby {
+                app_id: 440,
+                lobby_id: "1/../../x".into(),
+                steam_id: "76500000000000001".into(),
+            },
+            SteamJoin::Lobby {
+                app_id: 0,
+                lobby_id: "109775240917155841".into(),
+                steam_id: "76500000000000001".into(),
+            },
+        ] {
+            assert!(open_steam_join(&bad).is_err(), "{bad:?}");
         }
     }
 

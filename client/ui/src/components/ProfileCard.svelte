@@ -14,6 +14,7 @@
   import { listeningOf } from '../lib/activity'
   import ListeningPanel from './ListeningPanel.svelte'
   import PlayingPanel from './PlayingPanel.svelte'
+  import { joinOf } from '../lib/steamJoin'
   import { playingOf } from '../lib/game'
   import { errorText } from '../lib/tauri'
   import { baseName, displayName } from '../lib/selectors'
@@ -135,7 +136,8 @@
   // Every action between people lives in the right-click menu, never a button on the card (owner, #137): right-click
   // the card (or ContextMenu / Shift+F10 in it) for the person menu, without View profile since you're on it.
   let menu = $state<{ x: number; y: number; opener: HTMLElement } | null>(null)
-  const hasMenu = $derived(!preview && nickItems(app.state, serverId, user.id).length > 0)
+  // Join game (#381) is a person action too: their card's right-click offers it even with no nickname items
+  const hasMenu = $derived(!preview && (nickItems(app.state, serverId, user.id).length > 0 || !!joinOf(app.state, user.id)))
   function openMenu(e: MouseEvent | KeyboardEvent) {
     if (!hasMenu) return
     e.preventDefault()
@@ -185,7 +187,7 @@
       <!-- renderMarkdown output is DOMPurify-sanitised (the message renderer's allow-list) -->
       <div class="bio" {@attach animateEmojiIn(bioHtml)}>{@html bioHtml}</div>
     {/if}
-    {#if playing}<PlayingPanel {playing} />{/if}
+    {#if playing}<PlayingPanel {playing} userId={user.id} />{/if}
     {#if listening}<ListeningPanel {listening} />{/if}
     {#if loading && !stats}
       <!-- where Member since and Voice will be -->

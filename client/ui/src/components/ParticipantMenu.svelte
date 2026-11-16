@@ -18,6 +18,7 @@
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
+  import JoinGameItem from './JoinGameItem.svelte'
   import MessageSoundItem from './MessageSoundItem.svelte'
   import ServerVoiceItem from './ServerVoiceItem.svelte'
 
@@ -160,6 +161,7 @@
   }}>
   <!-- the card opens beside the row or tile the menu came from -->
   <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>
+  <JoinGameItem {userId} {pick} />
   {#each ids as id (id)}
     {#if id === 'volume'}
       <div class="slider" role="none">

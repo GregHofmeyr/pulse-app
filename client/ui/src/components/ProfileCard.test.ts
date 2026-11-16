@@ -213,6 +213,18 @@ describe('ProfileCard', () => {
     expect(el.querySelector('[data-steam-hours]')!.textContent).toBe('Steam, 2 weeks21.5 h')
   })
 
+  it('Join (#381): on their Playing panel and in the card\'s right-click menu, even with no nickname items', () => {
+    const join = { kind: 'server' as const, app_id: 440, address: '203.0.113.7:27015' }
+    app.state = { ...app.state, people: { ...app.state.people, U2: { user: sam, online: true, last_seen_at: null, playing: { name: 'Hat Game', steam_app_id: 440, started_at: null, art: null, join } } } } as never
+    const el = show()
+    expect(el.querySelector('section.playing button.join')!.textContent).toBe('Join')
+    const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 40 })
+    el.querySelector('section.playing')!.dispatchEvent(e)
+    flushSync()
+    expect(e.defaultPrevented).toBe(true)
+    expect(document.querySelector('[role=menu] [data-item="join-game"]')!.textContent).toBe('Join game')
+  })
+
   it("shows In <channel> when they're in voice", () => {
     app.state = {
       ...app.state,

@@ -1,7 +1,8 @@
 //! Live achievements (#379): every [`crate::config::SteamConfig::poll_every`], each linked person who shares
 //! achievements and plays a Steam game (or stopped less than `tail` ago) gets one `GetPlayerAchievements` call; what's
 //! new since the stored state becomes a card. Steam refusing (private game details) backs them off for an hour and
-//! tells their Settings. Steam hours (#383) are read from the same loop, about hourly.
+//! tells their Settings. Steam hours (#383) are read from the same loop, about hourly, and who's joinable (#381)
+//! every round.
 
 use pulse_protocol::ids::UserId;
 
@@ -34,6 +35,7 @@ pub fn spawn(s: AppState) {
                 tokio::spawn(async move { super::hours::tick(&s).await });
             }
             tick(&s).await;
+            super::join::tick(&s).await;
             n = n.wrapping_add(1);
             if n.is_multiple_of(BACKFILL_RETRY_EVERY) {
                 backfill::kick(&s);
