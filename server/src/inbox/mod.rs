@@ -219,6 +219,73 @@ pub enum Job {
     Server { server: ServerId },
 }
 
+impl Job {
+    /// Which of `shards` inbox workers does this job (#328): each person's always the same one, so their items
+    /// reach them in order. Deleted or restored chats all go to the first, so a server's delete (the server and
+    /// each of its channels) still tells each person once; those only retell counts, read fresh under each
+    /// person's slot, so they needn't share the person's worker.
+    pub fn shard(&self, shards: usize) -> usize {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        match self {
+            Job::Added { user, .. }
+            | Job::Removed { user, .. }
+            | Job::Recount { user }
+            | Job::Retell { user } => user.hash(&mut h),
+            Job::Channel { .. } | Job::Server { .. } => return 0,
+        }
+        (h.finish() % shards.max(1) as u64) as usize
+    }
+}
+
+/// Inbox work that didn't fit an inbox worker's queue (#328), collapsed to what mustn't be lost: each person's
+/// count, told whatever it is ([`Job::Retell`]), and the chats deleted or restored. Their items in it are not sent
+/// (their next Ready or inbox fetch has them). Held once per person or chat, so it can't grow past them.
+#[derive(Default)]
+pub struct Overflow {
+    users: HashSet<UserId>,
+    channels: HashSet<ChannelId>,
+    servers: HashSet<ServerId>,
+}
+
+impl Overflow {
+    pub fn add(&mut self, jobs: Vec<Job>) {
+        for job in jobs {
+            match job {
+                Job::Added { user, .. }
+                | Job::Removed { user, .. }
+                | Job::Recount { user }
+                | Job::Retell { user } => {
+                    self.users.insert(user);
+                }
+                Job::Channel { channel } => {
+                    self.channels.insert(channel);
+                }
+                Job::Server { server } => {
+                    self.servers.insert(server);
+                }
+            }
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.users.is_empty() && self.channels.is_empty() && self.servers.is_empty()
+    }
+
+    /// The work held, as jobs for [`run`]; empty afterwards.
+    pub fn take(&mut self) -> Vec<Job> {
+        let Self {
+            users,
+            channels,
+            servers,
+        } = std::mem::take(self);
+        let users = users.into_iter().map(|user| Job::Retell { user });
+        let channels = channels.into_iter().map(|channel| Job::Channel { channel });
+        let servers = servers.into_iter().map(|server| Job::Server { server });
+        users.chain(channels).chain(servers).collect()
+    }
+}
+
 /// The inbox work `events` (published together) imply, for users who are connected (a later Ready has it all):
 /// one [`Job::Removed`] per person for all the batch's deletes.
 pub fn follow_ups<'a>(hub: &Hub, events: impl Iterator<Item = &'a Event>) -> Vec<Job> {

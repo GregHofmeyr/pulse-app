@@ -46,8 +46,20 @@ pub type InboxSlot = Arc<tokio::sync::Mutex<Option<u32>>>;
 /// Inbox work for the hub's inbox worker ([`Hub::publish_all`]).
 type InboxBatch = (SqlitePool, Vec<crate::inbox::Job>);
 
-/// The most batches the inbox worker takes in one go (it coalesces their counts, `inbox::run`).
+/// The most batches an inbox worker takes in one go (it coalesces their counts, `inbox::run`).
 const INBOX_BATCHES: usize = 256;
+/// How many inbox workers share the work, each person's always on the same one (#328, `inbox::Job::shard`): a
+/// slow count for one person holds up only those on their worker.
+const INBOX_SHARDS: usize = 4;
+/// The most batches waiting for one inbox worker. Publishers never wait (they may hold `in_order`): work that
+/// doesn't fit is collapsed into the worker's [`crate::inbox::Overflow`] instead.
+const INBOX_QUEUE: usize = 1024;
+
+/// One inbox worker's queue, and the work that didn't fit it.
+struct InboxShard {
+    tx: mpsc::Sender<InboxBatch>,
+    overflow: Arc<Mutex<crate::inbox::Overflow>>,
+}
 
 pub struct Registration {
     pub id: ConnId,
@@ -107,8 +119,9 @@ struct Inner {
     /// Each connected user's [`InboxSlot`]. Locked only while `conns` is held (after it), so a slot is made only
     /// for someone connected and goes with their last connection.
     inbox: Mutex<HashMap<UserId, InboxSlot>>,
-    /// The inbox worker's queue (#327, [`Hub::publish_all`]), started on first use (and again if it ever ends).
-    inbox_queue: Mutex<Option<mpsc::UnboundedSender<InboxBatch>>>,
+    /// The inbox workers' queues (#327, #328, [`Hub::publish_all`]), each started on first use (and again if it
+    /// ever ends).
+    inbox_queue: Mutex<[Option<InboxShard>; INBOX_SHARDS]>,
     /// Each connection's "Listening to" (#275). Locked only while `conns` is held (after it).
     listening: Mutex<HashMap<ConnId, Held>>,
     /// Each connection's newest listening update, by ticket ([`Hub::listening_ticket`]): one that took longer to
@@ -431,9 +444,9 @@ impl Hub {
 
     /// Deliver each of `events`, in order, to every connection whose user is in its audience. The inbox events
     /// they imply together (#306, `inbox::follow_ups`: one per person for the whole batch, so a quote's delete
-    /// with all its replies counts each inbox once) are queued for the inbox worker, which reads and sends them
-    /// after: never under the caller's [`Hub::in_order`] (#327). The worker takes the batches in publish order,
-    /// and each person's counts under their [`InboxSlot`]. Audiences are all computed before the
+    /// with all its replies counts each inbox once) are queued for the inbox workers, which read and send them
+    /// after: never under the caller's [`Hub::in_order`] (#327). Each person's work goes to one worker (#328),
+    /// which takes it in publish order, and each person's counts under their [`InboxSlot`]. Audiences are all computed before the
     /// first delivery, and inbox work is queued only after the last: see the module docs.
     pub async fn publish_all(&self, db: &SqlitePool, events: Vec<Event>) {
         let mut out = Vec::with_capacity(events.len());
@@ -459,31 +472,60 @@ impl Hub {
         }
     }
 
-    /// Hand `jobs` to the inbox worker, starting it the first time (or again, logged, if it has ended).
+    /// Hand `jobs` to the inbox workers, each person's to theirs, starting a worker the first time (or again,
+    /// logged, if it has ended). Never waits: a full queue collapses the work into that worker's overflow.
     fn queue_inbox(&self, db: &SqlitePool, jobs: Vec<crate::inbox::Job>) {
+        let mut by_shard: [Vec<crate::inbox::Job>; INBOX_SHARDS] = Default::default();
+        for job in jobs {
+            by_shard[job.shard(INBOX_SHARDS)].push(job);
+        }
         let mut queue = self.inner.inbox_queue.lock().unwrap();
+        for (shard, jobs) in queue.iter_mut().zip(by_shard) {
+            if !jobs.is_empty() {
+                self.queue_on(shard, db, jobs);
+            }
+        }
+    }
+
+    fn queue_on(
+        &self,
+        shard: &mut Option<InboxShard>,
+        db: &SqlitePool,
+        jobs: Vec<crate::inbox::Job>,
+    ) {
+        use mpsc::error::TrySendError;
         let mut batch = (db.clone(), jobs);
-        if let Some(tx) = queue.as_ref() {
-            match tx.send(batch) {
+        if let Some(s) = shard.as_ref() {
+            match s.tx.try_send(batch) {
                 Ok(()) => return,
-                Err(mpsc::error::SendError(b)) => {
-                    tracing::error!("the inbox worker has ended; starting another");
+                Err(TrySendError::Full((db, jobs))) => {
+                    s.overflow.lock().unwrap().add(jobs);
+                    // The worker reads its overflow after each batch. If it emptied its queue meanwhile, this
+                    // empty batch wakes it; if the queue is still full, it has batches to come back from.
+                    let _ = s.tx.try_send((db, Vec::new()));
+                    return;
+                }
+                Err(TrySendError::Closed(b)) => {
+                    tracing::error!("an inbox worker has ended; starting another");
                     batch = b;
                 }
             }
         }
-        let tx = self.start_inbox_worker();
-        if tx.send(batch).is_err() {
+        let s = self.start_inbox_worker(INBOX_QUEUE);
+        if s.tx.try_send(batch).is_err() {
             tracing::error!("couldn't queue inbox work; those events are lost (a Ready has them)");
         }
-        *queue = Some(tx);
+        *shard = Some(s);
     }
 
-    /// The inbox worker: takes batches in publish order, with whatever else is already waiting (up to
-    /// [`INBOX_BATCHES`], so `inbox::run` counts each person once for all of them). It holds the hub weakly and
-    /// ends with it. A batch that panics is logged and the worker goes on with the next.
-    fn start_inbox_worker(&self) -> mpsc::UnboundedSender<InboxBatch> {
-        let (tx, mut rx) = mpsc::unbounded_channel::<InboxBatch>();
+    /// An inbox worker: takes batches in publish order, with whatever else is already waiting (up to
+    /// [`INBOX_BATCHES`], so `inbox::run` counts each person once for all of them), then any work that overflowed
+    /// its queue meanwhile. It holds the hub weakly and ends with it. A batch that panics is logged and the worker
+    /// goes on with the next.
+    fn start_inbox_worker(&self, capacity: usize) -> InboxShard {
+        let (tx, mut rx) = mpsc::channel::<InboxBatch>(capacity);
+        let overflow = Arc::new(Mutex::new(crate::inbox::Overflow::default()));
+        let late = overflow.clone();
         let hub = Arc::downgrade(&self.inner);
         tokio::spawn(async move {
             while let Some((db, mut jobs)) = rx.recv().await {
@@ -494,14 +536,18 @@ impl Hub {
                 }
                 let Some(inner) = hub.upgrade() else { break };
                 let hub = Hub { inner };
-                if let Err(e) =
-                    tokio::spawn(async move { crate::inbox::run(&db, &hub, jobs).await }).await
-                {
-                    tracing::error!(error = ?e, "an inbox batch failed; its events are lost (a Ready has them)");
+                run_inbox(db.clone(), hub.clone(), jobs).await;
+                let late = late.lock().unwrap().take();
+                if !late.is_empty() {
+                    tracing::warn!(
+                        jobs = late.len(),
+                        "inbox work fell behind; counts retold, the items are left to Ready"
+                    );
+                    run_inbox(db, hub, late).await;
                 }
             }
         });
-        tx
+        InboxShard { tx, overflow }
     }
 
     /// Like [`Hub::publish`], but only to the members of `only` who are also in the event's
@@ -710,6 +756,16 @@ fn deliver_where(
     conns.len() < before
 }
 
+/// One inbox batch, on its own task so a panic is logged and the worker goes on.
+async fn run_inbox(db: SqlitePool, hub: Hub, jobs: Vec<crate::inbox::Job>) {
+    if jobs.is_empty() {
+        return;
+    }
+    if let Err(e) = tokio::spawn(async move { crate::inbox::run(&db, &hub, jobs).await }).await {
+        tracing::error!(error = ?e, "an inbox batch failed; its events are lost (a Ready has them)");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -816,18 +872,115 @@ mod tests {
     #[tokio::test]
     async fn the_inbox_worker_starts_again_if_it_has_ended() {
         let hub = Hub::default();
-        let (dead, rx) = mpsc::unbounded_channel();
+        let user = UserId::new();
+        let i = crate::inbox::Job::Recount { user }.shard(INBOX_SHARDS);
+        let (dead, rx) = mpsc::channel(1);
         drop(rx);
-        *hub.inner.inbox_queue.lock().unwrap() = Some(dead);
+        hub.inner.inbox_queue.lock().unwrap()[i] = Some(InboxShard {
+            tx: dead,
+            overflow: Arc::default(),
+        });
         let db = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
-        hub.queue_inbox(
-            &db,
-            vec![crate::inbox::Job::Recount {
-                user: UserId::new(),
-            }],
-        );
+        hub.queue_inbox(&db, vec![crate::inbox::Job::Recount { user }]);
         let queue = hub.inner.inbox_queue.lock().unwrap();
-        assert!(!queue.as_ref().unwrap().is_closed(), "a live worker again");
+        assert!(
+            !queue[i].as_ref().unwrap().tx.is_closed(),
+            "a live worker again"
+        );
+    }
+
+    /// #328: each person's inbox work always goes to the same worker, and the work spreads over them.
+    #[test]
+    fn a_persons_inbox_work_stays_on_one_worker() {
+        use crate::inbox::Job;
+        let mut used = HashSet::new();
+        for _ in 0..64 {
+            let user = UserId::new();
+            let i = Job::Recount { user }.shard(INBOX_SHARDS);
+            assert!(i < INBOX_SHARDS);
+            assert_eq!(Job::Retell { user }.shard(INBOX_SHARDS), i);
+            assert_eq!(Job::Removed { user, ids: vec![] }.shard(INBOX_SHARDS), i);
+            used.insert(i);
+        }
+        assert_eq!(used.len(), INBOX_SHARDS, "64 people use every worker");
+    }
+
+    /// #328: a full queue never makes the publisher wait: the work is collapsed into the worker's overflow (each
+    /// person's count retold once), and nothing more queues behind it.
+    #[tokio::test]
+    async fn a_full_inbox_queue_collapses_into_the_overflow() {
+        use crate::inbox::Job;
+        let hub = Hub::default();
+        let alex = UserId::new();
+        // someone on the same worker
+        let sam = std::iter::repeat_with(UserId::new)
+            .find(|u| {
+                Job::Recount { user: *u }.shard(INBOX_SHARDS)
+                    == Job::Recount { user: alex }.shard(INBOX_SHARDS)
+            })
+            .unwrap();
+        let i = Job::Recount { user: alex }.shard(INBOX_SHARDS);
+        // a worker that never reads, with room for one batch
+        let (tx, mut rx) = mpsc::channel(1);
+        let overflow = Arc::new(Mutex::new(crate::inbox::Overflow::default()));
+        hub.inner.inbox_queue.lock().unwrap()[i] = Some(InboxShard {
+            tx,
+            overflow: overflow.clone(),
+        });
+        let db = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
+        hub.queue_inbox(&db, vec![Job::Recount { user: alex }]);
+        for _ in 0..3 {
+            hub.queue_inbox(
+                &db,
+                vec![
+                    Job::Recount { user: sam },
+                    Job::Removed {
+                        user: alex,
+                        ids: vec![],
+                    },
+                ],
+            );
+        }
+        let (_, first) = rx.try_recv().unwrap();
+        assert!(matches!(first[..], [Job::Recount { user }] if user == alex));
+        assert!(rx.try_recv().is_err(), "the rest didn't queue");
+        let mut late: Vec<UserId> = overflow
+            .lock()
+            .unwrap()
+            .take()
+            .into_iter()
+            .map(|j| match j {
+                Job::Retell { user } => user,
+                _ => panic!("a person's work collapses to a retell"),
+            })
+            .collect();
+        late.sort();
+        let mut want = vec![alex, sam];
+        want.sort();
+        assert_eq!(late, want, "once each");
+    }
+
+    /// #328: the worker does the work that overflowed, after its batch.
+    #[tokio::test]
+    async fn the_inbox_worker_takes_its_overflow() {
+        let hub = Hub::default();
+        let shard = hub.start_inbox_worker(4);
+        shard
+            .overflow
+            .lock()
+            .unwrap()
+            .add(vec![crate::inbox::Job::Recount {
+                user: UserId::new(),
+            }]);
+        let db = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
+        shard.tx.try_send((db, Vec::new())).unwrap();
+        for _ in 0..500 {
+            if shard.overflow.lock().unwrap().is_empty() && shard.tx.capacity() == 4 {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        panic!("the overflow wasn't taken");
     }
 
     #[test]
