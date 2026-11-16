@@ -143,6 +143,32 @@ describe('Composer files', () => {
     expect(calls.filter((c) => c.cmd === 'unstage_attachment' && (c.args as { id: string }).id !== 'z')).toHaveLength(1)
   })
 
+  it('several folders dropped together are all offered, and each becomes its own zip (#297)', async () => {
+    answers.stage_attachment_paths = (a) =>
+      (a as { paths: string[] }).paths.map((p) => {
+        const name = p.split('/').pop()!
+        return { status: 'refused', name, error: 'Folders can\'t be sent as they are. Zip the folder first.', folder: p }
+      })
+    answers.zip_attachment_folder = (a) => {
+      const name = (a as { path: string }).path.split('/').pop()!
+      return file(`z-${name}`, `${name}.zip`, 4096)
+    }
+    answers.pick_attachment_files = () => ['/home/alex/mods', '/home/alex/world']
+    show()
+    document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
+    await settle()
+    expect(document.querySelector('.folder span')!.textContent).toBe('mods and world are folders, which can\'t be sent as they are.')
+    const zip = [...document.querySelectorAll('.folder button')].find((b) => b.textContent === 'Zip both and send') as HTMLButtonElement
+    expect(zip).toBeTruthy()
+    zip.click()
+    await settle()
+    expect(calls.filter((c) => c.cmd === 'zip_attachment_folder').map((c) => c.args)).toEqual([
+      { path: '/home/alex/mods' }, { path: '/home/alex/world' },
+    ])
+    expect(chips()).toEqual(['mods.zip', 'world.zip'])
+    expect(document.querySelector('.folder')).toBeNull()
+  })
+
   it('refuses a pasted file over 50 MB without reading it', async () => {
     const box = show()
     const big = new File([new Uint8Array(1)], 'world.zip')

@@ -97,19 +97,28 @@
     else fileDrafts.delete(draftKey)
   })
   let fileError = $state<string | null>(null)
-  // A folder that was dropped or picked: offered as a zip (#57)
-  let folderOffer = $state<{ path: string; name: string } | null>(null)
-  let zipping = $state(false)
+  // Folders that were dropped or picked: offered as zips (#57), all of those dropped together (#297), one zip each
+  // (each keeps its folder's name, and the core zips one folder at a time).
+  let folderOffers = $state<{ path: string; name: string }[]>([])
+  // the folder being zipped
+  let zipping = $state<string | null>(null)
+  const folderNote = $derived(
+    folderOffers.length === 1 ? 'Folders can\'t be sent as they are.'
+    : folderOffers.length === 2 ? `${folderOffers[0].name} and ${folderOffers[1].name} are folders, which can't be sent as they are.`
+    : `${folderOffers.length} folders can't be sent as they are.`,
+  )
+  const zipLabel = $derived(folderOffers.length === 1 ? 'Zip and send' : folderOffers.length === 2 ? 'Zip both and send' : `Zip all ${folderOffers.length} and send`)
   // Files over 50 MB are temporary sends **(owner)**: the sender picks how long they last.
   let tempDays = $state<number>(7)
   const hasBig = $derived(files.some((f) => f.size > MAX_BYTES))
 
-  function addStaged(results: StageResult[]) {
+  /** Queue what the core staged. New results replace any folders still offered, unless `zipped` (a zip of one). */
+  function addStaged(results: StageResult[], zipped = false) {
     fileError = null
-    folderOffer = null
+    if (!zipped) folderOffers = []
     for (const r of results) {
       if (r.status === 'refused' && r.folder) {
-        folderOffer = { path: r.folder, name: r.name }
+        folderOffers = [...folderOffers, { path: r.folder, name: r.name }]
       } else if (r.status === 'refused') {
         fileError = r.error
       } else if (files.length >= MAX_FILES) {
@@ -173,27 +182,29 @@
   let gone = false
   onDestroy(() => (gone = true))
 
-  async function zipFolder() {
-    const offer = folderOffer
-    if (!offer || zipping) return
+  async function zipFolders() {
+    if (!folderOffers.length || zipping) return
     // a full queue: refused before minutes of zipping, not after
-    if (files.length >= MAX_FILES) {
+    if (files.length + folderOffers.length > MAX_FILES) {
       fileError = TOO_MANY
       return
     }
-    zipping = true
     try {
-      const file = await api.zipAttachmentFolder(offer.path)
-      if (gone) {
-        void api.unstageAttachment(file.id)
-        return
+      // one at a time; a failed one stops there and stays offered with those after it
+      for (const offer of [...folderOffers]) {
+        zipping = offer.name
+        const file = await api.zipAttachmentFolder(offer.path)
+        if (gone) {
+          void api.unstageAttachment(file.id)
+          return
+        }
+        folderOffers = folderOffers.filter((o) => o.path !== offer.path)
+        addStaged([{ status: 'staged', file }], true)
       }
-      folderOffer = null
-      addStaged([{ status: 'staged', file }])
     } catch (e) {
       fileError = errorText(e)
     } finally {
-      zipping = false
+      zipping = null
     }
   }
 
@@ -464,12 +475,12 @@
     {name}{#if c.usage.startsWith(name)}<span class="arg">{c.usage.slice(name.length)}</span>{:else}<span class="arg">{` ${c.usage}`}</span>{/if}
   {/snippet}
   <ComposerFiles {files} onRemove={removeFile} error={fileError} />
-  {#if folderOffer}
+  {#if folderOffers.length}
     <!-- a folder can't go as it is: zip it, and the zip joins the queued files (#57) -->
     <div class="folder" role="status">
-      <span>Folders can't be sent as they are.</span>
-      <button type="button" class="btn btn-quiet" disabled={zipping} onclick={() => void zipFolder()}>{zipping ? `Zipping ${folderOffer.name}…` : 'Zip and send'}</button>
-      <button type="button" class="icon-btn icon-btn-xs" aria-label="Dismiss" onclick={() => (folderOffer = null)}><Icon name="x" size={14} /></button>
+      <span>{folderNote}</span>
+      <button type="button" class="btn btn-quiet" disabled={!!zipping} onclick={() => void zipFolders()}>{zipping ? `Zipping ${zipping}…` : zipLabel}</button>
+      <button type="button" class="icon-btn icon-btn-xs" aria-label="Dismiss" onclick={() => (folderOffers = [])}><Icon name="x" size={14} /></button>
     </div>
   {/if}
   {#if hasBig}
