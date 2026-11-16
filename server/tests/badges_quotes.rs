@@ -39,7 +39,11 @@ struct World {
 }
 
 async fn world() -> World {
-    let app = spawn().await;
+    world_with(test_config()).await
+}
+
+async fn world_with(cfg: pulse_server::config::Config) -> World {
+    let app = spawn_with(cfg).await;
     let alex = register(&app, "alex").await;
     let sam = register(&app, "sam").await;
     let s = create_server(&app, &alex.1, "Main").await;
@@ -457,4 +461,29 @@ async fn three_am_thoughts_for_being_quoted_in_the_small_hours() {
     // 05:00 SAST: over.
     quoted(w.sam.0, vec![w.alex.0], "2026-11-03T03:00:00Z").await;
     assert_eq!(stat_of(&w.app, w.alex.0, stat::THREE_AM_QUOTE).await, 0);
+}
+
+/// #127 through the route: tests post quotes at the pinned midday clock, so none earns 3 am
+/// Thoughts whatever the hour CI runs; with the clock pinned to the small hours, one does.
+#[tokio::test]
+async fn posting_a_quote_reads_the_pinned_quote_clock() {
+    use chrono::{DateTime, Utc};
+    let w = world().await;
+    w.alex_quotes(&[w.sam.0]).await;
+    assert_eq!(stat_of(&w.app, w.sam.0, stat::THREE_AM_QUOTE).await, 0);
+
+    let night = DateTime::parse_from_rfc3339("2026-11-03T01:10:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let w = world_with(pulse_server::config::Config {
+        quote_clock: Some(night),
+        ..test_config()
+    })
+    .await;
+    w.alex_quotes(&[w.sam.0]).await;
+    assert!(
+        badge(&w.app, &w.sam.1, w.sam.0, "three_am_quote")
+            .await
+            .is_some()
+    );
 }

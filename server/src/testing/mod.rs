@@ -84,8 +84,17 @@ pub fn test_config() -> Config {
         stage_share_ttl: crate::stage::SHARE_TTL,
         part_size: pulse_protocol::rest::attachment_limits::PART_SIZE,
         giphy: crate::config::GiphyConfig::default(), // no key unless a test sets one
+        quote_clock: Some(QUOTE_CLOCK_DAY),
     }
 }
+
+/// Where `test_config` pins the quote badges' clock: 12:00 South African time, far from the small
+/// hours, so no quote test earns 3 am Thoughts by accident whenever it runs (#127).
+pub const QUOTE_CLOCK_DAY: chrono::DateTime<chrono::Utc> =
+    match chrono::DateTime::from_timestamp(1_767_261_600, 0) {
+        Some(t) => t, // 2026-01-01T10:00:00Z
+        None => panic!("a valid time"),
+    };
 
 pub async fn spawn() -> TestApp {
     spawn_with(test_config()).await

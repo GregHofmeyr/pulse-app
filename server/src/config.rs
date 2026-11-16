@@ -50,12 +50,16 @@ pub struct Config {
     pub part_size: u64,
     /// GIPHY (#58): the key signed-in apps search with, and the rating they ask for.
     pub giphy: GiphyConfig,
+    /// The time the quote badges take a new quote as posted at (#127, 3 am Thoughts); `None` = the
+    /// real clock. Only tests set it: `test_config` pins midday, so a quote test run in the small
+    /// hours never earns the badge by accident, and the 3 am tests pin night themselves.
+    pub quote_clock: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
     limits, stream_media_timeout, media_dir, media_min_free_bytes, updates_dir, totp_key, clips, embeds,
-    launch_date, calls, stage_share_ttl, part_size, giphy ;
+    launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock ;
     livekit_secret
 });
 
@@ -137,6 +141,7 @@ impl Config {
             stage_share_ttl: crate::stage::SHARE_TTL,
             part_size: pulse_protocol::rest::attachment_limits::PART_SIZE,
             giphy: giphy(|k| std::env::var(k).ok())?,
+            quote_clock: None,
         })
     }
 }
@@ -439,6 +444,7 @@ mod tests {
                 api_key: Some("SECRET-GIPHY".into()),
                 rating: "pg-13".into(),
             },
+            quote_clock: None,
         };
         let d = format!("{cfg:?}");
         assert!(!d.contains("SECRET"), "{d}");

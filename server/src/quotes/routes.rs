@@ -96,7 +96,13 @@ async fn post_quote(
         super::insert_line(&mut tx, msg_id, position, l).await?;
     }
     let speakers = super::speakers_now(&mut tx, server, &lines).await?;
-    let check = crate::badges::hooks::quoted(&mut tx, me, &speakers, chrono::Utc::now()).await?;
+    let check = crate::badges::hooks::quoted(
+        &mut tx,
+        me,
+        &speakers,
+        s.cfg.quote_clock.unwrap_or_else(chrono::Utc::now),
+    )
+    .await?;
     let moved = crate::reads::advance(&mut tx, me, id, msg_id).await?;
     tx.commit().await?;
 
