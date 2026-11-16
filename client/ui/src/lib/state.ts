@@ -1596,6 +1596,29 @@ export function landed(s: AppState, channel: string): AppState {
   return { ...s, history: { ...s.history, [channel]: rest } }
 }
 
+/** Where a chat opens when its latest page wouldn't reach the NEW line (#332): around your read point, as a jump's
+ *  window, when more than a page is unread and it isn't going on from what it holds (`resumePoint`). That's a first
+ *  visit with more than a page unread, or a reconnect after you read part of the way on another device (your read
+ *  point past what it holds, more than a page still below it). Null otherwise (the latest page): caught up, a page
+ *  or less unread, or never read at all (no read point to open at). */
+export function unreadWindowPoint(s: AppState, channel: string): string | null {
+  const h = s.history[channel]
+  const read = s.reads[channel]
+  if (h?.loaded || !read || read.unread <= PAGE || read.last_read_message_id === null) return null
+  if (resumePoint(s, channel) !== null) return null
+  return read.last_read_message_id
+}
+
+/** Open `channel` at its first unread message (#332): the window around `readPoint` (`loadWindow`), asking the view
+ *  to bring the first message after the read point to the top (`openAt`, as `resumeAfter` does), the NEW line above
+ *  it; reading on pages forward to the latest. */
+export function openAtUnread(s: AppState, channel: string, page: Message[], readPoint: string): AppState {
+  const next = loadWindow(s, channel, page, readPoint)
+  const first = next.messages[channel]?.find((m) => m.id > readPoint)?.id
+  const h = next.history[channel]
+  return first && h ? { ...next, history: { ...next.history, [channel]: { ...h, openAt: first } } } : next
+}
+
 /** Add `channel`'s latest page to what it holds (a first visit, or a reconnect's reload when your place is the latest).
  *  A full page that doesn't meet what it holds takes the list's place (as "Jump to present" does), keeping only live
  *  messages newer than it, and scroll-up pages back from it (no hole). Unread messages dropped that way are reached
