@@ -1,4 +1,8 @@
 <script lang="ts">
+  // "Your people" (#45): everyone else, online first, each card with Message, then Join (their server voice room) or
+  // Call. The one place person actions are buttons on a card (elsewhere they're in the right-click menu). Join game
+  // (#397): their public Steam lobby or game server, in the accent (a live action), on its own row so it never reads
+  // as the voice Join.
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
@@ -10,6 +14,8 @@
   import { callUser } from '../lib/calls.svelte'
   import { isMenuKey, rowMenuAt } from '../lib/participantMenu'
   import MemberMenu from './MemberMenu.svelte'
+  import { joinOf } from '../lib/steamJoin'
+  import { api } from '../lib/tauri'
 
   let { onOpen, onJoinVoice }: {
     onOpen: (channelId: string) => void
@@ -69,6 +75,22 @@
     menu = { userId, ...rowMenuAt(e, card) }
   }
 
+  /** Join game (#397): Steam opens on their lobby or game server (the core builds the steam:// URL from checked parts). */
+  let joining = $state<string | null>(null)
+  async function joinGame(userId: string) {
+    const join = joinOf(app.state, userId)
+    if (!join || joining) return
+    error = ''
+    joining = userId
+    try {
+      await api.joinSteamGame(join)
+    } catch (e) {
+      error = errorText(e)
+    } finally {
+      joining = null
+    }
+  }
+
   async function message(userId: string) {
     error = ''
     try {
@@ -89,6 +111,7 @@
         {#each section.list as p (p.user.id)}
           {@const voice = voiceOf(p.user.id)}
           {@const unread = dmUnread(p.user.id)}
+          {@const game = joinOf(app.state, p.user.id)}
           <div class="card" class:unread={unread > 0} class:away={!isOn(p.presence)} role="presentation"
             onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}
             oncontextmenu={(e) => openMenu(p.user.id, e, e.currentTarget)} onkeydown={(e) => { if (isMenuKey(e)) openMenu(p.user.id, e, e.currentTarget) }}>
@@ -111,6 +134,10 @@
                 <button class="btn btn-quiet" onclick={() => onJoinVoice(voice.channelId, voice.serverId)}><Icon name="speaker" size={14} /> Join</button>
               {:else}
                 <button class="btn btn-quiet" onclick={() => call(p.user.id)}><Icon name="phone" size={14} /> Call</button>
+              {/if}
+              {#if game}
+                <button class="btn btn-primary join-game" disabled={joining === p.user.id} data-tip={game.kind === 'lobby' ? 'Join their Steam lobby' : 'Join their game server'}
+                  onclick={() => void joinGame(p.user.id)}><Icon name="play" size={14} /> Join game</button>
               {/if}
             </div>
           </div>
@@ -138,8 +165,9 @@
   .text { display: flex; flex-direction: column; min-width: 0; }
   .text strong { font-size: 14px; }
   .status { font-size: 12px; color: var(--text-3); display: flex; align-items: center; gap: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .acts { display: flex; gap: 6px; }
+  .acts { display: flex; flex-wrap: wrap; gap: 6px; }
   .acts .btn { flex: 1; gap: 5px; }
+  .acts .join-game { flex-basis: 100%; }
   .error { color: var(--danger-text); font-size: 13px; }
   .empty { padding: 24px 2px; color: var(--text-3); }
 </style>

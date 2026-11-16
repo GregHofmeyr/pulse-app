@@ -80,6 +80,42 @@ describe('PeopleBoard', () => {
   })
 })
 
+describe('PeopleBoard Join game (#397)', () => {
+  const card = (name: string) => [...document.querySelectorAll<HTMLElement>('.card')].find((c) => c.textContent?.includes(name))!
+  const joinGame = (name: string) => card(name).querySelector<HTMLButtonElement>('button.join-game')
+  const playing = (address: string) => ({ name: 'Space Game', steam_app_id: 440, started_at: null, art: null, join: { kind: 'server' as const, app_id: 440, address } })
+
+  it("on a card while their game can be joined, in the accent, apart from the voice Join; it opens Steam", async () => {
+    const people = app.state.people
+    app.state = { ...app.state, people: {
+      ...people,
+      U2: { ...people.U2, playing: playing('203.0.113.7:27015') },
+      // a join that doesn't check out never shows
+      U3: { ...people.U3, playing: playing('127.0.0.1:27015') },
+    } }
+    flushSync()
+    const btn = joinGame('sam')!
+    expect(btn.textContent?.trim()).toBe('Join game')
+    expect(btn.classList.contains('btn-primary')).toBe(true)
+    expect(joinGame('kim')).toBeNull()
+    expect(joinGame('jo')).toBeNull()
+    // Message and Call stay as they were
+    expect([...card('sam').querySelectorAll('.acts button')].map((b) => b.textContent?.trim())).toEqual(['Message', 'Call', 'Join game'])
+    vi.mocked(invoke).mockClear()
+    btn.click()
+    await vi.waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith('join_steam_game', { join: playing('203.0.113.7:27015').join }))
+  })
+
+  it("Steam not opening says why", async () => {
+    app.state = { ...app.state, people: { ...app.state.people, U2: { ...app.state.people.U2, playing: playing('203.0.113.7:27015') } } }
+    flushSync()
+    vi.mocked(invoke).mockImplementationOnce(async () => { throw 'Steam did not open' })
+    joinGame('sam')!.click()
+    await vi.waitFor(() => expect(document.querySelector('.board > .error')?.textContent).toBe('Steam did not open'))
+    vi.mocked(invoke).mockImplementation(async () => undefined)
+  })
+})
+
 describe('PeopleBoard person menu (#135)', () => {
   const card = (name: string) => [...document.querySelectorAll<HTMLElement>('.card')].find((c) => c.textContent?.includes(name))!
   const menu = () => document.querySelector<HTMLElement>('[role=menu]')

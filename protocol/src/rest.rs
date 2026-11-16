@@ -1373,7 +1373,7 @@ pub enum SteamJoin {
     },
     Server {
         app_id: u32,
-        /// `a.b.c.d:port` (IPv4, as Steam reports it).
+        /// `a.b.c.d:port` (IPv4, as Steam reports it), or `[ipv6]:port` in its canonical form (#397).
         address: String,
     },
 }
