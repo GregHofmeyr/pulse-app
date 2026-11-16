@@ -47,17 +47,31 @@ pub fn channel_from_row(
 pub const CHANNEL_COLS: &str = "id, server_id, kind, name, position, category_id, icon_hash, \
      (SELECT m.still_hash FROM media m WHERE m.hash = icon_hash) AS icon_still, bitrate";
 
+/// [`DELETED_SERVERS`] as a literal, for `concat!`.
+macro_rules! deleted_servers {
+    () => {
+        "(SELECT id FROM servers WHERE deleted_at IS NOT NULL)"
+    };
+}
+
 /// The ids of the servers in their owner's Recently deleted (#184), as a subquery: a channel whose
 /// `server_id` is in it is gone with its server.
-pub const DELETED_SERVERS: &str = "(SELECT id FROM servers WHERE deleted_at IS NOT NULL)";
+pub const DELETED_SERVERS: &str = deleted_servers!();
+
+/// [`load_channel`]'s rule as a `WHERE` on `channels` (unaliased), binding the channel's id: there,
+/// not in Recently deleted, and nor is its server. Shared with [`channel_is_live_in`] (#349).
+const LIVE_CHANNEL: &str = concat!(
+    "id = ? AND deleted_at IS NULL AND (server_id IS NULL OR server_id NOT IN ",
+    deleted_servers!(),
+    ")"
+);
 
 /// The channel, unless there is none, it is in Recently deleted, or its server is: a deleted
 /// channel is gone for everything but its own Recently deleted routes (`servers::channels`), and a
 /// deleted server's channels for everything but its purge (`servers::deleted`).
 pub async fn load_channel(db: &SqlitePool, id: ChannelId) -> AppResult<Option<Channel>> {
     let row: Option<ChannelRow> = sqlx::query_as(&format!(
-        "SELECT {CHANNEL_COLS} FROM channels WHERE id = ? AND deleted_at IS NULL
-         AND (server_id IS NULL OR server_id NOT IN {DELETED_SERVERS})"
+        "SELECT {CHANNEL_COLS} FROM channels WHERE {LIVE_CHANNEL}"
     ))
     .bind(id.to_string())
     .fetch_optional(db)
@@ -67,13 +81,11 @@ pub async fn load_channel(db: &SqlitePool, id: ChannelId) -> AppResult<Option<Ch
 
 /// Whether [`load_channel`] would find `id`, asked inside a write transaction.
 pub async fn channel_is_live_in(db: &mut SqliteConnection, id: ChannelId) -> sqlx::Result<bool> {
-    let hit: Option<i64> = sqlx::query_scalar(&format!(
-        "SELECT 1 FROM channels WHERE id = ? AND deleted_at IS NULL
-         AND (server_id IS NULL OR server_id NOT IN {DELETED_SERVERS})"
-    ))
-    .bind(id.to_string())
-    .fetch_optional(&mut *db)
-    .await?;
+    let hit: Option<i64> =
+        sqlx::query_scalar(&format!("SELECT 1 FROM channels WHERE {LIVE_CHANNEL}"))
+            .bind(id.to_string())
+            .fetch_optional(&mut *db)
+            .await?;
     Ok(hit.is_some())
 }
 
