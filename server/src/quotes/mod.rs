@@ -439,6 +439,24 @@ pub(crate) fn counted(
     givers.into_iter().filter(|g| Some(*g) != speaker).collect()
 }
 
+/// The members `lines` (about to be posted in `server`) quote, for the quote badges (#128): each
+/// line's member picked directly, or the member its typed name is linked to right now (a name
+/// nobody has linked is nobody's). Counted once, as posted: linking or re-pointing a name later
+/// doesn't move what was counted, as an award keeps whom it credited (`quote_awards.credited_to`).
+pub async fn speakers_now(
+    tx: &mut SqliteConnection,
+    server: ServerId,
+    lines: &[CleanLine],
+) -> AppResult<Vec<UserId>> {
+    let links = links_for(&mut *tx, &[server.to_string()]).await?;
+    let none = HashMap::new();
+    let links = links.get(&server.to_string()).unwrap_or(&none);
+    Ok(lines
+        .iter()
+        .filter_map(|l| effective_speaker(l.speaker_id, l.speaker_key.as_deref(), links))
+        .collect())
+}
+
 /// `name_key` to member for every speaker link of `servers`.
 pub(crate) async fn links_for<'e, E>(
     db: E,

@@ -95,7 +95,7 @@ async fn post_quote(
     for (position, l) in lines.iter().enumerate() {
         super::insert_line(&mut tx, msg_id, position, l).await?;
     }
-    let speakers: Vec<UserId> = lines.iter().filter_map(|l| l.speaker_id).collect();
+    let speakers = super::speakers_now(&mut tx, server, &lines).await?;
     crate::badges::hooks::quoted(&mut tx, me, &speakers).await?;
     let moved = crate::reads::advance(&mut tx, me, id, msg_id).await?;
     tx.commit().await?;

@@ -93,6 +93,8 @@ Rarity in brackets (tiered badges: per tier, tuned on the badge page). ⓗ = hid
 - **John Quoter** [Uncommon] — quoted others 25 times.
 - **Personal Vendetta** [Rare] — quoted the same person 20 times.
 - **Friendly Fire** ⓗ [Uncommon] — quoted yourself.
+- Who a quote's line is by, for these three (#128): the member picked in the composer, or the member its typed name
+  is linked to when the quote is posted. Counted once, as posted: linking or re-pointing a name later moves nothing.
 
 **Clips and streams**
 - **Clipper** [tiers] — clips shared: 5 / 25 / 100.

@@ -354,3 +354,56 @@ async fn renamed_by_others_only() {
             .is_some()
     );
 }
+
+/// #128: a typed name already linked to a member counts as that member when the quote is posted;
+/// one nobody has linked counts as nobody. Each quote is counted once, as it was posted: linking
+/// or re-pointing a name afterwards moves nothing.
+#[tokio::test]
+async fn a_linked_typed_name_counts_as_its_member_when_posted() {
+    let w = world().await;
+    let kim = w.member("kim").await;
+    // Not linked yet: nobody's.
+    w.quote(
+        &w.alex.1,
+        json!([{ "speaker_name": "Sammy", "text": "hi" }]),
+    )
+    .await;
+    assert_eq!(stat_of(&w.app, w.alex.0, stat::QUOTED_OTHERS).await, 0);
+    w.link(&w.alex.1, "Sammy", w.sam.0).await;
+    // Linking it later doesn't count the quote before.
+    assert_eq!(stat_of(&w.app, w.alex.0, stat::QUOTED_OTHERS).await, 0);
+    // Now it's sam's: John Quoter and a vendetta on sam (any case and spacing of the name).
+    w.quote(
+        &w.alex.1,
+        json!([{ "speaker_name": " sammy ", "text": "hi" }]),
+    )
+    .await;
+    assert_eq!(stat_of(&w.app, w.alex.0, stat::QUOTED_OTHERS).await, 1);
+    assert_eq!(stat_of(&w.app, w.alex.0, &vendetta(w.sam.0)).await, 1);
+    // sam picked directly and by name in one quote: one quote of sam.
+    w.quote(
+        &w.alex.1,
+        json!([
+            { "speaker_id": w.sam.0, "text": "a" },
+            { "speaker_name": "Sammy", "text": "b" },
+        ]),
+    )
+    .await;
+    assert_eq!(stat_of(&w.app, w.alex.0, &vendetta(w.sam.0)).await, 2);
+    // sam quoting a name linked to sam is Friendly Fire.
+    w.quote(&w.sam.1, json!([{ "speaker_name": "Sammy", "text": "me" }]))
+        .await;
+    assert_eq!(stat_of(&w.app, w.sam.0, stat::FRIENDLY_FIRE).await, 1);
+    assert_eq!(stat_of(&w.app, w.sam.0, stat::QUOTED_OTHERS).await, 0);
+    // Re-pointed to kim: the quotes already counted stay sam's.
+    w.link(&w.alex.1, "Sammy", kim.0).await;
+    assert_eq!(stat_of(&w.app, w.alex.0, &vendetta(w.sam.0)).await, 2);
+    assert_eq!(stat_of(&w.app, w.alex.0, &vendetta(kim.0)).await, 0);
+    w.quote(
+        &w.alex.1,
+        json!([{ "speaker_name": "Sammy", "text": "hi" }]),
+    )
+    .await;
+    assert_eq!(stat_of(&w.app, w.alex.0, &vendetta(kim.0)).await, 1);
+    assert_eq!(stat_of(&w.app, w.alex.0, stat::QUOTED_OTHERS).await, 3);
+}

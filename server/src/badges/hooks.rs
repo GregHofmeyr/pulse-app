@@ -125,8 +125,8 @@ pub async fn reacted(
     Ok(check)
 }
 
-/// `poster` posted a quote with lines by `speakers` (members picked directly; plain names are
-/// nobody's). Quoting yourself is Friendly Fire; each other person quoted is one more toward a
+/// `poster` posted a quote with lines by `speakers` (members picked directly, or typed names
+/// linked to them when posted: `quotes::speakers_now`). Quoting yourself is Friendly Fire; each other person quoted is one more toward a
 /// vendetta on them; and a quote of anyone else is one more toward John Quoter, however many
 /// lines it has.
 pub async fn quoted(
