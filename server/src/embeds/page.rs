@@ -10,6 +10,10 @@
 //! the app when the video ended or the player failed, so the card goes back to its thumbnail
 //! (#292: on Linux the video plays in a window of its own, and closing that window fails the
 //! player). Every other provider's page has no script.
+//!
+//! A watch party's page (`/embed/youtube/{id}?party=1`, #384) carries [`PARTY`] instead: YouTube's player without its
+//! own controls, which the app drives (play, pause, seek, volume) and hears (state, time, duration, errors) through
+//! this page, so everyone in the call watches the same moment.
 
 use std::sync::LazyLock;
 
@@ -63,6 +67,47 @@ pub static RELAY_HASH: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
+/// A watch party page's script (#384): what [`RELAY`] does, both ways. From the app (`parent`, a
+/// `{pulse:'party-cmd'}` message) it passes on only play, pause, a seek to a number of seconds, a volume (0 to 100),
+/// mute and unmute, each as YouTube's own iframe API command; from the player (its own origin, this page's one frame)
+/// it tells the app only the player's state, time and duration, as numbers, and YouTube's error code. Nothing else is
+/// read or passed on. [`PARTY_HASH`] allows exactly it.
+pub const PARTY: &str = concat!(
+    "(function(){var f=document.querySelector('iframe'),o=new URL(f.src).origin,n=0,t;",
+    "function say(m){try{f.contentWindow.postMessage(JSON.stringify(m),o)}catch(_){}}",
+    "function cmd(c,a){say({event:'command',func:c,args:a||[],id:1,channel:'widget'})}",
+    "function hello(){say({event:'listening',id:1,channel:'widget'});",
+    "cmd('addEventListener',['onStateChange']);cmd('addEventListener',['onError'])}",
+    "function tell(m){m.pulse='party';parent.postMessage(m,'*')}",
+    "function num(x,a,b){return typeof x==='number'&&isFinite(x)&&x>=a&&x<=b}",
+    "f.addEventListener('load',function(){clearInterval(t);n=0;hello();",
+    "t=setInterval(function(){if(++n>20)clearInterval(t);else hello()},250)});",
+    "addEventListener('message',function(e){",
+    "if(parent!==window&&e.source===parent){var c=e.data;if(!c||typeof c!=='object'||c.pulse!=='party-cmd')return;",
+    "if(c.func==='play')cmd('playVideo');else if(c.func==='pause')cmd('pauseVideo');",
+    "else if(c.func==='seek'&&num(c.to,0,172800))cmd('seekTo',[c.to,true]);",
+    "else if(c.func==='volume'&&num(c.to,0,100))cmd('setVolume',[c.to]);",
+    "else if(c.func==='mute')cmd('mute');else if(c.func==='unmute')cmd('unMute');return}",
+    "if(e.origin!==o||e.source!==f.contentWindow)return;",
+    "var d;try{d=typeof e.data==='string'?JSON.parse(e.data):e.data}catch(_){return}",
+    "if(!d||typeof d!=='object')return;clearInterval(t);",
+    "if(d.event==='onError'){tell({state:'error',code:typeof d.info==='number'?d.info:null});return}",
+    "var i=d.event==='onStateChange'?{playerState:d.info}:(d.event==='infoDelivery'||d.event==='initialDelivery')?d.info:null;",
+    "if(!i||typeof i!=='object')return;var m={state:'info'};",
+    "if(typeof i.playerState==='number')m.player=i.playerState;",
+    "if(num(i.currentTime,0,1e7))m.time=i.currentTime;",
+    "if(num(i.duration,0,1e7))m.duration=i.duration;",
+    "tell(m)})})();"
+);
+
+/// The CSP source that allows [`PARTY`] and nothing else.
+pub static PARTY_HASH: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "'sha256-{}'",
+        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(PARTY.as_bytes()))
+    )
+});
+
 /// Whether the provider's page carries [`RELAY`].
 fn relays(p: EmbedProvider) -> bool {
     p == EmbedProvider::Youtube
@@ -81,13 +126,21 @@ async fn page(
     let Path((provider, id)) = path.map_err(|_| AppError::NotFound)?;
     let provider = super::parse_provider(&provider);
     let start = start(provider, query.as_deref()).ok_or(AppError::NotFound)?;
+    let party = party(provider, query.as_deref()).ok_or(AppError::NotFound)?;
     let parent = public.host_str().ok_or(AppError::NotFound)?;
-    let player = providers::player_url(provider, &id, start, parent).ok_or(AppError::NotFound)?;
+    let player = if party {
+        providers::youtube_party_url(&id, start)
+    } else {
+        providers::player_url(provider, &id, start, parent)
+    }
+    .ok_or(AppError::NotFound)?;
     let origin = Url::parse(&player)
         .map_err(|_| AppError::NotFound)?
         .origin()
         .ascii_serialization();
-    let script = if relays(provider) {
+    let script = if party {
+        format!("script-src {}; ", *PARTY_HASH)
+    } else if relays(provider) {
         format!("script-src {}; ", *RELAY_HASH)
     } else {
         String::new()
@@ -106,7 +159,7 @@ async fn page(
             ),
             (header::CONTENT_SECURITY_POLICY, csp),
         ],
-        html(provider, &player),
+        html(provider, &player, party),
     )
         .into_response())
 }
@@ -134,6 +187,26 @@ fn start(provider: EmbedProvider, query: Option<&str>) -> Option<Option<u32>> {
     (n <= MAX_START).then_some(Some(n))
 }
 
+/// The query's `party`: `Some(false)` without one, `Some(true)` for YouTube's `party=1` (once), `None` (404) for
+/// anything else.
+fn party(provider: EmbedProvider, query: Option<&str>) -> Option<bool> {
+    let Some(query) = query else {
+        return Some(false);
+    };
+    let mut base = Url::parse("http://query.invalid/").ok()?;
+    base.set_query(Some(query));
+    let found: Vec<_> = base
+        .query_pairs()
+        .filter(|(k, _)| k == "party")
+        .map(|(_, v)| v.into_owned())
+        .collect();
+    match found.as_slice() {
+        [] => Some(false),
+        [v] if v == "1" && provider == EmbedProvider::Youtube => Some(true),
+        _ => None,
+    }
+}
+
 fn label(p: EmbedProvider) -> &'static str {
     match p {
         EmbedProvider::Youtube => "YouTube",
@@ -146,11 +219,13 @@ fn label(p: EmbedProvider) -> &'static str {
     }
 }
 
-/// The page: black, full size, one iframe; no script but YouTube's [`RELAY`].
-fn html(p: EmbedProvider, player: &str) -> String {
+/// The page: black, full size, one iframe; no script but YouTube's [`RELAY`] (or a watch party's [`PARTY`]).
+fn html(p: EmbedProvider, player: &str, party: bool) -> String {
     let src = escape(player);
     let title = label(p);
-    let script = if relays(p) {
+    let script = if party {
+        format!("<script>{PARTY}</script>")
+    } else if relays(p) {
         format!("<script>{RELAY}</script>")
     } else {
         String::new()
@@ -197,6 +272,18 @@ fn escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn party_only_for_youtube_and_only_1() {
+        use EmbedProvider::{Twitch, Youtube};
+        assert_eq!(party(Youtube, None), Some(false));
+        assert_eq!(party(Youtube, Some("start=5")), Some(false));
+        assert_eq!(party(Youtube, Some("party=1&start=5")), Some(true));
+        for q in ["party=0", "party=", "party=yes", "party=1&party=1"] {
+            assert_eq!(party(Youtube, Some(q)), None, "{q}");
+        }
+        assert_eq!(party(Twitch, Some("party=1")), None);
+    }
 
     #[test]
     fn escapes_attribute_text() {

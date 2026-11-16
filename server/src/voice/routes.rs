@@ -195,6 +195,8 @@ async fn webhook(
                 ended = crate::streams::routes::left_call(&s, channel_id, user_id).await;
                 // Their Spotify share on the stage goes with them (#234).
                 crate::stage::left_call(&s, channel_id, user_id).await;
+                // and they're out of its watch party (#384)
+                crate::watch::left_call(&s, channel_id, user_id).await;
             }
             if in_memory || closed {
                 s.hub

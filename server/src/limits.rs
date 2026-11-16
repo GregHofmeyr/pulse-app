@@ -143,6 +143,8 @@ pub struct LimitsConfig {
     pub poll_vote_user: Rate,
     /// Spotify shares to a voice stage per person (#234): each one fetches a card and posts a line.
     pub stage_share_user: Rate,
+    /// Watch party starts and changes per person (#384): seeking through a video is a burst of them.
+    pub watch_party_user: Rate,
     /// "Listening to" updates per person (#275): the app sends at most one every few seconds; a held-back one is
     /// sent when the bucket allows, so the latest always lands.
     pub listening_user: Rate,
@@ -212,6 +214,8 @@ impl Default for LimitsConfig {
             poll_vote_user: Rate::new(20, 2.0),
             // six at once, then one every 10 s
             stage_share_user: Rate::new(6, 0.1),
+            // thirty at once, then two a second
+            watch_party_user: Rate::new(30, 2.0),
             // ten at once, then one every 2 s (two devices each sending one every 5 s stay under it)
             listening_user: Rate::new(10, 0.5),
             // a song every 3 minutes is 20 an hour; skipping through a playlist gets a few dozen
@@ -267,6 +271,7 @@ impl LimitsConfig {
             wheel_spin_user: r,
             poll_vote_user: r,
             stage_share_user: r,
+            watch_party_user: r,
             listening_user: r,
             listening_art_user: r,
             playing_user: r,
@@ -430,6 +435,7 @@ pub struct Limits {
     pub wheel_spin_user: Limiter,
     pub poll_vote_user: Limiter,
     pub stage_share_user: Limiter,
+    pub watch_party_user: Limiter,
     pub listening_user: Limiter,
     pub listening_art_user: Limiter,
     pub playing_user: Limiter,
@@ -476,6 +482,7 @@ impl Limits {
             wheel_spin_user: Limiter::new(c.wheel_spin_user),
             poll_vote_user: Limiter::new(c.poll_vote_user),
             stage_share_user: Limiter::new(c.stage_share_user),
+            watch_party_user: Limiter::new(c.watch_party_user),
             listening_user: Limiter::new(c.listening_user),
             listening_art_user: Limiter::new(c.listening_art_user),
             playing_user: Limiter::new(c.playing_user),

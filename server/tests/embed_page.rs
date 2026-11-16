@@ -4,7 +4,7 @@ mod common;
 
 use common::*;
 use pulse_server::config::{Config, EmbedConfig};
-use pulse_server::embeds::page::{RELAY, RELAY_HASH};
+use pulse_server::embeds::page::{PARTY, PARTY_HASH, RELAY, RELAY_HASH};
 use reqwest::{StatusCode, Url};
 
 const ANCESTORS: &str = "frame-ancestors http://tauri.localhost https://tauri.localhost tauri:";
@@ -68,8 +68,14 @@ async fn page(app: &TestApp, path: &str) -> (String, String) {
     let lower = body.to_lowercase();
     if path.starts_with("/embed/youtube/") {
         assert_eq!(lower.matches("<script").count(), 1, "{body}");
+        // a watch party's page (#384) carries its own two-way relay instead
+        let script = if path.contains("party=1") {
+            PARTY
+        } else {
+            RELAY
+        };
         assert!(
-            body.contains(&format!("<script>{RELAY}</script>")),
+            body.contains(&format!("<script>{script}</script>")),
             "{body}"
         );
     } else {
@@ -285,4 +291,43 @@ async fn twitch_parent_is_the_public_host() {
         "https://clips.twitch.tv/embed?clip=Clip1&amp;parent=chat.example.com&amp;parent=tauri.localhost&amp;parent=localhost&amp;autoplay=true"
     );
     assert_eq!(csp, csp_for("https://clips.twitch.tv"));
+}
+
+#[test]
+fn the_party_hash_is_the_party_scripts_sha256() {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let want = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(PARTY.as_bytes()));
+    assert_eq!(*PARTY_HASH, format!("'sha256-{want}'"));
+    // the app's commands come only from the parent, the player's news only from the player's own frame and origin
+    assert!(PARTY.contains("parent!==window&&e.source===parent"));
+    assert!(PARTY.contains("e.origin!==o||e.source!==f.contentWindow"));
+    // a seek and a volume only as bounded numbers
+    assert!(PARTY.contains("num(c.to,0,172800)") && PARTY.contains("num(c.to,0,100)"));
+    assert!(!PARTY.contains("loadVideoById") && !PARTY.contains("eval"));
+}
+
+#[tokio::test]
+async fn a_watch_party_page_frames_youtube_without_its_controls() {
+    let app = app().await;
+    let (src, csp) = page(&app, "/embed/youtube/dQw4w9WgXcQ?party=1&start=90").await;
+    assert_eq!(
+        src,
+        "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&amp;enablejsapi=1&amp;controls=0&amp;disablekb=1&amp;rel=0&amp;playsinline=1&amp;start=90"
+    );
+    assert_eq!(
+        csp,
+        format!(
+            "default-src 'none'; script-src {}; style-src 'unsafe-inline'; frame-src https://www.youtube-nocookie.com; {ANCESTORS}; base-uri 'none'; form-action 'none'",
+            *PARTY_HASH
+        )
+    );
+    for p in [
+        "/embed/youtube/dQw4w9WgXcQ?party=2",
+        "/embed/youtube/dQw4w9WgXcQ?party=1&party=1",
+        "/embed/youtube/short?party=1",
+        "/embed/twitch/FunnyClip-abc_12?party=1",
+    ] {
+        assert_eq!(get(&app, p).await.status(), StatusCode::NOT_FOUND, "{p}");
+    }
 }

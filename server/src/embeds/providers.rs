@@ -370,6 +370,21 @@ pub fn player_url(
     Some(url)
 }
 
+/// A watch party's player (#384): YouTube's, as [`player_url`]'s, without its own controls or keyboard (everyone's
+/// player follows the party, so Pulse's controls drive it) and no related videos from other channels at the end.
+pub fn youtube_party_url(id: &str, start: Option<u32>) -> Option<String> {
+    if !valid_id(EmbedProvider::Youtube, id) {
+        return None;
+    }
+    let start = start
+        .filter(|&s| s > 0)
+        .map(|s| format!("&start={s}"))
+        .unwrap_or_default();
+    Some(format!(
+        "https://www.youtube-nocookie.com/embed/{id}?autoplay=1&enablejsapi=1&controls=0&disablekb=1&rel=0&playsinline=1{start}"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -767,6 +782,24 @@ mod tests {
             player_url(Instagram, "reel:Cabc_12-x", None, "pulse.example.com").as_deref(),
             Some("https://www.instagram.com/reel/Cabc_12-x/embed/")
         );
+    }
+
+    #[test]
+    fn party_urls_are_youtube_only_and_checked() {
+        assert_eq!(
+            youtube_party_url(YT, Some(42)).as_deref(),
+            Some(
+                "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&enablejsapi=1&controls=0&disablekb=1&rel=0&playsinline=1&start=42"
+            )
+        );
+        assert!(
+            youtube_party_url(YT, Some(0))
+                .unwrap()
+                .ends_with("playsinline=1")
+        );
+        for bad in ["", "dQw4w9WgXc", "dQw4w9WgXcQ&x=1", "a\"><script>"] {
+            assert_eq!(youtube_party_url(bad, None), None, "{bad}");
+        }
     }
 
     #[test]

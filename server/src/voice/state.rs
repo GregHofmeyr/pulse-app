@@ -40,6 +40,8 @@ pub struct VoiceState {
     pub calls: crate::calls::CallState,
     /// What's shared on each voice channel's stage (#234).
     pub stage: crate::stage::StageState,
+    /// Each voice channel's YouTube watch party (#384).
+    pub watch: crate::watch::WatchState,
     /// When each person's join sound last went out (#121), for the once-per-30-s rule. Forgotten on restart.
     join_sounds: Arc<Mutex<HashMap<UserId, Instant>>>,
     /// When each person last left each channel (#278): back within [`JOIN_SOUND_EVERY`] is a reconnect, not a
