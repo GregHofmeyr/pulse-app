@@ -407,3 +407,54 @@ async fn a_linked_typed_name_counts_as_its_member_when_posted() {
     assert_eq!(stat_of(&w.app, w.alex.0, &vendetta(kim.0)).await, 1);
     assert_eq!(stat_of(&w.app, w.alex.0, stat::QUOTED_OTHERS).await, 3);
 }
+
+/// #127: quoted by someone else in a quote posted between 02:00 and 05:00 South African time
+/// earns 3 am Thoughts; quoting yourself then doesn't.
+#[tokio::test]
+async fn three_am_thoughts_for_being_quoted_in_the_small_hours() {
+    use chrono::{DateTime, Utc};
+    use pulse_server::badges::{engine, hooks};
+    let w = world().await;
+    let kim = w.member("kim").await;
+    let at = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+    let quoted = |poster: UserId, speakers: Vec<UserId>, when: &'static str| {
+        let app = &w.app;
+        async move {
+            let mut c = app.db.acquire().await.unwrap();
+            let check = hooks::quoted(&mut c, poster, &speakers, at(when))
+                .await
+                .unwrap();
+            drop(c);
+            engine::after(&app.state(), &check).await;
+            check
+        }
+    };
+    // 01:59 SAST: too early.
+    quoted(w.alex.0, vec![w.sam.0], "2026-11-02T23:59:00Z").await;
+    assert_eq!(stat_of(&w.app, w.sam.0, stat::THREE_AM_QUOTE).await, 0);
+    // 03:10 SAST: sam (and kim) quoted by alex; alex quoting himself too gets nothing.
+    let check = quoted(
+        w.alex.0,
+        vec![w.sam.0, w.alex.0, kim.0],
+        "2026-11-03T01:10:00Z",
+    )
+    .await;
+    assert!(
+        check.contains(&w.sam.0) && check.contains(&kim.0),
+        "{check:?}"
+    );
+    assert!(
+        badge(&w.app, &w.sam.1, w.sam.0, "three_am_quote")
+            .await
+            .is_some()
+    );
+    assert!(
+        badge(&w.app, &kim.1, kim.0, "three_am_quote")
+            .await
+            .is_some()
+    );
+    assert_eq!(stat_of(&w.app, w.alex.0, stat::THREE_AM_QUOTE).await, 0);
+    // 05:00 SAST: over.
+    quoted(w.sam.0, vec![w.alex.0], "2026-11-03T03:00:00Z").await;
+    assert_eq!(stat_of(&w.app, w.alex.0, stat::THREE_AM_QUOTE).await, 0);
+}

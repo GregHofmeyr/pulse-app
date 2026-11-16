@@ -35,6 +35,8 @@ pub mod stat {
     pub const VENDETTA_PREFIX: &str = "vendetta:";
     pub const VENDETTA_MAX: &str = "vendetta_max";
     pub const FRIENDLY_FIRE: &str = "friendly_fire";
+    /// Quoted by someone else in the small hours (#127).
+    pub const THREE_AM_QUOTE: &str = "three_am_quote";
     pub const CLIPS: &str = "clips";
     pub const HIGHLIGHT_REEL: &str = "highlight_reel";
     pub const STREAM_SECS: &str = "stream_secs";
@@ -62,6 +64,7 @@ pub mod stat {
         QUOTED_OTHERS,
         VENDETTA_MAX,
         FRIENDLY_FIRE,
+        THREE_AM_QUOTE,
         CLIPS,
         HIGHLIGHT_REEL,
         STREAM_SECS,
@@ -476,6 +479,16 @@ pub static CATALOGUE: &[Def] = &[
         stat::FRIENDLY_FIRE,
         &[(1, Uncommon)],
     )),
+    // The quote's post time counts (quotes carry no time of their own): 02:00 to 05:00 SAST,
+    // `time::in_small_hours`. Earned by whoever is quoted, never for quoting yourself.
+    counter(
+        "three_am_quote",
+        "3 am Thoughts",
+        "Got quoted for something said between 2 and 5 am (South African time).",
+        "🌙",
+        stat::THREE_AM_QUOTE,
+        &[(1, Rare)],
+    ),
     // Clips and streams
     counter(
         "clipper",

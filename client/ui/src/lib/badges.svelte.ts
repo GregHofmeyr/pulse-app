@@ -249,6 +249,7 @@ const NOUNS: Record<string, string> = {
   quotable: 'awards',
   john_quoter: 'quotes',
   personal_vendetta: 'quotes',
+  three_am_quote: 'quotes',
   clipper: 'clips',
   badge_collector: 'badges',
   how_did_we_get_here: 'hidden badges',

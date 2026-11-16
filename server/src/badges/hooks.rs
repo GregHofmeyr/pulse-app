@@ -2,11 +2,13 @@
 //! more than one `stats::add`. Callers only call these for server channels (never DMs or groups)
 //! and pass the users returned here to [`super::engine::after`] once they have committed.
 
+use chrono::{DateTime, Utc};
 use pulse_protocol::ids::{MessageId, UserId};
 use sqlx::SqliteConnection;
 
 use super::catalogue::stat;
 use super::stats;
+use super::time::in_small_hours;
 use crate::error::AppResult;
 
 /// Uses of one custom emoji that make it count toward Emoji Smith.
@@ -125,15 +127,19 @@ pub async fn reacted(
     Ok(check)
 }
 
-/// `poster` posted a quote with lines by `speakers` (members picked directly, or typed names
-/// linked to them when posted: `quotes::speakers_now`). Quoting yourself is Friendly Fire; each other person quoted is one more toward a
-/// vendetta on them; and a quote of anyone else is one more toward John Quoter, however many
-/// lines it has.
+/// `poster` posted a quote at `at` with lines by `speakers` (members picked directly, or typed
+/// names linked to them when posted: `quotes::speakers_now`). Quoting yourself is Friendly Fire;
+/// each other person quoted is one more toward a vendetta on them, and earns 3 am Thoughts if
+/// it's the small hours (#127); and a quote of anyone else is one more toward John Quoter, however
+/// many lines it has. Returns the users to check: the poster and anyone it just credited.
 pub async fn quoted(
     conn: &mut SqliteConnection,
     poster: UserId,
     speakers: &[UserId],
-) -> AppResult<()> {
+    at: DateTime<Utc>,
+) -> AppResult<Vec<UserId>> {
+    let small_hours = in_small_hours(at);
+    let mut check = vec![poster];
     let mut seen = Vec::new();
     for &who in speakers {
         if seen.contains(&who) {
@@ -146,10 +152,14 @@ pub async fn quoted(
             let key = format!("{}{who}", stat::VENDETTA_PREFIX);
             let n = stats::add(conn, poster, &key, 1).await?;
             stats::set_max(conn, poster, stat::VENDETTA_MAX, n).await?;
+            if small_hours {
+                stats::set_max(conn, who, stat::THREE_AM_QUOTE, 1).await?;
+                check.push(who);
+            }
         }
     }
     if seen.iter().any(|&who| who != poster) {
         stats::add(conn, poster, stat::QUOTED_OTHERS, 1).await?;
     }
-    Ok(())
+    Ok(check)
 }

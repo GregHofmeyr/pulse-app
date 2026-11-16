@@ -96,7 +96,7 @@ async fn post_quote(
         super::insert_line(&mut tx, msg_id, position, l).await?;
     }
     let speakers = super::speakers_now(&mut tx, server, &lines).await?;
-    crate::badges::hooks::quoted(&mut tx, me, &speakers).await?;
+    let check = crate::badges::hooks::quoted(&mut tx, me, &speakers, chrono::Utc::now()).await?;
     let moved = crate::reads::advance(&mut tx, me, id, msg_id).await?;
     tx.commit().await?;
 
@@ -128,7 +128,7 @@ async fn post_quote(
             )
             .await;
     }
-    crate::badges::engine::after(&s, &[me]).await;
+    crate::badges::engine::after(&s, &check).await;
     // A new quote has no awards or replies, so the poster's view is the same as an event's.
     match msg {
         Some(msg) => Ok(Json(msg)),

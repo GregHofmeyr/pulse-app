@@ -18,6 +18,11 @@ pub const DOOS_MIN_GAP: i64 = 60;
 /// ...and at most this many count in one South African day.
 pub const DOOS_DAY_CAP: i64 = 5;
 
+/// 3 am Thoughts (#127): a quote posted from this hour (South African time)...
+pub const SMALL_HOURS_FROM: i64 = 2;
+/// ...until this one.
+pub const SMALL_HOURS_UNTIL: i64 = 5;
+
 /// A stored time (see [`crate::db::stamp`]).
 pub fn parse(t: &str) -> AppResult<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(t)
@@ -79,6 +84,13 @@ pub fn covers_3am(intervals: &[(DateTime<Utc>, DateTime<Utc>)]) -> bool {
         };
         three < b
     })
+}
+
+/// Whether `t` is in the small hours: from [`SMALL_HOURS_FROM`] up to (not including)
+/// [`SMALL_HOURS_UNTIL`] South African time.
+pub fn in_small_hours(t: DateTime<Utc>) -> bool {
+    let hour = (t - sast_day_start(t)).num_hours();
+    (SMALL_HOURS_FROM..SMALL_HOURS_UNTIL).contains(&hour)
 }
 
 /// Whether a muted-talk report at `now_unix` counts, given the last counted one (`last_at`, unix
@@ -166,6 +178,17 @@ mod tests {
             t("2026-11-03T04:00:00Z")
         )]));
         assert!(!covers_3am(&[]));
+    }
+
+    #[test]
+    fn small_hours_are_two_to_five_sast() {
+        // 02:00 SAST is 00:00 UTC; 05:00 SAST is 03:00 UTC.
+        assert!(!in_small_hours(t("2026-11-02T23:59:59Z")));
+        assert!(in_small_hours(t("2026-11-03T00:00:00Z")));
+        assert!(in_small_hours(t("2026-11-03T01:00:00Z")));
+        assert!(in_small_hours(t("2026-11-03T02:59:59Z")));
+        assert!(!in_small_hours(t("2026-11-03T03:00:00Z")));
+        assert!(!in_small_hours(t("2026-11-03T12:00:00Z")));
     }
 
     #[test]

@@ -120,7 +120,8 @@ Rarity in brackets (tiered badges: per tier, tuned on the badge page). ⓗ = hid
 
 The one-of-a-kind badges have pictures (#225), kept only on the server (never in this public repo): `just badge-art <key> <file>` stores one in the media store (`badge_art` table, a still fitted within 256 px) and the badge's definition carries its hash as `art`; clients draw it round inside the rarity ring, fitted whole, and fall back to the emoji.
 
-**Parked:** 3 am quote ("get quoted for something said after 02:00").
+**Added later:** **3 am Thoughts** (`three_am_quote`) [Rare] — quoted by someone else in a quote posted between 02:00
+and 05:00 South African time (#127). Quotes carry no time of their own, so the post time counts; quoting yourself doesn't.
 
 ## How it gets made (builder's call where not stated)
 
