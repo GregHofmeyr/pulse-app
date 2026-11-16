@@ -7,7 +7,7 @@
   import { conversationName } from '../lib/conversations'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { stageLabel } from '../lib/voicestage'
-  import { noMicTip, noSoundTip } from '../lib/voiceui'
+  import { END_TEXT, noMicTip, noSoundTip } from '../lib/voiceui'
   import { isWindows } from '../lib/stream/platform'
 
   // during a switch, the channel being joined
@@ -33,6 +33,8 @@
     const where = app.state.channels[kicked.channelId]?.name
     return `${displayName(app.state, server, kicked.by)} disconnected you${where ? ` from ${where}` : ''}.`
   })
+  // #352: why the last call ended by itself; "X disconnected you" already says it when that's why
+  const ended = $derived(voice.ended && !kicked && !voice.channelId && !voice.joining ? voice.ended : null)
   // #351: in the call without a working mic or speakers
   const micTip = $derived(voice.channelId ? noMicTip(voice.deviceGaps.input, voice.micError) : null)
   const soundTip = $derived(voice.channelId ? noSoundTip(voice.deviceGaps.output) : null)
@@ -68,6 +70,13 @@
   <p class="vc-note vc-kicked" role="status">
     <span>{kickedText} You can join again.</span>
     <button class="icon-btn icon-btn-sm" aria-label="Dismiss" onclick={() => voiceApi.dismissDisconnected()}><Icon name="x" size={14} /></button>
+  </p>
+{/if}
+{#if ended}
+  <p class="vc-note vc-ended" role="status">
+    <span>{END_TEXT[ended.reason]}</span>
+    {#if ended.reason === 'connection_lost'}<button class="btn btn-primary" onclick={() => voiceApi.join(ended.channelId)}>Rejoin</button>{/if}
+    <button class="icon-btn icon-btn-sm" aria-label="Dismiss" onclick={() => voiceApi.dismissEnded()}><Icon name="x" size={14} /></button>
   </p>
 {/if}
 {#if visible}
@@ -136,6 +145,6 @@
   .vc-note { margin: 0 8px 6px; padding: 8px 12px; border-radius: var(--radius-md); background: var(--danger-soft); font-size: 12px; line-height: 1.4; color: var(--danger-text); display: flex; align-items: flex-start; gap: 8px; }
   .vc-note span { flex: 1; min-width: 0; }
   .vc-note :global(svg) { flex-shrink: 0; margin-top: 2px; }
-  .vc-kicked { align-items: center; }
+  .vc-kicked, .vc-ended { align-items: center; }
   .vc-mic { margin: 0 8px 6px; padding: 8px 12px; border-radius: var(--radius-md); background: var(--warn-soft); font-size: 12px; line-height: 1.4; color: var(--warn-text); }
 </style>

@@ -18,7 +18,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 import { app, startListening } from './store.svelte'
 import { emptyState } from './state'
-import { startVoiceListening, voice } from './voice.svelte'
+import { startVoiceListening, voice, voiceApi } from './voice.svelte'
 import { defaultMixer } from './mixer'
 
 const me = { id: 'ME', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -58,10 +58,13 @@ describe('removed from a conversation', () => {
   it('leaves the call of a voice channel that was deleted, and only that one', () => {
     const deleted = (channel_id: string) => h.handlers['pulse://event']({ payload: { t: 'ChannelDeleted', d: { channel_id, server_id: 'S1' } } })
     voice.channelId = 'V1'
+    voice.ended = null
     deleted('V2')
     expect(h.calls).toEqual([])
     deleted('V1')
     expect(h.calls).toEqual(['leave_voice'])
+    // #352: and says why the call ended
+    expect(voice.ended).toEqual({ reason: 'channel_deleted', channelId: 'V1' })
   })
 
   it('leaves alone a call it is already leaving for another join', () => {
@@ -70,6 +73,41 @@ describe('removed from a conversation', () => {
     voice.joining = 'C9'
     removed('G1')
     expect(h.calls).toEqual([])
+  })
+})
+
+// #352: why a call ended, kept for the notice until you join, leave or dismiss it
+describe('the end reason', () => {
+  const state = (channel_id: string | null, connection: string, reason: string | null = null) =>
+    h.handlers['voice://event']({ payload: { kind: 'state', channel_id, connection, controls: { muted: false, deafened: false }, reason } })
+  beforeEach(async () => {
+    h.calls.length = 0
+    Object.assign(voice, { channelId: null, joining: null, leaving: null, ended: null, controls: { muted: false, deafened: false } })
+    await startVoiceListening()
+  })
+
+  it('a call that ended by itself keeps why and where', () => {
+    state('V1', 'connected')
+    state('V1', 'reconnecting')
+    state(null, 'disconnected', 'connection_lost')
+    expect(voice.ended).toEqual({ reason: 'connection_lost', channelId: 'V1' })
+  })
+
+  it('a disconnect with no reason leaves it alone, and joining again clears it', async () => {
+    voice.ended = { reason: 'other_device', channelId: 'V1' }
+    state(null, 'disconnected')
+    expect(voice.ended).toEqual({ reason: 'other_device', channelId: 'V1' })
+    await voiceApi.join('V2')
+    expect(voice.ended).toBeNull()
+  })
+
+  it('leaving or dismissing clears it', () => {
+    voice.ended = { reason: 'removed', channelId: 'V1' }
+    voiceApi.dismissEnded()
+    expect(voice.ended).toBeNull()
+    voice.ended = { reason: 'removed', channelId: 'V1' }
+    void voiceApi.leave()
+    expect(voice.ended).toBeNull()
   })
 })
 

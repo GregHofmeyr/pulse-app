@@ -56,6 +56,8 @@ beforeEach(async () => {
   voice.micSilent = false
   voice.deviceGaps = { input: null, output: null }
   voice.micError = null
+  voice.ended = null
+  voice.disconnectedBy = null
   windowFocus.focused = true
   cmp = mount(VoiceStatus, { target: document.body })
   flushSync()
@@ -391,6 +393,54 @@ describe('VoiceStatus panel behaviour', () => {
       flushSync()
       expect(voice.deviceGaps).toEqual({ input: null, output: null })
       expect(voice.micError).toBeNull()
+    })
+  })
+
+  // #352: a call that ended by itself says why
+  describe('why the call ended', () => {
+    const notice = () => document.querySelector('.vc-ended')
+    const end = (reason: string | null) => {
+      emit({ kind: 'state', channel_id: null, connection: 'disconnected', controls: { muted: false, deafened: false }, reason })
+      flushSync()
+    }
+
+    it.each([
+      ['other_device', 'You joined from another device.'],
+      ['removed', 'You were removed from the call.'],
+      ['channel_deleted', 'The channel was deleted.'],
+    ])('%s_says_so_until_dismissed', (reason, text) => {
+      connect()
+      end(reason)
+      expect(notice()?.textContent).toContain(text)
+      expect(notice()?.querySelector('.btn')).toBeNull()
+      notice()!.querySelector<HTMLButtonElement>('button[aria-label=Dismiss]')!.click()
+      flushSync()
+      expect(notice()).toBeNull()
+    })
+
+    it('a_lost_connection_offers_to_rejoin', async () => {
+      connect()
+      end('connection_lost')
+      expect(notice()?.textContent).toContain('Lost connection.')
+      const rejoin = [...notice()!.querySelectorAll('button')].find((b) => b.textContent === 'Rejoin')!
+      rejoin.click()
+      await tick()
+      expect(invoke).toHaveBeenCalledWith('join_voice', expect.objectContaining({ channelId: 'V1' }))
+      expect(voice.ended).toBeNull()
+    })
+
+    it('a_leave_of_your_own_shows_nothing', () => {
+      connect()
+      end(null)
+      expect(notice()).toBeNull()
+    })
+
+    it('someone_disconnecting_you_is_said_once_by_that_notice', () => {
+      connect()
+      voice.disconnectedBy = { by: 'U1', channelId: 'V1' }
+      end('removed')
+      expect(document.querySelector('.vc-kicked')).not.toBeNull()
+      expect(notice()).toBeNull()
     })
   })
 

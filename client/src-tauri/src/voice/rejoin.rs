@@ -3,6 +3,10 @@
 use std::time::Duration;
 
 use livekit::DisconnectReason;
+use serde::Serialize;
+
+use super::VoiceError;
+use crate::api::ApiError;
 
 /// Rejoin attempts before giving up: with the delays below, about a minute more.
 pub const MAX_ATTEMPTS: u32 = 6;
@@ -17,6 +21,44 @@ pub fn worth_rejoining(reason: DisconnectReason) -> bool {
             | DisconnectReason::ParticipantRemoved
             | DisconnectReason::RoomDeleted
     )
+}
+
+/// Why a call ended by itself (#352), for the UI's notice. A leave of our own has none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EndReason {
+    /// Joined from another device (same identity): LiveKit dropped this one.
+    OtherDevice,
+    /// The network or the server: rejoining didn't bring it back (or wasn't possible).
+    ConnectionLost,
+    /// Removed from the call (or no longer allowed in the channel).
+    Removed,
+    /// The channel's room is gone.
+    ChannelDeleted,
+}
+
+/// Why losing the room this way ended the call, if it did by itself (`None`: we left). Only
+/// shown when it isn't rejoined (`worth_rejoining`).
+pub fn end_reason(reason: DisconnectReason) -> Option<EndReason> {
+    match reason {
+        DisconnectReason::ClientInitiated => None,
+        DisconnectReason::DuplicateIdentity => Some(EndReason::OtherDevice),
+        DisconnectReason::ParticipantRemoved => Some(EndReason::Removed),
+        DisconnectReason::RoomDeleted => Some(EndReason::ChannelDeleted),
+        _ => Some(EndReason::ConnectionLost),
+    }
+}
+
+/// A rejoin error that asking again won't fix (signed out, not allowed, the channel gone or any
+/// other 4xx): stop rejoining, and say why. `None`: worth another attempt.
+pub fn stop_rejoining(e: &VoiceError) -> Option<EndReason> {
+    match e {
+        VoiceError::Api(ApiError::Forbidden(_)) => Some(EndReason::Removed),
+        VoiceError::Api(ApiError::Unauthorized | ApiError::Rejected(_)) => {
+            Some(EndReason::ConnectionLost)
+        }
+        _ => None,
+    }
 }
 
 /// Delay before rejoin attempt `attempt` (0-based): the gateway's schedule (1 s, 2 s, 4 s … ±20 %).
@@ -91,6 +133,72 @@ mod tests {
         ] {
             assert!(!worth_rejoining(r), "{r:?}");
         }
+    }
+
+    /// #352: a call that ends by itself says why; one we ended ourselves says nothing.
+    #[test]
+    fn each_ending_says_why() {
+        use DisconnectReason::*;
+        assert_eq!(end_reason(ClientInitiated), None);
+        assert_eq!(end_reason(DuplicateIdentity), Some(EndReason::OtherDevice));
+        assert_eq!(end_reason(ParticipantRemoved), Some(EndReason::Removed));
+        assert_eq!(end_reason(RoomDeleted), Some(EndReason::ChannelDeleted));
+        for r in [
+            UnknownReason,
+            ServerShutdown,
+            SignalClose,
+            ConnectionTimeout,
+        ] {
+            assert_eq!(end_reason(r), Some(EndReason::ConnectionLost), "{r:?}");
+        }
+    }
+
+    /// #352: a rejoin the server refuses for good stops at once (and says why); anything else
+    /// is worth another try.
+    #[test]
+    fn a_refused_rejoin_stops_retrying() {
+        use crate::api::ApiError;
+        use crate::voice::VoiceError;
+        let stop = |e: VoiceError| stop_rejoining(&e);
+        assert_eq!(
+            stop(ApiError::Unauthorized.into()),
+            Some(EndReason::ConnectionLost)
+        );
+        assert_eq!(
+            stop(ApiError::Forbidden("not allowed".into()).into()),
+            Some(EndReason::Removed)
+        );
+        // 404 (the channel is gone) and other 4xx: asking again won't change the answer
+        assert_eq!(
+            stop(ApiError::Rejected("not found".into()).into()),
+            Some(EndReason::ConnectionLost)
+        );
+        for e in [
+            VoiceError::Api(ApiError::Network("down".into())),
+            VoiceError::Api(ApiError::Server("503".into())),
+            VoiceError::Api(ApiError::RateLimited),
+            VoiceError::Connect("refused".into()),
+            VoiceError::Timeout("connecting to voice"),
+            VoiceError::Device("busy".into()),
+        ] {
+            assert_eq!(stop_rejoining(&e), None, "{e:?}");
+        }
+    }
+
+    #[test]
+    fn end_reasons_serialise_for_the_ui() {
+        assert_eq!(
+            serde_json::to_value(EndReason::OtherDevice).unwrap(),
+            serde_json::json!("other_device")
+        );
+        assert_eq!(
+            serde_json::to_value(EndReason::ConnectionLost).unwrap(),
+            serde_json::json!("connection_lost")
+        );
+        assert_eq!(
+            serde_json::to_value(EndReason::ChannelDeleted).unwrap(),
+            serde_json::json!("channel_deleted")
+        );
     }
 
     /// A LiveKit reconnect that never ends (a server that doesn't answer at all) is cut short.

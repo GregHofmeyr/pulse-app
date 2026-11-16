@@ -119,7 +119,8 @@ export type LinkReport = {
 export type StageName = 'requesting_access' | 'connecting' | 'starting_audio' | 'connected' | 'reconnecting'
 
 export type VoiceEvent =
-  | { kind: 'state'; channel_id: string | null; connection: Connection; controls: Flags }
+  /** `reason`: why the call ended by itself (#352); null for a leave of your own and while still in a call. */
+  | { kind: 'state'; channel_id: string | null; connection: Connection; controls: Flags; reason?: EndReason | null }
   | { kind: 'stage'; stage: StageName; attempt: number | null }
   | ({ kind: 'link' } & LinkReport)
   | { kind: 'speaking'; user_ids: string[] }
@@ -139,6 +140,17 @@ export type VoiceEvent =
   /** You're talking into your own muted mic: play the "you're muted" double ding (#252). The core paces it (every
    * 12 s while you keep talking, again at once after a re-mute) and never sends it while you're deafened. */
   | { kind: 'muted_cue' }
+
+/** Why a call ended by itself (#352): `EndReason` in voice/rejoin.rs. */
+export type EndReason = 'other_device' | 'connection_lost' | 'removed' | 'channel_deleted'
+
+/** The notice for a call that ended by itself (#352). */
+export const END_TEXT: Record<EndReason, string> = {
+  other_device: 'You joined from another device.',
+  connection_lost: 'Lost connection.',
+  removed: 'You were removed from the call.',
+  channel_deleted: 'The channel was deleted.',
+}
 
 /** Why each side isn't open (null = it is), from the core (#351). */
 export type DeviceGaps = { input: string | null; output: string | null }

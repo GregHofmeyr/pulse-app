@@ -8,7 +8,7 @@ import { displayName, type SelfVoice } from './selectors'
 import { app, onAppEvent, onAppReady } from './store.svelte'
 import { api } from './tauri'
 import { pushCallMixQuietly } from './mixer.svelte'
-import { loadAudioConfig, loadLocalMutes, loadVolumes, peerCallSound, playSound, saveLocalMutes, saveVolumes, serverVoiceSound, transitionSounds, type AudioConfig, type Connection, type DeviceGaps, type EchoReport, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
+import { loadAudioConfig, loadLocalMutes, loadVolumes, peerCallSound, playSound, saveLocalMutes, saveVolumes, serverVoiceSound, transitionSounds, type AudioConfig, type Connection, type DeviceGaps, type EchoReport, type EndReason, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
 import { isJoining, reduceStage, type StageState } from './voicestage'
 import { holdOwnCue, ownJoin, peerJoin } from './joinSounds'
 import { joinSounds, playJoin } from './joinSounds.svelte'
@@ -48,6 +48,8 @@ export const voice = $state({
   localMutes: loadLocalMutes() as Record<string, true>,
   /** Who disconnected you from which call (#140), until you join again or dismiss the notice. */
   disconnectedBy: null as { by: string; channelId: string } | null,
+  /** Why the last call ended by itself and where (#352), until you join, leave or dismiss the notice. */
+  ended: null as { reason: EndReason; channelId: string } | null,
 })
 
 function myHold(ch: string | null) {
@@ -156,9 +158,12 @@ function leaveIfRemoved(e: AppEvent) {
   const gone = e.t === 'ChannelDeleted' || (e.t === 'ChannelRemoved' && e.d.user_id === app.state.me?.id)
   if (!gone) return
   const c = e.d.channel_id
-  if (voice.joining === c || (voice.channelId === c && voice.leaving !== c)) {
+  const inCall = voice.channelId === c && voice.leaving !== c
+  if (voice.joining === c || inCall) {
     voiceApi.leave().catch((err: unknown) => (voice.error = errText(err)))
   }
+  // say why the call ended (#352): our own leave got there before LiveKit's "room deleted"
+  if (inCall && e.t === 'ChannelDeleted') voice.ended = { reason: 'channel_deleted', channelId: c }
 }
 
 export async function startVoiceListening() {
@@ -205,6 +210,11 @@ export async function startVoiceListening() {
         if (!e.channel_id) voice.micSilent = false
         if (!e.channel_id) voice.deviceGaps = { input: null, output: null }
         if (!e.channel_id) voice.micError = null
+        // ended by itself (#352): kept for the notice (a leave of your own has no reason)
+        if (!e.channel_id && e.reason) {
+          const where = prev.channelId ?? voice.ended?.channelId
+          if (where) voice.ended = { reason: e.reason, channelId: where }
+        }
         break
       }
       case 'link':
@@ -277,6 +287,7 @@ export const voiceApi = {
     voice.error = ''
     voice.stalled = false
     voice.disconnectedBy = null
+    voice.ended = null
     // show the join at once, before the core has answered
     voice.joinFailed = null
     voice.leaving = voice.channelId ?? voice.leaving
@@ -330,6 +341,7 @@ export const voiceApi = {
     voice.joining = null
     // leaving by yourself is never "X disconnected you" (a disconnect that didn't take, #147)
     voice.disconnectedBy = null
+    voice.ended = null
     ++joinSeq
     return invoke('leave_voice')
   },
@@ -373,6 +385,9 @@ export const voiceApi = {
   },
   dismissDisconnected() {
     voice.disconnectedBy = null
+  },
+  dismissEnded() {
+    voice.ended = null
   },
   /** Levels are only sent while something shows them: call with true when a meter appears, false when it goes. */
   watchMeters(on: boolean) {

@@ -34,6 +34,7 @@ use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
 use pulse_protocol::ids::ChannelId;
+pub use rejoin::EndReason;
 use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -360,10 +361,11 @@ async fn report_publish<R: CloseRoom>(
     {
         return AfterPublish::Done;
     }
-    let state = |connection, channel_id| VoiceEvent::State {
+    let state = |connection, channel_id, reason| VoiceEvent::State {
         channel_id,
         connection,
         controls: *w.controls.lock().unwrap(),
+        reason,
     };
     let connected_stage = || {
         (w.events)(VoiceEvent::Stage {
@@ -401,11 +403,15 @@ async fn report_publish<R: CloseRoom>(
         if dropped.send(*epoch).is_ok() {
             w.retries.fetch_add(1, Ordering::SeqCst);
             tracing::warn!(error = %e, "voice: publishing the mic failed; rejoining again");
-            (w.events)(state(Connection::Reconnecting, Some(w.channel)));
+            (w.events)(state(Connection::Reconnecting, Some(w.channel), None));
         } else {
             // no rejoin loop to hand it to (the app is closing): the call is over
             tracing::warn!(error = %e, "voice: publishing the mic failed; leaving");
-            (w.events)(state(Connection::Disconnected, None));
+            (w.events)(state(
+                Connection::Disconnected,
+                None,
+                Some(EndReason::ConnectionLost),
+            ));
         }
         return AfterPublish::Done;
     }
@@ -869,6 +875,8 @@ pub enum VoiceEvent {
         channel_id: Option<ChannelId>,
         connection: Connection,
         controls: Controls,
+        /// Why the call ended by itself (#352): only on a "disconnected" nobody chose.
+        reason: Option<EndReason>,
     },
     Speaking {
         user_ids: Vec<String>,
@@ -1040,7 +1048,8 @@ enum Rejoined {
     Yes,
     /// The user left or joined something else meanwhile: their action reported its own state.
     Superseded,
-    GaveUp,
+    /// Out of attempts, or refused for good: the call is over, and this is why (#352).
+    GaveUp(EndReason),
 }
 
 pub struct VoiceManager {
@@ -1238,6 +1247,17 @@ impl VoiceManager {
             channel_id: channel,
             connection,
             controls: *self.controls.lock().unwrap(),
+            reason: None,
+        });
+    }
+
+    /// The call ended by itself, and why (#352).
+    fn emit_ended(&self, reason: EndReason) {
+        (self.events)(VoiceEvent::State {
+            channel_id: None,
+            connection: Connection::Disconnected,
+            controls: *self.controls.lock().unwrap(),
+            reason: Some(reason),
         });
     }
 
@@ -1393,9 +1413,9 @@ impl VoiceManager {
         *self.rejoining.lock().unwrap() = Some(channel);
         let outcome = self.rejoin_attempts(epoch).await;
         *self.rejoining.lock().unwrap() = None;
-        if let Rejoined::GaveUp = outcome {
-            tracing::warn!(%channel, "voice: couldn't rejoin; giving up");
-            self.emit_state(None, Connection::Disconnected);
+        if let Rejoined::GaveUp(reason) = outcome {
+            tracing::warn!(%channel, ?reason, "voice: couldn't rejoin; giving up");
+            self.emit_ended(reason);
         }
     }
 
@@ -1424,11 +1444,17 @@ impl VoiceManager {
             {
                 Ok(()) => return Rejoined::Yes,
                 Err(VoiceError::Cancelled) => return Rejoined::Superseded,
-                Err(VoiceError::Api(ApiError::Unauthorized)) => return Rejoined::GaveUp,
-                Err(e) => tracing::warn!(attempt, error = %e, "voice: rejoin failed"),
+                Err(e) => {
+                    // signed out, not allowed, the channel gone: asking again won't help
+                    if let Some(reason) = rejoin::stop_rejoining(&e) {
+                        tracing::warn!(attempt, error = %e, "voice: rejoin refused");
+                        return Rejoined::GaveUp(reason);
+                    }
+                    tracing::warn!(attempt, error = %e, "voice: rejoin failed");
+                }
             }
         }
-        Rejoined::GaveUp
+        Rejoined::GaveUp(EndReason::ConnectionLost)
     }
 
     /// Rejoin attempts so far (diagnostics).
@@ -1748,21 +1774,23 @@ impl VoiceManager {
             let (mic_room, mic_track, mic_out) = (room.clone(), track.clone(), mic_out.clone());
             let mic_kbps = kbps.clone();
             tasks.push(tokio::spawn(async move {
-                let state = |connection, channel_id| VoiceEvent::State {
+                let state = |connection, channel_id, reason| VoiceEvent::State {
                     channel_id,
                     connection,
                     controls: *controls.lock().unwrap(),
+                    reason,
                 };
-                // The call is gone: handed to the rejoin loop if `rejoin` (and that loop runs).
-                let lost = |rejoin: bool| {
+                // The call is gone: handed to the rejoin loop if `rejoin` (and that loop runs);
+                // otherwise ended, saying why (`reason`, #352).
+                let lost = |rejoin: bool, reason: Option<EndReason>| {
                     let outcome = drop_call(&alive, (&pipeline_alive, &shared), &io, &rx, || {
                         rejoin && dropped.as_ref().is_some_and(|d| d.send(epoch).is_ok())
                     });
                     match outcome {
                         Dropped::HandedOver => {
-                            events(state(Connection::Reconnecting, Some(channel)))
+                            events(state(Connection::Reconnecting, Some(channel), None))
                         }
-                        Dropped::Ended => events(state(Connection::Disconnected, None)),
+                        Dropped::Ended => events(state(Connection::Disconnected, None, reason)),
                         Dropped::AlreadyOver => {}
                     }
                 };
@@ -1779,7 +1807,7 @@ impl VoiceManager {
                                 after_s = give_up.after().as_secs(),
                                 "voice: LiveKit still reconnecting; giving up on it"
                             );
-                            lost(true);
+                            lost(true, Some(EndReason::ConnectionLost));
                             break;
                         }
                     };
@@ -1947,16 +1975,16 @@ impl VoiceManager {
                         RoomEvent::Reconnecting => {
                             tracing::warn!("voice: reconnecting");
                             give_up.arm();
-                            events(state(Connection::Reconnecting, Some(channel)))
+                            events(state(Connection::Reconnecting, Some(channel), None))
                         }
                         RoomEvent::Reconnected => {
                             tracing::info!("voice: reconnected");
                             give_up.disarm();
-                            events(state(Connection::Connected, Some(channel)))
+                            events(state(Connection::Connected, Some(channel), None))
                         }
                         RoomEvent::Disconnected { reason } => {
                             tracing::warn!(?reason, "voice disconnected by LiveKit");
-                            lost(rejoin::worth_rejoining(reason));
+                            lost(rejoin::worth_rejoining(reason), rejoin::end_reason(reason));
                             break;
                         }
                         _ => {}
@@ -2130,6 +2158,7 @@ impl VoiceManager {
             channel_id,
             connection,
             controls: c,
+            reason: None,
         });
         c
     }
@@ -3225,6 +3254,30 @@ mod tests {
         assert_eq!(d["state"], "busy");
     }
 
+    /// #352: "disconnected" carries why the call ended (null for a leave of our own).
+    #[test]
+    fn state_event_serialises_its_end_reason_for_the_ui() {
+        let e = VoiceEvent::State {
+            channel_id: None,
+            connection: Connection::Disconnected,
+            controls: Controls::default(),
+            reason: Some(EndReason::OtherDevice),
+        };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["kind"], "state");
+        assert_eq!(v["reason"], "other_device");
+        let e = VoiceEvent::State {
+            channel_id: None,
+            connection: Connection::Disconnected,
+            controls: Controls::default(),
+            reason: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&e).unwrap()["reason"],
+            serde_json::Value::Null
+        );
+    }
+
     #[test]
     fn mic_event_serialises_for_the_ui() {
         let e = VoiceEvent::Mic {
@@ -4008,15 +4061,29 @@ mod tests {
             .collect()
     }
 
-    /// A4: LiveKit gave up → voice rejoins by itself, says "reconnecting" for that channel the
-    /// whole time (no "disconnected" flash), and gives up after MAX_ATTEMPTS. A text channel makes
-    /// every attempt fail fast at the token step (no LiveKit needed).
-    #[tokio::test]
-    async fn a_dropped_call_is_rejoined_then_given_up_on() {
-        let app = testing::spawn().await;
-        let (_, token) = testing::register(&app, "alex").await;
-        let s = testing::create_server(&app, &token, "Main").await;
-        let general = testing::general(&app, &token, s.id).await;
+    /// Why the last "disconnected" said the call ended (#352).
+    fn last_end_reason(seen: &Mutex<Vec<VoiceEvent>>) -> Option<EndReason> {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                VoiceEvent::State {
+                    connection: Connection::Disconnected,
+                    reason,
+                    ..
+                } => Some(*reason),
+                _ => None,
+            })
+            .flatten()
+    }
+
+    /// Run the rejoin loop on a simulated drop of `channel` until it's done.
+    async fn rejoin_until_done(
+        app: &testing::TestApp,
+        token: &str,
+        channel: ChannelId,
+    ) -> (Arc<VoiceManager>, Arc<Mutex<Vec<VoiceEvent>>>) {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();
         let mut vm = VoiceManager::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
@@ -4027,14 +4094,27 @@ mod tests {
             tokio::spawn(async move { vm.run_rejoins().await })
         };
         let api = Api::new(&format!("http://{}", app.addr));
-        vm.simulate_drop(&api, &token, general.id).await;
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while vm.rejoins() < rejoin::MAX_ATTEMPTS || vm.rejoining().is_some() {
+        vm.simulate_drop(&api, token, channel).await;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            // the loop has started (it numbers its attempts) and finished
+            while vm.rejoins() == 0 || vm.rejoining().is_some() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
         .expect("rejoin never finished");
+        runner.abort();
+        (vm, seen)
+    }
+
+    /// A4: LiveKit gave up → voice rejoins by itself, says "reconnecting" for that channel the
+    /// whole time (no "disconnected" flash), and gives up after MAX_ATTEMPTS, saying the
+    /// connection was lost (#352). LiveKit unreachable makes every attempt fail fast.
+    #[tokio::test]
+    async fn a_dropped_call_is_rejoined_then_given_up_on() {
+        let app = testing::spawn_with(unreachable_livekit()).await;
+        let (token, _, lounge) = alex_and_a_voice_channel(&app).await;
+        let (vm, seen) = rejoin_until_done(&app, &token, lounge).await;
         let states = states_of(&seen).await;
         let (last, before) = states.split_last().unwrap();
         assert_eq!(
@@ -4045,11 +4125,28 @@ mod tests {
         assert!(
             before
                 .iter()
-                .all(|s| *s == (Some(general.id), Connection::Reconnecting)),
+                .all(|s| *s == (Some(lounge), Connection::Reconnecting)),
             "{states:?}"
         );
         assert_eq!(vm.rejoins(), rejoin::MAX_ATTEMPTS);
-        runner.abort();
+        assert_eq!(last_end_reason(&seen), Some(EndReason::ConnectionLost));
+    }
+
+    /// #352: a rejoin the server refuses (here a 400: a text channel has no voice; a 404 or 403
+    /// alike) stops at once instead of asking again for a minute, and says the call ended.
+    #[tokio::test]
+    async fn a_refused_rejoin_gives_up_at_once() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let general = testing::general(&app, &token, s.id).await;
+        let (vm, seen) = rejoin_until_done(&app, &token, general.id).await;
+        assert_eq!(vm.rejoins(), 1);
+        assert_eq!(
+            states_of(&seen).await.last(),
+            Some(&(None, Connection::Disconnected))
+        );
+        assert_eq!(last_end_reason(&seen), Some(EndReason::ConnectionLost));
     }
 
     /// A4: the user's Leave wins over a rejoin in progress, at once and for good.
