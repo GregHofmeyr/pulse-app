@@ -62,3 +62,5 @@ id!(ClipUploadId);
 id!(CallId);
 id!(AttachmentId);
 id!(CategoryId);
+id!(ScheduledId);
+id!(ReminderId);

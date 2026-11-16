@@ -191,6 +191,11 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::PlanForecast::export_all(&cfg)?;
     rest::PlanReminder::export_all(&cfg)?;
     rest::PlanRemindersRequest::export_all(&cfg)?;
+    rest::ScheduledMessage::export_all(&cfg)?;
+    rest::ScheduleMessageRequest::export_all(&cfg)?;
+    rest::EditScheduledRequest::export_all(&cfg)?;
+    rest::MessageReminder::export_all(&cfg)?;
+    rest::CreateReminderRequest::export_all(&cfg)?;
     rest::StageShare::export_all(&cfg)?;
     rest::StageShareRequest::export_all(&cfg)?;
     rest::StageShareLine::export_all(&cfg)?;

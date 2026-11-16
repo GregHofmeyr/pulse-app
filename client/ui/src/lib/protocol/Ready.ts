@@ -8,6 +8,7 @@ import type { CustomEmoji } from "./CustomEmoji";
 import type { DmMembers } from "./DmMembers";
 import type { Game } from "./Game";
 import type { Message } from "./Message";
+import type { MessageReminder } from "./MessageReminder";
 import type { Mute } from "./Mute";
 import type { NotifyLevelPref } from "./NotifyLevelPref";
 import type { OwnStatus } from "./OwnStatus";
@@ -15,6 +16,7 @@ import type { Person } from "./Person";
 import type { PrivateNickname } from "./PrivateNickname";
 import type { QotyEvent } from "./QotyEvent";
 import type { ReadState } from "./ReadState";
+import type { ScheduledMessage } from "./ScheduledMessage";
 import type { Server } from "./Server";
 import type { ServerId } from "./ServerId";
 import type { ServerLayout } from "./ServerLayout";
@@ -159,4 +161,13 @@ server_order?: Array<ServerId>,
  * Whether plans' reminder lines ping you (#399), on every device; on unless you turned it off. Yours only.
  * Absent from older servers (they ping everyone).
  */
-plan_reminders?: boolean, };
+plan_reminders?: boolean, 
+/**
+ * Your scheduled messages (#299), soonest first, failed ones included. Yours only. Absent from older servers.
+ */
+scheduled?: Array<ScheduledMessage>, 
+/**
+ * Your reminders (#300), soonest first: those still to come and those due (in your inbox) you haven't marked
+ * done. Yours only. Absent from older servers.
+ */
+reminders?: Array<MessageReminder>, };

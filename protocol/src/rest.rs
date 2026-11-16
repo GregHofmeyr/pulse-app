@@ -5,7 +5,7 @@ use ts_rs::TS;
 
 use crate::ids::{
     AttachmentId, CallId, CategoryId, ChannelId, ClipUploadId, GameId, LineId, MessageId,
-    QotyEventId, ServerId, UserId,
+    QotyEventId, ReminderId, ScheduledId, ServerId, UserId,
 };
 
 /// A `Debug` that names every field but prints the secret ones as `<redacted>`, for types that
@@ -1047,6 +1047,80 @@ pub mod plan_limits {
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct PlanRemindersRequest {
     pub on: bool,
+}
+
+/// Scheduled message and reminder limits (#299, #300), shared so the client can say them before the server refuses.
+pub mod schedule_limits {
+    /// Scheduled messages one person may have waiting (failed ones count until deleted).
+    pub const MAX_SCHEDULED: i64 = 50;
+    /// Reminders one person may have set and not yet had.
+    pub const MAX_REMINDERS: i64 = 100;
+    /// How far ahead a scheduled message or a reminder may be, in days.
+    pub const MAX_DAYS_AHEAD: i64 = 365;
+}
+
+/// A message written now that the server posts later, as its author (#299). Only its author ever sees it. Text only:
+/// mentions and emoji are text, files and GIFs aren't scheduled.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ScheduledMessage {
+    pub id: ScheduledId,
+    pub channel_id: ChannelId,
+    pub content: String,
+    /// The message it will reply to (in the same chat), if any.
+    pub reply_to_id: Option<MessageId>,
+    /// When it goes (UTC, RFC 3339, milliseconds).
+    pub send_at: String,
+    pub created_at: String,
+    pub edited_at: Option<String>,
+    /// Why it couldn't be posted when its time came (left the chat, the chat was deleted, ...): it stays until its
+    /// author deletes it (or sends it again, when the reason is gone). `None` while it waits.
+    pub failed: Option<String>,
+}
+
+/// `POST /channels/{id}/scheduled` (#299).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ScheduleMessageRequest {
+    pub content: String,
+    #[serde(default)]
+    pub reply_to_id: Option<MessageId>,
+    /// When to post it (RFC 3339, any offset): in the future, at most [`schedule_limits::MAX_DAYS_AHEAD`] away.
+    pub send_at: String,
+}
+
+/// `PATCH /scheduled/{id}` (#299): a new text, a new time, or both. A failed one given a new time waits again.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct EditScheduledRequest {
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub send_at: Option<String>,
+}
+
+/// "Remind me about this" (#300): private to the person who set it. Once due it is in their inbox (and they get a
+/// notification), unread until seen.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct MessageReminder {
+    pub id: ReminderId,
+    pub message_id: MessageId,
+    pub channel_id: ChannelId,
+    /// The thread the message is a reply in, if any (to open it there).
+    pub thread_root_id: Option<MessageId>,
+    /// When it is (was) due (UTC, RFC 3339, milliseconds).
+    pub remind_at: String,
+    pub created_at: String,
+    /// It has come due: it's in the inbox.
+    pub due: bool,
+    /// Due and opened (or marked read).
+    pub seen: bool,
+    /// The message, cut to one short line.
+    pub message: InboxSnippet,
+}
+
+/// `POST /messages/{id}/reminders` (#300).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CreateReminderRequest {
+    /// When (RFC 3339, any offset): in the future, at most [`schedule_limits::MAX_DAYS_AHEAD`] away.
+    pub remind_at: String,
 }
 
 /// An answer to a plan (#387).

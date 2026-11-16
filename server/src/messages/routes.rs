@@ -188,7 +188,7 @@ pub(crate) async fn load(
     Ok(Some(m))
 }
 
-fn clean(content: &str) -> AppResult<String> {
+pub(crate) fn clean(content: &str) -> AppResult<String> {
     let c = content.trim();
     if c.is_empty() || c.chars().count() > MAX_LEN {
         return Err(AppError::BadRequest(format!(
@@ -352,6 +352,18 @@ async fn send(
     if !s.limits.send_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
+    send_as(&s, me, id, req).await.map(Json)
+}
+
+/// A send from `me` in channel `id`, with every check a send has (the chat is there, `me` may post in it, its kind
+/// takes plain messages, the reply's target is in it): the route's body, and a scheduled message's post at its time
+/// (#299), which runs the checks again then. Not rate limited here (the route is; a scheduled post was, when made).
+pub(crate) async fn send_as(
+    s: &AppState,
+    me: UserId,
+    id: ChannelId,
+    req: SendMessageRequest,
+) -> AppResult<Message> {
     crate::media::writes_ok(&s.cfg)?;
     let ch = channel_for(&s.db, me, id).await?;
     // A voice channel's chat (#226) takes messages as a text channel does.
@@ -392,11 +404,10 @@ async fn send(
     {
         return load(&s.db, Some(me), existing)
             .await?
-            .map(Json)
             .ok_or(AppError::NotFound);
     }
     let claimed = if files {
-        crate::attachments::claim(&s, me, id, &req.attachments).await?
+        crate::attachments::claim(s, me, id, &req.attachments).await?
     } else {
         vec![]
     };
@@ -448,7 +459,7 @@ async fn send(
         }
     }
     deliver(
-        &s,
+        s,
         me,
         &ch,
         Outgoing {
@@ -465,7 +476,6 @@ async fn send(
         },
     )
     .await
-    .map(Json)
 }
 
 /// A checked message on its way in: what `deliver` stores and fans out.
