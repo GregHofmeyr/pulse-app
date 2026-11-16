@@ -1,5 +1,17 @@
 //! Connection registry + fan-out. Bounded per-connection queues: a client that cannot keep up
 //! is dropped rather than slowing everyone else down.
+//!
+//! Ordering of one [`Hub::publish_all`] (#349; clients rely on it, the inbox's `arrived` among
+//! them):
+//! 1. Every event's audience is worked out first, before any of them is delivered, all from the
+//!    database as the caller's write left it.
+//! 2. The events are then delivered in the order given, under the connection lock, so no other
+//!    publish interleaves with them on any connection.
+//! 3. Only after that are the inbox events they imply (`InboxItemAdded`, `InboxUpdated`) queued for
+//!    the inbox worker, which reads each item and count afresh and sends it later. So a device
+//!    always has the message (and its chat) before the inbox item for it, but a read point, a
+//!    thread seen point or a delete published meanwhile can reach it before that item: the
+//!    client checks an arriving item against what it already knows.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -393,7 +405,8 @@ impl Hub {
     /// they imply together (#306, `inbox::follow_ups`: one per person for the whole batch, so a quote's delete
     /// with all its replies counts each inbox once) are queued for the inbox worker, which reads and sends them
     /// after: never under the caller's [`Hub::in_order`] (#327). The worker takes the batches in publish order,
-    /// and each person's counts under their [`InboxSlot`].
+    /// and each person's counts under their [`InboxSlot`]. Audiences are all computed before the
+    /// first delivery, and inbox work is queued only after the last: see the module docs.
     pub async fn publish_all(&self, db: &SqlitePool, events: Vec<Event>) {
         let mut out = Vec::with_capacity(events.len());
         for event in events {

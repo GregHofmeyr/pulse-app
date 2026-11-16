@@ -472,6 +472,9 @@ pub enum Event {
         awarders: Vec<UserId>,
     },
     /// Only to the user's own sessions: something new in their inbox (#306), and their unread count after it.
+    /// Sent after the events that caused it (the message's own event comes first), read from the server's state
+    /// when sent: a read point, thread seen point or delete that came meanwhile may already have reached the
+    /// client, which should check the item against them (and drop it if its chat is gone).
     InboxItemAdded {
         user_id: UserId,
         item: Box<InboxItem>,
