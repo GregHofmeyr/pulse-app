@@ -4859,6 +4859,52 @@ pub async fn set_server_order(
     core.check(&app, api.set_server_order(&token, server_ids).await)
 }
 
+/// A new conversation category of your own (#305).
+#[tauri::command]
+pub async fn create_dm_category(
+    app: AppHandle,
+    core: State<'_, Core>,
+    name: String,
+) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.create_dm_category(&token, name).await)
+}
+
+/// Rename one of your conversation categories, or fold it (#305).
+#[tauri::command]
+pub async fn update_dm_category(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::DmCategoryId,
+    request: pulse_protocol::rest::UpdateDmCategoryRequest,
+) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.update_dm_category(&token, id, &request).await)
+}
+
+/// Delete one of your conversation categories (#305).
+#[tauri::command]
+pub async fn delete_dm_category(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::DmCategoryId,
+) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_dm_category(&token, id).await)
+}
+
+/// Pin or unpin a conversation and put it in a category, or none (#305).
+#[tauri::command]
+pub async fn place_dm(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    request: pulse_protocol::rest::DmPlacementRequest,
+) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.place_dm(&token, channel_id, &request).await)
+}
+
 /// Plan reminders (#399): whether plans' reminder lines ping you, on every device.
 #[tauri::command]
 pub async fn set_plan_reminders(

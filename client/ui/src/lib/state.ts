@@ -1,6 +1,7 @@
 // The app's single source of truth, as pure functions over plain data so they're easy to test.
 // The reactive wrapper lives in store.svelte.ts.
 import type { CallInfo } from './protocol/CallInfo'
+import type { DmLayout } from './protocol/DmLayout'
 import type { Category } from './protocol/Category'
 import type { Channel } from './protocol/Channel'
 import type { Gif } from './protocol/Gif'
@@ -94,6 +95,9 @@ export type AppState = {
   liveNotify: string[]
   /** Your server rail order (#185): server ids, first to last (lib/serverOrder.ts). */
   serverOrder: string[]
+  /** Your conversation list's pins and categories (#305), yours only, on every device: from Ready and
+   *  DmLayoutChanged (lib/dmLayout.ts). */
+  dmLayout: DmLayout
   /** Plan reminders (#399): whether plans' reminder lines ping you, on every device (the server leaves you out of
    *  them when off). From Ready and PlanRemindersChanged; on when the server doesn't say. */
   planReminders: boolean
@@ -180,7 +184,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -240,6 +244,8 @@ export function applyReady(s: AppState, r: Ready): AppState {
     liveNotify: r.live_notify ?? [],
     // absent from older servers: the usual order
     serverOrder: r.server_order ?? [],
+    // absent from older servers: nothing pinned, no categories
+    dmLayout: r.dm_layout ?? { categories: [], placements: [] },
     // absent from older servers: they ping everyone
     planReminders: r.plan_reminders ?? true,
     // absent from older servers: no calls
@@ -1253,6 +1259,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return s // played by the listener in soundboard.svelte.ts; nothing to keep
     case 'ServerOrderChanged':
       return { ...s, serverOrder: e.d.server_ids }
+    case 'DmLayoutChanged':
+      return { ...s, dmLayout: e.d.layout }
     case 'PlanRemindersChanged':
       return { ...s, planReminders: e.d.on }
     // scheduled messages (#299) and reminders (#300) are kept by their own stores (lib/scheduled.svelte.ts,

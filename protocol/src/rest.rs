@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::ids::{
-    AttachmentId, BookmarkId, CallId, CategoryId, ChannelId, ClipUploadId, GameId, LineId,
-    MessageId, QotyEventId, ReminderId, ScheduledId, ServerId, UserId,
+    AttachmentId, BookmarkId, CallId, CategoryId, ChannelId, ClipUploadId, DmCategoryId, GameId,
+    LineId, MessageId, QotyEventId, ReminderId, ScheduledId, ServerId, UserId,
 };
 
 /// A `Debug` that names every field but prints the secret ones as `<redacted>`, for types that
@@ -320,6 +320,68 @@ pub struct SetNicknameRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ServerOrderRequest {
     pub server_ids: Vec<ServerId>,
+}
+
+/// One of your own DM categories (#305): a heading in your conversation list that only you see.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DmCategory {
+    pub id: DmCategoryId,
+    pub name: String,
+    /// Folded shut in your list (on every device).
+    #[serde(default)]
+    pub collapsed: bool,
+}
+
+/// Where one of your conversations sits in your list (#305): pinned to the top, in one of your categories, or both
+/// (a pinned one shows under Pinned). Conversations with neither have no placement.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DmPlacement {
+    pub channel_id: ChannelId,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub category_id: Option<DmCategoryId>,
+}
+
+/// Your conversation list's layout (#305): your categories in order and your placements. Yours only, on every device.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DmLayout {
+    pub categories: Vec<DmCategory>,
+    pub placements: Vec<DmPlacement>,
+}
+
+/// `POST /me/dm-categories` (#305): a new category, last in your list.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CreateDmCategoryRequest {
+    pub name: String,
+}
+
+/// `PATCH /me/dm-categories/{id}` (#305): rename it, or fold it open or shut. Absent fields stay as they are.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct UpdateDmCategoryRequest {
+    #[serde(default)]
+    #[ts(optional)]
+    pub name: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub collapsed: Option<bool>,
+}
+
+/// `PUT /me/dm-placements/{channel_id}` (#305): pin or unpin a conversation and put it in a category (or none).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct DmPlacementRequest {
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub category_id: Option<DmCategoryId>,
+}
+
+/// Limits on DM categories (#305).
+pub mod dm_layout_limits {
+    /// Characters in a category's name, after trimming.
+    pub const NAME_CHARS: usize = 32;
+    /// Categories one person may have.
+    pub const MAX_CATEGORIES: usize = 30;
 }
 
 /// A name you gave someone that only you see. Only ever sent to its owner.

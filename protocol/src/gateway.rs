@@ -8,12 +8,12 @@ use crate::ids::{
 };
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji,
-    CustomStatus, F1Prediction, Game, InboxItem, Listening, ListeningUpdate, Member, Message,
-    MessageBookmark, MessageReminder, Mute, MyCustomStatus, NotifyLevelPref, OwnStatus, Person,
-    PinnedMessage, Plan, Playing, PlayingUpdate, PresenceStatus, PrivateNickname, QotyEvent,
-    QuietSpin, ReadState, RingEndReason, ScheduledMessage, Server, ServerLayout, ServerVoiceMod,
-    Sound, SpeakerLink, StageShare, SteamStatus, StreamEndReason, StreamInfo, User, WatchParty,
-    Wheel,
+    CustomStatus, DmLayout, F1Prediction, Game, InboxItem, Listening, ListeningUpdate, Member,
+    Message, MessageBookmark, MessageReminder, Mute, MyCustomStatus, NotifyLevelPref, OwnStatus,
+    Person, PinnedMessage, Plan, Playing, PlayingUpdate, PresenceStatus, PrivateNickname,
+    QotyEvent, QuietSpin, ReadState, RingEndReason, ScheduledMessage, Server, ServerLayout,
+    ServerVoiceMod, Sound, SpeakerLink, StageShare, SteamStatus, StreamEndReason, StreamInfo, User,
+    WatchParty, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -242,6 +242,10 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub bookmarks: Vec<MessageBookmark>,
+    /// Your conversation list's pins and categories (#305). Yours only. Absent from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub dm_layout: DmLayout,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -460,6 +464,12 @@ pub enum Event {
     BookmarkSaved {
         user_id: UserId,
         bookmark: MessageBookmark,
+    },
+    /// Only to its person's own sessions: their conversation list's pins and categories changed (#305), the new
+    /// [`Ready::dm_layout`]. Clients from before it skip it.
+    DmLayoutChanged {
+        user_id: UserId,
+        layout: DmLayout,
     },
     /// Only to its person's own sessions: a saved message was removed (#315).
     BookmarkRemoved {
@@ -908,6 +918,7 @@ impl Event {
             | Self::ReminderRemoved { .. }
             | Self::BookmarkSaved { .. }
             | Self::BookmarkRemoved { .. }
+            | Self::DmLayoutChanged { .. }
             | Self::BadgeEarned { .. } => None,
         }
     }
@@ -938,6 +949,7 @@ impl Event {
             | Self::ReminderRemoved { user_id, .. }
             | Self::BookmarkSaved { user_id, .. }
             | Self::BookmarkRemoved { user_id, .. }
+            | Self::DmLayoutChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
             | Self::CallRingEnded { user_id, .. }
@@ -1069,6 +1081,7 @@ mod tests {
             scheduled: vec![],
             reminders: vec![],
             bookmarks: vec![],
+            dm_layout: Default::default(),
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1162,6 +1175,7 @@ mod tests {
             scheduled: vec![],
             reminders: vec![],
             bookmarks: vec![],
+            dm_layout: Default::default(),
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1304,6 +1318,7 @@ mod tests {
             scheduled: vec![],
             reminders: vec![],
             bookmarks: vec![],
+            dm_layout: Default::default(),
             calls: vec![],
             ringing: vec![],
             layouts: vec![],

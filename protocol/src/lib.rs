@@ -160,6 +160,9 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::UpdateProfileRequest::export_all(&cfg)?;
     rest::SetNicknameRequest::export_all(&cfg)?;
     rest::ServerOrderRequest::export_all(&cfg)?;
+    rest::CreateDmCategoryRequest::export_all(&cfg)?;
+    rest::UpdateDmCategoryRequest::export_all(&cfg)?;
+    rest::DmPlacementRequest::export_all(&cfg)?;
     rest::PrivateNickname::export_all(&cfg)?;
     rest::NameChange::export_all(&cfg)?;
     rest::NameArchivePage::export_all(&cfg)?;
