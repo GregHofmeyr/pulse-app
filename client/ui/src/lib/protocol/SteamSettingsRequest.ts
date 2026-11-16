@@ -11,4 +11,16 @@ share_hours?: boolean,
 /**
  * "Share Join" (#381).
  */
-share_join?: boolean, };
+share_join?: boolean, 
+/**
+ * Deadlock post-match cards (#390).
+ */
+deadlock_matches?: boolean, 
+/**
+ * Deadlock rank badge and rank movers (#390).
+ */
+deadlock_rank?: boolean, 
+/**
+ * Deadlock squad stats (#390).
+ */
+deadlock_squad?: boolean, };

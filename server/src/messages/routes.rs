@@ -130,6 +130,10 @@ fn from_row(r: Row) -> AppResult<Message> {
             }
             _ => None,
         },
+        deadlock: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => super::system::deadlock(p).map(Box::new),
+            _ => None,
+        },
         // set by `plans::attach`
         plan: None,
         plan_reminder: match &system_payload {
@@ -558,6 +562,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         attachments,
         caption_is_fallback,
         achievement: None,
+        deadlock: None,
         plan: None,
         plan_reminder: None,
         f1: None,
@@ -1003,6 +1008,7 @@ mod tests {
             attachments: vec![],
             caption_is_fallback: false,
             achievement: None,
+            deadlock: None,
             plan: None,
             plan_reminder: None,
             f1: None,

@@ -31,9 +31,12 @@ pub struct Link {
     pub share_hours: bool,
     pub recent_minutes: Option<i64>,
     pub share_join: bool,
+    pub deadlock_matches: bool,
+    pub deadlock_rank: bool,
+    pub deadlock_squad: bool,
 }
 
-const LINK_COLS: &str = "user_id, steam_id, persona, share_achievements, backfill, private_since, completion_rate, perfect_games, share_hours, recent_minutes, share_join";
+const LINK_COLS: &str = "user_id, steam_id, persona, share_achievements, backfill, private_since, completion_rate, perfect_games, share_hours, recent_minutes, share_join, deadlock_matches, deadlock_rank, deadlock_squad";
 
 pub async fn link_of(db: &SqlitePool, user: UserId) -> sqlx::Result<Option<Link>> {
     sqlx::query_as(&format!(
@@ -50,6 +53,7 @@ pub async fn status(s: &AppState, user: UserId) -> AppResult<SteamStatus> {
     Ok(SteamStatus {
         linking_available: s.cfg.embeds.public_url.is_some(),
         achievements_available: s.steam.api().has_key(),
+        deadlock_available: s.deadlock.api().available(),
         link: link.map(|l| SteamLinked {
             steam_id: l.steam_id,
             persona: l.persona,
@@ -64,6 +68,9 @@ pub async fn status(s: &AppState, user: UserId) -> AppResult<SteamStatus> {
                 .filter(|_| l.share_hours)
                 .map(|m| m.max(0) as u32),
             share_join: l.share_join,
+            deadlock_matches: l.deadlock_matches,
+            deadlock_rank: l.deadlock_rank,
+            deadlock_squad: l.deadlock_squad,
         }),
     })
 }
@@ -157,6 +164,11 @@ async fn clear(conn: &mut SqliteConnection, user: UserId) -> sqlx::Result<bool> 
         .bind(user.to_string())
         .execute(&mut *conn)
         .await?;
+    // Deadlock (#390): what was read for the old account (posted cards and the matches seen stay)
+    sqlx::query("DELETE FROM deadlock_players WHERE user_id = ?")
+        .bind(user.to_string())
+        .execute(&mut *conn)
+        .await?;
     Ok(n > 0)
 }
 
@@ -171,6 +183,9 @@ pub async fn set_switches(
         "UPDATE steam_links SET share_achievements = COALESCE(?, share_achievements),
                 share_hours = COALESCE(?, share_hours),
                 share_join = COALESCE(?, share_join),
+                deadlock_matches = COALESCE(?, deadlock_matches),
+                deadlock_rank = COALESCE(?, deadlock_rank),
+                deadlock_squad = COALESCE(?, deadlock_squad),
                 recent_minutes = CASE WHEN ? = 0 THEN NULL ELSE recent_minutes END,
                 recent_at = CASE WHEN ? = 0 THEN NULL ELSE recent_at END
          WHERE user_id = ?",
@@ -178,6 +193,9 @@ pub async fn set_switches(
     .bind(req.share_achievements)
     .bind(req.share_hours)
     .bind(req.share_join)
+    .bind(req.deadlock_matches)
+    .bind(req.deadlock_rank)
+    .bind(req.deadlock_squad)
     .bind(req.share_hours)
     .bind(req.share_hours)
     .bind(user.to_string())

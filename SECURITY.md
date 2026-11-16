@@ -99,6 +99,24 @@ repository.
 - **Budget.** Every Web API call counts against a server-wide allowance (50,000 a day); past it, achievements pause
   until the next UTC day.
 
+**Deadlock (#390): only for users who linked Steam, each part behind its own switch (all on by default).**
+- **What the server reads.** The server asks deadlock-api.com (free, unofficial, open source) about the linked account
+  by its Deadlock account id (the SteamID3, worked out from the 64-bit SteamID): match history (every few minutes while
+  the user plays Deadlock, else about every half hour), rank (one batch call for everyone, about every half hour),
+  and, when someone opens a profile card, mate and hero stats (cached an hour). Patch notes come from deadlock-api's
+  feed, or Steam's public news for Deadlock as a fallback. With **Post-match cards**, **Show my rank** and **Squad
+  stats** off, the matching reads stop and nothing of that kind is shown. Nothing runs on the user's PC.
+- **What it sends.** Only those account ids. Requests carry a User-Agent naming Pulse and nothing about the operator;
+  the optional key (`PULSE_DEADLOCK_API_KEY`) goes in a header and is never logged. It keeps under deadlock-api's
+  rate limits and backs off on 429 and 5xx; after three failures in a row it logs once and hides the Deadlock bits.
+- **What others see.** Match cards, the weekly rank movers and patch notes in the Deadlock channel of each server whose
+  owner picked one (none by default); the rank badge on profiles and member lists; a profile's Deadlock section
+  (last match, top heroes, games together with fellow members who share squad stats). Hero and rank art is fetched
+  by the server only from deadlock-api's asset hosts (an allowlist), re-encoded, and served as Pulse media; clients
+  never contact deadlock-api.
+- **The bot.** For fresh match data a user friends one of deadlock-api's Steam bots. Settings links deadlock-api's own
+  site for the invite and warns that the real bot never asks for logins, codes or trades.
+
 **Microphone.** The microphone is opened when the user joins a voice channel or runs the microphone test in Settings.
 Audio goes to the SFU (section 2).
 
@@ -489,6 +507,7 @@ past that, the least recently used bucket is dropped.
 | "Listening to" album art fetched | 60/hour per user, its own budget apart from link previews |
 | Starting a Steam link, unlinking, the Steam setting, an Achievements channel change | in the "changes other people hear about" bucket above |
 | Steam Web API calls (achievements) | 50,000/day, server-wide |
+| deadlock-api match-history reads | 8/hour without a key, 240/hour with one, server-wide; paused for `Retry-After` on a 429 |
 | GIF settings reads and favourite adds and removes (together) | burst of 30, then one every 2 seconds per user |
 
 Real-time frames from the client are capped at 64 KB, and messages at 4,000 characters.
@@ -687,8 +706,8 @@ and the app frames it, so the player gets an HTTPS parent with a real origin.
   - Images are pinned by digest. LiveKit and Caddy are pinned in the compose file. The Pulse server image is pinned to
     the digest pulled at deploy time, so a moved tag cannot change what runs.
 - **Secrets.** The server's secrets live in a mode-`0600` file owned by the service user: the LiveKit secret,
-  `PULSE_TOTP_KEY`, the clips bucket's keys, `GIPHY_API_KEY` and `PULSE_STEAM_API_KEY` (optional; the server never
-  logs it or prints it in its config's debug output).
+  `PULSE_TOTP_KEY`, the clips bucket's keys, `GIPHY_API_KEY`, `PULSE_STEAM_API_KEY` and `PULSE_DEADLOCK_API_KEY` (both
+  optional; the server never logs them or prints them in its config's debug output).
 - **Backups.** Provisioning leaves backups off until the operator sets the encryption key and object-store details.
   Once configured, every night and before each deploy, the database and uploaded media are encrypted with `age` and
   stored in an S3-compatible object store. That object store is with a different provider from the VM. The

@@ -31,6 +31,7 @@
   import WheelLine from './WheelLine.svelte'
   import AchievementCard from './AchievementCard.svelte'
   import F1Card from './F1Card.svelte'
+  import DeadlockCard from './DeadlockCard.svelte'
   import PollCard from './PollCard.svelte'
   import { endedSummary, pollOver, shownText } from '../lib/poll'
   import { closePoll } from '../lib/polls.svelte'
@@ -311,6 +312,9 @@
   {:else if message.f1}
     <!-- an F1 card (#386): the race weekend with podium predictions, lights out, the results, the scores -->
     <F1Card {message} {nameOf} {time} />
+  {:else if message.deadlock}
+    <!-- a Deadlock card (#390): a match, the rank movers or a patch, with today's names -->
+    <DeadlockCard card={message.deadlock} {nameOf} {time} messageId={message.id} />
   {:else if message.call}
     <!-- a call line (#50) reads per member: "Missed call from sam" for those who never joined -->
     {@const text = callLineText(app.state, message)}

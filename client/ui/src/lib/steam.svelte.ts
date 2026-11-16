@@ -44,6 +44,8 @@ export const unlinkSteam = () => act(() => api.unlinkSteam())
 export const setSteamShare = (on: boolean) => act(() => api.setSteamShare(on))
 export const setSteamHours = (on: boolean) => act(() => api.setSteamHours(on))
 export const setSteamJoin = (on: boolean) => act(() => api.setSteamJoin(on))
+/** A Deadlock switch (#390): post-match cards, the rank badge, squad stats. */
+export const setDeadlockSwitch = (key: 'matches' | 'rank' | 'squad', on: boolean) => act(() => api.setDeadlockSwitch(key, on))
 
 export function handleSteamEvent(e: Event): void {
   if (e.t === 'SteamLinkChanged') setSteamStatus(e.d.status)

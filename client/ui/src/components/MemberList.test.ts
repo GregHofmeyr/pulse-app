@@ -15,6 +15,7 @@ import { appearance } from '../lib/appearance.svelte'
 import { motion } from '../lib/animate.svelte'
 import { closeCard, profileUi } from '../lib/profileCard.svelte'
 import { reactiveProps } from '../lib/testProps.svelte'
+import { resetDeadlockRanks } from '../lib/deadlock.svelte'
 
 const A = 'a'.repeat(64)
 const S = 'b'.repeat(64)
@@ -33,6 +34,7 @@ beforeEach(() => {
   motion.streaming = false
   window.dispatchEvent(new Event('focus'))
   closeCard()
+  resetDeadlockRanks()
   app.state = { ...emptyState(), me: alex, members: { S1: [{ user: alex, nickname: null }, { user: sam, nickname: 'Sammy' }] } } as never
   cmp = mount(MemberList, { target: document.body, props: { serverId: 'S1', onMessage } })
   flushSync()
@@ -452,5 +454,20 @@ describe('MemberList: Listening to (#275)', () => {
     flushSync()
     expect(samRow().querySelector('.listening-line')).toBeNull()
     expect(samRow().querySelector('.name-clip')?.textContent).toBe('sam')
+  })
+})
+
+describe('MemberList: Deadlock ranks (#390)', () => {
+  it("asks for the server's ranks and shows a badge after the name of those who have one", async () => {
+    expect(invoke).toHaveBeenCalledWith('deadlock_ranks', { serverId: 'S1' })
+    const { deadlockRanks } = await import('../lib/deadlock.svelte')
+    deadlockRanks.S1 = { U2: { badge: 83, tier: 8, subrank: 3, name: 'Oracle', image: { hash: A, width: 32, height: 32 } } }
+    flushSync()
+    const badges = document.querySelectorAll<HTMLImageElement>('[data-deadlock-rank]')
+    expect(badges).toHaveLength(1)
+    expect(badges[0].closest('.row')!.textContent).toContain('Sammy')
+    expect(badges[0].alt).toBe('Deadlock rank Oracle 3')
+    expect(badges[0].getAttribute('src')).toBe(url(A))
+    delete deadlockRanks.S1
   })
 })

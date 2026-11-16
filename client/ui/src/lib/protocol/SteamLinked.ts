@@ -40,4 +40,16 @@ recent_minutes?: number,
  * "Share Join" (#381, default on): friends are offered Join on your public Steam lobby or server. Absent from
  * older servers: on.
  */
-share_join?: boolean, };
+share_join?: boolean, 
+/**
+ * Deadlock post-match cards (#390, default on). Absent from older servers: on.
+ */
+deadlock_matches?: boolean, 
+/**
+ * Deadlock rank badge and the weekly rank movers (#390, default on). Absent from older servers: on.
+ */
+deadlock_rank?: boolean, 
+/**
+ * Deadlock squad stats (#390, default on). Absent from older servers: on.
+ */
+deadlock_squad?: boolean, };

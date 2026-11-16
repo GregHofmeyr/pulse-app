@@ -14,6 +14,7 @@
   import { listeningOf } from '../lib/activity'
   import ListeningPanel from './ListeningPanel.svelte'
   import PlayingPanel from './PlayingPanel.svelte'
+  import DeadlockPanel from './DeadlockPanel.svelte'
   import { joinOf } from '../lib/steamJoin'
   import { playingOf } from '../lib/game'
   import { errorText } from '../lib/tauri'
@@ -209,6 +210,10 @@
         {/if}
         {#if voiceRoom}<div class="room"><Icon name="speaker" size={quick ? 16 : 14} /><span>In {voiceRoom}</span></div>{/if}
       </dl>
+    {/if}
+    {#if !preview && serverId}
+      <!-- Deadlock (#390): rank, last match, heroes and squad stats, as its owner shares them; nothing when none -->
+      <DeadlockPanel userId={user.id} {serverId} />
     {/if}
     {#if !preview && mine}
       <!-- your own card: one box of actions, like Discord's; the avatar and Badges open the full profile. Only on

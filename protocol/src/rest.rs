@@ -761,6 +761,11 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub achievement: Option<Box<AchievementCard>>,
+    /// Set on a Deadlock card (#390), a system line in a server's Deadlock channel: a match, the weekly rank movers or
+    /// a patch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub deadlock: Option<Box<DeadlockCard>>,
     /// Set on a plan (#387): the invite card, with everyone's RSVPs (nothing on it is per person).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -2991,6 +2996,10 @@ pub struct SteamStatus {
     pub achievements_available: bool,
     /// Your linked account; `None` when you haven't linked one.
     pub link: Option<SteamLinked>,
+    /// Deadlock stats (#390) can be read right now: deadlock-api answers. Absent from older servers: no.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub deadlock_available: bool,
 }
 
 /// A linked Steam account, as its owner sees it.
@@ -3022,6 +3031,18 @@ pub struct SteamLinked {
     #[serde(default = "yes")]
     #[ts(as = "Option<bool>", optional)]
     pub share_join: bool,
+    /// Deadlock post-match cards (#390, default on). Absent from older servers: on.
+    #[serde(default = "yes")]
+    #[ts(as = "Option<bool>", optional)]
+    pub deadlock_matches: bool,
+    /// Deadlock rank badge and the weekly rank movers (#390, default on). Absent from older servers: on.
+    #[serde(default = "yes")]
+    #[ts(as = "Option<bool>", optional)]
+    pub deadlock_rank: bool,
+    /// Deadlock squad stats (#390, default on). Absent from older servers: on.
+    #[serde(default = "yes")]
+    #[ts(as = "Option<bool>", optional)]
+    pub deadlock_squad: bool,
 }
 
 /// `POST /me/steam/link`: the Steam sign-in page to open in the browser.
@@ -3044,6 +3065,18 @@ pub struct SteamSettingsRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub share_join: Option<bool>,
+    /// Deadlock post-match cards (#390).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub deadlock_matches: Option<bool>,
+    /// Deadlock rank badge and rank movers (#390).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub deadlock_rank: Option<bool>,
+    /// Deadlock squad stats (#390).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub deadlock_squad: Option<bool>,
 }
 
 /// `GET /servers/{id}/steam-hours` (#383): the server's members who played the most Steam hours over the last two
@@ -3316,4 +3349,172 @@ pub struct SetF1ChannelRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct F1PredictionRequest {
     pub picks: Option<Vec<String>>,
+}
+
+// ---------- Deadlock (#390) ----------
+
+/// Deadlock's Steam app id ("Citadel").
+pub const DEADLOCK_APP_ID: u32 = 1_422_450;
+
+/// A Deadlock rank: `badge` is `tier * 10 + subrank` (0 = unranked, Obscurus); the image is the server's copy.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockRank {
+    pub badge: u32,
+    pub tier: u32,
+    pub subrank: u32,
+    /// The tier's name ("Oracle").
+    pub name: String,
+    pub image: Option<EmbedThumb>,
+}
+
+/// One linked person's line on a post-match card.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockMatchPlayer {
+    pub user_id: UserId,
+    pub hero_id: u32,
+    pub hero: String,
+    /// The hero's card art (the server's copy).
+    pub hero_art: Option<EmbedThumb>,
+    pub kills: u32,
+    pub deaths: u32,
+    pub assists: u32,
+    pub won: bool,
+    /// The ranked progress the match gave them (ranked matches only).
+    pub rank_delta: Option<i32>,
+    /// Their rank after the match (ranked matches only).
+    pub rank: Option<DeadlockRank>,
+}
+
+/// A Deadlock match the server's linked people played: one card per match, everyone in it on it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockMatchCard {
+    #[ts(type = "number")]
+    pub match_id: u64,
+    pub duration_s: u32,
+    pub players: Vec<DeadlockMatchPlayer>,
+}
+
+/// One person's rank movement over the week.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockMover {
+    pub user_id: UserId,
+    pub from: DeadlockRank,
+    pub to: DeadlockRank,
+    /// Subranks moved: positive up, negative down.
+    pub steps: i32,
+}
+
+/// The weekly rank movers: who moved, most up first.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockMoversCard {
+    pub movers: Vec<DeadlockMover>,
+}
+
+/// A hero named in a patch, with its icon.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockHeroIcon {
+    pub name: String,
+    pub icon: Option<EmbedThumb>,
+}
+
+/// A Deadlock update: its title, a plain-text start of the notes, the link, and the heroes it names.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockPatchCard {
+    pub title: String,
+    /// An `https` link to the notes.
+    pub link: String,
+    pub published_at: String,
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub heroes: Vec<DeadlockHeroIcon>,
+}
+
+/// A Deadlock card (#390) in a server's Deadlock channel.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DeadlockCard {
+    Match(DeadlockMatchCard),
+    RankMovers(DeadlockMoversCard),
+    Patch(DeadlockPatchCard),
+}
+
+/// `GET /servers/{id}/deadlock-channel`: where the server's Deadlock cards go (`None` = nowhere) and which kinds.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockChannel {
+    pub channel_id: Option<ChannelId>,
+    pub match_cards: bool,
+    pub rank_movers: bool,
+    pub patch_notes: bool,
+}
+
+/// `PUT /servers/{id}/deadlock-channel` (the server's owner only): a text channel of that server or `None`, and the
+/// switches; one left out stays as it is.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SetDeadlockChannelRequest {
+    pub channel_id: Option<ChannelId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub match_cards: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub rank_movers: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub patch_notes: Option<bool>,
+}
+
+/// `GET /servers/{id}/deadlock-ranks`: the members' ranks, for the member list (those who share theirs and have
+/// one). Empty while deadlock-api is unreachable.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockRanks {
+    pub entries: Vec<DeadlockRankEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockRankEntry {
+    pub user_id: UserId,
+    pub rank: DeadlockRank,
+}
+
+/// Someone's last Deadlock match, for their profile.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockLastMatch {
+    pub hero: String,
+    pub hero_icon: Option<EmbedThumb>,
+    pub kills: u32,
+    pub deaths: u32,
+    pub assists: u32,
+    pub won: bool,
+    pub started_at: String,
+}
+
+/// A hero someone plays most.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockHeroLine {
+    pub hero: String,
+    pub icon: Option<EmbedThumb>,
+    pub matches: u32,
+    pub wins: u32,
+}
+
+/// Matches two people played on the same team.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockDuo {
+    pub user_id: UserId,
+    pub matches: u32,
+    pub wins: u32,
+}
+
+/// `GET /servers/{id}/members/{user}/deadlock`: the Deadlock section of a profile card. Each part only while its
+/// owner shares it; everything empty when there's nothing (not linked, deadlock-api unreachable).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeadlockProfile {
+    pub rank: Option<DeadlockRank>,
+    pub last_match: Option<DeadlockLastMatch>,
+    /// Their most-played heroes, most first (at most 3).
+    pub heroes: Vec<DeadlockHeroLine>,
+    /// Their games with you (when you share squad stats too).
+    pub with_you: Option<DeadlockDuo>,
+    /// Their best teammate among this server's members: the best win rate over at least a few games together.
+    pub best_duo: Option<DeadlockDuo>,
 }
