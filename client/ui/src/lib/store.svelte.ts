@@ -148,10 +148,14 @@ export function maybeAlert(e: Event) {
 }
 
 /** A clicked notification (the core has brought the window up): open its conversation, and a
- *  reply's replies panel. Gone, or signed out since: the window coming up is all. */
-export function handleNotificationClick(c: { channelId: string; threadId: string | null }) {
+ *  reply's replies panel; a reminder's (#300) shows its message. Gone, or signed out since: the window coming up is
+ *  all. */
+export function handleNotificationClick(c: { channelId: string; threadId: string | null; messageId?: string }) {
   const ch = app.state.channels[c.channelId]
   if (!ch || !app.state.me) return
+  // jump.ts imports this store, so it's fetched when needed
+  const messageId = c.messageId
+  if (messageId && !c.threadId && ch.kind !== 'clips') return void import('./jump').then((j) => j.jumpTo(c.channelId, messageId))
   ui.goTo = c.channelId
   if (c.threadId && ch.kind === 'quotes') ui.openReplies = { channelId: c.channelId, rootId: c.threadId }
 }
@@ -349,7 +353,7 @@ export async function startListening(): Promise<UnlistenFn> {
     }),
     // LiveKit closed stream audio's connection under us
     listen<{ channel_id: string }>('stream://audio_closed', (e) => void streamApi.onAudioClosed(e.payload.channel_id)),
-    listen<{ channelId: string; threadId: string | null }>('pulse://notification-click', (e) => handleNotificationClick(e.payload)),
+    listen<{ channelId: string; threadId: string | null; messageId?: string }>('pulse://notification-click', (e) => handleNotificationClick(e.payload)),
     listen<{ wasFocused: boolean }>('pulse://quick-switch', (e) => (ui.quickSwitch = { wasFocused: e.payload.wasFocused })),
     listen<ConnState>('pulse://conn', (e) => {
       app.connAt = Date.now()

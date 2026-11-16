@@ -1246,6 +1246,13 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, serverOrder: e.d.server_ids }
     case 'PlanRemindersChanged':
       return { ...s, planReminders: e.d.on }
+    // scheduled messages (#299) and reminders (#300) are kept by their own stores (lib/scheduled.svelte.ts,
+    // lib/reminders.svelte.ts)
+    case 'ScheduledSaved':
+    case 'ScheduledRemoved':
+    case 'ReminderSaved':
+    case 'ReminderRemoved':
+      return s
     case 'SoundFavourites':
       return { ...s, soundFavourites: e.d.favourites }
     case 'FrequentSounds':

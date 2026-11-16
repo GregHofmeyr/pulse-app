@@ -1,5 +1,6 @@
 <script lang="ts">
   import { notifyPrefs, setNotificationsEnabled, setNotificationText } from '../lib/notifyPrefs.svelte'
+  import { reminderPrefs, setReminderAlerts } from '../lib/reminderPrefs.svelte'
   import { setToastPref, TOAST_KINDS, toastPrefs } from '../lib/toastPrefs.svelte'
   import Avatar from './Avatar.svelte'
   import { app } from '../lib/store.svelte'
@@ -39,6 +40,14 @@
       <span>Show message text</span>
     </label>
     <small id="{uid}-text-help">Off: notifications say who and where, but only "New message" or "Mentioned you".</small>
+  </div>
+  <div class="settings-field">
+    <label class="row">
+      <input type="checkbox" role="switch" class="switch" checked={reminderPrefs.alerts} aria-describedby="{uid}-remind-help"
+        onchange={(e) => setReminderAlerts(e.currentTarget.checked)} />
+      <span>Reminder alerts</span>
+    </label>
+    <small id="{uid}-remind-help">When a message reminder comes due: the message sound, and a desktop notification while Pulse isn't in focus. Off: it only lands in your inbox.</small>
   </div>
 
   <!-- in-app toasts (#166): their own prefs, apart from desktop notifications -->

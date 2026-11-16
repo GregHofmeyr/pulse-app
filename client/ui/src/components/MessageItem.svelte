@@ -48,6 +48,9 @@
   import { openCard } from '../lib/profileCard.svelte'
   import PersonMenu from './PersonMenu.svelte'
   import MessageMenu from './MessageMenu.svelte'
+  import WhenPicker from './WhenPicker.svelte'
+  import { remindMe } from '../lib/reminders.svelte'
+  import { whenLabel } from '../lib/schedule'
   import { quoteRequest, quotesChannelsFor } from '../lib/quoteFromMessage'
   import { livePin, pinFor, pinTip, pinnedNoun, pinsPlainMessages } from '../lib/pins'
   import { reportPin } from '../lib/pinSync.svelte'
@@ -205,6 +208,14 @@
     planEdit = anchor ?? document.querySelector<HTMLElement>(`[data-message-id="${message.id}"] .plan`)
   }
   const cancelThisPlan = () => cancelPlan(message).catch((e) => showError(errorText(e)))
+  // Remind me (#300): a time from the menu's flyout, or Custom… (a day and time, by where the menu opened from)
+  let remindCustom = $state<HTMLElement | null>(null)
+  const remindAt = (at: string) =>
+    remindMe(message.id, at).then((r) => (ui.notice = `I'll remind you ${whenLabel(r.remind_at, Date.now())}`))
+  function remind(at: string | null, opener: HTMLElement) {
+    if (!at) return void (remindCustom = opener.isConnected ? opener : document.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`))
+    remindAt(at).catch((e) => showError(errorText(e)))
+  }
   // Add to quotes (#316): the message as a quote, its author speaking, in one of its server's quotes channels (none in
   // a DM or group: no item there). One request id per message, so a double pick posts it once.
   const quotesChannels = $derived(msgMenu ? quotesChannelsFor(app.state, message).map((c) => ({ id: c.id, name: c.name ?? '' })) : [])
@@ -448,7 +459,11 @@
 {#if msgMenu}
   {#key msgMenu}<MessageMenu pinned={!!pin} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
     onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
+    onRemind={(at) => msgMenu && remind(at, msgMenu.opener)}
     onEndPoll={endable ? endPoll : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
+{/if}
+{#if remindCustom}
+  <WhenPicker anchor={remindCustom} title="Remind me about this" confirm="Set reminder" onPick={remindAt} onClose={() => (remindCustom = null)} />
 {/if}
 {#if planEdit}
   <PlanComposer anchor={planEdit} channelId={message.channel_id} editing={message} onClose={() => (planEdit = null)} />

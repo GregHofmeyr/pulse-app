@@ -23,6 +23,7 @@
   import WheelPopover from './WheelPopover.svelte'
   import PollComposer from './PollComposer.svelte'
   import PlanComposer from './PlanComposer.svelte'
+  import SendLaterMenu from './SendLaterMenu.svelte'
   import { planPrefs } from '../lib/plans.svelte'
   import { customToken, savedTone, search, twemojiUrl, withSkin, type Std } from '../lib/emoji'
   import { applyEmoji, emojiQuery, insertAt } from '../lib/emojiComplete'
@@ -58,6 +59,9 @@
     onSendGif,
     stageNudge = null,
     files: filesHere = false,
+    onSchedule,
+    scheduledCount = 0,
+    onShowScheduled,
   }: {
     placeholder: string
     draftKey: string
@@ -85,6 +89,12 @@
     stageNudge?: { share: (url: string) => Promise<void>; up: readonly string[] } | null
     /** Files can be sent here (#57): shows the attach button and takes pasted files. */
     files?: boolean
+    /** Send later (#299): schedule the box's text (with the reply being picked) for `sendAt`, an instant. Shows the
+     *  clock button. None where messages aren't scheduled (threads). */
+    onSchedule?: (text: string, sendAt: string) => Promise<unknown>
+    /** How many messages are scheduled in this chat, and how to show them (Send later's menu offers the list). */
+    scheduledCount?: number
+    onShowScheduled?: () => void
   } = $props()
 
   // The composer remounts per channel ({#key} in Shell), so reading the key once is intended.
@@ -315,6 +325,22 @@
   let planPrefill = $state<string | null>(null)
   let planBtn: HTMLButtonElement | undefined = $state()
   const planHere = $derived(!!planChannel && planPrefs.on)
+  // Send later (#299): text only
+  let later = $state(false)
+  let laterBtn: HTMLButtonElement | undefined = $state()
+  const laterBlocked = $derived(
+    files.length ? "Files can't be scheduled. Send them now, or remove them to schedule just the text."
+    : !text.trim() ? 'Write a message first, then pick when it goes.'
+    : null,
+  )
+  async function schedule(at: string) {
+    const t = text.trim()
+    if (!onSchedule || !t || files.length) return
+    await onSchedule(t, at)
+    box.setText({ text: '', caret: 0 }, true, false)
+    box.forget()
+    lastTyping = null
+  }
 
   function syncCaret() {
     caret = box.readSel()?.start ?? text.length
@@ -447,7 +473,7 @@
   }
 </script>
 
-<div class="wrap" class:has-gif={!!onSendGif} class:has-wheel={!!wheelChannel} class:has-poll={!!pollChannel} class:has-plan={planHere} class:has-files={filesHere} bind:this={wrap} onfocusout={focusOut}
+<div class="wrap" class:has-later={!!onSchedule} class:has-gif={!!onSendGif} class:has-wheel={!!wheelChannel} class:has-poll={!!pollChannel} class:has-plan={planHere} class:has-files={filesHere} bind:this={wrap} onfocusout={focusOut}
   onpastecapture={pasteFiles}>
   {#if open}
     <div class="mentions menu-surface pop-in" role="listbox" aria-label="Mention someone">
@@ -524,6 +550,13 @@
   <EmojiBox bind:this={box} bind:text class="composer-input" label={placeholder} {placeholder} mention={mentionName}
     onkeydown={key} oninput={input} onclick={syncCaret} oncaret={(at) => (caret = at)}
     onkeyup={(e) => { if (e.key.startsWith('Arrow') && !shown) syncCaret() }} />
+  {#if onSchedule}
+    <button bind:this={laterBtn} class="emoji-btn later-btn" class:on={later} type="button" aria-label="Send later" data-tip="Send later" data-menu-toggle
+      aria-haspopup="menu" aria-expanded={later} onclick={() => (later = !later)}><Icon name="clock" size={20} /></button>
+    {#if later && laterBtn}
+      <SendLaterMenu anchor={laterBtn} blocked={laterBlocked} count={scheduledCount} onPick={schedule} onShowScheduled={() => onShowScheduled?.()} onClose={() => (later = false)} />
+    {/if}
+  {/if}
   {#if filesHere}
     <button class="emoji-btn attach-btn" type="button" aria-label="Attach files" data-tip="Attach files" onclick={pickFiles}><Icon name="paperclip" size={20} /></button>
   {/if}
@@ -626,4 +659,10 @@
   /* attach files (#57): on the left, as in most chat apps */
   .attach-btn { left: 8px; right: auto; }
   .wrap.has-files :global(.composer-input) { padding-left: 48px; }
+  /* Send later (#299): on the left too, after the attach button */
+  .later-btn { left: 8px; right: auto; }
+  .later-btn.on { background: var(--bg-4); color: var(--text); }
+  .wrap.has-later :global(.composer-input) { padding-left: 48px; }
+  .wrap.has-files .later-btn { left: 44px; }
+  .wrap.has-files.has-later :global(.composer-input) { padding-left: 84px; }
 </style>
