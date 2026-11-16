@@ -7,6 +7,7 @@
 //! server has nothing to fetch art for) and "Show play time" (off: no elapsed time is sent). A hand-added game's exe
 //! path never leaves this computer: only its name does. Polled every [`POLL`]; a frame goes only on a change.
 
+pub mod clipdrop;
 mod detect;
 pub mod vdf;
 #[cfg(windows)]
@@ -36,6 +37,10 @@ pub struct GameSettings {
     /// "Show play time": send how long it's been running.
     pub time: bool,
     pub games: Vec<ManualGame>,
+    /// "Offer new recordings as clips" (#382, [`clipdrop`]).
+    pub clips: bool,
+    /// The folders it watches; `None`: the defaults under Videos ([`clipdrop::default_folders`]).
+    pub clip_folders: Option<Vec<String>>,
 }
 
 impl Default for GameSettings {
@@ -45,6 +50,8 @@ impl Default for GameSettings {
             art: true,
             time: true,
             games: Vec::new(),
+            clips: true,
+            clip_folders: None,
         }
     }
 }
@@ -328,7 +335,8 @@ mod tests {
     fn settings_default_on_and_older_saves_fill_in() {
         let s: GameSettings =
             serde_json::from_str(r#"{"games":[{"name":"Old","exe":"C:\\old.exe"}]}"#).unwrap();
-        assert!(s.enabled && s.art && s.time);
+        assert!(s.enabled && s.art && s.time && s.clips);
+        assert_eq!(s.clip_folders, None);
         assert_eq!(s.games[0].name, "Old");
     }
 

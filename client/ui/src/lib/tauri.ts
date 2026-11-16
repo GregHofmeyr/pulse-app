@@ -163,7 +163,18 @@ export type MediaState = { reading: boolean; playing: NowPlaying | null }
 /** A game added by hand (#380): the exe stays on this device, only the name is ever sent. */
 export type ManualGame = { name: string; exe: string }
 /** Settings → Game activity (#380), the core's `games::GameSettings`. */
-export type GameSettings = { enabled: boolean; art: boolean; time: boolean; games: ManualGame[] }
+export type GameSettings = {
+  enabled: boolean
+  art: boolean
+  time: boolean
+  games: ManualGame[]
+  /** "Offer new recordings as clips" (#382). */
+  clips: boolean
+  /** The folders clip drop watches; null: the defaults under Videos (`clipDropDefaults`). */
+  clip_folders: string[] | null
+}
+/** `pulse://clip-drop` (#382): a recording that just finished in a watched folder. */
+export type ClipOffer = { path: string; name: string }
 /** Whether this device looks for games, and the one it sees (`pulse://game-activity`). */
 export type GameState = { detecting: boolean; playing: string | null }
 export type Restored = { status: 'ready'; user: User } | { status: 'logged_out' } | { status: 'refused' }
@@ -342,6 +353,8 @@ export const api = {
   gameActivity: () => invoke<GameState>('game_activity'),
   /** "Add a game": the system file dialog for an .exe; null when cancelled. */
   pickGameExe: () => invoke<{ exe: string; name: string } | null>('pick_game_exe'),
+  clipDropDefaults: () => invoke<string[]>('clip_drop_defaults'),
+  pickClipFolder: () => invoke<string | null>('pick_clip_folder'),
   /** Get a notification when someone goes live, or stop (#60). A LiveNotifyChanged follows to your sessions. */
   setLiveNotify: (userId: string, on: boolean) => invoke<void>('set_live_notify', { userId, on }),
   /** A group's icon (#56): an avatar-pipeline media hash, or null for the members' faces. Any member may. */

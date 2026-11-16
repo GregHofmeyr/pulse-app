@@ -11,6 +11,7 @@
   import { clipView, type ClipFilter } from '../lib/clips'
   import { InlineError } from '../lib/inlineError.svelte'
   import { app, onAppEvent, ui } from '../lib/store.svelte'
+  import { rememberClipsChannel } from '../lib/clipDrop.svelte'
   import { api, errorText, type ClipSource } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -146,6 +147,7 @@
         return false
       }
       source = s
+      rememberClipsChannel(channelId) // an offered recording (#382) goes here next
       return true
     } catch (e) {
       notice.show(typeof e === 'string' && e ? e : UNREADABLE) // the core's own words, else the plain one
@@ -176,6 +178,16 @@
       opening = false
     }
   }
+
+  // An offered recording's Share (#382) asked for the editor here: as a dropped file (one at a time, Windows only).
+  $effect(() => {
+    const r = ui.shareClip
+    if (!r || r.channelId !== channelId) return
+    untrack(() => {
+      ui.shareClip = null
+      void dropped([r.path])
+    })
+  })
 
   // Files dragged over the channel: it lights up, and a drop opens the first one. Tauri reports every file drag over the
   // window (its position in physical pixels), so only one whose point is on this channel counts: not the sidebar, and

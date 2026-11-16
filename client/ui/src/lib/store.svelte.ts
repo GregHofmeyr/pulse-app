@@ -54,6 +54,9 @@ export const ui = $state({
   /** A request to open this clip's panel (its clips channel's view does it and clears it): a clips
    *  channel has no history to jump in. */
   openClip: null as { channelId: string; clip: Message } | null,
+  /** A request to open the share editor on this file (an offered recording, #382; its clips channel's view does it
+   *  and clears it). */
+  shareClip: null as { channelId: string; path: string } | null,
   jump: null as JumpRequest | null,
   /** A request to open this chat's pins popover (a pin line's See pins, #178; its channel's view does it and clears it). */
   openPins: null as string | null,
@@ -385,6 +388,7 @@ export function resetState() {
   notifications.clear() // signed out: nothing more about the last account's messages
   ui.openReplies = null
   ui.openClip = null
+  ui.shareClip = null
   forgetProfileLoads()
   forgetEmbedOrigin() // the next account may be on another server
   forgetClipLinks() // the next account asks for its own play links
