@@ -47,6 +47,7 @@ import type { QuietSpin } from './protocol/QuietSpin'
 import type { CreatePollRequest } from './protocol/CreatePollRequest'
 import type { EditPollRequest } from './protocol/EditPollRequest'
 import type { DmLayout } from './protocol/DmLayout'
+import type { InboxThreads } from './protocol/InboxThreads'
 import type { DmPlacementRequest } from './protocol/DmPlacementRequest'
 import type { UpdateDmCategoryRequest } from './protocol/UpdateDmCategoryRequest'
 import type { Poll } from './protocol/Poll'
@@ -350,6 +351,8 @@ export const api = {
   inbox: (before: string | null, mentions: boolean) => invoke<InboxPage>('inbox', { before, mentions }),
   /** How many inbox items are unread (#306). */
   inboxUnread: () => invoke<number>('inbox_unread'),
+  /** Reply threads you're part of with replies you haven't seen (#326), and every thread you're part of. */
+  inboxThreads: () => invoke<InboxThreads>('inbox_threads'),
   /** An inbox item was opened (#306); the change also arrives as InboxUpdated on every device. */
   inboxRead: (messageId: string) => invoke<void>('inbox_read', { messageId }),
   /** Mark all read (#306), up to the newest item shown (null: up to now). */

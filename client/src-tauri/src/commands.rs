@@ -2016,6 +2016,16 @@ pub async fn inbox_unread(app: AppHandle, core: State<'_, Core>) -> Result<u32, 
     core.check(&app, api.inbox_unread(&token).await)
 }
 
+/// Reply threads you're part of with replies you haven't seen (#326).
+#[tauri::command]
+pub async fn inbox_threads(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<pulse_protocol::rest::InboxThreads, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.inbox_threads(&token).await)
+}
+
 /// An inbox item was opened (#306).
 #[tauri::command]
 pub async fn inbox_read(

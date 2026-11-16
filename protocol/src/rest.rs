@@ -2669,6 +2669,30 @@ pub struct InboxPage {
     pub unread: u32,
 }
 
+/// A reply thread you're part of with replies you haven't seen (#326): a quote's or clip's thread you started (you
+/// posted the quote or clip) or replied in, with replies by others since you last looked (your seen point, or your own
+/// last reply in it, whichever is later).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct InboxThread {
+    /// The quote or clip the thread is on, one short line.
+    pub root: InboxSnippet,
+    pub channel_id: ChannelId,
+    /// The newest reply you haven't seen.
+    pub latest: Message,
+    /// How many replies by others you haven't seen.
+    pub new_replies: u32,
+    /// You posted the quote or clip (otherwise you replied in it).
+    pub started: bool,
+}
+
+/// `GET /inbox/threads` (#326): the threads you're part of with new replies, newest reply first; and every thread
+/// you're part of (`watching`, newest first, capped), so a client knows which new replies are worth asking again for.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct InboxThreads {
+    pub threads: Vec<InboxThread>,
+    pub watching: Vec<MessageId>,
+}
+
 /// `GET /inbox/unread`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct InboxUnread {

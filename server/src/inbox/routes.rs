@@ -1,11 +1,12 @@
-//! `GET /inbox`, `GET /inbox/unread`, `POST /inbox/{message_id}/read`, `POST /inbox/read-all` (#306).
+//! `GET /inbox`, `GET /inbox/unread`, `POST /inbox/{message_id}/read`, `POST /inbox/read-all` (#306), and
+//! `GET /inbox/threads` (#326).
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use pulse_protocol::ids::MessageId;
-use pulse_protocol::rest::{InboxPage, InboxReadAllRequest, InboxUnread};
+use pulse_protocol::rest::{InboxPage, InboxReadAllRequest, InboxThreads, InboxUnread};
 use serde::Deserialize;
 
 use super::{Filter, item, list, tell, unread, updated};
@@ -22,6 +23,7 @@ pub fn router() -> Router<AppState> {
         .route("/inbox", get(page))
         .route("/inbox/unread", get(count))
         .route("/inbox/read-all", post(read_all))
+        .route("/inbox/threads", get(threads))
         .route("/inbox/{message_id}/read", post(read_one))
 }
 
@@ -54,6 +56,14 @@ async fn page(
         items,
         unread: unread(&s.db, me).await?,
     }))
+}
+
+/// `GET /inbox/threads` (#326): reply threads you're part of with replies you haven't seen.
+async fn threads(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+) -> AppResult<Json<InboxThreads>> {
+    Ok(Json(super::threads::list(&s.db, me).await?))
 }
 
 async fn count(State(s): State<AppState>, AuthUser(me): AuthUser) -> AppResult<Json<InboxUnread>> {

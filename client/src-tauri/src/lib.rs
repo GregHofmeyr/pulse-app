@@ -387,6 +387,7 @@ pub fn run() {
             commands::list_pins,
             commands::inbox,
             commands::inbox_unread,
+            commands::inbox_threads,
             commands::inbox_read,
             commands::inbox_read_all,
             commands::share_to_stage,

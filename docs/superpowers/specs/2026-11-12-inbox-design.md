@@ -4,7 +4,7 @@ Issue #306. Decided with the owner on 2026-11-12. **(owner)** marks the owner's 
 
 ## What it does
 
-- **One place for things meant for you**, across every server, DM and group: @mentions (you, @everyone/@here if the app has them, and role mentions when roles exist), **replies to your messages (owner)**, and any other per-you alerts the app already produces (e.g. thread replies you're part of). Plain unread messages in channels are not inbox items.
+- **One place for things meant for you**, across every server, DM and group: @mentions (you, @everyone/@here if the app has them, and role mentions when roles exist), **replies to your messages (owner)**, and any other per-you alerts the app already produces (e.g. thread replies you're part of: see Threads, #326). Plain unread messages in channels are not inbox items.
 - **Tabs or a filter (owner):** **All** (mentions + replies) and **Mentions** (only @mentions). Builder picks tabs vs a toggle to match existing patterns; remember the choice per device.
 - **Opening it:** an inbox button in the top bar / corner (next to other global buttons; builder matches existing placement), with an unread count badge; also reachable from the quick switcher (`>inbox` action and Ctrl+K "Inbox").
 - **Each item:** author avatar/name, where (server › channel, DM or group), time, a one-line preview with the mention highlighted, and for replies the snippet it replied to. Clicking jumps to the message (reusing the app's jump-and-highlight) and marks the item read.
@@ -13,6 +13,14 @@ Issue #306. Decided with the owner on 2026-11-12. **(owner)** marks the owner's 
 - **Respects notification settings:** muted channels/servers don't add items unless the item is an explicit @mention of you (match how the app's mention badges already treat mutes).
 - **Live:** new items arrive in real time; multiple devices stay in sync (read on one, read on all).
 - **Older clients (0.2.x)** are unaffected.
+
+## Threads (#326, added 2026-11-17)
+
+- **What "a thread you're part of" means:** a quote's or clip's replies (the reply panel; `thread_root_id`), when you **posted the quote or clip**, or **replied in it**. Plain replies in a chat aren't threads: one that answers you is already an inbox item (a reply). Being a speaker in a quote someone else posted doesn't count (you never chose to follow it; a reply to you or an @mention still reaches you as an item).
+- **New:** replies by others after your seen point in that thread, or after your own last reply there, whichever is later (replying means you saw it), within the inbox's 30 days. Never in a muted chat or server, a deleted chat or server, or on a deleted quote or clip.
+- **The Threads tab** (after Mentions) lists each such thread once, newest reply first: that reply's author, where (Server › #channel › replies), when, "2 new replies · your quote: …" (or "on quote: …" for one you replied in) and the reply's text. A click opens the thread at its newest reply (the quote's replies, or the clip's panel) and counts it seen; right-click is the author's person menu, as on items.
+- **The badge** on the inbox button counts each thread with new replies once, on top of unread items; **Mark all read** sees those threads too.
+- **How:** derived on read (`GET /inbox/threads`): nothing is written when a reply lands. The answer also names every thread you're watching, so the client asks again (a moment later, many replies making one fetch) only when a reply lands in one of those, your seen point moves, or a mute or delete may have changed things; it asks on every Ready too.
 
 ## How it gets made
 

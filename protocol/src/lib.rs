@@ -114,6 +114,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::InboxSnippet::export_all(&cfg)?;
     rest::InboxItem::export_all(&cfg)?;
     rest::InboxPage::export_all(&cfg)?;
+    rest::InboxThreads::export_all(&cfg)?;
     rest::InboxUnread::export_all(&cfg)?;
     rest::InboxReadAllRequest::export_all(&cfg)?;
     rest::QotyEndReason::export_all(&cfg)?;

@@ -759,6 +759,21 @@ impl Api {
         Ok(r.unread)
     }
 
+    /// Reply threads you're part of with replies you haven't seen (#326).
+    pub async fn inbox_threads(
+        &self,
+        token: &str,
+    ) -> Result<pulse_protocol::rest::InboxThreads, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/inbox/threads", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// An inbox item was opened (#306): read on every device.
     pub async fn inbox_read(&self, token: &str, message: MessageId) -> Result<(), ApiError> {
         Self::ok_empty(
