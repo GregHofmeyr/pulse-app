@@ -249,3 +249,48 @@ describe('Steam account (#379)', () => {
     expect(steamRows().textContent).toContain('alex on steam')
   })
 })
+
+describe('Deadlock (#390)', () => {
+  const linked = (over: Record<string, unknown> = {}, status: Record<string, unknown> = {}) => ({
+    linking_available: true,
+    achievements_available: true,
+    deadlock_available: true,
+    link: { steam_id: '76500000000000001', persona: 'alex on steam', share_achievements: true, private: false, backfill_done: true, completion_rate: null, perfect_games: 0, ...over },
+    ...status,
+  })
+  const rows = () => document.querySelector('[data-deadlock]')!
+  async function withStatus(status: unknown) {
+    const { setSteamStatus } = await import('../lib/steam.svelte')
+    setSteamStatus(status as never)
+    flushSync()
+  }
+
+  it('three switches, on by default (an older server never says), each saved on the server', async () => {
+    await withStatus(linked())
+    for (const k of ['matches', 'rank', 'squad']) expect([k, sw(`deadlock-${k}`).checked, sw(`deadlock-${k}`).disabled]).toEqual([k, true, false])
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'set_deadlock_switch' ? linked({ deadlock_rank: false }) : undefined))
+    sw('deadlock-rank').click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_deadlock_switch', { key: 'rank', on: false })
+    expect(sw('deadlock-rank').checked).toBe(false)
+  })
+
+  it("need a linked account, not game detection; the bot link is deadlock-api's site with the copycat warning", async () => {
+    await withStatus({ linking_available: true, achievements_available: true, link: null })
+    expect(sw('deadlock-matches').disabled).toBe(true)
+    await withStatus(linked())
+    sw('enabled').click()
+    flushSync()
+    expect(sw('deadlock-matches').disabled).toBe(false)
+    const a = rows().querySelector<HTMLAnchorElement>('a')!
+    expect(a.getAttribute('href')).toBe('https://deadlock-api.com/patron')
+    expect(a.getAttribute('target')).toBe('_blank')
+    expect(rows().querySelector('[data-bot-warning]')!.textContent).toBe('The real bot never asks for logins, codes or trades — ignore copycats.')
+  })
+
+  it('deadlock-api unreachable: one quiet line, no error', async () => {
+    await withStatus(linked({}, { deadlock_available: false }))
+    expect(rows().querySelector('[data-deadlock-down]')).toBeTruthy()
+    expect(rows().querySelector('[role=alert]')).toBeNull()
+  })
+})

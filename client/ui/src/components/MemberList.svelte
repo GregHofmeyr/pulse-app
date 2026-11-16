@@ -11,6 +11,9 @@
   import { baseName, displayName } from '../lib/selectors'
   import { isMenuKey, rowMenuAt } from '../lib/participantMenu'
   import { openCard } from '../lib/profileCard.svelte'
+  import { loadDeadlockRanks, rankOf } from '../lib/deadlock.svelte'
+  import { rankText } from '../lib/deadlock'
+  import { thumbUrl } from '../lib/achievements'
 
   let { serverId, onMessage }: { serverId: string; onMessage?: (userId: string) => void } = $props()
   const members = $derived(app.state.members[serverId] ?? [])
@@ -44,6 +47,10 @@
       return n
     })
   })
+  // Deadlock ranks (#390): a small badge after the name of members who show theirs
+  $effect(() => {
+    void loadDeadlockRanks(serverId)
+  })
   // the row under the pointer: its avatar animates
   let hovered = $state<string | null>(null)
 
@@ -68,6 +75,8 @@
     {@const name = displayName(app.state, serverId, m.user.id)}
     {@const base = baseName(m.user)}
     {@const listening = listeningOf(app.state, m.user.id)}
+    {@const rank = rankOf(serverId, m.user.id)}
+    {@const badge = rank ? thumbUrl(rank.image) : null}
     <!-- the context menu and a click on the row (their card, #182) are pointer shortcuts; the keyboard route is the
          row's buttons (Enter on the name, ContextMenu / Shift+F10) -->
     <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -77,6 +86,7 @@
       <Avatar id={m.user.id} {name} size={32} presence={presenceOf(app.state, m.user.id, clock.nowIso)} interactive {serverId} hovered={() => hovered === m.user.id} />
       <!-- what they're listening to (#275) takes the line under the name; Spotify's icon sits at the row's end -->
       <span class="who"><Name userId={m.user.id} {serverId} text={name} surface="side" />{#if listening}<ListeningLine {listening} icon={false} />{:else if name !== base}<small class="name-clip">{base}</small>{/if}</span>
+      {#if rank && badge}<img class="rank" src={badge} alt="Deadlock rank {rankText(rank)}" data-tip="Deadlock: {rankText(rank)}" data-deadlock-rank />{/if}
       {#if listening}<span class="sp"><SpotifyIcon /></span>{/if}
       {#if onMessage && m.user.id !== app.state.me?.id}
         <button class="msg" aria-label="Message {name}" data-tip="Message" onclick={() => onMessage(m.user.id)}><Icon name="message" size={16} /></button>
@@ -102,6 +112,8 @@
   .msg:hover { background: var(--bg-4); color: var(--text); }
   .row:hover .msg, .msg:focus-visible { opacity: 1; }
   .sp { margin-left: auto; flex-shrink: 0; color: var(--text-3); }
+  .rank { margin-left: auto; width: 22px; height: 22px; flex-shrink: 0; object-fit: contain; }
+  .rank + .sp, .rank ~ .msg { margin-left: 0; }
   .sp + .msg { margin-left: 0; }
   .row:hover { background: var(--bg-2); --ring: var(--bg-2); }
   /* offline (#170): dimmed slightly, as on Discord; back to full while hovered */

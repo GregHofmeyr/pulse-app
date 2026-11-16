@@ -6,7 +6,8 @@
   import { api, errorText } from '../lib/tauri'
   import { addGame, gameActivity, gamePrefs, removeGame, setClipFolders, setGameSwitch, type GameSwitch } from '../lib/gamePrefs.svelte'
   import { isWindows } from '../lib/stream/platform'
-  import { linkSteam, loadSteam, setSteamHours, setSteamJoin, setSteamShare, steam, steamNote, unlinkSteam } from '../lib/steam.svelte'
+  import { linkSteam, loadSteam, setDeadlockSwitch, setSteamHours, setSteamJoin, setSteamShare, steam, steamNote, unlinkSteam } from '../lib/steam.svelte'
+  import { BOT_WARNING, DEADLOCK_BOT_PAGE } from '../lib/deadlock'
   import { completionLine, hoursText } from '../lib/achievements'
   const uid = $props.id()
 
@@ -23,6 +24,16 @@
   // Join (#381): the same rule
   const shareJoin = $derived(!!steamLink && steamLink.share_join !== false)
   const steamOff = $derived(!gamePrefs.enabled || !steamLink || !steam.status?.achievements_available || steam.busy)
+
+  // Deadlock (#390): three switches on the linked account, on unless the server says off (an older server never says).
+  // They need no game detection: the server reads deadlock-api with the Steam account.
+  const deadlockSwitches: { key: 'matches' | 'rank' | 'squad'; field: 'deadlock_matches' | 'deadlock_rank' | 'deadlock_squad'; label: string; help: string }[] = [
+    { key: 'matches', field: 'deadlock_matches', label: 'Post-match cards', help: 'After each match: hero, K/D/A, win or loss, length and rank change in the Deadlock channel of servers that have one, and your last match on your profile.' },
+    { key: 'rank', field: 'deadlock_rank', label: 'Show my rank', help: 'Your rank badge on your profile and in member lists, and you in the weekly rank movers.' },
+    { key: 'squad', field: 'deadlock_squad', label: 'Squad stats', help: 'Your most-played heroes on your profile, and your games and win rate with people in your servers.' },
+  ]
+  const deadlockOff = $derived(!steamLink || steam.busy)
+  const deadlockDown = $derived(!!steamLink && steam.status?.deadlock_available === false)
 
   /** The finer switches under the master one; a new feature adds its row here and its key in GameSettings. */
   const finer: { key: Exclude<GameSwitch, 'enabled'>; label: string; help: string }[] = [
@@ -151,6 +162,21 @@
         <span>Let friends join your game</span>
       </label>
       <small class="sub" id="{uid}-steam-join-help">When Steam shows your lobby or game server publicly, people who can see you playing get Join on your profile card and in your right-click menu. That shares the lobby or the server's address with them. Off, your Pulse server stops looking.</small>
+      <div class="deadlock" data-deadlock>
+        <h4 class="games-title">Deadlock</h4>
+        <p class="hint">Read from deadlock-api.com (unofficial) with your linked Steam account, never from your PC.</p>
+        {#each deadlockSwitches as d (d.key)}
+          <label class="row sub">
+            <input type="checkbox" role="switch" class="switch" data-switch="deadlock-{d.key}" checked={!!steamLink && steamLink[d.field] !== false}
+              aria-describedby="{uid}-deadlock-{d.key}-help" disabled={deadlockOff} onchange={(e) => void setDeadlockSwitch(d.key, e.currentTarget.checked)} />
+            <span>{d.label}</span>
+          </label>
+          <small class="sub" id="{uid}-deadlock-{d.key}-help">{d.help}</small>
+        {/each}
+        {#if deadlockDown}<p class="seen sub" data-deadlock-down>deadlock-api isn't answering right now: Deadlock cards and stats are paused.</p>{/if}
+        <p class="hint sub">For your newest matches, add deadlock-api's bot as a Steam friend once: its invite is on <a href={DEADLOCK_BOT_PAGE} target="_blank" rel="noopener noreferrer">deadlock-api.com</a>. Without it your matches still show, just later.</p>
+        <p class="note sub" data-bot-warning>{BOT_WARNING}</p>
+      </div>
       {#if steam.error}<p class="error" role="alert">{steam.error}</p>{/if}
     </div>
   {/if}
@@ -189,7 +215,7 @@
   p { margin: 0; color: var(--text-2); font-size: 13px; }
   .row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
   .sub { margin-left: 24px; }
-  .folders, .steam { display: flex; flex-direction: column; gap: 6px; }
+  .folders, .steam, .deadlock { display: flex; flex-direction: column; gap: 6px; }
   .note { color: var(--warn-text); }
   .who .path { color: var(--text-2); }
   .seen { color: var(--text-3); }

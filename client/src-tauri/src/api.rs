@@ -1942,6 +1942,62 @@ impl Api {
         .await
     }
 
+    /// A server's Deadlock channel and which posts go there (#390).
+    pub async fn deadlock_channel(
+        &self,
+        token: &str,
+        server: ServerId,
+    ) -> Result<pulse_protocol::rest::DeadlockChannel, ApiError> {
+        let url = self.url(&["servers", &server.to_string(), "deadlock-channel"])?;
+        Self::parse(self.http.get(url).bearer_auth(token).send().await).await
+    }
+
+    /// Pick a server's Deadlock channel (its owner only) or none, and the switches `body` names.
+    pub async fn set_deadlock_channel(
+        &self,
+        token: &str,
+        server: ServerId,
+        body: &pulse_protocol::rest::SetDeadlockChannelRequest,
+    ) -> Result<pulse_protocol::rest::DeadlockChannel, ApiError> {
+        let url = self.url(&["servers", &server.to_string(), "deadlock-channel"])?;
+        Self::parse(
+            self.http
+                .put(url)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A server's members' Deadlock ranks, for the member list (#390).
+    pub async fn deadlock_ranks(
+        &self,
+        token: &str,
+        server: ServerId,
+    ) -> Result<pulse_protocol::rest::DeadlockRanks, ApiError> {
+        let url = self.url(&["servers", &server.to_string(), "deadlock-ranks"])?;
+        Self::parse(self.http.get(url).bearer_auth(token).send().await).await
+    }
+
+    /// A member's Deadlock section for their profile card (#390).
+    pub async fn deadlock_profile(
+        &self,
+        token: &str,
+        server: ServerId,
+        user: UserId,
+    ) -> Result<pulse_protocol::rest::DeadlockProfile, ApiError> {
+        let url = self.url(&[
+            "servers",
+            &server.to_string(),
+            "members",
+            &user.to_string(),
+            "deadlock",
+        ])?;
+        Self::parse(self.http.get(url).bearer_auth(token).send().await).await
+    }
+
     /// A page of someone's Name Archive in a server (`cursor`: the last page's `next_cursor`).
     pub async fn name_archive(
         &self,
@@ -5209,6 +5265,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(off.channel_id, None);
+    }
+
+    #[tokio::test]
+    async fn deadlock_round_trips_through_the_core() {
+        let app = testing::spawn().await;
+        let (alex_id, alex) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let server = testing::create_server(&app, &alex, "Squad").await;
+        let general = testing::general(&app, &alex, server.id).await;
+        let got = api.deadlock_channel(&alex, server.id).await.unwrap();
+        assert_eq!(got.channel_id, None);
+        let set = api
+            .set_deadlock_channel(
+                &alex,
+                server.id,
+                &pulse_protocol::rest::SetDeadlockChannelRequest {
+                    channel_id: Some(general.id),
+                    patch_notes: Some(false),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(set.channel_id, Some(general.id));
+        assert!(set.match_cards && !set.patch_notes);
+        assert!(
+            api.deadlock_ranks(&alex, server.id)
+                .await
+                .unwrap()
+                .entries
+                .is_empty()
+        );
+        let p = api
+            .deadlock_profile(&alex, server.id, alex_id)
+            .await
+            .unwrap();
+        assert_eq!(p, pulse_protocol::rest::DeadlockProfile::default());
+        let deadlock = pulse_protocol::rest::SteamSettingsRequest {
+            deadlock_rank: Some(false),
+            ..Default::default()
+        };
+        assert!(
+            api.set_steam_settings(&alex, &deadlock).await.is_err(),
+            "nothing linked"
+        );
     }
 
     #[tokio::test]

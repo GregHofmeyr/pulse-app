@@ -2307,6 +2307,70 @@ pub async fn set_steam_hours(
     core.check(&app, api.set_steam_settings(&token, &body).await)
 }
 
+/// One of your Deadlock switches (#390): `"matches"`, `"rank"` or `"squad"`.
+#[tauri::command]
+pub async fn set_deadlock_switch(
+    app: AppHandle,
+    core: State<'_, Core>,
+    key: String,
+    on: bool,
+) -> Result<pulse_protocol::rest::SteamStatus, ApiError> {
+    let (api, token) = core.current()?;
+    let mut body = pulse_protocol::rest::SteamSettingsRequest::default();
+    match key.as_str() {
+        "matches" => body.deadlock_matches = Some(on),
+        "rank" => body.deadlock_rank = Some(on),
+        "squad" => body.deadlock_squad = Some(on),
+        _ => return Err(ApiError::Rejected("unknown Deadlock setting".into())),
+    }
+    core.check(&app, api.set_steam_settings(&token, &body).await)
+}
+
+#[tauri::command]
+pub async fn deadlock_channel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<pulse_protocol::rest::DeadlockChannel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.deadlock_channel(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn set_deadlock_channel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    request: pulse_protocol::rest::SetDeadlockChannelRequest,
+) -> Result<pulse_protocol::rest::DeadlockChannel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_deadlock_channel(&token, server_id, &request).await,
+    )
+}
+
+#[tauri::command]
+pub async fn deadlock_ranks(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<pulse_protocol::rest::DeadlockRanks, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.deadlock_ranks(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn deadlock_profile(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    user_id: UserId,
+) -> Result<pulse_protocol::rest::DeadlockProfile, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.deadlock_profile(&token, server_id, user_id).await)
+}
+
 /// A server's Steam hours board (#383).
 #[tauri::command]
 pub async fn steam_hours(

@@ -63,6 +63,10 @@ import type { EmbedProvider } from './protocol/EmbedProvider'
 import type { SteamStatus } from './protocol/SteamStatus'
 import type { SteamHours } from './protocol/SteamHours'
 import type { SteamJoin } from './protocol/SteamJoin'
+import type { DeadlockChannel } from './protocol/DeadlockChannel'
+import type { SetDeadlockChannelRequest } from './protocol/SetDeadlockChannelRequest'
+import type { DeadlockRanks } from './protocol/DeadlockRanks'
+import type { DeadlockProfile } from './protocol/DeadlockProfile'
 import type { AchievementsChannel } from './protocol/AchievementsChannel'
 import type { Sound as StreamSound, SoundProbe, SoundStatus, WindowRef } from './stream/sound'
 
@@ -381,6 +385,16 @@ export const api = {
   achievementsChannel: (serverId: string) => invoke<AchievementsChannel>('achievements_channel', { serverId }),
   setAchievementsChannel: (serverId: string, channelId: string | null) =>
     invoke<AchievementsChannel>('set_achievements_channel', { serverId, channelId }),
+  /** One of your Deadlock switches (#390). */
+  setDeadlockSwitch: (key: 'matches' | 'rank' | 'squad', on: boolean) => invoke<SteamStatus>('set_deadlock_switch', { key, on }),
+  /** A server's Deadlock channel and which posts go there (#390). */
+  deadlockChannel: (serverId: string) => invoke<DeadlockChannel>('deadlock_channel', { serverId }),
+  setDeadlockChannel: (serverId: string, request: SetDeadlockChannelRequest) =>
+    invoke<DeadlockChannel>('set_deadlock_channel', { serverId, request }),
+  /** A server's members' Deadlock ranks, for the member list. */
+  deadlockRanks: (serverId: string) => invoke<DeadlockRanks>('deadlock_ranks', { serverId }),
+  /** A member's Deadlock section for their profile card. */
+  deadlockProfile: (serverId: string, userId: string) => invoke<DeadlockProfile>('deadlock_profile', { serverId, userId }),
   /** A group's icon (#56): an avatar-pipeline media hash, or null for the members' faces. Any member may. */
   setGroupIcon: (channelId: string, hash: string | null) => invoke<Channel>('set_group_icon', { channelId, hash }),
   /** A page of someone's Name Archive in a server, newest first. */

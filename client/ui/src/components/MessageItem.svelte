@@ -30,6 +30,7 @@
   import Name from './Name.svelte'
   import WheelLine from './WheelLine.svelte'
   import AchievementCard from './AchievementCard.svelte'
+  import DeadlockCard from './DeadlockCard.svelte'
   import PollCard from './PollCard.svelte'
   import { endedSummary, pollOver, shownText } from '../lib/poll'
   import { closePoll } from '../lib/polls.svelte'
@@ -296,6 +297,9 @@
   {#if message.achievement}
     <!-- a Steam achievement card (#379), with today's name for its person -->
     <AchievementCard card={message.achievement} name={nameOf(message.achievement.user_id)} {time} messageId={message.id} />
+  {:else if message.deadlock}
+    <!-- a Deadlock card (#390): a match, the rank movers or a patch, with today's names -->
+    <DeadlockCard card={message.deadlock} {nameOf} {time} messageId={message.id} />
   {:else if message.call}
     <!-- a call line (#50) reads per member: "Missed call from sam" for those who never joined -->
     {@const text = callLineText(app.state, message)}
