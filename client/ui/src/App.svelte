@@ -13,6 +13,7 @@
   import type { User } from './lib/protocol/User'
   import Login from './routes/Login.svelte'
   import Shell from './routes/Shell.svelte'
+  import ShellBoundary from './components/ShellBoundary.svelte'
   import UpdateRequired from './routes/UpdateRequired.svelte'
   import Waiting from './routes/Waiting.svelte'
   import Updating from './routes/Updating.svelte'
@@ -133,7 +134,10 @@
 {:else if screen === 'waiting'}
   <Waiting onSignOut={signOutWhileWaiting} />
 {:else if screen === 'shell' && user}
-  <Shell {user} onLogout={() => { user = null; restoreRefused = false; resetState(); badgeStore.reset() }} />
+  <!-- #132: an error showing the Shell gets "Something went wrong" and a Reload, not a half-dead window -->
+  <ShellBoundary>
+    <Shell {user} onLogout={() => { user = null; restoreRefused = false; resetState(); badgeStore.reset() }} />
+  </ShellBoundary>
 {:else}
   <Login notice={bootError} onAuthed={(u) => { bootError = ''; restoreRefused = false; user = u }} />
 {/if}

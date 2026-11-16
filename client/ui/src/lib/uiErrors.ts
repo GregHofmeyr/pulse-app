@@ -12,6 +12,11 @@ function describe(e: unknown): string {
   return String(e)
 }
 
+/** An error a `<svelte:boundary>` caught (the Shell's safety net, #132): logged the same way, saying where. */
+export function logBoundaryError(where: string, e: unknown): void {
+  void api.uiLog(`boundary ${where}: ${describe(e)}`, 'warn')
+}
+
 /** Starts logging uncaught errors and unhandled rejections; returns the stop. */
 export function logUncaughtErrors(): () => void {
   const onError = (ev: ErrorEvent) => void api.uiLog(`uncaught: ${describe(ev.error ?? ev.message)}`, 'warn')
