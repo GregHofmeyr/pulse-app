@@ -7,9 +7,9 @@ use crate::ids::{CallId, ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game,
     InboxItem, Listening, ListeningUpdate, Member, Message, Mute, NotifyLevelPref, OwnStatus,
-    Person, PinnedMessage, PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState,
-    RingEndReason, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare,
-    StreamEndReason, StreamInfo, User, Wheel,
+    Person, PinnedMessage, Playing, PlayingUpdate, PresenceStatus, PrivateNickname, QotyEvent,
+    QuietSpin, ReadState, RingEndReason, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink,
+    StageShare, StreamEndReason, StreamInfo, User, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -42,6 +42,11 @@ pub enum ClientFrame {
     Idle {
         idle: bool,
     },
+    /// The game this device is playing (#380), `None` when none is (or game activity was turned off). Only what the
+    /// person's switches allow. Held per connection, gone with it; servers from before it ignore the frame.
+    Playing {
+        playing: Option<PlayingUpdate>,
+    },
 }
 
 impl std::fmt::Debug for ClientFrame {
@@ -67,6 +72,11 @@ impl std::fmt::Debug for ClientFrame {
                 .field("show", show)
                 .finish(),
             Self::Idle { idle } => f.debug_struct("Idle").field("idle", idle).finish(),
+            // what someone plays stays out of logs
+            Self::Playing { playing } => f
+                .debug_struct("Playing")
+                .field("playing", &playing.as_ref().map(|_| "<playing>"))
+                .finish(),
         }
     }
 }
@@ -674,6 +684,12 @@ pub enum Event {
         user_id: UserId,
         listening: Option<Listening>,
     },
+    /// The game `user_id` is playing as this receiver may see it (#380): per viewer, from the same pass as
+    /// `PresenceChanged`, like `ListeningChanged`. Never published to an audience. Clients from before it skip it.
+    PlayingChanged {
+        user_id: UserId,
+        playing: Option<Playing>,
+    },
     /// A Jam on the stage has a new "Now playing" (#275): its sharer's Spotify changed song. Clients from before it
     /// skip the frame.
     StageNowPlaying {
@@ -737,6 +753,7 @@ impl Event {
             | Self::UserCreated { .. }
             | Self::PresenceChanged { .. }
             | Self::ListeningChanged { .. }
+            | Self::PlayingChanged { .. }
             | Self::ProfileUpdated { .. }
             | Self::MutesChanged { .. }
             | Self::NotifyLevelsChanged { .. }
@@ -1560,6 +1577,46 @@ mod tests {
         assert_eq!((np.channel_id(), np.only_for()), (Some(ch), None));
     }
 
+    /// "Playing" (#380): the frame's wire shape (optional fields may be left out), its Debug keeps the game out of
+    /// logs, the event goes to no audience, and a person without one sends no `playing` field.
+    #[test]
+    fn playing_frames_and_events() {
+        let f: ClientFrame = serde_json::from_str(
+            r#"{"op":"Playing","d":{"playing":{"name":"Space Game","steam_app_id":570,"elapsed_secs":61}}}"#,
+        )
+        .unwrap();
+        let ClientFrame::Playing { playing: Some(p) } = &f else {
+            panic!("{f:?}")
+        };
+        assert_eq!(
+            (p.name.as_str(), p.steam_app_id, p.elapsed_secs),
+            ("Space Game", Some(570), Some(61))
+        );
+        assert!(!format!("{f:?}").contains("Space"), "{f:?}");
+        let bare: ClientFrame =
+            serde_json::from_str(r#"{"op":"Playing","d":{"playing":{"name":"Chess"}}}"#).unwrap();
+        assert!(matches!(
+            bare,
+            ClientFrame::Playing {
+                playing: Some(PlayingUpdate {
+                    steam_app_id: None,
+                    elapsed_secs: None,
+                    ..
+                })
+            }
+        ));
+        let off: ClientFrame =
+            serde_json::from_str(r#"{"op":"Playing","d":{"playing":null}}"#).unwrap();
+        assert!(matches!(off, ClientFrame::Playing { playing: None }));
+
+        let e = Event::PlayingChanged {
+            user_id: UserId::new(),
+            playing: None,
+        };
+        assert_eq!((e.channel_id(), e.only_for()), (None, None));
+        assert_eq!(serde_json::to_value(&e).unwrap()["t"], "PlayingChanged");
+    }
+
     /// A person and a share from an older server (no activity, no now playing) still parse, and a person with none
     /// sends no `listening` field to older clients.
     #[test]
@@ -1571,6 +1628,8 @@ mod tests {
         .unwrap();
         assert_eq!(p.listening, None);
         assert!(serde_json::to_value(&p).unwrap().get("listening").is_none());
+        assert_eq!(p.playing, None);
+        assert!(serde_json::to_value(&p).unwrap().get("playing").is_none());
         assert!(!p.idle);
         assert!(serde_json::to_value(&p).unwrap().get("idle").is_none());
     }

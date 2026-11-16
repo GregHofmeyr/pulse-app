@@ -1154,6 +1154,10 @@ pub struct Person {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub listening: Option<Listening>,
+    /// The game they're playing (#380), by the same rule as `listening`. Absent otherwise, and from older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub playing: Option<Playing>,
 }
 
 /// What someone's Spotify app is playing (#275), read by their own Pulse from the OS media session (MPRIS on Linux,
@@ -1184,6 +1188,50 @@ pub struct ListeningUpdate {
     pub album: Option<String>,
     #[serde(default)]
     pub spotify_id: Option<String>,
+}
+
+/// The game someone is playing (#380), as their own Pulse detects it on Windows (Steam's running app, or an exe they
+/// added by hand). Only what their switches allow is here: no app id (and so no art) with "Show game art" off, no
+/// start with "Show play time" off. The exe's path never leaves their computer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Playing {
+    pub name: String,
+    /// Steam's app id, when Steam named the game and they share its art.
+    #[serde(default)]
+    pub steam_app_id: Option<u32>,
+    /// When they started, in server time (RFC 3339), when they share play time.
+    #[serde(default)]
+    pub started_at: Option<String>,
+    /// The game's art from Steam's CDN, fetched and stored by the server; none without a `steam_app_id`.
+    #[serde(default)]
+    pub art: Option<GameArt>,
+}
+
+/// A Steam game's art (#380), each re-encoded like a link thumbnail; any may be missing (not every game has a hero or
+/// a logo).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct GameArt {
+    /// The wide library hero (`library_hero.jpg`).
+    #[serde(default)]
+    pub hero: Option<EmbedThumb>,
+    /// The store capsule (`header.jpg`).
+    #[serde(default)]
+    pub header: Option<EmbedThumb>,
+    /// The transparent logo (`logo.png`).
+    #[serde(default)]
+    pub logo: Option<EmbedThumb>,
+}
+
+/// What a client says it's playing (#380, `ClientFrame::Playing`); the server checks it and adds the art.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct PlayingUpdate {
+    pub name: String,
+    #[serde(default)]
+    pub steam_app_id: Option<u32>,
+    /// How long they've been playing, in seconds, when they share play time (the server turns it into `started_at`
+    /// on its own clock).
+    #[serde(default)]
+    pub elapsed_secs: Option<u64>,
 }
 
 /// What a viewer sees of someone (#45). Never `Invisible`: that looks exactly like `Offline`.
