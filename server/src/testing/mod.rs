@@ -120,6 +120,12 @@ pub fn test_config() -> Config {
             rugby_base: "http://127.0.0.1:1".into(),
             ..Default::default()
         },
+        // Jolpica unreachable unless a test points it at a fake; no spacing between calls
+        f1: crate::config::F1Config {
+            api_base: "http://127.0.0.1:1".into(),
+            min_gap: Duration::ZERO,
+            ..Default::default()
+        },
     }
 }
 

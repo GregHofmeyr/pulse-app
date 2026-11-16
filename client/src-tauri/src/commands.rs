@@ -2469,6 +2469,44 @@ pub async fn sports_channel(
     core.check(&app, api.sports_channel(&token, server_id).await)
 }
 
+/// A server's F1 status (#386).
+#[tauri::command]
+pub async fn f1_status(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<pulse_protocol::rest::F1Status, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.f1_status(&token, server_id).await)
+}
+
+/// Pick a server's F1 channel (its owner only), or none.
+#[tauri::command]
+pub async fn set_f1_channel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    channel_id: Option<ChannelId>,
+) -> Result<pulse_protocol::rest::F1Status, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_f1_channel(&token, server_id, channel_id).await,
+    )
+}
+
+/// Your podium prediction on an F1 weekend card (none takes it back).
+#[tauri::command]
+pub async fn f1_predict(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    picks: Option<Vec<String>>,
+) -> Result<Vec<pulse_protocol::rest::F1Prediction>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.f1_predict(&token, message_id, picks).await)
+}
+
 #[tauri::command]
 pub async fn set_sports_channel(
     app: AppHandle,

@@ -103,6 +103,7 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         plan: None,
         plan_reminder: None,
         sports: None,
+        f1: None,
     }
 }
 

@@ -2105,6 +2105,56 @@ impl Api {
         Self::parse(self.http.get(url).bearer_auth(token).send().await).await
     }
 
+    /// A server's F1 status (#386): its F1 channel, the next race weekend and the season's prediction table.
+    pub async fn f1_status(
+        &self,
+        token: &str,
+        server: ServerId,
+    ) -> Result<pulse_protocol::rest::F1Status, ApiError> {
+        let url = self.url(&["servers", &server.to_string(), "f1"])?;
+        Self::parse(self.http.get(url).bearer_auth(token).send().await).await
+    }
+
+    /// Pick a server's F1 channel (its owner only), or none.
+    pub async fn set_f1_channel(
+        &self,
+        token: &str,
+        server: ServerId,
+        channel: Option<ChannelId>,
+    ) -> Result<pulse_protocol::rest::F1Status, ApiError> {
+        let url = self.url(&["servers", &server.to_string(), "f1-channel"])?;
+        let body = pulse_protocol::rest::SetF1ChannelRequest {
+            channel_id: channel,
+        };
+        Self::parse(
+            self.http
+                .put(url)
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Your podium prediction on an F1 weekend card (none takes it back): everyone's predictions after it.
+    pub async fn f1_predict(
+        &self,
+        token: &str,
+        card: MessageId,
+        picks: Option<Vec<String>>,
+    ) -> Result<Vec<pulse_protocol::rest::F1Prediction>, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/messages/{card}/f1/prediction", self.base))
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::F1PredictionRequest { picks })
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// A page of someone's Name Archive in a server (`cursor`: the last page's `next_cursor`).
     pub async fn name_archive(
         &self,
@@ -5485,6 +5535,27 @@ mod tests {
             .set_achievements_channel(&alex, server.id, None)
             .await
             .unwrap();
+        assert_eq!(off.channel_id, None);
+    }
+
+    #[tokio::test]
+    async fn the_f1_channel_round_trips_through_the_core() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let server = testing::create_server(&app, &alex, "Paddock").await;
+        let general = testing::general(&app, &alex, server.id).await;
+        let st = api.f1_status(&alex, server.id).await.unwrap();
+        assert_eq!((st.channel_id, st.next), (None, None));
+        let set = api
+            .set_f1_channel(&alex, server.id, Some(general.id))
+            .await
+            .unwrap();
+        assert_eq!(set.channel_id, Some(general.id));
+        // the test server can't reach Jolpica: no race weekend, no card to predict on
+        assert_eq!(set.next, None);
+        assert!(api.f1_predict(&alex, MessageId::new(), None).await.is_err());
+        let off = api.set_f1_channel(&alex, server.id, None).await.unwrap();
         assert_eq!(off.channel_id, None);
     }
 

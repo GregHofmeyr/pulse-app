@@ -77,6 +77,7 @@ pub async fn insert(
         plan: None,
         plan_reminder: crate::plans::reminder(&stored).map(Box::new),
         sports: sports(&stored).map(Box::new),
+        f1: crate::f1::card(&stored).map(Box::new),
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
         .bind(msg.id.to_string())

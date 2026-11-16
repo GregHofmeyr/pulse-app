@@ -3,6 +3,7 @@
   import { motion, setAnimateMode, type AnimateMode } from '../lib/animate.svelte'
   import { previews, setShowPreviews } from '../lib/linkPreviews.svelte'
   import { planPrefs, setPlanSomething } from '../lib/plans.svelte'
+  import { f1Prefs, setF1RaceWeekends } from '../lib/f1Prefs.svelte'
 
   const modes: { value: AnimateMode; label: string; help: string }[] = [
     { value: 'always', label: 'Always', help: 'Animated emoji play while Pulse is in focus.' },
@@ -28,5 +29,9 @@
   <div class="settings-field"><span class="settings-label">PLAN SOMETHING</span>
     <Segmented label="Plan something" options={onOff} value={planPrefs.on} onchange={setPlanSomething} />
     <small>{planPrefs.on ? 'The Plan button and /plan post invites with RSVPs. Plans show the forecast for their place, and you get a notification an hour before one you said Going or Maybe to.' : "No Plan button, forecasts or reminder notifications. Plans others post still show, and reminders still reach your inbox."} This device only.</small>
+  </div>
+  <div class="settings-field"><span class="settings-label">F1 RACE WEEKENDS</span>
+    <Segmented label="F1 race weekends" options={onOff} value={f1Prefs.on} onchange={setF1RaceWeekends} />
+    <small>{f1Prefs.on ? "A server's F1 channel shows a countdown to the next race, and F1 cards open in full: the race weekend with podium predictions, the results and the scores." : 'No countdown, and F1 cards fold to one line (click one to open it).'} This device only.</small>
   </div>
 </section>

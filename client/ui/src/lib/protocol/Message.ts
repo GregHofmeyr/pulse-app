@@ -5,6 +5,7 @@ import type { CallLine } from "./CallLine";
 import type { ChannelId } from "./ChannelId";
 import type { Clip } from "./Clip";
 import type { DeadlockCard } from "./DeadlockCard";
+import type { F1Card } from "./F1Card";
 import type { Gif } from "./Gif";
 import type { LinkEmbed } from "./LinkEmbed";
 import type { MessageId } from "./MessageId";
@@ -122,4 +123,9 @@ plan_reminder?: PlanReminder,
  * Set on a sports card (#385), a system line in a server's Sports channel: a followed team's match, from the
  * match-day banner through the live score to full time, edited in place.
  */
-sports?: SportsCard, };
+sports?: SportsCard, 
+/**
+ * Set on an F1 card (#386), a system line in a server's F1 channel. A weekend card carries everyone's podium
+ * predictions.
+ */
+f1?: F1Card, };

@@ -12,6 +12,7 @@ pub mod dms;
 pub mod embeds;
 pub mod emoji;
 pub mod error;
+pub mod f1;
 pub mod gateway;
 pub mod gifs;
 pub mod hygiene;
@@ -67,6 +68,7 @@ pub fn router(state: AppState) -> Router {
         .merge(pins::router())
         .merge(polls::router())
         .merge(plans::router())
+        .merge(f1::router())
         .merge(gifs::router())
         .merge(quotes::routes::router())
         .merge(qoty::router())
@@ -160,6 +162,8 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     pins::spawn_sweeper(state.clone());
     polls::spawn_sweeper(state.clone());
     plans::spawn_sweeper(state.clone());
+    // F1 race weekends (#386): nothing is fetched while no server has an F1 channel
+    f1::worker::spawn(state.clone());
     badges::sweep::spawn(state.clone());
     servers::channels::spawn_sweeper(state.clone());
     servers::deleted::spawn_sweeper(state.clone());

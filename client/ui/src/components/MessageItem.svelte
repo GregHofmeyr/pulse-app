@@ -30,6 +30,7 @@
   import Name from './Name.svelte'
   import WheelLine from './WheelLine.svelte'
   import AchievementCard from './AchievementCard.svelte'
+  import F1Card from './F1Card.svelte'
   import DeadlockCard from './DeadlockCard.svelte'
   import PollCard from './PollCard.svelte'
   import { endedSummary, pollOver, shownText } from '../lib/poll'
@@ -308,6 +309,9 @@
   {#if message.achievement}
     <!-- a Steam achievement card (#379), with today's name for its person -->
     <AchievementCard card={message.achievement} name={nameOf(message.achievement.user_id)} {time} messageId={message.id} />
+  {:else if message.f1}
+    <!-- an F1 card (#386): the race weekend with podium predictions, lights out, the results, the scores -->
+    <F1Card {message} {nameOf} {time} />
   {:else if message.deadlock}
     <!-- a Deadlock card (#390): a match, the rank movers or a patch, with today's names -->
     <DeadlockCard card={message.deadlock} {nameOf} {time} messageId={message.id} />
