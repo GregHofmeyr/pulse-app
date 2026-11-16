@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// Your status menu (#45), from the status row on your own profile card (#168). Online, Do Not Disturb (with its
-// timers), Invisible, each with its dot and the current one ticked.
+// Your status menu (#45), from the status row on your own profile card (#168). Online, Do Not Disturb and Invisible
+// (each with its timers, #153), each with its dot and the current one ticked.
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -74,18 +74,53 @@ describe('StatusPicker', () => {
     expect(item('online').getAttribute('aria-checked')).toBe('true')
   })
 
-  it('Online and Invisible set the status (no timer) and close', () => {
+  it('Online sets the status (no timer) and closes', () => {
     show({ status: 'dnd', dnd_until: null })
     item('online').click()
     flushSync()
     expect(statusCalls()).toEqual([{ status: 'online', dndUntil: null }])
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('Invisible opens the same timers (#153); each sends its end time', () => {
+    show()
+    item('invisible').click()
+    flushSync()
+    expect(q('[aria-label="Do Not Disturb for"]')).toBeNull()
+    const flyout = q('[role=menu][aria-label="Invisible for"]')!
+    const timers = [...flyout.querySelectorAll<HTMLButtonElement>('[role=menuitem]')]
+    expect(timers.map((b) => b.textContent?.trim())).toEqual(['For 1 hour', 'For 8 hours', 'Until tomorrow morning', 'Until I turn it off'])
+    expect(item('invisible').getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(timers[0])
+    timers[1].click()
+    flushSync()
+    expect(statusCalls()).toEqual([{ status: 'invisible', dndUntil: new Date(NOW + 8 * 3_600_000).toISOString() }])
     expect(onClose).toHaveBeenCalled()
     unmount(cmp!)
     document.body.innerHTML = ''
     show()
     item('invisible').click()
     flushSync()
+    const off = [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Invisible for"] [role=menuitem]')].find((b) => b.textContent?.trim() === 'Until I turn it off')!
+    off.click()
     expect(statusCalls().at(-1)).toEqual({ status: 'invisible', dndUntil: null })
+  })
+
+  it('a run-out Invisible timer ticks Online', () => {
+    show({ status: 'invisible', dnd_until: new Date(NOW - 1).toISOString() })
+    expect(item('online').getAttribute('aria-checked')).toBe('true')
+    expect(item('invisible').getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('opening one flyout closes the other', () => {
+    show()
+    item('dnd').click()
+    flushSync()
+    item('invisible').click()
+    flushSync()
+    expect(q('[aria-label="Do Not Disturb for"]')).toBeNull()
+    expect(q('[aria-label="Invisible for"]')).not.toBeNull()
+    expect(item('dnd').getAttribute('aria-expanded')).toBe('false')
   })
 
   it('Do Not Disturb opens its timers; each sends its end time', () => {
@@ -127,6 +162,12 @@ describe('StatusPicker', () => {
     key(document.activeElement!, 'ArrowLeft')
     expect(document.activeElement).toBe(item('dnd'))
     expect(q('[aria-label="Do Not Disturb for"]')).toBeNull()
+    key(document.activeElement!, 'ArrowDown')
+    expect(document.activeElement).toBe(item('invisible'))
+    key(document.activeElement!, 'ArrowRight')
+    expect(document.activeElement?.closest('[aria-label="Invisible for"]')).not.toBeNull()
+    key(document.activeElement!, 'ArrowLeft')
+    expect(document.activeElement).toBe(item('invisible'))
     key(document.activeElement!, 'Escape')
     expect(onClose).toHaveBeenCalled()
     expect(document.activeElement).toBe(opener)
@@ -134,8 +175,8 @@ describe('StatusPicker', () => {
 
   it('a failure says why', async () => {
     invoke.mockRejectedValue({ code: 'network', message: 'no connection' })
-    show()
-    item('invisible').click()
+    show({ status: 'dnd', dnd_until: null })
+    item('online').click()
     await vi.waitFor(() => expect(ui.notice).toBeTruthy())
   })
 })

@@ -1213,8 +1213,8 @@ impl Status {
     }
 }
 
-/// Your own status, for your own sessions only. `dnd_until`: when a timed DND ends (RFC 3339 UTC);
-/// `None` with `Dnd` means until you turn it off.
+/// Your own status, for your own sessions only. `dnd_until`: when a timed DND or Invisible ends
+/// (RFC 3339 UTC; #153 kept the name); `None` means until you turn it off.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct OwnStatus {
     pub status: Status,
@@ -1222,7 +1222,8 @@ pub struct OwnStatus {
     pub dnd_until: Option<String>,
 }
 
-/// `PUT /me/status`. `dnd_until` only goes with `Dnd`: a time in the next 7 days.
+/// `PUT /me/status`. `dnd_until` goes with `Dnd` or `Invisible` (#153), never `Online`: a time in
+/// the next 7 days.
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct SetStatusRequest {
     pub status: Status,

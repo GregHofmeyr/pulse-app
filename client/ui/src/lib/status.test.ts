@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { emptyState, type AppState } from './state'
-import { DND_FOR, dndActive, dndUntil, ownStatus, tomorrowMorning } from './status'
+import { STATUS_FOR, dndActive, statusUntil, ownStatus, tomorrowMorning } from './status'
 import type { OwnStatus } from './protocol/OwnStatus'
 
 const withStatus = (myStatus: OwnStatus): AppState => ({ ...emptyState(), myStatus })
 
-describe('DND timers (#45)', () => {
+describe('DND and Invisible timers (#45, #153)', () => {
   it('the choices, in order', () => {
-    expect(DND_FOR.map((c) => c.label)).toEqual(['For 1 hour', 'For 8 hours', 'Until tomorrow morning', 'Until I turn it off'])
+    expect(STATUS_FOR.map((c) => c.label)).toEqual(['For 1 hour', 'For 8 hours', 'Until tomorrow morning', 'Until I turn it off'])
   })
   it('tomorrow morning is 08:00 local time the next calendar day', () => {
     const at = (y: number, mo: number, d: number, h: number, mi = 0) => new Date(y, mo, d, h, mi)
@@ -20,11 +20,11 @@ describe('DND timers (#45)', () => {
   })
   it('each choice gives an absolute end time (or none)', () => {
     const now = new Date('2026-11-05T10:00:00Z')
-    const by = (label: string) => DND_FOR.find((c) => c.label === label)!
-    expect(dndUntil(by('For 1 hour'), now)).toBe('2026-11-05T11:00:00.000Z')
-    expect(dndUntil(by('For 8 hours'), now)).toBe('2026-11-05T18:00:00.000Z')
-    expect(dndUntil(by('Until tomorrow morning'), now)).toBe(tomorrowMorning(now).toISOString())
-    expect(dndUntil(by('Until I turn it off'), now)).toBeNull()
+    const by = (label: string) => STATUS_FOR.find((c) => c.label === label)!
+    expect(statusUntil(by('For 1 hour'), now)).toBe('2026-11-05T11:00:00.000Z')
+    expect(statusUntil(by('For 8 hours'), now)).toBe('2026-11-05T18:00:00.000Z')
+    expect(statusUntil(by('Until tomorrow morning'), now)).toBe(tomorrowMorning(now).toISOString())
+    expect(statusUntil(by('Until I turn it off'), now)).toBeNull()
   })
 })
 
@@ -46,5 +46,14 @@ describe('dndActive / ownStatus', () => {
     expect(dndActive(withStatus({ status: 'online', dnd_until: null }), now)).toBe(false)
     expect(dndActive(withStatus({ status: 'invisible', dnd_until: null }), now)).toBe(false)
     expect(ownStatus(withStatus({ status: 'invisible', dnd_until: null }), now)).toBe('invisible')
+  })
+})
+
+describe('a timed Invisible (#153)', () => {
+  it('is Invisible until its end, then you are Online again', () => {
+    const s = withStatus({ status: 'invisible', dnd_until: '2026-11-05T11:00:00.000Z' })
+    expect(ownStatus(s, '2026-11-05T10:59:59.999Z')).toBe('invisible')
+    expect(ownStatus(s, '2026-11-05T11:00:00.000Z')).toBe('online')
+    expect(dndActive(s, '2026-11-05T10:00:00.000Z')).toBe(false)
   })
 })

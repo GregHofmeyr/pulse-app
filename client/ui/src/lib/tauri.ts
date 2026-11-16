@@ -305,7 +305,7 @@ export const api = {
   disconnectVoice: (serverId: string, userId: string) => invoke<void>('disconnect_voice', { serverId, userId }),
   /** The name only you see for someone (`null` clears it). */
   setPrivateNickname: (userId: string, nickname: string | null) => invoke<void>('set_private_nickname', { userId, nickname }),
-  /** Your status (#45); `dndUntil` only with 'dnd' (null: until turned off). A StatusChanged follows to every session. */
+  /** Your status (#45); `dndUntil` only with 'dnd' or 'invisible' (#153; null: until turned off). A StatusChanged follows to every session. */
   setStatus: (status: Status, dndUntil: string | null) => invoke<void>('set_status', { status, dndUntil }),
   /** Start a call in a DM or group, ringing the others, or join the one going on (#50: `rang` false). Then join its voice room. */
   startCall: (channelId: string) => invoke<StartCallResponse>('start_call', { channelId }),

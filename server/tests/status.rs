@@ -464,7 +464,7 @@ async fn dnd_shows_as_dnd_and_its_timer_expires() {
     assert_eq!(mine.status, OwnStatus::default());
     // the sweep tells everyone
     assert_eq!(
-        pulse_server::presence::sweep::sweep_dnd(&app.state())
+        pulse_server::presence::sweep::sweep_timers(&app.state())
             .await
             .unwrap(),
         1
@@ -485,10 +485,105 @@ async fn dnd_shows_as_dnd_and_its_timer_expires() {
         }
     ));
     assert_eq!(
-        pulse_server::presence::sweep::sweep_dnd(&app.state())
+        pulse_server::presence::sweep::sweep_timers(&app.state())
             .await
             .unwrap(),
         0
+    );
+}
+
+/// Invisible on a timer (#153), like DND's: hidden until it runs out, then Online again by the
+/// same rules as turning it off (last seen no longer frozen, off-list rows gone).
+#[tokio::test]
+async fn invisible_on_a_timer_returns_to_online() {
+    let Three {
+        app,
+        alex: (a_id, a),
+        sam: (s_id, s, mut sam_ws),
+        mut alex_ws,
+        ..
+    } = three().await;
+    let until = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(8));
+    assert_eq!(set_status(&app, &a, "invisible", Some(&until)).await, 204);
+    let frozen = about(&drain(&mut sam_ws, 300).await, a_id);
+    assert_eq!(frozen.len(), 1);
+    assert_eq!(frozen[0].0, PresenceStatus::Offline);
+    let own = wait_for(&mut alex_ws, |e| matches!(e, Event::StatusChanged { .. })).await;
+    assert!(
+        matches!(own, Event::StatusChanged { status: OwnStatus { status: Status::Invisible, dnd_until: Some(ref u) }, .. } if *u == until)
+    );
+    // taken off the list while Invisible: that row only freezes during this invisibility
+    appear_offline(&app, &a, s_id, true).await;
+    appear_offline(&app, &a, s_id, false).await;
+    drain(&mut alex_ws, 200).await;
+    // the timer runs out: a fresh Ready already says Online, before any sweep
+    sqlx::query("UPDATE users SET dnd_until = '2000-01-01T00:00:00.000Z' WHERE id = ?")
+        .bind(a_id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (_s2, r) = hello(&app, &s).await;
+    assert_eq!(person(&r, a_id).status, PresenceStatus::Online);
+    let (_a2, mine) = hello(&app, &a).await;
+    assert_eq!(mine.status, OwnStatus::default());
+    // the sweep tells everyone and tidies up as turning it off would
+    assert_eq!(
+        pulse_server::presence::sweep::sweep_timers(&app.state())
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        about(&drain(&mut sam_ws, 300).await, a_id),
+        vec![(PresenceStatus::Online, None)]
+    );
+    let own = wait_for(&mut alex_ws, |e| matches!(e, Event::StatusChanged { .. })).await;
+    assert!(matches!(
+        own,
+        Event::StatusChanged {
+            status: OwnStatus {
+                status: Status::Online,
+                dnd_until: None
+            },
+            ..
+        }
+    ));
+    assert_eq!(
+        db_str(&app, "SELECT invisible_at FROM users WHERE id = ?", a_id).await,
+        None
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM presence_hidden")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+}
+
+/// Going Invisible again after a timer ran out (not yet swept) is a new invisibility: last seen
+/// freezes now, not at the old moment (#153).
+#[tokio::test]
+async fn invisible_again_after_a_run_out_timer_freezes_anew() {
+    let Three {
+        app,
+        alex: (a_id, a),
+        alex_ws: _alex_ws,
+        ..
+    } = three().await;
+    let until = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(1));
+    assert_eq!(set_status(&app, &a, "invisible", Some(&until)).await, 204);
+    let first = db_str(&app, "SELECT invisible_at FROM users WHERE id = ?", a_id).await;
+    sqlx::query("UPDATE users SET dnd_until = '2000-01-01T00:00:00.000Z' WHERE id = ?")
+        .bind(a_id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(set_status(&app, &a, "invisible", None).await, 204);
+    let second = db_str(&app, "SELECT invisible_at FROM users WHERE id = ?", a_id).await;
+    assert!(second > first, "{first:?} then {second:?}");
+    assert_eq!(
+        db_str(&app, "SELECT dnd_until FROM users WHERE id = ?", a_id).await,
+        None
     );
 }
 
@@ -570,7 +665,8 @@ async fn bad_requests_are_refused() {
     assert_eq!(set_status(&app, &a, "dnd", Some(&far)).await, 400);
     assert_eq!(set_status(&app, &a, "dnd", Some("tomorrow")).await, 400);
     assert_eq!(set_status(&app, &a, "online", Some(&soon)).await, 400);
-    assert_eq!(set_status(&app, &a, "invisible", Some(&soon)).await, 400);
+    assert_eq!(set_status(&app, &a, "invisible", Some(&far)).await, 400);
+    assert_eq!(set_status(&app, &a, "invisible", Some(&past)).await, 400);
     assert_eq!(set_status(&app, &a, "away", None).await, 422);
     assert_eq!(appear_offline(&app, &a, a_id, true).await, 400);
     assert_eq!(appear_offline(&app, &a, UserId::new(), true).await, 404);

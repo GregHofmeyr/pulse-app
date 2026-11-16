@@ -2,7 +2,7 @@
 import type { Status } from "./Status";
 
 /**
- * Your own status, for your own sessions only. `dnd_until`: when a timed DND ends (RFC 3339 UTC);
- * `None` with `Dnd` means until you turn it off.
+ * Your own status, for your own sessions only. `dnd_until`: when a timed DND or Invisible ends
+ * (RFC 3339 UTC; #153 kept the name); `None` means until you turn it off.
  */
 export type OwnStatus = { status: Status, dnd_until: string | null, };

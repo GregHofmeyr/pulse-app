@@ -45,7 +45,8 @@ One status per account, set by you and applied everywhere:
   soundboard, voices, streams). You chose to be in that call.
 - **Still updated:** unread badges, mention counts, server and call indicators. Only the alerts stop.
 - **Timers**, like the existing mutes (`muteDurations.ts`): 1 hour, 8 hours, until tomorrow morning, or until I turn it
-  off. When a timer runs out you return to Online. A timer only applies to DND; Invisible has no timer in this push.
+  off. When a timer runs out you return to Online. A timer only applies to DND; Invisible has no timer in this push
+  (Invisible got the same timers later, #153).
 - DND is enforced in the client: the client already decides alerts (`shouldAlert`, `notifyMessage`). Because the status
   lives on the server, every device knows it.
 
@@ -120,5 +121,5 @@ One status per account, set by you and applied everywhere:
 
 - Automatic Idle or Away after inactivity.
 - Custom status text and emoji ("Gaming 🎮").
-- Timers for Invisible.
+- Timers for Invisible (done later, #153).
 - Per-server statuses.

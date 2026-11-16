@@ -207,13 +207,13 @@ $effect.root(() => {
   $effect(() => {
     if (windowFocus.focused || !notifyPrefs.enabled) notifications.clear()
   })
-  // A timed DND ends on time (#45): the clock moves to its end, so your dot flips back to Online then, without
-  // waiting for the 30 s tick or the server (which sweeps it within ~15 s). A new status replaces the timer.
+  // A timed DND or Invisible ends on time (#45, #153): the clock moves to its end, so your dot flips back to Online
+  // then, without waiting for the 30 s tick or the server (which sweeps it within ~15 s). A new status replaces the timer.
   $effect(() => {
     const { status, dnd_until } = app.state.myStatus
-    if (status !== 'dnd' || !dnd_until) return
+    if (status === 'online' || !dnd_until) return
     const end = Date.parse(dnd_until)
-    // setTimeout holds at most ~24.8 days (the server caps a DND at 7)
+    // setTimeout holds at most ~24.8 days (the server caps a timer at 7)
     const t = setTimeout(() => (clock.nowIso = new Date(Math.max(Date.now(), end)).toISOString()), Math.min(Math.max(0, end - Date.now()), 2 ** 31 - 1))
     return () => clearTimeout(t)
   })

@@ -23,6 +23,8 @@ pub const NEVER_SEEN: &str = "";
 pub struct Subject {
     pub id: UserId,
     pub status: Status,
+    /// When a timed DND or Invisible ends (#153; the column kept DND's name from 0019). `None`:
+    /// until turned off.
     pub dnd_until: Option<String>,
     /// Set while Invisible: the last seen everyone (but the person) sees.
     pub invisible_at: Option<String>,
@@ -47,30 +49,40 @@ impl PresenceView {
 }
 
 impl Subject {
+    /// The status in force at `now`: a DND or Invisible whose timer ran out is Online.
+    pub fn status_at(&self, now: &str) -> Status {
+        match self.status {
+            Status::Online => Status::Online,
+            timed if self.dnd_until.as_deref().is_none_or(|u| u > now) => timed,
+            _ => Status::Online,
+        }
+    }
+
     /// DND in force at `now` (an expired timer is Online).
     pub fn dnd(&self, now: &str) -> bool {
-        self.status == Status::Dnd && self.dnd_until.as_deref().is_none_or(|u| u > now)
+        self.status_at(now) == Status::Dnd
+    }
+
+    /// Invisible in force at `now` (an expired timer is Online, #153).
+    pub fn invisible(&self, now: &str) -> bool {
+        self.status_at(now) == Status::Invisible
     }
 
     /// The status as it stands at `now`, for the person's own sessions.
     pub fn own(&self, now: &str) -> OwnStatus {
-        match self.status {
-            Status::Dnd if !self.dnd(now) => OwnStatus::default(),
+        match self.status_at(now) {
+            Status::Online => OwnStatus::default(),
             status => OwnStatus {
                 status,
-                dnd_until: if status == Status::Dnd {
-                    self.dnd_until.clone()
-                } else {
-                    None
-                },
+                dnd_until: self.dnd_until.clone(),
             },
         }
     }
 
     /// The moment this person stopped looking online to `viewer`, if they're hiding from them now
     /// (Invisible, hidden, or both: the earlier moment).
-    fn frozen_for(&self, viewer: UserId) -> Option<String> {
-        let invisible = self.status == Status::Invisible;
+    fn frozen_for(&self, viewer: UserId, now: &str) -> Option<String> {
+        let invisible = self.invisible(now);
         let hidden = self
             .hidden
             .get(&viewer)
@@ -89,9 +101,8 @@ impl Subject {
     }
 
     /// Whether this person hides from `viewer` at all right now.
-    fn hides_from(&self, viewer: UserId) -> bool {
-        self.status == Status::Invisible
-            || self.hidden.get(&viewer).is_some_and(|(_, active)| *active)
+    fn hides_from(&self, viewer: UserId, now: &str) -> bool {
+        self.invisible(now) || self.hidden.get(&viewer).is_some_and(|(_, active)| *active)
     }
 }
 
@@ -118,10 +129,10 @@ pub fn view_for(s: &Subject, viewer: UserId, connected: bool, now: &str) -> Pres
             }
         };
     }
-    if s.hides_from(viewer) {
+    if s.hides_from(viewer, now) {
         return PresenceView {
             status: PresenceStatus::Offline,
-            last_seen_at: s.frozen_for(viewer),
+            last_seen_at: s.frozen_for(viewer, now),
         };
     }
     if connected {
@@ -333,6 +344,40 @@ mod tests {
             view_for(&s, sam, false, NOW).status,
             PresenceStatus::Offline
         );
+    }
+
+    #[test]
+    fn invisible_hides_until_its_timer_runs_out() {
+        let mut s = alex();
+        s.status = Status::Invisible;
+        s.invisible_at = Some("2026-11-05T10:00:00.000Z".into());
+        s.dnd_until = Some("2026-11-05T13:00:00.000Z".into());
+        let sam = UserId::new();
+        s.hidden
+            .insert(sam, ("2026-11-05T08:00:00.000Z".into(), false));
+        assert_eq!(view_for(&s, sam, true, NOW).status, PresenceStatus::Offline);
+        assert_eq!(
+            s.own(NOW),
+            OwnStatus {
+                status: Status::Invisible,
+                dnd_until: s.dnd_until.clone()
+            }
+        );
+        // run out: Online to everyone, an off-list row no longer freezes, and offline shows the real
+        // last disconnect
+        s.dnd_until = Some("2026-11-05T11:59:59.999Z".into());
+        assert_eq!(
+            view_for(&s, sam, true, NOW),
+            PresenceView {
+                status: PresenceStatus::Online,
+                last_seen_at: None
+            }
+        );
+        assert_eq!(
+            view_for(&s, UserId::new(), false, NOW).last_seen_at,
+            s.last_seen_at
+        );
+        assert_eq!(s.own(NOW), OwnStatus::default());
     }
 
     #[test]

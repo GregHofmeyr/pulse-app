@@ -16,7 +16,8 @@ use crate::auth::AuthUser;
 use crate::db::{begin_write, now, stamp};
 use crate::error::{AppError, AppResult};
 
-/// The longest DND timer the server takes (the client offers at most "until tomorrow morning").
+/// The longest DND or Invisible timer the server takes (the client offers at most "until tomorrow
+/// morning").
 pub const MAX_DND: chrono::Duration = chrono::Duration::days(7);
 
 pub fn router() -> Router<AppState> {
@@ -31,7 +32,7 @@ fn too_fast() -> AppError {
     ))
 }
 
-/// A DND end as stored, if it's a real time in the next [`MAX_DND`].
+/// A timer's end as stored, if it's a real time in the next [`MAX_DND`].
 fn dnd_end(raw: &str, at: DateTime<Utc>) -> AppResult<String> {
     let t = DateTime::parse_from_rfc3339(raw)
         .map_err(|_| AppError::BadRequest("That end time isn't a time.".into()))?
@@ -41,7 +42,7 @@ fn dnd_end(raw: &str, at: DateTime<Utc>) -> AppResult<String> {
     }
     if t > at + MAX_DND {
         return Err(AppError::BadRequest(
-            "Do Not Disturb can be timed for up to 7 days.".into(),
+            "A status can be timed for up to 7 days.".into(),
         ));
     }
     Ok(stamp(t))
@@ -55,11 +56,10 @@ async fn set_status(
     let at = Utc::now();
     let dnd_until = match (&req.dnd_until, req.status) {
         (None, _) => None,
-        (Some(raw), Status::Dnd) => Some(dnd_end(raw, at)?),
-        (Some(_), _) => {
-            return Err(AppError::BadRequest(
-                "Only Do Not Disturb has a timer.".into(),
-            ));
+        // Invisible times out like DND (#153)
+        (Some(raw), Status::Dnd | Status::Invisible) => Some(dnd_end(raw, at)?),
+        (Some(_), Status::Online) => {
+            return Err(AppError::BadRequest("Online doesn't have a timer.".into()));
         }
     };
     if !s.limits.status_user.hit(&me.to_string()) {
@@ -77,6 +77,8 @@ async fn set_status(
             .unwrap_or_else(|| NEVER_SEEN.into())
     };
     let mut tx = begin_write(&s.db).await?;
+    // A run-out timer the sweep hasn't reached is over: going Invisible again freezes anew.
+    super::sweep::end_expired(&mut tx, &now, Some(me)).await?;
     let was: String = sqlx::query_scalar("SELECT presence FROM users WHERE id = ?")
         .bind(me.to_string())
         .fetch_one(&mut *tx)
@@ -157,6 +159,13 @@ async fn hide(
 ) -> AppResult<StatusCode> {
     let target = target(&s, me, &id).await?;
     let now = now();
+    // a run-out Invisible's off-list row isn't taken back on below (#153)
+    let mut tx = begin_write(&s.db).await?;
+    let ended = super::sweep::end_expired(&mut tx, &now, Some(me)).await?;
+    tx.commit().await?;
+    if !ended.is_empty() {
+        announce_own(&s, me).await;
+    }
     let subject = load_subject(&s.db, me).await?.ok_or(AppError::NotFound)?;
     let seen = view_for(&subject, target, s.hub.is_online(me), &now);
     let hidden_at = if seen.online() {
@@ -187,6 +196,8 @@ async fn unhide(
 ) -> AppResult<StatusCode> {
     let target = target(&s, me, &id).await?;
     let mut tx = begin_write(&s.db).await?;
+    // a run-out Invisible no longer keeps the row (#153)
+    let ended = super::sweep::end_expired(&mut tx, &now(), Some(me)).await?;
     sqlx::query(
         "DELETE FROM presence_hidden WHERE owner_id = ?1 AND target_id = ?2 \
          AND (SELECT presence FROM users WHERE id = ?1) <> 'invisible'",
@@ -201,6 +212,9 @@ async fn unhide(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    if !ended.is_empty() {
+        announce_own(&s, me).await;
+    }
     changed(&s, me, target, false).await;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -2092,7 +2092,7 @@ pub async fn set_private_nickname(
     )
 }
 
-/// Your status (#45); `dnd_until` only with Dnd.
+/// Your status (#45); `dnd_until` only with Dnd or Invisible (#153).
 #[tauri::command]
 pub async fn set_status(
     app: AppHandle,

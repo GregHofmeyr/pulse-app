@@ -49,4 +49,13 @@ describe('the DND timer', () => {
     flushSync()
     expect(mine()).toBe('dnd')
   })
+
+  it('a timed Invisible flips back to Online the same way (#153)', () => {
+    handleReady(testReady([], { status: { status: 'invisible', dnd_until: new Date(START + 60_000).toISOString() } }))
+    flushSync()
+    expect(mine()).toBe('invisible')
+    vi.advanceTimersByTime(60_000)
+    flushSync()
+    expect(mine()).toBe('online')
+  })
 })

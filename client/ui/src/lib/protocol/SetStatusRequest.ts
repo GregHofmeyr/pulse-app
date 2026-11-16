@@ -2,6 +2,7 @@
 import type { Status } from "./Status";
 
 /**
- * `PUT /me/status`. `dnd_until` only goes with `Dnd`: a time in the next 7 days.
+ * `PUT /me/status`. `dnd_until` goes with `Dnd` or `Invisible` (#153), never `Online`: a time in
+ * the next 7 days.
  */
 export type SetStatusRequest = { status: Status, dnd_until: string | null, };

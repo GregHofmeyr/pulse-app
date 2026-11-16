@@ -1,13 +1,14 @@
 <script lang="ts">
-  // Your status (#45): opens from the status row on your own profile card (#168), above it. Online, Do Not Disturb (its
-  // timers in a flyout, like a channel's Mute), Invisible, each with its dot and the current one ticked. The server answers with a StatusChanged to every session, which
+  // Your status (#45): opens from the status row on your own profile card (#168), above it. Online, Do Not Disturb and
+  // Invisible (each with its timers in a flyout, like a channel's Mute; Invisible's since #153), each with its dot and
+  // the current one ticked. The server answers with a StatusChanged to every session, which
   // ticks the new one; nothing is set here meanwhile.
   import { flushSync, onMount } from 'svelte'
   import { app, clock, ui } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import { clickOutside } from '../lib/actions'
   import { closeTimer } from '../lib/hoverIntent'
-  import { DND_FOR, dndUntil, ownStatus, type DndChoice } from '../lib/status'
+  import { STATUS_FOR, statusUntil, ownStatus, type TimerChoice } from '../lib/status'
   import Icon from './Icon.svelte'
   import type { Status } from '../lib/protocol/Status'
 
@@ -43,24 +44,31 @@
     if (list.length) list[(i + list.length) % list.length].focus()
   }
 
-  // The DND flyout: to the right (the sidebar is on the left), level with Do Not Disturb. Hover opens it without
-  // moving focus; ArrowRight or a click opens it with focus on its first timer; ArrowLeft or Escape closes just it.
+  // A timed status's flyout (DND or Invisible): to the right (the sidebar is on the left), level with its status. Hover
+  // opens it without moving focus; ArrowRight or a click opens it with focus on its first timer; ArrowLeft or Escape
+  // closes just it. One at a time.
+  type Timed = 'dnd' | 'invisible'
+  const isTimed = (id: Status): id is Timed => id !== 'online'
   const uid = $props.id()
-  const flyoutId = `${uid}-dnd`
-  let dndEl = $state<HTMLButtonElement>()
+  const flyoutId = (t: Timed) => `${uid}-${t}`
+  const timedEls: Partial<Record<Timed, HTMLButtonElement>> = $state({})
   let sub = $state<HTMLElement>()
-  let subOpen = $state(false)
+  let subFor = $state<Timed | null>(null)
+  const subOpen = $derived(subFor !== null)
+  /** The status whose flyout is open, or the one focus is on: its item. */
+  const subEl = $derived(subFor ? timedEls[subFor] : undefined)
   let subTop = $state(0)
   const subItems = () => (sub ? [...sub.querySelectorAll<HTMLButtonElement>('[role=menuitem]')] : [])
   function focusSub(i: number) {
     const list = subItems()
     if (list.length) list[(i + list.length) % list.length].focus()
   }
-  function openSub(focusFirst: boolean) {
-    if (!dndEl) return
-    // its first timer beside Do Not Disturb (the flyout's 6px padding and 1px border)
-    subTop = dndEl.offsetTop - 7
-    subOpen = true
+  function openSub(t: Timed, focusFirst: boolean) {
+    const at = timedEls[t]
+    if (!at) return
+    // its first timer beside its status (the flyout's 6px padding and 1px border)
+    subTop = at.offsetTop - 7
+    subFor = t
     if (focusFirst) {
       flushSync()
       focusSub(0)
@@ -71,9 +79,10 @@
   $effect(() => later.cancel)
   function closeSub(refocus: boolean) {
     later.cancel()
-    if (!subOpen) return
-    subOpen = false
-    if (refocus) dndEl?.focus()
+    if (!subFor) return
+    const at = subEl
+    subFor = null
+    if (refocus) at?.focus()
   }
   function subKeydown(e: KeyboardEvent) {
     const list = subItems()
@@ -105,14 +114,16 @@
   }
   const set = (status: Status, until: string | null = null) =>
     pick(() => api.setStatus(status, until).catch((e: unknown) => (ui.notice = `Couldn't change your status: ${errorText(e)}`)))
-  const setDnd = (d: DndChoice) => set('dnd', dndUntil(d, new Date()))
+  const setTimed = (t: Timed, d: TimerChoice) => set(t, statusUntil(d, new Date()))
+  const FLYOUT_LABEL: Record<Timed, string> = { dnd: 'Do Not Disturb for', invisible: 'Invisible for' }
 
   function keydown(e: KeyboardEvent) {
     const list = items()
     const at = list.indexOf(document.activeElement as HTMLButtonElement)
-    if (e.key === 'ArrowRight' && dndEl && document.activeElement === dndEl) {
+    const onTimed = (['dnd', 'invisible'] as const).find((t) => timedEls[t] && document.activeElement === timedEls[t])
+    if (e.key === 'ArrowRight' && onTimed) {
       e.preventDefault()
-      openSub(true)
+      openSub(onTimed, true)
       return
     }
     if (e.key === 'ArrowLeft') { e.preventDefault(); closeSub(false); return }
@@ -134,19 +145,21 @@
   onpointerover={(e) => {
     // another of the menu's own items under the pointer closes the flyout
     const t = (e.target as Element).closest?.('[data-item]')
-    if (t && t.parentElement === el && t !== dndEl && subOpen) later.schedule(() => closeSub(!!sub?.contains(document.activeElement)))
+    if (t && t.parentElement === el && t !== subEl && subOpen) later.schedule(() => closeSub(!!sub?.contains(document.activeElement)))
   }}>
   {#each STATUSES as s (s.id)}
-    {#if s.id === 'dnd'}
-      <button bind:this={dndEl} type="button" class="menu-item has-sub" class:hi={subOpen} role="menuitemradio" aria-checked={current === 'dnd'} data-item="dnd"
-        aria-haspopup="menu" aria-expanded={subOpen} aria-controls={subOpen ? flyoutId : undefined} onpointerenter={() => { later.cancel(); openSub(false) }} onclick={() => openSub(true)}>
-        <span class="dot dnd" aria-hidden="true"></span><span class="grow">{s.label}</span>
-        {#if current === 'dnd'}<Icon name="check" size={14} />{/if}<Icon name="chevronRight" size={14} />
+    {#if isTimed(s.id)}
+      {@const t = s.id}
+      <button bind:this={timedEls[t]} type="button" class="menu-item has-sub" class:hi={subFor === t} role="menuitemradio" aria-checked={current === t} data-item={t}
+        aria-haspopup="menu" aria-expanded={subFor === t} aria-controls={subFor === t ? flyoutId(t) : undefined}
+        onpointerenter={() => { later.cancel(); openSub(t, false) }} onclick={() => openSub(t, true)}>
+        <span class="dot {t}" aria-hidden="true"></span><span class="grow">{s.label}</span>
+        {#if current === t}<Icon name="check" size={14} />{/if}<Icon name="chevronRight" size={14} />
       </button>
-      {#if subOpen}
-        <div bind:this={sub} id={flyoutId} class="flyout menu-surface" role="menu" aria-label="Do Not Disturb for" tabindex="-1" style:top="{subTop}px" onkeydown={subKeydown} onpointerenter={later.cancel}>
-          {#each DND_FOR as d (d.label)}
-            <button type="button" class="menu-item" role="menuitem" onclick={() => setDnd(d)}>{d.label}</button>
+      {#if subFor === t}
+        <div bind:this={sub} id={flyoutId(t)} class="flyout menu-surface" role="menu" aria-label={FLYOUT_LABEL[t]} tabindex="-1" style:top="{subTop}px" onkeydown={subKeydown} onpointerenter={later.cancel}>
+          {#each STATUS_FOR as d (d.label)}
+            <button type="button" class="menu-item" role="menuitem" onclick={() => setTimed(t, d)}>{d.label}</button>
           {/each}
         </div>
       {/if}

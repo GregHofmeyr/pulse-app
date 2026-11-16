@@ -1805,7 +1805,7 @@ impl Api {
         .await
     }
 
-    /// Set your status (#45): Online, Dnd (optionally until `dnd_until`) or Invisible.
+    /// Set your status (#45): Online, or Dnd or Invisible (either optionally until `dnd_until`, #153).
     pub async fn set_status(
         &self,
         token: &str,
