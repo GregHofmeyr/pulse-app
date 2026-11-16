@@ -2,8 +2,10 @@
 //! (`ClientFrame::Idle`), and that it isn't once input resumes. The server shows the person Idle only while every
 //! device of theirs says so.
 //!
-//! Windows only: the input source is `GetLastInputInfo`, read every [`POLL`] (one cheap call, no hook). Linux has
-//! no idle source, so there the poller never starts and the device never says it's idle.
+//! On Windows the input source is `GetLastInputInfo`, read every [`POLL`] (one cheap call, no hook). On Linux it's
+//! the first desktop idle signal that answers over D-Bus (#374, [`linux`]): the screen saver's session idle time
+//! (KDE), Mutter's idle monitor (GNOME), then logind's idle hint for this session (set by whatever runs the idle
+//! timeout). Where none answers, or nothing ever sets the hint, the device never says it's idle, as before.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,12 +49,14 @@ pub struct Idle {
 }
 
 impl Idle {
-    /// Start polling on Windows; on other platforms this holds "not idle" forever and runs nothing.
+    /// Start polling on Windows and Linux; on other platforms this holds "not idle" forever and runs nothing.
     pub fn start(send: Arc<dyn Fn(ClientFrame) + Send + Sync>) -> Self {
         let me = Self::default();
         #[cfg(windows)]
         me.poll(LastInput, POLL, send);
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        me.poll(linux::source(), POLL, send);
+        #[cfg(not(any(windows, target_os = "linux")))]
         let _ = send;
         me
     }
@@ -71,7 +75,17 @@ impl Idle {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tick.tick().await;
-                if let Some(now) = tracker.seen(source.idle_for()) {
+                // Off the async workers: a source may block (a D-Bus round trip on Linux).
+                let Ok((back, idle_for)) = tokio::task::spawn_blocking(move || {
+                    let idle_for = source.idle_for();
+                    (source, idle_for)
+                })
+                .await
+                else {
+                    return;
+                };
+                source = back;
+                if let Some(now) = tracker.seen(idle_for) {
                     idle.store(now, Ordering::Relaxed);
                     send(ClientFrame::Idle { idle: now });
                 }
@@ -112,6 +126,38 @@ impl InputSource for LastInput {
     }
 }
 
+/// Several input sources in order of preference: the first one that answers is used from then on (a source that
+/// stops answering changes nothing, like any unreadable read). Until one answers, each read tries them all again.
+pub struct FirstThatAnswers {
+    sources: Vec<Box<dyn InputSource>>,
+    chosen: Option<usize>,
+}
+
+impl FirstThatAnswers {
+    pub fn new(sources: Vec<Box<dyn InputSource>>) -> Self {
+        Self {
+            sources,
+            chosen: None,
+        }
+    }
+}
+
+impl InputSource for FirstThatAnswers {
+    fn idle_for(&mut self) -> Option<Duration> {
+        if let Some(i) = self.chosen {
+            return self.sources[i].idle_for();
+        }
+        self.sources.iter_mut().enumerate().find_map(|(i, s)| {
+            let idle_for = s.idle_for()?;
+            self.chosen = Some(i);
+            Some(idle_for)
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux;
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -133,6 +179,70 @@ mod tests {
         // any input clears it
         assert_eq!(t.seen(Some(Duration::from_secs(3))), Some(false));
         assert_eq!(t.seen(Some(Duration::from_secs(23))), None);
+    }
+
+    /// A scripted source: answers each read from its list (then `None`), counting the reads.
+    struct Scripted {
+        answers: std::collections::VecDeque<Option<Duration>>,
+        reads: Arc<Mutex<usize>>,
+    }
+
+    fn scripted(answers: &[Option<Duration>]) -> (Box<dyn InputSource>, Arc<Mutex<usize>>) {
+        let reads = Arc::new(Mutex::new(0));
+        let s = Scripted {
+            answers: answers.iter().copied().collect(),
+            reads: reads.clone(),
+        };
+        (Box::new(s), reads)
+    }
+
+    impl InputSource for Scripted {
+        fn idle_for(&mut self) -> Option<Duration> {
+            *self.reads.lock().unwrap() += 1;
+            self.answers.pop_front().flatten()
+        }
+    }
+
+    #[test]
+    fn the_first_source_that_answers_is_kept() {
+        let (none, none_reads) = scripted(&[None, None]);
+        let (later, later_reads) = scripted(&[None, Some(MIN), None, Some(2 * MIN)]);
+        let (last, last_reads) = scripted(&[Some(5 * MIN), Some(6 * MIN)]);
+        let mut first = FirstThatAnswers::new(vec![none, later, last]);
+        // nothing before `last` answers on the first read
+        assert_eq!(first.idle_for(), Some(5 * MIN));
+        // from then on only `last` is read, even once an earlier one would answer
+        assert_eq!(first.idle_for(), Some(6 * MIN));
+        // ...and when it can't answer, that changes nothing rather than falling back
+        assert_eq!(first.idle_for(), None);
+        assert_eq!(*none_reads.lock().unwrap(), 1);
+        assert_eq!(*later_reads.lock().unwrap(), 1);
+        assert_eq!(*last_reads.lock().unwrap(), 3);
+    }
+
+    #[test]
+    fn sources_are_tried_again_until_one_answers() {
+        let (a, a_reads) = scripted(&[None, None, Some(MIN), Some(2 * MIN)]);
+        let (b, b_reads) = scripted(&[None, None]);
+        let mut first = FirstThatAnswers::new(vec![a, b]);
+        assert_eq!(first.idle_for(), None);
+        assert_eq!(first.idle_for(), None);
+        assert_eq!(first.idle_for(), Some(MIN));
+        assert_eq!(first.idle_for(), Some(2 * MIN));
+        assert_eq!(*a_reads.lock().unwrap(), 4);
+        assert_eq!(*b_reads.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn no_source_answering_means_never_idle() {
+        let (a, _) = scripted(&[]);
+        let mut first = FirstThatAnswers::new(vec![a]);
+        let mut t = Tracker::default();
+        for _ in 0..5 {
+            assert_eq!(t.seen(first.idle_for()), None);
+        }
+        let mut empty = FirstThatAnswers::new(Vec::new());
+        assert_eq!(empty.idle_for(), None);
     }
 
     /// A fake source: the time since the last input on a fake clock that each read moves on by one poll.
