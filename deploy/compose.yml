@@ -55,6 +55,8 @@ services:
       PULSE_STEAM_API_KEY: ${PULSE_STEAM_API_KEY:-}
       # Deadlock (#390): an optional deadlock-api.com key (higher rate limits). Empty = the keyless limits.
       PULSE_DEADLOCK_API_KEY: ${PULSE_DEADLOCK_API_KEY:-}
+      # Sports score pings (#385): an API-Sports key (api-football and api-rugby). Empty = sports off.
+      PULSE_API_SPORTS_KEY: ${PULSE_API_SPORTS_KEY:-}
       RUST_LOG: info,sqlx=warn
     volumes:
       - ./data:/data

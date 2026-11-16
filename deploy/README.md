@@ -168,6 +168,16 @@ hour, server-wide), so post-match cards come slower when many people play. A key
 Server settings (none by default). If deadlock-api goes away, the server logs it once and the Deadlock bits hide until
 it's back.
 
+### Sports score pings (optional)
+
+Match-day cards, live scores and full time for the teams people follow (#385: the PSL, the URC and the Premier League)
+come from API-Sports and need its key: register at dashboard.api-football.com (one key covers api-football and
+api-rugby), put it in `/srv/pulse/.env` as `PULSE_API_SPORTS_KEY` and `just deploy`. Without it sports stay off and
+nothing is fetched. The free plan allows 100 requests a day per sport; the server stops at 90, reads each followed
+league's schedule about once a day and reads matches live only while a followed team plays, at most every five minutes
+(more slowly on a busy day). Check which seasons your plan can read: if it can't read the current one, Settings says so
+and scores stay paused. Each server's owner picks its Sports channel in Server settings (none by default).
+
 ## 7. Deploying and rolling back
 
 - Every push to `main` that passes CI builds `ghcr.io/greghofmeyr/pulse-server:<7-char commit>` and `:latest`
