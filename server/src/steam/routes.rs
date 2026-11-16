@@ -75,6 +75,7 @@ async fn unlink(State(s): State<AppState>, AuthUser(me): AuthUser) -> AppResult<
     }
     if store::unlink(&s.db, me).await? {
         s.steam.forget(me);
+        s.deadlock.forget(me);
         store::tell(&s, me).await;
     }
     Ok(Json(store::status(&s, me).await?))
@@ -98,6 +99,14 @@ async fn settings(
     }
     if req.share_hours == Some(true) {
         super::hours::kick_one(&s, me);
+    }
+    if req.deadlock_matches == Some(false) {
+        // matches played while it's off are never announced: the next read starts a new baseline
+        s.deadlock.forget(me);
+        sqlx::query("UPDATE deadlock_players SET last_match_id = NULL WHERE user_id = ?")
+            .bind(me.to_string())
+            .execute(&s.db)
+            .await?;
     }
     if req.share_join == Some(false) && s.hub.set_steam_join(me, None) {
         s.hub.sync_presence(&s.db, me).await;

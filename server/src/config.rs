@@ -56,12 +56,14 @@ pub struct Config {
     pub quote_clock: Option<chrono::DateTime<chrono::Utc>>,
     /// Steam linking and achievements (#379).
     pub steam: SteamConfig,
+    /// Deadlock stats from deadlock-api.com (#390).
+    pub deadlock: DeadlockConfig,
 }
 
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
     limits, stream_media_timeout, media_dir, media_min_free_bytes, updates_dir, totp_key, clips, embeds,
-    launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock, steam ;
+    launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock, steam, deadlock ;
     livekit_secret
 });
 
@@ -112,6 +114,64 @@ fn steam(get: impl Fn(&str) -> Option<String>) -> SteamConfig {
             .map(|k| k.trim().to_string())
             .filter(|k| !k.is_empty()),
         ..SteamConfig::default()
+    }
+}
+
+/// Deadlock (#390): match history, ranks, squad stats, assets and patch notes from deadlock-api.com (free, unofficial).
+/// Works without a key at the lower rate limits; every read needs a linked Steam account (#379).
+#[derive(Clone)]
+pub struct DeadlockConfig {
+    /// `PULSE_DEADLOCK_API_KEY`; `None` (unset or empty) = the keyless limits. A secret: never logged.
+    pub api_key: Option<String>,
+    /// deadlock-api's base (`https://api.deadlock-api.com`); tests point it at a fake.
+    pub api_base: String,
+    /// The only hosts hero and rank art is fetched from (deadlock-api names the URLs; anything else is refused).
+    pub art_hosts: Vec<String>,
+    /// How often the poller wakes (1 min): who is due is decided each round.
+    pub poll_every: Duration,
+    /// How often someone playing Deadlock now (or in the last while) has their match history read (4 min).
+    pub active_every: Duration,
+    /// How often everyone else's is (30 min).
+    pub idle_every: Duration,
+    /// How often everyone's rank is read, in one batch call (30 min), and patch notes checked.
+    pub rank_every: Duration,
+    /// `SteamID64 − this` = Deadlock's account id ([`crate::deadlock::STEAM_ID64_BASE`]); tests use their own so
+    /// obviously fake SteamIDs convert.
+    pub steam_id_base: u64,
+    /// The first wait after deadlock-api fails (30 s), doubling per failure in a row up to an hour; tests shorten it.
+    pub retry_base: Duration,
+}
+
+pulse_protocol::redacting_debug!(DeadlockConfig {
+    api_base, art_hosts, poll_every, active_every, idle_every, rank_every, steam_id_base, retry_base ; api_key
+});
+
+impl Default for DeadlockConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            api_base: "https://api.deadlock-api.com".into(),
+            art_hosts: vec![
+                "assets-bucket.deadlock-api.com".into(),
+                "api.deadlock-api.com".into(),
+            ],
+            poll_every: Duration::from_secs(60),
+            active_every: Duration::from_secs(240),
+            idle_every: Duration::from_secs(1800),
+            rank_every: Duration::from_secs(1800),
+            steam_id_base: crate::deadlock::STEAM_ID64_BASE,
+            retry_base: Duration::from_secs(30),
+        }
+    }
+}
+
+/// The Deadlock settings from `PULSE_DEADLOCK_API_KEY`: unset or blank = no key (the lower limits).
+fn deadlock(get: impl Fn(&str) -> Option<String>) -> DeadlockConfig {
+    DeadlockConfig {
+        api_key: get("PULSE_DEADLOCK_API_KEY")
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty()),
+        ..DeadlockConfig::default()
     }
 }
 
@@ -195,6 +255,7 @@ impl Config {
             giphy: giphy(|k| std::env::var(k).ok())?,
             quote_clock: None,
             steam: steam(|k| std::env::var(k).ok()),
+            deadlock: deadlock(|k| std::env::var(k).ok()),
         })
     }
 }
@@ -438,6 +499,18 @@ mod tests {
     }
 
     #[test]
+    fn deadlock_env() {
+        assert!(deadlock(|_| None).api_key.is_none());
+        assert!(deadlock(|_| Some("  ".into())).api_key.is_none());
+        let set = deadlock(|_| Some(" dl-k3y ".into()));
+        assert_eq!(set.api_key.as_deref(), Some("dl-k3y"));
+        assert!(
+            !format!("{set:?}").contains("dl-k3y"),
+            "the key is redacted"
+        );
+    }
+
+    #[test]
     fn launch_date_env() {
         assert!(launch_date(None).unwrap().is_none());
         assert!(launch_date(Some("")).unwrap().is_none());
@@ -517,6 +590,10 @@ mod tests {
             steam: SteamConfig {
                 api_key: Some("SECRET-STEAM".into()),
                 ..SteamConfig::default()
+            },
+            deadlock: DeadlockConfig {
+                api_key: Some("SECRET-DEADLOCK".into()),
+                ..DeadlockConfig::default()
             },
         };
         let d = format!("{cfg:?}");

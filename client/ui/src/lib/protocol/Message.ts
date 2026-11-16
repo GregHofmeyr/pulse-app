@@ -4,6 +4,7 @@ import type { Attachment } from "./Attachment";
 import type { CallLine } from "./CallLine";
 import type { ChannelId } from "./ChannelId";
 import type { Clip } from "./Clip";
+import type { DeadlockCard } from "./DeadlockCard";
 import type { Gif } from "./Gif";
 import type { LinkEmbed } from "./LinkEmbed";
 import type { MessageId } from "./MessageId";
@@ -100,4 +101,9 @@ caption_is_fallback?: boolean,
 /**
  * Set on a Steam achievement card (#379), a system line in a server's Achievements channel.
  */
-achievement?: AchievementCard, };
+achievement?: AchievementCard, 
+/**
+ * Set on a Deadlock card (#390), a system line in a server's Deadlock channel: a match, the weekly rank movers or
+ * a patch.
+ */
+deadlock?: DeadlockCard, };

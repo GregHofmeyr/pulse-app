@@ -198,6 +198,22 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::SetAchievementsChannelRequest::export_all(&cfg)?;
     rest::AchievementCard::export_all(&cfg)?;
     rest::AchievementEntry::export_all(&cfg)?;
+    rest::DeadlockRank::export_all(&cfg)?;
+    rest::DeadlockMatchPlayer::export_all(&cfg)?;
+    rest::DeadlockMatchCard::export_all(&cfg)?;
+    rest::DeadlockMover::export_all(&cfg)?;
+    rest::DeadlockMoversCard::export_all(&cfg)?;
+    rest::DeadlockHeroIcon::export_all(&cfg)?;
+    rest::DeadlockPatchCard::export_all(&cfg)?;
+    rest::DeadlockCard::export_all(&cfg)?;
+    rest::DeadlockChannel::export_all(&cfg)?;
+    rest::SetDeadlockChannelRequest::export_all(&cfg)?;
+    rest::DeadlockRanks::export_all(&cfg)?;
+    rest::DeadlockRankEntry::export_all(&cfg)?;
+    rest::DeadlockLastMatch::export_all(&cfg)?;
+    rest::DeadlockHeroLine::export_all(&cfg)?;
+    rest::DeadlockDuo::export_all(&cfg)?;
+    rest::DeadlockProfile::export_all(&cfg)?;
     Ok(())
 }
 

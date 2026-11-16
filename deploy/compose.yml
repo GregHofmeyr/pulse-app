@@ -53,6 +53,8 @@ services:
       GIPHY_RATING: ${GIPHY_RATING:-pg-13}
       # Steam achievements (#379): the Steam Web API key. Empty = achievements off (linking still works).
       PULSE_STEAM_API_KEY: ${PULSE_STEAM_API_KEY:-}
+      # Deadlock (#390): an optional deadlock-api.com key (higher rate limits). Empty = the keyless limits.
+      PULSE_DEADLOCK_API_KEY: ${PULSE_DEADLOCK_API_KEY:-}
       RUST_LOG: info,sqlx=warn
     volumes:
       - ./data:/data

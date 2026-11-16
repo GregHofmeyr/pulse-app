@@ -130,6 +130,10 @@ fn from_row(r: Row) -> AppResult<Message> {
             }
             _ => None,
         },
+        deadlock: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => super::system::deadlock(p).map(Box::new),
+            _ => None,
+        },
     })
 }
 
@@ -543,6 +547,7 @@ async fn deliver(s: &AppState, me: UserId, ch: &Channel, out: Outgoing) -> AppRe
         attachments,
         caption_is_fallback,
         achievement: None,
+        deadlock: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -978,6 +983,7 @@ mod tests {
             attachments: vec![],
             caption_is_fallback: false,
             achievement: None,
+            deadlock: None,
         }
     }
 

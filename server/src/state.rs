@@ -21,4 +21,6 @@ pub struct AppState {
     pub embeds: Arc<crate::embeds::Unfurler>,
     /// Steam linking and achievements (#379): sign-ins in progress, the poller's memory, the Web API client.
     pub steam: crate::steam::Steam,
+    /// Deadlock stats (#390): the deadlock-api client, its health, and the poller's memory.
+    pub deadlock: crate::deadlock::Deadlock,
 }

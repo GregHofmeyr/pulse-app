@@ -7,6 +7,7 @@ pub mod calls;
 pub mod clips;
 pub mod config;
 pub mod db;
+pub mod deadlock;
 pub mod dms;
 pub mod embeds;
 pub mod emoji;
@@ -90,6 +91,7 @@ pub fn router(state: AppState) -> Router {
         .merge(models::router())
         .merge(wheels::routes::router())
         .merge(steam::routes::router())
+        .merge(deadlock::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
@@ -130,6 +132,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
         limits: std::sync::Arc::new(limits::Limits::new(&cfg.limits)),
         embeds: std::sync::Arc::new(embeds::Unfurler::new(&cfg.embeds)),
         steam: steam::Steam::new(&cfg.steam),
+        deadlock: deadlock::Deadlock::new(&cfg.deadlock),
         cfg: std::sync::Arc::new(cfg),
         hub: hub.clone(),
         voice: voice::VoiceState::default(),
@@ -160,6 +163,8 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     // Steam achievements (#379): the poller, and any backfill a restart cut off.
     steam::poller::spawn(state.clone());
     steam::backfill::kick(&state);
+    // Deadlock (#390): match cards, ranks, rank movers and patch notes from deadlock-api.com
+    deadlock::poller::spawn(state.clone());
     // badges whose Steam tiers changed reach those whose stored games already earn them
     {
         let s = state.clone();

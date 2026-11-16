@@ -159,6 +159,15 @@ need a Steam Web API key: get one at steamcommunity.com/dev/apikey, put it in `/
 Each server's owner then picks its Achievements channel in Server settings (none by default). The server makes at
 most 50,000 Steam calls a day.
 
+### Deadlock (optional)
+
+Deadlock cards, ranks and squad stats (#390) come from deadlock-api.com (free, unofficial) for anyone who linked Steam;
+they need no setup. Without a key the server keeps to deadlock-api's keyless limits (about 8 match-history reads an
+hour, server-wide), so post-match cards come slower when many people play. A key raises that to about 240: put it in
+`/srv/pulse/.env` as `PULSE_DEADLOCK_API_KEY` and `just deploy`. Each server's owner picks its Deadlock channel in
+Server settings (none by default). If deadlock-api goes away, the server logs it once and the Deadlock bits hide until
+it's back.
+
 ## 7. Deploying and rolling back
 
 - Every push to `main` that passes CI builds `ghcr.io/greghofmeyr/pulse-server:<7-char commit>` and `:latest`

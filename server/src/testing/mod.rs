@@ -1,5 +1,6 @@
 //! Test harness: a real server on an ephemeral port with a fresh temp-file SQLite.
 
+pub mod fake_deadlock;
 pub mod fake_giphy;
 pub mod fake_provider;
 pub mod fake_s3;
@@ -27,6 +28,8 @@ pub struct TestApp {
     pub embeds: Arc<crate::embeds::Unfurler>,
     /// The server's Steam state (the same one its routes use).
     pub steam: crate::steam::Steam,
+    /// The server's Deadlock state (the same one its routes use).
+    pub deadlock: crate::deadlock::Deadlock,
     /// The fake S3 behind `cfg.clips`, unless the test brought its own store or none.
     pub s3: Option<fake_s3::FakeS3>,
     _dir: tempfile::TempDir,
@@ -56,6 +59,7 @@ impl TestApp {
             limits: self.limits.clone(),
             embeds: self.embeds.clone(),
             steam: self.steam.clone(),
+            deadlock: self.deadlock.clone(),
             r2: self
                 .cfg
                 .clips
@@ -93,6 +97,12 @@ pub fn test_config() -> Config {
         steam: crate::config::SteamConfig {
             api_base: "http://127.0.0.1:1".into(),
             openid_endpoint: "http://127.0.0.1:1/openid/login".into(),
+            ..Default::default()
+        },
+        // deadlock-api unreachable unless a test points it at `fake_deadlock`
+        deadlock: crate::config::DeadlockConfig {
+            api_base: "http://127.0.0.1:1".into(),
+            art_hosts: vec![],
             ..Default::default()
         },
     }
@@ -166,9 +176,11 @@ async fn spawn_inner(mut cfg: Config, dir: tempfile::TempDir, with_clips: bool) 
     let limits = Arc::new(crate::limits::Limits::new(&cfg.limits));
     let embeds = Arc::new(crate::embeds::Unfurler::new(&cfg.embeds));
     let steam = crate::steam::Steam::new(&cfg.steam);
+    let deadlock = crate::deadlock::Deadlock::new(&cfg.deadlock);
     let state = AppState {
         embeds: embeds.clone(),
         steam: steam.clone(),
+        deadlock: deadlock.clone(),
         r2: cfg
             .clips
             .as_ref()
@@ -199,6 +211,7 @@ async fn spawn_inner(mut cfg: Config, dir: tempfile::TempDir, with_clips: bool) 
         limits,
         embeds,
         steam,
+        deadlock,
         s3,
         _dir: dir,
     }

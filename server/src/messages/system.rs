@@ -3,8 +3,8 @@
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId};
 use pulse_protocol::rest::{
-    AchievementCard, CallLine, Message, MessageKind, PinLine, PollEnded, QotyCard, StageShareLine,
-    WheelSpin,
+    AchievementCard, CallLine, DeadlockCard, Message, MessageKind, PinLine, PollEnded, QotyCard,
+    StageShareLine, WheelSpin,
 };
 use sqlx::SqliteConnection;
 
@@ -73,6 +73,7 @@ pub async fn insert(
         attachments: vec![],
         caption_is_fallback: false,
         achievement: achievement(&stored).map(Box::new),
+        deadlock: deadlock(&stored).map(Box::new),
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
         .bind(msg.id.to_string())
@@ -209,6 +210,25 @@ pub fn achievement(payload: &str) -> Option<AchievementCard> {
     serde_json::from_value(v).ok()
 }
 
+/// The payload `type` of a Deadlock card (#390).
+pub const DEADLOCK: &str = "deadlock";
+
+/// A Deadlock card's stored payload.
+pub fn deadlock_payload(card: &DeadlockCard) -> AppResult<serde_json::Value> {
+    let mut v = serde_json::to_value(card).map_err(anyhow::Error::from)?;
+    v["type"] = DEADLOCK.into();
+    Ok(v)
+}
+
+/// The Deadlock card in a stored payload, if it is one.
+pub fn deadlock(payload: &str) -> Option<DeadlockCard> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    if v.get("type")?.as_str()? != DEADLOCK {
+        return None;
+    }
+    serde_json::from_value(v).ok()
+}
+
 /// "a", "a and b", "a, b and c".
 pub fn join_names(names: &[String]) -> String {
     match names {
@@ -311,6 +331,30 @@ mod tests {
         assert_eq!(achievement(&stored), Some(card));
         assert_eq!(poll_ended(&stored), None);
         assert_eq!(achievement(r#"{"type":"pin"}"#), None);
+    }
+    #[test]
+    fn a_deadlock_card_round_trips_through_its_payload() {
+        use pulse_protocol::rest::{DeadlockMatchCard, DeadlockPatchCard};
+        let patch = DeadlockCard::Patch(DeadlockPatchCard {
+            title: "Gameplay Update".into(),
+            link: "https://example.test/notes".into(),
+            published_at: "2026-11-05T19:58:14Z".into(),
+            summary: Some("Haze: more haze.".into()),
+            heroes: vec![],
+        });
+        let stored = deadlock_payload(&patch).unwrap().to_string();
+        assert_eq!(deadlock(&stored), Some(patch));
+        let m = DeadlockCard::Match(DeadlockMatchCard {
+            match_id: 50_000_001,
+            duration_s: 1800,
+            players: vec![],
+        });
+        assert_eq!(
+            deadlock(&deadlock_payload(&m).unwrap().to_string()),
+            Some(m)
+        );
+        assert_eq!(deadlock(r#"{"type":"achievement"}"#), None);
+        assert_eq!(achievement(&stored), None);
     }
 
     #[test]

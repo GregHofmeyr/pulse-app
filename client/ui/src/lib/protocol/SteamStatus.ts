@@ -16,4 +16,8 @@ achievements_available: boolean,
 /**
  * Your linked account; `None` when you haven't linked one.
  */
-link: SteamLinked | null, };
+link: SteamLinked | null, 
+/**
+ * Deadlock stats (#390) can be read right now: deadlock-api answers. Absent from older servers: no.
+ */
+deadlock_available?: boolean, };

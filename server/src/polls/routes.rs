@@ -128,6 +128,7 @@ async fn create(
         attachments: vec![],
         caption_is_fallback: false,
         achievement: None,
+        deadlock: None,
     };
     let stored = Stored {
         message_id: msg.id,

@@ -339,6 +339,7 @@ async fn confirm(
         attachments: vec![],
         caption_is_fallback: false,
         achievement: None,
+        deadlock: None,
         embeds: vec![],
         call: None,
         wheel: None,
