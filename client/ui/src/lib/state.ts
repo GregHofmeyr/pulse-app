@@ -1099,6 +1099,14 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       if (list.some((m) => m.user.id === e.d.member.user.id)) return s
       return { ...s, members: { ...s.members, [e.d.server_id]: [...list, e.d.member] } }
     }
+    // Its owner handed a server to another member (#418).
+    case 'ServerOwnerChanged': {
+      const at = s.servers.findIndex((x) => x.id === e.d.server_id)
+      if (at < 0 || s.servers[at].owner_id === e.d.owner_id) return s
+      const servers = s.servers.slice()
+      servers[at] = { ...servers[at], owner_id: e.d.owner_id }
+      return { ...s, servers }
+    }
     // Someone left a server or was removed from it (#371). For you, its counts go from your rail too (the server
     // stays listed: you can join it again).
     case 'MemberLeft': {

@@ -348,3 +348,67 @@ async fn removing_someone_in_a_call_disconnects_them() {
     .await;
     assert_eq!(r.status(), 403);
 }
+
+async fn transfer(app: &TestApp, token: &str, server: ServerId, to: UserId) -> u16 {
+    app.http
+        .put(app.url(&format!("/servers/{server}/owner")))
+        .bearer_auth(token)
+        .json(&json!({ "user_id": to }))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+async fn owner(w: &World) -> Option<UserId> {
+    let servers: Vec<pulse_protocol::rest::Server> = get_json(&w.app, &w.kim.1, "/servers").await;
+    servers
+        .into_iter()
+        .find(|s| s.id == w.server)
+        .and_then(|s| s.owner_id)
+}
+
+#[tokio::test]
+async fn the_owner_hands_the_server_over_and_can_then_leave() {
+    let w = world_with(spawn().await).await;
+    // only the owner, only to another member
+    assert_eq!(transfer(&w.app, &w.sam.1, w.server, w.kim.0).await, 403);
+    assert_eq!(transfer(&w.app, &w.alex.1, w.server, w.alex.0).await, 400);
+    assert_eq!(transfer(&w.app, &w.alex.1, w.server, w.jo.0).await, 404);
+    assert_eq!(owner(&w).await, Some(w.alex.0));
+
+    let mut kim_rx = w.app.hub.register(w.kim.0, String::new()).rx;
+    assert_eq!(transfer(&w.app, &w.alex.1, w.server, w.sam.0).await, 204);
+    let server = w.server;
+    let (to, from) = wait_for(&mut kim_rx, |e| match e {
+        Event::ServerOwnerChanged {
+            server_id,
+            owner_id,
+            previous_owner_id,
+        } if server_id == server => Some((owner_id, previous_owner_id)),
+        _ => None,
+    })
+    .await;
+    assert_eq!((to, from), (w.sam.0, w.alex.0));
+    assert_eq!(owner(&w).await, Some(w.sam.0));
+
+    // the old owner is a member like any other now: no second hand-over, no removing, and they may leave
+    assert_eq!(transfer(&w.app, &w.alex.1, w.server, w.kim.0).await, 403);
+    assert_eq!(remove(&w.app, &w.alex.1, w.server, w.kim.0).await, 403);
+    assert_eq!(leave(&w.app, &w.sam.1, w.server).await.status(), 403);
+    assert_eq!(leave(&w.app, &w.alex.1, w.server).await.status(), 204);
+    // the new owner removes people
+    assert_eq!(remove(&w.app, &w.sam.1, w.server, w.kim.0).await, 204);
+    assert_eq!(members(&w).await, vec![w.sam.0]);
+}
+
+#[tokio::test]
+async fn a_hand_over_respects_the_server_cap() {
+    let w = world_with(spawn().await).await;
+    for i in 0..pulse_server::limits::caps::SERVERS_PER_USER {
+        create_server(&w.app, &w.sam.1, &format!("Sam's {i}")).await;
+    }
+    assert_eq!(transfer(&w.app, &w.alex.1, w.server, w.sam.0).await, 400);
+    assert_eq!(owner(&w).await, Some(w.alex.0));
+}

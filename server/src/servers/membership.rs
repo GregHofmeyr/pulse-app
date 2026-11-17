@@ -1,7 +1,7 @@
 //! Leaving a server, and its owner removing someone from it (#371).
 //!
-//! Anyone but the owner may leave; the owner may remove anyone else. There is no ownership transfer, so the owner can't
-//! leave (they can delete the server instead, #184). Both take the same way out ([`take_out`]): the membership row
+//! Anyone but the owner may leave; the owner may remove anyone else. The owner can't leave while they own it: they hand
+//! it to another member first ([`transfer`], #418), or delete it (#184). Leaving and removing take the same way out ([`take_out`]): the membership row
 //! goes, with their read points, replies seen, inbox reads and reminders in its channels (their inbox drops the
 //! server's mentions, which only count for members), and everyone hears `MemberLeft`. Anyone in one of its calls is
 //! taken out of it (voice state, their stream, watching, stage share and watch party place), and their LiveKit
@@ -13,12 +13,13 @@
 //!
 //! Nothing stops a rejoin: servers are public to the group, and Join server works as before, starting at "all read".
 
-use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, post};
+use axum::routing::{delete, post, put};
+use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ServerId, UserId};
+use pulse_protocol::rest::TransferServerRequest;
 
 use crate::AppState;
 use crate::auth::AuthUser;
@@ -29,6 +30,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/servers/{id}/leave", post(leave))
         .route("/servers/{id}/members/{user}", delete(remove))
+        .route("/servers/{id}/owner", put(transfer))
 }
 
 /// The owner (creator) of `server`.
@@ -52,7 +54,7 @@ async fn leave(
     server_exists(&s.db, id).await?;
     if owner_of(&s, id).await? == me {
         return Err(AppError::ForbiddenMsg(
-            "The owner can't leave their own server (there's no handing it over yet): delete it instead.".into(),
+            "The owner can't leave their own server: hand it to someone else first (Server settings, Transfer ownership), or delete it.".into(),
         ));
     }
     take_out(&s, id, me, None).await?;
@@ -81,6 +83,77 @@ async fn remove(
         ));
     }
     take_out(&s, id, user, Some(me)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `PUT /servers/{id}/owner`: its owner hands the server to another of its members (#418). 403 for anyone but the
+/// owner, 400 for themselves or someone who already owns as many servers as anyone may create, 404 when the new owner
+/// isn't in it. One write transaction: the owner is re-checked under the write lock, so of two racing transfers only
+/// the first lands (the second is no longer the owner's). Everyone hears `ServerOwnerChanged`; from then on the old
+/// owner is a member like any other, and may leave.
+async fn transfer(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ServerId>,
+    Json(req): Json<TransferServerRequest>,
+) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    server_exists(&s.db, id).await?;
+    let to = req.user_id;
+    if to == me {
+        return Err(AppError::BadRequest("you already own this server".into()));
+    }
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    server_live_in(&mut tx, id).await?; // deleted since the check above (#287)
+    let owner: String = sqlx::query_scalar("SELECT created_by FROM servers WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_one(&mut *tx)
+        .await?;
+    if owner != me.to_string() {
+        return Err(AppError::ForbiddenMsg(
+            "Only the server's owner can hand it over.".into(),
+        ));
+    }
+    let member: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?")
+            .bind(id.to_string())
+            .bind(to.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+    if member.is_none() {
+        return Err(AppError::NotFound);
+    }
+    // Owning counts against the servers they may create (deleted ones too, as creating counts them).
+    let theirs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM servers WHERE created_by = ?")
+        .bind(to.to_string())
+        .fetch_one(&mut *tx)
+        .await?;
+    if theirs >= crate::limits::caps::SERVERS_PER_USER {
+        return Err(AppError::BadRequest(format!(
+            "they already own {} servers, the most anyone may",
+            crate::limits::caps::SERVERS_PER_USER
+        )));
+    }
+    sqlx::query("UPDATE servers SET created_by = ? WHERE id = ? AND created_by = ?")
+        .bind(to.to_string())
+        .bind(id.to_string())
+        .bind(me.to_string())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    tracing::info!(server = %id, from = %me, to = %to, "server handed over");
+    s.hub
+        .publish(
+            &s.db,
+            Event::ServerOwnerChanged {
+                server_id: id,
+                owner_id: to,
+                previous_owner_id: me,
+            },
+        )
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 

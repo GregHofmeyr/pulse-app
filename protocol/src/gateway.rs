@@ -336,6 +336,13 @@ pub enum Event {
         server_id: ServerId,
         member: Member,
     },
+    /// Its owner handed a server to another of its members (#418). Everyone (servers are public): the server's
+    /// `owner_id` is now `owner_id`. Clients from before it skip it and catch up on their next Ready.
+    ServerOwnerChanged {
+        server_id: ServerId,
+        owner_id: UserId,
+        previous_owner_id: UserId,
+    },
     /// Someone is no longer in a server (#371): they left, or its owner removed them (`removed_by`). Everyone, like
     /// `MemberJoined`: member lists drop them, and the person themselves sees the server as one they aren't in (its
     /// counts and calls go from their rail). Clients from before it skip it and catch up on their next Ready.
@@ -886,6 +893,7 @@ impl Event {
             | Self::ChannelDeleted { .. }
             | Self::LayoutChanged { .. }
             | Self::MemberJoined { .. }
+            | Self::ServerOwnerChanged { .. }
             | Self::MemberLeft { .. }
             | Self::MemberUpdated { .. }
             | Self::UserCreated { .. }

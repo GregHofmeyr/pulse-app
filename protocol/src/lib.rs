@@ -35,6 +35,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::DeleteServerRequest::export_all(&cfg)?;
     rest::DeletedServer::export_all(&cfg)?;
     rest::CreateServerRequest::export_all(&cfg)?;
+    rest::TransferServerRequest::export_all(&cfg)?;
     rest::CreateChannelRequest::export_all(&cfg)?;
     rest::Category::export_all(&cfg)?;
     rest::ChannelPlacement::export_all(&cfg)?;

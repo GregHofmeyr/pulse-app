@@ -373,6 +373,7 @@ pub fn run() {
             commands::join_server,
             commands::leave_server,
             commands::remove_server_member,
+            commands::transfer_server,
             commands::list_channels,
             commands::list_members,
             commands::list_messages,

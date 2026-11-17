@@ -1199,6 +1199,17 @@ pub async fn leave_server(
 }
 
 #[tauri::command]
+pub async fn transfer_server(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    user_id: UserId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.transfer_server(&token, server_id, user_id).await)
+}
+
+#[tauri::command]
 pub async fn remove_server_member(
     app: AppHandle,
     core: State<'_, Core>,

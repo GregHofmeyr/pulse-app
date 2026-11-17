@@ -636,6 +636,12 @@ pub struct CreateServerRequest {
     pub name: String,
 }
 
+/// `PUT /servers/{id}/owner` (#418): its owner hands the server to another of its members.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct TransferServerRequest {
+    pub user_id: UserId,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct CreateChannelRequest {
     pub kind: ChannelKind,

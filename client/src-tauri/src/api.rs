@@ -25,9 +25,10 @@ use pulse_protocol::rest::{
     SetShowcaseRequest, SetStatusRequest, Sound, SpinAgainRequest, SpinWheelRequest, StageShare,
     StageShareRequest, StartAttachmentRequest, StartQotyRequest, StartWatchPartyRequest, Status,
     StreamInfo, StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest,
-    TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse,
-    TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, UpdateWheelRequest, UploadedPart,
-    User, VoiceTokenResponse, WatchParty, WatchPartyAction, WatchRequest, Wheel,
+    TransferServerRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
+    TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest,
+    UpdateWheelRequest, UploadedPart, User, VoiceTokenResponse, WatchParty, WatchPartyAction,
+    WatchRequest, Wheel,
 };
 use serde::de::DeserializeOwned;
 
@@ -939,6 +940,24 @@ impl Api {
             self.http
                 .delete(format!("{}/servers/{server}/members/{user}", self.base))
                 .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Hand a server to another of its members (#418): its owner only.
+    pub async fn transfer_server(
+        &self,
+        token: &str,
+        server: ServerId,
+        user: UserId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .put(format!("{}/servers/{server}/owner", self.base))
+                .bearer_auth(token)
+                .json(&TransferServerRequest { user_id: user })
                 .send()
                 .await,
         )
@@ -4221,6 +4240,24 @@ mod tests {
         api.remove_server_member(&alex, s.id, sam_id).await.unwrap();
         let members = api.members(&alex, s.id).await.unwrap();
         assert!(members.iter().all(|m| m.user.id != sam_id));
+    }
+
+    #[tokio::test]
+    async fn handing_a_server_over() {
+        let app = testing::spawn().await;
+        let (alex_id, alex) = testing::register(&app, "alex").await;
+        let (sam_id, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        api.join_server(&sam, s.id).await.unwrap();
+        assert!(api.transfer_server(&sam, s.id, sam_id).await.is_err());
+        api.transfer_server(&alex, s.id, sam_id).await.unwrap();
+        let listed = api.servers(&alex).await.unwrap();
+        let main = listed.iter().find(|x| x.id == s.id).unwrap();
+        assert_eq!(main.owner_id, Some(sam_id));
+        // the old owner may leave now
+        api.leave_server(&alex, s.id).await.unwrap();
+        assert!(api.transfer_server(&alex, s.id, alex_id).await.is_err());
     }
 
     #[tokio::test]
