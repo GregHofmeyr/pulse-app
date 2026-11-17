@@ -773,7 +773,9 @@ async fn edit(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
-    let (mut msg, _) = own_message(&s.db, me, id).await?;
+    let (mut msg, ch) = own_message(&s.db, me, id).await?;
+    // left the server, or removed from it: their words there are no longer theirs to change (deleting stays allowed)
+    crate::access::require_member_of(&s.db, me, &ch).await?;
     if msg.quote.is_some() {
         return Err(AppError::BadRequest(
             "quotes can't be edited like messages".into(),
@@ -828,6 +830,7 @@ async fn edit(
     let mut tx = crate::db::begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, msg.channel_id).await?; // channel deleted since (#109)
     crate::access::open_in(&mut tx, msg.channel_id).await?; // archived (#303): read-only
+    crate::access::member_of_in(&mut tx, me, msg.channel_id).await?; // left or removed since
     // The text it replaces is kept (#301), read under the write lock so two quick edits each keep the one before.
     let edited_at = msg.edited_at.clone().unwrap_or_default();
     super::history::record(&mut tx, id, &msg.content, &edited_at).await?;

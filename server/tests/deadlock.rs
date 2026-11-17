@@ -717,3 +717,24 @@ async fn unlinking_forgets_what_was_read() {
     assert_eq!(r.status(), 200);
     assert_eq!(count(app, "SELECT COUNT(*) FROM deadlock_players").await, 1);
 }
+
+/// An archived channel (#303) posts nothing, so it can't be picked as the Deadlock channel.
+#[tokio::test]
+async fn an_archived_channel_cant_be_the_deadlock_channel() {
+    let (app, _fake) = setup().await;
+    let (_, alex) = register(&app, "alex").await;
+    let server = create_server(&app, &alex, "Squad").await;
+    let general = general(&app, &alex, server.id).await.id;
+    let r = app
+        .http
+        .put(app.url(&format!("/channels/{general}/archive")))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    assert_eq!(
+        set_channel(&app, &alex, server.id, json!({ "channel_id": general })).await,
+        403
+    );
+}

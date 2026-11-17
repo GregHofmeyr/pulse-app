@@ -71,7 +71,7 @@ pub async fn tick(s: &AppState) {
             playing.insert(steam_id, (user, s.steam.app_of(user, Some(&p))));
         }
     }
-    let mut found: HashMap<UserId, SteamJoin> = HashMap::new();
+    let mut found: HashMap<UserId, (String, SteamJoin)> = HashMap::new();
     let mut read: HashSet<UserId> = HashSet::new();
     let ids: Vec<&str> = playing.keys().map(String::as_str).collect();
     for chunk in ids.chunks(SUMMARIES_MAX) {
@@ -86,7 +86,7 @@ pub async fn tick(s: &AppState) {
                     if let Some((user, app)) = playing.get(&g.steam_id)
                         && let Some(j) = join_of(&g, &g.steam_id, *app)
                     {
-                        found.insert(*user, j);
+                        found.insert(*user, (g.steam_id.clone(), j));
                     }
                 }
             }
@@ -105,8 +105,8 @@ pub async fn tick(s: &AppState) {
             changed.push(user);
         }
     }
-    for (user, j) in found {
-        if s.hub.set_steam_join(user, Some(j)) {
+    for (user, (steam_id, j)) in found {
+        if set_if_still_shared(s, user, &steam_id, j).await {
             changed.push(user);
         }
     }
@@ -115,9 +115,79 @@ pub async fn tick(s: &AppState) {
     }
 }
 
+/// Show `j` as `user`'s Join, only if they're still linked to `steam_id` and still share Join: the round read them
+/// before asking Steam, and they may have switched it off or unlinked while it answered. Checked and set under the
+/// join gate, which Settings holds while it switches Join off (or unlinks) and clears it, so neither can slip between.
+/// Whether what's shown changed.
+async fn set_if_still_shared(s: &AppState, user: UserId, steam_id: &str, j: SteamJoin) -> bool {
+    let _gate = s.steam.join_gate().await;
+    let still: Result<Option<i64>, _> = sqlx::query_scalar(
+        "SELECT 1 FROM steam_links WHERE user_id = ? AND steam_id = ? AND share_join = 1",
+    )
+    .bind(user.to_string())
+    .bind(steam_id)
+    .fetch_optional(&s.db)
+    .await;
+    match still {
+        Ok(Some(_)) => s.hub.set_steam_join(user, Some(j)),
+        Ok(None) => false,
+        Err(e) => {
+            tracing::warn!(error = %e, "Steam link not re-read for Join");
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{register, spawn};
+
+    /// A round read sam as sharing Join, then (while Steam answered) he switched it off or unlinked: the Join it found
+    /// isn't shown.
+    #[tokio::test]
+    async fn a_join_found_after_its_switch_went_off_or_its_link_went_is_dropped() {
+        let app = spawn().await;
+        let s = app.state();
+        let (sam, _) = register(&app, "sam").await;
+        let j = SteamJoin::Lobby {
+            app_id: 440,
+            lobby_id: LOBBY.into(),
+            steam_id: ALEX.into(),
+        };
+        let link = |share: bool| {
+            sqlx::query(
+                "INSERT INTO steam_links (user_id, steam_id, linked_at, backfill, share_join) VALUES (?, ?, ?, 'done', ?)
+                 ON CONFLICT (user_id) DO UPDATE SET share_join = excluded.share_join",
+            )
+            .bind(sam.to_string())
+            .bind(ALEX)
+            .bind("2026-01-01T00:00:00.000Z")
+            .bind(share)
+            .execute(&app.db)
+        };
+        // still shared: shown
+        link(true).await.unwrap();
+        assert!(set_if_still_shared(&s, sam, ALEX, j.clone()).await);
+        assert_eq!(s.hub.steam_joiners(), vec![sam]);
+        s.hub.set_steam_join(sam, None);
+        // switched off since the round read it
+        link(false).await.unwrap();
+        assert!(!set_if_still_shared(&s, sam, ALEX, j.clone()).await);
+        assert!(s.hub.steam_joiners().is_empty());
+        // linked to another account since
+        link(true).await.unwrap();
+        assert!(!set_if_still_shared(&s, sam, "76500000000000002", j.clone()).await);
+        assert!(s.hub.steam_joiners().is_empty());
+        // unlinked since
+        sqlx::query("DELETE FROM steam_links WHERE user_id = ?")
+            .bind(sam.to_string())
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert!(!set_if_still_shared(&s, sam, ALEX, j).await);
+        assert!(s.hub.steam_joiners().is_empty());
+    }
 
     /// Obviously fake: lobby account 1.
     const LOBBY: &str = "109775240917155841";

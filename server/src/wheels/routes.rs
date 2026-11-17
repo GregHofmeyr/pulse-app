@@ -291,6 +291,7 @@ async fn spin_quietly(
     Json(req): Json<SpinWheelRequest>,
 ) -> AppResult<(StatusCode, Json<QuietSpin>)> {
     let ch = spin_channel(&s, me, id).await?;
+    crate::access::require_open(&ch)?; // archived (#303): no spins, quiet ones included
     let Picked {
         wheel_id,
         name,

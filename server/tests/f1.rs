@@ -817,3 +817,49 @@ async fn the_owner_can_close_predictions_at_qualifying() {
         200
     );
 }
+
+/// An archived channel (#303) is read-only: no new or changed predictions on its card, and it can't be picked as the
+/// F1 channel.
+#[tokio::test]
+async fn an_archived_channel_takes_no_predictions_and_cant_be_picked() {
+    let (app, fake, [alex, sam, ..], server, g) = setup().await;
+    let lights_out = Utc::now() + TimeDelta::days(2);
+    fake.set(
+        "current.json",
+        schedule(vec![race(1, "Desert Grand Prix", lights_out)]),
+    );
+    fake.set(
+        "2030/drivers.json",
+        json!({"MRData": {"DriverTable": {"Drivers": [
+            {"driverId": "racer_a", "givenName": "Ace", "familyName": "Racer"},
+            {"driverId": "rider_b", "givenName": "Bo", "familyName": "Rider"},
+            {"driverId": "speed_c", "givenName": "Cy", "familyName": "Speed"}]}}}),
+    );
+    pick_channel(&app, &alex, server, Some(g.id)).await;
+    assert_eq!(
+        tick(&app.state(), lights_out - TimeDelta::hours(5))
+            .await
+            .unwrap(),
+        1
+    );
+    let card = f1_lines(&app, &sam, g.id).await[0].id;
+    let picks = json!(["racer_a", "rider_b", "speed_c"]);
+    let r = app
+        .http
+        .put(app.url(&format!("/channels/{}/archive", g.id)))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    assert_eq!(predict(&app, &sam, card, picks).await.status(), 403);
+    let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM f1_predictions")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(stored, 0);
+    assert_eq!(
+        pick_channel(&app, &alex, server, Some(g.id)).await.status(),
+        403
+    );
+}

@@ -1045,6 +1045,34 @@ async fn join_is_on_by_default_and_follows_stopping() {
     assert!(app.hub.steam_joiners().is_empty());
 }
 
+/// Unlinking takes the Join away now, not at the next round (#381).
+#[tokio::test]
+async fn unlinking_takes_the_join_away_at_once() {
+    let (app, fake) = setup().await;
+    let (alex, token) = linked(&app, &fake, "alex", ALEX_STEAM).await;
+    let mut ws = hello(&app, &token).await;
+    play(
+        &app,
+        &mut ws,
+        alex,
+        Some(steam_game("Space Game", SPACE, false)),
+    )
+    .await;
+    fake.in_game(ALEX_STEAM, Some((SPACE, None, Some(SERVER))));
+    join_tick(&app).await;
+    assert!(join_of(&app, alex).is_some());
+    let r = app
+        .http
+        .delete(app.url("/me/steam"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(join_of(&app, alex), None);
+    assert!(app.hub.steam_joiners().is_empty());
+}
+
 // ---------- Completionist tiers ----------
 
 #[tokio::test]

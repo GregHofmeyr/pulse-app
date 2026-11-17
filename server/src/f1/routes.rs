@@ -125,6 +125,7 @@ async fn set_channel(
                     "pick one of this server's text channels".into(),
                 ));
             }
+            crate::access::require_open(&channel)?; // an archived one posts nothing (#303)
             sqlx::query(
                 "INSERT INTO server_f1_channels (server_id, channel_id) VALUES (?, ?)
                  ON CONFLICT (server_id) DO UPDATE SET channel_id = excluded.channel_id",
@@ -179,10 +180,11 @@ async fn predict(
         .await?
         .ok_or(AppError::NotFound)?;
     drop(conn);
-    channel_for(&s.db, me, channel).await?;
+    let ch = channel_for(&s.db, me, channel).await?;
     if !is_server_member(&s.db, server, me).await? {
         return Err(AppError::Forbidden);
     }
+    crate::access::require_open(&ch)?; // archived (#303): read-only
     if !s.limits.poll_vote_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(Some(
             "that's a lot of picks; try again in a moment".into(),
@@ -212,6 +214,7 @@ async fn predict(
     };
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, channel).await?;
+    crate::access::open_in(&mut tx, channel).await?; // archived since the check
     // read again under the write lock: deleted since, or lights out came while we checked
     if super::weekend_card(&mut tx, id).await?.is_none() {
         return Err(AppError::NotFound);

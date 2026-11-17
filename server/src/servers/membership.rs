@@ -36,6 +36,9 @@ pub fn router() -> Router<AppState> {
         .route("/servers/{id}/owner", put(transfer))
 }
 
+const OWNER_CANT_LEAVE: &str = "The owner can't leave their own server: hand it to someone else first (Server settings, Transfer ownership), or delete it.";
+const ONLY_OWNER_REMOVES: &str = "Only the server's owner can remove people.";
+
 /// The owner (creator) of `server`.
 async fn owner_of(s: &AppState, server: ServerId) -> AppResult<UserId> {
     let owner: String = sqlx::query_scalar("SELECT created_by FROM servers WHERE id = ?")
@@ -56,9 +59,7 @@ async fn leave(
     }
     server_exists(&s.db, id).await?;
     if owner_of(&s, id).await? == me {
-        return Err(AppError::ForbiddenMsg(
-            "The owner can't leave their own server: hand it to someone else first (Server settings, Transfer ownership), or delete it.".into(),
-        ));
+        return Err(AppError::ForbiddenMsg(OWNER_CANT_LEAVE.into()));
     }
     take_out(&s, id, me, None).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -76,9 +77,7 @@ async fn remove(
     }
     server_exists(&s.db, id).await?;
     if owner_of(&s, id).await? != me {
-        return Err(AppError::ForbiddenMsg(
-            "Only the server's owner can remove people.".into(),
-        ));
+        return Err(AppError::ForbiddenMsg(ONLY_OWNER_REMOVES.into()));
     }
     if user == me {
         return Err(AppError::BadRequest(
@@ -175,6 +174,18 @@ pub(crate) async fn take_out(
     let mut tx = crate::db::begin_write(&s.db).await?;
     server_live_in(&mut tx, server).await?; // deleted since the route's check (#287)
     let (sid, uid) = (server.to_string(), user.to_string());
+    // The owner again, under the write lock: a hand-over (`transfer`) that committed after the route's check wins, so
+    // the new owner can't leave and the old one can no longer remove anyone.
+    let owner: String = sqlx::query_scalar("SELECT created_by FROM servers WHERE id = ?")
+        .bind(&sid)
+        .fetch_one(&mut *tx)
+        .await?;
+    if owner == uid {
+        return Err(AppError::ForbiddenMsg(OWNER_CANT_LEAVE.into()));
+    }
+    if by.is_some_and(|by| by.to_string() != owner) {
+        return Err(AppError::ForbiddenMsg(ONLY_OWNER_REMOVES.into()));
+    }
     let gone = sqlx::query("DELETE FROM server_members WHERE server_id = ? AND user_id = ?")
         .bind(&sid)
         .bind(&uid)
@@ -352,4 +363,73 @@ async fn out_of_calls(s: &AppState, server: ServerId, user: UserId, by: Option<U
     }
     // out of its LiveKit voice room, and their connections out of its stream room
     crate::voice::revoke::remove_from_call(s, channel, &[user]).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{create_server, post_json, register, spawn};
+
+    /// alex owns "Main", sam and kim are in it, and then (as if a hand-over landed after the route's owner check, before
+    /// `take_out`'s transaction) the server is handed to sam.
+    async fn handed_to_sam() -> (crate::testing::TestApp, ServerId, UserId, UserId, UserId) {
+        let app = spawn().await;
+        let (alex, a) = register(&app, "alex").await;
+        let (sam, s) = register(&app, "sam").await;
+        let (kim, k) = register(&app, "kim").await;
+        let server = create_server(&app, &a, "Main").await.id;
+        for t in [&s, &k] {
+            let r = post_json(
+                &app,
+                t,
+                &format!("/servers/{server}/join"),
+                serde_json::json!({}),
+            )
+            .await;
+            assert_eq!(r.status(), 204);
+        }
+        sqlx::query("UPDATE servers SET created_by = ? WHERE id = ?")
+            .bind(sam.to_string())
+            .bind(server.to_string())
+            .execute(&app.db)
+            .await
+            .unwrap();
+        (app, server, alex, sam, kim)
+    }
+
+    async fn is_member(app: &crate::testing::TestApp, server: ServerId, user: UserId) -> bool {
+        crate::servers::routes::is_server_member(&app.db, server, user)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_leave_racing_a_hand_over_to_the_leaver_is_refused() {
+        let (app, server, _, sam, _) = handed_to_sam().await;
+        let r = take_out(&app.state(), server, sam, None).await;
+        assert!(matches!(r, Err(AppError::ForbiddenMsg(_))), "{r:?}");
+        assert!(
+            is_member(&app, server, sam).await,
+            "the new owner is still in it"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_removal_by_someone_who_just_handed_the_server_over_is_refused() {
+        let (app, server, alex, _, kim) = handed_to_sam().await;
+        let r = take_out(&app.state(), server, kim, Some(alex)).await;
+        assert!(matches!(r, Err(AppError::ForbiddenMsg(_))), "{r:?}");
+        assert!(is_member(&app, server, kim).await);
+    }
+
+    #[tokio::test]
+    async fn the_owner_still_removes_and_members_still_leave() {
+        let (app, server, alex, sam, kim) = handed_to_sam().await;
+        take_out(&app.state(), server, kim, Some(sam))
+            .await
+            .unwrap();
+        take_out(&app.state(), server, alex, None).await.unwrap();
+        assert!(!is_member(&app, server, kim).await);
+        assert!(!is_member(&app, server, alex).await);
+    }
 }

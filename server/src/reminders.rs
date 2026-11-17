@@ -46,14 +46,17 @@ pub fn router() -> Router<AppState> {
 }
 
 /// A person's reminders whose message they can still see: not deleted, in a chat that isn't in Recently deleted (nor
-/// its server), and a DM or group they're still in. Binds: the person. The inbox counts its due, unseen ones unread.
+/// its server), and a DM or group they're still in, or a server they're still a member of. Binds: the person. The
+/// inbox counts its due, unseen ones unread.
 pub(crate) const VISIBLE: &str = "FROM message_reminders r
     JOIN messages m ON m.id = r.message_id
     JOIN channels c ON c.id = m.channel_id
     WHERE r.user_id = ? AND m.deleted_at IS NULL AND c.deleted_at IS NULL
       AND (c.server_id IS NULL OR c.server_id NOT IN (SELECT id FROM servers WHERE deleted_at IS NOT NULL))
       AND (c.server_id IS NOT NULL OR EXISTS (SELECT 1 FROM channel_members cm
-                                               WHERE cm.channel_id = c.id AND cm.user_id = r.user_id))";
+                                               WHERE cm.channel_id = c.id AND cm.user_id = r.user_id))
+      AND (c.server_id IS NULL OR EXISTS (SELECT 1 FROM server_members sm
+                                           WHERE sm.server_id = c.server_id AND sm.user_id = r.user_id))";
 
 const COLS: &str = "SELECT r.id, r.message_id, m.channel_id, m.thread_root_id, r.remind_at, r.created_at, \
      r.fired_at IS NOT NULL, r.seen_at IS NOT NULL, \
@@ -184,7 +187,13 @@ async fn create(
         .ok_or(AppError::NotFound)?
         .parse()
         .map_err(anyhow::Error::from)?;
-    channel_for(&s.db, me, channel).await?;
+    let ch = channel_for(&s.db, me, channel).await?;
+    // a server's messages: as a member (#371), as bookmarks are and as `VISIBLE` lists them
+    if let Some(server) = ch.server_id
+        && !crate::servers::routes::is_server_member(&s.db, server, me).await?
+    {
+        return Err(AppError::NotFound);
+    }
     let id = ReminderId::new();
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
