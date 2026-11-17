@@ -83,7 +83,8 @@ pub fn best_duo(mates: &[(UserId, u64, u64)]) -> Option<(UserId, u64, u64)> {
         .copied()
 }
 
-/// What `viewer` sees of `target`'s Deadlock in `server` (both members).
+/// What `viewer` sees of `target`'s Deadlock in `server` (both members): nothing when `target` hides what they're
+/// playing from `viewer`, as their Steam hours (#438).
 pub async fn profile(
     s: &AppState,
     server: ServerId,
@@ -91,7 +92,8 @@ pub async fn profile(
     target: UserId,
 ) -> AppResult<DeadlockProfile> {
     let mut out = DeadlockProfile::default();
-    if !s.deadlock.api().available() {
+    if !s.deadlock.api().available() || crate::activity_hidden::hides(&s.db, target, viewer).await?
+    {
         return Ok(out);
     }
     let link: Option<(String, bool, bool, bool)> = sqlx::query_as(
@@ -167,14 +169,16 @@ pub async fn profile(
             wins: h.wins.min(u32::MAX as u64) as u32,
         });
     }
-    // the server's members who share squad stats, by account
+    // the server's members who share squad stats, by account (less anyone hiding their games from `viewer`)
     let members: Vec<(String, String)> = sqlx::query_as(
         "SELECT l.user_id, l.steam_id FROM steam_links l
          JOIN server_members m ON m.user_id = l.user_id AND m.server_id = ?
-         WHERE l.deadlock_squad = 1 AND l.user_id != ?",
+         WHERE l.deadlock_squad = 1 AND l.user_id != ?
+           AND NOT EXISTS (SELECT 1 FROM activity_hidden h WHERE h.user_id = l.user_id AND h.target_id = ?)",
     )
     .bind(server.to_string())
     .bind(target.to_string())
+    .bind(viewer.to_string())
     .fetch_all(&s.db)
     .await?;
     let by_account: HashMap<u32, UserId> = members

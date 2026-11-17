@@ -39,7 +39,7 @@
 
 <div class="hidden-games" data-hidden-games>
   <h4 class="games-title">Hide what I'm playing from</h4>
-  <p class="hint">They see you online with no game: no "Playing", no Join and no Steam hours. They're never told.</p>
+  <p class="hint">They see you online with no game: no "Playing", no Join, no Steam hours and no Deadlock. Achievement and Deadlock posts skip servers they're in. They're never told.</p>
   <button type="button" class="btn btn-secondary add" onclick={() => (picking = true)}><Icon name="plus" size={14} /> Add person</button>
   {#if hidden.length}
     <ul class="settings-list">

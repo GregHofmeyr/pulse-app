@@ -7,6 +7,10 @@
 //! read by `Hub::sync_presence` and Ready's people) and the Steam hours reads. A change re-runs the pass, so a newly
 //! hidden viewer's clients drop your game at once and an un-hidden one gets it back.
 //!
+//! Posts that show someone's games to a whole channel (Steam achievement cards, Deadlock match cards and rank movers)
+//! are one message for everyone, so they can't be filtered per viewer: a post about you skips every server where
+//! anyone you hide your games from is a member ([`hides_in_server`]). Privacy wins over the post (#438).
+//!
 //! Kept per person (`activity_hidden`) so it follows you to every device, sent only to you (Ready's `activity_hidden`
 //! and `ActivityHiddenChanged`, always the whole list).
 
@@ -131,6 +135,15 @@ async fn announce(s: &AppState, me: UserId) -> AppResult<Vec<UserId>> {
         .await;
     s.hub.sync_presence(&s.db, me).await;
     Ok(list)
+}
+
+/// SQL that is true when the user in column `user` hides their game activity from any member of the server in column
+/// `server` (#438): a channel post about their games there would reach someone they hide them from.
+pub fn hides_in_server(user: &str, server: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM activity_hidden h JOIN server_members hm ON hm.user_id = h.target_id
+           AND hm.server_id = {server} WHERE h.user_id = {user})"
+    )
 }
 
 /// Whether `owner` hides their game activity from `viewer` (never from themselves).
