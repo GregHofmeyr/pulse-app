@@ -2,6 +2,7 @@
 // lists, one per tab, fetched when first shown and kept live by events. The pure parts are in inbox.ts.
 import { appendPage, applyToList, arrived, INBOX_PAGE, isItemTab, loadTab, markRead, saveTab, type InboxTab, type InboxView } from './inbox'
 import { reminders, seeAllReminders } from './reminders.svelte'
+import { seeAllThreads, threads } from './inboxThreads.svelte'
 import { openMessage } from './openMessage'
 import type { Event } from './protocol/Event'
 import type { InboxItem } from './protocol/InboxItem'
@@ -17,6 +18,9 @@ export const inbox = $state({
   /** Each tab's list once fetched (null until then; a Ready forgets them, so a reopened popover fetches again). */
   lists: { all: null, mentions: null } as Record<InboxTab, InboxList | null>,
 })
+
+/** The inbox button's count: unread items, and threads with replies you haven't seen (#326). */
+export const inboxBadge = (): number => inbox.unread + threads.list.length
 
 /** Bumped on every Ready: a page fetched before it is dropped. */
 let epoch = 0
@@ -111,6 +115,7 @@ export async function markAllRead(): Promise<void> {
   const newest = TABS.map((t) => inbox.lists[t]?.items[0]?.message.id ?? '').reduce((a, b) => (b > a ? b : a), '')
   readHere((i) => !newest || i.message.id <= newest)
   seeAllReminders()
+  seeAllThreads()
   inbox.unread = 0
   try {
     await api.inboxReadAll(newest || null)

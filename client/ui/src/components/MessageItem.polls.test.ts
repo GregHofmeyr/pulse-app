@@ -120,11 +120,24 @@ describe('the poll card', () => {
     expect(invoke).toHaveBeenCalledWith('close_poll', { messageId: 'M1' })
   })
 
+  it('as its creator: Edit poll in the menu and on the action bar opens the editor (#265)', () => {
+    show(msg(view({ results: tallies([0, 0, 0]) }), { author_id: 'U1' }), true)
+    expect(document.querySelector('button[aria-label="Edit poll"]')).toBeTruthy()
+    document.querySelector<HTMLButtonElement>('button[aria-label="More"]')!.click()
+    flushSync()
+    expect(menuItems()).toContain('Edit poll')
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find((b) => b.textContent!.trim() === 'Edit poll')!.click()
+    flushSync()
+    expect(document.querySelector('[role="dialog"][aria-label="Edit poll"]')).toBeTruthy()
+  })
+
   it("someone else's poll has no End poll", () => {
     show(msg(view()))
     document.querySelector<HTMLButtonElement>('button[aria-label="More"]')!.click()
     flushSync()
     expect(menuItems()).not.toContain('End poll')
+    expect(menuItems()).not.toContain('Edit poll')
+    expect(document.querySelector('button[aria-label="Edit poll"]')).toBeNull()
   })
 
   it('closed: final results to everyone, the winner emphasised, no voting', () => {

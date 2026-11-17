@@ -83,6 +83,7 @@ pub fn router(state: AppState) -> Router {
         .merge(quotes::routes::router())
         .merge(qoty::router())
         .merge(dms::routes::router())
+        .merge(dms::layout::router())
         .merge(voice::routes::router())
         .merge(calls::routes::router())
         .merge(streams::routes::router())

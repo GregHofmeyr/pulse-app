@@ -7,8 +7,11 @@
 //! Events: [`follow_ups`] turns the events the app already publishes (a new message, a read point or seen
 //! point moving, a mute, a delete) into the inbox work they imply; the hub's inbox worker ([`run`]) does it
 //! after the publish (#327), sending each user's events to their own sessions only, under their inbox slot.
+//!
+//! Threads (#326, [`threads`]): reply threads you're part of with replies you haven't seen, listed apart.
 
 pub mod routes;
+pub mod threads;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

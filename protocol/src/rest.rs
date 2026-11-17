@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::ids::{
-    AttachmentId, BookmarkId, CallId, CategoryId, ChannelId, ClipUploadId, GameId, LineId,
-    MessageId, QotyEventId, ReminderId, ScheduledId, ServerId, UserId,
+    AttachmentId, BookmarkId, CallId, CategoryId, ChannelId, ClipUploadId, DmCategoryId, GameId,
+    LineId, MessageId, QotyEventId, ReminderId, ScheduledId, ServerId, UserId,
 };
 
 /// A `Debug` that names every field but prints the secret ones as `<redacted>`, for types that
@@ -320,6 +320,68 @@ pub struct SetNicknameRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ServerOrderRequest {
     pub server_ids: Vec<ServerId>,
+}
+
+/// One of your own DM categories (#305): a heading in your conversation list that only you see.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DmCategory {
+    pub id: DmCategoryId,
+    pub name: String,
+    /// Folded shut in your list (on every device).
+    #[serde(default)]
+    pub collapsed: bool,
+}
+
+/// Where one of your conversations sits in your list (#305): pinned to the top, in one of your categories, or both
+/// (a pinned one shows under Pinned). Conversations with neither have no placement.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DmPlacement {
+    pub channel_id: ChannelId,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub category_id: Option<DmCategoryId>,
+}
+
+/// Your conversation list's layout (#305): your categories in order and your placements. Yours only, on every device.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DmLayout {
+    pub categories: Vec<DmCategory>,
+    pub placements: Vec<DmPlacement>,
+}
+
+/// `POST /me/dm-categories` (#305): a new category, last in your list.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CreateDmCategoryRequest {
+    pub name: String,
+}
+
+/// `PATCH /me/dm-categories/{id}` (#305): rename it, or fold it open or shut. Absent fields stay as they are.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct UpdateDmCategoryRequest {
+    #[serde(default)]
+    #[ts(optional)]
+    pub name: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub collapsed: Option<bool>,
+}
+
+/// `PUT /me/dm-placements/{channel_id}` (#305): pin or unpin a conversation and put it in a category (or none).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct DmPlacementRequest {
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub category_id: Option<DmCategoryId>,
+}
+
+/// Limits on DM categories (#305).
+pub mod dm_layout_limits {
+    /// Characters in a category's name, after trimming.
+    pub const NAME_CHARS: usize = 32;
+    /// Categories one person may have.
+    pub const MAX_CATEGORIES: usize = 30;
 }
 
 /// A name you gave someone that only you see. Only ever sent to its owner.
@@ -1084,6 +1146,32 @@ pub struct Poll {
     pub mine: Vec<u32>,
     /// Per option, in order. `None` until you may see results: after you vote, as its creator, or once it closes.
     pub results: Option<Vec<PollTally>>,
+    /// When its creator last changed its question or options (#265); the card says "(edited)". Absent from older
+    /// servers: never edited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub edited_at: Option<String>,
+}
+
+/// One option in a poll edit (#265): its text, and which of the poll's options (by index, before the edit) it is.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct PollOptionEdit {
+    pub text: String,
+    /// The option it keeps (its place before the edit), or `None` for a new one. Each at most once; an option no
+    /// entry keeps is removed. A kept option whose text changes loses its votes, as a removed one does.
+    #[serde(default)]
+    pub from: Option<u32>,
+}
+
+/// `PUT /messages/{id}/poll` (#265): its creator changes an open poll's question and options. Multiple choice,
+/// Anonymous and the end time stay as posted. An edit that would take votes away (an option with votes removed or
+/// reworded) is refused with 409 unless `clear_votes` says the creator agreed to it.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct EditPollRequest {
+    pub question: String,
+    pub options: Vec<PollOptionEdit>,
+    #[serde(default)]
+    pub clear_votes: bool,
 }
 
 /// `POST /channels/{id}/polls`.
@@ -2625,6 +2713,30 @@ pub struct InboxItem {
 pub struct InboxPage {
     pub items: Vec<InboxItem>,
     pub unread: u32,
+}
+
+/// A reply thread you're part of with replies you haven't seen (#326): a quote's or clip's thread you started (you
+/// posted the quote or clip) or replied in, with replies by others since you last looked (your seen point, or your own
+/// last reply in it, whichever is later).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct InboxThread {
+    /// The quote or clip the thread is on, one short line.
+    pub root: InboxSnippet,
+    pub channel_id: ChannelId,
+    /// The newest reply you haven't seen.
+    pub latest: Message,
+    /// How many replies by others you haven't seen.
+    pub new_replies: u32,
+    /// You posted the quote or clip (otherwise you replied in it).
+    pub started: bool,
+}
+
+/// `GET /inbox/threads` (#326): the threads you're part of with new replies, newest reply first; and every thread
+/// you're part of (`watching`, newest first, capped), so a client knows which new replies are worth asking again for.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct InboxThreads {
+    pub threads: Vec<InboxThread>,
+    pub watching: Vec<MessageId>,
 }
 
 /// `GET /inbox/unread`.

@@ -11,7 +11,7 @@
   import MenuFlyout from './MenuFlyout.svelte'
   import type { PinDuration } from '../lib/protocol/PinDuration'
 
-  let { pinned, x, y, opener, onPin, onUnpin, onRemind, saved = false, onSave, onUnsave, onForward, onEndPoll, onEditPlan, onCancelPlan, onShowPreviews, quotesChannels = [], onQuote, onClose }: {
+  let { pinned, x, y, opener, onPin, onUnpin, onRemind, saved = false, onSave, onUnsave, onForward, onEndPoll, onEditPoll, onEditPlan, onCancelPlan, onShowPreviews, quotesChannels = [], onQuote, onClose }: {
     /** The message is pinned: Unpin message instead of Pin message. */
     pinned: boolean
     x: number
@@ -31,6 +31,8 @@
     onForward?: () => unknown
     /** Set on your own open poll (#157): End poll. */
     onEndPoll?: () => unknown
+    /** Your open poll's Edit poll (#265). */
+    onEditPoll?: () => unknown
     /** Set on your own plan, not cancelled (#387): Edit plan and Cancel plan. */
     onEditPlan?: () => unknown
     onCancelPlan?: () => unknown
@@ -130,6 +132,9 @@
   {/if}
   {#if onForward}
     <button type="button" class="menu-item" role="menuitem" aria-haspopup="dialog" data-item onclick={() => pick(onForward)}>Forward…</button>
+  {/if}
+  {#if onEditPoll}
+    <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onEditPoll)}>Edit poll</button>
   {/if}
   {#if onEndPoll}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onEndPoll)}>End poll</button>

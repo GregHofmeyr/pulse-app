@@ -83,7 +83,7 @@
   import { isWindows } from '../lib/stream/platform'
   // The inbox (#306)
   import InboxPopover from '../components/InboxPopover.svelte'
-  import { closeInbox, inbox, openInbox, toggleInbox } from '../lib/inbox.svelte'
+  import { closeInbox, inbox, inboxBadge, openInbox, toggleInbox } from '../lib/inbox.svelte'
   import { badgeText } from '../lib/inbox'
   import { orderedServers } from '../lib/serverOrder'
   import { moveServerTo, stepServer } from '../lib/serverOrder.svelte'
@@ -783,7 +783,7 @@
     <!-- #306: the inbox, your mentions and replies everywhere; its count of unread ones -->
     <span class="inbox-anchor">
       <button bind:this={inboxButton} class="win inbox" data-menu-toggle aria-haspopup="dialog" aria-expanded={inbox.open}
-        aria-label={inbox.unread > 0 ? `Inbox, ${inbox.unread} unread` : 'Inbox'} data-tip="Inbox" onclick={toggleInbox}><Icon name="inbox" size={16} />{#if inbox.unread > 0}<span class="pill" aria-hidden="true">{badgeText(inbox.unread)}</span>{/if}</button>
+        aria-label={inboxBadge() > 0 ? `Inbox, ${inboxBadge()} unread` : 'Inbox'} data-tip="Inbox" onclick={toggleInbox}><Icon name="inbox" size={16} />{#if inboxBadge() > 0}<span class="pill" aria-hidden="true">{badgeText(inboxBadge())}</span>{/if}</button>
       {#if inbox.open}<InboxPopover onClose={closeInboxPopover} />{/if}
     </span>
     <!-- #207: what's new; a dot until this release's notes are opened once on this device -->

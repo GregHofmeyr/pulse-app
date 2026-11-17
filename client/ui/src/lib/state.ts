@@ -1,6 +1,7 @@
 // The app's single source of truth, as pure functions over plain data so they're easy to test.
 // The reactive wrapper lives in store.svelte.ts.
 import type { CallInfo } from './protocol/CallInfo'
+import type { DmLayout } from './protocol/DmLayout'
 import type { Category } from './protocol/Category'
 import type { Channel } from './protocol/Channel'
 import type { Gif } from './protocol/Gif'
@@ -94,6 +95,9 @@ export type AppState = {
   liveNotify: string[]
   /** Your server rail order (#185): server ids, first to last (lib/serverOrder.ts). */
   serverOrder: string[]
+  /** Your conversation list's pins and categories (#305), yours only, on every device: from Ready and
+   *  DmLayoutChanged (lib/dmLayout.ts). */
+  dmLayout: DmLayout
   /** Plan reminders (#399): whether plans' reminder lines ping you, on every device (the server leaves you out of
    *  them when off). From Ready and PlanRemindersChanged; on when the server doesn't say. */
   planReminders: boolean
@@ -180,7 +184,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -240,6 +244,8 @@ export function applyReady(s: AppState, r: Ready): AppState {
     liveNotify: r.live_notify ?? [],
     // absent from older servers: the usual order
     serverOrder: r.server_order ?? [],
+    // absent from older servers: nothing pinned, no categories
+    dmLayout: r.dm_layout ?? { categories: [], placements: [] },
     // absent from older servers: they ping everyone
     planReminders: r.plan_reminders ?? true,
     // absent from older servers: no calls
@@ -1265,6 +1271,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return s // played by the listener in soundboard.svelte.ts; nothing to keep
     case 'ServerOrderChanged':
       return { ...s, serverOrder: e.d.server_ids }
+    case 'DmLayoutChanged':
+      return { ...s, dmLayout: e.d.layout }
     case 'PlanRemindersChanged':
       return { ...s, planReminders: e.d.on }
     // scheduled messages (#299) and reminders (#300) are kept by their own stores (lib/scheduled.svelte.ts,
@@ -1598,6 +1606,29 @@ export function landed(s: AppState, channel: string): AppState {
   if (!h || (!h.openAt && !h.toLatest)) return s
   const { openAt: _at, toLatest: _latest, ...rest } = h
   return { ...s, history: { ...s.history, [channel]: rest } }
+}
+
+/** Where a chat opens when its latest page wouldn't reach the NEW line (#332): around your read point, as a jump's
+ *  window, when more than a page is unread and it isn't going on from what it holds (`resumePoint`). That's a first
+ *  visit with more than a page unread, or a reconnect after you read part of the way on another device (your read
+ *  point past what it holds, more than a page still below it). Null otherwise (the latest page): caught up, a page
+ *  or less unread, or never read at all (no read point to open at). */
+export function unreadWindowPoint(s: AppState, channel: string): string | null {
+  const h = s.history[channel]
+  const read = s.reads[channel]
+  if (h?.loaded || !read || read.unread <= PAGE || read.last_read_message_id === null) return null
+  if (resumePoint(s, channel) !== null) return null
+  return read.last_read_message_id
+}
+
+/** Open `channel` at its first unread message (#332): the window around `readPoint` (`loadWindow`), asking the view
+ *  to bring the first message after the read point to the top (`openAt`, as `resumeAfter` does), the NEW line above
+ *  it; reading on pages forward to the latest. */
+export function openAtUnread(s: AppState, channel: string, page: Message[], readPoint: string): AppState {
+  const next = loadWindow(s, channel, page, readPoint)
+  const first = next.messages[channel]?.find((m) => m.id > readPoint)?.id
+  const h = next.history[channel]
+  return first && h ? { ...next, history: { ...next.history, [channel]: { ...h, openAt: first } } } : next
 }
 
 /** Add `channel`'s latest page to what it holds (a first visit, or a reconnect's reload when your place is the latest).

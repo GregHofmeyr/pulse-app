@@ -45,6 +45,11 @@ import type { UpdateWheelRequest } from './protocol/UpdateWheelRequest'
 import type { SpinWheelRequest } from './protocol/SpinWheelRequest'
 import type { QuietSpin } from './protocol/QuietSpin'
 import type { CreatePollRequest } from './protocol/CreatePollRequest'
+import type { EditPollRequest } from './protocol/EditPollRequest'
+import type { DmLayout } from './protocol/DmLayout'
+import type { InboxThreads } from './protocol/InboxThreads'
+import type { DmPlacementRequest } from './protocol/DmPlacementRequest'
+import type { UpdateDmCategoryRequest } from './protocol/UpdateDmCategoryRequest'
 import type { Poll } from './protocol/Poll'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { StreamSettings } from './protocol/StreamSettings'
@@ -351,6 +356,8 @@ export const api = {
   inbox: (before: string | null, mentions: boolean) => invoke<InboxPage>('inbox', { before, mentions }),
   /** How many inbox items are unread (#306). */
   inboxUnread: () => invoke<number>('inbox_unread'),
+  /** Reply threads you're part of with replies you haven't seen (#326), and every thread you're part of. */
+  inboxThreads: () => invoke<InboxThreads>('inbox_threads'),
   /** An inbox item was opened (#306); the change also arrives as InboxUpdated on every device. */
   inboxRead: (messageId: string) => invoke<void>('inbox_read', { messageId }),
   /** Mark all read (#306), up to the newest item shown (null: up to now). */
@@ -699,12 +706,23 @@ export const wheelCmd = {
   spinQuietly: (channelId: string, request: SpinWheelRequest) => invoke<QuietSpin>('spin_wheel_quietly', { channelId, request }),
 }
 
-/** Polls (#157): post one, fetch your view of one, vote (your full set of choices; none takes it back), end yours. */
+/** Your conversation list's pins and categories (#305): every call answers with your whole layout. */
+export const dmLayoutCmd = {
+  create: (name: string) => invoke<DmLayout>('create_dm_category', { name }),
+  update: (id: string, request: UpdateDmCategoryRequest) => invoke<DmLayout>('update_dm_category', { id, request }),
+  remove: (id: string) => invoke<DmLayout>('delete_dm_category', { id }),
+  place: (channelId: string, request: DmPlacementRequest) => invoke<DmLayout>('place_dm', { channelId, request }),
+}
+
+/** Polls (#157): post one, fetch your view of one, vote (your full set of choices; none takes it back), end yours,
+ *  change yours (#265). */
 export const pollCmd = {
   create: (channelId: string, request: CreatePollRequest) => invoke<Message>('create_poll', { channelId, request }),
   get: (messageId: string) => invoke<Poll>('get_poll', { messageId }),
   vote: (messageId: string, options: number[]) => invoke<Poll>('vote_poll', { messageId, options }),
   close: (messageId: string) => invoke<Poll>('close_poll', { messageId }),
+  /** Change your open poll's question and options (#265). */
+  edit: (messageId: string, request: EditPollRequest) => invoke<Poll>('edit_poll', { messageId, request }),
 }
 
 /** Plan something (#387): post one, fetch it, change or cancel yours, answer one (none takes it back), its forecast (the

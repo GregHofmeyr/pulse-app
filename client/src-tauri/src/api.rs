@@ -775,6 +775,21 @@ impl Api {
         Ok(r.unread)
     }
 
+    /// Reply threads you're part of with replies you haven't seen (#326).
+    pub async fn inbox_threads(
+        &self,
+        token: &str,
+    ) -> Result<pulse_protocol::rest::InboxThreads, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/inbox/threads", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// An inbox item was opened (#306): read on every device.
     pub async fn inbox_read(&self, token: &str, message: MessageId) -> Result<(), ApiError> {
         Self::ok_empty(
@@ -2522,6 +2537,75 @@ impl Api {
         .await
     }
 
+    /// A new conversation category of your own (#305), last: your whole layout.
+    pub async fn create_dm_category(
+        &self,
+        token: &str,
+        name: String,
+    ) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+        Self::parse(
+            self.http
+                .post(self.url(&["me", "dm-categories"])?)
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::CreateDmCategoryRequest { name })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Rename one of your conversation categories, or fold it open or shut (#305).
+    pub async fn update_dm_category(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::DmCategoryId,
+        body: &pulse_protocol::rest::UpdateDmCategoryRequest,
+    ) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+        Self::parse(
+            self.http
+                .patch(self.url(&["me", "dm-categories", &id.to_string()])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Delete one of your conversation categories (#305): its conversations go back to the main list.
+    pub async fn delete_dm_category(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::DmCategoryId,
+    ) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+        Self::parse(
+            self.http
+                .delete(self.url(&["me", "dm-categories", &id.to_string()])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Pin or unpin a conversation and put it in one of your categories, or none (#305).
+    pub async fn place_dm(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &pulse_protocol::rest::DmPlacementRequest,
+    ) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+        Self::parse(
+            self.http
+                .put(self.url(&["me", "dm-placements", &channel.to_string()])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Plan reminders (#399): whether plans' reminder lines ping you, on every device.
     pub async fn set_plan_reminders(&self, token: &str, on: bool) -> Result<(), ApiError> {
         Self::ok_empty(
@@ -3706,6 +3790,24 @@ impl Api {
                 .put(format!("{}/messages/{poll}/poll/votes", self.base))
                 .bearer_auth(token)
                 .json(&pulse_protocol::rest::PollVoteRequest { options })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Change your open poll's question and options (#265).
+    pub async fn edit_poll(
+        &self,
+        token: &str,
+        poll: MessageId,
+        body: &pulse_protocol::rest::EditPollRequest,
+    ) -> Result<pulse_protocol::rest::Poll, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/messages/{poll}/poll", self.base))
+                .bearer_auth(token)
+                .json(body)
                 .send()
                 .await,
         )

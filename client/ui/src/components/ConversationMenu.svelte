@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
-  import { channelLevel, conversationName } from '../lib/conversations'
+  import { channelLevel, conversationName, isNotes } from '../lib/conversations'
   import { CHANNEL_LEVELS } from '../lib/notifyLevels'
   import { clickOutside } from '../lib/actions'
   import type { Channel } from '../lib/protocol/Channel'
@@ -15,6 +15,8 @@
   import MenuFlyout from './MenuFlyout.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
   import { pickGroupIcon, removeGroupIcon } from '../lib/groupIcon.svelte'
+  import { DM_CATEGORY_CHARS, categoryNameOk, placementOf } from '../lib/dmLayout'
+  import { moveConversation, moveToNewCategory, pinConversation } from '../lib/dmLayout.svelte'
 
   let { channel, muted, show, at = null, anchor = null, onClose, onRename, onLeft }: {
     channel: Channel
@@ -32,6 +34,9 @@
   } = $props()
 
   let confirmLeave = $state(false)
+  // New category… (#305): the menu turns into a name field
+  let naming = $state(false)
+  let newName = $state('')
   let error = $state('')
   const group = $derived(channel.kind === 'group')
   const isPrivate = $derived(channel.server_id === null)
@@ -51,6 +56,21 @@
       error = errorText(e)
     }
   }
+  // Your list's layout (#305), on right-click: pin to the top, and move into one of your categories
+  const withLayout = $derived(show === 'all' && isPrivate && !isNotes(app.state, channel.id))
+  const placed = $derived(placementOf(app.state.dmLayout, channel.id))
+  const cats = $derived(app.state.dmLayout.categories)
+  const moveChoices = $derived([
+    ...cats.map((c) => ({ label: c.name, checked: placed?.category_id === c.id })),
+    { label: 'New category…' },
+    ...(placed?.category_id ? [{ label: 'Remove from category' }] : []),
+  ])
+  function pickMove(i: number) {
+    if (i < cats.length) void run(() => moveConversation(channel.id, cats[i].id))
+    else if (i === cats.length) naming = true
+    else void run(() => moveConversation(channel.id, null))
+  }
+  let moveFlyout = $state<ReturnType<typeof MenuFlyout>>()
   const muteFor = (minutes: number | null) => run(() => api.setMute('channel', channel.id, muteUntil(minutes)))
   // The bell's popover (#203, #236): the right-click menu's items, Mute … as the durations flyout (Unmute … while
   // muted) and, on a server channel, Notifications as the channel menu's levels flyout (#195) with yours ticked,
@@ -66,7 +86,7 @@
   let flyout = $state<ReturnType<typeof MuteFlyout>>()
   let levelFlyout = $state<ReturnType<typeof MenuFlyout>>()
   let soundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
-  const flyouts = () => [flyout, levelFlyout, soundFlyout]
+  const flyouts = () => [flyout, levelFlyout, soundFlyout, moveFlyout]
   // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
   function keydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && flyouts().some((f) => f?.isOpen())) {
@@ -102,7 +122,16 @@
     const t = (e.target as Element).closest?.('.menu-item')
     if (t && t.parentElement === el) for (const f of flyouts()) if (t !== f?.trigger()) f?.closeSoon()
   }} onkeydown={keydown}>
-  {#if confirmLeave}
+  {#if naming}
+    <form class="name" onsubmit={(e) => { e.preventDefault(); if (categoryNameOk(newName)) void run(() => moveToNewCategory(channel.id, newName)) }}>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input class="input input-sm" bind:value={newName} maxlength={DM_CATEGORY_CHARS} placeholder="Category name" aria-label="Category name" autofocus />
+      <div class="row">
+        <button type="submit" class="menu-item" role="menuitem" disabled={!categoryNameOk(newName)}>Create and move</button>
+        <button type="button" class="menu-item" role="menuitem" onclick={() => (naming = false)}>Cancel</button>
+      </div>
+    </form>
+  {:else if confirmLeave}
     <p class="q">Leave {conversationName(app.state, channel.id)}? You'll lose access to its history.</p>
     <div class="row">
       <button class="menu-item danger" role="menuitem" onclick={() => run(() => api.removeMember(channel.id, app.state.me!.id), onLeft)}>Leave</button>
@@ -128,6 +157,12 @@
         <MenuFlyout bind:this={levelFlyout} label="Notifications" flyoutLabel="Notifications for {flyoutName}" menuLeft={place?.left ?? 0} menuTop={place?.top ?? 0}
           choices={levelChoices} onPick={pickLevel} />
       {/if}
+    {/if}
+    {#if withLayout && at}
+      <span class="menu-sep"></span>
+      <button class="menu-item" role="menuitem" onclick={() => run(() => pinConversation(channel.id, !placed?.pinned))}>{placed?.pinned ? 'Unpin' : 'Pin to top'}</button>
+      <MenuFlyout bind:this={moveFlyout} label="Move to category" flyoutLabel="Move {conversationName(app.state, channel.id)} to" menuLeft={at.x} menuTop={at.y}
+        choices={moveChoices} onPick={pickMove} />
     {/if}
     {#if withManage}
       {#if withMute && isPrivate}<span class="menu-sep"></span>{/if}
@@ -168,5 +203,6 @@
   .menu.ctx { --pop-origin: top left; }
   .q { margin: 6px 8px; font-size: 13px; color: var(--text-2); }
   .row { display: flex; gap: 4px; }
+  .name { display: flex; flex-direction: column; gap: 4px; padding: 4px; }
   .err { margin: 6px 8px 2px; font-size: 12px; color: var(--danger-text); }
 </style>

@@ -114,6 +114,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::InboxSnippet::export_all(&cfg)?;
     rest::InboxItem::export_all(&cfg)?;
     rest::InboxPage::export_all(&cfg)?;
+    rest::InboxThreads::export_all(&cfg)?;
     rest::InboxUnread::export_all(&cfg)?;
     rest::InboxReadAllRequest::export_all(&cfg)?;
     rest::QotyEndReason::export_all(&cfg)?;
@@ -160,6 +161,9 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::UpdateProfileRequest::export_all(&cfg)?;
     rest::SetNicknameRequest::export_all(&cfg)?;
     rest::ServerOrderRequest::export_all(&cfg)?;
+    rest::CreateDmCategoryRequest::export_all(&cfg)?;
+    rest::UpdateDmCategoryRequest::export_all(&cfg)?;
+    rest::DmPlacementRequest::export_all(&cfg)?;
     rest::PrivateNickname::export_all(&cfg)?;
     rest::NameChange::export_all(&cfg)?;
     rest::NameArchivePage::export_all(&cfg)?;
@@ -190,6 +194,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::Rsvp::export_all(&cfg)?;
     rest::Plan::export_all(&cfg)?;
     rest::CreatePlanRequest::export_all(&cfg)?;
+    rest::EditPollRequest::export_all(&cfg)?;
     rest::PlanRsvpRequest::export_all(&cfg)?;
     rest::PlanForecast::export_all(&cfg)?;
     rest::PlanReminder::export_all(&cfg)?;

@@ -23,6 +23,13 @@ Friends decide things in chat (when to play, what to play, where to eat). A poll
 - **Live:** votes, closes and deletes update for everyone without a reload.
 - **Limits:** question up to 200 characters, 2–10 options of up to 80 characters each, and the usual message rate limits for posting; votes rate-limited per person enough to stop scripted flipping.
 
+## Editing (#265, added 2026-11-17)
+
+- **Who and when:** the poll's creator, while it is open: **Edit poll** in the poll's menu, or the pencil on its action bar. It opens the poll composer filled from the poll, with **Save changes**. The question and options change; **Multiple choice, Anonymous and the end time stay as posted** (changing them under people who already voted would change what their vote means).
+- **Votes follow their option.** Votes are by position, so the edit says, for each row, which old option it is (`from`) or that it's new. Adding options, and moving them, keeps every vote with its option, with no confirm.
+- **Rewording or removing an option that has votes clears just that option's votes** (they were for what it said; a vote for "Pizza" shouldn't silently become one for "Sushi"). Save asks first ("This clears 2 votes (Pizza).", the button turns into **Clear votes and save**). The server enforces it: such an edit without `clear_votes` is refused (409), so a vote that lands while the creator is editing is never cleared unasked. Rewording or removing an option nobody voted for needs no confirm. Whoever lost a vote can vote again.
+- **Marked:** the card's status line ends in "(edited)" (`Poll.edited_at`); an edit that changes nothing isn't marked. The message's text for older clients (and search) follows the edit. Everyone's card updates live (`PollChanged`).
+
 ## How it gets made
 
 - **Server:** a poll is a message with a poll payload (question, options, multi, anonymous, ends_at, closed_at) plus a votes table (poll message, option index, voter, voted_at; unique per voter/option, and per voter for single choice). Next free migration number (0030 at the time of writing; rebase first and say what it does). Routes to create (as a message, same membership and limits as sending), vote/unvote, and close early (creator only). Results are computed server-side and filtered by the visibility rules above: before you vote you get no counts unless you're the creator or it's closed; anonymous polls never include voter ids. A periodic sweep or on-read check closes due polls and posts the "ended" system line once. Events for vote changes and closes. Deleting the poll message deletes its votes. Tests for permissions, visibility (voted / not voted / creator / closed / anonymous), single vs multi, the close line posted exactly once, limits.
@@ -37,6 +44,6 @@ Friends decide things in chat (when to play, what to play, where to eat). A poll
 
 ## Out of scope
 
-- Editing a poll's question or options after posting.
+- Editing a poll's question or options after posting (done later: see Editing, #265).
 - Polls in quotes or clips channels.
 - Ranked-choice or weighted voting; images on options.

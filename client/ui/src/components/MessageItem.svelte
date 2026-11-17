@@ -34,6 +34,7 @@
   import SportsCard from './SportsCard.svelte'
   import DeadlockCard from './DeadlockCard.svelte'
   import PollCard from './PollCard.svelte'
+  import PollComposer from './PollComposer.svelte'
   import { endedSummary, pollOver, shownText } from '../lib/poll'
   import { closePoll } from '../lib/polls.svelte'
   import PlanCard from './PlanCard.svelte'
@@ -208,6 +209,11 @@
   // your own poll, still open, can be ended from the message's menu (#157); a refusal fetches the poll afresh
   const endable = $derived(!!message.poll && mine && !pollOver(message.poll, now))
   const endPoll = () => closePoll(message).catch((e) => showError(errorText(e)))
+  // ...or changed (#265), from the menu or its Edit button: the poll composer, filled from it
+  let pollEdit = $state<HTMLElement | null>(null)
+  const editPollCard = (anchor?: HTMLElement) => {
+    pollEdit = anchor ?? document.querySelector<HTMLElement>(`[data-message-id="${message.id}"] .poll`)
+  }
   // your own plan, not cancelled, can be changed or cancelled from the message's menu or its Edit button (#387)
   const planOpen = $derived(!!message.plan && mine && !message.plan.cancelled_at)
   let planEdit = $state<HTMLElement | null>(null)
@@ -449,7 +455,8 @@
           {/if}
           {#if mine}
             {#if archived}{:else if message.plan}{#if planOpen}<button aria-label="Edit plan" onclick={(e) => editPlanCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
-            {:else if !message.poll && !message.forwarded}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
+            {:else if message.poll}{#if endable}<button aria-label="Edit poll" onclick={(e) => editPollCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
+            {:else if !message.forwarded}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
             {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
             <DeleteButton what={message.thread_root_id ? 'reply' : 'message'} onConfirm={() => void del()} />
           {/if}
@@ -490,7 +497,7 @@
     onRemind={(at) => msgMenu && remind(at, msgMenu.opener)}
     saved={!!savedOne} onSave={saveToVault} onUnsave={unsave}
     onForward={forwardable ? () => msgMenu && openForward(msgMenu.opener) : undefined}
-    onEndPoll={endable ? endPoll : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
+    onEndPoll={endable ? endPoll : undefined} onEditPoll={endable && !archived ? () => editPollCard() : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
 {/if}
 {#if remindCustom}
   <WhenPicker anchor={remindCustom} title="Remind me about this" confirm="Set reminder" onPick={remindAt} onClose={() => (remindCustom = null)} />
@@ -500,6 +507,9 @@
 {/if}
 {#if historyAt}
   <EditHistoryDialog anchor={historyAt} messageId={message.id} onClose={() => (historyAt = null)} />
+{/if}
+{#if pollEdit}
+  <PollComposer anchor={pollEdit} channelId={message.channel_id} editing={message} onClose={() => (pollEdit = null)} />
 {/if}
 {#if planEdit}
   <PlanComposer anchor={planEdit} channelId={message.channel_id} editing={message} onClose={() => (planEdit = null)} />

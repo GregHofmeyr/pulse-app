@@ -65,3 +65,4 @@ id!(CategoryId);
 id!(ScheduledId);
 id!(ReminderId);
 id!(BookmarkId);
+id!(DmCategoryId);

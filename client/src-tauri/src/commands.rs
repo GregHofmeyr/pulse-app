@@ -2054,6 +2054,16 @@ pub async fn inbox_unread(app: AppHandle, core: State<'_, Core>) -> Result<u32, 
     core.check(&app, api.inbox_unread(&token).await)
 }
 
+/// Reply threads you're part of with replies you haven't seen (#326).
+#[tauri::command]
+pub async fn inbox_threads(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<pulse_protocol::rest::InboxThreads, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.inbox_threads(&token).await)
+}
+
 /// An inbox item was opened (#306).
 #[tauri::command]
 pub async fn inbox_read(
@@ -4897,6 +4907,52 @@ pub async fn set_server_order(
     core.check(&app, api.set_server_order(&token, server_ids).await)
 }
 
+/// A new conversation category of your own (#305).
+#[tauri::command]
+pub async fn create_dm_category(
+    app: AppHandle,
+    core: State<'_, Core>,
+    name: String,
+) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.create_dm_category(&token, name).await)
+}
+
+/// Rename one of your conversation categories, or fold it (#305).
+#[tauri::command]
+pub async fn update_dm_category(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::DmCategoryId,
+    request: pulse_protocol::rest::UpdateDmCategoryRequest,
+) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.update_dm_category(&token, id, &request).await)
+}
+
+/// Delete one of your conversation categories (#305).
+#[tauri::command]
+pub async fn delete_dm_category(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::DmCategoryId,
+) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_dm_category(&token, id).await)
+}
+
+/// Pin or unpin a conversation and put it in a category, or none (#305).
+#[tauri::command]
+pub async fn place_dm(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    request: pulse_protocol::rest::DmPlacementRequest,
+) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.place_dm(&token, channel_id, &request).await)
+}
+
 /// Plan reminders (#399): whether plans' reminder lines ping you, on every device.
 #[tauri::command]
 pub async fn set_plan_reminders(
@@ -5238,6 +5294,18 @@ pub async fn vote_poll(
 ) -> Result<pulse_protocol::rest::Poll, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.vote_poll(&token, message_id, options).await)
+}
+
+/// Change your open poll's question and options (#265).
+#[tauri::command]
+pub async fn edit_poll(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    request: pulse_protocol::rest::EditPollRequest,
+) -> Result<pulse_protocol::rest::Poll, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.edit_poll(&token, message_id, &request).await)
 }
 
 /// End your poll now.
