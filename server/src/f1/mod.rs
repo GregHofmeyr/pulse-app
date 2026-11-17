@@ -23,8 +23,8 @@ use chrono::{DateTime, Utc};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
-    F1Card, F1Prediction, F1ResultsCard, F1ScoresCard, F1SeasonRow, F1Weekend, F1WeekendCard,
-    Message, MessageKind, f1_limits,
+    F1Card, F1PicksClose, F1Prediction, F1ResultsCard, F1ScoresCard, F1SeasonRow, F1SprintCard,
+    F1Weekend, F1WeekendCard, Message, MessageKind, f1_limits,
 };
 use sqlx::{SqliteConnection, SqlitePool};
 
@@ -88,6 +88,17 @@ pub fn results_text(card: &F1ResultsCard) -> String {
         .map(|r| format!("{}. {}", r.position, r.driver.name))
         .collect();
     format!("🏆 {}: {}", card.race_name, podium.join(", "))
+}
+
+/// The sprint card as text (#403).
+pub fn sprint_text(card: &F1SprintCard) -> String {
+    let top: Vec<String> = card
+        .results
+        .iter()
+        .take(f1_limits::PODIUM)
+        .map(|r| format!("{}. {}", r.position, r.driver.name))
+        .collect();
+    format!("🏎️ Sprint, {}: {}", card.race_name, top.join(", "))
 }
 
 /// The scores card as text; `names` are the scorers' display names in the card's order.
@@ -171,7 +182,29 @@ pub(crate) async fn predictions_of(
         .unwrap_or_default())
 }
 
-/// Fill each weekend card's predictions.
+/// When `server`'s podium predictions close (#403): its owner's choice, lights out by default.
+pub(crate) async fn picks_close_of(
+    db: &mut SqliteConnection,
+    server: ServerId,
+) -> AppResult<F1PicksClose> {
+    let key: Option<String> =
+        sqlx::query_scalar("SELECT picks_close FROM server_f1_channels WHERE server_id = ?")
+            .bind(server.to_string())
+            .fetch_optional(&mut *db)
+            .await?;
+    Ok(key.map(|k| F1PicksClose::parse(&k)).unwrap_or_default())
+}
+
+/// When predictions on `w`'s card close under `mode` (UTC, RFC 3339): lights out, or qualifying's start (lights out
+/// when the calendar has no qualifying time).
+pub fn close_at(w: &F1Weekend, mode: F1PicksClose) -> String {
+    match mode {
+        F1PicksClose::LightsOut => w.race_at.clone(),
+        F1PicksClose::Qualifying => crate::db::stamp(jolpica::qualifying_start(w)),
+    }
+}
+
+/// Fill each weekend card's predictions, and when they close by its server's choice now (#403).
 pub(crate) async fn attach(db: &SqlitePool, page: &mut [Message]) -> AppResult<()> {
     let ids: Vec<String> = page
         .iter()
@@ -187,9 +220,28 @@ pub(crate) async fn attach(db: &SqlitePool, page: &mut [Message]) -> AppResult<(
     }
     let mut conn = db.acquire().await?;
     let mut all = predictions_for(&mut conn, &ids).await?;
+    let mut modes: HashMap<ChannelId, F1PicksClose> = HashMap::new();
     for m in page.iter_mut() {
         if let Some(F1Card::Weekend(c)) = m.f1.as_deref_mut() {
             c.predictions = all.remove(&m.id.to_string()).unwrap_or_default();
+            let mode = match modes.get(&m.channel_id) {
+                Some(mode) => *mode,
+                None => {
+                    let server: Option<String> =
+                        sqlx::query_scalar("SELECT server_id FROM channels WHERE id = ?")
+                            .bind(m.channel_id.to_string())
+                            .fetch_optional(&mut *conn)
+                            .await?
+                            .flatten();
+                    let mode = match server.and_then(|s| s.parse().ok()) {
+                        Some(server) => picks_close_of(&mut conn, server).await?,
+                        None => F1PicksClose::default(),
+                    };
+                    modes.insert(m.channel_id, mode);
+                    mode
+                }
+            };
+            c.picks_close_at = Some(close_at(&c.weekend, mode));
         }
     }
     Ok(())
@@ -295,7 +347,7 @@ pub(crate) async fn display_names(db: &SqlitePool, users: &[UserId]) -> Vec<Stri
 mod tests {
     use super::*;
     use pulse_protocol::rest::{
-        F1Driver, F1LightsOut, F1ResultRow, F1Score, F1Session, F1SessionKind,
+        F1ConstructorRow, F1Driver, F1LightsOut, F1ResultRow, F1Score, F1Session, F1SessionKind,
     };
 
     fn d(id: &str) -> F1Driver {
@@ -343,6 +395,7 @@ mod tests {
                 weekend: weekend.clone(),
                 drivers: vec![d("a")],
                 predictions: vec![],
+                picks_close_at: None,
             }),
             F1Card::LightsOut(F1LightsOut {
                 season: 2030,
@@ -364,6 +417,19 @@ mod tests {
                 }],
                 fastest_lap: None,
                 standings: vec![],
+                constructor_standings: vec![F1ConstructorRow {
+                    position: 1,
+                    team: "Rocket".into(),
+                    points: 25.0,
+                    wins: 1,
+                }],
+            }),
+            F1Card::Sprint(F1SprintCard {
+                season: 2030,
+                round: 1,
+                race_name: "Desert Grand Prix".into(),
+                country: "Australia".into(),
+                results: vec![],
             }),
             F1Card::Scores(F1ScoresCard {
                 season: 2030,
@@ -394,6 +460,45 @@ mod tests {
     }
 
     #[test]
+    fn picks_close_at_lights_out_or_qualifying() {
+        let mut w = F1Weekend {
+            season: 2030,
+            round: 1,
+            race_name: "Desert GP".into(),
+            circuit: "c".into(),
+            locality: "l".into(),
+            country: "X".into(),
+            sessions: vec![
+                F1Session {
+                    kind: F1SessionKind::Qualifying,
+                    starts_at: "2030-03-07T05:00:00.000Z".into(),
+                },
+                F1Session {
+                    kind: F1SessionKind::Race,
+                    starts_at: "2030-03-08T04:00:00.000Z".into(),
+                },
+            ],
+            race_at: "2030-03-08T04:00:00.000Z".into(),
+        };
+        assert_eq!(
+            close_at(&w, F1PicksClose::LightsOut),
+            "2030-03-08T04:00:00.000Z"
+        );
+        assert_eq!(
+            close_at(&w, F1PicksClose::Qualifying),
+            "2030-03-07T05:00:00.000Z"
+        );
+        // no qualifying on the calendar: lights out
+        w.sessions.remove(0);
+        assert_eq!(
+            close_at(&w, F1PicksClose::Qualifying),
+            "2030-03-08T04:00:00.000Z"
+        );
+        assert_eq!(F1PicksClose::parse("qualifying"), F1PicksClose::Qualifying);
+        assert_eq!(F1PicksClose::parse("junk"), F1PicksClose::LightsOut);
+    }
+
+    #[test]
     fn the_fallback_texts() {
         assert_eq!(
             lights_out_text("Desert GP"),
@@ -416,10 +521,22 @@ mod tests {
                 .collect(),
             fastest_lap: None,
             standings: vec![],
+            constructor_standings: vec![],
         };
         assert_eq!(
             results_text(&r),
             "🏆 Desert GP: 1. Driver a, 2. Driver b, 3. Driver c"
+        );
+        let sprint = F1SprintCard {
+            season: 2030,
+            round: 1,
+            race_name: "Desert GP".into(),
+            country: "X".into(),
+            results: r.results.clone(),
+        };
+        assert_eq!(
+            sprint_text(&sprint),
+            "🏎️ Sprint, Desert GP: 1. Driver a, 2. Driver b, 3. Driver c"
         );
         let s = F1ScoresCard {
             season: 2030,

@@ -15,4 +15,9 @@ drivers: Array<F1Driver>,
 /**
  * In the order they were made; filled when read (never stored on the line).
  */
-predictions: Array<F1Prediction>, };
+predictions: Array<F1Prediction>, 
+/**
+ * When predictions close (UTC, RFC 3339), by the server's choice (#403): lights out, or qualifying's start. Filled
+ * when read; older servers never send it (they close at lights out).
+ */
+picks_close_at?: string, };

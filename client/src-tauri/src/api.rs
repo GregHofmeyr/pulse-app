@@ -2291,16 +2291,18 @@ impl Api {
         Self::parse(self.http.get(url).bearer_auth(token).send().await).await
     }
 
-    /// Pick a server's F1 channel (its owner only), or none.
+    /// Pick a server's F1 channel (its owner only), or none, and when predictions close (#403; `None` keeps it).
     pub async fn set_f1_channel(
         &self,
         token: &str,
         server: ServerId,
         channel: Option<ChannelId>,
+        picks_close: Option<pulse_protocol::rest::F1PicksClose>,
     ) -> Result<pulse_protocol::rest::F1Status, ApiError> {
         let url = self.url(&["servers", &server.to_string(), "f1-channel"])?;
         let body = pulse_protocol::rest::SetF1ChannelRequest {
             channel_id: channel,
+            picks_close,
         };
         Self::parse(
             self.http
@@ -6176,14 +6178,32 @@ mod tests {
         let st = api.f1_status(&alex, server.id).await.unwrap();
         assert_eq!((st.channel_id, st.next), (None, None));
         let set = api
-            .set_f1_channel(&alex, server.id, Some(general.id))
+            .set_f1_channel(&alex, server.id, Some(general.id), None)
             .await
             .unwrap();
         assert_eq!(set.channel_id, Some(general.id));
+        assert_eq!(
+            set.picks_close,
+            pulse_protocol::rest::F1PicksClose::LightsOut
+        );
+        // picks close at qualifying (#403), kept while the channel stays
+        let q = pulse_protocol::rest::F1PicksClose::Qualifying;
+        let set = api
+            .set_f1_channel(&alex, server.id, Some(general.id), Some(q))
+            .await
+            .unwrap();
+        assert_eq!(set.picks_close, q);
+        assert_eq!(
+            api.f1_status(&alex, server.id).await.unwrap().picks_close,
+            q
+        );
         // the test server can't reach Jolpica: no race weekend, no card to predict on
         assert_eq!(set.next, None);
         assert!(api.f1_predict(&alex, MessageId::new(), None).await.is_err());
-        let off = api.set_f1_channel(&alex, server.id, None).await.unwrap();
+        let off = api
+            .set_f1_channel(&alex, server.id, None, None)
+            .await
+            .unwrap();
         assert_eq!(off.channel_id, None);
     }
 
