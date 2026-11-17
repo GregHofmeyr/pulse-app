@@ -22,4 +22,4 @@ Issue #275 (research comment on #234 is the background). Decided with the owner 
 
 ## Out of scope
 
-- Other players (YouTube Music, Apple Music), games activity, Spotify Web API.
+- Other players (YouTube Music, Apple Music), games activity, Spotify Web API. Other players came later in #322: see `docs/listening-players.md`.

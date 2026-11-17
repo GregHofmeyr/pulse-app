@@ -450,6 +450,12 @@ describe('MemberList: Listening to (#275)', () => {
     expect(samRow().querySelector('.listening-line')?.textContent).toBe('Listening to Song · The Band')
     expect(samRow().querySelector('.name-clip')).toBeNull()
     expect(samRow().querySelector('.sp .spotify-icon')).not.toBeNull()
+    // another player (#322): a generic icon named for it, never Spotify's
+    app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online', listening: { title: 'Song', artist: 'Jo', album: 'Album', spotify_id: null, art: null, player: 'tidal' } } } }
+    flushSync()
+    expect(samRow().querySelector('.sp .spotify-icon')).toBeNull()
+    expect(samRow().querySelector('.sp .player-icon')?.getAttribute('data-tip')).toBe('Tidal')
+    expect(samRow().querySelector('.listening-line')?.getAttribute('data-tip')).toBe('Listening to Song · Jo on Tidal')
     app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online' } } }
     flushSync()
     expect(samRow().querySelector('.listening-line')).toBeNull()

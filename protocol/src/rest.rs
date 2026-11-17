@@ -1860,8 +1860,9 @@ pub struct Person {
     pub custom_status: Option<CustomStatus>,
 }
 
-/// What someone's Spotify app is playing (#275), read by their own Pulse from the OS media session (MPRIS on Linux,
-/// the system media controls on Windows): no Spotify login, nothing that controls their Spotify.
+/// What someone's music player is playing (#275, other players #322), read by their own Pulse from the OS media
+/// session (MPRIS on Linux, the system media controls on Windows): no player login, nothing that controls their
+/// player.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct Listening {
     pub title: String,
@@ -1870,15 +1871,44 @@ pub struct Listening {
     #[serde(default)]
     pub album: Option<String>,
     /// `track:<id>` or `episode:<id>` (Spotify's 22-character id), when the media session gave one: the link-out is
-    /// then `open.spotify.com/<kind>/<id>`.
+    /// then `open.spotify.com/<kind>/<id>`. Only ever with Spotify.
     #[serde(default)]
     pub spotify_id: Option<String>,
     /// The album art, from that link's Spotify card (the server's embed resolver); none without a `spotify_id`.
     #[serde(default)]
     pub art: Option<EmbedThumb>,
+    /// Which player it's from (#322). Absent means Spotify: older servers and clients only ever knew Spotify, and a
+    /// Spotify activity is sent without it, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub player: Option<MusicPlayer>,
 }
 
-/// What a client says its Spotify is playing (#275, `ClientFrame::Listening`); the server checks it and adds the art.
+impl Listening {
+    /// Whether it's from Spotify (no `player`, or `player: spotify`): only Spotify's has links, art, or a Jam.
+    pub fn is_spotify(&self) -> bool {
+        matches!(self.player, None | Some(MusicPlayer::Spotify))
+    }
+}
+
+/// The music players "Listening to" reads (#322), each from a strict allowlist of OS media sessions (see
+/// `docs/listening-players.md`). A player this build doesn't know reads as `Other`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MusicPlayer {
+    Spotify,
+    YoutubeMusic,
+    AppleMusic,
+    Tidal,
+    Deezer,
+    Foobar2000,
+    /// A music site in a browser that Pulse can't name (Windows doesn't say which site a browser plays).
+    Browser,
+    #[serde(other)]
+    Other,
+}
+
+/// What a client says its player is playing (#275, `ClientFrame::Listening`); the server checks it and adds the art.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct ListeningUpdate {
     pub title: String,
@@ -1888,6 +1918,10 @@ pub struct ListeningUpdate {
     pub album: Option<String>,
     #[serde(default)]
     pub spotify_id: Option<String>,
+    /// Which player (#322); absent means Spotify (older clients).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub player: Option<MusicPlayer>,
 }
 
 /// The game someone is playing (#380), as their own Pulse detects it on Windows (Steam's running app, or an exe they

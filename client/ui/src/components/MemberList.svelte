@@ -5,7 +5,7 @@
   import Icon from './Icon.svelte'
   import Name from './Name.svelte'
   import ListeningLine from './ListeningLine.svelte'
-  import SpotifyIcon from './SpotifyIcon.svelte'
+  import PlayerIcon from './PlayerIcon.svelte'
   import { listeningOf } from '../lib/activity'
   import PlayingLine from './PlayingLine.svelte'
   import { playingOf } from '../lib/game'
@@ -94,7 +94,7 @@
            takes the line under the name; Spotify's icon sits at the row's end, only with its line -->
       <span class="who"><Name userId={m.user.id} {serverId} text={name} surface="side" />{#if custom}<CustomStatusLine status={custom} />{:else if playing}<PlayingLine {playing} />{:else if listening}<ListeningLine {listening} icon={false} />{:else if name !== base}<small class="name-clip">{base}</small>{/if}</span>
       {#if rank && badge}<img class="rank" src={badge} alt="Deadlock rank {rankText(rank)}" data-tip="Deadlock: {rankText(rank)}" data-deadlock-rank />{/if}
-      {#if listening}<span class="sp"><SpotifyIcon /></span>{/if}
+      {#if listening}<span class="sp"><PlayerIcon {listening} /></span>{/if}
       {#if onMessage && m.user.id !== app.state.me?.id}
         <button class="msg" aria-label="Message {name}" data-tip="Message" onclick={() => onMessage(m.user.id)}><Icon name="message" size={16} /></button>
       {/if}

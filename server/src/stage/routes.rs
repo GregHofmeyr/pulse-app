@@ -119,7 +119,8 @@ async fn share(
         // a Jam shows what its sharer's Spotify plays (#275), from the start
         share.now_playing = super::jam(&share)
             .then(|| s.hub.listening_of(me, false))
-            .flatten();
+            .flatten()
+            .filter(pulse_protocol::rest::Listening::is_spotify);
         let gone = s.voice.stage.put(share.clone());
         announce_cleared(&s, gone).await;
         s.hub

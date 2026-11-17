@@ -1431,14 +1431,20 @@ pub fn embed_origin(core: State<'_, Core>) -> Option<String> {
     crate::embed_window::embed_origin_for(api.base()).map(str::to_owned)
 }
 
-/// "Read media activity" and "Show my activity" (#275), from the page's saved settings at boot and on every change.
-/// Reading off: no watcher at all.
+/// "Read media activity", "Show my activity" (#275) and "Share music from other players" (#322, `sources`; absent
+/// from an older page: both on), from the page's saved settings at boot and on every change. Reading off: no watcher
+/// at all.
 #[tauri::command]
-pub fn set_media_activity(m: State<'_, crate::activity::MediaActivity>, read: bool, show: bool) {
-    m.set(read, show);
+pub fn set_media_activity(
+    m: State<'_, crate::activity::MediaActivity>,
+    read: bool,
+    show: bool,
+    sources: Option<crate::activity::Sources>,
+) {
+    m.set(read, show, sources.unwrap_or_default());
 }
 
-/// Whether Pulse reads Spotify now, and what it last read (Settings shows it).
+/// Whether Pulse reads media now, and what it last read (Settings shows it).
 #[tauri::command]
 pub fn media_activity(m: State<'_, crate::activity::MediaActivity>) -> crate::activity::MediaState {
     m.state()

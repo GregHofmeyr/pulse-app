@@ -1,6 +1,7 @@
 // Typed wrappers over Tauri commands. The UI never calls the network itself.
 import { invoke } from '@tauri-apps/api/core'
 import type { User } from './protocol/User'
+import type { MusicPlayer } from './protocol/MusicPlayer'
 import type { ScheduledMessage } from './protocol/ScheduledMessage'
 import type { MessageReminder } from './protocol/MessageReminder'
 import type { MessageVersion } from './protocol/MessageVersion'
@@ -196,9 +197,11 @@ export type ModelStatus =
   | { state: 'downloading'; downloaded: number; total: number | null }
   | { state: 'ready' }
   | { state: 'failed'; error: string }
-/** What Spotify plays, as this device's media session tells it (#275, the core's `activity::NowPlaying`). */
-export type NowPlaying = { title: string; artist: string | null; album: string | null; spotify_id: string | null }
-/** Whether this device reads Spotify, and what it last read (`pulse://media-activity`). */
+/** What a music player plays, as this device's media session tells it (#275, #322; the core's `activity::NowPlaying`). */
+export type NowPlaying = { title: string; artist: string | null; album: string | null; spotify_id: string | null; player: MusicPlayer }
+/** The "Share music from other players" switches (#322, the core's `activity::Sources`). */
+export type MusicSources = { players: boolean; browsers: boolean }
+/** Whether this device reads media, and what it last read (`pulse://media-activity`). */
 export type MediaState = { reading: boolean; playing: NowPlaying | null }
 /** A game added by hand (#380): the exe stays on this device, only the name is ever sent. */
 export type ManualGame = { name: string; exe: string }
@@ -450,7 +453,7 @@ export const api = {
   /** Appear offline to one person, or stop (#45). An AppearOfflineChanged follows to your sessions. */
   setAppearOffline: (userId: string, hidden: boolean) => invoke<void>('set_appear_offline', { userId, hidden }),
   /** "Read media activity" and "Show my activity" (#275): reading off runs no watcher at all. */
-  setMediaActivity: (read: boolean, show: boolean) => invoke<void>('set_media_activity', { read, show }),
+  setMediaActivity: (read: boolean, show: boolean, sources: MusicSources) => invoke<void>('set_media_activity', { read, show, sources }),
   /** Whether this device reads Spotify now, and what it last read. */
   mediaActivity: () => invoke<MediaState>('media_activity'),
   /** Settings → Game activity (#380): master off runs no poller at all. */

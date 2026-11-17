@@ -178,6 +178,7 @@ async fn a_steam_game_reaches_everyone_with_its_art_beside_listening() {
             artist: None,
             album: None,
             spotify_id: None,
+            player: None,
         }),
         show: true,
     })

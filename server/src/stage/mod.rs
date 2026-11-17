@@ -180,7 +180,11 @@ pub fn jam(share: &StageShare) -> bool {
 /// in). Only real changes go out.
 pub async fn listening_changed(s: &AppState, user: UserId) {
     let _order = s.hub.in_order().await;
-    let now = s.hub.listening_of(user, false);
+    // only Spotify's song belongs on a Jam (#322): another player's reads as nothing playing there
+    let now = s
+        .hub
+        .listening_of(user, false)
+        .filter(Listening::is_spotify);
     for share in s.voice.stage.by(user).into_iter().filter(jam) {
         if s.voice
             .stage
@@ -296,6 +300,7 @@ mod tests {
             album: None,
             spotify_id: None,
             art: None,
+            player: None,
         };
         assert_eq!(st.by(alex).len(), 1);
         assert!(st.set_now_playing(ch, "1", Some(song.clone())));

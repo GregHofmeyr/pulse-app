@@ -13,7 +13,8 @@
 
 use pulse_protocol::ids::UserId;
 use pulse_protocol::rest::{
-    EmbedProvider, EmbedThumb, GameArt, Listening, ListeningUpdate, Playing, PlayingUpdate,
+    EmbedProvider, EmbedThumb, GameArt, Listening, ListeningUpdate, MusicPlayer, Playing,
+    PlayingUpdate,
 };
 
 use crate::AppState;
@@ -52,13 +53,25 @@ fn spotify_id(raw: &str) -> Option<String> {
 
 /// What a client's update says, checked: `None` when there's no title (nothing to show). The art is the server's to
 /// add ([`with_art`]).
+/// Only Spotify's keeps a Spotify id (#322): another player's never gets a Spotify link or art. A player this build
+/// doesn't know is dropped, and Spotify is held as no `player` at all, the shape older clients know.
 pub fn clean(u: ListeningUpdate) -> Option<Listening> {
+    let player = match u.player {
+        None | Some(MusicPlayer::Spotify) => None,
+        Some(MusicPlayer::Other) => return None,
+        Some(p) => Some(p),
+    };
     Some(Listening {
         title: text(&u.title)?,
         artist: u.artist.as_deref().and_then(text),
         album: u.album.as_deref().and_then(text),
-        spotify_id: u.spotify_id.as_deref().and_then(spotify_id),
+        spotify_id: u
+            .spotify_id
+            .as_deref()
+            .filter(|_| player.is_none())
+            .and_then(spotify_id),
         art: None,
+        player,
     })
 }
 
@@ -284,6 +297,7 @@ mod tests {
             artist: None,
             album: None,
             spotify_id: None,
+            player: None,
         }
     }
 
@@ -294,6 +308,7 @@ mod tests {
             artist: Some("\t".into()),
             album: Some("Album".into()),
             spotify_id: None,
+            player: None,
         })
         .unwrap();
         assert_eq!(l.title, "Song name (live)");
@@ -340,6 +355,37 @@ mod tests {
         ] {
             assert_eq!(id(bad), None, "{bad}");
         }
+    }
+
+    /// Other players (#322): their name is kept, a Spotify id they claim isn't, Spotify is held as no `player` (what
+    /// older clients know), and a player this build can't name is nothing.
+    #[test]
+    fn other_players_never_carry_spotify_bits() {
+        let with = |player| ListeningUpdate {
+            spotify_id: Some("track:4uLU6hMCjMI75M1A2tKUQC".into()),
+            player,
+            ..update("x")
+        };
+        let yt = clean(with(Some(MusicPlayer::YoutubeMusic))).unwrap();
+        assert_eq!(yt.player, Some(MusicPlayer::YoutubeMusic));
+        assert_eq!(yt.spotify_id, None);
+        assert!(!yt.is_spotify());
+        let sp = clean(with(Some(MusicPlayer::Spotify))).unwrap();
+        assert_eq!(sp.player, None);
+        assert!(sp.spotify_id.is_some() && sp.is_spotify());
+        assert!(clean(with(None)).unwrap().is_spotify());
+        assert_eq!(clean(with(Some(MusicPlayer::Other))), None);
+        // the wire: Spotify's has no `player`, another's names it
+        let v = serde_json::to_value(&sp).unwrap();
+        assert!(v.get("player").is_none(), "{v}");
+        assert_eq!(
+            serde_json::to_value(&yt).unwrap()["player"],
+            "youtube_music"
+        );
+        // a player a newer client names reads as Other, not an error
+        let u: ListeningUpdate =
+            serde_json::from_str(r#"{"title":"x","player":"bandcamp"}"#).unwrap();
+        assert_eq!(u.player, Some(MusicPlayer::Other));
     }
 
     #[test]

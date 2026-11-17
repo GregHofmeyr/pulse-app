@@ -1,31 +1,40 @@
-//! Linux: Spotify's MPRIS player over the session D-Bus (zbus, pure Rust). Event-driven: it listens for the player's
-//! `PropertiesChanged` (only from the owner of Spotify's bus name, filtered by the bus) and for that name's owner
-//! changing (Spotify starting or quitting), and reads all the player's properties only when the owner changes or a
-//! property is invalidated. Nothing is asked on a timer.
+//! Linux: the allowlisted players' MPRIS sessions over the session D-Bus (zbus, pure Rust). Event-driven: it listens
+//! for `PropertiesChanged` on the MPRIS object path (filtered by the bus, and kept only from a player the allowlist
+//! knows) and for MPRIS names' owners changing (a player starting or quitting), and reads a player's properties only
+//! when it appears or a property is invalidated. Nothing is asked on a timer. Of several playing at once, the
+//! preferred one is shown ([`best`]).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use futures::StreamExt;
 use tokio::sync::mpsc::UnboundedSender;
-use zbus::fdo::{DBusProxy, PropertiesProxy};
+use zbus::fdo::{DBusProxy, NameOwnerChanged, PropertiesChanged, PropertiesProxy};
 use zbus::names::{BusName, InterfaceName, WellKnownName};
 use zbus::zvariant::{OwnedValue, Value};
+use zbus::{MatchRule, MessageStream};
 
-use super::{MprisMeta, Seen, now_playing_mpris};
+use super::{MPRIS_PREFIX, MprisMeta, Seen, Source, best, now_playing_mpris};
 
-/// The Spotify app's MPRIS bus name (the desktop app, its Flatpak and Snap alike).
-pub const SPOTIFY: &str = "org.mpris.MediaPlayer2.spotify";
 const PATH: &str = "/org/mpris/MediaPlayer2";
 const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 
-/// The player's state, as its properties last said.
-#[derive(Debug, Default)]
+/// A player's state, as its properties last said.
+#[derive(Debug)]
 struct Player {
+    source: Source,
     status: Option<String>,
     meta: MprisMeta,
 }
 
 impl Player {
+    fn new(source: Source) -> Self {
+        Player {
+            source,
+            status: None,
+            meta: MprisMeta::default(),
+        }
+    }
+
     fn apply(&mut self, name: &str, value: &Value<'_>) {
         match name {
             "PlaybackStatus" => self.status = value.downcast_ref::<String>().ok(),
@@ -35,7 +44,7 @@ impl Player {
     }
 
     fn seen(&self) -> Seen {
-        now_playing_mpris(self.status.as_deref(), &self.meta)
+        now_playing_mpris(self.source, self.status.as_deref(), &self.meta)
     }
 }
 
@@ -72,13 +81,25 @@ fn metadata(value: &Value<'_>) -> MprisMeta {
     }
 }
 
-/// All the player's properties, fresh (an empty player when it doesn't answer).
-async fn read_all(props: &PropertiesProxy<'_>) -> Player {
-    let mut p = Player::default();
+/// All of player `name`'s properties, fresh (an empty player when it doesn't answer).
+async fn read_all(conn: &zbus::Connection, name: &str, source: Source) -> Player {
+    let mut p = Player::new(source);
     let Ok(iface) = InterfaceName::try_from(PLAYER) else {
         return p;
     };
-    match props.get_all(iface).await {
+    let props = async {
+        PropertiesProxy::builder(conn)
+            .destination(WellKnownName::try_from(name.to_owned())?)?
+            .path(PATH)?
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build()
+            .await
+    };
+    let all = match props.await {
+        Ok(props) => props.get_all(iface).await,
+        Err(e) => Err(e.into()),
+    };
+    match all {
         Ok(all) => {
             for (k, v) in &all {
                 p.apply(k, v);
@@ -89,54 +110,114 @@ async fn read_all(props: &PropertiesProxy<'_>) -> Player {
     p
 }
 
-/// Watch the MPRIS player at bus name `name`, sending what it plays to `tx` whenever that changes (first: what it
-/// plays now). Runs until `tx` is closed or the bus goes; fails if there's no session bus.
-pub async fn watch(name: &str, tx: UnboundedSender<Seen>) -> zbus::Result<()> {
+/// The players followed: by well-known name (sorted, so "the first of equals" is stable), and which unique name owns
+/// each (the sender of its signals).
+#[derive(Default)]
+struct Players {
+    by_name: BTreeMap<String, Player>,
+    owner: HashMap<String, String>,
+}
+
+impl Players {
+    fn seen(&self) -> Seen {
+        best(self.by_name.values().map(Player::seen))
+    }
+
+    fn remove(&mut self, name: &str) {
+        self.by_name.remove(name);
+        self.owner.retain(|_, n| n != name);
+    }
+}
+
+/// Watch the MPRIS players whose bus names `allow` lets in (and names the [`Source`] of), sending what the preferred
+/// one plays to `tx` whenever that changes (first: what plays now). Runs until `tx` is closed or the bus goes; fails
+/// if there's no session bus.
+pub async fn watch(
+    allow: impl Fn(&str) -> Option<Source>,
+    tx: UnboundedSender<Seen>,
+) -> zbus::Result<()> {
     let conn = zbus::Connection::session().await?;
     let dbus = DBusProxy::new(&conn).await?;
-    let wk = WellKnownName::try_from(name)?;
-    let mut owners = dbus
-        .receive_name_owner_changed_with_args(&[(0, name)])
-        .await?;
-    let props = PropertiesProxy::builder(&conn)
-        .destination(wk.clone())?
+    // only MPRIS names' owner changes, filtered by the bus
+    let owners_rule = MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .sender("org.freedesktop.DBus")?
+        .interface("org.freedesktop.DBus")?
+        .member("NameOwnerChanged")?
+        .arg0ns("org.mpris.MediaPlayer2")?
+        .build();
+    let mut owners = MessageStream::for_match_rule(owners_rule, &conn, None).await?;
+    let changes_rule = MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface("org.freedesktop.DBus.Properties")?
+        .member("PropertiesChanged")?
         .path(PATH)?
-        .cache_properties(zbus::proxy::CacheProperties::No)
-        .build()
-        .await?;
-    let mut changes = props.receive_properties_changed().await?;
-    let mut player = if dbus.name_has_owner(BusName::from(wk.clone())).await? {
-        read_all(&props).await
-    } else {
-        Player::default()
-    };
-    let mut last = player.seen();
+        .build();
+    let mut changes = MessageStream::for_match_rule(changes_rule, &conn, None).await?;
+
+    let mut players = Players::default();
+    for name in dbus.list_names().await? {
+        let name = name.as_str();
+        let Some(source) = name.strip_prefix(MPRIS_PREFIX).and(allow(name)) else {
+            continue;
+        };
+        let Ok(owner) = dbus.get_name_owner(BusName::try_from(name)?).await else {
+            continue;
+        };
+        players.owner.insert(owner.to_string(), name.to_owned());
+        players
+            .by_name
+            .insert(name.to_owned(), read_all(&conn, name, source).await);
+    }
+    let mut last = players.seen();
     if tx.send(last.clone()).is_err() {
         return Ok(());
     }
     loop {
         tokio::select! {
             o = owners.next() => {
-                let Some(sig) = o else { return Ok(()) };
+                let Some(msg) = o else { return Ok(()) };
+                let Some(sig) = msg.ok().and_then(NameOwnerChanged::from_message) else { continue };
                 let args = sig.args()?;
-                player = if args.new_owner().is_some() { read_all(&props).await } else { Player::default() };
+                let name = args.name().as_str().to_owned();
+                let Some(source) = allow(&name) else { continue };
+                players.remove(&name);
+                if let Some(owner) = args.new_owner().as_ref() {
+                    players.owner.insert(owner.to_string(), name.clone());
+                    let p = read_all(&conn, &name, source).await;
+                    players.by_name.insert(name, p);
+                }
             }
             c = changes.next() => {
-                let Some(sig) = c else { return Ok(()) };
+                let Some(msg) = c else { return Ok(()) };
+                let Ok(msg) = msg else { continue };
+                // only from a player followed (any other app's signals on the same path are ignored)
+                let Some(name) = msg
+                    .header()
+                    .sender()
+                    .and_then(|s| players.owner.get(s.as_str()))
+                    .cloned()
+                else {
+                    continue;
+                };
+                let Some(sig) = PropertiesChanged::from_message(msg) else { continue };
                 let args = sig.args()?;
                 if args.interface_name().as_str() != PLAYER {
                     continue;
                 }
+                let Some(p) = players.by_name.get_mut(&name) else { continue };
                 for (k, v) in args.changed_properties() {
-                    player.apply(k, v);
+                    p.apply(k, v);
                 }
                 if !args.invalidated_properties().is_empty() {
-                    player = read_all(&props).await;
+                    let source = p.source;
+                    let fresh = read_all(&conn, &name, source).await;
+                    players.by_name.insert(name, fresh);
                 }
             }
             _ = tx.closed() => return Ok(()),
         }
-        let seen = player.seen();
+        let seen = players.seen();
         if seen != last {
             if tx.send(seen.clone()).is_err() {
                 return Ok(());
@@ -200,6 +281,16 @@ mod tests {
         m
     }
 
+    /// An allowlist of just `name`, as Spotify.
+    fn only(name: String) -> impl Fn(&str) -> Option<Source> {
+        move |n: &str| {
+            (n == name).then_some(Source {
+                player: pulse_protocol::rest::MusicPlayer::Spotify,
+                group: crate::activity::Group::Spotify,
+            })
+        }
+    }
+
     /// A name no real player has, so the test never meets one (nor Spotify).
     fn name() -> String {
         format!("org.mpris.MediaPlayer2.pulsetest_{}", std::process::id())
@@ -241,7 +332,7 @@ mod tests {
         let name = name();
         let (tx, mut rx) = mpsc::unbounded_channel();
         let n = name.clone();
-        let task = tokio::spawn(async move { watch(&n, tx).await });
+        let task = tokio::spawn(async move { watch(only(n), tx).await });
         assert_eq!(next(&mut rx).await, None, "nothing running yet");
 
         // the player starts, playing
@@ -254,6 +345,7 @@ mod tests {
                 artist: Some("Alex".into()),
                 album: Some("Album".into()),
                 spotify_id: Some(format!("track:{ID}")),
+                player: pulse_protocol::rest::MusicPlayer::Spotify,
             }
         );
 
@@ -421,7 +513,7 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel();
         let seen = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
         let n = name.clone();
-        let watcher = tokio::spawn(async move { watch(&n, tx).await });
+        let watcher = tokio::spawn(async move { watch(only(n), tx).await });
         let s = seen.clone();
         let settle = tokio::spawn(crate::activity::settle(rx, move |_| {
             s.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

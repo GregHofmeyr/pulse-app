@@ -2,7 +2,7 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import ListeningLine from './ListeningLine.svelte'
-  import SpotifyIcon from './SpotifyIcon.svelte'
+  import PlayerIcon from './PlayerIcon.svelte'
   import { listeningOf } from '../lib/activity'
   import PlayingLine from './PlayingLine.svelte'
   import { playingOf } from '../lib/game'
@@ -64,7 +64,7 @@
       <!-- their custom status (#152), else what they're listening to (#275), on the line under the name; Spotify's icon
            at the row's end, only with its line -->
       <span class="who"><span class="nm"><Name userId={p.user.id} serverId={null} text={p.name} surface="side" />{#if p.user.id === app.state.me?.id}<small> (you)</small>{/if}</span>{#if custom}<CustomStatusLine status={custom} />{:else if playing}<PlayingLine {playing} />{:else if listening}<ListeningLine {listening} icon={false} />{/if}</span>
-      {#if listening}<span class="sp"><SpotifyIcon /></span>{/if}
+      {#if listening}<span class="sp"><PlayerIcon {listening} /></span>{/if}
     </div>
   {/each}
   {/each}
