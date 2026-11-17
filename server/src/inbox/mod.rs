@@ -70,17 +70,24 @@ const READ: &str = "(m.id <= COALESCE(ic.upto, '')
     OR CASE WHEN m.thread_root_id IS NULL THEN m.id <= COALESCE(rs.last_read_message_id, '')
             ELSE m.id <= COALESCE(tr.last_seen_id, '') END)";
 
-/// How many of `me`'s items are unread: mentions and replies, and reminders come due and not yet seen (#300).
+/// How many of `me`'s items are unread: mentions and replies, reminders come due and not yet seen (#300), and threads
+/// with replies they haven't seen (#326, counted here since #419).
 pub async fn unread<'e>(db: impl SqliteExecutor<'e>, me: UserId) -> AppResult<u32> {
+    // ITEMS and VISIBLE take plain binds (1-4); the threads' count names its own (5-7) after them
     let n: i64 = sqlx::query_scalar(&format!(
         "SELECT (SELECT COUNT(*) {ITEMS} AND NOT {READ})
-           + (SELECT COUNT(*) {} AND r.fired_at IS NOT NULL AND r.seen_at IS NULL)",
-        crate::reminders::VISIBLE
+           + (SELECT COUNT(*) {} AND r.fired_at IS NOT NULL AND r.seen_at IS NULL)
+           + {}",
+        crate::reminders::VISIBLE,
+        threads::unseen_count_sql(5, 6, 7),
     ))
     .bind(me.to_string())
     .bind(cutoff(Utc::now()).to_string())
     .bind(now())
     .bind(me.to_string())
+    .bind(me.to_string())
+    .bind(now())
+    .bind(cutoff(Utc::now()).to_string())
     .fetch_one(db)
     .await?;
     Ok(n as u32)
@@ -227,6 +234,9 @@ pub enum Job {
     Channel { channel: ChannelId },
     /// Likewise for every channel of a server.
     Server { server: ServerId },
+    /// A reply landed in (or left) a quote's or clip's thread: [`Job::Recount`] whoever is part of it and connected
+    /// (its Threads count is in theirs, #419).
+    Thread { root: MessageId },
 }
 
 impl Job {
@@ -242,7 +252,7 @@ impl Job {
             | Job::Removed { user, .. }
             | Job::Recount { user }
             | Job::Retell { user } => user.hash(&mut h),
-            Job::Channel { .. } | Job::Server { .. } => return 0,
+            Job::Channel { .. } | Job::Server { .. } | Job::Thread { .. } => return 0,
         }
         (h.finish() % shards.max(1) as u64) as usize
     }
@@ -256,6 +266,7 @@ pub struct Overflow {
     users: HashSet<UserId>,
     channels: HashSet<ChannelId>,
     servers: HashSet<ServerId>,
+    roots: HashSet<MessageId>,
 }
 
 impl Overflow {
@@ -274,12 +285,18 @@ impl Overflow {
                 Job::Server { server } => {
                     self.servers.insert(server);
                 }
+                Job::Thread { root } => {
+                    self.roots.insert(root);
+                }
             }
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.users.is_empty() && self.channels.is_empty() && self.servers.is_empty()
+        self.users.is_empty()
+            && self.channels.is_empty()
+            && self.servers.is_empty()
+            && self.roots.is_empty()
     }
 
     /// The work held, as jobs for [`run`]; empty afterwards.
@@ -288,11 +305,13 @@ impl Overflow {
             users,
             channels,
             servers,
+            roots,
         } = std::mem::take(self);
         let users = users.into_iter().map(|user| Job::Retell { user });
         let channels = channels.into_iter().map(|channel| Job::Channel { channel });
         let servers = servers.into_iter().map(|server| Job::Server { server });
-        users.chain(channels).chain(servers).collect()
+        let roots = roots.into_iter().map(|root| Job::Thread { root });
+        users.chain(channels).chain(servers).chain(roots).collect()
     }
 }
 
@@ -317,6 +336,19 @@ pub fn follow_ups<'a>(hub: &Hub, events: impl Iterator<Item = &'a Event>) -> Vec
                 | Event::ServerRestored { .. }
         ) {
             continue;
+        }
+        // a reply landing in or leaving a quote's or clip's thread moves its Threads count (#419)
+        let thread = match event {
+            Event::MessageCreated { message, .. } if !message.deleted => message.thread_root_id,
+            Event::MessageDeleted { thread_root_id, .. } => *thread_root_id,
+            _ => None,
+        };
+        if let Some(root) = thread
+            && !out
+                .iter()
+                .any(|j| matches!(j, Job::Thread { root: r } if *r == root))
+        {
+            out.push(Job::Thread { root });
         }
         // read once per batch, and only for an event that may need it
         let online = online.get_or_insert_with(|| hub.online_users());
@@ -392,6 +424,7 @@ pub async fn run(db: &SqlitePool, hub: &Hub, jobs: Vec<Job>) {
     let mut recount: Vec<UserId> = Vec::new();
     let mut gone_channels: Vec<ChannelId> = Vec::new();
     let mut gone_servers: Vec<ServerId> = Vec::new();
+    let mut roots: Vec<MessageId> = Vec::new();
     for job in jobs {
         match job {
             Job::Added { user, message } => added(db, hub, user, &message, &mut replied).await,
@@ -402,6 +435,22 @@ pub async fn run(db: &SqlitePool, hub: &Hub, jobs: Vec<Job>) {
             Job::Retell { user } => push_new(&mut retell, user),
             Job::Channel { channel } => push_new(&mut gone_channels, channel),
             Job::Server { server } => push_new(&mut gone_servers, server),
+            Job::Thread { root } => push_new(&mut roots, root),
+        }
+    }
+    if !roots.is_empty() {
+        let online = hub.online_users();
+        for &root in &roots {
+            match threads::part_of(db, root).await {
+                Ok(users) => {
+                    for user in users.into_iter().filter(|u| online.contains(u)) {
+                        push_new(&mut recount, user);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = ?e, %root, "couldn't read who is part of a thread")
+                }
+            }
         }
     }
     match with_items_in(db, &gone_channels, &gone_servers).await {

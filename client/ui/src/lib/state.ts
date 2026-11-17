@@ -1616,17 +1616,21 @@ export function landed(s: AppState, channel: string): AppState {
   return { ...s, history: { ...s.history, [channel]: rest } }
 }
 
+/** Stands for "before the chat's first message": the smallest message id there is (#419). */
+export const CHAT_START = '00000000000000000000000000'
+
 /** Where a chat opens when its latest page wouldn't reach the NEW line (#332): around your read point, as a jump's
  *  window, when more than a page is unread and it isn't going on from what it holds (`resumePoint`). That's a first
  *  visit with more than a page unread, or a reconnect after you read part of the way on another device (your read
- *  point past what it holds, more than a page still below it). Null otherwise (the latest page): caught up, a page
- *  or less unread, or never read at all (no read point to open at). */
+ *  point past what it holds, more than a page still below it). Never read at all (no read point: the chat was empty
+ *  when you joined it, so every message in it is unread), it opens at the chat's start, its oldest unread message:
+ *  [CHAT_START] (#419). Null otherwise (the latest page): caught up, or a page or less unread. */
 export function unreadWindowPoint(s: AppState, channel: string): string | null {
   const h = s.history[channel]
   const read = s.reads[channel]
-  if (h?.loaded || !read || read.unread <= PAGE || read.last_read_message_id === null) return null
+  if (h?.loaded || !read || read.unread <= PAGE) return null
   if (resumePoint(s, channel) !== null) return null
-  return read.last_read_message_id
+  return read.last_read_message_id ?? CHAT_START
 }
 
 /** Open `channel` at its first unread message (#332): the window around `readPoint` (`loadWindow`), asking the view

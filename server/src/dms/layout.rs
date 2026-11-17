@@ -1,5 +1,5 @@
 //! Your conversation list's layout (#305): conversations pinned to the top, and your own categories (create, rename,
-//! fold, delete, move a conversation into one). Kept per person (`dm_categories`, `dm_placements`) so it follows you
+//! fold, reorder (#419), delete, move a conversation into one). Kept per person (`dm_categories`, `dm_placements`) so it follows you
 //! to every device, and sent only to you (Ready's `dm_layout` and `DmLayoutChanged`, always the whole layout). A
 //! placement only counts while you're in the conversation: one you left reads as not there (its row goes with the
 //! chat when that's purged, or comes back if you're added again).
@@ -72,7 +72,7 @@ pub async fn of(db: &SqlitePool, user: UserId) -> AppResult<DmLayout> {
     })
 }
 
-/// A category's name, trimmed: 1-32 characters on one line.
+/// A category's name, trimmed: 1-32 characters on one line, and not one of the Move flyout's own entries (#419).
 pub fn clean_name(raw: &str) -> AppResult<String> {
     let n = raw.trim();
     let len = n.chars().count();
@@ -80,6 +80,11 @@ pub fn clean_name(raw: &str) -> AppResult<String> {
         return Err(AppError::BadRequest(format!(
             "a category's name is 1-{} characters on one line",
             dm_layout_limits::NAME_CHARS
+        )));
+    }
+    if dm_layout_limits::is_reserved(n) {
+        return Err(AppError::BadRequest(format!(
+            "\"{n}\" is a menu entry: pick another name"
         )));
     }
     Ok(n.to_string())
@@ -179,7 +184,8 @@ async fn create(
     Ok((StatusCode::CREATED, Json(layout)))
 }
 
-/// `PATCH /me/dm-categories/{id}`: rename it, or fold it open or shut.
+/// `PATCH /me/dm-categories/{id}`: rename it, fold it open or shut, or move it to `position` among your categories
+/// (#419).
 async fn update(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -204,6 +210,24 @@ async fn update(
     .bind(id.to_string())
     .execute(&mut *tx)
     .await?;
+    if let Some(to) = req.position {
+        let mut order: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM dm_categories WHERE user_id = ? ORDER BY position, id",
+        )
+        .bind(me.to_string())
+        .fetch_all(&mut *tx)
+        .await?;
+        let id = id.to_string();
+        order.retain(|c| *c != id);
+        order.insert((to as usize).min(order.len()), id);
+        for (position, c) in order.iter().enumerate() {
+            sqlx::query("UPDATE dm_categories SET position = ? WHERE id = ?")
+                .bind(position as i64)
+                .bind(c)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
     tx.commit().await?;
     Ok(Json(announce(&s, me).await?))
 }
@@ -295,5 +319,10 @@ mod tests {
         assert!(clean_name(&"x".repeat(33)).is_err());
         assert!(clean_name(&"é".repeat(32)).is_ok());
         assert!(clean_name("a\nb").is_err());
+        // the Move flyout's own entries (#419)
+        for reserved in ["New category…", " new category... ", "REMOVE FROM CATEGORY"] {
+            assert!(clean_name(reserved).is_err(), "{reserved}");
+        }
+        assert!(clean_name("New category").is_ok());
     }
 }

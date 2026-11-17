@@ -41,6 +41,40 @@ const WATCHED: &str = "SELECT r.id AS root_id, r.channel_id AS channel_id, COALE
               AND (np.target_kind = 'channel' AND np.target_id = c.id
                    OR np.target_kind = 'server' AND np.target_id = c.server_id))";
 
+/// How many of `me`'s threads have new replies (at most [`MAX_THREADS`], among the [`MAX_WATCHING`] newest they're
+/// part of): what [`list`] lists, counted, for the inbox's unread count (#419). A subquery for [`super::unread`], with
+/// its own numbered binds: `me` as `?{me}`, now as `?{now}` and the inbox's cutoff as `?{cutoff}`.
+pub(crate) fn unseen_count_sql(me: u8, now: u8, cutoff: u8) -> String {
+    let watched = WATCHED
+        .replace("?1", &format!("?{me}"))
+        .replace("?2", &format!("?{now}"));
+    format!(
+        "(SELECT COUNT(*) FROM (SELECT 1 FROM (SELECT root_id FROM ({watched}) ORDER BY root_id DESC LIMIT {MAX_WATCHING}) w
+          WHERE EXISTS (
+            SELECT 1 FROM messages x LEFT JOIN thread_reads tr ON tr.user_id = ?{me} AND tr.root_id = x.thread_root_id
+            WHERE x.thread_root_id = w.root_id AND x.deleted_at IS NULL AND x.id >= ?{cutoff}
+              AND COALESCE(x.author_id, '') != ?{me}
+              AND x.id > COALESCE(tr.last_seen_id, '')
+              AND x.id > COALESCE((SELECT MAX(y.id) FROM messages y WHERE y.thread_root_id = x.thread_root_id
+                                   AND y.deleted_at IS NULL AND y.author_id = ?{me}), ''))
+          LIMIT {MAX_THREADS}))"
+    )
+}
+
+/// Who is part of `root`'s thread (its poster, and everyone who replied in it): whose count a reply there may move.
+pub(crate) async fn part_of(db: &SqlitePool, root: MessageId) -> AppResult<Vec<UserId>> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT author_id FROM messages WHERE id = ?1 AND author_id IS NOT NULL
+         UNION SELECT author_id FROM messages WHERE thread_root_id = ?1 AND author_id IS NOT NULL AND deleted_at IS NULL",
+    )
+    .bind(root.to_string())
+    .fetch_all(db)
+    .await?;
+    ids.iter()
+        .map(|u| Ok(u.parse().map_err(anyhow::Error::from)?))
+        .collect()
+}
+
 /// `me`'s threads with new replies, newest reply first, and the threads they're watching.
 pub async fn list(db: &SqlitePool, me: UserId) -> AppResult<InboxThreads> {
     let watched: Vec<(String, String, bool)> = sqlx::query_as(&format!(

@@ -170,3 +170,89 @@ impl Fx {
         assert!(!r.status().is_success());
     }
 }
+
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// A connection past its Ready (inbox events reach it from then on), and the Ready's inbox count.
+async fn connect(app: &TestApp, token: &str) -> (Socket, u64) {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message as Ws;
+    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
+        .await
+        .unwrap()
+        .0;
+    let hello = serde_json::to_string(&pulse_protocol::gateway::ClientFrame::Hello {
+        token: token.into(),
+        client_version: pulse_protocol::PROTOCOL_VERSION,
+    })
+    .unwrap();
+    ws.send(Ws::text(hello)).await.unwrap();
+    loop {
+        let m = tokio::time::timeout(std::time::Duration::from_secs(3), ws.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        if let Ws::Text(t) = m {
+            let v: serde_json::Value = serde_json::from_str(&t).unwrap();
+            if v["op"] == "Ready" {
+                return (ws, v["d"]["inbox_unread"].as_u64().unwrap());
+            }
+        }
+    }
+}
+
+/// The count in the next `InboxUpdated` on `ws`; None when none comes within 3 s.
+async fn next_count(ws: &mut Socket) -> Option<u64> {
+    use futures::StreamExt;
+    use tokio_tungstenite::tungstenite::Message as Ws;
+    loop {
+        let m = tokio::time::timeout(std::time::Duration::from_secs(3), ws.next())
+            .await
+            .ok()??
+            .ok()?;
+        if let Ws::Text(t) = m {
+            let v: serde_json::Value = serde_json::from_str(&t).unwrap();
+            if v["op"] == "Event" && v["d"]["t"] == "InboxUpdated" {
+                return v["d"]["d"]["unread"].as_u64();
+            }
+        }
+    }
+}
+
+async fn unread(app: &TestApp, token: &str) -> u32 {
+    let n: pulse_protocol::rest::InboxUnread = get_json(app, token, "/inbox/unread").await;
+    n.unread
+}
+
+#[tokio::test]
+async fn threads_with_new_replies_count_in_the_inbox_and_their_people_hear_it() {
+    let f = fx().await;
+    assert_eq!(unread(&f.app, &f.alex).await, 0);
+    let (mut ws, at_ready) = connect(&f.app, &f.alex).await;
+    assert_eq!(at_ready, 0);
+
+    // a reply in alex's quote's thread: one thread unread, and alex's devices hear the count
+    f.reply(&f.sam, "first").await;
+    assert_eq!(next_count(&mut ws).await, Some(1));
+    // a second reply in the same thread is still one thread
+    let kims = f.reply(&f.kim, "second").await;
+    assert_eq!(unread(&f.app, &f.alex).await, 1);
+    // jo isn't part of it: nothing counted for her
+    assert_eq!(unread(&f.app, &f.jo).await, 0);
+    let (_, ready) = connect(&f.app, &f.alex).await;
+    assert_eq!(ready, 1);
+
+    // alex looks: gone from the count, and told so
+    f.seen(&f.alex, kims.id).await;
+    assert_eq!(unread(&f.app, &f.alex).await, 0);
+    let mut last = None;
+    while let Some(n) = next_count(&mut ws).await {
+        last = Some(n);
+        if n == 0 {
+            break;
+        }
+    }
+    assert_eq!(last, Some(0));
+}

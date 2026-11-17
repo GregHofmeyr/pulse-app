@@ -15,7 +15,7 @@
   import MenuFlyout from './MenuFlyout.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
   import { pickGroupIcon, removeGroupIcon } from '../lib/groupIcon.svelte'
-  import { DM_CATEGORY_CHARS, categoryNameOk, placementOf } from '../lib/dmLayout'
+  import { DM_CATEGORY_CHARS, categoryNameOk, categoryNameReserved, placementOf } from '../lib/dmLayout'
   import { moveConversation, moveToNewCategory, pinConversation } from '../lib/dmLayout.svelte'
 
   let { channel, muted, show, at = null, anchor = null, onClose, onRename, onLeft }: {
@@ -126,6 +126,7 @@
     <form class="name" onsubmit={(e) => { e.preventDefault(); if (categoryNameOk(newName)) void run(() => moveToNewCategory(channel.id, newName)) }}>
       <!-- svelte-ignore a11y_autofocus -->
       <input class="input input-sm" bind:value={newName} maxlength={DM_CATEGORY_CHARS} placeholder="Category name" aria-label="Category name" autofocus />
+      {#if categoryNameReserved(newName)}<p class="taken" role="status">That's a menu entry: pick another name</p>{/if}
       <div class="row">
         <button type="submit" class="menu-item" role="menuitem" disabled={!categoryNameOk(newName)}>Create and move</button>
         <button type="button" class="menu-item" role="menuitem" onclick={() => (naming = false)}>Cancel</button>
@@ -205,4 +206,5 @@
   .row { display: flex; gap: 4px; }
   .name { display: flex; flex-direction: column; gap: 4px; padding: 4px; }
   .err { margin: 6px 8px 2px; font-size: 12px; color: var(--danger-text); }
+  .taken { margin: 0; font-size: 12px; color: var(--text-3); }
 </style>

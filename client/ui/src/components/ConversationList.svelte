@@ -16,7 +16,7 @@
   import { openDm } from '../lib/store.svelte'
   import { errorText } from '../lib/tauri'
   import DmCategoryMenu from './DmCategoryMenu.svelte'
-  import { DM_CATEGORY_CHARS, categoryNameOk, dmSections } from '../lib/dmLayout'
+  import { DM_CATEGORY_CHARS, categoryNameOk, categoryNameReserved, dmSections } from '../lib/dmLayout'
   import { renameCategory, setCategoryCollapsed } from '../lib/dmLayout.svelte'
   import { isMenuKey, menuPoint } from '../lib/participantMenu'
   import type { DmCategory } from '../lib/protocol/DmCategory'
@@ -72,6 +72,7 @@
     if (renaming !== id) return
     renaming = null
     const was = app.state.dmLayout.categories.find((c) => c.id === id)?.name
+    if (categoryNameReserved(renameValue)) return void (layoutError = `"${renameValue.trim()}" is a menu entry: pick another name`)
     if (!categoryNameOk(renameValue) || renameValue.trim() === was) return
     await report(() => renameCategory(id, renameValue))
   }

@@ -5,9 +5,9 @@ Issue #305 (owner's feature list, 2026-11-11). Built 2026-11-17; the builder's c
 ## What it does
 
 - **Pin to top:** right-click a DM or group, **Pin to top** (or **Unpin**). Pinned conversations sit under a **Pinned** heading at the top of the list (your Notes stay above everything and can't be pinned or moved).
-- **Your own categories:** right-click a conversation, **Move to category** → one of yours (ticked if it's there), **New category…** (the menu turns into a name field: **Create and move**), or **Remove from category**. Each category is a heading in your list, like the channel list's: click it to fold it shut or open (folded, it shows the count of what's new in it and only keeps the conversation you're in); right-click it (or Shift+F10 / the menu key) for **Rename category…** (in the heading) and **Delete category** (no dialog: its conversations go back to the main list, pinned ones stay pinned).
-- **Order:** Pinned, then your categories in the order you made them, then the rest under **Conversations** (that heading only shows when there's something above it). Inside each, newest first, as the list always was. A pinned conversation in a category shows under Pinned.
-- **Names:** 1-32 characters on one line; two of your categories can't share a name (ignoring case). Up to 30 categories.
+- **Your own categories:** right-click a conversation, **Move to category** → one of yours (ticked if it's there), **New category…** (the menu turns into a name field: **Create and move**), or **Remove from category**. Each category is a heading in your list, like the channel list's: click it to fold it shut or open (folded, it shows the count of what's new in it and only keeps the conversation you're in); right-click it (or Shift+F10 / the menu key) for **Rename category…** (in the heading), **Move up** / **Move down** (#419, only where it can go) and **Delete category** (no dialog: its conversations go back to the main list, pinned ones stay pinned).
+- **Order:** Pinned, then your categories in your order (made last; moved with Move up / Move down, #419), then the rest under **Conversations** (that heading only shows when there's something above it). Inside each, newest first, as the list always was. A pinned conversation in a category shows under Pinned.
+- **Names:** 1-32 characters on one line; two of your categories can't share a name (ignoring case), and none can be named like the Move flyout's own entries, **New category…** or **Remove from category** (ignoring case, `...` for `…`; #419). Up to 30 categories.
 - **Yours, everywhere:** kept by the server per person, sent only to you (Ready's `dm_layout`, `DmLayoutChanged`), so every device shows the same list and folds. Nobody else ever sees your pins or categories.
 
 ## How it's made
@@ -17,4 +17,4 @@ Issue #305 (owner's feature list, 2026-11-11). Built 2026-11-17; the builder's c
 
 ## Not done
 
-- Reordering categories (they stay in the order made) and dragging conversations between them.
+- Dragging conversations between categories, and dragging the categories themselves (the conversation list has no drag code; the channel list's is built on its own DOM). Categories move with Move up / Move down instead (#419).
