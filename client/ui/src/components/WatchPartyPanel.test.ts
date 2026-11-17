@@ -143,6 +143,19 @@ describe('the watch party panel (#384)', () => {
     expect(invoke.mock.calls.some(([c]) => c === 'open_embed_window')).toBe(true)
   })
 
+  it('lists every queued video, not just the first few (#409)', async () => {
+    const queue = Array.from({ length: 8 }, (_, i) => ({ video_id: `video${i}abcd`, added_by: 'U2' }))
+    const host = show(party({ host_id: 'U1', viewers: ['U1'], queue }))
+    await settle()
+    const rows = host.querySelectorAll('.queue li')
+    expect(rows.length).toBe(8)
+    expect(rows[7].textContent).toContain('video7abcd')
+    expect(host.textContent).not.toContain('more')
+    const removes = host.querySelectorAll<HTMLButtonElement>('[aria-label="Remove from queue"]')
+    removes[7].click()
+    expect(actions()).toEqual([{ action: 'unqueue', index: 7 }])
+  })
+
   it('the host’s player moves the party on when the video ends', async () => {
     const host = show(party({ host_id: 'U1', viewers: ['U1'], queue: [{ video_id: 'aaaaaaaaaaa', added_by: 'U2' }] }))
     await settle()

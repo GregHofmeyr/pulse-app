@@ -340,3 +340,85 @@ async fn deleting_the_channel_drops_it() {
     assert!(w.app.voice.watch.of(w.lounge.id).is_none());
     assert!(ready_of(&w.app, &w.kim.1).await.watch_parties.is_empty());
 }
+
+/// The `saved_at_ms` of `channel`'s snapshot, if it has one.
+async fn snapshot_at(app: &TestApp, channel: ChannelId) -> Option<i64> {
+    sqlx::query_scalar("SELECT saved_at_ms FROM watch_party_snapshots WHERE channel_id = ?")
+        .bind(channel.to_string())
+        .fetch_optional(&app.db)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_restart_picks_it_back_up_with_whoever_is_still_in_the_call() {
+    let mut w = world().await;
+    assert_eq!(w.start(&w.alex.1, V).await.status(), 200);
+    changed(&mut w.rx).await;
+    assert_eq!(w.act(&w.sam.1, json!({"action": "join"})).await, 204);
+    changed(&mut w.rx).await;
+    let enqueue = json!({"action": "enqueue", "video_id": W, "title": "Next up"});
+    assert_eq!(w.act(&w.sam.1, enqueue).await, 204);
+    let before = changed(&mut w.rx).await;
+    assert!(snapshot_at(&w.app, w.lounge.id).await.is_some());
+
+    // a restart: memory is empty, and LiveKit hands back only sam (alex dropped while it was down)
+    let voice = pulse_server::voice::VoiceState::default();
+    voice.join(w.lounge.id, w.sam.0, "PA_sam");
+    let now = chrono::Utc::now().timestamp_millis();
+    let n = pulse_server::watch::restore(&w.app.db, &w.app.hub, &voice, now)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    let back = voice.watch.of(w.lounge.id).unwrap();
+    assert_eq!(back.viewers, [w.sam.0]);
+    assert_eq!(back.host_id, w.sam.0, "the host was gone, so it passed on");
+    assert_eq!((back.video_id.as_str(), back.queue.len()), (V, 1));
+    assert_eq!(
+        back.set_at_ms, before.set_at_ms,
+        "it carried on playing while down"
+    );
+    // everyone hears it came back
+    assert_eq!(changed(&mut w.rx).await, back);
+
+    // nobody from it in the call: dropped, snapshot and all
+    let empty = pulse_server::voice::VoiceState::default();
+    let n = pulse_server::watch::restore(&w.app.db, &w.app.hub, &empty, now)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    assert!(empty.watch.of(w.lounge.id).is_none());
+    assert_eq!(snapshot_at(&w.app, w.lounge.id).await, None);
+}
+
+#[tokio::test]
+async fn a_stale_snapshot_is_dropped_and_an_ended_party_leaves_none() {
+    let mut w = world().await;
+    assert_eq!(w.start(&w.alex.1, V).await.status(), 200);
+    changed(&mut w.rx).await;
+    let saved = snapshot_at(&w.app, w.lounge.id).await.unwrap();
+
+    // too long after it was saved: not restored, and forgotten
+    let voice = pulse_server::voice::VoiceState::default();
+    voice.join(w.lounge.id, w.alex.0, "PA_alex");
+    let late = saved + pulse_server::watch::RESTORE_WITHIN_MS + 1;
+    let n = pulse_server::watch::restore(&w.app.db, &w.app.hub, &voice, late)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    assert!(voice.watch.of(w.lounge.id).is_none());
+    assert_eq!(snapshot_at(&w.app, w.lounge.id).await, None);
+    quiet(&mut w.rx).await;
+
+    // a party that ends removes its snapshot
+    assert_eq!(
+        w.act(&w.alex.1, json!({"action": "pause", "position_ms": 1000}))
+            .await,
+        204
+    );
+    changed(&mut w.rx).await;
+    assert!(snapshot_at(&w.app, w.lounge.id).await.is_some());
+    assert_eq!(w.end(&w.alex.1).await, 204);
+    next(&mut w.rx).await;
+    assert_eq!(snapshot_at(&w.app, w.lounge.id).await, None);
+}

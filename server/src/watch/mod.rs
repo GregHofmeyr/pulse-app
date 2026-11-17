@@ -5,9 +5,10 @@
 //! the server's clock, playing or paused, the host and the queue. Each viewer's client drives its own YouTube player
 //! from it (`position + (server now - set_at)` while playing) and corrects its own drift; the server never ticks.
 //!
-//! In memory only, like the stage (#234) and the voice state it hangs off: a party is as ephemeral as its call. It ends
-//! when its last viewer leaves it or the call, and a restart drops it (someone starts it again). A host who leaves
-//! passes it to the next viewer, in the order they joined.
+//! Held in memory, like the stage (#234) and the voice state it hangs off: a party is as ephemeral as its call. It ends
+//! when its last viewer leaves it or the call. A host who leaves passes it to the next viewer, in the order they joined.
+//! Every change is also snapshotted to `watch_party_snapshots` (#409), so a restart picks a party back up
+//! ([`restore`]): only a snapshot younger than [`RESTORE_WITHIN_MS`], and only with the viewers still in the call.
 
 pub mod routes;
 
@@ -25,6 +26,10 @@ pub const MAX_TITLE: usize = 200;
 
 /// The furthest position taken (48 hours): YouTube's longest videos and streams fit, and nothing overflows.
 pub const MAX_POSITION_MS: u64 = 48 * 3600 * 1000;
+
+/// How old a snapshot may be and still be restored on boot (5 minutes): a restart for a deploy is well inside it, and
+/// a party left over from a long outage is gone.
+pub const RESTORE_WITHIN_MS: i64 = 5 * 60 * 1000;
 
 /// A YouTube video id: exactly 11 of `[A-Za-z0-9_-]`.
 pub fn valid_video_id(id: &str) -> bool {
@@ -273,6 +278,11 @@ impl WatchState {
         leave(&mut map, channel, user)
     }
 
+    /// Put back a party restored from its snapshot (#409).
+    fn put(&self, party: WatchParty) {
+        self.lock().insert(party.channel_id, party);
+    }
+
     /// End everything in `channel`; whether a party was on.
     pub fn remove_channel(&self, channel: ChannelId) -> bool {
         self.lock().remove(&channel).is_some()
@@ -284,6 +294,97 @@ pub async fn left_call(s: &crate::AppState, channel: ChannelId, user: UserId) {
     let _order = s.hub.in_order().await;
     let outcome = s.voice.watch.left_call(channel, user);
     routes::announce(s, channel, outcome).await;
+}
+
+/// Keep `channel`'s snapshot in step with what a change did: the party as it is now, or none once it ended.
+pub(crate) async fn snapshot(
+    db: &sqlx::SqlitePool,
+    channel: ChannelId,
+    outcome: &Outcome,
+    now_ms: i64,
+) {
+    let r = match outcome {
+        Outcome::Unchanged => return,
+        Outcome::Changed(party) => {
+            let Ok(json) = serde_json::to_string(party) else {
+                return;
+            };
+            sqlx::query(
+                "INSERT INTO watch_party_snapshots (channel_id, party, saved_at_ms) VALUES (?, ?, ?) \
+                 ON CONFLICT (channel_id) DO UPDATE SET party = excluded.party, saved_at_ms = excluded.saved_at_ms",
+            )
+            .bind(channel.to_string())
+            .bind(json)
+            .bind(now_ms)
+            .execute(db)
+            .await
+        }
+        Outcome::Ended => {
+            sqlx::query("DELETE FROM watch_party_snapshots WHERE channel_id = ?")
+                .bind(channel.to_string())
+                .execute(db)
+                .await
+        }
+    };
+    if let Err(e) = r {
+        tracing::warn!(error = %e, %channel, "couldn't snapshot a watch party");
+    }
+}
+
+/// `party` as restored at boot: only the viewers in `members` (in their order), the host passed on if they're gone;
+/// `None` when nobody is left.
+pub fn restored(mut party: WatchParty, members: &HashSet<UserId>) -> Option<WatchParty> {
+    party.viewers.retain(|v| members.contains(v));
+    let first = *party.viewers.first()?;
+    if !party.viewers.contains(&party.host_id) {
+        party.host_id = first;
+    }
+    Some(party)
+}
+
+/// Boot, once voice presence is back: pick up the parties a previous run snapshotted (#409). A snapshot older than
+/// [`RESTORE_WITHIN_MS`], or with nobody from it still in the call, is dropped. Each restored party is announced (a
+/// client that connected before this catches up; a later one gets it in Ready). Returns how many came back.
+pub async fn restore(
+    db: &sqlx::SqlitePool,
+    hub: &crate::gateway::hub::Hub,
+    voice: &crate::voice::VoiceState,
+    now_ms: i64,
+) -> anyhow::Result<usize> {
+    let rows: Vec<(String, String, i64)> =
+        sqlx::query_as("SELECT channel_id, party, saved_at_ms FROM watch_party_snapshots")
+            .fetch_all(db)
+            .await?;
+    let mut back = 0;
+    for (id, json, saved_at) in rows {
+        let Ok(channel) = id.parse::<ChannelId>() else {
+            continue;
+        };
+        let party = (now_ms.saturating_sub(saved_at) <= RESTORE_WITHIN_MS)
+            .then(|| serde_json::from_str::<WatchParty>(&json).ok())
+            .flatten()
+            .filter(|p| p.channel_id == channel && voice.watch.of(channel).is_none())
+            .and_then(|p| restored(p, &voice.members(channel)));
+        let Some(party) = party else {
+            sqlx::query("DELETE FROM watch_party_snapshots WHERE channel_id = ?")
+                .bind(channel.to_string())
+                .execute(db)
+                .await?;
+            continue;
+        };
+        voice.watch.put(party.clone());
+        snapshot(db, channel, &Outcome::Changed(party.clone()), now_ms).await;
+        hub.publish(
+            db,
+            pulse_protocol::gateway::Event::WatchPartyChanged {
+                party,
+                server_now_ms: now_ms,
+            },
+        )
+        .await;
+        back += 1;
+    }
+    Ok(back)
 }
 
 /// `channel` was deleted: its party goes. No event: clients drop the channel's state on `ChannelDeleted`.

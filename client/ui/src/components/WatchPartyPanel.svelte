@@ -248,7 +248,7 @@
     </div>
     {#if party.queue.length}
       <ol class="queue" aria-label="Up next">
-        {#each party.queue.slice(0, 5) as item, i (i + item.video_id)}
+        {#each party.queue as item, i (i + item.video_id)}
           <li>
             <span class="q-title">{item.title ?? item.video_id}</span><span class="q-by">{nameOf(item.added_by)}</span>
             {#if control || item.added_by === me}
@@ -256,7 +256,6 @@
             {/if}
           </li>
         {/each}
-        {#if party.queue.length > 5}<li class="more">and {party.queue.length - 5} more</li>{/if}
       </ol>
     {/if}
   {/if}
@@ -287,8 +286,9 @@
   .vol { display: flex; align-items: center; gap: 4px; color: var(--text-3); }
   .vol input { width: 72px; accent-color: var(--accent); }
   input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
-  .queue { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+  /* every queued video, scrolling once it's taller than about six rows */
+  .queue { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; font-size: 12px; max-height: 132px; overflow-y: auto; }
   .queue li { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-2); }
   .q-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .q-by, .more { color: var(--text-3); }
+  .q-by { color: var(--text-3); }
 </style>
