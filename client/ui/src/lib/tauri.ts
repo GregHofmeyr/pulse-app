@@ -49,6 +49,8 @@ import type { EditPollRequest } from './protocol/EditPollRequest'
 import type { DmLayout } from './protocol/DmLayout'
 import type { PersonDnd } from './protocol/PersonDnd'
 import type { InboxFilter } from './protocol/InboxFilter'
+import type { ChannelOrder } from './protocol/ChannelOrder'
+import type { ChannelOrderRequest } from './protocol/ChannelOrderRequest'
 import type { PersonDndRequest } from './protocol/PersonDndRequest'
 import type { InboxThreads } from './protocol/InboxThreads'
 import type { DmPlacementRequest } from './protocol/DmPlacementRequest'
@@ -366,6 +368,8 @@ export const api = {
     invoke<InboxPage>('inbox', filter ? { before, mentions, filter } : { before, mentions }),
   /** Replace your saved inbox filters (#307); answers with them as kept. */
   saveInboxFilters: (filters: InboxFilter[]) => invoke<InboxFilter[]>('save_inbox_filters', { filters }),
+  /** Your own order of a server's channel list (#304), or back to the server's (null); answers with it as kept. */
+  setChannelOrder: (serverId: string, request: ChannelOrderRequest | null) => invoke<ChannelOrder | null>('set_channel_order', { serverId, request }),
   /** How many inbox items are unread (#306). */
   inboxUnread: () => invoke<number>('inbox_unread'),
   /** Reply threads you're part of with replies you haven't seen (#326), and every thread you're part of. */

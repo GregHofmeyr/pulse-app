@@ -2094,6 +2094,22 @@ pub async fn inbox(
     )
 }
 
+/// Your own order of a server's channel list (#304), or back to the server's (`None`).
+#[tauri::command]
+pub async fn set_channel_order(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    request: Option<pulse_protocol::rest::ChannelOrderRequest>,
+) -> Result<Option<pulse_protocol::rest::ChannelOrder>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_channel_order(&token, server_id, request.as_ref())
+            .await,
+    )
+}
+
 /// Replace your saved inbox filters (#307).
 #[tauri::command]
 pub async fn save_inbox_filters(

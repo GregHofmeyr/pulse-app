@@ -1057,6 +1057,7 @@ mod tests {
                         dm_layout: Default::default(),
                         person_dnd: vec![],
                         inbox_filters: vec![],
+                        channel_orders: vec![],
                         calls: vec![],
                         ringing: vec![],
                         layouts: vec![],

@@ -390,6 +390,7 @@ pub fn run() {
             commands::list_pins,
             commands::inbox,
             commands::save_inbox_filters,
+            commands::set_channel_order,
             commands::inbox_unread,
             commands::inbox_threads,
             commands::inbox_read,

@@ -740,10 +740,28 @@ pub struct SaveLayoutRequest {
 }
 
 /// One category in a [`SaveLayoutRequest`] and its channels, in order.
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct LayoutCategory {
     pub id: CategoryId,
     pub channels: Vec<ChannelId>,
+}
+
+/// Your own order of a server's channel list (#304), drawn over the server's layout for you only: the channels
+/// outside any category, then the categories, each with its channels, all in your order. Channels and categories it
+/// doesn't name (new since) follow the ones it does, in the server's order; ones gone since are skipped. Archived
+/// channels are never in it. Yours only, on every device.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ChannelOrder {
+    pub server_id: ServerId,
+    pub uncategorised: Vec<ChannelId>,
+    pub categories: Vec<LayoutCategory>,
+}
+
+/// `PUT /me/channel-orders/{server_id}` (#304): your own order of that server's list (replacing any you had).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ChannelOrderRequest {
+    pub uncategorised: Vec<ChannelId>,
+    pub categories: Vec<LayoutCategory>,
 }
 
 /// One other user → a 1:1 `dm` (reused if it exists); 2..=9 others → a new `group`; only yourself →

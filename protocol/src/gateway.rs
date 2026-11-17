@@ -7,13 +7,13 @@ use crate::ids::{
     BookmarkId, CallId, ChannelId, LineId, MessageId, ReminderId, ScheduledId, ServerId, UserId,
 };
 use crate::rest::{
-    Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji,
-    CustomStatus, DmLayout, F1Prediction, Game, InboxFilter, InboxItem, Listening, ListeningUpdate,
-    Member, Message, MessageBookmark, MessageReminder, Mute, MyCustomStatus, NotifyLevelPref,
-    OwnStatus, Person, PersonDnd, PinnedMessage, Plan, Playing, PlayingUpdate, PresenceStatus,
-    PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason, ScheduledMessage, Server,
-    ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare, SteamStatus, StreamEndReason,
-    StreamInfo, User, WatchParty, Wheel,
+    Badge, CallInfo, CallRing, CardProfile, Channel, ChannelOrder, ClipView, ClipViewPref,
+    CustomEmoji, CustomStatus, DmLayout, F1Prediction, Game, InboxFilter, InboxItem, Listening,
+    ListeningUpdate, Member, Message, MessageBookmark, MessageReminder, Mute, MyCustomStatus,
+    NotifyLevelPref, OwnStatus, Person, PersonDnd, PinnedMessage, Plan, Playing, PlayingUpdate,
+    PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason,
+    ScheduledMessage, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare,
+    SteamStatus, StreamEndReason, StreamInfo, User, WatchParty, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -254,6 +254,11 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub inbox_filters: Vec<InboxFilter>,
+    /// Your own channel list orders (#304), one per server you set one for (and are still in). Yours only. Absent
+    /// from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub channel_orders: Vec<ChannelOrder>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -507,6 +512,13 @@ pub enum Event {
     InboxFiltersChanged {
         user_id: UserId,
         filters: Vec<InboxFilter>,
+    },
+    /// Only to its person's own sessions: their own order of a server's channel list changed (#304); `None`: reset to
+    /// the server's order. Clients from before it skip it.
+    ChannelOrderChanged {
+        user_id: UserId,
+        server_id: ServerId,
+        order: Option<ChannelOrder>,
     },
     /// Only to its person's own sessions: a saved message was removed (#315).
     BookmarkRemoved {
@@ -960,6 +972,7 @@ impl Event {
             | Self::DmLayoutChanged { .. }
             | Self::PersonDndChanged { .. }
             | Self::InboxFiltersChanged { .. }
+            | Self::ChannelOrderChanged { .. }
             | Self::BadgeEarned { .. } => None,
         }
     }
@@ -993,6 +1006,7 @@ impl Event {
             | Self::DmLayoutChanged { user_id, .. }
             | Self::PersonDndChanged { user_id, .. }
             | Self::InboxFiltersChanged { user_id, .. }
+            | Self::ChannelOrderChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
             | Self::CallRingEnded { user_id, .. }
@@ -1127,6 +1141,7 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             inbox_filters: vec![],
+            channel_orders: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1223,6 +1238,7 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             inbox_filters: vec![],
+            channel_orders: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1368,6 +1384,7 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             inbox_filters: vec![],
+            channel_orders: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],

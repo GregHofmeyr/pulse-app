@@ -23,7 +23,8 @@
   import { requestCreateCategory } from '../lib/categoryUi.svelte'
   import { clickOutside, modal, narrowerThan } from '../lib/actions'
   import { exitFade } from '../lib/exit'
-  import { NARROW_BODY, searchMakesRoom, sidebarLayout } from '../lib/layout'
+  import { NARROW_BODY, orderOf, searchMakesRoom, sidebarLayout } from '../lib/layout'
+  import { resetPersonalOrder, savePersonalOrder } from '../lib/channelOrder.svelte'
   import { COLUMNS, fitColumns, RIGHT_DEFAULT, RIGHT_MIN } from '../lib/columns'
   import { columns, resetColumn, setColumn } from '../lib/columns.svelte'
   import { CHAT_TOGGLE_ID, setVoiceChat, voiceChat } from '../lib/voiceChat.svelte'
@@ -815,7 +816,14 @@
             <div class="menu head-menu menu-surface pop-in" role="menu" use:clickOutside={closeServerMenu}>
               <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsId = activeServerId }}>Server settings</button>
               {#if member && activeServerId && app.state.layouts[activeServerId]}
+                {@const sid = activeServerId}
                 <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; if (activeServerId) requestCreateCategory(activeServerId) }}>Create category</button>
+                <!-- your own channel order (#304) -->
+                {#if app.state.channelOrders[sid]}
+                  <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; resetPersonalOrder(sid).catch((e: unknown) => (error = errorText(e))) }}>Reset to server order</button>
+                {:else}
+                  <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; savePersonalOrder(sid, orderOf(sidebarLayout(app.state, sid))).catch((e: unknown) => (error = errorText(e))) }}>Arrange channels just for me</button>
+                {/if}
               {/if}
             </div>
           {/if}

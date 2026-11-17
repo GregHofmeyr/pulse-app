@@ -1,5 +1,5 @@
--- Per-person Do Not Disturb (#310) and saved inbox filters (#307). New tables only (no rebuilds), so foreign keys
--- being OFF while migrating (db.rs) changes nothing, and older servers never read them.
+-- Per-person Do Not Disturb (#310), saved inbox filters (#307) and personal channel orders (#304). New tables only
+-- (no rebuilds), so foreign keys being OFF while migrating (db.rs) changes nothing, and older servers never read them.
 -- Rollback = restore the pre-deploy backup (or leave the tables: nothing else reads them).
 
 -- People whose messages don't alert you (no sound, no desktop notification), everywhere or only in DMs and groups,
@@ -24,4 +24,15 @@ CREATE TABLE inbox_filters (
     channels    TEXT NOT NULL DEFAULT '[]',
     unread_only INTEGER NOT NULL DEFAULT 0 CHECK (unread_only IN (0, 1)),
     PRIMARY KEY (user_id, position)
+) STRICT;
+
+-- Your own order of a server's channel list (#304), drawn over the server's layout for you only. `body` is JSON:
+-- {"uncategorised": [channel ids], "categories": [{"id": category id, "channels": [channel ids]}]}, cleaned against the
+-- server when saved. Goes with its person or its server; one you left is kept but not read.
+CREATE TABLE channel_orders (
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    server_id  TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, server_id)
 ) STRICT;

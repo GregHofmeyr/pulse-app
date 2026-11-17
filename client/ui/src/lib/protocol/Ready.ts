@@ -3,6 +3,7 @@ import type { CallInfo } from "./CallInfo";
 import type { CallRing } from "./CallRing";
 import type { Channel } from "./Channel";
 import type { ChannelId } from "./ChannelId";
+import type { ChannelOrder } from "./ChannelOrder";
 import type { ClipViewPref } from "./ClipViewPref";
 import type { CustomEmoji } from "./CustomEmoji";
 import type { DmLayout } from "./DmLayout";
@@ -196,4 +197,9 @@ person_dnd?: Array<PersonDnd>,
 /**
  * Your saved inbox filters (#307), in order. Yours only. Absent from older servers.
  */
-inbox_filters?: Array<InboxFilter>, };
+inbox_filters?: Array<InboxFilter>, 
+/**
+ * Your own channel list orders (#304), one per server you set one for (and are still in). Yours only. Absent
+ * from older servers.
+ */
+channel_orders?: Array<ChannelOrder>, };

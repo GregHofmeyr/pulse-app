@@ -783,6 +783,32 @@ impl Api {
         Self::parse(req.send().await).await
     }
 
+    /// Your own order of a server's channel list (#304) (`Some`), or back to the server's order (`None`). Answers with
+    /// the order as kept (`None` after a reset).
+    pub async fn set_channel_order(
+        &self,
+        token: &str,
+        server: ServerId,
+        request: Option<&pulse_protocol::rest::ChannelOrderRequest>,
+    ) -> Result<Option<pulse_protocol::rest::ChannelOrder>, ApiError> {
+        let url = self.url(&["me", "channel-orders", &server.to_string()])?;
+        match request {
+            Some(body) => Self::parse(
+                self.http
+                    .put(url)
+                    .bearer_auth(token)
+                    .json(body)
+                    .send()
+                    .await,
+            )
+            .await
+            .map(Some),
+            None => Self::ok_empty(self.http.delete(url).bearer_auth(token).send().await)
+                .await
+                .map(|()| None),
+        }
+    }
+
     /// Replace your saved inbox filters (#307); answers with them as kept.
     pub async fn save_inbox_filters(
         &self,
@@ -6157,6 +6183,30 @@ mod tests {
                 .is_empty()
         );
         assert!(api.set_person_dnd(&alex, alex_id, Some(&on)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn channel_order_round_trips_through_the_core() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let g = testing::general(&app, &alex, s.id).await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let req = pulse_protocol::rest::ChannelOrderRequest {
+            uncategorised: vec![g.id],
+            categories: vec![],
+        };
+        let kept = api
+            .set_channel_order(&alex, s.id, Some(&req))
+            .await
+            .unwrap();
+        assert_eq!(kept.unwrap().uncategorised, vec![g.id]);
+        assert!(
+            api.set_channel_order(&alex, s.id, None)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
