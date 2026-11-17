@@ -92,6 +92,17 @@ pub async fn zip_attachment_folder(core: State<'_, Core>, path: String) -> Resul
     tokio::task::block_in_place(|| stager.stage_folder(std::path::Path::new(&path)))
 }
 
+/// A queued still image's bytes, for the composer's image editor (#290): the edited picture comes back through
+/// `stage_attachment_bytes` as a new queued file.
+#[tauri::command]
+pub async fn staged_image_bytes(
+    core: State<'_, Core>,
+    id: String,
+) -> Result<tauri::ipc::Response, String> {
+    let stager = &core.attachments;
+    tokio::task::block_in_place(|| stager.image_bytes(&id)).map(tauri::ipc::Response::new)
+}
+
 /// Forget a queued file (its chip was removed).
 #[tauri::command]
 pub fn unstage_attachment(core: State<'_, Core>, id: String) {
