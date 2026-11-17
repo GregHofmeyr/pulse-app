@@ -144,7 +144,7 @@ pub(crate) async fn top_options(
     server: ServerId,
     year: i32,
 ) -> AppResult<Vec<String>> {
-    let ranked = crate::quotes::ranked(db, server, Some(year), true, None).await?;
+    let ranked = crate::quotes::ranked(db, server, Some(year), None, true, None).await?;
     let cut = ranked.get(TOP - 1).map_or(0, |r| r.1);
     Ok(ranked
         .into_iter()

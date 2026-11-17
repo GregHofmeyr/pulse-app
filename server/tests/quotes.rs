@@ -3394,13 +3394,16 @@ async fn most_quoted_merges_linked_names() {
     f.say_one("mine").await;
     f.post_lines(json!([{ "speaker_name": "Someone Else", "text": "z" }]))
         .await;
+    f.post_lines(json!([{ "speaker_name": "A FRIEND", "text": "later" }]))
+        .await;
     let name = |c: &pulse_protocol::rest::SpeakerCount| (c.user_id, c.name.clone(), c.count);
     let b = f.board("").await;
-    // The two spellings are one person; the latest spelling shows; ties by name.
+    // The spellings are one person, counted once per quote (#410: the friend quote's two lines
+    // are one quote); the latest quote's spelling shows; ties by name.
     assert_eq!(
         b.most_quoted.iter().map(name).collect::<Vec<_>>(),
         vec![
-            (None, Some("a  friend".into()), 2),
+            (None, Some("A FRIEND".into()), 2),
             (Some(f.sam), None, 1),
             (None, Some("Someone Else".into()), 1),
         ]
@@ -3414,6 +3417,223 @@ async fn most_quoted_merges_linked_names() {
             (None, Some("Someone Else".into()), 1)
         ]
     );
+}
+
+/// (#410) A quote counts once per person in "most quoted", however many of its lines they say:
+/// the board says "quotes", and the quote badges count a person once per quote too.
+#[tokio::test]
+async fn most_quoted_counts_quotes_not_lines() {
+    let f = fixture().await;
+    let (kim, _) = f.kim().await;
+    // sam and kim go back and forth: sam says three lines, kim one.
+    f.post_lines(json!([
+        f.say(f.sam, "a"),
+        f.say(kim, "b"),
+        f.say(f.sam, "c"),
+        f.say(f.sam, "d"),
+    ]))
+    .await;
+    f.say_one("e").await;
+    let b = f.board("").await;
+    let n = |c: &pulse_protocol::rest::SpeakerCount| (c.user_id, c.count);
+    assert_eq!(
+        b.most_quoted.iter().map(n).collect::<Vec<_>>(),
+        vec![(Some(f.sam), 2), (Some(kim), 1)]
+    );
+}
+
+/// (#410) A name typed for a member ("Sam", "SAM", their nickname) is that member on the boards,
+/// linked or not; a name two members share is nobody's; a link still wins.
+#[tokio::test]
+async fn typed_member_names_count_for_the_member() {
+    let f = fixture().await;
+    let (kim, kim_t) = f.kim().await;
+    // kim goes by "Jo" here.
+    f.sql(format!(
+        "UPDATE server_members SET nickname = 'Jo' WHERE user_id = '{kim}'"
+    ))
+    .await;
+    f.say_one("picked").await;
+    f.post_lines(json!([{ "speaker_name": "Sam", "text": "typed" }]))
+        .await;
+    f.post_lines(json!([{ "speaker_name": " SAM ", "text": "typed again" }]))
+        .await;
+    f.post_lines(json!([{ "speaker_name": "jo", "text": "nick" }]))
+        .await;
+    // Both sam and kim can be found by "pal": nobody's.
+    f.sql(format!(
+        "UPDATE users SET display_name = 'pal' WHERE id IN ('{}', '{kim}')",
+        f.sam
+    ))
+    .await;
+    f.post_lines(json!([{ "speaker_name": "Pal", "text": "who?" }]))
+        .await;
+    let n = |c: &pulse_protocol::rest::SpeakerCount| (c.user_id, c.name.clone(), c.count);
+    let b = f.board("").await;
+    assert_eq!(
+        b.most_quoted.iter().map(n).collect::<Vec<_>>(),
+        vec![
+            (Some(f.sam), None, 3),
+            (Some(kim), None, 1),
+            (None, Some("Pal".into()), 1)
+        ]
+    );
+    // A link points "jo" at alex instead.
+    assert_eq!(f.link(&kim_t, "jo", f.alex).await, 204);
+    let b = f.board("").await;
+    assert!(
+        b.most_quoted
+            .iter()
+            .any(|c| c.user_id == Some(f.alex) && c.count == 1),
+        "{:?}",
+        b.most_quoted
+    );
+    assert!(!b.most_quoted.iter().any(|c| c.user_id == Some(kim)));
+}
+
+/// (#410) Awards follow the same people, and an award on a line typed with your own name doesn't
+/// lift you on the board.
+#[tokio::test]
+async fn award_totals_fold_typed_member_names() {
+    let f = fixture().await;
+    let (kim, _) = f.kim().await;
+    let typed: Message = f
+        .post_lines(json!([{ "speaker_name": "Sam", "text": "typed" }]))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let picked = f.say_one("picked").await;
+    f.award(f.line_of(&typed, 0), f.alex).await;
+    f.award(f.line_of(&typed, 0), f.sam).await; // sam's own: doesn't count here
+    f.award(f.line_of(&picked, 0), kim).await;
+    let b = f.board("").await;
+    let n = |c: &pulse_protocol::rest::SpeakerCount| (c.user_id, c.name.clone(), c.count);
+    assert_eq!(
+        b.most_awarded.iter().map(n).collect::<Vec<_>>(),
+        vec![(Some(f.sam), None, 2)]
+    );
+}
+
+/// (#410) Each ranked quote carries its score, which is what it was ranked by: people, not emoji
+/// rows. The old board showed every emoji added up beside a list ranked by people.
+#[tokio::test]
+async fn ranked_quotes_carry_the_score_they_were_ranked_by() {
+    let f = fixture().await;
+    let (_, kim_t) = f.kim().await;
+    let (q1, q2) = (f.say_one("one").await, f.say_one("two").await);
+    for t in [&f.alex_t, &kim_t] {
+        assert_eq!(f.react(t, q1.id, "😂").await, 204);
+    }
+    assert_eq!(f.react(&f.sam_t, q2.id, "😂").await, 204);
+    for e in ["🔥", "💀"] {
+        f.sql(format!(
+            "INSERT INTO reactions (message_id, user_id, emoji, created_at) VALUES ('{}', '{}', '{e}', '2026-01-01T00:00:00.000Z')",
+            q2.id, f.sam
+        ))
+        .await;
+    }
+    let b = f.board("?period=all").await;
+    let got: Vec<_> = b.top.iter().map(|t| (t.message.id, t.score)).collect();
+    assert_eq!(got, vec![(q1.id, 2), (q2.id, 1)]);
+    assert!(b.top_year.is_empty() && b.top_all_time.is_empty());
+}
+
+/// (#410) Periods count quotes by the day they were posted, in the caller's local time, and apply
+/// to most reacted and most quoted; the awards board stays all time. Days are relative to today
+/// (the server only believes a `today` within a day of UTC's); `period_start`'s own test pins the
+/// calendar rules on fixed dates.
+#[tokio::test]
+async fn periods_count_by_the_local_day_posted() {
+    use chrono::Datelike;
+    let f = fixture().await;
+    let today = chrono::Utc::now().date_naive();
+    let month1 = today.with_day(1).unwrap();
+    let jan1 = chrono::NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap();
+    let day = chrono::Duration::days(1);
+    let monday = today - chrono::Duration::days(i64::from(today.weekday().num_days_from_monday()));
+    // (posted on, in this week, in this month, in this year)
+    let posted: Vec<_> = [
+        today,
+        monday,
+        monday - day,
+        month1,
+        month1 - day,
+        jan1,
+        jan1 - day,
+    ]
+    .into_iter()
+    .map(|d| (d, d >= monday, d >= month1, d >= jan1))
+    .collect();
+    let mut quotes = Vec::new();
+    for (i, (on, ..)) in posted.iter().enumerate() {
+        let m = f.say_one(&format!("q{i}")).await;
+        assert_eq!(f.react(&f.alex_t, m.id, "😂").await, 204);
+        f.award(f.line_of(&m, 0), f.alex).await;
+        f.sql(format!(
+            "UPDATE quotes SET posted_on = '{on}', year = {} WHERE message_id = '{}'",
+            on.year(),
+            m.id
+        ))
+        .await;
+        quotes.push(m.id);
+    }
+    for (period, pick) in [("week", 1usize), ("month", 2), ("year", 3), ("all", 0)] {
+        let want: Vec<MessageId> = posted
+            .iter()
+            .zip(&quotes)
+            .filter(|((_, w, m, y), _)| [true, *w, *m, *y][pick])
+            .map(|(_, id)| *id)
+            .collect();
+        let b = f.board(&format!("?period={period}&today={today}")).await;
+        let mut got: Vec<MessageId> = b.top.iter().map(|t| t.message.id).collect();
+        got.sort();
+        let mut want_sorted = want.clone();
+        want_sorted.sort();
+        assert_eq!(got, want_sorted, "{period}");
+        let quoted = b.most_quoted.first().map_or(0, |c| c.count);
+        assert_eq!(quoted as usize, want.len(), "{period}: most quoted");
+        // Awards are all time whatever the period.
+        assert_eq!(b.most_awarded[0].count as usize, posted.len(), "{period}");
+    }
+    assert_eq!(
+        f.board_raw(&f.alex_t, "?period=fortnight").await.status(),
+        400
+    );
+}
+
+/// (#410) A Quote of the Year win in a deleted channel is hidden like the rest of that channel.
+#[tokio::test]
+async fn wins_in_a_deleted_channel_are_hidden() {
+    let f = fixture().await;
+    let a = f.say_one("a").await;
+    seed_event(&f, 2025, &[(a.id, &[f.alex])]).await;
+    assert_eq!(f.board("").await.winners.len(), 1);
+    f.sql(format!(
+        "UPDATE channels SET deleted_at = '2026-01-02T00:00:00.000Z' WHERE id = '{}'",
+        f.ch.id
+    ))
+    .await;
+    assert!(f.board("").await.winners.is_empty());
+}
+
+/// (#410) An archived channel is still readable, so its quotes keep counting on the board and its
+/// wins stay; only a deleted channel's quotes drop out.
+#[tokio::test]
+async fn an_archived_channels_quotes_keep_counting() {
+    let f = fixture().await;
+    let a = f.say_one("a").await;
+    assert_eq!(f.react(&f.sam_t, a.id, "😂").await, 204);
+    seed_event(&f, 2025, &[(a.id, &[f.alex])]).await;
+    f.sql(format!(
+        "UPDATE channels SET archived_at = '2026-01-02T00:00:00.000Z' WHERE id = '{}'",
+        f.ch.id
+    ))
+    .await;
+    let b = f.board("").await;
+    assert_eq!(b.winners.len(), 1);
+    assert_eq!(ids(&b.top_all_time), vec![a.id]);
+    assert_eq!(b.most_quoted.len(), 1);
 }
 
 #[tokio::test]

@@ -2028,6 +2028,14 @@ async fn a_quotes_channel_holding_a_past_winner_purges_and_the_win_stays() {
         .await;
     assert_eq!(r.status(), 204);
     assert_eq!(f.in_recently_deleted().await.held, None);
+    // While the channel is only deleted (restorable), its win is hidden like the rest of it (#410).
+    let board: pulse_protocol::rest::Leaderboard = get_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/servers/{}/quotes/leaderboard", f.server),
+    )
+    .await;
+    assert!(board.winners.is_empty(), "hidden while in Recently deleted");
     let r = f
         .call(
             Method::DELETE,

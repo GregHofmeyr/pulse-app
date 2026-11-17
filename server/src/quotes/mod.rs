@@ -354,12 +354,14 @@ pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppR
 
 /// Live quotes of `server` ranked by reaction score: distinct people who reacted to the quote
 /// itself (replies don't count), best first, then newest. A quote nobody reacted to isn't ranked.
-/// `year` keeps one year's; `new_winners_only` leaves out quotes that already won a Quote of the
-/// Year; `limit` caps the list (`None`: all). Returns (message id, score).
+/// `year` keeps one year's; `since` keeps those posted on or after that day (`YYYY-MM-DD`, the
+/// poster's local date as `quotes.posted_on` stores it); `new_winners_only` leaves out quotes that
+/// already won a Quote of the Year; `limit` caps the list (`None`: all). Returns (message id, score).
 pub(crate) async fn ranked<'e, E>(
     db: E,
     server: ServerId,
     year: Option<i32>,
+    since: Option<&str>,
     new_winners_only: bool,
     limit: Option<usize>,
 ) -> AppResult<Vec<(String, i64)>>
@@ -372,7 +374,7 @@ where
          JOIN messages msg ON msg.id = q.message_id AND msg.deleted_at IS NULL
          JOIN channels c ON c.id = msg.channel_id AND c.deleted_at IS NULL
          JOIN reactions r ON r.message_id = q.message_id
-         WHERE c.server_id = ? AND (? IS NULL OR q.year = ?)
+         WHERE c.server_id = ? AND (? IS NULL OR q.year = ?) AND (? IS NULL OR q.posted_on >= ?)
            AND (? = 0 OR NOT EXISTS (SELECT 1 FROM qoty_winners w WHERE w.message_id = q.message_id))
          GROUP BY q.message_id
          ORDER BY score DESC, q.message_id DESC
@@ -381,6 +383,8 @@ where
     .bind(server.to_string())
     .bind(year)
     .bind(year)
+    .bind(since)
+    .bind(since)
     .bind(new_winners_only)
     // SQLite reads a negative LIMIT as none.
     .bind(limit.map_or(-1, |n| n as i64))

@@ -396,7 +396,7 @@ describe('TextChannel: quotes channel', () => {
     expect(start()).toBeUndefined()
   })
 
-  it('header buttons: the leaderboard opens its popover, Start calls back', () => {
+  it('header buttons: the leaderboard opens its panel, Start calls back', () => {
     app.state = markHistory(addHistory(applyReady(emptyState(), ready('quotes')), 'C1', []), 'C1', true)
     const onStartQoty = vi.fn()
     mounted.push(mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1', onStartQoty } }))
@@ -404,14 +404,16 @@ describe('TextChannel: quotes channel', () => {
     document.querySelector<HTMLButtonElement>('button[aria-label="Leaderboard"]')!.click()
     flushSync()
     expect(document.querySelector('.leaderboard')).toBeTruthy()
-    expect(invoke).toHaveBeenCalledWith('leaderboard', { serverId: 'S1', year: null })
+    expect(invoke).toHaveBeenCalledWith('leaderboard', expect.objectContaining({ serverId: 'S1' }))
+    // a panel down the channel (#410), not inside the header
+    expect(document.querySelector('.head .leaderboard')).toBeNull()
     ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Start Quote of the Year')!.click()
     expect(onStartQoty).toHaveBeenCalled()
   })
 
-  it('a leaderboard entry closes the popover and jumps to the quote in its channel', async () => {
+  it('a leaderboard entry closes the panel and jumps to the quote in its channel', async () => {
     const other: Message = { ...quoteMsg, id: 'Q9', channel_id: 'C2' }
-    const board = { winners: [], top_year: [], top_all_time: [other], most_quoted: [], most_awarded: [] }
+    const board = { winners: [], top_year: [], top_all_time: [], top: [{ message: other, score: 1 }], most_quoted: [], most_awarded: [] }
     invoke.mockImplementation(async (cmd: string) => (cmd === 'leaderboard' ? board : undefined))
     const r = ready('quotes')
     app.state = markHistory(addHistory(applyReady(emptyState(), { ...r, channels: [...r.channels, { id: 'C2', server_id: 'S1', kind: 'quotes', name: 'more', position: 1 }] }), 'C1', []), 'C1', true)
@@ -421,7 +423,7 @@ describe('TextChannel: quotes channel', () => {
     flushSync()
     await new Promise((r) => setTimeout(r, 0))
     flushSync()
-    document.querySelector<HTMLButtonElement>('.leaderboard button.entry')!.click()
+    document.querySelector<HTMLButtonElement>('.leaderboard button.jump')!.click()
     flushSync()
     expect(document.querySelector('.leaderboard')).toBeNull()
     expect(ui.goTo).toBe('C2')

@@ -13,10 +13,10 @@ use pulse_protocol::rest::{
     CreateDmRequest, CreateEmojiRequest, CreateSoundRequest, CreateWheelRequest, CustomEmoji,
     DeleteServerRequest, DeletedChannel, DeletedServer, EditClipRequest, EditMessageRequest,
     EditQuoteRequest, EggRequest, Game, Gif, GifConfig, GoLiveRequest, HideEmbedRequest, InboxPage,
-    InboxReadAllRequest, InboxUnread, Leaderboard, LinkSpeakerRequest, LoginMfaRequest,
-    LoginRequest, MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired,
-    MuteTarget, NameArchivePage, PartUrl, PartUrlsRequest, Pin, PinDuration, PinRequest,
-    PinnedMessage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, QuietSpin,
+    InboxReadAllRequest, InboxUnread, Leaderboard, LeaderboardPeriod, LinkSpeakerRequest,
+    LoginMfaRequest, LoginRequest, MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member,
+    Message, MfaRequired, MuteTarget, NameArchivePage, PartUrl, PartUrlsRequest, Pin, PinDuration,
+    PinRequest, PinnedMessage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, QuietSpin,
     RecoveryCodesResponse, RegisterRequest, RenameCategoryRequest, RenameChannelRequest,
     RenameEmojiRequest, ReopenQotyRequest, SaveLayoutRequest, SearchRequest, SearchResults,
     SendMessageRequest, Server, ServerLayout, ServerOrderRequest, ServerVoiceMod, SessionResponse,
@@ -3271,19 +3271,24 @@ impl Api {
         .await
     }
 
-    /// `year`: `None` = this year, as the server sees it.
+    /// The board for `period` (#410), counted back from `today` (the local `YYYY-MM-DD`; `None`:
+    /// the server's day). Without a period, the older shape (`top_year` and `top_all_time`).
     pub async fn leaderboard(
         &self,
         token: &str,
         server: ServerId,
-        year: Option<i32>,
+        period: Option<LeaderboardPeriod>,
+        today: Option<&str>,
     ) -> Result<Leaderboard, ApiError> {
         let mut req = self
             .http
             .get(self.url(&["servers", &server.to_string(), "quotes", "leaderboard"])?)
             .bearer_auth(token);
-        if let Some(y) = year {
-            req = req.query(&[("year", y)]);
+        if let Some(p) = period {
+            req = req.query(&[("period", p)]);
+        }
+        if let Some(t) = today {
+            req = req.query(&[("today", t)]);
         }
         Self::parse(req.send().await).await
     }
@@ -5821,16 +5826,26 @@ mod tests {
 
         // the board ranks by reactions; the search finds it by its words
         api.add_reaction(&jo, quote.id, "🔥").await.unwrap();
-        let board = api.leaderboard(&sam, s.id, None).await.unwrap();
+        let board = api.leaderboard(&sam, s.id, None, None).await.unwrap();
         assert_eq!(board.top_all_time[0].id, quote.id);
-        let this_year = quote.quote.as_ref().unwrap().year;
-        let board_year = api.leaderboard(&sam, s.id, Some(this_year)).await.unwrap();
-        assert_eq!(board_year.top_year[0].id, quote.id);
-        let board_other = api
-            .leaderboard(&sam, s.id, Some(this_year - 1))
+        let board = api
+            .leaderboard(&sam, s.id, Some(LeaderboardPeriod::All), None)
             .await
             .unwrap();
-        assert!(board_other.top_year.is_empty());
+        assert_eq!(
+            board
+                .top
+                .iter()
+                .map(|t| (t.message.id, t.score))
+                .collect::<Vec<_>>(),
+            [(quote.id, 1)]
+        );
+        let board_week = api
+            .leaderboard(&sam, s.id, Some(LeaderboardPeriod::Week), None)
+            .await
+            .unwrap();
+        assert_eq!(board_week.top[0].message.id, quote.id);
+        assert!(board_week.top_year.is_empty());
         let found = api.search_quotes(&sam, s.id, "honest").await.unwrap();
         assert_eq!(found[0].id, quote.id);
 

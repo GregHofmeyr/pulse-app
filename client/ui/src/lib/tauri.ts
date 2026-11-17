@@ -73,6 +73,7 @@ import type { LinkSpeakerRequest } from './protocol/LinkSpeakerRequest'
 import type { StartQotyRequest } from './protocol/StartQotyRequest'
 import type { QotyEvent } from './protocol/QotyEvent'
 import type { Leaderboard } from './protocol/Leaderboard'
+import type { LeaderboardPeriod } from './protocol/LeaderboardPeriod'
 import type { Game } from './protocol/Game'
 import type { EditClipRequest } from './protocol/EditClipRequest'
 import type { ClipUrl } from './protocol/ClipUrl'
@@ -568,7 +569,8 @@ export const api = {
   linkSpeaker: (serverId: string, body: LinkSpeakerRequest) => invoke<void>('link_speaker', { serverId, body }),
   unlinkSpeaker: (serverId: string, nameKey: string) => invoke<void>('unlink_speaker', { serverId, nameKey }),
   /** `year` omitted = this year. */
-  leaderboard: (serverId: string, year?: number) => invoke<Leaderboard>('leaderboard', { serverId, year: year ?? null }),
+  /** The quotes board for `period`, counted back from `today` (your local `YYYY-MM-DD`, #410). */
+  leaderboard: (serverId: string, period: LeaderboardPeriod, today: string) => invoke<Leaderboard>('leaderboard', { serverId, period, today }),
   // Clips (the upload itself is the send_clip command, with the editor).
   addGame: (serverId: string, name: string) => invoke<Game>('add_game', { serverId, name }),
   editClip: (messageId: string, body: EditClipRequest) => invoke<Message>('edit_clip', { messageId, body }),
