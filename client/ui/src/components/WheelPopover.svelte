@@ -21,9 +21,9 @@
   import { popoverStyle } from '../lib/reactions'
   import { errorText, wheelCmd } from '../lib/tauri'
   import {
-    loadMyWheels, loadServerWheels, saveWheel, savesSettled, setSpinQuietly, spinQuietly, spinWheel, upsertWheel, wheelPrefs, wheels,
+    loadMyWheels, loadServerWheels, saveWheel, savesSettled, setSpinQuietly, spinQuietly, spinWheel, upsertWheel, wheelPrefs, wheels, type WheelChange,
   } from '../lib/wheels.svelte'
-  import { drawSpin, WHEEL_LIMITS } from '../lib/wheel'
+  import { cleanWeights, drawSpin, WHEEL_LIMITS } from '../lib/wheel'
   import { playSound } from '../lib/voiceui'
   import { quietNow, runSpin } from '../lib/wheelSpin'
   import type { Wheel as SavedWheel } from '../lib/protocol/Wheel'
@@ -104,13 +104,13 @@
   }
 
   // a saved wheel saves each change, in order; what the server answers (or its event) is the truth
-  async function save(w: SavedWheel, change: { name?: string; options?: string[] }) {
+  async function save(w: SavedWheel, change: WheelChange) {
     error = ''
     error = await saveWheel(w, change)
   }
 
-  function setOptions(next: string[]) {
-    if (current) void save(current, { options: next })
+  function setOptions(next: string[], weights?: number[]) {
+    if (current) void save(current, { options: next, weights })
     else quick = next
   }
 
@@ -159,20 +159,23 @@
   // winner off this run of spins only (the saved wheel keeps it); picking, switching or editing starts afresh. ---
   let rotation = $state(0)
   let spinning = $state(false)
-  let result = $state<{ winner: number; options: string[] } | null>(null)
-  /** The private spins' options once a winner's been removed; null: the saved wheel's. */
+  let result = $state<{ winner: number; options: string[]; weights: number[] | undefined } | null>(null)
+  /** The private spins' options (and their weights, #259) once a winner's been removed; null: the saved wheel's. */
   let privateOptions = $state<string[] | null>(null)
+  let privateWeights = $state<number[] | undefined>(undefined)
   let stopSpin: (() => void) | null = null
   onDestroy(() => stopSpin?.())
   $effect(() => {
     void current?.id
     void current?.options
+    void current?.weights
     void scope
     untrack(() => {
       stopSpin?.()
       spinning = false
       result = null
       privateOptions = null
+      privateWeights = undefined
       rotation = 0
     })
   })
@@ -180,23 +183,30 @@
   function privateSpin(removeWinner: boolean) {
     if (!current || spinning) return
     let opts = privateOptions ?? current.options
-    if (removeWinner && result) opts = result.options.filter((_, i) => i !== result!.winner)
+    let ws = privateOptions ? privateWeights : (current.weights ?? undefined)
+    if (removeWinner && result) {
+      const gone = result.winner
+      opts = result.options.filter((_, i) => i !== gone)
+      ws = result.weights && cleanWeights(result.weights.filter((_, i) => i !== gone))
+    }
     if (opts.length < WHEEL_LIMITS.minOptions) return
     error = ''
     privateOptions = opts
+    privateWeights = ws
     result = null
     spinning = true
-    const { winner, angle } = drawSpin(opts.length)
+    const { winner, angle } = drawSpin(opts.length, Math.random, ws)
     // on from where the wheel stands, landing on the drawn angle
     const base = rotation % 360
     stopSpin = runSpin({
       angle: (((angle - base) % 360) + 360) % 360,
       count: opts.length,
+      weights: ws,
       quiet: quietNow(),
       onRotate: (deg) => (rotation = base + deg),
       onLanded: () => {
         spinning = false
-        result = { winner, options: opts }
+        result = { winner, options: opts, weights: ws }
         // your own private spin chimes as it lands (#271)
         playSound('wheel_result')
       },
@@ -213,12 +223,14 @@
   const isPrivate = $derived(current?.scope === 'personal')
   /** What the wheel shows: a private run's options (a winner removed), or the wheel being edited. */
   const shown = $derived(isPrivate && privateOptions ? privateOptions : options)
+  /** Its weights and palette (#259): a saved wheel's (a private run's after a removal); a quick wheel has none. */
+  const shownWeights = $derived(isPrivate && privateOptions ? privateWeights : (current?.weights ?? null))
   const canSpin = $derived(shown.length >= WHEEL_LIMITS.minOptions && !busy && !spinning)
 </script>
 
 <div bind:this={root} class="wheel-popover pop-in" role="dialog" aria-label="Picker wheel" tabindex="-1" use:clickOutside={onClose} onkeydown={keydown} {style}>
   <div class="stage">
-    <Wheel options={shown} {rotation} landed={result?.winner ?? null} result={result ? result.options[result.winner] : null} size={210} onSpin={spin} spinDisabled={!canSpin} />
+    <Wheel options={shown} weights={shownWeights} palette={current?.palette ?? null} {rotation} landed={result?.winner ?? null} result={result ? result.options[result.winner] : null} size={210} onSpin={spin} spinDisabled={!canSpin} />
     <div class="what">
       <span class="name">{current?.name ?? 'Quick wheel'}</span>
       <small>{current ? (current.server_id ? 'Server wheel · everyone here sees it' : 'Just me · only you see its spins') : 'One-off, not saved'}</small>
@@ -279,7 +291,9 @@
         {:else}
           <div class="menu-label">Options</div>
         {/if}
-        <WheelEditor bind:this={editor} bind:draft={addDraft} {options} onChange={setOptions} />
+        <WheelEditor bind:this={editor} bind:draft={addDraft} {options} onChange={setOptions}
+          weights={current?.weights ?? null} weighted={!!current} palette={current?.palette ?? null}
+          onPalette={current ? (palette) => current && void save(current, { palette }) : undefined} />
       {/if}
     </div>
   </div>

@@ -96,6 +96,33 @@ describe('WheelSettings', () => {
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('update_wheel', { id: 'W1', request: { name: 'Games tonight' } }))
   })
 
+  // #259
+  it('Edit sets an option\'s weight and the palette, saving each', async () => {
+    await show()
+    button('Edit').click()
+    flushSync()
+    const apex = document.querySelector<HTMLInputElement>('.edit input[aria-label="Weight of Apex"]')!
+    expect(apex.value).toBe('1')
+    apex.value = '4'
+    apex.dispatchEvent(new Event('change', { bubbles: true }))
+    flushSync()
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('update_wheel', { id: 'W1', request: { options: ['Valheim', 'Apex'], weights: [1, 4] } }))
+    // out of range is held to 1-10
+    await vi.waitFor(() => expect(document.querySelector<HTMLInputElement>('.edit input[aria-label="Weight of Valheim"]')).not.toBeNull())
+    const valheim = document.querySelector<HTMLInputElement>('.edit input[aria-label="Weight of Valheim"]')!
+    valheim.value = '40'
+    valheim.dispatchEvent(new Event('change', { bubbles: true }))
+    flushSync()
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('update_wheel', { id: 'W1', request: { options: ['Valheim', 'Apex'], weights: [10, 4] } }))
+    const gems = [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label=Colours] [role=radio]')].find((b) => b.textContent!.includes('Gems'))!
+    expect(gems.getAttribute('aria-checked')).toBe('false')
+    gems.click()
+    flushSync()
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('update_wheel', { id: 'W1', request: { palette: 'gems' } }))
+    // the thumbnail follows: a weighted wheel in the palette's colours
+    await vi.waitFor(() => expect(document.querySelector<SVGPathElement>('.wheel-list .slice path')!.getAttribute('fill')).toMatch(/^var\(--rarity-/))
+  })
+
   it('Delete asks first', async () => {
     await show()
     document.querySelector<HTMLButtonElement>('button[aria-label="Delete Games"]')!.click()

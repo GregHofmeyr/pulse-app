@@ -7,7 +7,7 @@
   import Wheel from './Wheel.svelte'
   import WheelEditor from './WheelEditor.svelte'
   import { errorText, wheelCmd } from '../lib/tauri'
-  import { dropWheel, loadMyWheels, loadServerWheels, saveWheel, upsertWheel, wheels } from '../lib/wheels.svelte'
+  import { dropWheel, loadMyWheels, loadServerWheels, saveWheel, upsertWheel, wheels, type WheelChange } from '../lib/wheels.svelte'
   import { WHEEL_LIMITS } from '../lib/wheel'
   import type { Server } from '../lib/protocol/Server'
   import type { Wheel as SavedWheel } from '../lib/protocol/Wheel'
@@ -104,7 +104,7 @@
     }
   }
 
-  async function save(w: SavedWheel, change: { name?: string; options?: string[] }) {
+  async function save(w: SavedWheel, change: WheelChange) {
     error = ''
     error = await saveWheel(w, change)
   }
@@ -162,7 +162,7 @@
     <ul class="settings-list wheel-list">
       {#each list as w (w.id)}
         <li class="settings-list-item">
-          <Wheel options={w.options} size={32} bare />
+          <Wheel options={w.options} weights={w.weights} palette={w.palette} size={32} bare />
           <div class="meta">
             <span class="name">{w.name}</span>
             <small>{count(w)}</small>
@@ -187,7 +187,8 @@
                 oninput={(e) => (names[w.id] = e.currentTarget.value)} onblur={() => rename(w)}
                 onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); rename(w) } }} />
             </label>
-            <WheelEditor bind:draft={optionDraft} options={w.options} onChange={(options) => save(w, { options })} autofocus={w.options.length === 0} />
+            <WheelEditor bind:draft={optionDraft} options={w.options} weights={w.weights} weighted palette={w.palette}
+              onPalette={(palette) => save(w, { palette })} onChange={(options, weights) => save(w, { options, weights })} autofocus={w.options.length === 0} />
           </li>
         {/if}
       {/each}

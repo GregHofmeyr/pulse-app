@@ -2,7 +2,7 @@
 // The server draws every spin's winner and final angle; these only read and animate them.
 
 /** As the server's `wheel_limits` (protocol/src/rest.rs). */
-export const WHEEL_LIMITS = { minOptions: 2, maxOptions: 100, optionChars: 60, nameChars: 40 } as const
+export const WHEEL_LIMITS = { minOptions: 2, maxOptions: 100, optionChars: 60, nameChars: 40, maxWeight: 10 } as const
 
 /** A full spin: whole turns before the landing, over this long. Every client uses the same, so all show one spin. */
 export const SPIN_TURNS = 5
@@ -18,12 +18,44 @@ export const QUIET_LINGER_MS = 6000
 /** How long a quiet spin's card lasts from when it arrives: the full spin, then the result for a while. */
 export const QUIET_CARD_MS = SPIN_MS + QUIET_LINGER_MS
 
-/** A draw on this device, for a Just me wheel's private spin (#270): the winner, uniformly, and the final angle
- *  that puts the pointer 10-90 % of the way across its slice. The server's `draw` (server/src/wheels/mod.rs). */
-export function drawSpin(n: number, random: () => number = Math.random): { winner: number; angle: number } {
-  const winner = Math.min(n - 1, Math.floor(random() * n))
-  const seg = 360 / n
-  const at = seg * (winner + 0.1 + random() * 0.8)
+/** A wheel's weights (#259) for `n` options: the saved ones when they fit, else every option alike. */
+export function weightsFor(n: number, weights?: readonly number[] | null): number[] {
+  return weights && weights.length === n && weights.some((w) => w > 0) ? weights.map((w) => Math.max(0, w)) : Array(n).fill(1)
+}
+
+/** Each slice's start and size in degrees, clockwise from 12 o'clock (#259: its weight's share of the turn). */
+export function sliceSpans(n: number, weights?: readonly number[] | null): { from: number; seg: number }[] {
+  const w = weightsFor(n, weights)
+  const total = w.reduce((a, b) => a + b, 0)
+  let before = 0
+  return w.map((x) => {
+    const span = { from: (360 * before) / total, seg: (360 * x) / total }
+    before += x
+    return span
+  })
+}
+
+/** Weights that are all alike are none (an unweighted wheel), as the server stores them. */
+export const cleanWeights = (weights: readonly number[]): number[] | undefined =>
+  weights.length && weights.some((w) => w !== weights[0]) ? [...weights] : undefined
+
+/** A draw on this device, for a Just me wheel's private spin (#270): the winner, in proportion to its weight
+ *  (#259; uniformly without weights), and the final angle that puts the pointer 10-90 % of the way across its slice.
+ *  The server's `draw_weighted` (server/src/wheels/mod.rs). */
+export function drawSpin(n: number, random: () => number = Math.random, weights?: readonly number[] | null): { winner: number; angle: number } {
+  const w = weightsFor(n, weights)
+  const total = w.reduce((a, b) => a + b, 0)
+  const pick = random() * total
+  let winner = n - 1
+  for (let i = 0, end = 0; i < n; i++) {
+    end += w[i]
+    if (pick < end) {
+      winner = i
+      break
+    }
+  }
+  const { from, seg } = sliceSpans(n, w)[winner]
+  const at = from + seg * (0.1 + random() * 0.8)
   return { winner, angle: (((360 - at) % 360) + 360) % 360 }
 }
 
@@ -67,11 +99,15 @@ export function shuffled<T>(list: T[], random: () => number = Math.random): T[] 
 
 /** The slice under the pointer at 12 o'clock when the wheel has turned `angle` degrees clockwise (slice i of n
  *  covers [i·360/n, (i+1)·360/n) clockwise from 12 o'clock): `wheel_winner_at` in protocol/src/rest.rs. */
-export function winnerAt(angle: number, n: number): number {
+export function winnerAt(angle: number, n: number, weights?: readonly number[] | null): number {
   if (n <= 0) return 0
   const mod = (v: number) => ((v % 360) + 360) % 360
   const at = mod(360 - mod(angle))
-  return Math.min(n - 1, Math.floor(at / (360 / n)))
+  if (!weights || weights.length !== n) return Math.min(n - 1, Math.floor(at / (360 / n)))
+  // weighted (#259): `wheel_winner_at_weighted`
+  const spans = sliceSpans(n, weights)
+  const i = spans.findIndex((s) => at < s.from + s.seg)
+  return i < 0 ? n - 1 : i
 }
 
 const easeOut = (t: number) => 1 - (1 - t) ** 4

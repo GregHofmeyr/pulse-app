@@ -19,7 +19,7 @@
   import { playSound } from '../lib/voiceui'
   import { WHEEL_LIMITS } from '../lib/wheel'
   import { cardState, dismissCard, markCardSeen } from '../lib/wheelCards'
-  import { sliceColour } from '../lib/wheelColours'
+  import { sliceStyle } from '../lib/wheelColours'
   import { quietNow, runSpin } from '../lib/wheelSpin'
   import { chatShown, spinAgain, spunLive } from '../lib/wheels.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
@@ -44,10 +44,11 @@
 
   onMount(() => {
     if (!live) return
-    const { angle, options } = untrack(() => spin)
+    const { angle, options, weights } = untrack(() => spin)
     return runSpin({
       angle,
       count: options.length,
+      weights,
       quiet,
       onRotate: (deg) => (rotation = deg),
       onLanded: () => {
@@ -130,7 +131,7 @@
 
 {#if phase !== 'line'}
   <div bind:this={card} class="wheel-card" data-message-id={message.id}>
-    <Wheel options={spin.options} {rotation} size={180} landed={phase === 'card' ? spin.winner : null} result={phase === 'card' ? winner : null} />
+    <Wheel options={spin.options} weights={spin.weights} palette={spin.palette} {rotation} size={180} landed={phase === 'card' ? spin.winner : null} result={phase === 'card' ? winner : null} />
     <div class="body">
       <p class="caption" aria-live="polite">
         {#if phase === 'spinning'}{@render who()} is spinning {label}…
@@ -149,9 +150,9 @@
 {:else}
   <!-- the 🎡 line as a mini result card (#273): the landed wheel, the winner, who spun what; actions on hover or focus -->
   <div class="wheel-line" data-message-id={message.id}>
-    <Wheel options={spin.options} rotation={spin.angle} size={40} landed={spin.winner} mini />
+    <Wheel options={spin.options} weights={spin.weights} palette={spin.palette} rotation={spin.angle} size={40} landed={spin.winner} mini />
     <div class="txt">
-      <p class="top"><span class="sr-only">🎡 </span><span class="swatch" style:background={sliceColour(spin.winner, n)}></span><strong class="won">{winner}</strong></p>
+      <p class="top"><span class="sr-only">🎡 </span><span class="swatch" style:background={sliceStyle(spin.winner, n, spin.palette).fill}></span><strong class="won">{winner}</strong></p>
       <p class="sub">{@render who()} spun {label} · {n} options · {time}{#if savedAs} · <span class="saved">Saved as {savedAs}</span>{/if}</p>
       {#if error}<p class="err" role="alert">{error}</p>{/if}
     </div>

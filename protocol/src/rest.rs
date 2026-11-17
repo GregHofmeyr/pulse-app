@@ -1051,8 +1051,17 @@ pub struct WheelSpin {
     /// Index into `options`.
     pub winner: u32,
     /// The wheel's final clockwise rotation in degrees, in [0, 360): the pointer at 12 o'clock then sits inside
-    /// the winner's slice ([`wheel_winner_at`]).
+    /// the winner's slice ([`wheel_winner_at_weighted`]).
     pub angle: f64,
+    /// Each option's weight (#259), as the saved wheel had it: a slice's share of the wheel, and of the draw. `None`
+    /// is every option alike (a quick wheel, or a wheel without weights; older clients draw it so).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub weights: Option<Vec<u32>>,
+    /// The saved wheel's palette (#259; [`wheel_palettes`]); `None` is the neon spectrum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub palette: Option<String>,
 }
 
 /// A quiet picker wheel spin (#270): drawn by the server and shown to the chat live, then gone. Nothing is stored,
@@ -1075,6 +1084,31 @@ pub fn wheel_winner_at(angle: f64, n: usize) -> usize {
     ((at / seg).floor() as usize).min(n - 1)
 }
 
+/// [`wheel_winner_at`] for a weighted wheel (#259): slice `i` covers its share of the turn, `weights[i]` of their
+/// sum, the slices in order clockwise from 12 o'clock. Empty or all-zero weights: every slice alike.
+pub fn wheel_winner_at_weighted(angle: f64, weights: &[u32]) -> usize {
+    let total: u64 = weights.iter().map(|&w| u64::from(w)).sum();
+    if total == 0 {
+        return wheel_winner_at(angle, weights.len());
+    }
+    let at = (360.0 - angle.rem_euclid(360.0)).rem_euclid(360.0);
+    let mut end = 0u64;
+    for (i, &w) in weights.iter().enumerate() {
+        end += u64::from(w);
+        if at < 360.0 * end as f64 / total as f64 {
+            return i;
+        }
+    }
+    weights.len() - 1
+}
+
+/// A wheel's palettes (#259): `neon` (the default, a spectrum made per wheel) and named sets of theme colours. The
+/// client draws them; the server only checks the name.
+pub mod wheel_palettes {
+    pub const NEON: &str = "neon";
+    pub const ALL: [&str; 5] = [NEON, "gems", "signal", "meadow", "accent"];
+}
+
 /// Picker wheel limits (#158), shared so the client can say them before the server refuses.
 pub mod wheel_limits {
     pub const MIN_OPTIONS: usize = 2;
@@ -1085,6 +1119,8 @@ pub mod wheel_limits {
     pub const NAME_CHARS: usize = 40;
     pub const WHEELS_PER_SERVER: i64 = 50;
     pub const WHEELS_PER_PERSON: i64 = 50;
+    /// An option's weight (#259): 1 (the default) to this.
+    pub const MAX_WEIGHT: u32 = 10;
 }
 
 /// A GIPHY GIF as Pulse keeps it (#58): its id and what to show before it loads. No GIPHY URLs: GIPHY's terms
@@ -1615,6 +1651,14 @@ pub struct Wheel {
     pub name: String,
     pub options: Vec<String>,
     pub updated_at: String,
+    /// Each option's weight (#259), one per option, 1 to [`wheel_limits::MAX_WEIGHT`]; `None` is all alike.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub weights: Option<Vec<u32>>,
+    /// Its palette (#259; [`wheel_palettes`]); `None` is the neon spectrum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub palette: Option<String>,
 }
 
 /// `POST /wheels`: a new saved wheel, in `server_id` (a server wheel) or, without one, Just me.
@@ -1626,6 +1670,14 @@ pub struct CreateWheelRequest {
     pub name: String,
     #[serde(default)]
     pub options: Vec<String>,
+    /// One per option (#259); absent = all alike.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub weights: Option<Vec<u32>>,
+    /// A [`wheel_palettes`] name; absent = the neon spectrum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub palette: Option<String>,
 }
 
 /// `PATCH /wheels/{id}`: what changes (absent = kept).
@@ -1637,6 +1689,14 @@ pub struct UpdateWheelRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub options: Option<Vec<String>>,
+    /// One per option (#259), with or without `options`. New options without weights: all alike again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub weights: Option<Vec<u32>>,
+    /// A [`wheel_palettes`] name (`neon` for the default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub palette: Option<String>,
 }
 
 /// `POST /channels/{id}/wheel-spins` (and `.../wheel-spins/quiet`, #270): spin a saved wheel (`wheel_id`) or a quick
@@ -3154,6 +3214,36 @@ mod tests {
         let r: SendMessageRequest =
             serde_json::from_str(r#"{"content":"hi","reply_to_id":null,"nonce":null}"#).unwrap();
         assert!(r.attachments.is_empty());
+    }
+
+    /// #259: weighted slices cover their share of the turn; equal weights read as the unweighted wheel, and an old
+    /// spin's payload (no weights or palette) still parses and writes neither.
+    #[test]
+    fn a_weighted_wheel_reads_each_slices_share() {
+        // weights 1, 3: slice 0 covers [0, 90), slice 1 [90, 360) clockwise from 12 o'clock
+        assert_eq!(wheel_winner_at_weighted(360.0 - 45.0, &[1, 3]), 0);
+        assert_eq!(wheel_winner_at_weighted(360.0 - 91.0, &[1, 3]), 1);
+        assert_eq!(wheel_winner_at_weighted(1.0, &[1, 3]), 1);
+        assert_eq!(wheel_winner_at_weighted(0.0, &[1, 3]), 0);
+        for n in 2..=20usize {
+            let ones = vec![1; n];
+            for k in 0..360 {
+                let a = k as f64 + 0.5;
+                assert_eq!(wheel_winner_at_weighted(a, &ones), wheel_winner_at(a, n));
+            }
+        }
+        assert_eq!(
+            wheel_winner_at_weighted(10.0, &[0, 0]),
+            wheel_winner_at(10.0, 2)
+        );
+        let old: WheelSpin =
+            serde_json::from_str(r#"{"options":["a","b"],"winner":1,"angle":10.0}"#).unwrap();
+        assert_eq!((old.weights.clone(), old.palette.clone()), (None, None));
+        let json = serde_json::to_string(&old).unwrap();
+        assert!(
+            !json.contains("weights") && !json.contains("palette"),
+            "{json}"
+        );
     }
 
     /// The pointer reads slice i of n from a clockwise turn: no turn shows slice 0 at the top's right edge; a
