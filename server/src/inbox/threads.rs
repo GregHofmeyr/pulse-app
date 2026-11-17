@@ -22,7 +22,8 @@ use crate::messages::routes::{COLS, Row, fill};
 pub const MAX_THREADS: i64 = 50;
 pub const MAX_WATCHING: i64 = 500;
 
-/// The live quotes and clips `me` is part of, in chats they can see and haven't muted. Binds: me, me, now.
+/// The live quotes and clips `me` is part of, in chats they can see (a server's only while they're in it) and haven't
+/// muted. Binds: me, me, now.
 const WATCHED: &str = "SELECT r.id AS root_id, r.channel_id AS channel_id, COALESCE(r.author_id = ?1, 0) AS started
     FROM messages r JOIN channels c ON c.id = r.channel_id
     WHERE r.deleted_at IS NULL
@@ -34,6 +35,8 @@ const WATCHED: &str = "SELECT r.id AS root_id, r.channel_id AS channel_id, COALE
       AND (c.server_id IS NULL OR c.server_id NOT IN (SELECT id FROM servers WHERE deleted_at IS NOT NULL))
       AND (c.server_id IS NOT NULL OR EXISTS (SELECT 1 FROM channel_members cm
                                                WHERE cm.channel_id = c.id AND cm.user_id = ?1))
+      AND (c.server_id IS NULL OR EXISTS (SELECT 1 FROM server_members sm
+                                           WHERE sm.server_id = c.server_id AND sm.user_id = ?1))
       AND NOT EXISTS (
             SELECT 1 FROM notification_prefs np
             WHERE np.user_id = ?1 AND np.muted = 1
