@@ -1,8 +1,9 @@
 // Card themes (#156): two raw colours, drawn as picked, top to bottom, over the whole card, in every app theme. The
 // text is chosen per card from those colours, not from the app theme: near-black on a light card, near-white on a dark
 // one, whichever reads with the smaller change, and the colours are moved toward white or black only as far as body
-// text (its secondary grey included) needs to reach WCAG AA (4.5:1). The card's inner surfaces are translucent overlays, so its colour shows through.
-import { contrast, luminance, parseHex, readable, toHex, type Rgb } from './color'
+// text (its secondary grey included) needs to reach WCAG AA (4.5:1), in OKLCH lightness so they keep hue and chroma
+// (#330). The gradient between them is drawn in OKLab (no grey, dark midpoint). The card's inner surfaces are translucent overlays, so its colour shows through.
+import { contrast, luminance, parseHex, readable, shadeOklch, toHex, type Rgb } from './color'
 
 export type ThemeKey = 'sunset' | 'night' | 'forest' | 'berry' | 'plain'
 export type ThemePreset = { key: ThemeKey; label: string; top: string; bottom: string }
@@ -96,7 +97,8 @@ function surfacesOf(stops: string[], ink: Ink): string[] {
  *  on the overlays over it, the colour that makes, and the worst contrast there. */
 function shiftFor(stop: string, ink: Ink): { k: number; color: string; worst: number } {
   for (let k = 0; k <= 100; k++) {
-    const color = k ? mixHex(toHex(ink.toward), stop, k / 100) : stop
+    // moved in OKLCH lightness, hue and chroma kept: Sunset's orange deepens to a burnt orange, not a brown (#330)
+    const color = k ? toHex(shadeOklch(rgbOf(stop), ink.light ? 'white' : 'black', k / 100)) : stop
     // the secondary grey is the harder of the two: once it reads, so does the text
     const worst = Math.min(...surfacesOf([color], ink).map((s) => contrast(ink.text2, s)))
     if (worst >= BODY_RATIO) return { k, color, worst }

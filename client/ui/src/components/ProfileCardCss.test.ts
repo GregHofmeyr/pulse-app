@@ -55,12 +55,12 @@ describe('the card follows the app theme (#139)', () => {
 })
 
 describe('the showcase badges on the card', () => {
-  it('are a little smaller than the shared showcase size (about 15%), every part scaled alike', () => {
+  it('are a little smaller than the shared showcase size (about 6%), every part scaled alike', () => {
     const decl = rule(/\.badges\.svelte-test \.badge-icon\.show/)
     expect(decl).not.toBeNull()
     const zoom = Number(decl!.match(/zoom:\s*([\d.]+)/)?.[1])
-    expect(zoom).toBeGreaterThanOrEqual(0.8)
-    expect(zoom).toBeLessThanOrEqual(0.85)
+    expect(zoom).toBeGreaterThanOrEqual(0.9)
+    expect(zoom).toBeLessThanOrEqual(0.97)
   })
 })
 
@@ -71,13 +71,20 @@ describe('#156: the glow is a choice, the quick card a little bigger', () => {
     expect(base).toMatch(/box-shadow:\s*var\(--card-lift\)/)
     expect(rule(/\.card\.glow\.svelte-test/)).toMatch(/box-shadow:[^;]*var\(--glow-top-a\)[^;]*var\(--glow-bottom-a\)[^;]*var\(--card-lift\)/)
   })
-  it('the quick card is 10–15% bigger than its old 300px, every size from one scale; the full card keeps its own', () => {
+  it('the card is 10–15% bigger than the old 300px quick card, every size from one scale; the full profile draws it the same (#330)', () => {
     const base = rule(/\.card\.svelte-test/)!
     const k = Number(base.match(/--k:\s*([\d.]+)/)?.[1])
     expect(k).toBeGreaterThanOrEqual(1.1)
     expect(k).toBeLessThanOrEqual(1.15)
     expect(base).toMatch(/width:\s*calc\(300px \* var\(--k\)\)/)
-    expect(rule(/\.card\.full\.svelte-test/)).toMatch(/--k:\s*1;/)
+    expect(css).not.toMatch(/\.card\.full/)
+  })
+  it('the gradient is drawn in OKLab (no grey, dark middle between saturated ends), after a plain one for an older engine (#330)', () => {
+    const base = rule(/\.card\.svelte-test/)!
+    const plain = base.indexOf('background: linear-gradient(var(--card-top), var(--card-bottom)) padding-box')
+    const oklab = base.indexOf('background: linear-gradient(in oklab, var(--card-top), var(--card-bottom)) padding-box, linear-gradient(in oklab, var(--card-border-top), var(--card-border-bottom)) border-box')
+    expect(plain).toBeGreaterThanOrEqual(0)
+    expect(oklab).toBeGreaterThan(plain)
   })
   it('the border is the card\'s own stronger shade; panels and the message box are translucent', () => {
     expect(rule(/\.card\.svelte-test/)).toMatch(/linear-gradient\(var\(--card-border-top\), var\(--card-border-bottom\)\) border-box/)

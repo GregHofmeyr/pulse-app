@@ -167,9 +167,10 @@
      sits above it (stacking.test.ts). */
   .overlay { position: fixed; inset: 0; z-index: 50; padding: 32px 16px; }
   /* the Board background: the theme's tinted surface (spec §3.2) */
-  .modal { width: min(880px, calc(100vw - 32px)); height: min(600px, calc(100vh - 64px)); flex-direction: row; gap: 16px; padding: 16px; background: linear-gradient(var(--card-top), var(--card-bottom)); overflow: hidden; }
+  .modal { width: min(880px, calc(100vw - 32px)); height: min(600px, calc(100vh - 64px)); flex-direction: row; gap: 16px; padding: 16px; background: linear-gradient(var(--card-top), var(--card-bottom)); background: linear-gradient(in oklab, var(--card-top), var(--card-bottom)); overflow: hidden; }
   /* padding: room for the card's glow (a scrolling box clips shadows at its edge), given back by the margin */
-  .left { flex: 0 0 calc(340px + 52px); overflow-y: auto; padding: 26px; margin: -26px; }
+  /* the card's width (ProfileCard: 300px × 1.12, as the quick card, #330) and its glow's room */
+  .left { flex: 0 0 calc(336px + 52px); overflow-y: auto; padding: 26px; margin: -26px; }
   /* A board scrolled half out of view (the trophy case, mostly) keeps its round corners (#131): the column's
      edge is cut with the boards' 12px radius, over the boards' area only (left of the 4px gap and the 10px
      scrollbar, whose room is kept even when nothing scrolls); the strip at the right stays whole for the bar.

@@ -145,7 +145,7 @@ describe('ProfileCard', () => {
     const el = show({ card: card({ banner_hash: BANNER, pronouns: 'they/them', bio: 'hi **there**' }) })
     expect(el.querySelector('.banner img')!.getAttribute('src')).toContain(BANNER)
     expect(el.querySelector('.av')).not.toBeNull()
-    // the quick card's avatar, 12% bigger since #156 (the full card's stays 80)
+    // the card's avatar, 12% bigger since #156, the same on the full profile (#330)
     expect(el.querySelector('.av')!.getAttribute('style')).toContain('90px')
     expect(el.querySelector('.name')!.textContent).toBe('sam')
     expect(el.querySelector('.handle')!.textContent).toBe('@sam · they/them')
@@ -430,7 +430,10 @@ describe('ProfileCard', () => {
     closeFull()
     unmount(cmp!)
     cmp = undefined
-    expect(show({ size: 'full' }).querySelector('button.avatar-link')).toBeNull()
+    const full = show({ size: 'full' })
+    expect(full.querySelector('button.avatar-link')).toBeNull()
+    // the full profile's card is drawn like the quick card (#330): the same avatar size
+    expect(full.querySelector('.av')!.getAttribute('style')).toContain('90px')
     unmount(cmp!)
     cmp = undefined
     expect(show({ preview: true }).querySelector('button.avatar-link')).toBeNull()
