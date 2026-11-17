@@ -184,10 +184,12 @@
   }
   // --- the message's own menu (#178): Pin message (a flyout of lengths) or Unpin message. From the action bar's More,
   // or a right-click on the message (the author's name and avatar keep their person menu). Not in quotes or clips
-  // channels (QuoteItem and the clip views are theirs), nor on an unsent or deleted message. ---
+  // channels (QuoteItem and the clip views are theirs), nor on an unsent or deleted message. A reply in a quote's or
+  // clip's thread has it with Remind me alone (#412). ---
   let msgMenu = $state<{ x: number; y: number; opener: HTMLElement } | null>(null)
   const pinnable = $derived(pinsPlainMessages(channelKind))
-  const msgMenuOn = $derived(pinnable && !pending && !message.deleted && !editing)
+  const cardReply = $derived(!pinnable && !!message.thread_root_id && (channelKind === 'quotes' || channelKind === 'clips'))
+  const msgMenuOn = $derived((pinnable || cardReply) && !pending && !message.deleted && !editing)
   function openMsgMenu(e: MouseEvent, opener: HTMLElement) {
     // the author's own menu took it (their name or avatar), or there's nothing to show
     if (e.defaultPrevented || !msgMenuOn) return
@@ -499,12 +501,17 @@
 {/if}
 <!-- outside the row, so focus in the menu doesn't count as focus in the message (its action bar) -->
 {#if msgMenu}
-  {#key msgMenu}<MessageMenu pinned={!!pin} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
-    onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
-    onRemind={(at) => msgMenu && remind(at, msgMenu.opener)}
-    saved={!!savedOne} onSave={saveToVault} onUnsave={unsave}
-    onForward={forwardable ? () => msgMenu && openForward(msgMenu.opener) : undefined}
-    onEndPoll={endable ? endPoll : undefined} onEditPoll={endable && !archived ? () => editPollCard() : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
+  {#if cardReply}
+    {#key msgMenu}<MessageMenu pinned={false} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
+      onRemind={(at) => msgMenu && remind(at, msgMenu.opener)} onClose={() => (msgMenu = null)} />{/key}
+  {:else}
+    {#key msgMenu}<MessageMenu pinned={!!pin} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
+      onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
+      onRemind={(at) => msgMenu && remind(at, msgMenu.opener)}
+      saved={!!savedOne} onSave={saveToVault} onUnsave={unsave}
+      onForward={forwardable ? () => msgMenu && openForward(msgMenu.opener) : undefined}
+      onEndPoll={endable ? endPoll : undefined} onEditPoll={endable && !archived ? () => editPollCard() : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
+  {/if}
 {/if}
 {#if remindCustom}
   <WhenPicker anchor={remindCustom} title="Remind me about this" confirm="Set reminder" onPick={remindAt} onClose={() => (remindCustom = null)} />

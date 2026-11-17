@@ -5161,6 +5161,17 @@ pub async fn reminder_seen(
     core.check(&app, api.reminder_seen(&token, id).await)
 }
 
+/// Claim telling you about a reminder you missed while none of your devices was connected (#412).
+#[tauri::command]
+pub async fn reminder_alerted(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::ReminderId,
+) -> Result<bool, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.reminder_alerted(&token, id).await)
+}
+
 /// Your join sound in a server (#121): one of its soundboard's sounds, or none (the normal join cue).
 #[tauri::command]
 pub async fn set_join_sound(

@@ -548,6 +548,7 @@ pub fn run() {
             commands::create_reminder,
             commands::delete_reminder,
             commands::reminder_seen,
+            commands::reminder_alerted,
             commands::message_edits,
             commands::forward_message,
             commands::list_bookmarks,

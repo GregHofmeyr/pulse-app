@@ -18,8 +18,10 @@
     y: number
     /** What it opened from: focus goes back to it when the menu closes from the keyboard. */
     opener: HTMLElement
-    onPin: (duration: PinDuration) => unknown
-    onUnpin: () => unknown
+    /** Pin message / Unpin message; both absent where messages aren't pinned (a reply in a quote's or clip's thread,
+     *  #412, whose menu is Remind me alone). */
+    onPin?: (duration: PinDuration) => unknown
+    onUnpin?: () => unknown
     /** Remind me (#300), a flyout of times: one of them (an instant), or `null` for Custom… (the caller asks). */
     onRemind?: (at: string | null) => unknown
     /** You saved this message (#315): Remove from saved instead of Save message. */
@@ -115,9 +117,9 @@
     if (!t || t.parentElement !== el) return
     for (const f of flyouts()) if (t !== f?.trigger()) f?.closeSoon()
   }}>
-  {#if pinned}
+  {#if pinned && onUnpin}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onUnpin)}>Unpin message</button>
-  {:else}
+  {:else if !pinned && onPin}
     <MenuFlyout bind:this={flyout} label="Pin message" flyoutLabel="Pin message for" menuLeft={left} menuTop={top} item="pin"
       choices={PIN_FOR} onPick={(i) => pick(() => onPin(PIN_FOR[i].duration))} />
   {/if}

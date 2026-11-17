@@ -1,14 +1,16 @@
 // Message reminders (#300): your list (from Ready, then ReminderSaved / ReminderRemoved, so every device agrees), and
 // what the message menu and the inbox do with it. When one comes due the server puts it in your inbox (its count
 // arrives as InboxUpdated) and this device tells you: the message sound, and a notification while Pulse isn't in focus
-// that opens the message (or a line in the app while it is), unless Reminder alerts is off.
+// that opens the message (or a line in the app while it is), unless Reminder alerts is off. One that came due while
+// none of your devices was connected (`missed`, #412) is told when the next one connects: each device claims it from
+// the server first, and only the one whose claim wins tells you, so you hear it once.
 import { jumpTo } from './jump'
 import { notifyPrefs } from './notifyPrefs.svelte'
 import { openMessage } from './openMessage'
 import type { Event } from './protocol/Event'
 import type { MessageReminder } from './protocol/MessageReminder'
 import { reminderPrefs } from './reminderPrefs.svelte'
-import { sortReminders, upsertReminder } from './schedule'
+import { sortReminders, upsertReminder, whenLabel } from './schedule'
 import { displayName, userOf } from './selectors'
 import { app, onAppEvent, onAppReady, ui } from './store.svelte'
 import { api, errorText } from './tauri'
@@ -34,6 +36,12 @@ export async function remindMe(messageId: string, at: string): Promise<MessageRe
   const made = await api.createReminder(messageId, at)
   put(made)
   return made
+}
+
+/** "Remind me about this" from a menu (a quote's, a clip's, #412): set, then a line in the app says when. */
+export async function remindAndSay(messageId: string, at: string): Promise<void> {
+  const r = await remindMe(messageId, at)
+  ui.notice = `I'll remind you ${whenLabel(r.remind_at, Date.now())}`
 }
 
 /** Cancel one still to come, or mark a due one done. */
@@ -112,6 +120,31 @@ function alert(r: MessageReminder) {
   }
 }
 
+/** Tell you about reminders you missed (#412), once: one as it would have been told, several in one line. */
+function alertMissed(list: readonly MessageReminder[]) {
+  if (list.length === 1) return alert(list[0])
+  if (!list.length || !reminderPrefs.alerts) return
+  const text = `${list.length} reminders came due while you were away`
+  playSound('message')
+  if (!windowFocus.focused && notifyPrefs.enabled) {
+    void api.notifyMessage({ title: 'Reminders', body: text, channelId: list[0].channel_id, messageId: list[0].message_id, tag: 'reminders-missed' })
+  } else if (windowFocus.focused) {
+    ui.notice = `${text}: they're in your inbox.`
+  }
+}
+
+/** On connecting: claim each missed reminder (#412) and tell you about the ones this device won. With Reminder alerts
+ *  off here nothing is claimed, so a device with them on can still tell you. */
+export async function claimMissed(list: readonly MessageReminder[]): Promise<void> {
+  if (!reminderPrefs.alerts) return
+  const missed = list.filter((r) => r.missed && r.due && !r.seen)
+  if (!missed.length) return
+  const won = await Promise.all(missed.map((r) => api.reminderAlerted(r.id).then((ok) => ok, () => false)))
+  const mine = missed.filter((_, i) => won[i])
+  reminders.list = reminders.list.map((r) => (missed.some((m) => m.id === r.id) ? { ...r, missed: false } : r))
+  alertMissed(mine)
+}
+
 /** A live event: yours only. One newly come due tells you (once, however often it's resent). */
 export function noteReminderEvent(e: Event): void {
   if (e.t === 'ReminderSaved') {
@@ -124,5 +157,8 @@ export function noteReminderEvent(e: Event): void {
   // a deleted message's reminders go in lib/inbox.svelte.ts, which recounts the inbox when one was unread
 }
 
-onAppReady((r) => (reminders.list = sortReminders(r.reminders ?? [])))
+onAppReady((r) => {
+  reminders.list = sortReminders(r.reminders ?? [])
+  void claimMissed(reminders.list)
+})
 onAppEvent(noteReminderEvent)

@@ -1318,6 +1318,11 @@ pub struct MessageReminder {
     pub due: bool,
     /// Due and opened (or marked read).
     pub seen: bool,
+    /// Came due while none of your devices was connected, and no device has told you yet (#412): the first to claim
+    /// it (`POST /reminders/{id}/alerted`) does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub missed: bool,
     /// The message, cut to one short line.
     pub message: InboxSnippet,
 }

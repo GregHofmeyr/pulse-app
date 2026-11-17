@@ -7,6 +7,7 @@
   import DeleteButton from './DeleteButton.svelte'
   import EditHistoryDialog from './EditHistoryDialog.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
+  import WhenPicker from './WhenPicker.svelte'
   import Icon from './Icon.svelte'
   import LineMenu from './LineMenu.svelte'
   import Name from './Name.svelte'
@@ -27,6 +28,7 @@
   import { serverNow } from '../lib/serverClock'
   import type { PinDuration } from '../lib/protocol/PinDuration'
   import { api, errorText } from '../lib/tauri'
+  import { remindAndSay } from '../lib/reminders.svelte'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { LineMedia } from '../lib/protocol/LineMedia'
   import type { Message } from '../lib/protocol/Message'
@@ -116,7 +118,16 @@
   const pinQuote = (d: PinDuration) => report(api.pinMessage(message.id, d))
   const unpinQuote = () => report(api.unpinMessage(message.id))
   /** Whether the line's menu would have anything in it: award, copy, save (an image), pin, or link. */
-  const hasActions = (line: QuoteLine) => !!awardOf(line) || !!copyText || !!line.media || !!pinItem || !!linkOf(line)
+  // Remind me (#412), about the whole quote, from a line's menu as Pin quote is: a time from its flyout, or Custom… (a
+  // day and time, placed by the line the menu opened from)
+  const remindable = $derived(!compact && !message.deleted)
+  let remindCustom = $state<HTMLElement | null>(null)
+  const remindAt = (at: string) => remindAndSay(message.id, at)
+  function remind(at: string | null, opener: HTMLElement) {
+    if (!at) return void (remindCustom = opener.isConnected ? opener : document.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`))
+    remindAt(at).catch((e) => showError(errorText(e)))
+  }
+  const hasActions = (line: QuoteLine) => !!awardOf(line) || !!copyText || !!line.media || !!pinItem || !!linkOf(line) || remindable
   const save = (media: LineMedia, caption: string | null) => void saveImage(media, caption, showError)
   // the Copy quote button's tooltip says "Copied" for a moment after
   let copied = $state(false)
@@ -249,6 +260,7 @@
       <LineMenu x={m.x} y={m.y} opener={m.opener} award={awardOf(line)} link={linkOf(line)} {members}
         onAward={() => toggleAward(line)} onCopy={copyText ? copy : null}
         onSave={line.media ? () => save(line.media!, line.caption) : null} pin={pinItem} onPin={pinQuote} onUnpin={unpinQuote}
+        onRemind={remindable ? (at) => remind(at, m.opener) : null}
         onLink={(id) => link(line, id)} onUnlink={() => unlink(line)}
         onClose={() => (menu = null)} />
     {/key}
@@ -268,6 +280,9 @@
   {/if}
 {/if}
 
+{#if remindCustom}
+  <WhenPicker anchor={remindCustom} title="Remind me about this" confirm="Set reminder" onPick={remindAt} onClose={() => (remindCustom = null)} />
+{/if}
 {#if historyAt}
   <EditHistoryDialog anchor={historyAt} messageId={message.id} onClose={() => (historyAt = null)} />
 {/if}

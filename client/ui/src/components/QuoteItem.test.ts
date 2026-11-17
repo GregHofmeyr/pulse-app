@@ -405,13 +405,14 @@ describe('QuoteItem', () => {
     expect(awardBtn(1)).toBeNull()
     // my own picture still has Save image (#206)
     openMenu(0)
-    expect(items()).toEqual(['Save image', 'Pin quote'])
+    expect(items()).toEqual(['Save image', 'Pin quote', 'Remind me'])
     document.querySelector('[role=menu]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     flushSync()
-    // the whole quote can still be pinned from it (#257); where the quote can't be pinned (a QotY option), no menu
+    // the whole quote can still be pinned (#257) and reminded of (#412) from it; where it can't (a QotY option), no
+    // menu
     lines[1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     flushSync()
-    expect(items()).toEqual(['Pin quote'])
+    expect(items()).toEqual(['Pin quote', 'Remind me'])
     document.querySelector('[role=menu]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     flushSync()
     unmount(cmp!); cmp = undefined; document.body.innerHTML = ''
