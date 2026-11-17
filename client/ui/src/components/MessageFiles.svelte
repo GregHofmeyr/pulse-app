@@ -2,6 +2,7 @@
   // A message's files (#57): images inline (one large, several in a grid; click for the viewer), videos in the clip
   // player, audio in a compact player, everything else (and an image that won't load) as a file card, a small text file with its preview under it (#318). A file the sender
   // marked as a spoiler (#289) shows blurred, and can't be used, until it's clicked; revealed stays revealed here.
+  // View-once files (#311) are ViewOnceFiles' for anyone but their sender.
   import type { Message } from '../lib/protocol/Message'
   import type { Attachment } from '../lib/protocol/Attachment'
   import { arrange, gridColumns, singleBox, type VideoSource } from '../lib/attachments'
@@ -14,13 +15,18 @@
   import FileCard from './FileCard.svelte'
   import TextPreview from './TextPreview.svelte'
   import { previewKind } from '../lib/textPreview'
-  import { clock } from '../lib/store.svelte'
+  import { app, clock } from '../lib/store.svelte'
+  import ViewOnceFiles from './ViewOnceFiles.svelte'
   import ImageViewer from './ImageViewer.svelte'
   import Icon from './Icon.svelte'
 
   let { message, onError }: { message: Message; onError?: (text: string) => void } = $props()
 
-  const parts = $derived(arrange(message.attachments ?? []))
+  // view-once files (#311): their sender sees them as usual (with who opened them); anyone else gets ViewOnceFiles'
+  // card instead, and none of their links are fetched here (the server would give none anyway)
+  const mine = $derived(!!message.author_id && message.author_id === app.state.me?.id)
+  const once = $derived((message.attachments ?? []).filter((a) => a.view_once))
+  const parts = $derived(arrange((message.attachments ?? []).filter((a) => mine || !a.view_once)))
   // links by attachment id; an image whose link or bytes fail twice shows as a file card instead
   let urls = $state<Record<string, string>>({})
   let broken = $state<Record<string, boolean>>({})
@@ -129,6 +135,7 @@
     {#if covered(a)}{@render cover(a)}{/if}
   </div>
 {/each}
+{#if once.length}<ViewOnceFiles {message} files={once} {mine} {onError} />{/if}
 {#if viewing !== null && viewable.length}
   <ImageViewer images={viewable} messageId={message.id} start={Math.min(Math.max(viewing, 0), viewable.length - 1)} onClose={() => (viewing = null)} {onError} />
 {/if}

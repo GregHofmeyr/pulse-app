@@ -4,12 +4,14 @@
   // Structure (the drag action, #55, relies on it): `.list` > `.cat.top` (rows) and one `.cat[data-category=<id>]`
   // per category (legacy sections: `.cat` without data-category), each `.label` heading then its rows `[data-channel]`.
   // Members drag rows and category headings to reorder (lib/drag.ts); legacy sections and non-members don't drag.
+  // With your own order (#304, the server menus' "Arrange channels just for me") drags and moves change only yours.
   // Archived channels (#303) sit apart at the bottom, in a collapsed `.archived` group that doesn't drag.
   import { tick, untrack } from 'svelte'
   import Icon, { type IconName } from './Icon.svelte'
   import type { Channel } from '../lib/protocol/Channel'
   import type { Category } from '../lib/protocol/Category'
-  import { app, clock } from '../lib/store.svelte'
+  import { app, clock, ui } from '../lib/store.svelte'
+  import { resetPersonalOrder, savePersonalOrder } from '../lib/channelOrder.svelte'
   import { callRoster, isMember, serverVoiceTip, type Occupant } from '../lib/selectors'
   import { stageShareIn } from '../lib/state'
   import { stageCard } from '../lib/stageShare'
@@ -18,7 +20,7 @@
   import { api, errorText } from '../lib/tauri'
   import { chatBadge, isMuted } from '../lib/conversations'
   import { isCollapsed, setCollapsed, toggleSection } from '../lib/sidebarSections.svelte'
-  import { applyOrder, categoryMoveText, channelMoveText, moveCategory as placeCategory, moveChannel as placeChannel, orderOf, sidebarLayout, stepCategory, stepChannel, type Order, type Section } from '../lib/layout'
+  import { applyOrder, orderFromPersonal, categoryMoveText, channelMoveText, moveCategory as placeCategory, moveChannel as placeChannel, orderOf, sidebarLayout, stepCategory, stepChannel, type Order, type Section } from '../lib/layout'
   import { cancelDrag, sortableList, type Drop } from '../lib/drag'
   import { drafts, saveOrder } from '../lib/layoutDraft.svelte'
   import { categoryUi } from '../lib/categoryUi.svelte'
@@ -69,12 +71,20 @@
   }
 
   const self = $derived(selfVoice())
-  // A reorder being saved shows at once, drawn over the server's layout.
+  // Your own order (#304), when you have one, is drawn over the server's layout; otherwise a reorder of the server's
+  // being saved shows at once, drawn over it.
   const layout = $derived.by(() => {
     const l = sidebarLayout(app.state, serverId)
+    const own = app.state.channelOrders[serverId]
+    if (own && l.live) return applyOrder(l, orderFromPersonal(own))
     const draft = drafts.byServer[serverId]
     return draft && l.live ? applyOrder(l, draft) : l
   })
+  /** Your own order is in force (#304): moves change only yours, never the server's layout. */
+  const personal = $derived(!!app.state.channelOrders[serverId] && layout.live)
+  /** Save a move to your own order; a refusal says why (the list goes back). */
+  const savePersonal = (next: Order) => savePersonalOrder(serverId, next).catch((e: unknown) => (ui.notice = errorText(e)))
+  const resetPersonal = () => void resetPersonalOrder(serverId).catch((e: unknown) => (ui.notice = errorText(e)))
   // Who's in voice is only shown to people who've joined the server.
   const member = $derived(isMember(app.state, serverId))
   /** Members of a server with categories may reorder and manage them. */
@@ -215,7 +225,7 @@
   /** Save a keyboard / menu move and keep focus on what moved: now, and again if a refusal snaps the list back (its
    *  element may be re-created) while focus hasn't gone anywhere else. */
   function saveMove(next: Order, selector: string) {
-    void saveOrder(serverId, next).then(() => {
+    void (personal ? savePersonal(next) : saveOrder(serverId, next)).then(() => {
       if (!document.activeElement || document.activeElement === document.body) void refocus(selector)
     })
     void refocus(selector)
@@ -270,8 +280,10 @@
       next = placeChannel(o, d.id, { category, index })
     }
     if (JSON.stringify(next) === JSON.stringify(o)) return false
-    // made from the list as it was when the drag began: a save on that revision (refused if it's gone since)
-    void saveOrder(serverId, next, dragFrom?.revision)
+    // your own order (#304): only yours changes; else made from the list as it was when the drag began, a save on
+    // that revision (refused if it's gone since)
+    if (personal) void savePersonal(next)
+    else void saveOrder(serverId, next, dragFrom?.revision)
     return true
   }
 
@@ -612,6 +624,13 @@
 
 <!-- always in the page: a region added along with its text often isn't read -->
 <p class="sr-only" aria-live="polite" data-moves>{moveSaid}</p>
+{#if personal}
+  <!-- your own order (#304): moves change only yours; Reset goes back to the server's -->
+  <div class="mine" data-personal-order>
+    <span>Your own order</span>
+    <button type="button" class="link" onclick={resetPersonal}>Reset to server order</button>
+  </div>
+{/if}
 <div class="list" bind:this={listEl} use:sortableList={dragOpts}>
   <div class="cat top">
     {#each layout.top as c (c.id)}{@render chan(c)}{/each}
@@ -669,6 +688,9 @@
 {/if}
 
 <style>
+  .mine { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 18px 0; font-size: 12px; color: var(--text-3); }
+  .link { border: 0; padding: 0; background: none; color: var(--accent-text); font: inherit; cursor: pointer; }
+  .link:hover { text-decoration: underline; }
   .list { position: relative; flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
   /* dragging (#55, lib/drag.ts): transforms only. What makes room slides; the lifted item follows the pointer (no
      transition) until it's dropped or sent back (returning); the frame a drop renders in has no transitions at all. */

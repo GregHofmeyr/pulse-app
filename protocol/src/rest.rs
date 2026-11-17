@@ -398,6 +398,28 @@ pub mod dm_layout_limits {
     }
 }
 
+/// Someone whose messages don't alert you (#310): no message sound and no desktop notification from them, everywhere
+/// or only in DMs and groups (`dms_only`), until `until` (RFC 3339; `None`: until you turn it off). Their messages
+/// still arrive and count as unread (and as mentions) as usual. Yours only; they're never told.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PersonDnd {
+    pub user_id: UserId,
+    #[serde(default)]
+    pub dms_only: bool,
+    #[serde(default)]
+    pub until: Option<String>,
+}
+
+/// `PUT /me/person-dnd/{user_id}` (#310): turn Do Not Disturb on for someone (or change it).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct PersonDndRequest {
+    #[serde(default)]
+    pub dms_only: bool,
+    /// When it ends (RFC 3339, in the future); `None`: until turned off.
+    #[serde(default)]
+    pub until: Option<String>,
+}
+
 /// A name you gave someone that only you see. Only ever sent to its owner.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PrivateNickname {
@@ -732,10 +754,28 @@ pub struct SaveLayoutRequest {
 }
 
 /// One category in a [`SaveLayoutRequest`] and its channels, in order.
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct LayoutCategory {
     pub id: CategoryId,
     pub channels: Vec<ChannelId>,
+}
+
+/// Your own order of a server's channel list (#304), drawn over the server's layout for you only: the channels
+/// outside any category, then the categories, each with its channels, all in your order. Channels and categories it
+/// doesn't name (new since) follow the ones it does, in the server's order; ones gone since are skipped. Archived
+/// channels are never in it. Yours only, on every device.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ChannelOrder {
+    pub server_id: ServerId,
+    pub uncategorised: Vec<ChannelId>,
+    pub categories: Vec<LayoutCategory>,
+}
+
+/// `PUT /me/channel-orders/{server_id}` (#304): your own order of that server's list (replacing any you had).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ChannelOrderRequest {
+    pub uncategorised: Vec<ChannelId>,
+    pub categories: Vec<LayoutCategory>,
 }
 
 /// One other user → a 1:1 `dm` (reused if it exists); 2..=9 others → a new `group`; only yourself →
@@ -2191,6 +2231,11 @@ pub struct Attachment {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[ts(as = "Option<bool>", optional)]
     pub spoiler: bool,
+    /// View once (#311): each recipient can open it once (`POST /messages/{id}/view-once/open`); the server signs no
+    /// other link to it for them, before or after. Its sender always can. Off the wire when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub view_once: bool,
 }
 
 /// `POST /attachments`: what is about to be uploaded.
@@ -2212,6 +2257,10 @@ pub struct StartAttachmentRequest {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[ts(as = "Option<bool>", optional)]
     pub spoiler: bool,
+    /// Each recipient can open it once (#311).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub view_once: bool,
 }
 
 /// Where to put the bytes. `url` is `None` when the upload has no single PUT URL (big sends).
@@ -2263,6 +2312,22 @@ pub struct AttachmentUrl {
     pub id: AttachmentId,
     pub url: Option<String>,
     pub expires_at: Option<String>,
+}
+
+/// Who has opened a message's view-once files (#311), `GET /messages/{id}/view-once`: for its sender, everyone who
+/// opened them (first opened first); for anyone else, only whether they did (`viewers` empty).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ViewOnceState {
+    /// You've opened them (always false for their sender).
+    pub opened: bool,
+    pub viewers: Vec<ViewOnceViewer>,
+}
+
+/// Someone who opened a message's view-once files, and when (#311).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ViewOnceViewer {
+    pub user_id: UserId,
+    pub viewed_at: String,
 }
 
 /// Limits on attachments, shared so the client can refuse before uploading.
@@ -2811,6 +2876,36 @@ pub struct InboxItem {
     pub read: bool,
 }
 
+/// One of your saved inbox filters (#307): the inbox's All and Mentions tabs narrowed to messages from these people
+/// and/or in these chats (either empty: any), and only unread ones when `unread_only`. Named by you; the name is its
+/// key (unique ignoring case). Yours only, on every device.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct InboxFilter {
+    pub name: String,
+    #[serde(default)]
+    pub people: Vec<UserId>,
+    #[serde(default)]
+    pub channels: Vec<ChannelId>,
+    #[serde(default)]
+    pub unread_only: bool,
+}
+
+/// `PUT /me/inbox-filters` (#307): your whole list of saved filters, in order.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct InboxFiltersRequest {
+    pub filters: Vec<InboxFilter>,
+}
+
+/// Limits on saved inbox filters (#307).
+pub mod inbox_filter_limits {
+    /// Saved filters one person may have.
+    pub const MAX_FILTERS: usize = 10;
+    /// Characters in a filter's name, after trimming.
+    pub const NAME_CHARS: usize = 32;
+    /// People, and chats, one filter may name (each).
+    pub const MAX_PER_FILTER: usize = 25;
+}
+
 /// `GET /inbox`: a page of your inbox, newest first, and how many items are unread in all.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct InboxPage {
@@ -3217,6 +3312,7 @@ mod tests {
                 expires_at: None,
                 expired: false,
                 spoiler: false,
+                view_once: false,
             }],
             caption_is_fallback: true,
             ..m

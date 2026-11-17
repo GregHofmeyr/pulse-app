@@ -4,12 +4,13 @@
   import Icon from './Icon.svelte'
   import { formatSize } from '../lib/attachments'
 
-  type ChipFile = { id: string; name: string; size: number; kind: string; preview: string | null; spoiler?: boolean; animated?: boolean }
+  type ChipFile = { id: string; name: string; size: number; kind: string; preview: string | null; spoiler?: boolean; viewOnce?: boolean; animated?: boolean }
 
   let {
     files,
     onRemove,
     onToggleSpoiler,
+    onToggleViewOnce,
     onEdit,
     error = null,
     progress = null,
@@ -19,6 +20,8 @@
     onRemove?: (id: string) => void
     /** Absent: the spoiler mark can't be changed (a message on its way). */
     onToggleSpoiler?: (id: string) => void
+    /** Absent: the view-once mark (#311) can't be changed. Offered for pictures, videos and sounds. */
+    onToggleViewOnce?: (id: string) => void
     /** Opens the image editor (#290) on a queued still image; absent: no Edit buttons (a message on its way). */
     onEdit?: (id: string) => void
     /** Why the last file couldn't be added. */
@@ -41,7 +44,7 @@
             {/if}
             <span class="meta">
               <span class="name">{f.name}</span>
-              <span class="size">{f.spoiler ? `Spoiler · ${formatSize(f.size)}` : formatSize(f.size)}</span>
+              <span class="size">{[f.viewOnce && 'View once', f.spoiler && 'Spoiler', formatSize(f.size)].filter(Boolean).join(' · ')}</span>
             </span>
             {#if onEdit && f.kind === 'image' && f.preview && !f.animated}
               <button class="icon-btn icon-btn-xs edit" type="button" aria-label={`Edit ${f.name}`} data-tip="Edit image" onclick={() => onEdit(f.id)}>
@@ -53,6 +56,13 @@
                 aria-label={f.spoiler ? `Unmark ${f.name} as a spoiler` : `Mark ${f.name} as a spoiler`}
                 data-tip={f.spoiler ? 'Spoiler: hidden until clicked' : 'Mark as spoiler'} onclick={() => onToggleSpoiler(f.id)}>
                 <Icon name="eye" size={14} />
+              </button>
+            {/if}
+            {#if onToggleViewOnce && (f.kind === 'image' || f.kind === 'video' || f.kind === 'audio')}
+              <button class="icon-btn icon-btn-xs mark once" class:on={f.viewOnce} type="button" aria-pressed={!!f.viewOnce}
+                aria-label={f.viewOnce ? `Unmark ${f.name} as view once` : `Mark ${f.name} as view once`}
+                data-tip={f.viewOnce ? 'View once: each person can open it once' : 'View once'} onclick={() => onToggleViewOnce(f.id)}>
+                <Icon name="eyeOff" size={14} />
               </button>
             {/if}
             {#if onRemove}

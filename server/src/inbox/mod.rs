@@ -10,6 +10,7 @@
 //!
 //! Threads (#326, [`threads`]): reply threads you're part of with replies you haven't seen, listed apart.
 
+pub mod filters;
 pub mod routes;
 pub mod threads;
 
@@ -93,13 +94,18 @@ pub async fn unread<'e>(db: impl SqliteExecutor<'e>, me: UserId) -> AppResult<u3
     Ok(n as u32)
 }
 
-/// What to list: a page older than `before` (newest first), only typed mentions, or exactly one message.
+/// What to list: a page older than `before` (newest first), only typed mentions, or exactly one message. A custom
+/// filter (#307) narrows it further: only from these `authors`, only in these `channels` (either empty: any), only
+/// unread ones.
 #[derive(Default)]
 pub struct Filter {
     pub before: Option<MessageId>,
     pub mentions_only: bool,
     pub only: Option<MessageId>,
     pub limit: i64,
+    pub authors: Vec<UserId>,
+    pub channels: Vec<ChannelId>,
+    pub unread_only: bool,
 }
 
 /// `me`'s items as `filter` picks them, newest first.
@@ -114,6 +120,22 @@ pub async fn list(db: &SqlitePool, me: UserId, filter: Filter) -> AppResult<Vec<
     if filter.only.is_some() {
         sql.push_str(" AND mn.message_id = ?");
     }
+    let marks = |n: usize| vec!["?"; n].join(", ");
+    if !filter.authors.is_empty() {
+        sql.push_str(&format!(
+            " AND m.author_id IN ({})",
+            marks(filter.authors.len())
+        ));
+    }
+    if !filter.channels.is_empty() {
+        sql.push_str(&format!(
+            " AND m.channel_id IN ({})",
+            marks(filter.channels.len())
+        ));
+    }
+    if filter.unread_only {
+        sql.push_str(&format!(" AND NOT {READ}"));
+    }
     sql.push_str(" ORDER BY mn.message_id DESC LIMIT ?");
     let mut q = sqlx::query_as::<_, (String, bool, bool)>(&sql)
         .bind(me.to_string())
@@ -124,6 +146,12 @@ pub async fn list(db: &SqlitePool, me: UserId, filter: Filter) -> AppResult<Vec<
     }
     if let Some(o) = filter.only {
         q = q.bind(o.to_string());
+    }
+    for a in &filter.authors {
+        q = q.bind(a.to_string());
+    }
+    for c in &filter.channels {
+        q = q.bind(c.to_string());
     }
     let picked = q.bind(filter.limit).fetch_all(db).await?;
     if picked.is_empty() {

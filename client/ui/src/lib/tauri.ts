@@ -48,6 +48,12 @@ import type { QuietSpin } from './protocol/QuietSpin'
 import type { CreatePollRequest } from './protocol/CreatePollRequest'
 import type { EditPollRequest } from './protocol/EditPollRequest'
 import type { DmLayout } from './protocol/DmLayout'
+import type { PersonDnd } from './protocol/PersonDnd'
+import type { InboxFilter } from './protocol/InboxFilter'
+import type { ViewOnceState } from './protocol/ViewOnceState'
+import type { ChannelOrder } from './protocol/ChannelOrder'
+import type { ChannelOrderRequest } from './protocol/ChannelOrderRequest'
+import type { PersonDndRequest } from './protocol/PersonDndRequest'
 import type { InboxThreads } from './protocol/InboxThreads'
 import type { DmPlacementRequest } from './protocol/DmPlacementRequest'
 import type { UpdateDmCategoryRequest } from './protocol/UpdateDmCategoryRequest'
@@ -156,6 +162,8 @@ export type StagedFile = {
   animated?: boolean
   /** Marked as a spoiler in the composer (#289); the UI's own, not the core's. */
   spoiler?: boolean
+  /** Marked view once in the composer (#311); the UI's own. */
+  viewOnce?: boolean
 }
 /** Mirrors `attachments::StageResult`. */
 export type StageResult =
@@ -347,9 +355,14 @@ export const api = {
     tempDays: number | null
     /** Staged ids marked as spoilers (#289). */
     spoilers: string[]
+    /** Staged ids marked view once (#311). */
+    viewOnce?: string[]
   }) => invoke<void>('send_with_attachments', a),
   cancelAttachmentSend: (nonce: string) => invoke<void>('cancel_attachment_send', { nonce }),
   attachmentUrls: (messageId: string) => invoke<AttachmentUrl[]>('attachment_urls', { messageId }),
+  /** View-once files (#311): who opened them (the sender) or whether you did; and the one open, with their links. */
+  viewOnceState: (messageId: string) => invoke<ViewOnceState>('view_once_state', { messageId }),
+  openViewOnce: (messageId: string) => invoke<AttachmentUrl[]>('open_view_once', { messageId }),
   /** A small text file's contents for its inline preview (#318); null when it can't be previewed (too big, not UTF-8, binary). */
   attachmentText: (messageId: string, attachmentId: string) => invoke<string | null>('attachment_text', { messageId, attachmentId }),
   /** The saved path; null when the Save dialog or the download is cancelled (or this file is already downloading). Progress: `download://progress`, key `file:<attachment id>`. */
@@ -362,7 +375,12 @@ export const api = {
   /** A chat's pins, newest pin first. */
   listPins: (channelId: string) => invoke<PinnedMessage[]>('list_pins', { channelId }),
   /** A page of your inbox (#306), newest first: older than `before`; only typed mentions with `mentions`. */
-  inbox: (before: string | null, mentions: boolean) => invoke<InboxPage>('inbox', { before, mentions }),
+  inbox: (before: string | null, mentions: boolean, filter: InboxFilter | null = null) =>
+    invoke<InboxPage>('inbox', filter ? { before, mentions, filter } : { before, mentions }),
+  /** Replace your saved inbox filters (#307); answers with them as kept. */
+  saveInboxFilters: (filters: InboxFilter[]) => invoke<InboxFilter[]>('save_inbox_filters', { filters }),
+  /** Your own order of a server's channel list (#304), or back to the server's (null); answers with it as kept. */
+  setChannelOrder: (serverId: string, request: ChannelOrderRequest | null) => invoke<ChannelOrder | null>('set_channel_order', { serverId, request }),
   /** How many inbox items are unread (#306). */
   inboxUnread: () => invoke<number>('inbox_unread'),
   /** Reply threads you're part of with replies you haven't seen (#326), and every thread you're part of. */
@@ -445,6 +463,8 @@ export const api = {
   pickClipFolder: () => invoke<string | null>('pick_clip_folder'),
   /** Get a notification when someone goes live, or stop (#60). A LiveNotifyChanged follows to your sessions. */
   setLiveNotify: (userId: string, on: boolean) => invoke<void>('set_live_notify', { userId, on }),
+  /** Per-person Do Not Disturb (#310): on for someone (`request`), or off (null); answers with your whole list. */
+  setPersonDnd: (userId: string, request: PersonDndRequest | null) => invoke<PersonDnd[]>('set_person_dnd', { userId, request }),
   /** Your Steam link and what this server can do with Steam (#379). */
   steamStatus: () => invoke<SteamStatus>('steam_status'),
   /** Opens Steam's sign-in in the browser; a SteamLinkChanged follows when it's done. */

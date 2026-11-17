@@ -229,6 +229,11 @@
     files = files.map((f) => (f.id === id ? { ...f, spoiler: !f.spoiler } : f))
   }
 
+  /** Mark or unmark a queued picture, video or sound as view once (#311): each person can open it once. */
+  function toggleViewOnce(id: string) {
+    files = files.map((f) => (f.id === id ? { ...f, viewOnce: !f.viewOnce } : f))
+  }
+
   // The image editor (#290): the queued image being edited. Saving queues the edit in its place (same spot, same
   // spoiler mark) and lets the original go.
   let editing = $state<StagedFile | null>(null)
@@ -542,7 +547,7 @@
     {@const name = `/${c.name}`}
     {name}{#if c.usage.startsWith(name)}<span class="arg">{c.usage.slice(name.length)}</span>{:else}<span class="arg">{` ${c.usage}`}</span>{/if}
   {/snippet}
-  <ComposerFiles {files} onRemove={removeFile} onToggleSpoiler={toggleSpoiler} onEdit={(id) => (editing = files.find((f) => f.id === id) ?? null)} error={fileError} />
+  <ComposerFiles {files} onRemove={removeFile} onToggleSpoiler={toggleSpoiler} onToggleViewOnce={toggleViewOnce} onEdit={(id) => (editing = files.find((f) => f.id === id) ?? null)} error={fileError} />
   {#if editing}
     {@const target = editing}
     <ImageEditDialog file={target} onSave={(bytes, name) => saveEdit(target, bytes, name)} onCancel={() => (editing = null)} />

@@ -2085,9 +2085,40 @@ pub async fn inbox(
     core: State<'_, Core>,
     before: Option<MessageId>,
     mentions: bool,
+    filter: Option<pulse_protocol::rest::InboxFilter>,
 ) -> Result<InboxPage, ApiError> {
     let (api, token) = core.current()?;
-    core.check(&app, api.inbox(&token, before, mentions).await)
+    core.check(
+        &app,
+        api.inbox(&token, before, mentions, filter.as_ref()).await,
+    )
+}
+
+/// Your own order of a server's channel list (#304), or back to the server's (`None`).
+#[tauri::command]
+pub async fn set_channel_order(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    request: Option<pulse_protocol::rest::ChannelOrderRequest>,
+) -> Result<Option<pulse_protocol::rest::ChannelOrder>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_channel_order(&token, server_id, request.as_ref())
+            .await,
+    )
+}
+
+/// Replace your saved inbox filters (#307).
+#[tauri::command]
+pub async fn save_inbox_filters(
+    app: AppHandle,
+    core: State<'_, Core>,
+    filters: Vec<pulse_protocol::rest::InboxFilter>,
+) -> Result<Vec<pulse_protocol::rest::InboxFilter>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.save_inbox_filters(&token, filters).await)
 }
 
 /// How many inbox items are unread (#306).
@@ -2381,6 +2412,21 @@ pub async fn set_live_notify(
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.set_live_notify(&token, user_id, on).await)
+}
+
+/// Per-person Do Not Disturb (#310): on for someone (`request`), or off (`None`); your whole list back.
+#[tauri::command]
+pub async fn set_person_dnd(
+    app: AppHandle,
+    core: State<'_, Core>,
+    user_id: UserId,
+    request: Option<pulse_protocol::rest::PersonDndRequest>,
+) -> Result<Vec<pulse_protocol::rest::PersonDnd>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_person_dnd(&token, user_id, request.as_ref()).await,
+    )
 }
 
 /// Your Steam link (#379).

@@ -743,12 +743,14 @@ impl Api {
         .await
     }
 
-    /// A page of your inbox (#306), newest first: older than `before`, and only typed mentions with `mentions`.
+    /// A page of your inbox (#306), newest first: older than `before`, and only typed mentions with `mentions`;
+    /// narrowed by a custom `filter` (#307: its people, chats and unread only; its name isn't sent).
     pub async fn inbox(
         &self,
         token: &str,
         before: Option<MessageId>,
         mentions: bool,
+        filter: Option<&pulse_protocol::rest::InboxFilter>,
     ) -> Result<InboxPage, ApiError> {
         let mut req = self
             .http
@@ -760,7 +762,68 @@ impl Api {
         if mentions {
             req = req.query(&[("mentions", "true")]);
         }
+        if let Some(f) = filter {
+            let join = |ids: Vec<String>| ids.join(",");
+            if !f.people.is_empty() {
+                req = req.query(&[(
+                    "from",
+                    join(f.people.iter().map(|p| p.to_string()).collect()),
+                )]);
+            }
+            if !f.channels.is_empty() {
+                req = req.query(&[(
+                    "in",
+                    join(f.channels.iter().map(|c| c.to_string()).collect()),
+                )]);
+            }
+            if f.unread_only {
+                req = req.query(&[("unread", "true")]);
+            }
+        }
         Self::parse(req.send().await).await
+    }
+
+    /// Your own order of a server's channel list (#304) (`Some`), or back to the server's order (`None`). Answers with
+    /// the order as kept (`None` after a reset).
+    pub async fn set_channel_order(
+        &self,
+        token: &str,
+        server: ServerId,
+        request: Option<&pulse_protocol::rest::ChannelOrderRequest>,
+    ) -> Result<Option<pulse_protocol::rest::ChannelOrder>, ApiError> {
+        let url = self.url(&["me", "channel-orders", &server.to_string()])?;
+        match request {
+            Some(body) => Self::parse(
+                self.http
+                    .put(url)
+                    .bearer_auth(token)
+                    .json(body)
+                    .send()
+                    .await,
+            )
+            .await
+            .map(Some),
+            None => Self::ok_empty(self.http.delete(url).bearer_auth(token).send().await)
+                .await
+                .map(|()| None),
+        }
+    }
+
+    /// Replace your saved inbox filters (#307); answers with them as kept.
+    pub async fn save_inbox_filters(
+        &self,
+        token: &str,
+        filters: Vec<pulse_protocol::rest::InboxFilter>,
+    ) -> Result<Vec<pulse_protocol::rest::InboxFilter>, ApiError> {
+        Self::parse(
+            self.http
+                .put(self.url(&["me", "inbox-filters"])?)
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::InboxFiltersRequest { filters })
+                .send()
+                .await,
+        )
+        .await
     }
 
     /// How many items in your inbox are unread (#306).
@@ -2030,6 +2093,21 @@ impl Api {
             self.http.delete(url)
         };
         Self::ok_empty(req.bearer_auth(token).send().await).await
+    }
+
+    /// Per-person Do Not Disturb (#310): on for `user` (with `request`), or off (`None`). Answers with your whole list.
+    pub async fn set_person_dnd(
+        &self,
+        token: &str,
+        user: UserId,
+        request: Option<&pulse_protocol::rest::PersonDndRequest>,
+    ) -> Result<Vec<pulse_protocol::rest::PersonDnd>, ApiError> {
+        let url = self.url(&["me", "person-dnd", &user.to_string()])?;
+        let req = match request {
+            Some(body) => self.http.put(url).json(body),
+            None => self.http.delete(url),
+        };
+        Self::parse(req.bearer_auth(token).send().await).await
     }
 
     /// Your Steam link and what this server can do with Steam (#379).
@@ -3462,6 +3540,38 @@ impl Api {
         Self::clip_ok_empty(
             self.http
                 .post(self.url(&["attachment-uploads", &id.to_string(), "complete"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Who opened a message's view-once files (#311): for its sender, everyone; for you, whether you did.
+    pub async fn view_once_state(
+        &self,
+        token: &str,
+        message: MessageId,
+    ) -> Result<pulse_protocol::rest::ViewOnceState, ApiError> {
+        Self::parse(
+            self.http
+                .get(self.url(&["messages", &message.to_string(), "view-once"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Open a message's view-once files, the one time (#311): their links (short-lived); `410` the second time.
+    pub async fn open_view_once(
+        &self,
+        token: &str,
+        message: MessageId,
+    ) -> Result<Vec<AttachmentUrl>, ApiError> {
+        Self::parse(
+            self.http
+                .post(self.url(&["messages", &message.to_string(), "view-once", "open"])?)
                 .bearer_auth(token)
                 .send()
                 .await,
@@ -6109,6 +6219,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn person_dnd_round_trips_through_the_core() {
+        let app = testing::spawn().await;
+        let (alex_id, alex) = testing::register(&app, "alex").await;
+        let (sam_id, _) = testing::register(&app, "sam").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let on = pulse_protocol::rest::PersonDndRequest {
+            dms_only: true,
+            until: None,
+        };
+        let list = api.set_person_dnd(&alex, sam_id, Some(&on)).await.unwrap();
+        assert_eq!((list[0].user_id, list[0].dms_only), (sam_id, true));
+        assert!(
+            api.set_person_dnd(&alex, sam_id, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(api.set_person_dnd(&alex, alex_id, Some(&on)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn channel_order_round_trips_through_the_core() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let g = testing::general(&app, &alex, s.id).await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let req = pulse_protocol::rest::ChannelOrderRequest {
+            uncategorised: vec![g.id],
+            categories: vec![],
+        };
+        let kept = api
+            .set_channel_order(&alex, s.id, Some(&req))
+            .await
+            .unwrap();
+        assert_eq!(kept.unwrap().uncategorised, vec![g.id]);
+        assert!(
+            api.set_channel_order(&alex, s.id, None)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn live_notify_round_trips_through_the_core() {
         let app = testing::spawn().await;
         let (alex_id, alex) = testing::register(&app, "alex").await;
@@ -6445,7 +6600,7 @@ mod tests {
     async fn inbox_lists_counts_and_reads() {
         let app = testing::spawn().await;
         let (_, alex) = testing::register(&app, "alex").await;
-        let (_, sam) = testing::register(&app, "sam").await;
+        let (sam_id, sam) = testing::register(&app, "sam").await;
         let s = testing::create_server(&app, &alex, "Main").await;
         let r = testing::post_json(
             &app,
@@ -6469,14 +6624,28 @@ mod tests {
         .json()
         .await
         .unwrap();
-        let page = api.inbox(&alex, None, false).await.unwrap();
+        let page = api.inbox(&alex, None, false, None).await.unwrap();
         let ids: Vec<_> = page.items.iter().map(|i| i.message.id).collect();
         assert_eq!(ids, vec![reply.id, a.id]);
         assert_eq!(page.unread, 2);
-        let mentions = api.inbox(&alex, None, true).await.unwrap();
+        let mentions = api.inbox(&alex, None, true, None).await.unwrap();
         assert_eq!(mentions.items.len(), 1);
-        let older = api.inbox(&alex, Some(reply.id), false).await.unwrap();
+        let older = api.inbox(&alex, Some(reply.id), false, None).await.unwrap();
         assert_eq!(older.items[0].message.id, a.id);
+        // a saved filter (#307), and a page narrowed by it
+        let filter = pulse_protocol::rest::InboxFilter {
+            name: "Sam".into(),
+            people: vec![sam_id],
+            channels: vec![g.id],
+            unread_only: true,
+        };
+        let kept = api
+            .save_inbox_filters(&alex, vec![filter.clone()])
+            .await
+            .unwrap();
+        assert_eq!(kept, vec![filter.clone()]);
+        let narrowed = api.inbox(&alex, None, true, Some(&filter)).await.unwrap();
+        assert_eq!(narrowed.items.len(), 1);
         api.inbox_read(&alex, a.id).await.unwrap();
         assert_eq!(api.inbox_unread(&alex).await.unwrap(), 1);
         api.inbox_read_all(&alex, None).await.unwrap();

@@ -20,6 +20,7 @@
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
   import JoinGameItem from './JoinGameItem.svelte'
   import MessageSoundItem from './MessageSoundItem.svelte'
+  import PersonDndItem from './PersonDndItem.svelte'
   import ServerVoiceItem from './ServerVoiceItem.svelte'
   import WatchPartyItem from './WatchPartyItem.svelte'
 
@@ -117,11 +118,15 @@
 
   // the message sound flyout (#312)
   let soundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
+  // and per-person Do Not Disturb's (#310)
+  let dndFlyout = $state<ReturnType<typeof PersonDndItem>>()
+  const flyouts = () => [soundFlyout, dndFlyout]
 
   function keydown(e: KeyboardEvent) {
     // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
-    if (e.key === 'Escape' && soundFlyout?.isOpen()) { e.preventDefault(); e.stopPropagation(); soundFlyout.close(false); return }
-    if (['ArrowDown', 'ArrowUp', 'Home', 'End', 'ArrowLeft'].includes(e.key)) soundFlyout?.close(false)
+    const open = flyouts().find((f) => f?.isOpen())
+    if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); open.close(false); return }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End', 'ArrowLeft'].includes(e.key)) for (const f of flyouts()) f?.close(false)
     const list = items()
     const at = list.indexOf(document.activeElement as HTMLElement)
     switch (e.key) {
@@ -158,7 +163,7 @@
   onpointerover={(e) => {
     // another of the menu's own items under the pointer closes the flyout
     const t = (e.target as Element).closest?.('[data-item]')
-    if (t && t.parentElement === el && t !== soundFlyout?.trigger()) soundFlyout?.closeSoon()
+    if (t && t.parentElement === el) for (const f of flyouts()) if (t !== f?.trigger()) f?.closeSoon()
   }}>
   <!-- the card opens beside the row or tile the menu came from -->
   <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>
@@ -221,6 +226,7 @@
   <WatchPartyItem {channelId} {userId} {pick} />
   <NicknameItems {serverId} {userId} {pick} />
   <LiveNotifyItem {userId} {pick} />
+  <PersonDndItem bind:this={dndFlyout} {userId} {pick} menuLeft={left} menuTop={top} />
   <AppearOfflineItem {userId} {pick} />
 </div>
 

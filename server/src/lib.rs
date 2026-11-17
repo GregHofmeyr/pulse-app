@@ -23,6 +23,7 @@ pub mod limits;
 pub mod media;
 pub mod messages;
 pub mod models;
+pub mod person_dnd;
 pub mod pins;
 pub mod plans;
 pub mod polls;
@@ -66,11 +67,13 @@ pub fn router(state: AppState) -> Router {
         .merge(servers::nicknames::router())
         .merge(servers::membership::router())
         .merge(servers::order::router())
+        .merge(servers::personal_order::router())
         .merge(servers::categories::router())
         .merge(messages::routes::router())
         .merge(messages::reactions::router())
         .merge(messages::threads::router())
         .merge(inbox::router())
+        .merge(inbox::filters::router())
         .merge(pins::router())
         .merge(polls::router())
         .merge(plans::router())
@@ -88,6 +91,7 @@ pub fn router(state: AppState) -> Router {
         .merge(calls::routes::router())
         .merge(streams::routes::router())
         .merge(streams::notify::router())
+        .merge(person_dnd::router())
         .merge(stage::routes::router())
         .merge(watch::routes::router())
         .merge(reports::routes::router())
@@ -97,6 +101,7 @@ pub fn router(state: AppState) -> Router {
         .merge(clips::games::router())
         .merge(clips::routes::router())
         .merge(attachments::routes::router())
+        .merge(attachments::view_once::router())
         .merge(profiles::routes::router())
         .merge(profiles::private::router())
         .merge(presence::routes::router())

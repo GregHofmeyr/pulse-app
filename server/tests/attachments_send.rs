@@ -830,3 +830,118 @@ async fn a_forward_shows_the_originals_files_by_reference_spoilers_and_all() {
     let links: Vec<AttachmentUrl> = urls(app, &kim, fwd.id).await.json().await.unwrap();
     assert!(links.is_empty());
 }
+
+/// #311: a view-once file. Nobody but its sender gets a link from the usual route; each recipient opens it once
+/// (a short-lived, not-to-be-cached link), a second open is 410 and nothing re-issues one; the sender sees who
+/// opened it; it can't be forwarded.
+#[tokio::test]
+async fn a_view_once_file_opens_once_per_recipient() {
+    use pulse_protocol::rest::ViewOnceState;
+    let w = world().await;
+    let (app, t, ch) = (&w.app, &w.alex.1, w.text.id);
+    let (kim_id, kim) = register(app, "kim").await;
+    let r = post_json(app, &kim, &format!("/servers/{}/join", w.server), json!({})).await;
+    assert_eq!(r.status(), 204);
+    let bytes = webp(100);
+    let r = post_json(
+        app,
+        t,
+        &format!("/channels/{ch}/attachments"),
+        json!({ "name": "secret.webp", "size": bytes.len(), "content_type": "image/webp", "view_once": true }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let up: AttachmentUpload = r.json().await.unwrap();
+    put(&up, &bytes).await;
+    let plain = upload(app, t, ch, "notes.pdf", "application/pdf", b"%PDF-1.4").await;
+    let m = send_ok(app, t, ch, "", &[up.id, plain]).await;
+    assert!(m.attachments[0].view_once);
+    assert!(!m.attachments[1].view_once);
+
+    // the usual links: the sender gets both; sam only the plain one
+    let mine: Vec<AttachmentUrl> = urls(app, t, m.id).await.json().await.unwrap();
+    assert!(mine.iter().all(|u| u.url.is_some()));
+    let sams: Vec<AttachmentUrl> = urls(app, &w.sam.1, m.id).await.json().await.unwrap();
+    assert_eq!(
+        sams.iter().map(|u| u.url.is_some()).collect::<Vec<_>>(),
+        [false, true]
+    );
+
+    let state = |token: String| async move {
+        let s: ViewOnceState =
+            get_json(app, &token, &format!("/messages/{}/view-once", m.id)).await;
+        s
+    };
+    assert!(!state(w.sam.1.clone()).await.opened);
+    // sam opens it: one link, to the view-once file only, marked not to be kept
+    let r = post_json(
+        app,
+        &w.sam.1,
+        &format!("/messages/{}/view-once/open", m.id),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let opened: Vec<AttachmentUrl> = r.json().await.unwrap();
+    assert_eq!(opened.len(), 1);
+    assert_eq!(opened[0].id, up.id);
+    let url = opened[0].url.as_deref().unwrap();
+    assert!(url.contains("no-store"), "{url}");
+    // never again, by either route
+    let r = post_json(
+        app,
+        &w.sam.1,
+        &format!("/messages/{}/view-once/open", m.id),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 410);
+    let sams: Vec<AttachmentUrl> = urls(app, &w.sam.1, m.id).await.json().await.unwrap();
+    assert!(sams[0].url.is_none());
+    assert!(state(w.sam.1.clone()).await.opened);
+    // kim still can, once
+    assert!(!state(kim.clone()).await.opened);
+    // the sender sees who opened it; the sender can't "open" their own
+    let mine = state(t.clone()).await;
+    assert_eq!(
+        mine.viewers.iter().map(|v| v.user_id).collect::<Vec<_>>(),
+        vec![w.sam.0]
+    );
+    let r = post_json(
+        app,
+        t,
+        &format!("/messages/{}/view-once/open", m.id),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 400);
+    // not forwardable
+    let dm = create_dm(app, &w.sam.1, &[kim_id]).await;
+    let r = post_json(
+        app,
+        &w.sam.1,
+        &format!("/messages/{}/forward", m.id),
+        json!({ "channel_id": dm.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 400);
+    // someone outside the chat: as if it weren't there
+    let (_, jo) = register(app, "jo").await;
+    let r = post_json(
+        app,
+        &jo,
+        &format!("/messages/{}/view-once/open", m.id),
+        json!({}),
+    )
+    .await;
+    assert!(r.status() == 403 || r.status() == 404, "{}", r.status());
+    // kim opens it too: one open each
+    let r = post_json(
+        app,
+        &kim,
+        &format!("/messages/{}/view-once/open", m.id),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+}

@@ -1047,3 +1047,99 @@ async fn a_mute_end_time_is_stored_canonically_or_refused() {
     assert_eq!(put("2099-01-01T12:00:00Z").await.unwrap().status(), 204);
     assert_eq!(stored().await.as_deref(), Some("2099-01-01T12:00:00.000Z"));
 }
+
+/// Custom filters (#307): `from`, `in` and `unread` narrow a page; the count stays the whole inbox's.
+#[tokio::test]
+async fn a_custom_filter_narrows_by_people_chats_and_unread() {
+    let f = fx().await;
+    send(&f.app, &f.alex_t, f.ch.id, "hi all").await;
+    let from_sam = send(&f.app, &f.sam_t, f.ch.id, "@alex from sam").await;
+    let from_kim = send(&f.app, &f.kim_t, f.ch.id, "@alex from kim").await;
+    let dm = create_dm(&f.app, &f.alex_t, &[f.sam]).await;
+    send(&f.app, &f.alex_t, dm.id, "hey").await;
+    let in_dm = send(&f.app, &f.sam_t, dm.id, "@alex in our dm").await;
+
+    let page = f.inbox(&f.alex_t, &format!("?from={}", f.sam)).await;
+    assert_eq!(ids(&page), vec![in_dm.id, from_sam.id]);
+    assert_eq!(page.unread, 3);
+    let page = f.inbox(&f.alex_t, &format!("?in={}", f.ch.id)).await;
+    assert_eq!(ids(&page), vec![from_kim.id, from_sam.id]);
+    let page = f
+        .inbox(
+            &f.alex_t,
+            &format!("?from={},{}&in={}", f.sam, f.kim, f.ch.id),
+        )
+        .await;
+    assert_eq!(ids(&page), vec![from_kim.id, from_sam.id]);
+    // read one: unread only leaves it out
+    assert_eq!(f.read_one(&f.alex_t, from_kim.id).await, 204);
+    let page = f.inbox(&f.alex_t, "?unread=true").await;
+    assert_eq!(ids(&page), vec![in_dm.id, from_sam.id]);
+    // nonsense is refused
+    let r = f
+        .app
+        .http
+        .get(f.app.url("/inbox?from=nope"))
+        .bearer_auth(&f.alex_t)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400);
+}
+
+/// Saved filters (#307): per person, in Ready and `InboxFiltersChanged`, never anyone else's.
+#[tokio::test]
+async fn saved_filters_follow_you_and_no_one_else() {
+    use pulse_protocol::rest::InboxFilter;
+    let f = fx().await;
+    let (mut other, ready) = hello(&f.app, &f.alex_t).await;
+    assert!(ready.inbox_filters.is_empty());
+    let save = |filters: serde_json::Value| {
+        f.app
+            .http
+            .put(f.app.url("/me/inbox-filters"))
+            .bearer_auth(&f.alex_t)
+            .json(&json!({ "filters": filters }))
+            .send()
+    };
+    let r = save(json!([
+        { "name": " Sam ", "people": [f.sam, f.sam], "unread_only": true },
+        { "name": "General", "channels": [f.ch.id] },
+    ]))
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 200);
+    let kept: Vec<InboxFilter> = r.json().await.unwrap();
+    assert_eq!(kept.len(), 2);
+    assert_eq!(
+        (
+            kept[0].name.as_str(),
+            kept[0].people.clone(),
+            kept[0].unread_only
+        ),
+        ("Sam", vec![f.sam], true)
+    );
+    let told = loop {
+        match next_frame(&mut other).await.expect("told") {
+            ServerFrame::Event(Event::InboxFiltersChanged { filters, .. }) => break filters,
+            _ => continue,
+        }
+    };
+    assert_eq!(told, kept);
+    let (_, again) = hello(&f.app, &f.alex_t).await;
+    assert_eq!(again.inbox_filters, kept);
+    let (_, sams) = hello(&f.app, &f.sam_t).await;
+    assert!(sams.inbox_filters.is_empty());
+    // two names you can't tell apart, or a filter that narrows nothing: refused
+    let r =
+        save(json!([{ "name": "a", "unread_only": true }, { "name": "A", "unread_only": true }]))
+            .await
+            .unwrap();
+    assert_eq!(r.status(), 409);
+    let r = save(json!([{ "name": "Nothing" }])).await.unwrap();
+    assert_eq!(r.status(), 400);
+    // saving none clears them
+    let r = save(json!([])).await.unwrap();
+    let kept: Vec<InboxFilter> = r.json().await.unwrap();
+    assert!(kept.is_empty());
+}

@@ -2,7 +2,8 @@
   // The right-click menu on a server tab (#161): Server settings (as the sidebar header's menu opens them), Mute
   // server as a durations flyout, the channel menu's (#131), or Unmute server, and Notifications: the server's level
   // as a flyout with yours ticked (#195), and Move left / Move right in your rail (#185: dragging's keyboard and menu
-  // way), and Leave server (#371, asked first; not its owner's). Keyboard as in the channel menu.
+  // way), and Leave server (#371, asked first; not its owner's). Arrange channels just for me / Reset to server order
+  // (#304): your own order of its channel list. Keyboard as in the channel menu.
   import { onMount, untrack } from 'svelte'
   import { app, clock, ui } from '../lib/store.svelte'
   import { placeMenu } from '../lib/menuPlace'
@@ -14,6 +15,8 @@
   import MenuFlyout from './MenuFlyout.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
   import { isMember } from '../lib/selectors'
+  import { orderOf, sidebarLayout } from '../lib/layout'
+  import { resetPersonalOrder, savePersonalOrder } from '../lib/channelOrder.svelte'
 
   let { serverId, name, x, y, opener, onClose, onSettings, onCreateCategory, onMoveLeft, onMoveRight, onError }: {
     serverId: string
@@ -40,6 +43,10 @@
   const canLeave = $derived(isMember(app.state, serverId) && app.state.servers.find((s) => s.id === serverId)?.owner_id !== app.state.me?.id)
   // an older server has no categories to add to
   const canCreateCategory = $derived(!!onCreateCategory && isMember(app.state, serverId) && !!app.state.layouts[serverId])
+  // your own channel order (#304): members of a server with categories; started from the list as it is now
+  const canArrange = $derived(isMember(app.state, serverId) && !!app.state.layouts[serverId])
+  const ownOrder = $derived(!!app.state.channelOrders[serverId])
+  const startOwnOrder = () => savePersonalOrder(serverId, orderOf(sidebarLayout(app.state, serverId)))
 
   let el = $state<HTMLElement>()
   let left = $state(untrack(() => x))
@@ -108,6 +115,13 @@
   <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onSettings)}>Server settings</button>
   {#if canCreateCategory && onCreateCategory}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onCreateCategory)}>Create category</button>
+  {/if}
+  {#if canArrange}
+    {#if ownOrder}
+      <button type="button" class="menu-item" role="menuitem" data-item="own-order" onclick={() => pick(report(() => resetPersonalOrder(serverId)))}>Reset to server order</button>
+    {:else}
+      <button type="button" class="menu-item" role="menuitem" data-item="own-order" onclick={() => pick(report(startOwnOrder))}>Arrange channels just for me</button>
+    {/if}
   {/if}
   {#if muted}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(report(() => api.clearMute('server', serverId)))}>Unmute server</button>

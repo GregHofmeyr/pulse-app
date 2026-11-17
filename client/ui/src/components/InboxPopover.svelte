@@ -1,6 +1,7 @@
 <script lang="ts">
   // The inbox (#306): a popover under the top bar's inbox button, styled as the pins popover is. Tabs All (mentions and
   // replies) and Mentions, remembered per device; newest first, the next page loading as you scroll near the end.
+  // Custom filters (#307, InboxFilters.svelte) narrow All and Mentions to some people and/or chats, or unread only.
   // Each row: who, where, when, a one-line preview with your mention picked out, and for a reply the line it answered.
   // Unread rows stand out. A click shows the message and reads it; Mark all read reads everything shown.
   // Threads (#326): quote and clip threads you started or replied in with replies you haven't seen; a click opens the
@@ -11,7 +12,7 @@
   import { relativeTime } from '../lib/conversations'
   import { badgeText, highlightParts, isItemTab, oneLine, placeLabel, whereLabel, type InboxView } from '../lib/inbox'
   import Icon from './Icon.svelte'
-  import { closeInbox, inbox, inboxBadge, loadMore, markAllRead, openItem, setTab } from '../lib/inbox.svelte'
+  import { activeFilter, closeInbox, inbox, inboxBadge, loadMore, markAllRead, openItem, setTab } from '../lib/inbox.svelte'
   import { openThread, refreshThreads, threads } from '../lib/inboxThreads.svelte'
   import type { InboxThread } from '../lib/protocol/InboxThread'
   import { openReminder, reminderAuthor, reminders, removeReminder } from '../lib/reminders.svelte'
@@ -30,6 +31,7 @@
   import Loading from './Loading.svelte'
   import Segmented from './Segmented.svelte'
   import PersonMenu from './PersonMenu.svelte'
+  import InboxFilters from './InboxFilters.svelte'
   import { personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
   import { messagePerson } from '../lib/messagePerson'
 
@@ -114,6 +116,8 @@
     <button type="button" class="btn btn-quiet sm" disabled={badge === 0} onclick={() => void markAllRead()}>Mark all read</button>
   </div>
   <div class="tabs"><Segmented label="Show" options={TABS} value={inbox.tab} onchange={setTab} /></div>
+  <!-- custom filters (#307): the All and Mentions tabs only -->
+  {#if itemTab}<InboxFilters />{/if}
   <div class="list" onscroll={scrolled}>
     {#each shownReminders as r (r.id)}
       {@const unread = r.due && !r.seen}
@@ -177,7 +181,7 @@
         </button>
       {/each}
     {:else if list && !list.loading && !list.error && !shownReminders.length}
-      <p class="none">{inbox.tab === 'mentions' ? 'No mentions in the last 30 days.' : 'Nothing for you in the last 30 days. Mentions and replies to you land here.'}</p>
+      <p class="none">{inbox.filter !== null && activeFilter() ? 'Nothing matches this filter in the last 30 days.' : inbox.tab === 'mentions' ? 'No mentions in the last 30 days.' : 'Nothing for you in the last 30 days. Mentions and replies to you land here.'}</p>
     {/if}
     {#if itemTab && list?.error}
       <p class="error" role="alert">{list.error} <button type="button" class="link" onclick={() => void loadMore(itemTab)}>Try again</button></p>

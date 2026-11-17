@@ -12,6 +12,7 @@
   import LiveNotifyItem from './LiveNotifyItem.svelte'
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
   import MessageSoundItem from './MessageSoundItem.svelte'
+  import PersonDndItem from './PersonDndItem.svelte'
   import MenuFlyout from './MenuFlyout.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
   import { pickGroupIcon, removeGroupIcon } from '../lib/groupIcon.svelte'
@@ -86,7 +87,8 @@
   let flyout = $state<ReturnType<typeof MuteFlyout>>()
   let levelFlyout = $state<ReturnType<typeof MenuFlyout>>()
   let soundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
-  const flyouts = () => [flyout, levelFlyout, soundFlyout, moveFlyout]
+  let dndFlyout = $state<ReturnType<typeof PersonDndItem>>()
+  const flyouts = () => [flyout, levelFlyout, soundFlyout, moveFlyout, dndFlyout]
   // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
   function keydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && flyouts().some((f) => f?.isOpen())) {
@@ -182,6 +184,7 @@
         <LiveNotifyItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
         <JoinSoundMuteItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
         <MessageSoundItem bind:this={soundFlyout} userId={dmWith} pick={(action) => { void action(); onClose() }} menuLeft={place?.left ?? 0} menuTop={place?.top ?? 0} />
+        <PersonDndItem bind:this={dndFlyout} userId={dmWith} pick={(action) => { void action(); onClose() }} menuLeft={place?.left ?? 0} menuTop={place?.top ?? 0} />
         <AppearOfflineItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
       {/if}
       {#if isPrivate}

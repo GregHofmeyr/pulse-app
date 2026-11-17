@@ -17,4 +17,9 @@ expired: boolean,
 /**
  * The sender marked it as a spoiler (#289): shown blurred until clicked. Off the wire when false.
  */
-spoiler?: boolean, };
+spoiler?: boolean, 
+/**
+ * View once (#311): each recipient can open it once (`POST /messages/{id}/view-once/open`); the server signs no
+ * other link to it for them, before or after. Its sender always can. Off the wire when false.
+ */
+view_once?: boolean, };
