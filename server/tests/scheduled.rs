@@ -401,6 +401,20 @@ async fn a_reminder_lands_in_its_persons_inbox_once_at_its_time() {
     assert_eq!(ev["d"]["unread"], 1);
     let page: InboxPage = get_json(&app, &alex, "/inbox").await;
     assert_eq!(page.unread, 1);
+    // alex was connected, so it was told live: not missed (#412), and nothing to claim
+    let mine: Vec<MessageReminder> = get_json(&app, &alex, "/reminders").await;
+    assert!(!mine[0].missed);
+    let claimed: bool = post_json(
+        &app,
+        &alex,
+        &format!("/reminders/{}/alerted", made.id),
+        json!({}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert!(!claimed);
     // once
     assert_eq!(
         pulse_server::reminders::remind_due(&s, later)
@@ -480,4 +494,50 @@ async fn mark_all_read_reads_due_reminders_and_a_deleted_message_reminds_no_one(
     assert_eq!(page.unread, 0);
     let mine: Vec<MessageReminder> = get_json(&app, &alex, "/reminders").await;
     assert!(mine[0].seen);
+}
+
+#[tokio::test]
+async fn one_due_while_no_device_was_connected_is_told_once_by_the_first_to_claim_it() {
+    let (app, [alex, sam, kim, _], _, g) = setup().await;
+    let m = send(&app, &sam, g.id, "the plan for friday").await;
+    let r = post_json(
+        &app,
+        &alex,
+        &format!("/messages/{}/reminders", m.id),
+        json!({"remind_at": at(TimeDelta::minutes(5))}),
+    )
+    .await;
+    let made: MessageReminder = r.json().await.unwrap();
+    assert!(!made.missed);
+    // alex has no device connected when it comes due
+    let s = app.state();
+    let later = Utc::now() + TimeDelta::hours(1);
+    assert_eq!(
+        pulse_server::reminders::remind_due(&s, later)
+            .await
+            .unwrap(),
+        1
+    );
+    let (mut ws, ready) = hello(&app, &alex).await;
+    assert_eq!(ready["reminders"][0]["missed"], true);
+    let claim = |token: String| {
+        let app = &app;
+        let path = format!("/reminders/{}/alerted", made.id);
+        async move {
+            let r = post_json(app, &token, &path, json!({})).await;
+            (r.status().as_u16(), r.json::<bool>().await.ok())
+        }
+    };
+    // not kim's to claim
+    assert_eq!(claim(kim.clone()).await.0, 404);
+    // the first device to claim it tells alex; the next doesn't
+    assert_eq!(claim(alex.clone()).await, (200, Some(true)));
+    let ev = next_raw(&mut ws, |d| d["t"] == "ReminderSaved")
+        .await
+        .unwrap();
+    assert_eq!(ev["d"]["reminder"]["due"], true);
+    assert!(ev["d"]["reminder"].get("missed").is_none());
+    assert_eq!(claim(alex.clone()).await, (200, Some(false)));
+    let mine: Vec<MessageReminder> = get_json(&app, &alex, "/reminders").await;
+    assert!(mine[0].due && !mine[0].missed && !mine[0].seen);
 }

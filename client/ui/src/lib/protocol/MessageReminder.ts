@@ -26,6 +26,11 @@ due: boolean,
  */
 seen: boolean, 
 /**
+ * Came due while none of your devices was connected, and no device has told you yet (#412): the first to claim
+ * it (`POST /reminders/{id}/alerted`) does.
+ */
+missed?: boolean, 
+/**
  * The message, cut to one short line.
  */
 message: InboxSnippet, };

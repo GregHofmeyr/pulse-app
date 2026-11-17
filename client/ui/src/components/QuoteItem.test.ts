@@ -84,6 +84,20 @@ function stubFocusVisible(el: HTMLElement, visible: boolean) {
 }
 
 describe('QuoteItem', () => {
+  it('(edited) opens its edit history (#415)', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'message_edits'
+      ? [{ content: '“hello there” — sam', written_at: '2026-10-01T10:05:00.000Z' }, { content: '“hi” — sam', written_at: '2026-10-01T10:00:00.000Z' }]
+      : undefined))
+    show(quote([line()], { edited_at: '2026-10-01T10:05:00.000Z' }))
+    const edited = document.querySelector<HTMLButtonElement>('button.edited')!
+    expect(edited.textContent).toBe('(edited)')
+    edited.click(); flushSync()
+    await settle(); flushSync()
+    expect(calls('message_edits')).toEqual([['message_edits', { messageId: 'M1' }]])
+    const dialog = document.querySelector<HTMLElement>('[role=dialog][aria-label="Edit history"]')!
+    expect(dialog.textContent).toContain('“hi” — sam')
+  })
+
   it('renders lines with speakers and curly marks', () => {
     show(quote([line(), line({ id: 'L2', speaker_id: null, speaker_name: 'Grandpa', text: 'back in my day' })]))
     const texts = [...document.querySelectorAll('.line .text')].map((e) => e.textContent)
@@ -391,13 +405,14 @@ describe('QuoteItem', () => {
     expect(awardBtn(1)).toBeNull()
     // my own picture still has Save image (#206)
     openMenu(0)
-    expect(items()).toEqual(['Save image', 'Pin quote'])
+    expect(items()).toEqual(['Save image', 'Pin quote', 'Remind me'])
     document.querySelector('[role=menu]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     flushSync()
-    // the whole quote can still be pinned from it (#257); where the quote can't be pinned (a QotY option), no menu
+    // the whole quote can still be pinned (#257) and reminded of (#412) from it; where it can't (a QotY option), no
+    // menu
     lines[1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     flushSync()
-    expect(items()).toEqual(['Pin quote'])
+    expect(items()).toEqual(['Pin quote', 'Remind me'])
     document.querySelector('[role=menu]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     flushSync()
     unmount(cmp!); cmp = undefined; document.body.innerHTML = ''

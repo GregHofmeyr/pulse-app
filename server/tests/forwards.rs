@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use pulse_protocol::rest::{ChannelKind, Message};
+use pulse_protocol::rest::{ChannelKind, Message, SearchResults};
 use serde_json::{Value, json};
 
 async fn forward(
@@ -15,6 +15,15 @@ async fn forward(
     body: Value,
 ) -> reqwest::Response {
     post_json(app, token, &format!("/messages/{id}/forward"), body).await
+}
+
+async fn search(
+    app: &TestApp,
+    token: &str,
+    server: impl std::fmt::Display,
+    q: &str,
+) -> SearchResults {
+    get_json(app, token, &format!("/servers/{server}/search?q={q}")).await
 }
 
 async fn history(app: &TestApp, token: &str, channel: impl std::fmt::Display) -> Vec<Message> {
@@ -87,6 +96,12 @@ async fn a_forward_says_where_from_and_keeps_the_words_it_forwarded() {
     let bare: Message = r.json().await.unwrap();
     assert!(bare.caption_is_fallback);
     assert!(bare.mentions.is_empty());
+    // its text names the original's first line as it is now (notifications, previews, older clients; #415), on
+    // read too
+    assert_eq!(bare.content, "↪ Forwarded: movie night cancelled");
+    let seen = history(&app, &kim, dm.id).await;
+    let got = seen.iter().find(|m| m.id == bare.id).unwrap();
+    assert_eq!(got.content, bare.content);
 
     // a forward can't be edited
     let r = app
@@ -126,6 +141,12 @@ async fn a_dm_is_never_named_and_a_deleted_original_leaves_nothing() {
     let f = fwd.forwarded.unwrap();
     assert_eq!(f.channel_kind, ChannelKind::Dm);
     assert_eq!(f.channel_name, None);
+    assert_eq!(fwd.content, "↪ Forwarded: my new number is 555");
+    // search finds it by the words it forwarded (#415), and shows them
+    let found = search(&app, &sam, s.id, "number").await;
+    assert_eq!(found.hits.len(), 1);
+    assert_eq!(found.hits[0].message.id, fwd.id);
+    assert_eq!(found.hits[0].text, "my new number is 555");
 
     // alex deletes it: the forward shows nothing of it
     let r = app
@@ -141,8 +162,11 @@ async fn a_dm_is_never_named_and_a_deleted_original_leaves_nothing() {
     let f = got.forwarded.as_ref().unwrap();
     assert!(f.unavailable);
     assert_eq!(f.content, "");
+    assert_eq!(got.content, "↪ Forwarded a message");
     let raw = serde_json::to_string(&seen).unwrap();
     assert!(!raw.contains("555"), "{raw}");
+    // nor does search find it by them any more
+    assert!(search(&app, &sam, s.id, "number").await.hits.is_empty());
     // and it can't be forwarded on
     let r = forward(&app, &sam, fwd.id, json!({"channel_id": g.id})).await;
     assert_eq!(r.status(), 400);

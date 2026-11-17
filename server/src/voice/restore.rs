@@ -271,6 +271,19 @@ pub async fn sync(s: &AppState, started_at: &str, budget: Duration) -> anyhow::R
             crate::calls::joined(s, &ch, p.user).await;
         }
     }
+    // Watch parties hang off the calls just restored (#409): with nobody restored, theirs are dropped.
+    match crate::watch::restore(
+        &s.db,
+        &s.hub,
+        &s.voice,
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .await
+    {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(restored = n, "watch parties picked back up"),
+        Err(e) => tracing::warn!(error = %e, "couldn't restore watch parties"),
+    }
     Ok(added.len())
 }
 

@@ -356,7 +356,8 @@ pub struct CreateDmCategoryRequest {
     pub name: String,
 }
 
-/// `PATCH /me/dm-categories/{id}` (#305): rename it, or fold it open or shut. Absent fields stay as they are.
+/// `PATCH /me/dm-categories/{id}` (#305): rename it, fold it open or shut, or move it (#419). Absent fields stay as
+/// they are.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
 pub struct UpdateDmCategoryRequest {
     #[serde(default)]
@@ -365,6 +366,10 @@ pub struct UpdateDmCategoryRequest {
     #[serde(default)]
     #[ts(optional)]
     pub collapsed: Option<bool>,
+    /// Where it goes among your categories, from 0 (past the end: last); the others keep their order around it.
+    #[serde(default)]
+    #[ts(optional)]
+    pub position: Option<u32>,
 }
 
 /// `PUT /me/dm-placements/{channel_id}` (#305): pin or unpin a conversation and put it in a category (or none).
@@ -382,6 +387,15 @@ pub mod dm_layout_limits {
     pub const NAME_CHARS: usize = 32;
     /// Categories one person may have.
     pub const MAX_CATEGORIES: usize = 30;
+    /// Names no category may have (ignoring case, and "..." for "…"): the Move to category flyout's own entries sit
+    /// beside the categories, and one named like them couldn't be told apart (#419).
+    pub const RESERVED_NAMES: [&str; 2] = ["New category…", "Remove from category"];
+
+    /// Whether `name` (trimmed) is one of [`RESERVED_NAMES`].
+    pub fn is_reserved(name: &str) -> bool {
+        let n = name.trim().replace("...", "…").to_lowercase();
+        RESERVED_NAMES.iter().any(|r| r.to_lowercase() == n)
+    }
 }
 
 /// Someone whose messages don't alert you (#310): no message sound and no desktop notification from them, everywhere
@@ -1394,6 +1408,11 @@ pub struct MessageReminder {
     pub due: bool,
     /// Due and opened (or marked read).
     pub seen: bool,
+    /// Came due while none of your devices was connected, and no device has told you yet (#412): the first to claim
+    /// it (`POST /reminders/{id}/alerted`) does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub missed: bool,
     /// The message, cut to one short line.
     pub message: InboxSnippet,
 }

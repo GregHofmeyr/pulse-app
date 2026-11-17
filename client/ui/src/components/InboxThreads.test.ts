@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The inbox's Threads tab (#326): threads you started or replied in with replies you haven't seen, fetched on Ready
-// and again when a reply lands in one you watch; each counts toward the badge; a click opens the thread and counts
+// and again when a reply lands in one you watch; each counts toward the badge (in the server's count, #419); a click opens the thread and counts
 // it seen; your own reply, or your seen point, takes it away; Mark all read sees them all.
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -43,13 +43,14 @@ beforeEach(async () => {
   invoke.mockReset()
   invoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'inbox_threads') return answer
-    if (cmd === 'inbox') return { items: [], unread: 1 }
-    if (cmd === 'inbox_unread') return 1
+    // one item and the one thread: the server counts both (#419)
+    if (cmd === 'inbox') return { items: [], unread: 2 }
+    if (cmd === 'inbox_unread') return 2
     return undefined
   })
   handleReady(testReady([{ id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 1 } as never], {
     members: [{ server_id: 'S1', members: [{ user: testMe, nickname: null }, { user: sam, nickname: null }] }],
-    inbox_unread: 1,
+    inbox_unread: 2,
   }))
   await settle()
 })
@@ -69,7 +70,7 @@ async function show() {
 }
 
 describe('inbox Threads (#326)', () => {
-  it('Ready fetches them; each thread counts toward the badge', () => {
+  it("Ready fetches them; the badge is the server's count, which has them already (#419)", () => {
     expect(invoke).toHaveBeenCalledWith('inbox_threads', undefined)
     expect(threads.list.map((t) => t.root.message_id)).toEqual(['R1'])
     expect(inboxBadge()).toBe(2)
@@ -113,9 +114,11 @@ describe('inbox Threads (#326)', () => {
     expect(threads.list).toEqual([])
   })
 
-  it('Mark all read sees every thread', async () => {
+  it('Mark all read sees every thread, before it reads the rest', async () => {
     await markAllRead()
     expect(invoke).toHaveBeenCalledWith('mark_replies_seen', { rootId: 'R1', messageId: 'X2' })
     expect(threads.list).toEqual([])
+    const order = invoke.mock.calls.map(([c]) => c).filter((c) => c === 'mark_replies_seen' || c === 'inbox_read_all')
+    expect(order).toEqual(['mark_replies_seen', 'inbox_read_all'])
   })
 })

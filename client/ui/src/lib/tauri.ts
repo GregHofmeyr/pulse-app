@@ -313,6 +313,8 @@ export const api = {
   deleteReminder: (id: string) => invoke<void>('delete_reminder', { id }),
   /** A due one opened: read on every device. */
   reminderSeen: (id: string) => invoke<void>('reminder_seen', { id }),
+  /** Claim telling you about a reminder missed while none of your devices was connected (#412): true for the one claim that wins. */
+  reminderAlerted: (id: string) => invoke<boolean>('reminder_alerted', { id }),
   joinServer: (serverId: string) => invoke<void>('join_server', { serverId }),
   leaveServer: (serverId: string) => invoke<void>('leave_server', { serverId }),
   removeServerMember: (serverId: string, userId: string) => invoke<void>('remove_server_member', { serverId, userId }),

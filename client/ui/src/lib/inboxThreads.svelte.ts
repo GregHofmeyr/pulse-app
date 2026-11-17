@@ -1,7 +1,8 @@
 // The inbox's Threads tab (#326): quote and clip threads you started or replied in that have replies by others you
 // haven't seen (the server works it out: lib's GET /inbox/threads). Fetched on every Ready, then again (a moment
 // later, many changes making one fetch) when a reply lands in a thread you're watching, your seen point moves, or a
-// mute or delete may have changed it. Each thread counts once toward the inbox button's badge until you look.
+// mute or delete may have changed it. Each thread counts once toward the inbox button's badge until you look (the
+// server's count has them since #419).
 import type { Event } from './protocol/Event'
 import type { InboxThread } from './protocol/InboxThread'
 import { openMessage } from './openMessage'
@@ -55,11 +56,11 @@ export function openThread(t: InboxThread, close: () => void): void {
   if (!openMessage(t.latest)) ui.notice = 'That channel was deleted.'
 }
 
-/** Mark all read reads these too: each thread's replies, seen. */
-export function seeAllThreads(): void {
+/** Mark all read reads these too: each thread's replies, seen. Settles once every seen point has landed (or failed). */
+export async function seeAllThreads(): Promise<void> {
   const list = threads.list
   threads.list = []
-  for (const t of list) api.markRepliesSeen(t.root.message_id, t.latest.id).catch(() => soon())
+  await Promise.all(list.map((t) => api.markRepliesSeen(t.root.message_id, t.latest.id).catch(() => soon())))
 }
 
 export function noteThreadsEvent(e: Event): void {

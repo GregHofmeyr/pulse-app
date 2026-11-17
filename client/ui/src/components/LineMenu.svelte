@@ -4,6 +4,7 @@
   import { placeMenu } from '../lib/menuPlace'
   import { suggest, type Mentionable } from '../lib/mentions'
   import { PIN_FOR } from '../lib/pins'
+  import { remindPicks } from '../lib/schedule'
   import MenuFlyout from './MenuFlyout.svelte'
   import type { PinDuration } from '../lib/protocol/PinDuration'
 
@@ -20,6 +21,7 @@
     pin = null,
     onPin = () => {},
     onUnpin = () => {},
+    onRemind = null,
     onLink,
     onUnlink,
     onClose,
@@ -44,6 +46,9 @@
     pin?: 'pin' | 'unpin' | null
     onPin?: (duration: PinDuration) => unknown
     onUnpin?: () => unknown
+    /** Remind me (#412), about the whole quote, a flyout of times: one of them (an instant), or `null` for Custom… (the
+     *  caller asks). Absent: no such entry. */
+    onRemind?: ((at: string | null) => unknown) | null
     onLink: (userId: string) => unknown
     onUnlink: () => unknown
     onClose: () => void
@@ -72,9 +77,13 @@
     focusItem(0)
   })
 
-  // the menu's own items (the pin flyout's lengths sit inside it, under their own menu)
+  // the menu's own items (the flyouts' choices sit inside it, under their own menus)
   const items = () => (el ? [...el.querySelectorAll<HTMLElement>('[data-item]')] : [])
   let flyout = $state<ReturnType<typeof MenuFlyout>>()
+  let remindFlyout = $state<ReturnType<typeof MenuFlyout>>()
+  const flyouts = () => [flyout, remindFlyout]
+  const closeSub = () => flyouts().forEach((f) => f?.close(false))
+  const remindChoices = untrack(() => remindPicks(Date.now()))
   function focusItem(i: number) {
     const list = items()
     if (list.length) list[(i + list.length) % list.length].focus()
@@ -106,10 +115,10 @@
   function keydown(e: KeyboardEvent) {
     const list = items()
     const at = list.indexOf(document.activeElement as HTMLElement)
-    // the pin flyout (as the message menu's): ArrowLeft closes it, and a hover-opened one takes the first Escape
-    if (e.key === 'ArrowLeft' && !picking) { e.preventDefault(); flyout?.close(false); return }
-    if (e.key === 'Escape' && flyout?.isOpen()) { e.preventDefault(); e.stopPropagation(); flyout.close(false); return }
-    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) flyout?.close(false)
+    // the pin and remind flyouts (as the message menu's): ArrowLeft closes them, and a hover-opened one takes the first Escape
+    if (e.key === 'ArrowLeft' && !picking) { e.preventDefault(); closeSub(); return }
+    if (e.key === 'Escape' && flyouts().some((f) => f?.isOpen())) { e.preventDefault(); e.stopPropagation(); closeSub(); return }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) closeSub()
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); focusItem(at + 1); break
       case 'ArrowUp': e.preventDefault(); focusItem(at < 0 ? -1 : at - 1); break
@@ -136,9 +145,10 @@
 <div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Line actions" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px" style:--pop-origin={origin}
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}
   onpointerover={(e) => {
-    // another of the menu's own items under the pointer closes the pin flyout
+    // another of the menu's own items under the pointer closes the other flyouts
     const t = (e.target as Element).closest?.('[data-item]')
-    if (t && t.parentElement === el && t !== flyout?.trigger()) flyout?.closeSoon()
+    if (!t || t.parentElement !== el) return
+    for (const f of flyouts()) if (t !== f?.trigger()) f?.closeSoon()
   }}>
   {#if picking}
     <input type="text" class="input input-sm find" data-item aria-label="Find a member" placeholder="Find a member" autocomplete="off" bind:value={query} />
@@ -160,6 +170,10 @@
         choices={PIN_FOR} onPick={(i) => pick(() => onPin(PIN_FOR[i].duration))} />
     {:else if pin === 'unpin'}
       <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onUnpin)}>Unpin quote</button>
+    {/if}
+    {#if onRemind}
+      <MenuFlyout bind:this={remindFlyout} label="Remind me" flyoutLabel="Remind me about this" menuLeft={left} menuTop={top} item="remind"
+        choices={[...remindChoices, { label: 'Custom…' }]} onPick={(i) => pick(() => onRemind?.(remindChoices[i]?.at ?? null))} />
     {/if}
     {#if link === 'link'}
       <button type="button" class="menu-item" role="menuitem" data-item onclick={startPicking}>Link to a member…</button>

@@ -689,6 +689,10 @@ pub(crate) async fn deliver(
         None => crate::reads::advance(&mut tx, me, id, msg.id).await?,
     };
     tx.commit().await?;
+    // A forward with no comment is stored with the bare stand-in, and reads as one naming the original (#415).
+    if let Some(f) = forward.as_ref().filter(|f| !f.stored.has_comment) {
+        msg.content = crate::forwards::stand_in(&f.view);
+    }
     s.hub
         .publish(
             &s.db,

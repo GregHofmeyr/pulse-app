@@ -296,9 +296,13 @@ async fn edit_quote(
             None => super::insert_line(&mut tx, id, position, l).await?,
         }
     }
+    // The quote as it read before goes into its edit history (#415), as a message's does.
+    let content = super::render_content(&lines);
+    let edited_at = now();
+    crate::messages::history::record(&mut tx, id, &content, &edited_at).await?;
     sqlx::query("UPDATE messages SET content = ?, edited_at = ? WHERE id = ?")
-        .bind(super::render_content(&lines))
-        .bind(now())
+        .bind(&content)
+        .bind(&edited_at)
         .bind(id.to_string())
         .execute(&mut *tx)
         .await?;

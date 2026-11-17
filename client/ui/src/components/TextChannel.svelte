@@ -29,7 +29,7 @@
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { conversationName, firstUnreadIndex, isMuted, isNotes, reanchor, shouldMarkRead } from '../lib/conversations'
-  import { addOlder, appendNewer, mergeLatest, openAtUnread, reachLatest, landed, resumeAfter, resumePoint, unreadWindowPoint, pendingMessage, removePending } from '../lib/state'
+  import { addOlder, appendNewer, mergeLatest, openAtUnread, reachLatest, landed, resumeAfter, resumePoint, unreadWindowPoint, CHAT_START, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
   import { pinSync, refreshPins } from '../lib/pinSync.svelte'
   import { pinsTitle, takesPins } from '../lib/pins'
@@ -104,7 +104,8 @@
   // After a reconnect with unread messages you go on from the newest held from before it instead (#329): any number
   // may have come, and the latest page wouldn't meet the list. With more than a page unread and nothing to go on from
   // (a first visit, or a read point moved on by another device), it opens at the first unread message instead (#332):
-  // the window around your read point, the NEW line at the top (a jump to this chat, under way, wins).
+  // the window around your read point, the NEW line at the top (a jump to this chat, under way, wins). Never read
+  // (no read point), that's the chat's start (#419).
   $effect(() => {
     const c = channelId
     if (history?.loaded || fetching === c) return
@@ -121,7 +122,8 @@
   })
   async function loadFirst(c: string, resume: string | null, unreadAt: string | null) {
     if (unreadAt) {
-      const around = await api.listMessagesAround(c, unreadAt)
+      // never read (#419): the chat's first page, from its start
+      const around = unreadAt === CHAT_START ? await api.listMessagesAfter(c, CHAT_START) : await api.listMessagesAround(c, unreadAt)
       // A jump's window (or a reload) got there first: leave it be.
       if (app.state.history[c]?.loaded) return
       if (around?.length) {

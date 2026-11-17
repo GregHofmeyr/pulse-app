@@ -2963,6 +2963,23 @@ impl Api {
         .await
     }
 
+    /// Claim telling you about a reminder that came due while none of your devices was connected (#412): `true` for
+    /// the one claim that wins.
+    pub async fn reminder_alerted(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::ReminderId,
+    ) -> Result<bool, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/reminders/{id}/alerted", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// `emoji`: a Unicode emoji or `custom:<id>`.
     pub async fn add_reaction(
         &self,

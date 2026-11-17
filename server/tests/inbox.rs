@@ -296,7 +296,8 @@ async fn mentions_in_a_quotes_thread_are_items_read_by_its_seen_point() {
     let page = f.inbox(&f.alex_t, "").await;
     assert_eq!(ids(&page), vec![reply.id]);
     assert_eq!(page.items[0].message.thread_root_id, Some(quote.id));
-    assert_eq!(page.unread, 1);
+    // the mention, and alex's quote's thread with a new reply (#419)
+    assert_eq!(page.unread, 2);
     let r = post_json(
         &f.app,
         &f.alex_t,
@@ -649,7 +650,8 @@ async fn deleting_a_quote_with_replies_tells_each_person_once() {
         replies.push(r.json::<Message>().await.unwrap().id);
     }
     let (mut ws, ready) = hello(&f.app, &f.alex_t).await;
-    assert_eq!(ready.inbox_unread, Some(3));
+    // the three mentions, and alex's quote's thread (#419)
+    assert_eq!(ready.inbox_unread, Some(4));
     f.delete(&f.alex_t, quote.id).await;
     match next_inbox(&mut ws).await {
         Some(Event::InboxUpdated {

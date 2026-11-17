@@ -5,7 +5,9 @@
   import Avatar from './Avatar.svelte'
   import ClipDownload from './ClipDownload.svelte'
   import DeleteButton from './DeleteButton.svelte'
+  import EditHistoryDialog from './EditHistoryDialog.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
+  import WhenPicker from './WhenPicker.svelte'
   import Icon from './Icon.svelte'
   import LineMenu from './LineMenu.svelte'
   import Name from './Name.svelte'
@@ -26,6 +28,7 @@
   import { serverNow } from '../lib/serverClock'
   import type { PinDuration } from '../lib/protocol/PinDuration'
   import { api, errorText } from '../lib/tauri'
+  import { remindAndSay } from '../lib/reminders.svelte'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { LineMedia } from '../lib/protocol/LineMedia'
   import type { Message } from '../lib/protocol/Message'
@@ -115,7 +118,16 @@
   const pinQuote = (d: PinDuration) => report(api.pinMessage(message.id, d))
   const unpinQuote = () => report(api.unpinMessage(message.id))
   /** Whether the line's menu would have anything in it: award, copy, save (an image), pin, or link. */
-  const hasActions = (line: QuoteLine) => !!awardOf(line) || !!copyText || !!line.media || !!pinItem || !!linkOf(line)
+  // Remind me (#412), about the whole quote, from a line's menu as Pin quote is: a time from its flyout, or Custom… (a
+  // day and time, placed by the line the menu opened from)
+  const remindable = $derived(!compact && !message.deleted)
+  let remindCustom = $state<HTMLElement | null>(null)
+  const remindAt = (at: string) => remindAndSay(message.id, at)
+  function remind(at: string | null, opener: HTMLElement) {
+    if (!at) return void (remindCustom = opener.isConnected ? opener : document.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`))
+    remindAt(at).catch((e) => showError(errorText(e)))
+  }
+  const hasActions = (line: QuoteLine) => !!awardOf(line) || !!copyText || !!line.media || !!pinItem || !!linkOf(line) || remindable
   const save = (media: LineMedia, caption: string | null) => void saveImage(media, caption, showError)
   // the Copy quote button's tooltip says "Copied" for a moment after
   let copied = $state(false)
@@ -155,6 +167,8 @@
 
   // --- the full-size image ---
   let open = $state<{ media: LineMedia; caption: string | null } | null>(null)
+  // Edit history (#301, #415): "(edited)" opens the versions
+  let historyAt = $state<HTMLElement | null>(null)
 </script>
 
 {#if quote}
@@ -208,7 +222,8 @@
           {#each quote.wins as year (year)}
             <span class="win">Quote of the Year {year}</span>
           {/each}
-          {#if message.edited_at}<span class="edited">(edited)</span>{/if}
+          {#if message.edited_at}<button type="button" class="edited" aria-haspopup="dialog" aria-expanded={!!historyAt} data-tip="See edit history" data-menu-toggle
+            onclick={(e) => (historyAt = historyAt ? null : e.currentTarget)}>(edited)</button>{/if}
         {/if}
         {#if !compact}<ReactionRow {message} {meId} {nameOf} onError={showError} onePerPerson {suggest} />{/if}
         {#if quote.reply_count > 0 && onOpenReplies && !compact}
@@ -245,6 +260,7 @@
       <LineMenu x={m.x} y={m.y} opener={m.opener} award={awardOf(line)} link={linkOf(line)} {members}
         onAward={() => toggleAward(line)} onCopy={copyText ? copy : null}
         onSave={line.media ? () => save(line.media!, line.caption) : null} pin={pinItem} onPin={pinQuote} onUnpin={unpinQuote}
+        onRemind={remindable ? (at) => remind(at, m.opener) : null}
         onLink={(id) => link(line, id)} onUnlink={() => unlink(line)}
         onClose={() => (menu = null)} />
     {/key}
@@ -262,6 +278,13 @@
       <button type="button" class="close icon-btn round modal-close" aria-label="Close" onclick={() => (open = null)}><Icon name="x" size={16} /></button>
     </div>
   {/if}
+{/if}
+
+{#if remindCustom}
+  <WhenPicker anchor={remindCustom} title="Remind me about this" confirm="Set reminder" onPick={remindAt} onClose={() => (remindCustom = null)} />
+{/if}
+{#if historyAt}
+  <EditHistoryDialog anchor={historyAt} messageId={message.id} onClose={() => (historyAt = null)} />
 {/if}
 
 <style>
@@ -298,7 +321,8 @@
   .picbtn { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: var(--radius-sm); }
   .caption { margin: 4px 0 0; font-size: 13px; color: var(--text-2); }
   .win { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: var(--radius-md); background: var(--quote-green); color: var(--on-quote-green); font-size: 11px; font-weight: 700; }
-  .edited { font-size: 11px; color: var(--text-3); }
+  .edited { font-size: 11px; color: var(--text-3); border: 0; padding: 0; background: none; font-family: inherit; cursor: pointer; }
+  .edited:hover, .edited:focus-visible { color: var(--text-2); text-decoration: underline; }
   .replies { margin-top: 4px; padding: 0; border: 0; background: none; color: var(--accent-text); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
   .replies:hover { text-decoration: underline; }
   .new { padding: 0 6px; border-radius: var(--radius-sm); background: var(--quote-green); color: var(--on-quote-green); font-size: 10px; font-weight: 700; text-transform: uppercase; }

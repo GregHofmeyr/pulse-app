@@ -40,6 +40,23 @@ export async function moveToNewCategory(channelId: string, name: string): Promis
 
 export const renameCategory = async (id: string, name: string): Promise<DmLayout> => put(await dmLayoutCmd.update(id, { name: name.trim() }))
 
+/** Move a category up (-1) or down (+1) among yours (#419): at once, put back when refused. */
+export async function moveCategory(id: string, by: -1 | 1): Promise<void> {
+  const was = app.state.dmLayout
+  const from = was.categories.findIndex((c) => c.id === id)
+  const to = from + by
+  if (from < 0 || to < 0 || to >= was.categories.length) return
+  const categories = [...was.categories]
+  categories.splice(to, 0, ...categories.splice(from, 1))
+  put({ ...was, categories })
+  try {
+    put(await dmLayoutCmd.update(id, { position: to }))
+  } catch (e) {
+    put(was)
+    throw e
+  }
+}
+
 /** Delete a category: its conversations go back to the main list (pinned ones stay pinned). */
 export const deleteCategory = async (id: string): Promise<DmLayout> => put(await dmLayoutCmd.remove(id))
 
