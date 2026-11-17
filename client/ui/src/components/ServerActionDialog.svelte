@@ -47,7 +47,7 @@
     {#if action.kind === 'leave'}
       <p>Leave <strong>{server}</strong>? If you're in one of its voice channels, you're disconnected. Your messages stay, and you can join it again from the server list.</p>
     {:else if action.kind === 'remove'}
-      <p>Remove <strong>{person}</strong> from <strong>{server}</strong>? They're disconnected from its voice channels and streams. Their messages stay, and they can join again.</p>
+      <p>Remove <strong>{person}</strong> from <strong>{server}</strong>? They're disconnected from its voice channels and streams. Their messages stay, and they can join again, unless it's the third time in 48 hours: then not until you allow them back (Server settings, Members).</p>
     {:else}
       <p>Hand <strong>{server}</strong> to <strong>{person}</strong>? They become its owner, with everything only the owner can do, and you become a member like anyone else. Only they can hand it back.</p>
       <label>

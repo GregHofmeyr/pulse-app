@@ -244,8 +244,11 @@
   let forwardAt = $state<HTMLElement | null>(null)
   const openForward = (opener: HTMLElement) =>
     (forwardAt = opener.isConnected ? opener : document.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`))
-  // Edit history (#301): "(edited)" opens the message's versions
+  // Edit history (#301): "(edited)" opens the message's versions, as does the menu's Edit history (#415)
   let historyAt = $state<HTMLElement | null>(null)
+  const openHistory = (opener: HTMLElement) =>
+    (historyAt = opener.isConnected ? opener : document.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`))
+  const onEditHistory = $derived(message.edited_at ? () => msgMenu && openHistory(msgMenu.opener) : undefined)
   // Add to quotes (#316): the message as a quote, its author speaking, in one of its server's quotes channels (none in
   // a DM or group: no item there). One request id per message, so a double pick posts it once.
   const quotesChannels = $derived(msgMenu ? quotesChannelsFor(app.state, message).map((c) => ({ id: c.id, name: c.name ?? '' })) : [])
@@ -504,13 +507,13 @@
 {#if msgMenu}
   {#if cardReply}
     {#key msgMenu}<MessageMenu pinned={false} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
-      onRemind={(at) => msgMenu && remind(at, msgMenu.opener)} onClose={() => (msgMenu = null)} />{/key}
+      onRemind={(at) => msgMenu && remind(at, msgMenu.opener)} {onEditHistory} onClose={() => (msgMenu = null)} />{/key}
   {:else}
     {#key msgMenu}<MessageMenu pinned={!!pin} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
       onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
       onRemind={(at) => msgMenu && remind(at, msgMenu.opener)}
       saved={!!savedOne} onSave={saveToVault} onUnsave={unsave}
-      onForward={forwardable ? () => msgMenu && openForward(msgMenu.opener) : undefined}
+      onForward={forwardable ? () => msgMenu && openForward(msgMenu.opener) : undefined} {onEditHistory}
       onEndPoll={endable ? endPoll : undefined} onEditPoll={endable && !archived ? () => editPollCard() : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
   {/if}
 {/if}

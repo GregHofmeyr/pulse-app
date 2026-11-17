@@ -374,6 +374,8 @@ pub fn run() {
             commands::leave_server,
             commands::remove_server_member,
             commands::transfer_server,
+            commands::list_server_blocks,
+            commands::allow_back,
             commands::list_channels,
             commands::list_members,
             commands::list_messages,

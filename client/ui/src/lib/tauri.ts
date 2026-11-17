@@ -1,6 +1,7 @@
 // Typed wrappers over Tauri commands. The UI never calls the network itself.
 import { invoke } from '@tauri-apps/api/core'
 import type { User } from './protocol/User'
+import type { ServerBlock } from './protocol/ServerBlock'
 import type { MusicPlayer } from './protocol/MusicPlayer'
 import type { ScheduledMessage } from './protocol/ScheduledMessage'
 import type { MessageReminder } from './protocol/MessageReminder'
@@ -327,6 +328,10 @@ export const api = {
   removeServerMember: (serverId: string, userId: string) => invoke<void>('remove_server_member', { serverId, userId }),
   /** Hand a server to another of its members (#418): its owner only. */
   transferServer: (serverId: string, userId: string) => invoke<void>('transfer_server', { serverId, userId }),
+  /** The people blocked from rejoining a server (#418): its owner only. */
+  listServerBlocks: (serverId: string) => invoke<ServerBlock[]>('list_server_blocks', { serverId }),
+  /** Let someone blocked from rejoining a server back (#418): its owner only. */
+  allowBack: (serverId: string, userId: string) => invoke<void>('allow_back', { serverId, userId }),
   listChannels: (serverId: string) => invoke<Channel[]>('list_channels', { serverId }),
   listMembers: (serverId: string) => invoke<Member[]>('list_members', { serverId }),
   listMessages: (channelId: string, before?: string) =>

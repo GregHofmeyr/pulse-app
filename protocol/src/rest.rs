@@ -678,6 +678,15 @@ pub struct TransferServerRequest {
     pub user_id: UserId,
 }
 
+/// `GET /servers/{id}/blocked` (#418): someone its owner removed three times within 48 hours, who can't rejoin until
+/// the owner allows them back (`DELETE /servers/{id}/blocked/{user}`). The owner's view only.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ServerBlock {
+    pub user_id: UserId,
+    /// When the block began (the third removal; RFC 3339 UTC).
+    pub blocked_at: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct CreateChannelRequest {
     pub kind: ChannelKind,

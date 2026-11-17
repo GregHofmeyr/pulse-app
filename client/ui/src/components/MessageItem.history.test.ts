@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-// Edit history (#301): "(edited)" is a button that opens the message's versions, newest first, with their times.
+// Edit history (#301): "(edited)" is a button that opens the message's versions, newest first, with their times; the
+// message menu's Edit history (#415) opens the same dialog.
 import { flushSync, mount, tick, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
@@ -78,5 +79,26 @@ describe('edit history (#301)', () => {
   it('a message never edited has no (edited)', () => {
     show(msg({ edited_at: null }))
     expect(document.querySelector('.edited')).toBeNull()
+  })
+
+  it('the message menu has Edit history on an edited message, opening the same versions (#415)', async () => {
+    show(msg())
+    document.querySelector<HTMLButtonElement>('button[aria-label=More]')!.click(); flushSync()
+    const item = [...document.querySelectorAll<HTMLButtonElement>('[role=menu] [role=menuitem]')].find((b) => b.textContent === 'Edit history')!
+    expect(item.getAttribute('aria-haspopup')).toBe('dialog')
+    item.click(); flushSync()
+    await settle()
+    expect(document.querySelector('[role=menu][aria-label="Message actions"]')).toBeNull()
+    expect(invoke).toHaveBeenCalledWith('message_edits', { messageId: 'M1' })
+    expect(dialog()!.querySelectorAll('.version')).toHaveLength(3)
+  })
+
+  it('a message never edited has no Edit history in its menu', () => {
+    show(msg({ edited_at: null }))
+    document.querySelector('.content')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 50 }))
+    flushSync()
+    const items = [...document.querySelectorAll('[role=menu] [role=menuitem]')].map((b) => b.textContent)
+    expect(items.length).toBeGreaterThan(0)
+    expect(items).not.toContain('Edit history')
   })
 })

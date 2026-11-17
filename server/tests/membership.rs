@@ -573,3 +573,164 @@ async fn leaving_removes_stray_livekit_participants_by_grant() {
         1
     );
 }
+
+// --- repeat removals (#418): the third removal of the same person within 48 hours blocks their rejoin until the
+// owner allows them back ---
+
+async fn blocked(app: &TestApp, token: &str, server: ServerId) -> reqwest::Response {
+    app.http
+        .get(app.url(&format!("/servers/{server}/blocked")))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn allow_back(app: &TestApp, token: &str, server: ServerId, user: UserId) -> u16 {
+    app.http
+        .delete(app.url(&format!("/servers/{server}/blocked/{user}")))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+/// alex removes sam `times` times, sam rejoining after each but the last.
+async fn remove_sam(w: &World, times: usize) {
+    for i in 0..times {
+        assert_eq!(remove(&w.app, &w.alex.1, w.server, w.sam.0).await, 204);
+        if i + 1 < times {
+            assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204, "rejoin {i}");
+        }
+    }
+}
+
+async fn blocked_ids(w: &World) -> Vec<UserId> {
+    let r = blocked(&w.app, &w.alex.1, w.server).await;
+    assert_eq!(r.status(), 200);
+    r.json::<Vec<pulse_protocol::rest::ServerBlock>>()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|b| b.user_id)
+        .collect()
+}
+
+#[tokio::test]
+async fn two_removals_still_allow_a_rejoin() {
+    let w = world_with(spawn().await).await;
+    remove_sam(&w, 2).await;
+    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
+    assert!(blocked_ids(&w).await.is_empty());
+    // leaving doesn't count
+    assert_eq!(leave(&w.app, &w.sam.1, w.server).await.status(), 204);
+    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
+}
+
+#[tokio::test]
+async fn the_third_removal_in_48_hours_blocks_a_rejoin() {
+    let w = world_with(spawn().await).await;
+    remove_sam(&w, 3).await;
+    let r = post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/servers/{}/join", w.server),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 403);
+    let body: serde_json::Value = r.json().await.unwrap();
+    assert_eq!(
+        body["message"],
+        "You can't rejoin this server right now. Ask the owner."
+    );
+    assert!(!members(&w).await.contains(&w.sam.0));
+    assert_eq!(blocked_ids(&w).await, vec![w.sam.0]);
+    // only sam: kim still comes and goes
+    assert_eq!(remove(&w.app, &w.alex.1, w.server, w.kim.0).await, 204);
+    assert_eq!(join(&w.app, &w.kim.1, w.server).await, 204);
+}
+
+#[tokio::test]
+async fn removals_older_than_48_hours_dont_count() {
+    let w = world_with(spawn().await).await;
+    remove_sam(&w, 2).await;
+    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
+    let old = (chrono::Utc::now() - chrono::TimeDelta::hours(49))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    sqlx::query("UPDATE server_removals SET removed_at = ?")
+        .bind(&old)
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    assert_eq!(remove(&w.app, &w.alex.1, w.server, w.sam.0).await, 204);
+    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM server_removals WHERE server_id = ? AND user_id = ?",
+            &w.server.to_string(),
+            &w.sam.0.to_string()
+        )
+        .await,
+        1,
+        "the old ones are pruned"
+    );
+}
+
+#[tokio::test]
+async fn a_block_outlives_48_hours_until_the_owner_allows_them_back() {
+    let w = world_with(spawn().await).await;
+    remove_sam(&w, 3).await;
+    let old = (chrono::Utc::now() - chrono::TimeDelta::days(5))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    for table in [
+        "server_removals SET removed_at",
+        "server_blocks SET blocked_at",
+    ] {
+        sqlx::query(&format!("UPDATE {table} = ?"))
+            .bind(&old)
+            .execute(&w.app.db)
+            .await
+            .unwrap();
+    }
+    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 403, "still blocked");
+    assert_eq!(allow_back(&w.app, &w.alex.1, w.server, w.sam.0).await, 204);
+    assert!(blocked_ids(&w).await.is_empty());
+    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
+    assert!(members(&w).await.contains(&w.sam.0));
+    // allowing back cleared the counted removals: one more removal doesn't block again
+    assert_eq!(remove(&w.app, &w.alex.1, w.server, w.sam.0).await, 204);
+    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
+    assert_eq!(
+        allow_back(&w.app, &w.alex.1, w.server, w.sam.0).await,
+        404,
+        "not blocked"
+    );
+}
+
+#[tokio::test]
+async fn only_the_owner_sees_or_lifts_blocks() {
+    let w = world_with(spawn().await).await;
+    remove_sam(&w, 3).await;
+    assert_eq!(blocked(&w.app, &w.kim.1, w.server).await.status(), 403);
+    assert_eq!(allow_back(&w.app, &w.kim.1, w.server, w.sam.0).await, 403);
+    assert_eq!(allow_back(&w.app, &w.sam.1, w.server, w.sam.0).await, 403);
+    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 403);
+    // a new owner inherits them
+    let r = w
+        .app
+        .http
+        .put(w.app.url(&format!("/servers/{}/owner", w.server)))
+        .bearer_auth(&w.alex.1)
+        .json(&json!({ "user_id": w.kim.0 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    assert_eq!(allow_back(&w.app, &w.alex.1, w.server, w.sam.0).await, 403);
+    assert_eq!(allow_back(&w.app, &w.kim.1, w.server, w.sam.0).await, 204);
+    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
+}

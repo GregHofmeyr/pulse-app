@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 // Server settings → Members (#418): avatar, name and join date for everyone in the server, the owner marked, no
 // buttons on the rows but the avatar's card; a person's actions are on their right-click menu (Remove from server and
-// Make owner for the owner).
-import { flushSync, mount, unmount } from 'svelte'
+// Make owner for the owner). Under them, for the owner, the people blocked from rejoining (#418), with Allow back on
+// their right-click menu.
+import { flushSync, mount, tick, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
@@ -16,6 +17,7 @@ const user = (id: string, name: string) => ({ id, username: name, display_name: 
 const alex = user('U1', 'alex')
 const sam = user('U2', 'sam')
 const kim = user('U3', 'kim')
+const jo = user('U4', 'jo')
 
 let cmp: ReturnType<typeof mount> | undefined
 function open(owner: string) {
@@ -28,7 +30,7 @@ function open(owner: string) {
       { user: sam, nickname: null, joined_at: '2026-11-01T08:00:00.000Z' },
       { user: kim, nickname: null },
     ] },
-    people: Object.fromEntries([alex, sam, kim].map((u) => [u.id, { user: u, online: true, last_seen_at: null }])),
+    people: Object.fromEntries([alex, sam, kim, jo].map((u) => [u.id, { user: u, online: true, last_seen_at: null }])),
   } as never
   cmp = mount(ServerSettings, { target: document.body, props: { get server() { return app.state.servers[0] }, onClose: vi.fn() } })
   flushSync()
@@ -104,5 +106,63 @@ describe('Server settings: Members', () => {
     rightClick(rows()[0])
     expect(ids()).toContain('profile')
     expect(ids()).not.toContain('make-owner')
+  })
+
+  describe('blocked from rejoining (#418)', () => {
+    const settle = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
+    const blockedRows = () => [...document.querySelectorAll<HTMLElement>('[data-blocked]')]
+    beforeEach(() => {
+      invoke.mockImplementation(async (cmd: string) =>
+        cmd === 'list_server_blocks' ? [{ user_id: 'U4', blocked_at: '2026-11-15T08:00:00.000Z' }] : undefined)
+    })
+
+    it('the owner sees who is blocked, and Allow back on their right-click lets them back', async () => {
+      open('U1')
+      await settle()
+      expect(invoke).toHaveBeenCalledWith('list_server_blocks', { serverId: 'S1' })
+      const list = blockedRows()
+      expect(list.map((r) => r.dataset.blocked)).toEqual(['U4'])
+      expect(list[0].textContent).toContain('jo')
+      expect(list[0].textContent).toContain('Blocked Nov 15, 2026')
+      rightClick(list[0])
+      expect(ids()).toContain('allow-back')
+      expect(ids()).not.toContain('remove-server')
+      invoke.mockImplementation(async () => [])
+      item('allow-back')!.click()
+      flushSync()
+      await settle()
+      expect(invoke).toHaveBeenCalledWith('allow_back', { serverId: 'S1', userId: 'U4' })
+      expect(blockedRows()).toHaveLength(0)
+      expect(document.querySelector('.content h3')).toBeNull()
+    })
+
+    it('members get no Allow back, and others never ask', async () => {
+      open('U1')
+      await settle()
+      rightClick(rows()[1])
+      expect(ids()).not.toContain('allow-back')
+      unmount(cmp!)
+      document.body.innerHTML = ''
+      invoke.mockClear()
+      open('U2')
+      await settle()
+      expect(invoke).not.toHaveBeenCalledWith('list_server_blocks', expect.anything())
+      expect(blockedRows()).toHaveLength(0)
+    })
+
+    it('a refused Allow back says why', async () => {
+      open('U1')
+      await settle()
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'allow_back') throw { kind: 'Forbidden', message: "Only the server's owner can see or lift rejoin blocks." }
+        return [{ user_id: 'U4', blocked_at: '2026-11-15T08:00:00.000Z' }]
+      })
+      rightClick(blockedRows()[0])
+      item('allow-back')!.click()
+      flushSync()
+      await settle()
+      expect(document.querySelector('.content [role=alert]')?.textContent).toContain('owner')
+      expect(blockedRows()).toHaveLength(1)
+    })
   })
 })
