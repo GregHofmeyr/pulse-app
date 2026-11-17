@@ -24,6 +24,33 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.14',
+  version: '0.2.14',
+  date: '17 November 2026',
+  new: [
+    'Invite to game: right-click someone (or hit the 🎮 button in a DM) to send a Join card for the game you\'re in. Only the people in that chat can join, and it works even when your game activity is hidden',
+    'Hide what I\'m playing: right-click someone to stop them seeing your game, Steam hours and Deadlock stats. They still see you online. Manage the list in Settings › Privacy › Game activity',
+    'A redesigned quotes leaderboard that\'s easier to read and counts properly',
+  ],
+  fixes: [
+    'Clip drop works on its own now, even with Game activity off (it moved to Settings › Chat)',
+    'Very light, dark or grey custom accent colours no longer leave buttons and switches faint',
+    'The Sunset profile card stays orange instead of turning brown, and the full profile card matches the quick one',
+  ],
+  qol: [
+    'Edit history is in the message menu too, not only behind "(edited)"',
+    'Someone removed from a server three times in two days needs the owner to let them back in (Server settings › Members › right-click › Allow back)',
+    'Your achievement and Deadlock cards skip servers that have someone you hide your games from',
+  ],
+  soon: [
+    'Private servers you join by invite',
+    'A fresh profile editor',
+  ],
+  message: 'Game night, your way 🎮',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.13',
   version: '0.2.13',
   date: '17 November 2026',
@@ -61,30 +88,4 @@ export const patchNotes: PatchNotes = {
     'A fresh profile editor',
   ],
   message: 'Big night. Grab the popcorn 🍿',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.12',
-  version: '0.2.12',
-  date: '16 November 2026',
-  new: [
-    'Game activity (Windows): Pulse shows what you\'re playing ("Playing Deadlock · 1h 12m") on your profile card, with the game\'s art, and behind your tile in voice calls. Steam games are found on any drive, and you can add other games by hand. Switch it off, or turn off the art or play time, in Settings › Privacy › Game activity',
-    'Steam achievements: link your Steam account and your unlocks show up live in your server\'s Achievements channel, with the icon and how rare each one is. Finish a game and Pulse celebrates the 100%. Your completion rate appears on your profile card',
-    'New badge: Completionist, for your first 100% game',
-    'Auto clip drop: when NVIDIA or Game Bar saves a new recording, Pulse offers to share it to #clips',
-  ],
-  fixes: [
-    'If something breaks while showing a screen, you now get a Reload button instead of a blank window',
-    'Noise suppression steps back up on its own after a CPU spike forced it down',
-  ],
-  qol: [
-    'The stream sound picker shows proper app names and a little level meter',
-    'Echo cancellation explains itself when it switches off for headphones',
-  ],
-  soon: [
-    'Deadlock: post-match cards, rank badges and squad stats',
-    'A fresh profile editor: edit right inside your big profile card',
-  ],
-  message: 'GG. Pulse knows what you\'re playing now 🎮',
 }
