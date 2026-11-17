@@ -7,6 +7,11 @@ all-features = true
 # Vulnerabilities, unsoundness and unmaintained crates are all errors unless listed here.
 # Every entry needs the advisory id and a reason; re-check the list when dependencies move.
 ignore = [
+    # chrono was declared unmaintained (2026-11). No fixed release exists; it comes in through
+    # livekit/livekit-api/pbjson-types, and the server also uses it directly for timestamps. Not a
+    # vulnerability. Moving the server's own use to `time` or `jiff` is tracked separately; the
+    # transitive use goes away only when livekit moves (#441).
+    "RUSTSEC-2026-0543",
     # tract is pinned to =0.21.4 because DeepFilterNet (libDF) needs ndarray 0.15 and tract 0.21.5+
     # moved to ndarray 0.16 (see client/src-tauri/Cargo.toml). The fix is in 0.21.16 only. Pulse only
     # loads the DeepFilterNet model bundled in the binary, never an attacker-supplied NNEF file.
