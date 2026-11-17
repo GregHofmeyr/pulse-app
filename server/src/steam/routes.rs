@@ -73,10 +73,18 @@ async fn unlink(State(s): State<AppState>, AuthUser(me): AuthUser) -> AppResult<
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
-    if store::unlink(&s.db, me).await? {
+    // the Join goes with the link (#381), under the join gate as switching it off does
+    let gate = s.steam.join_gate().await;
+    let unlinked = store::unlink(&s.db, me).await?;
+    let join_cleared = unlinked && s.hub.set_steam_join(me, None);
+    drop(gate);
+    if unlinked {
         s.steam.forget(me);
         s.deadlock.forget(me);
         store::tell(&s, me).await;
+    }
+    if join_cleared {
+        s.hub.sync_presence(&s.db, me).await;
     }
     Ok(Json(store::status(&s, me).await?))
 }
@@ -89,9 +97,13 @@ async fn settings(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
+    // Join switched off: stored and cleared under the join gate, so a round's Join read before it can't come back
+    let gate = s.steam.join_gate().await;
     if !store::set_switches(&s.db, me, &req).await? {
         return Err(AppError::NotFound);
     }
+    let join_cleared = req.share_join == Some(false) && s.hub.set_steam_join(me, None);
+    drop(gate);
     match req.share_achievements {
         Some(true) => backfill::kick(&s),
         Some(false) => s.steam.forget(me),
@@ -108,7 +120,7 @@ async fn settings(
             .execute(&s.db)
             .await?;
     }
-    if req.share_join == Some(false) && s.hub.set_steam_join(me, None) {
+    if join_cleared {
         s.hub.sync_presence(&s.db, me).await;
     }
 

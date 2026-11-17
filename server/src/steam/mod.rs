@@ -51,6 +51,9 @@ struct Inner {
     no_stats: Mutex<HashMap<(UserId, u32), Instant>>,
     /// One backfill at a time, server-wide.
     backfill: tokio::sync::Mutex<()>,
+    /// Held while a Join round checks a link still shares Join and shows what it found, and while Settings switches
+    /// Join off or unlinks and clears it (#381): so a Join read before the switch went off never comes back after.
+    join_gate: tokio::sync::Mutex<()>,
 }
 
 impl Steam {
@@ -65,12 +68,18 @@ impl Steam {
                 backoff: Mutex::default(),
                 no_stats: Mutex::default(),
                 backfill: tokio::sync::Mutex::new(()),
+                join_gate: tokio::sync::Mutex::new(()),
             }),
         }
     }
 
     pub fn api(&self) -> &api::Api {
         &self.inner.api
+    }
+
+    /// See `Inner::join_gate`.
+    pub async fn join_gate(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.inner.join_gate.lock().await
     }
 
     /// A new one-time sign-in state for `user` (kept hashed; expired ones are dropped).
