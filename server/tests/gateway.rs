@@ -105,6 +105,7 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         sports: None,
         f1: None,
         forwarded: None,
+        member_line: None,
     }
 }
 

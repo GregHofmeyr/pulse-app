@@ -134,6 +134,7 @@ async fn create(
         sports: None,
         f1: None,
         forwarded: None,
+        member_line: None,
     };
     let stored = Stored {
         message_id: msg.id,

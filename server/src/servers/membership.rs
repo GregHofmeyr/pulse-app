@@ -9,7 +9,8 @@
 //! `streams::ghosts::member_removed`). A join they try later is refused anyway (`voice::revoke::admit` checks
 //! membership). Their messages stay. Everything that checks membership as it acts (posting, reacting, voice and stream
 //! tokens, the posting workers, scheduled messages at their time) refuses them from then on, and mentions in its
-//! channels no longer reach them (`messages::mentions`).
+//! channels no longer reach them (`messages::mentions`). A system line says so in its first text channel ("alex left
+//! the server", "sam was removed", #418).
 //!
 //! Nothing stops a rejoin: servers are public to the group, and Join server works as before, starting at "all read".
 
@@ -166,6 +167,8 @@ pub(crate) async fn take_out(
 ) -> AppResult<()> {
     // A leave changes a live Quote of the Year's member count, which its events carry as absolute state: in commit
     // order, as a join publishes it.
+    // their name as it is now, for the line's text (clients name them as they're called when they show it)
+    let name = crate::dms::routes::shown_name(&s.db, user).await?;
     let order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     server_live_in(&mut tx, server).await?; // deleted since the route's check (#287)
@@ -215,8 +218,20 @@ pub(crate) async fn take_out(
     .fetch_all(&mut *tx)
     .await?;
     let qoty = crate::qoty::live_in(&mut tx, server).await?;
+    let line = member_line_in(&mut tx, server, user, by, &name).await?;
     tx.commit().await?;
     tracing::info!(server = %server, user = %user, by = ?by, "left server");
+    if let Some(message) = line {
+        s.hub
+            .publish(
+                &s.db,
+                Event::MessageCreated {
+                    message,
+                    nonce: None,
+                },
+            )
+            .await;
+    }
     s.hub
         .publish(
             &s.db,
@@ -246,6 +261,43 @@ pub(crate) async fn take_out(
     // viewer's `#v` / `#a` may outlive their voice connection.
     crate::streams::ghosts::member_removed(s, server, user).await;
     Ok(())
+}
+
+/// Store the line saying `user` left `server` (or `by` removed them) in its first text channel, the one at the top of
+/// its channel list (uncategorised channels first, then each category in order; deleted and archived ones skipped),
+/// where a new server's #general sits. None when it has no such channel. It carries their id, so clients show today's
+/// name; the text is for clients from before it. Servers have no join lines to match.
+async fn member_line_in(
+    tx: &mut sqlx::SqliteConnection,
+    server: ServerId,
+    user: UserId,
+    by: Option<UserId>,
+    name: &str,
+) -> AppResult<Option<pulse_protocol::rest::Message>> {
+    let channel: Option<String> = sqlx::query_scalar(
+        "SELECT c.id FROM channels c LEFT JOIN categories k ON k.id = c.category_id
+         WHERE c.server_id = ? AND c.kind = 'text' AND c.deleted_at IS NULL AND c.archived_at IS NULL
+         ORDER BY k.id IS NOT NULL, k.position, c.position, c.id LIMIT 1",
+    )
+    .bind(server.to_string())
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(channel) = channel else {
+        return Ok(None);
+    };
+    let line = pulse_protocol::rest::MemberLine {
+        user_id: user,
+        removed_by: by,
+    };
+    let content = match by {
+        None => format!("{name} left the server"),
+        Some(_) => format!("{name} was removed"),
+    };
+    let payload = crate::messages::system::member_line_payload(&line)?;
+    let channel = channel.parse().map_err(anyhow::Error::from)?;
+    Ok(Some(
+        crate::messages::system::insert(tx, channel, content, payload).await?,
+    ))
 }
 
 /// `user` is no longer in `server`: out of its call, if they're in one (told who did it first, when removed, as a

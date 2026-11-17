@@ -198,6 +198,7 @@ fn skeleton(f: &Stored) -> Message {
         sports: None,
         f1: None,
         forwarded: None,
+        member_line: None,
     }
 }
 

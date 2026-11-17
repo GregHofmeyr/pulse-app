@@ -863,6 +863,20 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub forwarded: Option<Box<Forwarded>>,
+    /// Set on a server membership line (#418), a system line in the server's first text channel: someone left it, or
+    /// its owner removed them. Clients name them as they're called today; `content` names them as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub member_line: Option<MemberLine>,
+}
+
+/// A server membership line (#418): "alex left the server", or "sam was removed" (`removed_by` the owner who did).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MemberLine {
+    pub user_id: UserId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub removed_by: Option<UserId>,
 }
 
 /// The original of a forwarded message (#302), as it was when forwarded.

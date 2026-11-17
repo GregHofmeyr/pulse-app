@@ -9,6 +9,7 @@ import type { F1Card } from "./F1Card";
 import type { Forwarded } from "./Forwarded";
 import type { Gif } from "./Gif";
 import type { LinkEmbed } from "./LinkEmbed";
+import type { MemberLine } from "./MemberLine";
 import type { MessageId } from "./MessageId";
 import type { MessageKind } from "./MessageKind";
 import type { Pin } from "./Pin";
@@ -135,4 +136,9 @@ f1?: F1Card,
  * `content` is the forwarder's comment, or a stand-in when they wrote none (`caption_is_fallback`), and its
  * `attachments` are the original's (by reference, while it is there).
  */
-forwarded?: Forwarded, };
+forwarded?: Forwarded, 
+/**
+ * Set on a server membership line (#418), a system line in the server's first text channel: someone left it, or
+ * its owner removed them. Clients name them as they're called today; `content` names them as they were.
+ */
+member_line?: MemberLine, };

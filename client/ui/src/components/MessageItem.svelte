@@ -382,6 +382,10 @@
     <!-- a share to the voice stage (#234), with today's names: "🎵 alex shared a Jam to the stage" -->
     {@const sl = message.stage_share_line}
     <div class="system" data-message-id={message.id}>🎵 {nameOf(sl.by)} shared {sharePhrase(sl.kind)} to the stage <span class="time">{time}</span></div>
+  {:else if message.member_line}
+    <!-- someone left the server or was removed (#418), with today's name -->
+    {@const ml = message.member_line}
+    <div class="system member-line" data-message-id={message.id}><Icon name="users" size={14} /> {nameOf(ml.user_id)} {ml.removed_by ? 'was removed' : 'left the server'} <span class="time">{time}</span></div>
   {:else}
   <div class="system" data-message-id={message.id}>{message.content} <span class="time">{time}</span></div>
   {/if}

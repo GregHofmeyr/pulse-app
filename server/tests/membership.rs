@@ -412,3 +412,66 @@ async fn a_hand_over_respects_the_server_cap() {
     assert_eq!(transfer(&w.app, &w.alex.1, w.server, w.sam.0).await, 400);
     assert_eq!(owner(&w).await, Some(w.alex.0));
 }
+
+/// The system lines in `channel`, oldest first.
+async fn member_lines(w: &World, channel: pulse_protocol::ids::ChannelId) -> Vec<Message> {
+    let mut history: Vec<Message> =
+        get_json(&w.app, &w.alex.1, &format!("/channels/{channel}/messages")).await;
+    history.retain(|m| m.member_line.is_some());
+    history.sort_by_key(|m| m.id);
+    history
+}
+
+#[tokio::test]
+async fn leaving_and_removing_post_a_line_in_the_first_text_channel() {
+    let w = world_with(spawn().await).await;
+    let mut kim_rx = w.app.hub.register(w.kim.0, String::new()).rx;
+    assert_eq!(leave(&w.app, &w.sam.1, w.server).await.status(), 204);
+    let g = w.general.id;
+    let sam_id = w.sam.0;
+    let live = wait_for(&mut kim_rx, |e| match e {
+        Event::MessageCreated { message, .. } if message.channel_id == g => Some(message),
+        _ => None,
+    })
+    .await;
+    let line = live.member_line.clone().expect("a member line");
+    assert_eq!((line.user_id, line.removed_by), (sam_id, None));
+    assert_eq!(live.content, "sam left the server");
+    assert_eq!(live.author_id, None);
+
+    assert_eq!(remove(&w.app, &w.alex.1, w.server, w.kim.0).await, 204);
+    let lines = member_lines(&w, g).await;
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    let removed = lines[1].member_line.clone().unwrap();
+    assert_eq!(
+        (removed.user_id, removed.removed_by),
+        (w.kim.0, Some(w.alex.0))
+    );
+    assert_eq!(lines[1].content, "kim was removed");
+}
+
+#[tokio::test]
+async fn the_line_skips_an_archived_first_channel() {
+    let w = world_with(spawn().await).await;
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/servers/{}/channels", w.server),
+        json!({"name": "chat", "kind": "text"}),
+    )
+    .await;
+    assert!(r.status().is_success(), "{}", r.status());
+    let chat: Channel = r.json().await.unwrap();
+    let r = w
+        .app
+        .http
+        .put(w.app.url(&format!("/channels/{}/archive", w.general.id)))
+        .bearer_auth(&w.alex.1)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    assert_eq!(leave(&w.app, &w.sam.1, w.server).await.status(), 204);
+    assert!(member_lines(&w, w.general.id).await.is_empty());
+    assert_eq!(member_lines(&w, chat.id).await.len(), 1);
+}

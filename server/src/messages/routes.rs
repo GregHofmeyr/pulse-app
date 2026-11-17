@@ -152,6 +152,10 @@ fn from_row(r: Row) -> AppResult<Message> {
         },
         // set by `forwards::attach`
         forwarded: None,
+        member_line: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => super::system::member_line(p),
+            _ => None,
+        },
     })
 }
 
@@ -598,6 +602,7 @@ pub(crate) async fn deliver(
         sports: None,
         f1: None,
         forwarded: forward.as_ref().map(|f| Box::new(f.view.clone())),
+        member_line: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -1061,6 +1066,7 @@ mod tests {
             sports: None,
             f1: None,
             forwarded: None,
+            member_line: None,
         }
     }
 
