@@ -1520,6 +1520,7 @@ mod tests {
                 },
                 nickname: Some("n".into()),
                 join_sound: None,
+                joined_at: None,
             },
         };
         assert_eq!((e.channel_id(), e.only_for()), (None, None));

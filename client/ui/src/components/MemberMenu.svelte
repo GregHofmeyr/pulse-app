@@ -3,8 +3,8 @@
   // (where the server may be none and View profile is left out: you're on it), or a message author in a DM or group
   // (#189: no server, so no server nickname). The profile, a message, server mute / deafen (#144: as the voice
   // participant menu's), and the nickname items, Appear offline to them (#45), and in a DM muting it (the DM list's
-  // flyout, #190), and in a group's member list Remove from group (#335); in a server you own, Remove from server (#371). Keyboard and focus work as in the voice
-  // participant menu.
+  // flyout, #190), and in a group's member list Remove from group (#335); in a server you own, Remove from server (#371) and Make owner (#418, handing it
+  // over, asked in the shell with the server's name). Keyboard and focus work as in the voice participant menu.
   import { onMount, untrack } from 'svelte'
   import { app, clock, ui } from '../lib/store.svelte'
   import { placeMenu } from '../lib/menuPlace'
@@ -42,7 +42,7 @@
   } = $props()
 
   const self = $derived(userId === app.state.me?.id)
-  // Remove from server (#371): the server's owner, on anyone else in it (asked first, in the shell)
+  // Remove from server (#371) and Make owner (#418): the server's owner, on anyone else in it (asked first, in the shell)
   const canRemove = $derived(
     !!serverId && !self && app.state.servers.find((s) => s.id === serverId)?.owner_id === app.state.me?.id
       && (app.state.members[serverId] ?? []).some((m) => m.user.id === userId) && isMember(app.state, serverId),
@@ -165,6 +165,7 @@
   {#if canRemove && serverId}
     {@const sid = serverId}
     <span class="menu-sep" role="separator"></span>
+    <button type="button" class="menu-item danger" role="menuitem" data-item="make-owner" onclick={() => pick(() => (ui.serverAction = { kind: 'transfer', serverId: sid, userId }))}>Make owner</button>
     <button type="button" class="menu-item danger" role="menuitem" data-item="remove-server" onclick={() => pick(() => (ui.serverAction = { kind: 'remove', serverId: sid, userId }))}>Remove from server</button>
   {/if}
   {#if onRemove && !self}

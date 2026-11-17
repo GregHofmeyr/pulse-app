@@ -11,6 +11,7 @@
   import DeleteServer from './DeleteServer.svelte'
   import LeaveServer from './LeaveServer.svelte'
   import TransferOwnership from './TransferOwnership.svelte'
+  import ServerMembers from './ServerMembers.svelte'
   import { isMember } from '../lib/selectors'
   import AchievementsChannelSettings from './AchievementsChannelSettings.svelte'
   import F1ChannelSettings from './F1ChannelSettings.svelte'
@@ -20,13 +21,13 @@
   import type { Server } from '../lib/protocol/Server'
 
   let { server, onClose }: { server: Server; onClose: () => void } = $props()
-  // Notifications (#203): your own level for the server, as its tab's right-click menu sets it. Leave server (#371):
-  // for anyone in it (its owner is told to hand it over first). Transfer ownership (#418) and Delete server (#184): its
-  // owner's only, last.
-  type Section = 'Emoji' | 'Soundboard' | 'Wheels' | 'Quote speakers' | 'Achievements' | 'Deadlock' | 'F1' | 'Sports' | 'Notifications' | 'Storage' | 'Recently deleted' | 'Leave server' | 'Transfer ownership' | 'Delete server'
+  // Notifications (#203): your own level for the server, as its tab's right-click menu sets it. Members (#418): everyone
+  // in it, each with their person menu. Leave server (#371): for anyone in it (its owner is told to hand it over
+  // first). Transfer ownership (#418) and Delete server (#184): its owner's only, last.
+  type Section = 'Emoji' | 'Soundboard' | 'Wheels' | 'Quote speakers' | 'Achievements' | 'Deadlock' | 'F1' | 'Sports' | 'Notifications' | 'Storage' | 'Recently deleted' | 'Members' | 'Leave server' | 'Transfer ownership' | 'Delete server'
   const owner = $derived(!!server.owner_id && server.owner_id === app.state.me?.id)
   const sections = $derived<Section[]>([
-    'Emoji', 'Soundboard', 'Wheels', 'Quote speakers', 'Achievements', 'Deadlock', 'F1', 'Sports', 'Notifications', 'Storage', 'Recently deleted',
+    'Emoji', 'Soundboard', 'Wheels', 'Quote speakers', 'Achievements', 'Deadlock', 'F1', 'Sports', 'Notifications', 'Storage', 'Recently deleted', 'Members',
     ...(isMember(app.state, server.id) ? (['Leave server'] as const) : []),
     ...(owner ? (['Transfer ownership', 'Delete server'] as const) : []),
   ])
@@ -48,7 +49,7 @@
   </nav>
   <div class="content">
     <button class="close icon-btn round modal-close" aria-label="Close server settings" onclick={onClose}><Icon name="x" size={16} /></button>
-    {#if section === 'Emoji'}<EmojiSettings {server} />{:else if section === 'Soundboard'}<SoundboardSettings {server} />{:else if section === 'Wheels'}<WheelSettings {server} />{:else if section === 'Achievements'}<AchievementsChannelSettings {server} />{:else if section === 'Deadlock'}<DeadlockChannelSettings {server} />{:else if section === 'F1'}<F1ChannelSettings {server} />{:else if section === 'Sports'}<SportsChannelSettings {server} />{:else if section === 'Notifications'}<NotifyLevelSettings {server} />{:else if section === 'Storage'}<StorageSettings {server} />{:else if section === 'Recently deleted'}<RecentlyDeleted {server} />{:else if section === 'Leave server'}<LeaveServer {server} {owner} onLeft={onClose} />{:else if section === 'Transfer ownership' && owner}<TransferOwnership {server} />{:else if section === 'Delete server' && owner}<DeleteServer {server} onDeleted={onClose} />{:else}<SpeakerLinkSettings {server} />{/if}
+    {#if section === 'Members'}<ServerMembers {server} />{:else if section === 'Emoji'}<EmojiSettings {server} />{:else if section === 'Soundboard'}<SoundboardSettings {server} />{:else if section === 'Wheels'}<WheelSettings {server} />{:else if section === 'Achievements'}<AchievementsChannelSettings {server} />{:else if section === 'Deadlock'}<DeadlockChannelSettings {server} />{:else if section === 'F1'}<F1ChannelSettings {server} />{:else if section === 'Sports'}<SportsChannelSettings {server} />{:else if section === 'Notifications'}<NotifyLevelSettings {server} />{:else if section === 'Storage'}<StorageSettings {server} />{:else if section === 'Recently deleted'}<RecentlyDeleted {server} />{:else if section === 'Leave server'}<LeaveServer {server} {owner} onLeft={onClose} />{:else if section === 'Transfer ownership' && owner}<TransferOwnership {server} />{:else if section === 'Delete server' && owner}<DeleteServer {server} onDeleted={onClose} />{:else}<SpeakerLinkSettings {server} />{/if}
   </div>
 </div>
 </div>

@@ -475,3 +475,25 @@ async fn the_line_skips_an_archived_first_channel() {
     assert!(member_lines(&w, w.general.id).await.is_empty());
     assert_eq!(member_lines(&w, chat.id).await.len(), 1);
 }
+
+#[tokio::test]
+async fn members_carry_when_they_joined() {
+    let w = world_with(spawn().await).await;
+    let listed: Vec<Member> =
+        get_json(&w.app, &w.jo.1, &format!("/servers/{}/members", w.server)).await;
+    assert_eq!(listed.len(), 3);
+    assert!(listed.iter().all(|m| m.joined_at.is_some()), "{listed:?}");
+    // joining is in order: the owner first
+    assert_eq!(listed[0].user.id, w.alex.0);
+    assert!(listed[0].joined_at <= listed[1].joined_at);
+    // and the live event carries it too
+    let mut kim_rx = w.app.hub.register(w.kim.0, String::new()).rx;
+    assert_eq!(join(&w.app, &w.jo.1, w.server).await, 204);
+    let jo_id = w.jo.0;
+    let at = wait_for(&mut kim_rx, |e| match e {
+        Event::MemberJoined { member, .. } if member.user.id == jo_id => Some(member.joined_at),
+        _ => None,
+    })
+    .await;
+    assert!(at.is_some());
+}

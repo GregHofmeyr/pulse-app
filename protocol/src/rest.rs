@@ -740,6 +740,10 @@ pub struct Member {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub join_sound: Option<String>,
+    /// When they joined the server (RFC 3339 UTC; the latest join, after a leave). Absent from older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub joined_at: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
