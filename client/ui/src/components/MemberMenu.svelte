@@ -4,7 +4,8 @@
   // (#189: no server, so no server nickname). The profile, a message, server mute / deafen (#144: as the voice
   // participant menu's), and the nickname items, Appear offline to them (#45), and in a DM muting it (the DM list's
   // flyout, #190), and in a group's member list Remove from group (#335); in a server you own, Remove from server (#371) and Make owner (#418, handing it
-  // over, asked in the shell with the server's name). Keyboard and focus work as in the voice participant menu.
+  // over, asked in the shell with the server's name), and on someone blocked from rejoining it Allow back (#418, from
+  // Server settings › Members). Keyboard and focus work as in the voice participant menu.
   import { onMount, untrack } from 'svelte'
   import { app, clock, ui } from '../lib/store.svelte'
   import { placeMenu } from '../lib/menuPlace'
@@ -24,7 +25,7 @@
   import MuteFlyout from './MuteFlyout.svelte'
   import PersonDndItem from './PersonDndItem.svelte'
 
-  let { serverId, userId, x, y, opener, onClose, onMessage, onRemove, fromCard = false, muteChannelId = null }: {
+  let { serverId, userId, x, y, opener, onClose, onMessage, onRemove, onAllowBack, fromCard = false, muteChannelId = null }: {
     /** The server it opens in, or null (a card opened outside servers). */
     serverId: string | null
     userId: string
@@ -36,6 +37,8 @@
     onMessage?: (userId: string) => void
     /** Opened on a group's member list (#335): Remove from group, for anyone but you. */
     onRemove?: (userId: string) => void
+    /** Opened on someone blocked from rejoining a server you own (#418): Allow back. */
+    onAllowBack?: (userId: string) => void
     /** Opened on their profile card: no View profile. */
     fromCard?: boolean
     /** Opened on a message in your DM with them: Mute conversation mutes that DM. */
@@ -171,6 +174,10 @@
     <span class="menu-sep" role="separator"></span>
     <button type="button" class="menu-item danger" role="menuitem" data-item="make-owner" onclick={() => pick(() => (ui.serverAction = { kind: 'transfer', serverId: sid, userId }))}>Make owner</button>
     <button type="button" class="menu-item danger" role="menuitem" data-item="remove-server" onclick={() => pick(() => (ui.serverAction = { kind: 'remove', serverId: sid, userId }))}>Remove from server</button>
+  {/if}
+  {#if onAllowBack && !self}
+    <span class="menu-sep" role="separator"></span>
+    <button type="button" class="menu-item" role="menuitem" data-item="allow-back" onclick={() => pick(() => onAllowBack(userId))}>Allow back</button>
   {/if}
   {#if onRemove && !self}
     <span class="menu-sep" role="separator"></span>
