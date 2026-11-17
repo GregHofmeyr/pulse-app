@@ -64,12 +64,32 @@ export const DARK_INK = '#141519'
 export type AccentTokens = Record<'--accent' | '--accent-soft' | '--accent-faint' | '--accent-mid' | '--accent-strong' | '--focus-soft' | '--focus-ring' | '--on-accent' | '--accent-text', string>
 
 /**
- * Everything accent-coloured, from one colour: the translucent tints (mentions and chips, a mention's row, a pressed
+ * A fill (button, on switch, slider) this close to the theme's surfaces is taken as an odd custom pick and moved to
+ * FILL_CONTRAST (#119). Just under the faintest preset on any theme (Gold on Pastel is about 1.29:1), so presets and
+ * the themes' own accents keep the colour as picked; themes.test.ts pins that.
+ */
+export const FILL_FLOOR = 1.25
+/** What an odd pick's fill is moved to: WCAG's 3:1 for non-text UI against the theme's surfaces. */
+export const FILL_CONTRAST = 3
+
+/**
+ * The colour accent fills use: `hex` as picked unless it nearly vanishes into the theme's surfaces (under FILL_FLOOR
+ * on any of them), then moved toward the readable side, keeping its hue, to FILL_CONTRAST.
+ */
+export function accentFill(hex: string, s: Surfaces): string {
+  const bgs = textSurfaces(s)
+  return bgs.every((bg) => contrast(hex, bg) >= FILL_FLOOR) ? hex : readable(hex, bgs, FILL_CONTRAST)
+}
+
+/**
+ * Everything accent-coloured, from one colour: the fill (the colour as picked, or nudged when it would vanish into
+ * the surfaces, see accentFill), the translucent tints (mentions and chips, a mention's row, a pressed
  * toggle and a jumped-to message (mid, strong on hover), the message
  * box's focus edge), the focus ring (3:1 on the theme's surfaces), the text on an accent button (dark ink or white,
  * whichever reads better) and accent-coloured text (4.5:1 on the theme's surfaces).
  */
-export function deriveAccent(hex: string, s: Surfaces, light: boolean): AccentTokens {
+export function deriveAccent(picked: string, s: Surfaces, light: boolean): AccentTokens {
+  const hex = accentFill(picked, s)
   // Dark ink or white, whichever reads better; a mid-tone where the ink falls under 4.5:1 gets pure black (black or
   // white always reaches 4.58:1).
   const better = contrast(DARK_INK, hex) >= contrast('#ffffff', hex) ? DARK_INK : '#ffffff'

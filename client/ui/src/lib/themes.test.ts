@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { contrast, parseHex, readable } from './color'
-import { ACCENT_PRESETS, DARK_INK, deriveAccent, NAME_LEVELS, surfacesFor, textSurfaces, THEMES, TINTS, type ThemeKey, type TintKey } from './themes'
+import { contrast, parseHex, readable, rgba } from './color'
+import { ACCENT_PRESETS, accentFill, DARK_INK, deriveAccent, FILL_CONTRAST, FILL_FLOOR, NAME_LEVELS, surfacesFor, textSurfaces, THEMES, TINTS, type ThemeKey, type TintKey } from './themes'
 
 /** HSL hue in degrees (null for a grey). */
 function hue(hex: string): number | null {
@@ -16,6 +16,8 @@ const hueGap = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.ab
 
 /** Every theme, and Light with every tint. */
 const VARIANTS: { theme: ThemeKey; tint: TintKey }[] = THEMES.flatMap((t) => (t.key === 'light' ? TINTS.map((n) => ({ theme: t.key, tint: n.key })) : [{ theme: t.key, tint: 'plain' as TintKey }]))
+/** `rgba(r, g, b, ` of a colour, to check a tint was made from it. */
+const rgbaPrefix = (hex: string) => rgba(hex, 0.5).replace(/\.5\)$/, '')
 
 describe('readable', () => {
   it('leaves a colour that already reaches the ratio exactly as it is', () => {
@@ -98,9 +100,10 @@ describe('deriveAccent', () => {
     const light = THEMES.find((t) => t.key === theme)!.light
     for (const c of ALL) {
       const a = deriveAccent(c, s, light)
-      expect(a['--accent']).toBe(c)
+      const fill = a['--accent']
+      expect(fill).toBe(accentFill(c, s))
       // dark ink or white, whichever reads better, never under 4.5:1
-      expect(contrast(a['--on-accent'], c), `${theme} ${c}`).toBeGreaterThanOrEqual(Math.max(4.5, Math.min(contrast(DARK_INK, c), contrast('#ffffff', c))))
+      expect(contrast(a['--on-accent'], fill), `${theme} ${c}`).toBeGreaterThanOrEqual(Math.max(4.5, Math.min(contrast(DARK_INK, fill), contrast('#ffffff', fill))))
       for (const bg of textSurfaces(s)) {
         expect(contrast(a['--accent-text'], bg), `${theme}/${tint} accent text ${c} on ${bg}`).toBeGreaterThanOrEqual(4.5)
         expect(contrast(a['--focus-ring'], bg), `${theme}/${tint} focus ring ${c} on ${bg}`).toBeGreaterThanOrEqual(3)
@@ -112,9 +115,54 @@ describe('deriveAccent', () => {
   it('text on the accent reads at 4.5:1 for every preset and any colour (pure black when neither ink nor white does)', () => {
     const greys = Array.from({ length: 52 }, (_, i) => '#' + (i * 5).toString(16).padStart(2, '0').repeat(3))
     for (const c of [...ACCENT_PRESETS.map((p) => p.color), ...SWEEP, ...greys, '#777777', '#3d7a8a', '#b04080']) {
-      const on = deriveAccent(c, surfacesFor('dark', 'plain'), false)['--on-accent']
+      const a = deriveAccent(c, surfacesFor('dark', 'plain'), false)
+      const on = a['--on-accent']
       expect(['#141519', '#ffffff', '#000000']).toContain(on)
-      expect(contrast(on, c), c).toBeGreaterThanOrEqual(4.5)
+      expect(contrast(on, a['--accent']), c).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  // #119: an extreme custom accent no longer leaves fills (buttons, switches, sliders) faint.
+  it.each(VARIANTS)('$theme ($tint): presets and theme accents keep their fill exactly as picked', ({ theme, tint }) => {
+    const s = surfacesFor(theme, tint)
+    for (const c of [...ACCENT_PRESETS.map((p) => p.color), ...THEMES.map((t) => t.accent)]) {
+      expect(accentFill(c, s), `${theme}/${tint} ${c}`).toBe(c)
+      for (const bg of textSurfaces(s)) expect(contrast(c, bg), `${theme}/${tint} ${c} on ${bg}`).toBeGreaterThanOrEqual(FILL_FLOOR)
+    }
+  })
+
+  const EXTREME = { 'near-white': '#fafafa', 'near-black': '#050505', grey: '#808080', 'pure yellow': '#ffff00', 'pale yellow': '#fffde0', black: '#000000', white: '#ffffff' }
+  it.each(VARIANTS)('$theme ($tint): an extreme accent gets a fill that shows (3:1 on the surfaces, or as picked when it already stands off) with 4.5:1 text on it', ({ theme, tint }) => {
+    const s = surfacesFor(theme, tint)
+    const light = THEMES.find((t) => t.key === theme)!.light
+    for (const [name, c] of Object.entries(EXTREME)) {
+      const a = deriveAccent(c, s, light)
+      const fill = a['--accent']
+      const asPicked = textSurfaces(s).every((bg) => contrast(c, bg) >= FILL_FLOOR)
+      for (const bg of textSurfaces(s)) {
+        expect(contrast(fill, bg), `${theme}/${tint} ${name} fill on ${bg}`).toBeGreaterThanOrEqual(asPicked ? FILL_FLOOR : FILL_CONTRAST)
+      }
+      if (asPicked) expect(fill).toBe(c)
+      expect(contrast(a['--on-accent'], fill), `${theme}/${tint} text on ${name}`).toBeGreaterThanOrEqual(4.5)
+      // the tints follow the fill
+      expect(a['--accent-soft'].startsWith(rgbaPrefix(fill)), `${theme}/${tint} ${name} soft`).toBe(true)
+    }
+  })
+
+  it('near-white on Light, near-black on OLED and pure yellow on Light are deepened or lifted; the same colours stay as picked where they show', () => {
+    const light = surfacesFor('light', 'plain')
+    const oled = surfacesFor('oled', 'plain')
+    expect(accentFill('#fafafa', light)).not.toBe('#fafafa')
+    expect(accentFill('#ffff00', light)).not.toBe('#ffff00')
+    expect(accentFill('#050505', oled)).not.toBe('#050505')
+    expect(accentFill('#fafafa', oled)).toBe('#fafafa')
+    expect(accentFill('#ffff00', oled)).toBe('#ffff00')
+    expect(accentFill('#050505', light)).toBe('#050505')
+    // just enough: 3:1 on the faintest surface, not much more
+    for (const [c, s] of [['#fafafa', light], ['#ffff00', light], ['#050505', oled]] as const) {
+      const worst = Math.min(...textSurfaces(s).map((bg) => contrast(accentFill(c, s), bg)))
+      expect(worst).toBeGreaterThanOrEqual(FILL_CONTRAST)
+      expect(worst).toBeLessThan(FILL_CONTRAST + 0.3)
     }
   })
 

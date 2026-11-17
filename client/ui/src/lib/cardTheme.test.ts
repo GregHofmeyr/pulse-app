@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BODY_RATIO, cardInk, cardVars, composite, DARK_CARD, DEFAULT_THEME, EDGE_SHADE, LIGHT_CARD, mixHex, nameStop, presetFor, THEME_PRESETS } from './cardTheme'
-import { contrast, luminance, parseHex } from './color'
+import { contrast, luminance, parseHex, toOklch } from './color'
 
 const lum = (c: string) => luminance(parseHex(c)!)
 /** Every surface the card's text sits on: its two ends and the panels and the message box over them. */
@@ -105,6 +105,23 @@ describe('the card is drawn in its own two colours (#156)', () => {
     const v = cardVars('#8a3cff', '#ff8a2a')
     expect(contrast(v['--card-text'], v['--card-top'])).toBeGreaterThanOrEqual(BODY_RATIO)
     expect(contrast(v['--card-text'], v['--card-top'])).toBeLessThan(BODY_RATIO + 2.5)
+  })
+
+  it("Sunset's orange end deepens to a burnt orange, not a brown: hue and chroma kept in OKLCH, unlike the old sRGB mix toward black (#330)", () => {
+    const { light, bottom } = cardInk('#8a3cff', '#ff8a2a')
+    expect(light).toBe(false)
+    const [, wasC, wasH] = toOklch(parseHex('#ff8a2a')!)
+    const [L, C, H] = toOklch(parseHex(bottom)!)
+    // the same hue, within a degree
+    expect(Math.abs(H - wasH)).toBeLessThan(1)
+    // the old sRGB mix gave #8f4d18 (chroma about .109); as much chroma as sRGB holds at this lightness now
+    const brown = toOklch(parseHex('#8f4d18')!)
+    expect(C).toBeGreaterThan(brown[1] + 0.01)
+    expect(C).toBeLessThanOrEqual(wasC)
+    expect(Math.abs(L - brown[0])).toBeLessThan(0.03)
+    // and the text still reads on it and on the overlays over it
+    const v = cardVars('#8a3cff', '#ff8a2a')
+    for (const s of surfaces(v, DARK_CARD)) expect(contrast(v['--card-text-2'], s), s).toBeGreaterThanOrEqual(BODY_RATIO)
   })
 
   it('the panels and the message box are translucent overlays; the solid panel colours are what they make', () => {

@@ -97,14 +97,14 @@ describe('AppearanceSettings: theme, accent and name readability (#42)', () => {
     expect(button('Accent', 'Mint').getAttribute('aria-pressed')).toBe('true')
     const pick = document.querySelector<HTMLInputElement>('input[type=color]')!
     expect(pick.value).toBe('#3ddc97')
-    pick.value = '#123456'
+    pick.value = '#2a6ad0'
     pick.dispatchEvent(new Event('input', { bubbles: true }))
     // once a frame at most (#156 follow-up); the picker closing applies it at once
     flushSync()
     expect(html.style.getPropertyValue('--accent')).toBe('#3ddc97')
     pick.dispatchEvent(new Event('change', { bubbles: true }))
     flushSync()
-    expect(html.style.getPropertyValue('--accent')).toBe('#123456')
+    expect(html.style.getPropertyValue('--accent')).toBe('#2a6ad0')
     expect(html.style.getPropertyValue('--on-accent')).toBe('#ffffff')
     expect(button('Accent', 'Mint').getAttribute('aria-pressed')).toBe('false')
     button('Accent', 'Theme default').click()

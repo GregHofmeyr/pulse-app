@@ -70,8 +70,6 @@
   const nameBg = $derived(nameStop(theme.vars['--card-top'], theme.vars['--card-bottom'], theme.light))
   // the owner's choice, saved with the profile (#156); an older server sends none: on, as it always was
   const glow = $derived(card.glow !== false)
-  // the quick card is a little bigger than it was (#156); its icons a step up with it
-  const quick = $derived(size === 'quick')
   const mine = $derived(user.id === app.state.me?.id)
   // The name that applies here (#47): their nickname in this server, else your private nickname for
   // them, else their display name; the preview draws the display name being edited. The username
@@ -168,9 +166,9 @@
   <div class="body">
     {#if !preview && size === 'quick'}
       <!-- the avatar is a way in to the full profile too -->
-      <button type="button" class="ring avatar-link" aria-label="View full profile" onclick={viewFull}><Avatar id={user.id} {name} size={quick ? 90 : 80} place="card" {presence} /></button>
+      <button type="button" class="ring avatar-link" aria-label="View full profile" onclick={viewFull}><Avatar id={user.id} {name} size={90} place="card" {presence} /></button>
     {:else}
-      <span class="ring"><Avatar id={user.id} {name} size={quick ? 90 : 80} place="card" {presence} user={preview ? user : undefined} /></span>
+      <span class="ring"><Avatar id={user.id} {name} size={90} place="card" {presence} user={preview ? user : undefined} /></span>
     {/if}
     <div class="who">
       <!-- No server for the style: a card shows the person's own colour, never a role colour (spec §2) -->
@@ -179,7 +177,7 @@
     </div>
     {#if custom}
       <!-- plain text, in full (the lists cut it to one line) -->
-      <div class="custom-status" data-custom-status>{#if custom.emoji}<StatusEmoji emoji={custom.emoji} size={quick ? 18 : 16} />{/if}{#if custom.text}<span>{custom.text}</span>{/if}</div>
+      <div class="custom-status" data-custom-status>{#if custom.emoji}<StatusEmoji emoji={custom.emoji} size={18} />{/if}{#if custom.text}<span>{custom.text}</span>{/if}</div>
     {/if}
     {#if shown.length}
       <div class="badges">
@@ -216,7 +214,7 @@
             <div data-steam-hours><dt>Steam, 2 weeks</dt><dd>{hoursText(stats.steam_recent_minutes)}</dd></div>
           {/if}
         {/if}
-        {#if voiceRoom}<div class="room"><Icon name="speaker" size={quick ? 16 : 14} /><span>In {voiceRoom}</span></div>{/if}
+        {#if voiceRoom}<div class="room"><Icon name="speaker" size={16} /><span>In {voiceRoom}</span></div>{/if}
       </dl>
     {/if}
     {#if !preview && serverId}
@@ -227,15 +225,15 @@
       <!-- your own card: one box of actions, like Discord's; the avatar and Badges open the full profile. Only on
            yours: actions between people stay in the right-click menu (owner) -->
       <div class="actions">
-        <button type="button" onclick={editProfile}><Icon name="pencil" size={quick ? 18 : 16} /><span>Edit profile</span></button>
+        <button type="button" onclick={editProfile}><Icon name="pencil" size={18} /><span>Edit profile</span></button>
         <!-- your status (#45): the row opens the status menu -->
         <button type="button" aria-haspopup="menu" aria-expanded={!!statusMenu} data-menu-toggle onclick={(e) => (statusMenu = statusMenu ? null : e.currentTarget)}>
-          <span class="status {presence?.kind ?? 'online'}"></span><span>{presence?.label ?? 'Online'}</span><Icon name="chevronRight" size={quick ? 16 : 14} /></button>
-        {#if size === 'quick'}<button type="button" onclick={viewFull}><Icon name="trophy" size={quick ? 18 : 16} /><span>Badges</span></button>{/if}
+          <span class="status {presence?.kind ?? 'online'}"></span><span>{presence?.label ?? 'Online'}</span><Icon name="chevronRight" size={16} /></button>
+        {#if size === 'quick'}<button type="button" onclick={viewFull}><Icon name="trophy" size={18} /><span>Badges</span></button>{/if}
         <!-- your notes to self (#308): your DM with only you, made the first time -->
-        <button type="button" onclick={openNotes}><Icon name="pencil" size={quick ? 18 : 16} /><span>Notes</span></button>
+        <button type="button" onclick={openNotes}><Icon name="pencil" size={18} /><span>Notes</span></button>
         <!-- Settings (#168): the me area opens only this card, so the card is the way there (the cog stays too) -->
-        <button type="button" onclick={openCardSettings}><Icon name="gear" size={quick ? 18 : 16} /><span>Settings</span></button>
+        <button type="button" onclick={openCardSettings}><Icon name="gear" size={18} /><span>Settings</span></button>
       </div>
       {#if error}<p class="err" role="alert">{error}</p>{/if}
     {:else if !preview && size === 'quick'}
@@ -258,19 +256,20 @@
 <style>
   /* #156: the card's two colours as picked, top to bottom over the whole card; a thin border in a stronger shade of
      each; inner surfaces translucent over it (lib/cardTheme.ts). The glow (each colour at 45%, reconciliation 8) is the
-     owner's choice; on a light app theme a soft lift too. --k: the quick card is 12% bigger than it was (300px), every
-     size in proportion; the full card keeps its own. */
+     owner's choice; on a light app theme a soft lift too. --k: the card is 12% bigger than the quick card was (300px),
+     every size in proportion; the full profile's card is drawn the same (#330). */
   .card {
     --k: 1.12;
     width: calc(300px * var(--k)); border-radius: var(--radius-xl); overflow: hidden; color: var(--card-text);
     border: 1px solid transparent;
     background: linear-gradient(var(--card-top), var(--card-bottom)) padding-box, linear-gradient(var(--card-border-top), var(--card-border-bottom)) border-box;
+    /* drawn in OKLab where the engine can (#330): an sRGB blend of two saturated ends dips grey and dark in the middle
+       (Sunset's purple into orange); the line above stays for an older WebKitGTK, which drops this one */
+    background: linear-gradient(in oklab, var(--card-top), var(--card-bottom)) padding-box, linear-gradient(in oklab, var(--card-border-top), var(--card-border-bottom)) border-box;
     box-shadow: var(--card-lift);
   }
   .card.glow { box-shadow: 0 -4px 22px var(--glow-top-a), 0 4px 22px var(--glow-bottom-a), var(--card-lift); }
-  .card.full { --k: 1; width: 340px; }
   .banner { position: relative; height: calc(104px * var(--k)); }
-  .card.full .banner { height: 118px; }
   .banner.none { height: calc(56px * var(--k)); }
   .banner img { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* the banner fades into the card over its bottom 40% */
@@ -282,15 +281,14 @@
   .ring { align-self: flex-start; margin-top: calc(-44px * var(--k)); position: relative; border-radius: 50%; padding: 4px; background: var(--card-top); }
   .ring :global(.pres) { width: 24%; height: 24%; right: 2px; bottom: 2px; border-color: var(--card-top); border-width: 3px; }
   .who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  /* Name's card size is 1.15em: this makes it 20 px (22 on the quick card), bold */
+  /* Name's card size is 1.15em: this makes it 22 px, bold */
   .who :global(.name) { font-weight: 700; }
   .who { font-size: calc(20px * var(--k) / 1.15); }
   .handle { font-size: calc(13px * var(--k)); color: var(--card-text-2); }
   .custom-status { display: flex; align-items: center; gap: 6px; margin-top: calc(-4px * var(--k)); font-size: calc(13px * var(--k)); color: var(--card-text); overflow-wrap: anywhere; min-width: 0; }
   .badges { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 0; }
   /* a touch smaller than the shared showcase size; zoom keeps the ring, glyph, spark and tier in proportion */
-  .badges :global(.badge-icon.show) { zoom: .84; }
-  .card:not(.full) .badges :global(.badge-icon.show) { zoom: .94; }
+  .badges :global(.badge-icon.show) { zoom: .94; }
   .panel { border-radius: var(--radius-md); padding: calc(10px * var(--k)) calc(12px * var(--k)); background: var(--card-panel); font-size: calc(13px * var(--k)); }
   .bio { font-size: calc(13px * var(--k)); line-height: 1.4; overflow-wrap: anywhere; }
   .bio :global(p) { margin: 0; }

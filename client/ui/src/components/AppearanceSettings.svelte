@@ -88,7 +88,7 @@
         <span>Custom</span>
       </label>
     </div>
-    <small id="{uid}-accent">Buttons, links, mentions and focus follow it. Text on it turns dark or white to stay readable.</small>
+    <small id="{uid}-accent">Buttons, links, mentions and focus follow it. Text on it turns dark or white to stay readable, and a colour that would vanish into the theme is deepened for buttons and switches.</small>
   </div>
 
   <div class="settings-field">
