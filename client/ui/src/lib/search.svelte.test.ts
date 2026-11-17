@@ -122,12 +122,13 @@ describe('search store', () => {
     expect(ui.openReplies).toEqual({ channelId: 'Q1', rootId: 'Q9' })
   })
 
-  it('a clip, or a reply to one, opens that clip in its channel', () => {
+  it('a clip is jumped to in its feed (#120); a reply to one opens that clip in its channel', () => {
     const clip = msg('V1', 'K1')
     openHit(hit(clip))
     expect(ui.goTo).toBe('K1')
-    expect(ui.openClip).toEqual({ channelId: 'K1', clip })
-    ui.openClip = null
+    expect(ui.jumpClip).toEqual({ channelId: 'K1', clip })
+    expect(ui.openClip).toBeNull()
+    ui.jumpClip = null
     openHit(hit(msg('R2', 'K1', { thread_root_id: 'V1' }), clip))
     expect(ui.openClip).toEqual({ channelId: 'K1', clip })
   })

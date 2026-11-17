@@ -867,11 +867,52 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub forwarded: Option<Box<Forwarded>>,
+    /// Set on a group chat's own system line (#114): who created it, added, left or was removed, or renamed it or
+    /// changed its icon, by id, so clients write it with the names that apply today. `content` keeps the line as
+    /// written (the fallback for older clients, and for anyone a client doesn't know).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub group_line: Option<GroupLine>,
     /// Set on a server membership line (#418), a system line in the server's first text channel: someone left it, or
     /// its owner removed them. Clients name them as they're called today; `content` names them as they were.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub member_line: Option<MemberLine>,
+}
+
+/// What a group chat's system line says happened (#114).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupLineKind {
+    /// `by` created the group with `users`.
+    Created,
+    /// `by` added `users`.
+    MembersAdded,
+    /// `by` left.
+    MemberLeft,
+    /// `by` removed `users` (one person).
+    MemberRemoved,
+    /// `by` renamed the group to `name`.
+    Renamed,
+    /// `by` removed the group name.
+    NameRemoved,
+    /// `by` changed the group icon.
+    IconChanged,
+    /// `by` removed the group icon.
+    IconRemoved,
+}
+
+/// A group chat's system line by id (#114), read from the payload the server stored with it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct GroupLine {
+    pub kind: GroupLineKind,
+    pub by: UserId,
+    #[serde(default)]
+    pub users: Vec<UserId>,
+    /// The new name, on `Renamed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub name: Option<String>,
 }
 
 /// A server membership line (#418): "alex left the server", or "sam was removed" (`removed_by` the owner who did).

@@ -5,8 +5,8 @@ use futures::TryStreamExt;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
-    ChannelKind, EditQuoteRequest, Leaderboard, LeaderboardWin, Message, PostQuoteRequest,
-    QuoteSpeaker, SpeakerCount,
+    ChannelKind, EditQuoteRequest, Leaderboard, LeaderboardWin, Message, MessageKind,
+    PostQuoteRequest, QuoteSpeaker, SpeakerCount,
 };
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
@@ -393,8 +393,9 @@ async fn leaderboard(
     let top_all_time = top_quotes(&s.db, server, None).await?;
 
     // Winners: newest year first, a tie's co-winners newest quote first. Deleted ones stay.
-    let wins: Vec<(i64, String, i64, String)> = sqlx::query_as(
-        "SELECT e.year, w.message_id, w.votes, e.id
+    // `voters` is set once the quote was purged with its channel (#110), taking its votes along.
+    let wins: Vec<(i64, String, i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT e.year, w.message_id, w.votes, e.id, w.voters
          FROM qoty_winners w JOIN qoty_events e ON e.id = w.event_id
          WHERE e.server_id = ?
          ORDER BY e.year DESC, w.message_id DESC",
@@ -468,17 +469,27 @@ async fn leaderboard(
             .collect()
     };
     let mut winners = Vec::with_capacity(wins.len());
-    for (year, message, votes, event) in &wins {
-        let Some(msg) = messages.get(message) else {
-            continue;
+    for (year, message, votes, event, kept_voters) in &wins {
+        // A quote purged with its channel (#110) reads as a deleted one: the win stays (spec §3.1).
+        let msg = match messages.get(message) {
+            Some(m) => m.clone(),
+            None => purged_winner(message)?,
+        };
+        let voters = match kept_voters {
+            Some(json) => serde_json::from_str::<Vec<String>>(json)
+                .map_err(anyhow::Error::from)?
+                .iter()
+                .map(|u| super::parse_id(u))
+                .collect::<AppResult<Vec<UserId>>>()?,
+            None => voters
+                .remove(&(event.clone(), message.clone()))
+                .unwrap_or_default(),
         };
         winners.push(LeaderboardWin {
             year: *year as i32,
-            message: msg.clone(),
+            message: msg,
             votes: *votes as u32,
-            voters: voters
-                .remove(&(event.clone(), message.clone()))
-                .unwrap_or_default(),
+            voters,
             speakers: speakers
                 .remove(&(event.clone(), message.clone()))
                 .unwrap_or_default(),
@@ -494,6 +505,50 @@ async fn leaderboard(
         most_quoted: most_quoted(&s.db, server).await?,
         most_awarded,
     }))
+}
+
+/// The stand-in for a winning quote whose message was purged with its channel (#110): a deleted
+/// message with nothing in it (clients show "This quote was deleted." and offer nothing to open;
+/// its channel is gone, so it names none).
+fn purged_winner(id: &str) -> AppResult<Message> {
+    Ok(Message {
+        id: super::parse_id(id)?,
+        channel_id: ChannelId::floor(0),
+        author_id: None,
+        kind: MessageKind::Normal,
+        content: String::new(),
+        reply_to_id: None,
+        created_at: String::new(),
+        edited_at: None,
+        deleted: true,
+        mentions: vec![],
+        reactions: vec![],
+        thread_root_id: None,
+        quote: None,
+        qoty_card: None,
+        clip: None,
+        embeds: vec![],
+        embeds_hidden: false,
+        call: None,
+        pin: None,
+        pin_line: None,
+        wheel: None,
+        poll: None,
+        poll_ended: None,
+        stage_share_line: None,
+        gif: None,
+        attachments: vec![],
+        caption_is_fallback: false,
+        achievement: None,
+        deadlock: None,
+        plan: None,
+        plan_reminder: None,
+        sports: None,
+        f1: None,
+        forwarded: None,
+        group_line: None,
+        member_line: None,
+    })
 }
 
 #[derive(serde::Deserialize)]

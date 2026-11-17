@@ -230,6 +230,17 @@ pub async fn delete(
     }
     let (ch, server) = server_channel_for(&s, me, id).await?;
     let _order = s.hub.in_order().await;
+    if ch.kind == ChannelKind::Quotes {
+        // A vote past its deadline that the sweeper hasn't ended yet would hold the delete up for
+        // no reason (#110): end it first, in its own transaction, and announce it (its card lands
+        // while the channel is still live).
+        let mut tx = crate::db::begin_write(&s.db).await?;
+        let ended = crate::qoty::ending::end_if_overdue(&mut tx, server).await?;
+        tx.commit().await?;
+        if let Some(ended) = ended {
+            crate::qoty::ending::announce(&s, ended).await;
+        }
+    }
     let mut tx = crate::db::begin_write(&s.db).await?;
     if ch.kind == ChannelKind::Quotes && on_ballot(&mut tx, id).await? {
         return Err(AppError::Conflict(
@@ -340,10 +351,12 @@ async fn on_ballot(db: &mut SqliteConnection, id: ChannelId) -> AppResult<bool> 
     Ok(hit.is_some())
 }
 
-/// Why a deleted channel can't be purged yet, if it can't (the Quote of the Year guards #104 put on
-/// the delete itself): a quotes channel stays while one of its quotes is [`on_ballot`], and for
-/// good once it holds a winner (what won is kept when its quote is deleted: `qoty_winners`). The
-/// sweeper leaves such a channel in Recently deleted, where the list shows this as `held`.
+/// Why a deleted channel can't be purged yet, if it can't (the Quote of the Year guard #104 put on
+/// the delete itself): a quotes channel stays while one of its quotes is [`on_ballot`]. A past
+/// winner no longer holds it (#110): the win outlives its quote (`qoty_winners` keeps no foreign
+/// key on the message, and the purge copies its voters onto it), as it outlives a deleted one
+/// (spec §3.1). The sweeper leaves a held channel in Recently deleted, where the list shows this
+/// as `held`.
 pub(crate) async fn held(
     db: &mut SqliteConnection,
     id: ChannelId,
@@ -352,20 +365,9 @@ pub(crate) async fn held(
     if kind != ChannelKind::Quotes {
         return Ok(None);
     }
-    if on_ballot(db, id).await? {
-        return Ok(Some(
-            "One of its quotes is up in the Quote of the Year vote: it can't be deleted for good until the vote ends.",
-        ));
-    }
-    let holds_winner: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM qoty_winners w JOIN messages m ON m.id = w.message_id
-         WHERE m.channel_id = ? LIMIT 1",
-    )
-    .bind(id.to_string())
-    .fetch_optional(&mut *db)
-    .await?;
-    Ok(holds_winner
-        .map(|_| "It holds a Quote of the Year winner, so it can't be deleted for good."))
+    Ok(on_ballot(db, id).await?.then_some(
+        "One of its quotes is up in the Quote of the Year vote: it can't be deleted for good until the vote ends.",
+    ))
 }
 
 /// Deleted at or before this, a channel is due to be purged: the sweeper takes it, and it can no

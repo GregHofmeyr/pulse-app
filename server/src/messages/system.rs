@@ -1,10 +1,10 @@
 //! System lines ("sam added riley"): author-less messages with a JSON payload for clients.
 
 use pulse_protocol::gateway::Event;
-use pulse_protocol::ids::{ChannelId, MessageId};
+use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{
-    AchievementCard, CallLine, DeadlockCard, MemberLine, Message, MessageKind, PinLine, PollEnded,
-    QotyCard, SportsCard, StageShareLine, WheelSpin,
+    AchievementCard, CallLine, DeadlockCard, GroupLine, GroupLineKind, MemberLine, Message,
+    MessageKind, PinLine, PollEnded, QotyCard, SportsCard, StageShareLine, WheelSpin,
 };
 use sqlx::SqliteConnection;
 
@@ -79,6 +79,7 @@ pub async fn insert(
         sports: sports(&stored).map(Box::new),
         f1: crate::f1::card(&stored).map(Box::new),
         forwarded: None,
+        group_line: group_line(&stored),
         member_line: member_line(&stored),
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
@@ -274,6 +275,38 @@ pub fn member_line(payload: &str) -> Option<MemberLine> {
 }
 
 /// "a", "a and b", "a, b and c".
+/// A group chat's own line (#114) in a stored payload, if it is one: the payloads `dms::routes` and
+/// `servers::routes` write for a group's creation, members and settings, read as one [`GroupLine`]
+/// so clients can write it with today's names.
+pub fn group_line(payload: &str) -> Option<GroupLine> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    let id = |key: &str| -> Option<UserId> { serde_json::from_value(v.get(key)?.clone()).ok() };
+    let ids =
+        |key: &str| -> Option<Vec<UserId>> { serde_json::from_value(v.get(key)?.clone()).ok() };
+    let set = |key: &str| v.get(key).is_some_and(|x| !x.is_null());
+    let (kind, by, users) = match v.get("type")?.as_str()? {
+        "group_created" => (GroupLineKind::Created, id("by")?, ids("with")?),
+        "members_added" => (GroupLineKind::MembersAdded, id("by")?, ids("users")?),
+        "member_left" => (GroupLineKind::MemberLeft, id("user")?, vec![]),
+        "member_removed" => (GroupLineKind::MemberRemoved, id("by")?, vec![id("user")?]),
+        "group_renamed" if set("name") => (GroupLineKind::Renamed, id("by")?, vec![]),
+        "group_renamed" => (GroupLineKind::NameRemoved, id("by")?, vec![]),
+        "group_icon_changed" if set("icon") => (GroupLineKind::IconChanged, id("by")?, vec![]),
+        "group_icon_changed" => (GroupLineKind::IconRemoved, id("by")?, vec![]),
+        _ => return None,
+    };
+    let name = match kind {
+        GroupLineKind::Renamed => Some(v.get("name")?.as_str()?.to_owned()),
+        _ => None,
+    };
+    Some(GroupLine {
+        kind,
+        by,
+        users,
+        name,
+    })
+}
+
 pub fn join_names(names: &[String]) -> String {
     match names {
         [] => String::new(),
@@ -287,6 +320,40 @@ mod tests {
     use super::*;
     use pulse_protocol::ids::QotyEventId;
     use pulse_protocol::rest::QotyEndReason;
+
+    #[test]
+    fn group_lines_read_from_their_payloads() {
+        let (alex, sam, kim) = (UserId::new(), UserId::new(), UserId::new());
+        let read = |v: serde_json::Value| group_line(&v.to_string());
+        let created =
+            read(serde_json::json!({"type": "group_created", "by": alex, "with": [sam, kim]}))
+                .unwrap();
+        assert_eq!(created.kind, GroupLineKind::Created);
+        assert_eq!((created.by, created.users), (alex, vec![sam, kim]));
+        let left = read(serde_json::json!({"type": "member_left", "user": sam})).unwrap();
+        assert_eq!((left.kind, left.by), (GroupLineKind::MemberLeft, sam));
+        let removed =
+            read(serde_json::json!({"type": "member_removed", "by": alex, "user": kim})).unwrap();
+        assert_eq!(removed.users, vec![kim]);
+        let renamed =
+            read(serde_json::json!({"type": "group_renamed", "by": alex, "name": "Trip"})).unwrap();
+        assert_eq!(
+            (renamed.kind, renamed.name.as_deref()),
+            (GroupLineKind::Renamed, Some("Trip"))
+        );
+        let unnamed =
+            read(serde_json::json!({"type": "group_renamed", "by": alex, "name": null})).unwrap();
+        assert_eq!(unnamed.kind, GroupLineKind::NameRemoved);
+        let icon = read(serde_json::json!({"type": "group_icon_changed", "by": alex, "icon": "h"}))
+            .unwrap();
+        assert_eq!(icon.kind, GroupLineKind::IconChanged);
+        let no_icon =
+            read(serde_json::json!({"type": "group_icon_changed", "by": alex, "icon": null}))
+                .unwrap();
+        assert_eq!(no_icon.kind, GroupLineKind::IconRemoved);
+        assert!(read(serde_json::json!({"type": "call", "by": alex})).is_none());
+        assert!(read(serde_json::json!({"type": "members_added", "by": "nope"})).is_none());
+    }
 
     #[test]
     fn a_card_round_trips_through_its_payload() {

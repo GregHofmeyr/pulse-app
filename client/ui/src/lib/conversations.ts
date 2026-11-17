@@ -6,6 +6,7 @@ import type { NotifyLevel } from './protocol/NotifyLevel'
 import { displayName } from './selectors'
 import { mentionLookup, showMentions } from './mentionStyles'
 import { callLineText } from './calls'
+import { groupLineText } from './groupLines'
 import { isMediaHash, TOKEN_RE } from './emoji'
 import { shownText } from './poll'
 
@@ -164,7 +165,7 @@ export function relativeTime(iso: string, nowMs: number): string {
 export function previewText(s: AppState, m: Message): { text: string; system: boolean } {
   if (m.deleted) return { text: 'message deleted', system: true }
   if (m.call) return { text: callLineText(s, m), system: true }
-  if (m.kind === 'system') return { text: m.content, system: true }
+  if (m.kind === 'system') return { text: groupLineText(s, m), system: true }
   // mentions as the names you see (never usernames, #47)
   const line = showMentions(shownText(m), mentionLookup(s), (id) => displayName(s, null, id)).replace(/\s+/g, ' ').trim()
   if (m.author_id === s.me?.id) return { text: `You: ${line}`, system: false }

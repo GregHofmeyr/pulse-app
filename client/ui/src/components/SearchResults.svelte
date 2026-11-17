@@ -9,6 +9,7 @@
   import { closeSearch, loadMore, openHit, retrySearch, search } from '../lib/search.svelte'
   import { chipText } from '../lib/searchQuery'
   import { lineWithHit, segments } from '../lib/highlight'
+  import { hitShown } from '../lib/mentionStyles'
   import { relativeTime } from '../lib/conversations'
   import { channelLabel, displayName } from '../lib/selectors'
   import { mediaUrl } from '../lib/emoji'
@@ -25,7 +26,9 @@
   function shown(h: SearchHit) {
     const kind = app.state.channels[h.message.channel_id]?.kind
     const isQuote = !!h.message.quote || (kind === 'quotes' && !h.message.thread_root_id)
-    return isQuote ? lineWithHit(h.text, h.highlights) : { text: h.text, highlights: h.highlights }
+    // mentions as the names you see, not usernames (#114)
+    const whole = hitShown(app.state, h)
+    return { ...(isQuote ? lineWithHit(whole.text, whole.highlights) : whole), full: whole.text }
   }
   /** An image line's picture when the line a quote card shows is one (its text reads "[image]"):
    *  content has one line per quote line, in order (server `quotes::render_content`). */
@@ -91,7 +94,7 @@
             </span>
             {#if tag}<span class="label">{tag}</span>{/if}
             {#if pic}<img class="line-thumb" src={mediaUrl(pic)} alt="" loading="lazy" decoding="async" />
-            {:else}<span class="text" class:one-line={s.text !== h.text}>{#each segments(s.text, s.highlights) as seg, i (i)}{#if seg.hit}<mark>{seg.text}</mark>{:else}{seg.text}{/if}{/each}</span>{/if}
+            {:else}<span class="text" class:one-line={s.text !== s.full}>{#each segments(s.text, s.highlights) as seg, i (i)}{#if seg.hit}<mark>{seg.text}</mark>{:else}{seg.text}{/if}{/each}</span>{/if}
             {#if h.message.clip}<img class="thumb" src={mediaUrl(h.message.clip.thumb_hash)} alt="" loading="lazy" decoding="async" />{/if}
           </span>
         </button>

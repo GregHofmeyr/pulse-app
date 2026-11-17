@@ -97,6 +97,19 @@
   $effect(() => () => {
     untrack(() => {
       if (ui.openClip?.channelId === channelId) ui.openClip = null
+      if (ui.jumpClip?.channelId === channelId) ui.jumpClip = null
+    })
+  })
+  // A search result (or inbox item) asked to go to one of this channel's clips (#120): the whole feed scrolls to it
+  // and flashes it. One the feed can't reach (deleted since, or very far back) opens its panel instead.
+  let jumpTarget = $state<{ clip: Message } | null>(null)
+  $effect(() => {
+    const r = ui.jumpClip
+    if (!r || r.channelId !== channelId) return
+    untrack(() => {
+      ui.jumpClip = null
+      filter = {} // a filter could hide it
+      jumpTarget = { clip: r.clip }
     })
   })
   // A deleted clip's thread is gone with it.
@@ -237,7 +250,8 @@
 
 <div class="chan" class:with-replies={!!repliesRoot} bind:this={chan}>
   <ClipsHeader {channelId} {serverId} {filter} onFilter={(f) => (filter = f)} {view} onShare={share} onOpenPinned={openReplies} />
-  <ClipFeed {channelId} {filter} layout={view} onOpenReplies={openReplies} {unsentReplies} {pending} />
+  <ClipFeed {channelId} {filter} layout={view} onOpenReplies={openReplies} {unsentReplies} {pending}
+    jumpTo={jumpTarget} onJumpMissed={openReplies} />
   {#if repliesRoot}
     {#key repliesRoot.id}
       <RepliesPanel root={repliesRoot} {serverId} onClose={closeReplies} />

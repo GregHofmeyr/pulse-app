@@ -23,6 +23,8 @@ let cmp: ReturnType<typeof mount> | undefined
 function show(m: Message) {
   app.state = {
     ...emptyState(),
+    me: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } },
+    people: { U2: { user: { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, online: true, last_seen_at: null } },
     channels: { C1: { id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 } },
     messages: { C1: [m] },
   } as never

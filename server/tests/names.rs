@@ -640,6 +640,16 @@ async fn group_system_lines_use_display_names() {
     let line = &msgs.last().unwrap().content;
     assert!(line.starts_with("Alex A created the group with"), "{line}");
     assert!(line.contains("Sam S"), "{line}");
+    // The ids go with it, so clients can write it with the names that apply later (#114).
+    let g = msgs
+        .last()
+        .unwrap()
+        .group_line
+        .clone()
+        .expect("a group line");
+    assert_eq!(g.kind, pulse_protocol::rest::GroupLineKind::Created);
+    assert_eq!(g.by, c.alex.0);
+    assert_eq!(g.users, vec![c.sam.0, c.kim.0]);
 }
 
 #[tokio::test]

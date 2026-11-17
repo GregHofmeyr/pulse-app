@@ -15,6 +15,7 @@
   import { buildResults, placesFrom, type Place, type ResultSection, type Row } from '../lib/quickSwitch'
   import { messageQuery, messageSearcher, NO_MESSAGES, type MessageResults } from '../lib/quickMessages'
   import { lineWithHit, segments } from '../lib/highlight'
+  import { hitShown } from '../lib/mentionStyles'
   import { channelLabel, displayName } from '../lib/selectors'
   import { conversationName } from '../lib/conversations'
   import type { SearchHit } from '../lib/protocol/SearchHit'
@@ -197,7 +198,8 @@
               {@render lead(r)}
               {#if r.type === 'message'}
                 <!-- the line with the match, its matched words marked (text nodes only: never HTML) -->
-                {@const line = lineWithHit(r.hit.text, r.hit.highlights)}
+                {@const whole = hitShown(app.state, r.hit)}
+                {@const line = lineWithHit(whole.text, whole.highlights)}
                 <span class="name">{#each segments(line.text, line.highlights) as seg, k (k)}{#if seg.hit}<mark>{seg.text}</mark>{:else}{seg.text}{/if}{/each}</span>
               {:else}
                 <span class="name">{r.type === 'place' ? r.place.name : r.action.label}</span>

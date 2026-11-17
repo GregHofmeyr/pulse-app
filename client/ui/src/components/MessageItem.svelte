@@ -45,6 +45,7 @@
   import { nameCss, resolveNameStyle } from '../lib/nameStyle'
   import { displayName, roleColorFor, userOf } from '../lib/selectors'
   import { callLineText } from '../lib/calls'
+  import { groupLineText, memberLineText } from '../lib/groupLines'
   import { appearance } from '../lib/appearance.svelte'
   import { openCard } from '../lib/profileCard.svelte'
   import PersonMenu from './PersonMenu.svelte'
@@ -386,10 +387,12 @@
     <!-- a share to the voice stage (#234), with today's names: "🎵 alex shared a Jam to the stage" -->
     {@const sl = message.stage_share_line}
     <div class="system" data-message-id={message.id}>🎵 {nameOf(sl.by)} shared {sharePhrase(sl.kind)} to the stage <span class="time">{time}</span></div>
+  {:else if message.group_line}
+    <!-- a group's own line (#114), with today's names: "alex added sam" -->
+    <div class="system" data-message-id={message.id}>{groupLineText(app.state, message)} <span class="time">{time}</span></div>
   {:else if message.member_line}
     <!-- someone left the server or was removed (#418), with today's name -->
-    {@const ml = message.member_line}
-    <div class="system member-line" data-message-id={message.id}><Icon name="users" size={14} /> {nameOf(ml.user_id)} {ml.removed_by ? 'was removed' : 'left the server'} <span class="time">{time}</span></div>
+    <div class="system member-line" data-message-id={message.id}><Icon name="users" size={14} /> {memberLineText(app.state, message, serverId)} <span class="time">{time}</span></div>
   {:else}
   <div class="system" data-message-id={message.id}>{message.content} <span class="time">{time}</span></div>
   {/if}
