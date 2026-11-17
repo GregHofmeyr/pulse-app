@@ -48,6 +48,7 @@ import type { CreatePollRequest } from './protocol/CreatePollRequest'
 import type { EditPollRequest } from './protocol/EditPollRequest'
 import type { DmLayout } from './protocol/DmLayout'
 import type { PersonDnd } from './protocol/PersonDnd'
+import type { InboxFilter } from './protocol/InboxFilter'
 import type { PersonDndRequest } from './protocol/PersonDndRequest'
 import type { InboxThreads } from './protocol/InboxThreads'
 import type { DmPlacementRequest } from './protocol/DmPlacementRequest'
@@ -361,7 +362,10 @@ export const api = {
   /** A chat's pins, newest pin first. */
   listPins: (channelId: string) => invoke<PinnedMessage[]>('list_pins', { channelId }),
   /** A page of your inbox (#306), newest first: older than `before`; only typed mentions with `mentions`. */
-  inbox: (before: string | null, mentions: boolean) => invoke<InboxPage>('inbox', { before, mentions }),
+  inbox: (before: string | null, mentions: boolean, filter: InboxFilter | null = null) =>
+    invoke<InboxPage>('inbox', filter ? { before, mentions, filter } : { before, mentions }),
+  /** Replace your saved inbox filters (#307); answers with them as kept. */
+  saveInboxFilters: (filters: InboxFilter[]) => invoke<InboxFilter[]>('save_inbox_filters', { filters }),
   /** How many inbox items are unread (#306). */
   inboxUnread: () => invoke<number>('inbox_unread'),
   /** Reply threads you're part of with replies you haven't seen (#326), and every thread you're part of. */

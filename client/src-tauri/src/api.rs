@@ -743,12 +743,14 @@ impl Api {
         .await
     }
 
-    /// A page of your inbox (#306), newest first: older than `before`, and only typed mentions with `mentions`.
+    /// A page of your inbox (#306), newest first: older than `before`, and only typed mentions with `mentions`;
+    /// narrowed by a custom `filter` (#307: its people, chats and unread only; its name isn't sent).
     pub async fn inbox(
         &self,
         token: &str,
         before: Option<MessageId>,
         mentions: bool,
+        filter: Option<&pulse_protocol::rest::InboxFilter>,
     ) -> Result<InboxPage, ApiError> {
         let mut req = self
             .http
@@ -760,7 +762,42 @@ impl Api {
         if mentions {
             req = req.query(&[("mentions", "true")]);
         }
+        if let Some(f) = filter {
+            let join = |ids: Vec<String>| ids.join(",");
+            if !f.people.is_empty() {
+                req = req.query(&[(
+                    "from",
+                    join(f.people.iter().map(|p| p.to_string()).collect()),
+                )]);
+            }
+            if !f.channels.is_empty() {
+                req = req.query(&[(
+                    "in",
+                    join(f.channels.iter().map(|c| c.to_string()).collect()),
+                )]);
+            }
+            if f.unread_only {
+                req = req.query(&[("unread", "true")]);
+            }
+        }
         Self::parse(req.send().await).await
+    }
+
+    /// Replace your saved inbox filters (#307); answers with them as kept.
+    pub async fn save_inbox_filters(
+        &self,
+        token: &str,
+        filters: Vec<pulse_protocol::rest::InboxFilter>,
+    ) -> Result<Vec<pulse_protocol::rest::InboxFilter>, ApiError> {
+        Self::parse(
+            self.http
+                .put(self.url(&["me", "inbox-filters"])?)
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::InboxFiltersRequest { filters })
+                .send()
+                .await,
+        )
+        .await
     }
 
     /// How many items in your inbox are unread (#306).
@@ -6433,7 +6470,7 @@ mod tests {
     async fn inbox_lists_counts_and_reads() {
         let app = testing::spawn().await;
         let (_, alex) = testing::register(&app, "alex").await;
-        let (_, sam) = testing::register(&app, "sam").await;
+        let (sam_id, sam) = testing::register(&app, "sam").await;
         let s = testing::create_server(&app, &alex, "Main").await;
         let r = testing::post_json(
             &app,
@@ -6457,14 +6494,28 @@ mod tests {
         .json()
         .await
         .unwrap();
-        let page = api.inbox(&alex, None, false).await.unwrap();
+        let page = api.inbox(&alex, None, false, None).await.unwrap();
         let ids: Vec<_> = page.items.iter().map(|i| i.message.id).collect();
         assert_eq!(ids, vec![reply.id, a.id]);
         assert_eq!(page.unread, 2);
-        let mentions = api.inbox(&alex, None, true).await.unwrap();
+        let mentions = api.inbox(&alex, None, true, None).await.unwrap();
         assert_eq!(mentions.items.len(), 1);
-        let older = api.inbox(&alex, Some(reply.id), false).await.unwrap();
+        let older = api.inbox(&alex, Some(reply.id), false, None).await.unwrap();
         assert_eq!(older.items[0].message.id, a.id);
+        // a saved filter (#307), and a page narrowed by it
+        let filter = pulse_protocol::rest::InboxFilter {
+            name: "Sam".into(),
+            people: vec![sam_id],
+            channels: vec![g.id],
+            unread_only: true,
+        };
+        let kept = api
+            .save_inbox_filters(&alex, vec![filter.clone()])
+            .await
+            .unwrap();
+        assert_eq!(kept, vec![filter.clone()]);
+        let narrowed = api.inbox(&alex, None, true, Some(&filter)).await.unwrap();
+        assert_eq!(narrowed.items.len(), 1);
         api.inbox_read(&alex, a.id).await.unwrap();
         assert_eq!(api.inbox_unread(&alex).await.unwrap(), 1);
         api.inbox_read_all(&alex, None).await.unwrap();

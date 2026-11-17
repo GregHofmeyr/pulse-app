@@ -289,6 +289,7 @@ async fn ready_for(
         bookmarks: crate::bookmarks::list_for(db, me).await?,
         dm_layout: crate::dms::layout::of(db, me).await?,
         person_dnd: crate::person_dnd::list(db, me).await?,
+        inbox_filters: crate::inbox::filters::list_for(db, me).await?,
         layouts,
         server_now: Some(now()),
         stage_shares: voice_state.stage.visible(&visible),

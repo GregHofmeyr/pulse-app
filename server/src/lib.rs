@@ -72,6 +72,7 @@ pub fn router(state: AppState) -> Router {
         .merge(messages::reactions::router())
         .merge(messages::threads::router())
         .merge(inbox::router())
+        .merge(inbox::filters::router())
         .merge(pins::router())
         .merge(polls::router())
         .merge(plans::router())

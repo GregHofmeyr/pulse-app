@@ -5,6 +5,7 @@ import { conversationName } from './conversations'
 import type { AppState } from './state'
 import type { Event } from './protocol/Event'
 import type { InboxItem } from './protocol/InboxItem'
+import type { InboxFilter } from './protocol/InboxFilter'
 
 /** The tabs that list inbox items, page by page. */
 export type InboxTab = 'all' | 'mentions'
@@ -146,6 +147,52 @@ export function arrived(s: AppState, item: InboxItem): InboxItem | null {
 export function appendPage(items: InboxItem[], more: InboxItem[]): InboxItem[] {
   const have = new Set(items.map((i) => i.message.id))
   return [...items, ...more.filter((i) => !have.has(i.message.id))]
+}
+
+/** Whether `item` is one `filter` shows (#307): from one of its people and in one of its chats (either empty: any),
+ *  and unread when it asks for unread only. No filter: every item. */
+export function matchesFilter(item: InboxItem, filter: InboxFilter | null): boolean {
+  if (!filter) return true
+  const m = item.message
+  if (filter.people.length && !(m.author_id && filter.people.includes(m.author_id))) return false
+  if (filter.channels.length && !filter.channels.includes(m.channel_id)) return false
+  return !(filter.unread_only && item.read)
+}
+
+/** Limits on saved filters, as the server keeps them (#307). */
+export const FILTER_NAME_CHARS = 32
+export const MAX_FILTERS = 10
+export const MAX_PER_FILTER = 25
+
+/** What's wrong with a filter about to be saved as `name` among `others` (the rest of your filters), or ''. */
+export function filterProblem(f: Pick<InboxFilter, 'name' | 'people' | 'channels' | 'unread_only'>, others: readonly InboxFilter[]): string {
+  const name = f.name.trim()
+  if (!name) return 'Give it a name.'
+  if ([...name].length > FILTER_NAME_CHARS) return `Names are up to ${FILTER_NAME_CHARS} characters.`
+  if (others.some((o) => o.name.toLowerCase() === name.toLowerCase())) return 'You already have a filter with that name.'
+  if (!f.people.length && !f.channels.length && !f.unread_only) return 'Pick some people or chats, or Only unread.'
+  if (f.people.length > MAX_PER_FILTER || f.channels.length > MAX_PER_FILTER) return `Up to ${MAX_PER_FILTER} people and ${MAX_PER_FILTER} chats.`
+  return ''
+}
+
+const FILTER_KEY = 'pulse.inbox.filter'
+
+/** The saved filter last picked on this device (by name), or null. */
+export function loadFilterName(): string | null {
+  try {
+    return localStorage.getItem(FILTER_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function saveFilterName(name: string | null): void {
+  try {
+    if (name === null) localStorage.removeItem(FILTER_KEY)
+    else localStorage.setItem(FILTER_KEY, name)
+  } catch {
+    /* remembered for this session only */
+  }
 }
 
 /** The badge's text: the count, `99+` past 99. */

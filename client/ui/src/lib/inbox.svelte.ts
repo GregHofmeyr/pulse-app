@@ -1,6 +1,7 @@
 // The inbox (#306): the unread count on the top bar's button (from Ready, then every inbox event), and the popover's
 // lists, one per tab, fetched when first shown and kept live by events. The pure parts are in inbox.ts.
-import { appendPage, applyToList, arrived, INBOX_PAGE, isItemTab, loadTab, markRead, saveTab, type InboxTab, type InboxView } from './inbox'
+import { appendPage, applyToList, arrived, INBOX_PAGE, isItemTab, loadFilterName, loadTab, markRead, matchesFilter, saveFilterName, saveTab, type InboxTab, type InboxView } from './inbox'
+import type { InboxFilter } from './protocol/InboxFilter'
 import { reminders, seeAllReminders } from './reminders.svelte'
 import { seeAllThreads, threads } from './inboxThreads.svelte'
 import { openMessage } from './openMessage'
@@ -17,7 +18,36 @@ export const inbox = $state({
   tab: loadTab() as InboxView,
   /** Each tab's list once fetched (null until then; a Ready forgets them, so a reopened popover fetches again). */
   lists: { all: null, mentions: null } as Record<InboxTab, InboxList | null>,
+  /** The saved filter picked for the All and Mentions tabs (#307), by name; remembered per device. One you no longer
+   *  have counts as none. */
+  filter: loadFilterName(),
 })
+
+/** The filter in force (#307): the picked one, while you still have it. */
+export const activeFilter = (): InboxFilter | null =>
+  inbox.filter === null ? null : (app.state.inboxFilters.find((f) => f.name === inbox.filter) ?? null)
+
+/** Pick a saved filter (by name), or none: the lists are fetched again through it. */
+export function setFilter(name: string | null): void {
+  inbox.filter = name
+  saveFilterName(name)
+  refetchLists()
+}
+
+/** Save your whole list of filters (#307); the answer replaces ours (and comes to your other devices as an event). */
+export async function saveFilters(filters: InboxFilter[]): Promise<InboxFilter[]> {
+  const kept = await api.saveInboxFilters(filters)
+  app.state = { ...app.state, inboxFilters: kept }
+  refetchLists()
+  return kept
+}
+
+/** Drop both lists (a page fetched before this is dropped too) and fetch the open tab's again. */
+function refetchLists() {
+  epoch++
+  inbox.lists = { all: null, mentions: null }
+  loadOpenTab()
+}
 
 /** The inbox button's count: unread items, and threads with replies you haven't seen (#326). */
 export const inboxBadge = (): number => inbox.unread + threads.list.length
@@ -39,7 +69,7 @@ export async function loadMore(tab: InboxTab): Promise<void> {
   const before = have?.items[have.items.length - 1]?.message.id ?? null
   setList(tab, { items: have?.items ?? [], end: false, loading: true, error: '' })
   try {
-    const page = await api.inbox(before, tab === 'mentions')
+    const page = await api.inbox(before, tab === 'mentions', activeFilter())
     if (mine !== epoch) return
     inbox.unread = page.unread
     const now = inbox.lists[tab]
@@ -112,6 +142,8 @@ export function openItem(item: InboxItem): void {
 
 /** Mark all read: everything up to the newest item shown (or all of it, when none is), and every due reminder. */
 export async function markAllRead(): Promise<void> {
+  // through a filter (#307): only what it shows (each item on its own), not everything up to the newest of them
+  if (activeFilter()) return markShownRead()
   const newest = TABS.map((t) => inbox.lists[t]?.items[0]?.message.id ?? '').reduce((a, b) => (b > a ? b : a), '')
   readHere((i) => !newest || i.message.id <= newest)
   seeAllReminders()
@@ -124,6 +156,20 @@ export async function markAllRead(): Promise<void> {
   }
 }
 
+/** Mark read every unread item the lists show (a filter is picked): here at once, then on the server one by one. */
+async function markShownRead(): Promise<void> {
+  const ids = [...new Set(TABS.flatMap((t) => (inbox.lists[t]?.items ?? []).filter((i) => !i.read).map((i) => i.message.id)))]
+  if (!ids.length) return
+  readHere((i) => ids.includes(i.message.id))
+  inbox.unread = Math.max(0, inbox.unread - ids.length)
+  try {
+    for (const id of ids) await api.inboxRead(id)
+  } catch {
+    /* the count comes back from the server */
+  }
+  void refreshCount()
+}
+
 /** A live event: inbox events, and the read points, seen points and deletes that read or remove items. */
 export function noteInboxEvent(event: Event): void {
   if (event.t === 'InboxItemAdded' || event.t === 'InboxUpdated') inbox.unread = event.d.unread
@@ -131,7 +177,8 @@ export function noteInboxEvent(event: Event): void {
   if (e.t === 'InboxItemAdded') {
     // as this device stands: its chat gone (dropped) or already read here (#327)
     const item = arrived(app.state, e.d.item)
-    if (!item) return
+    // gone here, or not one the picked filter (#307) shows
+    if (!item || !matchesFilter(item, activeFilter())) return
     e = { ...e, d: { ...e.d, item } }
   }
   for (const tab of TABS) {
@@ -140,12 +187,9 @@ export function noteInboxEvent(event: Event): void {
     const items = applyToList(list.items, e, tab)
     if (items !== list.items) setList(tab, { ...list, items })
   }
-  // a mute hides (or an unmute brings back) plain replies in that chat: the lists are fetched again
-  if (e.t === 'MutesChanged') {
-    epoch++
-    inbox.lists = { all: null, mentions: null }
-    loadOpenTab()
-  }
+  // a mute hides (or an unmute brings back) plain replies in that chat; your filters changed (#307, on another
+  // device too): the lists are fetched again
+  if (e.t === 'MutesChanged' || e.t === 'InboxFiltersChanged') refetchLists()
   // a deleted message's reminders go (#300); one that was unread leaves the count, which the server has
   if (e.t === 'MessageDeleted' && reminders.list.some((r) => r.message_id === e.d.message_id)) {
     const unread = reminders.list.some((r) => r.message_id === e.d.message_id && r.due && !r.seen)

@@ -8,9 +8,9 @@ use crate::ids::{
 };
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji,
-    CustomStatus, DmLayout, F1Prediction, Game, InboxItem, Listening, ListeningUpdate, Member,
-    Message, MessageBookmark, MessageReminder, Mute, MyCustomStatus, NotifyLevelPref, OwnStatus,
-    Person, PersonDnd, PinnedMessage, Plan, Playing, PlayingUpdate, PresenceStatus,
+    CustomStatus, DmLayout, F1Prediction, Game, InboxFilter, InboxItem, Listening, ListeningUpdate,
+    Member, Message, MessageBookmark, MessageReminder, Mute, MyCustomStatus, NotifyLevelPref,
+    OwnStatus, Person, PersonDnd, PinnedMessage, Plan, Playing, PlayingUpdate, PresenceStatus,
     PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason, ScheduledMessage, Server,
     ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare, SteamStatus, StreamEndReason,
     StreamInfo, User, WatchParty, Wheel,
@@ -250,6 +250,10 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub person_dnd: Vec<PersonDnd>,
+    /// Your saved inbox filters (#307), in order. Yours only. Absent from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub inbox_filters: Vec<InboxFilter>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -497,6 +501,12 @@ pub enum Event {
     PersonDndChanged {
         user_id: UserId,
         list: Vec<PersonDnd>,
+    },
+    /// Only to its person's own sessions: their saved inbox filters changed (#307), the whole new
+    /// [`Ready::inbox_filters`]. Clients from before it skip it.
+    InboxFiltersChanged {
+        user_id: UserId,
+        filters: Vec<InboxFilter>,
     },
     /// Only to its person's own sessions: a saved message was removed (#315).
     BookmarkRemoved {
@@ -949,6 +959,7 @@ impl Event {
             | Self::BookmarkRemoved { .. }
             | Self::DmLayoutChanged { .. }
             | Self::PersonDndChanged { .. }
+            | Self::InboxFiltersChanged { .. }
             | Self::BadgeEarned { .. } => None,
         }
     }
@@ -981,6 +992,7 @@ impl Event {
             | Self::BookmarkRemoved { user_id, .. }
             | Self::DmLayoutChanged { user_id, .. }
             | Self::PersonDndChanged { user_id, .. }
+            | Self::InboxFiltersChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
             | Self::CallRingEnded { user_id, .. }
@@ -1114,6 +1126,7 @@ mod tests {
             bookmarks: vec![],
             dm_layout: Default::default(),
             person_dnd: vec![],
+            inbox_filters: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1209,6 +1222,7 @@ mod tests {
             bookmarks: vec![],
             dm_layout: Default::default(),
             person_dnd: vec![],
+            inbox_filters: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1353,6 +1367,7 @@ mod tests {
             bookmarks: vec![],
             dm_layout: Default::default(),
             person_dnd: vec![],
+            inbox_filters: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],

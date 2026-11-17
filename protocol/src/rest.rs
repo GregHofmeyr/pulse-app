@@ -2814,6 +2814,36 @@ pub struct InboxItem {
     pub read: bool,
 }
 
+/// One of your saved inbox filters (#307): the inbox's All and Mentions tabs narrowed to messages from these people
+/// and/or in these chats (either empty: any), and only unread ones when `unread_only`. Named by you; the name is its
+/// key (unique ignoring case). Yours only, on every device.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct InboxFilter {
+    pub name: String,
+    #[serde(default)]
+    pub people: Vec<UserId>,
+    #[serde(default)]
+    pub channels: Vec<ChannelId>,
+    #[serde(default)]
+    pub unread_only: bool,
+}
+
+/// `PUT /me/inbox-filters` (#307): your whole list of saved filters, in order.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct InboxFiltersRequest {
+    pub filters: Vec<InboxFilter>,
+}
+
+/// Limits on saved inbox filters (#307).
+pub mod inbox_filter_limits {
+    /// Saved filters one person may have.
+    pub const MAX_FILTERS: usize = 10;
+    /// Characters in a filter's name, after trimming.
+    pub const NAME_CHARS: usize = 32;
+    /// People, and chats, one filter may name (each).
+    pub const MAX_PER_FILTER: usize = 25;
+}
+
 /// `GET /inbox`: a page of your inbox, newest first, and how many items are unread in all.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct InboxPage {

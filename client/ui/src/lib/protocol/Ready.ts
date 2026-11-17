@@ -8,6 +8,7 @@ import type { CustomEmoji } from "./CustomEmoji";
 import type { DmLayout } from "./DmLayout";
 import type { DmMembers } from "./DmMembers";
 import type { Game } from "./Game";
+import type { InboxFilter } from "./InboxFilter";
 import type { Message } from "./Message";
 import type { MessageBookmark } from "./MessageBookmark";
 import type { MessageReminder } from "./MessageReminder";
@@ -191,4 +192,8 @@ dm_layout?: DmLayout,
 /**
  * The people whose messages don't alert you (#310), run-out ones left out. Yours only. Absent from older servers.
  */
-person_dnd?: Array<PersonDnd>, };
+person_dnd?: Array<PersonDnd>, 
+/**
+ * Your saved inbox filters (#307), in order. Yours only. Absent from older servers.
+ */
+inbox_filters?: Array<InboxFilter>, };

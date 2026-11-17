@@ -389,6 +389,7 @@ pub fn run() {
             commands::unpin_message,
             commands::list_pins,
             commands::inbox,
+            commands::save_inbox_filters,
             commands::inbox_unread,
             commands::inbox_threads,
             commands::inbox_read,

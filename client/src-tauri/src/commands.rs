@@ -2085,9 +2085,24 @@ pub async fn inbox(
     core: State<'_, Core>,
     before: Option<MessageId>,
     mentions: bool,
+    filter: Option<pulse_protocol::rest::InboxFilter>,
 ) -> Result<InboxPage, ApiError> {
     let (api, token) = core.current()?;
-    core.check(&app, api.inbox(&token, before, mentions).await)
+    core.check(
+        &app,
+        api.inbox(&token, before, mentions, filter.as_ref()).await,
+    )
+}
+
+/// Replace your saved inbox filters (#307).
+#[tauri::command]
+pub async fn save_inbox_filters(
+    app: AppHandle,
+    core: State<'_, Core>,
+    filters: Vec<pulse_protocol::rest::InboxFilter>,
+) -> Result<Vec<pulse_protocol::rest::InboxFilter>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.save_inbox_filters(&token, filters).await)
 }
 
 /// How many inbox items are unread (#306).
