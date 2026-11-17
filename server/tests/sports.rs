@@ -2,7 +2,8 @@
 //! network. Dormant without a key; the team lists read once and cached; one card per match from the match-day banner
 //! through the live score to full time, edited in place; pings off and no channel mean no requests at all; the daily
 //! allowance (ours and API-Sports' own "requests" answer); a plan refusal backing off with a note; rugby read by day;
-//! the Sports channel's rules.
+//! the Sports channel's rules; team logos as server media, a card that ran out of live data saying so, and the
+//! owner's league limit (#406).
 mod common;
 
 use common::*;
@@ -407,7 +408,8 @@ async fn pings_off_or_no_channel_means_no_requests() {
         200
     );
     tick(app).await;
-    assert_eq!(fake.total_calls(), before + 1);
+    // the schedule (the card's two logos come from the media host, which spends no requests)
+    assert_eq!(fake.total_calls() - fake.calls("media"), before + 1);
     assert_eq!(cards(app, &w.alex, w.general).await.len(), 1);
 }
 
@@ -602,4 +604,217 @@ async fn the_sports_channel_is_the_owners_pick_of_a_text_channel() {
     )
     .await;
     assert_eq!(got.channel_id, None);
+}
+
+#[tokio::test]
+async fn cards_carry_both_teams_logos_as_server_media() {
+    let w = world().await;
+    let (app, fake) = (&w.app, &w.fake);
+    let later = now() + 2 * 3600;
+    fake.add_match(
+        PSL,
+        6001,
+        later,
+        (COASTAL, "Coastal City"),
+        (LAKESIDE, "Lakeside Stars"),
+    );
+    // a team API-Sports has no logo for
+    let no_logo = pulse_server::testing::fake_sports::NO_LOGO;
+    fake.add_match(
+        PSL,
+        6002,
+        later + 600,
+        (COASTAL, "Coastal City"),
+        (no_logo, "New FC"),
+    );
+    tick(app).await;
+    let got = cards(app, &w.alex, w.general).await;
+    assert_eq!(got.len(), 2);
+    let first = &got.iter().find(|c| c.1.fixture_id == 6001).unwrap().1;
+    let (home, away) = (
+        first.home.logo.clone().expect("home logo"),
+        first.away.logo.clone().expect("away logo"),
+    );
+    assert_eq!((home.width, home.height), (96, 96));
+    assert_eq!((away.width, away.height), (96, 96));
+    // stored media anyone signed in can load
+    let r = app
+        .http
+        .get(app.url(&format!("/media/{}", home.hash)))
+        .bearer_auth(&w.sam)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let second = &got.iter().find(|c| c.1.fixture_id == 6002).unwrap().1;
+    assert_eq!(
+        second.home.logo.as_ref().map(|l| &l.hash),
+        Some(&home.hash),
+        "the same team's logo, remembered"
+    );
+    assert!(second.away.logo.is_none(), "none to be had");
+    // Coastal and Lakeside fetched once each, the missing one tried once
+    assert_eq!(fake.calls("media"), 3);
+    // a card edit later fetches nothing again (the missing one waits an hour)
+    let f = pulse_server::sports::poller::load(&app.state(), SportsLeague::Psl, 6002)
+        .await
+        .unwrap()
+        .unwrap();
+    pulse_server::sports::poller::sync_cards(&app.state(), &f, false)
+        .await
+        .unwrap();
+    assert_eq!(fake.calls("media"), 3);
+    // kept from the media sweep
+    assert_eq!(count(app, "SELECT COUNT(*) FROM sports_media").await, 2);
+    assert_eq!(
+        fake.calls("football/fixtures"),
+        1,
+        "logos spend no requests"
+    );
+}
+
+#[tokio::test]
+async fn a_card_whose_window_passes_without_live_data_says_so() {
+    let w = world().await;
+    let (app, fake) = (&w.app, &w.fake);
+    let s = app.state();
+    let later = now() + 3600;
+    fake.add_match(
+        PSL,
+        7001,
+        later,
+        (COASTAL, "Coastal City"),
+        (HIGHVELD, "Highveld United"),
+    );
+    fake.add_match(
+        PSL,
+        7002,
+        later + 60,
+        (COASTAL, "Coastal City"),
+        (LAKESIDE, "Lakeside Stars"),
+    );
+    tick(app).await;
+    assert_eq!(cards(app, &w.alex, w.general).await.len(), 2);
+    // 7001 never got a live read past match day, and its window is gone; 7002 went live and was never called over
+    let window = s.cfg.sports.window.as_secs() as i64;
+    let max_window = s.cfg.sports.max_window.as_secs() as i64;
+    sqlx::query("UPDATE sports_fixtures SET kickoff = ? WHERE fixture_id = 7001")
+        .bind(now() - window - 60)
+        .execute(&s.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE sports_fixtures SET kickoff = ?, status = '2H', home_score = 1, away_score = 0, minute = 70
+         WHERE fixture_id = 7002",
+    )
+    .bind(now() - max_window - 60)
+    .execute(&s.db)
+    .await
+    .unwrap();
+    let before = fake.total_calls();
+    tick(app).await;
+    assert_eq!(fake.total_calls(), before, "nothing live to read");
+    let got = cards(app, &w.alex, w.general).await;
+    let (m1, c1) = got.iter().find(|c| c.1.fixture_id == 7001).unwrap();
+    assert!(c1.no_updates);
+    assert_eq!(c1.phase, SportsPhase::Upcoming);
+    assert_eq!(
+        m1.content,
+        "⚽ Coastal City v Highveld United: no live updates, check back later"
+    );
+    let (m2, c2) = got.iter().find(|c| c.1.fixture_id == 7002).unwrap();
+    assert!(c2.no_updates);
+    assert_eq!((c2.home.score, c2.away.score), (Some(1), Some(0)));
+    assert_eq!(
+        m2.content,
+        "⚽ Coastal City 1 – 0 Lakeside Stars: no live updates, check back later"
+    );
+    // done: never read again, and the card stays as it is
+    let done: i64 = count(
+        app,
+        "SELECT COUNT(*) FROM sports_fixtures WHERE fixture_id IN (7001, 7002) AND done = 1",
+    )
+    .await;
+    assert_eq!(done, 2);
+    app.sports.forget_live_read(Sport::Football);
+    tick(app).await;
+    assert_eq!(fake.total_calls(), before);
+}
+
+#[tokio::test]
+async fn the_owner_can_limit_which_leagues_post() {
+    let w = world().await;
+    let (app, fake) = (&w.app, &w.fake);
+    let path = format!("/servers/{}/sports-channel", w.server);
+    // only the owner, never empty, never without a channel
+    let r = put(
+        app,
+        &w.sam,
+        &path,
+        json!({"channel_id": w.general, "leagues": ["urc"]}),
+    )
+    .await;
+    assert_eq!(r.status(), 403);
+    let r = put(
+        app,
+        &w.alex,
+        &path,
+        json!({"channel_id": w.general, "leagues": []}),
+    )
+    .await;
+    assert_eq!(r.status(), 400);
+    let r = put(
+        app,
+        &w.alex,
+        &path,
+        json!({"channel_id": null, "leagues": ["urc"]}),
+    )
+    .await;
+    assert_eq!(r.status(), 400);
+    let got: SportsChannel = put(
+        app,
+        &w.alex,
+        &path,
+        json!({"channel_id": w.general, "leagues": ["urc"]}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(got.leagues, Some(vec![SportsLeague::Urc]));
+    // picking the channel again keeps the limit; everyone sees it
+    assert_eq!(
+        set_channel(app, &w.alex, w.server, Some(w.general)).await,
+        200
+    );
+    let got: SportsChannel = get_json(app, &w.sam, &path).await;
+    assert_eq!(got.leagues, Some(vec![SportsLeague::Urc]));
+
+    // sam follows a PSL team: this server takes no PSL, so nothing is read or posted
+    fake.add_match(
+        PSL,
+        8001,
+        now() + 3600,
+        (COASTAL, "Coastal City"),
+        (HIGHVELD, "Highveld United"),
+    );
+    let before = fake.total_calls();
+    tick(app).await;
+    assert_eq!(fake.total_calls(), before, "no league to read");
+    assert!(cards(app, &w.alex, w.general).await.is_empty());
+
+    // every league again: no limit, and the card comes
+    let got: SportsChannel = put(
+        app,
+        &w.alex,
+        &path,
+        json!({"channel_id": w.general, "leagues": ["psl", "urc", "epl"]}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(got.leagues, None);
+    tick(app).await;
+    assert_eq!(cards(app, &w.alex, w.general).await.len(), 1);
 }

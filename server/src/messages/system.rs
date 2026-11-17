@@ -484,11 +484,17 @@ mod tests {
                 team_id: 1,
                 name: "Home FC".into(),
                 score: Some(1),
+                logo: Some(pulse_protocol::rest::EmbedThumb {
+                    hash: "a".repeat(64),
+                    width: 96,
+                    height: 96,
+                }),
             },
             away: SportsSide {
                 team_id: 2,
                 name: "Away FC".into(),
                 score: Some(0),
+                logo: None,
             },
             scorers: vec![SportsScorer {
                 home: true,
@@ -497,6 +503,7 @@ mod tests {
                 note: Some("pen".into()),
             }],
             followers: vec![],
+            no_updates: true,
         };
         let stored = sports_payload(&card).unwrap().to_string();
         assert_eq!(sports(&stored), Some(card));

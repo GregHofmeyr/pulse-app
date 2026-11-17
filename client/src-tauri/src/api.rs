@@ -2203,16 +2203,19 @@ impl Api {
         Self::parse(self.http.get(url).bearer_auth(token).send().await).await
     }
 
-    /// Pick a server's Sports channel (its owner only), or none.
+    /// Pick a server's Sports channel (its owner only), or none, and the leagues that post there (#406; `None` keeps
+    /// them).
     pub async fn set_sports_channel(
         &self,
         token: &str,
         server: ServerId,
         channel: Option<ChannelId>,
+        leagues: Option<Vec<pulse_protocol::rest::SportsLeague>>,
     ) -> Result<pulse_protocol::rest::SportsChannel, ApiError> {
         let url = self.url(&["servers", &server.to_string(), "sports-channel"])?;
         let body = pulse_protocol::rest::SetSportsChannelRequest {
             channel_id: channel,
+            leagues,
         };
         Self::parse(
             self.http
@@ -6284,10 +6287,18 @@ mod tests {
             None
         );
         let set = api
-            .set_sports_channel(&alex, server.id, Some(general.id))
+            .set_sports_channel(&alex, server.id, Some(general.id), None)
             .await
             .unwrap();
         assert_eq!(set.channel_id, Some(general.id));
+        assert_eq!(set.leagues, None, "every league by default");
+        // the owner limits the leagues (#406)
+        let urc = vec![pulse_protocol::rest::SportsLeague::Urc];
+        let set = api
+            .set_sports_channel(&alex, server.id, Some(general.id), Some(urc.clone()))
+            .await
+            .unwrap();
+        assert_eq!(set.leagues, Some(urc));
     }
 
     #[tokio::test]

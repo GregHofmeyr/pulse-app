@@ -120,8 +120,10 @@ repository.
 **Sports score pings (#385): only on a server with an API-Sports key; each person's own switch (on by default).**
 - **What the server reads.** API-Sports (api-football and api-rugby): each followed league's schedule about once a day,
   the league's team list when someone first searches it (kept a week), and the live score of a followed team's match
-  from kick-off to full time. Nothing is read without the key (`PULSE_API_SPORTS_KEY`), nor while nobody with the switch
-  on follows a team in a server with a Sports channel.
+  from kick-off to full time. Team logos (#406) come from API-Sports' media host only (an allowlist, no key sent),
+  are re-encoded and served as Pulse media. Nothing is read without the key (`PULSE_API_SPORTS_KEY`), nor while nobody
+  with the switch on follows a team in a server with a Sports channel that takes that league (the owner may limit
+  them).
 - **What it sends.** League and fixture ids, seasons and dates: nothing about any user. The key goes in the
   `x-apisports-key` header and is never logged. A server-wide count keeps each sport under 90 requests a UTC day (the
   free plan allows 100); API-Sports' refusals back the client off.

@@ -8,7 +8,11 @@
 //! 3. Matches with a card are read live from kick-off until full time, one request per sport per read, at most every
 //!    [`crate::config::SportsConfig::live_every`] and further apart when the day's allowance runs short
 //!    ([`super::live_gap`]). A change (a goal, a try, half time, full time) edits each card in place: no new messages.
-//! 4. Done matches older than a week are dropped.
+//! 4. A card whose window passes with no live data to end the match says "no live updates" (#406) and stops; done
+//!    matches older than a week are dropped.
+//!
+//! Each card carries both teams' logos (#406, [`super::logos`]), and only goes to Sports channels that take its league
+//! (the owner may limit them).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -164,7 +168,8 @@ pub async fn tick(s: &AppState) {
     }
 }
 
-/// The leagues someone with pings on follows a team in while in a server with a Sports channel.
+/// The leagues someone with pings on follows a team in while in a server with a Sports channel that takes that
+/// league (#406: its owner may limit them).
 pub async fn active_leagues(s: &AppState) -> AppResult<Vec<SportsLeague>> {
     let keys: Vec<String> = sqlx::query_scalar(
         "SELECT DISTINCT f.league FROM sports_follows f
@@ -174,6 +179,7 @@ pub async fn active_leagues(s: &AppState) -> AppResult<Vec<SportsLeague>> {
          JOIN servers sv ON sv.id = d.server_id AND sv.deleted_at IS NULL
          JOIN channels c ON c.id = d.channel_id AND c.deleted_at IS NULL AND c.archived_at IS NULL
          WHERE COALESCE(p.pings, 1) = 1
+           AND (d.leagues IS NULL OR EXISTS (SELECT 1 FROM json_each(d.leagues) j WHERE j.value = f.league))
          ORDER BY f.league",
     )
     .fetch_all(&s.db)
@@ -456,9 +462,30 @@ pub async fn live(s: &AppState, sport: Sport) -> AppResult<()> {
     Ok(())
 }
 
-/// Matches past their longest window are done (no more reads); done ones older than [`KEEP_DAYS`] go.
+/// Whether a carded match has run out of live data (#406): still on match day once its window has passed (no live
+/// read ever moved it on), or still not over past its longest window.
+pub fn stale(f: &Fixture, now: i64, window: i64, max_window: i64) -> bool {
+    match phase_of(&f.status) {
+        SportsPhase::Final | SportsPhase::Off => false,
+        SportsPhase::Upcoming => now > f.kickoff + window,
+        SportsPhase::Live => now > f.kickoff + max_window,
+    }
+}
+
+/// Matches past their longest window are done (no more reads), and a card left without live data says so (#406);
+/// done ones older than [`KEEP_DAYS`] go.
 pub async fn expire(s: &AppState) -> AppResult<()> {
     let now = chrono::Utc::now().timestamp();
+    let (window, max_window) = (
+        s.cfg.sports.window.as_secs() as i64,
+        s.cfg.sports.max_window.as_secs() as i64,
+    );
+    for f in pending(s).await? {
+        if stale(&f, now, window, max_window) && has_card(s, &f).await? {
+            sync_cards_as(s, &f, false, true).await?;
+            set_done(s, &f).await?;
+        }
+    }
     sqlx::query("UPDATE sports_fixtures SET done = 1 WHERE done = 0 AND kickoff < ?")
         .bind(now - s.cfg.sports.max_window.as_secs() as i64)
         .execute(&s.db)
@@ -478,7 +505,8 @@ pub async fn expire(s: &AppState) -> AppResult<()> {
     Ok(())
 }
 
-/// The servers' Sports channels where a member with pings on follows either team of `f`, with those members.
+/// The servers' Sports channels that take `f`'s league (#406) where a member with pings on follows either team of
+/// `f`, with those members.
 pub async fn targets(s: &AppState, f: &Fixture) -> AppResult<Vec<(ChannelId, Vec<UserId>)>> {
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT d.channel_id, f.user_id FROM server_sports_channels d
@@ -488,6 +516,7 @@ pub async fn targets(s: &AppState, f: &Fixture) -> AppResult<Vec<(ChannelId, Vec
          JOIN sports_follows f ON f.user_id = m.user_id AND f.league = ?1 AND f.team_id IN (?2, ?3)
          LEFT JOIN sports_prefs p ON p.user_id = f.user_id
          WHERE COALESCE(p.pings, 1) = 1
+           AND (d.leagues IS NULL OR EXISTS (SELECT 1 FROM json_each(d.leagues) j WHERE j.value = ?1))
          ORDER BY d.channel_id, f.created_at, f.user_id",
     )
     .bind(f.league.key())
@@ -533,14 +562,17 @@ pub fn card(f: &Fixture, followers: Vec<UserId>) -> SportsCard {
             team_id: f.home.0,
             name: f.home.1.clone(),
             score: f.home_score.filter(|_| phase != SportsPhase::Upcoming),
+            logo: None,
         },
         away: SportsSide {
             team_id: f.away.0,
             name: f.away.1.clone(),
             score: f.away_score.filter(|_| phase != SportsPhase::Upcoming),
+            logo: None,
         },
         scorers: f.scorers.clone(),
         followers,
+        no_updates: false,
     }
 }
 
@@ -549,6 +581,16 @@ pub fn content(c: &SportsCard, kickoff_unix: i64) -> String {
     let ball = if c.league.rugby() { "🏉" } else { "⚽" };
     let (h, a) = (&c.home.name, &c.away.name);
     let score = |side: &SportsSide| side.score.map_or("–".to_string(), |n| n.to_string());
+    if c.no_updates {
+        return match (c.home.score, c.away.score) {
+            (Some(_), Some(_)) => format!(
+                "{ball} {h} {} – {} {a}: no live updates, check back later",
+                score(&c.home),
+                score(&c.away)
+            ),
+            _ => format!("{ball} {h} v {a}: no live updates, check back later"),
+        };
+    }
     match c.phase {
         SportsPhase::Upcoming => format!(
             "{ball} Match day: {h} v {a}, kick-off {} SAST",
@@ -587,7 +629,23 @@ pub fn content(c: &SportsCard, kickoff_unix: i64) -> String {
 /// Bring `f`'s cards up to date: each existing card edited, and (with `create`) a new card in each Sports channel
 /// that should have one and doesn't (only while the match is still to come or on).
 pub async fn sync_cards(s: &AppState, f: &Fixture, create: bool) -> AppResult<()> {
+    sync_cards_as(s, f, create, false).await
+}
+
+/// [`sync_cards`], the cards saying they stopped updating when `no_updates` (#406).
+pub async fn sync_cards_as(
+    s: &AppState,
+    f: &Fixture,
+    create: bool,
+    no_updates: bool,
+) -> AppResult<()> {
     let mut targets = targets(s, f).await?;
+    // both logos (#406), fetched once (charged to a follower) and remembered after
+    let by = targets.iter().find_map(|(_, users)| users.first().copied());
+    let (home_logo, away_logo) = (
+        super::logos::logo(s, by, f.league, f.home.0).await,
+        super::logos::logo(s, by, f.league, f.away.0).await,
+    );
     let existing: Vec<(String, String)> = sqlx::query_as(
         "SELECT p.channel_id, p.message_id FROM sports_posts p
          JOIN messages m ON m.id = p.message_id AND m.deleted_at IS NULL
@@ -612,7 +670,10 @@ pub async fn sync_cards(s: &AppState, f: &Fixture, create: bool) -> AppResult<()
         SportsPhase::Upcoming | SportsPhase::Live
     );
     for (ch, followers) in targets {
-        let c = card(f, followers);
+        let mut c = card(f, followers);
+        c.home.logo = home_logo.clone();
+        c.away.logo = away_logo.clone();
+        c.no_updates = no_updates;
         let text = content(&c, f.kickoff);
         let payload = system::sports_payload(&c)?;
         if let Some(i) = posted.iter().position(|(pc, _)| *pc == ch) {
@@ -713,6 +774,42 @@ mod tests {
         let mut rugby = fixture("FT");
         rugby.league = SportsLeague::Urc;
         assert!(content(&card(&rugby, vec![]), rugby.kickoff).starts_with("🏉 Full time"));
+    }
+
+    #[test]
+    fn a_card_left_without_live_data_says_so() {
+        let w = 150 * 60;
+        let max = 4 * 3600;
+        let f = fixture("NS");
+        assert!(!stale(&f, f.kickoff + w, w, max), "still in its window");
+        assert!(
+            stale(&f, f.kickoff + w + 1, w, max),
+            "match day, window gone"
+        );
+        let live = fixture("2H");
+        assert!(
+            !stale(&live, live.kickoff + w + 1, w, max),
+            "live reads go on"
+        );
+        assert!(stale(&live, live.kickoff + max + 1, w, max));
+        for done in ["FT", "PST"] {
+            assert!(
+                !stale(&fixture(done), f.kickoff + max + 1, w, max),
+                "{done}"
+            );
+        }
+        let mut c = card(&f, vec![]);
+        c.no_updates = true;
+        assert_eq!(
+            content(&c, f.kickoff),
+            "⚽ Home FC v Away FC: no live updates, check back later"
+        );
+        let mut c = card(&live, vec![]);
+        c.no_updates = true;
+        assert_eq!(
+            content(&c, f.kickoff),
+            "⚽ Home FC 2 – 1 Away FC: no live updates, check back later"
+        );
     }
 
     #[test]

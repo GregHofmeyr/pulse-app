@@ -190,17 +190,53 @@ async fn teams(
 }
 
 async fn channel_of(s: &AppState, server: ServerId) -> AppResult<SportsChannel> {
-    let ch: Option<String> = sqlx::query_scalar(
-        "SELECT d.channel_id FROM server_sports_channels d
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT d.channel_id, d.leagues FROM server_sports_channels d
          JOIN channels c ON c.id = d.channel_id AND c.deleted_at IS NULL
          WHERE d.server_id = ?",
     )
     .bind(server.to_string())
     .fetch_optional(&s.db)
     .await?;
+    let Some((ch, leagues)) = row else {
+        return Ok(SportsChannel {
+            channel_id: None,
+            leagues: None,
+        });
+    };
     Ok(SportsChannel {
-        channel_id: ch.and_then(|c| c.parse().ok()),
+        channel_id: ch.parse().ok(),
+        leagues: leagues.as_deref().map(parse_leagues),
     })
+}
+
+/// A stored league list (#406), in [`SportsLeague::ALL`]'s order; a key no longer known is left out.
+pub fn parse_leagues(stored: &str) -> Vec<SportsLeague> {
+    let keys: Vec<String> = serde_json::from_str(stored).unwrap_or_default();
+    SportsLeague::ALL
+        .into_iter()
+        .filter(|l| keys.iter().any(|k| k == l.key()))
+        .collect()
+}
+
+/// The league list to store for an owner's pick (#406): `None` (no limit) when it's every league; refused when empty.
+pub fn leagues_to_store(picked: &[SportsLeague]) -> AppResult<Option<String>> {
+    let keys: Vec<&str> = SportsLeague::ALL
+        .into_iter()
+        .filter(|l| picked.contains(l))
+        .map(|l| l.key())
+        .collect();
+    if keys.is_empty() {
+        return Err(AppError::BadRequest(
+            "pick at least one league (or no Sports channel)".into(),
+        ));
+    }
+    if keys.len() == SportsLeague::ALL.len() {
+        return Ok(None);
+    }
+    Ok(Some(
+        serde_json::to_string(&keys).map_err(anyhow::Error::from)?,
+    ))
 }
 
 async fn get_channel(
@@ -212,7 +248,8 @@ async fn get_channel(
     Ok(Json(channel_of(&s, id).await?))
 }
 
-/// `PUT /servers/{id}/sports-channel`: the server's owner picks one of its text channels, or none.
+/// `PUT /servers/{id}/sports-channel`: the server's owner picks one of its text channels, or none, and which leagues
+/// post there (#406; kept while there's a channel, and only settable with one).
 async fn set_channel(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -232,7 +269,13 @@ async fn set_channel(
             "Only the server's owner can pick its Sports channel.".into(),
         ));
     }
+    let leagues = req.leagues.as_deref().map(leagues_to_store).transpose()?;
     match req.channel_id {
+        None if leagues.is_some() => {
+            return Err(AppError::BadRequest(
+                "pick a Sports channel before choosing its leagues".into(),
+            ));
+        }
         None => {
             sqlx::query("DELETE FROM server_sports_channels WHERE server_id = ?")
                 .bind(id.to_string())
@@ -249,6 +292,13 @@ async fn set_channel(
             .bind(ch.to_string())
             .execute(&s.db)
             .await?;
+            if let Some(leagues) = leagues {
+                sqlx::query("UPDATE server_sports_channels SET leagues = ? WHERE server_id = ?")
+                    .bind(leagues)
+                    .bind(id.to_string())
+                    .execute(&s.db)
+                    .await?;
+            }
         }
     }
     Ok(Json(channel_of(&s, id).await?))
@@ -262,4 +312,22 @@ async fn check_channel(s: &AppState, server: ServerId, ch: ChannelId) -> AppResu
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn league_limits_store_as_keys_and_every_league_is_no_limit() {
+        use SportsLeague::*;
+        assert_eq!(
+            leagues_to_store(&[Epl, Psl]).unwrap().as_deref(),
+            Some(r#"["psl","epl"]"#)
+        );
+        assert_eq!(leagues_to_store(&[Urc, Psl, Epl, Psl]).unwrap(), None);
+        assert!(leagues_to_store(&[]).is_err());
+        assert_eq!(parse_leagues(r#"["epl","gone","psl"]"#), vec![Psl, Epl]);
+        assert_eq!(parse_leagues("junk"), vec![]);
+    }
 }

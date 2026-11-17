@@ -233,6 +233,11 @@ pub struct SportsConfig {
     pub football_base: String,
     /// api-rugby's base (`https://v1.rugby.api-sports.io`); tests point it at a fake.
     pub rugby_base: String,
+    /// Where team logos are (#406): `{logo_base}/football/teams/{id}.png`, `{logo_base}/rugby/teams/{id}.png`
+    /// (`https://media.api-sports.io`, which needs no key and spends no requests); tests point it at a fake.
+    pub logo_base: String,
+    /// The only hosts a logo is fetched from (anything else is refused).
+    pub logo_hosts: Vec<String>,
     /// How often the poller wakes (1 min): what's due is decided each round.
     pub poll_every: Duration,
     /// How often a followed league's schedule is read (20 h: about once a day).
@@ -253,7 +258,7 @@ pub struct SportsConfig {
 }
 
 pulse_protocol::redacting_debug!(SportsConfig {
-    football_base, rugby_base, poll_every, schedule_every, teams_every, live_every, window, max_window, banner_lead,
+    football_base, rugby_base, logo_base, logo_hosts, poll_every, schedule_every, teams_every, live_every, window, max_window, banner_lead,
     daily_cap, retry_base ; api_key
 });
 
@@ -263,6 +268,8 @@ impl Default for SportsConfig {
             api_key: None,
             football_base: "https://v3.football.api-sports.io".into(),
             rugby_base: "https://v1.rugby.api-sports.io".into(),
+            logo_base: "https://media.api-sports.io".into(),
+            logo_hosts: vec!["media.api-sports.io".into()],
             poll_every: Duration::from_secs(60),
             schedule_every: Duration::from_secs(20 * 3600),
             teams_every: Duration::from_secs(7 * 24 * 3600),

@@ -767,7 +767,9 @@ export const sportsCmd = {
   unfollow: (league: SportsLeague, teamId: number) => invoke<SportsStatus>('unfollow_team', { league, teamId }),
   teams: (league: SportsLeague) => invoke<SportsTeams>('sports_teams', { league }),
   channel: (serverId: string) => invoke<SportsChannel>('sports_channel', { serverId }),
-  setChannel: (serverId: string, channelId: string | null) => invoke<SportsChannel>('set_sports_channel', { serverId, channelId }),
+  /** `leagues` (#406): the leagues that post there (every league = no limit); left out, they stay as they are. */
+  setChannel: (serverId: string, channelId: string | null, leagues?: SportsLeague[]) =>
+    invoke<SportsChannel>('set_sports_channel', { serverId, channelId, leagues: leagues ?? null }),
 }
 
 /** Tauri rejects with the command's error string. */

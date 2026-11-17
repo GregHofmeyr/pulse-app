@@ -25,4 +25,9 @@ minute: number | null, home: SportsSide, away: SportsSide, scorers: Array<Sports
 /**
  * The server's members who follow either team (with pings on).
  */
-followers: Array<UserId>, };
+followers: Array<UserId>, 
+/**
+ * The match's window passed with no live data to end it (#406): the card stopped updating, and says so rather
+ * than look stuck on match day or mid-match.
+ */
+no_updates: boolean, };

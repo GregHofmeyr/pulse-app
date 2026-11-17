@@ -176,7 +176,8 @@ api-rugby), put it in `/srv/pulse/.env` as `PULSE_API_SPORTS_KEY` and `just depl
 nothing is fetched. The free plan allows 100 requests a day per sport; the server stops at 90, reads each followed
 league's schedule about once a day and reads matches live only while a followed team plays, at most every five minutes
 (more slowly on a busy day). Check which seasons your plan can read: if it can't read the current one, Settings says so
-and scores stay paused. Each server's owner picks its Sports channel in Server settings (none by default).
+and scores stay paused. Each server's owner picks its Sports channel in Server settings (none by default), and can limit
+which leagues post there. Team logos come from `media.api-sports.io` (no key, no requests spent).
 
 ## 7. Deploying and rolling back
 

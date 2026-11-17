@@ -3004,7 +3004,7 @@ pub enum EmbedKind {
 }
 
 /// A preview's thumbnail: a `link_thumb` media hash, a still WebP.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct EmbedThumb {
     pub hash: String,
     pub width: u32,
@@ -4301,12 +4301,20 @@ pub struct SportsTeams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SportsChannel {
     pub channel_id: Option<ChannelId>,
+    /// The leagues whose cards post here (#406), by the owner's choice; `None` = every league (the default). Older
+    /// servers never send it.
+    #[serde(default)]
+    pub leagues: Option<Vec<SportsLeague>>,
 }
 
-/// `PUT /servers/{id}/sports-channel` (the server's owner only): a text channel of that server, or `None`.
+/// `PUT /servers/{id}/sports-channel` (the server's owner only): a text channel of that server, or `None`, and the
+/// leagues that post (#406; left out, they stay as they are; every league = no limit). Leagues need a channel.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SetSportsChannelRequest {
     pub channel_id: Option<ChannelId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub leagues: Option<Vec<SportsLeague>>,
 }
 
 /// Where a match is.
@@ -4329,6 +4337,11 @@ pub struct SportsSide {
     pub name: String,
     /// `None` until kick-off.
     pub score: Option<u32>,
+    /// The team's logo (#406), the server's copy of API-Sports' (clients never reach API-Sports); none when it
+    /// couldn't be had. Older servers never send it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub logo: Option<EmbedThumb>,
 }
 
 /// A goal (football only: api-rugby names no try scorers).
@@ -4362,4 +4375,8 @@ pub struct SportsCard {
     /// The server's members who follow either team (with pings on).
     #[serde(default)]
     pub followers: Vec<UserId>,
+    /// The match's window passed with no live data to end it (#406): the card stopped updating, and says so rather
+    /// than look stuck on match day or mid-match.
+    #[serde(default)]
+    pub no_updates: bool,
 }
