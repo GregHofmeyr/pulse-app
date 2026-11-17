@@ -941,6 +941,11 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub member_line: Option<MemberLine>,
+    /// Set on an invite to play a game (#436): the card, as everyone in the chat sees it. Where to join is never in it:
+    /// a member of the chat asks for that (`POST /messages/{id}/game-invite/join`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub game_invite: Option<Box<GameInvite>>,
 }
 
 /// What a group chat's system line says happened (#114).
@@ -1972,6 +1977,24 @@ pub enum SteamJoin {
         /// `a.b.c.d:port` (IPv4, as Steam reports it), or `[ipv6]:port` in its canonical form (#397).
         address: String,
     },
+}
+
+/// An invite to play a game (#436), sent into a DM or group by its author while they play: the game as their
+/// "Playing" showed it then. `joinable` while there's a Steam lobby or game server to join (the server hands it only to
+/// the chat's members, on `POST /messages/{id}/game-invite/join`); `ended` once the author left that game or its
+/// lobby, for good. A server restart ends it too, but it opens again when the author is seen in the same game within
+/// minutes (#438).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct GameInvite {
+    pub name: String,
+    #[serde(default)]
+    pub steam_app_id: Option<u32>,
+    #[serde(default)]
+    pub art: Option<GameArt>,
+    #[serde(default)]
+    pub joinable: bool,
+    #[serde(default)]
+    pub ended: bool,
 }
 
 /// A Steam game's art (#380), each re-encoded like a link thumbnail; any may be missing (not every game has a hero or

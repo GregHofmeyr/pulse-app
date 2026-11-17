@@ -347,6 +347,7 @@ async fn confirm(
         forwarded: None,
         group_line: None,
         member_line: None,
+        game_invite: None,
         embeds: vec![],
         call: None,
         wheel: None,

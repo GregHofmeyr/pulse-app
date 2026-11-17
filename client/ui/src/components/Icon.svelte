@@ -81,6 +81,8 @@
     quote: 'M7 7h4v5a4 4 0 0 1-4 4M15 7h4v5a4 4 0 0 1-4 4',
     trophy: 'M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3',
     play: 'M7 4v16l13-8z',
+    // a game controller (#436): Invite to game
+    gamepad: 'M7 7h10a5 5 0 0 1 4.9 6l-.7 3.6a2.5 2.5 0 0 1-4.4 1L15 15H9l-1.8 2.6a2.5 2.5 0 0 1-4.4-1L2.1 13A5 5 0 0 1 7 7zM7 10v4M5 12h4M15.5 11h.01M18 13h.01',
     pause: 'M8 4v16M16 4v16',
     fullscreen: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
     // two arrows out to opposite corners: make it bigger (the stage's Spotify card back to the strip, #288)

@@ -8,10 +8,10 @@ use crate::ids::{
 };
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ChannelOrder, ClipView, ClipViewPref,
-    CustomEmoji, CustomStatus, DmLayout, F1Prediction, Game, InboxFilter, InboxItem, Listening,
-    ListeningUpdate, Member, Message, MessageBookmark, MessageReminder, Mute, MyCustomStatus,
-    NotifyLevelPref, OwnStatus, Person, PersonDnd, PinnedMessage, Plan, Playing, PlayingUpdate,
-    PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason,
+    CustomEmoji, CustomStatus, DmLayout, F1Prediction, Game, GameInvite, InboxFilter, InboxItem,
+    Listening, ListeningUpdate, Member, Message, MessageBookmark, MessageReminder, Mute,
+    MyCustomStatus, NotifyLevelPref, OwnStatus, Person, PersonDnd, PinnedMessage, Plan, Playing,
+    PlayingUpdate, PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason,
     ScheduledMessage, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare,
     SteamStatus, StreamEndReason, StreamInfo, User, WatchParty, Wheel,
 };
@@ -250,6 +250,16 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub person_dnd: Vec<PersonDnd>,
+    /// The people you hide what you're playing from (#436), in the order you added them. Yours only. Absent from older
+    /// servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub activity_hidden: Vec<UserId>,
+    /// The servers you can't rejoin right now (#431): their owner removed you a third time within 48 hours, and hasn't
+    /// allowed you back. Yours only. Absent from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub rejoin_blocked: Vec<ServerId>,
     /// Your saved inbox filters (#307), in order. Yours only. Absent from older servers.
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
@@ -355,6 +365,20 @@ pub enum Event {
         server_id: ServerId,
         owner_id: UserId,
         previous_owner_id: UserId,
+    },
+    /// Only to its person's own sessions, a server's owner: who is blocked from rejoining their server changed (#431),
+    /// a removal blocked someone or they allowed someone back. An open Members pane asks again
+    /// (`GET /servers/{id}/blocked`). Clients from before it skip it.
+    ServerBlocksChanged {
+        user_id: UserId,
+        server_id: ServerId,
+    },
+    /// Only to its person's own sessions: they can't rejoin `server_id` now (`blocked`), or can again (#431); the
+    /// change to [`Ready::rejoin_blocked`]. Clients from before it skip it.
+    RejoinBlockChanged {
+        user_id: UserId,
+        server_id: ServerId,
+        blocked: bool,
     },
     /// Someone is no longer in a server (#371): they left, or its owner removed them (`removed_by`). Everyone, like
     /// `MemberJoined`: member lists drop them, and the person themselves sees the server as one they aren't in (its
@@ -506,6 +530,19 @@ pub enum Event {
     PersonDndChanged {
         user_id: UserId,
         list: Vec<PersonDnd>,
+    },
+    /// Only to its person's own sessions: the people they hide what they're playing from changed (#436), the whole new
+    /// [`Ready::activity_hidden`]. Clients from before it skip it.
+    ActivityHiddenChanged {
+        user_id: UserId,
+        list: Vec<UserId>,
+    },
+    /// Only to its person's own sessions: what they may see of `person_id`'s game stats (Steam hours, their Deadlock
+    /// section) changed (#438), because `person_id` hid what they play from them or showed it again. Nothing but who:
+    /// an open card of `person_id` asks again. Clients from before it skip it.
+    GameStatsChanged {
+        user_id: UserId,
+        person_id: UserId,
     },
     /// Only to its person's own sessions: their saved inbox filters changed (#307), the whole new
     /// [`Ready::inbox_filters`]. Clients from before it skip it.
@@ -827,6 +864,13 @@ pub enum Event {
         message_id: MessageId,
         plan: Box<Plan>,
     },
+    /// An invite to play (#436) changed: it became joinable, or stopped being, or ended (its author left the game or
+    /// lobby). Clients from before it skip the frame.
+    GameInviteChanged {
+        channel_id: ChannelId,
+        message_id: MessageId,
+        invite: Box<GameInvite>,
+    },
     /// A weekend card's podium predictions changed (#386): someone picked or took theirs back, or the race was
     /// scored. Everyone sees the same predictions, so it carries them whole. Clients from before it skip the frame.
     F1PredictionsChanged {
@@ -905,6 +949,7 @@ impl Event {
             | Self::MessageUnpinned { channel_id, .. }
             | Self::PollChanged { channel_id, .. }
             | Self::PlanChanged { channel_id, .. }
+            | Self::GameInviteChanged { channel_id, .. }
             | Self::F1PredictionsChanged { channel_id, .. }
             | Self::StageShareCleared { channel_id, .. }
             | Self::StageNowPlaying { channel_id, .. }
@@ -980,6 +1025,10 @@ impl Event {
             | Self::BookmarkRemoved { .. }
             | Self::DmLayoutChanged { .. }
             | Self::PersonDndChanged { .. }
+            | Self::ActivityHiddenChanged { .. }
+            | Self::GameStatsChanged { .. }
+            | Self::ServerBlocksChanged { .. }
+            | Self::RejoinBlockChanged { .. }
             | Self::InboxFiltersChanged { .. }
             | Self::ChannelOrderChanged { .. }
             | Self::ViewOnceOpened { .. }
@@ -1015,6 +1064,10 @@ impl Event {
             | Self::BookmarkRemoved { user_id, .. }
             | Self::DmLayoutChanged { user_id, .. }
             | Self::PersonDndChanged { user_id, .. }
+            | Self::ActivityHiddenChanged { user_id, .. }
+            | Self::GameStatsChanged { user_id, .. }
+            | Self::ServerBlocksChanged { user_id, .. }
+            | Self::RejoinBlockChanged { user_id, .. }
             | Self::InboxFiltersChanged { user_id, .. }
             | Self::ChannelOrderChanged { user_id, .. }
             | Self::ViewOnceOpened { user_id, .. }
@@ -1151,6 +1204,8 @@ mod tests {
             bookmarks: vec![],
             dm_layout: Default::default(),
             person_dnd: vec![],
+            activity_hidden: vec![],
+            rejoin_blocked: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],
@@ -1248,6 +1303,8 @@ mod tests {
             bookmarks: vec![],
             dm_layout: Default::default(),
             person_dnd: vec![],
+            activity_hidden: vec![],
+            rejoin_blocked: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],
@@ -1394,6 +1451,8 @@ mod tests {
             bookmarks: vec![],
             dm_layout: Default::default(),
             person_dnd: vec![],
+            activity_hidden: vec![],
+            rejoin_blocked: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],

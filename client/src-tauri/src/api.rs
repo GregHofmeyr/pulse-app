@@ -2143,6 +2143,54 @@ impl Api {
         Self::parse(req.bearer_auth(token).send().await).await
     }
 
+    /// Hide what you're playing from `user` (#436), or show it again (`on` false). Answers with your whole list.
+    pub async fn set_activity_hidden(
+        &self,
+        token: &str,
+        user: UserId,
+        on: bool,
+    ) -> Result<Vec<UserId>, ApiError> {
+        let url = self.url(&["me", "activity-hidden", &user.to_string()])?;
+        let req = if on {
+            self.http.put(url)
+        } else {
+            self.http.delete(url)
+        };
+        Self::parse(req.bearer_auth(token).send().await).await
+    }
+
+    /// Invite a DM or group to the game you're playing (#436): its message, with the card.
+    pub async fn send_game_invite(
+        &self,
+        token: &str,
+        channel: ChannelId,
+    ) -> Result<Message, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/channels/{channel}/game-invite", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Where to join an invite's game (#436), for a member of its chat.
+    pub async fn game_invite_join(
+        &self,
+        token: &str,
+        message: MessageId,
+    ) -> Result<pulse_protocol::rest::SteamJoin, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/messages/{message}/game-invite/join", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Your Steam link and what this server can do with Steam (#379).
     pub async fn steam_status(
         &self,
@@ -6287,6 +6335,31 @@ mod tests {
         );
         let ch = api.set_group_icon(&alex, g.id, None).await.unwrap();
         assert_eq!(ch.icon_hash, None);
+    }
+
+    #[tokio::test]
+    async fn activity_hidden_and_game_invites_round_trip_through_the_core() {
+        let app = testing::spawn().await;
+        let (alex_id, alex) = testing::register(&app, "alex").await;
+        let (sam_id, _) = testing::register(&app, "sam").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let list = api.set_activity_hidden(&alex, sam_id, true).await.unwrap();
+        assert_eq!(list, vec![sam_id]);
+        assert!(
+            api.set_activity_hidden(&alex, sam_id, false)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(api.set_activity_hidden(&alex, alex_id, true).await.is_err());
+        // not in a game: nothing to invite to, and nothing to join
+        let dm = api.create_dm(&alex, vec![sam_id]).await.unwrap();
+        assert!(api.send_game_invite(&alex, dm.id).await.is_err());
+        assert!(
+            api.game_invite_join(&alex, pulse_protocol::ids::MessageId::new())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

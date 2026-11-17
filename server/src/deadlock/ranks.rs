@@ -84,15 +84,22 @@ pub async fn refresh(s: &AppState) -> AppResult<()> {
     Ok(())
 }
 
-/// The stored badges of `server`'s members who show their rank (ranked ones only).
-pub async fn of_server(db: &SqlitePool, server: &str) -> sqlx::Result<Vec<(UserId, u32)>> {
+/// The stored badges of `server`'s members who show their rank (ranked ones only), as `viewer` sees them: less anyone
+/// who hides what they're playing from `viewer` (#438).
+pub async fn of_server(
+    db: &SqlitePool,
+    server: &str,
+    viewer: UserId,
+) -> sqlx::Result<Vec<(UserId, u32)>> {
     let rows: Vec<(String, i64)> = sqlx::query_as(
         "SELECT p.user_id, p.badge FROM deadlock_players p
          JOIN steam_links l ON l.user_id = p.user_id AND l.deadlock_rank = 1
          JOIN server_members m ON m.user_id = p.user_id AND m.server_id = ?
-         WHERE p.badge > 0",
+         WHERE p.badge > 0
+           AND NOT EXISTS (SELECT 1 FROM activity_hidden h WHERE h.user_id = p.user_id AND h.target_id = ?)",
     )
     .bind(server)
+    .bind(viewer.to_string())
     .fetch_all(db)
     .await?;
     Ok(rows
@@ -155,12 +162,14 @@ async fn post_movers(s: &AppState) -> AppResult<()> {
     }
     let cat = assets::catalog(s).await;
     for (server, ch) in channels {
-        let rows: Vec<(String, i64, i64)> = sqlx::query_as(
+        // one card for the whole channel: nobody on it hides their games from a member (#438)
+        let rows: Vec<(String, i64, i64)> = sqlx::query_as(&format!(
             "SELECT p.user_id, p.week_badge, p.badge FROM deadlock_players p
              JOIN steam_links l ON l.user_id = p.user_id AND l.deadlock_rank = 1
              JOIN server_members m ON m.user_id = p.user_id AND m.server_id = ?
-             WHERE p.badge > 0 AND p.week_badge > 0 AND p.badge != p.week_badge",
-        )
+             WHERE p.badge > 0 AND p.week_badge > 0 AND p.badge != p.week_badge AND NOT {}",
+            crate::activity_hidden::hides_in_server("p.user_id", "m.server_id")
+        ))
         .bind(&server)
         .fetch_all(&s.db)
         .await?;

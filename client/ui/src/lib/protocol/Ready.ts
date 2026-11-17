@@ -195,6 +195,16 @@ dm_layout?: DmLayout,
  */
 person_dnd?: Array<PersonDnd>, 
 /**
+ * The people you hide what you're playing from (#436), in the order you added them. Yours only. Absent from older
+ * servers.
+ */
+activity_hidden?: Array<UserId>, 
+/**
+ * The servers you can't rejoin right now (#431): their owner removed you a third time within 48 hours, and hasn't
+ * allowed you back. Yours only. Absent from older servers.
+ */
+rejoin_blocked?: Array<ServerId>, 
+/**
  * Your saved inbox filters (#307), in order. Yours only. Absent from older servers.
  */
 inbox_filters?: Array<InboxFilter>, 

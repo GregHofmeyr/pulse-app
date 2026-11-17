@@ -34,12 +34,23 @@ export function notifyMessage(s: AppState, v: AlertInput, prefs: NotifyPrefs, mo
   // mentions as the names you see there (never usernames, #47)
   const shown = { ...m, content: showMentions(shownText(m), mentionLookup(s), (id) => displayName(s, v.channel.server_id, id)) }
   const n: Notice = { title: notificationTitle(s, m, v.channel, more), body: notificationBody(shown, v.me, prefs.showText), channelId: m.channel_id }
+  // an invite to play (#436): "alex invited you to play Space Game" (the game is message text: hidden with it)
+  if (m.game_invite && !more) {
+    const who = m.author_id ? displayName(s, v.channel.server_id, m.author_id) : 'Pulse'
+    if (prefs.showText) {
+      n.title = gameInviteTitle(who, m.game_invite.name)
+      n.body = v.channel.kind === 'group' ? `in ${conversationName(s, v.channel.id)}` : 'Join from the chat'
+    } else n.body = 'Invited you to play a game'
+  }
   if (m.thread_root_id) n.threadId = m.thread_root_id
   const author = m.author_id ? userOf(s, m.author_id) : null
   const avatar = author?.avatar_still ?? author?.avatar_hash
   if (avatar) n.avatar = avatar
   return n
 }
+
+/** "alex invited you to play Space Game" (#436). */
+export const gameInviteTitle = (who: string, game: string): string => `${who} invited you to play ${game}`
 
 /** "sam", "sam in Friends", "sam in #general (Main)", with " and N more" after the name. */
 export function notificationTitle(s: AppState, m: Message, channel: Channel, more: number): string {

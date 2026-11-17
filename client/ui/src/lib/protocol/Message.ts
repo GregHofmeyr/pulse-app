@@ -7,6 +7,7 @@ import type { Clip } from "./Clip";
 import type { DeadlockCard } from "./DeadlockCard";
 import type { F1Card } from "./F1Card";
 import type { Forwarded } from "./Forwarded";
+import type { GameInvite } from "./GameInvite";
 import type { Gif } from "./Gif";
 import type { GroupLine } from "./GroupLine";
 import type { LinkEmbed } from "./LinkEmbed";
@@ -148,4 +149,9 @@ group_line?: GroupLine,
  * Set on a server membership line (#418), a system line in the server's first text channel: someone left it, or
  * its owner removed them. Clients name them as they're called today; `content` names them as they were.
  */
-member_line?: MemberLine, };
+member_line?: MemberLine, 
+/**
+ * Set on an invite to play a game (#436): the card, as everyone in the chat sees it. Where to join is never in it:
+ * a member of the chat asks for that (`POST /messages/{id}/game-invite/join`).
+ */
+game_invite?: GameInvite, };

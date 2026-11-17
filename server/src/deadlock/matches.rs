@@ -37,7 +37,7 @@ impl Kind {
 }
 
 /// The Deadlock channels taking `kind` (live servers, text channels), with their servers; only those `user` is a
-/// member of when given.
+/// member of when given, less those of servers where a member is someone `user` hides their games from (#438).
 pub async fn channels(
     s: &AppState,
     kind: Kind,
@@ -48,9 +48,11 @@ pub async fn channels(
          JOIN servers sv ON sv.id = d.server_id AND sv.deleted_at IS NULL
          JOIN channels c ON c.id = d.channel_id AND c.deleted_at IS NULL AND c.archived_at IS NULL AND c.kind = 'text'
          WHERE d.{} = 1 AND (?1 IS NULL OR EXISTS (
-             SELECT 1 FROM server_members m WHERE m.server_id = d.server_id AND m.user_id = ?1))
+             SELECT 1 FROM server_members m WHERE m.server_id = d.server_id AND m.user_id = ?1)
+             AND NOT {})
          ORDER BY d.server_id",
-        kind.column()
+        kind.column(),
+        crate::activity_hidden::hides_in_server("?1", "d.server_id")
     );
     let rows: Vec<(String, String)> = sqlx::query_as(&sql)
         .bind(user.map(|u| u.to_string()))

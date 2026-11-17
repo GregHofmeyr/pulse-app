@@ -738,3 +738,103 @@ async fn an_archived_channel_cant_be_the_deadlock_channel() {
         403
     );
 }
+
+async fn hide_games(app: &TestApp, token: &str, who: UserId) {
+    let r = app
+        .http
+        .put(app.url(&format!("/me/activity-hidden/{who}")))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+}
+
+#[tokio::test]
+async fn hiding_your_games_from_a_member_keeps_your_deadlock_out_of_their_server() {
+    // #438: a match card is one message for the whole channel, so a server with someone alex hides their games from
+    // gets none of alex's; another server still does. alex's Deadlock section and rank skip that person too.
+    let w = world().await;
+    let (app, fake) = (&w.app, &w.fake);
+    let kim = register(app, "kim").await;
+    let other = create_server(app, &w.alex.1, "Other").await;
+    join(app, &kim.1, other.id).await;
+    let other_general = general(app, &w.alex.1, other.id).await.id;
+    assert_eq!(
+        set_channel(
+            app,
+            &w.alex.1,
+            other.id,
+            json!({ "channel_id": other_general })
+        )
+        .await,
+        200
+    );
+    hide_games(app, &w.alex.1, w.sam.0).await;
+
+    fake.add_match(ALEX, 50_000_001, HAZE, (1, 9, 2), false, now() - 7200, None);
+    pulse_server::deadlock::matches::poll_one(&app.state(), w.alex.0, ALEX)
+        .await
+        .unwrap();
+    fake.add_match(
+        ALEX,
+        50_000_002,
+        INFERNUS,
+        (12, 3, 8),
+        true,
+        now() - 2000,
+        None,
+    );
+    pulse_server::deadlock::matches::poll_one(&app.state(), w.alex.0, ALEX)
+        .await
+        .unwrap();
+    assert!(
+        match_cards(&cards(app, &w.alex.1, w.general).await).is_empty(),
+        "sam reads #general: no card about alex there"
+    );
+    assert_eq!(
+        match_cards(&cards(app, &kim.1, other_general).await).len(),
+        1,
+        "the other server still gets it"
+    );
+
+    // the section and the rank: empty for sam, whole for kim (who joins the first server)
+    join(app, &kim.1, w.server).await;
+    fake.set_rank(ALEX, 83);
+    fake.hero_stats(ALEX, INFERNUS, 22, 40);
+    let s = app.state();
+    pulse_server::deadlock::ranks::refresh(&s).await.unwrap();
+    let path = format!("/servers/{}/members/{}/deadlock", w.server, w.alex.0);
+    let p: DeadlockProfile = get_json(app, &w.sam.1, &path).await;
+    assert!(p.rank.is_none() && p.last_match.is_none() && p.heroes.is_empty());
+    let p: DeadlockProfile = get_json(app, &kim.1, &path).await;
+    assert!(p.rank.is_some() && p.last_match.is_some() && !p.heroes.is_empty());
+    let ranks = format!("/servers/{}/deadlock-ranks", w.server);
+    let r: DeadlockRanks = get_json(app, &w.sam.1, &ranks).await;
+    assert!(r.entries.iter().all(|e| e.user_id != w.alex.0));
+    let r: DeadlockRanks = get_json(app, &kim.1, &ranks).await;
+    assert!(r.entries.iter().any(|e| e.user_id == w.alex.0));
+
+    // the weekly movers skip alex in a server sam is in
+    let t0 = chrono::Utc::now();
+    pulse_server::deadlock::ranks::movers_at(&s, t0)
+        .await
+        .unwrap();
+    fake.set_rank(ALEX, 85);
+    pulse_server::deadlock::ranks::refresh(&s).await.unwrap();
+    pulse_server::deadlock::ranks::movers_at(&s, t0 + chrono::Duration::days(7))
+        .await
+        .unwrap();
+    assert!(
+        !cards(app, &w.alex.1, w.general)
+            .await
+            .iter()
+            .any(|(_, c)| matches!(c, DeadlockCard::RankMovers(_)))
+    );
+    assert!(
+        cards(app, &kim.1, other_general)
+            .await
+            .iter()
+            .any(|(_, c)| matches!(c, DeadlockCard::RankMovers(_)))
+    );
+}

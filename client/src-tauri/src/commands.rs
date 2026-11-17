@@ -2459,6 +2459,41 @@ pub async fn set_person_dnd(
     )
 }
 
+/// Hide what you're playing from someone (#436), or show it again; your whole list back.
+#[tauri::command]
+pub async fn set_activity_hidden(
+    app: AppHandle,
+    core: State<'_, Core>,
+    user_id: UserId,
+    on: bool,
+) -> Result<Vec<UserId>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_activity_hidden(&token, user_id, on).await)
+}
+
+/// Invite a DM or group to the game you're playing (#436).
+#[tauri::command]
+pub async fn send_game_invite(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.send_game_invite(&token, channel_id).await)
+}
+
+/// Where to join an invite's game (#436): only a member of its chat gets it; the page opens it with
+/// [`join_steam_game`], with the same checks as any Join.
+#[tauri::command]
+pub async fn game_invite_join(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<pulse_protocol::rest::SteamJoin, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.game_invite_join(&token, message_id).await)
+}
+
 /// Your Steam link (#379).
 #[tauri::command]
 pub async fn steam_status(

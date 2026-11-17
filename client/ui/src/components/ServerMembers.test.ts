@@ -11,7 +11,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 
 import ServerSettings from './ServerSettings.svelte'
 import { app, ui } from '../lib/store.svelte'
-import { emptyState } from '../lib/state'
+import { applyEvent, emptyState } from '../lib/state'
 
 const user = (id: string, name: string) => ({ id, username: name, display_name: name, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const alex = user('U1', 'alex')
@@ -147,6 +147,25 @@ describe('Server settings: Members', () => {
       open('U2')
       await settle()
       expect(invoke).not.toHaveBeenCalledWith('list_server_blocks', expect.anything())
+      expect(blockedRows()).toHaveLength(0)
+    })
+
+    it('a block change on another of the owner\'s devices asks again; other events don\'t (#431)', async () => {
+      open('U1')
+      await settle()
+      expect(blockedRows()).toHaveLength(1)
+      const asks = () => invoke.mock.calls.filter((c) => c[0] === 'list_server_blocks').length
+      expect(asks()).toBe(1)
+      invoke.mockImplementation(async () => [])
+      app.state = applyEvent(app.state, { t: 'ServerBlocksChanged', d: { user_id: 'U1', server_id: 'S2' } }, 0)
+      app.state = applyEvent(app.state, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U2' } } as never, 0)
+      flushSync()
+      await settle()
+      expect(asks()).toBe(1)
+      app.state = applyEvent(app.state, { t: 'ServerBlocksChanged', d: { user_id: 'U1', server_id: 'S1' } }, 0)
+      flushSync()
+      await settle()
+      expect(asks()).toBe(2)
       expect(blockedRows()).toHaveLength(0)
     })
 

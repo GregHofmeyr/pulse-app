@@ -734,3 +734,97 @@ async fn only_the_owner_sees_or_lifts_blocks() {
     assert_eq!(allow_back(&w.app, &w.kim.1, w.server, w.sam.0).await, 204);
     assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
 }
+
+/// `token`'s Ready, from a real gateway connection.
+async fn ready_of(app: &TestApp, token: &str) -> pulse_protocol::gateway::Ready {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message as Ws;
+    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
+        .await
+        .unwrap()
+        .0;
+    let hello = pulse_protocol::gateway::ClientFrame::Hello {
+        token: token.into(),
+        client_version: pulse_protocol::PROTOCOL_VERSION,
+    };
+    ws.send(Ws::text(serde_json::to_string(&hello).unwrap()))
+        .await
+        .unwrap();
+    loop {
+        let m = tokio::time::timeout(Duration::from_secs(3), ws.next())
+            .await
+            .expect("Ready arrives")
+            .unwrap()
+            .unwrap();
+        if let Ws::Text(t) = m
+            && let Ok(ServerFrame::Ready(r)) = serde_json::from_str::<ServerFrame>(&t)
+        {
+            return r;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_block_and_an_allow_back_tell_the_owners_devices_and_the_person() {
+    // #431: the owner's devices hear `ServerBlocksChanged` (an open Members pane asks again) when a removal blocks
+    // someone and when they allow them back; the person hears `RejoinBlockChanged` and has it in Ready, so they see
+    // why before they press Join. Nobody else hears either.
+    let w = world_with(spawn().await).await;
+    let mut alex_rx = w.app.hub.register(w.alex.0, String::new()).rx;
+    let mut sam_rx = w.app.hub.register(w.sam.0, String::new()).rx;
+    let mut kim_rx = w.app.hub.register(w.kim.0, String::new()).rx;
+    assert!(ready_of(&w.app, &w.sam.1).await.rejoin_blocked.is_empty());
+
+    remove_sam(&w, 3).await;
+    let server = w.server;
+    wait_for(&mut alex_rx, |e| match e {
+        Event::ServerBlocksChanged { user_id, server_id } if server_id == server => {
+            assert_eq!(user_id, w.alex.0);
+            Some(())
+        }
+        _ => None,
+    })
+    .await;
+    let blocked = wait_for(&mut sam_rx, |e| match e {
+        Event::RejoinBlockChanged {
+            server_id, blocked, ..
+        } if server_id == server => Some(blocked),
+        _ => None,
+    })
+    .await;
+    assert!(blocked);
+    assert_eq!(
+        ready_of(&w.app, &w.sam.1).await.rejoin_blocked,
+        vec![server]
+    );
+    assert!(ready_of(&w.app, &w.kim.1).await.rejoin_blocked.is_empty());
+
+    assert_eq!(allow_back(&w.app, &w.alex.1, server, w.sam.0).await, 204);
+    wait_for(&mut alex_rx, |e| {
+        matches!(e, Event::ServerBlocksChanged { server_id, .. } if server_id == server)
+            .then_some(())
+    })
+    .await;
+    let blocked = wait_for(&mut sam_rx, |e| match e {
+        Event::RejoinBlockChanged {
+            server_id, blocked, ..
+        } if server_id == server => Some(blocked),
+        _ => None,
+    })
+    .await;
+    assert!(!blocked);
+    assert!(ready_of(&w.app, &w.sam.1).await.rejoin_blocked.is_empty());
+
+    // kim heard neither
+    while let Ok(f) = kim_rx.try_recv() {
+        if let ServerFrame::Event(e) = f {
+            assert!(
+                !matches!(
+                    e,
+                    Event::ServerBlocksChanged { .. } | Event::RejoinBlockChanged { .. }
+                ),
+                "{e:?}"
+            );
+        }
+    }
+}

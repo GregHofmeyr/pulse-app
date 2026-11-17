@@ -8,7 +8,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import DeadlockPanel from './DeadlockPanel.svelte'
-import { app } from '../lib/store.svelte'
+import { app, gameStats } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 
 const HASH = 'ef'.repeat(32)
@@ -59,6 +59,19 @@ describe('DeadlockPanel', () => {
     invoke.mockRejectedValue(new Error('older server'))
     open()
     await settle()
+    expect(document.querySelector('[data-deadlock-panel]')).toBeNull()
+  })
+
+  it('asks again when they hide what they play from you, and drops the section (#438)', async () => {
+    invoke.mockResolvedValue({ rank: null, last_match: null, heroes: [{ hero: 'Haze', icon: null, matches: 5, wins: 3 }], with_you: null, best_duo: null })
+    open()
+    await settle()
+    expect(document.querySelector('[data-deadlock-panel]')).not.toBeNull()
+    invoke.mockResolvedValue({ rank: null, last_match: null, heroes: [], with_you: null, best_duo: null })
+    gameStats.rev = { ...gameStats.rev, U1: (gameStats.rev.U1 ?? 0) + 1 }
+    flushSync()
+    await settle()
+    expect(invoke).toHaveBeenCalledTimes(2)
     expect(document.querySelector('[data-deadlock-panel]')).toBeNull()
   })
 })

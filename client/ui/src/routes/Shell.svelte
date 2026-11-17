@@ -417,6 +417,8 @@
   }
   const activeServer = $derived(servers.find((s) => s.id === activeServerId) ?? null)
   const member = $derived(activeServerId ? isMember(app.state, activeServerId) : false)
+  // its owner blocked you from rejoining (#431): Join says why up front
+  const rejoinBlocked = $derived(!!activeServerId && !member && app.state.rejoinBlocked.includes(activeServerId))
   const activeChannel = $derived(activeChannelId ? app.state.channels[activeChannelId] : null)
   /** A DM or group call's stream in full view (#51), in place of the conversation: its streamer, while it's watched. */
   const convoFull = $derived.by(() => {
@@ -870,8 +872,14 @@
       {#if activeServerId && !member}
         <div class="join">
           <p>You're not in <strong>{activeServer?.name}</strong> yet.</p>
-          <button class="btn btn-lg btn-primary" onclick={join}>Join server</button>
-          {#if error}<p class="error">{error}</p>{/if}
+          {#if rejoinBlocked}
+            <!-- #431: its owner removed you a third time; said before you press anything, as Join would say it -->
+            <button class="btn btn-lg btn-primary" disabled aria-describedby="rejoin-blocked">Join server</button>
+            <p class="error" id="rejoin-blocked" data-rejoin-blocked>You can't rejoin this server right now. Ask the owner.</p>
+          {:else}
+            <button class="btn btn-lg btn-primary" onclick={join}>Join server</button>
+          {/if}
+          {#if error && !rejoinBlocked}<p class="error">{error}</p>{/if}
         </div>
       {:else if activeChannel?.kind === 'voice' && activeChannelId}
         <VoicePanel channelId={activeChannelId} serverId={activeServerId} onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />

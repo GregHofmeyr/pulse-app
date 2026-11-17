@@ -58,9 +58,19 @@ pub async fn tick(s: &AppState) {
                 return;
             }
         };
+    // senders of invites to play that haven't ended (#436) are read too, whatever their Join switch says: what's
+    // found reaches their invites only
+    let invites = match crate::game_invites::live_senders(&s.db).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "game invites not read for Join");
+            vec![]
+        }
+    };
+    let inviting: HashSet<UserId> = invites.iter().filter_map(|(u, _)| u.parse().ok()).collect();
     // those playing now, by SteamID: (who, the app they're shown playing)
     let mut playing: HashMap<String, (UserId, Option<u32>)> = HashMap::new();
-    for (user, steam_id) in rows {
+    for (user, steam_id) in rows.into_iter().chain(invites) {
         let Ok(user) = user.parse::<UserId>() else {
             continue;
         };
@@ -104,6 +114,9 @@ pub async fn tick(s: &AppState) {
         {
             changed.push(user);
         }
+    }
+    for user in inviting.iter().filter(|u| read.contains(u)) {
+        crate::game_invites::refresh(s, *user, found.get(user).map(|(_, j)| j.clone())).await;
     }
     for (user, (steam_id, j)) in found {
         if set_if_still_shared(s, user, &steam_id, j).await {

@@ -16,6 +16,8 @@
   import { setSoundMute, soundboard } from '../lib/soundboard.svelte'
   import NicknameItems from './NicknameItems.svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
+  import GameInviteItem from './GameInviteItem.svelte'
+  import HideGameItem from './HideGameItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
   import JoinGameItem from './JoinGameItem.svelte'
@@ -168,6 +170,7 @@
   <!-- the card opens beside the row or tile the menu came from -->
   <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>
   <JoinGameItem {userId} {pick} />
+  <GameInviteItem {userId} {pick} />
   {#each ids as id (id)}
     {#if id === 'volume'}
       <div class="slider" role="none">
@@ -228,6 +231,7 @@
   <LiveNotifyItem {userId} {pick} />
   <PersonDndItem bind:this={dndFlyout} {userId} {pick} menuLeft={left} menuTop={top} />
   <AppearOfflineItem {userId} {pick} />
+  <HideGameItem {userId} {pick} />
 </div>
 
 <style>

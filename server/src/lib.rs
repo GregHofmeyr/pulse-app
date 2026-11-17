@@ -1,5 +1,6 @@
 pub mod access;
 pub mod activity;
+pub mod activity_hidden;
 pub mod attachments;
 pub mod auth;
 pub mod badges;
@@ -15,6 +16,7 @@ pub mod emoji;
 pub mod error;
 pub mod f1;
 pub mod forwards;
+pub mod game_invites;
 pub mod gateway;
 pub mod gifs;
 pub mod hygiene;
@@ -92,6 +94,8 @@ pub fn router(state: AppState) -> Router {
         .merge(streams::routes::router())
         .merge(streams::notify::router())
         .merge(person_dnd::router())
+        .merge(activity_hidden::router())
+        .merge(game_invites::router())
         .merge(stage::routes::router())
         .merge(watch::routes::router())
         .merge(reports::routes::router())
@@ -172,6 +176,10 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     // A failure here must not keep the server down: the sweeper tries again shortly.
     if let Err(e) = qoty::end_overdue(&state, &db::now()).await {
         tracing::warn!(error = %e, "Quote of the Year boot sweep failed; the sweeper will retry");
+    }
+    // Nobody plays anything yet (it lives in memory): invites to play that a previous run left open end (#436).
+    if let Err(e) = game_invites::end_all_on_startup(&state.db).await {
+        tracing::warn!(error = %e, "couldn't end game invites left open");
     }
     qoty::spawn_sweeper(state.clone(), qoty::SWEEP_EVERY);
     clips::sweep::spawn(state.clone());

@@ -487,6 +487,11 @@ export const api = {
   setSteamJoin: (on: boolean) => invoke<SteamStatus>('set_steam_join', { on }),
   /** Steam opens on a friend's lobby or game server (#381); rejects with a message to show. */
   joinSteamGame: (join: SteamJoin) => invoke<void>('join_steam_game', { join }),
+  // Hide what I'm playing (#436): your whole list back
+  setActivityHidden: (userId: string, on: boolean) => invoke<string[]>('set_activity_hidden', { userId, on }),
+  // Invite to game (#436): the invite's message; where to join is asked for only when Join is pressed
+  sendGameInvite: (channelId: string) => invoke<Message>('send_game_invite', { channelId }),
+  gameInviteJoin: (messageId: string) => invoke<SteamJoin>('game_invite_join', { messageId }),
   /** A server's Steam hours board (#383): who played the most over the last two weeks. */
   steamHours: (serverId: string) => invoke<SteamHours>('steam_hours', { serverId }),
   /** A server's Achievements channel (#379); the owner may pick one of its text channels, or none. */

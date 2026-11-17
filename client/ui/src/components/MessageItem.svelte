@@ -38,6 +38,7 @@
   import { endedSummary, pollOver, shownText } from '../lib/poll'
   import { closePoll } from '../lib/polls.svelte'
   import PlanCard from './PlanCard.svelte'
+  import GameInviteCard from './GameInviteCard.svelte'
   import PlanComposer from './PlanComposer.svelte'
   import { cancelPlan } from '../lib/plans.svelte'
   import { planWhen } from '../lib/plan'
@@ -433,6 +434,9 @@
         {:else if message.plan}
           <!-- a plan (#387): the card stands in for its text (which is the plan for clients that don't know plans) -->
           <PlanCard {message} {nameOf} />
+        {:else if message.game_invite}
+          <!-- an invite to play (#436): the card stands in for its text -->
+          <GameInviteCard {message} {nameOf} />
         {:else}
           <!-- renderMessage output is DOMPurify-sanitised (allow-list, cached per message); the only {@html} in the app. -->
           {@const html = renderMessage(message, mentionNames, customEmoji)}
@@ -469,7 +473,7 @@
           {#if mine}
             {#if archived}{:else if message.plan}{#if planOpen}<button aria-label="Edit plan" onclick={(e) => editPlanCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
             {:else if message.poll}{#if endable}<button aria-label="Edit poll" onclick={(e) => editPollCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
-            {:else if !message.forwarded}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
+            {:else if !message.forwarded && !message.game_invite}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
             {#if embeds.length && !archived}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
             <DeleteButton what={message.thread_root_id ? 'reply' : 'message'} onConfirm={() => void del()} />
           {/if}

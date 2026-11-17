@@ -364,13 +364,19 @@ pub async fn recompute_all(s: &AppState) {
     }
 }
 
-/// `user`'s Steam hours over the last two weeks, as the profile card shows them (#383): while they share hours and
-/// once read.
-pub async fn profile_hours(conn: &mut SqliteConnection, user: UserId) -> sqlx::Result<Option<u32>> {
+/// `user`'s Steam hours over the last two weeks, as `viewer`'s profile card shows them (#383): while they share hours,
+/// once read, and not to someone they hide what they're playing from (#436).
+pub async fn profile_hours(
+    conn: &mut SqliteConnection,
+    user: UserId,
+    viewer: UserId,
+) -> sqlx::Result<Option<u32>> {
     let m: Option<Option<i64>> = sqlx::query_scalar(
-        "SELECT recent_minutes FROM steam_links WHERE user_id = ? AND share_hours = 1",
+        "SELECT recent_minutes FROM steam_links l WHERE l.user_id = ? AND l.share_hours = 1
+           AND NOT EXISTS (SELECT 1 FROM activity_hidden h WHERE h.user_id = l.user_id AND h.target_id = ?)",
     )
     .bind(user.to_string())
+    .bind(viewer.to_string())
     .fetch_optional(conn)
     .await?;
     Ok(m.flatten().map(|m| m.max(0) as u32))

@@ -13,7 +13,7 @@ const url = (t: EmbedThumb | null | undefined): string | null => (t && isMediaHa
 
 /** The wide art behind a strip or a tile (the library hero, else the store header), and the logo; each null when the
  *  server has none (a non-Steam game, art switched off, or Steam has none). */
-export function gameArt(p: Playing): { wide: string | null; logo: string | null } {
+export function gameArt(p: Pick<Playing, 'art'>): { wide: string | null; logo: string | null } {
   return { wide: url(p.art?.hero) ?? url(p.art?.header), logo: url(p.art?.logo) }
 }
 

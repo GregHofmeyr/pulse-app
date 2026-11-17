@@ -9,7 +9,7 @@ pub mod custom;
 pub mod routes;
 pub mod sweep;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pulse_protocol::ids::UserId;
 use pulse_protocol::rest::{CustomStatus, OwnStatus, PresenceStatus, Status};
@@ -37,6 +37,8 @@ pub struct Subject {
     /// Their custom status (#152), and when it clears (`None`: never).
     pub custom: Option<CustomStatus>,
     pub custom_until: Option<String>,
+    /// The people they hide what they're playing from (#436).
+    pub game_hidden: HashSet<UserId>,
 }
 
 /// What one viewer sees of one person.
@@ -113,6 +115,12 @@ impl Subject {
             // NEVER_SEEN: they had never been seen when they stopped looking online
             |at| (at != NEVER_SEEN).then_some(at),
         )
+    }
+
+    /// Whether `viewer` may see this person's game activity (#436), when they see them online at all: never hidden
+    /// from themselves.
+    pub fn shows_game_to(&self, viewer: UserId) -> bool {
+        viewer == self.id || !self.game_hidden.contains(&viewer)
     }
 
     /// Whether this person hides from `viewer` at all right now.
@@ -201,6 +209,7 @@ fn subject(r: Row) -> anyhow::Result<Subject> {
         hidden: HashMap::new(),
         custom: r.5.map(|text| CustomStatus { text, emoji: r.6 }),
         custom_until: r.7,
+        game_hidden: HashSet::new(),
     })
 }
 
@@ -222,6 +231,14 @@ pub async fn load_subject(db: &SqlitePool, id: UserId) -> anyhow::Result<Option<
     for (t, at, active) in hidden {
         s.hidden.insert(t.parse()?, (at, active != 0));
     }
+    let game_hidden: Vec<String> =
+        sqlx::query_scalar("SELECT target_id FROM activity_hidden WHERE user_id = ?")
+            .bind(id.to_string())
+            .fetch_all(db)
+            .await?;
+    for t in game_hidden {
+        s.game_hidden.insert(t.parse()?);
+    }
     Ok(Some(s))
 }
 
@@ -242,6 +259,15 @@ pub async fn load_all(db: &SqlitePool) -> anyhow::Result<HashMap<UserId, Subject
     for (o, t, at, active) in hidden {
         if let Some(s) = all.get_mut(&o.parse()?) {
             s.hidden.insert(t.parse()?, (at, active != 0));
+        }
+    }
+    let game_hidden: Vec<(String, String)> =
+        sqlx::query_as("SELECT user_id, target_id FROM activity_hidden")
+            .fetch_all(db)
+            .await?;
+    for (o, t) in game_hidden {
+        if let Some(s) = all.get_mut(&o.parse()?) {
+            s.game_hidden.insert(t.parse()?);
         }
     }
     Ok(all)
@@ -274,6 +300,7 @@ mod tests {
             hidden: HashMap::new(),
             custom: None,
             custom_until: None,
+            game_hidden: HashSet::new(),
         }
     }
 

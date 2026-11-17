@@ -1181,3 +1181,67 @@ async fn achievement_hunter_needs_20_started_games() {
     .await;
     assert_eq!(tier, 0);
 }
+
+#[tokio::test]
+async fn achievement_cards_skip_servers_with_someone_you_hide_your_games_from() {
+    // #438: a card is one message for the whole channel, so a server where alex hides their games from a member gets
+    // none of alex's cards; another server still does, and showing them again brings the cards back.
+    let (app, fake) = setup().await;
+    let (alex, token, general) = linked_alex(&app, &fake).await;
+    let (sam, sam_t) = register(&app, "sam").await;
+    let gamers: String = sqlx::query_scalar("SELECT server_id FROM channels WHERE id = ?")
+        .bind(general.to_string())
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let r = post_json(&app, &sam_t, &format!("/servers/{gamers}/join"), json!({})).await;
+    assert!(r.status().is_success());
+    let other = create_server(&app, &token, "Other").await;
+    let other_general = general_of(&app, &token, other.id).await;
+    let r = app
+        .http
+        .put(app.url(&format!("/servers/{}/achievements-channel", other.id)))
+        .bearer_auth(&token)
+        .json(&json!({ "channel_id": other_general }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let r = app
+        .http
+        .put(app.url(&format!("/me/activity-hidden/{sam}")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+
+    let mut ws = hello(&app, &token).await;
+    play(
+        &app,
+        &mut ws,
+        alex,
+        Some(steam_game("Space Game", SPACE, false)),
+    )
+    .await;
+    tick(&app).await;
+    fake.unlock(ALEX_STEAM, SPACE, "SECOND", now());
+    tick(&app).await;
+    assert!(
+        cards(&app, &sam_t, general).await.is_empty(),
+        "sam is in Gamers"
+    );
+    assert_eq!(cards(&app, &token, other_general).await.len(), 1);
+
+    let r = app
+        .http
+        .delete(app.url(&format!("/me/activity-hidden/{sam}")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    fake.unlock(ALEX_STEAM, SPACE, "THIRD", now());
+    tick(&app).await;
+    assert!(!cards(&app, &sam_t, general).await.is_empty());
+}

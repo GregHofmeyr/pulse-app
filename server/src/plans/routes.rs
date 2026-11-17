@@ -167,6 +167,7 @@ async fn create(
         forwarded: None,
         group_line: None,
         member_line: None,
+        game_invite: None,
     };
     // As a send: the message, the plan and your read point land together, and the read point's event goes out in
     // commit order with every other message.

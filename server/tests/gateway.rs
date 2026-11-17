@@ -107,6 +107,7 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         forwarded: None,
         group_line: None,
         member_line: None,
+        game_invite: None,
     }
 }
 
