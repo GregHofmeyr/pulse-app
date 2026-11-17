@@ -500,6 +500,13 @@ async fn squad_stats_show_heroes_games_together_and_the_best_duo() {
     let before = fake.calls("mate-stats");
     let _: DeadlockProfile = get_json(app, &kim.1, &path).await;
     assert_eq!(fake.calls("mate-stats"), before);
+    // kim and alex hiding their games from sam changes none of it (#438): only live games and new posts are hidden
+    hide_games(app, &kim.1, w.sam.0).await;
+    hide_games(app, &w.alex.1, w.sam.0).await;
+    let p: DeadlockProfile = get_json(app, &w.sam.1, &path).await;
+    assert_eq!(p.heroes.len(), 2);
+    assert_eq!(p.with_you.unwrap().user_id, w.sam.0);
+    assert_eq!(p.best_duo.unwrap().user_id, kim.0);
 
     // kim stops sharing squad stats: not anyone's duo any more
     set_steam(app, &kim.1, json!({ "deadlock_squad": false })).await;
@@ -753,7 +760,8 @@ async fn hide_games(app: &TestApp, token: &str, who: UserId) {
 #[tokio::test]
 async fn hiding_your_games_from_a_member_keeps_your_deadlock_out_of_their_server() {
     // #438: a match card is one message for the whole channel, so a server with someone alex hides their games from
-    // gets none of alex's; another server still does. alex's Deadlock section and rank skip that person too.
+    // gets none of alex's; another server still does. alex's Deadlock section and rank still show to that person like
+    // anyone else: only new posts skip, since a section vanishing would be the clearer tell.
     let w = world().await;
     let (app, fake) = (&w.app, &w.fake);
     let kim = register(app, "kim").await;
@@ -798,22 +806,20 @@ async fn hiding_your_games_from_a_member_keeps_your_deadlock_out_of_their_server
         "the other server still gets it"
     );
 
-    // the section and the rank: empty for sam, whole for kim (who joins the first server)
+    // the section and the rank: whole for sam and for kim (who joins the first server) alike
     join(app, &kim.1, w.server).await;
     fake.set_rank(ALEX, 83);
     fake.hero_stats(ALEX, INFERNUS, 22, 40);
     let s = app.state();
     pulse_server::deadlock::ranks::refresh(&s).await.unwrap();
     let path = format!("/servers/{}/members/{}/deadlock", w.server, w.alex.0);
-    let p: DeadlockProfile = get_json(app, &w.sam.1, &path).await;
-    assert!(p.rank.is_none() && p.last_match.is_none() && p.heroes.is_empty());
-    let p: DeadlockProfile = get_json(app, &kim.1, &path).await;
-    assert!(p.rank.is_some() && p.last_match.is_some() && !p.heroes.is_empty());
-    let ranks = format!("/servers/{}/deadlock-ranks", w.server);
-    let r: DeadlockRanks = get_json(app, &w.sam.1, &ranks).await;
-    assert!(r.entries.iter().all(|e| e.user_id != w.alex.0));
-    let r: DeadlockRanks = get_json(app, &kim.1, &ranks).await;
-    assert!(r.entries.iter().any(|e| e.user_id == w.alex.0));
+    for t in [&w.sam.1, &kim.1] {
+        let p: DeadlockProfile = get_json(app, t, &path).await;
+        assert!(p.rank.is_some() && p.last_match.is_some() && !p.heroes.is_empty());
+        let ranks = format!("/servers/{}/deadlock-ranks", w.server);
+        let r: DeadlockRanks = get_json(app, t, &ranks).await;
+        assert!(r.entries.iter().any(|e| e.user_id == w.alex.0));
+    }
 
     // the weekly movers skip alex in a server sam is in
     let t0 = chrono::Utc::now();

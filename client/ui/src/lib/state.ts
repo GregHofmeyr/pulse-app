@@ -1327,9 +1327,6 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return e.d.user_id === s.me?.id ? { ...s, personDnd: e.d.list } : s
     case 'ActivityHiddenChanged':
       return e.d.user_id === s.me?.id ? { ...s, activityHidden: e.d.list } : s
-    // An open card asks again (lib/store.svelte.ts, noteGameStats): nothing to keep here (#438).
-    case 'GameStatsChanged':
-      return s
     case 'ServerBlocksChanged':
       return e.d.user_id === s.me?.id ? { ...s, blocksRev: { ...s.blocksRev, [e.d.server_id]: (s.blocksRev[e.d.server_id] ?? 0) + 1 } } : s
     case 'RejoinBlockChanged': {

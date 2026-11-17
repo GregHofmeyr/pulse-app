@@ -29,7 +29,7 @@ export const patchNotes: PatchNotes = {
   date: '17 November 2026',
   new: [
     'Invite to game: right-click someone (or hit the 🎮 button in a DM) to send a Join card for the game you\'re in. Only the people in that chat can join, and it works even when your game activity is hidden',
-    'Hide what I\'m playing: right-click someone to stop them seeing your game, Steam hours and Deadlock stats. They still see you online. Manage the list in Settings › Privacy › Game activity',
+    'Hide what I\'m playing: right-click someone to stop them seeing the game you\'re in (and joining it). They still see you online. Manage the list in Settings › Privacy › Game activity',
     'A redesigned quotes leaderboard that\'s easier to read and counts properly',
   ],
   fixes: [

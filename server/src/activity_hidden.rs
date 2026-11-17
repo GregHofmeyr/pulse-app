@@ -1,22 +1,23 @@
 //! Hide what I'm playing per person (#436): `PUT|DELETE /me/activity-hidden/{user_id}`. Someone on your list never
-//! gets your game activity: your "Playing" (and the Join inside it), your Steam hours (profile card and a server's
-//! board), and your Steam completion and 100 % games on your profile card (Steam badges still show to everyone: one vanishing would be a clearer tell than it ticking up). They see you online with no game, as if you played nothing. "Listening to" isn't game activity and isn't
-//! touched.
+//! gets your live game: your "Playing" and the Join inside it. They see you online with no game, as if you played
+//! nothing right now. "Listening to" isn't game activity and isn't touched.
 //!
-//! Enforced where game activity leaves the server: the hub's per-viewer pass (`presence::Subject::shows_game_to`,
-//! read by `Hub::sync_presence` and Ready's people), and the Steam hours and stat reads. A change re-runs the pass, so a newly
-//! hidden viewer's clients drop your game at once and an un-hidden one gets it back.
+//! Only what you're playing now is hidden. Your profile and stats (Steam hours on your card and a server's board,
+//! Steam completion and 100 % games, Steam badges, your Deadlock section, rank and games together) show to them
+//! exactly as to anyone else, under your own share switches: something vanishing would be a far clearer tell than a
+//! number ticking up (#438).
+//!
+//! Enforced where your live game leaves the server: the hub's per-viewer pass (`presence::Subject::shows_game_to`,
+//! read by `Hub::sync_presence` and Ready's people). A change re-runs the pass, so a newly hidden viewer's clients
+//! drop your game at once and an un-hidden one gets it back.
 //!
 //! Posts that show someone's games to a whole channel (Steam achievement cards, Deadlock match cards and rank movers)
-//! are one message for everyone, so they can't be filtered per viewer: a post about you skips every server where
-//! anyone you hide your games from is a member ([`hides_in_server`]). Privacy wins over the post (#438).
+//! are one message for everyone, so they can't be filtered per viewer: a new post about you skips every server where
+//! anyone you hide your games from is a member ([`hides_in_server`]), and a match card going out again drops your
+//! line there. A post that never appears isn't noticed (#438). Invites to play aren't touched.
 //!
 //! Kept per person (`activity_hidden`) so it follows you to every device, sent only to you (Ready's `activity_hidden`
-//! and `ActivityHiddenChanged`, always the whole list). The person newly hidden (or shown again) gets
-//! `GameStatsChanged`, naming only you, so a card of yours they have open asks again and drops (or gets back) your
-//! Steam hours, Steam stats and Deadlock section (#438). It goes out only when you have something there
-//! that hiding changes for them (a game now, shared Steam hours or completion, or shared Deadlock
-//! data), and like the re-run pass it says no more than that your game activity changed.
+//! and `ActivityHiddenChanged`, always the whole list).
 
 use axum::extract::{Path, State};
 use axum::routing::put;
@@ -97,7 +98,7 @@ async fn set(
             "What you're playing can be hidden from up to {MAX_PEOPLE} people."
         )));
     }
-    let added = sqlx::query(
+    sqlx::query(
         "INSERT INTO activity_hidden (user_id, target_id, created_at) VALUES (?, ?, ?)
          ON CONFLICT (user_id, target_id) DO NOTHING",
     )
@@ -105,15 +106,9 @@ async fn set(
     .bind(target.to_string())
     .bind(now())
     .execute(&mut *tx)
-    .await?
-    .rows_affected()
-        > 0;
+    .await?;
     tx.commit().await?;
-    let list = announce(&s, me).await?;
-    if added {
-        stats_changed(&s, me, target).await?;
-    }
-    Ok(Json(list))
+    Ok(Json(announce(&s, me).await?))
 }
 
 /// `DELETE /me/activity-hidden/{id}`: show them your game activity again. Answers with your whole list.
@@ -123,56 +118,12 @@ async fn clear(
     Path(id): Path<String>,
 ) -> AppResult<Json<Vec<UserId>>> {
     let target = target(&s, me, &id).await?;
-    let removed = sqlx::query("DELETE FROM activity_hidden WHERE user_id = ? AND target_id = ?")
+    sqlx::query("DELETE FROM activity_hidden WHERE user_id = ? AND target_id = ?")
         .bind(me.to_string())
         .bind(target.to_string())
         .execute(&s.db)
-        .await?
-        .rows_affected()
-        > 0;
-    let list = announce(&s, me).await?;
-    if removed {
-        stats_changed(&s, me, target).await?;
-    }
-    Ok(Json(list))
-}
-
-/// Tell `viewer`'s sessions that what they may see of `me`'s game stats changed, when `me` has any that hiding takes
-/// away ([`has_game_stats`]): otherwise nothing they could see changed, and nothing goes out.
-async fn stats_changed(s: &AppState, me: UserId, viewer: UserId) -> AppResult<()> {
-    if !has_game_stats(s, me).await? {
-        return Ok(());
-    }
-    s.hub
-        .publish(
-            &s.db,
-            Event::GameStatsChanged {
-                user_id: viewer,
-                person_id: me,
-            },
-        )
-        .await;
-    Ok(())
-}
-
-/// Whether `me` has game activity that hiding it from someone takes off what they see: a game now, Steam hours or a
-/// Steam completion they share, or Deadlock data they share.
-async fn has_game_stats(s: &AppState, me: UserId) -> AppResult<bool> {
-    if s.hub.playing_of(me).is_some() {
-        return Ok(true);
-    }
-    let steam: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM steam_links l WHERE l.user_id = ? AND (
-           (l.share_hours = 1 AND l.recent_minutes IS NOT NULL)
-           OR (l.share_achievements = 1 AND l.completion_rate IS NOT NULL)
-           OR ((l.deadlock_matches = 1 OR l.deadlock_rank = 1 OR l.deadlock_squad = 1)
-               AND (EXISTS (SELECT 1 FROM deadlock_players p WHERE p.user_id = l.user_id)
-                    OR EXISTS (SELECT 1 FROM deadlock_matches dm WHERE dm.user_id = l.user_id))))",
-    )
-    .bind(me.to_string())
-    .fetch_optional(&s.db)
-    .await?;
-    Ok(steam.is_some())
+        .await?;
+    Ok(Json(announce(&s, me).await?))
 }
 
 /// Tell `me`'s own sessions their list as it is now, and every viewer what they may now see of `me`'s game.
@@ -199,22 +150,4 @@ pub fn hides_in_server(user: &'static str, server: &'static str) -> String {
         "EXISTS (SELECT 1 FROM activity_hidden h JOIN server_members hm ON hm.user_id = h.target_id
            AND hm.server_id = {server} WHERE h.user_id = {user})"
     )
-}
-
-/// Whether `owner` hides their game activity from `viewer` (never from themselves).
-pub async fn hides<'e>(
-    db: impl sqlx::SqliteExecutor<'e>,
-    owner: UserId,
-    viewer: UserId,
-) -> sqlx::Result<bool> {
-    if owner == viewer {
-        return Ok(false);
-    }
-    let hit: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM activity_hidden WHERE user_id = ? AND target_id = ?")
-            .bind(owner.to_string())
-            .bind(viewer.to_string())
-            .fetch_optional(db)
-            .await?;
-    Ok(hit.is_some())
 }

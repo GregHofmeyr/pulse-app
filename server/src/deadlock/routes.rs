@@ -131,7 +131,7 @@ async fn ranks(
     if !s.deadlock.api().available() {
         return Ok(Json(DeadlockRanks { entries: vec![] }));
     }
-    let rows = super::ranks::of_server(&s.db, &id.to_string(), me).await?;
+    let rows = super::ranks::of_server(&s.db, &id.to_string()).await?;
     let cat = if rows.is_empty() {
         None
     } else {

@@ -1,7 +1,8 @@
-//! Hide what I'm playing per person (#436): someone on your list never gets your game (Ready's people, live
-//! `PlayingChanged`) or your Steam hours (profile card, a server's board), and sees you online all the same; everyone
-//! else is untouched; hiding takes your game from their clients at once and showing sends it again; your list follows
-//! you (Ready and `ActivityHiddenChanged`); "Listening to" isn't touched. Nothing here reaches the real network.
+//! Hide what I'm playing per person (#436): someone on your list never gets your live game (Ready's people, live
+//! `PlayingChanged`) and sees you online all the same; everyone else is untouched; hiding takes your game from their
+//! clients at once and showing sends it again; your list follows you (Ready and `ActivityHiddenChanged`); "Listening
+//! to" isn't touched. Your profile and stats (Steam hours on the card and the board, Steam completion, badges) still
+//! show to them as to anyone (#438). Nothing here reaches the real network.
 mod common;
 
 use std::time::Duration;
@@ -224,7 +225,8 @@ async fn hiding_takes_your_game_away_at_once_and_showing_sends_it_again() {
 }
 
 #[tokio::test]
-async fn steam_hours_skip_whoever_you_hide_your_games_from() {
+async fn steam_hours_still_show_to_whoever_you_hide_your_games_from() {
+    // #438: only your live game is hidden; hours vanishing from the card or the board would be the clearer tell
     let app = spawn().await;
     let (alex, alex_t) = register(&app, "alex").await;
     let (sam, sam_t) = register(&app, "sam").await;
@@ -259,7 +261,7 @@ async fn steam_hours_skip_whoever_you_hide_your_games_from() {
         }
     };
     assert_eq!(hours(kim_t.clone()).await, (Some(300), true));
-    assert_eq!(hours(sam_t.clone()).await, (None, false));
+    assert_eq!(hours(sam_t.clone()).await, (Some(300), true), "hidden from");
     assert_eq!(hours(alex_t.clone()).await, (Some(300), true), "your own");
 }
 
@@ -284,65 +286,10 @@ async fn only_real_people_and_never_yourself() {
     assert!(r.activity_hidden.is_empty());
 }
 
-fn stats_changes(events: &[Event], about: UserId) -> usize {
-    events
-        .iter()
-        .filter(|e| matches!(e, Event::GameStatsChanged { person_id, .. } if *person_id == about))
-        .count()
-}
-
 #[tokio::test]
-async fn the_person_hidden_or_shown_again_is_told_to_ask_for_your_stats_again() {
-    // #438: a card of alex that sam has open drops alex's Steam hours and Deadlock section live: sam's sessions get
-    // `GameStatsChanged` naming alex when alex hides their games from sam, and again when alex shows them; nobody
-    // else does, and a hide that changes nothing sends nothing.
-    let app = spawn().await;
-    let (alex, alex_t) = register(&app, "alex").await;
-    let (sam, sam_t) = register(&app, "sam").await;
-    let (_, kim_t) = register(&app, "kim").await;
-    let (mut sam_ws, _) = hello(&app, &sam_t).await;
-    let (mut kim_ws, _) = hello(&app, &kim_t).await;
-    for ws in [&mut sam_ws, &mut kim_ws] {
-        drain(ws, 200).await;
-    }
-    // alex shares Steam hours: something sam sees of alex changes
-    sqlx::query(
-        "INSERT INTO steam_links (user_id, steam_id, linked_at, backfill, share_hours, recent_minutes, recent_at)
-         VALUES (?, '76500000000000001', ?, 'done', 1, 300, ?)",
-    )
-    .bind(alex.to_string())
-    .bind(pulse_server::db::now())
-    .bind(pulse_server::db::now())
-    .execute(&app.db)
-    .await
-    .unwrap();
-
-    assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
-    let got = drain(&mut sam_ws, 400).await;
-    assert!(
-        got.iter().any(|e| matches!(
-            e,
-            Event::GameStatsChanged { user_id, person_id } if *user_id == sam && *person_id == alex
-        )),
-        "{got:?}"
-    );
-    assert_eq!(stats_changes(&drain(&mut kim_ws, 300).await, alex), 0);
-    assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
-    assert_eq!(
-        stats_changes(&drain(&mut sam_ws, 300).await, alex),
-        0,
-        "already hidden"
-    );
-
-    assert_eq!(hide(&app, &alex_t, sam, false).await.status(), 200);
-    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 1);
-    assert_eq!(stats_changes(&drain(&mut kim_ws, 300).await, alex), 0);
-}
-
-#[tokio::test]
-async fn steam_stats_on_the_card_skip_whoever_you_hide_your_games_from() {
-    // #438: the profile card's Steam completion and 100 % games are game activity too. Steam badges still show to
-    // everyone (owner call: a badge vanishing is a more obvious tell than it ticking up), as does the rest of the card.
+async fn steam_stats_and_badges_on_the_card_still_show_to_whoever_you_hide_your_games_from() {
+    // #438: the profile card's Steam completion, 100 % games and Steam badges show to everyone, including whoever you
+    // hide your games from (owner call: something vanishing is a far more obvious tell than numbers ticking up).
     let app = spawn().await;
     let (alex, alex_t) = register(&app, "alex").await;
     let (sam, sam_t) = register(&app, "sam").await;
@@ -408,64 +355,12 @@ async fn steam_stats_on_the_card_skip_whoever_you_hide_your_games_from() {
     );
     assert_eq!(
         card(sam_t.clone()).await,
-        (false, None, all.clone(), showcase.clone())
+        (true, Some(3), all.clone(), showcase.clone()),
+        "hidden from"
     );
     assert_eq!(
         card(alex_t.clone()).await,
         (true, Some(3), all, showcase),
         "your own"
     );
-}
-
-#[tokio::test]
-async fn hiding_with_nothing_to_hide_tells_them_nothing() {
-    // #438: `GameStatsChanged` goes out only when something the person hidden (or shown again) could see changes: no
-    // Steam hours, stats or badges, no Deadlock and no game now means nothing to ask again for.
-    let app = spawn().await;
-    let (alex, alex_t) = register(&app, "alex").await;
-    let (sam, sam_t) = register(&app, "sam").await;
-    let (mut sam_ws, _) = hello(&app, &sam_t).await;
-    let (mut alex_ws, _) = hello(&app, &alex_t).await;
-    drain(&mut sam_ws, 200).await;
-
-    assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
-    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 0);
-    assert_eq!(hide(&app, &alex_t, sam, false).await.status(), 200);
-    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 0);
-
-    // a Steam link that shares nothing that shows is nothing either
-    sqlx::query(
-        "INSERT INTO steam_links (user_id, steam_id, linked_at, backfill, share_hours, share_achievements)
-         VALUES (?, '76500000000000001', ?, 'done', 1, 1)",
-    )
-    .bind(alex.to_string())
-    .bind(pulse_server::db::now())
-    .execute(&app.db)
-    .await
-    .unwrap();
-    assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
-    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 0);
-    assert_eq!(hide(&app, &alex_t, sam, false).await.status(), 200);
-    drain(&mut sam_ws, 300).await;
-
-    // playing something now is
-    play(&app, &mut alex_ws, alex, Some("Space Game")).await;
-    drain(&mut sam_ws, 300).await;
-    assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
-    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 1);
-    play(&app, &mut alex_ws, alex, None).await;
-    assert_eq!(hide(&app, &alex_t, sam, false).await.status(), 200);
-    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 0);
-
-    // but a Steam badge alone isn't: badges show to everyone
-    sqlx::query(
-        "INSERT INTO user_badges (user_id, badge_key, tier, earned_at) VALUES (?, 'touch_grass', 1, ?)",
-    )
-    .bind(alex.to_string())
-    .bind(pulse_server::db::now())
-    .execute(&app.db)
-    .await
-    .unwrap();
-    assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
-    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 0);
 }

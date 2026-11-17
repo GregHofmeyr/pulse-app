@@ -84,22 +84,16 @@ pub async fn refresh(s: &AppState) -> AppResult<()> {
     Ok(())
 }
 
-/// The stored badges of `server`'s members who show their rank (ranked ones only), as `viewer` sees them: less anyone
-/// who hides what they're playing from `viewer` (#438).
-pub async fn of_server(
-    db: &SqlitePool,
-    server: &str,
-    viewer: UserId,
-) -> sqlx::Result<Vec<(UserId, u32)>> {
+/// The stored badges of `server`'s members who show their rank (ranked ones only). The same for every member,
+/// including anyone a member hides what they're playing from (#438).
+pub async fn of_server(db: &SqlitePool, server: &str) -> sqlx::Result<Vec<(UserId, u32)>> {
     let rows: Vec<(String, i64)> = sqlx::query_as(
         "SELECT p.user_id, p.badge FROM deadlock_players p
          JOIN steam_links l ON l.user_id = p.user_id AND l.deadlock_rank = 1
          JOIN server_members m ON m.user_id = p.user_id AND m.server_id = ?
-         WHERE p.badge > 0
-           AND NOT EXISTS (SELECT 1 FROM activity_hidden h WHERE h.user_id = p.user_id AND h.target_id = ?)",
+         WHERE p.badge > 0",
     )
     .bind(server)
-    .bind(viewer.to_string())
     .fetch_all(db)
     .await?;
     Ok(rows

@@ -1,8 +1,9 @@
 <script lang="ts">
   // "Hide what I'm playing" / "Show what I'm playing" (#436): an ordinary item in every person's right-click menu
-  // (member list, message author, voice row and tile, DM list, profile card). Hidden, they never get your game (the
-  // server leaves it out for them) and see you online with no game; they're never told. Never for yourself. The
-  // answer (and ActivityHiddenChanged on your other devices) flips the label.
+  // (member list, message author, voice row and tile, DM list, profile card). Hidden, they never get what you're
+  // playing right now or its Join (the server leaves it out for them) and see you online with no game; your profile
+  // and stats still show to them as to anyone. They're never told. Never for yourself. The answer (and
+  // ActivityHiddenChanged on your other devices) flips the label.
   import { app, ui } from '../lib/store.svelte'
   import { errorText } from '../lib/tauri'
   import { hidesGameFrom, setActivityHidden } from '../lib/gameInvites.svelte'

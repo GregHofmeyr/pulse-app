@@ -41,7 +41,7 @@ async fn steam_hours(
 ) -> AppResult<Json<SteamHours>> {
     crate::servers::routes::require_member(&s.db, id, me).await?;
     Ok(Json(SteamHours {
-        entries: super::hours::board(&s.db, id, me).await?,
+        entries: super::hours::board(&s.db, id).await?,
     }))
 }
 
