@@ -1320,6 +1320,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return e.d.user_id === s.me?.id ? { ...s, personDnd: e.d.list } : s
     case 'ActivityHiddenChanged':
       return e.d.user_id === s.me?.id ? { ...s, activityHidden: e.d.list } : s
+    // An open card asks again (lib/store.svelte.ts, noteGameStats): nothing to keep here (#438).
+    case 'GameStatsChanged':
+      return s
     case 'InboxFiltersChanged':
       return e.d.user_id === s.me?.id ? { ...s, inboxFilters: e.d.filters } : s
     case 'ViewOnceOpened':

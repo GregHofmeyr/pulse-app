@@ -1,8 +1,9 @@
 <script lang="ts">
   // A member's Deadlock section on their profile card (#390): rank badge, last match, most-played heroes, their games
   // with you and their best duo in this server. Read when the card opens; nothing shows when there's nothing (not
-  // linked, nothing shared, deadlock-api unreachable, an older server). Pictures are the server's copies.
-  import { app } from '../lib/store.svelte'
+  // linked, nothing shared, deadlock-api unreachable, an older server). Pictures are the server's copies. Read again
+  // when they hide what they play from you or show it again (#438, `gameStats`).
+  import { app, gameStats } from '../lib/store.svelte'
   import { api } from '../lib/tauri'
   import { displayName } from '../lib/selectors'
   import { thumbUrl } from '../lib/achievements'
@@ -13,6 +14,7 @@
   let got = $state<DeadlockProfile | null>(null)
   $effect(() => {
     const [s, u] = [serverId, userId]
+    void gameStats.rev[u]
     let gone = false
     got = null
     api.deadlockProfile(s, u).then(

@@ -283,3 +283,47 @@ async fn only_real_people_and_never_yourself() {
     let (_ws, r) = hello(&app, &sam_t).await;
     assert!(r.activity_hidden.is_empty());
 }
+
+fn stats_changes(events: &[Event], about: UserId) -> usize {
+    events
+        .iter()
+        .filter(|e| matches!(e, Event::GameStatsChanged { person_id, .. } if *person_id == about))
+        .count()
+}
+
+#[tokio::test]
+async fn the_person_hidden_or_shown_again_is_told_to_ask_for_your_stats_again() {
+    // #438: a card of alex that sam has open drops alex's Steam hours and Deadlock section live: sam's sessions get
+    // `GameStatsChanged` naming alex when alex hides their games from sam, and again when alex shows them; nobody
+    // else does, and a hide that changes nothing sends nothing.
+    let app = spawn().await;
+    let (alex, alex_t) = register(&app, "alex").await;
+    let (sam, sam_t) = register(&app, "sam").await;
+    let (_, kim_t) = register(&app, "kim").await;
+    let (mut sam_ws, _) = hello(&app, &sam_t).await;
+    let (mut kim_ws, _) = hello(&app, &kim_t).await;
+    for ws in [&mut sam_ws, &mut kim_ws] {
+        drain(ws, 200).await;
+    }
+
+    assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
+    let got = drain(&mut sam_ws, 400).await;
+    assert!(
+        got.iter().any(|e| matches!(
+            e,
+            Event::GameStatsChanged { user_id, person_id } if *user_id == sam && *person_id == alex
+        )),
+        "{got:?}"
+    );
+    assert_eq!(stats_changes(&drain(&mut kim_ws, 300).await, alex), 0);
+    assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
+    assert_eq!(
+        stats_changes(&drain(&mut sam_ws, 300).await, alex),
+        0,
+        "already hidden"
+    );
+
+    assert_eq!(hide(&app, &alex_t, sam, false).await.status(), 200);
+    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 1);
+    assert_eq!(stats_changes(&drain(&mut kim_ws, 300).await, alex), 0);
+}

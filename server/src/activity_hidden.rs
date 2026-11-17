@@ -12,7 +12,9 @@
 //! anyone you hide your games from is a member ([`hides_in_server`]). Privacy wins over the post (#438).
 //!
 //! Kept per person (`activity_hidden`) so it follows you to every device, sent only to you (Ready's `activity_hidden`
-//! and `ActivityHiddenChanged`, always the whole list).
+//! and `ActivityHiddenChanged`, always the whole list). The person newly hidden (or shown again) gets
+//! `GameStatsChanged`, naming only you, so a card of yours they have open asks again and drops (or gets back) your
+//! Steam hours and Deadlock section (#438); like the re-run pass, it says no more than that your game changed.
 
 use axum::extract::{Path, State};
 use axum::routing::put;
@@ -93,7 +95,7 @@ async fn set(
             "What you're playing can be hidden from up to {MAX_PEOPLE} people."
         )));
     }
-    sqlx::query(
+    let added = sqlx::query(
         "INSERT INTO activity_hidden (user_id, target_id, created_at) VALUES (?, ?, ?)
          ON CONFLICT (user_id, target_id) DO NOTHING",
     )
@@ -101,9 +103,15 @@ async fn set(
     .bind(target.to_string())
     .bind(now())
     .execute(&mut *tx)
-    .await?;
+    .await?
+    .rows_affected()
+        > 0;
     tx.commit().await?;
-    Ok(Json(announce(&s, me).await?))
+    let list = announce(&s, me).await?;
+    if added {
+        stats_changed(&s, me, target).await;
+    }
+    Ok(Json(list))
 }
 
 /// `DELETE /me/activity-hidden/{id}`: show them your game activity again. Answers with your whole list.
@@ -113,12 +121,31 @@ async fn clear(
     Path(id): Path<String>,
 ) -> AppResult<Json<Vec<UserId>>> {
     let target = target(&s, me, &id).await?;
-    sqlx::query("DELETE FROM activity_hidden WHERE user_id = ? AND target_id = ?")
+    let removed = sqlx::query("DELETE FROM activity_hidden WHERE user_id = ? AND target_id = ?")
         .bind(me.to_string())
         .bind(target.to_string())
         .execute(&s.db)
-        .await?;
-    Ok(Json(announce(&s, me).await?))
+        .await?
+        .rows_affected()
+        > 0;
+    let list = announce(&s, me).await?;
+    if removed {
+        stats_changed(&s, me, target).await;
+    }
+    Ok(Json(list))
+}
+
+/// Tell `viewer`'s sessions that what they may see of `me`'s game stats changed.
+async fn stats_changed(s: &AppState, me: UserId, viewer: UserId) {
+    s.hub
+        .publish(
+            &s.db,
+            Event::GameStatsChanged {
+                user_id: viewer,
+                person_id: me,
+            },
+        )
+        .await;
 }
 
 /// Tell `me`'s own sessions their list as it is now, and every viewer what they may now see of `me`'s game.

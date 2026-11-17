@@ -293,6 +293,19 @@ export function noteProfileUpdate(e: Event) {
   if (e.t === 'ProfileUpdated' && profileLoads.has(e.d.user.id)) updatedDuringLoad.set(e.d.user.id, e.d)
 }
 
+/** Bumped per person when what you may see of their game stats changes (#438): their Deadlock section reads it to
+ *  ask again. */
+export const gameStats = $state<{ rev: Record<string, number> }>({ rev: {} })
+
+/** Someone hid what they play from you, or showed it again (`GameStatsChanged`): a cached profile of theirs (an open
+ *  card's) is fetched again, dropping or bringing back their Steam hours, and their Deadlock section asks again. */
+export function noteGameStats(e: Event) {
+  if (e.t !== 'GameStatsChanged' || e.d.user_id !== app.state.me?.id) return
+  const who = e.d.person_id
+  gameStats.rev = { ...gameStats.rev, [who]: (gameStats.rev[who] ?? 0) + 1 }
+  if (app.state.profiles[who]) loadProfile(who).catch(() => {})
+}
+
 /** Fetch `userId`'s profile into the cache; calls made while one is in flight share its request. */
 export function loadProfile(userId: string): Promise<Profile> {
   const inflight = profileLoads.get(userId)
@@ -376,6 +389,7 @@ export async function startListening(): Promise<UnlistenFn> {
     listen<Event>('pulse://event', (e) => {
       maybeAlert(e.payload)
       noteProfileUpdate(e.payload)
+      noteGameStats(e.payload)
       noteReactionEvent(e.payload, app.state.me?.id)
       app.state = applyEvent(app.state, e.payload, Date.now())
       streamApi.onEvent(e.payload)

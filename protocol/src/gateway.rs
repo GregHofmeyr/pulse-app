@@ -518,6 +518,13 @@ pub enum Event {
         user_id: UserId,
         list: Vec<UserId>,
     },
+    /// Only to its person's own sessions: what they may see of `person_id`'s game stats (Steam hours, their Deadlock
+    /// section) changed (#438), because `person_id` hid what they play from them or showed it again. Nothing but who:
+    /// an open card of `person_id` asks again. Clients from before it skip it.
+    GameStatsChanged {
+        user_id: UserId,
+        person_id: UserId,
+    },
     /// Only to its person's own sessions: their saved inbox filters changed (#307), the whole new
     /// [`Ready::inbox_filters`]. Clients from before it skip it.
     InboxFiltersChanged {
@@ -1000,6 +1007,7 @@ impl Event {
             | Self::DmLayoutChanged { .. }
             | Self::PersonDndChanged { .. }
             | Self::ActivityHiddenChanged { .. }
+            | Self::GameStatsChanged { .. }
             | Self::InboxFiltersChanged { .. }
             | Self::ChannelOrderChanged { .. }
             | Self::ViewOnceOpened { .. }
@@ -1036,6 +1044,7 @@ impl Event {
             | Self::DmLayoutChanged { user_id, .. }
             | Self::PersonDndChanged { user_id, .. }
             | Self::ActivityHiddenChanged { user_id, .. }
+            | Self::GameStatsChanged { user_id, .. }
             | Self::InboxFiltersChanged { user_id, .. }
             | Self::ChannelOrderChanged { user_id, .. }
             | Self::ViewOnceOpened { user_id, .. }

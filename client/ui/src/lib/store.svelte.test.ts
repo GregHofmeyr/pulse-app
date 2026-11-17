@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }))
 
 import { invoke } from '@tauri-apps/api/core'
-import { app, handleReady, loadProfile, noteProfileUpdate, PROFILE_STALE_MS, queueMessage, resetState, retryFiles, revalidateProfile } from './store.svelte'
+import { app, gameStats, handleReady, loadProfile, noteGameStats, noteProfileUpdate, PROFILE_STALE_MS, queueMessage, resetState, retryFiles, revalidateProfile } from './store.svelte'
 import { addPending, applyEvent, emptyState, removePending, setPendingStatus, type Pending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
@@ -225,6 +225,22 @@ describe('loadProfile', () => {
   beforeEach(() => {
     resetState()
     vi.mocked(invoke).mockReset()
+  })
+
+  it('GameStatsChanged for you fetches a cached profile of that person again and bumps their stats (#438)', async () => {
+    vi.mocked(invoke).mockImplementation((async () => profile('U2')) as never)
+    app.state = { ...app.state, me: { ...profile('U1').user, id: 'U1' } }
+    const e = (to: string, who: string) => ({ t: 'GameStatsChanged', d: { user_id: to, person_id: who } }) as const
+    noteGameStats(e('U1', 'U3')) // nothing cached of U3: no fetch, but their Deadlock section asks again
+    expect(calls()).toHaveLength(0)
+    expect(gameStats.rev.U3).toBe(1)
+    await loadProfile('U2')
+    noteGameStats(e('U1', 'U2'))
+    await Promise.resolve()
+    expect(calls()).toHaveLength(2)
+    expect(gameStats.rev.U2).toBe(1)
+    noteGameStats(e('U9', 'U2')) // someone else's: never ours
+    expect(calls()).toHaveLength(2)
   })
 
   it('concurrent loadProfile calls share one request', async () => {
