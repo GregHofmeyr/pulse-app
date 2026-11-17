@@ -647,6 +647,22 @@ impl Api {
         .await
     }
 
+    /// Archive (`true`) or unarchive a text channel (#303): the server owner only.
+    pub async fn set_channel_archived(
+        &self,
+        token: &str,
+        ch: ChannelId,
+        archived: bool,
+    ) -> Result<Channel, ApiError> {
+        let url = format!("{}/channels/{ch}/archive", self.base);
+        let req = if archived {
+            self.http.put(url)
+        } else {
+            self.http.delete(url)
+        };
+        Self::parse(req.bearer_auth(token).send().await).await
+    }
+
     pub async fn list_deleted_channels(
         &self,
         token: &str,
@@ -757,6 +773,21 @@ impl Api {
         )
         .await?;
         Ok(r.unread)
+    }
+
+    /// Reply threads you're part of with replies you haven't seen (#326).
+    pub async fn inbox_threads(
+        &self,
+        token: &str,
+    ) -> Result<pulse_protocol::rest::InboxThreads, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/inbox/threads", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
     }
 
     /// An inbox item was opened (#306): read on every device.
@@ -878,6 +909,35 @@ impl Api {
         Self::ok_empty(
             self.http
                 .post(format!("{}/servers/{server}/join", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Leave a server (#371). Its owner can't.
+    pub async fn leave_server(&self, token: &str, server: ServerId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(format!("{}/servers/{server}/leave", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Remove someone from a server (#371): its owner only.
+    pub async fn remove_server_member(
+        &self,
+        token: &str,
+        server: ServerId,
+        user: UserId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/servers/{server}/members/{user}", self.base))
                 .bearer_auth(token)
                 .send()
                 .await,
@@ -2477,6 +2537,75 @@ impl Api {
         .await
     }
 
+    /// A new conversation category of your own (#305), last: your whole layout.
+    pub async fn create_dm_category(
+        &self,
+        token: &str,
+        name: String,
+    ) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+        Self::parse(
+            self.http
+                .post(self.url(&["me", "dm-categories"])?)
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::CreateDmCategoryRequest { name })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Rename one of your conversation categories, or fold it open or shut (#305).
+    pub async fn update_dm_category(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::DmCategoryId,
+        body: &pulse_protocol::rest::UpdateDmCategoryRequest,
+    ) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+        Self::parse(
+            self.http
+                .patch(self.url(&["me", "dm-categories", &id.to_string()])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Delete one of your conversation categories (#305): its conversations go back to the main list.
+    pub async fn delete_dm_category(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::DmCategoryId,
+    ) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+        Self::parse(
+            self.http
+                .delete(self.url(&["me", "dm-categories", &id.to_string()])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Pin or unpin a conversation and put it in one of your categories, or none (#305).
+    pub async fn place_dm(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &pulse_protocol::rest::DmPlacementRequest,
+    ) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+        Self::parse(
+            self.http
+                .put(self.url(&["me", "dm-placements", &channel.to_string()])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Plan reminders (#399): whether plans' reminder lines ping you, on every device.
     pub async fn set_plan_reminders(&self, token: &str, on: bool) -> Result<(), ApiError> {
         Self::ok_empty(
@@ -2565,6 +2694,106 @@ impl Api {
         Self::ok_empty(
             self.http
                 .delete(format!("{}/scheduled/{id}", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A message's versions (#301): the current text first, then the earlier ones, newest first.
+    pub async fn message_edits(
+        &self,
+        token: &str,
+        message: MessageId,
+    ) -> Result<Vec<pulse_protocol::rest::MessageVersion>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/messages/{message}/edits", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Forward a message (#302) to a chat you can post in; the forward, as a send answers.
+    pub async fn forward_message(
+        &self,
+        token: &str,
+        message: MessageId,
+        body: &pulse_protocol::rest::ForwardMessageRequest,
+    ) -> Result<Message, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/messages/{message}/forward", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Your saved messages (#315), newest first.
+    pub async fn list_bookmarks(
+        &self,
+        token: &str,
+    ) -> Result<Vec<pulse_protocol::rest::MessageBookmark>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/bookmarks", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Save a message (#315); the one you already have when it was saved before.
+    pub async fn save_message(
+        &self,
+        token: &str,
+        message: MessageId,
+        body: &pulse_protocol::rest::SaveMessageRequest,
+    ) -> Result<pulse_protocol::rest::MessageBookmark, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/messages/{message}/bookmark", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A saved message's new note (#315).
+    pub async fn edit_bookmark(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::BookmarkId,
+        body: &pulse_protocol::rest::EditBookmarkRequest,
+    ) -> Result<pulse_protocol::rest::MessageBookmark, ApiError> {
+        Self::parse(
+            self.http
+                .patch(format!("{}/bookmarks/{id}", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn delete_bookmark(
+        &self,
+        token: &str,
+        id: pulse_protocol::ids::BookmarkId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/bookmarks/{id}", self.base))
                 .bearer_auth(token)
                 .send()
                 .await,
@@ -3572,6 +3801,24 @@ impl Api {
         .await
     }
 
+    /// Change your open poll's question and options (#265).
+    pub async fn edit_poll(
+        &self,
+        token: &str,
+        poll: MessageId,
+        body: &pulse_protocol::rest::EditPollRequest,
+    ) -> Result<pulse_protocol::rest::Poll, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/messages/{poll}/poll", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// End your poll now.
     pub async fn close_poll(
         &self,
@@ -3951,6 +4198,50 @@ mod tests {
             api.rename_category(&alex, made.id, "Again").await.is_err(),
             "deleted"
         );
+    }
+
+    #[tokio::test]
+    async fn leaving_and_removing_from_a_server() {
+        let app = testing::spawn().await;
+        let (alex_id, alex) = testing::register(&app, "alex").await;
+        let (sam_id, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        api.join_server(&sam, s.id).await.unwrap();
+        // the owner can't leave, in the server's words
+        match api.leave_server(&alex, s.id).await {
+            Err(ApiError::Forbidden(m)) => assert!(m.contains("owner"), "{m}"),
+            other => panic!("the owner's leave should be refused, got {other:?}"),
+        }
+        api.leave_server(&sam, s.id).await.unwrap();
+        assert!(api.leave_server(&sam, s.id).await.is_err(), "already out");
+        api.join_server(&sam, s.id).await.unwrap();
+        // only the owner removes, and not themselves
+        assert!(api.remove_server_member(&sam, s.id, alex_id).await.is_err());
+        assert!(
+            api.remove_server_member(&alex, s.id, alex_id)
+                .await
+                .is_err()
+        );
+        api.remove_server_member(&alex, s.id, sam_id).await.unwrap();
+        let members = api.members(&alex, s.id).await.unwrap();
+        assert!(members.iter().all(|m| m.user.id != sam_id));
+    }
+
+    #[tokio::test]
+    async fn archiving_a_channel() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (_, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        api.join_server(&sam, s.id).await.unwrap();
+        let g = testing::general(&app, &alex, s.id).await;
+        assert!(api.set_channel_archived(&sam, g.id, true).await.is_err());
+        let ch = api.set_channel_archived(&alex, g.id, true).await.unwrap();
+        assert!(ch.archived_at.is_some());
+        let ch = api.set_channel_archived(&alex, g.id, false).await.unwrap();
+        assert!(ch.archived_at.is_none());
     }
 
     #[tokio::test]

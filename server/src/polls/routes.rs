@@ -6,8 +6,8 @@ use axum::routing::{get, post, put};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{
-    Channel, ChannelKind, CreatePollRequest, Message, MessageKind, Poll, PollDuration,
-    PollVoteRequest,
+    Channel, ChannelKind, CreatePollRequest, EditPollRequest, Message, MessageKind, Poll,
+    PollDuration, PollVoteRequest,
 };
 
 use super::{Stored, announce_close, clean_options, clean_question, close_in, creator_name};
@@ -21,7 +21,7 @@ use crate::servers::routes::is_server_member;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/channels/{id}/polls", post(create))
-        .route("/messages/{id}/poll", get(get_poll))
+        .route("/messages/{id}/poll", get(get_poll).put(edit))
         .route("/messages/{id}/poll/votes", put(vote))
         .route("/messages/{id}/poll/close", post(close))
 }
@@ -133,6 +133,8 @@ async fn create(
         plan_reminder: None,
         sports: None,
         f1: None,
+        forwarded: None,
+        group_line: None,
     };
     let stored = Stored {
         message_id: msg.id,
@@ -144,12 +146,14 @@ async fn create(
         anonymous: req.anonymous,
         ends_at,
         closed_at: None,
+        edited_at: None,
     };
     // As a send: the message, the poll and your read point land together, and the read point's event goes out in
     // commit order with every other message.
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, id).await?; // channel deleted since (#109)
+    crate::access::open_in(&mut tx, id).await?; // archived (#303): read-only
     // minted under the write lock, so ids keep commit order (as a send)
     msg.id = MessageId::new();
     msg.created_at = now();
@@ -265,6 +269,7 @@ async fn vote(
     let mut tx = begin_write(&s.db).await?;
     // Read again under the write lock: a close (or a delete, of it or its channel) may have landed since.
     crate::access::channel_live_in(&mut tx, p.channel_id).await?;
+    crate::access::open_in(&mut tx, p.channel_id).await?; // archived (#303): read-only
     let at = now();
     match super::load(&mut tx, id).await? {
         None => return Err(AppError::NotFound),
@@ -300,6 +305,101 @@ async fn vote(
     my_view(&s, me, id).await
 }
 
+/// `PUT /messages/{id}/poll` (#265): its creator changes an open poll's question and options. Adding an option is
+/// always fine; an option removed, or reworded, loses its votes (they were for what it said), and only with
+/// `clear_votes` (the creator confirmed it), else 409. Multiple choice, Anonymous and the end time stay as posted. The
+/// poll's text for older clients follows; the chat gets a `PollChanged`.
+async fn edit(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<MessageId>,
+    Json(req): Json<EditPollRequest>,
+) -> AppResult<Json<Poll>> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    crate::media::writes_ok(&s.cfg)?;
+    let p = visible(&s, me, id).await?;
+    if p.author_id != Some(me) {
+        return Err(AppError::Forbidden);
+    }
+    // an archived channel (#303) is read-only: no changing polls there
+    crate::access::require_open(&channel_for(&s.db, me, p.channel_id).await?)?;
+    let question = clean_question(&req.question)?;
+    let mut tx = begin_write(&s.db).await?;
+    // Read again under the write lock: a close, a delete, an archive or a vote may have landed since.
+    crate::access::channel_live_in(&mut tx, p.channel_id).await?;
+    crate::access::open_in(&mut tx, p.channel_id).await?; // archived (#303): read-only
+    let at = now();
+    let p = match super::load(&mut tx, id).await? {
+        None => return Err(AppError::NotFound),
+        Some(p) if p.over(&at) => return Err(is_over()),
+        Some(p) => p,
+    };
+    let plan = super::plan_edit(&p.options, &req.options)?;
+    let unchanged = question == p.question
+        && plan.options == p.options
+        && plan
+            .moves
+            .iter()
+            .enumerate()
+            .all(|(i, m)| *m == Some(i as u32));
+    if unchanged {
+        drop(tx);
+        return my_view(&s, me, id).await;
+    }
+    let votes: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT option, voter_id, voted_at FROM poll_votes WHERE message_id = ? ORDER BY voted_at, rowid",
+    )
+    .bind(id.to_string())
+    .fetch_all(&mut *tx)
+    .await?;
+    let moved = |o: i64| {
+        usize::try_from(o)
+            .ok()
+            .and_then(|o| plan.moves.get(o).copied().flatten())
+    };
+    let lost = votes.iter().filter(|(o, _, _)| moved(*o).is_none()).count();
+    if lost > 0 && !req.clear_votes {
+        return Err(AppError::Conflict(format!(
+            "this change clears {lost} vote{}; confirm to save it",
+            if lost == 1 { "" } else { "s" }
+        )));
+    }
+    sqlx::query("DELETE FROM poll_votes WHERE message_id = ?")
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    for (o, voter, voted_at) in &votes {
+        let Some(to) = moved(*o) else { continue };
+        sqlx::query(
+            "INSERT INTO poll_votes (message_id, option, voter_id, voted_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(i64::from(to))
+        .bind(voter)
+        .bind(voted_at)
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query("UPDATE polls SET question = ?, options = ?, edited_at = ? WHERE message_id = ?")
+        .bind(&question)
+        .bind(serde_json::to_string(&plan.options).map_err(anyhow::Error::from)?)
+        .bind(&at)
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    // the text for clients that don't know polls (and search) follows
+    sqlx::query("UPDATE messages SET content = ? WHERE id = ?")
+        .bind(super::fallback_text(&question, &plan.options))
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    changed(&s, &p).await;
+    my_view(&s, me, id).await
+}
+
 /// `POST /messages/{id}/poll/close`: its creator ends it now. Posts the ended line.
 async fn close(
     State(s): State<AppState>,
@@ -323,6 +423,7 @@ async fn close(
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, p.channel_id).await?; // channel deleted since (#109)
+    crate::access::open_in(&mut tx, p.channel_id).await?; // archived (#303): read-only
     // a delete may have landed since the read: a deleted poll has no row
     if super::load(&mut tx, id).await?.is_none() {
         return Err(AppError::NotFound);

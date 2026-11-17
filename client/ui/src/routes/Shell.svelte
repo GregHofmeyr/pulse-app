@@ -19,6 +19,7 @@
   import CustomStatusDialog from '../components/CustomStatusDialog.svelte'
   import ServerMenu from '../components/ServerMenu.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
+  import ServerActionDialog from '../components/ServerActionDialog.svelte'
   import { requestCreateCategory } from '../lib/categoryUi.svelte'
   import { clickOutside, modal, narrowerThan } from '../lib/actions'
   import { exitFade } from '../lib/exit'
@@ -82,7 +83,7 @@
   import { isWindows } from '../lib/stream/platform'
   // The inbox (#306)
   import InboxPopover from '../components/InboxPopover.svelte'
-  import { closeInbox, inbox, openInbox, toggleInbox } from '../lib/inbox.svelte'
+  import { closeInbox, inbox, inboxBadge, openInbox, toggleInbox } from '../lib/inbox.svelte'
   import { badgeText } from '../lib/inbox'
   import { orderedServers } from '../lib/serverOrder'
   import { moveServerTo, stepServer } from '../lib/serverOrder.svelte'
@@ -782,7 +783,7 @@
     <!-- #306: the inbox, your mentions and replies everywhere; its count of unread ones -->
     <span class="inbox-anchor">
       <button bind:this={inboxButton} class="win inbox" data-menu-toggle aria-haspopup="dialog" aria-expanded={inbox.open}
-        aria-label={inbox.unread > 0 ? `Inbox, ${inbox.unread} unread` : 'Inbox'} data-tip="Inbox" onclick={toggleInbox}><Icon name="inbox" size={16} />{#if inbox.unread > 0}<span class="pill" aria-hidden="true">{badgeText(inbox.unread)}</span>{/if}</button>
+        aria-label={inboxBadge() > 0 ? `Inbox, ${inboxBadge()} unread` : 'Inbox'} data-tip="Inbox" onclick={toggleInbox}><Icon name="inbox" size={16} />{#if inboxBadge() > 0}<span class="pill" aria-hidden="true">{badgeText(inboxBadge())}</span>{/if}</button>
       {#if inbox.open}<InboxPopover onClose={closeInboxPopover} />{/if}
     </span>
     <!-- #207: what's new; a dot until this release's notes are opened once on this device -->
@@ -885,6 +886,7 @@
 <BadgeToast />
 <GroupIconCrop />
 {#if settingsServer}<ServerSettings server={settingsServer} onClose={() => (serverSettingsId = null)} />{/if}
+{#if ui.serverAction}<ServerActionDialog action={ui.serverAction} onClose={() => (ui.serverAction = null)} />{/if}
 {#if settingsOpen}<Settings section={settingsSection} onLogout={logout} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if stream.clash}<StreamClashDialog clash={stream.clash} />{/if}

@@ -6,7 +6,7 @@ use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
     ChannelKind, EditQuoteRequest, Leaderboard, LeaderboardPeriod, LeaderboardWin, Message,
-    PostQuoteRequest, QuoteSpeaker, RankedQuote, SpeakerCount,
+    MessageKind, PostQuoteRequest, QuoteSpeaker, RankedQuote, SpeakerCount,
 };
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
@@ -440,10 +440,12 @@ async fn leaderboard(
     let (top_year, top_all_time) = (ids(&top_year), ids(&top_all_time));
 
     // Winners: newest year first, a tie's co-winners newest quote first. Deleted quotes stay (the
-    // win is history); a quote in a deleted channel is hidden like the rest of that channel, until
-    // it is restored or purged.
-    let wins: Vec<(i64, String, i64, String)> = sqlx::query_as(
-        "SELECT e.year, w.message_id, w.votes, e.id
+    // win is history); a quote in a soft-deleted channel is hidden like the rest of that channel,
+    // until it is restored or purged. Once purged (#110) its message row is gone, so the NOT EXISTS
+    // below no longer hides it and it shows as a deleted quote, with `voters` keeping the votes
+    // that went with it.
+    let wins: Vec<(i64, String, i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT e.year, w.message_id, w.votes, e.id, w.voters
          FROM qoty_winners w JOIN qoty_events e ON e.id = w.event_id
          WHERE e.server_id = ?
            AND NOT EXISTS (SELECT 1 FROM messages m JOIN channels c ON c.id = m.channel_id
@@ -520,17 +522,27 @@ async fn leaderboard(
             .collect()
     };
     let mut winners = Vec::with_capacity(wins.len());
-    for (year, message, votes, event) in &wins {
-        let Some(msg) = messages.get(message) else {
-            continue;
+    for (year, message, votes, event, kept_voters) in &wins {
+        // A quote purged with its channel (#110) reads as a deleted one: the win stays (spec §3.1).
+        let msg = match messages.get(message) {
+            Some(m) => m.clone(),
+            None => purged_winner(message)?,
+        };
+        let voters = match kept_voters {
+            Some(json) => serde_json::from_str::<Vec<String>>(json)
+                .map_err(anyhow::Error::from)?
+                .iter()
+                .map(|u| super::parse_id(u))
+                .collect::<AppResult<Vec<UserId>>>()?,
+            None => voters
+                .remove(&(event.clone(), message.clone()))
+                .unwrap_or_default(),
         };
         winners.push(LeaderboardWin {
             year: *year as i32,
-            message: msg.clone(),
+            message: msg,
             votes: *votes as u32,
-            voters: voters
-                .remove(&(event.clone(), message.clone()))
-                .unwrap_or_default(),
+            voters,
             speakers: speakers
                 .remove(&(event.clone(), message.clone()))
                 .unwrap_or_default(),
@@ -555,6 +567,49 @@ async fn leaderboard(
         most_quoted: most_quoted(&s.db, server, since.as_deref()).await?,
         most_awarded,
     }))
+}
+
+/// The stand-in for a winning quote whose message was purged with its channel (#110): a deleted
+/// message with nothing in it (clients show "This quote was deleted." and offer nothing to open;
+/// its channel is gone, so it names none).
+fn purged_winner(id: &str) -> AppResult<Message> {
+    Ok(Message {
+        id: super::parse_id(id)?,
+        channel_id: ChannelId::floor(0),
+        author_id: None,
+        kind: MessageKind::Normal,
+        content: String::new(),
+        reply_to_id: None,
+        created_at: String::new(),
+        edited_at: None,
+        deleted: true,
+        mentions: vec![],
+        reactions: vec![],
+        thread_root_id: None,
+        quote: None,
+        qoty_card: None,
+        clip: None,
+        embeds: vec![],
+        embeds_hidden: false,
+        call: None,
+        pin: None,
+        pin_line: None,
+        wheel: None,
+        poll: None,
+        poll_ended: None,
+        stage_share_line: None,
+        gif: None,
+        attachments: vec![],
+        caption_is_fallback: false,
+        achievement: None,
+        deadlock: None,
+        plan: None,
+        plan_reminder: None,
+        sports: None,
+        f1: None,
+        forwarded: None,
+        group_line: None,
+    })
 }
 
 #[derive(serde::Deserialize)]

@@ -661,3 +661,144 @@ async fn votes_are_rate_limited_per_person() {
     vote_ok(&app, &alex, m.id, &[1]).await;
     assert_eq!(vote(&app, &alex, m.id, &[0]).await.status(), 429);
 }
+
+async fn edit(app: &TestApp, token: &str, poll: MessageId, body: Value) -> reqwest::Response {
+    req(
+        app,
+        reqwest::Method::PUT,
+        token,
+        &format!("/messages/{poll}/poll"),
+        Some(body),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn its_creator_edits_a_poll_and_votes_follow_their_options() {
+    let (app, [alex, sam, kim, _], [_, sam_id, kim_id, _], g) = setup_ids().await;
+    let m = create_ok(
+        &app,
+        &alex,
+        g.id,
+        poll_body("Food?", &["Pizza", "Tacos", "Sushi"]),
+    )
+    .await;
+    vote_ok(&app, &sam, m.id, &[2]).await;
+    vote_ok(&app, &kim, m.id, &[0]).await;
+    // only its creator
+    let body = json!({"question": "Dinner?", "options": [
+        {"text": "Sushi", "from": 2}, {"text": "Pizza", "from": 0}, {"text": "Tacos", "from": 1}, {"text": "Curry"}
+    ]});
+    assert_eq!(edit(&app, &sam, m.id, body.clone()).await.status(), 403);
+    // adding and moving options keeps every vote, with no confirm
+    let mut ws = hello(&app, &sam).await;
+    let r = edit(&app, &alex, m.id, body).await;
+    assert_eq!(r.status(), 200);
+    let p: Poll = r.json().await.unwrap();
+    assert_eq!(p.question, "Dinner?");
+    assert_eq!(p.options, ["Sushi", "Pizza", "Tacos", "Curry"]);
+    assert!(p.edited_at.is_some());
+    let t = p.results.unwrap();
+    assert_eq!(t[0].voters, vec![sam_id]);
+    assert_eq!(t[1].voters, vec![kim_id]);
+    assert_eq!(vote_ok(&app, &sam, m.id, &[2]).await.mine, vec![2]);
+    vote_ok(&app, &sam, m.id, &[0]).await;
+    let ev = next_raw(&mut ws, |d| d["t"] == "PollChanged")
+        .await
+        .unwrap();
+    assert_eq!(ev["d"]["message_id"], m.id.to_string());
+    // the text for older clients follows
+    let list: Vec<Message> = get_json(&app, &sam, &format!("/channels/{}/messages", g.id)).await;
+    let msg = list.iter().find(|x| x.id == m.id).unwrap();
+    assert!(msg.content.contains("Dinner?") && msg.content.contains("Curry"));
+    assert!(msg.poll.as_ref().unwrap().edited_at.is_some());
+}
+
+#[tokio::test]
+async fn rewording_or_removing_a_voted_option_needs_a_confirm_and_clears_only_its_votes() {
+    let (app, [alex, sam, kim, _], [_, _, kim_id, _], g) = setup_ids().await;
+    let m = create_ok(&app, &alex, g.id, poll_body("Q", &["a", "b", "c"])).await;
+    vote_ok(&app, &sam, m.id, &[0]).await;
+    vote_ok(&app, &kim, m.id, &[1]).await;
+    // a reword of a voted option: refused without the confirm
+    let reword = json!({"question": "Q", "options": [{"text": "A!", "from": 0}, {"text": "b", "from": 1}, {"text": "c", "from": 2}]});
+    let (status, msg) = error(edit(&app, &alex, m.id, reword.clone()).await).await;
+    assert_eq!(status, 409);
+    assert!(msg.contains("1 vote"), "{msg}");
+    // an unvoted option can be reworded or removed freely
+    let p: Poll = edit(
+        &app,
+        &alex,
+        m.id,
+        json!({"question": "Q", "options": [{"text": "a", "from": 0}, {"text": "b", "from": 1}]}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(p.voters, 2);
+    // confirmed: only that option's votes go
+    let reword = json!({"question": "Q", "options": [{"text": "A!", "from": 0}, {"text": "b", "from": 1}], "clear_votes": true});
+    let p: Poll = edit(&app, &alex, m.id, reword).await.json().await.unwrap();
+    let t = p.results.unwrap();
+    assert_eq!((t[0].votes, t[1].voters.clone()), (0, vec![kim_id]));
+    assert_eq!(view(&app, &sam, m.id).await.mine, Vec::<u32>::new());
+    // removing a voted option, confirmed
+    let p: Poll = edit(
+        &app,
+        &alex,
+        m.id,
+        json!({"question": "Q", "options": [{"text": "A!", "from": 0}, {"text": "new"}], "clear_votes": true}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(p.voters, 0);
+}
+
+#[tokio::test]
+async fn a_closed_poll_cant_be_edited_and_bad_edits_are_refused() {
+    let (app, [alex, ..], g) = setup().await;
+    let m = create_ok(&app, &alex, g.id, poll_body("Q", &["a", "b"])).await;
+    let bad = [
+        json!({"question": " ", "options": [{"text": "a", "from": 0}, {"text": "b", "from": 1}]}),
+        json!({"question": "Q", "options": [{"text": "a", "from": 0}]}),
+        json!({"question": "Q", "options": [{"text": "a", "from": 0}, {"text": "b", "from": 0}]}),
+        json!({"question": "Q", "options": [{"text": "a", "from": 0}, {"text": "b", "from": 7}]}),
+    ];
+    for b in bad {
+        assert_eq!(edit(&app, &alex, m.id, b).await.status(), 400);
+    }
+    // nothing changed: no "(edited)"
+    let same =
+        json!({"question": "Q", "options": [{"text": "a", "from": 0}, {"text": "b", "from": 1}]});
+    let p: Poll = edit(&app, &alex, m.id, same.clone())
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert!(p.edited_at.is_none());
+    assert_eq!(close(&app, &alex, m.id).await.status(), 200);
+    assert_eq!(edit(&app, &alex, m.id, same).await.status(), 409);
+}
+
+#[tokio::test]
+async fn a_poll_in_an_archived_channel_cant_be_edited() {
+    let (app, [alex, ..], g) = setup().await;
+    let m = create_ok(&app, &alex, g.id, poll_body("Q", &["a", "b"])).await;
+    let r = app
+        .http
+        .put(app.url(&format!("/channels/{}/archive", g.id)))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    let body =
+        json!({"question": "Q2", "options": [{"text": "a", "from": 0}, {"text": "b", "from": 1}]});
+    let (status, msg) = error(edit(&app, &alex, m.id, body).await).await;
+    assert_eq!(status, 403);
+    assert!(msg.contains("archived"), "{msg}");
+    assert_eq!(view(&app, &alex, m.id).await.question, "Q");
+}

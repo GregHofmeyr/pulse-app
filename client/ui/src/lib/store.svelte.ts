@@ -56,6 +56,9 @@ export const ui = $state({
   /** A request to open this clip's panel (its clips channel's view does it and clears it): a clips
    *  channel has no history to jump in. */
   openClip: null as { channelId: string; clip: Message } | null,
+  /** A request to scroll this clip's channel feed to it and flash it (#120), as a message jump does (its clips
+   *  channel's view does it and clears it; a clip it can't reach in the feed opens its panel instead). */
+  jumpClip: null as { channelId: string; clip: Message } | null,
   /** A request to open the share editor on this file (an offered recording, #382; its clips channel's view does it
    *  and clears it). */
   shareClip: null as { channelId: string; path: string } | null,
@@ -65,6 +68,9 @@ export const ui = $state({
   /** The quick switcher's global keybind fired (#319; the core already brought the window up): the shell opens the
    *  switcher, or closes it if Pulse was in front with it open, and clears this. */
   quickSwitch: null as { wasFocused: boolean } | null,
+  /** A server membership change waiting for its confirm (#371): you leaving a server, or its owner removing someone.
+   *  The shell asks (ServerActionDialog) and clears it. */
+  serverAction: null as { kind: 'leave'; serverId: string } | { kind: 'remove'; serverId: string; userId: string } | null,
   /** A short line for the shell to show for a moment (it shows it and clears it). */
   notice: null as string | null,
   autoReported: false,
@@ -405,6 +411,7 @@ export function resetState() {
   notifications.clear() // signed out: nothing more about the last account's messages
   ui.openReplies = null
   ui.openClip = null
+  ui.jumpClip = null
   ui.shareClip = null
   forgetProfileLoads()
   forgetEmbedOrigin() // the next account may be on another server

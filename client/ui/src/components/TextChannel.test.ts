@@ -15,6 +15,7 @@ import TextChannel from './TextChannel.svelte'
 import { app, handleReady, resetState, ui } from '../lib/store.svelte'
 import { testQoty, testReady } from '../lib/testReady'
 import { addHistory, applyEvent, applyReady, emptyState, markHistory, trimHistory } from '../lib/state'
+import { jumpTo } from '../lib/jump'
 
 const msg = (n: number): Message => ({
   id: `M${String(n).padStart(4, '0')}`, channel_id: 'C1', author_id: 'U2', kind: 'normal', content: `m${n}`,
@@ -940,7 +941,7 @@ describe('TextChannel: more than a page arriving while away (#329)', () => {
     expect(ids()[0]).toBe('M0101') // what was read stays
     expect(ids().at(-1)).toBe('M0250')
     expect(app.state.history['C1'].end).toBe(false) // more below: paging forward reaches the latest
-    expect(document.querySelector('.jump')?.textContent).toBe('Jump to present')
+    expect(document.querySelector('.jump')?.textContent).toBe('120 new · Jump to latest') // #332
     unmount(c)
   })
 
@@ -1082,6 +1083,74 @@ describe('TextChannel: more than a page arriving while away (#329)', () => {
     await tick()
     expect(calls('list_messages_around')).toBeLessThanOrEqual(1)
     expect(calls('list_messages_after')).toBe(0)
+    unmount(c)
+  })
+
+  it('read part of the way on another device, more than a page still below: opens at the first unread (#332)', async () => {
+    app.state = markHistory(addHistory(app.state, 'C1', page(101, 100)), 'C1', false)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    const list = document.querySelector<HTMLElement>('.list')!
+    const rect = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const y = this.dataset.messageId === 'M0261' ? 900 : 0
+      return { top: y, bottom: y + 20, left: 0, right: 0, width: 0, height: 20, x: 0, y, toJSON() {} } as DOMRect
+    }
+    try {
+      list.scrollTop = 0
+      serve(400)
+      handleReady(testReady([C1], read('M0260', 140))) // read to M0260 elsewhere; 140 below it
+      flushSync()
+      await vi.waitFor(() => expect(ids()).toContain('M0261'))
+      expect(calls('list_messages_around')).toBeGreaterThanOrEqual(1)
+      expect(ids()[0]).toBe('M0235') // the window around the read point, not the latest page
+      expect(contiguous()).toBe(true)
+      expect(app.state.history['C1'].end).toBe(false)
+      await vi.waitFor(() => expect(list.scrollTop).toBe(860)) // the first unread at the top, room for the NEW line
+      // the NEW line sits over the first unread: it follows the read point the window opened at
+      const newline = document.querySelector('.newline')!
+      expect(newline.nextElementSibling?.querySelector('[data-message-id]')?.getAttribute('data-message-id') ?? newline.nextElementSibling?.getAttribute('data-message-id')).toBe('M0261')
+      expect(document.querySelector('.jump')?.textContent).toBe('140 new · Jump to latest')
+      expect(calls('mark_read')).toBe(0) // the window's bottom isn't the latest
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = rect
+      unmount(c)
+    }
+  })
+
+  it('a first visit with more than a page unread opens at the first unread; a page or less, at the latest (#332)', async () => {
+    serve(300)
+    handleReady(testReady([C1], read('M0200', 100)))
+    let c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    await vi.waitFor(() => expect(app.state.history['C1']?.loaded).toBe(true))
+    expect(ids()[0]).toBe('M0175')
+    expect(app.state.history['C1'].end).toBe(false)
+    unmount(c)
+    resetState()
+    serve(300)
+    handleReady(testReady([C1], read('M0260', 40)))
+    invoke.mockClear()
+    c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    await vi.waitFor(() => expect(app.state.history['C1']?.loaded).toBe(true))
+    expect(calls('list_messages_around')).toBe(0)
+    expect(ids().at(-1)).toBe('M0300')
+    unmount(c)
+  })
+
+  it('a jump to the chat wins over opening at the first unread (#332)', async () => {
+    serve(300)
+    handleReady(testReady([C1], read('M0200', 100)))
+    ui.goTo = 'C1'
+    const jumping = jumpTo('C1', 'M0050')
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    await jumping
+    await vi.waitFor(() => expect(app.state.history['C1']?.loaded).toBe(true))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(ids()).toContain('M0050')
+    expect(ids()).not.toContain('M0201')
     unmount(c)
   })
 

@@ -259,6 +259,68 @@ pub async fn save_attachment(
 
 const GONE: &str = "That file isn't available any more.";
 
+/// The largest text file a message previews (#318); anything bigger is offered for download only.
+pub const TEXT_PREVIEW_MAX: u64 = 256 * 1024;
+
+/// A small text file of a message, read for its inline preview (#318) through the same short-lived link a
+/// download uses. `None` when it can't be previewed: bigger than [`TEXT_PREVIEW_MAX`] (whatever its size says), not
+/// UTF-8, or binary (see [`preview_text`]). An error when the file is gone or the read fails.
+#[tauri::command]
+pub async fn attachment_text(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    attachment_id: AttachmentId,
+) -> Result<Option<String>, String> {
+    let (api, token) = core.current().map_err(|e| e.to_string())?;
+    let urls = core
+        .check(&app, api.attachment_urls(&token, message_id).await)
+        .map_err(|e| e.to_string())?;
+    let Some(url) = urls
+        .into_iter()
+        .find(|u| u.id == attachment_id)
+        .and_then(|u| u.url)
+    else {
+        return Err(GONE.into());
+    };
+    let mut res = crate::clips::upload::client()
+        .get(&url)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(GONE.into());
+    }
+    if res.content_length().is_some_and(|n| n > TEXT_PREVIEW_MAX) {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = res.chunk().await.map_err(|e| e.to_string())? {
+        bytes.extend_from_slice(&chunk);
+        // never more than the cap in memory, whatever the store sends
+        if bytes.len() as u64 > TEXT_PREVIEW_MAX {
+            return Ok(None);
+        }
+    }
+    Ok(preview_text(&bytes))
+}
+
+/// Bytes as preview text (#318): UTF-8 only (a leading byte-order mark dropped), and never binary (a NUL byte, or
+/// other control characters than tab, newlines and form feed). Line endings become `\n`. `None` otherwise: the
+/// preview says it can't show the file rather than guessing an encoding.
+pub fn preview_text(bytes: &[u8]) -> Option<String> {
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    let text = std::str::from_utf8(bytes).ok()?;
+    if text
+        .chars()
+        .any(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r' | '\x0C'))
+    {
+        return None;
+    }
+    Some(text.replace("\r\n", "\n").replace('\r', "\n"))
+}
+
 /// A name safe to suggest in a Save dialog: the server cleaned it already; this is the last line
 /// (no path, nothing Windows refuses).
 fn safe_name(name: &str) -> String {
@@ -304,6 +366,29 @@ mod tests {
         assert_eq!(safe_name("a:b?.txt"), "a_b_.txt");
         assert_eq!(safe_name("..."), "file");
         assert_eq!(safe_name("name. "), "name");
+    }
+
+    #[test]
+    fn preview_text_is_utf8_and_never_binary() {
+        assert_eq!(
+            preview_text(b"# notes\r\nline 2").as_deref(),
+            Some("# notes\nline 2")
+        );
+        assert_eq!(
+            preview_text("\u{feff}café\tok".as_bytes()).as_deref(),
+            Some("café\tok")
+        );
+        assert_eq!(preview_text(b"").as_deref(), Some(""));
+        // not UTF-8 (Latin-1 "café"): no guessing
+        assert_eq!(preview_text(b"caf\xe9"), None);
+        // binary
+        assert_eq!(preview_text(b"PK\x03\x04\0\0"), None);
+        assert_eq!(preview_text(b"abc\0def"), None);
+        // HTML is just text here: the UI shows it as source
+        assert_eq!(
+            preview_text(b"<script>alert(1)</script>").as_deref(),
+            Some("<script>alert(1)</script>")
+        );
     }
 
     #[test]

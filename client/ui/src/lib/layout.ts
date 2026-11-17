@@ -20,7 +20,9 @@ export function searchMakesRoom(s: { narrow: boolean; searchOpen: boolean; threa
  *  (`key` `<serverId>:<kind>`, `category` null). */
 export type Section = { key: string; category: Category | null; kind: ChannelKind | null; name: string; channels: Channel[] }
 /** `live`: the server has categories. `top`: the uncategorised channels, shown above the first heading. */
-export type SidebarLayout = { live: boolean; revision: number; top: Channel[]; sections: Section[] }
+/** `archived`: the server's archived channels (#303), kept out of the sections and the order (a layout save leaves
+ *  them out): the list shows them in a collapsed Archived group at the bottom, oldest-archived first. */
+export type SidebarLayout = { live: boolean; revision: number; top: Channel[]; sections: Section[]; archived: Channel[] }
 /** A list's order as ids: the uncategorised channels, then each category with its channels. */
 export type Order = { top: string[]; cats: { id: string; channels: string[] }[] }
 
@@ -38,11 +40,13 @@ const LEGACY: { kind: ChannelKind; name: string }[] = [
 /** `serverId`'s channel list: uncategorised channels (and any whose category isn't known) on top, then each
  *  category; without a layout (an older server), the four kind sections, always all four. */
 export function sidebarLayout(s: AppState, serverId: string): SidebarLayout {
-  const mine = Object.values(s.channels).filter((c) => c.server_id === serverId).sort(byPosition)
+  const all = Object.values(s.channels).filter((c) => c.server_id === serverId).sort(byPosition)
+  const mine = all.filter((c) => !c.archived_at)
+  const archived = all.filter((c) => !!c.archived_at).sort((a, b) => (a.archived_at! < b.archived_at! ? -1 : a.archived_at! > b.archived_at! ? 1 : 0))
   const held = s.layouts[serverId]
   if (!held) {
     const sections = LEGACY.map(({ kind, name }) => ({ key: `${serverId}:${kind}`, category: null, kind, name, channels: mine.filter((c) => c.kind === kind) }))
-    return { live: false, revision: 0, top: [], sections }
+    return { live: false, revision: 0, top: [], sections, archived }
   }
   const cats = [...held.categories].sort(byPosition)
   const known = new Set(cats.map((c) => c.id))
@@ -51,6 +55,7 @@ export function sidebarLayout(s: AppState, serverId: string): SidebarLayout {
     revision: held.revision,
     top: mine.filter((c) => !c.category_id || !known.has(c.category_id)),
     sections: cats.map((category) => ({ key: `cat:${category.id}`, category, kind: null, name: category.name, channels: mine.filter((c) => c.category_id === category.id) })),
+    archived,
   }
 }
 

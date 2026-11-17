@@ -3,6 +3,7 @@ pub mod activity;
 pub mod attachments;
 pub mod auth;
 pub mod badges;
+pub mod bookmarks;
 pub mod calls;
 pub mod clips;
 pub mod config;
@@ -13,6 +14,7 @@ pub mod embeds;
 pub mod emoji;
 pub mod error;
 pub mod f1;
+pub mod forwards;
 pub mod gateway;
 pub mod gifs;
 pub mod hygiene;
@@ -62,6 +64,7 @@ pub fn router(state: AppState) -> Router {
         .merge(auth::two_factor::router())
         .merge(servers::routes::router())
         .merge(servers::nicknames::router())
+        .merge(servers::membership::router())
         .merge(servers::order::router())
         .merge(servers::categories::router())
         .merge(messages::routes::router())
@@ -73,11 +76,14 @@ pub fn router(state: AppState) -> Router {
         .merge(plans::router())
         .merge(scheduled::router())
         .merge(reminders::router())
+        .merge(bookmarks::router())
+        .merge(forwards::router())
         .merge(f1::router())
         .merge(gifs::router())
         .merge(quotes::routes::router())
         .merge(qoty::router())
         .merge(dms::routes::router())
+        .merge(dms::layout::router())
         .merge(voice::routes::router())
         .merge(calls::routes::router())
         .merge(streams::routes::router())

@@ -3,19 +3,24 @@
   // replies) and Mentions, remembered per device; newest first, the next page loading as you scroll near the end.
   // Each row: who, where, when, a one-line preview with your mention picked out, and for a reply the line it answered.
   // Unread rows stand out. A click shows the message and reads it; Mark all read reads everything shown.
-  // Reminders (#300): those come due sit at the top of All (unread until opened) and the Reminders tab lists them with
-  // those still to come (Done or Cancel). Scheduled (#299) lists every chat's scheduled messages.
+  // Threads (#326): quote and clip threads you started or replied in with replies you haven't seen; a click opens the
+  // thread at its newest reply and counts it seen. Reminders (#300): those come due sit at the top of All (unread until opened) and the Reminders tab lists them with
+  // those still to come (Done or Cancel). Scheduled (#299) lists every chat's scheduled messages. Saved (#315) lists your
+  // saved messages, with a search.
   import { clickOutside } from '../lib/actions'
   import { relativeTime } from '../lib/conversations'
   import { badgeText, highlightParts, isItemTab, oneLine, placeLabel, whereLabel, type InboxView } from '../lib/inbox'
   import Icon from './Icon.svelte'
-  import { closeInbox, inbox, loadMore, markAllRead, openItem, setTab } from '../lib/inbox.svelte'
+  import { closeInbox, inbox, inboxBadge, loadMore, markAllRead, openItem, setTab } from '../lib/inbox.svelte'
+  import { openThread, refreshThreads, threads } from '../lib/inboxThreads.svelte'
+  import type { InboxThread } from '../lib/protocol/InboxThread'
   import { openReminder, reminderAuthor, reminders, removeReminder } from '../lib/reminders.svelte'
   import { scheduled } from '../lib/scheduled.svelte'
   import { whenLabel } from '../lib/schedule'
   import { errorText } from '../lib/tauri'
   import type { MessageReminder } from '../lib/protocol/MessageReminder'
   import ScheduledList from './ScheduledList.svelte'
+  import SavedList from './SavedList.svelte'
   import { mentionLookup, showMentions } from '../lib/mentionStyles'
   import { shownText } from '../lib/poll'
   import { displayName } from '../lib/selectors'
@@ -33,8 +38,10 @@
   const TABS: { value: InboxView; label: string }[] = [
     { value: 'all', label: 'All' },
     { value: 'mentions', label: 'Mentions' },
+    { value: 'threads', label: 'Threads' },
     { value: 'reminders', label: 'Reminders' },
     { value: 'scheduled', label: 'Scheduled' },
+    { value: 'saved', label: 'Saved' },
   ]
   const itemTab = $derived(isItemTab(inbox.tab) ? inbox.tab : null)
   const list = $derived(itemTab ? inbox.lists[itemTab] : null)
@@ -80,6 +87,20 @@
     menu = personMenuAt(e, item.message.author_id, app.state.channels[item.message.channel_id]?.server_id ?? null, row) ?? menu
   }
 
+  // Threads (#326): a thread's row names its newest reply's author, how many replies are new and what it's on
+  const badge = $derived(inboxBadge())
+  const threadName = (t: InboxThread, userId: string | null) =>
+    userId ? displayName(app.state, app.state.channels[t.channel_id]?.server_id ?? null, userId) : 'Someone'
+  const newLabel = (t: InboxThread) => `${t.new_replies} new repl${t.new_replies === 1 ? 'y' : 'ies'}`
+  const threadRoot = (t: InboxThread) => {
+    const kind = app.state.channels[t.channel_id]?.kind === 'clips' ? 'clip' : 'quote'
+    if (t.root.deleted || !t.root.content.trim()) return kind
+    return `${kind}: ${oneLine(t.root.content)}`
+  }
+  function threadMenu(t: InboxThread, e: MouseEvent | KeyboardEvent, row: HTMLElement) {
+    menu = personMenuAt(e, t.latest.author_id, app.state.channels[t.channel_id]?.server_id ?? null, row) ?? menu
+  }
+
   /** Near the end of the list: fetch the next page. */
   function scrolled(e: Event) {
     const el = e.currentTarget as HTMLElement
@@ -89,8 +110,8 @@
 
 <div class="inbox-pop menu-surface pop-in" role="dialog" aria-label="Inbox" use:clickOutside={onClose}>
   <div class="head">
-    <h2>Inbox{#if inbox.unread > 0}<span class="count" aria-label="{inbox.unread} unread">{badgeText(inbox.unread)}</span>{/if}</h2>
-    <button type="button" class="btn btn-quiet sm" disabled={inbox.unread === 0} onclick={() => void markAllRead()}>Mark all read</button>
+    <h2>Inbox{#if badge > 0}<span class="count" aria-label="{badge} unread">{badgeText(badge)}</span>{/if}</h2>
+    <button type="button" class="btn btn-quiet sm" disabled={badge === 0} onclick={() => void markAllRead()}>Mark all read</button>
   </div>
   <div class="tabs"><Segmented label="Show" options={TABS} value={inbox.tab} onchange={setTab} /></div>
   <div class="list" onscroll={scrolled}>
@@ -116,6 +137,30 @@
       {#if !reminders.list.length}<p class="none">No reminders. Right-click a message (or its More) and pick Remind me.</p>{/if}
     {:else if inbox.tab === 'scheduled'}
       <ScheduledList items={scheduled.list} showWhere empty="Nothing scheduled. Use the clock beside the message box to send a message later." />
+    {:else if inbox.tab === 'saved'}
+      <SavedList />
+    {:else if inbox.tab === 'threads'}
+      {#each threads.list as t (t.root.message_id)}
+        {@const m = t.latest}
+        <button type="button" class="item unread" onclick={() => openThread(t, closeInbox)}
+          oncontextmenu={(e) => threadMenu(t, e, e.currentTarget)} onkeydown={(e) => threadMenu(t, e, e.currentTarget)}
+          aria-label="Unread: {newLabel(t)} in a thread you {t.started ? 'started' : 'replied in'}, newest from {threadName(t, m.author_id)} in {placeLabel(app.state, t.channel_id, t.root.message_id)}">
+          <span class="av" aria-hidden="true"><Avatar id={m.author_id ?? ''} name={threadName(t, m.author_id)} size={32} /></span>
+          <span class="text" aria-hidden="true">
+            <span class="top"><span class="author">{threadName(t, m.author_id)}</span><span class="where">{placeLabel(app.state, t.channel_id, t.root.message_id)}</span><time datetime={m.created_at} data-tip={new Date(m.created_at).toLocaleString()}>{relativeTime(m.created_at, nowMs)}</time></span>
+            <span class="snippet" class:gone={t.root.deleted}><Icon name="reply" size={12} /> {newLabel(t)} · {t.started ? 'your' : 'on'} {threadRoot(t)}</span>
+            <span class="said">{oneLine(showMentions(shownText(m), lookup, (id) => threadName(t, id)))}</span>
+          </span>
+        </button>
+      {:else}
+        {#if threads.error}
+          <p class="error" role="alert">{threads.error} <button type="button" class="link" onclick={() => void refreshThreads()}>Try again</button></p>
+        {:else if !threads.loaded}
+          <Loading />
+        {:else}
+          <p class="none">No new replies in threads you started or replied in.</p>
+        {/if}
+      {/each}
     {:else if list?.items.length}
       {#each list.items as item (item.message.id)}
         {@const m = item.message}

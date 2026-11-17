@@ -4,7 +4,7 @@
   // a flyout with yours ticked, #195); voice: join or leave, then the same three for its chat (#226). Anyone in the
   // server may rename and
   // delete (v1 trust model), and open a voice channel's settings (#75); those are handed back to the list, which
-  // edits in the row and asks in a dialog.
+  // edits in the row and asks in a dialog. The server's owner may archive or unarchive a text channel (#303).
   import { onMount, untrack } from 'svelte'
   import { app, clock } from '../lib/store.svelte'
   import { placeMenu } from '../lib/menuPlace'
@@ -51,6 +51,12 @@
     app.state.mutes.some((m) => m.target_kind === 'channel' && m.target_id === channel.id && (m.until === null || m.until > clock.nowIso)),
   )
   const inCall = $derived(voice.channelId === channel.id || voice.joining === channel.id)
+  // Archive channel (#303): a text channel, by its server's owner. Archived, it's read-only and sits in the list's
+  // Archived group; Unarchive brings it back.
+  const canArchive = $derived(
+    member && channel.kind === 'text' && !!channel.server_id && app.state.servers.find((s) => s.id === channel.server_id)?.owner_id === app.state.me?.id,
+  )
+  const setArchived = (on: boolean) => report(() => api.setChannelArchived(channel.id, on))
 
   let el = $state<HTMLElement>()
   let left = $state(untrack(() => x))
@@ -151,6 +157,13 @@
     <span class="menu-sep"></span>
     {#if isVoice}<button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onSettings)}>Channel settings…</button>{/if}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onRename)}>Rename channel…</button>
+    {#if canArchive}
+      {#if channel.archived_at}
+        <button type="button" class="menu-item" role="menuitem" data-item="unarchive" onclick={() => pick(setArchived(false))}>Unarchive channel</button>
+      {:else}
+        <button type="button" class="menu-item" role="menuitem" data-item="archive" onclick={() => pick(setArchived(true))}>Archive channel</button>
+      {/if}
+    {/if}
     <button type="button" class="menu-item danger" role="menuitem" data-item onclick={() => pick(onDelete)}>Delete channel…</button>
     {#if onMoveUp && onMoveDown}
       <span class="menu-sep"></span>

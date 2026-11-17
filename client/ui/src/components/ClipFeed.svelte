@@ -11,9 +11,10 @@
   import { app } from '../lib/store.svelte'
   import { api, errorText, type ClipJob } from '../lib/tauri'
   import { windowFocus } from '../lib/windowFocus.svelte'
+  import { motion } from '../lib/animate.svelte'
   import type { Message } from '../lib/protocol/Message'
 
-  let { channelId, filter, layout, onOpenReplies, unsentReplies = {}, pending = [] }: {
+  let { channelId, filter, layout, onOpenReplies, unsentReplies = {}, pending = [], jumpTo = null, onJumpMissed }: {
     channelId: string
     filter: ClipFilter
     layout: 'list' | 'wall'
@@ -23,6 +24,10 @@
     unsentReplies?: Record<string, number>
     /** Your clips being sent here, oldest first: at the newest end (the list's bottom, the wall's top-left). */
     pending?: ClipJob[]
+    /** Scroll to this clip and flash it (#120), paging back for it if need be; a new object asks again. */
+    jumpTo?: { clip: Message } | null
+    /** The clip asked for isn't in reach of the feed (deleted, or further back than a jump pages). */
+    onJumpMissed?: (clip: Message) => void
   } = $props()
 
   const serverId = $derived(app.state.channels[channelId]?.server_id ?? '')
@@ -169,6 +174,64 @@
     scroller.querySelector<HTMLElement>(`[data-clip-id="${id}"]`)?.scrollIntoView({ block: 'start' })
   })
 
+  // --- a jump to a clip (#120): page back until it's held (at most JUMP_PAGES pages), then scroll it into the middle
+  // and flash it, as a message jump does (TextChannel) ---
+  const JUMP_PAGES = 20
+  const FLASH_MS = 3000
+  let want = $state<Message | null>(null)
+  let wantPages = 0
+  $effect(() => {
+    const j = jumpTo
+    if (!j) return
+    untrack(() => {
+      want = j.clip
+      wantPages = 0
+    })
+  })
+  $effect(() => {
+    const clip = want
+    if (!clip) return
+    const f = feed
+    if (failedKey === key) {
+      want = null
+      untrack(() => onJumpMissed?.(clip))
+      return
+    }
+    if (!f || f.loading || unfetched(f)) return // its first page is on the way
+    if (f.items.some((m) => m.id === clip.id)) {
+      want = null
+      untrack(() => void tick().then(() => flash(clip.id)))
+      return
+    }
+    if (f.start || wantPages >= JUMP_PAGES) {
+      want = null
+      untrack(() => onJumpMissed?.(clip))
+      return
+    }
+    wantPages++
+    untrack(() => void fetchPage(true))
+  })
+  let flashEl: Element | null = null
+  let flashTimer: ReturnType<typeof setTimeout> | undefined
+  function clearFlash() {
+    clearTimeout(flashTimer)
+    flashEl?.classList.remove('jump-flash', 'still')
+    flashEl = null
+  }
+  function flash(id: string) {
+    const el = scroller?.querySelector(`[data-clip-id="${id}"]`)
+    if (!el) return
+    clearFlash()
+    void (el as HTMLElement).offsetWidth // a repeat restarts the animation
+    el.classList.add('jump-flash')
+    if (motion.reducedMotion) el.classList.add('still')
+    placed = `${key}|${layout}` // the clip, not the bottom
+    el.scrollIntoView?.({ block: 'center' })
+    flashEl = el
+    flashTimer = setTimeout(clearFlash, FLASH_MS)
+  }
+  $effect(() => () => clearFlash())
+
   // --- the wall's one player ---
   let playingId = $state<string | null>(null)
 
@@ -239,4 +302,11 @@
     .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   .error { margin: 8px 18px; color: var(--danger-text); font-size: 13px; }
+  /* a jumped-to clip (#120): a fading highlight, or a static outline under reduced motion, as a jumped-to message */
+  .feed :global(.jump-flash) { animation: jump-flash 3s ease-out; }
+  .feed :global(.jump-flash.still) { animation: none; outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+  @keyframes jump-flash {
+    0%, 35% { background: var(--accent-strong); }
+    100% { background: transparent; }
+  }
 </style>

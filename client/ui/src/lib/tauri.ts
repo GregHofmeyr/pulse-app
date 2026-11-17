@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core'
 import type { User } from './protocol/User'
 import type { ScheduledMessage } from './protocol/ScheduledMessage'
 import type { MessageReminder } from './protocol/MessageReminder'
+import type { MessageVersion } from './protocol/MessageVersion'
+import type { MessageBookmark } from './protocol/MessageBookmark'
 import type { Profile } from './protocol/Profile'
 import type { SeenBadge } from './protocol/SeenBadge'
 import type { UpdateProfileRequest } from './protocol/UpdateProfileRequest'
@@ -43,6 +45,11 @@ import type { UpdateWheelRequest } from './protocol/UpdateWheelRequest'
 import type { SpinWheelRequest } from './protocol/SpinWheelRequest'
 import type { QuietSpin } from './protocol/QuietSpin'
 import type { CreatePollRequest } from './protocol/CreatePollRequest'
+import type { EditPollRequest } from './protocol/EditPollRequest'
+import type { DmLayout } from './protocol/DmLayout'
+import type { InboxThreads } from './protocol/InboxThreads'
+import type { DmPlacementRequest } from './protocol/DmPlacementRequest'
+import type { UpdateDmCategoryRequest } from './protocol/UpdateDmCategoryRequest'
 import type { Poll } from './protocol/Poll'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { StreamSettings } from './protocol/StreamSettings'
@@ -219,6 +226,7 @@ export const api = {
   setChannelBitrate: (channelId: string, bitrate: number | null) => invoke<Channel>('set_channel_bitrate', { channelId, bitrate }),
   /** A server channel, to its server's Recently deleted; everyone hears ChannelDeleted. */
   deleteChannel: (channelId: string) => invoke<void>('delete_channel', { channelId }),
+  setChannelArchived: (channelId: string, archived: boolean) => invoke<Channel>('set_channel_archived', { channelId, archived }),
   listDeletedChannels: (serverId: string) => invoke<DeletedChannel[]>('list_deleted_channels', { serverId }),
   /** Back from Recently deleted, with everything in it; everyone hears ChannelRestored. */
   restoreChannel: (channelId: string) => invoke<Channel>('restore_channel', { channelId }),
@@ -279,6 +287,19 @@ export const api = {
   /** Post it now; the message it became (its MessageCreated comes too). */
   sendScheduledNow: (id: string) => invoke<Message>('send_scheduled_now', { id }),
   deleteScheduled: (id: string) => invoke<void>('delete_scheduled', { id }),
+  /** A message's versions (#301): the current text first, then the earlier ones, newest first. */
+  messageEdits: (messageId: string) => invoke<MessageVersion[]>('message_edits', { messageId }),
+  /** Forward a message (#302) to a chat you can post in, with your comment (may be empty); the forward (its
+   *  MessageCreated comes too). One nonce per forward, so a retry lands once. */
+  forwardMessage: (messageId: string, channelId: string, comment: string, nonce: string) =>
+    invoke<Message>('forward_message', { messageId, channelId, comment, nonce }),
+  // Saved messages (#315): private to you.
+  listBookmarks: () => invoke<MessageBookmark[]>('list_bookmarks'),
+  /** The one you already have when it was saved before. */
+  saveMessage: (messageId: string, note: string | null = null) => invoke<MessageBookmark>('save_message', { messageId, note }),
+  /** A new note; empty clears it. */
+  editBookmark: (id: string, note: string) => invoke<MessageBookmark>('edit_bookmark', { id, note }),
+  deleteBookmark: (id: string) => invoke<void>('delete_bookmark', { id }),
   // Message reminders (#300): private to you.
   listReminders: () => invoke<MessageReminder[]>('list_reminders'),
   createReminder: (messageId: string, remindAt: string) => invoke<MessageReminder>('create_reminder', { messageId, remindAt }),
@@ -287,6 +308,8 @@ export const api = {
   /** A due one opened: read on every device. */
   reminderSeen: (id: string) => invoke<void>('reminder_seen', { id }),
   joinServer: (serverId: string) => invoke<void>('join_server', { serverId }),
+  leaveServer: (serverId: string) => invoke<void>('leave_server', { serverId }),
+  removeServerMember: (serverId: string, userId: string) => invoke<void>('remove_server_member', { serverId, userId }),
   listChannels: (serverId: string) => invoke<Channel[]>('list_channels', { serverId }),
   listMembers: (serverId: string) => invoke<Member[]>('list_members', { serverId }),
   listMessages: (channelId: string, before?: string) =>
@@ -319,6 +342,8 @@ export const api = {
   }) => invoke<void>('send_with_attachments', a),
   cancelAttachmentSend: (nonce: string) => invoke<void>('cancel_attachment_send', { nonce }),
   attachmentUrls: (messageId: string) => invoke<AttachmentUrl[]>('attachment_urls', { messageId }),
+  /** A small text file's contents for its inline preview (#318); null when it can't be previewed (too big, not UTF-8, binary). */
+  attachmentText: (messageId: string, attachmentId: string) => invoke<string | null>('attachment_text', { messageId, attachmentId }),
   /** The saved path; null when the Save dialog or the download is cancelled (or this file is already downloading). Progress: `download://progress`, key `file:<attachment id>`. */
   saveAttachment: (messageId: string, attachmentId: string, name: string) =>
     invoke<string | null>('save_attachment', { messageId, attachmentId, name }),
@@ -332,6 +357,8 @@ export const api = {
   inbox: (before: string | null, mentions: boolean) => invoke<InboxPage>('inbox', { before, mentions }),
   /** How many inbox items are unread (#306). */
   inboxUnread: () => invoke<number>('inbox_unread'),
+  /** Reply threads you're part of with replies you haven't seen (#326), and every thread you're part of. */
+  inboxThreads: () => invoke<InboxThreads>('inbox_threads'),
   /** An inbox item was opened (#306); the change also arrives as InboxUpdated on every device. */
   inboxRead: (messageId: string) => invoke<void>('inbox_read', { messageId }),
   /** Mark all read (#306), up to the newest item shown (null: up to now). */
@@ -681,12 +708,23 @@ export const wheelCmd = {
   spinQuietly: (channelId: string, request: SpinWheelRequest) => invoke<QuietSpin>('spin_wheel_quietly', { channelId, request }),
 }
 
-/** Polls (#157): post one, fetch your view of one, vote (your full set of choices; none takes it back), end yours. */
+/** Your conversation list's pins and categories (#305): every call answers with your whole layout. */
+export const dmLayoutCmd = {
+  create: (name: string) => invoke<DmLayout>('create_dm_category', { name }),
+  update: (id: string, request: UpdateDmCategoryRequest) => invoke<DmLayout>('update_dm_category', { id, request }),
+  remove: (id: string) => invoke<DmLayout>('delete_dm_category', { id }),
+  place: (channelId: string, request: DmPlacementRequest) => invoke<DmLayout>('place_dm', { channelId, request }),
+}
+
+/** Polls (#157): post one, fetch your view of one, vote (your full set of choices; none takes it back), end yours,
+ *  change yours (#265). */
 export const pollCmd = {
   create: (channelId: string, request: CreatePollRequest) => invoke<Message>('create_poll', { channelId, request }),
   get: (messageId: string) => invoke<Poll>('get_poll', { messageId }),
   vote: (messageId: string, options: number[]) => invoke<Poll>('vote_poll', { messageId, options }),
   close: (messageId: string) => invoke<Poll>('close_poll', { messageId }),
+  /** Change your open poll's question and options (#265). */
+  edit: (messageId: string, request: EditPollRequest) => invoke<Poll>('edit_poll', { messageId, request }),
 }
 
 /** Plan something (#387): post one, fetch it, change or cancel yours, answer one (none takes it back), its forecast (the

@@ -1,3 +1,4 @@
+pub mod history;
 pub mod mentions;
 pub(crate) mod nonce;
 pub mod reactions;

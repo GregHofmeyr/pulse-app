@@ -2006,13 +2006,18 @@ async fn a_quotes_channel_with_an_option_in_a_live_vote_stays_until_the_vote_end
     assert_eq!(r.status(), 204);
 }
 
-/// A past winner is kept when its quote is deleted, so its channel is never purged: it stays in
-/// Recently deleted (flagged), from where it can still be restored.
+/// A past winner no longer holds its quotes channel in Recently deleted (#110): the channel purges
+/// like any other and the win outlives it, read on the leaderboard as a deleted quote with its
+/// votes, voters and speakers (as a deleted quote's win is, spec §3.1).
 #[tokio::test]
-async fn a_quotes_channel_holding_a_past_winner_stays() {
+async fn a_quotes_channel_holding_a_past_winner_purges_and_the_win_stays() {
     let f = fixture().await;
     let q = f.quote("the winner").await;
-    seed_win(&f, 2025, q.id).await;
+    let e = f.started().await;
+    assert_eq!(f.add(&f.alex_t, e.id, q.id).await.status(), 200);
+    f.voted(&f.alex_t, e.id, q.id).await;
+    f.voted(&f.sam_t, e.id, q.id).await;
+    f.ended(&f.alex_t, e.id).await;
     let r = f
         .call(
             Method::DELETE,
@@ -2022,6 +2027,15 @@ async fn a_quotes_channel_holding_a_past_winner_stays() {
         )
         .await;
     assert_eq!(r.status(), 204);
+    assert_eq!(f.in_recently_deleted().await.held, None);
+    // While the channel is only deleted (restorable), its win is hidden like the rest of it (#410).
+    let board: pulse_protocol::rest::Leaderboard = get_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/servers/{}/quotes/leaderboard", f.server),
+    )
+    .await;
+    assert!(board.winners.is_empty(), "hidden while in Recently deleted");
     let r = f
         .call(
             Method::DELETE,
@@ -2030,11 +2044,80 @@ async fn a_quotes_channel_holding_a_past_winner_stays() {
             None,
         )
         .await;
-    assert_eq!(r.status(), 409);
-    assert!(message_of(r).await.contains("Quote of the Year"));
-    assert_eq!(f.sweep_a_week_on().await, 0);
-    let held = f.in_recently_deleted().await.held.expect("held");
-    assert!(held.contains("winner"), "{held}");
+    assert_eq!(r.status(), 204);
+    assert_eq!(
+        f.count(&format!(
+            "SELECT COUNT(*) FROM channels WHERE id = '{}'",
+            f.ch.id
+        ))
+        .await,
+        0,
+        "purged"
+    );
+    assert_eq!(
+        f.count(&format!(
+            "SELECT COUNT(*) FROM messages WHERE id = '{}'",
+            q.id
+        ))
+        .await,
+        0
+    );
+    let board: pulse_protocol::rest::Leaderboard = get_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/servers/{}/quotes/leaderboard", f.server),
+    )
+    .await;
+    assert_eq!(board.winners.len(), 1, "the win stays");
+    let w = &board.winners[0];
+    assert_eq!(w.year, this_year());
+    assert_eq!(w.message.id, q.id);
+    assert!(w.message.deleted, "read as a deleted quote");
+    assert!(w.message.content.is_empty(), "none of its words");
+    assert_eq!(w.votes, 2);
+    assert_eq!(
+        w.voters,
+        vec![f.alex, f.sam],
+        "voters kept, in voting order"
+    );
+    assert_eq!(w.speakers.len(), 1);
+    assert_eq!(w.speakers[0].user_id, Some(f.sam));
+}
+
+/// A vote past its deadline that the sweeper hasn't ended yet doesn't hold up deleting a quotes
+/// channel with an option on it (#110): the delete ends it first, and the channel goes.
+#[tokio::test]
+async fn deleting_a_quotes_channel_ends_an_overdue_vote_first() {
+    let f = fixture().await;
+    let q = f.quote("on the ballot").await;
+    let e = f.started().await;
+    assert_eq!(f.add(&f.alex_t, e.id, q.id).await.status(), 200);
+    f.voted(&f.sam_t, e.id, q.id).await;
+    f.sql(&format!(
+        "UPDATE qoty_events SET ends_at = '2000-01-01T00:00:00.000Z' WHERE id = '{}'",
+        e.id
+    ))
+    .await;
+    let r = f
+        .call(
+            Method::DELETE,
+            &f.sam_t,
+            &format!("/channels/{}", f.ch.id),
+            None,
+        )
+        .await;
+    assert_eq!(r.status(), 204, "the overdue vote no longer holds it up");
+    assert_eq!(
+        f.count(&format!(
+            "SELECT COUNT(*) FROM qoty_events WHERE id = '{}' AND end_reason = 'time'",
+            e.id
+        ))
+        .await,
+        1,
+        "ended by time"
+    );
+    // The win it made doesn't hold the purge either.
+    assert_eq!(f.sweep_a_week_on().await, 1);
     assert_eq!(
         f.count(&format!(
             "SELECT COUNT(*) FROM qoty_winners WHERE message_id = '{}'",
@@ -2043,15 +2126,6 @@ async fn a_quotes_channel_holding_a_past_winner_stays() {
         .await,
         1
     );
-    let r = f
-        .call(
-            Method::POST,
-            &f.sam_t,
-            &format!("/channels/{}/restore", f.ch.id),
-            Some(json!({})),
-        )
-        .await;
-    assert_eq!(r.status(), 200);
 }
 
 /// A vote reopened while one of its options' channel is part-way through its purge (#108) loses

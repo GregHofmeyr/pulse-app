@@ -46,7 +46,7 @@ pub async fn channels(
     let sql = format!(
         "SELECT d.server_id, d.channel_id FROM server_deadlock_channels d
          JOIN servers sv ON sv.id = d.server_id AND sv.deleted_at IS NULL
-         JOIN channels c ON c.id = d.channel_id AND c.deleted_at IS NULL AND c.kind = 'text'
+         JOIN channels c ON c.id = d.channel_id AND c.deleted_at IS NULL AND c.archived_at IS NULL AND c.kind = 'text'
          WHERE d.{} = 1 AND (?1 IS NULL OR EXISTS (
              SELECT 1 FROM server_members m WHERE m.server_id = d.server_id AND m.user_id = ?1))
          ORDER BY d.server_id",

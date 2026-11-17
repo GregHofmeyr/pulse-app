@@ -1,5 +1,6 @@
-// Where a message opens when it's picked from a list of them (a search result, an inbox item; #324). A clips channel has
-// no history to jump in: its clip's panel opens instead (a reply's clip, for a reply). A reply in a quote opens that
+// Where a message opens when it's picked from a list of them (a search result, an inbox item; #324). A clip is scrolled
+// to in its channel's feed and flashed (#120), as a message is in its history; a reply to a clip opens that clip's
+// panel (the reply lives in its thread). A reply in a quote opens that
 // quote's replies, as a notification click does. Anything else is jumped to in its channel's history.
 import { jumpTo } from './jump'
 import type { Message } from './protocol/Message'
@@ -18,7 +19,11 @@ export function openMessage(m: Message, root: Message | null = null): boolean {
   if (ch.kind === 'clips') {
     ui.goTo = ch.id
     const rootId = m.thread_root_id
-    const clip = !rootId ? m : root?.id === rootId ? root : heldClip(ch.id, rootId)
+    if (!rootId) {
+      ui.jumpClip = { channelId: ch.id, clip: m }
+      return true
+    }
+    const clip = root?.id === rootId ? root : heldClip(ch.id, rootId)
     if (clip) ui.openClip = { channelId: ch.id, clip }
     else if (rootId) void fetchClip(ch.id, rootId, mine)
     return true

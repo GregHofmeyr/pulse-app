@@ -3,14 +3,14 @@
   // (where the server may be none and View profile is left out: you're on it), or a message author in a DM or group
   // (#189: no server, so no server nickname). The profile, a message, server mute / deafen (#144: as the voice
   // participant menu's), and the nickname items, Appear offline to them (#45), and in a DM muting it (the DM list's
-  // flyout, #190), and in a group's member list Remove from group (#335). Keyboard and focus work as in the voice
+  // flyout, #190), and in a group's member list Remove from group (#335); in a server you own, Remove from server (#371). Keyboard and focus work as in the voice
   // participant menu.
   import { onMount, untrack } from 'svelte'
   import { app, clock, ui } from '../lib/store.svelte'
   import { placeMenu } from '../lib/menuPlace'
   import { api, errorText } from '../lib/tauri'
   import { muteUntil } from '../lib/muteDurations'
-  import { displayName, inServerVoice, serverVoiceOf } from '../lib/selectors'
+  import { displayName, inServerVoice, isMember, serverVoiceOf } from '../lib/selectors'
   import { memberVoiceItems } from '../lib/participantMenu'
   import ServerVoiceItem from './ServerVoiceItem.svelte'
   import { clickOutside } from '../lib/actions'
@@ -42,6 +42,11 @@
   } = $props()
 
   const self = $derived(userId === app.state.me?.id)
+  // Remove from server (#371): the server's owner, on anyone else in it (asked first, in the shell)
+  const canRemove = $derived(
+    !!serverId && !self && app.state.servers.find((s) => s.id === serverId)?.owner_id === app.state.me?.id
+      && (app.state.members[serverId] ?? []).some((m) => m.user.id === userId) && isMember(app.state, serverId),
+  )
   const name = $derived(displayName(app.state, serverId, userId))
   const muted = $derived(
     !!muteChannelId && app.state.mutes.some((m) => m.target_kind === 'channel' && m.target_id === muteChannelId && (m.until === null || m.until > clock.nowIso)),
@@ -156,6 +161,11 @@
       <MuteFlyout bind:this={flyout} item="mute" label="Mute conversation" flyoutLabel="Mute {name} for" menuLeft={left} menuTop={top}
         onPick={(m) => pick(reportMute(() => api.setMute('channel', muteChannelId, muteUntil(m))))} />
     {/if}
+  {/if}
+  {#if canRemove && serverId}
+    {@const sid = serverId}
+    <span class="menu-sep" role="separator"></span>
+    <button type="button" class="menu-item danger" role="menuitem" data-item="remove-server" onclick={() => pick(() => (ui.serverAction = { kind: 'remove', serverId: sid, userId }))}>Remove from server</button>
   {/if}
   {#if onRemove && !self}
     <span class="menu-sep" role="separator"></span>

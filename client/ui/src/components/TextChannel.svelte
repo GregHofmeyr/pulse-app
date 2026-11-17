@@ -29,7 +29,7 @@
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { conversationName, firstUnreadIndex, isMuted, isNotes, reanchor, shouldMarkRead } from '../lib/conversations'
-  import { addOlder, appendNewer, mergeLatest, reachLatest, landed, resumeAfter, resumePoint, pendingMessage, removePending } from '../lib/state'
+  import { addOlder, appendNewer, mergeLatest, openAtUnread, reachLatest, landed, resumeAfter, resumePoint, unreadWindowPoint, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
   import { pinSync, refreshPins } from '../lib/pinSync.svelte'
   import { pinsTitle, takesPins } from '../lib/pins'
@@ -102,36 +102,53 @@
   // Fetch the latest page whenever this channel isn't marked loaded (first view, or after a
   // reconnect cleared the markers). Marked only on success, so an offline failure retries later.
   // After a reconnect with unread messages you go on from the newest held from before it instead (#329): any number
-  // may have come, and the latest page wouldn't meet the list.
+  // may have come, and the latest page wouldn't meet the list. With more than a page unread and nothing to go on from
+  // (a first visit, or a read point moved on by another device), it opens at the first unread message instead (#332):
+  // the window around your read point, the NEW line at the top (a jump to this chat, under way, wins).
   $effect(() => {
     const c = channelId
     if (history?.loaded || fetching === c) return
     fetching = c
     const resume = untrack(() => resumePoint(app.state, c))
-    const forward = resume !== null
-    const request = forward ? api.listMessagesAfter(c, resume) : api.listMessages(c)
-    request.then(
-      async (page) => {
-        fetching = null
-        // A jump's window got there first: merging the latest page into it would leave a gap.
-        if (app.state.history[c]?.loaded) return
-        if (!forward) {
-          app.state = mergeLatest(app.state, c, page)
-          await tick()
-          return void list?.scrollTo({ top: list.scrollHeight })
-        }
-        app.state = resumeAfter(app.state, c, page)
-        // More to come below: where the view lands is in the state (`land`, below), so a view drawn later lands too.
-        if (app.state.history[c]?.end === false) return
-        await tick()
-        list?.scrollTo({ top: list.scrollHeight })
-      },
+    const unreadAt = untrack(() => (resume === null && ui.jump?.channelId !== c ? unreadWindowPoint(app.state, c) : null))
+    void loadFirst(c, resume, unreadAt).then(
+      () => (fetching = null),
       (e) => {
         fetching = null
         error = errorText(e)
       },
     )
   })
+  async function loadFirst(c: string, resume: string | null, unreadAt: string | null) {
+    if (unreadAt) {
+      const around = await api.listMessagesAround(c, unreadAt)
+      // A jump's window (or a reload) got there first: leave it be.
+      if (app.state.history[c]?.loaded) return
+      if (around?.length) {
+        app.state = openAtUnread(app.state, c, around, unreadAt)
+        // the NEW line follows the read point the window opened at (`land`, below, brings it into view)
+        if (c === channelId) {
+          anchor = unreadAt
+          anchored = true
+        }
+        return
+      }
+      // the read point's message is gone (deleted): the latest page, as before
+    }
+    const page = resume !== null ? await api.listMessagesAfter(c, resume) : await api.listMessages(c)
+    // A jump's window got there first: merging the latest page into it would leave a gap.
+    if (app.state.history[c]?.loaded) return
+    if (resume === null) {
+      app.state = mergeLatest(app.state, c, page)
+      await tick()
+      return void list?.scrollTo({ top: list.scrollHeight })
+    }
+    app.state = resumeAfter(app.state, c, page)
+    // More to come below: where the view lands is in the state (`land`, below), so a view drawn later lands too.
+    if (app.state.history[c]?.end === false) return
+    await tick()
+    list?.scrollTo({ top: list.scrollHeight })
+  }
 
   // A reconnect fetches only the latest page again: the older pages (or a jump's window) still loaded keep the pins
   // they had, so the chat's pins are fetched to set them right (#258).
@@ -165,8 +182,8 @@
     void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   })
 
-  // A reconnect's reload left more to come below (#329, `resumeAfter`): at the bottom (or opening), the first new
-  // message goes to the top of the view to read on from, the NEW line above it; scrolled up, the view stays where it
+  // A reconnect's reload left more to come below (#329, `resumeAfter`), or a chat opened at its first unread (#332,
+  // `openAtUnread`): at the bottom (or opening), the first new message goes to the top of the view to read on from, the NEW line above it; scrolled up, the view stays where it
   // is. Your own message sent meanwhile takes you to the latest instead. Once, whichever view draws it first.
   $effect(() => {
     const h = history
@@ -376,6 +393,8 @@
     wasWatching = now
   })
   const unreadBelow = $derived(atBottom ? 0 : (app.state.reads[channelId]?.unread ?? 0))
+  /** Unread messages in all (a window opened at the first unread, #332, still has them below it). */
+  const unreadHere = $derived(app.state.reads[channelId]?.unread ?? 0)
   let markTimer: ReturnType<typeof setTimeout> | null = null
   $effect(() => {
     const newest = messages.at(-1)?.id
@@ -899,7 +918,7 @@
     {/if}
   </div>
   {#if backTo}<button class="jump" onclick={goBack}>Back to where you were</button>
-  {:else if detached}<button class="jump" onclick={toPresent}>Jump to present</button>
+  {:else if detached}<button class="jump" onclick={toPresent}>{unreadHere > 0 ? `${unreadHere} new · Jump to latest` : 'Jump to present'}</button>
   {:else if unreadBelow > 0}<button class="jump" onclick={jump}>{unreadBelow} new · Jump</button>
   {:else if farUp}<button class="jump" onclick={jump}>Jump to present</button>{/if}
   {#if jumpNotice}<p class="jump-notice" role="status">{jumpNotice}</p>{/if}
@@ -918,6 +937,9 @@
         <div class="edit-quote"><QuoteComposer {channelId} serverId={serverId ?? ''} editing={editingQuote} onDone={() => (editingQuote = null)} /></div>
       {/key}
     {/if}
+  {:else if channel?.archived_at}
+    <!-- archived (#303): read-only for everyone until its owner unarchives it; the server refuses posts anyway -->
+    <p class="archived-note" role="status">This channel is archived, so it's read-only.</p>
   {:else}
   {#if scheduledHere.length}
     <div class="sched-line">
@@ -946,6 +968,7 @@
 
 <style>
   .chan { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .archived-note { margin: 0 16px 16px; padding: 12px 14px; border-radius: var(--radius-md); background: var(--bg-1); color: var(--text-2); font-size: 14px; text-align: center; }
   /* the replies panel sits on the right (RepliesPanel, absolutely placed); the channel keeps the rest */
   .chan { position: relative; --replies-w: min(380px, 45%); }
   .chan.with-replies { padding-right: var(--replies-w); }

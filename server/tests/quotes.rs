@@ -3612,6 +3612,25 @@ async fn wins_in_a_deleted_channel_are_hidden() {
     assert!(f.board("").await.winners.is_empty());
 }
 
+/// (#410) An archived channel is still readable, so its quotes keep counting on the board and its
+/// wins stay; only a deleted channel's quotes drop out.
+#[tokio::test]
+async fn an_archived_channels_quotes_keep_counting() {
+    let f = fixture().await;
+    let a = f.say_one("a").await;
+    assert_eq!(f.react(&f.sam_t, a.id, "😂").await, 204);
+    seed_event(&f, 2025, &[(a.id, &[f.alex])]).await;
+    f.sql(format!(
+        "UPDATE channels SET archived_at = '2026-01-02T00:00:00.000Z' WHERE id = '{}'",
+        f.ch.id
+    ))
+    .await;
+    let b = f.board("").await;
+    assert_eq!(b.winners.len(), 1);
+    assert_eq!(ids(&b.top_all_time), vec![a.id]);
+    assert_eq!(b.most_quoted.len(), 1);
+}
+
 #[tokio::test]
 async fn most_awarded_is_award_totals_and_lists_are_capped() {
     let f = fixture().await;

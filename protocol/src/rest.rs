@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::ids::{
-    AttachmentId, CallId, CategoryId, ChannelId, ClipUploadId, GameId, LineId, MessageId,
-    QotyEventId, ReminderId, ScheduledId, ServerId, UserId,
+    AttachmentId, BookmarkId, CallId, CategoryId, ChannelId, ClipUploadId, DmCategoryId, GameId,
+    LineId, MessageId, QotyEventId, ReminderId, ScheduledId, ServerId, UserId,
 };
 
 /// A `Debug` that names every field but prints the secret ones as `<redacted>`, for types that
@@ -322,6 +322,68 @@ pub struct ServerOrderRequest {
     pub server_ids: Vec<ServerId>,
 }
 
+/// One of your own DM categories (#305): a heading in your conversation list that only you see.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DmCategory {
+    pub id: DmCategoryId,
+    pub name: String,
+    /// Folded shut in your list (on every device).
+    #[serde(default)]
+    pub collapsed: bool,
+}
+
+/// Where one of your conversations sits in your list (#305): pinned to the top, in one of your categories, or both
+/// (a pinned one shows under Pinned). Conversations with neither have no placement.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DmPlacement {
+    pub channel_id: ChannelId,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub category_id: Option<DmCategoryId>,
+}
+
+/// Your conversation list's layout (#305): your categories in order and your placements. Yours only, on every device.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DmLayout {
+    pub categories: Vec<DmCategory>,
+    pub placements: Vec<DmPlacement>,
+}
+
+/// `POST /me/dm-categories` (#305): a new category, last in your list.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CreateDmCategoryRequest {
+    pub name: String,
+}
+
+/// `PATCH /me/dm-categories/{id}` (#305): rename it, or fold it open or shut. Absent fields stay as they are.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct UpdateDmCategoryRequest {
+    #[serde(default)]
+    #[ts(optional)]
+    pub name: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub collapsed: Option<bool>,
+}
+
+/// `PUT /me/dm-placements/{channel_id}` (#305): pin or unpin a conversation and put it in a category (or none).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct DmPlacementRequest {
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub category_id: Option<DmCategoryId>,
+}
+
+/// Limits on DM categories (#305).
+pub mod dm_layout_limits {
+    /// Characters in a category's name, after trimming.
+    pub const NAME_CHARS: usize = 32;
+    /// Categories one person may have.
+    pub const MAX_CATEGORIES: usize = 30;
+}
+
 /// A name you gave someone that only you see. Only ever sent to its owner.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PrivateNickname {
@@ -511,6 +573,11 @@ pub struct Channel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub bitrate: Option<u32>,
+    /// When its owner archived it (#303): a text channel that is read-only (nobody posts, reacts or edits there) and
+    /// sits in the list's collapsed Archived group. Absent: not archived (and from older servers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub archived_at: Option<String>,
 }
 
 /// The bitrates a voice channel may set (#75), in kbps, above Default's 64. 256 is as much as the
@@ -784,6 +851,95 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub f1: Option<Box<F1Card>>,
+    /// Set on a forward (#302): where the original was said, by whom and when, and what it said. The forward's own
+    /// `content` is the forwarder's comment, or a stand-in when they wrote none (`caption_is_fallback`), and its
+    /// `attachments` are the original's (by reference, while it is there).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub forwarded: Option<Box<Forwarded>>,
+    /// Set on a group chat's own system line (#114): who created it, added, left or was removed, or renamed it or
+    /// changed its icon, by id, so clients write it with the names that apply today. `content` keeps the line as
+    /// written (the fallback for older clients, and for anyone a client doesn't know).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub group_line: Option<GroupLine>,
+}
+
+/// What a group chat's system line says happened (#114).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupLineKind {
+    /// `by` created the group with `users`.
+    Created,
+    /// `by` added `users`.
+    MembersAdded,
+    /// `by` left.
+    MemberLeft,
+    /// `by` removed `users` (one person).
+    MemberRemoved,
+    /// `by` renamed the group to `name`.
+    Renamed,
+    /// `by` removed the group name.
+    NameRemoved,
+    /// `by` changed the group icon.
+    IconChanged,
+    /// `by` removed the group icon.
+    IconRemoved,
+}
+
+/// A group chat's system line by id (#114), read from the payload the server stored with it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct GroupLine {
+    pub kind: GroupLineKind,
+    pub by: UserId,
+    #[serde(default)]
+    pub users: Vec<UserId>,
+    /// The new name, on `Renamed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub name: Option<String>,
+}
+
+/// The original of a forwarded message (#302), as it was when forwarded.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Forwarded {
+    /// The original (never itself a forward: forwarding a forward forwards its original).
+    pub message_id: MessageId,
+    pub channel_id: ChannelId,
+    /// The kind of chat it was said in: a DM or group is never named.
+    pub channel_kind: ChannelKind,
+    /// The channel's name, for a server's channel only.
+    pub channel_name: Option<String>,
+    pub server_id: Option<ServerId>,
+    /// The thread it was a reply in, if any (to open it there).
+    pub thread_root_id: Option<MessageId>,
+    pub author_id: Option<UserId>,
+    pub created_at: String,
+    /// Its text when forwarded (empty when it was only files, or it is unavailable).
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub gif: Option<Gif>,
+    /// Its link previews.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<LinkEmbed>>", optional)]
+    pub embeds: Vec<LinkEmbed>,
+    /// The original was deleted (or its chat was): nothing of it is shown.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub unavailable: bool,
+}
+
+/// `POST /messages/{id}/forward` (#302): forward a message you can see to a chat you can post in.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ForwardMessageRequest {
+    pub channel_id: ChannelId,
+    /// Your words above it (may be empty), up to a message's length.
+    #[serde(default)]
+    pub comment: String,
+    /// As a send's: a retry with the same nonce gets the first forward back.
+    #[serde(default)]
+    pub nonce: Option<String>,
 }
 
 /// How long a pin lasts (#178).
@@ -990,6 +1146,32 @@ pub struct Poll {
     pub mine: Vec<u32>,
     /// Per option, in order. `None` until you may see results: after you vote, as its creator, or once it closes.
     pub results: Option<Vec<PollTally>>,
+    /// When its creator last changed its question or options (#265); the card says "(edited)". Absent from older
+    /// servers: never edited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub edited_at: Option<String>,
+}
+
+/// One option in a poll edit (#265): its text, and which of the poll's options (by index, before the edit) it is.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct PollOptionEdit {
+    pub text: String,
+    /// The option it keeps (its place before the edit), or `None` for a new one. Each at most once; an option no
+    /// entry keeps is removed. A kept option whose text changes loses its votes, as a removed one does.
+    #[serde(default)]
+    pub from: Option<u32>,
+}
+
+/// `PUT /messages/{id}/poll` (#265): its creator changes an open poll's question and options. Multiple choice,
+/// Anonymous and the end time stay as posted. An edit that would take votes away (an option with votes removed or
+/// reworded) is refused with 409 unless `clear_votes` says the creator agreed to it.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct EditPollRequest {
+    pub question: String,
+    pub options: Vec<PollOptionEdit>,
+    #[serde(default)]
+    pub clear_votes: bool,
 }
 
 /// `POST /channels/{id}/polls`.
@@ -1121,6 +1303,56 @@ pub struct MessageReminder {
 pub struct CreateReminderRequest {
     /// When (RFC 3339, any offset): in the future, at most [`schedule_limits::MAX_DAYS_AHEAD`] away.
     pub remind_at: String,
+}
+
+/// Saved message limits (#315), shared so the client can say them before the server refuses.
+pub mod bookmark_limits {
+    /// Saved messages one person may have.
+    pub const MAX_BOOKMARKS: i64 = 500;
+    /// The longest note on one, in characters.
+    pub const NOTE_MAX_CHARS: usize = 500;
+    /// How much of the message a saved one shows, in characters.
+    pub const SNIPPET_CHARS: usize = 300;
+}
+
+/// What a saved message shows of the message while its person can still see it (#315).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SavedMessage {
+    pub channel_id: ChannelId,
+    /// The thread the message is a reply in, if any (to open it there).
+    pub thread_root_id: Option<MessageId>,
+    pub author_id: Option<UserId>,
+    /// At most [`bookmark_limits::SNIPPET_CHARS`] characters of it.
+    pub content: String,
+    pub created_at: String,
+}
+
+/// A saved message (#315): a private bookmark, with an optional note. Only its person ever sees it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct MessageBookmark {
+    pub id: BookmarkId,
+    pub message_id: MessageId,
+    pub note: Option<String>,
+    /// When it was saved.
+    pub created_at: String,
+    /// The message, while they can see it; `None` once it is deleted or out of their reach (left the chat, the chat
+    /// deleted): nothing of it is shown then.
+    pub message: Option<SavedMessage>,
+}
+
+/// `POST /messages/{id}/bookmark` (#315).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct SaveMessageRequest {
+    /// At most [`bookmark_limits::NOTE_MAX_CHARS`] characters; empty or none: no note.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// `PATCH /bookmarks/{id}` (#315): the new note (empty or none: no note).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct EditBookmarkRequest {
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// An answer to a plan (#387).
@@ -1815,6 +2047,16 @@ pub struct EditMessageRequest {
     pub content: String,
 }
 
+/// How many earlier versions of an edited message are kept (#301): older ones go as new edits come.
+pub const MAX_EDIT_VERSIONS: i64 = 20;
+
+/// One version of an edited message (#301): its text, and when it was written (sent, or the edit that made it).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct MessageVersion {
+    pub content: String,
+    pub written_at: String,
+}
+
 // ---------- Attachments (#57) ----------
 
 /// What an attachment is, which decides how the UI shows it.
@@ -2471,6 +2713,30 @@ pub struct InboxItem {
 pub struct InboxPage {
     pub items: Vec<InboxItem>,
     pub unread: u32,
+}
+
+/// A reply thread you're part of with replies you haven't seen (#326): a quote's or clip's thread you started (you
+/// posted the quote or clip) or replied in, with replies by others since you last looked (your seen point, or your own
+/// last reply in it, whichever is later).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct InboxThread {
+    /// The quote or clip the thread is on, one short line.
+    pub root: InboxSnippet,
+    pub channel_id: ChannelId,
+    /// The newest reply you haven't seen.
+    pub latest: Message,
+    /// How many replies by others you haven't seen.
+    pub new_replies: u32,
+    /// You posted the quote or clip (otherwise you replied in it).
+    pub started: bool,
+}
+
+/// `GET /inbox/threads` (#326): the threads you're part of with new replies, newest reply first; and every thread
+/// you're part of (`watching`, newest first, capped), so a client knows which new replies are worth asking again for.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct InboxThreads {
+    pub threads: Vec<InboxThread>,
+    pub watching: Vec<MessageId>,
 }
 
 /// `GET /inbox/unread`.

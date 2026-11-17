@@ -96,3 +96,28 @@ export function endedSummary(winners: string[], votes: number): string {
   if (winners.length === 1) return `: ${winners[0]} won (${plural(votes, 'vote')})`
   return `: ${joinNames([...new Set(winners)])} tied (${plural(votes, 'vote')} each)`
 }
+
+/** One option row in the poll editor (#265): its text, and which of the poll's options it was (`null`: a new one). */
+export type EditRow = { text: string; from: number | null }
+
+/** The editor's rows for a poll: each option, where it was. */
+export const editRows = (p: Poll): EditRow[] => p.options.map((text, i) => ({ text, from: i }))
+
+/** The votes an edit would clear (#265), per option before it: an option with votes that is removed, or kept with
+ *  new text (votes were for what it said). Adding or moving options clears nothing. As the server's `plan_edit`. */
+export function clearedVotes(p: Poll, rows: EditRow[]): { option: string; votes: number }[] {
+  const tally = p.results
+  if (!tally) return []
+  return p.options.flatMap((option, i) => {
+    const votes = tally[i]?.votes ?? 0
+    if (!votes) return []
+    const row = rows.find((r) => r.from === i)
+    return row && row.text.trim() === option ? [] : [{ option, votes }]
+  })
+}
+
+/** "This clears 3 votes (Pizza, Tacos)." */
+export function clearedLabel(cleared: { option: string; votes: number }[]): string {
+  const n = cleared.reduce((a, c) => a + c.votes, 0)
+  return `This clears ${plural(n, 'vote')} (${cleared.map((c) => c.option).join(', ')}).`
+}

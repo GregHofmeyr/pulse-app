@@ -34,6 +34,7 @@
   import SportsCard from './SportsCard.svelte'
   import DeadlockCard from './DeadlockCard.svelte'
   import PollCard from './PollCard.svelte'
+  import PollComposer from './PollComposer.svelte'
   import { endedSummary, pollOver, shownText } from '../lib/poll'
   import { closePoll } from '../lib/polls.svelte'
   import PlanCard from './PlanCard.svelte'
@@ -44,12 +45,17 @@
   import { nameCss, resolveNameStyle } from '../lib/nameStyle'
   import { displayName, roleColorFor, userOf } from '../lib/selectors'
   import { callLineText } from '../lib/calls'
+  import { groupLineText } from '../lib/groupLines'
   import { appearance } from '../lib/appearance.svelte'
   import { openCard } from '../lib/profileCard.svelte'
   import PersonMenu from './PersonMenu.svelte'
   import MessageMenu from './MessageMenu.svelte'
   import WhenPicker from './WhenPicker.svelte'
+  import EditHistoryDialog from './EditHistoryDialog.svelte'
+  import ForwardPicker from './ForwardPicker.svelte'
+  import ForwardedCard from './ForwardedCard.svelte'
   import { remindMe } from '../lib/reminders.svelte'
+  import { bookmarkOf, removeBookmark, saveMessage } from '../lib/bookmarks.svelte'
   import { whenLabel } from '../lib/schedule'
   import { quoteRequest, quotesChannelsFor } from '../lib/quoteFromMessage'
   import { livePin, pinFor, pinTip, pinnedNoun, pinsPlainMessages } from '../lib/pins'
@@ -106,6 +112,8 @@
 
   // --- names and avatars: the avatar animates while the pointer is over the row; pills take the person's style ---
   let rowHover = $state(false)
+  /** Its channel is archived (#303): read-only, so no reacting, replying or editing. */
+  const archived = $derived(!!app.state.channels[message.channel_id]?.archived_at)
   // Pills restyle only when the HTML or a mentioned person's style changes, not on every state update:
   // the lookup is rebuilt only when people or members change, and the styles are compared as one string.
   const lookup = $derived(mentionLookup(app.state))
@@ -201,6 +209,11 @@
   // your own poll, still open, can be ended from the message's menu (#157); a refusal fetches the poll afresh
   const endable = $derived(!!message.poll && mine && !pollOver(message.poll, now))
   const endPoll = () => closePoll(message).catch((e) => showError(errorText(e)))
+  // ...or changed (#265), from the menu or its Edit button: the poll composer, filled from it
+  let pollEdit = $state<HTMLElement | null>(null)
+  const editPollCard = (anchor?: HTMLElement) => {
+    pollEdit = anchor ?? document.querySelector<HTMLElement>(`[data-message-id="${message.id}"] .poll`)
+  }
   // your own plan, not cancelled, can be changed or cancelled from the message's menu or its Edit button (#387)
   const planOpen = $derived(!!message.plan && mine && !message.plan.cancelled_at)
   let planEdit = $state<HTMLElement | null>(null)
@@ -216,6 +229,18 @@
     if (!at) return void (remindCustom = opener.isConnected ? opener : document.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`))
     remindAt(at).catch((e) => showError(errorText(e)))
   }
+  // Save message (#315): a private bookmark, listed in the inbox's Saved tab
+  const savedOne = $derived(msgMenu ? bookmarkOf(message.id) : null)
+  const saveToVault = () => saveMessage(message.id).then(() => (ui.notice = 'Saved. Find it in your inbox under Saved.'), (e) => showError(errorText(e)))
+  const unsave = () => savedOne && removeBookmark(savedOne.id).then(() => (ui.notice = 'Removed from saved'), (e) => showError(errorText(e)))
+  // Forward… (#302): words, files or a GIF (not a poll or plan, nor a forward whose original is gone), to a chat picked
+  // by where the menu opened from
+  const forwardable = $derived(!message.poll && !message.plan && !message.forwarded?.unavailable)
+  let forwardAt = $state<HTMLElement | null>(null)
+  const openForward = (opener: HTMLElement) =>
+    (forwardAt = opener.isConnected ? opener : document.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`))
+  // Edit history (#301): "(edited)" opens the message's versions
+  let historyAt = $state<HTMLElement | null>(null)
   // Add to quotes (#316): the message as a quote, its author speaking, in one of its server's quotes channels (none in
   // a DM or group: no item there). One request id per message, so a double pick posts it once.
   const quotesChannels = $derived(msgMenu ? quotesChannelsFor(app.state, message).map((c) => ({ id: c.id, name: c.name ?? '' })) : [])
@@ -358,6 +383,9 @@
     <!-- a share to the voice stage (#234), with today's names: "🎵 alex shared a Jam to the stage" -->
     {@const sl = message.stage_share_line}
     <div class="system" data-message-id={message.id}>🎵 {nameOf(sl.by)} shared {sharePhrase(sl.kind)} to the stage <span class="time">{time}</span></div>
+  {:else if message.group_line}
+    <!-- a group's own line (#114), with today's names: "alex added sam" -->
+    <div class="system" data-message-id={message.id}>{groupLineText(app.state, message)} <span class="time">{time}</span></div>
   {:else}
   <div class="system" data-message-id={message.id}>{message.content} <span class="time">{time}</span></div>
   {/if}
@@ -401,14 +429,17 @@
             {#if !onlyGif}<div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention} onkeydown={(e) => { openMention(e); mentionMenu(e) }} oncontextmenu={mentionMenu}>{@html html}</div>{/if}
             {#each gifs as g (g.id)}<GifView gif={g} onError={showError} onFail={() => (failedGifs = [...failedGifs, g.id])} />{/each}
           {/if}
+          <!-- a forward (#302): the original, under the forwarder's comment -->
+          {#if message.forwarded}<ForwardedCard {message} {nameOf} {mentionNames} onError={showError} />{/if}
           <!-- files with no caption were still edited if the caption was cleared (#297) -->
-          {#if message.edited_at}<span class="edited">(edited)</span>{/if}
+          {#if message.edited_at}<button type="button" class="edited" aria-haspopup="dialog" aria-expanded={!!historyAt} data-tip="See edit history" data-menu-toggle
+            onclick={(e) => (historyAt = historyAt ? null : e.currentTarget)}>(edited)</button>{/if}
         {/if}
         <!-- files (#57): a sent message's, or the chips and upload bar of one on its way -->
         {#if pending?.files?.length}
           <ComposerFiles files={pending.files} progress={pending.status === 'pending' ? (attachmentSends.fraction(pending.nonce) ?? 0) : null}
             error={pending.status === 'failed' ? attachmentSends.error(pending.nonce) : null} />
-        {:else if !pending && !message.deleted && message.attachments?.length}
+        {:else if !pending && !message.deleted && !message.forwarded && message.attachments?.length}
           <MessageFiles {message} onError={showError} />
         {/if}
         {#each embeds as e (e.url)}<LinkEmbed embed={e} messageId={message.id} channelId={message.channel_id} {mine} onError={showError} />{/each}
@@ -417,11 +448,15 @@
       </div>
       {#if !pending && !message.deleted && !editing}
         <div class="actions" class:open={picking || focusIn || !!msgMenu}>
-          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={16} /></button>
-          <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={16} /></button>
+          <!-- an archived channel (#303) is read-only: no reacting, replying or editing there -->
+          {#if !archived}
+            <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={16} /></button>
+            <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={16} /></button>
+          {/if}
           {#if mine}
-            {#if message.plan}{#if planOpen}<button aria-label="Edit plan" onclick={(e) => editPlanCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
-            {:else if !message.poll}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
+            {#if archived}{:else if message.plan}{#if planOpen}<button aria-label="Edit plan" onclick={(e) => editPlanCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
+            {:else if message.poll}{#if endable}<button aria-label="Edit poll" onclick={(e) => editPollCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
+            {:else if !message.forwarded}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
             {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
             <DeleteButton what={message.thread_root_id ? 'reply' : 'message'} onConfirm={() => void del()} />
           {/if}
@@ -460,10 +495,21 @@
   {#key msgMenu}<MessageMenu pinned={!!pin} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
     onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
     onRemind={(at) => msgMenu && remind(at, msgMenu.opener)}
-    onEndPoll={endable ? endPoll : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
+    saved={!!savedOne} onSave={saveToVault} onUnsave={unsave}
+    onForward={forwardable ? () => msgMenu && openForward(msgMenu.opener) : undefined}
+    onEndPoll={endable ? endPoll : undefined} onEditPoll={endable && !archived ? () => editPollCard() : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
 {/if}
 {#if remindCustom}
   <WhenPicker anchor={remindCustom} title="Remind me about this" confirm="Set reminder" onPick={remindAt} onClose={() => (remindCustom = null)} />
+{/if}
+{#if forwardAt}
+  <ForwardPicker anchor={forwardAt} {message} author={message.forwarded ? nameOf(message.forwarded.author_id) : name} onClose={() => (forwardAt = null)} />
+{/if}
+{#if historyAt}
+  <EditHistoryDialog anchor={historyAt} messageId={message.id} onClose={() => (historyAt = null)} />
+{/if}
+{#if pollEdit}
+  <PollComposer anchor={pollEdit} channelId={message.channel_id} editing={message} onClose={() => (pollEdit = null)} />
 {/if}
 {#if planEdit}
   <PlanComposer anchor={planEdit} channelId={message.channel_id} editing={message} onClose={() => (planEdit = null)} />
@@ -496,7 +542,8 @@
   .content :global(pre code) { border: 0; padding: 0; }
   .content :global(a) { color: var(--accent-text); }
   .content :global(blockquote) { margin: 4px 0; padding-left: 10px; border-left: 3px solid var(--bg-4); color: var(--text-2); }
-  .edited { font-size: 11px; color: var(--text-3); }
+  .edited { font-size: 11px; color: var(--text-3); border: 0; padding: 0; background: none; font-family: inherit; cursor: pointer; }
+  .edited:hover, .edited:focus-visible { color: var(--text-2); text-decoration: underline; }
   .deleted { margin: 0; font-style: italic; color: var(--text-3); }
   .reply { display: flex; align-items: center; gap: 6px; padding-left: 20px; margin-bottom: 4px; font-size: 13px; color: var(--text-3); min-width: 0; }
   .reply strong { color: var(--text-2); }

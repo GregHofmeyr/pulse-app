@@ -145,6 +145,19 @@ describe('applyEvent', () => {
     expect(Object.keys(s.channels)).toContain('C2')
   })
 
+  it('MemberLeft drops them from the list; for you, the server\'s counts go too (#371)', () => {
+    const sam = { user: { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] as string[] } }, nickname: null }
+    let s = applyEvent(base(), { t: 'MemberJoined', d: { server_id: 'S1', member: sam } }, 0)
+    s = { ...s, reads: { C1: { channel_id: 'C1', last_read_message_id: null, unread: 3, mentions: 1 } } }
+    s = applyEvent(s, { t: 'MemberLeft', d: { server_id: 'S1', user_id: 'U2' } }, 0)
+    expect(s.members['S1'].map((m) => m.user.id)).toEqual(['U1'])
+    expect(s.reads['C1']?.unread).toBe(3)
+    s = applyEvent(s, { t: 'MemberLeft', d: { server_id: 'S1', user_id: 'U1', removed_by: 'U3' } }, 0)
+    expect(s.members['S1']).toEqual([])
+    expect(s.reads['C1']).toBeUndefined()
+    expect(s.servers.map((x) => x.id)).toEqual(['S1'])
+  })
+
   it('a restored channel comes back to the list after its delete', () => {
     let s = applyEvent(base(), { t: 'ChannelCreated', d: { channel: ch('C2') } }, 0)
     s = applyEvent(s, { t: 'ChannelDeleted', d: { channel_id: 'C2', server_id: 'S1' } }, 0)

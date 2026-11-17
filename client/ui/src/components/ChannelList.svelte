@@ -4,6 +4,7 @@
   // Structure (the drag action, #55, relies on it): `.list` > `.cat.top` (rows) and one `.cat[data-category=<id>]`
   // per category (legacy sections: `.cat` without data-category), each `.label` heading then its rows `[data-channel]`.
   // Members drag rows and category headings to reorder (lib/drag.ts); legacy sections and non-members don't drag.
+  // Archived channels (#303) sit apart at the bottom, in a collapsed `.archived` group that doesn't drag.
   import { tick, untrack } from 'svelte'
   import Icon, { type IconName } from './Icon.svelte'
   import type { Channel } from '../lib/protocol/Channel'
@@ -470,6 +471,9 @@
   }
   /** In a collapsed section only these rows stay: the channel you're on, unread unmuted ones, and the voice channel
    *  you're in. The top area has no heading, so it never collapses. */
+  // The Archived group (#303): collapsed until opened (here, for this session); the channel you have open shows in it
+  // anyway. Its rows don't drag, and their menus move nothing (archived channels aren't in the order).
+  let archivedOpen = $state<Record<string, boolean>>({})
   const shown = (c: Channel, key: string | null) =>
     !key || !isCollapsed(key) || c.id === activeChannelId ||
     (c.kind === 'voice' && c.id === voiceChannelId) || ((app.state.reads[c.id]?.unread ?? 0) > 0 && !isMuted(app.state, c, clock.nowIso))
@@ -619,6 +623,18 @@
       {#each sec.channels as c (c.id)}{#if shown(c, sec.key)}{@render chan(c)}{/if}{/each}
     </div>
   {/each}
+  {#if layout.archived.length}
+    {@const open = !!archivedOpen[serverId]}
+    <div class="archived" data-archived>
+      <div class="label">
+        <button type="button" class="section" aria-expanded={open} onclick={() => (archivedOpen = { ...archivedOpen, [serverId]: !open })}>
+          <span class="caret" class:shut={!open}><Icon name="chevron" size={11} /></span>Archived
+        </button>
+        <span class="n">{layout.archived.length}</span>
+      </div>
+      {#each layout.archived as c (c.id)}{#if open || c.id === activeChannelId}{@render channelRow(c, 'hash')}{/if}{/each}
+    </div>
+  {/if}
   {#if newCat?.serverId === serverId}
     <div class="label new-cat" class:first={layout.top.length === 0 && layout.sections.length === 0}>
       <input class="input input-sm grow" use:focus bind:value={catDraft} maxlength="64" placeholder="New category" aria-label="New category name"
@@ -667,6 +683,11 @@
   /* a section: its heading, then its rows (the top area has no heading, and nothing to show when empty) */
   .cat { display: flex; flex-direction: column; gap: 2px; }
   .cat.top:empty { display: none; }
+  /* archived channels (#303): their own group at the bottom, quieter than the rest */
+  .archived { display: flex; flex-direction: column; gap: 2px; }
+  .archived .row { color: var(--text-3); }
+  .archived .row:hover, .archived .row.active { color: var(--text-2); }
+  .archived .n { font-weight: 500; }
   .label { padding: 16px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); text-transform: uppercase; }
   .label { display: flex; align-items: center; justify-content: space-between; }
   .label.first { padding-top: 12px; }

@@ -3,6 +3,7 @@
 // our view directly. Every request takes a ticket, and only an answer newer than the last one shown lands: a slow
 // fetch can't put back what a later vote changed.
 import type { CreatePollRequest } from './protocol/CreatePollRequest'
+import type { EditPollRequest } from './protocol/EditPollRequest'
 import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
 import type { Poll } from './protocol/Poll'
@@ -76,6 +77,10 @@ export const votePoll = (m: Message, options: number[]): Promise<Poll> => run(m.
 
 /** End your poll now. */
 export const closePoll = (m: Message): Promise<Poll> => run(m.channel_id, m.id, () => pollCmd.close(m.id))
+
+/** Change your open poll's question and options (#265). Rejects with the server's reason (409 when it would clear
+ *  votes without `clear_votes`). */
+export const editPoll = (m: Message, request: EditPollRequest): Promise<Poll> => run(m.channel_id, m.id, () => pollCmd.edit(m.id, request))
 
 export function handlePollEvent(e: Event): void {
   if (e.t === 'PollChanged') {

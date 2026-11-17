@@ -1189,6 +1189,30 @@ pub async fn join_server(
 }
 
 #[tauri::command]
+pub async fn leave_server(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.leave_server(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn remove_server_member(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    user_id: UserId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.remove_server_member(&token, server_id, user_id).await,
+    )
+}
+
+#[tauri::command]
 pub async fn list_channels(
     app: AppHandle,
     core: State<'_, Core>,
@@ -1938,6 +1962,20 @@ pub async fn delete_channel(
 }
 
 #[tauri::command]
+pub async fn set_channel_archived(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    archived: bool,
+) -> Result<Channel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_channel_archived(&token, channel_id, archived).await,
+    )
+}
+
+#[tauri::command]
 pub async fn list_deleted_channels(
     app: AppHandle,
     core: State<'_, Core>,
@@ -2014,6 +2052,16 @@ pub async fn inbox(
 pub async fn inbox_unread(app: AppHandle, core: State<'_, Core>) -> Result<u32, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.inbox_unread(&token).await)
+}
+
+/// Reply threads you're part of with replies you haven't seen (#326).
+#[tauri::command]
+pub async fn inbox_threads(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<pulse_protocol::rest::InboxThreads, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.inbox_threads(&token).await)
 }
 
 /// An inbox item was opened (#306).
@@ -4864,6 +4912,52 @@ pub async fn set_server_order(
     core.check(&app, api.set_server_order(&token, server_ids).await)
 }
 
+/// A new conversation category of your own (#305).
+#[tauri::command]
+pub async fn create_dm_category(
+    app: AppHandle,
+    core: State<'_, Core>,
+    name: String,
+) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.create_dm_category(&token, name).await)
+}
+
+/// Rename one of your conversation categories, or fold it (#305).
+#[tauri::command]
+pub async fn update_dm_category(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::DmCategoryId,
+    request: pulse_protocol::rest::UpdateDmCategoryRequest,
+) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.update_dm_category(&token, id, &request).await)
+}
+
+/// Delete one of your conversation categories (#305).
+#[tauri::command]
+pub async fn delete_dm_category(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::DmCategoryId,
+) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_dm_category(&token, id).await)
+}
+
+/// Pin or unpin a conversation and put it in a category, or none (#305).
+#[tauri::command]
+pub async fn place_dm(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    request: pulse_protocol::rest::DmPlacementRequest,
+) -> Result<pulse_protocol::rest::DmLayout, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.place_dm(&token, channel_id, &request).await)
+}
+
 /// Plan reminders (#399): whether plans' reminder lines ping you, on every device.
 #[tauri::command]
 pub async fn set_plan_reminders(
@@ -4937,6 +5031,83 @@ pub async fn delete_scheduled(
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.delete_scheduled(&token, id).await)
+}
+
+/// A message's versions (#301): the current text first, then the earlier ones, newest first.
+#[tauri::command]
+pub async fn message_edits(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<Vec<pulse_protocol::rest::MessageVersion>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.message_edits(&token, message_id).await)
+}
+
+/// Forward a message (#302) to a chat you can post in, with an optional comment. `nonce` makes a retry land once.
+#[tauri::command]
+pub async fn forward_message(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    channel_id: ChannelId,
+    comment: String,
+    nonce: Option<String>,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    let body = pulse_protocol::rest::ForwardMessageRequest {
+        channel_id,
+        comment,
+        nonce,
+    };
+    core.check(&app, api.forward_message(&token, message_id, &body).await)
+}
+
+/// Your saved messages (#315), newest first.
+#[tauri::command]
+pub async fn list_bookmarks(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<Vec<pulse_protocol::rest::MessageBookmark>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.list_bookmarks(&token).await)
+}
+
+/// Save a message (#315), with an optional note.
+#[tauri::command]
+pub async fn save_message(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    note: Option<String>,
+) -> Result<pulse_protocol::rest::MessageBookmark, ApiError> {
+    let (api, token) = core.current()?;
+    let body = pulse_protocol::rest::SaveMessageRequest { note };
+    core.check(&app, api.save_message(&token, message_id, &body).await)
+}
+
+/// A saved message's new note (#315); none or empty clears it.
+#[tauri::command]
+pub async fn edit_bookmark(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::BookmarkId,
+    note: Option<String>,
+) -> Result<pulse_protocol::rest::MessageBookmark, ApiError> {
+    let (api, token) = core.current()?;
+    let body = pulse_protocol::rest::EditBookmarkRequest { note };
+    core.check(&app, api.edit_bookmark(&token, id, &body).await)
+}
+
+/// Remove a saved message (#315).
+#[tauri::command]
+pub async fn delete_bookmark(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::BookmarkId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_bookmark(&token, id).await)
 }
 
 /// Your reminders (#300), soonest first.
@@ -5128,6 +5299,18 @@ pub async fn vote_poll(
 ) -> Result<pulse_protocol::rest::Poll, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.vote_poll(&token, message_id, options).await)
+}
+
+/// Change your open poll's question and options (#265).
+#[tauri::command]
+pub async fn edit_poll(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    request: pulse_protocol::rest::EditPollRequest,
+) -> Result<pulse_protocol::rest::Poll, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.edit_poll(&token, message_id, &request).await)
 }
 
 /// End your poll now.

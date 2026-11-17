@@ -5,9 +5,11 @@ import type { Channel } from "./Channel";
 import type { ChannelId } from "./ChannelId";
 import type { ClipViewPref } from "./ClipViewPref";
 import type { CustomEmoji } from "./CustomEmoji";
+import type { DmLayout } from "./DmLayout";
 import type { DmMembers } from "./DmMembers";
 import type { Game } from "./Game";
 import type { Message } from "./Message";
+import type { MessageBookmark } from "./MessageBookmark";
 import type { MessageReminder } from "./MessageReminder";
 import type { Mute } from "./Mute";
 import type { MyCustomStatus } from "./MyCustomStatus";
@@ -175,4 +177,13 @@ scheduled?: Array<ScheduledMessage>,
  * Your reminders (#300), soonest first: those still to come and those due (in your inbox) you haven't marked
  * done. Yours only. Absent from older servers.
  */
-reminders?: Array<MessageReminder>, };
+reminders?: Array<MessageReminder>, 
+/**
+ * Your saved messages (#315), newest first (one out of your reach has no message). Yours only. Absent from older
+ * servers.
+ */
+bookmarks?: Array<MessageBookmark>, 
+/**
+ * Your conversation list's pins and categories (#305). Yours only. Absent from older servers.
+ */
+dm_layout?: DmLayout, };
