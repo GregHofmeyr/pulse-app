@@ -469,3 +469,173 @@ async fn after_a_restart_the_same_game_soon_reopens_the_invite() {
             .is_some_and(|c| c.ended)
     );
 }
+
+/// Another obviously fake lobby (account 2).
+const OTHER_LOBBY: &str = "109775240917155842";
+
+async fn leave_group(
+    app: &TestApp,
+    token: &str,
+    ch: ChannelId,
+    who: UserId,
+) -> reqwest::StatusCode {
+    app.http
+        .delete(app.url(&format!("/channels/{ch}/members/{who}")))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn leaving_the_group_ends_the_senders_invites_there() {
+    // #438: an invite doesn't outlive its sender's membership: leaving (or being removed from) the group ends it live,
+    // and the Join round no longer reads a lobby into it.
+    let World {
+        app,
+        fake,
+        alex: (alex, alex_t),
+        sam: (sam, sam_t),
+        kim: (kim, kim_t),
+    } = world().await;
+    let group = create_dm(&app, &alex_t, &[sam, kim]).await;
+    let mut alex_ws = hello(&app, &alex_t).await;
+    let mut sam_ws = hello(&app, &sam_t).await;
+    fake.in_game(ALEX_STEAM, Some((SPACE, Some(LOBBY), None)));
+    play(&app, &mut alex_ws, alex, true).await;
+    let msg: Message = invite(&app, &alex_t, group.id).await.json().await.unwrap();
+    assert_eq!(join(&app, &sam_t, msg.id).await.status(), 200);
+    drain(&mut sam_ws, 300).await;
+
+    assert_eq!(leave_group(&app, &alex_t, group.id, alex).await, 204);
+    let (events, raw) = drain(&mut sam_ws, 400).await;
+    assert!(!raw.contains(LOBBY), "{raw}");
+    assert!(
+        invite_changes(&events, msg.id)
+            .last()
+            .is_some_and(|c| c.ended && !c.joinable),
+        "{events:?}"
+    );
+    assert_eq!(join(&app, &sam_t, msg.id).await.status(), 409);
+    // still playing, still in the lobby: the Join round doesn't bring it back
+    join_tick(&app).await;
+    assert_eq!(join(&app, &kim_t, msg.id).await.status(), 409);
+
+    // removed by someone else: the same
+    let group = create_dm(&app, &alex_t, &[sam, kim]).await;
+    let msg: Message = invite(&app, &alex_t, group.id).await.json().await.unwrap();
+    drain(&mut sam_ws, 300).await;
+    assert_eq!(leave_group(&app, &sam_t, group.id, alex).await, 204);
+    let (events, _) = drain(&mut sam_ws, 400).await;
+    assert!(
+        invite_changes(&events, msg.id)
+            .last()
+            .is_some_and(|c| c.ended),
+        "{events:?}"
+    );
+    join_tick(&app).await;
+    assert_eq!(join(&app, &sam_t, msg.id).await.status(), 409);
+}
+
+#[tokio::test]
+async fn an_invite_whose_sender_is_no_longer_a_member_hands_out_nothing() {
+    // #438, defence in depth: whatever left the sender's membership behind without ending the invite, join, the Join
+    // round and a reopen after a restart all need the sender still in the chat.
+    let World {
+        app,
+        fake,
+        alex: (alex, alex_t),
+        sam: (sam, sam_t),
+        kim: (kim, _),
+    } = world().await;
+    let group = create_dm(&app, &alex_t, &[sam, kim]).await;
+    let mut alex_ws = hello(&app, &alex_t).await;
+    fake.in_game(ALEX_STEAM, Some((SPACE, None, None)));
+    play(&app, &mut alex_ws, alex, true).await;
+    let msg: Message = invite(&app, &alex_t, group.id).await.json().await.unwrap();
+    let gone = || async {
+        sqlx::query("DELETE FROM channel_members WHERE channel_id = ? AND user_id = ?")
+            .bind(group.id.to_string())
+            .bind(alex.to_string())
+            .execute(&app.db)
+            .await
+            .unwrap();
+    };
+    let back = || async {
+        sqlx::query("INSERT INTO channel_members (channel_id, user_id, added_at) VALUES (?, ?, ?)")
+            .bind(group.id.to_string())
+            .bind(alex.to_string())
+            .bind(pulse_server::db::now())
+            .execute(&app.db)
+            .await
+            .unwrap();
+    };
+    gone().await;
+    // a lobby shows up: not for an invite whose sender left
+    fake.in_game(ALEX_STEAM, Some((SPACE, Some(LOBBY), None)));
+    join_tick(&app).await;
+    let set: Option<String> =
+        sqlx::query_scalar("SELECT join_info FROM game_invites WHERE message_id = ?")
+            .bind(msg.id.to_string())
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(set, None);
+    // a join_info already there isn't handed out either
+    sqlx::query("UPDATE game_invites SET join_info = ? WHERE message_id = ?")
+        .bind(serde_json::to_string(&lobby()).unwrap())
+        .bind(msg.id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(join(&app, &sam_t, msg.id).await.status(), 409);
+
+    // nor does a restart's grace reopen it
+    back().await;
+    pulse_server::game_invites::end_all_on_startup(&app.db)
+        .await
+        .unwrap();
+    gone().await;
+    play(&app, &mut alex_ws, alex, false).await;
+    play(&app, &mut alex_ws, alex, true).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let ended: Option<String> =
+        sqlx::query_scalar("SELECT ended_at FROM game_invites WHERE message_id = ?")
+            .bind(msg.id.to_string())
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(ended.is_some());
+}
+
+#[tokio::test]
+async fn an_invite_doesnt_follow_its_sender_to_another_lobby() {
+    // #438: once an invite offers a lobby, a different lobby ends it rather than moving it.
+    let World {
+        app,
+        fake,
+        alex: (alex, alex_t),
+        sam: (sam, sam_t),
+        ..
+    } = world().await;
+    let dm = create_dm(&app, &alex_t, &[sam]).await;
+    let mut alex_ws = hello(&app, &alex_t).await;
+    let mut sam_ws = hello(&app, &sam_t).await;
+    fake.in_game(ALEX_STEAM, Some((SPACE, Some(LOBBY), None)));
+    play(&app, &mut alex_ws, alex, true).await;
+    let msg: Message = invite(&app, &alex_t, dm.id).await.json().await.unwrap();
+    drain(&mut sam_ws, 300).await;
+
+    fake.in_game(ALEX_STEAM, Some((SPACE, Some(OTHER_LOBBY), None)));
+    join_tick(&app).await;
+    let (events, raw) = drain(&mut sam_ws, 400).await;
+    assert!(!raw.contains(OTHER_LOBBY), "{raw}");
+    assert!(
+        invite_changes(&events, msg.id)
+            .last()
+            .is_some_and(|c| c.ended),
+        "{events:?}"
+    );
+    assert_eq!(join(&app, &sam_t, msg.id).await.status(), 409);
+}

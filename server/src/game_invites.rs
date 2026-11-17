@@ -9,7 +9,10 @@
 //! previews, forwards) can carry it.
 //!
 //! An invite ends, for good, when its sender stops playing that game ([`follow`], on every game change and
-//! disconnect) or when the lobby it offered is gone ([`refresh`]). A server restart ends every open invite too (what
+//! disconnect), when the lobby it offered is gone or Steam shows them in another one ([`refresh`]: an invite never
+//! follows its sender to a lobby it didn't offer), or when its sender leaves or is removed from the chat
+//! ([`end_for_member`]; and anything that reads an invite to hand it out or keep it going needs its sender still in the
+//! chat, [`SENDER_IN`]). A server restart ends every open invite too (what
 //! anyone plays lives in memory), but not for good: one whose sender reports the same game again within
 //! [`RESTART_GRACE`] of startup opens again (#438). An ended invite keeps its card, greyed out, with nothing to join.
 
@@ -43,6 +46,7 @@ pub fn router() -> Router<AppState> {
 pub(crate) struct Stored {
     pub message_id: MessageId,
     pub channel_id: ChannelId,
+    pub sender_id: UserId,
     pub game: String,
     pub steam_app_id: Option<u32>,
     pub art: Option<GameArt>,
@@ -54,20 +58,27 @@ type Row = (
     String,
     String,
     String,
+    String,
     Option<i64>,
     Option<String>,
     Option<String>,
     Option<String>,
 );
 
-const COLS: &str = "g.message_id, g.channel_id, g.game, g.steam_app_id, g.art, g.join_info, g.ended_at \
+const COLS: &str = "g.message_id, g.channel_id, g.sender_id, g.game, g.steam_app_id, g.art, g.join_info, g.ended_at \
      FROM game_invites g JOIN messages m ON m.id = g.message_id";
 
+/// The invite's sender is still in its chat: an invite whose sender left hands out nothing and isn't kept going, even
+/// if something left it open ([`end_for_member`] ends it when they go).
+const SENDER_IN: &str = "EXISTS (SELECT 1 FROM channel_members cm \
+     WHERE cm.channel_id = g.channel_id AND cm.user_id = g.sender_id)";
+
 fn stored_from(r: Row) -> AppResult<Stored> {
-    let (message_id, channel_id, game, app, art, join, ended_at) = r;
+    let (message_id, channel_id, sender_id, game, app, art, join, ended_at) = r;
     Ok(Stored {
         message_id: message_id.parse().map_err(anyhow::Error::from)?,
         channel_id: channel_id.parse().map_err(anyhow::Error::from)?,
+        sender_id: sender_id.parse().map_err(anyhow::Error::from)?,
         game,
         steam_app_id: app.and_then(|a| u32::try_from(a).ok()),
         art: art.and_then(|a| serde_json::from_str(&a).ok()),
@@ -108,6 +119,18 @@ impl Stored {
     }
 }
 
+/// Whether `st`'s sender is still in its chat.
+async fn sender_in(db: &SqlitePool, st: &Stored) -> AppResult<bool> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM channel_members WHERE channel_id = ? AND user_id = ?",
+    )
+    .bind(st.channel_id.to_string())
+    .bind(st.sender_id.to_string())
+    .fetch_optional(db)
+    .await?
+    .is_some())
+}
+
 /// A live (not deleted) message's invite.
 async fn load(db: &mut SqliteConnection, id: MessageId) -> AppResult<Option<Stored>> {
     let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
@@ -119,10 +142,10 @@ async fn load(db: &mut SqliteConnection, id: MessageId) -> AppResult<Option<Stor
     row.map(stored_from).transpose()
 }
 
-/// `sender`'s invites that haven't ended (on live messages).
+/// `sender`'s invites that haven't ended (on live messages, in chats they're still in).
 async fn live_of(db: &SqlitePool, sender: UserId) -> AppResult<Vec<Stored>> {
     let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {COLS} WHERE g.sender_id = ? AND g.ended_at IS NULL AND m.deleted_at IS NULL"
+        "SELECT {COLS} WHERE g.sender_id = ? AND g.ended_at IS NULL AND m.deleted_at IS NULL AND {SENDER_IN}"
     )))
     .bind(sender.to_string())
     .fetch_all(db)
@@ -132,12 +155,12 @@ async fn live_of(db: &SqlitePool, sender: UserId) -> AppResult<Vec<Stored>> {
 
 /// Everyone with an invite that hasn't ended, with the SteamID they're linked to: the Join round reads them too.
 pub async fn live_senders(db: &SqlitePool) -> sqlx::Result<Vec<(String, String)>> {
-    sqlx::query_as(
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT DISTINCT g.sender_id, l.steam_id FROM game_invites g
          JOIN steam_links l ON l.user_id = g.sender_id
          JOIN messages m ON m.id = g.message_id
-         WHERE g.ended_at IS NULL AND m.deleted_at IS NULL",
-    )
+         WHERE g.ended_at IS NULL AND m.deleted_at IS NULL AND {SENDER_IN}"
+    )))
     .fetch_all(db)
     .await
 }
@@ -202,7 +225,7 @@ pub async fn end_all_on_startup(db: &SqlitePool) -> sqlx::Result<u64> {
 async fn reopen_after_restart(s: &AppState, user: UserId, p: &Playing) -> AppResult<()> {
     let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} WHERE g.sender_id = ? AND g.ended_at IS NOT NULL AND g.restart_grace_until > ?
-           AND m.deleted_at IS NULL"
+           AND m.deleted_at IS NULL AND {SENDER_IN}"
     )))
     .bind(user.to_string())
     .bind(now())
@@ -289,6 +312,41 @@ async fn end(s: &AppState, st: &Stored) -> AppResult<()> {
     Ok(())
 }
 
+/// `user` left group `channel` or was removed from it (committed): each of their invites there ends, live, and one a
+/// restart ended can't open again.
+pub async fn end_for_member(s: &AppState, channel: ChannelId, user: UserId) {
+    let r: Result<Vec<String>, sqlx::Error> = async {
+        sqlx::query(
+            "UPDATE game_invites SET restart_grace_until = NULL
+             WHERE channel_id = ? AND sender_id = ? AND restart_grace_until IS NOT NULL",
+        )
+        .bind(channel.to_string())
+        .bind(user.to_string())
+        .execute(&s.db)
+        .await?;
+        sqlx::query_scalar(
+            "UPDATE game_invites SET ended_at = ?, join_info = NULL
+             WHERE channel_id = ? AND sender_id = ? AND ended_at IS NULL RETURNING message_id",
+        )
+        .bind(now())
+        .bind(channel.to_string())
+        .bind(user.to_string())
+        .fetch_all(&s.db)
+        .await
+    }
+    .await;
+    match r {
+        Ok(ended) => {
+            for id in ended {
+                if let Ok(id) = id.parse() {
+                    announce(s, channel, id).await;
+                }
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "game invites not ended for a member who left"),
+    }
+}
+
 /// `user`'s game changed (or they went): each of their invites for another game than the one they play now ends, and
 /// one a restart ended for the game they play now opens again ([`reopen_after_restart`]).
 pub async fn follow(s: &AppState, user: UserId) {
@@ -318,7 +376,8 @@ pub async fn follow(s: &AppState, user: UserId) {
 }
 
 /// A Join round read `user` from Steam: `found` is where they can be joined now (`None`: nowhere). Each of their live
-/// invites for the game they play takes it; one that offered a lobby or server that's gone ends (they left it).
+/// invites for the game they play that offers nothing yet takes it; one that offered a lobby or server that's gone, or
+/// that Steam now shows them somewhere else than, ends (they left it: the invite was to that one).
 pub async fn refresh(s: &AppState, user: UserId, found: Option<SteamJoin>) {
     let live = match live_of(&s.db, user).await {
         Ok(l) => l,
@@ -332,9 +391,11 @@ pub async fn refresh(s: &AppState, user: UserId, found: Option<SteamJoin>) {
         if !st.same_game(playing.as_ref()) {
             continue; // `follow` ends it
         }
+        // once it offers a lobby or server, it offers that one only: gone, or another one, ends it
         let r = match (&st.join, &found) {
+            (Some(was), Some(j)) if was != j => end(s, &st).await,
             (Some(_), None) => end(s, &st).await,
-            (was, Some(j)) if was.as_ref() != Some(j) => set_join(s, &st, j).await.map(|_| ()),
+            (None, Some(j)) => set_join(s, &st, j).await.map(|_| ()),
             _ => Ok(()),
         };
         if let Err(e) = r {
@@ -518,7 +579,7 @@ async fn join(
         load(&mut conn, id).await?.ok_or(AppError::NotFound)?
     };
     channel_for(&s.db, me, st.channel_id).await?;
-    if st.ended_at.is_some() {
+    if st.ended_at.is_some() || !sender_in(&s.db, &st).await? {
         return Err(AppError::Conflict("No longer in this game.".into()));
     }
     st.join
