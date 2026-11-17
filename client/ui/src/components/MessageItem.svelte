@@ -111,7 +111,8 @@
 
   // --- names and avatars: the avatar animates while the pointer is over the row; pills take the person's style ---
   let rowHover = $state(false)
-  /** Its channel is archived (#303): read-only, so no reacting, replying or editing. */
+  /** Its channel is archived (#303): read-only, so no reacting, replying, editing, ending a poll or touching previews;
+   *  your own message can still be deleted (the server allows it too). */
   const archived = $derived(!!app.state.channels[message.channel_id]?.archived_at)
   // Pills restyle only when the HTML or a mentioned person's style changes, not on every state update:
   // the lookup is rebuilt only when people or members change, and the styles are compared as one string.
@@ -206,7 +207,8 @@
   // A refused pin or unpin means the pin here was out of date: show why, and fetch the chat's pins to set it right.
   const report = (p: Promise<unknown>) => reportPin(p, message.channel_id, showError)
   // your own poll, still open, can be ended from the message's menu (#157); a refusal fetches the poll afresh
-  const endable = $derived(!!message.poll && mine && !pollOver(message.poll, now))
+  // not in an archived channel (#303): ending a poll there is refused (one ending on its own waits for an unarchive)
+  const endable = $derived(!!message.poll && mine && !archived && !pollOver(message.poll, now))
   const endPoll = () => closePoll(message).catch((e) => showError(errorText(e)))
   // ...or changed (#265), from the menu or its Edit button: the poll composer, filled from it
   let pollEdit = $state<HTMLElement | null>(null)
@@ -272,7 +274,9 @@
     }
   }
   // your own message with a removed preview whose link is still in it (#94): Show previews again, in its menu
-  const showable = $derived(mine && !!message.embeds_hidden && previews.show)
+  // An archived channel (#303) is read-only: previews stay as they are (removing or showing one is an edit). Deleting
+  // your own message is the one change still allowed there: you can always take your words back.
+  const showable = $derived(mine && !archived && !!message.embeds_hidden && previews.show)
   const showEmbeds = () => api.showEmbeds(message.id).catch((e) => showError(errorText(e)))
   // a GIPHY link shows as the GIF (#58), never as a preview card (an older server may have made one)
   const embeds = $derived(!pending && !message.deleted && previews.show ? (message.embeds ?? []).filter((e) => !gifIdOf(e.url)) : [])
@@ -442,7 +446,7 @@
         {:else if !pending && !message.deleted && !message.forwarded && message.attachments?.length}
           <MessageFiles {message} onError={showError} />
         {/if}
-        {#each embeds as e (e.url)}<LinkEmbed embed={e} messageId={message.id} channelId={message.channel_id} {mine} onError={showError} />{/each}
+        {#each embeds as e (e.url)}<LinkEmbed embed={e} messageId={message.id} channelId={message.channel_id} mine={mine && !archived} onError={showError} />{/each}
         {#if !pending}<ReactionRow {message} {meId} {nameOf} onError={showError} />{/if}
         {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
       </div>
@@ -457,7 +461,7 @@
             {#if archived}{:else if message.plan}{#if planOpen}<button aria-label="Edit plan" onclick={(e) => editPlanCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
             {:else if message.poll}{#if endable}<button aria-label="Edit poll" onclick={(e) => editPollCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
             {:else if !message.forwarded}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
-            {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
+            {#if embeds.length && !archived}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
             <DeleteButton what={message.thread_root_id ? 'reply' : 'message'} onConfirm={() => void del()} />
           {/if}
           {#if msgMenuOn}

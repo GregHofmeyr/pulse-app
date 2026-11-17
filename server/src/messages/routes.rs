@@ -869,6 +869,8 @@ async fn remove(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
+    // No `access::require_open`: your own message can be deleted even in an archived channel (#418), the one change
+    // allowed there.
     let (msg, ch) = own_message(&s.db, me, id).await?;
     let is_quote = msg.quote.is_some();
     let is_clip = msg.clip.is_some();

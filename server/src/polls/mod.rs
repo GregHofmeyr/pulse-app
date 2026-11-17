@@ -480,11 +480,14 @@ pub(crate) async fn announce_close(s: &AppState, p: &Stored, line: Message) {
 
 /// Close every open poll whose time is up at `now`, posting each one's line. Returns how many it closed. A poll
 /// in a channel that is in Recently deleted (or whose server is) is left open (#334): its line would land in the
-/// deleted channel; restored, the next sweep closes it.
+/// deleted channel; restored, the next sweep closes it. A poll in an archived channel waits the same way (#418): an
+/// archived channel takes no new lines, automatic ones included, so its "ended" line posts once it's unarchived. Its
+/// time is up all the same, so everyone already sees it as over, with its results.
 pub async fn close_due(s: &AppState, now: &str) -> AppResult<usize> {
     let rows: Vec<StoredRow> = sqlx::query_as(&format!(
         "SELECT {STORED_COLS} WHERE p.closed_at IS NULL AND p.ends_at IS NOT NULL AND p.ends_at <= ? \
          AND m.deleted_at IS NULL AND p.channel_id IN (SELECT id FROM channels WHERE deleted_at IS NULL \
+         AND archived_at IS NULL \
          AND (server_id IS NULL OR server_id NOT IN {}))",
         crate::access::DELETED_SERVERS
     ))
@@ -500,6 +503,10 @@ pub async fn close_due(s: &AppState, now: &str) -> AppResult<usize> {
         let mut tx = begin_write(&s.db).await?;
         // deleted since the read above: left for after a restore (dropping `tx` ends it)
         if !crate::access::channel_is_live_in(&mut tx, p.channel_id).await? {
+            continue;
+        }
+        // archived since the read above: left for after an unarchive, as above
+        if crate::access::open_in(&mut tx, p.channel_id).await.is_err() {
             continue;
         }
         let line = close_in(&mut tx, &p, &who, now).await?;

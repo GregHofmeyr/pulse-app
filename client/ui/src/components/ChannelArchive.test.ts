@@ -138,5 +138,43 @@ describe('a message in an archived channel', () => {
     expect(archived).not.toContain('Add reaction')
     expect(archived).not.toContain('Reply')
     expect(archived).not.toContain('Edit')
+    // deleting your own message stays (#418): the server allows it too
+    expect(archived).toContain('Delete')
+  })
+
+  const showWith = (over: Partial<Message>) => {
+    const m: Message = {
+      id: 'M1', channel_id: 'T2', author_id: 'U1', kind: 'normal', content: 'see https://example.com/a', reply_to_id: null,
+      created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null,
+      quote: null, qoty_card: null, clip: null, embeds: [], ...over,
+    }
+    if (cmp) unmount(cmp)
+    app.state = applyReady(emptyState(), testReady(channels(true)))
+    cmp = mount(MessageItem, { target: document.body, props: {
+      message: m, serverId: 'S1', name: 'alex', nameOf: (id: string | null) => id ?? '', replyTo: null,
+      grouped: false, mine: true, onReply: () => {}, onEdit: async () => {}, onDelete: async () => {}, meId: 'U1',
+    } })
+    flushSync()
+  }
+
+  it('shows reaction pills that can\'t be clicked, and nothing to add one with (#418)', () => {
+    invoke.mockResolvedValue([])
+    showWith({ reactions: [{ emoji: '👍', count: 2, me: true }, { emoji: '🎉', count: 1, me: false }] })
+    const chips = [...document.querySelectorAll<HTMLButtonElement>('.reactions .chip')]
+    expect(chips).toHaveLength(2)
+    for (const c of chips) {
+      expect(c.getAttribute('aria-disabled')).toBe('true')
+      expect(c.classList.contains('locked')).toBe(true)
+      c.click()
+    }
+    expect(invoke).not.toHaveBeenCalledWith('add_reaction', expect.anything())
+    expect(invoke).not.toHaveBeenCalledWith('remove_reaction', expect.anything())
+    expect(document.querySelector('.reactions .chip.add')).toBeNull()
+  })
+
+  it('offers nothing to remove its previews with (#418)', () => {
+    showWith({ embeds: [{ url: 'https://example.com/a', provider: 'generic', kind: 'card', title: 'A' }] as never })
+    expect(document.querySelector('button[aria-label="Remove previews"]')).toBeNull()
+    expect(document.querySelector('button[aria-label="Remove preview"]')).toBeNull()
   })
 })

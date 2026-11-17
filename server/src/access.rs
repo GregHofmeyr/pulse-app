@@ -105,7 +105,9 @@ pub async fn channel_live_in(db: &mut SqliteConnection, id: ChannelId) -> AppRes
 }
 
 /// 403 (in words the client shows) when `ch` is archived (#303): nobody posts, reacts, edits, votes, pins or spins
-/// there until its owner unarchives it.
+/// there until its owner unarchives it, nor removes or brings back a link preview; automatic lines wait too (a poll's
+/// "ended" line, `polls::close_due`). The one change still allowed is deleting your own message (#418): you can always
+/// take your words back, so `DELETE /messages/{id}` doesn't call this.
 pub fn require_open(ch: &Channel) -> AppResult<()> {
     if ch.archived_at.is_some() {
         return Err(AppError::ForbiddenMsg(ARCHIVED.into()));
