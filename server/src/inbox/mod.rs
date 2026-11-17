@@ -75,13 +75,13 @@ const READ: &str = "(m.id <= COALESCE(ic.upto, '')
 /// with replies they haven't seen (#326, counted here since #419).
 pub async fn unread<'e>(db: impl SqliteExecutor<'e>, me: UserId) -> AppResult<u32> {
     // ITEMS and VISIBLE take plain binds (1-4); the threads' count names its own (5-7) after them
-    let n: i64 = sqlx::query_scalar(&format!(
+    let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT (SELECT COUNT(*) {ITEMS} AND NOT {READ})
            + (SELECT COUNT(*) {} AND r.fired_at IS NOT NULL AND r.seen_at IS NULL)
            + {}",
         crate::reminders::VISIBLE,
         threads::unseen_count_sql(5, 6, 7),
-    ))
+    )))
     .bind(me.to_string())
     .bind(cutoff(Utc::now()).to_string())
     .bind(now())
@@ -137,7 +137,7 @@ pub async fn list(db: &SqlitePool, me: UserId, filter: Filter) -> AppResult<Vec<
         sql.push_str(&format!(" AND NOT {READ}"));
     }
     sql.push_str(" ORDER BY mn.message_id DESC LIMIT ?");
-    let mut q = sqlx::query_as::<_, (String, bool, bool)>(&sql)
+    let mut q = sqlx::query_as::<_, (String, bool, bool)>(sqlx::AssertSqlSafe(sql))
         .bind(me.to_string())
         .bind(cutoff(Utc::now()).to_string())
         .bind(now());
@@ -612,15 +612,17 @@ async fn visible<'e>(
     me: UserId,
     message: MessageId,
 ) -> AppResult<Option<(bool, bool)>> {
-    Ok(sqlx::query_as::<_, (bool, bool)>(&format!(
-        "SELECT mn.explicit, {READ} {ITEMS} AND mn.message_id = ?"
-    ))
-    .bind(me.to_string())
-    .bind(cutoff(Utc::now()).to_string())
-    .bind(now())
-    .bind(message.to_string())
-    .fetch_optional(db)
-    .await?)
+    Ok(
+        sqlx::query_as::<_, (bool, bool)>(sqlx::AssertSqlSafe(format!(
+            "SELECT mn.explicit, {READ} {ITEMS} AND mn.message_id = ?"
+        )))
+        .bind(me.to_string())
+        .bind(cutoff(Utc::now()).to_string())
+        .bind(now())
+        .bind(message.to_string())
+        .fetch_optional(db)
+        .await?,
+    )
 }
 
 /// Read `user`'s count under their inbox slot and send `make(count)` to their devices: always when `always`

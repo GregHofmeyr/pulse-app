@@ -163,13 +163,13 @@ async fn post_movers(s: &AppState) -> AppResult<()> {
     let cat = assets::catalog(s).await;
     for (server, ch) in channels {
         // one card for the whole channel: nobody on it hides their games from a member (#438)
-        let rows: Vec<(String, i64, i64)> = sqlx::query_as(&format!(
+        let rows: Vec<(String, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT p.user_id, p.week_badge, p.badge FROM deadlock_players p
              JOIN steam_links l ON l.user_id = p.user_id AND l.deadlock_rank = 1
              JOIN server_members m ON m.user_id = p.user_id AND m.server_id = ?
              WHERE p.badge > 0 AND p.week_badge > 0 AND p.badge != p.week_badge AND NOT {}",
             crate::activity_hidden::hides_in_server("p.user_id", "m.server_id")
-        ))
+        )))
         .bind(&server)
         .fetch_all(&s.db)
         .await?;

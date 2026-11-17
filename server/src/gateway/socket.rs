@@ -166,9 +166,9 @@ pub async fn people(
         user: UserRow,
         last_seen_at: Option<String>,
     }
-    let rows: Vec<PersonRow> = sqlx::query_as(&format!(
+    let rows: Vec<PersonRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS}, u.last_seen_at FROM users u {USER_JOIN} ORDER BY u.username"
-    ))
+    )))
     .fetch_all(db)
     .await?;
     let users = rows

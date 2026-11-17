@@ -59,7 +59,10 @@ async fn before_categories() -> (tempfile::TempDir, SqlitePool, sqlx::migrate::M
 }
 
 async fn sql(pool: &SqlitePool, q: &str) {
-    sqlx::query(q).execute(pool).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(q))
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 async fn add_server(pool: &SqlitePool, id: &str, name: &str) {

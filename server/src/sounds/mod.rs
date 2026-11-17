@@ -69,10 +69,10 @@ fn from_row(
 /// Every server's sounds, oldest first.
 pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<Sound>> {
     // a deleted server's are gone with it (#184)
-    let rows: Vec<Row> = sqlx::query_as(&format!(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE server_id NOT IN {} ORDER BY id",
         crate::access::DELETED_SERVERS
-    ))
+    )))
     .fetch_all(db)
     .await?;
     rows.into_iter().map(from_row).collect()
@@ -80,16 +80,18 @@ pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<Sound>> {
 
 /// One server's sounds, oldest first.
 pub async fn for_server(db: &SqlitePool, server: ServerId) -> AppResult<Vec<Sound>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!("{SELECT} WHERE server_id = ? ORDER BY id"))
-        .bind(server.to_string())
-        .fetch_all(db)
-        .await?;
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT} WHERE server_id = ? ORDER BY id"
+    )))
+    .bind(server.to_string())
+    .fetch_all(db)
+    .await?;
     rows.into_iter().map(from_row).collect()
 }
 
 /// One sound by id.
 pub async fn load(db: &SqlitePool, id: &str) -> AppResult<Option<Sound>> {
-    let row: Option<Row> = sqlx::query_as(&format!("{SELECT} WHERE id = ?"))
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE id = ?")))
         .bind(id)
         .fetch_optional(db)
         .await?;

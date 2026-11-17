@@ -118,10 +118,12 @@ fn from_row(r: Row) -> AppResult<MessageReminder> {
 
 /// `me`'s reminders they can still see, soonest first: for Ready and `GET /reminders`.
 pub async fn list_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<MessageReminder>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!("{COLS} {VISIBLE} ORDER BY r.remind_at, r.id"))
-        .bind(me.to_string())
-        .fetch_all(db)
-        .await?;
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{COLS} {VISIBLE} ORDER BY r.remind_at, r.id"
+    )))
+    .bind(me.to_string())
+    .fetch_all(db)
+    .await?;
     rows.into_iter().map(from_row).collect()
 }
 
@@ -131,11 +133,13 @@ async fn one<'e>(
     me: UserId,
     id: ReminderId,
 ) -> AppResult<Option<MessageReminder>> {
-    let row: Option<Row> = sqlx::query_as(&format!("{COLS} {VISIBLE} AND r.id = ?"))
-        .bind(me.to_string())
-        .bind(id.to_string())
-        .fetch_optional(db)
-        .await?;
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{COLS} {VISIBLE} AND r.id = ?"
+    )))
+    .bind(me.to_string())
+    .bind(id.to_string())
+    .fetch_optional(db)
+    .await?;
     row.map(from_row).transpose()
 }
 

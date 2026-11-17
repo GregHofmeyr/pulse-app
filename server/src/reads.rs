@@ -142,7 +142,7 @@ async fn read_states(
                                      OR server_id IN {DELETED_SERVERS})"
     );
     let only = only.map(|c| c.to_string());
-    let rows: Vec<(String, Option<String>, i64, i64)> = sqlx::query_as(&sql)
+    let rows: Vec<(String, Option<String>, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(me.to_string())
         .bind(&only)
         .bind(&only)
@@ -171,7 +171,7 @@ pub async fn thread_seen_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<Threa
     let sql = format!(
         "SELECT DISTINCT m.thread_root_id, tr.last_seen_id {COUNTED_REPLY_MENTIONS} ORDER BY m.thread_root_id"
     );
-    let rows: Vec<(String, Option<String>)> = sqlx::query_as(&sql)
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(me.to_string())
         .bind(None::<String>)
         .bind(None::<String>)

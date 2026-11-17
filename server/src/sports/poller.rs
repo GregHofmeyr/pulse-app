@@ -105,9 +105,9 @@ fn from_row(r: Row) -> Option<Fixture> {
 }
 
 pub async fn load(s: &AppState, league: SportsLeague, id: u32) -> AppResult<Option<Fixture>> {
-    let row: Option<Row> = sqlx::query_as(&format!(
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM sports_fixtures WHERE league = ? AND fixture_id = ?"
-    ))
+    )))
     .bind(league.key())
     .bind(id)
     .fetch_optional(&s.db)
@@ -117,9 +117,9 @@ pub async fn load(s: &AppState, league: SportsLeague, id: u32) -> AppResult<Opti
 
 /// Matches not done yet, by kick-off.
 async fn pending(s: &AppState) -> AppResult<Vec<Fixture>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM sports_fixtures WHERE done = 0 ORDER BY kickoff, fixture_id"
-    ))
+    )))
     .fetch_all(&s.db)
     .await?;
     Ok(rows.into_iter().filter_map(from_row).collect())
@@ -270,14 +270,14 @@ pub async fn upsert(s: &AppState, league: SportsLeague, m: &Match) -> AppResult<
     if before.as_ref() == Some(&after) {
         return Ok(false);
     }
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO sports_fixtures ({COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
          ON CONFLICT (league, fixture_id) DO UPDATE SET kickoff = excluded.kickoff, home_id = excluded.home_id,
              home_name = excluded.home_name, away_id = excluded.away_id, away_name = excluded.away_name,
              status = excluded.status, home_score = excluded.home_score, away_score = excluded.away_score,
              minute = excluded.minute, scorers = excluded.scorers
          WHERE done = 0"
-    ))
+    )))
     .bind(league.key())
     .bind(after.id)
     .bind(after.kickoff)

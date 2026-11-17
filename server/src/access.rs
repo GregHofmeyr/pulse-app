@@ -72,9 +72,9 @@ const LIVE_CHANNEL: &str = concat!(
 /// channel is gone for everything but its own Recently deleted routes (`servers::channels`), and a
 /// deleted server's channels for everything but its purge (`servers::deleted`).
 pub async fn load_channel(db: &SqlitePool, id: ChannelId) -> AppResult<Option<Channel>> {
-    let row: Option<ChannelRow> = sqlx::query_as(&format!(
+    let row: Option<ChannelRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CHANNEL_COLS} FROM channels WHERE {LIVE_CHANNEL}"
-    ))
+    )))
     .bind(id.to_string())
     .fetch_optional(db)
     .await?;
@@ -83,11 +83,12 @@ pub async fn load_channel(db: &SqlitePool, id: ChannelId) -> AppResult<Option<Ch
 
 /// Whether [`load_channel`] would find `id`, asked inside a write transaction.
 pub async fn channel_is_live_in(db: &mut SqliteConnection, id: ChannelId) -> sqlx::Result<bool> {
-    let hit: Option<i64> =
-        sqlx::query_scalar(&format!("SELECT 1 FROM channels WHERE {LIVE_CHANNEL}"))
-            .bind(id.to_string())
-            .fetch_optional(&mut *db)
-            .await?;
+    let hit: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT 1 FROM channels WHERE {LIVE_CHANNEL}"
+    )))
+    .bind(id.to_string())
+    .fetch_optional(&mut *db)
+    .await?;
     Ok(hit.is_some())
 }
 
@@ -200,7 +201,7 @@ pub async fn readable_channel_ids_everywhere(
 ) -> AppResult<Vec<String>> {
     // Server channels: only the kinds with a chat (kept in Rust, as `readable_server_channels`
     // keeps them). Conversations: only the ones you're in, the one rule `can_read` applies.
-    let rows: Vec<(String, String)> = sqlx::query_as(&format!(
+    let rows: Vec<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT c.id, c.kind FROM channels c
          WHERE c.deleted_at IS NULL
            AND c.server_id IN (SELECT server_id FROM server_members WHERE user_id = ?1)
@@ -208,7 +209,7 @@ pub async fn readable_channel_ids_everywhere(
          UNION ALL
          SELECT c.id, c.kind FROM channel_members cm JOIN channels c ON c.id = cm.channel_id
          WHERE cm.user_id = ?1 AND c.deleted_at IS NULL AND c.server_id IS NULL"
-    ))
+    )))
     .bind(user.to_string())
     .fetch_all(db)
     .await?;
@@ -231,10 +232,10 @@ pub async fn readable_server_channels(
     server: ServerId,
 ) -> AppResult<Vec<Channel>> {
     crate::servers::routes::server_exists(db, server).await?;
-    let rows: Vec<ChannelRow> = sqlx::query_as(&format!(
+    let rows: Vec<ChannelRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CHANNEL_COLS} FROM channels WHERE server_id = ? AND deleted_at IS NULL
          ORDER BY position, id"
-    ))
+    )))
     .bind(server.to_string())
     .fetch_all(db)
     .await?;

@@ -99,9 +99,9 @@ pub fn future_time(raw: &str, now: DateTime<Utc>) -> AppResult<String> {
 
 /// `me`'s scheduled messages, soonest first (failed ones too): for Ready and `GET /scheduled`.
 pub async fn list_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<ScheduledMessage>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} WHERE author_id = ? ORDER BY send_at, id"
-    ))
+    )))
     .bind(me.to_string())
     .fetch_all(db)
     .await?;
@@ -110,11 +110,13 @@ pub async fn list_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<ScheduledMes
 
 /// `me`'s scheduled message `id` (404 for anyone else's, as if there were none).
 async fn mine(db: &SqlitePool, me: UserId, id: ScheduledId) -> AppResult<ScheduledMessage> {
-    let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLS} WHERE id = ? AND author_id = ?"))
-        .bind(id.to_string())
-        .bind(me.to_string())
-        .fetch_optional(db)
-        .await?;
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} WHERE id = ? AND author_id = ?"
+    )))
+    .bind(id.to_string())
+    .bind(me.to_string())
+    .fetch_optional(db)
+    .await?;
     row.map(from_row).transpose()?.ok_or(AppError::NotFound)
 }
 

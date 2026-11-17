@@ -98,9 +98,9 @@ fn stored_from(r: StoredRow) -> AppResult<Stored> {
 
 /// A live (not deleted) message's poll.
 pub(crate) async fn load(db: &mut SqliteConnection, id: MessageId) -> AppResult<Option<Stored>> {
-    let row: Option<StoredRow> = sqlx::query_as(&format!(
+    let row: Option<StoredRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {STORED_COLS} WHERE p.message_id = ? AND m.deleted_at IS NULL"
-    ))
+    )))
     .bind(id.to_string())
     .fetch_optional(&mut *db)
     .await?;
@@ -484,13 +484,13 @@ pub(crate) async fn announce_close(s: &AppState, p: &Stored, line: Message) {
 /// archived channel takes no new lines, automatic ones included, so its "ended" line posts once it's unarchived. Its
 /// time is up all the same, so everyone already sees it as over, with its results.
 pub async fn close_due(s: &AppState, now: &str) -> AppResult<usize> {
-    let rows: Vec<StoredRow> = sqlx::query_as(&format!(
+    let rows: Vec<StoredRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {STORED_COLS} WHERE p.closed_at IS NULL AND p.ends_at IS NOT NULL AND p.ends_at <= ? \
          AND m.deleted_at IS NULL AND p.channel_id IN (SELECT id FROM channels WHERE deleted_at IS NULL \
          AND archived_at IS NULL \
          AND (server_id IS NULL OR server_id NOT IN {}))",
         crate::access::DELETED_SERVERS
-    ))
+    )))
     .bind(now)
     .fetch_all(&s.db)
     .await?;

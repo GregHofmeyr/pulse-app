@@ -240,7 +240,7 @@ async fn migration_keeps_every_channel_row() {
             "INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES ('VS', '{user}', '{voice}', '{ts}')"
         ),
     ] {
-        sqlx::query(&q)
+        sqlx::query(sqlx::AssertSqlSafe(&*q))
             .execute(&pool)
             .await
             .unwrap_or_else(|e| panic!("{q}: {e}"));
@@ -255,7 +255,7 @@ async fn migration_keeps_every_channel_row() {
     let count = |t: &'static str| {
         let pool = pool.clone();
         async move {
-            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {t}"))
+            sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {t}")))
                 .fetch_one(&pool)
                 .await
                 .unwrap()
@@ -353,7 +353,10 @@ async fn migration_refuses_to_run_with_foreign_keys_on() {
             "INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES ('M', 'C', 'U', 'hi', '{ts}')"
         ),
     ] {
-        sqlx::query(&q).execute(&mut conn).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(&*q))
+            .execute(&mut conn)
+            .await
+            .unwrap();
     }
     migrator.migrations = all;
     let err = migrator.run(&mut conn).await.unwrap_err().to_string();
@@ -1015,7 +1018,12 @@ async fn reading_counts_awards_replies_and_wins() {
     let lines = m.quote.clone().unwrap().lines;
     let (l1, l2) = (lines[0].id.to_string(), lines[1].id.to_string());
     let db = &f.app.db;
-    let exec = |q: String| async move { sqlx::query(&q).execute(db).await.unwrap() };
+    let exec = |q: String| async move {
+        sqlx::query(sqlx::AssertSqlSafe(&*q))
+            .execute(db)
+            .await
+            .unwrap()
+    };
     // Oldest first: sam (the speaker, uncounted), alex, jo.
     for (giver, at) in [(f.sam, "01"), (f.alex, "02"), (jo, "03")] {
         exec(format!(
@@ -1533,14 +1541,17 @@ async fn deleting_a_quote_clears_reactions_awards_and_replies() {
             f.alex
         ),
     ] {
-        sqlx::query(&q).execute(db).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(&*q))
+            .execute(db)
+            .await
+            .unwrap();
     }
 
     let mut ws = hello(&f.app, &f.sam_t).await;
     assert_eq!(f.delete(&f.alex_t, m.id).await.status(), 204);
 
     let count = |q: String| async move {
-        sqlx::query_scalar::<_, i64>(&q)
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(&*q))
             .fetch_one(db)
             .await
             .unwrap()
@@ -3119,12 +3130,12 @@ async fn a_committed_link_succeeds_when_a_quote_cant_be_read_back() {
         posted.push(m);
     }
     // In the link's own transaction, make the first quote unreadable (a line id that isn't one).
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TRIGGER spoil AFTER INSERT ON speaker_links BEGIN
            UPDATE quote_lines SET id = 'not-a-line-id' WHERE id = '{}';
          END",
         f.line_of(&posted[0], 1)
-    ))
+    )))
     .execute(&f.app.db)
     .await
     .unwrap();
@@ -3242,7 +3253,10 @@ impl Fixture {
             .collect()
     }
     async fn sql(&self, q: String) {
-        sqlx::query(&q).execute(&self.app.db).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(&*q))
+            .execute(&self.app.db)
+            .await
+            .unwrap();
     }
     async fn say_one(&self, text: &str) -> Message {
         self.post_lines(json!([self.say(self.sam, text)]))
@@ -4111,7 +4125,7 @@ impl Fixture {
         }
     }
     async fn rows(&self, sql: &str) -> i64 {
-        sqlx::query_scalar(sql)
+        sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .fetch_one(&self.app.db)
             .await
             .unwrap()

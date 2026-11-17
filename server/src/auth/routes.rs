@@ -56,9 +56,9 @@ fn check_password_rule(p: &str) -> AppResult<()> {
 }
 
 pub async fn load_user(db: &SqlitePool, id: UserId) -> AppResult<User> {
-    sqlx::query_as::<_, UserRow>(&format!(
+    sqlx::query_as::<_, UserRow>(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS} FROM users u {USER_JOIN} WHERE u.id = ?"
-    ))
+    )))
     .bind(id.to_string())
     .fetch_optional(db)
     .await?

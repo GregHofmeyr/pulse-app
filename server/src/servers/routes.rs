@@ -303,9 +303,9 @@ pub(crate) fn server_from_row((id, name, icon_hash, owner): ServerRow) -> AppRes
 
 /// Every server, but those in Recently deleted (#184).
 pub async fn all_servers(db: &SqlitePool) -> AppResult<Vec<Server>> {
-    let rows: Vec<ServerRow> = sqlx::query_as(&format!(
+    let rows: Vec<ServerRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SERVER_COLS} FROM servers WHERE deleted_at IS NULL ORDER BY id"
-    ))
+    )))
     .fetch_all(db)
     .await?;
     rows.into_iter().map(server_from_row).collect()
@@ -387,10 +387,10 @@ async fn join(
 }
 
 pub async fn server_channels(db: &SqlitePool, id: ServerId) -> AppResult<Vec<Channel>> {
-    let rows = sqlx::query_as(&format!(
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CHANNEL_COLS} FROM channels WHERE server_id = ? AND deleted_at IS NULL
          ORDER BY kind, position, id"
-    ))
+    )))
     .bind(id.to_string())
     .fetch_all(db)
     .await?;
@@ -399,11 +399,11 @@ pub async fn server_channels(db: &SqlitePool, id: ServerId) -> AppResult<Vec<Cha
 
 /// Every live server's channels in one query, each list ordered as [`server_channels`] orders it.
 pub async fn all_server_channels(db: &SqlitePool) -> AppResult<HashMap<ServerId, Vec<Channel>>> {
-    let rows = sqlx::query_as(&format!(
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CHANNEL_COLS} FROM channels WHERE server_id IS NOT NULL AND deleted_at IS NULL
          AND server_id NOT IN {DELETED_SERVERS}
          ORDER BY server_id, kind, position, id"
-    ))
+    )))
     .fetch_all(db)
     .await?;
     let mut out: HashMap<ServerId, Vec<Channel>> = HashMap::new();
@@ -530,10 +530,10 @@ impl MemberRow {
 }
 
 pub async fn server_members(db: &SqlitePool, id: ServerId) -> AppResult<Vec<Member>> {
-    let rows: Vec<MemberRow> = sqlx::query_as(&format!(
+    let rows: Vec<MemberRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS}, m.nickname, m.join_sound_id, m.joined_at FROM server_members m JOIN users u ON u.id = m.user_id {USER_JOIN}
          WHERE m.server_id = ? ORDER BY m.joined_at, m.user_id"
-    ))
+    )))
     .bind(id.to_string())
     .fetch_all(db)
     .await?;
@@ -549,12 +549,12 @@ struct ServerMemberRow {
 
 /// Every live server's members in one query, each list ordered as [`server_members`] orders it.
 pub async fn all_server_members(db: &SqlitePool) -> AppResult<HashMap<ServerId, Vec<Member>>> {
-    let rows: Vec<ServerMemberRow> = sqlx::query_as(&format!(
+    let rows: Vec<ServerMemberRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT m.server_id, {USER_COLS}, m.nickname, m.join_sound_id, m.joined_at
          FROM server_members m JOIN users u ON u.id = m.user_id {USER_JOIN}
          WHERE m.server_id NOT IN {DELETED_SERVERS}
          ORDER BY m.server_id, m.joined_at, m.user_id"
-    ))
+    )))
     .fetch_all(db)
     .await?;
     let mut out: HashMap<ServerId, Vec<Member>> = HashMap::new();
@@ -575,10 +575,10 @@ async fn list_members(
 }
 
 pub async fn dms_of(db: &SqlitePool, user: UserId) -> AppResult<Vec<Channel>> {
-    let rows = sqlx::query_as(&format!(
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CHANNEL_COLS} FROM channels
          WHERE id IN (SELECT channel_id FROM channel_members WHERE user_id = ?) ORDER BY id"
-    ))
+    )))
     .bind(user.to_string())
     .fetch_all(db)
     .await?;

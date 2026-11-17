@@ -364,9 +364,9 @@ async fn migration_0027_keeps_every_report_and_allows_ideas() {
     );
     migrator.run(&pool).await.unwrap();
 
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO users (id, username, password_hash, created_at) VALUES ('{OLD_USER}', 'alex', 'x', '{OLD_TS}')"
-    ))
+    )))
     .execute(&pool)
     .await
     .unwrap();

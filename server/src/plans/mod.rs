@@ -102,9 +102,9 @@ fn stored_from(r: StoredRow) -> AppResult<Stored> {
 
 /// A live (not deleted) message's plan.
 pub(crate) async fn load(db: &mut SqliteConnection, id: MessageId) -> AppResult<Option<Stored>> {
-    let row: Option<StoredRow> = sqlx::query_as(&format!(
+    let row: Option<StoredRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {STORED_COLS} WHERE p.message_id = ? AND m.deleted_at IS NULL"
-    ))
+    )))
     .bind(id.to_string())
     .fetch_optional(&mut *db)
     .await?;
@@ -449,12 +449,12 @@ async fn to_remind(db: &mut SqliteConnection, p: &Stored) -> AppResult<Vec<UserI
 pub async fn remind_due(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
     let at = stamp(now);
     let due_by = stamp(now + TimeDelta::minutes(plan_limits::REMIND_MINUTES));
-    let rows: Vec<StoredRow> = sqlx::query_as(&format!(
+    let rows: Vec<StoredRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {STORED_COLS} WHERE p.reminded_at IS NULL AND p.cancelled_at IS NULL AND p.starts_at <= ? \
          AND m.deleted_at IS NULL AND p.channel_id IN (SELECT id FROM channels WHERE deleted_at IS NULL \
          AND archived_at IS NULL AND (server_id IS NULL OR server_id NOT IN {}))",
         crate::access::DELETED_SERVERS
-    ))
+    )))
     .bind(&due_by)
     .fetch_all(&s.db)
     .await?;

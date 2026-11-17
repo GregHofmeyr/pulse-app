@@ -101,9 +101,9 @@ pub async fn layout_of(db: &mut SqliteConnection, server: ServerId) -> AppResult
         .fetch_optional(&mut *db)
         .await?
         .ok_or(AppError::NotFound)?;
-    let rows: Vec<CategoryRow> = sqlx::query_as(&format!(
+    let rows: Vec<CategoryRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CATEGORY_COLS} FROM categories WHERE server_id = ? ORDER BY position, id"
-    ))
+    )))
     .bind(server.to_string())
     .fetch_all(&mut *db)
     .await?;
@@ -147,9 +147,9 @@ pub async fn all_layouts(db: &SqlitePool) -> AppResult<Vec<ServerLayout>> {
     )
     .fetch_all(db)
     .await?;
-    let rows: Vec<CategoryRow> = sqlx::query_as(&format!(
+    let rows: Vec<CategoryRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CATEGORY_COLS} FROM categories ORDER BY server_id, position, id"
-    ))
+    )))
     .fetch_all(db)
     .await?;
     let mut by_server: HashMap<ServerId, Vec<Category>> = HashMap::new();
@@ -280,9 +280,9 @@ async fn rename(
     let name = clean_name(&req.name)?;
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
-    let row: Option<CategoryRow> = sqlx::query_as(&format!(
+    let row: Option<CategoryRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE categories SET name = ? WHERE id = ? RETURNING {CATEGORY_COLS}"
-    ))
+    )))
     .bind(&name)
     .bind(id.to_string())
     .fetch_optional(&mut *tx)

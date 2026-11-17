@@ -414,11 +414,11 @@ async fn deleted_channel(
     db: &mut SqliteConnection,
     id: ChannelId,
 ) -> AppResult<(Channel, ServerId, Option<UserId>, String)> {
-    let row: Option<DeletedRow> = sqlx::query_as(&format!(
+    let row: Option<DeletedRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CHANNEL_COLS}, deleted_by, deleted_at FROM channels
          WHERE id = ? AND deleted_at IS NOT NULL AND server_id IS NOT NULL
            AND server_id NOT IN {DELETED_SERVERS}"
-    ))
+    )))
     .bind(id.to_string())
     .fetch_optional(&mut *db)
     .await?;
@@ -478,10 +478,10 @@ pub async fn list_deleted(
     crate::servers::routes::require_member(&s.db, server, me).await?;
     let mut db = s.db.acquire().await?;
     let owner = owner_of(&mut db, server).await? == me;
-    let rows: Vec<DeletedRow> = sqlx::query_as(&format!(
+    let rows: Vec<DeletedRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CHANNEL_COLS}, deleted_by, deleted_at FROM channels
          WHERE server_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id"
-    ))
+    )))
     .bind(server.to_string())
     .fetch_all(&mut *db)
     .await?;
@@ -810,10 +810,10 @@ pub async fn purge_expired_batched(
 ) -> AppResult<u32> {
     let due = due(now);
     // (an emptied group, with no server, is `dms::purge`'s)
-    let ids: Vec<String> = sqlx::query_scalar(&format!(
+    let ids: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT id FROM channels WHERE deleted_at IS NOT NULL AND deleted_at <= ?
          AND server_id IS NOT NULL AND server_id NOT IN {DELETED_SERVERS} ORDER BY deleted_at"
-    ))
+    )))
     .bind(&due)
     .fetch_all(&s.db)
     .await?;

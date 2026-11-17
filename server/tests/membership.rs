@@ -93,7 +93,7 @@ async fn members(w: &World) -> Vec<UserId> {
 }
 
 async fn count(app: &TestApp, sql: &str, a: &str, b: &str) -> i64 {
-    sqlx::query_scalar(sql)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(a)
         .bind(b)
         .fetch_one(&app.db)
@@ -690,7 +690,7 @@ async fn a_block_outlives_48_hours_until_the_owner_allows_them_back() {
         "server_removals SET removed_at",
         "server_blocks SET blocked_at",
     ] {
-        sqlx::query(&format!("UPDATE {table} = ?"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE {table} = ?")))
             .bind(&old)
             .execute(&w.app.db)
             .await

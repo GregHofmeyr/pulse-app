@@ -173,7 +173,10 @@ impl Fixture {
         self.quote_in(self.ch.id, text).await
     }
     async fn sql(&self, q: &str) {
-        sqlx::query(q).execute(&self.app.db).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(q))
+            .execute(&self.app.db)
+            .await
+            .unwrap();
     }
     /// Give `m` a reaction score of `n`: one reaction from each of `n` registered users.
     async fn score(&self, m: MessageId, fans: &[UserId], n: usize) {
@@ -265,7 +268,10 @@ impl Fixture {
         out
     }
     async fn count(&self, q: &str) -> i64 {
-        sqlx::query_scalar(q).fetch_one(&self.app.db).await.unwrap()
+        sqlx::query_scalar(sqlx::AssertSqlSafe(q))
+            .fetch_one(&self.app.db)
+            .await
+            .unwrap()
     }
     async fn edit(&self, m: &Message, lines: serde_json::Value) -> u16 {
         self.call(

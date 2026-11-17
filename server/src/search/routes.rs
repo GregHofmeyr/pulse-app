@@ -127,7 +127,7 @@ impl Search {
     ///   are a set looked up per doc.
     /// - Several channels with words: the index leads, in rowid order.
     /// - Several channels, filters only: every doc, newest first.
-    fn push_from_where<'a>(&'a self, q: &mut QueryBuilder<'a, Sqlite>, channels: &'a [String]) {
+    fn push_from_where(&self, q: &mut QueryBuilder<Sqlite>, channels: &[String]) {
         const LOOKUPS: &str = " CROSS JOIN messages m ON m.id = d.message_id
                       CROSS JOIN channels c ON c.id = m.channel_id";
         if let [only] = channels {

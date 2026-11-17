@@ -119,7 +119,7 @@ pub(crate) async fn summaries(
     Ok(out)
 }
 
-fn push_list<'a>(q: &mut sqlx::QueryBuilder<'a, sqlx::Sqlite>, ids: &'a [String]) {
+fn push_list(q: &mut sqlx::QueryBuilder<sqlx::Sqlite>, ids: &[String]) {
     let mut list = q.separated(", ");
     for id in ids {
         list.push_bind(id);
@@ -177,9 +177,9 @@ async fn list(
 ) -> AppResult<Json<Vec<Message>>> {
     visible_root(&s.db, me, root).await?;
     let (limit, before) = p.bounds();
-    let rows: Vec<Row> = sqlx::query_as(&format!(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM messages WHERE thread_root_id = ? AND id < ? ORDER BY id DESC LIMIT ?"
-    ))
+    )))
     .bind(root.to_string())
     .bind(before)
     .bind(limit)

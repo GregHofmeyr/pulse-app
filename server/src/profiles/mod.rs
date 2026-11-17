@@ -43,11 +43,11 @@ pub async fn load_profile(
     let id = user.to_string();
     // One read transaction, so the card, stats, badges and archive are a single snapshot.
     let mut tx = db.begin().await?;
-    let Some(row) = sqlx::query_as::<_, ProfileRow>(&format!(
+    let Some(row) = sqlx::query_as::<_, ProfileRow>(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS}, u.banner_hash, bn.still_hash AS banner_still, u.theme_top, \
          u.theme_bottom, u.pronouns, u.bio, u.card_glow, u.created_at \
          FROM users u {USER_JOIN} LEFT JOIN media bn ON bn.hash = u.banner_hash WHERE u.id = ?"
-    ))
+    )))
     .bind(&id)
     .fetch_optional(&mut *tx)
     .await?

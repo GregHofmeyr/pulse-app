@@ -39,9 +39,9 @@ pub struct Link {
 const LINK_COLS: &str = "user_id, steam_id, persona, share_achievements, backfill, private_since, completion_rate, perfect_games, share_hours, recent_minutes, share_join, deadlock_matches, deadlock_rank, deadlock_squad";
 
 pub async fn link_of(db: &SqlitePool, user: UserId) -> sqlx::Result<Option<Link>> {
-    sqlx::query_as(&format!(
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {LINK_COLS} FROM steam_links WHERE user_id = ?"
-    ))
+    )))
     .bind(user.to_string())
     .fetch_optional(db)
     .await

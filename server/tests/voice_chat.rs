@@ -348,9 +348,9 @@ async fn deleting_a_voice_channel_takes_its_chat_and_a_purge_removes_it() {
         204
     );
     for table in ["messages", "read_states", "search_docs"] {
-        let n: i64 = sqlx::query_scalar(&format!(
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM {table} WHERE channel_id = ?"
-        ))
+        )))
         .bind(id.to_string())
         .fetch_one(&w.app.db)
         .await
@@ -432,7 +432,10 @@ async fn migration_starts_existing_members_at_all_read_in_voice_channels() {
             "INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES ('{line}', '{voice}', '{alex}', 'hi', '{ts}')"
         ),
     ] {
-        sqlx::query(&q).execute(&pool).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(&*q))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     migrator.migrations = Cow::Owned(all.into_owned());
     migrator.run(&pool).await.unwrap();

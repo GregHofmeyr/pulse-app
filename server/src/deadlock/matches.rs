@@ -54,7 +54,8 @@ pub async fn channels(
         kind.column(),
         crate::activity_hidden::hides_in_server("?1", "d.server_id")
     );
-    let rows: Vec<(String, String)> = sqlx::query_as(&sql)
+    // SAFE: only a fixed column name from `Kind` and `hides_in_server`'s static fragments go in; `user` is bound.
+    let rows: Vec<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(user.map(|u| u.to_string()))
         .fetch_all(&s.db)
         .await?;

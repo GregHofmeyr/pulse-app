@@ -18,7 +18,7 @@ pub struct Kind {
     pub r2: bool,
 }
 
-async fn sum(db: &SqlitePool, sql: &str) -> AppResult<(u64, u64)> {
+async fn sum(db: &SqlitePool, sql: &'static str) -> AppResult<(u64, u64)> {
     let (count, bytes): (i64, i64) = sqlx::query_as(sql).fetch_one(db).await?;
     Ok((count as u64, bytes as u64))
 }

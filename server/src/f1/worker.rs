@@ -67,12 +67,12 @@ struct Target {
 
 /// Every live server's F1 channel (live text channels only).
 async fn targets(s: &AppState) -> AppResult<Vec<Target>> {
-    let rows: Vec<(String, String)> = sqlx::query_as(&format!(
+    let rows: Vec<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT f.server_id, f.channel_id FROM server_f1_channels f
          JOIN channels c ON c.id = f.channel_id AND c.deleted_at IS NULL AND c.archived_at IS NULL AND c.kind = 'text'
          WHERE f.server_id NOT IN {} ORDER BY f.server_id",
         crate::access::DELETED_SERVERS
-    ))
+    )))
     .fetch_all(&s.db)
     .await?;
     Ok(rows

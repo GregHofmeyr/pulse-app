@@ -184,9 +184,9 @@ async fn counted_awarders(
     line: LineId,
     speaker: Option<UserId>,
 ) -> AppResult<Vec<UserId>> {
-    let rows: Vec<String> = sqlx::query_scalar(&format!(
+    let rows: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT giver_id FROM quote_awards WHERE line_id = ? {AWARD_ORDER}"
-    ))
+    )))
     .bind(line.to_string())
     .fetch_all(db)
     .await?;

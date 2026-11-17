@@ -187,7 +187,8 @@ async fn typical_queries_take_under_50ms() {
          WHERE message_search MATCH ? AND +d.channel_id IN ({marks})
          ORDER BY s.rowid DESC LIMIT 26"
     );
-    let mut q = sqlx::query_as::<_, (i64, i64, i64, String)>(&sql).bind(common.clone());
+    let mut q = sqlx::query_as::<_, (i64, i64, i64, String)>(sqlx::AssertSqlSafe(&*sql))
+        .bind(common.clone());
     for c in &list {
         q = q.bind(c.clone());
     }

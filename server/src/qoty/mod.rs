@@ -183,9 +183,9 @@ pub(crate) async fn load(
     id: QotyEventId,
     me: Option<UserId>,
 ) -> AppResult<Option<QotyEvent>> {
-    let row: Option<EventRow> = sqlx::query_as(&format!(
+    let row: Option<EventRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {EVENT_COLS} FROM qoty_events WHERE id = ?"
-    ))
+    )))
     .bind(id.to_string())
     .fetch_optional(db)
     .await?;
@@ -266,13 +266,13 @@ async fn build(db: &SqlitePool, row: EventRow, me: Option<UserId>) -> AppResult<
 /// the events show them (nothing marked as yours), so the first update changes nothing else.
 pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<QotyEvent>> {
     let since = stamp(Utc::now() - chrono::Duration::hours(REOPEN_HOURS));
-    let rows: Vec<EventRow> = sqlx::query_as(&format!(
+    let rows: Vec<EventRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {EVENT_COLS} FROM qoty_events
          WHERE (ended_at IS NULL OR (end_reason = 'early' AND ended_at > ?))
            AND server_id NOT IN {}
          ORDER BY started_at, id",
         crate::access::DELETED_SERVERS
-    ))
+    )))
     .bind(since)
     .fetch_all(db)
     .await?;

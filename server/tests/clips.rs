@@ -253,7 +253,7 @@ async fn migration_keeps_every_channel_row() {
             "INSERT INTO read_states (user_id, channel_id, last_read_message_id) VALUES ('{user}', '{text}', '{message}')"
         ),
     ] {
-        sqlx::query(&q)
+        sqlx::query(sqlx::AssertSqlSafe(&*q))
             .execute(&pool)
             .await
             .unwrap_or_else(|e| panic!("{q}: {e}"));
@@ -267,7 +267,7 @@ async fn migration_keeps_every_channel_row() {
     let count = |t: &'static str| {
         let pool = pool.clone();
         async move {
-            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {t}"))
+            sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {t}")))
                 .fetch_one(&pool)
                 .await
                 .unwrap()
@@ -360,7 +360,10 @@ async fn migration_0009_refuses_to_run_with_foreign_keys_on() {
             "INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES ('M', 'C', 'U', 'hi', '{ts}')"
         ),
     ] {
-        sqlx::query(&q).execute(&mut conn).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(&*q))
+            .execute(&mut conn)
+            .await
+            .unwrap();
     }
     conn.close().await.unwrap();
     let mut conn = opts.foreign_keys(true).connect().await.unwrap();
@@ -376,10 +379,11 @@ async fn migration_0009_refuses_to_run_with_foreign_keys_on() {
         .unwrap();
     assert_eq!(v, 8, "0009 rolled back");
     for (table, want) in [("channels", 1), ("messages", 1)] {
-        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
-            .fetch_one(&mut conn)
-            .await
-            .unwrap();
+        let n: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
         assert_eq!(n, want, "{table} unchanged");
     }
 }
@@ -1354,7 +1358,7 @@ async fn delete_message(
 }
 
 async fn text(app: &TestApp, sql: &str, bind: &str) -> String {
-    sqlx::query_scalar(sql)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(bind)
         .fetch_one(&app.db)
         .await
@@ -1362,7 +1366,7 @@ async fn text(app: &TestApp, sql: &str, bind: &str) -> String {
 }
 
 async fn count(app: &TestApp, sql: &str, bind: &str) -> i64 {
-    sqlx::query_scalar(sql)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(bind)
         .fetch_one(&app.db)
         .await
