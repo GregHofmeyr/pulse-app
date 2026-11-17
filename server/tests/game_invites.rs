@@ -400,3 +400,72 @@ async fn invites_go_in_dms_and_groups_only() {
     let general = general(&app, &alex_t, server.id).await;
     assert_eq!(invite(&app, &alex_t, general.id).await.status(), 400);
 }
+
+#[tokio::test]
+async fn after_a_restart_the_same_game_soon_reopens_the_invite() {
+    // #438: a restart ends every open invite, but its sender reporting the same game within the grace opens it again;
+    // once the grace is over, it stays ended.
+    let World {
+        app,
+        fake,
+        alex: (alex, alex_t),
+        sam: (sam, sam_t),
+        ..
+    } = world().await;
+    let dm = create_dm(&app, &alex_t, &[sam]).await;
+    let mut alex_ws = hello(&app, &alex_t).await;
+    let mut sam_ws = hello(&app, &sam_t).await;
+    fake.in_game(ALEX_STEAM, Some((SPACE, Some(LOBBY), None)));
+    play(&app, &mut alex_ws, alex, true).await;
+    let msg: Message = invite(&app, &alex_t, dm.id).await.json().await.unwrap();
+    let late: Message = invite(&app, &alex_t, dm.id).await.json().await.unwrap();
+
+    // the restart (the hub forgetting alex's game is the gateway's part; the invites' is this)
+    assert_eq!(
+        pulse_server::game_invites::end_all_on_startup(&app.db)
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(join(&app, &sam_t, msg.id).await.status(), 409);
+    // one of them is past its grace
+    sqlx::query("UPDATE game_invites SET restart_grace_until = ? WHERE message_id = ?")
+        .bind(pulse_server::db::stamp(
+            chrono::Utc::now() - chrono::Duration::minutes(1),
+        ))
+        .bind(late.id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    play(&app, &mut alex_ws, alex, false).await;
+    drain(&mut sam_ws, 300).await;
+
+    // alex's client reports the game again
+    play(&app, &mut alex_ws, alex, true).await;
+    let (events, raw) = drain(&mut sam_ws, 500).await;
+    assert!(!raw.contains(LOBBY), "{raw}");
+    let changes = invite_changes(&events, msg.id);
+    assert!(
+        changes.last().is_some_and(|c| !c.ended && c.joinable),
+        "{events:?}"
+    );
+    assert_eq!(
+        join(&app, &sam_t, msg.id)
+            .await
+            .json::<SteamJoin>()
+            .await
+            .unwrap(),
+        lobby()
+    );
+    assert!(invite_changes(&events, late.id).is_empty());
+    assert_eq!(join(&app, &sam_t, late.id).await.status(), 409);
+
+    // and it ends as any invite does when they leave the game
+    play(&app, &mut alex_ws, alex, false).await;
+    let (events, _) = drain(&mut sam_ws, 400).await;
+    assert!(
+        invite_changes(&events, msg.id)
+            .last()
+            .is_some_and(|c| c.ended)
+    );
+}

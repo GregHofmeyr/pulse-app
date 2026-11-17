@@ -5,6 +5,7 @@ import type { GameArt } from "./GameArt";
  * An invite to play a game (#436), sent into a DM or group by its author while they play: the game as their
  * "Playing" showed it then. `joinable` while there's a Steam lobby or game server to join (the server hands it only to
  * the chat's members, on `POST /messages/{id}/game-invite/join`); `ended` once the author left that game or its
- * lobby, for good.
+ * lobby, for good. A server restart ends it too, but it opens again when the author is seen in the same game within
+ * minutes (#438).
  */
 export type GameInvite = { name: string, steam_app_id: number | null, art: GameArt | null, joinable: boolean, ended: boolean, };

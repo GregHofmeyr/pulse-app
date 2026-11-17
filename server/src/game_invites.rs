@@ -9,8 +9,9 @@
 //! previews, forwards) can carry it.
 //!
 //! An invite ends, for good, when its sender stops playing that game ([`follow`], on every game change and
-//! disconnect), when the lobby it offered is gone ([`refresh`]), or when the server restarts ([`end_all_on_startup`]:
-//! what anyone plays lives in memory). An ended invite keeps its card, greyed out, with nothing to join.
+//! disconnect) or when the lobby it offered is gone ([`refresh`]). A server restart ends every open invite too (what
+//! anyone plays lives in memory), but not for good: one whose sender reports the same game again within
+//! [`RESTART_GRACE`] of startup opens again (#438). An ended invite keeps its card, greyed out, with nothing to join.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -27,6 +28,9 @@ use crate::access::channel_for;
 use crate::auth::AuthUser;
 use crate::db::{begin_write, now};
 use crate::error::{AppError, AppResult};
+
+/// How long after startup an invite the restart ended can open again, when its sender reports the same game.
+pub const RESTART_GRACE: chrono::Duration = chrono::Duration::minutes(10);
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -92,6 +96,15 @@ impl Stored {
                     || p.steam_app_id.is_none()
                     || p.steam_app_id == self.steam_app_id)
         })
+    }
+
+    /// Whether `p` is the very game this invite is for, after a restart: the same Steam app id when the invite has
+    /// one, else the same name.
+    fn same_game_again(&self, p: &Playing) -> bool {
+        match self.steam_app_id {
+            Some(app) => p.steam_app_id == Some(app),
+            None => p.name == self.game,
+        }
     }
 }
 
@@ -170,17 +183,64 @@ pub(crate) async fn on_delete(tx: &mut SqliteConnection, id: MessageId) -> AppRe
     Ok(())
 }
 
-/// At boot nobody is playing anything (it lives in memory): every invite still open ends.
+/// At boot nobody is playing anything (it lives in memory): every invite still open ends, for [`RESTART_GRACE`] only
+/// ([`reopen_after_restart`]).
 pub async fn end_all_on_startup(db: &SqlitePool) -> sqlx::Result<u64> {
-    Ok(
-        sqlx::query(
-            "UPDATE game_invites SET ended_at = ?, join_info = NULL WHERE ended_at IS NULL",
-        )
-        .bind(now())
-        .execute(db)
-        .await?
-        .rows_affected(),
+    let grace = crate::db::stamp(chrono::Utc::now() + RESTART_GRACE);
+    Ok(sqlx::query(
+        "UPDATE game_invites SET ended_at = ?, join_info = NULL, restart_grace_until = ? WHERE ended_at IS NULL",
     )
+    .bind(now())
+    .bind(grace)
+    .execute(db)
+    .await?
+    .rows_affected())
+}
+
+/// `user` plays `p`: each of their invites a restart ended less than [`RESTART_GRACE`] ago, for that same game,
+/// opens again (and reads where to join at once, as when sent).
+async fn reopen_after_restart(s: &AppState, user: UserId, p: &Playing) -> AppResult<()> {
+    let rows: Vec<Row> = sqlx::query_as(&format!(
+        "SELECT {COLS} WHERE g.sender_id = ? AND g.ended_at IS NOT NULL AND g.restart_grace_until > ?
+           AND m.deleted_at IS NULL"
+    ))
+    .bind(user.to_string())
+    .bind(now())
+    .fetch_all(&s.db)
+    .await?;
+    let mut join = None;
+    for st in rows.into_iter().map(stored_from) {
+        let st = st?;
+        if !st.same_game_again(p) {
+            continue;
+        }
+        let reopened = sqlx::query(
+            "UPDATE game_invites SET ended_at = NULL, restart_grace_until = NULL
+             WHERE message_id = ? AND ended_at IS NOT NULL AND restart_grace_until > ?",
+        )
+        .bind(st.message_id.to_string())
+        .bind(now())
+        .execute(&s.db)
+        .await?
+        .rows_affected()
+            > 0;
+        if !reopened {
+            continue;
+        }
+        announce(s, st.channel_id, st.message_id).await;
+        if join.is_none() {
+            join = Some(read_join(s, user, p).await);
+        }
+        if let Some(Some(j)) = &join {
+            let open = Stored {
+                ended_at: None,
+                join: None,
+                ..st
+            };
+            set_join(s, &open, j).await?;
+        }
+    }
+    Ok(())
 }
 
 /// The text of an invite to play `game`, for clients that don't know invites (and for search, previews and forwards).
@@ -229,8 +289,14 @@ async fn end(s: &AppState, st: &Stored) -> AppResult<()> {
     Ok(())
 }
 
-/// `user`'s game changed (or they went): each of their invites for another game than the one they play now ends.
+/// `user`'s game changed (or they went): each of their invites for another game than the one they play now ends, and
+/// one a restart ended for the game they play now opens again ([`reopen_after_restart`]).
 pub async fn follow(s: &AppState, user: UserId) {
+    if let Some(p) = s.hub.playing_of(user)
+        && let Err(e) = reopen_after_restart(s, user, &p).await
+    {
+        tracing::warn!(error = %e, "game invites not reopened");
+    }
     let live = match live_of(&s.db, user).await {
         Ok(l) => l,
         Err(e) => {
