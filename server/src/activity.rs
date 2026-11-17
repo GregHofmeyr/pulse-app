@@ -234,6 +234,8 @@ pub fn playing_received(s: &AppState, conn: ConnId, me: UserId, update: Option<P
         };
         if s.hub.set_playing(conn, me, ticket, playing) {
             s.hub.sync_presence(&s.db, me).await;
+            // invites to a game they no longer play end (#436)
+            crate::game_invites::follow(&s, me).await;
         }
     });
 }

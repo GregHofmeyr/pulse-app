@@ -136,6 +136,7 @@ async fn create(
         forwarded: None,
         group_line: None,
         member_line: None,
+        game_invite: None,
     };
     let stored = Stored {
         message_id: msg.id,

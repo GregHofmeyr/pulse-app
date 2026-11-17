@@ -189,6 +189,7 @@ async fn silent_client_times_out_despite_outbound_traffic() {
                 forwarded: None,
                 group_line: None,
                 member_line: None,
+                game_invite: None,
             };
             hub.publish(
                 &db,

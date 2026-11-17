@@ -223,6 +223,7 @@ fn skeleton(f: &Stored) -> Message {
         forwarded: None,
         group_line: None,
         member_line: None,
+        game_invite: None,
     }
 }
 

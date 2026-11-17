@@ -710,6 +710,7 @@ impl Hub {
     ///
     /// Then what they're listening to (#275) and playing (#380), by the same rule: only to viewers they look online to
     /// (and to themselves), so going Invisible or hiding from someone takes it from them (`None`) as it takes the dot.
+    /// Their game also skips anyone they hide what they're playing from (#436).
     pub async fn sync_presence(&self, db: &SqlitePool, user: UserId) -> Option<bool> {
         let _order = self.inner.presence.lock().await;
         let subject = match load_subject(db, user).await {
@@ -744,7 +745,10 @@ impl Hub {
                         }),
                     );
                 }
-                let want = game.as_ref().filter(|_| sees);
+                // hidden from them (#436): online, with no game
+                let want = game
+                    .as_ref()
+                    .filter(|_| sees && subject.shows_game_to(c.user));
                 if self.inner.playing.tell(user, *id, want) {
                     playing_to.insert(
                         *id,
@@ -820,7 +824,11 @@ impl Hub {
                 let listening = sees
                     .then(|| self.inner.listening.latest(&conns, user.id, true))
                     .flatten();
-                let playing = sees.then(|| self.shown_playing(&conns, user.id)).flatten();
+                // hidden from them (#436): online, with no game
+                let shows_game = all.get(&user.id).is_none_or(|s| s.shows_game_to(viewer));
+                let playing = (sees && shows_game)
+                    .then(|| self.shown_playing(&conns, user.id))
+                    .flatten();
                 if let Some(conn) = conn {
                     announced.insert((user.id, conn), view.clone());
                     self.inner.listening.tell(user.id, conn, listening.as_ref());

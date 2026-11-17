@@ -81,6 +81,7 @@ pub async fn insert(
         forwarded: None,
         group_line: group_line(&stored),
         member_line: member_line(&stored),
+        game_invite: None,
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
         .bind(msg.id.to_string())

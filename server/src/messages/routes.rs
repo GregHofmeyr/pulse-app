@@ -160,6 +160,8 @@ fn from_row(r: Row) -> AppResult<Message> {
             Some(p) if system && deleted_at.is_none() => super::system::member_line(p),
             _ => None,
         },
+        // set by `game_invites::attach`
+        game_invite: None,
     })
 }
 
@@ -193,6 +195,7 @@ pub(crate) async fn load(
     crate::pins::attach(db, &mut one).await?;
     crate::polls::attach(db, me, &mut one).await?;
     crate::plans::attach(db, &mut one).await?;
+    crate::game_invites::attach(db, &mut one).await?;
     crate::f1::attach(db, &mut one).await?;
     crate::attachments::attach(db, &mut one).await?;
     crate::forwards::attach(db, &mut one).await?;
@@ -267,6 +270,7 @@ pub(crate) async fn fill(
     crate::pins::attach(db, &mut page).await?;
     crate::polls::attach(db, me, &mut page).await?;
     crate::plans::attach(db, &mut page).await?;
+    crate::game_invites::attach(db, &mut page).await?;
     crate::f1::attach(db, &mut page).await?;
     crate::attachments::attach(db, &mut page).await?;
     crate::forwards::attach(db, &mut page).await?;
@@ -608,6 +612,7 @@ pub(crate) async fn deliver(
         forwarded: forward.as_ref().map(|f| Box::new(f.view.clone())),
         group_line: None,
         member_line: None,
+        game_invite: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -795,6 +800,10 @@ async fn edit(
             "plans are changed from their card, not edited as text".into(),
         ));
     }
+    // Nor an invite to play (#436): its card is the game as it was when sent.
+    if msg.game_invite.is_some() {
+        return Err(AppError::BadRequest("game invites can't be edited".into()));
+    }
     let is_clip: Option<i64> = sqlx::query_scalar("SELECT 1 FROM clips WHERE message_id = ?")
         .bind(id.to_string())
         .fetch_optional(&s.db)
@@ -926,6 +935,7 @@ async fn remove(
     let unpinned = crate::pins::on_delete(&mut tx, id).await?;
     crate::polls::on_delete(&mut tx, id).await?;
     crate::plans::on_delete(&mut tx, id).await?;
+    crate::game_invites::on_delete(&mut tx, id).await?;
     tx.commit().await?;
     let mut deleted = deleted;
     if let Some(mut ended) = overdue {
@@ -1082,6 +1092,7 @@ mod tests {
             forwarded: None,
             group_line: None,
             member_line: None,
+            game_invite: None,
         }
     }
 

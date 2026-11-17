@@ -112,17 +112,24 @@ pub async fn one(s: &AppState, user: UserId, steam_id: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// Server `server`'s board: its members who share Steam hours and played some in the last two weeks, most first.
-pub async fn board(db: &SqlitePool, server: ServerId) -> AppResult<Vec<SteamHoursEntry>> {
+/// Server `server`'s board as `viewer` sees it: its members who share Steam hours and played some in the last two
+/// weeks, most first, less anyone who hides what they're playing from `viewer` (#436).
+pub async fn board(
+    db: &SqlitePool,
+    server: ServerId,
+    viewer: UserId,
+) -> AppResult<Vec<SteamHoursEntry>> {
     let fresh = crate::db::stamp(chrono::Utc::now() - chrono::Duration::hours(STALE_HOURS));
     let rows: Vec<(String, i64)> = sqlx::query_as(
         "SELECT l.user_id, l.recent_minutes FROM steam_links l
          JOIN server_members m ON m.user_id = l.user_id AND m.server_id = ?
          WHERE l.share_hours = 1 AND l.recent_minutes > 0 AND l.recent_at >= ?
+           AND NOT EXISTS (SELECT 1 FROM activity_hidden h WHERE h.user_id = l.user_id AND h.target_id = ?)
          ORDER BY l.recent_minutes DESC, l.user_id LIMIT ?",
     )
     .bind(server.to_string())
     .bind(fresh)
+    .bind(viewer.to_string())
     .bind(BOARD_MAX)
     .fetch_all(db)
     .await?;

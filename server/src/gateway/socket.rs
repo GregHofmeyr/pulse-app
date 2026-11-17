@@ -125,6 +125,10 @@ async fn disconnected(s: &AppState, conn: ConnId, me: UserId, since: &str) {
     let was_playing = s.hub.playing_held(conn).is_some();
     let was_idle = s.hub.is_idle(me);
     s.hub.unregister(conn);
+    if was_playing {
+        // its game went with it: invites to play it end (#436)
+        crate::game_invites::follow(s, me).await;
+    }
     if s.hub.is_online(me) {
         // the device still in use left (#53): the idle ones left behind make them Idle
         if was_listening || was_playing || s.hub.is_idle(me) != was_idle {
@@ -289,6 +293,7 @@ async fn ready_for(
         bookmarks: crate::bookmarks::list_for(db, me).await?,
         dm_layout: crate::dms::layout::of(db, me).await?,
         person_dnd: crate::person_dnd::list(db, me).await?,
+        activity_hidden: crate::activity_hidden::list(db, me).await?,
         inbox_filters: crate::inbox::filters::list_for(db, me).await?,
         channel_orders: crate::servers::personal_order::list_for(db, me).await?,
         layouts,
