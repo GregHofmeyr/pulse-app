@@ -61,9 +61,16 @@ export function placeLine(w: F1Weekend): string {
   return where ? `${w.circuit} · ${where}` : w.circuit
 }
 
-/** Podium picks are taken until lights out. */
-export function picksOpen(w: F1Weekend, now: number): boolean {
-  return Date.parse(w.race_at) > now
+/** When a card's picks close: its server's choice when the server says (#403: lights out, or qualifying's start),
+ *  else lights out. */
+export const picksCloseAt = (w: F1Weekend, closeAt?: string | null): string => closeAt ?? w.race_at
+
+/** Whether a card's picks close before lights out (the server closes them at qualifying, #403). */
+export const closesEarly = (w: F1Weekend, closeAt?: string | null): boolean => Date.parse(picksCloseAt(w, closeAt)) < Date.parse(w.race_at)
+
+/** Podium picks are taken until they close: lights out, or qualifying's start by the server's choice (#403). */
+export function picksOpen(w: F1Weekend, now: number, closeAt?: string | null): boolean {
+  return Date.parse(picksCloseAt(w, closeAt)) > now
 }
 
 /** Your prediction on a card, if you made one. */

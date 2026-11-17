@@ -25,6 +25,8 @@
   import { app, clock, discardFiles, queueMessage, retryFiles, ui } from '../lib/store.svelte'
   import { presenceOf } from '../lib/presence'
   import { listeningOf } from '../lib/activity'
+  import PlayingLine from './PlayingLine.svelte'
+  import { playingOf } from '../lib/game'
   import ListeningLine from './ListeningLine.svelte'
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
@@ -45,6 +47,7 @@
   import { planPrefs } from '../lib/plans.svelte'
   import F1Banner from './F1Banner.svelte'
   import QuietSpinCard from './QuietSpinCard.svelte'
+  import { pendingFresh } from '../lib/clipDrop.svelte'
   import { onOwnSpin, provideChatShown, quietSpins, spinQuick } from '../lib/wheels.svelte'
 
   let { channelId, serverId, panel = null, onAddPeople = () => {}, onLeft = () => {}, onStartQoty = () => {}, onVoiceSettings = () => {} }: {
@@ -765,6 +768,18 @@
     post(p.content, p.reply_to_id, p.gif ?? null)
   }
 
+  // An offered recording sent in this DM (#394) asked for its file in the composer: queued, as a drop would be. One that
+  // waited too long (this chat never opened when asked) is dropped instead.
+  $effect(() => {
+    const r = ui.attachFiles
+    const c = composer
+    if (!r || r.channelId !== channelId || !c) return
+    untrack(() => {
+      ui.attachFiles = null
+      if (pendingFresh(r.at)) void c.addPaths(r.paths)
+    })
+  })
+
   // Files dragged over the chat (#57): it lights up, and a drop queues them in the composer. Tauri reports every file
   // drag over the window (in physical pixels), so only one whose point is on this chat counts, and not with a modal open.
   let dragging = $state(false)
@@ -818,8 +833,10 @@
     {:else if isPrivate && channel?.kind === 'dm' && others[0]}
       <Avatar id={others[0]} name={title} size={26} presence={presenceOf(app.state, others[0], clock.nowIso)} interactive serverId={null} />
       <span class="title"><Name userId={others[0]} serverId={null} text={title} /></span>
-      {@const listening = listeningOf(app.state, others[0])}
-      {#if listening}<ListeningLine {listening} />{/if}
+      <!-- the game they're playing (#392), else what they're listening to -->
+      {@const playing = playingOf(app.state, others[0])}
+      {@const listening = playing ? null : listeningOf(app.state, others[0])}
+      {#if playing}<PlayingLine {playing} />{:else if listening}<ListeningLine {listening} />{/if}
     {:else if isPrivate}
       {#if channel?.icon_hash}
         <GroupIcon hash={channel.icon_hash} still={channel.icon_still} size={26} />

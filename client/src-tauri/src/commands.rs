@@ -2691,11 +2691,13 @@ pub async fn set_f1_channel(
     core: State<'_, Core>,
     server_id: ServerId,
     channel_id: Option<ChannelId>,
+    picks_close: Option<pulse_protocol::rest::F1PicksClose>,
 ) -> Result<pulse_protocol::rest::F1Status, ApiError> {
     let (api, token) = core.current()?;
     core.check(
         &app,
-        api.set_f1_channel(&token, server_id, channel_id).await,
+        api.set_f1_channel(&token, server_id, channel_id, picks_close)
+            .await,
     )
 }
 
@@ -2717,11 +2719,13 @@ pub async fn set_sports_channel(
     core: State<'_, Core>,
     server_id: ServerId,
     channel_id: Option<ChannelId>,
+    leagues: Option<Vec<pulse_protocol::rest::SportsLeague>>,
 ) -> Result<pulse_protocol::rest::SportsChannel, ApiError> {
     let (api, token) = core.current()?;
     core.check(
         &app,
-        api.set_sports_channel(&token, server_id, channel_id).await,
+        api.set_sports_channel(&token, server_id, channel_id, leagues)
+            .await,
     )
 }
 

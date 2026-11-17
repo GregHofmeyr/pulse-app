@@ -3099,7 +3099,7 @@ pub enum EmbedKind {
 }
 
 /// A preview's thumbnail: a `link_thumb` media hash, a still WebP.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct EmbedThumb {
     pub hash: String,
     pub width: u32,
@@ -3952,6 +3952,11 @@ pub struct F1WeekendCard {
     /// In the order they were made; filled when read (never stored on the line).
     #[serde(default)]
     pub predictions: Vec<F1Prediction>,
+    /// When predictions close (UTC, RFC 3339), by the server's choice (#403): lights out, or qualifying's start. Filled
+    /// when read; older servers never send it (they close at lights out).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub picks_close_at: Option<String>,
 }
 
 /// The "lights out in 1 hour" line.
@@ -4008,6 +4013,59 @@ pub struct F1ResultsCard {
     /// The drivers' championship after this round, top 10 (empty when it wasn't out in time).
     #[serde(default)]
     pub standings: Vec<F1StandingRow>,
+    /// The constructors' championship after this round (#403), every team (empty when it wasn't out in time, and on
+    /// cards from before it was added).
+    #[serde(default)]
+    pub constructor_standings: Vec<F1ConstructorRow>,
+}
+
+/// One row of the constructors' championship (#403).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct F1ConstructorRow {
+    pub position: u16,
+    /// The team as Jolpica names it ("McLaren").
+    pub team: String,
+    pub points: f32,
+    pub wins: u16,
+}
+
+/// The sprint's results card (#403), posted once a sprint weekend's sprint results are in.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct F1SprintCard {
+    pub season: u16,
+    pub round: u16,
+    pub race_name: String,
+    pub country: String,
+    /// The top 10, in order (points go to the top 8).
+    pub results: Vec<F1ResultRow>,
+}
+
+/// When a server's podium predictions close (#403): at lights out (the default), or when qualifying starts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum F1PicksClose {
+    #[default]
+    LightsOut,
+    Qualifying,
+}
+
+impl F1PicksClose {
+    /// The key stored (`lights_out`, `qualifying`).
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::LightsOut => "lights_out",
+            Self::Qualifying => "qualifying",
+        }
+    }
+
+    /// A stored key; anything else is the default.
+    pub fn parse(key: &str) -> Self {
+        if key == "qualifying" {
+            Self::Qualifying
+        } else {
+            Self::LightsOut
+        }
+    }
 }
 
 /// One person's score for a race.
@@ -4054,6 +4112,8 @@ pub enum F1Card {
     LightsOut(F1LightsOut),
     Results(F1ResultsCard),
     Scores(F1ScoresCard),
+    /// A sprint's results (#403).
+    Sprint(F1SprintCard),
 }
 
 /// `GET /servers/{id}/f1`: the server's F1 channel (`None` = no F1 cards), the next race weekend for the countdown
@@ -4064,12 +4124,19 @@ pub struct F1Status {
     pub channel_id: Option<ChannelId>,
     pub next: Option<F1Weekend>,
     pub season_table: Vec<F1SeasonRow>,
+    /// When the server's podium predictions close (#403). Older servers never send it (lights out).
+    #[serde(default)]
+    pub picks_close: F1PicksClose,
 }
 
-/// `PUT /servers/{id}/f1-channel` (the server's owner only): a text channel of that server, or `None`.
+/// `PUT /servers/{id}/f1-channel` (the server's owner only): a text channel of that server, or `None`, and when
+/// predictions close (#403; left out, it stays as it is).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SetF1ChannelRequest {
     pub channel_id: Option<ChannelId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub picks_close: Option<F1PicksClose>,
 }
 
 /// `PUT /messages/{id}/f1/prediction`: your P1, P2, P3 (three different drivers from the card), replacing any before;
@@ -4330,12 +4397,20 @@ pub struct SportsTeams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SportsChannel {
     pub channel_id: Option<ChannelId>,
+    /// The leagues whose cards post here (#406), by the owner's choice; `None` = every league (the default). Older
+    /// servers never send it.
+    #[serde(default)]
+    pub leagues: Option<Vec<SportsLeague>>,
 }
 
-/// `PUT /servers/{id}/sports-channel` (the server's owner only): a text channel of that server, or `None`.
+/// `PUT /servers/{id}/sports-channel` (the server's owner only): a text channel of that server, or `None`, and the
+/// leagues that post (#406; left out, they stay as they are; every league = no limit). Leagues need a channel.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SetSportsChannelRequest {
     pub channel_id: Option<ChannelId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub leagues: Option<Vec<SportsLeague>>,
 }
 
 /// Where a match is.
@@ -4358,6 +4433,11 @@ pub struct SportsSide {
     pub name: String,
     /// `None` until kick-off.
     pub score: Option<u32>,
+    /// The team's logo (#406), the server's copy of API-Sports' (clients never reach API-Sports); none when it
+    /// couldn't be had. Older servers never send it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub logo: Option<EmbedThumb>,
 }
 
 /// A goal (football only: api-rugby names no try scorers).
@@ -4391,4 +4471,8 @@ pub struct SportsCard {
     /// The server's members who follow either team (with pings on).
     #[serde(default)]
     pub followers: Vec<UserId>,
+    /// The match's window passed with no live data to end it (#406): the card stopped updating, and says so rather
+    /// than look stuck on match day or mid-match.
+    #[serde(default)]
+    pub no_updates: bool,
 }

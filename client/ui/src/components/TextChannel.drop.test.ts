@@ -18,7 +18,8 @@ vi.mock('@tauri-apps/api/webview', () => ({
 
 import { invoke } from '@tauri-apps/api/core'
 import TextChannel from './TextChannel.svelte'
-import { app, resetState } from '../lib/store.svelte'
+import { app, resetState, ui } from '../lib/store.svelte'
+import { PENDING_MS } from '../lib/clipDrop.svelte'
 import { applyReady, emptyState, markHistory } from '../lib/state'
 import { testReady } from '../lib/testReady'
 
@@ -85,5 +86,26 @@ describe('TextChannel: dropping files', () => {
     document.body.append(dialog)
     await drop(['/home/alex/report.pdf'])
     expect(staged()).toHaveLength(0)
+  })
+
+  // #394: an offered recording sent in a DM arrives as a request for this chat's composer
+  it("an offered recording sent here is queued in the message box; another chat's, or a stale one, isn't", async () => {
+    await open()
+    ui.attachFiles = { channelId: 'C9', paths: ['/v/elsewhere.mp4'], at: Date.now() }
+    flushSync()
+    for (let i = 0; i < 3; i++) await tick()
+    expect(staged()).toHaveLength(0)
+    expect(ui.attachFiles).not.toBeNull()
+    ui.attachFiles = { channelId: 'C1', paths: ['/v/old.mp4'], at: Date.now() - PENDING_MS - 1000 }
+    flushSync()
+    for (let i = 0; i < 3; i++) await tick()
+    expect(staged()).toHaveLength(0)
+    expect(ui.attachFiles).toBeNull()
+    ui.attachFiles = { channelId: 'C1', paths: ['/v/Apex/new.mp4'], at: Date.now() }
+    flushSync()
+    for (let i = 0; i < 3; i++) await tick()
+    expect(staged()).toHaveLength(1)
+    expect(staged()[0][1]).toEqual({ paths: ['/v/Apex/new.mp4'] })
+    expect(ui.attachFiles).toBeNull()
   })
 })

@@ -4,7 +4,9 @@
 //! - the weekend card from [`CARD_LEAD_HOURS`] before the first session until lights out (it waits for the field,
 //!   so people have drivers to pick, until qualifying starts);
 //! - the "lights out in 1 hour" line in the hour before lights out (one the server slept through is skipped);
-//! - the results card, then the predictions' scores, once the results are in: they're only asked for from a while
+//! - a sprint weekend's sprint results card (#403), once they're in: asked for from a while after the sprint starts;
+//! - the results card (with the drivers' and constructors' standings), then the predictions' scores, once the results
+//!   are in: they're only asked for from a while
 //!   after lights out, and only until a server has its card, so the results are polled around the race's end and
 //!   never otherwise.
 //!
@@ -41,6 +43,8 @@ pub enum Post {
     Weekend,
     LightsOut,
     Results,
+    /// A sprint's results (#403).
+    Sprint,
 }
 
 impl Post {
@@ -49,6 +53,7 @@ impl Post {
             Self::Weekend => "weekend",
             Self::LightsOut => "lights_out",
             Self::Results => "results",
+            Self::Sprint => "sprint",
         }
     }
 }
@@ -353,10 +358,15 @@ pub async fn tick(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
                 // with no field to pick from yet, wait for one until qualifying
                 if !drivers.is_empty() || now >= jolpica::qualifying_start(w) {
                     for tg in waiting {
+                        let mode = {
+                            let mut conn = s.db.acquire().await?;
+                            super::picks_close_of(&mut conn, tg.server).await?
+                        };
                         let card = F1WeekendCard {
                             weekend: w.clone(),
                             drivers: drivers.clone(),
                             predictions: vec![],
+                            picks_close_at: Some(super::close_at(w, mode)),
                         };
                         let text = super::weekend_text(w);
                         if post_once(s, tg, w, Post::Weekend, |_| (text, F1Card::Weekend(card)))
@@ -389,6 +399,32 @@ pub async fn tick(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
                 };
                 if post_once(s, tg, w, Post::LightsOut, make).await?.is_some() {
                     sent += 1;
+                }
+            }
+        }
+        // a sprint's results (#403), around the sprint's end only
+        if let Some(sprint_at) = jolpica::sprint_start(w)
+            && now >= sprint_at + TimeDelta::minutes(jolpica::SPRINT_AFTER_MINUTES)
+            && now < sprint_at + TimeDelta::hours(jolpica::RESULTS_GIVE_UP_HOURS)
+        {
+            let mut waiting = vec![];
+            for &tg in &targets {
+                if !posted(s, tg, w, Post::Sprint).await? {
+                    waiting.push(tg);
+                }
+            }
+            if !waiting.is_empty()
+                && let Some(card) = jolpica::sprint_card(&s.db, &s.cfg.f1, w, now).await?
+            {
+                for tg in waiting {
+                    let text = super::sprint_text(&card);
+                    let c = F1Card::Sprint(card.clone());
+                    if post_once(s, tg, w, Post::Sprint, |_| (text, c))
+                        .await?
+                        .is_some()
+                    {
+                        sent += 1;
+                    }
                 }
             }
         }

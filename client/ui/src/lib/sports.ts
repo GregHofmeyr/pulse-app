@@ -1,4 +1,6 @@
 // Sports score pings (#385): how leagues, matches and cards read. Pure.
+import { isMediaHash, mediaUrl } from './emoji'
+import type { EmbedThumb } from './protocol/EmbedThumb'
 import type { SportsCard } from './protocol/SportsCard'
 import type { SportsLeague } from './protocol/SportsLeague'
 import type { SportsScorer } from './protocol/SportsScorer'
@@ -21,8 +23,16 @@ export function kickoffText(iso: string, now: number): string {
   return t.toDateString() === new Date(now).toDateString() ? time : `${t.toLocaleDateString([], { weekday: 'short' })} ${time}`
 }
 
-/** What the card's corner says: "Kick-off 19:30", "63'", "Half time", "Full time", "Postponed". */
+/** What a card that ran out of live data says (#406). */
+export const NO_UPDATES = 'No live updates — check back later'
+
+/** A team's logo (#406): the server's copy, or null when it has none. */
+export const logoUrl = (logo: EmbedThumb | null | undefined): string | null => (logo && isMediaHash(logo.hash) ? mediaUrl(logo.hash) : null)
+
+/** What the card's corner says: "Kick-off 19:30", "63'", "Half time", "Full time", "Postponed"; "No live updates" once
+ *  its window passed with no live data to end it (#406). */
 export function phaseText(c: SportsCard, now: number): string {
+  if (c.no_updates) return 'No live updates'
   switch (c.phase) {
     case 'upcoming':
       return `Kick-off ${kickoffText(c.kickoff, now)}`

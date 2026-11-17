@@ -18,7 +18,8 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 
 import ClipDropToast from './ClipDropToast.svelte'
-import { clipDrop, clipsTarget, MAX_OFFERS } from '../lib/clipDrop.svelte'
+import { clipDrop, clipsTarget, MAX_OFFERS, pendingFresh, PENDING_MS } from '../lib/clipDrop.svelte'
+import { gamePrefs } from '../lib/gamePrefs.svelte'
 import { app, ui } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { testReady } from '../lib/testReady'
@@ -31,8 +32,13 @@ const toasts = () => [...document.querySelectorAll('.clip-offer')]
 const button = (el: Element, text: string) => [...el.querySelectorAll('button')].find((b) => b.textContent?.trim() === text)!
 
 let cmp: ReturnType<typeof mount> | undefined
-async function show(channels: Channel[]) {
-  app.state = applyReady(emptyState(), testReady(channels))
+const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const dm = (id: string): Channel => ({ id, server_id: null, kind: 'dm', name: null, position: 0 }) as Channel
+async function show(channels: Channel[], dms: string[] = []) {
+  app.state = applyReady(emptyState(), testReady([...channels, ...dms.map(dm)], {
+    dm_members: dms.map((id) => ({ channel_id: id, user_ids: ['U1', 'U2'] })),
+    people: [{ user: sam, online: true, last_seen_at: null, status: 'online' }],
+  } as never))
   cmp = mount(ClipDropToast, { target: document.body })
   flushSync()
   await settle()
@@ -43,6 +49,9 @@ beforeEach(() => {
   clipDrop.offers = []
   ui.goTo = null
   ui.shareClip = null
+  ui.attachFiles = null
+  gamePrefs.enabled = true
+  gamePrefs.clips = true
 })
 afterEach(() => {
   if (cmp) unmount(cmp)
@@ -59,7 +68,8 @@ describe('ClipDropToast', () => {
     expect(toasts()[0].textContent).toContain('New clip: replay.mp4 — Share to #highlights?')
     button(toasts()[0], 'Share').click()
     flushSync()
-    expect(ui.shareClip).toEqual({ channelId: 'C1', path: 'C:\\Users\\alex\\Videos\\Apex\\replay.mp4' })
+    expect(ui.shareClip).toMatchObject({ channelId: 'C1', path: 'C:\\Users\\alex\\Videos\\Apex\\replay.mp4' })
+    expect(Date.now() - ui.shareClip!.at).toBeLessThan(5000)
     expect(ui.goTo).toBe('C1')
     expect(toasts()).toHaveLength(0)
   })
@@ -116,6 +126,71 @@ describe('ClipDropToast', () => {
     cmp = undefined
     expect(clipDrop.offers).toEqual([])
     expect(h.handlers['pulse://clip-drop']).toBeUndefined()
+  })
+})
+
+describe('ClipDropToast: follow-ups (#394)', () => {
+  it('Send in a DM picks a chat and opens it with the file queued; Back returns to Share', async () => {
+    await show([ch('C1', 'highlights')], ['D1'])
+    offer('replay.mp4')
+    flushSync()
+    button(toasts()[0], 'Send in a DM').click()
+    flushSync()
+    expect(toasts()[0].textContent).toContain('Send replay.mp4 in a DM?')
+    expect(button(toasts()[0], 'Share')).toBeUndefined()
+    button(toasts()[0], 'Back').click()
+    flushSync()
+    expect(button(toasts()[0], 'Share')).toBeDefined()
+    button(toasts()[0], 'Send in a DM').click()
+    flushSync()
+    document.querySelector<HTMLButtonElement>('button[aria-label="Direct message"]')!.click()
+    flushSync()
+    expect([...document.querySelectorAll('[role="option"]')].map((o) => o.textContent?.trim())).toEqual(['sam'])
+    button(toasts()[0], 'Send').click()
+    flushSync()
+    expect(ui.attachFiles).toMatchObject({ channelId: 'D1', paths: ['C:\\Users\\alex\\Videos\\Apex\\replay.mp4'] })
+    expect(ui.goTo).toBe('D1')
+    expect(ui.shareClip).toBeNull()
+    expect(toasts()).toHaveLength(0)
+  })
+
+  it('with no clips channel a DM is still offered; with no DMs there is no Send in a DM', async () => {
+    await show([ch('T1', 'general', 'text')], ['D1'])
+    offer('a.mp4')
+    flushSync()
+    expect(button(toasts()[0], 'Send in a DM')).toBeDefined()
+    unmount(cmp!)
+    cmp = undefined
+    await show([ch('C1', 'highlights')])
+    offer('b.mp4')
+    flushSync()
+    expect(button(toasts()[0], 'Send in a DM')).toBeUndefined()
+  })
+
+  it('turning clip drop (or Game activity) off clears the toasts showing, and new offers are ignored', async () => {
+    await show([ch('C1', 'highlights')])
+    offer('a.mp4')
+    offer('b.mp4')
+    flushSync()
+    expect(toasts()).toHaveLength(2)
+    gamePrefs.clips = false
+    flushSync()
+    expect(toasts()).toHaveLength(0)
+    offer('c.mp4')
+    flushSync()
+    expect(toasts()).toHaveLength(0)
+    gamePrefs.clips = true
+    offer('d.mp4')
+    flushSync()
+    expect(toasts()).toHaveLength(1)
+    gamePrefs.enabled = false
+    flushSync()
+    expect(toasts()).toHaveLength(0)
+  })
+
+  it('a pending request is fresh for a while, then stale', () => {
+    expect(pendingFresh(1000, 1000 + PENDING_MS)).toBe(true)
+    expect(pendingFresh(1000, 1001 + PENDING_MS)).toBe(false)
   })
 })
 

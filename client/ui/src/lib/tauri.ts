@@ -21,6 +21,7 @@ import type { PlanForecast } from './protocol/PlanForecast'
 import type { Rsvp } from './protocol/Rsvp'
 import type { F1Prediction } from './protocol/F1Prediction'
 import type { F1Status } from './protocol/F1Status'
+import type { F1PicksClose } from './protocol/F1PicksClose'
 import type { ServerLayout } from './protocol/ServerLayout'
 import type { DeletedChannel } from './protocol/DeletedChannel'
 import type { DeletedServer } from './protocol/DeletedServer'
@@ -771,7 +772,9 @@ export const planCmd = {
  *  on a weekend card (three driver ids, P1 first; null takes it back), answered with everyone's. */
 export const f1Cmd = {
   status: (serverId: string) => invoke<F1Status>('f1_status', { serverId }),
-  setChannel: (serverId: string, channelId: string | null) => invoke<F1Status>('set_f1_channel', { serverId, channelId }),
+  /** `picksClose` (#403): when predictions close; left out, it stays as it is. */
+  setChannel: (serverId: string, channelId: string | null, picksClose?: F1PicksClose) =>
+    invoke<F1Status>('set_f1_channel', { serverId, channelId, picksClose: picksClose ?? null }),
   predict: (messageId: string, picks: string[] | null) => invoke<F1Prediction[]>('f1_predict', { messageId, picks }),
 }
 
@@ -784,7 +787,9 @@ export const sportsCmd = {
   unfollow: (league: SportsLeague, teamId: number) => invoke<SportsStatus>('unfollow_team', { league, teamId }),
   teams: (league: SportsLeague) => invoke<SportsTeams>('sports_teams', { league }),
   channel: (serverId: string) => invoke<SportsChannel>('sports_channel', { serverId }),
-  setChannel: (serverId: string, channelId: string | null) => invoke<SportsChannel>('set_sports_channel', { serverId, channelId }),
+  /** `leagues` (#406): the leagues that post there (every league = no limit); left out, they stay as they are. */
+  setChannel: (serverId: string, channelId: string | null, leagues?: SportsLeague[]) =>
+    invoke<SportsChannel>('set_sports_channel', { serverId, channelId, leagues: leagues ?? null }),
 }
 
 /** Tauri rejects with the command's error string. */

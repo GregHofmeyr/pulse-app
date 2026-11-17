@@ -1,15 +1,22 @@
 // Sports score pings (#385): kick-off in your own time, the card's corner, scorers, the team search.
 import { describe, expect, it } from 'vitest'
-import { ballOf, joinNames, kickoffText, leagueName, matchTeams, phaseText, scorerText } from './sports'
+import { ballOf, joinNames, kickoffText, leagueName, logoUrl, matchTeams, phaseText, scorerText } from './sports'
 import type { SportsCard } from './protocol/SportsCard'
 
 const card = (over: Partial<SportsCard>): SportsCard => ({
   league: 'psl', fixture_id: 1, phase: 'upcoming', kickoff: '2026-11-21T17:30:00Z', status: 'NS', minute: null,
   home: { team_id: 10, name: 'Coastal City', score: null }, away: { team_id: 20, name: 'Highveld United', score: null },
-  scorers: [], followers: [], ...over,
+  scorers: [], followers: [], no_updates: false, ...over,
 })
 
 describe('sports', () => {
+  it('a card out of live data says so in its corner; a logo is a media hash or nothing (#406)', () => {
+    expect(phaseText(card({ phase: 'live', minute: 70, no_updates: true }), Date.now())).toBe('No live updates')
+    expect(logoUrl({ hash: 'a'.repeat(64), width: 96, height: 96 })).toContain('a'.repeat(64))
+    expect(logoUrl({ hash: 'https://evil.test/x.png', width: 1, height: 1 })).toBeNull()
+    expect(logoUrl(undefined)).toBeNull()
+  })
+
   it('names leagues and their ball', () => {
     expect(leagueName('urc')).toBe('United Rugby Championship')
     expect(ballOf('urc')).toBe('🏉')

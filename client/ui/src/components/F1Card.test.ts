@@ -160,6 +160,7 @@ describe('the other F1 cards', () => {
       results: [row(1, FIELD[0], '1:30:00.000', 25), row(2, FIELD[2], '+1.000', 18), row(3, FIELD[1], '+2.000', 15), row(4, FIELD[3], '+1 Lap', 12)],
       fastest_lap: { driver: FIELD[2], lap: 40, time: '1:20.001' },
       standings: [{ position: 1, driver: FIELD[0], points: 100, wins: 3 }],
+      constructor_standings: [{ position: 1, team: 'Rocket', points: 180, wins: 3 }, { position: 2, team: 'Comet', points: 90.5, wins: 0 }],
     }))
     const steps = [...document.querySelectorAll('.podium .step')]
     // P2, P1, P3
@@ -168,6 +169,44 @@ describe('the other F1 cards', () => {
     expect(document.querySelector('.rows .who')!.textContent).toContain('Di Dash')
     expect(document.querySelector('.fast')!.textContent).toBe('⏱ Fastest lap: Cy Speed 1:20.001 (lap 40)')
     expect(document.querySelector('.standings summary')!.textContent).toBe("Drivers' standings after round 2")
+    // the constructors' table too (#403)
+    const teams = document.querySelector('[data-constructors]')!
+    expect(teams.querySelector('summary')!.textContent).toBe("Constructors' standings after round 2")
+    expect([...teams.querySelectorAll('tr')].map((r) => r.textContent)).toEqual(['1Rocket3 wins180', '2Comet90.5'])
+  })
+
+  it('a results card from before constructors were added shows none', () => {
+    show(msg({
+      kind: 'results', season: 2030, round: 2, race_name: 'Harbour Grand Prix', country: 'UK',
+      results: [{ position: 1, driver: FIELD[0], time: '1:30:00.000', points: 25 }], fastest_lap: null, standings: [],
+    } as unknown as Card))
+    expect(document.querySelector('[data-constructors]')).toBeNull()
+  })
+
+  it("the sprint card (#403): the sprint's top 10, points where scored", () => {
+    show(msg({
+      kind: 'sprint', season: 2030, round: 2, race_name: 'Harbour Grand Prix', country: 'UK',
+      results: [{ position: 1, driver: FIELD[1], time: '26:51.033', points: 8 }, { position: 2, driver: FIELD[0], time: '+4.951', points: 7 }, { position: 9, driver: FIELD[3], time: '+20.1', points: 0 }],
+    }))
+    const card = document.querySelector('[data-f1-sprint]')!
+    expect(card.querySelector('.title')!.textContent).toBe('Harbour Grand Prix Sprint')
+    expect([...card.querySelectorAll('tr')].map((r) => r.textContent)).toEqual(['1Bo RiderRocket26:51.0338', '2Ace RacerRocket+4.9517', '9Di DashRocket+20.1'])
+    f1Prefs.on = false
+    reshow()
+    expect(document.querySelector('.system.folded')!.textContent).toContain('🏎️ Sprint, Harbour Grand Prix: RIB, RAA, DAD')
+  })
+
+  it('picks close when qualifying starts when the server says so (#403)', () => {
+    // qualifying at 08:00, an hour away: still open, and the hint says when it closes
+    show(msg({ ...weekendCard(), picks_close_at: '2030-03-14T08:00:00.000Z' } as Card))
+    expect(selects()).toHaveLength(3)
+    expect(document.querySelector('.predict .hint')!.textContent).toContain('Closes when qualifying starts.')
+    // qualifying has started: closed, though lights out is a day away
+    vi.setSystemTime(Date.parse('2030-03-14T08:01:00.000Z'))
+    reshow()
+    expect(selects()).toHaveLength(0)
+    expect(document.querySelector('.count')!.textContent).toContain('Lights out in')
+    expect(document.querySelector('.predict .hint')!.textContent).toBe('Closed when qualifying started.')
   })
 
   it('the scores card: each pick marked, the points and the season', () => {

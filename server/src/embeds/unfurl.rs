@@ -292,8 +292,20 @@ pub(super) async fn thumb(
     by: UserId,
     url: &Url,
 ) -> Option<EmbedThumb> {
+    thumb_with(fetcher, db, media_dir, by, url, process::link_thumb).await
+}
+
+/// [`thumb`] with its own processing (a game's hero art keeps more pixels, #392).
+pub(super) async fn thumb_with(
+    fetcher: &Fetcher,
+    db: &SqlitePool,
+    media_dir: &Path,
+    by: UserId,
+    url: &Url,
+    processing: fn(&[u8]) -> Result<process::Processed, process::ProcessError>,
+) -> Option<EmbedThumb> {
     let got = fetcher.get(url.as_str(), Want::Image).await.ok()?;
-    let processed = media::routes::run_processing(move || process::link_thumb(&got.body))
+    let processed = media::routes::run_processing(move || processing(&got.body))
         .await
         .ok()?
         .ok()?;

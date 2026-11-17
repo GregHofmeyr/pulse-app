@@ -1,7 +1,7 @@
 <script lang="ts">
   // An F1 card (#386), a system line in a server's F1 channel: the race weekend card (F1WeekendCard), the "lights out
-  // in 1 hour" line, the podium and results card (the top 10, the fastest lap, the standings after the round), or the
-  // predictions' scores with the season's table. With "F1 race weekends" off (Settings › Chat, this device), each
+  // in 1 hour" line, a sprint's results (#403), the podium and results card (the top 10, the fastest lap, the drivers'
+  // and constructors' standings after the round), or the predictions' scores with the season's table. With "F1 race weekends" off (Settings › Chat, this device), each
   // folds to one line that opens on a click.
   import F1WeekendCard from './F1WeekendCard.svelte'
   import { driverById, driverShort, flagOf, ordinal, pointsText, sessionWhen } from '../lib/f1'
@@ -28,6 +28,8 @@
         return `🏆 ${card.race_name}: ${card.results.slice(0, 3).map((r) => driverShort(r.driver)).join(', ')}`
       case 'scores':
         return `🔮 Podium predictions, ${card.race_name}`
+      case 'sprint':
+        return `🏎️ Sprint, ${card.race_name}: ${card.results.slice(0, 3).map((r) => driverShort(r.driver)).join(', ')}`
     }
   })
 </script>
@@ -86,6 +88,33 @@
         </table>
       </details>
     {/if}
+    {#if card.constructor_standings?.length}
+      <details class="standings" data-constructors>
+        <summary>Constructors' standings after round {card.round}</summary>
+        <table class="rows">
+          <tbody>
+            {#each card.constructor_standings as c (c.team)}
+              <tr><td class="pos">{c.position}</td><td class="who">{c.team}</td><td class="gap">{c.wins ? `${c.wins} ${c.wins === 1 ? 'win' : 'wins'}` : ''}</td><td class="pts">{c.points}</td></tr>
+            {/each}
+          </tbody>
+        </table>
+      </details>
+    {/if}
+  </section>
+{:else if card.kind === 'sprint'}
+  <section class="f1" data-message-id={message.id} data-f1-sprint aria-labelledby="{uid}-t">
+    <header>
+      <span class="flag" aria-hidden="true">{flagOf(card.country)}</span>
+      <p class="title" id="{uid}-t">{card.race_name} <span class="kind">Sprint</span></p>
+      <span class="time">{time}</span>
+    </header>
+    <table class="rows">
+      <tbody>
+        {#each card.results as r (r.position)}
+          <tr><td class="pos">{r.position}</td><td class="who">{r.driver.name}{#if r.driver.team}<span class="team"> {r.driver.team}</span>{/if}</td><td class="gap">{r.time}</td><td class="pts">{r.points || ''}</td></tr>
+        {/each}
+      </tbody>
+    </table>
   </section>
 {:else if card.kind === 'scores'}
   <section class="f1" data-message-id={message.id} aria-labelledby="{uid}-t">

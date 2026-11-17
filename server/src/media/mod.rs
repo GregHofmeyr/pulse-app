@@ -372,6 +372,7 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
            AND hash NOT IN (SELECT media_hash FROM badge_art)
            AND hash NOT IN (SELECT hash FROM steam_card_media)
            AND hash NOT IN (SELECT hash FROM deadlock_media)
+           AND hash NOT IN (SELECT hash FROM sports_media)
            AND hash NOT IN (SELECT p.still_hash FROM media p
                             WHERE p.still_hash IS NOT NULL
                               AND (p.created_at > ?1

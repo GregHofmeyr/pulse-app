@@ -17,7 +17,9 @@ use common::*;
 use futures::{SinkExt, StreamExt};
 use pulse_protocol::gateway::{ClientFrame, ServerFrame};
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId};
-use pulse_protocol::rest::{Channel, F1Card, F1Prediction, F1Status, Message, MessageKind};
+use pulse_protocol::rest::{
+    Channel, F1Card, F1PicksClose, F1Prediction, F1Status, Message, MessageKind,
+};
 use pulse_server::f1::worker::tick;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message as Ws;
@@ -133,6 +135,38 @@ fn standings(round: u16) -> Value {
         .collect();
     json!({"MRData": {"StandingsTable": {"season": "2030", "round": round.to_string(),
         "StandingsLists": [{"season": "2030", "round": round.to_string(), "DriverStandings": rows}]}}})
+}
+
+/// The constructors' championship after `round` (#403), as Jolpica's `constructorStandings.json` has it.
+fn constructor_standings(round: u16) -> Value {
+    let rows: Vec<Value> = [("rocket", "Rocket", "120"), ("comet", "Comet", "80")]
+        .iter()
+        .enumerate()
+        .map(|(i, (id, name, pts))| {
+            json!({"position": (i + 1).to_string(), "positionText": (i + 1).to_string(), "points": pts,
+                   "wins": if i == 0 { "2" } else { "0" },
+                   "Constructor": {"constructorId": id, "name": name, "nationality": "British"}})
+        })
+        .collect();
+    json!({"MRData": {"StandingsTable": {"season": "2030", "round": round.to_string(),
+        "StandingsLists": [{"season": "2030", "round": round.to_string(), "ConstructorStandings": rows}]}}})
+}
+
+/// A sprint's results for `round` (#403), as Jolpica's `sprint.json` has them.
+fn sprint_results(round: u16, order: &[&str]) -> Value {
+    let mut v = results(round, order);
+    let race = &mut v["MRData"]["RaceTable"]["Races"][0];
+    race["SprintResults"] = race["Results"].take();
+    race.as_object_mut().unwrap().remove("Results");
+    v
+}
+
+/// A sprint weekend's race (#403): sprint qualifying and the sprint the day before qualifying.
+fn sprint_race(round: u16, name: &str, at: DateTime<Utc>) -> Value {
+    let mut r = race(round, name, at);
+    r["SprintQualifying"] = date_time(at - TimeDelta::days(2) + TimeDelta::hours(4));
+    r["Sprint"] = date_time(at - TimeDelta::days(1) - TimeDelta::hours(4));
+    r
 }
 
 type Socket =
@@ -258,7 +292,8 @@ async fn nothing_is_fetched_or_posted_without_an_f1_channel() {
         F1Status {
             channel_id: None,
             next: None,
-            season_table: vec![]
+            season_table: vec![],
+            picks_close: F1PicksClose::LightsOut,
         }
     );
     assert!(fake.calls().is_empty(), "{:?}", fake.calls());
@@ -462,6 +497,7 @@ async fn a_race_weekend_from_the_card_to_the_scores() {
         results(2, &["racer_a", "speed_c", "rider_b", "dash_d", "zoom_e"]),
     );
     fake.set("2030/2/driverStandings.json", standings(2));
+    fake.set("2030/2/constructorStandings.json", constructor_standings(2));
     assert_eq!(
         tick(&s, after + TimeDelta::minutes(1)).await.unwrap(),
         0,
@@ -476,6 +512,12 @@ async fn a_race_weekend_from_the_card_to_the_scores() {
         "never again once they're in"
     );
     assert_eq!(fake.asked("2030/2/driverStandings.json"), 1);
+    assert_eq!(fake.asked("2030/2/constructorStandings.json"), 1);
+    assert_eq!(
+        fake.asked("2030/2/sprint.json"),
+        0,
+        "no sprint this weekend"
+    );
 
     let lines = f1_lines(&app, &sam, g.id).await;
     assert_eq!(lines.len(), 4, "card, lights out, results, scores");
@@ -489,6 +531,13 @@ async fn a_race_weekend_from_the_card_to_the_scores() {
     assert_eq!(res.results.len(), 5);
     assert_eq!(res.fastest_lap.as_ref().unwrap().driver.id, "speed_c");
     assert_eq!(res.standings.len(), 5);
+    // the constructors' table too (#403)
+    let teams: Vec<(&str, u16)> = res
+        .constructor_standings
+        .iter()
+        .map(|r| (r.team.as_str(), r.wins))
+        .collect();
+    assert_eq!(teams, [("Rocket", 2), ("Comet", 0)]);
     let Some(F1Card::Scores(sc)) = lines[3].f1.as_deref() else {
         panic!("{:?}", lines[3].f1)
     };
@@ -613,6 +662,160 @@ async fn the_results_wait_a_while_for_the_standings_then_go_without() {
     };
     assert!(r.standings.is_empty());
     assert_eq!(r.results.len(), 3);
+}
+
+#[tokio::test]
+async fn a_sprint_weekend_posts_the_sprint_results_once() {
+    let (app, fake, [alex, sam, ..], server, g) = setup().await;
+    let s = app.state();
+    let lights_out = Utc::now() + TimeDelta::days(1) + TimeDelta::hours(10);
+    let sprint_at = lights_out - TimeDelta::days(1) - TimeDelta::hours(4);
+    fake.set(
+        "current.json",
+        schedule(vec![sprint_race(1, "Harbour Grand Prix", lights_out)]),
+    );
+    pick_channel(&app, &alex, server, Some(g.id)).await;
+    // before the sprint is over nothing is asked
+    tick(&s, sprint_at + TimeDelta::minutes(20)).await.unwrap();
+    assert_eq!(fake.asked("2030/1/sprint.json"), 0);
+    let after = sprint_at + TimeDelta::minutes(50);
+    tick(&s, after).await.unwrap();
+    assert_eq!(fake.asked("2030/1/sprint.json"), 1, "not in yet");
+    fake.set(
+        "2030/1/sprint.json",
+        sprint_results(1, &["rider_b", "racer_a", "speed_c"]),
+    );
+    tick(&s, after + TimeDelta::minutes(6)).await.unwrap();
+    tick(&s, after + TimeDelta::minutes(30)).await.unwrap();
+    assert_eq!(fake.asked("2030/1/sprint.json"), 2, "never again once in");
+    let lines = f1_lines(&app, &sam, g.id).await;
+    let sprints: Vec<&Message> = lines
+        .iter()
+        .filter(|m| matches!(m.f1.as_deref(), Some(F1Card::Sprint(_))))
+        .collect();
+    assert_eq!(sprints.len(), 1, "once");
+    let Some(F1Card::Sprint(sp)) = sprints[0].f1.as_deref() else {
+        panic!()
+    };
+    assert_eq!(
+        sp.results
+            .iter()
+            .map(|r| r.driver.id.as_str())
+            .collect::<Vec<_>>(),
+        ["rider_b", "racer_a", "speed_c"]
+    );
+    assert_eq!(
+        sprints[0].content,
+        "🏎️ Sprint, Harbour Grand Prix: 1. Bo Rider, 2. Ace Racer, 3. Cy Speed"
+    );
+}
+
+#[tokio::test]
+async fn the_owner_can_close_predictions_at_qualifying() {
+    let (app, fake, [alex, sam, ..], server, g) = setup().await;
+    let s = app.state();
+    // qualifying (the day before lights out) is an hour away
+    let lights_out = Utc::now() + TimeDelta::days(1) + TimeDelta::hours(1);
+    let qualifying = lights_out - TimeDelta::days(1);
+    fake.set(
+        "current.json",
+        schedule(vec![race(1, "Desert Grand Prix", lights_out)]),
+    );
+    fake.set(
+        "2030/drivers.json",
+        json!({"MRData": {"DriverTable": {"Drivers": [
+            {"driverId": "racer_a", "givenName": "Ace", "familyName": "Racer"},
+            {"driverId": "rider_b", "givenName": "Bo", "familyName": "Rider"},
+            {"driverId": "speed_c", "givenName": "Cy", "familyName": "Speed"}]}}}),
+    );
+    // not before there's a channel, and only the owner
+    let r = put_json(
+        &app,
+        &alex,
+        &format!("/servers/{server}/f1-channel"),
+        json!({"channel_id": null, "picks_close": "qualifying"}),
+    )
+    .await;
+    assert_eq!(r.status(), 400);
+    let body = json!({"channel_id": g.id, "picks_close": "qualifying"});
+    let r = put_json(
+        &app,
+        &sam,
+        &format!("/servers/{server}/f1-channel"),
+        body.clone(),
+    )
+    .await;
+    assert_eq!(r.status(), 403);
+    let st: F1Status = put_json(&app, &alex, &format!("/servers/{server}/f1-channel"), body)
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(st.picks_close, F1PicksClose::Qualifying);
+    // picking the channel again (no picks_close) keeps it
+    let st: F1Status = pick_channel(&app, &alex, server, Some(g.id))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(st.picks_close, F1PicksClose::Qualifying);
+    let st: F1Status = get_json(&app, &sam, &format!("/servers/{server}/f1")).await;
+    assert_eq!(st.picks_close, F1PicksClose::Qualifying);
+
+    assert_eq!(tick(&s, Utc::now()).await.unwrap(), 1);
+    let lines = f1_lines(&app, &sam, g.id).await;
+    let Some(F1Card::Weekend(w)) = lines[0].f1.as_deref() else {
+        panic!()
+    };
+    let close = DateTime::parse_from_rfc3339(w.picks_close_at.as_deref().unwrap()).unwrap();
+    assert!(
+        (close.with_timezone(&Utc) - qualifying).num_seconds().abs() <= 1,
+        "the card says picks close at qualifying"
+    );
+    let picks = json!(["racer_a", "rider_b", "speed_c"]);
+    assert_eq!(
+        predict(&app, &sam, lines[0].id, picks.clone())
+            .await
+            .status(),
+        200,
+        "still open before qualifying"
+    );
+
+    // the card's qualifying moved to five minutes ago: closed, though lights out is a day away
+    let payload: String = sqlx::query_scalar("SELECT system_payload FROM messages WHERE id = ?")
+        .bind(lines[0].id.to_string())
+        .fetch_one(&s.db)
+        .await
+        .unwrap();
+    let mut v: Value = serde_json::from_str(&payload).unwrap();
+    let started = Utc::now() - TimeDelta::minutes(5);
+    v["weekend"]["sessions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .filter(|x| x["kind"] == "qualifying")
+        .for_each(|x| x["starts_at"] = json!(pulse_server::db::stamp(started)));
+    sqlx::query("UPDATE messages SET system_payload = ? WHERE id = ?")
+        .bind(v.to_string())
+        .bind(lines[0].id.to_string())
+        .execute(&s.db)
+        .await
+        .unwrap();
+    let r = predict(&app, &sam, lines[0].id, picks).await;
+    assert_eq!(r.status(), 409);
+    assert!(r.text().await.unwrap().contains("qualifying"));
+    // back to lights out: open again
+    put_json(
+        &app,
+        &alex,
+        &format!("/servers/{server}/f1-channel"),
+        json!({"channel_id": g.id, "picks_close": "lights_out"}),
+    )
+    .await;
+    assert_eq!(
+        predict(&app, &sam, lines[0].id, json!(null)).await.status(),
+        200
+    );
 }
 
 /// An archived channel (#303) is read-only: no new or changed predictions on its card, and it can't be picked as the
