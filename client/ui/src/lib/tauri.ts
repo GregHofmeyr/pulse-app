@@ -47,6 +47,8 @@ import type { QuietSpin } from './protocol/QuietSpin'
 import type { CreatePollRequest } from './protocol/CreatePollRequest'
 import type { EditPollRequest } from './protocol/EditPollRequest'
 import type { DmLayout } from './protocol/DmLayout'
+import type { PersonDnd } from './protocol/PersonDnd'
+import type { PersonDndRequest } from './protocol/PersonDndRequest'
 import type { InboxThreads } from './protocol/InboxThreads'
 import type { DmPlacementRequest } from './protocol/DmPlacementRequest'
 import type { UpdateDmCategoryRequest } from './protocol/UpdateDmCategoryRequest'
@@ -442,6 +444,8 @@ export const api = {
   pickClipFolder: () => invoke<string | null>('pick_clip_folder'),
   /** Get a notification when someone goes live, or stop (#60). A LiveNotifyChanged follows to your sessions. */
   setLiveNotify: (userId: string, on: boolean) => invoke<void>('set_live_notify', { userId, on }),
+  /** Per-person Do Not Disturb (#310): on for someone (`request`), or off (null); answers with your whole list. */
+  setPersonDnd: (userId: string, request: PersonDndRequest | null) => invoke<PersonDnd[]>('set_person_dnd', { userId, request }),
   /** Your Steam link and what this server can do with Steam (#379). */
   steamStatus: () => invoke<SteamStatus>('steam_status'),
   /** Opens Steam's sign-in in the browser; a SteamLinkChanged follows when it's done. */

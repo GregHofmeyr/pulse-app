@@ -125,14 +125,17 @@ export type AlertInput = {
   planReminders?: boolean
   /** "F1 race weekends" is on (#403): the scores line that pings the predictors alerts like a mention. Missing = on. */
   f1Scores?: boolean
+  /** Its author is on your per-person Do Not Disturb here (#310, lib/personDnd.ts `quietFrom`): nothing from them
+   *  alerts, mentions included; it still counts as unread. */
+  quiet?: boolean
 }
 
 /** Whether a new message is worth alerting you to (the message sound and the desktop notification):
  *  someone else's message in a DM or group, or in a server channel as its level says (#195: All messages, Only
  *  @mentions, or Nothing, not even mentions), unless you're reading it in the focused window. A mute lets only
- *  mentions through; Do Not Disturb lets nothing through. */
+ *  mentions through; Do Not Disturb lets nothing through, nor does someone's per-person Do Not Disturb (#310). */
 export function shouldAlert(v: AlertInput): boolean {
-  if (v.dnd) return false
+  if (v.dnd || v.quiet) return false
   const m = v.message
   // a plan's reminder (#387) is a system line, but it pings its Going and Maybe people as a mention does
   const reminder = !!m.plan_reminder && v.planReminders !== false && m.mentions.includes(v.me)

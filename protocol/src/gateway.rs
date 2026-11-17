@@ -10,10 +10,10 @@ use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji,
     CustomStatus, DmLayout, F1Prediction, Game, InboxItem, Listening, ListeningUpdate, Member,
     Message, MessageBookmark, MessageReminder, Mute, MyCustomStatus, NotifyLevelPref, OwnStatus,
-    Person, PinnedMessage, Plan, Playing, PlayingUpdate, PresenceStatus, PrivateNickname,
-    QotyEvent, QuietSpin, ReadState, RingEndReason, ScheduledMessage, Server, ServerLayout,
-    ServerVoiceMod, Sound, SpeakerLink, StageShare, SteamStatus, StreamEndReason, StreamInfo, User,
-    WatchParty, Wheel,
+    Person, PersonDnd, PinnedMessage, Plan, Playing, PlayingUpdate, PresenceStatus,
+    PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason, ScheduledMessage, Server,
+    ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare, SteamStatus, StreamEndReason,
+    StreamInfo, User, WatchParty, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -246,6 +246,10 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub dm_layout: DmLayout,
+    /// The people whose messages don't alert you (#310), run-out ones left out. Yours only. Absent from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub person_dnd: Vec<PersonDnd>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -487,6 +491,12 @@ pub enum Event {
     DmLayoutChanged {
         user_id: UserId,
         layout: DmLayout,
+    },
+    /// Only to its person's own sessions: their per-person Do Not Disturb list changed (#310), the whole new
+    /// [`Ready::person_dnd`]. Clients from before it skip it.
+    PersonDndChanged {
+        user_id: UserId,
+        list: Vec<PersonDnd>,
     },
     /// Only to its person's own sessions: a saved message was removed (#315).
     BookmarkRemoved {
@@ -938,6 +948,7 @@ impl Event {
             | Self::BookmarkSaved { .. }
             | Self::BookmarkRemoved { .. }
             | Self::DmLayoutChanged { .. }
+            | Self::PersonDndChanged { .. }
             | Self::BadgeEarned { .. } => None,
         }
     }
@@ -969,6 +980,7 @@ impl Event {
             | Self::BookmarkSaved { user_id, .. }
             | Self::BookmarkRemoved { user_id, .. }
             | Self::DmLayoutChanged { user_id, .. }
+            | Self::PersonDndChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
             | Self::CallRingEnded { user_id, .. }
@@ -1101,6 +1113,7 @@ mod tests {
             reminders: vec![],
             bookmarks: vec![],
             dm_layout: Default::default(),
+            person_dnd: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1195,6 +1208,7 @@ mod tests {
             reminders: vec![],
             bookmarks: vec![],
             dm_layout: Default::default(),
+            person_dnd: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1338,6 +1352,7 @@ mod tests {
             reminders: vec![],
             bookmarks: vec![],
             dm_layout: Default::default(),
+            person_dnd: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],

@@ -2032,6 +2032,21 @@ impl Api {
         Self::ok_empty(req.bearer_auth(token).send().await).await
     }
 
+    /// Per-person Do Not Disturb (#310): on for `user` (with `request`), or off (`None`). Answers with your whole list.
+    pub async fn set_person_dnd(
+        &self,
+        token: &str,
+        user: UserId,
+        request: Option<&pulse_protocol::rest::PersonDndRequest>,
+    ) -> Result<Vec<pulse_protocol::rest::PersonDnd>, ApiError> {
+        let url = self.url(&["me", "person-dnd", &user.to_string()])?;
+        let req = match request {
+            Some(body) => self.http.put(url).json(body),
+            None => self.http.delete(url),
+        };
+        Self::parse(req.bearer_auth(token).send().await).await
+    }
+
     /// Your Steam link and what this server can do with Steam (#379).
     pub async fn steam_status(
         &self,
@@ -6084,6 +6099,27 @@ mod tests {
         );
         let ch = api.set_group_icon(&alex, g.id, None).await.unwrap();
         assert_eq!(ch.icon_hash, None);
+    }
+
+    #[tokio::test]
+    async fn person_dnd_round_trips_through_the_core() {
+        let app = testing::spawn().await;
+        let (alex_id, alex) = testing::register(&app, "alex").await;
+        let (sam_id, _) = testing::register(&app, "sam").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let on = pulse_protocol::rest::PersonDndRequest {
+            dms_only: true,
+            until: None,
+        };
+        let list = api.set_person_dnd(&alex, sam_id, Some(&on)).await.unwrap();
+        assert_eq!((list[0].user_id, list[0].dms_only), (sam_id, true));
+        assert!(
+            api.set_person_dnd(&alex, sam_id, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(api.set_person_dnd(&alex, alex_id, Some(&on)).await.is_err());
     }
 
     #[tokio::test]

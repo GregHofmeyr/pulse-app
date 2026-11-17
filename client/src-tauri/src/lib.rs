@@ -480,6 +480,7 @@ pub fn run() {
             commands::clear_custom_status,
             commands::set_appear_offline,
             commands::set_live_notify,
+            commands::set_person_dnd,
             commands::steam_status,
             commands::link_steam,
             commands::unlink_steam,

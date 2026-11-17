@@ -384,6 +384,28 @@ pub mod dm_layout_limits {
     pub const MAX_CATEGORIES: usize = 30;
 }
 
+/// Someone whose messages don't alert you (#310): no message sound and no desktop notification from them, everywhere
+/// or only in DMs and groups (`dms_only`), until `until` (RFC 3339; `None`: until you turn it off). Their messages
+/// still arrive and count as unread (and as mentions) as usual. Yours only; they're never told.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PersonDnd {
+    pub user_id: UserId,
+    #[serde(default)]
+    pub dms_only: bool,
+    #[serde(default)]
+    pub until: Option<String>,
+}
+
+/// `PUT /me/person-dnd/{user_id}` (#310): turn Do Not Disturb on for someone (or change it).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct PersonDndRequest {
+    #[serde(default)]
+    pub dms_only: bool,
+    /// When it ends (RFC 3339, in the future); `None`: until turned off.
+    #[serde(default)]
+    pub until: Option<String>,
+}
+
 /// A name you gave someone that only you see. Only ever sent to its owner.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PrivateNickname {

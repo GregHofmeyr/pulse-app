@@ -1055,6 +1055,7 @@ mod tests {
                         reminders: vec![],
                         bookmarks: vec![],
                         dm_layout: Default::default(),
+                        person_dnd: vec![],
                         calls: vec![],
                         ringing: vec![],
                         layouts: vec![],

@@ -22,6 +22,7 @@
   import JoinGameItem from './JoinGameItem.svelte'
   import MessageSoundItem from './MessageSoundItem.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
+  import PersonDndItem from './PersonDndItem.svelte'
 
   let { serverId, userId, x, y, opener, onClose, onMessage, onRemove, fromCard = false, muteChannelId = null }: {
     /** The server it opens in, or null (a card opened outside servers). */
@@ -66,7 +67,9 @@
   // the mute flyout (the channel menu's, #131) and the message sound one (#312)
   let flyout = $state<ReturnType<typeof MuteFlyout>>()
   let soundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
-  const flyouts = () => [flyout, soundFlyout]
+  // per-person Do Not Disturb's (#310)
+  let dndFlyout = $state<ReturnType<typeof PersonDndItem>>()
+  const flyouts = () => [flyout, soundFlyout, dndFlyout]
   const closeSub = (refocus: boolean | 'if-inside') => { for (const f of flyouts()) f?.close(refocus) }
 
   let el = $state<HTMLElement>()
@@ -152,6 +155,7 @@
   <LiveNotifyItem {userId} {pick} />
   <JoinSoundMuteItem {userId} {pick} />
   <MessageSoundItem bind:this={soundFlyout} {userId} {pick} menuLeft={left} menuTop={top} />
+  <PersonDndItem bind:this={dndFlyout} {userId} {pick} menuLeft={left} menuTop={top} />
   <AppearOfflineItem {userId} {pick} />
   {#if muteChannelId && !self}
     <span class="menu-sep" role="separator"></span>

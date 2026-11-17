@@ -205,7 +205,7 @@ describe("an inbox row's person menu (#135): who wrote it", () => {
     flushSync()
     expect(e.defaultPrevented).toBe(true)
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for Sam')
-    expect(itemIds()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
+    expect(itemIds()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline'])
   })
 
   it('Shift+F10 on a focused row opens it; Esc closes only the menu, focus back on the row', async () => {

@@ -15,6 +15,7 @@ import { api, type AttachmentProgress, type DownloadProgress, type StagedFile } 
 import { loadUnsent, saveUnsent } from './unsent'
 import { isMuted, messageSound, notifyLevel, onScreen, SOUND_GAP_MS } from './conversations'
 import { dndActive } from './status'
+import { quietFrom } from './personDnd'
 import { notifyMessage, NotifyThrottle } from './notify'
 import { notifyPrefs } from './notifyPrefs.svelte'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -107,7 +108,7 @@ function logSoundDecision(v: Parameters<typeof messageSound>[0], play: boolean) 
   const gapOk = v.now - v.lastPlayedAt >= SOUND_GAP_MS
   // turned to 0 % in the volume mixer looks nothing like a sound that got lost
   const prefs = soundGain(loadMixer(), 'message') > 0 ? 'on' : 'off'
-  const line = `sound: message private=${isPrivate} mentioned=${mentioned} open=${v.open} thread=${m.thread_root_id ?? '-'} open_thread=${v.openThread ?? '-'} focused=${v.focused} muted=${v.muted} level=${isPrivate ? '-' : v.level} gap_ok=${gapOk} sound=${prefs} play=${play}`
+  const line = `sound: message private=${isPrivate} mentioned=${mentioned} open=${v.open} thread=${m.thread_root_id ?? '-'} open_thread=${v.openThread ?? '-'} focused=${v.focused} muted=${v.muted} quiet=${!!v.quiet} level=${isPrivate ? '-' : v.level} gap_ok=${gapOk} sound=${prefs} play=${play}`
   if (play || !onScreen(v) || !v.focused) return void api.uiLog(line, 'info')
   getCurrentWindow().isFocused().then(
     (f) => {
@@ -141,6 +142,7 @@ export function maybeAlert(e: Event) {
     level: notifyLevel(app.state, ch),
     // the real time, not the clock: a DND timer ends exactly when it ends
     dnd: dndActive(app.state, nowIso),
+    quiet: quietFrom(app.state.personDnd, m.author_id, ch.server_id === null, nowIso),
     planReminders: planPrefs.on,
     f1Scores: f1Prefs.on,
     lastPlayedAt,

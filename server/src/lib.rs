@@ -23,6 +23,7 @@ pub mod limits;
 pub mod media;
 pub mod messages;
 pub mod models;
+pub mod person_dnd;
 pub mod pins;
 pub mod plans;
 pub mod polls;
@@ -88,6 +89,7 @@ pub fn router(state: AppState) -> Router {
         .merge(calls::routes::router())
         .merge(streams::routes::router())
         .merge(streams::notify::router())
+        .merge(person_dnd::router())
         .merge(stage::routes::router())
         .merge(watch::routes::router())
         .merge(reports::routes::router())

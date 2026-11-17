@@ -2383,6 +2383,21 @@ pub async fn set_live_notify(
     core.check(&app, api.set_live_notify(&token, user_id, on).await)
 }
 
+/// Per-person Do Not Disturb (#310): on for someone (`request`), or off (`None`); your whole list back.
+#[tauri::command]
+pub async fn set_person_dnd(
+    app: AppHandle,
+    core: State<'_, Core>,
+    user_id: UserId,
+    request: Option<pulse_protocol::rest::PersonDndRequest>,
+) -> Result<Vec<pulse_protocol::rest::PersonDnd>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_person_dnd(&token, user_id, request.as_ref()).await,
+    )
+}
+
 /// Your Steam link (#379).
 #[tauri::command]
 pub async fn steam_status(

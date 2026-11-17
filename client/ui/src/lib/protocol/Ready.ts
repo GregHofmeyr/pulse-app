@@ -16,6 +16,7 @@ import type { MyCustomStatus } from "./MyCustomStatus";
 import type { NotifyLevelPref } from "./NotifyLevelPref";
 import type { OwnStatus } from "./OwnStatus";
 import type { Person } from "./Person";
+import type { PersonDnd } from "./PersonDnd";
 import type { PrivateNickname } from "./PrivateNickname";
 import type { QotyEvent } from "./QotyEvent";
 import type { ReadState } from "./ReadState";
@@ -186,4 +187,8 @@ bookmarks?: Array<MessageBookmark>,
 /**
  * Your conversation list's pins and categories (#305). Yours only. Absent from older servers.
  */
-dm_layout?: DmLayout, };
+dm_layout?: DmLayout, 
+/**
+ * The people whose messages don't alert you (#310), run-out ones left out. Yours only. Absent from older servers.
+ */
+person_dnd?: Array<PersonDnd>, };
