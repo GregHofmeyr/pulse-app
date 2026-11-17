@@ -68,7 +68,10 @@ export const ui = $state({
   jumpClip: null as { channelId: string; clip: Message } | null,
   /** A request to open the share editor on this file (an offered recording, #382; its clips channel's view does it
    *  and clears it). */
-  shareClip: null as { channelId: string; path: string } | null,
+  shareClip: null as { channelId: string; path: string; at: number } | null,
+  /** A request to queue these files in this chat's composer (an offered recording sent in a DM, #394; its view does it
+   *  and clears it). `at`: when asked, so one whose chat never showed is dropped (lib/clipDrop pendingFresh). */
+  attachFiles: null as { channelId: string; paths: string[]; at: number } | null,
   jump: null as JumpRequest | null,
   /** A request to open this chat's pins popover (a pin line's See pins, #178; its channel's view does it and clears it). */
   openPins: null as string | null,
@@ -423,6 +426,7 @@ export function resetState() {
   ui.openClip = null
   ui.jumpClip = null
   ui.shareClip = null
+  ui.attachFiles = null
   forgetProfileLoads()
   forgetEmbedOrigin() // the next account may be on another server
   forgetClipLinks() // the next account asks for its own play links

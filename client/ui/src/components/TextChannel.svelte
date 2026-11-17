@@ -47,6 +47,7 @@
   import { planPrefs } from '../lib/plans.svelte'
   import F1Banner from './F1Banner.svelte'
   import QuietSpinCard from './QuietSpinCard.svelte'
+  import { pendingFresh } from '../lib/clipDrop.svelte'
   import { onOwnSpin, provideChatShown, quietSpins, spinQuick } from '../lib/wheels.svelte'
 
   let { channelId, serverId, panel = null, onAddPeople = () => {}, onLeft = () => {}, onStartQoty = () => {}, onVoiceSettings = () => {} }: {
@@ -766,6 +767,18 @@
     app.state = removePending(app.state, channelId, nonce)
     post(p.content, p.reply_to_id, p.gif ?? null)
   }
+
+  // An offered recording sent in this DM (#394) asked for its file in the composer: queued, as a drop would be. One that
+  // waited too long (this chat never opened when asked) is dropped instead.
+  $effect(() => {
+    const r = ui.attachFiles
+    const c = composer
+    if (!r || r.channelId !== channelId || !c) return
+    untrack(() => {
+      ui.attachFiles = null
+      if (pendingFresh(r.at)) void c.addPaths(r.paths)
+    })
+  })
 
   // Files dragged over the chat (#57): it lights up, and a drop queues them in the composer. Tauri reports every file
   // drag over the window (in physical pixels), so only one whose point is on this chat counts, and not with a modal open.

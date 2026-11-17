@@ -11,7 +11,7 @@
   import { clipView, type ClipFilter } from '../lib/clips'
   import { InlineError } from '../lib/inlineError.svelte'
   import { app, onAppEvent, ui } from '../lib/store.svelte'
-  import { rememberClipsChannel } from '../lib/clipDrop.svelte'
+  import { pendingFresh, rememberClipsChannel } from '../lib/clipDrop.svelte'
   import { api, errorText, type ClipSource } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -198,7 +198,8 @@
     if (!r || r.channelId !== channelId) return
     untrack(() => {
       ui.shareClip = null
-      void dropped([r.path])
+      // one that waited too long (the channel never opened when asked, #394) isn't opened now
+      if (pendingFresh(r.at)) void dropped([r.path])
     })
   })
 
