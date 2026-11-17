@@ -14,7 +14,9 @@
 //! Kept per person (`activity_hidden`) so it follows you to every device, sent only to you (Ready's `activity_hidden`
 //! and `ActivityHiddenChanged`, always the whole list). The person newly hidden (or shown again) gets
 //! `GameStatsChanged`, naming only you, so a card of yours they have open asks again and drops (or gets back) your
-//! Steam hours and Deadlock section (#438); like the re-run pass, it says no more than that your game changed.
+//! Steam hours, Steam stats and badges and Deadlock section (#438). It goes out only when you have something there
+//! that hiding changes for them (a game now, shared Steam hours or completion, a Steam badge, or shared Deadlock
+//! data), and like the re-run pass it says no more than that your game activity changed.
 
 use axum::extract::{Path, State};
 use axum::routing::put;
@@ -109,7 +111,7 @@ async fn set(
     tx.commit().await?;
     let list = announce(&s, me).await?;
     if added {
-        stats_changed(&s, me, target).await;
+        stats_changed(&s, me, target).await?;
     }
     Ok(Json(list))
 }
@@ -130,13 +132,17 @@ async fn clear(
         > 0;
     let list = announce(&s, me).await?;
     if removed {
-        stats_changed(&s, me, target).await;
+        stats_changed(&s, me, target).await?;
     }
     Ok(Json(list))
 }
 
-/// Tell `viewer`'s sessions that what they may see of `me`'s game stats changed.
-async fn stats_changed(s: &AppState, me: UserId, viewer: UserId) {
+/// Tell `viewer`'s sessions that what they may see of `me`'s game stats changed, when `me` has any that hiding takes
+/// away ([`has_game_stats`]): otherwise nothing they could see changed, and nothing goes out.
+async fn stats_changed(s: &AppState, me: UserId, viewer: UserId) -> AppResult<()> {
+    if !has_game_stats(s, me).await? {
+        return Ok(());
+    }
     s.hub
         .publish(
             &s.db,
@@ -146,6 +152,37 @@ async fn stats_changed(s: &AppState, me: UserId, viewer: UserId) {
             },
         )
         .await;
+    Ok(())
+}
+
+/// Whether `me` has game activity that hiding it from someone takes off what they see: a game now, Steam hours or a
+/// Steam completion they share, a Steam badge, or Deadlock data they share.
+async fn has_game_stats(s: &AppState, me: UserId) -> AppResult<bool> {
+    if s.hub.playing_of(me).is_some() {
+        return Ok(true);
+    }
+    let steam: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM steam_links l WHERE l.user_id = ? AND (
+           (l.share_hours = 1 AND l.recent_minutes IS NOT NULL)
+           OR (l.share_achievements = 1 AND l.completion_rate IS NOT NULL)
+           OR ((l.deadlock_matches = 1 OR l.deadlock_rank = 1 OR l.deadlock_squad = 1)
+               AND (EXISTS (SELECT 1 FROM deadlock_players p WHERE p.user_id = l.user_id)
+                    OR EXISTS (SELECT 1 FROM deadlock_matches dm WHERE dm.user_id = l.user_id))))",
+    )
+    .bind(me.to_string())
+    .fetch_optional(&s.db)
+    .await?;
+    if steam.is_some() {
+        return Ok(true);
+    }
+    let badges: Vec<String> =
+        sqlx::query_scalar("SELECT badge_key FROM user_badges WHERE user_id = ?")
+            .bind(me.to_string())
+            .fetch_all(&s.db)
+            .await?;
+    Ok(badges
+        .iter()
+        .any(|k| crate::badges::catalogue::find(k).is_some_and(crate::badges::catalogue::is_steam)))
 }
 
 /// Tell `me`'s own sessions their list as it is now, and every viewer what they may now see of `me`'s game.

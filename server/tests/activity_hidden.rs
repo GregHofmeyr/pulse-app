@@ -305,6 +305,17 @@ async fn the_person_hidden_or_shown_again_is_told_to_ask_for_your_stats_again() 
     for ws in [&mut sam_ws, &mut kim_ws] {
         drain(ws, 200).await;
     }
+    // alex shares Steam hours: something sam sees of alex changes
+    sqlx::query(
+        "INSERT INTO steam_links (user_id, steam_id, linked_at, backfill, share_hours, recent_minutes, recent_at)
+         VALUES (?, '76500000000000001', ?, 'done', 1, 300, ?)",
+    )
+    .bind(alex.to_string())
+    .bind(pulse_server::db::now())
+    .bind(pulse_server::db::now())
+    .execute(&app.db)
+    .await
+    .unwrap();
 
     assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
     let got = drain(&mut sam_ws, 400).await;
@@ -409,4 +420,57 @@ async fn steam_stats_and_badges_on_the_card_skip_whoever_you_hide_your_games_fro
         (true, Some(3), all, showcase),
         "your own"
     );
+}
+
+#[tokio::test]
+async fn hiding_with_nothing_to_hide_tells_them_nothing() {
+    // #438: `GameStatsChanged` goes out only when something the person hidden (or shown again) could see changes: no
+    // Steam hours, stats or badges, no Deadlock and no game now means nothing to ask again for.
+    let app = spawn().await;
+    let (alex, alex_t) = register(&app, "alex").await;
+    let (sam, sam_t) = register(&app, "sam").await;
+    let (mut sam_ws, _) = hello(&app, &sam_t).await;
+    let (mut alex_ws, _) = hello(&app, &alex_t).await;
+    drain(&mut sam_ws, 200).await;
+
+    assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
+    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 0);
+    assert_eq!(hide(&app, &alex_t, sam, false).await.status(), 200);
+    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 0);
+
+    // a Steam link that shares nothing that shows is nothing either
+    sqlx::query(
+        "INSERT INTO steam_links (user_id, steam_id, linked_at, backfill, share_hours, share_achievements)
+         VALUES (?, '76500000000000001', ?, 'done', 1, 1)",
+    )
+    .bind(alex.to_string())
+    .bind(pulse_server::db::now())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
+    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 0);
+    assert_eq!(hide(&app, &alex_t, sam, false).await.status(), 200);
+    drain(&mut sam_ws, 300).await;
+
+    // playing something now is
+    play(&app, &mut alex_ws, alex, Some("Space Game")).await;
+    drain(&mut sam_ws, 300).await;
+    assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
+    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 1);
+    play(&app, &mut alex_ws, alex, None).await;
+    assert_eq!(hide(&app, &alex_t, sam, false).await.status(), 200);
+    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 0);
+
+    // and so is a Steam badge on the card
+    sqlx::query(
+        "INSERT INTO user_badges (user_id, badge_key, tier, earned_at) VALUES (?, 'touch_grass', 1, ?)",
+    )
+    .bind(alex.to_string())
+    .bind(pulse_server::db::now())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
+    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 1);
 }
