@@ -1,10 +1,10 @@
 //! Hide what I'm playing per person (#436): `PUT|DELETE /me/activity-hidden/{user_id}`. Someone on your list never
 //! gets your game activity: your "Playing" (and the Join inside it), your Steam hours (profile card and a server's
-//! board), and your Steam completion, 100 % games and Steam badges on your profile card (the badges stay earned). They see you online with no game, as if you played nothing. "Listening to" isn't game activity and isn't
+//! board), and your Steam completion and 100 % games on your profile card (Steam badges still show to everyone: one vanishing would be a clearer tell than it ticking up). They see you online with no game, as if you played nothing. "Listening to" isn't game activity and isn't
 //! touched.
 //!
 //! Enforced where game activity leaves the server: the hub's per-viewer pass (`presence::Subject::shows_game_to`,
-//! read by `Hub::sync_presence` and Ready's people), the Steam hours and stat reads, and the profile card's badges. A change re-runs the pass, so a newly
+//! read by `Hub::sync_presence` and Ready's people), and the Steam hours and stat reads. A change re-runs the pass, so a newly
 //! hidden viewer's clients drop your game at once and an un-hidden one gets it back.
 //!
 //! Posts that show someone's games to a whole channel (Steam achievement cards, Deadlock match cards and rank movers)
@@ -14,8 +14,8 @@
 //! Kept per person (`activity_hidden`) so it follows you to every device, sent only to you (Ready's `activity_hidden`
 //! and `ActivityHiddenChanged`, always the whole list). The person newly hidden (or shown again) gets
 //! `GameStatsChanged`, naming only you, so a card of yours they have open asks again and drops (or gets back) your
-//! Steam hours, Steam stats and badges and Deadlock section (#438). It goes out only when you have something there
-//! that hiding changes for them (a game now, shared Steam hours or completion, a Steam badge, or shared Deadlock
+//! Steam hours, Steam stats and Deadlock section (#438). It goes out only when you have something there
+//! that hiding changes for them (a game now, shared Steam hours or completion, or shared Deadlock
 //! data), and like the re-run pass it says no more than that your game activity changed.
 
 use axum::extract::{Path, State};
@@ -156,7 +156,7 @@ async fn stats_changed(s: &AppState, me: UserId, viewer: UserId) -> AppResult<()
 }
 
 /// Whether `me` has game activity that hiding it from someone takes off what they see: a game now, Steam hours or a
-/// Steam completion they share, a Steam badge, or Deadlock data they share.
+/// Steam completion they share, or Deadlock data they share.
 async fn has_game_stats(s: &AppState, me: UserId) -> AppResult<bool> {
     if s.hub.playing_of(me).is_some() {
         return Ok(true);
@@ -172,17 +172,7 @@ async fn has_game_stats(s: &AppState, me: UserId) -> AppResult<bool> {
     .bind(me.to_string())
     .fetch_optional(&s.db)
     .await?;
-    if steam.is_some() {
-        return Ok(true);
-    }
-    let badges: Vec<String> =
-        sqlx::query_scalar("SELECT badge_key FROM user_badges WHERE user_id = ?")
-            .bind(me.to_string())
-            .fetch_all(&s.db)
-            .await?;
-    Ok(badges
-        .iter()
-        .any(|k| crate::badges::catalogue::find(k).is_some_and(crate::badges::catalogue::is_steam)))
+    Ok(steam.is_some())
 }
 
 /// Tell `me`'s own sessions their list as it is now, and every viewer what they may now see of `me`'s game.

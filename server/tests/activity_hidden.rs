@@ -340,9 +340,9 @@ async fn the_person_hidden_or_shown_again_is_told_to_ask_for_your_stats_again() 
 }
 
 #[tokio::test]
-async fn steam_stats_and_badges_on_the_card_skip_whoever_you_hide_your_games_from() {
-    // #438: the profile card's Steam completion, 100 % games and Steam badges are game activity too; the badges stay
-    // earned (and shown to everyone else), and the rest of the card is untouched.
+async fn steam_stats_on_the_card_skip_whoever_you_hide_your_games_from() {
+    // #438: the profile card's Steam completion and 100 % games are game activity too. Steam badges still show to
+    // everyone (owner call: a badge vanishing is a more obvious tell than it ticking up), as does the rest of the card.
     let app = spawn().await;
     let (alex, alex_t) = register(&app, "alex").await;
     let (sam, sam_t) = register(&app, "sam").await;
@@ -408,12 +408,7 @@ async fn steam_stats_and_badges_on_the_card_skip_whoever_you_hide_your_games_fro
     );
     assert_eq!(
         card(sam_t.clone()).await,
-        (
-            false,
-            None,
-            vec!["founder".to_string()],
-            vec!["founder".to_string()]
-        )
+        (false, None, all.clone(), showcase.clone())
     );
     assert_eq!(
         card(alex_t.clone()).await,
@@ -462,7 +457,7 @@ async fn hiding_with_nothing_to_hide_tells_them_nothing() {
     assert_eq!(hide(&app, &alex_t, sam, false).await.status(), 200);
     assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 0);
 
-    // and so is a Steam badge on the card
+    // but a Steam badge alone isn't: badges show to everyone
     sqlx::query(
         "INSERT INTO user_badges (user_id, badge_key, tier, earned_at) VALUES (?, 'touch_grass', 1, ?)",
     )
@@ -472,5 +467,5 @@ async fn hiding_with_nothing_to_hide_tells_them_nothing() {
     .await
     .unwrap();
     assert_eq!(hide(&app, &alex_t, sam, true).await.status(), 200);
-    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 1);
+    assert_eq!(stats_changes(&drain(&mut sam_ws, 400).await, alex), 0);
 }

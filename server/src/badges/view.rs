@@ -119,12 +119,6 @@ pub async fn profile_badges(
     viewer: UserId,
 ) -> AppResult<(Vec<Badge>, Vec<String>, bool)> {
     let mut badges = engine::held(conn, user).await?;
-    // Steam badges are game activity: someone `user` hides their games from doesn't see them on the card (#438). They
-    // stay earned.
-    let no_steam = crate::activity_hidden::hides(&mut *conn, user, viewer).await?;
-    if no_steam {
-        badges.retain(|b| !find(&b.key).is_some_and(super::catalogue::is_steam));
-    }
     let chosen: Vec<String> = sqlx::query_scalar(
         "SELECT badge_key FROM user_badges WHERE user_id = ? AND showcase IS NOT NULL \
          ORDER BY showcase",
@@ -133,10 +127,6 @@ pub async fn profile_badges(
     .fetch_all(&mut *conn)
     .await?;
     let showcase_chosen = !chosen.is_empty();
-    let chosen: Vec<String> = chosen
-        .into_iter()
-        .filter(|k| !no_steam || !find(k).is_some_and(super::catalogue::is_steam))
-        .collect();
     let showcase = if !showcase_chosen {
         // The rarest five, older first among equals (`held` is oldest first; the sort is stable).
         let mut by_rarity: Vec<&Badge> = badges.iter().collect();
