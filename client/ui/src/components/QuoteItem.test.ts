@@ -84,6 +84,20 @@ function stubFocusVisible(el: HTMLElement, visible: boolean) {
 }
 
 describe('QuoteItem', () => {
+  it('(edited) opens its edit history (#415)', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'message_edits'
+      ? [{ content: '“hello there” — sam', written_at: '2026-10-01T10:05:00.000Z' }, { content: '“hi” — sam', written_at: '2026-10-01T10:00:00.000Z' }]
+      : undefined))
+    show(quote([line()], { edited_at: '2026-10-01T10:05:00.000Z' }))
+    const edited = document.querySelector<HTMLButtonElement>('button.edited')!
+    expect(edited.textContent).toBe('(edited)')
+    edited.click(); flushSync()
+    await settle(); flushSync()
+    expect(calls('message_edits')).toEqual([['message_edits', { messageId: 'M1' }]])
+    const dialog = document.querySelector<HTMLElement>('[role=dialog][aria-label="Edit history"]')!
+    expect(dialog.textContent).toContain('“hi” — sam')
+  })
+
   it('renders lines with speakers and curly marks', () => {
     show(quote([line(), line({ id: 'L2', speaker_id: null, speaker_name: 'Grandpa', text: 'back in my day' })]))
     const texts = [...document.querySelectorAll('.line .text')].map((e) => e.textContent)

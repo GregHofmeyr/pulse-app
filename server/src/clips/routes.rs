@@ -512,11 +512,14 @@ async fn edit(
     // Guarded: a delete (of the clip, or its channel: #109) that commits between our read and this write wins.
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, ch.id).await?;
+    // The caption it had goes into its edit history (#415), as a message's text does.
+    let edited_at = now();
+    crate::messages::history::record(&mut tx, id, &caption, &edited_at).await?;
     let changed = sqlx::query(
         "UPDATE messages SET content = ?, edited_at = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
     )
     .bind(&caption)
-    .bind(now())
+    .bind(&edited_at)
     .bind(id.to_string())
     .bind(me.to_string())
     .execute(&mut *tx)

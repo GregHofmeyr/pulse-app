@@ -1505,6 +1505,11 @@ async fn an_edit_shows_each_person_their_own_seen_point() {
     .await;
     assert_eq!(r.status(), 200);
     let m: Message = r.json().await.unwrap();
+    // the caption it had is in its edit history (#415)
+    let v: Vec<pulse_protocol::rest::MessageVersion> =
+        get_json(&w.app, &w.sam.1, &format!("/messages/{}/edits", clip.id)).await;
+    let texts: Vec<&str> = v.iter().map(|x| x.content.as_str()).collect();
+    assert_eq!(texts, ["edited", clip.content.as_str()]);
     assert_eq!(
         m.clip.unwrap().replies_seen,
         Some(reply.id),

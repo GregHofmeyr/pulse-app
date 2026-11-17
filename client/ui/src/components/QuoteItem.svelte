@@ -5,6 +5,7 @@
   import Avatar from './Avatar.svelte'
   import ClipDownload from './ClipDownload.svelte'
   import DeleteButton from './DeleteButton.svelte'
+  import EditHistoryDialog from './EditHistoryDialog.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
   import Icon from './Icon.svelte'
   import LineMenu from './LineMenu.svelte'
@@ -155,6 +156,8 @@
 
   // --- the full-size image ---
   let open = $state<{ media: LineMedia; caption: string | null } | null>(null)
+  // Edit history (#301, #415): "(edited)" opens the versions
+  let historyAt = $state<HTMLElement | null>(null)
 </script>
 
 {#if quote}
@@ -208,7 +211,8 @@
           {#each quote.wins as year (year)}
             <span class="win">Quote of the Year {year}</span>
           {/each}
-          {#if message.edited_at}<span class="edited">(edited)</span>{/if}
+          {#if message.edited_at}<button type="button" class="edited" aria-haspopup="dialog" aria-expanded={!!historyAt} data-tip="See edit history" data-menu-toggle
+            onclick={(e) => (historyAt = historyAt ? null : e.currentTarget)}>(edited)</button>{/if}
         {/if}
         {#if !compact}<ReactionRow {message} {meId} {nameOf} onError={showError} onePerPerson {suggest} />{/if}
         {#if quote.reply_count > 0 && onOpenReplies && !compact}
@@ -264,6 +268,10 @@
   {/if}
 {/if}
 
+{#if historyAt}
+  <EditHistoryDialog anchor={historyAt} messageId={message.id} onClose={() => (historyAt = null)} />
+{/if}
+
 <style>
   /* --bar-room: the quick-action bar's room at narrow widths, as in MessageItem (#237) */
   .author { display: contents; }
@@ -298,7 +306,8 @@
   .picbtn { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: var(--radius-sm); }
   .caption { margin: 4px 0 0; font-size: 13px; color: var(--text-2); }
   .win { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: var(--radius-md); background: var(--quote-green); color: var(--on-quote-green); font-size: 11px; font-weight: 700; }
-  .edited { font-size: 11px; color: var(--text-3); }
+  .edited { font-size: 11px; color: var(--text-3); border: 0; padding: 0; background: none; font-family: inherit; cursor: pointer; }
+  .edited:hover, .edited:focus-visible { color: var(--text-2); text-decoration: underline; }
   .replies { margin-top: 4px; padding: 0; border: 0; background: none; color: var(--accent-text); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
   .replies:hover { text-decoration: underline; }
   .new { padding: 0 6px; border-radius: var(--radius-sm); background: var(--quote-green); color: var(--on-quote-green); font-size: 10px; font-weight: 700; text-transform: uppercase; }
