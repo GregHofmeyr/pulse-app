@@ -1006,3 +1006,22 @@ async fn weights_and_palettes_are_saved_and_spun_with() {
     let qs = quick.wheel.unwrap();
     assert_eq!((qs.weights, qs.palette), (None, None));
 }
+
+/// An archived channel (#303) is read-only: no quiet spins there either.
+#[tokio::test]
+async fn no_quiet_spin_in_an_archived_channel() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let s = create_server(&app, &alex, "Main").await;
+    let g = general(&app, &alex, s.id).await;
+    let r = app
+        .http
+        .put(app.url(&format!("/channels/{}/archive", g.id)))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    let r = quiet(&app, &alex, g.id, json!({"options": ["pizza", "sushi"]})).await;
+    assert_eq!(r.status(), 403);
+}

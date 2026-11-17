@@ -603,3 +603,21 @@ async fn the_sports_channel_is_the_owners_pick_of_a_text_channel() {
     .await;
     assert_eq!(got.channel_id, None);
 }
+
+/// An archived channel (#303) posts nothing, so it can't be picked as the Sports channel.
+#[tokio::test]
+async fn an_archived_channel_cant_be_the_sports_channel() {
+    let (app, _fake) = setup().await;
+    let (_, alex) = register(&app, "alex").await;
+    let server = create_server(&app, &alex, "Main").await;
+    let g = general(&app, &alex, server.id).await.id;
+    let r = app
+        .http
+        .put(app.url(&format!("/channels/{g}/archive")))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    assert_eq!(set_channel(&app, &alex, server.id, Some(g)).await, 403);
+}
