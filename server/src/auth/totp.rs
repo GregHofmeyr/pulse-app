@@ -73,7 +73,7 @@ pub fn encrypt(key: &TotpKey, user: UserId, secret: &[u8]) -> Vec<u8> {
     let aad = aad(user);
     let ct = cipher
         .encrypt(
-            Nonce::from_slice(&nonce),
+            &Nonce::from(nonce),
             Payload {
                 msg: secret,
                 aad: aad.as_bytes(),
@@ -92,7 +92,7 @@ pub fn decrypt(key: &TotpKey, user: UserId, blob: &[u8]) -> anyhow::Result<Vec<u
     let aad = aad(user);
     ChaCha20Poly1305::new((&key.0).into())
         .decrypt(
-            Nonce::from_slice(nonce),
+            &Nonce::try_from(nonce).map_err(|_| anyhow::anyhow!("stored secret is malformed"))?,
             Payload {
                 msg: ct,
                 aad: aad.as_bytes(),
