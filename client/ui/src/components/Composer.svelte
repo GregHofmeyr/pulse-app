@@ -34,7 +34,8 @@
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { Gif } from '../lib/protocol/Gif'
   import { memberServers } from '../lib/reactions'
-  import { app } from '../lib/store.svelte'
+  import { app, ui } from '../lib/store.svelte'
+  import { inGame, sendGameInvite } from '../lib/gameInvites.svelte'
   import { displayName } from '../lib/selectors'
   import Name from './Name.svelte'
   import SpotifyIcon from './SpotifyIcon.svelte'
@@ -56,6 +57,7 @@
     wheelChannel = null,
     pollChannel = null,
     planChannel = null,
+    inviteChannel = null,
     commands = [],
     onSendGif,
     stageNudge = null,
@@ -81,6 +83,8 @@
     pollChannel?: string | null
     /** The chat a plan posts in (#387): shows the Plan button (while "Plan something" is on). None where plans don't go. */
     planChannel?: string | null
+    /** The DM or group an invite to play posts in (#436): shows the game-controller button while you're in a game. */
+    inviteChannel?: string | null
     /** Slash commands that run here (#262, lib/commands.ts): suggested on `/`, with a usage tip. None where they don't. */
     commands?: readonly SlashCommand[]
     /** Sends a GIF picked in the GIF picker (#58) at once (`link`: its GIPHY page, the message's text): shows the GIF button. */
@@ -347,6 +351,20 @@
   let planPrefill = $state<string | null>(null)
   let planBtn: HTMLButtonElement | undefined = $state()
   const planHere = $derived(!!planChannel && planPrefs.on)
+  // Invite to game (#436): only while your own "Playing" shows a game
+  const inviteHere = $derived(!!inviteChannel && inGame(app.state))
+  let inviting = $state(false)
+  async function inviteToGame() {
+    if (!inviteChannel || inviting) return
+    inviting = true
+    try {
+      await sendGameInvite(inviteChannel)
+    } catch (e) {
+      ui.notice = errorText(e)
+    } finally {
+      inviting = false
+    }
+  }
   // Send later (#299): text only
   let later = $state(false)
   let laterBtn: HTMLButtonElement | undefined = $state()
@@ -623,6 +641,10 @@
         <PlanComposer anchor={planBtn} channelId={planChannel} prefill={planPrefill} onClose={() => (planning = false)} />
       {/key}
     {/if}
+  {/if}
+  {#if inviteHere}
+    <button class="emoji-btn invite-btn" type="button" aria-label="Invite to game" data-tip="Invite to game" disabled={inviting}
+      onclick={() => void inviteToGame()}><Icon name="gamepad" size={20} /></button>
   {/if}
 </div>
 

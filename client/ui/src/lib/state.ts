@@ -3,6 +3,7 @@
 import type { CallInfo } from './protocol/CallInfo'
 import type { DmLayout } from './protocol/DmLayout'
 import type { PersonDnd } from './protocol/PersonDnd'
+import type { GameInvite } from './protocol/GameInvite'
 import type { InboxFilter } from './protocol/InboxFilter'
 import type { ChannelOrder } from './protocol/ChannelOrder'
 import type { Category } from './protocol/Category'
@@ -104,6 +105,9 @@ export type AppState = {
   /** Per-person Do Not Disturb (#310): whose messages don't alert you, yours only, on every device. From Ready and
    *  PersonDndChanged; a timed one past its `until` counts as off (lib/personDnd.ts). */
   personDnd: PersonDnd[]
+  /** Hide what I'm playing (#436): the people who never get your game activity, yours only, on every device. From
+   *  Ready and ActivityHiddenChanged. */
+  activityHidden: string[]
   /** Your saved inbox filters (#307), in order, on every device: from Ready and InboxFiltersChanged. */
   inboxFilters: InboxFilter[]
   /** Your own channel list orders (#304), by server id, yours only, on every device: from Ready and
@@ -195,7 +199,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -259,6 +263,8 @@ export function applyReady(s: AppState, r: Ready): AppState {
     dmLayout: r.dm_layout ?? { categories: [], placements: [] },
     // absent from older servers: nobody
     personDnd: r.person_dnd ?? [],
+    // absent from older servers: nobody
+    activityHidden: r.activity_hidden ?? [],
     // absent from older servers: none
     inboxFilters: r.inbox_filters ?? [],
     // absent from older servers: the server's order everywhere
@@ -440,6 +446,15 @@ export function setPoll(s: AppState, channel: string, id: string, poll: Poll): A
  * it whole. The state is returned as is when it isn't loaded. */
 export function setPlan(s: AppState, channel: string, id: string, plan: Plan): AppState {
   const put = (m: Message): Message => (m.plan && !m.deleted ? { ...m, plan } : m)
+  const shown = mapShown(s, channel, id, put)
+  const prev = shown.latest[channel]
+  return prev?.id === id ? { ...shown, latest: { ...shown.latest, [channel]: put(prev) } } : shown
+}
+
+/** Put an invite to play as it is now on its message, wherever it shows (#436). The state is returned as is when the
+ * message isn't loaded. */
+export function setGameInvite(s: AppState, channel: string, id: string, invite: GameInvite): AppState {
+  const put = (m: Message): Message => (m.game_invite && !m.deleted ? { ...m, game_invite: invite } : m)
   const shown = mapShown(s, channel, id, put)
   const prev = shown.latest[channel]
   return prev?.id === id ? { ...shown, latest: { ...shown.latest, [channel]: put(prev) } } : shown
@@ -1074,6 +1089,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     // A plan's answers, edit or cancel (#387), the card whole.
     case 'PlanChanged':
       return setPlan(s, e.d.channel_id, e.d.message_id, e.d.plan)
+    // An invite to play (#436), whole: joinable, or ended.
+    case 'GameInviteChanged':
+      return setGameInvite(s, e.d.channel_id, e.d.message_id, e.d.invite)
     // An F1 weekend card's predictions (#386), whole.
     case 'F1PredictionsChanged':
       return setF1Predictions(s, e.d.channel_id, e.d.message_id, e.d.predictions)
@@ -1300,6 +1318,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, dmLayout: e.d.layout }
     case 'PersonDndChanged':
       return e.d.user_id === s.me?.id ? { ...s, personDnd: e.d.list } : s
+    case 'ActivityHiddenChanged':
+      return e.d.user_id === s.me?.id ? { ...s, activityHidden: e.d.list } : s
     case 'InboxFiltersChanged':
       return e.d.user_id === s.me?.id ? { ...s, inboxFilters: e.d.filters } : s
     case 'ViewOnceOpened':

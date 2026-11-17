@@ -127,12 +127,13 @@ describe('PrivacySettings', () => {
     cmp = mount(PrivacySettings, { target: document.body })
     flushSync()
     expect(rows()).toEqual([])
-    expect(document.querySelector('.empty')!.textContent).toContain("You don't appear offline to anyone")
+    // (Game activity's "Hide what I'm playing from" list, #436, has its own)
+    expect([...document.querySelectorAll('.empty')].find((e) => !e.closest('[data-hidden-games]'))!.textContent).toContain("You don't appear offline to anyone")
   })
 
   describe('Add person (#188)', () => {
     const jo = user('U4', 'jo')
-    const addBtn = () => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === 'Add person')
+    const addBtn = () => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === 'Add person' && !b.closest('[data-hidden-games]'))
     const picker = () => document.querySelector<HTMLElement>('[role=dialog][aria-label="Appear offline to"]')
     const offered = () => [...document.querySelectorAll<HTMLElement>('[role=dialog] .pick')].map((b) => b.querySelector('.nm')!.textContent?.trim())
     const setup = (over: object) => {

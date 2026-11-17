@@ -971,7 +971,7 @@
     <ScheduledPopover anchor={scheduledBtn} {channelId} onClose={() => (scheduledOpen = false)} />
   {/if}
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate || isVoice ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
-    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} pollChannel={channelId} planChannel={channelId} {commands} onSendGif={sendGif} {stageNudge} files
+    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} wheelChannel={channelId} pollChannel={channelId} planChannel={channelId} inviteChannel={isPrivate && !notes ? channelId : null} {commands} onSendGif={sendGif} {stageNudge} files
     onSchedule={schedule} scheduledCount={scheduledHere.length} onShowScheduled={() => (scheduledOpen = true)} />
   {/if}
   {#if repliesRoot}

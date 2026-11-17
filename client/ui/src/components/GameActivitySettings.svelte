@@ -3,6 +3,7 @@
   // can join them later), the Steam account and its achievements (#379), and the games added by hand. Clip drop (#382)
   // is its own feature in Settings › Chat (ClipDropSettings). All on by default. Windows only: elsewhere Pulse never looks.
   import Icon from './Icon.svelte'
+  import HiddenGameList from './HiddenGameList.svelte'
   import { api, errorText } from '../lib/tauri'
   import { addGame, gameActivity, gamePrefs, removeGame, setGameSwitch, type GameSwitch } from '../lib/gamePrefs.svelte'
   import { linkSteam, loadSteam, setDeadlockSwitch, setSteamHours, setSteamJoin, setSteamShare, steam, steamNote, unlinkSteam } from '../lib/steam.svelte'
@@ -81,6 +82,7 @@
     </label>
     <small class="sub" id="{uid}-{f.key}-help">{f.help}</small>
   {/each}
+  <HiddenGameList />
   {#if steam.status}
     <div class="steam" data-steam>
       <h4 class="games-title">Steam account</h4>

@@ -17,6 +17,8 @@
   import { openCard } from '../lib/profileCard.svelte'
   import NicknameItems from './NicknameItems.svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
+  import GameInviteItem from './GameInviteItem.svelte'
+  import HideGameItem from './HideGameItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
   import JoinGameItem from './JoinGameItem.svelte'
@@ -148,6 +150,7 @@
     <button type="button" class="menu-item" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>
   {/if}
   <JoinGameItem {userId} {pick} />
+  <GameInviteItem {userId} {pick} />
   {#if serverId}
     {#each voiceIds as id (id)}<ServerVoiceItem {id} {serverId} {userId} {pick} />{/each}
   {/if}
@@ -157,6 +160,7 @@
   <MessageSoundItem bind:this={soundFlyout} {userId} {pick} menuLeft={left} menuTop={top} />
   <PersonDndItem bind:this={dndFlyout} {userId} {pick} menuLeft={left} menuTop={top} />
   <AppearOfflineItem {userId} {pick} />
+  <HideGameItem {userId} {pick} />
   {#if muteChannelId && !self}
     <span class="menu-sep" role="separator"></span>
     {#if muted}

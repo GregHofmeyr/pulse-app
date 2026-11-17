@@ -9,6 +9,8 @@
   import { openRename } from '../lib/profileCard.svelte'
   import { onMount } from 'svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
+  import GameInviteItem from './GameInviteItem.svelte'
+  import HideGameItem from './HideGameItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
   import MessageSoundItem from './MessageSoundItem.svelte'
@@ -186,6 +188,8 @@
         <MessageSoundItem bind:this={soundFlyout} userId={dmWith} pick={(action) => { void action(); onClose() }} menuLeft={place?.left ?? 0} menuTop={place?.top ?? 0} />
         <PersonDndItem bind:this={dndFlyout} userId={dmWith} pick={(action) => { void action(); onClose() }} menuLeft={place?.left ?? 0} menuTop={place?.top ?? 0} />
         <AppearOfflineItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
+        <HideGameItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
+        <GameInviteItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
       {/if}
       {#if isPrivate}
         <button class="menu-item" role="menuitem" onclick={() => run(() => api.closeConversation(channel.id), onLeft)}>Close conversation</button>
