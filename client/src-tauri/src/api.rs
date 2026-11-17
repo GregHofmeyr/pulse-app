@@ -19,16 +19,16 @@ use pulse_protocol::rest::{
     PinRequest, PinnedMessage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, QuietSpin,
     RecoveryCodesResponse, RegisterRequest, RenameCategoryRequest, RenameChannelRequest,
     RenameEmojiRequest, ReopenQotyRequest, SaveLayoutRequest, SearchRequest, SearchResults,
-    SendMessageRequest, Server, ServerLayout, ServerOrderRequest, ServerVoiceMod, SessionResponse,
-    SetChannelBitrateRequest, SetClipViewRequest, SetCustomStatusRequest, SetJoinSoundRequest,
-    SetMuteRequest, SetNicknameRequest, SetNotifyLevelRequest, SetServerVoiceRequest,
-    SetShowcaseRequest, SetStatusRequest, Sound, SpinAgainRequest, SpinWheelRequest, StageShare,
-    StageShareRequest, StartAttachmentRequest, StartQotyRequest, StartWatchPartyRequest, Status,
-    StreamInfo, StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest,
-    TransferServerRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
-    TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest,
-    UpdateWheelRequest, UploadedPart, User, VoiceTokenResponse, WatchParty, WatchPartyAction,
-    WatchRequest, Wheel,
+    SendMessageRequest, Server, ServerBlock, ServerLayout, ServerOrderRequest, ServerVoiceMod,
+    SessionResponse, SetChannelBitrateRequest, SetClipViewRequest, SetCustomStatusRequest,
+    SetJoinSoundRequest, SetMuteRequest, SetNicknameRequest, SetNotifyLevelRequest,
+    SetServerVoiceRequest, SetShowcaseRequest, SetStatusRequest, Sound, SpinAgainRequest,
+    SpinWheelRequest, StageShare, StageShareRequest, StartAttachmentRequest, StartQotyRequest,
+    StartWatchPartyRequest, Status, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
+    ThreadSeenRequest, TransferServerRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
+    TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest,
+    UpdateSoundRequest, UpdateWheelRequest, UploadedPart, User, VoiceTokenResponse, WatchParty,
+    WatchPartyAction, WatchRequest, Wheel,
 };
 use serde::de::DeserializeOwned;
 
@@ -1021,6 +1021,39 @@ impl Api {
                 .put(format!("{}/servers/{server}/owner", self.base))
                 .bearer_auth(token)
                 .json(&TransferServerRequest { user_id: user })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// The people blocked from rejoining a server (#418): its owner only.
+    pub async fn server_blocks(
+        &self,
+        token: &str,
+        server: ServerId,
+    ) -> Result<Vec<ServerBlock>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/servers/{server}/blocked", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Let someone blocked from rejoining a server back (#418): its owner only.
+    pub async fn allow_back(
+        &self,
+        token: &str,
+        server: ServerId,
+        user: UserId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/servers/{server}/blocked/{user}", self.base))
+                .bearer_auth(token)
                 .send()
                 .await,
         )
@@ -4443,6 +4476,29 @@ mod tests {
         // the old owner may leave now
         api.leave_server(&alex, s.id).await.unwrap();
         assert!(api.transfer_server(&alex, s.id, alex_id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn blocking_a_rejoin_and_allowing_back() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (sam_id, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        for _ in 0..3 {
+            api.join_server(&sam, s.id).await.unwrap();
+            api.remove_server_member(&alex, s.id, sam_id).await.unwrap();
+        }
+        assert!(api.join_server(&sam, s.id).await.is_err());
+        assert!(api.server_blocks(&sam, s.id).await.is_err(), "owner only");
+        let blocks = api.server_blocks(&alex, s.id).await.unwrap();
+        assert_eq!(
+            blocks.iter().map(|b| b.user_id).collect::<Vec<_>>(),
+            vec![sam_id]
+        );
+        assert!(api.allow_back(&sam, s.id, sam_id).await.is_err());
+        api.allow_back(&alex, s.id, sam_id).await.unwrap();
+        api.join_server(&sam, s.id).await.unwrap();
     }
 
     #[tokio::test]

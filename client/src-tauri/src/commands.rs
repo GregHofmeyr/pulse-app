@@ -13,9 +13,9 @@ use pulse_protocol::rest::{
     Leaderboard, LeaderboardPeriod, LinkSpeakerRequest, MediaInfo, Member, Message, MuteTarget,
     NameArchivePage, NotifyLevel, Pin, PinDuration, PinnedMessage, PostQuoteRequest, Profile,
     QotyEvent, RecoveryCodesResponse, SaveLayoutRequest, SearchRequest, SearchResults, Server,
-    ServerLayout, SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare, StartQotyRequest,
-    TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
-    WatchParty, WatchPartyAction,
+    ServerBlock, ServerLayout, SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare,
+    StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest,
+    UpdateSoundRequest, User, WatchParty, WatchPartyAction,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -1221,6 +1221,27 @@ pub async fn remove_server_member(
         &app,
         api.remove_server_member(&token, server_id, user_id).await,
     )
+}
+
+#[tauri::command]
+pub async fn list_server_blocks(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<Vec<ServerBlock>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.server_blocks(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn allow_back(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    user_id: UserId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.allow_back(&token, server_id, user_id).await)
 }
 
 #[tauri::command]
