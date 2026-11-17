@@ -497,3 +497,79 @@ async fn members_carry_when_they_joined() {
     .await;
     assert!(at.is_some());
 }
+
+fn granted(identity: &str, sid: &str, grant: &str) -> livekit_protocol::ParticipantInfo {
+    let mut p = participant(identity, sid);
+    p.attributes.insert("pulse_grant".into(), grant.into());
+    p
+}
+
+/// #418: leaving also removes stray LiveKit participants by grant, as a logout does: one in a room of the server
+/// whose voice state was never recorded (a lost join webhook), or under an identity the leave doesn't name. Their
+/// grants for its rooms go; someone else's connection stays.
+#[tokio::test]
+async fn leaving_removes_stray_livekit_participants_by_grant() {
+    let rooms = common::livekit::SharedRooms::default();
+    let (url, removed, _) = common::livekit::fake_livekit_full(rooms.clone()).await;
+    let mut cfg = test_config();
+    cfg.livekit_api_url = url;
+    let w = world_with(spawn_with(cfg).await).await;
+    let chans: Vec<Channel> = get_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/servers/{}/channels", w.server),
+    )
+    .await;
+    let lounge = chans
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+    let (sam, kim) = (w.sam.0.to_string(), w.kim.0.to_string());
+    let voice = lounge.id.to_string();
+    let stream = format!("{}~s", w.general.id);
+    // sam is connected to its voice room with no voice state, and to a stream room under an odd identity
+    let g_voice = grant_livekit(&w.app, &voice, &sam).await;
+    let g_stream = grant_livekit(&w.app, &stream, &format!("{sam}#v")).await;
+    let g_kim = grant_livekit(&w.app, &voice, &kim).await;
+    rooms.lock().unwrap().extend([
+        (
+            voice.clone(),
+            vec![
+                granted(&sam, "PA_sam", &g_voice),
+                granted(&kim, "PA_kim", &g_kim),
+            ],
+        ),
+        (
+            stream.clone(),
+            vec![granted(&format!("{sam}#x"), "PA_sam_x", &g_stream)],
+        ),
+    ]);
+
+    assert_eq!(leave(&w.app, &w.sam.1, w.server).await.status(), 204);
+
+    let log = removed.lock().unwrap().clone();
+    assert!(log.contains(&(voice.clone(), sam.clone())), "{log:?}");
+    assert!(
+        log.contains(&(stream.clone(), format!("{sam}#x"))),
+        "{log:?}"
+    );
+    assert!(!log.iter().any(|(_, who)| who == &kim), "{log:?}");
+    // sam's grants for its rooms are gone
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM livekit_grants WHERE id IN (?, ?)")
+        .bind(&g_voice)
+        .bind(&g_stream)
+        .fetch_one(&w.app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM livekit_grants WHERE identity = ? AND room = ?",
+            &kim,
+            &voice
+        )
+        .await,
+        1
+    );
+}

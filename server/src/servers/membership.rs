@@ -1,16 +1,18 @@
 //! Leaving a server, and its owner removing someone from it (#371).
 //!
 //! Anyone but the owner may leave; the owner may remove anyone else. The owner can't leave while they own it: they hand
-//! it to another member first ([`transfer`], #418), or delete it (#184). Leaving and removing take the same way out ([`take_out`]): the membership row
-//! goes, with their read points, replies seen, inbox reads and reminders in its channels (their inbox drops the
-//! server's mentions, which only count for members), and everyone hears `MemberLeft`. Anyone in one of its calls is
-//! taken out of it (voice state, their stream, watching, stage share and watch party place), and their LiveKit
-//! connections for the server go (#149): the voice room, and every stream room of its channels (ghost and named,
-//! `streams::ghosts::member_removed`). A join they try later is refused anyway (`voice::revoke::admit` checks
-//! membership). Their messages stay. Everything that checks membership as it acts (posting, reacting, voice and stream
-//! tokens, the posting workers, scheduled messages at their time) refuses them from then on, and mentions in its
-//! channels no longer reach them (`messages::mentions`). A system line says so in its first text channel ("alex left
-//! the server", "sam was removed", #418). A custom status showing one of its emoji loses the emoji (#418).
+//! it to another member first ([`transfer`], #418), or delete it (#184). Leaving and removing take the same way out
+//! ([`take_out`]): the membership row goes, with their read points, replies seen, inbox reads and reminders in its
+//! channels (their inbox drops the server's mentions, which only count for members), and everyone hears `MemberLeft`.
+//! Anyone in one of its calls is taken out of it (voice state, their stream, watching, stage share and watch party
+//! place), and their LiveKit connections for the server go (#149): the voice room, and every stream room of its
+//! channels (ghost and named, `streams::ghosts::member_removed`), and then any participant still carrying one of their
+//! grants for its rooms, as a logout removes them (`voice::revoke::remove_granted`, #418). A join they try later is
+//! refused anyway (`voice::revoke::admit` checks membership). Their messages stay. Everything that checks membership as
+//! it acts (posting, reacting, voice and stream tokens, the posting workers, scheduled messages at their time) refuses
+//! them from then on, and mentions in its channels no longer reach them (`messages::mentions`). A system line says so
+//! in its first text channel ("alex left the server", "sam was removed", #418). A custom status showing one of its
+//! emoji loses the emoji (#418).
 //!
 //! Nothing stops a rejoin: servers are public to the group, and Join server works as before, starting at "all read".
 
@@ -221,6 +223,9 @@ pub(crate) async fn take_out(
     let line = member_line_in(&mut tx, server, user, by, &name).await?;
     // a custom status showing one of its emoji drops it, keeping the text (#418)
     let status_changed = crate::presence::custom::drop_server_emoji(&mut tx, user, server).await?;
+    // Their LiveKit grants for its rooms go with the membership (a join with one is refused anyway); the participants
+    // still carrying one are removed below, whatever identity they connected under, as a logout does (#418).
+    let grants = crate::auth::session::drop_server_grants(&mut tx, user, server).await?;
     tx.commit().await?;
     tracing::info!(server = %server, user = %user, by = ?by, "left server");
     if let Some(message) = line {
@@ -266,6 +271,9 @@ pub(crate) async fn take_out(
     // Their stream-room connections in its channels go too (#149): a ghost viewer isn't in the call, and a named
     // viewer's `#v` / `#a` may outlive their voice connection.
     crate::streams::ghosts::member_removed(s, server, user).await;
+    // and any stray connection by grant: one in another of its rooms (a lost join webhook), or under an identity the
+    // calls above don't name
+    crate::voice::revoke::remove_granted(s, &grants).await;
     Ok(())
 }
 
