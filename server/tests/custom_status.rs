@@ -438,3 +438,65 @@ async fn custom_emoji(app: &TestApp, token: &str, server: ServerId, name: &str) 
     assert_eq!(r.status(), 200);
     r.json().await.unwrap()
 }
+
+/// #418: leaving (or being removed from) a server drops its emoji from your custom status and keeps the text; one that
+/// was only that emoji goes. Your own sessions and everyone who sees you online hear it; recent ones with its emoji go.
+#[tokio::test]
+async fn leaving_a_server_drops_its_emoji_from_your_status() {
+    let (app, (_, a, _alex_ws), (s_id, s, mut sam_ws), (k_id, k, mut kim_ws)) = three().await;
+    let srv = create_server(&app, &a, "alex's").await;
+    for t in [&s, &k] {
+        assert!(
+            post_json(&app, t, &format!("/servers/{}/join", srv.id), json!({}))
+                .await
+                .status()
+                .is_success()
+        );
+    }
+    let e = custom_emoji(&app, &a, srv.id, "pog").await;
+    let key = format!("custom:{}", e.id);
+    assert_eq!(
+        set_custom(&app, &s, json!({ "text": "", "emoji": key })).await,
+        204
+    );
+    assert_eq!(
+        set_custom(&app, &s, json!({ "text": "Raiding", "emoji": key })).await,
+        204
+    );
+    drain(&mut sam_ws, 300).await;
+    drain(&mut kim_ws, 300).await;
+
+    let r = post_json(&app, &s, &format!("/servers/{}/leave", srv.id), json!({})).await;
+    assert_eq!(r.status(), 204);
+    let mine = own(&drain(&mut sam_ws, 300).await).expect("told their own sessions");
+    assert_eq!(mine.current, Some(cs("Raiding", None)));
+    assert!(
+        mine.recent
+            .iter()
+            .all(|r| r.emoji.as_deref() != Some(key.as_str())),
+        "{:?}",
+        mine.recent
+    );
+    assert_eq!(
+        customs(&drain(&mut kim_ws, 300).await, s_id)
+            .last()
+            .cloned(),
+        Some(Some(cs("Raiding", None)))
+    );
+
+    // an emoji-only status goes altogether (kim, removed this time)
+    assert_eq!(
+        set_custom(&app, &k, json!({ "text": "", "emoji": key })).await,
+        204
+    );
+    let gone = app
+        .http
+        .delete(app.url(&format!("/servers/{}/members/{}", srv.id, k_id)))
+        .bearer_auth(&a)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(gone.status(), 204);
+    let (_k2, r) = hello(&app, &k).await;
+    assert_eq!(r.my_custom_status.current, None);
+}

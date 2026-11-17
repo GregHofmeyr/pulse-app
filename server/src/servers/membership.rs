@@ -10,7 +10,7 @@
 //! membership). Their messages stay. Everything that checks membership as it acts (posting, reacting, voice and stream
 //! tokens, the posting workers, scheduled messages at their time) refuses them from then on, and mentions in its
 //! channels no longer reach them (`messages::mentions`). A system line says so in its first text channel ("alex left
-//! the server", "sam was removed", #418).
+//! the server", "sam was removed", #418). A custom status showing one of its emoji loses the emoji (#418).
 //!
 //! Nothing stops a rejoin: servers are public to the group, and Join server works as before, starting at "all read".
 
@@ -219,6 +219,8 @@ pub(crate) async fn take_out(
     .await?;
     let qoty = crate::qoty::live_in(&mut tx, server).await?;
     let line = member_line_in(&mut tx, server, user, by, &name).await?;
+    // a custom status showing one of its emoji drops it, keeping the text (#418)
+    let status_changed = crate::presence::custom::drop_server_emoji(&mut tx, user, server).await?;
     tx.commit().await?;
     tracing::info!(server = %server, user = %user, by = ?by, "left server");
     if let Some(message) = line {
@@ -256,6 +258,10 @@ pub(crate) async fn take_out(
         crate::qoty::publish_updated(s, event).await;
     }
     drop(order);
+    if status_changed {
+        crate::presence::custom::announce_own(s, user).await;
+        s.hub.sync_presence(&s.db, user).await;
+    }
     out_of_calls(s, server, user, by).await;
     // Their stream-room connections in its channels go too (#149): a ghost viewer isn't in the call, and a named
     // viewer's `#v` / `#a` may outlive their voice connection.
