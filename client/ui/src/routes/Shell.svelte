@@ -69,7 +69,7 @@
   import { avatarColor, initial } from '../lib/avatar'
   import Avatar from '../components/Avatar.svelte'
   import Name from '../components/Name.svelte'
-  import { keybindsApi } from '../lib/keybinds'
+  import { keybindsApi, pageActionFor } from '../lib/keybinds'
   import { watchWindowFocus } from '../lib/windowFocus.svelte'
   import type { User } from '../lib/protocol/User'
   // The quick switcher (#309)
@@ -645,6 +645,17 @@
       if (ask.wasFocused) globalSwitchAt = performance.now()
       const blocked = !switcherOpen && !!document.querySelector('[aria-modal="true"]')
       switcherOpen = globalSwitch({ open: switcherOpen, wasFocused: ask.wasFocused, blocked, sinceLocalMs: performance.now() - localSwitchAt })
+    })
+  })
+  /** A global keybind for leaving the call or Go Live (#72): as the call panel's buttons (lib/keybinds.ts says when). */
+  $effect(() => {
+    const a = ui.keybindAction
+    if (!a) return
+    untrack(() => {
+      ui.keybindAction = null
+      const does = pageActionFor(a, { inCall: !!voice.channelId, connected: voice.connection === 'connected', live: !!stream.live, canStream: isWindows() })
+      if (does === 'leave') void voiceApi.leave()
+      else if (does === 'goLive' && voice.channelId) void pickSource(voice.channelId)
     })
   })
   function switcherGo(p: Place, join: boolean) {

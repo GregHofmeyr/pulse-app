@@ -28,6 +28,13 @@ pub struct Keybinds {
     /// Bring Pulse up and open the quick switcher (#319). Unbound by default like the others.
     #[serde(default)]
     pub quick_switch: Option<Bind>,
+    /// Leave the call you're in (#72), as the call panel's hang-up button does. Unbound by default.
+    #[serde(default)]
+    pub leave_call: Option<Bind>,
+    /// Go Live (#72): bring Pulse up and open the screen picker, as the call panel's Go Live does. Unbound by
+    /// default.
+    #[serde(default)]
+    pub go_live: Option<Bind>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +42,8 @@ pub enum Action {
     ToggleMute,
     ToggleDeafen,
     QuickSwitch,
+    LeaveCall,
+    GoLive,
 }
 
 impl Action {
@@ -43,6 +52,8 @@ impl Action {
             Self::ToggleMute => "Toggle mute",
             Self::ToggleDeafen => "Toggle deafen",
             Self::QuickSwitch => "Open quick switcher",
+            Self::LeaveCall => "Leave call",
+            Self::GoLive => "Go Live",
         }
     }
 
@@ -51,11 +62,19 @@ impl Action {
             Self::ToggleMute => crate::ipc::Command::ToggleMute,
             Self::ToggleDeafen => crate::ipc::Command::ToggleDeafen,
             Self::QuickSwitch => crate::ipc::Command::QuickSwitch,
+            Self::LeaveCall => crate::ipc::Command::LeaveCall,
+            Self::GoLive => crate::ipc::Command::GoLive,
         }
     }
 
     /// Every action, in the order the settings pane lists them (an earlier one keeps a shared bind).
-    pub const ALL: [Action; 3] = [Self::ToggleMute, Self::ToggleDeafen, Self::QuickSwitch];
+    pub const ALL: [Action; 5] = [
+        Self::ToggleMute,
+        Self::ToggleDeafen,
+        Self::QuickSwitch,
+        Self::LeaveCall,
+        Self::GoLive,
+    ];
 }
 
 impl Keybinds {
@@ -72,6 +91,8 @@ impl Keybinds {
             Action::ToggleMute => &self.toggle_mute,
             Action::ToggleDeafen => &self.toggle_deafen,
             Action::QuickSwitch => &self.quick_switch,
+            Action::LeaveCall => &self.leave_call,
+            Action::GoLive => &self.go_live,
         }
     }
 
@@ -80,6 +101,8 @@ impl Keybinds {
             Action::ToggleMute => &mut self.toggle_mute,
             Action::ToggleDeafen => &mut self.toggle_deafen,
             Action::QuickSwitch => &mut self.quick_switch,
+            Action::LeaveCall => &mut self.leave_call,
+            Action::GoLive => &mut self.go_live,
         }
     }
 }
@@ -473,7 +496,7 @@ mod tests {
         let v1 = Keybinds {
             toggle_mute: Some(b("KeyM", "cs")),
             toggle_deafen: Some(b("F13", "ca")),
-            quick_switch: None,
+            ..Default::default()
         };
         save(dir.path(), &v1.clone().into()).unwrap();
         assert_eq!(load(dir.path()).binds, v1);
@@ -521,7 +544,7 @@ mod tests {
         let k = Keybinds {
             toggle_mute: Some(b("KeyD", "cs")),
             toggle_deafen: Some(b("KeyD", "cs")),
-            quick_switch: None,
+            ..Default::default()
         };
         assert_eq!(
             validate(&k).unwrap_err(),
@@ -686,5 +709,46 @@ mod tests {
         let loaded = load(dir.path()).binds;
         assert_eq!(loaded.toggle_mute, Some(b("KeyK", "cs")));
         assert_eq!(loaded.quick_switch, None);
+    }
+
+    /// #72: leaving the call and Go Live are bindable like the others; a file from before them reads as unbound,
+    /// and the earlier action keeps a shared bind.
+    #[test]
+    fn leave_call_and_go_live_are_bindable_like_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let k = Keybinds {
+            leave_call: Some(b("F9", "")),
+            go_live: Some(b("KeyL", "cs")),
+            ..Default::default()
+        };
+        assert!(validate(&k).is_ok());
+        assert_eq!(
+            k.bound(),
+            vec![
+                (Action::LeaveCall, &b("F9", "")),
+                (Action::GoLive, &b("KeyL", "cs"))
+            ]
+        );
+        assert_eq!(Action::LeaveCall.command(), crate::ipc::Command::LeaveCall);
+        assert_eq!(Action::GoLive.command(), crate::ipc::Command::GoLive);
+        assert_eq!(Action::LeaveCall.label(), "Leave call");
+        save(dir.path(), &k.clone().into()).unwrap();
+        assert_eq!(load(dir.path()).binds, k);
+        let clash = Keybinds {
+            quick_switch: Some(b("F9", "")),
+            ..k.clone()
+        };
+        assert_eq!(
+            validate(&clash).unwrap_err(),
+            "F9 can't be both open quick switcher and leave call"
+        );
+        save(dir.path(), &clash.into()).unwrap();
+        let loaded = load(dir.path()).binds;
+        assert_eq!(loaded.quick_switch, Some(b("F9", "")));
+        assert_eq!(loaded.leave_call, None);
+        assert_eq!(loaded.go_live, Some(b("KeyL", "cs")));
+        std::fs::write(dir.path().join(FILE), r#"{"toggle_mute":{"code":"F13"}}"#).unwrap();
+        let old = load(dir.path()).binds;
+        assert_eq!((old.leave_call, old.go_live), (None, None));
     }
 }

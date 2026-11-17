@@ -3,7 +3,13 @@ import { invoke } from '@tauri-apps/api/core'
 
 /** A key combination, by physical key (W3C `code`), so it survives a layout switch. */
 export type Bind = { code: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean }
-export type Keybinds = { toggle_mute: Bind | null; toggle_deafen: Bind | null; quick_switch: Bind | null }
+export type Keybinds = {
+  toggle_mute: Bind | null
+  toggle_deafen: Bind | null
+  quick_switch: Bind | null
+  leave_call: Bind | null
+  go_live: Bind | null
+}
 export type Action = keyof Keybinds
 
 export const actions: { key: Action; label: string }[] = [
@@ -11,7 +17,22 @@ export const actions: { key: Action; label: string }[] = [
   { key: 'toggle_deafen', label: 'Toggle deafen' },
   // brings Pulse up from anywhere and opens the quick switcher (#319)
   { key: 'quick_switch', label: 'Open quick switcher' },
+  // the call panel's hang-up and Go Live, from anywhere (#72)
+  { key: 'leave_call', label: 'Leave call' },
+  { key: 'go_live', label: 'Go Live' },
 ]
+
+/** A bound action the page does itself (#72): the core sends it as `pulse://keybind-action`. */
+export type PageAction = 'leave_call' | 'go_live'
+
+/** What a page action does now: leave the call you're in; open the Go Live picker when you could press Go Live
+ *  (in a connected call, on Windows, not already live). Anything else does nothing: a bind is pressed blind, from
+ *  another app, so it never opens a dialog to say why. */
+export function pageActionFor(a: PageAction, now: { inCall: boolean; connected: boolean; live: boolean; canStream: boolean }): 'leave' | 'goLive' | null {
+  if (a === 'leave_call') return now.inCall ? 'leave' : null
+  if (a === 'go_live') return now.inCall && now.connected && now.canStream && !now.live ? 'goLive' : null
+  return null
+}
 
 type Mods = { ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }
 type KeyLike = Mods & { code: string }

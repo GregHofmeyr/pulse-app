@@ -1787,6 +1787,27 @@ pub struct QuickSwitch {
     pub was_focused: bool,
 }
 
+/// Asks the page to do a bound action it owns (#72): leave the call, or Go Live.
+pub const KEYBIND_ACTION_EVENT: &str = "pulse://keybind-action";
+
+/// What the page is told with [`KEYBIND_ACTION_EVENT`]: the action, by its keybinds key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeybindAction {
+    LeaveCall,
+    GoLive,
+}
+
+impl KeybindAction {
+    fn of(c: crate::ipc::Command) -> Self {
+        if c == crate::ipc::Command::GoLive {
+            Self::GoLive
+        } else {
+            Self::LeaveCall
+        }
+    }
+}
+
 /// Bring the window up (unminimised, shown, focused) and ask the page to open the switcher.
 fn quick_switch(app: &AppHandle) {
     let was_focused = app.get_webview_window("main").is_some_and(|w| {
@@ -1801,8 +1822,19 @@ fn quick_switch(app: &AppHandle) {
 /// Hotkey path (IPC on Linux, keyboard/mouse hooks on Windows): toggle + broadcast, same as the
 /// buttons; the quick switcher's bind brings the window up instead.
 pub fn hotkey(app: &AppHandle, c: crate::ipc::Command) {
-    if c == crate::ipc::Command::QuickSwitch {
-        return quick_switch(app);
+    use crate::ipc::Command;
+    match c {
+        Command::QuickSwitch => return quick_switch(app),
+        // the page does these, as its own buttons do (#72); Go Live's picker needs the window
+        Command::LeaveCall | Command::GoLive => {
+            if c == Command::GoLive {
+                crate::bring_to_front(app);
+            }
+            let action = KeybindAction::of(c);
+            let _ = app.emit(KEYBIND_ACTION_EVENT, action);
+            return;
+        }
+        Command::ToggleMute | Command::ToggleDeafen => {}
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -1810,7 +1842,7 @@ pub fn hotkey(app: &AppHandle, c: crate::ipc::Command) {
         let controls = match c {
             crate::ipc::Command::ToggleMute => voice.toggle_mute().await,
             crate::ipc::Command::ToggleDeafen => voice.toggle_deafen().await,
-            crate::ipc::Command::QuickSwitch => return,
+            _ => return,
         };
         app.state::<Core>().send_frame(ClientFrame::VoiceState {
             flags: flags(controls),
@@ -3680,6 +3712,21 @@ mod tests {
                 except_server: Some(s),
                 except_channel: Some(c)
             }
+        );
+    }
+
+    /// #72: the page's own actions, by the keys lib/keybinds.ts uses.
+    #[test]
+    fn keybind_actions_are_what_the_ui_listens_for() {
+        use crate::ipc::Command;
+        assert_eq!(KEYBIND_ACTION_EVENT, "pulse://keybind-action");
+        assert_eq!(
+            serde_json::to_string(&KeybindAction::of(Command::LeaveCall)).unwrap(),
+            r#""leave_call""#
+        );
+        assert_eq!(
+            serde_json::to_string(&KeybindAction::of(Command::GoLive)).unwrap(),
+            r#""go_live""#
         );
     }
 
