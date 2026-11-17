@@ -1,10 +1,10 @@
 //! Hide what I'm playing per person (#436): `PUT|DELETE /me/activity-hidden/{user_id}`. Someone on your list never
-//! gets your game activity: your "Playing" (and the Join inside it) and your Steam hours (profile card and a server's
-//! board). They see you online with no game, as if you played nothing. "Listening to" isn't game activity and isn't
+//! gets your game activity: your "Playing" (and the Join inside it), your Steam hours (profile card and a server's
+//! board), and your Steam completion, 100 % games and Steam badges on your profile card (the badges stay earned). They see you online with no game, as if you played nothing. "Listening to" isn't game activity and isn't
 //! touched.
 //!
 //! Enforced where game activity leaves the server: the hub's per-viewer pass (`presence::Subject::shows_game_to`,
-//! read by `Hub::sync_presence` and Ready's people) and the Steam hours reads. A change re-runs the pass, so a newly
+//! read by `Hub::sync_presence` and Ready's people), the Steam hours and stat reads, and the profile card's badges. A change re-runs the pass, so a newly
 //! hidden viewer's clients drop your game at once and an un-hidden one gets it back.
 //!
 //! Posts that show someone's games to a whole channel (Steam achievement cards, Deadlock match cards and rank movers)
@@ -175,7 +175,11 @@ pub fn hides_in_server(user: &'static str, server: &'static str) -> String {
 }
 
 /// Whether `owner` hides their game activity from `viewer` (never from themselves).
-pub async fn hides(db: &SqlitePool, owner: UserId, viewer: UserId) -> sqlx::Result<bool> {
+pub async fn hides<'e>(
+    db: impl sqlx::SqliteExecutor<'e>,
+    owner: UserId,
+    viewer: UserId,
+) -> sqlx::Result<bool> {
     if owner == viewer {
         return Ok(false);
     }

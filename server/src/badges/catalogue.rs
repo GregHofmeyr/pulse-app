@@ -711,6 +711,19 @@ pub static HAND_GIVEN: &[Def] = &[
     },
 ];
 
+/// Whether `def` is a Steam badge: earned from a linked Steam account's games, so game activity (#438).
+pub fn is_steam(def: &Def) -> bool {
+    matches!(
+        def.rule,
+        Rule::Counter {
+            stat: stat::STEAM_PERFECT_GAMES
+                | stat::STEAM_COMPLETION_PCT
+                | stat::STEAM_FORTNIGHT_SECS,
+            ..
+        }
+    )
+}
+
 /// The definition of `key`, earnable or hand-given.
 pub fn find(key: &str) -> Option<&'static Def> {
     CATALOGUE.iter().chain(HAND_GIVEN).find(|d| d.key == key)

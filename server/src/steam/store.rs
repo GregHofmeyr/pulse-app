@@ -382,17 +382,20 @@ pub async fn profile_hours(
     Ok(m.flatten().map(|m| m.max(0) as u32))
 }
 
-/// The profile card's Steam stat: the completion rate and 100 % games, while `user` shares achievements and there's
-/// a rate to show.
+/// The profile card's Steam stat, as `viewer` sees it: the completion rate and 100 % games, while `user` shares
+/// achievements, there's a rate to show, and `user` doesn't hide their games from `viewer` (#438).
 pub async fn profile_stat(
     conn: &mut SqliteConnection,
     user: UserId,
+    viewer: UserId,
 ) -> sqlx::Result<(Option<f32>, Option<u32>)> {
     let row: Option<(Option<f64>, i64)> = sqlx::query_as(
-        "SELECT completion_rate, perfect_games FROM steam_links
-         WHERE user_id = ? AND share_achievements = 1 AND completion_rate IS NOT NULL",
+        "SELECT completion_rate, perfect_games FROM steam_links l
+         WHERE l.user_id = ? AND l.share_achievements = 1 AND l.completion_rate IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM activity_hidden h WHERE h.user_id = l.user_id AND h.target_id = ?)",
     )
     .bind(user.to_string())
+    .bind(viewer.to_string())
     .fetch_optional(conn)
     .await?;
     Ok(match row {
