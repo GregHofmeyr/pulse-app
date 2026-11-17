@@ -296,8 +296,8 @@ pub async fn announce(
         return Ok(());
     }
     let line = player_line(s, user, h, cat).await;
-    for (_, ch) in channels {
-        if let Err(e) = post_in(s, ch, h, &line).await {
+    for (server, ch) in channels {
+        if let Err(e) = post_in(s, &server, ch, h, &line).await {
             tracing::warn!(error = ?e, "Deadlock match card not posted");
         }
     }
@@ -312,8 +312,23 @@ async fn names_of(s: &AppState, card: &DeadlockMatchCard) -> Vec<String> {
     names
 }
 
+/// Whether `user` now hides their games from a member of `server` (#438).
+async fn hides_in(s: &AppState, user: UserId, server: &str) -> AppResult<bool> {
+    // SAFE: `hides_in_server`'s static fragments with two placeholders; both values are bound.
+    let sql = format!(
+        "SELECT {}",
+        crate::activity_hidden::hides_in_server("?2", "?1")
+    );
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(server)
+        .bind(user.to_string())
+        .fetch_one(&s.db)
+        .await?)
+}
+
 async fn post_in(
     s: &AppState,
+    server: &str,
     ch: ChannelId,
     h: &HistoryEntry,
     line: &DeadlockMatchPlayer,
@@ -334,6 +349,15 @@ async fn post_in(
         if card.players.iter().any(|p| p.user_id == line.user_id) {
             return Ok(());
         }
+        // the card goes out again whole: a line whose player now hides their games from someone in this server
+        // leaves it rather than reach them (#438)
+        let mut kept = Vec::with_capacity(card.players.len() + 1);
+        for p in card.players {
+            if !hides_in(s, p.user_id, server).await? {
+                kept.push(p);
+            }
+        }
+        card.players = kept;
         card.players.push(line.clone());
         let text = content(&card, &names_of(s, &card).await);
         let payload = system::deadlock_payload(&DeadlockCard::Match(card))?;

@@ -838,3 +838,46 @@ async fn hiding_your_games_from_a_member_keeps_your_deadlock_out_of_their_server
             .any(|(_, c)| matches!(c, DeadlockCard::RankMovers(_)))
     );
 }
+
+#[tokio::test]
+async fn a_friends_line_added_later_drops_the_line_of_someone_who_now_hides_their_games_there() {
+    // #438: a card alex's line already made is re-posted whole when sam's line joins it; if alex now hides their games
+    // from a member of that server, the re-post leaves alex's line out instead of sending it again.
+    let w = world().await;
+    let (app, fake) = (&w.app, &w.fake);
+    let kim = register(app, "kim").await;
+    join(app, &kim.1, w.server).await;
+    fake.add_match(ALEX, 50_000_001, HAZE, (1, 9, 2), false, now() - 7200, None);
+    fake.add_match(SAM, 50_000_001, HAZE, (1, 9, 2), false, now() - 7200, None);
+    matches_tick(app).await; // the baseline
+    fake.add_match(
+        ALEX,
+        50_000_002,
+        INFERNUS,
+        (12, 3, 8),
+        true,
+        now() - 2000,
+        None,
+    );
+    fake.add_match(SAM, 50_000_002, HAZE, (4, 7, 10), false, now() - 2000, None);
+    pulse_server::deadlock::matches::poll_one(&app.state(), w.alex.0, ALEX)
+        .await
+        .unwrap();
+    let mc = match_cards(&cards(app, &kim.1, w.general).await);
+    assert_eq!(mc.len(), 1);
+    assert_eq!(mc[0].1.players.len(), 1);
+
+    hide_games(app, &w.alex.1, kim.0).await;
+    pulse_server::deadlock::matches::poll_one(&app.state(), w.sam.0, SAM)
+        .await
+        .unwrap();
+    let mc = match_cards(&cards(app, &kim.1, w.general).await);
+    assert_eq!(mc.len(), 1);
+    let (msg, card) = &mc[0];
+    assert_eq!(
+        card.players.iter().map(|p| p.user_id).collect::<Vec<_>>(),
+        vec![w.sam.0]
+    );
+    assert!(!msg.content.contains("alex"), "{}", msg.content);
+    assert!(msg.content.contains("sam lost as Haze"), "{}", msg.content);
+}
