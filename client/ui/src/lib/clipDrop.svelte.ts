@@ -2,10 +2,10 @@
 // (`pulse://clip-drop`, src-tauri games/clipdrop.rs) and a toast asks "Share to #clips?". Share opens that clips channel
 // with the usual clip editor on the file (ClipsChannel takes `ui.shareClip`); the channel is the last one you shared a
 // clip in, else the only one there is, else you pick one in the toast. It can go to a DM instead (#394): that chat
-// opens with the file queued in its composer. Turning the switch off (or Game activity's master) clears the toasts.
+// opens with the file queued in its composer. Turning the switch off (Settings › Chat › Clip drop) clears the toasts.
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { conversations } from './conversations'
-import { gamePrefs } from './gamePrefs.svelte'
+import { clipDropPrefs } from './clipDropPrefs.svelte'
 import type { Channel } from './protocol/Channel'
 import type { AppState } from './state'
 import { ui } from './store.svelte'
@@ -68,8 +68,8 @@ export function dmTargets(s: AppState, nowIso: string): { id: string; name: stri
     .map((c) => ({ id: c.channel.id, name: c.name }))
 }
 
-/** Whether offers are wanted: Game activity on, and "Offer new recordings as clips" on. */
-export const clipDropOn = (): boolean => gamePrefs.enabled && gamePrefs.clips
+/** Whether offers are wanted: Clip drop's own switch, whatever Game activity says. */
+export const clipDropOn = (): boolean => clipDropPrefs.on
 
 /** How long a Share's request waits for its chat to show (#394): one that never landed (the chat didn't open) is
  *  dropped, rather than opening the editor the next time that chat shows. */

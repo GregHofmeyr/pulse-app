@@ -1,11 +1,10 @@
 <script lang="ts">
   // Settings → Privacy → Game activity (#380): the master switch, the finer ones under it (each its own row, so Join
-  // can join them later), clip drop's watched folders (#382), the Steam account and its achievements (#379), and the
-  // games added by hand. All on by default. Windows only: elsewhere Pulse never looks.
+  // can join them later), the Steam account and its achievements (#379), and the games added by hand. Clip drop (#382)
+  // is its own feature in Settings › Chat (ClipDropSettings). All on by default. Windows only: elsewhere Pulse never looks.
   import Icon from './Icon.svelte'
   import { api, errorText } from '../lib/tauri'
-  import { addGame, gameActivity, gamePrefs, removeGame, setClipFolders, setGameSwitch, type GameSwitch } from '../lib/gamePrefs.svelte'
-  import { isWindows } from '../lib/stream/platform'
+  import { addGame, gameActivity, gamePrefs, removeGame, setGameSwitch, type GameSwitch } from '../lib/gamePrefs.svelte'
   import { linkSteam, loadSteam, setDeadlockSwitch, setSteamHours, setSteamJoin, setSteamShare, steam, steamNote, unlinkSteam } from '../lib/steam.svelte'
   import { BOT_WARNING, DEADLOCK_BOT_PAGE } from '../lib/deadlock'
   import { completionLine, hoursText } from '../lib/achievements'
@@ -39,29 +38,7 @@
   const finer: { key: Exclude<GameSwitch, 'enabled'>; label: string; help: string }[] = [
     { key: 'art', label: 'Show game art', help: "Steam games show their art, which your Pulse server fetches. Off, the game's Steam id isn't sent." },
     { key: 'time', label: 'Show play time', help: "Others see how long you've been playing. Off, it isn't sent." },
-    { key: 'clips', label: 'Offer new recordings as clips', help: 'When NVIDIA or Game Bar saves a recording in a watched folder, Pulse offers to share it to a clips channel. Nothing is sent unless you share it.' },
   ]
-
-  // Clip drop's folders (#382): the chosen ones, else the core's defaults under Videos (asked once, on Windows).
-  const windows = isWindows()
-  let defaultFolders = $state<string[]>([])
-  $effect(() => {
-    if (!windows) return
-    let gone = false
-    api.clipDropDefaults().then((d) => !gone && (defaultFolders = d), () => {})
-    return () => (gone = true)
-  })
-  const folders = $derived(gamePrefs.clip_folders ?? defaultFolders)
-  async function addFolder() {
-    error = ''
-    try {
-      const got = await api.pickClipFolder()
-      if (got && !folders.some((f) => f.toLowerCase() === got.toLowerCase())) setClipFolders([...folders, got])
-    } catch (e) {
-      error = errorText(e)
-    }
-  }
-  const removeFolder = (f: string) => setClipFolders(folders.filter((x) => x !== f))
 
   // "Add a game": the picked exe, waiting for its name
   let picked = $state<string | null>(null)
@@ -104,30 +81,6 @@
     </label>
     <small class="sub" id="{uid}-{f.key}-help">{f.help}</small>
   {/each}
-  {#if windows && gamePrefs.enabled && gamePrefs.clips}
-    <div class="sub folders">
-      <h4 class="games-title">Watched folders</h4>
-      <p class="hint">New videos here and in their folders one level down (NVIDIA saves each game in its own) are offered.</p>
-      {#if folders.length}
-        <ul class="settings-list">
-          {#each folders as f (f)}
-            <li class="settings-list-item">
-              <span class="who"><small class="path" data-tip={f}>{f}</small></span>
-              <button type="button" class="btn btn-secondary" aria-label="Stop watching {f}" onclick={() => removeFolder(f)}>Remove</button>
-            </li>
-          {/each}
-        </ul>
-      {:else}
-        <p class="hint">No folders: nothing is offered.</p>
-      {/if}
-      <div class="actions">
-        <button type="button" class="btn btn-secondary" onclick={() => void addFolder()}><Icon name="plus" size={14} /> Add a folder</button>
-        {#if gamePrefs.clip_folders}
-          <button type="button" class="btn btn-secondary" onclick={() => setClipFolders(null)}>Use the defaults</button>
-        {/if}
-      </div>
-    </div>
-  {/if}
   {#if steam.status}
     <div class="steam" data-steam>
       <h4 class="games-title">Steam account</h4>
@@ -215,9 +168,8 @@
   p { margin: 0; color: var(--text-2); font-size: 13px; }
   .row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
   .sub { margin-left: 24px; }
-  .folders, .steam, .deadlock { display: flex; flex-direction: column; gap: 6px; }
+  .steam, .deadlock { display: flex; flex-direction: column; gap: 6px; }
   .note { color: var(--warn-text); }
-  .who .path { color: var(--text-2); }
   .seen { color: var(--text-3); }
   .games-title { margin: 8px 0 0; font-size: 13px; font-weight: 600; }
   .add { align-self: flex-start; }

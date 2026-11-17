@@ -212,13 +212,12 @@ export type GameSettings = {
   art: boolean
   time: boolean
   games: ManualGame[]
-  /** "Offer new recordings as clips" (#382). */
-  clips: boolean
-  /** The folders clip drop watches; null: the defaults under Videos (`clipDropDefaults`). */
-  clip_folders: string[] | null
   /** A linked Steam account shares achievements (#379): the app id goes even with art off, marked for the server only. */
   steam_achievements: boolean
 }
+/** Settings › Chat › Clip drop (#382), the core's `games::clipdrop::ClipDropSettings`: its own switch, apart from
+ *  Game activity. `folders` null: the defaults under Videos (`clipDropDefaults`). */
+export type ClipDropSettings = { on: boolean; folders: string[] | null }
 /** `pulse://clip-drop` (#382): a recording that just finished in a watched folder. */
 export type ClipOffer = { path: string; name: string }
 /** Whether this device looks for games, and the one it sees (`pulse://game-activity`). */
@@ -463,6 +462,8 @@ export const api = {
   gameActivity: () => invoke<GameState>('game_activity'),
   /** "Add a game": the system file dialog for an .exe; null when cancelled. */
   pickGameExe: () => invoke<{ exe: string; name: string } | null>('pick_game_exe'),
+  /** Clip drop (#382): off watches nothing; runs whatever Game activity says. */
+  setClipDrop: (settings: ClipDropSettings) => invoke<void>('set_clip_drop', { settings }),
   clipDropDefaults: () => invoke<string[]>('clip_drop_defaults'),
   pickClipFolder: () => invoke<string | null>('pick_clip_folder'),
   /** Get a notification when someone goes live, or stop (#60). A LiveNotifyChanged follows to your sessions. */

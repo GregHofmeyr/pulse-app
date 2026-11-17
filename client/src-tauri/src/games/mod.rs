@@ -25,8 +25,9 @@ use serde::{Deserialize, Serialize};
 /// How often what runs is read (owner: cheap, every 15 s or so).
 pub const POLL: Duration = Duration::from_secs(15);
 
-/// The Settings → Game activity switches and the hand-added games, as the page saves them. Later switches (Join,
-/// achievements, clip drop) are one more field here and on the page, defaulting on like these.
+/// The Settings → Game activity switches and the hand-added games, as the page saves them. Later switches are one more
+/// field here and on the page, defaulting on like these. Clip drop isn't one: it's its own feature with its own switch
+/// ([`clipdrop`], `set_clip_drop`), running with game activity off; an older page's `clips` fields are ignored.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GameSettings {
@@ -37,10 +38,6 @@ pub struct GameSettings {
     /// "Show play time": send how long it's been running.
     pub time: bool,
     pub games: Vec<ManualGame>,
-    /// "Offer new recordings as clips" (#382, [`clipdrop`]).
-    pub clips: bool,
-    /// The folders it watches; `None`: the defaults under Videos ([`clipdrop::default_folders`]).
-    pub clip_folders: Option<Vec<String>>,
     /// A linked Steam account shares achievements (#379; the server's setting, told by the page): the Steam app id
     /// is sent even with "Show game art" off, marked `hide_art` so the server shows it to nobody. Off by default: the
     /// page turns it on only for a linked account.
@@ -54,8 +51,6 @@ impl Default for GameSettings {
             art: true,
             time: true,
             games: Vec::new(),
-            clips: true,
-            clip_folders: None,
             steam_achievements: false,
         }
     }
@@ -370,9 +365,13 @@ mod tests {
     fn settings_default_on_and_older_saves_fill_in() {
         let s: GameSettings =
             serde_json::from_str(r#"{"games":[{"name":"Old","exe":"C:\\old.exe"}]}"#).unwrap();
-        assert!(s.enabled && s.art && s.time && s.clips);
-        assert_eq!(s.clip_folders, None);
+        assert!(s.enabled && s.art && s.time);
         assert_eq!(s.games[0].name, "Old");
+        // an older page still sends clip drop's fields here: ignored (clip drop has its own switch now)
+        let s: GameSettings =
+            serde_json::from_str(r#"{"enabled":false,"clips":true,"clip_folders":["D:\\Clips"]}"#)
+                .unwrap();
+        assert!(!s.enabled);
     }
 
     type Faked = (GameActivity, Arc<Mutex<Vec<ClientFrame>>>, Arc<Mutex<u32>>);

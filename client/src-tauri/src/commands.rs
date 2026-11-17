@@ -1454,18 +1454,21 @@ pub fn media_activity(m: State<'_, crate::activity::MediaActivity>) -> crate::ac
 /// on every change. Master off: no poller at all.
 #[tauri::command]
 pub fn set_game_activity(
-    app: AppHandle,
     g: State<'_, crate::games::GameActivity>,
-    clips: State<'_, crate::games::clipdrop::ClipDrop>,
     settings: crate::games::GameSettings,
 ) {
-    // clip drop (#382): under the master switch, watching the chosen folders or the defaults under Videos
-    let folders = match &settings.clip_folders {
-        Some(f) => f.iter().map(std::path::PathBuf::from).collect(),
-        None => clip_drop_default_paths(&app),
-    };
-    clips.set(settings.enabled && settings.clips, folders);
     g.set(settings);
+}
+
+/// Settings → Chat → Clip drop (#382): its switch and folders, from the page's saved settings at boot and on every
+/// change. Its own feature: it runs with Game activity off and never starts game detection.
+#[tauri::command]
+pub fn set_clip_drop(
+    app: AppHandle,
+    clips: State<'_, crate::games::clipdrop::ClipDrop>,
+    settings: crate::games::clipdrop::ClipDropSettings,
+) {
+    clips.set(settings.on, settings.watched(app.path().video_dir().ok()));
 }
 
 fn clip_drop_default_paths(app: &AppHandle) -> Vec<std::path::PathBuf> {

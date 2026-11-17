@@ -22,6 +22,7 @@
   import { installUpdate, startUpdateListening, updates } from './lib/updates.svelte'
   import { startMediaActivity } from './lib/activityPrefs.svelte'
   import { startGameActivity } from './lib/gamePrefs.svelte'
+  import { tellClipDrop } from './lib/clipDropPrefs.svelte'
   import { startSteamListening } from './lib/steam.svelte'
 
   let user = $state<User | null>(null)
@@ -57,6 +58,8 @@
     const media = startMediaActivity().catch(() => () => {})
     // "Playing" (#380): likewise, nothing is looked for until the core has the saved switches
     const games = startGameActivity().catch(() => () => {})
+    // Clip drop (#382): its own switch, told apart from Game activity; nothing is watched until then
+    tellClipDrop()
     Promise.all([startListening(), startVoiceListening(), startUpdateListening(), media, games]).then(async ([unlisten, unlistenVoice, unlistenUpdates, unlistenMedia, unlistenGames]) => {
       const unlistenBadges = startBadgeListening()
       const unlistenSounds = startSoundboardListening()

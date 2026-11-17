@@ -18,8 +18,9 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 
 import ClipDropToast from './ClipDropToast.svelte'
-import { clipDrop, clipsTarget, MAX_OFFERS, pendingFresh, PENDING_MS } from '../lib/clipDrop.svelte'
+import { clipDrop, clipDropOn, clipsTarget, MAX_OFFERS, pendingFresh, PENDING_MS } from '../lib/clipDrop.svelte'
 import { gamePrefs } from '../lib/gamePrefs.svelte'
+import { clipDropPrefs } from '../lib/clipDropPrefs.svelte'
 import { app, ui } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { testReady } from '../lib/testReady'
@@ -51,7 +52,7 @@ beforeEach(() => {
   ui.shareClip = null
   ui.attachFiles = null
   gamePrefs.enabled = true
-  gamePrefs.clips = true
+  clipDropPrefs.on = true
 })
 afterEach(() => {
   if (cmp) unmount(cmp)
@@ -167,25 +168,31 @@ describe('ClipDropToast: follow-ups (#394)', () => {
     expect(button(toasts()[0], 'Send in a DM')).toBeUndefined()
   })
 
-  it('turning clip drop (or Game activity) off clears the toasts showing, and new offers are ignored', async () => {
+  it('turning clip drop off clears the toasts showing, and new offers are ignored', async () => {
     await show([ch('C1', 'highlights')])
     offer('a.mp4')
     offer('b.mp4')
     flushSync()
     expect(toasts()).toHaveLength(2)
-    gamePrefs.clips = false
+    clipDropPrefs.on = false
     flushSync()
     expect(toasts()).toHaveLength(0)
     offer('c.mp4')
     flushSync()
     expect(toasts()).toHaveLength(0)
-    gamePrefs.clips = true
+    clipDropPrefs.on = true
     offer('d.mp4')
     flushSync()
     expect(toasts()).toHaveLength(1)
+  })
+
+  it('Game activity off leaves clip drop alone (#382: its own feature): offers still show', async () => {
     gamePrefs.enabled = false
+    await show([ch('C1', 'highlights')])
+    expect(clipDropOn()).toBe(true)
+    offer('a.mp4')
     flushSync()
-    expect(toasts()).toHaveLength(0)
+    expect(toasts()).toHaveLength(1)
   })
 
   it('a pending request is fresh for a while, then stale', () => {

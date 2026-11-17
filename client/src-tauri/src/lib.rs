@@ -239,7 +239,7 @@ pub fn run() {
                     let _ = h2.emit("pulse://game-activity", state);
                 }),
             ));
-            // Clip drop (#382): offers new NVIDIA / Game Bar recordings; nothing runs until the page's switches say so
+            // Clip drop (#382): offers new NVIDIA / Game Bar recordings; nothing runs until the page's Clip drop switch says so
             let h = app.handle().clone();
             app.manage(games::clipdrop::ClipDrop::new(std::sync::Arc::new(
                 move |offer| {
@@ -511,6 +511,7 @@ pub fn run() {
             commands::set_media_activity,
             commands::media_activity,
             commands::set_game_activity,
+            commands::set_clip_drop,
             commands::game_activity,
             commands::pick_game_exe,
             commands::clip_drop_defaults,

@@ -1,7 +1,8 @@
 //! Auto clip drop (#382): a recording NVIDIA (ShadowPlay / the NVIDIA App: `Videos\<Game>\`) or Game Bar
 //! (`Videos\Captures`) just saved is offered to a clips channel (`pulse://clip-drop`; the page asks "Share to #clips?"
-//! and opens the usual clip editor with it). Settings → Game activity → "Offer new recordings as clips", under the
-//! master switch, both on by default. Windows only: elsewhere nothing runs.
+//! and opens the usual clip editor with it). Settings → Chat → Clip drop ([`ClipDropSettings`], on by default), its own
+//! feature: it runs with Game activity off, never starts game detection and shares nothing until you share a clip.
+//! Windows only: elsewhere nothing runs.
 //!
 //! No file watcher: every [`POLL`] the watched folders are listed, their top level and one level of subfolders (the
 //! per-game ones), nothing deeper. A folder's files when it's first read are old ([`Tracker`]): only a video that
@@ -12,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// How often the folders are listed (owner: cheap, ~10 s).
 pub const POLL: Duration = Duration::from_secs(10);
@@ -181,6 +182,34 @@ pub fn tidy_folders(folders: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> 
         .collect()
 }
 
+/// Settings → Chat → Clip drop, as the page saves it (`set_clip_drop`): the switch and the folders it watches.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct ClipDropSettings {
+    pub on: bool,
+    /// `None`: the defaults under Videos ([`default_folders`]).
+    pub folders: Option<Vec<String>>,
+}
+
+impl Default for ClipDropSettings {
+    fn default() -> Self {
+        ClipDropSettings {
+            on: true,
+            folders: None,
+        }
+    }
+}
+
+impl ClipDropSettings {
+    /// The folders to watch: the chosen ones, else the defaults under `videos`.
+    pub fn watched(&self, videos: Option<PathBuf>) -> Vec<PathBuf> {
+        match &self.folders {
+            Some(f) => f.iter().map(PathBuf::from).collect(),
+            None => default_folders(videos),
+        }
+    }
+}
+
 type Offer = Arc<dyn Fn(ClipOffer) + Send + Sync>;
 
 struct Inner {
@@ -220,8 +249,8 @@ impl ClipDrop {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// On (the master switch and "Offer new recordings as clips") starts the poller if none runs; off stops it. The
-    /// folders are read on the next poll (one newly added starts as old news).
+    /// On (Clip drop's switch, whatever Game activity says) starts the poller if none runs; off stops it. The folders
+    /// are read on the next poll (one newly added starts as old news).
     pub fn set(&self, on: bool, folders: Vec<PathBuf>) {
         let mut g = self.lock();
         g.folders = tidy_folders(folders);
@@ -450,6 +479,19 @@ mod tests {
             ]),
             vec![v, PathBuf::from("D:/Clips")]
         );
+    }
+
+    #[test]
+    fn settings_default_on_and_watch_the_chosen_folders_or_the_defaults() {
+        let v = PathBuf::from("C:/Users/alex/Videos");
+        let s: ClipDropSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s, ClipDropSettings::default());
+        assert!(s.on);
+        assert_eq!(s.watched(Some(v.clone())), default_folders(Some(v.clone())));
+        let s: ClipDropSettings =
+            serde_json::from_str(r#"{"on":false,"folders":["D:/Clips"]}"#).unwrap();
+        assert!(!s.on);
+        assert_eq!(s.watched(Some(v)), vec![PathBuf::from("D:/Clips")]);
     }
 
     #[tokio::test]

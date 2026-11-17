@@ -20,7 +20,7 @@
     }
   })
 
-  // the switch (or Game activity) turned off: what's showing goes too
+  // the switch turned off: what's showing goes too
   $effect(() => {
     if (!clipDropOn()) clearOffers()
   })

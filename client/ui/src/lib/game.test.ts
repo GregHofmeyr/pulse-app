@@ -37,18 +37,17 @@ describe('how it reads', () => {
 
 describe('saved switches', () => {
   it('all on by default; an older save fills in; junk is the defaults', () => {
-    expect(parseSaved(null)).toEqual({ enabled: true, art: true, time: true, games: [], clips: true, clip_folders: null, steam_achievements: false })
+    expect(parseSaved(null)).toEqual({ enabled: true, art: true, time: true, games: [], steam_achievements: false })
     expect(parseSaved('{oops')).toEqual(parseSaved(null))
     expect(parseSaved(JSON.stringify({ enabled: false, games: [{ name: 'Old', exe: 'C:\\old.exe' }, { name: '', exe: 'x' }, 7] }))).toEqual({
-      enabled: false, art: true, time: true, games: [{ name: 'Old', exe: 'C:\\old.exe' }], clips: true, clip_folders: null, steam_achievements: false,
+      enabled: false, art: true, time: true, games: [{ name: 'Old', exe: 'C:\\old.exe' }], steam_achievements: false,
     })
     // the Steam flag is the server's to say: a save never turns it on
     expect(parseSaved(JSON.stringify({ steam_achievements: true })).steam_achievements).toBe(false)
   })
 
-  it('clip drop: its switch and chosen folders are kept; junk folders are dropped', () => {
-    expect(parseSaved(JSON.stringify({ clips: false, clip_folders: ['D:\\Clips', '', 3, '  '] }))).toMatchObject({ clips: false, clip_folders: ['D:\\Clips'] })
-    expect(parseSaved(JSON.stringify({ clip_folders: 'D:\\Clips' })).clip_folders).toBeNull()
+  it("an older save's clip drop fields aren't Game activity's any more (#382: lib/clipDropPrefs takes them over)", () => {
+    expect(parseSaved(JSON.stringify({ enabled: false, clips: true, clip_folders: ['D:\\Clips'] }))).not.toHaveProperty('clips')
   })
 })
 
