@@ -328,6 +328,12 @@ async fn join(
     // (and gets a read point) or sees us as a member in create_channel.
     let mut tx = crate::db::begin_write(&s.db).await?;
     server_live_in(&mut tx, id).await?; // a delete committed since the check above (#287)
+    // removed three times within 48 hours: not until the owner allows them back (#418)
+    if crate::servers::membership::blocked_in(&mut tx, id, me).await? {
+        return Err(AppError::ForbiddenMsg(
+            crate::servers::membership::BLOCKED_JOIN.into(),
+        ));
+    }
     let added = sqlx::query(
         "INSERT OR IGNORE INTO server_members (server_id, user_id, joined_at) VALUES (?, ?, ?)",
     )

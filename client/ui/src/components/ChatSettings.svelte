@@ -1,5 +1,6 @@
 <script lang="ts">
   import Segmented from './Segmented.svelte'
+  import ClipDropSettings from './ClipDropSettings.svelte'
   import { motion, setAnimateMode, type AnimateMode } from '../lib/animate.svelte'
   import { previews, setShowPreviews } from '../lib/linkPreviews.svelte'
   import { planPrefs, setPlanReminders, setPlanSomething } from '../lib/plans.svelte'
@@ -57,6 +58,8 @@
     <Segmented label="F1 race weekends" options={onOff} value={f1Prefs.on} onchange={setF1RaceWeekends} />
     <small>{f1Prefs.on ? "A server's F1 channel shows a countdown to the next race, and F1 cards open in full: the race weekend with podium predictions, the results and the scores. You get a notification when your predictions are scored." : 'No countdown, F1 cards fold to one line (click one to open it), and no notification when your predictions are scored (it still reaches your inbox).'} This device only.</small>
   </div>
+  <!-- Clip drop (#382): its own feature (Windows only), apart from Game activity -->
+  <ClipDropSettings />
 </section>
 
 <style>

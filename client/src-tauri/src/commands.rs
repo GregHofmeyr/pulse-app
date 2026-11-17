@@ -13,9 +13,9 @@ use pulse_protocol::rest::{
     Leaderboard, LeaderboardPeriod, LinkSpeakerRequest, MediaInfo, Member, Message, MuteTarget,
     NameArchivePage, NotifyLevel, Pin, PinDuration, PinnedMessage, PostQuoteRequest, Profile,
     QotyEvent, RecoveryCodesResponse, SaveLayoutRequest, SearchRequest, SearchResults, Server,
-    ServerLayout, SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare, StartQotyRequest,
-    TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
-    WatchParty, WatchPartyAction,
+    ServerBlock, ServerLayout, SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare,
+    StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest,
+    UpdateSoundRequest, User, WatchParty, WatchPartyAction,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -1224,6 +1224,27 @@ pub async fn remove_server_member(
 }
 
 #[tauri::command]
+pub async fn list_server_blocks(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<Vec<ServerBlock>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.server_blocks(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn allow_back(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    user_id: UserId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.allow_back(&token, server_id, user_id).await)
+}
+
+#[tauri::command]
 pub async fn list_channels(
     app: AppHandle,
     core: State<'_, Core>,
@@ -1454,18 +1475,21 @@ pub fn media_activity(m: State<'_, crate::activity::MediaActivity>) -> crate::ac
 /// on every change. Master off: no poller at all.
 #[tauri::command]
 pub fn set_game_activity(
-    app: AppHandle,
     g: State<'_, crate::games::GameActivity>,
-    clips: State<'_, crate::games::clipdrop::ClipDrop>,
     settings: crate::games::GameSettings,
 ) {
-    // clip drop (#382): under the master switch, watching the chosen folders or the defaults under Videos
-    let folders = match &settings.clip_folders {
-        Some(f) => f.iter().map(std::path::PathBuf::from).collect(),
-        None => clip_drop_default_paths(&app),
-    };
-    clips.set(settings.enabled && settings.clips, folders);
     g.set(settings);
+}
+
+/// Settings → Chat → Clip drop (#382): its switch and folders, from the page's saved settings at boot and on every
+/// change. Its own feature: it runs with Game activity off and never starts game detection.
+#[tauri::command]
+pub fn set_clip_drop(
+    app: AppHandle,
+    clips: State<'_, crate::games::clipdrop::ClipDrop>,
+    settings: crate::games::clipdrop::ClipDropSettings,
+) {
+    clips.set(settings.on, settings.watched(app.path().video_dir().ok()));
 }
 
 fn clip_drop_default_paths(app: &AppHandle) -> Vec<std::path::PathBuf> {

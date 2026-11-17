@@ -14,15 +14,19 @@
 //! in its first text channel ("alex left the server", "sam was removed", #418). A custom status showing one of its
 //! emoji loses the emoji (#418).
 //!
-//! Nothing stops a rejoin: servers are public to the group, and Join server works as before, starting at "all read".
+//! A removed person may rejoin: servers are public to the group, and Join server works as before, starting at "all
+//! read". But the third time the owner removes the same person within [`REMOVAL_WINDOW_HOURS`] (#418) they're blocked
+//! ([`record_removal`]): Join server refuses them ([`BLOCKED_JOIN`]) until the owner allows them back
+//! (`DELETE /servers/{id}/blocked/{user}`, [`allow_back`]), which clears the block and the removals it counted. The
+//! block has no expiry. Only the owner sees who's blocked (`GET /servers/{id}/blocked`, Server settings › Members).
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ServerId, UserId};
-use pulse_protocol::rest::TransferServerRequest;
+use pulse_protocol::rest::{ServerBlock, TransferServerRequest};
 
 use crate::AppState;
 use crate::auth::AuthUser;
@@ -34,7 +38,17 @@ pub fn router() -> Router<AppState> {
         .route("/servers/{id}/leave", post(leave))
         .route("/servers/{id}/members/{user}", delete(remove))
         .route("/servers/{id}/owner", put(transfer))
+        .route("/servers/{id}/blocked", get(blocked))
+        .route("/servers/{id}/blocked/{user}", delete(allow_back))
 }
+
+/// How many removals of the same person from the same server, within [`REMOVAL_WINDOW_HOURS`], block their rejoin.
+pub(crate) const REMOVALS_TO_BLOCK: i64 = 3;
+/// The window [`REMOVALS_TO_BLOCK`] counts removals in.
+pub(crate) const REMOVAL_WINDOW_HOURS: i64 = 48;
+/// What Join server says to someone blocked from rejoining.
+pub(crate) const BLOCKED_JOIN: &str = "You can't rejoin this server right now. Ask the owner.";
+const ONLY_OWNER_BLOCKS: &str = "Only the server's owner can see or lift rejoin blocks.";
 
 const OWNER_CANT_LEAVE: &str = "The owner can't leave their own server: hand it to someone else first (Server settings, Transfer ownership), or delete it.";
 const ONLY_OWNER_REMOVES: &str = "Only the server's owner can remove people.";
@@ -86,6 +100,141 @@ async fn remove(
     }
     take_out(&s, id, user, Some(me)).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /servers/{id}/blocked` (#418): the people blocked from rejoining, newest block first. The owner only (403 for
+/// anyone else).
+async fn blocked(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ServerId>,
+) -> AppResult<Json<Vec<ServerBlock>>> {
+    server_exists(&s.db, id).await?;
+    if owner_of(&s, id).await? != me {
+        return Err(AppError::ForbiddenMsg(ONLY_OWNER_BLOCKS.into()));
+    }
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT user_id, blocked_at FROM server_blocks WHERE server_id = ? ORDER BY blocked_at DESC, user_id",
+    )
+    .bind(id.to_string())
+    .fetch_all(&s.db)
+    .await?;
+    rows.into_iter()
+        .map(|(user, blocked_at)| {
+            Ok(ServerBlock {
+                user_id: user.parse().map_err(anyhow::Error::from)?,
+                blocked_at,
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()
+        .map(Json)
+}
+
+/// `DELETE /servers/{id}/blocked/{user}` (#418): the owner allows a blocked person back; their removals so far stop
+/// counting too. 403 for anyone but the owner, 404 when they aren't blocked. The owner is re-checked under the write
+/// lock, as a hand-over may have landed since.
+async fn allow_back(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path((id, user)): Path<(ServerId, UserId)>,
+) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    server_exists(&s.db, id).await?;
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    server_live_in(&mut tx, id).await?;
+    let (sid, uid) = (id.to_string(), user.to_string());
+    let owner: String = sqlx::query_scalar("SELECT created_by FROM servers WHERE id = ?")
+        .bind(&sid)
+        .fetch_one(&mut *tx)
+        .await?;
+    if owner != me.to_string() {
+        return Err(AppError::ForbiddenMsg(ONLY_OWNER_BLOCKS.into()));
+    }
+    let gone = sqlx::query("DELETE FROM server_blocks WHERE server_id = ? AND user_id = ?")
+        .bind(&sid)
+        .bind(&uid)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if gone == 0 {
+        return Err(AppError::NotFound);
+    }
+    sqlx::query("DELETE FROM server_removals WHERE server_id = ? AND user_id = ?")
+        .bind(&sid)
+        .bind(&uid)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    tracing::info!(server = %id, user = %user, by = %me, "allowed back");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Whether `user` is blocked from rejoining `server` (#418), inside the join's write transaction.
+pub(crate) async fn blocked_in(
+    tx: &mut sqlx::SqliteConnection,
+    server: ServerId,
+    user: UserId,
+) -> AppResult<bool> {
+    let hit: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM server_blocks WHERE server_id = ? AND user_id = ?")
+            .bind(server.to_string())
+            .bind(user.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+    Ok(hit.is_some())
+}
+
+/// Note that `by` removed `user` from `server` (#418), in the removal's transaction: removals older than the window go,
+/// and the [`REMOVALS_TO_BLOCK`]th within it blocks their rejoin. True when this one blocked them.
+async fn record_removal(
+    tx: &mut sqlx::SqliteConnection,
+    server: ServerId,
+    user: UserId,
+    by: UserId,
+) -> AppResult<bool> {
+    let (sid, uid) = (server.to_string(), user.to_string());
+    let at = crate::db::now();
+    let since =
+        crate::db::stamp(chrono::Utc::now() - chrono::TimeDelta::hours(REMOVAL_WINDOW_HOURS));
+    sqlx::query(
+        "DELETE FROM server_removals WHERE server_id = ? AND user_id = ? AND removed_at <= ?",
+    )
+    .bind(&sid)
+    .bind(&uid)
+    .bind(&since)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO server_removals (server_id, user_id, removed_by, removed_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&sid)
+    .bind(&uid)
+    .bind(by.to_string())
+    .bind(&at)
+    .execute(&mut *tx)
+    .await?;
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM server_removals WHERE server_id = ? AND user_id = ?",
+    )
+    .bind(&sid)
+    .bind(&uid)
+    .fetch_one(&mut *tx)
+    .await?;
+    if count < REMOVALS_TO_BLOCK {
+        return Ok(false);
+    }
+    let added = sqlx::query(
+        "INSERT OR IGNORE INTO server_blocks (server_id, user_id, blocked_at) VALUES (?, ?, ?)",
+    )
+    .bind(&sid)
+    .bind(&uid)
+    .bind(&at)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    Ok(added > 0)
 }
 
 /// `PUT /servers/{id}/owner`: its owner hands the server to another of its members (#418). 403 for anyone but the
@@ -237,8 +386,13 @@ pub(crate) async fn take_out(
     // Their LiveKit grants for its rooms go with the membership (a join with one is refused anyway); the participants
     // still carrying one are removed below, whatever identity they connected under, as a logout does (#418).
     let grants = crate::auth::session::drop_server_grants(&mut tx, user, server).await?;
+    // a removal counts towards blocking their rejoin (#418); a leave doesn't
+    let blocked = match by {
+        Some(by) => record_removal(&mut tx, server, user, by).await?,
+        None => false,
+    };
     tx.commit().await?;
-    tracing::info!(server = %server, user = %user, by = ?by, "left server");
+    tracing::info!(server = %server, user = %user, by = ?by, blocked, "left server");
     if let Some(message) = line {
         s.hub
             .publish(

@@ -1,6 +1,7 @@
 // Typed wrappers over Tauri commands. The UI never calls the network itself.
 import { invoke } from '@tauri-apps/api/core'
 import type { User } from './protocol/User'
+import type { ServerBlock } from './protocol/ServerBlock'
 import type { MusicPlayer } from './protocol/MusicPlayer'
 import type { ScheduledMessage } from './protocol/ScheduledMessage'
 import type { MessageReminder } from './protocol/MessageReminder'
@@ -212,13 +213,12 @@ export type GameSettings = {
   art: boolean
   time: boolean
   games: ManualGame[]
-  /** "Offer new recordings as clips" (#382). */
-  clips: boolean
-  /** The folders clip drop watches; null: the defaults under Videos (`clipDropDefaults`). */
-  clip_folders: string[] | null
   /** A linked Steam account shares achievements (#379): the app id goes even with art off, marked for the server only. */
   steam_achievements: boolean
 }
+/** Settings › Chat › Clip drop (#382), the core's `games::clipdrop::ClipDropSettings`: its own switch, apart from
+ *  Game activity. `folders` null: the defaults under Videos (`clipDropDefaults`). */
+export type ClipDropSettings = { on: boolean; folders: string[] | null }
 /** `pulse://clip-drop` (#382): a recording that just finished in a watched folder. */
 export type ClipOffer = { path: string; name: string }
 /** Whether this device looks for games, and the one it sees (`pulse://game-activity`). */
@@ -328,6 +328,10 @@ export const api = {
   removeServerMember: (serverId: string, userId: string) => invoke<void>('remove_server_member', { serverId, userId }),
   /** Hand a server to another of its members (#418): its owner only. */
   transferServer: (serverId: string, userId: string) => invoke<void>('transfer_server', { serverId, userId }),
+  /** The people blocked from rejoining a server (#418): its owner only. */
+  listServerBlocks: (serverId: string) => invoke<ServerBlock[]>('list_server_blocks', { serverId }),
+  /** Let someone blocked from rejoining a server back (#418): its owner only. */
+  allowBack: (serverId: string, userId: string) => invoke<void>('allow_back', { serverId, userId }),
   listChannels: (serverId: string) => invoke<Channel[]>('list_channels', { serverId }),
   listMembers: (serverId: string) => invoke<Member[]>('list_members', { serverId }),
   listMessages: (channelId: string, before?: string) =>
@@ -463,6 +467,8 @@ export const api = {
   gameActivity: () => invoke<GameState>('game_activity'),
   /** "Add a game": the system file dialog for an .exe; null when cancelled. */
   pickGameExe: () => invoke<{ exe: string; name: string } | null>('pick_game_exe'),
+  /** Clip drop (#382): off watches nothing; runs whatever Game activity says. */
+  setClipDrop: (settings: ClipDropSettings) => invoke<void>('set_clip_drop', { settings }),
   clipDropDefaults: () => invoke<string[]>('clip_drop_defaults'),
   pickClipFolder: () => invoke<string | null>('pick_clip_folder'),
   /** Get a notification when someone goes live, or stop (#60). A LiveNotifyChanged follows to your sessions. */
