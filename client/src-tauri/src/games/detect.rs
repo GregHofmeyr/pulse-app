@@ -97,6 +97,38 @@ fn file_name(p: &str) -> &str {
     p.rsplit(['\\', '/']).next().unwrap_or(p)
 }
 
+/// Steam apps that run but aren't games (#392): wallpaper engines, VR runtimes, redistributables, Proton and the
+/// Linux runtimes, SDKs. Known ids first, then names no game has.
+const NOT_GAMES: &[u32] = &[
+    431960,  // Wallpaper Engine
+    250820,  // SteamVR
+    228980,  // Steamworks Common Redistributables
+    1070560, // Steam Linux Runtime 1.0 (scout)
+    1391110, // Steam Linux Runtime 2.0 (soldier)
+    1628350, // Steam Linux Runtime 3.0 (sniper)
+    1493710, // Proton Experimental
+    1826330, // Proton EasyAntiCheat Runtime
+    1161040, // Proton BattlEye Runtime
+    993090,  // Lossless Scaling
+    1905180, // OBS Studio
+];
+
+/// Whether a Steam app is a tool, not a game: by id, or by a name only tools carry.
+pub fn not_a_game(id: u32, name: &str) -> bool {
+    if NOT_GAMES.contains(&id) {
+        return true;
+    }
+    let n = name.to_lowercase();
+    n.starts_with("proton ")
+        || n == "proton"
+        || n.starts_with("steam linux runtime")
+        || n.starts_with("steamvr")
+        || n.contains("redistributable")
+        || n.ends_with(" sdk")
+        || n.contains("dedicated server")
+        || n.starts_with("wallpaper engine")
+}
+
 /// The first of `games` running among `procs`: by full path, or by exe name alone for a process whose path Windows
 /// wouldn't give (only its name is known then).
 pub fn match_exe<'a>(procs: &[String], games: &'a [ManualGame]) -> Option<&'a ManualGame> {
@@ -123,6 +155,7 @@ pub fn detect(
     if let Some(id) = source.running_app_id().filter(|id| *id != 0)
         && let Some(steam) = source.steam_path()
         && let Some(name) = names.name(&steam, id)
+        && !not_a_game(id, &name)
     {
         return Some(Detected {
             name,
@@ -261,6 +294,44 @@ pub mod tests {
             detect(&mut src, &mut names, &[]).map(|d| d.name),
             Some("Hat Game".into())
         );
+    }
+
+    #[test]
+    fn steam_tools_are_not_playing() {
+        let dir = tempfile::tempdir().unwrap();
+        let steam = dir.path().join("Steam");
+        manifest(&steam, 431960, "Wallpaper Engine");
+        manifest(&steam, 3_000_001, "Proton 9.0");
+        manifest(&steam, 3_000_002, "Space Game Dedicated Server");
+        manifest(&steam, 570, "Space Game");
+        library_list(&steam, &[&steam]);
+        let games = [game("Old Game", r"D:\Games\old.exe")];
+        let mut src = Fake {
+            app_id: Some(431960),
+            steam: Some(steam.clone()),
+            procs: vec![r"D:\Games\old.exe".into()],
+            ..Fake::default()
+        };
+        let mut names = SteamNames::default();
+        // a tool under Steam: the hand-added game running beside it shows instead
+        assert_eq!(
+            detect(&mut src, &mut names, &games).map(|d| d.name),
+            Some("Old Game".into())
+        );
+        for id in [3_000_001, 3_000_002] {
+            src.app_id = Some(id);
+            assert_eq!(detect(&mut src, &mut names, &[]), None, "{id}");
+        }
+        src.app_id = Some(570);
+        assert_eq!(
+            detect(&mut src, &mut names, &[]).map(|d| d.name),
+            Some("Space Game".into())
+        );
+        assert!(not_a_game(250820, "SteamVR"));
+        assert!(not_a_game(1, "Steam Linux Runtime 3.0 (sniper)"));
+        assert!(not_a_game(2, "Steamworks Common Redistributables"));
+        assert!(!not_a_game(3, "Protonaut"));
+        assert!(!not_a_game(4, "Hat Game"));
     }
 
     #[test]

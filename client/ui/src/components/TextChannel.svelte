@@ -25,6 +25,8 @@
   import { app, clock, discardFiles, queueMessage, retryFiles, ui } from '../lib/store.svelte'
   import { presenceOf } from '../lib/presence'
   import { listeningOf } from '../lib/activity'
+  import PlayingLine from './PlayingLine.svelte'
+  import { playingOf } from '../lib/game'
   import ListeningLine from './ListeningLine.svelte'
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
@@ -818,8 +820,10 @@
     {:else if isPrivate && channel?.kind === 'dm' && others[0]}
       <Avatar id={others[0]} name={title} size={26} presence={presenceOf(app.state, others[0], clock.nowIso)} interactive serverId={null} />
       <span class="title"><Name userId={others[0]} serverId={null} text={title} /></span>
-      {@const listening = listeningOf(app.state, others[0])}
-      {#if listening}<ListeningLine {listening} />{/if}
+      <!-- the game they're playing (#392), else what they're listening to -->
+      {@const playing = playingOf(app.state, others[0])}
+      {@const listening = playing ? null : listeningOf(app.state, others[0])}
+      {#if playing}<PlayingLine {playing} />{:else if listening}<ListeningLine {listening} />{/if}
     {:else if isPrivate}
       {#if channel?.icon_hash}
         <GroupIcon hash={channel.icon_hash} still={channel.icon_still} size={26} />

@@ -457,6 +457,30 @@ describe('MemberList: Listening to (#275)', () => {
   })
 })
 
+describe('MemberList: Playing (#392)', () => {
+  it("the game someone plays takes the line under their name, over their song; a custom status still comes first", () => {
+    const samRow = () => [...document.querySelectorAll<HTMLElement>('.members .row')].find((r) => r.textContent?.includes('Sammy'))!
+    const listening = { title: 'Song', artist: 'The Band', album: null, spotify_id: null, art: null }
+    const playing = { name: 'Space Game', steam_app_id: 570, started_at: null, art: null }
+    app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online', listening, playing } } }
+    flushSync()
+    const line = samRow().querySelector<HTMLElement>('[data-playing-line]')!
+    expect(line.textContent).toBe('Playing Space Game')
+    expect(line.dataset.tip).toBe('Playing Space Game')
+    expect(samRow().querySelector('.listening-line')).toBeNull()
+    expect(samRow().querySelector('.sp')).toBeNull()
+    expect(samRow().querySelector('.name-clip')).toBeNull()
+    app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online', playing, custom_status: { text: 'Busy', emoji: null } } } }
+    flushSync()
+    expect(samRow().querySelector('[data-playing-line]')).toBeNull()
+    expect(samRow().querySelector('.custom-status')).not.toBeNull()
+    app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online' } } }
+    flushSync()
+    expect(samRow().querySelector('[data-playing-line]')).toBeNull()
+    expect(samRow().querySelector('.name-clip')?.textContent).toBe('sam')
+  })
+})
+
 describe('MemberList: custom status (#152)', () => {
   it('one muted line under the name, cut to fit, the whole text in its tooltip; plain text, never markup', () => {
     const samRow = () => [...document.querySelectorAll<HTMLElement>('.members .row')].find((r) => r.textContent?.includes('Sammy'))!
