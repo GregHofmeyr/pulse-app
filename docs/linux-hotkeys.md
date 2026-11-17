@@ -17,6 +17,10 @@ bindn = , mouse:274, exec, pulse-app --toggle-mute
 
 # bring Pulse up and open the quick switcher (#319); plain bind: the key is Pulse's alone
 bind = CTRL SHIFT, K, exec, pulse-app --quick-switch
+
+# leave the call you're in, and Go Live (#72: brings Pulse up with the screen picker; Windows only for now)
+bindn = , F9, exec, pulse-app --leave-call
+bind = CTRL SHIFT, L, exec, pulse-app --go-live
 ```
 
 The quick switcher's command asks the running Pulse to come to the front and open the switcher. Wayland lets a

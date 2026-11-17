@@ -28,8 +28,8 @@
 
   onMount(() => {
     if (!live) return
-    const { angle, options } = untrack(() => spin)
-    return runSpin({ angle, count: options.length, quiet: quietNow(), onRotate: (deg) => (rotation = deg), onLanded: () => (landed = true) })
+    const { angle, options, weights } = untrack(() => spin)
+    return runSpin({ angle, count: options.length, weights, quiet: quietNow(), onRotate: (deg) => (rotation = deg), onLanded: () => (landed = true) })
   })
 
   // pointed at or focused once it's landed: it stays until let go (then lingers a little)
@@ -68,7 +68,7 @@
 <div class="wheel-card quiet-card" role="group" aria-label="Quiet spin" out:exitFade
   onmouseenter={() => (hovered = true)} onmouseleave={() => (hovered = false)}
   onfocusin={() => (hovered = true)} onfocusout={() => (hovered = false)}>
-  <Wheel options={spin.options} {rotation} size={140} landed={landed ? spin.winner : null} result={landed ? winner : null} />
+  <Wheel options={spin.options} weights={spin.weights} palette={spin.palette} {rotation} size={140} landed={landed ? spin.winner : null} result={landed ? winner : null} />
   <div class="body">
     <p class="caption" aria-live="polite">
       {#if !landed}{@render who()} is spinning {label}…

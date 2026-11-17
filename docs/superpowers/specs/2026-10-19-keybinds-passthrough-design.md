@@ -30,7 +30,8 @@ in the focused app.
 ## Non-goals
 
 - Push-to-talk (deferred: nobody in the group uses it).
-- Actions beyond toggle mute / toggle deafen (later, when a use case shows up).
+- Actions beyond toggle mute / toggle deafen (later, when a use case shows up). Since added: open the quick switcher
+  (#319), leave call and Go Live (#72).
 - Linux behaviour changes: Linux keeps compositor binds + the `pulse-app --toggle-*` CLI (only the
   doc is refreshed, see below).
 - Running Pulse elevated / as admin.

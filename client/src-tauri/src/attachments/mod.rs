@@ -32,6 +32,9 @@ pub struct Staged {
     pub height: Option<u32>,
     /// `data:image/png;base64,…`, a small thumbnail of an image.
     pub preview: Option<String>,
+    /// An animated image (more than one frame): the composer's image editor (#290) leaves it alone, since a
+    /// canvas would keep only its first frame.
+    pub animated: bool,
     /// What gets uploaded.
     #[serde(skip)]
     pub path: PathBuf,
@@ -107,6 +110,7 @@ impl Stager {
                 "data:image/png;base64,{}",
                 base64::engine::general_purpose::STANDARD.encode(&out.preview_png)
             )),
+            animated: out.frames > 1,
             path,
             owned: true,
         }))
@@ -123,6 +127,7 @@ impl Stager {
             width: None,
             height: None,
             preview: None,
+            animated: false,
             path,
             owned,
         })
@@ -182,6 +187,17 @@ impl Stager {
             .unwrap_or_else(|p| p.into_inner())
             .get(id)
             .cloned()
+    }
+
+    /// A staged still image's bytes (the WebP it was converted to), for the composer's image editor (#290). Only
+    /// our own converted stills: never a file by path, an animation or anything that isn't an image.
+    pub fn image_bytes(&self, id: &str) -> Result<Vec<u8>, String> {
+        match self.get(id) {
+            Some(s) if s.owned && s.kind == AttachmentKind::Image && !s.animated => {
+                std::fs::read(&s.path).map_err(|_| UNREADABLE.to_string())
+            }
+            _ => Err("That file can't be edited.".into()),
+        }
     }
 
     /// Forget a staged file, deleting it if it is ours.
@@ -283,6 +299,30 @@ mod tests {
         assert_eq!((t.name.as_str(), t.size), ("notes.txt", 2));
         assert!(t.owned && t.path.exists());
         assert_eq!(st.stage_bytes("x", b"").unwrap_err(), EMPTY);
+    }
+
+    /// #290: the image editor reads only our own converted stills.
+    #[test]
+    fn only_a_staged_still_image_can_be_read_for_editing() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = Stager::new(dir.path().join("staging"));
+        let img = st.stage_bytes("shot.png", &png(8, 6)).unwrap();
+        assert!(!img.animated);
+        let bytes = st.image_bytes(&img.id).unwrap();
+        assert_eq!(bytes.len() as u64, img.size);
+        assert_eq!(
+            image::guess_format(&bytes).unwrap(),
+            image::ImageFormat::WebP
+        );
+        let txt = st.stage_bytes("notes.txt", b"hi").unwrap();
+        assert!(st.image_bytes(&txt.id).is_err());
+        let pdf = dir.path().join("report.pdf");
+        std::fs::write(&pdf, b"%PDF-1.4 hello").unwrap();
+        let by_path = st.stage_path(&pdf).unwrap();
+        assert!(st.image_bytes(&by_path.id).is_err());
+        assert!(st.image_bytes("nope").is_err());
+        st.remove(&img.id);
+        assert!(st.image_bytes(&img.id).is_err());
     }
 
     #[test]

@@ -1,5 +1,5 @@
 //! Linux hotkeys: Wayland apps can't grab global keys, so a Hyprland bind runs
-//! `pulse-app --toggle-mute` (or `--toggle-deafen`, `--quick-switch`), which pokes the running app
+//! `pulse-app --toggle-mute` (or `--toggle-deafen`, `--quick-switch`, `--leave-call`, `--go-live`), which pokes the running app
 //! over an owner-only Unix socket.
 
 #[cfg(unix)]
@@ -11,6 +11,10 @@ pub enum Command {
     ToggleDeafen,
     /// Bring the window up and open the quick switcher (#319).
     QuickSwitch,
+    /// Leave the call you're in (#72).
+    LeaveCall,
+    /// Bring the window up and open the Go Live picker (#72).
+    GoLive,
 }
 
 impl Command {
@@ -19,6 +23,8 @@ impl Command {
             "toggle-mute" => Some(Self::ToggleMute),
             "toggle-deafen" => Some(Self::ToggleDeafen),
             "quick-switch" => Some(Self::QuickSwitch),
+            "leave-call" => Some(Self::LeaveCall),
+            "go-live" => Some(Self::GoLive),
             _ => None,
         }
     }
@@ -35,6 +41,8 @@ impl Command {
             Self::ToggleMute => "toggle-mute\n",
             Self::ToggleDeafen => "toggle-deafen\n",
             Self::QuickSwitch => "quick-switch\n",
+            Self::LeaveCall => "leave-call\n",
+            Self::GoLive => "go-live\n",
         }
     }
 }
@@ -259,13 +267,17 @@ mod tests {
         send(&path, Command::ToggleMute).unwrap();
         send(&path, Command::ToggleDeafen).unwrap();
         send(&path, Command::QuickSwitch).unwrap();
+        send(&path, Command::LeaveCall).unwrap();
+        send(&path, Command::GoLive).unwrap();
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert_eq!(
             *got.lock().unwrap(),
             vec![
                 Command::ToggleMute,
                 Command::ToggleDeafen,
-                Command::QuickSwitch
+                Command::QuickSwitch,
+                Command::LeaveCall,
+                Command::GoLive
             ]
         );
     }
@@ -285,6 +297,14 @@ mod tests {
         assert_eq!(
             Command::from_args(&["pulse-app".into(), "--quick-switch".into()]),
             Some(Command::QuickSwitch)
+        );
+        assert_eq!(
+            Command::from_args(&["pulse-app".into(), "--leave-call".into()]),
+            Some(Command::LeaveCall)
+        );
+        assert_eq!(
+            Command::from_args(&["pulse-app".into(), "--go-live".into()]),
+            Some(Command::GoLive)
         );
         assert_eq!(Command::from_args(&["pulse-app".into()]), None);
     }

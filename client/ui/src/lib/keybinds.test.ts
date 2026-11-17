@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Recorder, bindLabel, keyLabel } from './keybinds'
+import { Recorder, actions, bindLabel, keyLabel, pageActionFor } from './keybinds'
 
 const none = { ctrl: false, shift: false, alt: false, meta: false }
 const click = (button: number, mods: Partial<{ ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }> = {}) => ({
@@ -98,5 +98,28 @@ describe('labels', () => {
     expect(bindLabel({ code: 'F13', ctrl: false, shift: false, alt: false, meta: false })).toBe('F13')
     expect(bindLabel(null)).toBe('Not set')
     expect(bindLabel({ code: 'Mouse4', ctrl: true, shift: false, alt: false, meta: false })).toBe('Ctrl + Mouse 4')
+  })
+})
+
+// #72: more bindable actions, the page doing the two it owns
+describe('page actions', () => {
+  const now = { inCall: true, connected: true, live: false, canStream: true }
+
+  it('are listed after the others, by the keys the core saves', () => {
+    expect(actions.map((a) => a.key)).toEqual(['toggle_mute', 'toggle_deafen', 'quick_switch', 'leave_call', 'go_live'])
+  })
+
+  it('leave the call only when you are in one', () => {
+    expect(pageActionFor('leave_call', now)).toBe('leave')
+    expect(pageActionFor('leave_call', { ...now, connected: false })).toBe('leave')
+    expect(pageActionFor('leave_call', { ...now, inCall: false })).toBeNull()
+  })
+
+  it('open Go Live only when the button would: connected, able to stream, not live yet', () => {
+    expect(pageActionFor('go_live', now)).toBe('goLive')
+    expect(pageActionFor('go_live', { ...now, live: true })).toBeNull()
+    expect(pageActionFor('go_live', { ...now, connected: false })).toBeNull()
+    expect(pageActionFor('go_live', { ...now, canStream: false })).toBeNull()
+    expect(pageActionFor('go_live', { ...now, inCall: false })).toBeNull()
   })
 })

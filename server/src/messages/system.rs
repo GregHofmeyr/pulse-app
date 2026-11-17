@@ -396,6 +396,8 @@ mod tests {
             options: vec!["a".into(), "b".into(), "c".into()],
             winner: 2,
             angle: 12.5,
+            weights: Some(vec![1, 2, 3]),
+            palette: Some("gems".into()),
         };
         let stored = wheel_spin_payload(&spin).unwrap().to_string();
         assert_eq!(wheel_spin(&stored), Some(spin));

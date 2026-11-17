@@ -1616,6 +1616,8 @@ mod tests {
             name: "Games".into(),
             options: vec!["a".into(), "b".into()],
             updated_at: "2026-11-09T00:00:00.000Z".into(),
+            weights: None,
+            palette: None,
         };
         let shared = Event::WheelSaved {
             wheel: wheel(Some(sv), None),
@@ -1654,6 +1656,8 @@ mod tests {
             options: vec!["a".into(), "b".into()],
             winner: 1,
             angle: 90.0,
+            weights: None,
+            palette: None,
         };
         let m = Message {
             wheel: Some(Box::new(spin.clone())),

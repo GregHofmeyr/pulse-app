@@ -91,6 +91,10 @@
     frameFwd: 'M5 5l10 7-10 7zM19 5v14',
     scissors: 'M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM8.1 8.1 20 20M8.1 15.9 20 4',
     undo: 'M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3',
+    // the image editor (#290): crop marks, and a quarter turn each way
+    crop: 'M6 2v14a2 2 0 0 0 2 2h14M18 22V8a2 2 0 0 0-2-2H2',
+    rotateLeft: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5',
+    rotateRight: 'M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5',
     grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
     list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
     film: 'M4 4h16v16H4zM8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4',

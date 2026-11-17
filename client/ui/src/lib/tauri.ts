@@ -151,6 +151,8 @@ export type StagedFile = {
   height: number | null
   /** A small PNG thumbnail of an image (a data URL). */
   preview: string | null
+  /** More than one frame: the image editor (#290) leaves it alone. */
+  animated?: boolean
   /** Marked as a spoiler in the composer (#289); the UI's own, not the core's. */
   spoiler?: boolean
 }
@@ -327,6 +329,8 @@ export const api = {
   stageAttachmentBytes: (name: string, bytes: Uint8Array) =>
     invoke<StagedFile>('stage_attachment_bytes', bytes, { headers: { 'x-name': encodeURIComponent(name) } }),
   unstageAttachment: (id: string) => invoke<void>('unstage_attachment', { id }),
+  /** A queued still image's bytes (WebP), for the image editor (#290). */
+  stagedImageBytes: (id: string) => invoke<ArrayBuffer>('staged_image_bytes', { id }),
   /** "Zip and send": zip a folder and queue the zip. */
   zipAttachmentFolder: (path: string) => invoke<StagedFile>('zip_attachment_folder', { path }),
   pickAttachmentFiles: () => invoke<string[]>('pick_attachment_files'),

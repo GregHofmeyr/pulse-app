@@ -75,6 +75,8 @@ export const ui = $state({
   /** The quick switcher's global keybind fired (#319; the core already brought the window up): the shell opens the
    *  switcher, or closes it if Pulse was in front with it open, and clears this. */
   quickSwitch: null as { wasFocused: boolean } | null,
+  /** A global keybind for an action the page does (#72: leave the call, Go Live); the shell does it and clears it. */
+  keybindAction: null as import('./keybinds').PageAction | null,
   /** A server membership change waiting for its confirm (#371): you leaving a server, its owner removing someone, or
    *  its owner handing it to someone (#418). The shell asks (ServerActionDialog) and clears it. */
   serverAction: null as ServerAction | null,
@@ -377,6 +379,7 @@ export async function startListening(): Promise<UnlistenFn> {
     listen<{ channel_id: string }>('stream://audio_closed', (e) => void streamApi.onAudioClosed(e.payload.channel_id)),
     listen<{ channelId: string; threadId: string | null; messageId?: string }>('pulse://notification-click', (e) => handleNotificationClick(e.payload)),
     listen<{ wasFocused: boolean }>('pulse://quick-switch', (e) => (ui.quickSwitch = { wasFocused: e.payload.wasFocused })),
+    listen<import('./keybinds').PageAction>('pulse://keybind-action', (e) => (ui.keybindAction = e.payload)),
     listen<ConnState>('pulse://conn', (e) => {
       app.connAt = Date.now()
       app.state = { ...app.state, conn: e.payload }
