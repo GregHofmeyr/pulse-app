@@ -255,6 +255,11 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub activity_hidden: Vec<UserId>,
+    /// The servers you can't rejoin right now (#431): their owner removed you a third time within 48 hours, and hasn't
+    /// allowed you back. Yours only. Absent from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub rejoin_blocked: Vec<ServerId>,
     /// Your saved inbox filters (#307), in order. Yours only. Absent from older servers.
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
@@ -360,6 +365,20 @@ pub enum Event {
         server_id: ServerId,
         owner_id: UserId,
         previous_owner_id: UserId,
+    },
+    /// Only to its person's own sessions, a server's owner: who is blocked from rejoining their server changed (#431),
+    /// a removal blocked someone or they allowed someone back. An open Members pane asks again
+    /// (`GET /servers/{id}/blocked`). Clients from before it skip it.
+    ServerBlocksChanged {
+        user_id: UserId,
+        server_id: ServerId,
+    },
+    /// Only to its person's own sessions: they can't rejoin `server_id` now (`blocked`), or can again (#431); the
+    /// change to [`Ready::rejoin_blocked`]. Clients from before it skip it.
+    RejoinBlockChanged {
+        user_id: UserId,
+        server_id: ServerId,
+        blocked: bool,
     },
     /// Someone is no longer in a server (#371): they left, or its owner removed them (`removed_by`). Everyone, like
     /// `MemberJoined`: member lists drop them, and the person themselves sees the server as one they aren't in (its
@@ -1008,6 +1027,8 @@ impl Event {
             | Self::PersonDndChanged { .. }
             | Self::ActivityHiddenChanged { .. }
             | Self::GameStatsChanged { .. }
+            | Self::ServerBlocksChanged { .. }
+            | Self::RejoinBlockChanged { .. }
             | Self::InboxFiltersChanged { .. }
             | Self::ChannelOrderChanged { .. }
             | Self::ViewOnceOpened { .. }
@@ -1045,6 +1066,8 @@ impl Event {
             | Self::PersonDndChanged { user_id, .. }
             | Self::ActivityHiddenChanged { user_id, .. }
             | Self::GameStatsChanged { user_id, .. }
+            | Self::ServerBlocksChanged { user_id, .. }
+            | Self::RejoinBlockChanged { user_id, .. }
             | Self::InboxFiltersChanged { user_id, .. }
             | Self::ChannelOrderChanged { user_id, .. }
             | Self::ViewOnceOpened { user_id, .. }
@@ -1182,6 +1205,7 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             activity_hidden: vec![],
+            rejoin_blocked: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],
@@ -1280,6 +1304,7 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             activity_hidden: vec![],
+            rejoin_blocked: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],
@@ -1427,6 +1452,7 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             activity_hidden: vec![],
+            rejoin_blocked: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],

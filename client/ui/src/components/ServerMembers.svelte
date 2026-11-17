@@ -5,7 +5,9 @@
   // the member list's, so the owner finds Remove from server and Make owner there. Under them, for the owner only, the
   // people blocked from rejoining (#418: removed three times within 48 hours), with when; Allow back is on their
   // right-click menu. Asked of the server when the pane opens, and again when the member list or the owner changes (a
-  // removal is what blocks someone), and after an Allow back.
+  // removal is what blocks someone), after an Allow back, and when the owner's other device blocks or allows someone
+  // back (#431, ServerBlocksChanged).
+  import { untrack } from 'svelte'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import PersonMenu from './PersonMenu.svelte'
@@ -47,10 +49,14 @@
       if (ask === asked) error = errorText(e)
     }
   }
+  // what asks again: a removal (the member count), a hand-over (`owner`) or a block change on any of the owner's devices;
+  // deriveds, so any other event leaves it be
+  const memberCount = $derived((app.state.members[server.id] ?? []).length)
+  const blocksRev = $derived(app.state.blocksRev[server.id] ?? 0)
   $effect(() => {
-    // read: a removal (the member count) or a hand-over asks again
-    void (app.state.members[server.id] ?? []).length
-    if (owner) void loadBlocks()
+    void memberCount
+    void blocksRev
+    if (owner) untrack(() => void loadBlocks())
     else blocks = []
   })
   const blocked = $derived(

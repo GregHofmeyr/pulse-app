@@ -108,6 +108,12 @@ export type AppState = {
   /** Hide what I'm playing (#436): the people who never get your game activity, yours only, on every device. From
    *  Ready and ActivityHiddenChanged. */
   activityHidden: string[]
+  /** Servers you can't rejoin right now (#431: their owner removed you a third time within 48 hours), yours only.
+   *  From Ready and RejoinBlockChanged; Join server says why up front. */
+  rejoinBlocked: string[]
+  /** Bumped per server when who's blocked from rejoining it changes (#431, ServerBlocksChanged, its owner's only): an
+   *  open Members pane asks again. */
+  blocksRev: Record<string, number>
   /** Your saved inbox filters (#307), in order, on every device: from Ready and InboxFiltersChanged. */
   inboxFilters: InboxFilter[]
   /** Your own channel list orders (#304), by server id, yours only, on every device: from Ready and
@@ -199,7 +205,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], rejoinBlocked: [], blocksRev: {}, inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -265,6 +271,7 @@ export function applyReady(s: AppState, r: Ready): AppState {
     personDnd: r.person_dnd ?? [],
     // absent from older servers: nobody
     activityHidden: r.activity_hidden ?? [],
+    rejoinBlocked: r.rejoin_blocked ?? [],
     // absent from older servers: none
     inboxFilters: r.inbox_filters ?? [],
     // absent from older servers: the server's order everywhere
@@ -1323,6 +1330,13 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     // An open card asks again (lib/store.svelte.ts, noteGameStats): nothing to keep here (#438).
     case 'GameStatsChanged':
       return s
+    case 'ServerBlocksChanged':
+      return e.d.user_id === s.me?.id ? { ...s, blocksRev: { ...s.blocksRev, [e.d.server_id]: (s.blocksRev[e.d.server_id] ?? 0) + 1 } } : s
+    case 'RejoinBlockChanged': {
+      if (e.d.user_id !== s.me?.id) return s
+      const rest = s.rejoinBlocked.filter((id) => id !== e.d.server_id)
+      return { ...s, rejoinBlocked: e.d.blocked ? [...rest, e.d.server_id] : rest }
+    }
     case 'InboxFiltersChanged':
       return e.d.user_id === s.me?.id ? { ...s, inboxFilters: e.d.filters } : s
     case 'ViewOnceOpened':

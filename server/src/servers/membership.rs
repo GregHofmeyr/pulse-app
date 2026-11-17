@@ -18,7 +18,10 @@
 //! read". But the third time the owner removes the same person within [`REMOVAL_WINDOW_HOURS`] (#418) they're blocked
 //! ([`record_removal`]): Join server refuses them ([`BLOCKED_JOIN`]) until the owner allows them back
 //! (`DELETE /servers/{id}/blocked/{user}`, [`allow_back`]), which clears the block and the removals it counted. The
-//! block has no expiry. Only the owner sees who's blocked (`GET /servers/{id}/blocked`, Server settings › Members).
+//! block has no expiry. Only the owner sees who's blocked (`GET /servers/{id}/blocked`, Server settings › Members);
+//! a block or an Allow back tells the owner's devices (`ServerBlocksChanged`, so an open Members pane asks again) and
+//! the person blocked (Ready's `rejoin_blocked` and `RejoinBlockChanged`, so they see why before they press Join,
+//! #431).
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -168,7 +171,50 @@ async fn allow_back(
         .await?;
     tx.commit().await?;
     tracing::info!(server = %id, user = %user, by = %me, "allowed back");
+    blocks_changed(&s, id, me, user, false).await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Tell `owner`'s devices that who's blocked from rejoining `server` changed, and `user` that they are (`blocked`) or
+/// aren't any more (#431).
+async fn blocks_changed(
+    s: &AppState,
+    server: ServerId,
+    owner: UserId,
+    user: UserId,
+    blocked: bool,
+) {
+    s.hub
+        .publish_all(
+            &s.db,
+            vec![
+                Event::ServerBlocksChanged {
+                    user_id: owner,
+                    server_id: server,
+                },
+                Event::RejoinBlockChanged {
+                    user_id: user,
+                    server_id: server,
+                    blocked,
+                },
+            ],
+        )
+        .await;
+}
+
+/// The live servers `user` is blocked from rejoining (#431), for their Ready.
+pub(crate) async fn blocked_servers(
+    db: &sqlx::SqlitePool,
+    user: UserId,
+) -> anyhow::Result<Vec<ServerId>> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT b.server_id FROM server_blocks b JOIN servers sv ON sv.id = b.server_id AND sv.deleted_at IS NULL
+         WHERE b.user_id = ? ORDER BY b.server_id",
+    )
+    .bind(user.to_string())
+    .fetch_all(db)
+    .await?;
+    ids.iter().map(|i| Ok(i.parse()?)).collect()
 }
 
 /// Whether `user` is blocked from rejoining `server` (#418), inside the join's write transaction.
@@ -414,6 +460,9 @@ pub(crate) async fn take_out(
             },
         )
         .await;
+    if blocked && let Some(by) = by {
+        blocks_changed(s, server, by, user, true).await;
+    }
     for id in reminders {
         match id.parse() {
             Ok(id) => {

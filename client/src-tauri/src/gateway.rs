@@ -1057,6 +1057,7 @@ mod tests {
                         dm_layout: Default::default(),
                         person_dnd: vec![],
                         activity_hidden: vec![],
+                        rejoin_blocked: vec![],
                         inbox_filters: vec![],
                         channel_orders: vec![],
                         calls: vec![],

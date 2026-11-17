@@ -1828,3 +1828,27 @@ describe('coming back after a reconnect (#329)', () => {
     expect(near.history['C1']).toEqual({ loaded: true, start: true, end: true })
   })
 })
+
+describe('rejoin blocks (#431)', () => {
+  it('Ready carries the servers you can\'t rejoin; RejoinBlockChanged follows a block and an Allow back, yours only', () => {
+    let s = applyReady(emptyState(), ready({ rejoin_blocked: ['S9'] }))
+    expect(s.rejoinBlocked).toEqual(['S9'])
+    const me = s.me!.id
+    s = applyEvent(s, { t: 'RejoinBlockChanged', d: { user_id: me, server_id: 'S8', blocked: true } }, 0)
+    s = applyEvent(s, { t: 'RejoinBlockChanged', d: { user_id: me, server_id: 'S8', blocked: true } }, 0)
+    expect(s.rejoinBlocked).toEqual(['S9', 'S8'])
+    s = applyEvent(s, { t: 'RejoinBlockChanged', d: { user_id: me, server_id: 'S9', blocked: false } }, 0)
+    expect(s.rejoinBlocked).toEqual(['S8'])
+    const other = applyEvent(s, { t: 'RejoinBlockChanged', d: { user_id: 'someone-else', server_id: 'S7', blocked: true } }, 0)
+    expect(other).toBe(s)
+    // an older server sends none: nothing blocked
+    expect(applyReady(emptyState(), ready()).rejoinBlocked).toEqual([])
+  })
+
+  it('ServerBlocksChanged bumps that server\'s blocks for the owner only', () => {
+    let s = applyReady(emptyState(), ready())
+    s = applyEvent(s, { t: 'ServerBlocksChanged', d: { user_id: s.me!.id, server_id: 'S1' } }, 0)
+    expect(s.blocksRev.S1).toBe(1)
+    expect(applyEvent(s, { t: 'ServerBlocksChanged', d: { user_id: 'someone-else', server_id: 'S1' } }, 0)).toBe(s)
+  })
+})
