@@ -2231,6 +2231,11 @@ pub struct Attachment {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[ts(as = "Option<bool>", optional)]
     pub spoiler: bool,
+    /// View once (#311): each recipient can open it once (`POST /messages/{id}/view-once/open`); the server signs no
+    /// other link to it for them, before or after. Its sender always can. Off the wire when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub view_once: bool,
 }
 
 /// `POST /attachments`: what is about to be uploaded.
@@ -2252,6 +2257,10 @@ pub struct StartAttachmentRequest {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[ts(as = "Option<bool>", optional)]
     pub spoiler: bool,
+    /// Each recipient can open it once (#311).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub view_once: bool,
 }
 
 /// Where to put the bytes. `url` is `None` when the upload has no single PUT URL (big sends).
@@ -2303,6 +2312,22 @@ pub struct AttachmentUrl {
     pub id: AttachmentId,
     pub url: Option<String>,
     pub expires_at: Option<String>,
+}
+
+/// Who has opened a message's view-once files (#311), `GET /messages/{id}/view-once`: for its sender, everyone who
+/// opened them (first opened first); for anyone else, only whether they did (`viewers` empty).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ViewOnceState {
+    /// You've opened them (always false for their sender).
+    pub opened: bool,
+    pub viewers: Vec<ViewOnceViewer>,
+}
+
+/// Someone who opened a message's view-once files, and when (#311).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ViewOnceViewer {
+    pub user_id: UserId,
+    pub viewed_at: String,
 }
 
 /// Limits on attachments, shared so the client can refuse before uploading.
@@ -3287,6 +3312,7 @@ mod tests {
                 expires_at: None,
                 expired: false,
                 spoiler: false,
+                view_once: false,
             }],
             caption_is_fallback: true,
             ..m

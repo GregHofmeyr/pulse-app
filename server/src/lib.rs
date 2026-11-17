@@ -101,6 +101,7 @@ pub fn router(state: AppState) -> Router {
         .merge(clips::games::router())
         .merge(clips::routes::router())
         .merge(attachments::routes::router())
+        .merge(attachments::view_once::router())
         .merge(profiles::routes::router())
         .merge(profiles::private::router())
         .merge(presence::routes::router())

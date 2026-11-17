@@ -595,6 +595,8 @@ pub fn run() {
             attachments::commands::send_with_attachments,
             attachments::commands::cancel_attachment_send,
             attachments::commands::attachment_urls,
+            attachments::commands::view_once_state,
+            attachments::commands::open_view_once,
             attachments::commands::save_attachment,
             attachments::commands::attachment_text,
             // clips

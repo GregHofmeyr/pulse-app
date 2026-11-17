@@ -168,6 +168,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::PersonDndRequest::export_all(&cfg)?;
     rest::InboxFiltersRequest::export_all(&cfg)?;
     rest::ChannelOrderRequest::export_all(&cfg)?;
+    rest::ViewOnceState::export_all(&cfg)?;
     rest::PrivateNickname::export_all(&cfg)?;
     rest::NameChange::export_all(&cfg)?;
     rest::NameArchivePage::export_all(&cfg)?;

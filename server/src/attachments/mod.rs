@@ -5,6 +5,7 @@
 pub mod routes;
 pub mod storage;
 pub mod sweep;
+pub mod view_once;
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -183,7 +184,7 @@ fn kind_of(s: &str) -> AttachmentKind {
 
 /// `attachments` columns read into an [`Attachment`], in this order.
 const COLS: &str = "id, name, content_type, kind, size, width, height, duration_ms, expires_at, \
-                    purged_at, spoiler";
+                    purged_at, spoiler, view_once";
 type Row = (
     String,
     String,
@@ -195,6 +196,7 @@ type Row = (
     Option<i64>,
     Option<String>,
     Option<String>,
+    bool,
     bool,
 );
 
@@ -212,6 +214,7 @@ type MessageRow = (
     Option<String>,
     Option<String>,
     bool,
+    bool,
 );
 
 fn to_attachment(r: Row, now: &str) -> AppResult<Attachment> {
@@ -227,6 +230,7 @@ fn to_attachment(r: Row, now: &str) -> AppResult<Attachment> {
         expires_at,
         purged_at,
         spoiler,
+        view_once,
     ) = r;
     // Past its time it reads as expired at once; the sweep deletes the bytes within minutes.
     let expired = purged_at.is_some() || expires_at.as_deref().is_some_and(|e| e <= now);
@@ -242,6 +246,7 @@ fn to_attachment(r: Row, now: &str) -> AppResult<Attachment> {
         expires_at,
         expired,
         spoiler,
+        view_once,
     })
 }
 
@@ -269,9 +274,11 @@ pub async fn attach(db: &SqlitePool, msgs: &mut [Message]) -> AppResult<()> {
     }
     let now = crate::db::now();
     let mut by_msg: HashMap<String, Vec<Attachment>> = HashMap::new();
-    for (message_id, id, name, ct, kind, size, w, h, d, exp, purged, spoiler) in rows {
+    for (message_id, id, name, ct, kind, size, w, h, d, exp, purged, spoiler, once) in rows {
         by_msg.entry(message_id).or_default().push(to_attachment(
-            (id, name, ct, kind, size, w, h, d, exp, purged, spoiler),
+            (
+                id, name, ct, kind, size, w, h, d, exp, purged, spoiler, once,
+            ),
             &now,
         )?);
     }
@@ -518,6 +525,7 @@ mod tests {
             expires_at: None,
             expired: false,
             spoiler: false,
+            view_once: false,
         }
     }
 

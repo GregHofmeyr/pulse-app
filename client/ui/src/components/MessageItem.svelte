@@ -239,7 +239,8 @@
   const unsave = () => savedOne && removeBookmark(savedOne.id).then(() => (ui.notice = 'Removed from saved'), (e) => showError(errorText(e)))
   // Forward… (#302): words, files or a GIF (not a poll or plan, nor a forward whose original is gone), to a chat picked
   // by where the menu opened from
-  const forwardable = $derived(!message.poll && !message.plan && !message.forwarded?.unavailable)
+  // view-once files (#311) can't be forwarded (the server refuses it too)
+  const forwardable = $derived(!message.poll && !message.plan && !message.forwarded?.unavailable && !message.attachments?.some((a) => a.view_once))
   let forwardAt = $state<HTMLElement | null>(null)
   const openForward = (opener: HTMLElement) =>
     (forwardAt = opener.isConnected ? opener : document.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`))

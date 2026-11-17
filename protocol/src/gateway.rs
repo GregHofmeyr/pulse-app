@@ -520,6 +520,15 @@ pub enum Event {
         server_id: ServerId,
         order: Option<ChannelOrder>,
     },
+    /// Only to `user_id`'s own sessions, sent to the viewer and to the message's sender: `viewer_id` opened the
+    /// view-once files of `message_id` (#311). Clients from before it skip it.
+    ViewOnceOpened {
+        user_id: UserId,
+        channel_id: ChannelId,
+        message_id: MessageId,
+        viewer_id: UserId,
+        viewed_at: String,
+    },
     /// Only to its person's own sessions: a saved message was removed (#315).
     BookmarkRemoved {
         user_id: UserId,
@@ -973,6 +982,7 @@ impl Event {
             | Self::PersonDndChanged { .. }
             | Self::InboxFiltersChanged { .. }
             | Self::ChannelOrderChanged { .. }
+            | Self::ViewOnceOpened { .. }
             | Self::BadgeEarned { .. } => None,
         }
     }
@@ -1007,6 +1017,7 @@ impl Event {
             | Self::PersonDndChanged { user_id, .. }
             | Self::InboxFiltersChanged { user_id, .. }
             | Self::ChannelOrderChanged { user_id, .. }
+            | Self::ViewOnceOpened { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
             | Self::CallRingEnded { user_id, .. }

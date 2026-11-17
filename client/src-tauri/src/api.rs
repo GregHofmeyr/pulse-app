@@ -3542,6 +3542,38 @@ impl Api {
         .await
     }
 
+    /// Who opened a message's view-once files (#311): for its sender, everyone; for you, whether you did.
+    pub async fn view_once_state(
+        &self,
+        token: &str,
+        message: MessageId,
+    ) -> Result<pulse_protocol::rest::ViewOnceState, ApiError> {
+        Self::parse(
+            self.http
+                .get(self.url(&["messages", &message.to_string(), "view-once"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Open a message's view-once files, the one time (#311): their links (short-lived); `410` the second time.
+    pub async fn open_view_once(
+        &self,
+        token: &str,
+        message: MessageId,
+    ) -> Result<Vec<AttachmentUrl>, ApiError> {
+        Self::parse(
+            self.http
+                .post(self.url(&["messages", &message.to_string(), "view-once", "open"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Short-lived links to every file of a message, in order (an expired one has none).
     pub async fn attachment_urls(
         &self,

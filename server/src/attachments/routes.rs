@@ -152,8 +152,8 @@ async fn start(
     sqlx::query(
         "INSERT INTO attachments
              (id, key, user_id, channel_id, name, content_type, kind, size, width, height,
-              duration_ms, expires_at, spoiler, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              duration_ms, expires_at, spoiler, view_once, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id.to_string())
     .bind(&key)
@@ -168,6 +168,7 @@ async fn start(
     .bind(length.filter(|_| media))
     .bind(&expires_at)
     .bind(req.spoiler)
+    .bind(req.view_once)
     .bind(crate::db::stamp(now_at))
     .execute(&mut *tx)
     .await?;
@@ -256,6 +257,9 @@ async fn cancel(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// An attachment as its links need it: id, key, expires_at, purged_at, view_once.
+type UrlRow = (String, String, Option<String>, Option<String>, bool);
+
 /// Signed links to every file of a message, in order; an expired temporary file has none. Every
 /// call signs again (links are cached client-side until shortly before they expire).
 async fn urls(
@@ -304,19 +308,23 @@ async fn urls(
         }
         None => id,
     };
-    let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT id, key, expires_at, purged_at FROM attachments WHERE message_id = ?
+    let rows: Vec<UrlRow> = sqlx::query_as(
+        "SELECT id, key, expires_at, purged_at, view_once FROM attachments WHERE message_id = ?
          ORDER BY position",
     )
     .bind(files.to_string())
     .fetch_all(&s.db)
     .await?;
+    // view-once files (#311): only their sender gets links here; anyone else opens them once, through
+    // `POST /messages/{id}/view-once/open`
+    let sender =
+        rows.iter().any(|r| r.4) && super::view_once::sender_of(&s.db, files).await? == Some(me);
     let now = crate::db::now();
     rows.into_iter()
-        .map(|(att, key, expires_at, purged_at)| {
+        .map(|(att, key, expires_at, purged_at, view_once)| {
             let expired =
                 purged_at.is_some() || expires_at.as_deref().is_some_and(|e| e <= now.as_str());
-            let (url, at) = if expired {
+            let (url, at) = if expired || (view_once && !sender) {
                 (None, None)
             } else {
                 let (url, at) = r2.download_url(&object_key(&key, expires_at.is_some()), URL_TTL);

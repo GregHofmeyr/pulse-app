@@ -59,7 +59,7 @@ export type ConnState =
 
 /** A message we've sent but the server hasn't confirmed yet (optimistic UI / offline outbox). */
 /** A file going with a pending message (#57): its staged id (what a retry sends again) and what its chip shows. */
-export type PendingFile = { id: string; name: string; size: number; kind: string; preview: string | null; /** #289 */ spoiler?: boolean }
+export type PendingFile = { id: string; name: string; size: number; kind: string; preview: string | null; /** #289 */ spoiler?: boolean; /** #311 */ viewOnce?: boolean }
 export type Pending = {
   nonce: string; content: string; reply_to_id: string | null; /** The quote this answers (a reply lives in that quote's thread, not the channel list). */ thread_root_id: string | null; status: 'pending' | 'failed'; created_at: string
   /** A GIF from the picker (#58); `content` is its GIPHY link. */
@@ -1302,6 +1302,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return e.d.user_id === s.me?.id ? { ...s, personDnd: e.d.list } : s
     case 'InboxFiltersChanged':
       return e.d.user_id === s.me?.id ? { ...s, inboxFilters: e.d.filters } : s
+    case 'ViewOnceOpened':
+      return s // kept by lib/viewOnce.svelte.ts (#311)
     case 'ChannelOrderChanged': {
       if (e.d.user_id !== s.me?.id) return s
       const { [e.d.server_id]: _was, ...rest } = s.channelOrders

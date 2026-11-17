@@ -11,4 +11,8 @@ temp_days: number | null,
 /**
  * Show it blurred until clicked (#289).
  */
-spoiler?: boolean, };
+spoiler?: boolean, 
+/**
+ * Each recipient can open it once (#311).
+ */
+view_once?: boolean, };

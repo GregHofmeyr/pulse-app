@@ -369,6 +369,12 @@ async fn forward(
             has_comment: false,
         },
         None => {
+            // view-once files (#311) go to their recipients once: a forward would hand them on
+            if src.attachments.iter().any(|a| a.view_once) {
+                return Err(AppError::BadRequest(
+                    "view-once files can't be forwarded".into(),
+                ));
+            }
             let special = src.kind != MessageKind::Normal
                 || src.quote.is_some()
                 || src.clip.is_some()

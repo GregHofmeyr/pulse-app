@@ -92,6 +92,16 @@ impl R2 {
         (url, expires)
     }
 
+    /// [`Self::download_url`] for a view-once file (#311): the response tells caches not to keep it.
+    pub fn download_url_no_store(&self, key: &str, ttl: Duration) -> (Url, String) {
+        let mut get = self.bucket.get_object(Some(&self.creds), key);
+        get.query_mut()
+            .insert("response-cache-control", "private, no-store".to_string());
+        let url = get.sign(ttl);
+        let expires = expires_at(&url, ttl);
+        (url, expires)
+    }
+
     /// The object's size, or `None` if it isn't there.
     pub async fn head(&self, key: &str) -> AppResult<Option<u64>> {
         let url = self

@@ -49,6 +49,7 @@ import type { EditPollRequest } from './protocol/EditPollRequest'
 import type { DmLayout } from './protocol/DmLayout'
 import type { PersonDnd } from './protocol/PersonDnd'
 import type { InboxFilter } from './protocol/InboxFilter'
+import type { ViewOnceState } from './protocol/ViewOnceState'
 import type { ChannelOrder } from './protocol/ChannelOrder'
 import type { ChannelOrderRequest } from './protocol/ChannelOrderRequest'
 import type { PersonDndRequest } from './protocol/PersonDndRequest'
@@ -160,6 +161,8 @@ export type StagedFile = {
   animated?: boolean
   /** Marked as a spoiler in the composer (#289); the UI's own, not the core's. */
   spoiler?: boolean
+  /** Marked view once in the composer (#311); the UI's own. */
+  viewOnce?: boolean
 }
 /** Mirrors `attachments::StageResult`. */
 export type StageResult =
@@ -351,9 +354,14 @@ export const api = {
     tempDays: number | null
     /** Staged ids marked as spoilers (#289). */
     spoilers: string[]
+    /** Staged ids marked view once (#311). */
+    viewOnce?: string[]
   }) => invoke<void>('send_with_attachments', a),
   cancelAttachmentSend: (nonce: string) => invoke<void>('cancel_attachment_send', { nonce }),
   attachmentUrls: (messageId: string) => invoke<AttachmentUrl[]>('attachment_urls', { messageId }),
+  /** View-once files (#311): who opened them (the sender) or whether you did; and the one open, with their links. */
+  viewOnceState: (messageId: string) => invoke<ViewOnceState>('view_once_state', { messageId }),
+  openViewOnce: (messageId: string) => invoke<AttachmentUrl[]>('open_view_once', { messageId }),
   /** A small text file's contents for its inline preview (#318); null when it can't be previewed (too big, not UTF-8, binary). */
   attachmentText: (messageId: string, attachmentId: string) => invoke<string | null>('attachment_text', { messageId, attachmentId }),
   /** The saved path; null when the Save dialog or the download is cancelled (or this file is already downloading). Progress: `download://progress`, key `file:<attachment id>`. */

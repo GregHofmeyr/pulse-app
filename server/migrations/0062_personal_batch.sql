@@ -1,6 +1,8 @@
--- Per-person Do Not Disturb (#310), saved inbox filters (#307) and personal channel orders (#304). New tables only
--- (no rebuilds), so foreign keys being OFF while migrating (db.rs) changes nothing, and older servers never read them.
--- Rollback = restore the pre-deploy backup (or leave the tables: nothing else reads them).
+-- Per-person Do Not Disturb (#310), saved inbox filters (#307), personal channel orders (#304) and view-once files
+-- (#311). New tables and one new column with a constant default only (no rebuilds), so foreign keys being OFF while
+-- migrating (db.rs) changes nothing, and older servers never read them.
+-- Rollback = restore the pre-deploy backup (or leave them: nothing else reads them). NB an older server would serve
+-- view-once files to everyone like any other file, so don't roll back past this while any are in use.
 
 -- People whose messages don't alert you (no sound, no desktop notification), everywhere or only in DMs and groups,
 -- until `until` (NULL: until turned back off). Yours only; they're never told. A row past its `until` reads as none.
@@ -35,4 +37,16 @@ CREATE TABLE channel_orders (
     body       TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (user_id, server_id)
+) STRICT;
+
+-- View-once files (#311): each recipient can open them once; the server signs no other link to them for anyone but
+-- their sender.
+ALTER TABLE attachments ADD COLUMN view_once INTEGER NOT NULL DEFAULT 0 CHECK (view_once IN (0, 1));
+
+-- Who opened a message's view-once files, and when (first open only). Goes with the message or the person.
+CREATE TABLE view_once_views (
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    viewed_at  TEXT NOT NULL,
+    PRIMARY KEY (message_id, user_id)
 ) STRICT;
