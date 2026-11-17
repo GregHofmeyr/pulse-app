@@ -27,7 +27,7 @@ vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 
 import ClipsChannel from './ClipsChannel.svelte'
 import { app, ui } from '../lib/store.svelte'
-import { clipDrop } from '../lib/clipDrop.svelte'
+import { clipDrop, PENDING_MS } from '../lib/clipDrop.svelte'
 import { applyEvent, applyReady, emptyState, setClipJob } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
 import { positionAt } from '../lib/composerDom'
@@ -240,11 +240,11 @@ describe('ClipsSend', () => {
   it('an offered recording opens in the editor here, and this channel is remembered', async () => {
     clipDrop.last = null
     await show()
-    ui.shareClip = { channelId: 'C9', path: '/v/elsewhere.mp4' } // another channel's: not ours
+    ui.shareClip = { channelId: 'C9', path: '/v/elsewhere.mp4', at: Date.now() } // another channel's: not ours
     flushSync()
     await settle()
     expect(calls('open_clip')).toEqual([])
-    ui.shareClip = { channelId: 'C1', path: '/v/Apex/new.mp4' }
+    ui.shareClip = { channelId: 'C1', path: '/v/Apex/new.mp4', at: Date.now() }
     flushSync()
     await settle()
     await settle()
@@ -254,6 +254,19 @@ describe('ClipsSend', () => {
     expect(editor()).not.toBeNull()
     expect(clipDrop.last).toBe('C1')
     ui.shareClip = null
+  })
+
+  // #394: a Share whose channel never opened when asked doesn't open the editor the next time the channel shows
+  it("a stale offered recording is dropped, not opened", async () => {
+    await show()
+    ui.shareClip = { channelId: 'C1', path: '/v/Apex/old.mp4', at: Date.now() - PENDING_MS - 1000 }
+    flushSync()
+    await settle()
+    await settle()
+    flushSync()
+    expect(ui.shareClip).toBeNull()
+    expect(calls('open_clip')).toEqual([])
+    expect(editor()).toBeNull()
   })
 
   it('cancelling the picker opens nothing', async () => {

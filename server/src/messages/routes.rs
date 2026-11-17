@@ -156,6 +156,10 @@ fn from_row(r: Row) -> AppResult<Message> {
             Some(p) if system && deleted_at.is_none() => super::system::group_line(p),
             _ => None,
         },
+        member_line: match &system_payload {
+            Some(p) if system && deleted_at.is_none() => super::system::member_line(p),
+            _ => None,
+        },
     })
 }
 
@@ -603,6 +607,7 @@ pub(crate) async fn deliver(
         f1: None,
         forwarded: forward.as_ref().map(|f| Box::new(f.view.clone())),
         group_line: None,
+        member_line: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -684,6 +689,10 @@ pub(crate) async fn deliver(
         None => crate::reads::advance(&mut tx, me, id, msg.id).await?,
     };
     tx.commit().await?;
+    // A forward with no comment is stored with the bare stand-in, and reads as one naming the original (#415).
+    if let Some(f) = forward.as_ref().filter(|f| !f.stored.has_comment) {
+        msg.content = crate::forwards::stand_in(&f.view);
+    }
     s.hub
         .publish(
             &s.db,
@@ -764,7 +773,9 @@ async fn edit(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
-    let (mut msg, _) = own_message(&s.db, me, id).await?;
+    let (mut msg, ch) = own_message(&s.db, me, id).await?;
+    // left the server, or removed from it: their words there are no longer theirs to change (deleting stays allowed)
+    crate::access::require_member_of(&s.db, me, &ch).await?;
     if msg.quote.is_some() {
         return Err(AppError::BadRequest(
             "quotes can't be edited like messages".into(),
@@ -819,6 +830,7 @@ async fn edit(
     let mut tx = crate::db::begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, msg.channel_id).await?; // channel deleted since (#109)
     crate::access::open_in(&mut tx, msg.channel_id).await?; // archived (#303): read-only
+    crate::access::member_of_in(&mut tx, me, msg.channel_id).await?; // left or removed since
     // The text it replaces is kept (#301), read under the write lock so two quick edits each keep the one before.
     let edited_at = msg.edited_at.clone().unwrap_or_default();
     super::history::record(&mut tx, id, &msg.content, &edited_at).await?;
@@ -869,6 +881,8 @@ async fn remove(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
+    // No `access::require_open`: your own message can be deleted even in an archived channel (#418), the one change
+    // allowed there.
     let (msg, ch) = own_message(&s.db, me, id).await?;
     let is_quote = msg.quote.is_some();
     let is_clip = msg.clip.is_some();
@@ -1067,6 +1081,7 @@ mod tests {
             f1: None,
             forwarded: None,
             group_line: None,
+            member_line: None,
         }
     }
 

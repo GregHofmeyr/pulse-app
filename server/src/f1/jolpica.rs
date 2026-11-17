@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use pulse_protocol::rest::{
-    F1Driver, F1FastestLap, F1ResultRow, F1ResultsCard, F1Session, F1SessionKind, F1StandingRow,
-    F1Weekend, f1_limits,
+    F1ConstructorRow, F1Driver, F1FastestLap, F1ResultRow, F1ResultsCard, F1Session, F1SessionKind,
+    F1SprintCard, F1StandingRow, F1Weekend, f1_limits,
 };
 use serde::Deserialize;
 use sqlx::SqlitePool;
@@ -31,6 +31,8 @@ pub const SCHEDULE_TTL_HOURS: i64 = 6;
 pub const ENTRY_LIST_TTL_HOURS: i64 = 24;
 /// Results aren't asked for before this long after lights out (a race runs about an hour and a half).
 pub const RESULTS_AFTER_MINUTES: i64 = 100;
+/// A sprint's results aren't asked for before this long after it starts (a sprint runs about half an hour).
+pub const SPRINT_AFTER_MINUTES: i64 = 45;
 /// Nor after this long: a race whose results never came is left alone.
 pub const RESULTS_GIVE_UP_HOURS: i64 = 48;
 /// How long the results card waits for the standings once the results are in, before going without them.
@@ -228,6 +230,9 @@ struct Race {
     qualifying: Option<When>,
     #[serde(rename = "Results", default)]
     results: Vec<RaceResult>,
+    /// `{season}/{round}/sprint.json`'s rows (#403): the same shape as `Results`.
+    #[serde(rename = "SprintResults", default)]
+    sprint_results: Vec<RaceResult>,
 }
 
 #[derive(Deserialize)]
@@ -296,6 +301,21 @@ struct StandingsList {
     round: String,
     #[serde(rename = "DriverStandings", default)]
     rows: Vec<Standing>,
+    /// `constructorStandings.json`'s rows (#403).
+    #[serde(rename = "ConstructorStandings", default)]
+    constructors: Vec<ConstructorStanding>,
+}
+
+#[derive(Deserialize)]
+struct ConstructorStanding {
+    #[serde(default)]
+    position: Option<String>,
+    #[serde(default)]
+    points: String,
+    #[serde(default)]
+    wins: String,
+    #[serde(rename = "Constructor")]
+    constructor: Constructor,
 }
 
 #[derive(Deserialize)]
@@ -409,6 +429,26 @@ fn standings_filled(body: &str) -> bool {
         .is_ok_and(|a| a.data.table.lists.iter().any(|l| !l.rows.is_empty()))
 }
 
+fn constructors_filled(body: &str) -> bool {
+    serde_json::from_str::<Answer<StandingsData>>(body).is_ok_and(|a| {
+        a.data
+            .table
+            .lists
+            .iter()
+            .any(|l| !l.constructors.is_empty())
+    })
+}
+
+fn sprint_filled(body: &str) -> bool {
+    serde_json::from_str::<Answer<RaceData>>(body).is_ok_and(|a| {
+        a.data
+            .table
+            .races
+            .iter()
+            .any(|r| !r.sprint_results.is_empty())
+    })
+}
+
 fn drivers_filled(body: &str) -> bool {
     serde_json::from_str::<Answer<DriverData>>(body).is_ok_and(|a| !a.data.table.drivers.is_empty())
 }
@@ -426,13 +466,31 @@ pub fn parse_results(body: &str) -> (Vec<F1ResultRow>, Option<F1FastestLap>) {
     let Some(race) = a.data.table.races.into_iter().next() else {
         return (vec![], None);
     };
-    let mut rows: Vec<(u16, &RaceResult)> = race
-        .results
+    result_rows(&race.results)
+}
+
+/// A sprint's results (#403), in finishing order. Empty when they aren't in (or it's no sprint weekend).
+pub fn parse_sprint(body: &str) -> Vec<F1ResultRow> {
+    let Ok(a) = serde_json::from_str::<Answer<RaceData>>(body) else {
+        return vec![];
+    };
+    a.data
+        .table
+        .races
+        .into_iter()
+        .next()
+        .map(|r| result_rows(&r.sprint_results).0)
+        .unwrap_or_default()
+}
+
+/// Result rows in finishing order, and the fastest lap among them.
+fn result_rows(results: &[RaceResult]) -> (Vec<F1ResultRow>, Option<F1FastestLap>) {
+    let mut rows: Vec<(u16, &RaceResult)> = results
         .iter()
         .filter_map(|r| Some((r.position.trim().parse().ok()?, r)))
         .collect();
     rows.sort_by_key(|(p, _)| *p);
-    let fastest = race.results.iter().find_map(|r| {
+    let fastest = results.iter().find_map(|r| {
         let f = r.fastest_lap.as_ref()?;
         (f.rank.as_deref() == Some("1")).then(|| F1FastestLap {
             driver: driver(&r.driver, r.constructor.as_ref().map(|c| c.name.as_str())),
@@ -481,6 +539,36 @@ pub fn parse_standings(body: &str, round: u16) -> Vec<F1StandingRow> {
                 driver: driver(&s.driver, s.constructors.last().map(|c| c.name.as_str())),
                 points: number(&s.points),
                 wins: s.wins.trim().parse().unwrap_or(0),
+            })
+        })
+        .collect();
+    rows.sort_by_key(|r| r.position);
+    rows
+}
+
+/// The constructors' championship in a standings answer for `round` (#403; none when it's for another round).
+pub fn parse_constructor_standings(body: &str, round: u16) -> Vec<F1ConstructorRow> {
+    let Ok(a) = serde_json::from_str::<Answer<StandingsData>>(body) else {
+        return vec![];
+    };
+    let Some(list) = a
+        .data
+        .table
+        .lists
+        .into_iter()
+        .find(|l| l.round.trim().parse() == Ok(round))
+    else {
+        return vec![];
+    };
+    let mut rows: Vec<F1ConstructorRow> = list
+        .constructors
+        .iter()
+        .filter_map(|c| {
+            Some(F1ConstructorRow {
+                position: c.position.as_deref()?.trim().parse().ok()?,
+                team: c.constructor.name.trim().to_string(),
+                points: number(&c.points),
+                wins: c.wins.trim().parse().unwrap_or(0),
             })
         })
         .collect();
@@ -589,7 +677,21 @@ pub async fn results_card(
         .await?
         .map(|s| parse_standings(&s.body, w.round))
         .unwrap_or_default();
-    if standings.is_empty() {
+    // the constructors' table (#403), asked for once the drivers' is in: the card waits for both, within the grace
+    let constructors = if standings.is_empty() {
+        vec![]
+    } else {
+        let key = format!("constructors:{}:{}", w.season, w.round);
+        let path = format!(
+            "{}/{}/constructorStandings.json?limit=100",
+            w.season, w.round
+        );
+        get(db, cfg, &key, &path, fresh, constructors_filled, now)
+            .await?
+            .map(|s| parse_constructor_standings(&s.body, w.round))
+            .unwrap_or_default()
+    };
+    if standings.is_empty() || constructors.is_empty() {
         let since = c
             .filled_at
             .as_deref()
@@ -613,8 +715,51 @@ pub async fn results_card(
         results: rows.into_iter().take(f1_limits::RESULT_ROWS).collect(),
         fastest_lap,
         standings: standings.into_iter().take(f1_limits::RESULT_ROWS).collect(),
+        constructor_standings: constructors,
     };
     Ok(Some((card, podium)))
+}
+
+/// When a weekend's sprint starts, if it has one.
+pub fn sprint_start(w: &F1Weekend) -> Option<DateTime<Utc>> {
+    w.sessions
+        .iter()
+        .find(|s| s.kind == F1SessionKind::Sprint)
+        .and_then(|s| DateTime::parse_from_rfc3339(&s.starts_at).ok())
+        .map(|t| t.with_timezone(&Utc))
+}
+
+/// The sprint's results card for a round (#403), once they're in: `None` until then. Asked for like the race's
+/// results, from [`SPRINT_AFTER_MINUTES`] after the sprint starts, never again once in.
+pub async fn sprint_card(
+    db: &SqlitePool,
+    cfg: &F1Config,
+    w: &F1Weekend,
+    now: DateTime<Utc>,
+) -> AppResult<Option<F1SprintCard>> {
+    let Some(start) = sprint_start(w) else {
+        return Ok(None);
+    };
+    let fresh = Freshness {
+        ttl: results_poll(now - start),
+        final_when_filled: true,
+    };
+    let key = format!("sprint:{}:{}", w.season, w.round);
+    let path = format!("{}/{}/sprint.json?limit=100", w.season, w.round);
+    let Some(c) = get(db, cfg, &key, &path, fresh, sprint_filled, now).await? else {
+        return Ok(None);
+    };
+    let rows = parse_sprint(&c.body);
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(F1SprintCard {
+        season: w.season,
+        round: w.round,
+        race_name: w.race_name.clone(),
+        country: w.country.clone(),
+        results: rows.into_iter().take(f1_limits::RESULT_ROWS).collect(),
+    }))
 }
 
 /// Who can be picked on a weekend card: the previous round's field (with their teams), or before the first race the
@@ -806,6 +951,64 @@ mod tests {
         );
         assert!(parse_standings(body, 2).is_empty(), "another round's");
         assert!(standings_filled(body));
+    }
+
+    #[test]
+    fn constructor_standings_read_for_their_round() {
+        // the shape of a real constructorStandings.json, made-up teams
+        let body = r#"{"MRData":{"xmlns":"","series":"f1","limit":"30","offset":"0","total":"3","StandingsTable":{
+          "season":"2030","round":"2","StandingsLists":[{"season":"2030","round":"2","ConstructorStandings":[
+            {"position":"2","positionText":"2","points":"40.5","wins":"0","Constructor":{"constructorId":"comet",
+             "url":"https://example.test/comet","name":"Comet","nationality":"British"}},
+            {"position":"1","positionText":"1","points":"58","wins":"2","Constructor":{"constructorId":"rocket",
+             "name":"Rocket","nationality":"Italian"}},
+            {"positionText":"-","points":"0","wins":"0","Constructor":{"constructorId":"gone","name":"Gone"}}
+          ]}]}}}"#;
+        let rows = parse_constructor_standings(body, 2);
+        assert_eq!(rows.len(), 2, "a row with no position is left out");
+        assert_eq!(
+            (rows[0].position, rows[0].team.as_str(), rows[0].wins),
+            (1, "Rocket", 2)
+        );
+        assert!((rows[1].points - 40.5).abs() < 0.01);
+        assert!(parse_constructor_standings(body, 1).is_empty());
+        assert!(constructors_filled(body));
+        assert!(!constructors_filled(
+            r#"{"MRData":{"StandingsTable":{"StandingsLists":[]}}}"#
+        ));
+        // a drivers' answer has no constructors in it
+        assert!(!constructors_filled(
+            r#"{"MRData":{"StandingsTable":{"StandingsLists":[{"round":"1","DriverStandings":[]}]}}}"#
+        ));
+    }
+
+    #[test]
+    fn sprint_results_read_in_finishing_order() {
+        // the shape of a real sprint.json, made-up drivers
+        let body = r#"{"MRData":{"total":"2","RaceTable":{"season":"2030","round":"2","Races":[{"season":"2030",
+          "round":"2","raceName":"Harbour Grand Prix","Circuit":{"circuitName":"Harbour Street Circuit",
+          "Location":{"locality":"Port Town","country":"UK"}},"date":"2030-03-15","time":"07:00:00Z","SprintResults":[
+            {"number":"4","position":"2","positionText":"2","points":"7","Driver":{"driverId":"rider_b","code":"RIB",
+             "givenName":"Bo","familyName":"Rider"},"Constructor":{"name":"Comet"},"grid":"2","laps":"19",
+             "status":"Finished","Time":{"millis":"1","time":"+4.951"},"FastestLap":{"rank":"1","lap":"16","Time":{"time":"1:24.5"}}},
+            {"number":"1","position":"1","positionText":"1","points":"8","Driver":{"driverId":"racer_a","code":"RAA",
+             "givenName":"Ace","familyName":"Racer"},"Constructor":{"name":"Rocket"},"status":"Finished",
+             "Time":{"time":"26:51.033"}}
+          ]}]}}}"#;
+        let rows = parse_sprint(body);
+        let ids: Vec<&str> = rows.iter().map(|r| r.driver.id.as_str()).collect();
+        assert_eq!(ids, ["racer_a", "rider_b"]);
+        assert_eq!(rows[0].time, "26:51.033");
+        assert!((rows[0].points - 8.0).abs() < 0.01);
+        assert!(sprint_filled(body));
+        let none =
+            r#"{"MRData":{"total":"0","RaceTable":{"season":"2030","round":"1","Races":[]}}}"#;
+        assert!(parse_sprint(none).is_empty() && !sprint_filled(none));
+        // a race's results aren't a sprint's
+        assert!(parse_sprint(RESULTS).is_empty());
+        let w = parse_schedule(SCHEDULE);
+        assert_eq!(sprint_start(&w[0]), None);
+        assert!(sprint_start(&w[1]).is_some());
     }
 
     #[test]

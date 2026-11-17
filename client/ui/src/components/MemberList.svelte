@@ -5,8 +5,10 @@
   import Icon from './Icon.svelte'
   import Name from './Name.svelte'
   import ListeningLine from './ListeningLine.svelte'
-  import SpotifyIcon from './SpotifyIcon.svelte'
+  import PlayerIcon from './PlayerIcon.svelte'
   import { listeningOf } from '../lib/activity'
+  import PlayingLine from './PlayingLine.svelte'
+  import { playingOf } from '../lib/game'
   import CustomStatusLine from './CustomStatusLine.svelte'
   import { customStatusOf } from '../lib/customStatus'
   import MemberMenu from './MemberMenu.svelte'
@@ -77,7 +79,8 @@
     {@const name = displayName(app.state, serverId, m.user.id)}
     {@const base = baseName(m.user)}
     {@const custom = customStatusOf(app.state, m.user.id, clock.nowIso)}
-    {@const listening = custom ? null : listeningOf(app.state, m.user.id)}
+    {@const playing = custom ? null : playingOf(app.state, m.user.id)}
+    {@const listening = custom || playing ? null : listeningOf(app.state, m.user.id)}
     {@const rank = rankOf(serverId, m.user.id)}
     {@const badge = rank ? thumbUrl(rank.image) : null}
     <!-- the context menu and a click on the row (their card, #182) are pointer shortcuts; the keyboard route is the
@@ -87,11 +90,11 @@
       onclick={(e) => { if (!(e.target as Element).closest('button')) openCard(m.user.id, serverId, e.currentTarget) }} onpointerenter={() => (hovered = m.user.id)} onpointerleave={() => { if (hovered === m.user.id) hovered = null }}
       oncontextmenu={(e) => { e.preventDefault(); openMenu(m.user.id, e, e.currentTarget) }} onkeydown={(e) => rowKey(m.user.id, e)}>
       <Avatar id={m.user.id} {name} size={32} presence={presenceOf(app.state, m.user.id, clock.nowIso)} interactive {serverId} hovered={() => hovered === m.user.id} />
-      <!-- their custom status (#152), else what they're listening to (#275), takes the line under the name; Spotify's
-           icon sits at the row's end, only with its line -->
-      <span class="who"><Name userId={m.user.id} {serverId} text={name} surface="side" />{#if custom}<CustomStatusLine status={custom} />{:else if listening}<ListeningLine {listening} icon={false} />{:else if name !== base}<small class="name-clip">{base}</small>{/if}</span>
+      <!-- their custom status (#152), else the game they're playing (#392), else what they're listening to (#275),
+           takes the line under the name; Spotify's icon sits at the row's end, only with its line -->
+      <span class="who"><Name userId={m.user.id} {serverId} text={name} surface="side" />{#if custom}<CustomStatusLine status={custom} />{:else if playing}<PlayingLine {playing} />{:else if listening}<ListeningLine {listening} icon={false} />{:else if name !== base}<small class="name-clip">{base}</small>{/if}</span>
       {#if rank && badge}<img class="rank" src={badge} alt="Deadlock rank {rankText(rank)}" data-tip="Deadlock: {rankText(rank)}" data-deadlock-rank />{/if}
-      {#if listening}<span class="sp"><SpotifyIcon /></span>{/if}
+      {#if listening}<span class="sp"><PlayerIcon {listening} /></span>{/if}
       {#if onMessage && m.user.id !== app.state.me?.id}
         <button class="msg" aria-label="Message {name}" data-tip="Message" onclick={() => onMessage(m.user.id)}><Icon name="message" size={16} /></button>
       {/if}

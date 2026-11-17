@@ -1,6 +1,6 @@
 <script lang="ts">
   // Server settings → Leave server (#371). A danger zone like Delete server's: the button acts, as the pane already
-  // says what happens. Its owner can't leave (there's no handing a server over yet), so they're told that instead.
+  // says what happens. Its owner can't leave while it's theirs, so they're pointed at Transfer ownership (#418).
   import { api, errorText } from '../lib/tauri'
   import type { Server } from '../lib/protocol/Server'
 
@@ -29,8 +29,8 @@
   <div class="danger">
     {#if owner}
       <p>
-        You own <strong>{server.name}</strong>, so you can't leave it: there's no way to hand a server over to someone
-        else yet. You can delete it instead (Delete server).
+        You own <strong>{server.name}</strong>, so you can't leave it: hand it to someone else first (Transfer
+        ownership), then leave. Or delete it (Delete server).
       </p>
     {:else}
       <p>

@@ -10,7 +10,10 @@ use pulse_protocol::rest::{
     SpinWheelRequest, UpdateWheelRequest, Wheel, WheelScope, WheelSpin, wheel_limits,
 };
 
-use super::{clean_name, clean_options, draw, for_owner, for_server, load, spinnable};
+use super::{
+    clean_name, clean_options, clean_palette, clean_weights, draw_weighted, for_owner, for_server,
+    load, parse_weights, spinnable, stored_weights,
+};
 use crate::AppState;
 use crate::access::channel_for;
 use crate::auth::AuthUser;
@@ -36,8 +39,31 @@ fn too_many_wheels(what: &str, cap: i64) -> AppError {
     ))
 }
 
-/// A stored spin: its chat, saved wheel, name, options (JSON) and winner.
-type SpinRow = (String, Option<String>, Option<String>, String, i64);
+/// A stored spin: its chat, saved wheel, name, options (JSON), winner, weights (JSON) and palette.
+type SpinRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    String,
+    i64,
+    Option<String>,
+    Option<String>,
+);
+
+/// What a spin spins: the saved wheel it's from (and its name), or a quick wheel; the options, their weights and the
+/// palette (#259).
+struct Picked {
+    wheel_id: Option<String>,
+    name: Option<String>,
+    options: Vec<String>,
+    weights: Option<Vec<u32>>,
+    palette: Option<String>,
+}
+
+/// Weights that are all alike are none (an unweighted wheel, as older clients draw it).
+fn weighted(w: Vec<u32>) -> Option<Vec<u32>> {
+    (!w.iter().all(|&x| x == w[0])).then_some(w)
+}
 
 fn spin_too_soon() -> AppError {
     AppError::TooManyRequests(Some(
@@ -88,6 +114,8 @@ async fn create(
     }
     let name = clean_name(&req.name)?;
     let options = clean_options(req.options)?;
+    let weights = clean_weights(req.weights, options.len())?;
+    let palette = clean_palette(req.palette)?;
     if let Some(server) = req.server_id {
         require_member(&s.db, server, me).await?;
     }
@@ -117,8 +145,8 @@ async fn create(
         return Err(too_many_wheels(whose, cap));
     }
     sqlx::query(
-        "INSERT INTO wheels (id, server_id, owner_id, name, options, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO wheels (id, server_id, owner_id, name, options, created_by, created_at, updated_at, weights, palette)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(req.server_id.map(|s| s.to_string()))
@@ -128,6 +156,8 @@ async fn create(
     .bind(me.to_string())
     .bind(&at)
     .bind(&at)
+    .bind(stored_weights(&weights)?)
+    .bind(&palette)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -150,19 +180,33 @@ async fn update(
         Some(n) => clean_name(n)?,
         None => old.name,
     };
+    let new_options = req.options.is_some();
     let options = match req.options {
         Some(o) => clean_options(o)?,
         None => old.options,
     };
-    let changed =
-        sqlx::query("UPDATE wheels SET name = ?, options = ?, updated_at = ? WHERE id = ?")
-            .bind(&name)
-            .bind(serde_json::to_string(&options).map_err(anyhow::Error::from)?)
-            .bind(now())
-            .bind(&id)
-            .execute(&s.db)
-            .await?
-            .rows_affected();
+    // new options without weights are all alike again: the old weights went with the old options
+    let weights = match req.weights {
+        Some(w) => clean_weights(Some(w), options.len())?,
+        None if new_options => None,
+        None => old.weights,
+    };
+    let palette = match req.palette {
+        Some(p) => clean_palette(Some(p))?,
+        None => old.palette,
+    };
+    let changed = sqlx::query(
+        "UPDATE wheels SET name = ?, options = ?, weights = ?, palette = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(&name)
+    .bind(serde_json::to_string(&options).map_err(anyhow::Error::from)?)
+    .bind(stored_weights(&weights)?)
+    .bind(&palette)
+    .bind(now())
+    .bind(&id)
+    .execute(&s.db)
+    .await?
+    .rows_affected();
     if changed == 0 {
         return Err(AppError::NotFound);
     }
@@ -228,12 +272,12 @@ async fn spin(
 ) -> AppResult<(StatusCode, Json<Message>)> {
     crate::media::writes_ok(&s.cfg)?;
     let ch = spin_channel(&s, me, id).await?;
-    let (wheel_id, name, options) = what_to_spin(&s, me, &ch, req).await?;
+    let picked = what_to_spin(&s, me, &ch, req).await?;
     // Spent once the spin is sure to go ahead: a refused one (too few options, the wrong chat) costs nothing.
     if !s.limits.wheel_spin_user.hit(&me.to_string()) {
         return Err(spin_too_soon());
     }
-    let line = post_spin(&s, me, &ch, wheel_id, name, options).await?;
+    let line = post_spin(&s, me, &ch, picked).await?;
     Ok((StatusCode::CREATED, Json(line)))
 }
 
@@ -247,11 +291,18 @@ async fn spin_quietly(
     Json(req): Json<SpinWheelRequest>,
 ) -> AppResult<(StatusCode, Json<QuietSpin>)> {
     let ch = spin_channel(&s, me, id).await?;
-    let (wheel_id, name, options) = what_to_spin(&s, me, &ch, req).await?;
+    crate::access::require_open(&ch)?; // archived (#303): no spins, quiet ones included
+    let Picked {
+        wheel_id,
+        name,
+        options,
+        weights,
+        palette,
+    } = what_to_spin(&s, me, &ch, req).await?;
     if !s.limits.wheel_spin_user.hit(&me.to_string()) {
         return Err(spin_too_soon());
     }
-    let (winner, angle) = draw(options.len(), &mut rand::rng());
+    let (winner, angle) = draw_weighted(options.len(), weights.as_deref(), &mut rand::rng());
     let quiet = QuietSpin {
         id: next_ulid().to_string(),
         channel_id: ch.id,
@@ -262,6 +313,8 @@ async fn spin_quietly(
             options,
             winner: u32::try_from(winner).map_err(anyhow::Error::from)?,
             angle,
+            weights,
+            palette,
         },
     };
     s.hub
@@ -276,13 +329,14 @@ async fn spin_quietly(
 }
 
 /// What a spin request spins: a saved wheel (its id, name and options), a quick wheel (its options), or a saved
-/// wheel with only some of its options (named; each option at most as often as the wheel has it). At least two.
+/// wheel with only some of its options (named; each option at most as often as the wheel has it, with its weight).
+/// At least two.
 async fn what_to_spin(
     s: &AppState,
     me: UserId,
     ch: &Channel,
     req: SpinWheelRequest,
-) -> AppResult<(Option<String>, Option<String>, Vec<String>)> {
+) -> AppResult<Picked> {
     let picked = match (req.wheel_id, req.options) {
         (Some(w), only) => {
             let wheel = load(&s.db, &w).await?.ok_or(AppError::NotFound)?;
@@ -297,32 +351,47 @@ async fn what_to_spin(
                 }
                 _ => {}
             }
-            let options = match only {
-                None => wheel.options,
+            let (options, weights) = match only {
+                None => (wheel.options, wheel.weights),
                 Some(only) => {
                     let only = clean_options(only)?;
-                    let mut left = wheel.options;
+                    let n = wheel.options.len();
+                    let all = wheel.weights.unwrap_or_else(|| vec![1; n]);
+                    let mut left: Vec<(String, u32)> = wheel.options.into_iter().zip(all).collect();
+                    let mut kept = Vec::with_capacity(only.len());
                     for o in &only {
-                        let Some(i) = left.iter().position(|x| x == o) else {
+                        let Some(i) = left.iter().position(|(x, _)| x == o) else {
                             return Err(AppError::BadRequest(
                                 "that wheel has changed; open it again to spin".into(),
                             ));
                         };
-                        left.swap_remove(i);
+                        kept.push(left.swap_remove(i).1);
                     }
-                    only
+                    (only, weighted(kept))
                 }
             };
-            (Some(wheel.id), Some(wheel.name), options)
+            Picked {
+                wheel_id: Some(wheel.id),
+                name: Some(wheel.name),
+                options,
+                weights,
+                palette: wheel.palette,
+            }
         }
-        (None, Some(options)) => (None, None, clean_options(options)?),
+        (None, Some(options)) => Picked {
+            wheel_id: None,
+            name: None,
+            options: clean_options(options)?,
+            weights: None,
+            palette: None,
+        },
         (None, None) => {
             return Err(AppError::BadRequest(
                 "spin a saved wheel or a list of options".into(),
             ));
         }
     };
-    spinnable(&picked.2)?;
+    spinnable(&picked.options)?;
     Ok(picked)
 }
 
@@ -337,22 +406,28 @@ async fn spin_again(
     crate::media::writes_ok(&s.cfg)?;
     let row: Option<SpinRow> = sqlx::query_as(
         // a deleted line (soft-deleted, so its spin row stays) spins no more
-        "SELECT w.channel_id, w.wheel_id, w.name, w.options, w.winner FROM wheel_spins w
+        "SELECT w.channel_id, w.wheel_id, w.name, w.options, w.winner, w.weights, w.palette FROM wheel_spins w
          JOIN messages m ON m.id = w.message_id
          WHERE w.message_id = ? AND m.deleted_at IS NULL",
     )
     .bind(id.to_string())
     .fetch_optional(&s.db)
     .await?;
-    let (channel, wheel_id, name, options, winner) = row.ok_or(AppError::NotFound)?;
+    let (channel, wheel_id, name, options, winner, weights, palette) =
+        row.ok_or(AppError::NotFound)?;
     let channel: ChannelId = channel.parse().map_err(anyhow::Error::from)?;
     // 404 for anyone who can't see the chat, as if there were no such spin.
     let ch = spin_channel(&s, me, channel).await?;
     let mut options = super::parse_options(&options)?;
+    let mut weights = parse_weights(weights.as_deref())?.filter(|w| w.len() == options.len());
     if req.remove_winner {
         let i = usize::try_from(winner).map_err(anyhow::Error::from)?;
         if i < options.len() {
             options.remove(i);
+            weights = weights.and_then(|mut w| {
+                w.remove(i);
+                weighted(w)
+            });
         }
         if options.len() < wheel_limits::MIN_OPTIONS {
             return Err(AppError::BadRequest(
@@ -363,20 +438,27 @@ async fn spin_again(
     if !s.limits.wheel_spin_user.hit(&me.to_string()) {
         return Err(spin_too_soon());
     }
-    let line = post_spin(&s, me, &ch, wheel_id, name, options).await?;
+    let picked = Picked {
+        wheel_id,
+        name,
+        options,
+        weights,
+        palette,
+    };
+    let line = post_spin(&s, me, &ch, picked).await?;
     Ok((StatusCode::CREATED, Json(line)))
 }
 
 /// Draw, store the line and the spin together, then tell the chat.
-async fn post_spin(
-    s: &AppState,
-    me: UserId,
-    ch: &Channel,
-    wheel_id: Option<String>,
-    name: Option<String>,
-    options: Vec<String>,
-) -> AppResult<Message> {
-    let (winner, angle) = draw(options.len(), &mut rand::rng());
+async fn post_spin(s: &AppState, me: UserId, ch: &Channel, picked: Picked) -> AppResult<Message> {
+    let Picked {
+        wheel_id,
+        name,
+        options,
+        weights,
+        palette,
+    } = picked;
+    let (winner, angle) = draw_weighted(options.len(), weights.as_deref(), &mut rand::rng());
     let who = crate::dms::routes::shown_name(&s.db, me).await?;
     let content = format!(
         "🎡 {who} spun {} → {}",
@@ -390,6 +472,8 @@ async fn post_spin(
         options,
         winner: u32::try_from(winner).map_err(anyhow::Error::from)?,
         angle,
+        weights,
+        palette,
     };
     let payload = system::wheel_spin_payload(&spin)?;
     let channel = ch.id;
@@ -398,8 +482,8 @@ async fn post_spin(
     crate::access::open_in(&mut tx, channel).await?; // archived (#303): read-only
     let line = system::insert(&mut tx, channel, content, payload).await?;
     let inserted = sqlx::query(
-        "INSERT INTO wheel_spins (message_id, channel_id, spinner_id, wheel_id, name, options, winner, angle, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO wheel_spins (message_id, channel_id, spinner_id, wheel_id, name, options, winner, angle, created_at, weights, palette)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(line.id.to_string())
     .bind(channel.to_string())
@@ -410,6 +494,8 @@ async fn post_spin(
     .bind(i64::from(spin.winner))
     .bind(spin.angle)
     .bind(&line.created_at)
+    .bind(stored_weights(&spin.weights)?)
+    .bind(&spin.palette)
     .execute(&mut *tx)
     .await;
     match inserted {

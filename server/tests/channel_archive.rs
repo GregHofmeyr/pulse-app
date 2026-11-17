@@ -1,5 +1,6 @@
 //! Archiving a text channel (#303): the server owner's; read-only while archived (posting, reacting, editing and the
 //! rest are refused), still readable and searchable, left out of layout saves; unarchived, it takes messages again.
+//! Deleting your own message stays allowed there, and a due poll's "ended" line waits for the unarchive (#418).
 mod common;
 
 use std::time::Duration;
@@ -226,4 +227,73 @@ async fn a_layout_save_leaves_archived_channels_out() {
         .await
         .unwrap();
     assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+}
+
+/// #418: in an archived channel you can still delete your own message (the one change allowed), but not remove a
+/// link preview; and a poll that runs out there posts its "ended" line only once it's unarchived.
+#[tokio::test]
+async fn archived_edge_cases_delete_previews_and_poll_lines() {
+    let f = setup().await;
+    let g = f.general.id;
+    let mine = send(&f.app, &f.sam.1, g, "see https://example.com/a").await;
+    let r = post_json(
+        &f.app,
+        &f.sam.1,
+        &format!("/channels/{g}/polls"),
+        json!({"question": "pizza?", "options": ["yes", "no"], "ends_in": "day"}),
+    )
+    .await;
+    assert!(r.status().is_success(), "{}", r.status());
+    let poll: Message = r.json().await.unwrap();
+    sqlx::query("UPDATE polls SET ends_at = '2000-01-01T00:00:00.000Z' WHERE message_id = ?")
+        .bind(poll.id.to_string())
+        .execute(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(set(&f, &f.alex.1, &f.general, true).await.status(), 200);
+
+    let hide = post_json(
+        &f.app,
+        &f.sam.1,
+        &format!("/messages/{}/embeds/hide", mine.id),
+        json!({}),
+    )
+    .await;
+    assert_eq!(hide.status(), 403);
+    let show = post_json(
+        &f.app,
+        &f.sam.1,
+        &format!("/messages/{}/embeds/show", mine.id),
+        json!({}),
+    )
+    .await;
+    assert_eq!(show.status(), 403);
+
+    // the due poll waits: no line in the archived channel
+    let s = f.app.state();
+    let now = pulse_server::db::now();
+    assert_eq!(pulse_server::polls::close_due(&s, &now).await.unwrap(), 0);
+    let ended = |h: &[Message]| h.iter().filter(|m| m.poll_ended.is_some()).count();
+    let history: Vec<Message> =
+        get_json(&f.app, &f.alex.1, &format!("/channels/{g}/messages")).await;
+    assert_eq!(ended(&history), 0);
+
+    // your own message can still go (not someone else's)
+    let del = f
+        .app
+        .http
+        .delete(f.app.url(&format!("/messages/{}", mine.id)));
+    assert_eq!(status(del, &f.alex.1).await, 403);
+    let del = f
+        .app
+        .http
+        .delete(f.app.url(&format!("/messages/{}", mine.id)));
+    assert_eq!(status(del, &f.sam.1).await, 204);
+
+    // unarchived, the next sweep posts the line
+    assert_eq!(set(&f, &f.alex.1, &f.general, false).await.status(), 200);
+    assert_eq!(pulse_server::polls::close_due(&s, &now).await.unwrap(), 1);
+    let history: Vec<Message> =
+        get_json(&f.app, &f.alex.1, &format!("/channels/{g}/messages")).await;
+    assert_eq!(ended(&history), 1);
 }

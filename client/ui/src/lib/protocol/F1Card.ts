@@ -2,9 +2,10 @@
 import type { F1LightsOut } from "./F1LightsOut";
 import type { F1ResultsCard } from "./F1ResultsCard";
 import type { F1ScoresCard } from "./F1ScoresCard";
+import type { F1SprintCard } from "./F1SprintCard";
 import type { F1WeekendCard } from "./F1WeekendCard";
 
 /**
  * An F1 card (#386): a system line in the server's F1 channel.
  */
-export type F1Card = { "kind": "weekend" } & F1WeekendCard | { "kind": "lights_out" } & F1LightsOut | { "kind": "results" } & F1ResultsCard | { "kind": "scores" } & F1ScoresCard;
+export type F1Card = { "kind": "weekend" } & F1WeekendCard | { "kind": "lights_out" } & F1LightsOut | { "kind": "results" } & F1ResultsCard | { "kind": "scores" } & F1ScoresCard | { "kind": "sprint" } & F1SprintCard;

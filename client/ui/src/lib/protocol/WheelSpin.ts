@@ -28,6 +28,15 @@ options: Array<string>,
 winner: number, 
 /**
  * The wheel's final clockwise rotation in degrees, in [0, 360): the pointer at 12 o'clock then sits inside
- * the winner's slice ([`wheel_winner_at`]).
+ * the winner's slice ([`wheel_winner_at_weighted`]).
  */
-angle: number, };
+angle: number, 
+/**
+ * Each option's weight (#259), as the saved wheel had it: a slice's share of the wheel, and of the draw. `None`
+ * is every option alike (a quick wheel, or a wheel without weights; older clients draw it so).
+ */
+weights?: Array<number>, 
+/**
+ * The saved wheel's palette (#259; [`wheel_palettes`]); `None` is the neon spectrum.
+ */
+palette?: string, };

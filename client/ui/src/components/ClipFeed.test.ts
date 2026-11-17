@@ -300,13 +300,14 @@ describe('ClipFeed', () => {
     }
     const item = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === label)!
     const labels = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((b) => b.textContent?.trim())
-    // everyone's clip has the menu, with Download first (#204) and Pin clip (#257); Edit and Delete are the poster's
+    // everyone's clip has the menu, with Download first (#204), Pin clip (#257) and Remind me (#412); Edit and Delete
+    // are the poster's
     open('M003')
-    expect(labels()).toEqual(['Download', 'Pin clip'])
+    expect(labels()).toEqual(['Download', 'Pin clip', 'Remind me'])
     open('M003')
     expect(labels()).toEqual([])
     open()
-    expect(labels()).toEqual(['Download', 'Pin clip', 'Edit', 'Delete'])
+    expect(labels()).toEqual(['Download', 'Pin clip', 'Remind me', 'Edit', 'Delete'])
     open()
     // Edit: caption and game, through a dialog
     open()
@@ -496,7 +497,7 @@ describe('ClipFeed', () => {
     it('the menu says Downloading 42% and has Cancel download', async () => {
       await downloading('M003', 42, 100)
       openMenu('M003')
-      expect(items()).toEqual(['Downloading 42%', 'Cancel download', 'Pin clip'])
+      expect(items()).toEqual(['Downloading 42%', 'Cancel download', 'Pin clip', 'Remind me'])
       ;[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === 'Cancel download')!.click()
       await settle()
       expect(calls('cancel_download').map((c) => c[1])).toEqual([{ key: 'clip:M003' }])
@@ -504,7 +505,7 @@ describe('ClipFeed', () => {
       await settle()
       flushSync()
       openMenu('M003')
-      expect(items()).toEqual(['Download', 'Pin clip'])
+      expect(items()).toEqual(['Download', 'Pin clip', 'Remind me'])
     })
 
     it('a finished download says Saved, quietly', async () => {
@@ -516,7 +517,7 @@ describe('ClipFeed', () => {
       expect(icon('M003').dataset.tip).toBe('Saved')
       expect(card('M003').querySelector('[role="alert"]')).toBeNull()
       openMenu('M003')
-      expect(items()).toEqual(['Saved', 'Show in folder', 'Pin clip'])
+      expect(items()).toEqual(['Saved', 'Show in folder', 'Pin clip', 'Remind me'])
     })
 
     it('Saved offers Show in folder (#333), on the video and in the menu, for the file it saved', async () => {

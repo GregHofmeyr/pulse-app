@@ -1139,6 +1139,22 @@ describe('TextChannel: more than a page arriving while away (#329)', () => {
     unmount(c)
   })
 
+  it('never read, with more than a page unread: opens at the chat\'s start, its oldest unread (#419)', async () => {
+    serve(300)
+    handleReady(testReady([C1], { read_states: [{ channel_id: 'C1', last_read_message_id: null, unread: 300, mentions: 0 }] }))
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    await vi.waitFor(() => expect(app.state.history['C1']?.loaded).toBe(true))
+    expect(calls('list_messages_after')).toBe(1)
+    expect(calls('list_messages_around')).toBe(0)
+    expect(ids()[0]).toBe('M0001')
+    expect(ids().at(-1)).toBe('M0050')
+    expect(app.state.history['C1'].start).toBe(true)
+    expect(app.state.history['C1'].end).toBe(false)
+    expect(calls('mark_read')).toBe(0)
+    unmount(c)
+  })
+
   it('a jump to the chat wins over opening at the first unread (#332)', async () => {
     serve(300)
     handleReady(testReady([C1], read('M0200', 100)))

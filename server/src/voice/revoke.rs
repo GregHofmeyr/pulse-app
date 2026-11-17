@@ -254,6 +254,13 @@ async fn remove(client: &RoomClient, room: &str, identity: &str) {
 pub async fn remove_revoked(s: &AppState, grants: &[RevokedGrant]) {
     // ghost grants aren't in the table: their sessions are checked instead
     crate::streams::ghosts::sessions_revoked(s).await;
+    remove_granted(s, grants).await;
+}
+
+/// Remove every participant LiveKit reports carrying one of `grants` (per room, in parallel, within [`BUDGET`]),
+/// whatever identity it connected under: what a logout does for its sessions ([`remove_revoked`]), and what leaving a
+/// server does for the grants its member held in its rooms (#418). Never fails; problems are logged.
+pub async fn remove_granted(s: &AppState, grants: &[RevokedGrant]) {
     let mut rooms: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for g in grants {
         rooms.entry(&g.room).or_default().insert(&g.id);

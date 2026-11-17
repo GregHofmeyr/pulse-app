@@ -135,6 +135,7 @@ async fn create(
         f1: None,
         forwarded: None,
         group_line: None,
+        member_line: None,
     };
     let stored = Stored {
         message_id: msg.id,
@@ -323,13 +324,16 @@ async fn edit(
     if p.author_id != Some(me) {
         return Err(AppError::Forbidden);
     }
-    // an archived channel (#303) is read-only: no changing polls there
-    crate::access::require_open(&channel_for(&s.db, me, p.channel_id).await?)?;
+    // an archived channel (#303) is read-only: no changing polls there; nor once its creator left the server
+    let ch = channel_for(&s.db, me, p.channel_id).await?;
+    crate::access::require_open(&ch)?;
+    crate::access::require_member_of(&s.db, me, &ch).await?;
     let question = clean_question(&req.question)?;
     let mut tx = begin_write(&s.db).await?;
-    // Read again under the write lock: a close, a delete, an archive or a vote may have landed since.
+    // Read again under the write lock: a close, a delete, an archive, a leave or a vote may have landed since.
     crate::access::channel_live_in(&mut tx, p.channel_id).await?;
     crate::access::open_in(&mut tx, p.channel_id).await?; // archived (#303): read-only
+    crate::access::member_of_in(&mut tx, me, p.channel_id).await?;
     let at = now();
     let p = match super::load(&mut tx, id).await? {
         None => return Err(AppError::NotFound),
@@ -414,6 +418,9 @@ async fn close(
     if p.author_id != Some(me) {
         return Err(AppError::Forbidden);
     }
+    // left the server, or removed from it: the poll is no longer theirs to end
+    let ch = channel_for(&s.db, me, p.channel_id).await?;
+    crate::access::require_member_of(&s.db, me, &ch).await?;
     let at = now();
     if p.over(&at) {
         return Err(is_over());
@@ -424,6 +431,7 @@ async fn close(
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, p.channel_id).await?; // channel deleted since (#109)
     crate::access::open_in(&mut tx, p.channel_id).await?; // archived (#303): read-only
+    crate::access::member_of_in(&mut tx, me, p.channel_id).await?; // left or removed since
     // a delete may have landed since the read: a deleted poll has no row
     if super::load(&mut tx, id).await?.is_none() {
         return Err(AppError::NotFound);

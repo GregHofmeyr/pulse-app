@@ -1203,6 +1203,11 @@ async fn editing_text_keeps_awards() {
         edited.content, "“one, edited” — sam\n“two” — A Friend",
         "content is re-rendered"
     );
+    // the quote as it read before is in its edit history (#415)
+    let v: Vec<pulse_protocol::rest::MessageVersion> =
+        get_json(&f.app, &f.sam_t, &format!("/messages/{}/edits", m.id)).await;
+    let texts: Vec<&str> = v.iter().map(|x| x.content.as_str()).collect();
+    assert_eq!(texts, [edited.content.as_str(), m.content.as_str()]);
     for l in &q.lines {
         assert_eq!(f.awards_on(l.id).await, 1);
     }

@@ -11,7 +11,7 @@ const playSound = vi.fn()
 vi.mock('./voiceui', async (orig) => ({ ...(await orig<typeof import('./voiceui')>()), playSound: (...a: unknown[]) => playSound(...a) }))
 
 import { noteScheduledEvent, scheduled, scheduledIn } from './scheduled.svelte'
-import { noteReminderEvent, openReminder, reminders, seeAllReminders } from './reminders.svelte'
+import { claimMissed, noteReminderEvent, openReminder, reminders, seeAllReminders } from './reminders.svelte'
 import { setReminderAlerts } from './reminderPrefs.svelte'
 import { app, ui } from './store.svelte'
 import { emptyState } from './state'
@@ -107,5 +107,44 @@ describe('reminders (#300)', () => {
     expect(reminders.list.map((r) => [r.id, r.seen])).toEqual([['R1', true], ['R2', true], ['R3', false]])
     noteReminderEvent({ t: 'ReminderRemoved', d: { user_id: 'U1', id: 'R2' } })
     expect(reminders.list.map((r) => r.id)).toEqual(['R1', 'R3'])
+  })
+})
+
+describe('reminders missed while no device was connected (#412)', () => {
+  const missed = [rem({ id: 'R1', due: true, missed: true }), rem({ id: 'R2', due: true, missed: true, message_id: 'M2' }), rem({ id: 'R3', due: true })]
+  const claimed = (won: string[]) => invoke.mockImplementation(async (cmd: string, args?: unknown) =>
+    cmd === 'reminder_alerted' ? won.includes((args as { id: string }).id) : undefined)
+  const claims = () => invoke.mock.calls.filter((c) => c[0] === 'reminder_alerted').map((c) => (c[1] as { id: string }).id)
+
+  it('claims each missed one and tells you only those this device won, once', async () => {
+    claimed(['R1'])
+    reminders.list = missed
+    await claimMissed(reminders.list)
+    expect(claims()).toEqual(['R1', 'R2'])
+    expect(playSound).toHaveBeenCalledTimes(1)
+    expect(ui.notice).toContain('Reminder: ')
+    expect(reminders.list.some((r) => r.missed)).toBe(false)
+  })
+
+  it('several won are one line; away from the window, one notification', async () => {
+    claimed(['R1', 'R2'])
+    windowFocus.focused = false
+    await claimMissed(missed)
+    expect(playSound).toHaveBeenCalledTimes(1)
+    const notices = invoke.mock.calls.filter((c) => c[0] === 'notify_message')
+    expect(notices).toEqual([['notify_message', { notice: expect.objectContaining({ title: 'Reminders', body: '2 reminders came due while you were away', tag: 'reminders-missed' }) }]])
+  })
+
+  it('another device won them all: nothing here', async () => {
+    claimed([])
+    await claimMissed(missed)
+    expect(playSound).not.toHaveBeenCalled()
+    expect(ui.notice).toBeNull()
+  })
+
+  it('with Reminder alerts off nothing is claimed, so another device can tell you', async () => {
+    setReminderAlerts(false)
+    await claimMissed(missed)
+    expect(claims()).toEqual([])
   })
 })

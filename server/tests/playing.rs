@@ -178,6 +178,7 @@ async fn a_steam_game_reaches_everyone_with_its_art_beside_listening() {
             artist: None,
             album: None,
             spotify_id: None,
+            player: None,
         }),
         show: true,
     })
@@ -203,6 +204,11 @@ async fn a_steam_game_reaches_everyone_with_its_art_beside_listening() {
         art.logo.clone().unwrap(),
     );
     assert!(hero.width > hero.height * 2, "the wide hero, kept wide");
+    assert_eq!(
+        hero.width, 1280,
+        "the hero keeps more than a link thumbnail"
+    );
+    assert!(header.width <= 480 && logo.width <= 480);
     assert_ne!(header.hash, logo.hash);
     assert_eq!(cdn_hits(&fake), 3, "three pieces, each fetched once");
     // the art is stored media anyone signed in can load

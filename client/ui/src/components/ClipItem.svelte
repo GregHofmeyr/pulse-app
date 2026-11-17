@@ -5,6 +5,7 @@
   import ClipCaption from './ClipCaption.svelte'
   import ClipPlayer from './ClipPlayer.svelte'
   import ClipReplies from './ClipReplies.svelte'
+  import EditHistoryDialog from './EditHistoryDialog.svelte'
   import Icon from './Icon.svelte'
   import Name from './Name.svelte'
   import ReactionRow from './ReactionRow.svelte'
@@ -58,6 +59,8 @@
   const download = () => void downloadClip(message, inlineError.show)
   // the poster's avatar animates while the pointer is over the clip
   let over = $state(false)
+  // Edit history (#301, #415): "(edited)" opens the versions
+  let historyAt = $state<HTMLElement | null>(null)
 </script>
 
 {#if clip}
@@ -69,7 +72,8 @@
         <strong>{#if message.author_id}<Name userId={message.author_id} serverId={serverId || null} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</strong>
         {#if game}<span class="game">{game}</span>{/if}
         <span class="time">{when}</span>
-        {#if message.edited_at}<span class="edited">(edited)</span>{/if}
+        {#if message.edited_at}<button type="button" class="edited" aria-haspopup="dialog" aria-expanded={!!historyAt} data-tip="See edit history" data-menu-toggle
+          onclick={(e) => (historyAt = historyAt ? null : e.currentTarget)}>(edited)</button>{/if}
         {#if pin}<span class="pin-mark" data-tip={pinTip(nameOf(pin.pinned_by), pin.expires_at, now)}><Icon name="pin" size={14} /></span>{/if}
         <span class="grow"></span>
         {#if onOpenReplies && !compact}<button type="button" class="icon-btn icon-btn-sm" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={16} /></button>{/if}
@@ -82,6 +86,10 @@
       {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
     </div>
   </article>
+{/if}
+
+{#if historyAt}
+  <EditHistoryDialog anchor={historyAt} messageId={message.id} onClose={() => (historyAt = null)} />
 {/if}
 
 <style>
@@ -98,6 +106,8 @@
     .game { display: none; }
   }
   .time, .edited { font-size: 11px; color: var(--text-3); }
+  .edited { border: 0; padding: 0; background: none; font-family: inherit; cursor: pointer; }
+  .edited:hover, .edited:focus-visible { color: var(--text-2); text-decoration: underline; }
   .pin-mark { display: inline-flex; color: var(--text-3); }
   .grow { flex: 1; }
   .player { width: 100%; max-width: 640px; }

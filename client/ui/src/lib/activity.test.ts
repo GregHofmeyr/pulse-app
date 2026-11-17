@@ -1,6 +1,6 @@
 // "Listening to…" (#275): wording, links, and how the state keeps it.
 import { describe, expect, it } from 'vitest'
-import { activityLine, artUrl, listenLink, listeningOf, songLine } from './activity'
+import { activityLine, activityTip, artUrl, isSpotify, listenLink, listeningOf, playerName, songLine, sourceLine } from './activity'
 import { applyEvent, applyReady, emptyState, stageShareIn } from './state'
 import { testReady } from './testReady'
 import type { Listening } from './protocol/Listening'
@@ -18,10 +18,30 @@ describe('how it reads', () => {
 
   it('a known song links to itself; otherwise a search that opens Spotify', () => {
     expect(listenLink(song({ spotify_id: `track:${ID}` }))).toEqual({ href: `https://open.spotify.com/track/${ID}`, label: 'Listen on Spotify' })
-    expect(listenLink(song({ spotify_id: `episode:${ID}` })).href).toBe(`https://open.spotify.com/episode/${ID}`)
+    expect(listenLink(song({ spotify_id: `episode:${ID}` }))?.href).toBe(`https://open.spotify.com/episode/${ID}`)
     expect(listenLink(song())).toEqual({ href: 'https://open.spotify.com/search/Song%20The%20Band', label: 'Open Spotify' })
     // nothing odd from the wire becomes a path
-    expect(listenLink(song({ spotify_id: 'track:../../x', title: 'a/b?c' })).href).toBe('https://open.spotify.com/search/a%2Fb%3Fc%20The%20Band')
+    expect(listenLink(song({ spotify_id: 'track:../../x', title: 'a/b?c' }))?.href).toBe('https://open.spotify.com/search/a%2Fb%3Fc%20The%20Band')
+  })
+
+  it('another player (#322): a source label, never a Spotify link', () => {
+    const yt = song({ player: 'youtube_music', spotify_id: `track:${ID}` })
+    expect(listenLink(yt)).toBeNull()
+    expect(listenLink(song({ player: 'browser' }))).toBeNull()
+    expect(isSpotify(yt)).toBe(false)
+    expect(isSpotify(song())).toBe(true)
+    expect(isSpotify(song({ player: 'spotify' }))).toBe(true)
+    expect(listenLink(song({ player: 'spotify' }))?.label).toBe('Open Spotify')
+    expect(activityLine(yt)).toBe('Listening to Song · The Band')
+    expect(activityTip(yt)).toBe('Listening to Song · The Band on YouTube Music')
+    expect(activityTip(song({ player: 'browser' }))).toBe('Listening to Song · The Band in a browser')
+    expect(activityTip(song())).toBe('Listening to Song · The Band')
+    expect(sourceLine(song())).toBe('Listening to Spotify')
+    expect(sourceLine(song({ player: 'tidal' }))).toBe('Listening on Tidal')
+    expect(sourceLine(song({ player: 'browser' }))).toBe('Listening in a browser')
+    expect(['apple_music', 'deezer', 'foobar2000', 'other'].map((p) => playerName(p as never))).toEqual(['Apple Music', 'Deezer', 'foobar2000', 'another player'])
+    // a player a newer server names that this build doesn't know
+    expect(playerName('bandcamp' as never)).toBe('another player')
   })
 
   it('art only from a media hash', () => {

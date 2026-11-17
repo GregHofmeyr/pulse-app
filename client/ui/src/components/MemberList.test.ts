@@ -231,7 +231,7 @@ describe('MemberList row menu (#113)', () => {
     rightClick(row(1))
     expect(menu()).not.toBeNull()
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for Sammy')
-    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline'])
     expect(label('private-nick')).toBe('Set private nickname')
     expect(label('profile')).toBe('View profile')
     expect(label('message')).toBe('Message')
@@ -243,7 +243,7 @@ describe('MemberList row menu (#113)', () => {
     app.state = { ...app.state, privateNicks: { U2: 'Bestie' } }
     flushSync()
     rightClick(row(1))
-    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline'])
     expect(label('private-nick')).toBe('Change private nickname')
   })
 
@@ -363,13 +363,13 @@ describe('MemberList row menu (#113)', () => {
 
     it('someone out of voice with nothing held: no server voice items', () => {
       rightClick(row(1))
-      expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
+      expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline'])
     })
 
     it('server muted while out of voice: Server unmute, saying who did it, as in the voice menu', () => {
       held('U1', null)
       rightClick(row(1))
-      expect(ids()).toEqual(['profile', 'message', 'server-mute', 'nick', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
+      expect(ids()).toEqual(['profile', 'message', 'server-mute', 'nick', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline'])
       expect(label('server-mute')).toBe('Server unmute')
       expect(tip('server-mute')).toBe('Server muted by alex')
       pickItem('server-mute')
@@ -380,7 +380,7 @@ describe('MemberList row menu (#113)', () => {
     it('server deafened while out of voice: Server undeafen', () => {
       held(null, 'U1')
       rightClick(row(1))
-      expect(ids()).toEqual(['profile', 'message', 'server-deafen', 'nick', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
+      expect(ids()).toEqual(['profile', 'message', 'server-deafen', 'nick', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline'])
       expect(label('server-deafen')).toBe('Server undeafen')
       expect(tip('server-deafen')).toBe('Server deafened by alex')
       pickItem('server-deafen')
@@ -390,7 +390,7 @@ describe('MemberList row menu (#113)', () => {
     it("in this server's voice: Server mute and Server deafen, as in the voice menu (Disconnect stays there)", () => {
       inLounge()
       rightClick(row(1))
-      expect(ids()).toEqual(['profile', 'message', 'server-mute', 'server-deafen', 'nick', 'private-nick', 'live-notify', 'message-sound', 'appear-offline'])
+      expect(ids()).toEqual(['profile', 'message', 'server-mute', 'server-deafen', 'nick', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline'])
       expect(label('server-mute')).toBe('Server mute')
       expect(tip('server-mute')).toBeNull()
     })
@@ -450,9 +450,39 @@ describe('MemberList: Listening to (#275)', () => {
     expect(samRow().querySelector('.listening-line')?.textContent).toBe('Listening to Song · The Band')
     expect(samRow().querySelector('.name-clip')).toBeNull()
     expect(samRow().querySelector('.sp .spotify-icon')).not.toBeNull()
+    // another player (#322): a generic icon named for it, never Spotify's
+    app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online', listening: { title: 'Song', artist: 'Jo', album: 'Album', spotify_id: null, art: null, player: 'tidal' } } } }
+    flushSync()
+    expect(samRow().querySelector('.sp .spotify-icon')).toBeNull()
+    expect(samRow().querySelector('.sp .player-icon')?.getAttribute('data-tip')).toBe('Tidal')
+    expect(samRow().querySelector('.listening-line')?.getAttribute('data-tip')).toBe('Listening to Song · Jo on Tidal')
     app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online' } } }
     flushSync()
     expect(samRow().querySelector('.listening-line')).toBeNull()
+    expect(samRow().querySelector('.name-clip')?.textContent).toBe('sam')
+  })
+})
+
+describe('MemberList: Playing (#392)', () => {
+  it("the game someone plays takes the line under their name, over their song; a custom status still comes first", () => {
+    const samRow = () => [...document.querySelectorAll<HTMLElement>('.members .row')].find((r) => r.textContent?.includes('Sammy'))!
+    const listening = { title: 'Song', artist: 'The Band', album: null, spotify_id: null, art: null }
+    const playing = { name: 'Space Game', steam_app_id: 570, started_at: null, art: null }
+    app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online', listening, playing } } }
+    flushSync()
+    const line = samRow().querySelector<HTMLElement>('[data-playing-line]')!
+    expect(line.textContent).toBe('Playing Space Game')
+    expect(line.dataset.tip).toBe('Playing Space Game')
+    expect(samRow().querySelector('.listening-line')).toBeNull()
+    expect(samRow().querySelector('.sp')).toBeNull()
+    expect(samRow().querySelector('.name-clip')).toBeNull()
+    app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online', playing, custom_status: { text: 'Busy', emoji: null } } } }
+    flushSync()
+    expect(samRow().querySelector('[data-playing-line]')).toBeNull()
+    expect(samRow().querySelector('.custom-status')).not.toBeNull()
+    app.state = { ...app.state, people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online' } } }
+    flushSync()
+    expect(samRow().querySelector('[data-playing-line]')).toBeNull()
     expect(samRow().querySelector('.name-clip')?.textContent).toBe('sam')
   })
 })

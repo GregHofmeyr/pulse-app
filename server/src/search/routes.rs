@@ -7,7 +7,7 @@ use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
-use pulse_protocol::rest::{Channel, SearchHas, SearchHit, SearchResults};
+use pulse_protocol::rest::{Channel, Message, SearchHas, SearchHit, SearchResults};
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Sqlite};
 
@@ -345,11 +345,13 @@ async fn run(
             .iter()
             .flat_map(|q| q.lines.iter().filter_map(|l| l.caption.clone()))
             .collect();
-        let shown = text::display_text(&message.content, &captions);
+        // A forward (#415) is indexed by its comment and the words it forwarded, and shows both.
+        let indexed = indexed_text(&message);
+        let shown = text::display_text(&indexed, &captions);
         // The index also holds custom emoji ids as words: a hit that only matched one of those
         // has none of the words in what it shows. (`total` was counted before this, so it can
         // count such a hit: rare, and only ever over.)
-        if text::matched_only_by_emoji_ids(&message.content, &shown, &search.terms) {
+        if text::matched_only_by_emoji_ids(&indexed, &shown, &search.terms) {
             continue;
         }
         let (highlights, _) = text::highlights(&shown, &search.terms);
@@ -365,6 +367,26 @@ async fn run(
         next_cursor,
         total,
     })
+}
+
+/// The words a message is indexed by besides its quote's captions (0060_search_forwards.sql): its content, or for a
+/// live forward its comment (none when it was sent without one) then the words it forwarded.
+fn indexed_text(m: &Message) -> String {
+    match m.forwarded.as_deref() {
+        Some(f) if !f.unavailable => {
+            let comment = if m.caption_is_fallback {
+                ""
+            } else {
+                m.content.as_str()
+            };
+            [comment, f.content.as_str()]
+                .into_iter()
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        _ => m.content.clone(),
+    }
 }
 
 /// The page's messages, in the page's order. One deleted since the page was read is left out

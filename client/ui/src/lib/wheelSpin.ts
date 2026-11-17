@@ -10,18 +10,18 @@ import { windowFocus } from './windowFocus.svelte'
 export const quietNow = (): boolean => motion.reducedMotion || motion.streaming || !windowFocus.focused
 
 /** Spin a wheel of `count` slices to `angle`. Returns a stop function (an unmount mid-spin). */
-export function runSpin(o: { angle: number; count: number; quiet: boolean; onRotate: (deg: number) => void; onLanded: () => void }): () => void {
+export function runSpin(o: { angle: number; count: number; weights?: readonly number[] | null; quiet: boolean; onRotate: (deg: number) => void; onLanded: () => void }): () => void {
   const duration = spinDuration(o.quiet)
   let start: number | null = null
   let raf = 0
-  let slice = winnerAt(0, o.count)
+  let slice = winnerAt(0, o.count, o.weights)
   let lastTick = -Infinity
   const frame = (t: number) => {
     start ??= t
     const elapsed = t - start
     const rotation = rotationAt(elapsed, o.angle, o.quiet)
     o.onRotate(rotation)
-    const now = winnerAt(rotation, o.count)
+    const now = winnerAt(rotation, o.count, o.weights)
     if (now !== slice) {
       slice = now
       if (!o.quiet && t - lastTick >= TICK_GAP_MS) {

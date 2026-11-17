@@ -1,12 +1,15 @@
 //! `GET /inbox`, `GET /inbox/unread`, `POST /inbox/{message_id}/read`, `POST /inbox/read-all` (#306), and
-//! `GET /inbox/threads` (#326).
+//! `GET /inbox/threads` (#326). `GET /inbox` takes a custom filter (#307): `from`, `in` (comma-separated ids) and
+//! `unread`.
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use pulse_protocol::ids::MessageId;
-use pulse_protocol::rest::{InboxPage, InboxReadAllRequest, InboxThreads, InboxUnread};
+use pulse_protocol::rest::{
+    InboxPage, InboxReadAllRequest, InboxThreads, InboxUnread, inbox_filter_limits,
+};
 use serde::Deserialize;
 
 use super::{Filter, item, list, tell, unread, updated};
@@ -34,6 +37,33 @@ struct PageQuery {
     /// The Mentions tab: typed mentions only.
     #[serde(default)]
     mentions: bool,
+    /// A custom filter (#307): only from these people (comma-separated ids).
+    from: Option<String>,
+    /// Only in these chats (comma-separated ids).
+    #[serde(rename = "in")]
+    in_channels: Option<String>,
+    /// Only unread items.
+    #[serde(default)]
+    unread: bool,
+}
+
+/// A comma-separated list of ids, at most [`inbox_filter_limits::MAX_PER_FILTER`]; a malformed one is a 400.
+fn ids<T: std::str::FromStr>(raw: Option<&str>) -> AppResult<Vec<T>> {
+    let list: Vec<&str> = raw
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .collect();
+    if list.len() > inbox_filter_limits::MAX_PER_FILTER {
+        return Err(AppError::BadRequest("too many ids in a filter".into()));
+    }
+    list.into_iter()
+        .map(|x| {
+            x.parse()
+                .map_err(|_| AppError::BadRequest("not an id".into()))
+        })
+        .collect()
 }
 
 async fn page(
@@ -49,6 +79,9 @@ async fn page(
             mentions_only: q.mentions,
             only: None,
             limit: q.limit.unwrap_or(PAGE).clamp(1, MAX_PAGE),
+            authors: ids(q.from.as_deref())?,
+            channels: ids(q.in_channels.as_deref())?,
+            unread_only: q.unread,
         },
     )
     .await?;

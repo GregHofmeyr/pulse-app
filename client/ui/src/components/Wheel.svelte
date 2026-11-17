@@ -6,11 +6,15 @@
   // shows the result view over it (#271): the wheel stays, under a dark, centre-weighted fade, with the winner
   // written large across the hub. `mini` is a landed spin's thumbnail (the 🎡 line, #273): the slices without labels,
   // with a pointer and a small hub drawn to scale.
-  import { fitLabel, labelFit, resultFontSize } from '../lib/wheel'
-  import { labelColour, sliceColour } from '../lib/wheelColours'
+  import { fitLabel, labelFit, resultFontSize, sliceSpans } from '../lib/wheel'
+  import { sliceStyle } from '../lib/wheelColours'
 
-  let { options, rotation = 0, size = 220, landed = null, result = null, onSpin, spinLabel = 'Spin', spinDisabled = false, bare = false, mini = false }: {
+  let { options, weights = null, palette = null, rotation = 0, size = 220, landed = null, result = null, onSpin, spinLabel = 'Spin', spinDisabled = false, bare = false, mini = false }: {
     options: string[]
+    /** Each option's weight (#259): its slice's share of the wheel. None: all alike. */
+    weights?: readonly number[] | null
+    /** A palette's name (#259, lib/wheelColours.ts); none is the neon spectrum. */
+    palette?: string | null
     rotation?: number
     /** Its width and height in px. */
     size?: number
@@ -32,7 +36,7 @@
 
   const R = 100
   const n = $derived(options.length)
-  const fit = $derived(labelFit(n))
+  const spans = $derived(sliceSpans(n, weights))
   // a point on the rim, `deg` clockwise from 12 o'clock
   const at = (deg: number, r = R) => {
     const a = (deg * Math.PI) / 180
@@ -40,15 +44,19 @@
   }
   const slices = $derived(
     options.map((label, i) => {
-      const seg = 360 / n
-      const from = i * seg
+      const { from, seg } = spans[i]
+      // a weighted slice's label fits it as one of 360/seg equal slices would
+      const fit = labelFit(360 / Math.max(seg, 1e-6))
+      const look = sliceStyle(i, n, palette)
       return {
         label: fitLabel(label, fit.chars),
+        size: fit.size,
         full: label,
-        // one option: the whole disc
-        d: n === 1 ? `M0 ${-R}A${R} ${R} 0 1 1 0 ${R}A${R} ${R} 0 1 1 0 ${-R}Z` : `M0 0L${at(from)}A${R} ${R} 0 ${seg > 180 ? 1 : 0} 1 ${at(from + seg)}Z`,
-        fill: sliceColour(i, n),
-        ink: labelColour(i, n),
+        // one option (or one holding the whole turn): the whole disc
+        d: n === 1 || seg >= 359.999 ? `M0 ${-R}A${R} ${R} 0 1 1 0 ${R}A${R} ${R} 0 1 1 0 ${-R}Z` : `M0 0L${at(from)}A${R} ${R} 0 ${seg > 180 ? 1 : 0} 1 ${at(from + seg)}Z`,
+        fill: look.fill,
+        ink: look.ink,
+        edged: look.edged,
         // the label's frame: x runs out along the slice's middle
         turn: from + seg / 2 - 90,
       }
@@ -66,9 +74,10 @@
       <g transform="rotate({rotation})">
         {#each slices as s, i (i)}
           <g class="slice" class:dim={landed !== null && landed !== i}>
-            <path d={s.d} fill={s.fill} />
-            {#if !plain}<text transform="rotate({s.turn})" x={R - 7} y="0" text-anchor="end" dominant-baseline="central" fill={s.ink}
-              font-size={fit.size}>{s.label}</text>{/if}
+            <!-- a palette's token goes in as a style too: var() in a presentation attribute isn't every engine's -->
+            <path d={s.d} fill={s.fill} style:fill={s.edged ? s.fill : undefined} />
+            {#if !plain}<text transform="rotate({s.turn})" x={R - 7} y="0" text-anchor="end" dominant-baseline="central" fill={s.ink} style:fill={s.edged ? s.ink : undefined}
+              class:edged={s.edged} font-size={s.size}>{s.label}</text>{/if}
           </g>
         {/each}
       </g>
@@ -99,6 +108,8 @@
   .rim { fill: var(--bg-0); }
   .slice path { stroke: var(--bg-0); stroke-width: 1.2; stroke-linejoin: round; }
   .slice text { font-weight: 700; pointer-events: none; }
+  /* a palette's label (#259): white with a dark edge, readable on any theme colour */
+  .slice text.edged { stroke: var(--video-chrome-strong); stroke-width: 1.6; stroke-linejoin: round; paint-order: stroke; }
   .slice { transition: opacity var(--dur-slow) var(--ease); }
   .slice.dim { opacity: .35; }
   /* the thumbnail's hub and pointer (#273), ringed in the surface colour like the full-size ones */

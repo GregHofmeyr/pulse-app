@@ -3,11 +3,13 @@ import type { CallInfo } from "./CallInfo";
 import type { CallRing } from "./CallRing";
 import type { Channel } from "./Channel";
 import type { ChannelId } from "./ChannelId";
+import type { ChannelOrder } from "./ChannelOrder";
 import type { ClipViewPref } from "./ClipViewPref";
 import type { CustomEmoji } from "./CustomEmoji";
 import type { DmLayout } from "./DmLayout";
 import type { DmMembers } from "./DmMembers";
 import type { Game } from "./Game";
+import type { InboxFilter } from "./InboxFilter";
 import type { Message } from "./Message";
 import type { MessageBookmark } from "./MessageBookmark";
 import type { MessageReminder } from "./MessageReminder";
@@ -16,6 +18,7 @@ import type { MyCustomStatus } from "./MyCustomStatus";
 import type { NotifyLevelPref } from "./NotifyLevelPref";
 import type { OwnStatus } from "./OwnStatus";
 import type { Person } from "./Person";
+import type { PersonDnd } from "./PersonDnd";
 import type { PrivateNickname } from "./PrivateNickname";
 import type { QotyEvent } from "./QotyEvent";
 import type { ReadState } from "./ReadState";
@@ -186,4 +189,17 @@ bookmarks?: Array<MessageBookmark>,
 /**
  * Your conversation list's pins and categories (#305). Yours only. Absent from older servers.
  */
-dm_layout?: DmLayout, };
+dm_layout?: DmLayout, 
+/**
+ * The people whose messages don't alert you (#310), run-out ones left out. Yours only. Absent from older servers.
+ */
+person_dnd?: Array<PersonDnd>, 
+/**
+ * Your saved inbox filters (#307), in order. Yours only. Absent from older servers.
+ */
+inbox_filters?: Array<InboxFilter>, 
+/**
+ * Your own channel list orders (#304), one per server you set one for (and are still in). Yours only. Absent
+ * from older servers.
+ */
+channel_orders?: Array<ChannelOrder>, };

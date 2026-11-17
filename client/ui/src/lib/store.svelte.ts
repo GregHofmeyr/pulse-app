@@ -15,6 +15,7 @@ import { api, type AttachmentProgress, type DownloadProgress, type StagedFile } 
 import { loadUnsent, saveUnsent } from './unsent'
 import { isMuted, messageSound, notifyLevel, onScreen, SOUND_GAP_MS } from './conversations'
 import { dndActive } from './status'
+import { quietFrom } from './personDnd'
 import { notifyMessage, NotifyThrottle } from './notify'
 import { notifyPrefs } from './notifyPrefs.svelte'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -38,6 +39,13 @@ class AppStore {
   /** When the last connection state arrived (ms): the start of a "retrying in Ns" countdown. */
   connAt = $state(0)
 }
+
+/** A server membership change to confirm (`ui.serverAction`). */
+export type ServerAction =
+  | { kind: 'leave'; serverId: string }
+  | { kind: 'remove'; serverId: string; userId: string }
+  | { kind: 'transfer'; serverId: string; userId: string }
+
 export const app = new AppStore()
 
 /** A request to show a message (lib/jump.ts): the open channel scrolls to it, flashes it, then clears
@@ -61,16 +69,21 @@ export const ui = $state({
   jumpClip: null as { channelId: string; clip: Message } | null,
   /** A request to open the share editor on this file (an offered recording, #382; its clips channel's view does it
    *  and clears it). */
-  shareClip: null as { channelId: string; path: string } | null,
+  shareClip: null as { channelId: string; path: string; at: number } | null,
+  /** A request to queue these files in this chat's composer (an offered recording sent in a DM, #394; its view does it
+   *  and clears it). `at`: when asked, so one whose chat never showed is dropped (lib/clipDrop pendingFresh). */
+  attachFiles: null as { channelId: string; paths: string[]; at: number } | null,
   jump: null as JumpRequest | null,
   /** A request to open this chat's pins popover (a pin line's See pins, #178; its channel's view does it and clears it). */
   openPins: null as string | null,
   /** The quick switcher's global keybind fired (#319; the core already brought the window up): the shell opens the
    *  switcher, or closes it if Pulse was in front with it open, and clears this. */
   quickSwitch: null as { wasFocused: boolean } | null,
-  /** A server membership change waiting for its confirm (#371): you leaving a server, or its owner removing someone.
-   *  The shell asks (ServerActionDialog) and clears it. */
-  serverAction: null as { kind: 'leave'; serverId: string } | { kind: 'remove'; serverId: string; userId: string } | null,
+  /** A global keybind for an action the page does (#72: leave the call, Go Live); the shell does it and clears it. */
+  keybindAction: null as import('./keybinds').PageAction | null,
+  /** A server membership change waiting for its confirm (#371): you leaving a server, its owner removing someone, or
+   *  its owner handing it to someone (#418). The shell asks (ServerActionDialog) and clears it. */
+  serverAction: null as ServerAction | null,
   /** A short line for the shell to show for a moment (it shows it and clears it). */
   notice: null as string | null,
   autoReported: false,
@@ -98,7 +111,7 @@ function logSoundDecision(v: Parameters<typeof messageSound>[0], play: boolean) 
   const gapOk = v.now - v.lastPlayedAt >= SOUND_GAP_MS
   // turned to 0 % in the volume mixer looks nothing like a sound that got lost
   const prefs = soundGain(loadMixer(), 'message') > 0 ? 'on' : 'off'
-  const line = `sound: message private=${isPrivate} mentioned=${mentioned} open=${v.open} thread=${m.thread_root_id ?? '-'} open_thread=${v.openThread ?? '-'} focused=${v.focused} muted=${v.muted} level=${isPrivate ? '-' : v.level} gap_ok=${gapOk} sound=${prefs} play=${play}`
+  const line = `sound: message private=${isPrivate} mentioned=${mentioned} open=${v.open} thread=${m.thread_root_id ?? '-'} open_thread=${v.openThread ?? '-'} focused=${v.focused} muted=${v.muted} quiet=${!!v.quiet} level=${isPrivate ? '-' : v.level} gap_ok=${gapOk} sound=${prefs} play=${play}`
   if (play || !onScreen(v) || !v.focused) return void api.uiLog(line, 'info')
   getCurrentWindow().isFocused().then(
     (f) => {
@@ -132,6 +145,7 @@ export function maybeAlert(e: Event) {
     level: notifyLevel(app.state, ch),
     // the real time, not the clock: a DND timer ends exactly when it ends
     dnd: dndActive(app.state, nowIso),
+    quiet: quietFrom(app.state.personDnd, m.author_id, ch.server_id === null, nowIso),
     planReminders: planPrefs.on,
     f1Scores: f1Prefs.on,
     lastPlayedAt,
@@ -183,7 +197,7 @@ export async function openDm(userId: string): Promise<string> {
  *  With `files` (#57) the core uploads them first, then sends (its outcome arrives on the same `pulse://outbox`). */
 export function queueMessage(channelId: string, text: string, replyToId: string | null, gif: Gif | null = null, files: readonly StagedFile[] = [], tempDays: number | null = null): void {
   const nonce = crypto.randomUUID()
-  const pendingFiles: PendingFile[] = files.map((f) => ({ id: f.id, name: f.name, size: f.size, kind: f.kind, preview: f.preview, ...(f.spoiler ? { spoiler: true } : {}) }))
+  const pendingFiles: PendingFile[] = files.map((f) => ({ id: f.id, name: f.name, size: f.size, kind: f.kind, preview: f.preview, ...(f.spoiler ? { spoiler: true } : {}), ...(f.viewOnce ? { viewOnce: true } : {}) }))
   app.state = addPending(app.state, channelId, {
     nonce, content: text, reply_to_id: replyToId, thread_root_id: null, status: 'pending', created_at: new Date().toISOString(),
     ...(gif ? { gif } : {}),
@@ -199,6 +213,7 @@ function sendFiles(channelId: string, nonce: string, text: string, replyToId: st
     .sendWithAttachments({
       channelId, content: text, replyToId, threadRootId: null, nonce, staged: files.map((f) => f.id), tempDays,
       spoilers: files.filter((f) => f.spoiler).map((f) => f.id),
+      ...(files.some((f) => f.viewOnce) ? { viewOnce: files.filter((f) => f.viewOnce).map((f) => f.id) } : {}),
     })
     .catch(() => (app.state = setPendingStatus(app.state, channelId, nonce, 'failed')))
 }
@@ -370,6 +385,7 @@ export async function startListening(): Promise<UnlistenFn> {
     listen<{ channel_id: string }>('stream://audio_closed', (e) => void streamApi.onAudioClosed(e.payload.channel_id)),
     listen<{ channelId: string; threadId: string | null; messageId?: string }>('pulse://notification-click', (e) => handleNotificationClick(e.payload)),
     listen<{ wasFocused: boolean }>('pulse://quick-switch', (e) => (ui.quickSwitch = { wasFocused: e.payload.wasFocused })),
+    listen<import('./keybinds').PageAction>('pulse://keybind-action', (e) => (ui.keybindAction = e.payload)),
     listen<ConnState>('pulse://conn', (e) => {
       app.connAt = Date.now()
       app.state = { ...app.state, conn: e.payload }
@@ -413,6 +429,7 @@ export function resetState() {
   ui.openClip = null
   ui.jumpClip = null
   ui.shareClip = null
+  ui.attachFiles = null
   forgetProfileLoads()
   forgetEmbedOrigin() // the next account may be on another server
   forgetClipLinks() // the next account asks for its own play links

@@ -22,7 +22,8 @@ use crate::messages::routes::{COLS, Row, fill};
 pub const MAX_THREADS: i64 = 50;
 pub const MAX_WATCHING: i64 = 500;
 
-/// The live quotes and clips `me` is part of, in chats they can see and haven't muted. Binds: me, me, now.
+/// The live quotes and clips `me` is part of, in chats they can see (a server's only while they're in it) and haven't
+/// muted. Binds: me, me, now.
 const WATCHED: &str = "SELECT r.id AS root_id, r.channel_id AS channel_id, COALESCE(r.author_id = ?1, 0) AS started
     FROM messages r JOIN channels c ON c.id = r.channel_id
     WHERE r.deleted_at IS NULL
@@ -34,12 +35,48 @@ const WATCHED: &str = "SELECT r.id AS root_id, r.channel_id AS channel_id, COALE
       AND (c.server_id IS NULL OR c.server_id NOT IN (SELECT id FROM servers WHERE deleted_at IS NOT NULL))
       AND (c.server_id IS NOT NULL OR EXISTS (SELECT 1 FROM channel_members cm
                                                WHERE cm.channel_id = c.id AND cm.user_id = ?1))
+      AND (c.server_id IS NULL OR EXISTS (SELECT 1 FROM server_members sm
+                                           WHERE sm.server_id = c.server_id AND sm.user_id = ?1))
       AND NOT EXISTS (
             SELECT 1 FROM notification_prefs np
             WHERE np.user_id = ?1 AND np.muted = 1
               AND (np.muted_until IS NULL OR np.muted_until > ?2)
               AND (np.target_kind = 'channel' AND np.target_id = c.id
                    OR np.target_kind = 'server' AND np.target_id = c.server_id))";
+
+/// How many of `me`'s threads have new replies (at most [`MAX_THREADS`], among the [`MAX_WATCHING`] newest they're
+/// part of): what [`list`] lists, counted, for the inbox's unread count (#419). A subquery for [`super::unread`], with
+/// its own numbered binds: `me` as `?{me}`, now as `?{now}` and the inbox's cutoff as `?{cutoff}`.
+pub(crate) fn unseen_count_sql(me: u8, now: u8, cutoff: u8) -> String {
+    let watched = WATCHED
+        .replace("?1", &format!("?{me}"))
+        .replace("?2", &format!("?{now}"));
+    format!(
+        "(SELECT COUNT(*) FROM (SELECT 1 FROM (SELECT root_id FROM ({watched}) ORDER BY root_id DESC LIMIT {MAX_WATCHING}) w
+          WHERE EXISTS (
+            SELECT 1 FROM messages x LEFT JOIN thread_reads tr ON tr.user_id = ?{me} AND tr.root_id = x.thread_root_id
+            WHERE x.thread_root_id = w.root_id AND x.deleted_at IS NULL AND x.id >= ?{cutoff}
+              AND COALESCE(x.author_id, '') != ?{me}
+              AND x.id > COALESCE(tr.last_seen_id, '')
+              AND x.id > COALESCE((SELECT MAX(y.id) FROM messages y WHERE y.thread_root_id = x.thread_root_id
+                                   AND y.deleted_at IS NULL AND y.author_id = ?{me}), ''))
+          LIMIT {MAX_THREADS}))"
+    )
+}
+
+/// Who is part of `root`'s thread (its poster, and everyone who replied in it): whose count a reply there may move.
+pub(crate) async fn part_of(db: &SqlitePool, root: MessageId) -> AppResult<Vec<UserId>> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT author_id FROM messages WHERE id = ?1 AND author_id IS NOT NULL
+         UNION SELECT author_id FROM messages WHERE thread_root_id = ?1 AND author_id IS NOT NULL AND deleted_at IS NULL",
+    )
+    .bind(root.to_string())
+    .fetch_all(db)
+    .await?;
+    ids.iter()
+        .map(|u| Ok(u.parse().map_err(anyhow::Error::from)?))
+        .collect()
+}
 
 /// `me`'s threads with new replies, newest reply first, and the threads they're watching.
 pub async fn list(db: &SqlitePool, me: UserId) -> AppResult<InboxThreads> {

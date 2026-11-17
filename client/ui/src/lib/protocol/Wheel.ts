@@ -14,4 +14,12 @@ server_id: ServerId | null,
 /**
  * Set for a Just me wheel.
  */
-owner_id: UserId | null, name: string, options: Array<string>, updated_at: string, };
+owner_id: UserId | null, name: string, options: Array<string>, updated_at: string, 
+/**
+ * Each option's weight (#259), one per option, 1 to [`wheel_limits::MAX_WEIGHT`]; `None` is all alike.
+ */
+weights?: Array<number>, 
+/**
+ * Its palette (#259; [`wheel_palettes`]); `None` is the neon spectrum.
+ */
+palette?: string, };

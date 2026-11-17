@@ -1,10 +1,11 @@
 <script lang="ts">
   // The "race weekend" card (#386), a system line in a server's F1 channel: the race, its flag and circuit, the
-  // countdown to lights out, every session in your own time, and podium predictions. Until lights out you pick P1, P2
+  // countdown to lights out, every session in your own time, and podium predictions. Until they close (lights out, or
+  // qualifying by the server's choice, #403) you pick P1, P2
   // and P3 from the field (or let the dice pick), and change or clear your picks; everyone's picks show below, with
   // their points once the race is scored. Picks from everyone land live (F1PredictionsChanged).
   import Avatar from './Avatar.svelte'
-  import { SESSION_LABELS, countdown, driverById, driverShort, flagOf, picksOpen, picksReady, placeLine, pointsText, predictionOf, randomPodium, sessionWhen } from '../lib/f1'
+  import { SESSION_LABELS, closesEarly, countdown, driverById, driverShort, flagOf, picksOpen, picksReady, placeLine, pointsText, predictionOf, randomPodium, sessionWhen } from '../lib/f1'
   import { predictPodium } from '../lib/f1.svelte'
   import { app, clock } from '../lib/store.svelte'
   import { serverNow } from '../lib/serverClock'
@@ -19,7 +20,10 @@
   // the clock moves every 30 s: the countdown and "closed" follow it
   const now = $derived((void clock.nowIso, serverNow()))
   const left = $derived(countdown(Date.parse(w.race_at), now))
-  const open = $derived(picksOpen(w, now) && card.drivers.length >= 3)
+  const open = $derived(picksOpen(w, now, card.picks_close_at) && card.drivers.length >= 3)
+  // picks close at lights out, or when qualifying starts by the server's choice (#403)
+  const early = $derived(closesEarly(w, card.picks_close_at))
+  const closeHint = $derived(open ? (early ? 'Closes when qualifying starts.' : 'Closes at lights out.') : early ? 'Closed when qualifying started.' : 'Closed at lights out.')
   const me = $derived(app.state.me?.id ?? '')
   const mine = $derived(predictionOf(card.predictions, me))
 
@@ -72,7 +76,7 @@
   </ul>
   {#if card.drivers.length >= 3}
     <div class="predict" role="group" aria-label="Podium predictions">
-      <p class="sub">Podium predictions <span class="hint">{open ? '3 points for the exact place, 1 for the podium. Closes at lights out.' : 'Closed at lights out.'}</span></p>
+      <p class="sub">Podium predictions <span class="hint">{open ? `3 points for the exact place, 1 for the podium. ${closeHint}` : closeHint}</span></p>
       {#if open}
         <div class="picks">
           {#each [0, 1, 2] as i (i)}

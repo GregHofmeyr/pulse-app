@@ -36,7 +36,12 @@
 
   const customOf = (key: string): CustomEmoji | undefined => app.state.customEmoji[key.slice(7)]
 
-  const blocked = (key: string) => blockedReason(app.state, key)
+  /** Its channel is archived (#303, #418): read-only, so its pills only show who reacted (the server refuses a
+   *  toggle anyway), and there's nothing to add. */
+  const archived = $derived(!!app.state.channels[message.channel_id]?.archived_at)
+  const ARCHIVED = "This channel is archived, so it's read-only"
+  const blocked = (key: string) => (archived ? ARCHIVED : blockedReason(app.state, key))
+  $effect(() => { if (archived) picking = false })
 
   function toggle(key: string, add: boolean) {
     void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, add, meId, onError, onePerPerson)
@@ -125,12 +130,12 @@
   }
 </script>
 
-{#if !message.deleted && (message.reactions.length > 0 || suggest.length > 0 || alwaysAdd)}
+{#if !message.deleted && (message.reactions.length > 0 || (!archived && (suggest.length > 0 || alwaysAdd)))}
   <div class="reactions">
     {#each message.reactions as r (r.emoji)}
       {@const c = r.emoji.startsWith('custom:') ? customOf(r.emoji) : undefined}
       {@const custom = r.emoji.startsWith('custom:')}
-      {@const why = r.me ? null : blocked(r.emoji)}
+      {@const why = r.me && !archived ? null : blocked(r.emoji)}
       <span class="wrap">
         <button
           class="chip" class:mine={r.me} class:locked={!!why} type="button" aria-pressed={r.me}
@@ -156,7 +161,7 @@
         {#if tipFor === r.emoji && tipText}<span class="tip sr-only" id={tipId(r.emoji)}>{tipText}{#if why}<span class="why"> {why}</span>{/if}</span>{/if}
       </span>
     {/each}
-    {#each suggest as key (key)}
+    {#each archived ? [] : suggest as key (key)}
       {@const c = key.startsWith('custom:') ? customOf(key) : undefined}
       {#if !blocked(key)}
         <button class="chip suggest" type="button" aria-label={c ? `React with :${c.name}:` : `React with ${key}`} onclick={() => toggle(key, true)}>
@@ -168,9 +173,11 @@
         </button>
       {/if}
     {/each}
-    <button class="chip add" type="button" aria-label="Add reaction" data-menu-toggle onclick={(ev) => { anchor = ev.currentTarget; picking = !picking }}>
-      <Icon name="smile" size={16} />
-    </button>
+    {#if !archived}
+      <button class="chip add" type="button" aria-label="Add reaction" data-menu-toggle onclick={(ev) => { anchor = ev.currentTarget; picking = !picking }}>
+        <Icon name="smile" size={16} />
+      </button>
+    {/if}
   </div>
 {/if}
 {#if picking && anchor}

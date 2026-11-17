@@ -58,10 +58,16 @@ let sent = 0
 /** Change a saved wheel: shown at once, then saved behind its earlier changes. Only the answer to the newest change
  *  is shown (an older one would briefly undo it). A refusal fetches its list fresh. Resolves with the refusal's
  *  text, or '' when it saved. */
-export function saveWheel(w: Wheel, change: { name?: string; options?: string[] }): Promise<string> {
+export type WheelChange = { name?: string; options?: string[]; weights?: number[]; palette?: string }
+
+export function saveWheel(w: Wheel, change: WheelChange): Promise<string> {
   const n = ++sent
   latest.set(w.id, n)
-  upsertWheel({ ...w, ...change })
+  // shown as the server will store it: new options without weights are all alike; `neon` is no palette (#259)
+  const shown: Wheel = { ...w, ...change }
+  if (change.options && !change.weights) delete shown.weights
+  if (change.palette === 'neon') delete shown.palette
+  upsertWheel(shown)
   const run = (chains.get(w.id) ?? Promise.resolve()).then(async () => {
     try {
       const saved = await wheelCmd.update(w.id, change)

@@ -132,7 +132,8 @@ pub async fn set_bitrate(
 /// `PUT /channels/{id}/archive`: the server owner archives a text channel (#303). It turns read-only (posting,
 /// reacting, editing and the rest are refused: `access::require_open`) and the clients move it to the list's collapsed
 /// Archived group; it stays readable and searchable. Everyone hears `ChannelUpdated` with its `archived_at`. Archiving
-/// one already archived changes nothing.
+/// one already archived changes nothing. People can still delete their own messages there (#418); a poll that runs out
+/// there posts its "ended" line once it's unarchived.
 pub async fn archive(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,

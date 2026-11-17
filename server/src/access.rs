@@ -105,7 +105,9 @@ pub async fn channel_live_in(db: &mut SqliteConnection, id: ChannelId) -> AppRes
 }
 
 /// 403 (in words the client shows) when `ch` is archived (#303): nobody posts, reacts, edits, votes, pins or spins
-/// there until its owner unarchives it.
+/// there until its owner unarchives it, nor removes or brings back a link preview; automatic lines wait too (a poll's
+/// "ended" line, `polls::close_due`). The one change still allowed is deleting your own message (#418): you can always
+/// take your words back, so `DELETE /messages/{id}` doesn't call this.
 pub fn require_open(ch: &Channel) -> AppResult<()> {
     if ch.archived_at.is_some() {
         return Err(AppError::ForbiddenMsg(ARCHIVED.into()));
@@ -126,6 +128,35 @@ pub async fn open_in(db: &mut SqliteConnection, id: ChannelId) -> AppResult<()> 
     match archived {
         Some(_) => Err(AppError::ForbiddenMsg(ARCHIVED.into())),
         None => Ok(()),
+    }
+}
+
+/// 403 when `ch` is a server channel and `user` isn't in its server (they left or were removed): its channels stay
+/// readable to everyone, but changing what they posted there (editing a message, a poll or a plan; closing or
+/// cancelling one) is for members, as posting is. Deleting your own message stays allowed (#418).
+pub async fn require_member_of(db: &SqlitePool, user: UserId, ch: &Channel) -> AppResult<()> {
+    if let Some(server) = ch.server_id
+        && !crate::servers::routes::is_server_member(db, server, user).await?
+    {
+        return Err(AppError::Forbidden);
+    }
+    Ok(())
+}
+
+/// [`require_member_of`] again inside a write transaction, by channel id, so a leave or removal that committed after
+/// the request's early check wins.
+pub async fn member_of_in(db: &mut SqliteConnection, user: UserId, id: ChannelId) -> AppResult<()> {
+    let ok: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM channels c WHERE c.id = ?1 AND (c.server_id IS NULL OR EXISTS
+           (SELECT 1 FROM server_members sm WHERE sm.server_id = c.server_id AND sm.user_id = ?2))",
+    )
+    .bind(id.to_string())
+    .bind(user.to_string())
+    .fetch_optional(&mut *db)
+    .await?;
+    match ok {
+        Some(_) => Ok(()),
+        None => Err(AppError::Forbidden),
     }
 }
 

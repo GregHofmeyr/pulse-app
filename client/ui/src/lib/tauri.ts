@@ -1,6 +1,7 @@
 // Typed wrappers over Tauri commands. The UI never calls the network itself.
 import { invoke } from '@tauri-apps/api/core'
 import type { User } from './protocol/User'
+import type { MusicPlayer } from './protocol/MusicPlayer'
 import type { ScheduledMessage } from './protocol/ScheduledMessage'
 import type { MessageReminder } from './protocol/MessageReminder'
 import type { MessageVersion } from './protocol/MessageVersion'
@@ -21,6 +22,7 @@ import type { PlanForecast } from './protocol/PlanForecast'
 import type { Rsvp } from './protocol/Rsvp'
 import type { F1Prediction } from './protocol/F1Prediction'
 import type { F1Status } from './protocol/F1Status'
+import type { F1PicksClose } from './protocol/F1PicksClose'
 import type { ServerLayout } from './protocol/ServerLayout'
 import type { DeletedChannel } from './protocol/DeletedChannel'
 import type { DeletedServer } from './protocol/DeletedServer'
@@ -47,6 +49,12 @@ import type { QuietSpin } from './protocol/QuietSpin'
 import type { CreatePollRequest } from './protocol/CreatePollRequest'
 import type { EditPollRequest } from './protocol/EditPollRequest'
 import type { DmLayout } from './protocol/DmLayout'
+import type { PersonDnd } from './protocol/PersonDnd'
+import type { InboxFilter } from './protocol/InboxFilter'
+import type { ViewOnceState } from './protocol/ViewOnceState'
+import type { ChannelOrder } from './protocol/ChannelOrder'
+import type { ChannelOrderRequest } from './protocol/ChannelOrderRequest'
+import type { PersonDndRequest } from './protocol/PersonDndRequest'
 import type { InboxThreads } from './protocol/InboxThreads'
 import type { DmPlacementRequest } from './protocol/DmPlacementRequest'
 import type { UpdateDmCategoryRequest } from './protocol/UpdateDmCategoryRequest'
@@ -152,8 +160,12 @@ export type StagedFile = {
   height: number | null
   /** A small PNG thumbnail of an image (a data URL). */
   preview: string | null
+  /** More than one frame: the image editor (#290) leaves it alone. */
+  animated?: boolean
   /** Marked as a spoiler in the composer (#289); the UI's own, not the core's. */
   spoiler?: boolean
+  /** Marked view once in the composer (#311); the UI's own. */
+  viewOnce?: boolean
 }
 /** Mirrors `attachments::StageResult`. */
 export type StageResult =
@@ -186,9 +198,11 @@ export type ModelStatus =
   | { state: 'downloading'; downloaded: number; total: number | null }
   | { state: 'ready' }
   | { state: 'failed'; error: string }
-/** What Spotify plays, as this device's media session tells it (#275, the core's `activity::NowPlaying`). */
-export type NowPlaying = { title: string; artist: string | null; album: string | null; spotify_id: string | null }
-/** Whether this device reads Spotify, and what it last read (`pulse://media-activity`). */
+/** What a music player plays, as this device's media session tells it (#275, #322; the core's `activity::NowPlaying`). */
+export type NowPlaying = { title: string; artist: string | null; album: string | null; spotify_id: string | null; player: MusicPlayer }
+/** The "Share music from other players" switches (#322, the core's `activity::Sources`). */
+export type MusicSources = { players: boolean; browsers: boolean }
+/** Whether this device reads media, and what it last read (`pulse://media-activity`). */
 export type MediaState = { reading: boolean; playing: NowPlaying | null }
 /** A game added by hand (#380): the exe stays on this device, only the name is ever sent. */
 export type ManualGame = { name: string; exe: string }
@@ -307,9 +321,13 @@ export const api = {
   deleteReminder: (id: string) => invoke<void>('delete_reminder', { id }),
   /** A due one opened: read on every device. */
   reminderSeen: (id: string) => invoke<void>('reminder_seen', { id }),
+  /** Claim telling you about a reminder missed while none of your devices was connected (#412): true for the one claim that wins. */
+  reminderAlerted: (id: string) => invoke<boolean>('reminder_alerted', { id }),
   joinServer: (serverId: string) => invoke<void>('join_server', { serverId }),
   leaveServer: (serverId: string) => invoke<void>('leave_server', { serverId }),
   removeServerMember: (serverId: string, userId: string) => invoke<void>('remove_server_member', { serverId, userId }),
+  /** Hand a server to another of its members (#418): its owner only. */
+  transferServer: (serverId: string, userId: string) => invoke<void>('transfer_server', { serverId, userId }),
   listChannels: (serverId: string) => invoke<Channel[]>('list_channels', { serverId }),
   listMembers: (serverId: string) => invoke<Member[]>('list_members', { serverId }),
   listMessages: (channelId: string, before?: string) =>
@@ -324,6 +342,8 @@ export const api = {
   stageAttachmentBytes: (name: string, bytes: Uint8Array) =>
     invoke<StagedFile>('stage_attachment_bytes', bytes, { headers: { 'x-name': encodeURIComponent(name) } }),
   unstageAttachment: (id: string) => invoke<void>('unstage_attachment', { id }),
+  /** A queued still image's bytes (WebP), for the image editor (#290). */
+  stagedImageBytes: (id: string) => invoke<ArrayBuffer>('staged_image_bytes', { id }),
   /** "Zip and send": zip a folder and queue the zip. */
   zipAttachmentFolder: (path: string) => invoke<StagedFile>('zip_attachment_folder', { path }),
   pickAttachmentFiles: () => invoke<string[]>('pick_attachment_files'),
@@ -339,9 +359,14 @@ export const api = {
     tempDays: number | null
     /** Staged ids marked as spoilers (#289). */
     spoilers: string[]
+    /** Staged ids marked view once (#311). */
+    viewOnce?: string[]
   }) => invoke<void>('send_with_attachments', a),
   cancelAttachmentSend: (nonce: string) => invoke<void>('cancel_attachment_send', { nonce }),
   attachmentUrls: (messageId: string) => invoke<AttachmentUrl[]>('attachment_urls', { messageId }),
+  /** View-once files (#311): who opened them (the sender) or whether you did; and the one open, with their links. */
+  viewOnceState: (messageId: string) => invoke<ViewOnceState>('view_once_state', { messageId }),
+  openViewOnce: (messageId: string) => invoke<AttachmentUrl[]>('open_view_once', { messageId }),
   /** A small text file's contents for its inline preview (#318); null when it can't be previewed (too big, not UTF-8, binary). */
   attachmentText: (messageId: string, attachmentId: string) => invoke<string | null>('attachment_text', { messageId, attachmentId }),
   /** The saved path; null when the Save dialog or the download is cancelled (or this file is already downloading). Progress: `download://progress`, key `file:<attachment id>`. */
@@ -354,7 +379,12 @@ export const api = {
   /** A chat's pins, newest pin first. */
   listPins: (channelId: string) => invoke<PinnedMessage[]>('list_pins', { channelId }),
   /** A page of your inbox (#306), newest first: older than `before`; only typed mentions with `mentions`. */
-  inbox: (before: string | null, mentions: boolean) => invoke<InboxPage>('inbox', { before, mentions }),
+  inbox: (before: string | null, mentions: boolean, filter: InboxFilter | null = null) =>
+    invoke<InboxPage>('inbox', filter ? { before, mentions, filter } : { before, mentions }),
+  /** Replace your saved inbox filters (#307); answers with them as kept. */
+  saveInboxFilters: (filters: InboxFilter[]) => invoke<InboxFilter[]>('save_inbox_filters', { filters }),
+  /** Your own order of a server's channel list (#304), or back to the server's (null); answers with it as kept. */
+  setChannelOrder: (serverId: string, request: ChannelOrderRequest | null) => invoke<ChannelOrder | null>('set_channel_order', { serverId, request }),
   /** How many inbox items are unread (#306). */
   inboxUnread: () => invoke<number>('inbox_unread'),
   /** Reply threads you're part of with replies you haven't seen (#326), and every thread you're part of. */
@@ -424,7 +454,7 @@ export const api = {
   /** Appear offline to one person, or stop (#45). An AppearOfflineChanged follows to your sessions. */
   setAppearOffline: (userId: string, hidden: boolean) => invoke<void>('set_appear_offline', { userId, hidden }),
   /** "Read media activity" and "Show my activity" (#275): reading off runs no watcher at all. */
-  setMediaActivity: (read: boolean, show: boolean) => invoke<void>('set_media_activity', { read, show }),
+  setMediaActivity: (read: boolean, show: boolean, sources: MusicSources) => invoke<void>('set_media_activity', { read, show, sources }),
   /** Whether this device reads Spotify now, and what it last read. */
   mediaActivity: () => invoke<MediaState>('media_activity'),
   /** Settings → Game activity (#380): master off runs no poller at all. */
@@ -437,6 +467,8 @@ export const api = {
   pickClipFolder: () => invoke<string | null>('pick_clip_folder'),
   /** Get a notification when someone goes live, or stop (#60). A LiveNotifyChanged follows to your sessions. */
   setLiveNotify: (userId: string, on: boolean) => invoke<void>('set_live_notify', { userId, on }),
+  /** Per-person Do Not Disturb (#310): on for someone (`request`), or off (null); answers with your whole list. */
+  setPersonDnd: (userId: string, request: PersonDndRequest | null) => invoke<PersonDnd[]>('set_person_dnd', { userId, request }),
   /** Your Steam link and what this server can do with Steam (#379). */
   steamStatus: () => invoke<SteamStatus>('steam_status'),
   /** Opens Steam's sign-in in the browser; a SteamLinkChanged follows when it's done. */
@@ -745,7 +777,9 @@ export const planCmd = {
  *  on a weekend card (three driver ids, P1 first; null takes it back), answered with everyone's. */
 export const f1Cmd = {
   status: (serverId: string) => invoke<F1Status>('f1_status', { serverId }),
-  setChannel: (serverId: string, channelId: string | null) => invoke<F1Status>('set_f1_channel', { serverId, channelId }),
+  /** `picksClose` (#403): when predictions close; left out, it stays as it is. */
+  setChannel: (serverId: string, channelId: string | null, picksClose?: F1PicksClose) =>
+    invoke<F1Status>('set_f1_channel', { serverId, channelId, picksClose: picksClose ?? null }),
   predict: (messageId: string, picks: string[] | null) => invoke<F1Prediction[]>('f1_predict', { messageId, picks }),
 }
 
@@ -758,7 +792,9 @@ export const sportsCmd = {
   unfollow: (league: SportsLeague, teamId: number) => invoke<SportsStatus>('unfollow_team', { league, teamId }),
   teams: (league: SportsLeague) => invoke<SportsTeams>('sports_teams', { league }),
   channel: (serverId: string) => invoke<SportsChannel>('sports_channel', { serverId }),
-  setChannel: (serverId: string, channelId: string | null) => invoke<SportsChannel>('set_sports_channel', { serverId, channelId }),
+  /** `leagues` (#406): the leagues that post there (every league = no limit); left out, they stay as they are. */
+  setChannel: (serverId: string, channelId: string | null, leagues?: SportsLeague[]) =>
+    invoke<SportsChannel>('set_sports_channel', { serverId, channelId, leagues: leagues ?? null }),
 }
 
 /** Tauri rejects with the command's error string. */

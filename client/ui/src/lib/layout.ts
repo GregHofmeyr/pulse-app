@@ -2,6 +2,8 @@ import type { Category } from './protocol/Category'
 import type { Channel } from './protocol/Channel'
 import type { ChannelKind } from './protocol/ChannelKind'
 import type { SaveLayoutRequest } from './protocol/SaveLayoutRequest'
+import type { ChannelOrder } from './protocol/ChannelOrder'
+import type { ChannelOrderRequest } from './protocol/ChannelOrderRequest'
 import type { AppState } from './state'
 
 // Side panels in a narrow window (#97): the window body (sidebar + chat + panels) below this many pixels counts as
@@ -94,6 +96,14 @@ export function applyOrder(l: SidebarLayout, o: Order): SidebarLayout {
     top: [...top, ...left(l.top)],
     sections: [...named, ...rest].map(({ section, channels }) => ({ ...section, channels: [...channels, ...left(section.channels)] })),
   }
+}
+
+/** Your own order of a server's list (#304) as an [Order], to draw over the server's with `applyOrder`. */
+export const orderFromPersonal = (p: ChannelOrder): Order => ({ top: [...p.uncategorised], cats: p.categories.map((c) => ({ id: c.id, channels: [...c.channels] })) })
+
+/** The personal order route's body for `o` (#304). */
+export function toPersonalRequest(o: Order): ChannelOrderRequest {
+  return { uncategorised: [...o.top], categories: o.cats.map((c) => ({ id: c.id, channels: [...c.channels] })) }
 }
 
 /** The layout route's body for `o`, based on the layout `revision` held. */

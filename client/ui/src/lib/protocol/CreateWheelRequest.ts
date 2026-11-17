@@ -4,4 +4,12 @@ import type { ServerId } from "./ServerId";
 /**
  * `POST /wheels`: a new saved wheel, in `server_id` (a server wheel) or, without one, Just me.
  */
-export type CreateWheelRequest = { server_id?: ServerId, name: string, options: Array<string>, };
+export type CreateWheelRequest = { server_id?: ServerId, name: string, options: Array<string>, 
+/**
+ * One per option (#259); absent = all alike.
+ */
+weights?: Array<number>, 
+/**
+ * A [`wheel_palettes`] name; absent = the neon spectrum.
+ */
+palette?: string, };

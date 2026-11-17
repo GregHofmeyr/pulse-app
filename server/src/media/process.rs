@@ -60,6 +60,11 @@ pub const LINK_THUMB_MAX_INPUT: usize = 8 * 1024 * 1024;
 pub const LINK_THUMB_SIDE: u32 = 480;
 pub const LINK_THUMB_MAX_OUTPUT: usize = 256 * 1024;
 
+/// A game's hero art (#392): shown across a whole stage tile, so kept larger than a link thumbnail (Steam's is
+/// 1920×620; this keeps it sharp on a big tile at a fraction of the bytes).
+pub const GAME_HERO_SIDE: u32 = 1280;
+pub const GAME_HERO_MAX_OUTPUT: usize = 512 * 1024;
+
 /// Badge art (#225): a still fitted within this square on its long side.
 pub const BADGE_ART_SIDE: u32 = 256;
 pub const BADGE_ART_MAX_OUTPUT: usize = 256 * 1024;
@@ -331,6 +336,17 @@ pub fn link_thumb(input: &[u8]) -> Result<Processed, ProcessError> {
         LINK_THUMB_MAX_INPUT,
         LINK_THUMB_SIDE,
         LINK_THUMB_MAX_OUTPUT,
+    )
+}
+
+/// Process a game's hero art (#392): as [`link_thumb`], fitted within [`GAME_HERO_SIDE`]² instead.
+/// CPU-bound: call it off the async runtime.
+pub fn game_hero(input: &[u8]) -> Result<Processed, ProcessError> {
+    first_frame_fitted(
+        input,
+        LINK_THUMB_MAX_INPUT,
+        GAME_HERO_SIDE,
+        GAME_HERO_MAX_OUTPUT,
     )
 }
 
@@ -802,6 +818,15 @@ mod tests {
         assert_eq!((p.width, p.height), (100, 50));
         let p = link_thumb(&png(300, 1200)).unwrap();
         assert_eq!((p.width, p.height), (120, 480));
+    }
+
+    #[test]
+    fn game_hero_fits_within_1280_and_never_enlarges() {
+        let p = game_hero(&png(1920, 620)).unwrap();
+        assert_eq!((p.width, p.height, p.frames), (1280, 413, 1));
+        assert!(is_webp(&p.webp));
+        let p = game_hero(&png(600, 200)).unwrap();
+        assert_eq!((p.width, p.height), (600, 200));
     }
 
     #[test]

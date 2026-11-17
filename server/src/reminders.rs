@@ -6,6 +6,9 @@
 //! `UPDATE … WHERE fired_at IS NULL` changes the row tells its person, so a restart neither loses nor repeats one. A
 //! reminder whose message they can no longer see when it comes due (deleted, its chat gone or left) goes quietly.
 //! Due ones stay listed until marked done (deleted), or for the inbox's 30 days.
+//!
+//! One that comes due while none of its person's devices is connected is `missed` (#412): their next device to
+//! connect claims it (`POST /reminders/{id}/alerted`, which only one claim wins) and tells them then.
 
 use std::time::Duration;
 
@@ -39,20 +42,25 @@ pub fn router() -> Router<AppState> {
         .route("/messages/{id}/reminders", post(create))
         .route("/reminders/{id}", delete(remove))
         .route("/reminders/{id}/seen", post(seen))
+        .route("/reminders/{id}/alerted", post(alerted))
 }
 
 /// A person's reminders whose message they can still see: not deleted, in a chat that isn't in Recently deleted (nor
-/// its server), and a DM or group they're still in. Binds: the person. The inbox counts its due, unseen ones unread.
+/// its server), and a DM or group they're still in, or a server they're still a member of. Binds: the person. The
+/// inbox counts its due, unseen ones unread.
 pub(crate) const VISIBLE: &str = "FROM message_reminders r
     JOIN messages m ON m.id = r.message_id
     JOIN channels c ON c.id = m.channel_id
     WHERE r.user_id = ? AND m.deleted_at IS NULL AND c.deleted_at IS NULL
       AND (c.server_id IS NULL OR c.server_id NOT IN (SELECT id FROM servers WHERE deleted_at IS NOT NULL))
       AND (c.server_id IS NOT NULL OR EXISTS (SELECT 1 FROM channel_members cm
-                                               WHERE cm.channel_id = c.id AND cm.user_id = r.user_id))";
+                                               WHERE cm.channel_id = c.id AND cm.user_id = r.user_id))
+      AND (c.server_id IS NULL OR EXISTS (SELECT 1 FROM server_members sm
+                                           WHERE sm.server_id = c.server_id AND sm.user_id = r.user_id))";
 
 const COLS: &str = "SELECT r.id, r.message_id, m.channel_id, m.thread_root_id, r.remind_at, r.created_at, \
-     r.fired_at IS NOT NULL, r.seen_at IS NOT NULL, m.author_id, m.content";
+     r.fired_at IS NOT NULL, r.seen_at IS NOT NULL, \
+     r.fired_at IS NOT NULL AND r.seen_at IS NULL AND r.alerted_at IS NULL, m.author_id, m.content";
 
 type Row = (
     String,
@@ -61,6 +69,7 @@ type Row = (
     Option<String>,
     String,
     String,
+    bool,
     bool,
     bool,
     Option<String>,
@@ -77,6 +86,7 @@ fn from_row(r: Row) -> AppResult<MessageReminder> {
         created_at,
         due,
         seen,
+        missed,
         author,
         content,
     ) = r;
@@ -93,6 +103,7 @@ fn from_row(r: Row) -> AppResult<MessageReminder> {
         created_at,
         due,
         seen,
+        missed,
         message: InboxSnippet {
             message_id,
             author_id: author
@@ -176,7 +187,13 @@ async fn create(
         .ok_or(AppError::NotFound)?
         .parse()
         .map_err(anyhow::Error::from)?;
-    channel_for(&s.db, me, channel).await?;
+    let ch = channel_for(&s.db, me, channel).await?;
+    // a server's messages: as a member (#371), as bookmarks are and as `VISIBLE` lists them
+    if let Some(server) = ch.server_id
+        && !crate::servers::routes::is_server_member(&s.db, server, me).await?
+    {
+        return Err(AppError::NotFound);
+    }
     let id = ReminderId::new();
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
@@ -273,6 +290,38 @@ async fn seen(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `POST /reminders/{id}/alerted`: this device tells its person about a reminder that came due while none of theirs
+/// was connected (#412). `true` for the one claim that wins (it tells them), `false` once one has, or for one that
+/// isn't missed (not due, already seen, or told live). Their other devices hear it's no longer missed.
+async fn alerted(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ReminderId>,
+) -> AppResult<Json<bool>> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    if one(&s.db, me, id).await?.is_none() {
+        return Err(AppError::NotFound);
+    }
+    let _order = s.hub.in_order().await;
+    let won = sqlx::query(
+        "UPDATE message_reminders SET alerted_at = ? WHERE id = ? AND user_id = ? AND fired_at IS NOT NULL
+         AND seen_at IS NULL AND alerted_at IS NULL",
+    )
+    .bind(now())
+    .bind(id.to_string())
+    .bind(me.to_string())
+    .execute(&s.db)
+    .await?
+    .rows_affected()
+        > 0;
+    if won && let Some(r) = one(&s.db, me, id).await? {
+        publish_saved(&s, me, r).await;
+    }
+    Ok(Json(won))
+}
+
 /// Mark all read (#306) covers `me`'s due reminders too: each is seen, and their devices hear it. Whether any were.
 /// The caller tells the count.
 pub(crate) async fn mark_all_seen(s: &AppState, me: UserId) -> AppResult<bool> {
@@ -317,10 +366,14 @@ pub async fn remind_due(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
         let user: UserId = user.parse().map_err(anyhow::Error::from)?;
         let order = s.hub.in_order().await;
         let mut tx = begin_write(&s.db).await?;
+        // With one of their devices connected they hear it now; with none it's missed until one claims it (#412).
+        let live = s.hub.connections_for(user) > 0;
         let changed = sqlx::query(
-            "UPDATE message_reminders SET fired_at = ? WHERE id = ? AND fired_at IS NULL",
+            "UPDATE message_reminders SET fired_at = ?1, alerted_at = CASE WHEN ?2 THEN ?1 END
+             WHERE id = ?3 AND fired_at IS NULL",
         )
         .bind(&at)
+        .bind(live)
         .bind(id.to_string())
         .execute(&mut *tx)
         .await?

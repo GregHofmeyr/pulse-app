@@ -1199,6 +1199,17 @@ pub async fn leave_server(
 }
 
 #[tauri::command]
+pub async fn transfer_server(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    user_id: UserId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.transfer_server(&token, server_id, user_id).await)
+}
+
+#[tauri::command]
 pub async fn remove_server_member(
     app: AppHandle,
     core: State<'_, Core>,
@@ -1420,14 +1431,20 @@ pub fn embed_origin(core: State<'_, Core>) -> Option<String> {
     crate::embed_window::embed_origin_for(api.base()).map(str::to_owned)
 }
 
-/// "Read media activity" and "Show my activity" (#275), from the page's saved settings at boot and on every change.
-/// Reading off: no watcher at all.
+/// "Read media activity", "Show my activity" (#275) and "Share music from other players" (#322, `sources`; absent
+/// from an older page: both on), from the page's saved settings at boot and on every change. Reading off: no watcher
+/// at all.
 #[tauri::command]
-pub fn set_media_activity(m: State<'_, crate::activity::MediaActivity>, read: bool, show: bool) {
-    m.set(read, show);
+pub fn set_media_activity(
+    m: State<'_, crate::activity::MediaActivity>,
+    read: bool,
+    show: bool,
+    sources: Option<crate::activity::Sources>,
+) {
+    m.set(read, show, sources.unwrap_or_default());
 }
 
-/// Whether Pulse reads Spotify now, and what it last read (Settings shows it).
+/// Whether Pulse reads media now, and what it last read (Settings shows it).
 #[tauri::command]
 pub fn media_activity(m: State<'_, crate::activity::MediaActivity>) -> crate::activity::MediaState {
     m.state()
@@ -1776,6 +1793,27 @@ pub struct QuickSwitch {
     pub was_focused: bool,
 }
 
+/// Asks the page to do a bound action it owns (#72): leave the call, or Go Live.
+pub const KEYBIND_ACTION_EVENT: &str = "pulse://keybind-action";
+
+/// What the page is told with [`KEYBIND_ACTION_EVENT`]: the action, by its keybinds key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeybindAction {
+    LeaveCall,
+    GoLive,
+}
+
+impl KeybindAction {
+    fn of(c: crate::ipc::Command) -> Self {
+        if c == crate::ipc::Command::GoLive {
+            Self::GoLive
+        } else {
+            Self::LeaveCall
+        }
+    }
+}
+
 /// Bring the window up (unminimised, shown, focused) and ask the page to open the switcher.
 fn quick_switch(app: &AppHandle) {
     let was_focused = app.get_webview_window("main").is_some_and(|w| {
@@ -1790,8 +1828,19 @@ fn quick_switch(app: &AppHandle) {
 /// Hotkey path (IPC on Linux, keyboard/mouse hooks on Windows): toggle + broadcast, same as the
 /// buttons; the quick switcher's bind brings the window up instead.
 pub fn hotkey(app: &AppHandle, c: crate::ipc::Command) {
-    if c == crate::ipc::Command::QuickSwitch {
-        return quick_switch(app);
+    use crate::ipc::Command;
+    match c {
+        Command::QuickSwitch => return quick_switch(app),
+        // the page does these, as its own buttons do (#72); Go Live's picker needs the window
+        Command::LeaveCall | Command::GoLive => {
+            if c == Command::GoLive {
+                crate::bring_to_front(app);
+            }
+            let action = KeybindAction::of(c);
+            let _ = app.emit(KEYBIND_ACTION_EVENT, action);
+            return;
+        }
+        Command::ToggleMute | Command::ToggleDeafen => {}
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -1799,7 +1848,7 @@ pub fn hotkey(app: &AppHandle, c: crate::ipc::Command) {
         let controls = match c {
             crate::ipc::Command::ToggleMute => voice.toggle_mute().await,
             crate::ipc::Command::ToggleDeafen => voice.toggle_deafen().await,
-            crate::ipc::Command::QuickSwitch => return,
+            _ => return,
         };
         app.state::<Core>().send_frame(ClientFrame::VoiceState {
             flags: flags(controls),
@@ -2042,9 +2091,40 @@ pub async fn inbox(
     core: State<'_, Core>,
     before: Option<MessageId>,
     mentions: bool,
+    filter: Option<pulse_protocol::rest::InboxFilter>,
 ) -> Result<InboxPage, ApiError> {
     let (api, token) = core.current()?;
-    core.check(&app, api.inbox(&token, before, mentions).await)
+    core.check(
+        &app,
+        api.inbox(&token, before, mentions, filter.as_ref()).await,
+    )
+}
+
+/// Your own order of a server's channel list (#304), or back to the server's (`None`).
+#[tauri::command]
+pub async fn set_channel_order(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    request: Option<pulse_protocol::rest::ChannelOrderRequest>,
+) -> Result<Option<pulse_protocol::rest::ChannelOrder>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_channel_order(&token, server_id, request.as_ref())
+            .await,
+    )
+}
+
+/// Replace your saved inbox filters (#307).
+#[tauri::command]
+pub async fn save_inbox_filters(
+    app: AppHandle,
+    core: State<'_, Core>,
+    filters: Vec<pulse_protocol::rest::InboxFilter>,
+) -> Result<Vec<pulse_protocol::rest::InboxFilter>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.save_inbox_filters(&token, filters).await)
 }
 
 /// How many inbox items are unread (#306).
@@ -2340,6 +2420,21 @@ pub async fn set_live_notify(
     core.check(&app, api.set_live_notify(&token, user_id, on).await)
 }
 
+/// Per-person Do Not Disturb (#310): on for someone (`request`), or off (`None`); your whole list back.
+#[tauri::command]
+pub async fn set_person_dnd(
+    app: AppHandle,
+    core: State<'_, Core>,
+    user_id: UserId,
+    request: Option<pulse_protocol::rest::PersonDndRequest>,
+) -> Result<Vec<pulse_protocol::rest::PersonDnd>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_person_dnd(&token, user_id, request.as_ref()).await,
+    )
+}
+
 /// Your Steam link (#379).
 #[tauri::command]
 pub async fn steam_status(
@@ -2602,11 +2697,13 @@ pub async fn set_f1_channel(
     core: State<'_, Core>,
     server_id: ServerId,
     channel_id: Option<ChannelId>,
+    picks_close: Option<pulse_protocol::rest::F1PicksClose>,
 ) -> Result<pulse_protocol::rest::F1Status, ApiError> {
     let (api, token) = core.current()?;
     core.check(
         &app,
-        api.set_f1_channel(&token, server_id, channel_id).await,
+        api.set_f1_channel(&token, server_id, channel_id, picks_close)
+            .await,
     )
 }
 
@@ -2628,11 +2725,13 @@ pub async fn set_sports_channel(
     core: State<'_, Core>,
     server_id: ServerId,
     channel_id: Option<ChannelId>,
+    leagues: Option<Vec<pulse_protocol::rest::SportsLeague>>,
 ) -> Result<pulse_protocol::rest::SportsChannel, ApiError> {
     let (api, token) = core.current()?;
     core.check(
         &app,
-        api.set_sports_channel(&token, server_id, channel_id).await,
+        api.set_sports_channel(&token, server_id, channel_id, leagues)
+            .await,
     )
 }
 
@@ -3674,6 +3773,21 @@ mod tests {
                 except_server: Some(s),
                 except_channel: Some(c)
             }
+        );
+    }
+
+    /// #72: the page's own actions, by the keys lib/keybinds.ts uses.
+    #[test]
+    fn keybind_actions_are_what_the_ui_listens_for() {
+        use crate::ipc::Command;
+        assert_eq!(KEYBIND_ACTION_EVENT, "pulse://keybind-action");
+        assert_eq!(
+            serde_json::to_string(&KeybindAction::of(Command::LeaveCall)).unwrap(),
+            r#""leave_call""#
+        );
+        assert_eq!(
+            serde_json::to_string(&KeybindAction::of(Command::GoLive)).unwrap(),
+            r#""go_live""#
         );
     }
 
@@ -5153,6 +5267,17 @@ pub async fn reminder_seen(
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.reminder_seen(&token, id).await)
+}
+
+/// Claim telling you about a reminder you missed while none of your devices was connected (#412).
+#[tauri::command]
+pub async fn reminder_alerted(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: pulse_protocol::ids::ReminderId,
+) -> Result<bool, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.reminder_alerted(&token, id).await)
 }
 
 /// Your join sound in a server (#121): one of its soundboard's sounds, or none (the normal join cue).

@@ -1,9 +1,10 @@
-//! "Listening to…" (#275): what the local Spotify app is playing, read from the OS media session (MPRIS over D-Bus
-//! on Linux, the system media transport controls on Windows), sent to the server as `ClientFrame::Listening`.
+//! "Listening to…" (#275): what the local Spotify app (and, #322, the other allowlisted music players: see
+//! [`parse`]) is playing, read from the OS media session (MPRIS over D-Bus on Linux, the system media transport
+//! controls on Windows), sent to the server as `ClientFrame::Listening`.
 //!
 //! Only while "Read media activity" is on ([`MediaActivity::set`]): off, there is no watcher at all (no D-Bus
 //! connection, no thread, no task, nothing sent). On, the watcher is event-driven, never polling: it wakes on the
-//! player's own change signals, filtered to Spotify's player. What it sees is settled ([`Settle`]) before it's sent:
+//! player's own change signals, filtered to the allowlisted players the switches let in ([`Sources`]). What it sees is settled ([`Settle`]) before it's sent:
 //! a track change sends a few signals at once, a pause or stop clears only after a short delay, and sends are spaced.
 //!
 //! Spotify's rules (#196): this only reads what the OS already shows; nothing here controls anyone's Spotify.
@@ -14,12 +15,15 @@ mod gsmtc;
 pub mod mpris;
 mod parse;
 
-pub use parse::{MprisMeta, is_spotify_app, now_playing_gsmtc, now_playing_mpris, spotify_id};
+pub use parse::{
+    Group, MPRIS_PREFIX, MprisMeta, Source, Sources, best, classify_gsmtc, classify_mpris,
+    is_spotify_app, now_playing_gsmtc, now_playing_mpris, spotify_id,
+};
 
 use std::sync::{Arc, Mutex};
 
 use pulse_protocol::gateway::ClientFrame;
-use pulse_protocol::rest::ListeningUpdate;
+use pulse_protocol::rest::{ListeningUpdate, MusicPlayer};
 use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
@@ -32,7 +36,7 @@ pub const CLEAR_AFTER: Duration = Duration::from_secs(8);
 /// The least time between two sends; the latest is sent when it's up (the server's limit is looser).
 pub const MIN_GAP: Duration = Duration::from_secs(5);
 
-/// What Spotify is playing, as the media session tells it.
+/// What a music player is playing, as the media session tells it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct NowPlaying {
     pub title: String,
@@ -40,6 +44,8 @@ pub struct NowPlaying {
     pub album: Option<String>,
     /// `track:<id>` or `episode:<id>`, when the session gave one (MPRIS does; Windows' doesn't).
     pub spotify_id: Option<String>,
+    /// Which player (#322).
+    pub player: MusicPlayer,
 }
 
 impl NowPlaying {
@@ -49,11 +55,14 @@ impl NowPlaying {
             artist: self.artist.clone(),
             album: self.album.clone(),
             spotify_id: self.spotify_id.clone(),
+            // Spotify's goes as before, without one (older servers know only Spotify)
+            player: (self.player != MusicPlayer::Spotify).then_some(self.player),
         }
     }
 }
 
-/// What a watcher sees: what Spotify plays, or `None` (paused, stopped, closed, an ad, nothing).
+/// What a watcher sees: what the preferred player plays ([`best`]), or `None` (paused, stopped, closed, an ad,
+/// nothing).
 pub type Seen = Option<NowPlaying>;
 
 /// Decides when what's seen is sent (pure: the clock is passed in).
@@ -150,20 +159,21 @@ impl Drop for Watcher {
     }
 }
 
-/// Start watching Spotify's media session, calling `send` with each settled change. `None` where there's no media
-/// session to read (macOS).
-fn watch(send: Box<dyn Fn(Seen) + Send>) -> Option<Watcher> {
+/// Start watching the media sessions of the players `sources` lets in, calling `send` with each settled change. `None`
+/// where there's no media session to read (macOS).
+fn watch(sources: Sources, send: Box<dyn Fn(Seen) + Send>) -> Option<Watcher> {
     #[cfg(any(target_os = "linux", windows))]
     {
         let (tx, rx) = mpsc::unbounded_channel();
         #[cfg(target_os = "linux")]
         let task = tauri::async_runtime::spawn(async move {
-            if let Err(e) = mpris::watch(mpris::SPOTIFY, tx).await {
+            let allow = move |name: &str| classify_mpris(name).filter(|s| sources.allows(s.group));
+            if let Err(e) = mpris::watch(allow, tx).await {
                 tracing::info!(error = %e, "media activity: can't read the media session");
             }
         });
         #[cfg(windows)]
-        let thread = gsmtc::spawn(tx);
+        let thread = gsmtc::spawn(sources, tx);
         let settle = tauri::async_runtime::spawn(settle(rx, send));
         Some(Watcher {
             #[cfg(target_os = "linux")]
@@ -175,7 +185,7 @@ fn watch(send: Box<dyn Fn(Seen) + Send>) -> Option<Watcher> {
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        let _ = send;
+        let _ = (sources, send);
         None
     }
 }
@@ -190,12 +200,13 @@ pub struct MediaState {
 type SendFrame = Arc<dyn Fn(ClientFrame) + Send + Sync>;
 type Notify = Arc<dyn Fn(MediaState) + Send + Sync>;
 /// Starts a watcher that calls the given function with each settled change (the real one: [`watch`]).
-type Start = Arc<dyn Fn(Box<dyn Fn(Seen) + Send>) -> Option<Watcher> + Send + Sync>;
+type Start = Arc<dyn Fn(Sources, Box<dyn Fn(Seen) + Send>) -> Option<Watcher> + Send + Sync>;
 
 #[derive(Default)]
 struct Inner {
     read: bool,
     show: bool,
+    sources: Sources,
     /// What was last sent, while reading.
     playing: Seen,
     watcher: Option<Watcher>,
@@ -203,7 +214,7 @@ struct Inner {
     epoch: u64,
 }
 
-/// The two Settings switches (#275) and the watcher they decide. Managed Tauri state.
+/// The Settings switches (#275, #322) and the watcher they decide. Managed Tauri state.
 pub struct MediaActivity {
     inner: Arc<Mutex<Inner>>,
     send: SendFrame,
@@ -229,13 +240,32 @@ impl MediaActivity {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// "Read media activity" (`read`) and "Show my activity" (`show`). Reading off stops and drops the watcher and
-    /// clears what the server holds; on starts one if none runs. `show` changing re-sends what's playing with it.
-    pub fn set(&self, read: bool, show: bool) {
+    /// "Read media activity" (`read`), "Show my activity" (`show`) and the "Share music from other players"
+    /// switches (`sources`, #322). Reading off stops and drops the watcher and clears what the server holds; on starts
+    /// one if none runs, and other `sources` restart it (what it already sent stays until the new one says
+    /// otherwise). `show` changing re-sends what's playing with it.
+    pub fn set(&self, read: bool, show: bool, sources: Sources) {
         let mut g = self.lock();
         let was = (g.read, g.show);
+        if read && g.sources != sources && g.watcher.take().is_some() {
+            g.epoch += 1;
+            // another player's song may be one the switches now keep out: it goes now, not after the new watcher's
+            // settle delay (which sends it again if it's still let in)
+            if g.playing
+                .as_ref()
+                .is_some_and(|p| p.player != MusicPlayer::Spotify)
+            {
+                g.playing = None;
+                (self.send)(frame(None, show));
+                (self.notify)(MediaState {
+                    reading: true,
+                    playing: None,
+                });
+            }
+        }
         g.read = read;
         g.show = show;
+        g.sources = sources;
         if !read {
             if g.watcher.take().is_some() {
                 g.epoch += 1;
@@ -248,18 +278,21 @@ impl MediaActivity {
             let epoch = g.epoch;
             let (inner, send, notify) =
                 (self.inner.clone(), self.send.clone(), self.notify.clone());
-            g.watcher = (self.start)(Box::new(move |seen: Seen| {
-                let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
-                if g.epoch != epoch || !g.read {
-                    return;
-                }
-                g.playing = seen.clone();
-                send(frame(seen.as_ref(), g.show));
-                notify(MediaState {
-                    reading: true,
-                    playing: seen,
-                });
-            }));
+            g.watcher = (self.start)(
+                sources,
+                Box::new(move |seen: Seen| {
+                    let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
+                    if g.epoch != epoch || !g.read {
+                        return;
+                    }
+                    g.playing = seen.clone();
+                    send(frame(seen.as_ref(), g.show));
+                    notify(MediaState {
+                        reading: true,
+                        playing: seen,
+                    });
+                }),
+            );
         } else if was.1 != show && g.playing.is_some() {
             (self.send)(frame(g.playing.as_ref(), show));
         }
@@ -311,6 +344,7 @@ mod tests {
             artist: Some("The Band".into()),
             album: None,
             spotify_id: None,
+            player: MusicPlayer::Spotify,
         }
     }
 
@@ -402,7 +436,7 @@ mod tests {
         let m = MediaActivity::with_start(
             Arc::new(move |fr| f.lock().unwrap().push(fr)),
             Arc::new(|_| {}),
-            Arc::new(move |send| {
+            Arc::new(move |_sources, send| {
                 *st.lock().unwrap() += 1;
                 *fd.lock().unwrap() = Some(send);
                 // a watcher that does nothing on its own: its settle task is a no-op
@@ -430,8 +464,8 @@ mod tests {
     #[test]
     fn reading_off_means_no_watcher_at_all() {
         let (m, frames, _, starts) = fake();
-        m.set(false, true);
-        m.set(false, false);
+        m.set(false, true, Sources::default());
+        m.set(false, false, Sources::default());
         assert!(!m.watching());
         assert_eq!(*starts.lock().unwrap(), 0, "never started");
         assert!(frames.lock().unwrap().is_empty());
@@ -441,8 +475,8 @@ mod tests {
     #[test]
     fn reading_sends_what_plays_and_stopping_clears_it() {
         let (m, frames, feed, starts) = fake();
-        m.set(true, true);
-        m.set(true, true);
+        m.set(true, true, Sources::default());
+        m.set(true, true, Sources::default());
         assert_eq!(*starts.lock().unwrap(), 1, "one watcher");
         (feed.lock().unwrap().as_ref().unwrap())(Some(song("A")));
         assert_eq!(
@@ -454,13 +488,13 @@ mod tests {
             Some((Some("A".into()), true))
         );
         // Show off: the same song again, not to be shown
-        m.set(true, false);
+        m.set(true, false, Sources::default());
         assert_eq!(
             listening(&frames.lock().unwrap()[1]),
             (Some("A".into()), false)
         );
         // reading off: the watcher goes and the server is told nothing plays
-        m.set(false, false);
+        m.set(false, false, Sources::default());
         assert!(!m.watching());
         assert_eq!(listening(&frames.lock().unwrap()[2]), (None, false));
         assert_eq!(m.after_ready().map(|f| listening(&f)), None);
@@ -468,5 +502,47 @@ mod tests {
         (feed.lock().unwrap().as_ref().unwrap())(Some(song("B")));
         assert_eq!(frames.lock().unwrap().len(), 3);
         assert_eq!(m.state().playing, None);
+    }
+
+    /// #322: other `sources` restart the watcher with them, and another player's song they may now keep out goes at
+    /// once; Spotify's stays. The frame names a non-Spotify player, Spotify's names none (as before).
+    #[test]
+    fn other_sources_restart_the_watcher_and_clear_another_players_song() {
+        let (m, frames, feed, starts) = fake();
+        m.set(true, true, Sources::default());
+        let yt = NowPlaying {
+            player: MusicPlayer::YoutubeMusic,
+            ..song("Y")
+        };
+        (feed.lock().unwrap().as_ref().unwrap())(Some(yt));
+        match &frames.lock().unwrap()[0] {
+            ClientFrame::Listening {
+                listening: Some(l), ..
+            } => assert_eq!(l.player, Some(MusicPlayer::YoutubeMusic)),
+            other => panic!("{other:?}"),
+        }
+        let no_browsers = Sources {
+            players: true,
+            browsers: false,
+        };
+        m.set(true, true, no_browsers);
+        assert_eq!(*starts.lock().unwrap(), 2, "restarted");
+        assert_eq!(listening(&frames.lock().unwrap()[1]), (None, true));
+        assert_eq!(m.state().playing, None);
+        // the same switches again: nothing restarts
+        m.set(true, true, no_browsers);
+        assert_eq!(*starts.lock().unwrap(), 2);
+        // Spotify's song survives a change of switches
+        (feed.lock().unwrap().as_ref().unwrap())(Some(song("S")));
+        match &frames.lock().unwrap()[2] {
+            ClientFrame::Listening {
+                listening: Some(l), ..
+            } => assert_eq!(l.player, None),
+            other => panic!("{other:?}"),
+        }
+        m.set(true, true, Sources::default());
+        assert_eq!(*starts.lock().unwrap(), 3);
+        assert_eq!(frames.lock().unwrap().len(), 3, "nothing cleared");
+        assert_eq!(m.state().playing.map(|p| p.title), Some("S".into()));
     }
 }

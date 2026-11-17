@@ -224,7 +224,7 @@ mod tests {
         m.set_binds(&Keybinds {
             toggle_mute: mute,
             toggle_deafen: deafen,
-            quick_switch: None,
+            ..Default::default()
         });
         m
     }

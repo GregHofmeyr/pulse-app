@@ -158,6 +158,14 @@ describe('applyEvent', () => {
     expect(s.servers.map((x) => x.id)).toEqual(['S1'])
   })
 
+  it('ServerOwnerChanged hands the server to its new owner (#418)', () => {
+    const s = applyEvent(base(), { t: 'ServerOwnerChanged', d: { server_id: 'S1', owner_id: 'U2', previous_owner_id: 'U1' } }, 0)
+    expect(s.servers.find((x) => x.id === 'S1')?.owner_id).toBe('U2')
+    // an unknown server changes nothing
+    const same = applyEvent(s, { t: 'ServerOwnerChanged', d: { server_id: 'S9', owner_id: 'U3', previous_owner_id: 'U2' } }, 0)
+    expect(same).toBe(s)
+  })
+
   it('a restored channel comes back to the list after its delete', () => {
     let s = applyEvent(base(), { t: 'ChannelCreated', d: { channel: ch('C2') } }, 0)
     s = applyEvent(s, { t: 'ChannelDeleted', d: { channel_id: 'C2', server_id: 'S1' } }, 0)

@@ -62,8 +62,27 @@ Asked for by the owner after #270 (from a tester); the details are the builder's
 
 Owner's pick ("option B" of the line-restyle playground). The settled line becomes a small card (`bg-2`, `line` border, the 10 px radius token, at most 460 px wide, indented like the system lines): a 40 px thumbnail of the landed wheel (the shared `Wheel` in its `mini` mode: the same slices and colours turned to the spin's angle, the winner full colour and the rest dimmed, no labels, a pointer and a small hub drawn to scale; static), the winner large and bold after its slice swatch (ellipsis if long), and under it, small and muted, "alex spun Games tonight · 8 options · 16:50" ("a quick wheel" when unsaved; "· Saved as …" once a quick wheel is saved from it). The actions are 16 px icon buttons at the right with tooltips (Spin again, Remove winner & spin, hidden at two options, Save as wheel for quick wheels, which opens the same Save as wheel flyout), shown on hover or focus (they stay in the Tab order, so focus reveals them) and while one is in use. Client-only: older clients keep the old line. The card is unchanged.
 
+## Weighted options and palettes (#259)
+
+The builder's calls (the issue left the details open).
+
+- **Weights.** A saved wheel's options each have a weight, 1 (the default) to 10, set in the editor (popover and
+  Settings) beside each option (its share shows as a tooltip). A slice covers its weight's share of the wheel, and the
+  server's draw picks it with exactly that probability (one whole-number draw over the sum of the weights, then an
+  angle 10-90 % across the winner's slice, as before). Quick wheels have no weights. A spin carries the weights (its
+  line, the stored spin and a quiet spin), so every client draws the same slices; Spin again, Remove winner & spin
+  and a quiet subset keep each option's own weight. All alike is stored as none. New options sent without weights
+  reset them; the editor always sends both. Clients from before draw a weighted spin as equal slices (the winner text
+  is still right).
+- **Palettes.** A saved wheel picks its colours: **Neon** (the spectrum above, the default) or a named set of theme
+  tokens: **Gems** (the badge rarities), **Signal** (ok, warn, danger, accent), **Meadow** (the quote greens) and
+  **Accent** (the accent and `bg-4`). Token slices recolour with the theme; their labels are `--on-video` with a
+  `--video-chrome-strong` edge, which reads on any fill. The last slice never repeats the first's colour.
+- Migration 0058 adds nullable `weights` and `palette` columns to `wheels` and `wheel_spins`.
+- **Not done:** images on slices (left for later; they'd need uploads and per-slice clipping).
+
 ## Out of scope
 
-- Weighted options, images on slices, custom colour palettes per wheel.
+- Images on slices (#259 left them out).
 - Spinning from Settings.
 - Notifications for spins.

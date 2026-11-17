@@ -6,4 +6,8 @@ export type Member = { user: User, nickname: string | null,
  * The id of the sound from this server's soundboard that plays when they join one of its
  * voice channels (#121). Absent from older servers, and when none is set.
  */
-join_sound?: string, };
+join_sound?: string, 
+/**
+ * When they joined the server (RFC 3339 UTC; the latest join, after a leave). Absent from older servers.
+ */
+joined_at?: string, };

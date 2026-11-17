@@ -180,8 +180,41 @@ pub(super) async fn end_expired(
     .await
 }
 
+/// `user` left `server` (#418): a custom status showing one of its emoji drops the emoji and keeps the text (one that
+/// was only that emoji goes), as they can't use its emoji any more; recent ones with its emoji go too, since picking
+/// them again would be refused. Whether their status changed, for announcing after commit (`announce_own`, then
+/// `Hub::sync_presence`). A run-out status changes like any other: the sweep clears it anyway.
+pub(crate) async fn drop_server_emoji(
+    tx: &mut SqliteConnection,
+    user: UserId,
+    server: pulse_protocol::ids::ServerId,
+) -> sqlx::Result<bool> {
+    const THEIRS: &str = "(SELECT 'custom:' || id FROM custom_emoji WHERE server_id = ?)";
+    let (uid, sid) = (user.to_string(), server.to_string());
+    let changed = sqlx::query(&format!(
+        "UPDATE users SET
+           custom_text = CASE WHEN custom_text = '' THEN NULL ELSE custom_text END,
+           custom_until = CASE WHEN custom_text = '' THEN NULL ELSE custom_until END,
+           custom_emoji = NULL
+         WHERE id = ? AND custom_emoji IN {THEIRS}"
+    ))
+    .bind(&uid)
+    .bind(&sid)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    sqlx::query(&format!(
+        "DELETE FROM custom_status_recent WHERE user_id = ? AND emoji IN {THEIRS}"
+    ))
+    .bind(&uid)
+    .bind(&sid)
+    .execute(&mut *tx)
+    .await?;
+    Ok(changed > 0)
+}
+
 /// Tell `me`'s own sessions their custom status as it now stands.
-pub(super) async fn announce_own(s: &AppState, me: UserId) {
+pub(crate) async fn announce_own(s: &AppState, me: UserId) {
     match mine(&s.db, me, &now()).await {
         Ok(status) => {
             s.hub

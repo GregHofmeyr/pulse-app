@@ -39,6 +39,7 @@ async fn hide(
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, ch.id).await?; // channel deleted since (#109)
+    crate::access::open_in(&mut tx, ch.id).await?; // archived (#303): previews stay as they are, like the text
     // The message must still be live: a delete that committed since the check above wins.
     let hidden = sqlx::query(
         "UPDATE link_embeds SET hidden = 1
@@ -81,6 +82,7 @@ async fn show(
         return Err(AppError::NotFound); // deleted since the check above
     };
     crate::access::channel_live_in(&mut tx, ch.id).await?; // channel deleted since (#109)
+    crate::access::open_in(&mut tx, ch.id).await?; // archived (#303): read-only
     // Only links still in the message: one edited out stays hidden in case it comes back.
     let links = super::links::extract(&content);
     let mut shown = 0;

@@ -7,13 +7,13 @@ use crate::ids::{
     BookmarkId, CallId, ChannelId, LineId, MessageId, ReminderId, ScheduledId, ServerId, UserId,
 };
 use crate::rest::{
-    Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji,
-    CustomStatus, DmLayout, F1Prediction, Game, InboxItem, Listening, ListeningUpdate, Member,
-    Message, MessageBookmark, MessageReminder, Mute, MyCustomStatus, NotifyLevelPref, OwnStatus,
-    Person, PinnedMessage, Plan, Playing, PlayingUpdate, PresenceStatus, PrivateNickname,
-    QotyEvent, QuietSpin, ReadState, RingEndReason, ScheduledMessage, Server, ServerLayout,
-    ServerVoiceMod, Sound, SpeakerLink, StageShare, SteamStatus, StreamEndReason, StreamInfo, User,
-    WatchParty, Wheel,
+    Badge, CallInfo, CallRing, CardProfile, Channel, ChannelOrder, ClipView, ClipViewPref,
+    CustomEmoji, CustomStatus, DmLayout, F1Prediction, Game, InboxFilter, InboxItem, Listening,
+    ListeningUpdate, Member, Message, MessageBookmark, MessageReminder, Mute, MyCustomStatus,
+    NotifyLevelPref, OwnStatus, Person, PersonDnd, PinnedMessage, Plan, Playing, PlayingUpdate,
+    PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason,
+    ScheduledMessage, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare,
+    SteamStatus, StreamEndReason, StreamInfo, User, WatchParty, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -246,6 +246,19 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub dm_layout: DmLayout,
+    /// The people whose messages don't alert you (#310), run-out ones left out. Yours only. Absent from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub person_dnd: Vec<PersonDnd>,
+    /// Your saved inbox filters (#307), in order. Yours only. Absent from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub inbox_filters: Vec<InboxFilter>,
+    /// Your own channel list orders (#304), one per server you set one for (and are still in). Yours only. Absent
+    /// from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub channel_orders: Vec<ChannelOrder>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -335,6 +348,13 @@ pub enum Event {
     MemberJoined {
         server_id: ServerId,
         member: Member,
+    },
+    /// Its owner handed a server to another of its members (#418). Everyone (servers are public): the server's
+    /// `owner_id` is now `owner_id`. Clients from before it skip it and catch up on their next Ready.
+    ServerOwnerChanged {
+        server_id: ServerId,
+        owner_id: UserId,
+        previous_owner_id: UserId,
     },
     /// Someone is no longer in a server (#371): they left, or its owner removed them (`removed_by`). Everyone, like
     /// `MemberJoined`: member lists drop them, and the person themselves sees the server as one they aren't in (its
@@ -480,6 +500,34 @@ pub enum Event {
     DmLayoutChanged {
         user_id: UserId,
         layout: DmLayout,
+    },
+    /// Only to its person's own sessions: their per-person Do Not Disturb list changed (#310), the whole new
+    /// [`Ready::person_dnd`]. Clients from before it skip it.
+    PersonDndChanged {
+        user_id: UserId,
+        list: Vec<PersonDnd>,
+    },
+    /// Only to its person's own sessions: their saved inbox filters changed (#307), the whole new
+    /// [`Ready::inbox_filters`]. Clients from before it skip it.
+    InboxFiltersChanged {
+        user_id: UserId,
+        filters: Vec<InboxFilter>,
+    },
+    /// Only to its person's own sessions: their own order of a server's channel list changed (#304); `None`: reset to
+    /// the server's order. Clients from before it skip it.
+    ChannelOrderChanged {
+        user_id: UserId,
+        server_id: ServerId,
+        order: Option<ChannelOrder>,
+    },
+    /// Only to `user_id`'s own sessions, sent to the viewer and to the message's sender: `viewer_id` opened the
+    /// view-once files of `message_id` (#311). Clients from before it skip it.
+    ViewOnceOpened {
+        user_id: UserId,
+        channel_id: ChannelId,
+        message_id: MessageId,
+        viewer_id: UserId,
+        viewed_at: String,
     },
     /// Only to its person's own sessions: a saved message was removed (#315).
     BookmarkRemoved {
@@ -886,6 +934,7 @@ impl Event {
             | Self::ChannelDeleted { .. }
             | Self::LayoutChanged { .. }
             | Self::MemberJoined { .. }
+            | Self::ServerOwnerChanged { .. }
             | Self::MemberLeft { .. }
             | Self::MemberUpdated { .. }
             | Self::UserCreated { .. }
@@ -930,6 +979,10 @@ impl Event {
             | Self::BookmarkSaved { .. }
             | Self::BookmarkRemoved { .. }
             | Self::DmLayoutChanged { .. }
+            | Self::PersonDndChanged { .. }
+            | Self::InboxFiltersChanged { .. }
+            | Self::ChannelOrderChanged { .. }
+            | Self::ViewOnceOpened { .. }
             | Self::BadgeEarned { .. } => None,
         }
     }
@@ -961,6 +1014,10 @@ impl Event {
             | Self::BookmarkSaved { user_id, .. }
             | Self::BookmarkRemoved { user_id, .. }
             | Self::DmLayoutChanged { user_id, .. }
+            | Self::PersonDndChanged { user_id, .. }
+            | Self::InboxFiltersChanged { user_id, .. }
+            | Self::ChannelOrderChanged { user_id, .. }
+            | Self::ViewOnceOpened { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
             | Self::CallRingEnded { user_id, .. }
@@ -1093,6 +1150,9 @@ mod tests {
             reminders: vec![],
             bookmarks: vec![],
             dm_layout: Default::default(),
+            person_dnd: vec![],
+            inbox_filters: vec![],
+            channel_orders: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1187,6 +1247,9 @@ mod tests {
             reminders: vec![],
             bookmarks: vec![],
             dm_layout: Default::default(),
+            person_dnd: vec![],
+            inbox_filters: vec![],
+            channel_orders: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1330,6 +1393,9 @@ mod tests {
             reminders: vec![],
             bookmarks: vec![],
             dm_layout: Default::default(),
+            person_dnd: vec![],
+            inbox_filters: vec![],
+            channel_orders: vec![],
             calls: vec![],
             ringing: vec![],
             layouts: vec![],
@@ -1512,6 +1578,7 @@ mod tests {
                 },
                 nickname: Some("n".into()),
                 join_sound: None,
+                joined_at: None,
             },
         };
         assert_eq!((e.channel_id(), e.only_for()), (None, None));
@@ -1607,6 +1674,8 @@ mod tests {
             name: "Games".into(),
             options: vec!["a".into(), "b".into()],
             updated_at: "2026-11-09T00:00:00.000Z".into(),
+            weights: None,
+            palette: None,
         };
         let shared = Event::WheelSaved {
             wheel: wheel(Some(sv), None),
@@ -1645,6 +1714,8 @@ mod tests {
             options: vec!["a".into(), "b".into()],
             winner: 1,
             angle: 90.0,
+            weights: None,
+            palette: None,
         };
         let m = Message {
             wheel: Some(Box::new(spin.clone())),

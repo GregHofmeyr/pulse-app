@@ -175,8 +175,8 @@ pub async fn check_group_cap(tx: &mut sqlx::SqliteConnection, users: &[UserId]) 
 }
 
 pub async fn member_of(db: &SqlitePool, server: ServerId, user: UserId) -> AppResult<Member> {
-    let (nickname, join_sound): (Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT nickname, join_sound_id FROM server_members WHERE server_id = ? AND user_id = ?",
+    let (nickname, join_sound, joined_at): (Option<String>, Option<String>, String) = sqlx::query_as(
+        "SELECT nickname, join_sound_id, joined_at FROM server_members WHERE server_id = ? AND user_id = ?",
     )
     .bind(server.to_string())
     .bind(user.to_string())
@@ -186,6 +186,7 @@ pub async fn member_of(db: &SqlitePool, server: ServerId, user: UserId) -> AppRe
         user: load_user(db, user).await?,
         nickname,
         join_sound,
+        joined_at: Some(joined_at),
     })
 }
 
@@ -508,6 +509,7 @@ struct MemberRow {
     user: UserRow,
     nickname: Option<String>,
     join_sound_id: Option<String>,
+    joined_at: String,
 }
 
 impl MemberRow {
@@ -516,13 +518,14 @@ impl MemberRow {
             user: self.user.into_user()?,
             nickname: self.nickname,
             join_sound: self.join_sound_id,
+            joined_at: Some(self.joined_at),
         })
     }
 }
 
 pub async fn server_members(db: &SqlitePool, id: ServerId) -> AppResult<Vec<Member>> {
     let rows: Vec<MemberRow> = sqlx::query_as(&format!(
-        "SELECT {USER_COLS}, m.nickname, m.join_sound_id FROM server_members m JOIN users u ON u.id = m.user_id {USER_JOIN}
+        "SELECT {USER_COLS}, m.nickname, m.join_sound_id, m.joined_at FROM server_members m JOIN users u ON u.id = m.user_id {USER_JOIN}
          WHERE m.server_id = ? ORDER BY m.joined_at, m.user_id"
     ))
     .bind(id.to_string())
@@ -541,7 +544,7 @@ struct ServerMemberRow {
 /// Every live server's members in one query, each list ordered as [`server_members`] orders it.
 pub async fn all_server_members(db: &SqlitePool) -> AppResult<HashMap<ServerId, Vec<Member>>> {
     let rows: Vec<ServerMemberRow> = sqlx::query_as(&format!(
-        "SELECT m.server_id, {USER_COLS}, m.nickname, m.join_sound_id
+        "SELECT m.server_id, {USER_COLS}, m.nickname, m.join_sound_id, m.joined_at
          FROM server_members m JOIN users u ON u.id = m.user_id {USER_JOIN}
          WHERE m.server_id NOT IN {DELETED_SERVERS}
          ORDER BY m.server_id, m.joined_at, m.user_id"

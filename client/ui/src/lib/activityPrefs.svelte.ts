@@ -2,17 +2,23 @@
 // its own webview storage), both off until turned on. Reading is the master switch: off, the core runs no watcher
 // at all; on with Show off, what Spotify plays only feeds a Jam you put on the stage. The core is told at boot and on
 // every change, and tells back what it reads (`pulse://media-activity`) for Settings to show.
+// Other players (#322): "Share music from other players" (desktop apps) and "Share music from a browser", each on
+// until turned off, under the same master switch.
 import { listen } from '@tauri-apps/api/event'
 import { api, type MediaState } from './tauri'
 
 const READ_KEY = 'pulse.activity.read'
 const SHOW_KEY = 'pulse.activity.show'
+const PLAYERS_KEY = 'pulse.activity.players'
+const BROWSERS_KEY = 'pulse.activity.browsers'
 
-function saved(key: string): boolean {
+/** The saved switch, or `fallback` when it was never set (or storage can't be read). */
+function saved(key: string, fallback = false): boolean {
   try {
-    return localStorage.getItem(key) === 'true'
+    const v = localStorage.getItem(key)
+    return v === null ? fallback : v === 'true'
   } catch {
-    return false
+    return fallback
   }
 }
 
@@ -24,13 +30,19 @@ function save(key: string, on: boolean) {
   }
 }
 
-export const activityPrefs = $state({ read: saved(READ_KEY), show: saved(SHOW_KEY) })
+export const activityPrefs = $state({
+  read: saved(READ_KEY),
+  show: saved(SHOW_KEY),
+  players: saved(PLAYERS_KEY, true),
+  browsers: saved(BROWSERS_KEY, true),
+})
 
 /** What the core reads right now (Settings' "Spotify is playing …"). */
 export const mediaActivity = $state<MediaState>({ reading: false, playing: null })
 
 function tell(): void {
-  void api.setMediaActivity(activityPrefs.read, activityPrefs.show).catch(() => {})
+  const sources = { players: activityPrefs.players, browsers: activityPrefs.browsers }
+  void api.setMediaActivity(activityPrefs.read, activityPrefs.show, sources).catch(() => {})
 }
 
 export function setReadMedia(on: boolean): void {
@@ -42,6 +54,20 @@ export function setReadMedia(on: boolean): void {
 export function setShowActivity(on: boolean): void {
   activityPrefs.show = on
   save(SHOW_KEY, on)
+  tell()
+}
+
+/** "Share music from other players" (#322): Apple Music, Tidal, Deezer, foobar2000, YouTube Music's app. */
+export function setSharePlayers(on: boolean): void {
+  activityPrefs.players = on
+  save(PLAYERS_KEY, on)
+  tell()
+}
+
+/** "Share music from a browser" (#322): YouTube Music and other music sites, only when it's clearly music. */
+export function setShareBrowsers(on: boolean): void {
+  activityPrefs.browsers = on
+  save(BROWSERS_KEY, on)
   tell()
 }
 

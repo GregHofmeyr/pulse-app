@@ -26,8 +26,31 @@ use crate::messages::routes::{Outgoing as Post, caption, deliver, load};
 use crate::messages::{mentions, nonce};
 use crate::servers::routes::is_server_member;
 
-/// The forward's own content when its forwarder wrote no comment: what older clients (and notifications) show.
+/// The forward's own stored content when its forwarder wrote no comment. Read back, it says more ([`stand_in`]).
 pub const STAND_IN: &str = "↪ Forwarded a message";
+
+/// The longest piece of the original a comment-less forward's text shows, in characters.
+const STAND_IN_MAX: usize = 100;
+
+/// How a forward with no comment reads as text (notifications, previews, older clients; #415): "↪ Forwarded: " and
+/// the original's first line, "↪ Forwarded a GIF", or [`STAND_IN`] (files only, or once the original is gone: then it
+/// says nothing of it). Worked out on read, never stored, so a deleted original's words go with it.
+pub fn stand_in(view: &Forwarded) -> String {
+    if view.unavailable {
+        return STAND_IN.to_owned();
+    }
+    if let Some(line) = view.content.lines().map(str::trim).find(|l| !l.is_empty()) {
+        let mut cut: String = line.chars().take(STAND_IN_MAX).collect();
+        if line.chars().nth(STAND_IN_MAX).is_some() {
+            cut.push('…');
+        }
+        return format!("↪ Forwarded: {cut}");
+    }
+    if view.gif.is_some() {
+        return "↪ Forwarded a GIF".to_owned();
+    }
+    STAND_IN.to_owned()
+}
 
 /// How many of an original's forwards are told when it is deleted (one at a time; the rest read as unavailable on
 /// their next load).
@@ -199,6 +222,7 @@ fn skeleton(f: &Stored) -> Message {
         f1: None,
         forwarded: None,
         group_line: None,
+        member_line: None,
     }
 }
 
@@ -227,6 +251,9 @@ pub async fn attach(db: &SqlitePool, msgs: &mut [Message]) -> AppResult<()> {
         let (id, f) = stored_from(row)?;
         let (fwd, files) = view(db, &f).await?;
         if let Some(m) = msgs.iter_mut().find(|m| m.id == id) {
+            if !f.has_comment {
+                m.content = stand_in(&fwd);
+            }
             m.forwarded = Some(Box::new(fwd));
             m.attachments = files;
             m.caption_is_fallback = !f.has_comment;
@@ -342,6 +369,12 @@ async fn forward(
             has_comment: false,
         },
         None => {
+            // view-once files (#311) go to their recipients once: a forward would hand them on
+            if src.attachments.iter().any(|a| a.view_once) {
+                return Err(AppError::BadRequest(
+                    "view-once files can't be forwarded".into(),
+                ));
+            }
             let special = src.kind != MessageKind::Normal
                 || src.quote.is_some()
                 || src.clip.is_some()

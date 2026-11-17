@@ -45,7 +45,7 @@
   import { nameCss, resolveNameStyle } from '../lib/nameStyle'
   import { displayName, roleColorFor, userOf } from '../lib/selectors'
   import { callLineText } from '../lib/calls'
-  import { groupLineText } from '../lib/groupLines'
+  import { groupLineText, memberLineText } from '../lib/groupLines'
   import { appearance } from '../lib/appearance.svelte'
   import { openCard } from '../lib/profileCard.svelte'
   import PersonMenu from './PersonMenu.svelte'
@@ -112,7 +112,8 @@
 
   // --- names and avatars: the avatar animates while the pointer is over the row; pills take the person's style ---
   let rowHover = $state(false)
-  /** Its channel is archived (#303): read-only, so no reacting, replying or editing. */
+  /** Its channel is archived (#303): read-only, so no reacting, replying, editing, ending a poll or touching previews;
+   *  your own message can still be deleted (the server allows it too). */
   const archived = $derived(!!app.state.channels[message.channel_id]?.archived_at)
   // Pills restyle only when the HTML or a mentioned person's style changes, not on every state update:
   // the lookup is rebuilt only when people or members change, and the styles are compared as one string.
@@ -183,10 +184,12 @@
   }
   // --- the message's own menu (#178): Pin message (a flyout of lengths) or Unpin message. From the action bar's More,
   // or a right-click on the message (the author's name and avatar keep their person menu). Not in quotes or clips
-  // channels (QuoteItem and the clip views are theirs), nor on an unsent or deleted message. ---
+  // channels (QuoteItem and the clip views are theirs), nor on an unsent or deleted message. A reply in a quote's or
+  // clip's thread has it with Remind me alone (#412). ---
   let msgMenu = $state<{ x: number; y: number; opener: HTMLElement } | null>(null)
   const pinnable = $derived(pinsPlainMessages(channelKind))
-  const msgMenuOn = $derived(pinnable && !pending && !message.deleted && !editing)
+  const cardReply = $derived(!pinnable && !!message.thread_root_id && (channelKind === 'quotes' || channelKind === 'clips'))
+  const msgMenuOn = $derived((pinnable || cardReply) && !pending && !message.deleted && !editing)
   function openMsgMenu(e: MouseEvent, opener: HTMLElement) {
     // the author's own menu took it (their name or avatar), or there's nothing to show
     if (e.defaultPrevented || !msgMenuOn) return
@@ -207,7 +210,8 @@
   // A refused pin or unpin means the pin here was out of date: show why, and fetch the chat's pins to set it right.
   const report = (p: Promise<unknown>) => reportPin(p, message.channel_id, showError)
   // your own poll, still open, can be ended from the message's menu (#157); a refusal fetches the poll afresh
-  const endable = $derived(!!message.poll && mine && !pollOver(message.poll, now))
+  // not in an archived channel (#303): ending a poll there is refused (one ending on its own waits for an unarchive)
+  const endable = $derived(!!message.poll && mine && !archived && !pollOver(message.poll, now))
   const endPoll = () => closePoll(message).catch((e) => showError(errorText(e)))
   // ...or changed (#265), from the menu or its Edit button: the poll composer, filled from it
   let pollEdit = $state<HTMLElement | null>(null)
@@ -235,7 +239,8 @@
   const unsave = () => savedOne && removeBookmark(savedOne.id).then(() => (ui.notice = 'Removed from saved'), (e) => showError(errorText(e)))
   // Forward… (#302): words, files or a GIF (not a poll or plan, nor a forward whose original is gone), to a chat picked
   // by where the menu opened from
-  const forwardable = $derived(!message.poll && !message.plan && !message.forwarded?.unavailable)
+  // view-once files (#311) can't be forwarded (the server refuses it too)
+  const forwardable = $derived(!message.poll && !message.plan && !message.forwarded?.unavailable && !message.attachments?.some((a) => a.view_once))
   let forwardAt = $state<HTMLElement | null>(null)
   const openForward = (opener: HTMLElement) =>
     (forwardAt = opener.isConnected ? opener : document.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`))
@@ -273,7 +278,9 @@
     }
   }
   // your own message with a removed preview whose link is still in it (#94): Show previews again, in its menu
-  const showable = $derived(mine && !!message.embeds_hidden && previews.show)
+  // An archived channel (#303) is read-only: previews stay as they are (removing or showing one is an edit). Deleting
+  // your own message is the one change still allowed there: you can always take your words back.
+  const showable = $derived(mine && !archived && !!message.embeds_hidden && previews.show)
   const showEmbeds = () => api.showEmbeds(message.id).catch((e) => showError(errorText(e)))
   // a GIPHY link shows as the GIF (#58), never as a preview card (an older server may have made one)
   const embeds = $derived(!pending && !message.deleted && previews.show ? (message.embeds ?? []).filter((e) => !gifIdOf(e.url)) : [])
@@ -386,6 +393,9 @@
   {:else if message.group_line}
     <!-- a group's own line (#114), with today's names: "alex added sam" -->
     <div class="system" data-message-id={message.id}>{groupLineText(app.state, message)} <span class="time">{time}</span></div>
+  {:else if message.member_line}
+    <!-- someone left the server or was removed (#418), with today's name -->
+    <div class="system member-line" data-message-id={message.id}><Icon name="users" size={14} /> {memberLineText(app.state, message, serverId)} <span class="time">{time}</span></div>
   {:else}
   <div class="system" data-message-id={message.id}>{message.content} <span class="time">{time}</span></div>
   {/if}
@@ -442,7 +452,7 @@
         {:else if !pending && !message.deleted && !message.forwarded && message.attachments?.length}
           <MessageFiles {message} onError={showError} />
         {/if}
-        {#each embeds as e (e.url)}<LinkEmbed embed={e} messageId={message.id} channelId={message.channel_id} {mine} onError={showError} />{/each}
+        {#each embeds as e (e.url)}<LinkEmbed embed={e} messageId={message.id} channelId={message.channel_id} mine={mine && !archived} onError={showError} />{/each}
         {#if !pending}<ReactionRow {message} {meId} {nameOf} onError={showError} />{/if}
         {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
       </div>
@@ -457,7 +467,7 @@
             {#if archived}{:else if message.plan}{#if planOpen}<button aria-label="Edit plan" onclick={(e) => editPlanCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
             {:else if message.poll}{#if endable}<button aria-label="Edit poll" onclick={(e) => editPollCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
             {:else if !message.forwarded}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
-            {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
+            {#if embeds.length && !archived}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
             <DeleteButton what={message.thread_root_id ? 'reply' : 'message'} onConfirm={() => void del()} />
           {/if}
           {#if msgMenuOn}
@@ -492,12 +502,17 @@
 {/if}
 <!-- outside the row, so focus in the menu doesn't count as focus in the message (its action bar) -->
 {#if msgMenu}
-  {#key msgMenu}<MessageMenu pinned={!!pin} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
-    onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
-    onRemind={(at) => msgMenu && remind(at, msgMenu.opener)}
-    saved={!!savedOne} onSave={saveToVault} onUnsave={unsave}
-    onForward={forwardable ? () => msgMenu && openForward(msgMenu.opener) : undefined}
-    onEndPoll={endable ? endPoll : undefined} onEditPoll={endable && !archived ? () => editPollCard() : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
+  {#if cardReply}
+    {#key msgMenu}<MessageMenu pinned={false} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
+      onRemind={(at) => msgMenu && remind(at, msgMenu.opener)} onClose={() => (msgMenu = null)} />{/key}
+  {:else}
+    {#key msgMenu}<MessageMenu pinned={!!pin} x={msgMenu.x} y={msgMenu.y} opener={msgMenu.opener}
+      onPin={(d) => report(api.pinMessage(message.id, d))} onUnpin={() => report(api.unpinMessage(message.id))}
+      onRemind={(at) => msgMenu && remind(at, msgMenu.opener)}
+      saved={!!savedOne} onSave={saveToVault} onUnsave={unsave}
+      onForward={forwardable ? () => msgMenu && openForward(msgMenu.opener) : undefined}
+      onEndPoll={endable ? endPoll : undefined} onEditPoll={endable && !archived ? () => editPollCard() : undefined} onEditPlan={planOpen ? () => editPlanCard() : undefined} onCancelPlan={planOpen ? cancelThisPlan : undefined} onShowPreviews={showable ? showEmbeds : undefined} {quotesChannels} onQuote={addToQuotes} onClose={() => (msgMenu = null)} />{/key}
+  {/if}
 {/if}
 {#if remindCustom}
   <WhenPicker anchor={remindCustom} title="Remind me about this" confirm="Set reminder" onPick={remindAt} onClose={() => (remindCustom = null)} />

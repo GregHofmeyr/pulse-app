@@ -13,6 +13,7 @@ use sqlx::SqlitePool;
 
 use super::{CACHE_FAILURE_TTL, CACHE_MAX, CACHE_TTL, Fetching, Unfurler, keep_thumb, unfurl};
 use crate::limits::Limiter;
+use crate::media::process;
 
 /// One game's art as remembered: `None` when Steam had none of it.
 pub(super) struct CachedArt {
@@ -87,11 +88,18 @@ impl Unfurler {
             return None;
         }
         let [hero, header, logo] = art_urls(&self.endpoints.steam_cdn, app_id);
-        let one = |u: String| async move {
+        let one = |u: String, processing| async move {
             let url = Url::parse(&u).ok()?;
-            unfurl::thumb(&self.fetcher, db, media_dir, by, &url).await
+            unfurl::thumb_with(&self.fetcher, db, media_dir, by, &url, processing).await
         };
-        let run = async { tokio::join!(one(hero), one(header), one(logo)) };
+        // the hero fills a stage tile: kept at up to 1280 px, not a link thumbnail's 480 (#392)
+        let run = async {
+            tokio::join!(
+                one(hero, process::game_hero),
+                one(header, process::link_thumb),
+                one(logo, process::link_thumb)
+            )
+        };
         let (hero, header, logo) = tokio::time::timeout(self.deadline, run)
             .await
             .unwrap_or_else(|_| {

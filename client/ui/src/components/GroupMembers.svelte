@@ -2,8 +2,10 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import ListeningLine from './ListeningLine.svelte'
-  import SpotifyIcon from './SpotifyIcon.svelte'
+  import PlayerIcon from './PlayerIcon.svelte'
   import { listeningOf } from '../lib/activity'
+  import PlayingLine from './PlayingLine.svelte'
+  import { playingOf } from '../lib/game'
   import CustomStatusLine from './CustomStatusLine.svelte'
   import { customStatusOf } from '../lib/customStatus'
   import { app, clock } from '../lib/store.svelte'
@@ -54,14 +56,15 @@
   <div class="label">{g.label} — {g.list.length}</div>
   {#each g.list as p (p.user.id)}
     {@const custom = customStatusOf(app.state, p.user.id, clock.nowIso)}
-    {@const listening = custom ? null : listeningOf(app.state, p.user.id)}
+    {@const playing = custom ? null : playingOf(app.state, p.user.id)}
+    {@const listening = custom || playing ? null : listeningOf(app.state, p.user.id)}
     <div class="row hover-row" class:off={g.key === 'offline'} data-section={g.key} role="presentation" onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}
       oncontextmenu={(e) => openMenu(p.user.id, e, e.currentTarget)} onkeydown={(e) => openMenu(p.user.id, e, e.currentTarget)}>
       <Avatar id={p.user.id} name={p.name} size={32} presence={presenceOf(app.state, p.user.id, clock.nowIso)} interactive serverId={null} hovered={() => hovered === p.user.id} />
       <!-- their custom status (#152), else what they're listening to (#275), on the line under the name; Spotify's icon
            at the row's end, only with its line -->
-      <span class="who"><span class="nm"><Name userId={p.user.id} serverId={null} text={p.name} surface="side" />{#if p.user.id === app.state.me?.id}<small> (you)</small>{/if}</span>{#if custom}<CustomStatusLine status={custom} />{:else if listening}<ListeningLine {listening} icon={false} />{/if}</span>
-      {#if listening}<span class="sp"><SpotifyIcon /></span>{/if}
+      <span class="who"><span class="nm"><Name userId={p.user.id} serverId={null} text={p.name} surface="side" />{#if p.user.id === app.state.me?.id}<small> (you)</small>{/if}</span>{#if custom}<CustomStatusLine status={custom} />{:else if playing}<PlayingLine {playing} />{:else if listening}<ListeningLine {listening} icon={false} />{/if}</span>
+      {#if listening}<span class="sp"><PlayerIcon {listening} /></span>{/if}
     </div>
   {/each}
   {/each}

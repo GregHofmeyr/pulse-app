@@ -18,6 +18,7 @@
 //! - [`routes`]: your follows and switch, the team search, each server's Sports channel.
 
 pub mod api;
+pub mod logos;
 pub mod poller;
 pub mod routes;
 pub mod teams;
@@ -109,6 +110,8 @@ struct Inner {
     live_at: Mutex<HashMap<Sport, Instant>>,
     /// One team list fetch at a time (two people searching at once spend one request).
     teams_lock: tokio::sync::Mutex<()>,
+    /// Logo URLs that couldn't be fetched, and when (#406): left alone for [`logos::MISS_RETRY`].
+    logo_misses: Mutex<HashMap<String, Instant>>,
 }
 
 impl Sports {
@@ -118,6 +121,7 @@ impl Sports {
                 api: api::Api::new(cfg),
                 live_at: Mutex::default(),
                 teams_lock: tokio::sync::Mutex::default(),
+                logo_misses: Mutex::default(),
             }),
         }
     }
@@ -144,6 +148,29 @@ impl Sports {
     pub fn forget_live_read(&self, sport: Sport) {
         let mut l = self.inner.live_at.lock().unwrap_or_else(|e| e.into_inner());
         l.remove(&sport);
+    }
+
+    /// Whether the logo at `url` failed within [`logos::MISS_RETRY`].
+    pub fn logo_missed(&self, url: &str) -> bool {
+        let m = self
+            .inner
+            .logo_misses
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        m.get(url).is_some_and(|t| t.elapsed() < logos::MISS_RETRY)
+    }
+
+    pub fn logo_miss(&self, url: &str) {
+        let mut m = self
+            .inner
+            .logo_misses
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // bounded: the teams of three leagues
+        if m.len() >= 512 {
+            m.retain(|_, t| t.elapsed() < logos::MISS_RETRY);
+        }
+        m.insert(url.to_string(), Instant::now());
     }
 
     pub fn mark_live_read(&self, sport: Sport) {

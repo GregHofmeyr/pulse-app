@@ -52,8 +52,9 @@ fn refused(r: Refused) -> AppError {
     }
 }
 
-/// Tell the channel what a change did.
+/// Tell the channel what a change did (and keep its snapshot in step, #409).
 pub(crate) async fn announce(s: &AppState, channel: ChannelId, outcome: Outcome) {
+    super::snapshot(&s.db, channel, &outcome, now_ms()).await;
     let event = match outcome {
         Outcome::Unchanged => return,
         Outcome::Changed(party) => Event::WatchPartyChanged {

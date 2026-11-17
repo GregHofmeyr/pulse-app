@@ -154,3 +154,74 @@ describe('Server settings: Leave server', () => {
     expect([...document.querySelectorAll('.content button')].some((b) => b.textContent === 'Leave server')).toBe(false)
   })
 })
+
+describe('handing a server over (#418)', () => {
+  const openSection = (name: string) => {
+    // live, as the shell passes it
+    cmp = mount(ServerSettings, { target: document.body, props: { get server() { return app.state.servers[0] }, onClose: vi.fn() } })
+    flushSync()
+    const nav = [...document.querySelectorAll<HTMLButtonElement>('nav button')]
+    const b = nav.find((x) => x.textContent === name)
+    b?.click()
+    flushSync()
+    return b
+  }
+
+  it('Transfer ownership is the owner\'s only, in the danger colour', () => {
+    state('U2')
+    expect(openSection('Transfer ownership')).toBeUndefined()
+    unmount(cmp!)
+    state('U1')
+    const b = openSection('Transfer ownership')!
+    expect(b.classList.contains('danger')).toBe(true)
+  })
+
+  it('picking someone and Transfer ownership asks first in the shell', () => {
+    state('U1')
+    openSection('Transfer ownership')
+    const go = [...document.querySelectorAll<HTMLButtonElement>('.content button')].find((b) => b.textContent === 'Transfer ownership')!
+    expect(go.disabled).toBe(true)
+    expect(go.classList.contains('btn-danger')).toBe(true)
+    document.querySelector<HTMLButtonElement>('.content [aria-label="New owner"]')!.click()
+    flushSync()
+    const opt = [...document.querySelectorAll<HTMLElement>('[role=option]')].find((o) => o.textContent?.trim() === 'sam')!
+    opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    opt.click()
+    flushSync()
+    expect(go.disabled).toBe(false)
+    go.click()
+    expect(ui.serverAction).toEqual({ kind: 'transfer', serverId: 'S1', userId: 'U2' })
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('the dialog wants the server\'s name before it hands it over', async () => {
+    state('U1')
+    const onClose = vi.fn()
+    cmp = mount(ServerActionDialog, { target: document.body, props: { action: { kind: 'transfer', serverId: 'S1', userId: 'U2' }, onClose } })
+    flushSync()
+    expect(document.querySelector('[role=dialog]')!.getAttribute('aria-label')).toBe('Make sam the owner')
+    const go = document.querySelectorAll<HTMLButtonElement>('[role=dialog] .actions button')[1]
+    expect(go.textContent?.trim()).toBe('Transfer ownership')
+    expect(go.classList.contains('btn-danger')).toBe(true)
+    expect(go.disabled).toBe(true)
+    const input = document.querySelector<HTMLInputElement>('[role=dialog] input')!
+    input.value = 'Alph'
+    input.dispatchEvent(new Event('input'))
+    flushSync()
+    expect(go.disabled).toBe(true)
+    input.value = 'Alpha'
+    input.dispatchEvent(new Event('input'))
+    flushSync()
+    go.click()
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalled())
+    expect(invoke).toHaveBeenCalledWith('transfer_server', { serverId: 'S1', userId: 'U2' })
+  })
+
+  it('once it\'s handed over, settings move to Leave server', () => {
+    state('U1')
+    openSection('Transfer ownership')
+    app.state = { ...app.state, servers: [{ ...app.state.servers[0], owner_id: 'U2' }] }
+    flushSync()
+    expect(document.querySelector('nav button.on')?.textContent).toBe('Leave server')
+  })
+})

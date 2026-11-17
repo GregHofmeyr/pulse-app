@@ -49,6 +49,22 @@ describe('ListeningPanel', () => {
     expect(document.querySelector('a.open')!.textContent).toBe('Open Spotify')
   })
 
+  it('another player (#322): its name, a generic icon, and no Spotify link, art or share', () => {
+    show({ title: 'Song', artist: 'Kim', album: 'Album', spotify_id: null, art: null, player: 'youtube_music' })
+    expect(document.querySelector('.head')!.textContent).toBe('Listening on YouTube Music')
+    expect(document.querySelector('.spotify-icon')).toBeNull()
+    expect(document.querySelector('.player-icon svg')!.getAttribute('aria-label')).toBe('YouTube Music')
+    expect(document.querySelector('a.open')).toBeNull()
+    expect(document.querySelector('.actions')).toBeNull()
+    expect(document.querySelector('section')!.getAttribute('aria-label')).toBe('Listening to Song on YouTube Music')
+  })
+
+  it('a browser: "Listening in a browser"', () => {
+    show({ title: 'Song', artist: 'Kim', album: 'Album', spotify_id: null, art: null, player: 'browser' })
+    expect(document.querySelector('.head')!.textContent).toBe('Listening in a browser')
+    expect(document.querySelector('a.open')).toBeNull()
+  })
+
   describe('Share to stage (#321)', () => {
     const shareBtn = () => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Share to stage')
     beforeEach(() => {

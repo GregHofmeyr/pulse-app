@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyReady, emptyState } from './state'
-import { groupLineText } from './groupLines'
+import { groupLineText, memberLineText } from './groupLines'
 import { previewText } from './conversations'
 import { testReady } from './testReady'
 import type { Message } from './protocol/Message'
@@ -51,5 +51,24 @@ describe('group lines (#114)', () => {
   it('reads the same in the conversation list preview', () => {
     const s = state()
     expect(previewText(s, line('sam left', { kind: 'member_left', by: 'U2', users: [] }))).toEqual({ text: 'Sammy left', system: true })
+  })
+})
+
+describe('server membership lines (#418)', () => {
+  const member = (removed_by?: string): Message => ({
+    ...line('sam left the server'), channel_id: 'C1',
+    member_line: { user_id: 'U2', ...(removed_by ? { removed_by } : {}) },
+  })
+
+  it('names who left or was removed as they\'re called now', () => {
+    const s = state()
+    expect(memberLineText(s, member(), null)).toBe('Sammy left the server')
+    expect(memberLineText(s, member('U1'), null)).toBe('Sammy was removed')
+  })
+
+  it('keeps the stored text for someone this client doesn\'t know', () => {
+    const s = state()
+    const m: Message = { ...member(), content: 'jo left the server', member_line: { user_id: 'U9' } }
+    expect(memberLineText(s, m, null)).toBe('jo left the server')
   })
 })

@@ -2,6 +2,9 @@
 // The reactive wrapper lives in store.svelte.ts.
 import type { CallInfo } from './protocol/CallInfo'
 import type { DmLayout } from './protocol/DmLayout'
+import type { PersonDnd } from './protocol/PersonDnd'
+import type { InboxFilter } from './protocol/InboxFilter'
+import type { ChannelOrder } from './protocol/ChannelOrder'
 import type { Category } from './protocol/Category'
 import type { Channel } from './protocol/Channel'
 import type { Gif } from './protocol/Gif'
@@ -56,7 +59,7 @@ export type ConnState =
 
 /** A message we've sent but the server hasn't confirmed yet (optimistic UI / offline outbox). */
 /** A file going with a pending message (#57): its staged id (what a retry sends again) and what its chip shows. */
-export type PendingFile = { id: string; name: string; size: number; kind: string; preview: string | null; /** #289 */ spoiler?: boolean }
+export type PendingFile = { id: string; name: string; size: number; kind: string; preview: string | null; /** #289 */ spoiler?: boolean; /** #311 */ viewOnce?: boolean }
 export type Pending = {
   nonce: string; content: string; reply_to_id: string | null; /** The quote this answers (a reply lives in that quote's thread, not the channel list). */ thread_root_id: string | null; status: 'pending' | 'failed'; created_at: string
   /** A GIF from the picker (#58); `content` is its GIPHY link. */
@@ -98,6 +101,14 @@ export type AppState = {
   /** Your conversation list's pins and categories (#305), yours only, on every device: from Ready and
    *  DmLayoutChanged (lib/dmLayout.ts). */
   dmLayout: DmLayout
+  /** Per-person Do Not Disturb (#310): whose messages don't alert you, yours only, on every device. From Ready and
+   *  PersonDndChanged; a timed one past its `until` counts as off (lib/personDnd.ts). */
+  personDnd: PersonDnd[]
+  /** Your saved inbox filters (#307), in order, on every device: from Ready and InboxFiltersChanged. */
+  inboxFilters: InboxFilter[]
+  /** Your own channel list orders (#304), by server id, yours only, on every device: from Ready and
+   *  ChannelOrderChanged. A server without one shows the server's order (lib/layout.ts `personalLayout`). */
+  channelOrders: Record<string, ChannelOrder>
   /** Plan reminders (#399): whether plans' reminder lines ping you, on every device (the server leaves you out of
    *  them when off). From Ready and PlanRemindersChanged; on when the server doesn't say. */
   planReminders: boolean
@@ -184,7 +195,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -246,6 +257,12 @@ export function applyReady(s: AppState, r: Ready): AppState {
     serverOrder: r.server_order ?? [],
     // absent from older servers: nothing pinned, no categories
     dmLayout: r.dm_layout ?? { categories: [], placements: [] },
+    // absent from older servers: nobody
+    personDnd: r.person_dnd ?? [],
+    // absent from older servers: none
+    inboxFilters: r.inbox_filters ?? [],
+    // absent from older servers: the server's order everywhere
+    channelOrders: Object.fromEntries((r.channel_orders ?? []).map((o) => [o.server_id, o])),
     // absent from older servers: they ping everyone
     planReminders: r.plan_reminders ?? true,
     // absent from older servers: no calls
@@ -1099,6 +1116,14 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       if (list.some((m) => m.user.id === e.d.member.user.id)) return s
       return { ...s, members: { ...s.members, [e.d.server_id]: [...list, e.d.member] } }
     }
+    // Its owner handed a server to another member (#418).
+    case 'ServerOwnerChanged': {
+      const at = s.servers.findIndex((x) => x.id === e.d.server_id)
+      if (at < 0 || s.servers[at].owner_id === e.d.owner_id) return s
+      const servers = s.servers.slice()
+      servers[at] = { ...servers[at], owner_id: e.d.owner_id }
+      return { ...s, servers }
+    }
     // Someone left a server or was removed from it (#371). For you, its counts go from your rail too (the server
     // stays listed: you can join it again).
     case 'MemberLeft': {
@@ -1273,6 +1298,17 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, serverOrder: e.d.server_ids }
     case 'DmLayoutChanged':
       return { ...s, dmLayout: e.d.layout }
+    case 'PersonDndChanged':
+      return e.d.user_id === s.me?.id ? { ...s, personDnd: e.d.list } : s
+    case 'InboxFiltersChanged':
+      return e.d.user_id === s.me?.id ? { ...s, inboxFilters: e.d.filters } : s
+    case 'ViewOnceOpened':
+      return s // kept by lib/viewOnce.svelte.ts (#311)
+    case 'ChannelOrderChanged': {
+      if (e.d.user_id !== s.me?.id) return s
+      const { [e.d.server_id]: _was, ...rest } = s.channelOrders
+      return { ...s, channelOrders: e.d.order ? { ...rest, [e.d.server_id]: e.d.order } : rest }
+    }
     case 'PlanRemindersChanged':
       return { ...s, planReminders: e.d.on }
     // scheduled messages (#299) and reminders (#300) are kept by their own stores (lib/scheduled.svelte.ts,
@@ -1608,17 +1644,21 @@ export function landed(s: AppState, channel: string): AppState {
   return { ...s, history: { ...s.history, [channel]: rest } }
 }
 
+/** Stands for "before the chat's first message": the smallest message id there is (#419). */
+export const CHAT_START = '00000000000000000000000000'
+
 /** Where a chat opens when its latest page wouldn't reach the NEW line (#332): around your read point, as a jump's
  *  window, when more than a page is unread and it isn't going on from what it holds (`resumePoint`). That's a first
  *  visit with more than a page unread, or a reconnect after you read part of the way on another device (your read
- *  point past what it holds, more than a page still below it). Null otherwise (the latest page): caught up, a page
- *  or less unread, or never read at all (no read point to open at). */
+ *  point past what it holds, more than a page still below it). Never read at all (no read point: the chat was empty
+ *  when you joined it, so every message in it is unread), it opens at the chat's start, its oldest unread message:
+ *  [CHAT_START] (#419). Null otherwise (the latest page): caught up, or a page or less unread. */
 export function unreadWindowPoint(s: AppState, channel: string): string | null {
   const h = s.history[channel]
   const read = s.reads[channel]
-  if (h?.loaded || !read || read.unread <= PAGE || read.last_read_message_id === null) return null
+  if (h?.loaded || !read || read.unread <= PAGE) return null
   if (resumePoint(s, channel) !== null) return null
-  return read.last_read_message_id
+  return read.last_read_message_id ?? CHAT_START
 }
 
 /** Open `channel` at its first unread message (#332): the window around `readPoint` (`loadWindow`), asking the view

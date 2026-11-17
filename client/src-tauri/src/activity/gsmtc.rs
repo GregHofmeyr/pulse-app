@@ -1,7 +1,9 @@
-//! Windows: the Spotify app's session in the system media transport controls (GSMTC, WinRT through the `windows`
-//! crate). Event-driven: one thread sleeps on a channel that only the manager's `SessionsChanged` and the Spotify
-//! session's `MediaPropertiesChanged` / `PlaybackInfoChanged` handlers (and the stop) wake; each wake reads the
-//! session once. Windows gives title, artist and album, but no Spotify id (so no art and no direct link).
+//! Windows: the allowlisted players' sessions in the system media transport controls (GSMTC, WinRT through the
+//! `windows` crate; which app ids count: [`classify_gsmtc`]). Event-driven: one thread sleeps on a channel that only
+//! the manager's `SessionsChanged` and the followed sessions' `MediaPropertiesChanged` / `PlaybackInfoChanged`
+//! handlers (and the stop) wake; each wake reads the followed sessions once and shows the preferred one that plays
+//! ([`best`]). Windows gives title, artist and album, but no Spotify id (so no art and no direct link), and no page
+//! address for a browser.
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -12,12 +14,12 @@ use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionManager as Manager,
 };
 
-use super::{Seen, is_spotify_app, now_playing_gsmtc};
+use super::{Seen, Source, Sources, best, classify_gsmtc, now_playing_gsmtc};
 
 enum Wake {
-    /// Sessions came or went: find Spotify's again.
+    /// Sessions came or went: find the players' again.
     Sessions,
-    /// Spotify's session changed song or status.
+    /// A followed session changed song or status.
     Changed,
     Stop,
 }
@@ -43,13 +45,13 @@ impl Drop for Handle {
     }
 }
 
-pub fn spawn(tx: UnboundedSender<Seen>) -> Handle {
+pub fn spawn(sources: Sources, tx: UnboundedSender<Seen>) -> Handle {
     let (wake, woken) = channel();
     let w = wake.clone();
     let spawned = std::thread::Builder::new()
         .name("pulse-media-activity".into())
         .spawn(move || {
-            if let Err(e) = run(&tx, w, woken) {
+            if let Err(e) = run(sources, &tx, w, woken) {
                 tracing::info!(error = %e, "media activity: can't read the media session");
             }
         });
@@ -59,9 +61,10 @@ pub fn spawn(tx: UnboundedSender<Seen>) -> Handle {
     Handle { stop: Some(wake) }
 }
 
-/// Spotify's session, with the handlers hooked on it.
+/// A player's session, with the handlers hooked on it.
 struct Hooked {
     session: Session,
+    source: Source,
     media: i64,
     playback: i64,
 }
@@ -73,25 +76,30 @@ impl Hooked {
     }
 }
 
-/// The Spotify app's session among the manager's, if it has one.
-fn spotify(manager: &Manager) -> Option<Session> {
-    let sessions = manager.GetSessions().ok()?;
-    (0..sessions.Size().ok()?)
+/// The manager's sessions that are players `sources` lets in, in the manager's order.
+fn players(manager: &Manager, sources: Sources) -> Vec<(Session, Source)> {
+    let Ok(sessions) = manager.GetSessions() else {
+        return Vec::new();
+    };
+    (0..sessions.Size().unwrap_or(0))
         .filter_map(|i| sessions.GetAt(i).ok())
-        .find(|s| {
-            s.SourceAppUserModelId()
-                .is_ok_and(|id| is_spotify_app(&id.to_string_lossy()))
+        .filter_map(|s| {
+            let id = s.SourceAppUserModelId().ok()?.to_string_lossy();
+            let source = classify_gsmtc(&id).filter(|src| sources.allows(src.group))?;
+            Some((s, source))
         })
+        .collect()
 }
 
 /// What `session` plays now. The properties are an async call: joined here, on this (MTA) thread, never a UI one.
-fn read(session: &Session) -> Seen {
+fn read(session: &Session, source: Source) -> Seen {
     let status = session.GetPlaybackInfo().ok()?.PlaybackStatus().ok()?.0;
     let props = session.TryGetMediaPropertiesAsync().ok()?.join().ok()?;
     let text = |r: windows::core::Result<windows::core::HSTRING>| {
         r.map(|h| h.to_string_lossy()).unwrap_or_default()
     };
     now_playing_gsmtc(
+        source,
         status,
         &text(props.Title()),
         &text(props.Artist()),
@@ -99,7 +107,7 @@ fn read(session: &Session) -> Seen {
     )
 }
 
-fn hook(session: Session, wake: &Sender<Wake>) -> windows::core::Result<Hooked> {
+fn hook(session: Session, source: Source, wake: &Sender<Wake>) -> windows::core::Result<Hooked> {
     let w = wake.clone();
     let media = session.MediaPropertiesChanged(&TypedEventHandler::new(move |_, _| {
         let _ = w.send(Wake::Changed);
@@ -112,12 +120,14 @@ fn hook(session: Session, wake: &Sender<Wake>) -> windows::core::Result<Hooked> 
     }))?;
     Ok(Hooked {
         session,
+        source,
         media,
         playback,
     })
 }
 
 fn run(
+    sources: Sources,
     tx: &UnboundedSender<Seen>,
     wake: Sender<Wake>,
     woken: Receiver<Wake>,
@@ -128,24 +138,31 @@ fn run(
         let _ = w.send(Wake::Sessions);
         Ok(())
     }))?;
-    let mut hooked: Option<Hooked> = None;
+    let mut hooked: Vec<Hooked> = Vec::new();
     let mut last: Option<Seen> = None;
     let mut wake_up = Wake::Sessions;
     loop {
         match wake_up {
             Wake::Stop => break,
             Wake::Sessions => {
-                let now = spotify(&manager);
-                if hooked.as_ref().map(|h| &h.session) != now.as_ref() {
-                    if let Some(h) = hooked.take() {
-                        h.unhook();
-                    }
-                    hooked = now.and_then(|s| hook(s, &wake).ok());
+                let now = players(&manager, sources);
+                // keep the ones still there, unhook the gone, hook the new (in the manager's order)
+                let (mut keep, gone): (Vec<Hooked>, Vec<Hooked>) = hooked
+                    .drain(..)
+                    .partition(|h| now.iter().any(|(s, _)| *s == h.session));
+                gone.into_iter().for_each(Hooked::unhook);
+                for (s, source) in now {
+                    let h = match keep.iter().position(|h| h.session == s) {
+                        Some(i) => Some(keep.swap_remove(i)),
+                        None => hook(s, source, &wake).ok(),
+                    };
+                    hooked.extend(h);
                 }
+                keep.into_iter().for_each(Hooked::unhook);
             }
             Wake::Changed => {}
         }
-        let seen = hooked.as_ref().and_then(|h| read(&h.session));
+        let seen = best(hooked.iter().map(|h| read(&h.session, h.source)));
         if last.as_ref() != Some(&seen) {
             if tx.send(seen.clone()).is_err() {
                 break;
@@ -157,9 +174,7 @@ fn run(
             Err(_) => break,
         };
     }
-    if let Some(h) = hooked.take() {
-        h.unhook();
-    }
+    hooked.into_iter().for_each(Hooked::unhook);
     let _ = manager.RemoveSessionsChanged(sessions);
     Ok(())
 }

@@ -9,7 +9,9 @@ use common::*;
 use futures::{SinkExt, StreamExt};
 use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
 use pulse_protocol::ids::UserId;
-use pulse_protocol::rest::{Channel, ChannelKind, Listening, ListeningUpdate, StageShare};
+use pulse_protocol::rest::{
+    Channel, ChannelKind, Listening, ListeningUpdate, MusicPlayer, StageShare,
+};
 use pulse_server::config::Config;
 use pulse_server::limits::{LimitsConfig, Rate};
 use pulse_server::testing::fake_provider::{FakeProvider, SPOTIFY_ID, SPOTIFY_JAM_URL};
@@ -95,6 +97,7 @@ fn update(title: &str) -> ListeningUpdate {
         artist: Some("The Band".into()),
         album: None,
         spotify_id: None,
+        player: None,
     }
 }
 
@@ -437,6 +440,58 @@ async fn a_jam_on_the_stage_shows_what_its_sharer_plays() {
         .filter(|e| matches!(e, Event::StageNowPlaying { .. }))
         .collect();
     assert!(got.is_empty(), "{got:?}");
+}
+
+/// Another player (#322): its activity reaches everyone named by player, with no Spotify id, no art fetched, and it
+/// never shows on a Jam (the Jam reads it as nothing playing).
+#[tokio::test]
+async fn another_players_song_is_named_and_stays_off_a_jam() {
+    let People {
+        app,
+        fake,
+        alex: (a, at, mut alex_ws),
+        sam: (s, st, mut sam_ws),
+        ..
+    } = people().await;
+    let ch = lounge(&app, &(a, at.clone()), &(s, st.clone())).await;
+    say(&mut alex_ws, Some(update("Spotify song")), true).await;
+    next_listening(&mut sam_ws, a).await.expect("listening");
+    let jam = share(&app, &at, &ch, SPOTIFY_JAM_URL).await;
+    assert_eq!(
+        jam.now_playing.map(|l| l.title),
+        Some("Spotify song".into())
+    );
+    drain(&mut sam_ws, 300).await;
+    let hits = fake.hits();
+
+    say(
+        &mut alex_ws,
+        Some(ListeningUpdate {
+            spotify_id: Some(format!("track:{SPOTIFY_ID}")),
+            player: Some(MusicPlayer::YoutubeMusic),
+            ..update("A YouTube Music song")
+        }),
+        true,
+    )
+    .await;
+    let events = drain(&mut sam_ws, 500).await;
+    let got = about(&events, a)
+        .pop()
+        .flatten()
+        .expect("the other player's song");
+    assert_eq!(got.title, "A YouTube Music song");
+    assert_eq!(got.player, Some(MusicPlayer::YoutubeMusic));
+    assert_eq!((got.spotify_id, got.art), (None, None));
+    assert_eq!(fake.hits(), hits, "no art fetched");
+    // the Jam's line goes: not Spotify's song
+    let now: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::StageNowPlaying { now_playing, .. } => Some(now_playing.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(now, vec![None]);
 }
 
 /// Published to an audience by mistake, an activity reaches nobody: it's only ever told per viewer.

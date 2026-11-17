@@ -60,3 +60,39 @@ export function contrast(hex: string, rgb: [number, number, number]): number {
   const b = luminance(rgb)
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
 }
+
+// --- Palettes (#259): a saved wheel may swap the neon spectrum for a named set of theme colours. These are app.css
+// tokens (CSS `var()`s), so a theme recolours them like the rest of the app and they need no literal here. Their
+// labels are the video chrome's white with a dark edge (`--on-video` over `--video-chrome-strong`), which reads on
+// any fill in every theme, since a token's value isn't known until the theme is.
+
+export type PaletteId = 'neon' | 'gems' | 'signal' | 'meadow' | 'accent'
+
+/** The palettes a wheel can use, in the order the picker lists them (`neon` first: the default). Names match the
+ *  server's `wheel_palettes`. */
+export const PALETTES: readonly { id: PaletteId; label: string; tokens: readonly string[] }[] = [
+  { id: 'neon', label: 'Neon', tokens: [] },
+  // the badge rarities
+  { id: 'gems', label: 'Gems', tokens: ['--rarity-common', '--rarity-uncommon', '--rarity-rare', '--rarity-epic', '--rarity-legendary', '--rarity-mythical'] },
+  { id: 'signal', label: 'Signal', tokens: ['--ok', '--warn', '--danger', '--accent'] },
+  { id: 'meadow', label: 'Meadow', tokens: ['--quote-green', '--quote-green-mid', '--quote-green-deep', '--ok-deep'] },
+  { id: 'accent', label: 'Accent', tokens: ['--accent', '--bg-4'] },
+]
+
+/** A stored palette name as one of ours; anything else (none, or a newer one) is the neon spectrum. */
+export const paletteOf = (name: string | null | undefined): PaletteId => PALETTES.find((p) => p.id === name)?.id ?? 'neon'
+
+/** Which of a palette's tokens slice i of n takes: round the palette, except that the last slice never matches the
+ *  first (they touch). */
+function tokenIndex(i: number, n: number, len: number): number {
+  const k = i % len
+  return n > 1 && i === n - 1 && k === 0 && len > 1 ? 1 % len : k
+}
+
+/** Slice i of n's fill and label in a palette: the neon spectrum's colours, or a palette's tokens with an edged label
+ *  (`edged`: draw the label with a `--video-chrome-strong` outline). */
+export function sliceStyle(i: number, n: number, palette: string | null | undefined): { fill: string; ink: string; edged: boolean } {
+  const p = PALETTES.find((x) => x.id === paletteOf(palette))!
+  if (!p.tokens.length) return { fill: sliceColour(i, n), ink: labelColour(i, n), edged: false }
+  return { fill: `var(${p.tokens[tokenIndex(i, n, p.tokens.length)]})`, ink: 'var(--on-video)', edged: true }
+}

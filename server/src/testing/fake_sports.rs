@@ -8,6 +8,9 @@
 //!   [`FakeSports::add_match`], [`FakeSports::set_score`] and [`FakeSports::add_goal`].
 //! - `/rugby/games`: by `league` + `season`, and `date` (the kick-off's UTC day) when given.
 //!
+//! - `http://sportslogos.test:<port>/media/{football|rugby}/teams/{id}.png` ([`LOGO_HOST`]): a team's logo (#406),
+//!   a small PNG; a team id of [`NO_LOGO`] or more has none (404). Counted as `media`.
+//!
 //! Like the real thing, failures arrive as HTTP 200 with an `errors` object: a missing or wrong key (`token`),
 //! [`FakeSports::spend_day`] (`requests`), [`FakeSports::refuse_plan`] (`plan`). [`FakeSports::set_down`] answers 503.
 //! Calls are counted by path ([`FakeSports::calls`]) and the last query of each kept ([`FakeSports::last_query`]).
@@ -25,6 +28,11 @@ use crate::config::Config;
 
 /// The key [`FakeSports::configure`] gives the server.
 pub const FAKE_KEY: &str = "test-sports-key";
+/// The logo host (#406), resolved to the fake by [`FakeSports::configure`].
+pub const LOGO_HOST: &str = "sportslogos.test";
+/// Teams from this id up have no logo.
+pub const NO_LOGO: u32 = 900;
+const LOOPBACK: std::net::IpAddr = std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
 
 #[derive(Clone)]
 struct FakeMatch {
@@ -68,6 +76,7 @@ impl FakeSports {
             .route("/football/fixtures", get(fixtures))
             .route("/rugby/teams", get(rugby_teams))
             .route("/rugby/games", get(games))
+            .route("/media/{sport}/teams/{file}", get(logo))
             .with_state(world.clone());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         FakeSports { port, world }
@@ -79,6 +88,11 @@ impl FakeSports {
         cfg.sports.football_base = format!("http://127.0.0.1:{}/football", self.port);
         cfg.sports.rugby_base = format!("http://127.0.0.1:{}/rugby", self.port);
         cfg.sports.retry_base = std::time::Duration::ZERO;
+        cfg.sports.logo_base = format!("http://{LOGO_HOST}:{}/media", self.port);
+        cfg.sports.logo_hosts = vec![LOGO_HOST.into()];
+        cfg.embeds.allowed_ips.push(LOOPBACK);
+        cfg.embeds.extra_ports.push(self.port);
+        cfg.embeds.hosts.push((LOGO_HOST.into(), LOOPBACK));
     }
 
     pub fn add_team(&self, league: u32, id: u32, name: &str) {
@@ -173,6 +187,23 @@ impl FakeSports {
             .get(path)
             .cloned()
             .unwrap_or_default()
+    }
+}
+
+/// A team's logo (#406): no key needed, as on API-Sports' media host.
+async fn logo(
+    State(w): State<Shared>,
+    axum::extract::Path((_sport, file)): axum::extract::Path<(String, String)>,
+) -> Response {
+    *w.lock().unwrap().calls.entry("media".into()).or_default() += 1;
+    let id: Option<u32> = file.strip_suffix(".png").and_then(|i| i.parse().ok());
+    match id {
+        Some(id) if id < NO_LOGO => (
+            [(axum::http::header::CONTENT_TYPE, "image/png")],
+            super::fake_provider::png(96, 96),
+        )
+            .into_response(),
+        _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
 

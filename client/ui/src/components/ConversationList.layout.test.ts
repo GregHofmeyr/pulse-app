@@ -16,7 +16,7 @@ vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 import ConversationList from './ConversationList.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
-import { dmSections } from '../lib/dmLayout'
+import { categoryNameOk, dmSections } from '../lib/dmLayout'
 
 const user = (id: string, name: string) => ({ id, username: name, display_name: name, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const [alex, sam, kim, jo] = [user('U1', 'alex'), user('U2', 'sam'), user('U3', 'kim'), user('U4', 'jo')]
@@ -139,6 +139,43 @@ describe('pins and categories (#305)', () => {
     expect(invoke).toHaveBeenLastCalledWith('delete_dm_category', { id: 'K1' })
   })
 
+  it('a category moves up and down from its menu, only where it can go (#419)', async () => {
+    const MATES = { id: 'K2', name: 'Mates', collapsed: false }
+    const placements = [{ channel_id: 'G1', pinned: false, category_id: 'K1' }, { channel_id: 'D2', pinned: false, category_id: 'K2' }]
+    show({ categories: [FRIENDS, MATES], placements })
+    const headings = () => [...document.querySelectorAll<HTMLElement>('.label .section[aria-expanded]')]
+    const menuItems = () => [...document.querySelectorAll('[role=menu] [role=menuitem]')].map((b) => b.textContent!.trim())
+    rightClick(headings()[0])
+    expect(menuItems()).toEqual(['Rename category…', 'Move down', 'Delete category'])
+    answer = { categories: [MATES, FRIENDS], placements }
+    item('Move down')!.click()
+    await flush()
+    expect(invoke).toHaveBeenLastCalledWith('update_dm_category', { id: 'K1', request: { position: 1 } })
+    expect(outline().indexOf('# Mates')).toBeLessThan(outline().indexOf('# Friends'))
+    rightClick(headings()[1])
+    expect(menuItems()).toEqual(['Rename category…', 'Move up', 'Delete category'])
+    // refused: put back
+    invoke.mockImplementationOnce(async () => { throw new Error('nope') })
+    item('Move up')!.click()
+    await flush()
+    expect(outline().indexOf('# Mates')).toBeLessThan(outline().indexOf('# Friends'))
+  })
+
+  it("a menu entry's name can't be a category's (#419)", async () => {
+    show({ categories: [], placements: [] })
+    rightClick(rowFor('jo'))
+    item('Move to category')!.click()
+    flushSync()
+    item('New category…')!.click()
+    flushSync()
+    const field = document.querySelector<HTMLInputElement>('[role=menu] input[aria-label="Category name"]')!
+    field.value = 'remove from category'
+    field.dispatchEvent(new Event('input'))
+    flushSync()
+    expect(item('Create and move')!.disabled).toBe(true)
+    expect(document.querySelector('[role=menu] .taken')?.textContent).toBe("That's a menu entry: pick another name")
+  })
+
   it("another device's change shows at once", () => {
     show({ categories: [], placements: [] })
     app.state = applyEvent(app.state, { t: 'DmLayoutChanged', d: { user_id: 'U1', layout: { categories: [], placements: [{ channel_id: 'G1', pinned: true, category_id: null }] } } }, Date.now())
@@ -158,5 +195,13 @@ describe('dmSections', () => {
     expect(s.pinned.map((x) => x.channel.id)).toEqual(['A'])
     expect(s.categories[0].items.map((x) => x.channel.id)).toEqual(['B'])
     expect(s.rest.map((x) => x.channel.id)).toEqual(['C'])
+  })
+})
+
+describe('categoryNameOk (#419)', () => {
+  it('refuses the Move flyout\'s own entries, ignoring case and three dots for the ellipsis', () => {
+    for (const n of ['New category…', ' new category... ', 'REMOVE FROM CATEGORY']) expect(categoryNameOk(n)).toBe(false)
+    expect(categoryNameOk('New category')).toBe(true)
+    expect(categoryNameOk('Friends')).toBe(true)
   })
 })

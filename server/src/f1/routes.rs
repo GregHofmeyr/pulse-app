@@ -6,7 +6,8 @@ use axum::{Json, Router};
 use chrono::Utc;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId};
 use pulse_protocol::rest::{
-    ChannelKind, F1Prediction, F1PredictionRequest, F1Status, SetF1ChannelRequest, f1_limits,
+    ChannelKind, F1PicksClose, F1Prediction, F1PredictionRequest, F1Status, SetF1ChannelRequest,
+    f1_limits,
 };
 
 use super::jolpica;
@@ -45,8 +46,13 @@ async fn current(s: &AppState, server: ServerId) -> AppResult<F1Status> {
             channel_id,
             next: None,
             season_table: vec![],
+            picks_close: F1PicksClose::default(),
         });
     }
+    let picks_close = {
+        let mut conn = s.db.acquire().await?;
+        super::picks_close_of(&mut conn, server).await?
+    };
     let at = Utc::now();
     let schedule = jolpica::schedule(&s.db, &s.cfg.f1, at).await?;
     let next = jolpica::next_weekend(&schedule, at).cloned();
@@ -65,6 +71,7 @@ async fn current(s: &AppState, server: ServerId) -> AppResult<F1Status> {
         channel_id,
         next,
         season_table,
+        picks_close,
     })
 }
 
@@ -78,7 +85,8 @@ async fn status(
     Ok(Json(current(&s, id).await?))
 }
 
-/// `PUT /servers/{id}/f1-channel`: the server's owner picks one of its text channels, or none.
+/// `PUT /servers/{id}/f1-channel`: the server's owner picks one of its text channels, or none, and when predictions
+/// close (#403; kept while there's a channel, and only settable with one).
 async fn set_channel(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -99,6 +107,11 @@ async fn set_channel(
         ));
     }
     match req.channel_id {
+        None if req.picks_close.is_some() => {
+            return Err(AppError::BadRequest(
+                "pick an F1 channel before choosing when predictions close".into(),
+            ));
+        }
         None => {
             sqlx::query("DELETE FROM server_f1_channels WHERE server_id = ?")
                 .bind(id.to_string())
@@ -112,6 +125,7 @@ async fn set_channel(
                     "pick one of this server's text channels".into(),
                 ));
             }
+            crate::access::require_open(&channel)?; // an archived one posts nothing (#303)
             sqlx::query(
                 "INSERT INTO server_f1_channels (server_id, channel_id) VALUES (?, ?)
                  ON CONFLICT (server_id) DO UPDATE SET channel_id = excluded.channel_id",
@@ -120,6 +134,13 @@ async fn set_channel(
             .bind(ch.to_string())
             .execute(&s.db)
             .await?;
+            if let Some(mode) = req.picks_close {
+                sqlx::query("UPDATE server_f1_channels SET picks_close = ? WHERE server_id = ?")
+                    .bind(mode.key())
+                    .bind(id.to_string())
+                    .execute(&s.db)
+                    .await?;
+            }
         }
     }
     Ok(Json(current(&s, id).await?))
@@ -146,7 +167,7 @@ pub fn clean_picks(picks: &[String], field: &[String]) -> AppResult<Vec<String>>
 }
 
 /// `PUT /messages/{id}/f1/prediction`: your podium for a weekend card, replacing any before (`None` takes it back),
-/// until lights out. The channel gets everyone's as `F1PredictionsChanged`.
+/// until they close (lights out, or qualifying by the server's choice). The channel gets everyone's as `F1PredictionsChanged`.
 async fn predict(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -159,17 +180,29 @@ async fn predict(
         .await?
         .ok_or(AppError::NotFound)?;
     drop(conn);
-    channel_for(&s.db, me, channel).await?;
+    let ch = channel_for(&s.db, me, channel).await?;
     if !is_server_member(&s.db, server, me).await? {
         return Err(AppError::Forbidden);
     }
+    crate::access::require_open(&ch)?; // archived (#303): read-only
     if !s.limits.poll_vote_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(Some(
             "that's a lot of picks; try again in a moment".into(),
         )));
     }
-    let closed = || AppError::Conflict("predictions closed at lights out".into());
-    if stamp(Utc::now()) >= card.weekend.race_at {
+    // lights out, or qualifying's start by the server's choice (#403)
+    let mode = {
+        let mut conn = s.db.acquire().await?;
+        super::picks_close_of(&mut conn, server).await?
+    };
+    let close_at = super::close_at(&card.weekend, mode);
+    let closed = || {
+        AppError::Conflict(match mode {
+            F1PicksClose::LightsOut => "predictions closed at lights out".into(),
+            F1PicksClose::Qualifying => "predictions closed when qualifying started".into(),
+        })
+    };
+    if stamp(Utc::now()) >= close_at {
         return Err(closed());
     }
     let picks = match &req.picks {
@@ -181,11 +214,12 @@ async fn predict(
     };
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, channel).await?;
+    crate::access::open_in(&mut tx, channel).await?; // archived since the check
     // read again under the write lock: deleted since, or lights out came while we checked
     if super::weekend_card(&mut tx, id).await?.is_none() {
         return Err(AppError::NotFound);
     }
-    if stamp(Utc::now()) >= card.weekend.race_at {
+    if stamp(Utc::now()) >= close_at {
         return Err(closed());
     }
     match picks {

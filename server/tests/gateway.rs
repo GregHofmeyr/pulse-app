@@ -106,6 +106,7 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         f1: None,
         forwarded: None,
         group_line: None,
+        member_line: None,
     }
 }
 

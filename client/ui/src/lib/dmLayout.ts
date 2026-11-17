@@ -35,8 +35,18 @@ export function dmSections<T extends { channel: { id: string }; notes: boolean }
 export const placementOf = (layout: DmLayout, channelId: string): DmPlacement | null =>
   layout.placements.find((p) => p.channel_id === channelId) ?? null
 
-/** Name check for a category: 1-32 characters after trimming. */
+/** Names no category may have (ignoring case, and "..." for "…"): the Move to category flyout's own entries (#419).
+ *  The server's `dm_layout_limits::RESERVED_NAMES`, which refuses them too. */
+export const RESERVED_CATEGORY_NAMES = ['New category…', 'Remove from category']
+
+/** Whether `name` is one of [RESERVED_CATEGORY_NAMES]. */
+export function categoryNameReserved(name: string): boolean {
+  const n = name.trim().replaceAll('...', '…').toLowerCase()
+  return RESERVED_CATEGORY_NAMES.some((r) => r.toLowerCase() === n)
+}
+
+/** Name check for a category: 1-32 characters after trimming, and not a menu entry's name. */
 export function categoryNameOk(name: string): boolean {
   const n = [...name.trim()].length
-  return n > 0 && n <= DM_CATEGORY_CHARS
+  return n > 0 && n <= DM_CATEGORY_CHARS && !categoryNameReserved(name)
 }

@@ -10,6 +10,7 @@ import type { Forwarded } from "./Forwarded";
 import type { Gif } from "./Gif";
 import type { GroupLine } from "./GroupLine";
 import type { LinkEmbed } from "./LinkEmbed";
+import type { MemberLine } from "./MemberLine";
 import type { MessageId } from "./MessageId";
 import type { MessageKind } from "./MessageKind";
 import type { Pin } from "./Pin";
@@ -142,4 +143,9 @@ forwarded?: Forwarded,
  * changed its icon, by id, so clients write it with the names that apply today. `content` keeps the line as
  * written (the fallback for older clients, and for anyone a client doesn't know).
  */
-group_line?: GroupLine, };
+group_line?: GroupLine, 
+/**
+ * Set on a server membership line (#418), a system line in the server's first text channel: someone left it, or
+ * its owner removed them. Clients name them as they're called today; `content` names them as they were.
+ */
+member_line?: MemberLine, };

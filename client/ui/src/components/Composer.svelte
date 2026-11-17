@@ -40,6 +40,7 @@
   import SpotifyIcon from './SpotifyIcon.svelte'
   import { spotifyLinkIn } from '../lib/stageShare'
   import ComposerFiles from './ComposerFiles.svelte'
+  import ImageEditDialog from './ImageEditDialog.svelte'
   import { api, errorText, type StageResult } from '../lib/tauri'
   import { MAX_BYTES, MAX_FILES, PASTE_TOO_BIG, TEMP_DAYS, TEMP_MAX_BYTES, TOO_BIG_TEMP, TOO_MANY } from '../lib/attachments'
 
@@ -226,6 +227,27 @@
   /** Mark or unmark a queued file as a spoiler (#289): it shows blurred until someone clicks it. */
   function toggleSpoiler(id: string) {
     files = files.map((f) => (f.id === id ? { ...f, spoiler: !f.spoiler } : f))
+  }
+
+  /** Mark or unmark a queued picture, video or sound as view once (#311): each person can open it once. */
+  function toggleViewOnce(id: string) {
+    files = files.map((f) => (f.id === id ? { ...f, viewOnce: !f.viewOnce } : f))
+  }
+
+  // The image editor (#290): the queued image being edited. Saving queues the edit in its place (same spot, same
+  // spoiler mark) and lets the original go.
+  let editing = $state<StagedFile | null>(null)
+  async function saveEdit(old: StagedFile, bytes: Uint8Array, name: string) {
+    const fresh = await api.stageAttachmentBytes(name, bytes)
+    editing = null
+    if (gone || !files.some((f) => f.id === old.id)) {
+      // removed (or the composer went away) while saving: nothing to put it in place of
+      void api.unstageAttachment(fresh.id)
+      return
+    }
+    files = files.map((f) => (f.id === old.id ? { ...fresh, spoiler: old.spoiler } : f))
+    fileError = null
+    void api.unstageAttachment(old.id)
   }
 
   function removeFile(id: string) {
@@ -525,7 +547,11 @@
     {@const name = `/${c.name}`}
     {name}{#if c.usage.startsWith(name)}<span class="arg">{c.usage.slice(name.length)}</span>{:else}<span class="arg">{` ${c.usage}`}</span>{/if}
   {/snippet}
-  <ComposerFiles {files} onRemove={removeFile} onToggleSpoiler={toggleSpoiler} error={fileError} />
+  <ComposerFiles {files} onRemove={removeFile} onToggleSpoiler={toggleSpoiler} onToggleViewOnce={toggleViewOnce} onEdit={(id) => (editing = files.find((f) => f.id === id) ?? null)} error={fileError} />
+  {#if editing}
+    {@const target = editing}
+    <ImageEditDialog file={target} onSave={(bytes, name) => saveEdit(target, bytes, name)} onCancel={() => (editing = null)} />
+  {/if}
   {#if folderOffers.length}
     <!-- a folder can't go as it is: zip it, and the zip joins the queued files (#57) -->
     <div class="folder" role="status">

@@ -1,15 +1,18 @@
 <script lang="ts">
   // A clip's menu: Download for everyone (#204), and Pin clip (a flyout of lengths, as a message's menu has) or Unpin
-  // clip (#257); for the poster also Edit (caption and game, in a small dialog) and Delete (asked first). The server
+  // clip (#257); Remind me (#412), a flyout of times as a message's menu has; for the poster also Edit (caption and game, in a small dialog) and Delete (asked first). The server
   // refuses anyone else's edit or delete anyway. While the clip downloads (#205) Download reads "Downloading 42%" and
   // Cancel download stops it.
   import { tick } from 'svelte'
   import GamePicker from './GamePicker.svelte'
   import Icon from './Icon.svelte'
   import MenuFlyout from './MenuFlyout.svelte'
+  import WhenPicker from './WhenPicker.svelte'
   import { clickOutside, modal } from '../lib/actions'
   import { livePin, PIN_FOR } from '../lib/pins'
   import { reportPin } from '../lib/pinSync.svelte'
+  import { remindAndSay } from '../lib/reminders.svelte'
+  import { remindPicks } from '../lib/schedule'
   import { serverNow } from '../lib/serverClock'
   import { clock } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
@@ -51,6 +54,7 @@
   const pinned = $derived(!!livePin(message, (void clock.nowIso, serverNow())))
   let menuEl = $state<HTMLElement>()
   let flyout = $state<ReturnType<typeof MenuFlyout>>()
+  let remindFlyout = $state<ReturnType<typeof MenuFlyout>>()
   // where the menu sits on screen, for the flyout's placing: under the ⋯ button, its right edge on the button's (its
   // layout box, not its rectangle, which the entrance scales)
   let menuLeft = $state(0)
@@ -71,6 +75,20 @@
   function unpin() {
     menu = false
     void report(api.unpinMessage(message.id))
+  }
+  // --- Remind me (#412): a time from the flyout (worked out as the menu opens), or Custom… (placed by the ⋯ button) ---
+  let remindChoices = $state(remindPicks(Date.now()))
+  $effect(() => {
+    if (menu) remindChoices = remindPicks(Date.now())
+  })
+  let remindCustom = $state<HTMLElement | null>(null)
+  const remindAt = (at: string) => remindAndSay(message.id, at)
+  function remind(i: number) {
+    menu = false
+    opener?.focus()
+    const at = remindChoices[i]?.at
+    if (!at) return void (remindCustom = opener ?? null)
+    remindAt(at).catch((e) => onError(errorText(e)))
   }
   function download() {
     menu = false
@@ -126,9 +144,10 @@
   {#if menu}
     <div bind:this={menuEl} class="menu menu-surface pop-in" role="menu" tabindex="-1" use:clickOutside={closeMenu}
       onpointerover={(e) => {
-        // another of the menu's own items under the pointer closes the pin flyout
+        // another of the menu's own items under the pointer closes the other flyouts
         const t = (e.target as Element).closest?.('.menu-item')
-        if (t && t.parentElement === menuEl && t !== flyout?.trigger()) flyout?.closeSoon()
+        if (!t || t.parentElement !== menuEl) return
+        for (const f of [flyout, remindFlyout]) if (t !== f?.trigger()) f?.closeSoon()
       }}>
       {#if dl?.phase === 'downloading'}
         <span class="menu-item progress" role="menuitem" aria-disabled="true"><Icon name="download" size={14} />{dlText}</span>
@@ -145,6 +164,8 @@
         <MenuFlyout bind:this={flyout} label="Pin clip" flyoutLabel="Pin clip for" {menuLeft} {menuTop} item="pin" icon="pin"
           choices={PIN_FOR} onPick={(i) => pin(PIN_FOR[i].duration)} />
       {/if}
+      <MenuFlyout bind:this={remindFlyout} label="Remind me" flyoutLabel="Remind me about this" {menuLeft} {menuTop} item="remind" icon="bell"
+        choices={[...remindChoices, { label: 'Custom…' }]} onPick={remind} />
       {#if mine}
         <button type="button" class="menu-item" role="menuitem" onclick={startEdit}><Icon name="pencil" size={14} />Edit</button>
         <button type="button" class="menu-item danger" role="menuitem" onclick={() => void askDelete()}><Icon name="trash" size={14} />Delete</button>
@@ -160,6 +181,10 @@
     </div>
   {/if}
 </div>
+
+{#if remindCustom}
+  <WhenPicker anchor={remindCustom} title="Remind me about this" confirm="Set reminder" onPick={remindAt} onClose={() => (remindCustom = null)} />
+{/if}
 
 {#if editing}
   <div class="overlay modal-overlay fade-in">

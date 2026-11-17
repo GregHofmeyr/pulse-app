@@ -92,6 +92,17 @@ pub async fn zip_attachment_folder(core: State<'_, Core>, path: String) -> Resul
     tokio::task::block_in_place(|| stager.stage_folder(std::path::Path::new(&path)))
 }
 
+/// A queued still image's bytes, for the composer's image editor (#290): the edited picture comes back through
+/// `stage_attachment_bytes` as a new queued file.
+#[tauri::command]
+pub async fn staged_image_bytes(
+    core: State<'_, Core>,
+    id: String,
+) -> Result<tauri::ipc::Response, String> {
+    let stager = &core.attachments;
+    tokio::task::block_in_place(|| stager.image_bytes(&id)).map(tauri::ipc::Response::new)
+}
+
 /// Forget a queued file (its chip was removed).
 #[tauri::command]
 pub fn unstage_attachment(core: State<'_, Core>, id: String) {
@@ -135,6 +146,7 @@ pub async fn send_with_attachments(
     staged: Vec<String>,
     temp_days: Option<u8>,
     spoilers: Option<Vec<String>>,
+    view_once: Option<Vec<String>>,
 ) -> Result<(), ApiError> {
     let out = Outgoing {
         channel: channel_id,
@@ -145,6 +157,7 @@ pub async fn send_with_attachments(
         staged,
         temp_days,
         spoilers: spoilers.unwrap_or_default(),
+        view_once: view_once.unwrap_or_default(),
     };
     tauri::async_runtime::spawn(async move {
         let core = app.state::<Core>();
@@ -210,6 +223,28 @@ pub async fn attachment_urls(
 ) -> Result<Vec<AttachmentUrl>, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.attachment_urls(&token, message_id).await)
+}
+
+/// Who opened a message's view-once files (#311).
+#[tauri::command]
+pub async fn view_once_state(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<pulse_protocol::rest::ViewOnceState, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.view_once_state(&token, message_id).await)
+}
+
+/// Open a message's view-once files, the one time (#311).
+#[tauri::command]
+pub async fn open_view_once(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<Vec<AttachmentUrl>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.open_view_once(&token, message_id).await)
 }
 
 /// Download one file of a message to where the system Save dialog says, suggesting its name, its

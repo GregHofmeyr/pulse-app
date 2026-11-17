@@ -8,10 +8,16 @@
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import { displayName } from '../lib/selectors'
-  import { activityPrefs, mediaActivity, setReadMedia, setShowActivity } from '../lib/activityPrefs.svelte'
-  import { songLine } from '../lib/activity'
+  import { activityPrefs, mediaActivity, setReadMedia, setShareBrowsers, setSharePlayers, setShowActivity } from '../lib/activityPrefs.svelte'
+  import { playerName, songLine } from '../lib/activity'
+  import type { MusicPlayer } from '../lib/protocol/MusicPlayer'
   import GameActivitySettings from './GameActivitySettings.svelte'
   const uid = $props.id()
+  // "Spotify is playing …", "A browser is playing …" (an older core sends no player: Spotify)
+  const readingName = (p: MusicPlayer | undefined) => {
+    const n = playerName(p ?? 'spotify')
+    return p === 'browser' || p === 'other' ? n.charAt(0).toUpperCase() + n.slice(1) : n
+  }
 
   let error = $state('')
   // the name you see them by (#47); the list keeps the order you hid them in
@@ -58,15 +64,28 @@
         onchange={(e) => setReadMedia(e.currentTarget.checked)} />
       <span>Read media activity</span>
     </label>
-    <small id="{uid}-read-help">Lets Pulse see what the Spotify app on this computer is playing. Off, Pulse doesn't look at all.</small>
+    <small id="{uid}-read-help">Lets Pulse see what the Spotify app (and the players below) on this computer is playing. Off, Pulse doesn't look at all.</small>
     <label class="row">
       <input type="checkbox" role="switch" class="switch" checked={activityPrefs.show} disabled={!activityPrefs.read} aria-describedby="{uid}-show-help"
         onchange={(e) => setShowActivity(e.currentTarget.checked)} />
       <span>Show my activity</span>
     </label>
     <small id="{uid}-show-help">Everyone who can see you online sees "Listening to" on your profile. Off, it only updates a Jam you share to the stage.</small>
+    <!-- other players (#322): each group on until turned off, only while reading -->
+    <label class="row">
+      <input type="checkbox" role="switch" class="switch" checked={activityPrefs.players} disabled={!activityPrefs.read} aria-describedby="{uid}-players-help"
+        onchange={(e) => setSharePlayers(e.currentTarget.checked)} />
+      <span>Share music from other players</span>
+    </label>
+    <small id="{uid}-players-help">YouTube Music, Apple Music, Tidal, Deezer and foobar2000 apps, besides Spotify.</small>
+    <label class="row">
+      <input type="checkbox" role="switch" class="switch" checked={activityPrefs.browsers} disabled={!activityPrefs.read} aria-describedby="{uid}-browsers-help"
+        onchange={(e) => setShareBrowsers(e.currentTarget.checked)} />
+      <span>Share music from a browser</span>
+    </label>
+    <small id="{uid}-browsers-help">YouTube Music and other music sites in Chrome, Edge, Brave, Firefox, Vivaldi or Opera, only when it's clearly a song (it has an artist and an album). Videos never show.</small>
     {#if activityPrefs.read}
-      <p class="reading" aria-live="polite">{mediaActivity.playing ? `Spotify is playing ${songLine(mediaActivity.playing)}` : 'Nothing playing in Spotify right now.'}</p>
+      <p class="reading" aria-live="polite">{mediaActivity.playing ? `${readingName(mediaActivity.playing.player)} is playing ${songLine(mediaActivity.playing)}` : 'Nothing playing right now.'}</p>
     {/if}
   </div>
   <GameActivitySettings />

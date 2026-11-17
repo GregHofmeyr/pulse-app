@@ -118,7 +118,7 @@ async fn check_channel(s: &AppState, server: ServerId, ch: ChannelId) -> AppResu
             "pick one of this server's text channels".into(),
         ));
     }
-    Ok(())
+    crate::access::require_open(&channel) // an archived one posts nothing (#303)
 }
 
 /// `GET /servers/{id}/deadlock-ranks`: the members' ranks for the member list; empty while deadlock-api is dark.

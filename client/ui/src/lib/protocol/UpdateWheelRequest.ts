@@ -3,4 +3,12 @@
 /**
  * `PATCH /wheels/{id}`: what changes (absent = kept).
  */
-export type UpdateWheelRequest = { name?: string, options?: Array<string>, };
+export type UpdateWheelRequest = { name?: string, options?: Array<string>, 
+/**
+ * One per option (#259), with or without `options`. New options without weights: all alike again.
+ */
+weights?: Array<number>, 
+/**
+ * A [`wheel_palettes`] name (`neon` for the default).
+ */
+palette?: string, };

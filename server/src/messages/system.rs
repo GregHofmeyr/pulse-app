@@ -3,8 +3,8 @@
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{
-    AchievementCard, CallLine, DeadlockCard, GroupLine, GroupLineKind, Message, MessageKind,
-    PinLine, PollEnded, QotyCard, SportsCard, StageShareLine, WheelSpin,
+    AchievementCard, CallLine, DeadlockCard, GroupLine, GroupLineKind, MemberLine, Message,
+    MessageKind, PinLine, PollEnded, QotyCard, SportsCard, StageShareLine, WheelSpin,
 };
 use sqlx::SqliteConnection;
 
@@ -80,6 +80,7 @@ pub async fn insert(
         f1: crate::f1::card(&stored).map(Box::new),
         forwarded: None,
         group_line: group_line(&stored),
+        member_line: member_line(&stored),
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
         .bind(msg.id.to_string())
@@ -254,6 +255,25 @@ pub fn sports(payload: &str) -> Option<SportsCard> {
     serde_json::from_value(v).ok()
 }
 
+/// The payload `type` of a server membership line (#418).
+pub const MEMBER_LINE: &str = "member_line";
+
+/// A membership line's stored payload.
+pub fn member_line_payload(line: &MemberLine) -> AppResult<serde_json::Value> {
+    let mut v = serde_json::to_value(line).map_err(anyhow::Error::from)?;
+    v["type"] = MEMBER_LINE.into();
+    Ok(v)
+}
+
+/// The membership line in a stored payload, if it is one.
+pub fn member_line(payload: &str) -> Option<MemberLine> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    if v.get("type")?.as_str()? != MEMBER_LINE {
+        return None;
+    }
+    serde_json::from_value(v).ok()
+}
+
 /// "a", "a and b", "a, b and c".
 /// A group chat's own line (#114) in a stored payload, if it is one: the payloads `dms::routes` and
 /// `servers::routes` write for a group's creation, members and settings, read as one [`GroupLine`]
@@ -376,6 +396,8 @@ mod tests {
             options: vec!["a".into(), "b".into(), "c".into()],
             winner: 2,
             angle: 12.5,
+            weights: Some(vec![1, 2, 3]),
+            palette: Some("gems".into()),
         };
         let stored = wheel_spin_payload(&spin).unwrap().to_string();
         assert_eq!(wheel_spin(&stored), Some(spin));
@@ -462,11 +484,17 @@ mod tests {
                 team_id: 1,
                 name: "Home FC".into(),
                 score: Some(1),
+                logo: Some(pulse_protocol::rest::EmbedThumb {
+                    hash: "a".repeat(64),
+                    width: 96,
+                    height: 96,
+                }),
             },
             away: SportsSide {
                 team_id: 2,
                 name: "Away FC".into(),
                 score: Some(0),
+                logo: None,
             },
             scorers: vec![SportsScorer {
                 home: true,
@@ -475,11 +503,26 @@ mod tests {
                 note: Some("pen".into()),
             }],
             followers: vec![],
+            no_updates: true,
         };
         let stored = sports_payload(&card).unwrap().to_string();
         assert_eq!(sports(&stored), Some(card));
         assert_eq!(deadlock(&stored), None);
         assert_eq!(sports(r#"{"type":"deadlock","kind":"patch"}"#), None);
+    }
+
+    #[test]
+    fn a_member_line_round_trips_through_its_payload() {
+        use pulse_protocol::ids::UserId;
+        let line = MemberLine {
+            user_id: UserId::new(),
+            removed_by: Some(UserId::new()),
+        };
+        let stored = member_line_payload(&line).unwrap().to_string();
+        assert_eq!(member_line(&stored), Some(line));
+        assert_eq!(pin_line(&stored), None);
+        // a group's member lines are another kind
+        assert_eq!(member_line(r#"{"type":"member_left","user":"x"}"#), None);
     }
 
     #[test]

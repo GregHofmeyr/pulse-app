@@ -102,6 +102,12 @@ async fn visible(s: &AppState, me: UserId, id: MessageId) -> AppResult<Stored> {
     Ok(p)
 }
 
+/// 403 once `me` left the plan's server (or was removed): the plan is no longer theirs to change or cancel.
+async fn still_member(s: &AppState, me: UserId, p: &Stored) -> AppResult<()> {
+    let ch = channel_for(&s.db, me, p.channel_id).await?;
+    crate::access::require_member_of(&s.db, me, &ch).await
+}
+
 async fn current(s: &AppState, id: MessageId) -> AppResult<Plan> {
     let mut conn = s.db.acquire().await?;
     super::view_of(&mut conn, id)
@@ -160,6 +166,7 @@ async fn create(
         f1: None,
         forwarded: None,
         group_line: None,
+        member_line: None,
     };
     // As a send: the message, the plan and your read point land together, and the read point's event goes out in
     // commit order with every other message.
@@ -290,11 +297,13 @@ async fn edit(
     }
     crate::media::writes_ok(&s.cfg)?;
     let p = visible(&s, me, id).await?;
+    still_member(&s, me, &p).await?;
     let at = Utc::now();
     let c: Cleaned = clean(&req, at)?;
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, p.channel_id).await?;
     crate::access::open_in(&mut tx, p.channel_id).await?; // archived (#303): read-only
+    crate::access::member_of_in(&mut tx, me, p.channel_id).await?; // left or removed since
     let p = mine_open(&mut tx, me, id).await?;
     let edited = stamp(at);
     sqlx::query(
@@ -388,9 +397,11 @@ async fn cancel(
     }
     crate::media::writes_ok(&s.cfg)?;
     let p = visible(&s, me, id).await?;
+    still_member(&s, me, &p).await?;
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, p.channel_id).await?;
     crate::access::open_in(&mut tx, p.channel_id).await?; // archived (#303): read-only
+    crate::access::member_of_in(&mut tx, me, p.channel_id).await?; // left or removed since
     mine_open(&mut tx, me, id).await?;
     sqlx::query("UPDATE plans SET cancelled_at = ? WHERE message_id = ? AND cancelled_at IS NULL")
         .bind(now())

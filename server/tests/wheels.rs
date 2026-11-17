@@ -880,3 +880,148 @@ async fn options_differing_only_in_case_are_two_options() {
     .await;
     assert_eq!(r.status(), 400);
 }
+
+/// #259: a saved wheel keeps a weight per option and a palette; new options without weights are all alike again;
+/// a spin carries both (on its line, the stored spin and a quiet spin), lands inside its weighted slice, and Spin
+/// again / Remove winner & spin / a subset keep each option's own weight.
+#[tokio::test]
+async fn weights_and_palettes_are_saved_and_spun_with() {
+    use pulse_protocol::rest::wheel_winner_at_weighted;
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let s = create_server(&app, &alex, "Main").await;
+    let g = general(&app, &alex, s.id).await;
+
+    // refused: the wrong count, out of range, an unknown palette
+    for body in [
+        json!({"server_id": s.id, "name": "W", "options": ["a", "b"], "weights": [1]}),
+        json!({"server_id": s.id, "name": "W", "options": ["a", "b"], "weights": [0, 1]}),
+        json!({"server_id": s.id, "name": "W", "options": ["a", "b"], "weights": [11, 1]}),
+        json!({"server_id": s.id, "name": "W", "options": ["a", "b"], "palette": "plaid"}),
+    ] {
+        assert_eq!(create(&app, &alex, body).await.status(), 400);
+    }
+    let w = create_ok(
+        &app,
+        &alex,
+        json!({"server_id": s.id, "name": "Food", "options": ["pizza", "sushi", "tacos"], "weights": [1, 1, 8], "palette": "gems"}),
+    )
+    .await;
+    assert_eq!(w.weights, Some(vec![1, 1, 8]));
+    assert_eq!(w.palette.as_deref(), Some("gems"));
+    // all alike is no weights; neon is no palette
+    let plain = create_ok(
+        &app,
+        &alex,
+        json!({"server_id": s.id, "name": "Plain", "options": ["a", "b"], "weights": [1, 1], "palette": "neon"}),
+    )
+    .await;
+    assert_eq!((plain.weights, plain.palette), (None, None));
+
+    let patch = |id: String, body: Value| {
+        let (app, alex) = (&app, alex.clone());
+        async move {
+            let r = req(
+                app,
+                reqwest::Method::PATCH,
+                &alex,
+                &format!("/wheels/{id}"),
+                Some(body),
+            )
+            .await;
+            assert_eq!(r.status(), 200);
+            r.json::<Wheel>().await.unwrap()
+        }
+    };
+    // a rename keeps the weights and palette
+    let renamed = patch(w.id.clone(), json!({"name": "Dinner"})).await;
+    assert_eq!(renamed.weights, Some(vec![1, 1, 8]));
+    assert_eq!(renamed.palette.as_deref(), Some("gems"));
+    // a spin carries them: tacos holds 80 % of the wheel
+    let line = spin_ok(&app, &alex, g.id, json!({"wheel_id": w.id})).await;
+    let sp = line.wheel.clone().unwrap();
+    assert_eq!(sp.weights, Some(vec![1, 1, 8]));
+    assert_eq!(sp.palette.as_deref(), Some("gems"));
+    assert_eq!(
+        wheel_winner_at_weighted(sp.angle, &[1, 1, 8]),
+        sp.winner as usize
+    );
+    let (weights, palette): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT weights, palette FROM wheel_spins WHERE message_id = ?")
+            .bind(line.id.to_string())
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(weights.as_deref(), Some("[1,1,8]"));
+    assert_eq!(palette.as_deref(), Some("gems"));
+
+    // Remove winner & spin drops the winner's weight with it; Spin again keeps them all
+    let r = again(&app, &alex, line.id, true).await;
+    assert_eq!(r.status(), 201);
+    let next: Message = r.json().await.unwrap();
+    let ns = next.wheel.unwrap();
+    let mut left = vec![("pizza", 1u32), ("sushi", 1), ("tacos", 8)];
+    left.remove(sp.winner as usize);
+    assert_eq!(
+        ns.options,
+        left.iter().map(|(o, _)| o.to_string()).collect::<Vec<_>>()
+    );
+    let want: Vec<u32> = left.iter().map(|(_, w)| *w).collect();
+    let want = (!want.iter().all(|&x| x == want[0])).then_some(want);
+    assert_eq!(ns.weights, want);
+    assert_eq!(ns.palette.as_deref(), Some("gems"));
+
+    // a subset (a quiet Remove winner) keeps each option's own weight
+    let q = quiet_ok(
+        &app,
+        &alex,
+        g.id,
+        json!({"wheel_id": w.id, "options": ["tacos", "pizza"]}),
+    )
+    .await;
+    assert_eq!(q.spin.options, vec!["tacos", "pizza"]);
+    assert_eq!(q.spin.weights, Some(vec![8, 1]));
+    assert_eq!(q.spin.palette.as_deref(), Some("gems"));
+
+    // new options without weights: all alike again; the palette can go back to neon
+    let edited = patch(
+        w.id.clone(),
+        json!({"options": ["pizza", "sushi"], "palette": "neon"}),
+    )
+    .await;
+    assert_eq!((edited.weights, edited.palette), (None, None));
+    let edited = patch(w.id.clone(), json!({"weights": [3, 1]})).await;
+    assert_eq!(edited.weights, Some(vec![3, 1]));
+    let r = req(
+        &app,
+        reqwest::Method::PATCH,
+        &alex,
+        &format!("/wheels/{}", w.id),
+        Some(json!({"weights": [3, 1, 1]})),
+    )
+    .await;
+    assert_eq!(r.status(), 400, "one weight per option");
+    // a quick wheel has neither
+    let quick = spin_ok(&app, &alex, g.id, json!({"options": ["a", "b"]})).await;
+    let qs = quick.wheel.unwrap();
+    assert_eq!((qs.weights, qs.palette), (None, None));
+}
+
+/// An archived channel (#303) is read-only: no quiet spins there either.
+#[tokio::test]
+async fn no_quiet_spin_in_an_archived_channel() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let s = create_server(&app, &alex, "Main").await;
+    let g = general(&app, &alex, s.id).await;
+    let r = app
+        .http
+        .put(app.url(&format!("/channels/{}/archive", g.id)))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    let r = quiet(&app, &alex, g.id, json!({"options": ["pizza", "sushi"]})).await;
+    assert_eq!(r.status(), 403);
+}

@@ -276,6 +276,27 @@ pub async fn drop_grants(
     )
 }
 
+/// Delete every grant `user` holds (whichever session it was issued to) for the rooms of `server`'s channels: each
+/// channel's voice room and its stream room (`<channel>~s`), when they leave it (#418). Returns them, for removing the
+/// participants that still carry them (`voice::revoke::remove_granted`).
+pub async fn drop_server_grants(
+    conn: &mut SqliteConnection,
+    user: UserId,
+    server: pulse_protocol::ids::ServerId,
+) -> anyhow::Result<Vec<RevokedGrant>> {
+    Ok(sqlx::query_as(
+        "DELETE FROM livekit_grants
+         WHERE token_hash IN (SELECT token_hash FROM sessions WHERE user_id = ?1)
+           AND (room IN (SELECT id FROM channels WHERE server_id = ?2)
+                OR room IN (SELECT id || '~s' FROM channels WHERE server_id = ?2))
+         RETURNING id, room",
+    )
+    .bind(user.to_string())
+    .bind(server.to_string())
+    .fetch_all(conn)
+    .await?)
+}
+
 /// A LiveKit leave webhook: the grant is finished if `sid` is still the participant connected
 /// with it (a full reconnect's late leave for the old connection doesn't count).
 pub async fn note_left(db: &SqlitePool, grant: &str, sid: &str) -> anyhow::Result<()> {

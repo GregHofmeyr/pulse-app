@@ -36,3 +36,15 @@ export function groupLineText(s: AppState, m: Message): string {
       return m.content
   }
 }
+
+/** A server membership line (#418), as `groupLineText` writes a group's: "alex left the server" / "sam was removed",
+ *  with the name that applies in `serverId` today; its stored text when the client doesn't know them (someone who left
+ *  before this client met them). */
+export function memberLineText(s: AppState, m: Message, serverId: string | null): string {
+  const l = m.member_line
+  if (!l) return m.content
+  const known = l.user_id === s.me?.id || !!userOf(s, l.user_id) || !!s.privateNicks[l.user_id]
+  if (!known) return m.content
+  const name = displayName(s, serverId, l.user_id)
+  return l.removed_by ? `${name} was removed` : `${name} left the server`
+}

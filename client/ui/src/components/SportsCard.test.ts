@@ -17,7 +17,7 @@ afterEach(() => {
 const base: Card = {
   league: 'psl', fixture_id: 1, phase: 'upcoming', kickoff: '2026-11-21T17:30:00Z', status: 'NS', minute: null,
   home: { team_id: 10, name: 'Coastal City', score: null }, away: { team_id: 20, name: 'Highveld United', score: null },
-  scorers: [], followers: ['U2'],
+  scorers: [], followers: ['U2'], no_updates: false,
 }
 
 function show(over: Partial<Card>) {
@@ -67,5 +67,28 @@ describe('SportsCard', () => {
     expect(el.querySelector('.head')!.textContent).toContain('🏉')
     expect(el.querySelector('[data-corner]')!.textContent).toBe('Postponed')
     expect(el.querySelector('.followers')).toBeNull()
+  })
+
+  it("each team's logo beside its name (#406), the server's copy; none, or one that won't load, shows nothing", () => {
+    const hash = 'a'.repeat(64)
+    const el = show({ home: { ...base.home, logo: { hash, width: 96, height: 96 } } })
+    const img = el.querySelector<HTMLImageElement>('[data-side="home"] img.logo')!
+    expect(img.getAttribute('src')).toContain(hash)
+    expect(el.querySelector('[data-side="away"] img')).toBeNull()
+    img.dispatchEvent(new Event('error'))
+    flushSync()
+    expect(el.querySelector('[data-side="home"] img')).toBeNull()
+    expect(el.querySelector('[data-side="home"] .team')!.textContent).toBe('Coastal City')
+  })
+
+  it('a card whose window passed with no live data says so, never as live (#406)', () => {
+    const el = show({ phase: 'live', status: '2H', minute: 70, home: { ...base.home, score: 1 }, away: { ...base.away, score: 0 }, no_updates: true })
+    expect(el.querySelector('[data-no-updates]')!.textContent).toBe('No live updates — check back later')
+    const corner = el.querySelector('[data-corner]')!
+    expect(corner.textContent).toBe('No live updates')
+    expect(corner.classList.contains('live')).toBe(false)
+    unmount(cmp!)
+    cmp = undefined
+    expect(show({}).querySelector('[data-no-updates]')).toBeNull()
   })
 })

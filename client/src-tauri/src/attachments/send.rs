@@ -32,6 +32,8 @@ pub struct Outgoing {
     pub temp_days: Option<u8>,
     /// Staged ids the sender marked as spoilers (#289).
     pub spoilers: Vec<String>,
+    /// Staged ids the sender marked view once (#311).
+    pub view_once: Vec<String>,
 }
 
 /// `attachments://progress`: bytes stored so far over all of a send's files.
@@ -250,6 +252,7 @@ impl Jobs {
                                         None
                                     },
                                     spoiler: out.spoilers.contains(&f.id),
+                                    view_once: out.view_once.contains(&f.id),
                                 },
                             )
                             .await?
@@ -564,6 +567,7 @@ mod tests {
             staged,
             temp_days: None,
             spoilers: vec![],
+            view_once: vec![],
         }
     }
 
@@ -582,6 +586,25 @@ mod tests {
             .attachments
             .iter()
             .map(|a| (a.name.as_str(), a.spoiler))
+            .collect();
+        assert_eq!(marked, [("shot.webp", true), ("notes.txt", false)]);
+    }
+
+    /// #311: the files marked view once go up marked; the rest don't.
+    #[tokio::test]
+    async fn files_marked_view_once_are_sent_view_once() {
+        let s = setup().await;
+        let staged = stage(&s);
+        let mut out = outgoing(&s, staged.clone(), "");
+        out.view_once = vec![staged[0].clone()];
+        let m = Jobs::default()
+            .run(&s.api, &s.token, &s.stager, &out, |_| {})
+            .await
+            .unwrap();
+        let marked: Vec<(&str, bool)> = m
+            .attachments
+            .iter()
+            .map(|a| (a.name.as_str(), a.view_once))
             .collect();
         assert_eq!(marked, [("shot.webp", true), ("notes.txt", false)]);
     }
@@ -699,6 +722,7 @@ mod tests {
                     duration_ms: None,
                     temp_days: Some(7),
                     spoiler: false,
+                    view_once: false,
                 },
             )
             .await

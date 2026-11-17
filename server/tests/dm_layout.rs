@@ -275,3 +275,59 @@ async fn only_your_own_conversations_and_sensible_names() {
     let (_, kims) = hello(&app, &kim).await;
     assert!(kims.placements.is_empty());
 }
+
+#[tokio::test]
+async fn categories_can_be_moved_up_and_down() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    for name in ["One", "Two", "Three"] {
+        new_category(&app, &alex, name).await;
+    }
+    let l = new_category(&app, &alex, "Four").await;
+    let id = |l: &DmLayout, name: &str| l.categories.iter().find(|c| c.name == name).unwrap().id;
+    let names = |l: &DmLayout| {
+        l.categories
+            .iter()
+            .map(|c| c.name.clone())
+            .collect::<Vec<_>>()
+    };
+    let (mut other_device, _) = hello(&app, &alex).await;
+    let mv = |cat: pulse_protocol::ids::DmCategoryId, to: u32| {
+        let app = &app;
+        let alex = alex.clone();
+        async move {
+            call(
+                app,
+                reqwest::Method::PATCH,
+                &alex,
+                &format!("/me/dm-categories/{cat}"),
+                json!({ "position": to }),
+            )
+            .await
+        }
+    };
+
+    // Three up one
+    let r = mv(id(&l, "Three"), 1).await;
+    assert_eq!(r.status(), 200);
+    let l: DmLayout = r.json().await.unwrap();
+    assert_eq!(names(&l), ["One", "Three", "Two", "Four"]);
+    assert_eq!(next_layout(&mut other_device).await.unwrap(), l);
+    // One down to the end (past it: last)
+    let l: DmLayout = mv(id(&l, "One"), 99).await.json().await.unwrap();
+    assert_eq!(names(&l), ["Three", "Two", "Four", "One"]);
+    // it keeps: a fresh connection sees the same order
+    let (_, ready) = hello(&app, &alex).await;
+    assert_eq!(names(&ready), names(&l));
+    // not sam's to move
+    let r = call(
+        &app,
+        reqwest::Method::PATCH,
+        &sam,
+        &format!("/me/dm-categories/{}", id(&l, "One")),
+        json!({ "position": 0 }),
+    )
+    .await;
+    assert_eq!(r.status(), 404);
+}

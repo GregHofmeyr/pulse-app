@@ -35,6 +35,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::DeleteServerRequest::export_all(&cfg)?;
     rest::DeletedServer::export_all(&cfg)?;
     rest::CreateServerRequest::export_all(&cfg)?;
+    rest::TransferServerRequest::export_all(&cfg)?;
     rest::CreateChannelRequest::export_all(&cfg)?;
     rest::Category::export_all(&cfg)?;
     rest::ChannelPlacement::export_all(&cfg)?;
@@ -166,6 +167,10 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::CreateDmCategoryRequest::export_all(&cfg)?;
     rest::UpdateDmCategoryRequest::export_all(&cfg)?;
     rest::DmPlacementRequest::export_all(&cfg)?;
+    rest::PersonDndRequest::export_all(&cfg)?;
+    rest::InboxFiltersRequest::export_all(&cfg)?;
+    rest::ChannelOrderRequest::export_all(&cfg)?;
+    rest::ViewOnceState::export_all(&cfg)?;
     rest::PrivateNickname::export_all(&cfg)?;
     rest::NameChange::export_all(&cfg)?;
     rest::NameArchivePage::export_all(&cfg)?;
