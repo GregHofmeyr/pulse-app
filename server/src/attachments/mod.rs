@@ -351,10 +351,12 @@ pub async fn claim(
         if ch.as_deref() != Some(channel.to_string().as_str()) || created < since {
             return Err(AppError::NotFound);
         }
-        let att: Row = sqlx::query_as(&format!("SELECT {COLS} FROM attachments WHERE id = ?"))
-            .bind(id.to_string())
-            .fetch_one(&s.db)
-            .await?;
+        let att: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLS} FROM attachments WHERE id = ?"
+        )))
+        .bind(id.to_string())
+        .fetch_one(&s.db)
+        .await?;
         let att = to_attachment(att, &now)?;
         // A big file's parts are joined by completing its upload first.
         if upload_id.is_some() {

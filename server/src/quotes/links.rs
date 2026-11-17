@@ -231,11 +231,12 @@ const COLUMNS: &str =
 
 /// The server's full list, in a stable order.
 async fn links_of(db: &mut SqliteConnection, server: ServerId) -> AppResult<Vec<SpeakerLink>> {
-    let rows: Vec<Row> =
-        sqlx::query_as(&format!("{COLUMNS} WHERE server_id = ? ORDER BY name_key"))
-            .bind(server.to_string())
-            .fetch_all(db)
-            .await?;
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{COLUMNS} WHERE server_id = ? ORDER BY name_key"
+    )))
+    .bind(server.to_string())
+    .fetch_all(db)
+    .await?;
     rows.into_iter().map(link_of).collect()
 }
 
@@ -243,10 +244,10 @@ async fn links_of(db: &mut SqliteConnection, server: ServerId) -> AppResult<Vec<
 /// for `SpeakerLinksChanged` (Ready lists every server to every user too).
 pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<SpeakerLink>> {
     // a deleted server's are gone with it (#184)
-    let rows: Vec<Row> = sqlx::query_as(&format!(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{COLUMNS} WHERE server_id NOT IN {} ORDER BY server_id, name_key",
         crate::access::DELETED_SERVERS
-    ))
+    )))
     .fetch_all(db)
     .await?;
     rows.into_iter().map(link_of).collect()

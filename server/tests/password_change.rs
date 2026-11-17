@@ -413,7 +413,7 @@ async fn binary_reset_password_and_revoke_sessions() {
 }
 
 async fn count(app: &TestApp, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
         .fetch_one(&app.db)
         .await
         .unwrap()

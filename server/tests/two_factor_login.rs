@@ -132,7 +132,7 @@ async fn second_step(app: &TestApp, ticket: &str, code: &str) -> reqwest::Respon
 }
 
 async fn count(app: &TestApp, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
         .fetch_one(&app.db)
         .await
         .unwrap()

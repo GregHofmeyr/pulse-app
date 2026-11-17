@@ -431,7 +431,10 @@ async fn cleanup_keeps_media_used_by_a_quote_line() {
             info.hash
         ),
     ] {
-        sqlx::query(&sql).execute(&app.db).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&app.db)
+            .await
+            .unwrap();
     }
     // In use by a line: neither the animation nor its still goes.
     assert_eq!(
@@ -653,7 +656,10 @@ async fn insert_live_clip(
              VALUES ('m1', '{key}', '{thumb_hash}', 1000, 1920, 1080)"
         ),
     ] {
-        sqlx::query(&sql).execute(&app.db).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&app.db)
+            .await
+            .unwrap();
     }
 }
 

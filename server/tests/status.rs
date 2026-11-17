@@ -130,7 +130,7 @@ async fn appear_offline(app: &TestApp, token: &str, to: UserId, hide: bool) -> u
 }
 
 async fn db_str(app: &TestApp, sql: &str, id: UserId) -> Option<String> {
-    sqlx::query_scalar(sql)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(id.to_string())
         .fetch_one(&app.db)
         .await

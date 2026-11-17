@@ -105,18 +105,20 @@ pub fn parse_options(stored: &str) -> AppResult<Vec<String>> {
 }
 
 pub async fn load(db: &SqlitePool, id: &str) -> AppResult<Option<Wheel>> {
-    let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLS} FROM wheels WHERE id = ?"))
-        .bind(id)
-        .fetch_optional(db)
-        .await?;
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM wheels WHERE id = ?"
+    )))
+    .bind(id)
+    .fetch_optional(db)
+    .await?;
     row.map(from_row).transpose()
 }
 
 /// A server's wheels, by name.
 pub async fn for_server(db: &SqlitePool, server: ServerId) -> AppResult<Vec<Wheel>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM wheels WHERE server_id = ? ORDER BY name COLLATE NOCASE, id"
-    ))
+    )))
     .bind(server.to_string())
     .fetch_all(db)
     .await?;
@@ -125,9 +127,9 @@ pub async fn for_server(db: &SqlitePool, server: ServerId) -> AppResult<Vec<Whee
 
 /// One person's Just me wheels, by name.
 pub async fn for_owner(db: &SqlitePool, owner: UserId) -> AppResult<Vec<Wheel>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM wheels WHERE owner_id = ? ORDER BY name COLLATE NOCASE, id"
-    ))
+    )))
     .bind(owner.to_string())
     .fetch_all(db)
     .await?;

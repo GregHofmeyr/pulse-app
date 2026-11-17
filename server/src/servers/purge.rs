@@ -123,45 +123,47 @@ pub(crate) async fn messages(
         const PAGE: &str = "(SELECT value FROM json_each(?1))";
         let oldest = page.last().expect("not empty");
         for col in ["reply_to_id", "thread_root_id"] {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE messages SET {col} = NULL
                  WHERE channel_id = ?2 AND id < ?3 AND {col} IN {PAGE}"
-            ))
+            )))
             .bind(&ids)
             .bind(&channel)
             .bind(oldest)
             .execute(&mut *tx)
             .await?;
         }
-        let clips: Vec<String> = sqlx::query_scalar(&format!(
+        let clips: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT video_key FROM clips WHERE message_id IN {PAGE}"
-        ))
+        )))
         .bind(&ids)
         .fetch_all(&mut *tx)
         .await?;
         // A Quote of the Year win outlives its quote (#110): it keeps who voted for it before the
         // message's cascade takes its options and votes (its speakers are snapshotted already).
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE qoty_winners SET voters = (
                  SELECT json_group_array(user_id) FROM (
                      SELECT v.user_id FROM qoty_votes v
                      WHERE v.event_id = qoty_winners.event_id AND v.message_id = qoty_winners.message_id
                      ORDER BY v.rowid))
              WHERE voters IS NULL AND message_id IN {PAGE}"
-        ))
+        )))
         .bind(&ids)
         .execute(&mut *tx)
         .await?;
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM quote_lines WHERE message_id IN {PAGE}"
-        ))
+        )))
         .bind(&ids)
         .execute(&mut *tx)
         .await?;
-        sqlx::query(&format!("DELETE FROM messages WHERE id IN {PAGE}"))
-            .bind(&ids)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM messages WHERE id IN {PAGE}"
+        )))
+        .bind(&ids)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         let held = locked.elapsed();
         drop(order);

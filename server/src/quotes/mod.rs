@@ -322,21 +322,21 @@ pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppR
     // Only a live event loses the quote; an ended one keeps its options and votes as history.
     // Votes go with their option (foreign key cascade), but not by luck: say so.
     const LIVE: &str = "event_id IN (SELECT id FROM qoty_events WHERE ended_at IS NULL)";
-    let qoty: Vec<String> = sqlx::query_scalar(&format!(
+    let qoty: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT event_id FROM qoty_options WHERE message_id = ? AND {LIVE}"
-    ))
+    )))
     .bind(&id)
     .fetch_all(&mut *tx)
     .await?;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DELETE FROM qoty_votes WHERE message_id = ? AND {LIVE}"
-    ))
+    )))
     .bind(&id)
     .execute(&mut *tx)
     .await?;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DELETE FROM qoty_options WHERE message_id = ? AND {LIVE}"
-    ))
+    )))
     .bind(&id)
     .execute(&mut *tx)
     .await?;
@@ -490,7 +490,7 @@ where
     Ok(out)
 }
 
-fn in_list<'a>(q: &mut sqlx::QueryBuilder<'a, sqlx::Sqlite>, ids: &'a [String]) {
+fn in_list(q: &mut sqlx::QueryBuilder<sqlx::Sqlite>, ids: &[String]) {
     let mut list = q.separated(", ");
     for id in ids {
         list.push_bind(id);

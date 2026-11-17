@@ -191,21 +191,21 @@ pub(crate) async fn drop_server_emoji(
 ) -> sqlx::Result<bool> {
     const THEIRS: &str = "(SELECT 'custom:' || id FROM custom_emoji WHERE server_id = ?)";
     let (uid, sid) = (user.to_string(), server.to_string());
-    let changed = sqlx::query(&format!(
+    let changed = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE users SET
            custom_text = CASE WHEN custom_text = '' THEN NULL ELSE custom_text END,
            custom_until = CASE WHEN custom_text = '' THEN NULL ELSE custom_until END,
            custom_emoji = NULL
          WHERE id = ? AND custom_emoji IN {THEIRS}"
-    ))
+    )))
     .bind(&uid)
     .bind(&sid)
     .execute(&mut *tx)
     .await?
     .rows_affected();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DELETE FROM custom_status_recent WHERE user_id = ? AND emoji IN {THEIRS}"
-    ))
+    )))
     .bind(&uid)
     .bind(&sid)
     .execute(&mut *tx)

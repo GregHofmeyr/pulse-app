@@ -80,9 +80,9 @@ pub(crate) async fn part_of(db: &SqlitePool, root: MessageId) -> AppResult<Vec<U
 
 /// `me`'s threads with new replies, newest reply first, and the threads they're watching.
 pub async fn list(db: &SqlitePool, me: UserId) -> AppResult<InboxThreads> {
-    let watched: Vec<(String, String, bool)> = sqlx::query_as(&format!(
+    let watched: Vec<(String, String, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT root_id, channel_id, started FROM ({WATCHED}) ORDER BY root_id DESC LIMIT ?3"
-    ))
+    )))
     .bind(me.to_string())
     .bind(now())
     .bind(MAX_WATCHING)

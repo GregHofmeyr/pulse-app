@@ -122,10 +122,12 @@ const SELECT_NO_LOG: &str =
      FROM bug_reports r JOIN users u ON u.id = r.user_id";
 
 pub async fn list(db: &SqlitePool, limit: i64) -> AppResult<Vec<Listed>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!("{SELECT_NO_LOG} ORDER BY r.id DESC LIMIT ?"))
-        .bind(limit)
-        .fetch_all(db)
-        .await?;
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT_NO_LOG} ORDER BY r.id DESC LIMIT ?"
+    )))
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
     Ok(rows.iter().map(listed).collect())
 }
 
@@ -145,7 +147,7 @@ pub async fn find(db: &SqlitePool, short_id: &str) -> AppResult<Full> {
     match ids.as_slice() {
         [] => Err(AppError::NotFound),
         [id] => {
-            let r: Row = sqlx::query_as(&format!("{SELECT} WHERE r.id = ?"))
+            let r: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE r.id = ?")))
                 .bind(id)
                 .fetch_one(db)
                 .await?;

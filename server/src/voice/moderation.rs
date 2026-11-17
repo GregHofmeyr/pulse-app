@@ -76,12 +76,12 @@ pub async fn get(
 /// Every server's mutes / deafens in force (servers are public, like their members).
 pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<ServerVoiceMod>> {
     // a deleted server's are gone with it (#184)
-    let rows: Vec<Row> = sqlx::query_as(&format!(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT server_id, user_id, muted_by, deafened_by FROM voice_moderation
          WHERE (muted_by IS NOT NULL OR deafened_by IS NOT NULL) AND server_id NOT IN {}
          ORDER BY server_id, user_id",
         crate::access::DELETED_SERVERS
-    ))
+    )))
     .fetch_all(db)
     .await?;
     rows.into_iter().map(from_row).collect()

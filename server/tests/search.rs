@@ -104,7 +104,10 @@ async fn clip(f: &Fx, ch: ChannelId, caption: &str) -> MessageId {
             "INSERT INTO clips (message_id, video_key, thumb_hash, duration_ms, width, height) VALUES ('{id}', 'v{id}', 't{id}', 1000, 1, 1)"
         ),
     ] {
-        sqlx::query(&q).execute(&f.app.db).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(&*q))
+            .execute(&f.app.db)
+            .await
+            .unwrap();
     }
     id
 }

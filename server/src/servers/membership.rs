@@ -406,10 +406,10 @@ pub(crate) async fn take_out(
         } else {
             "message_id"
         };
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {table} WHERE user_id = ? AND {col} IN
                (SELECT m.id FROM messages m JOIN channels c ON c.id = m.channel_id WHERE c.server_id = ?)"
-        ))
+        )))
         .bind(&uid)
         .bind(&sid)
         .execute(&mut *tx)

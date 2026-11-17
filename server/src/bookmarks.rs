@@ -89,10 +89,12 @@ fn from_row(r: Row) -> AppResult<MessageBookmark> {
 
 /// `me`'s saved messages, newest first: for Ready and `GET /bookmarks`.
 pub async fn list_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<MessageBookmark>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!("{SELECT} ORDER BY b.created_at DESC, b.id DESC"))
-        .bind(me.to_string())
-        .fetch_all(db)
-        .await?;
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT} ORDER BY b.created_at DESC, b.id DESC"
+    )))
+    .bind(me.to_string())
+    .fetch_all(db)
+    .await?;
     rows.into_iter().map(from_row).collect()
 }
 
@@ -102,7 +104,7 @@ async fn one<'e>(
     me: UserId,
     id: BookmarkId,
 ) -> AppResult<Option<MessageBookmark>> {
-    let row: Option<Row> = sqlx::query_as(&format!("{SELECT} AND b.id = ?"))
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} AND b.id = ?")))
         .bind(me.to_string())
         .bind(id.to_string())
         .fetch_optional(db)

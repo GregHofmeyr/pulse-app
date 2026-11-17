@@ -414,7 +414,7 @@ async fn disable_with_a_recovery_code_clears_everything() {
         }
     );
     for t in ["user_totp", "recovery_codes", "mfa_tickets"] {
-        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {t}"))
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {t}")))
             .fetch_one(&app.db)
             .await
             .unwrap();

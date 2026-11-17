@@ -215,11 +215,12 @@ fn subject(r: Row) -> anyhow::Result<Subject> {
 
 /// One person's status and the people they hide from.
 pub async fn load_subject(db: &SqlitePool, id: UserId) -> anyhow::Result<Option<Subject>> {
-    let row: Option<Row> =
-        sqlx::query_as(&format!("SELECT {SUBJECT_COLS} FROM users WHERE id = ?"))
-            .bind(id.to_string())
-            .fetch_optional(db)
-            .await?;
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {SUBJECT_COLS} FROM users WHERE id = ?"
+    )))
+    .bind(id.to_string())
+    .fetch_optional(db)
+    .await?;
     let Some(row) = row else { return Ok(None) };
     let mut s = subject(row)?;
     let hidden: Vec<(String, String, i64)> = sqlx::query_as(
@@ -244,9 +245,11 @@ pub async fn load_subject(db: &SqlitePool, id: UserId) -> anyhow::Result<Option<
 
 /// Everyone, by id (Ready reads each table once).
 pub async fn load_all(db: &SqlitePool) -> anyhow::Result<HashMap<UserId, Subject>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!("SELECT {SUBJECT_COLS} FROM users"))
-        .fetch_all(db)
-        .await?;
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {SUBJECT_COLS} FROM users"
+    )))
+    .fetch_all(db)
+    .await?;
     let mut all = HashMap::new();
     for r in rows {
         let s = subject(r)?;

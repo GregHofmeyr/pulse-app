@@ -73,9 +73,9 @@ async fn concurrent_create_channel_all_succeed_with_distinct_positions() {
 /// Make every row write of `table` fail (`op` is INSERT or DELETE), as a full disk would part-way
 /// through a handler.
 async fn fail_writes(app: &TestApp, op: &str, table: &str) {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TRIGGER fail_{table} BEFORE {op} ON {table} BEGIN SELECT RAISE(ABORT, 'injected'); END"
-    ))
+    )))
     .execute(&app.db)
     .await
     .unwrap();

@@ -165,8 +165,9 @@ async fn announce(s: &AppState, me: UserId) -> AppResult<Vec<UserId>> {
 }
 
 /// SQL that is true when the user in column `user` hides their game activity from any member of the server in column
-/// `server` (#438): a channel post about their games there would reach someone they hide them from.
-pub fn hides_in_server(user: &str, server: &str) -> String {
+/// `server` (#438): a channel post about their games there would reach someone they hide them from. Both are pasted
+/// into the SQL as they are, so they are `'static` column names or placeholders, never request data.
+pub fn hides_in_server(user: &'static str, server: &'static str) -> String {
     format!(
         "EXISTS (SELECT 1 FROM activity_hidden h JOIN server_members hm ON hm.user_id = h.target_id
            AND hm.server_id = {server} WHERE h.user_id = {user})"

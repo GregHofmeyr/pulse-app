@@ -27,7 +27,7 @@ async fn next_event(rx: &mut mpsc::Receiver<ServerFrame>) -> Event {
 }
 
 async fn count(app: &TestApp, q: &str, id: &str) -> i64 {
-    sqlx::query_scalar(q)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(q))
         .bind(id)
         .fetch_one(&app.db)
         .await

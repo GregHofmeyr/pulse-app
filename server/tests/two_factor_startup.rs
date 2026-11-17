@@ -194,11 +194,13 @@ async fn reset_2fa_turns_it_off() {
         .unwrap();
     assert_eq!(me.status(), 200, "sessions survive the reset");
     for t in ["user_totp", "recovery_codes", "mfa_tickets"] {
-        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {t} WHERE user_id = ?"))
-            .bind(alex.to_string())
-            .fetch_one(&db)
-            .await
-            .unwrap();
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM {t} WHERE user_id = ?"
+        )))
+        .bind(alex.to_string())
+        .fetch_one(&db)
+        .await
+        .unwrap();
         assert_eq!(n, 0, "{t}");
     }
     // An unknown user is an error, not a silent no-op.

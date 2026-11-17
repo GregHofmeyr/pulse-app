@@ -110,9 +110,9 @@ impl Stored {
 
 /// A live (not deleted) message's invite.
 async fn load(db: &mut SqliteConnection, id: MessageId) -> AppResult<Option<Stored>> {
-    let row: Option<Row> = sqlx::query_as(&format!(
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} WHERE g.message_id = ? AND m.deleted_at IS NULL"
-    ))
+    )))
     .bind(id.to_string())
     .fetch_optional(&mut *db)
     .await?;
@@ -121,9 +121,9 @@ async fn load(db: &mut SqliteConnection, id: MessageId) -> AppResult<Option<Stor
 
 /// `sender`'s invites that haven't ended (on live messages).
 async fn live_of(db: &SqlitePool, sender: UserId) -> AppResult<Vec<Stored>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} WHERE g.sender_id = ? AND g.ended_at IS NULL AND m.deleted_at IS NULL"
-    ))
+    )))
     .bind(sender.to_string())
     .fetch_all(db)
     .await?;
@@ -200,10 +200,10 @@ pub async fn end_all_on_startup(db: &SqlitePool) -> sqlx::Result<u64> {
 /// `user` plays `p`: each of their invites a restart ended less than [`RESTART_GRACE`] ago, for that same game,
 /// opens again (and reads where to join at once, as when sent).
 async fn reopen_after_restart(s: &AppState, user: UserId, p: &Playing) -> AppResult<()> {
-    let rows: Vec<Row> = sqlx::query_as(&format!(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} WHERE g.sender_id = ? AND g.ended_at IS NOT NULL AND g.restart_grace_until > ?
            AND m.deleted_at IS NULL"
-    ))
+    )))
     .bind(user.to_string())
     .bind(now())
     .fetch_all(&s.db)

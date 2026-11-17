@@ -174,10 +174,10 @@ pub async fn server_usage(
     .bind(server.to_string())
     .fetch_one(db)
     .await?;
-    let thumbs: i64 = sqlx::query_scalar(&format!(
+    let thumbs: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COALESCE(SUM(size), 0) FROM media
          WHERE hash IN (SELECT c.thumb_hash {live})"
-    ))
+    )))
     .bind(server.to_string())
     .fetch_one(db)
     .await?;

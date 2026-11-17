@@ -11,7 +11,10 @@ fn ts(d: Duration) -> String {
 }
 
 async fn count(app: &TestApp, sql: &str) -> i64 {
-    sqlx::query_scalar(sql).fetch_one(&app.db).await.unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]

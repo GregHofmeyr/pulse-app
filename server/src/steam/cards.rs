@@ -77,7 +77,7 @@ pub async fn app_info(s: &AppState, app: u32) -> (Schema, HashMap<String, f32>) 
 /// The text channels picked as Achievements channels in the servers `user` is in (live servers and channels), less
 /// those of servers where a member is someone `user` hides their games from (#438).
 pub async fn channels_for(s: &AppState, user: UserId) -> AppResult<Vec<ChannelId>> {
-    let ids: Vec<String> = sqlx::query_scalar(&format!(
+    let ids: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT a.channel_id FROM server_achievement_channels a
          JOIN server_members m ON m.server_id = a.server_id AND m.user_id = ?1
          JOIN servers sv ON sv.id = a.server_id AND sv.deleted_at IS NULL
@@ -85,7 +85,7 @@ pub async fn channels_for(s: &AppState, user: UserId) -> AppResult<Vec<ChannelId
          WHERE NOT {}
          ORDER BY a.server_id",
         crate::activity_hidden::hides_in_server("?1", "a.server_id")
-    ))
+    )))
     .bind(user.to_string())
     .fetch_all(&s.db)
     .await?;

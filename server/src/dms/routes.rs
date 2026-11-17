@@ -345,9 +345,9 @@ async fn remove_member(
         return Err(AppError::NotFound); // dropping `tx` rolls back
     }
     for t in ["read_states", "dm_hidden"] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {t} WHERE channel_id = ? AND user_id = ?"
-        ))
+        )))
         .bind(id.to_string())
         .bind(user.to_string())
         .execute(&mut *tx)

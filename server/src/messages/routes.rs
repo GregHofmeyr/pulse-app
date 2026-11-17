@@ -171,10 +171,12 @@ pub(crate) async fn load(
     me: Option<UserId>,
     id: MessageId,
 ) -> AppResult<Option<Message>> {
-    let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLS} FROM messages WHERE id = ?"))
-        .bind(id.to_string())
-        .fetch_optional(db)
-        .await?;
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM messages WHERE id = ?"
+    )))
+    .bind(id.to_string())
+    .fetch_optional(db)
+    .await?;
     let Some(mut m) = row.map(from_row).transpose()? else {
         return Ok(None);
     };
@@ -298,9 +300,9 @@ async fn slice(
     n: i64,
 ) -> AppResult<Vec<Row>> {
     let (cmp, order) = if newer { (">", "ASC") } else { ("<", "DESC") };
-    let mut rows: Vec<Row> = sqlx::query_as(&format!(
+    let mut rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM messages WHERE channel_id = ? AND id {cmp} ? AND thread_root_id IS NULL ORDER BY id {order} LIMIT ?"
-    ))
+    )))
     .bind(channel.to_string())
     .bind(bound)
     .bind(n)
@@ -338,9 +340,9 @@ async fn list(
         slice(&s.db, id, &after.to_string(), true, limit).await?
     } else if let Some(target) = q.around {
         // The target must be a main-list message of this channel (deleted and system ones count).
-        let anchor: Option<Row> = sqlx::query_as(&format!(
+        let anchor: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {COLS} FROM messages WHERE id = ? AND channel_id = ? AND thread_root_id IS NULL"
-        ))
+        )))
         .bind(target.to_string())
         .bind(id.to_string())
         .fetch_optional(&s.db)

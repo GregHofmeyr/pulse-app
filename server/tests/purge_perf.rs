@@ -11,7 +11,7 @@ use pulse_protocol::rest::Channel;
 use serde_json::json;
 
 async fn count(app: &TestApp, q: &str, id: &str) -> i64 {
-    sqlx::query_scalar(q)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(q))
         .bind(id)
         .fetch_one(&app.db)
         .await
@@ -19,7 +19,10 @@ async fn count(app: &TestApp, q: &str, id: &str) -> i64 {
 }
 
 async fn scalar(app: &TestApp, q: &str) -> i64 {
-    sqlx::query_scalar(q).fetch_one(&app.db).await.unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(q))
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
 }
 
 async fn status(r: reqwest::RequestBuilder, token: &str) -> u16 {

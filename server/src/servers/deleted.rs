@@ -135,13 +135,14 @@ pub async fn list(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
 ) -> AppResult<Json<Vec<DeletedServer>>> {
-    let rows: Vec<(String, String, Option<String>, String, String)> = sqlx::query_as(&format!(
-        "SELECT {SERVER_COLS}, deleted_at FROM servers
+    let rows: Vec<(String, String, Option<String>, String, String)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {SERVER_COLS}, deleted_at FROM servers
          WHERE created_by = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id"
-    ))
-    .bind(me.to_string())
-    .fetch_all(&s.db)
-    .await?;
+        )))
+        .bind(me.to_string())
+        .fetch_all(&s.db)
+        .await?;
     let due = due(chrono::Utc::now());
     let mut out = Vec::with_capacity(rows.len());
     for (id, name, icon, owner, deleted_at) in rows {
@@ -199,10 +200,12 @@ pub async fn restore(
 
 /// What Ready would carry for `id`.
 async fn snapshot_of(s: &AppState, id: ServerId) -> AppResult<ServerSnapshot> {
-    let row: ServerRow = sqlx::query_as(&format!("SELECT {SERVER_COLS} FROM servers WHERE id = ?"))
-        .bind(id.to_string())
-        .fetch_one(&s.db)
-        .await?;
+    let row: ServerRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {SERVER_COLS} FROM servers WHERE id = ?"
+    )))
+    .bind(id.to_string())
+    .fetch_one(&s.db)
+    .await?;
     let mut layout = {
         let mut db = s.db.acquire().await?;
         crate::servers::categories::layout_of(&mut db, id).await?
@@ -248,9 +251,9 @@ async fn snapshot_of(s: &AppState, id: ServerId) -> AppResult<ServerSnapshot> {
 /// mutes and notification levels of each who has one on the server or one of its channels.
 async fn republish_own_state(s: &AppState, server: ServerId) -> AppResult<()> {
     const LIVE: &str = "(SELECT id FROM channels WHERE server_id = ? AND deleted_at IS NULL)";
-    let reads: Vec<(String, String)> = sqlx::query_as(&format!(
+    let reads: Vec<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT user_id, channel_id FROM read_states WHERE channel_id IN {LIVE}"
-    ))
+    )))
     .bind(server.to_string())
     .fetch_all(&s.db)
     .await?;
@@ -273,10 +276,10 @@ async fn republish_own_state(s: &AppState, server: ServerId) -> AppResult<()> {
         }
     }
     // their quote reply seen points (#115)
-    let seen: Vec<(String, String, String, String)> = sqlx::query_as(&format!(
+    let seen: Vec<(String, String, String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT m.channel_id, t.user_id, t.root_id, t.last_seen_id FROM thread_reads t
          JOIN messages m ON m.id = t.root_id WHERE m.channel_id IN {LIVE}"
-    ))
+    )))
     .bind(server.to_string())
     .fetch_all(&s.db)
     .await?;
@@ -285,9 +288,9 @@ async fn republish_own_state(s: &AppState, server: ServerId) -> AppResult<()> {
         let event = crate::servers::channels::thread_seen_again(channel, &user, &root, &last)?;
         s.hub.publish(&s.db, event).await;
     }
-    let views: Vec<(String, String, String)> = sqlx::query_as(&format!(
+    let views: Vec<(String, String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT user_id, channel_id, view FROM clip_view_prefs WHERE channel_id IN {LIVE}"
-    ))
+    )))
     .bind(server.to_string())
     .fetch_all(&s.db)
     .await?;
@@ -307,11 +310,11 @@ async fn republish_own_state(s: &AppState, server: ServerId) -> AppResult<()> {
             )
             .await;
     }
-    let muters: BTreeSet<String> = sqlx::query_scalar(&format!(
+    let muters: BTreeSet<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT DISTINCT user_id FROM notification_prefs
          WHERE (target_kind = 'server' AND target_id = ?)
             OR (target_kind = 'channel' AND target_id IN {LIVE})"
-    ))
+    )))
     .bind(server.to_string())
     .bind(server.to_string())
     .fetch_all(&s.db)

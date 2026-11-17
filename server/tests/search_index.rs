@@ -21,7 +21,10 @@ async fn hits(db: &SqlitePool, expr: &str) -> Vec<String> {
 }
 
 async fn exec(db: &SqlitePool, q: &str) {
-    sqlx::query(q).execute(db).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(q))
+        .execute(db)
+        .await
+        .unwrap();
 }
 
 /// A migrated database with alex, server Main, #general (text), #quotes and a DM.
@@ -275,7 +278,10 @@ async fn migration_backfills_existing() {
             .map(String::from),
     );
     for q in rows {
-        sqlx::query(&q).execute(&mut conn).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(&*q))
+            .execute(&mut conn)
+            .await
+            .unwrap();
     }
     conn.close().await.unwrap();
 

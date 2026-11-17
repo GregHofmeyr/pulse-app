@@ -77,7 +77,7 @@ pub fn canonical_key(key: &str) -> String {
 
 /// Every server's emoji, deleted ones included (without a hash).
 pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<CustomEmoji>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!("{SELECT} ORDER BY e.id"))
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} ORDER BY e.id")))
         .fetch_all(db)
         .await?;
     rows.into_iter().map(from_row).collect()
@@ -85,7 +85,7 @@ pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<CustomEmoji>> {
 
 /// One emoji by id, deleted or not.
 pub async fn load(db: &SqlitePool, id: &str) -> AppResult<Option<CustomEmoji>> {
-    let row: Option<Row> = sqlx::query_as(&format!("{SELECT} WHERE e.id = ?"))
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE e.id = ?")))
         .bind(id)
         .fetch_optional(db)
         .await?;

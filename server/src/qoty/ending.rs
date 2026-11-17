@@ -275,11 +275,13 @@ pub(crate) async fn undo(
     let due = crate::servers::channels::due(chrono::Utc::now());
     // Votes go with their option (foreign key cascade), but not by luck: say so.
     for table in ["qoty_votes", "qoty_options"] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE {GONE}"))
-            .bind(id.to_string())
-            .bind(&due)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE {GONE}"
+        )))
+        .bind(id.to_string())
+        .bind(&due)
+        .execute(&mut *tx)
+        .await?;
     }
     cards
         .into_iter()
@@ -296,7 +298,7 @@ pub async fn end_overdue(s: &AppState, due: &str) -> AppResult<u32> {
                        WHERE ended_at IS NULL AND ends_at IS NOT NULL AND ends_at <= ?
                          AND server_id NOT IN (SELECT id FROM servers WHERE deleted_at IS NOT NULL)";
     // A cheap look first, so an idle sweep takes no locks.
-    let any: Option<String> = sqlx::query_scalar(&format!("{DUE} LIMIT 1"))
+    let any: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("{DUE} LIMIT 1")))
         .bind(due)
         .fetch_optional(&s.db)
         .await?;

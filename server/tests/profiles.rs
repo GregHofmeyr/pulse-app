@@ -139,15 +139,15 @@ async fn migration_0010_adds_defaults_and_drops_images() {
 
     let ts = "2026-10-01T00:00:00.000Z";
     let user = "01J0000000000000000000USER";
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO users (id, username, password_hash, created_at) VALUES ('{user}', 'alex', 'x', '{ts}')"
-    ))
+    )))
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO images (hash, bytes, created_at) VALUES ('h', x'00', '{ts}')"
-    ))
+    )))
     .execute(&pool)
     .await
     .unwrap();
@@ -207,7 +207,7 @@ async fn profile_of(app: &TestApp, token: &str, id: pulse_protocol::ids::UserId)
 }
 
 async fn exec(app: &TestApp, q: &str, binds: &[&str]) {
-    let mut query = sqlx::query(q);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(q));
     for b in binds {
         query = query.bind(*b);
     }

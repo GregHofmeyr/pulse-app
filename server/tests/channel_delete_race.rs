@@ -50,7 +50,7 @@ async fn create_channel(w: &World, kind: &str) -> Channel {
 }
 
 async fn count(app: &TestApp, q: &str, id: ChannelId) -> i64 {
-    sqlx::query_scalar(q)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(q))
         .bind(id.to_string())
         .fetch_one(&app.db)
         .await
@@ -80,7 +80,7 @@ async fn racing<F: std::future::Future<Output = reqwest::Response>>(
     req: F,
 ) -> (u16, String) {
     let mut del = pulse_server::db::begin_write(&app.db).await.unwrap();
-    sqlx::query(delete)
+    sqlx::query(sqlx::AssertSqlSafe(delete))
         .bind(pulse_server::db::now())
         .bind(channel.to_string())
         .execute(&mut *del)

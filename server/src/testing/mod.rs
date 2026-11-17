@@ -245,7 +245,11 @@ async fn spawn_inner(mut cfg: Config, dir: tempfile::TempDir, with_clips: bool) 
 /// One number from the test database (a `COUNT(*)`), for tests outside this crate that have no
 /// `sqlx` of their own.
 pub async fn count(app: &TestApp, sql: &str) -> i64 {
-    sqlx::query_scalar(sql).fetch_one(&app.db).await.unwrap()
+    // SAFE: test-only helper; the SQL is written by the test itself, never by a request.
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
 }
 
 pub async fn invite(app: &TestApp) -> String {
