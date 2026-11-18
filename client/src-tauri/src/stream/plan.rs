@@ -18,7 +18,7 @@ pub enum Capture {
 pub enum Sound {
     /// The shared window's app (a screen share treats it as `Everything`).
     App,
-    /// Everything except Pulse.
+    /// Everything except Pulse and Discord (#458).
     Everything,
 }
 
@@ -30,7 +30,7 @@ pub enum Tier {
     App,
     /// The app, plus processes of its family that are playing (same exe, its launcher).
     Related,
-    /// Everything except Pulse, as chosen (or a screen share).
+    /// Everything except Pulse and Discord, as chosen (or a screen share).
     Everything,
     /// This app was chosen but nobody could be found: everything except Pulse and the
     /// always-on apps in `SKIP_ALWAYS_ON`.
@@ -70,6 +70,9 @@ pub const SKIP_ALWAYS_ON: &[&str] = &[
     "discordptb.exe",
     "discordcanary.exe",
 ];
+
+/// Discord, which Everything leaves out with Pulse (#458): a call on both apps would otherwise carry its voices.
+const DISCORD: &[&str] = &["discord.exe", "discordptb.exe", "discordcanary.exe"];
 
 /// Shells and system hosts: never an app's "launcher". Capturing one (tree mode) would take
 /// every app it started.
@@ -218,13 +221,18 @@ fn trees(roots: &[u32], procs: &[Proc]) -> HashSet<u32> {
 
 /// `pid` or one of its ancestors is an always-on app (Spotify's helpers play its sound).
 fn always_on(pid: u32, procs: &[Proc]) -> bool {
+    ancestor_named(pid, procs, SKIP_ALWAYS_ON)
+}
+
+/// `pid` or one of its ancestors is one of `list`.
+fn ancestor_named(pid: u32, procs: &[Proc], list: &[&str]) -> bool {
     let mut at = pid;
     // bounded: a parent cycle can't spin
     for _ in 0..=procs.len() {
         let Some(p) = procs.iter().find(|p| p.pid == at) else {
             return false;
         };
-        if named_in(&p.exe, SKIP_ALWAYS_ON) {
+        if named_in(&p.exe, list) {
             return true;
         }
         if p.parent == 0 || p.parent == p.pid {
@@ -252,6 +260,7 @@ fn per_session(i: &PlanInput, skip: bool) -> Vec<Capture> {
             .iter()
             .filter(|p| !i.pulse_pids.contains(p))
             .filter(|&&p| !(skip && always_on(p, i.procs)))
+            .filter(|&&p| !is_discord(p, i.procs))
             .filter(|&&p| {
                 let tree = trees(&[p], i.procs);
                 !tree.iter().any(|t| {
@@ -273,13 +282,19 @@ pub fn is_frame_host(exe: &str) -> bool {
     named_in(exe, &[FRAME_HOST])
 }
 
+/// `pid` is Discord, or one of its processes.
+fn is_discord(pid: u32, procs: &[Proc]) -> bool {
+    ancestor_named(pid, procs, DISCORD)
+}
+
 fn everything(i: &PlanInput) -> Vec<Capture> {
-    if i.pulse_roots.iter().all(|&p| p == i.own_pid) {
+    let discord = i.session_pids.iter().any(|&p| is_discord(p, i.procs));
+    if !discord && i.pulse_roots.iter().all(|&p| p == i.own_pid) {
         // Alone: exclude our own tree, capture the rest of the machine.
         return vec![Capture::Exclude(i.own_pid)];
     }
-    // EXCLUDE takes one process tree, so excluding ours would capture the other instance's
-    // playback. Follow each non-Pulse audio process instead.
+    // EXCLUDE takes one process tree, so excluding ours would capture the other instance's (or
+    // Discord's) playback. Follow each audio process but Pulse and Discord instead.
     per_session(i, false)
 }
 
@@ -677,6 +692,35 @@ mod tests {
         assert_eq!(
             c.plan(Source::Screen, Sound::Everything).0,
             vec![Include(60)]
+        );
+    }
+
+    #[test]
+    fn everything_leaves_out_discord_when_it_plays() {
+        // #458: "Everything except Pulse and Discord". Discord's voice runs in a child process.
+        let mut c = Case::new(&[41, 81]);
+        c.procs.push(p(80, 2, r"C:\Discord\Discord.exe"));
+        c.procs.push(p(81, 80, r"C:\Discord\Discord.exe"));
+        assert_eq!(
+            c.plan(Source::Screen, Sound::Everything),
+            (vec![Include(41)], Tier::Everything)
+        );
+        // silent Discord: the one exclude, so sound that starts later is in at once
+        c.sessions = vec![41];
+        assert_eq!(
+            c.plan(Source::Screen, Sound::Everything).0,
+            vec![Exclude(10)]
+        );
+    }
+
+    #[test]
+    fn the_last_resort_leaves_out_discord_too() {
+        let mut c = Case::new(&[70, 81]);
+        c.procs.push(p(80, 2, r"C:\DiscordPTB\DiscordPTB.exe"));
+        c.procs.push(p(81, 80, r"C:\DiscordPTB\helper.exe"));
+        assert_eq!(
+            c.plan(window(&[]), Sound::App),
+            (vec![Include(70)], Tier::LastResort)
         );
     }
 

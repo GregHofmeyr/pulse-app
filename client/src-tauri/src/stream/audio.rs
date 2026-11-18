@@ -193,6 +193,8 @@ pub struct Probe {
     pub playing: bool,
     /// The app's loudest session peak now, 0–100 (#229: the picker's level meter).
     pub level: u8,
+    /// The app's icon (#458), a `data:image/png` URL; none where it can't be read (and off Windows).
+    pub icon: Option<String>,
 }
 
 /// While live: which source is heard, and whether anything has been since it began.
@@ -537,11 +539,12 @@ fn plan_now(target: &Target, sound: Sound) -> (Vec<Capture>, Tier) {
     let pulse_pids = procs::pulse_pids();
     let pulse_roots = procs::pulse_roots();
     let session_pids = procs::audio_session_pids();
-    // the process table (one open per process) only where a tier reads it
+    // the process table (one open per process) only where a tier reads it; Everything tells Discord apart by exe
+    // name alone (#458)
     let all = if target.window && sound == Sound::App {
         procs::processes()
     } else {
-        Vec::new()
+        procs::process_names()
     };
     capture_plan(&PlanInput {
         own_pid: std::process::id(),
@@ -572,11 +575,17 @@ pub fn probe(window: &WindowRef) -> Probe {
         source: target.source(),
         sound: Sound::App,
     });
+    let icon = target
+        .owners
+        .first()
+        .and_then(|o| all.iter().find(|p| p.pid == *o))
+        .and_then(|p| procs::app_icon(&p.exe));
     Probe {
         identified: !target.owners.is_empty(),
         app: target.app,
         playing: !playing.is_empty(),
         level: level_percent(&playing, &sessions),
+        icon,
     }
 }
 

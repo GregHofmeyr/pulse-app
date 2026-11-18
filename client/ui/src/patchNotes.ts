@@ -44,6 +44,8 @@ export const patchNotes: PatchNotes = {
     'The Sunset card theme\'s orange is brighter, and secondary text on dark cards is a little lighter',
     'A tidier message box: attach files, wheels, polls, plans, game invites and Send later all live in the + menu',
     'Emoji and GIFs share one picker with tabs, and it opens on the one you used last',
+    'Go Live\'s sound picker is a proper dropdown that shows the app by name and icon, with a live level meter',
+    'Streaming "everything" leaves out Discord as well as Pulse, so a call there isn\'t carried into your stream',
   ],
   soon: [
     'Private servers you join by invite',

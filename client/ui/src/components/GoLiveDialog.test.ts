@@ -30,6 +30,7 @@ vi.mock('../lib/stream/stream.svelte', () => ({
 
 import GoLiveDialog from './GoLiveDialog.svelte'
 import { app, resetState } from '../lib/store.svelte'
+import { chooseOption, openSelect, selectLabels, selectTrigger, selectValue } from './selectHarness'
 
 const LOUNGE = { id: 'c1', server_id: 'S1', kind: 'voice' as const, name: 'Lounge', position: 0 }
 const DM = { id: 'DM1', server_id: null, kind: 'dm' as const, name: null, position: 0 }
@@ -154,16 +155,17 @@ describe('GoLiveDialog capture ownership', () => {
     unmount(c)
   })
 
-  describe('sound choice', () => {
+  describe('sound choice (#458: the Pulse dropdown)', () => {
     const settle = async () => {
       for (let i = 0; i < 5; i++) await Promise.resolve()
       flushSync()
     }
-    const radios = () => [...document.querySelectorAll<HTMLInputElement>('input[name="sound"]')]
-    const text = (r: HTMLInputElement) => r.closest('label')!.textContent!.replace(/\s+/g, ' ').trim()
-    const labels = () => radios().map(text)
-    const choice = (t: string) => radios().find((r) => text(r).startsWith(t))!
+    const trigger = () => selectTrigger('Sound')!
+    const labels = () => selectLabels(trigger())
+    const current = () => selectValue(trigger())
+    const option = (v: string) => openSelect(trigger()).querySelector<HTMLElement>(`[role=option][data-value="${v}"]`)!
     const open = (p: object = picked()) => mount(GoLiveDialog, { target: document.body, props: { channelId: 'c1', picked: p as never, onClose: () => {} } })
+    const ICON = 'data:image/png;base64,AAAA'
 
     beforeEach(() => {
       localStorage.clear()
@@ -172,56 +174,83 @@ describe('GoLiveDialog capture ownership', () => {
       live.goLive = async () => {}
     })
 
-    it('a_window_share_offers_this_app_everything_and_no_sound_defaulting_to_this_app', async () => {
-      live.probe = { identified: true, app: 'Game', playing: false, level: 0 }
+    it('a_window_share_offers_the_app_by_name_everything_and_no_sound_defaulting_to_the_app', async () => {
+      live.probe = { identified: true, app: 'Space Game', playing: false, level: 0, icon: ICON }
       const c = open({ ...picked(), hwnd: 1312 })
       await settle()
-      expect(document.querySelector('fieldset:has(input[name="sound"]) legend')!.textContent).toBe('Sound')
-      expect(labels()).toEqual(['This app Not playing sound right now', 'Everything except Pulse', 'No sound'])
-      expect(choice('This app').checked).toBe(true)
-      expect(choice('This app').disabled).toBe(false)
+      expect(document.querySelector('input[name="sound"]')).toBeNull() // no native radios
+      expect(document.querySelector('.sound-row .legend')!.textContent).toBe('Sound')
+      expect(labels()).toEqual(['Space Game', 'Everything except Pulse and Discord', 'No sound'])
+      expect(current()).toBe('app')
       expect(live.probed[0]).toEqual({ hwnd: 1312, title: 'Game' })
       unmount(c)
     })
 
-    it('a_playing_app_says_so', async () => {
-      live.probe = { identified: true, app: 'Game', playing: true, level: 40 }
+    it('the_app_row_shows_its_icon_and_the_others_theirs', async () => {
+      live.probe = { identified: true, app: 'Space Game', playing: false, level: 0, icon: ICON }
       const c = open()
       await settle()
-      expect(labels()[0]).toBe('This app Playing sound')
+      expect(trigger().querySelector<HTMLImageElement>('img.app-icon')!.getAttribute('src')).toBe(ICON)
+      expect(option('everything').querySelector('svg')).not.toBeNull()
+      expect(option('off').querySelector('svg')).not.toBeNull()
       unmount(c)
     })
 
-    it('a_playing_app_shows_its_level_and_a_silent_one_no_meter', async () => {
-      live.probe = { identified: true, app: 'Game', playing: true, level: 40 }
+    it('without an icon the app row falls back to a window icon, and without a name to This app', async () => {
+      live.probe = { identified: true, app: null, playing: false, level: 0, icon: null }
       const c = open()
       await settle()
-      const fill = document.querySelector<HTMLElement>('[data-sound-level] .fill')!
-      expect(fill.style.transform).toBe('scaleX(0.4)')
+      expect(trigger().querySelector('img')).toBeNull()
+      expect(trigger().querySelector('svg')).not.toBeNull()
+      expect(labels()[0]).toBe('This app')
       unmount(c)
-      live.probe = { identified: true, app: 'Game', playing: false, level: 0 }
+    })
+
+    it('the_selected_app_row_has_a_live_level_meter', async () => {
+      live.probe = { identified: true, app: 'Space Game', playing: true, level: 40 }
+      const c = open()
+      await settle()
+      const meter = trigger().querySelector<HTMLElement>('[data-sound-level]')!
+      expect(meter.getAttribute('aria-label')).toBe('Playing sound')
+      expect(meter.querySelector<HTMLElement>('.fill')!.style.transform).toBe('scaleX(0.4)')
+      // in the list, on the selected row only
+      expect(option('app').querySelector('[data-sound-level]')).not.toBeNull()
+      expect(option('everything').querySelector('[data-sound-level]')).toBeNull()
+      unmount(c)
+      live.probe = { identified: true, app: 'Space Game', playing: false, level: 0 }
       const c2 = open()
       await settle()
-      expect(document.querySelector('[data-sound-level]')).toBeNull()
+      expect(trigger().querySelector('[data-sound-level]')!.getAttribute('aria-label')).toBe('Not playing sound right now')
+      expect(trigger().querySelector<HTMLElement>('[data-sound-level] .fill')!.style.transform).toBe('scaleX(0)')
       unmount(c2)
     })
 
-    it('this_app_is_greyed_out_only_when_its_app_cannot_be_identified', async () => {
+    it('no meter once another row is picked', async () => {
+      live.probe = { identified: true, app: 'Space Game', playing: true, level: 40 }
+      const c = open()
+      await settle()
+      chooseOption(trigger(), 'everything')
+      expect(current()).toBe('everything')
+      expect(trigger().querySelector('[data-sound-level]')).toBeNull()
+      unmount(c)
+    })
+
+    it('the_app_row_is_disabled_with_the_reason_when_its_app_cannot_be_identified', async () => {
       live.probe = { identified: false, app: null, playing: false, level: 0 }
       const c = open()
       await settle()
-      const app = choice('This app')
-      expect(app.disabled).toBe(true)
-      expect(app.closest('label')!.getAttribute('data-tip')).toBe("Can't tell which app owns this window")
-      expect(choice('Everything except Pulse').checked).toBe(true)
+      const row = option('app')
+      expect(row.getAttribute('aria-disabled')).toBe('true')
+      expect(row.getAttribute('data-tip')).toBe("Can't tell which app owns this window")
+      expect(current()).toBe('everything')
       unmount(c)
     })
 
     it('a_screen_share_offers_everything_and_no_sound', async () => {
       const c = open({ ...picked(), surface: 'monitor' })
       await settle()
-      expect(labels()).toEqual(['Everything except Pulse', 'No sound'])
-      expect(choice('Everything except Pulse').checked).toBe(true)
+      expect(labels()).toEqual(['Everything except Pulse and Discord', 'No sound'])
+      expect(current()).toBe('everything')
       expect(live.probed).toEqual([]) // nothing to identify
       unmount(c)
     })
@@ -230,17 +259,15 @@ describe('GoLiveDialog capture ownership', () => {
       live.probe = { identified: true, app: 'Game', playing: false, level: 0 }
       const c = open()
       await settle()
-      choice('No sound').click()
-      flushSync()
+      chooseOption(trigger(), 'off')
       ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Go Live')!.click()
       await settle()
       expect(live.settings).toEqual([expect.objectContaining({ audio: false, sound: 'app' })])
       unmount(c)
       const c2 = open()
       await settle()
-      expect(choice('No sound').checked).toBe(true) // remembered
-      choice('Everything except Pulse').click()
-      flushSync()
+      expect(current()).toBe('off') // remembered
+      chooseOption(trigger(), 'everything')
       ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Go Live')!.click()
       await settle()
       expect(live.settings[1]).toEqual(expect.objectContaining({ audio: true, sound: 'everything' }))
