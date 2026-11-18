@@ -617,6 +617,11 @@ pub fn report_load_failure(shared: &Shared, err: &str) {
 /// Strong's model can't change threads (DeepFilterNet's tract plan isn't `Send`), so it lives on
 /// its own worker thread, which loads it and cleans blocks there. This handle round-trips each
 /// block; dropping it ends the worker and frees the model.
+/// The longest a 10 ms block waits for the Strong worker (#353): ten blocks, far past any healthy turn (a few ms) or a
+/// CPU spike the overload check steps down from. Past it the worker counts as wedged: the block passes raw and the
+/// chain falls back to Standard with a note, instead of the mic going silent for good.
+const STRONG_WEDGED: Duration = Duration::from_millis(100);
+
 pub struct StrongWorker {
     tx: std_mpsc::Sender<Vec<f32>>,
     rx: std_mpsc::Receiver<(Vec<f32>, Option<f32>, Option<f32>)>,
@@ -636,13 +641,19 @@ impl Denoiser for StrongWorker {
             self.level = None;
             return None;
         }
-        match self.rx.recv() {
+        match self.rx.recv_timeout(STRONG_WEDGED) {
             Ok((out, p, level)) => {
                 block.copy_from_slice(&out);
                 self.level = level;
                 p
             }
-            Err(_) => {
+            Err(e) => {
+                if e == std_mpsc::RecvTimeoutError::Timeout {
+                    tracing::warn!(
+                        wait_ms = STRONG_WEDGED.as_millis() as u64,
+                        "noise suppression: the Strong worker stopped answering; passing audio through"
+                    );
+                }
                 self.dead = true;
                 self.level = None;
                 None
@@ -1682,6 +1693,36 @@ mod tests {
         w.process(&mut b);
         assert!(w.failed());
         assert_eq!(b, vec![0.3f32; FRAME], "audio passes through untouched");
+    }
+
+    /// #353: a worker that never answers (wedged, still alive) doesn't hold the mic for good: the block passes raw
+    /// after [`STRONG_WEDGED`] and the worker counts as failed (the chain then falls back to Standard).
+    #[test]
+    fn wedged_strong_worker_times_out_and_passes_audio() {
+        let (tx, _worker_in) = std::sync::mpsc::channel::<Vec<f32>>(); // alive, never answers
+        let (_out_tx, rx) = std::sync::mpsc::channel();
+        let mut w = StrongWorker {
+            tx,
+            rx,
+            dead: false,
+            level: Some(0.5),
+            lead: 2,
+        };
+        let mut b = vec![0.3f32; FRAME];
+        let started = Instant::now();
+        w.process(&mut b);
+        let waited = started.elapsed();
+        assert!(
+            waited >= STRONG_WEDGED && waited < STRONG_WEDGED * 10,
+            "{waited:?}"
+        );
+        assert!(w.failed());
+        assert_eq!(w.decision_level(), None);
+        assert_eq!(b, vec![0.3f32; FRAME], "audio passes through untouched");
+        // from then on it passes straight through, no waiting
+        let started = Instant::now();
+        w.process(&mut b);
+        assert!(started.elapsed() < STRONG_WEDGED);
     }
 
     /// A worker that dies mid-call passes the raw block: the gate must judge that block's own

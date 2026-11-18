@@ -1854,12 +1854,25 @@ pub struct AudioDevices {
     outputs: Vec<DeviceInfo>,
 }
 
-/// async: runs on the runtime, not the UI thread (device enumeration can block).
+/// How long Settings waits for the system to list its audio devices (#353): enumeration can block for seconds (a
+/// Bluetooth headset waking, many virtual endpoints).
+const LIST_DEVICES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Device enumeration can block, so it runs on a blocking thread (never a runtime worker or the UI thread), and the
+/// page waits at most [`LIST_DEVICES_TIMEOUT`] for it (a list still stuck then finishes on its own and is dropped).
 #[tauri::command]
-pub async fn list_audio_devices() -> AudioDevices {
-    AudioDevices {
+pub async fn list_audio_devices() -> Result<AudioDevices, String> {
+    let list = tokio::task::spawn_blocking(|| AudioDevices {
         inputs: crate::voice::devices::list_inputs(),
         outputs: crate::voice::devices::list_outputs(),
+    });
+    match tokio::time::timeout(LIST_DEVICES_TIMEOUT, list).await {
+        Ok(Ok(d)) => Ok(d),
+        Ok(Err(e)) => Err(format!("couldn't list audio devices: {e}")),
+        Err(_) => {
+            tracing::warn!("voice: listing audio devices timed out");
+            Err("the system took too long to list audio devices".into())
+        }
     }
 }
 
