@@ -575,3 +575,48 @@ async fn the_queue_takes_anyone_in_the_call_and_a_card_a_message_showed() {
     next(&mut w.rx).await;
     assert!(w.app.voice.watch.of(w.lounge.id).is_none());
 }
+
+#[tokio::test]
+async fn twitch_vods_channels_and_clips_play_and_queue() {
+    let mut w = world().await;
+    let r = w
+        .app
+        .http
+        .put(w.app.url(&w.path()))
+        .bearer_auth(&w.alex.1)
+        .json(&json!({ "source": "twitch_channel", "video_id": "alex_live", "title": "Live" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let p: WatchParty = r.json().await.unwrap();
+    assert_eq!(
+        (p.source, p.video_id.as_str()),
+        (
+            pulse_protocol::rest::WatchSource::TwitchChannel,
+            "alex_live"
+        )
+    );
+    changed(&mut w.rx).await;
+    for (source, id) in [("twitch_video", "123"), ("twitch_clip", "FunnyClip-abc_12")] {
+        let a = json!({"action": "enqueue", "source": source, "video_id": id, "title": "x"});
+        assert_eq!(w.act(&w.sam.1, a).await, 204);
+        changed(&mut w.rx).await;
+    }
+    // ids checked per source: a YouTube id isn't a VOD, a login isn't uppercase
+    for (source, id) in [
+        ("twitch_video", V),
+        ("twitch_channel", "Alex"),
+        ("twitch_clip", "a/b"),
+        ("youtube", "123"),
+    ] {
+        let a = json!({"action": "enqueue", "source": source, "video_id": id, "title": "x"});
+        assert_eq!(w.act(&w.sam.1, a).await, 400, "{source} {id}");
+    }
+    assert_eq!(w.act(&w.alex.1, json!({"action": "next"})).await, 204);
+    let p = changed(&mut w.rx).await;
+    assert_eq!(
+        (p.source, p.video_id.as_str(), p.queue.len()),
+        (pulse_protocol::rest::WatchSource::TwitchVideo, "123", 1)
+    );
+}
