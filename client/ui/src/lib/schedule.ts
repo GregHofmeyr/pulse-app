@@ -2,9 +2,14 @@
 // viewer's own time, turned into an instant), the custom time's check, how a time reads, and list order.
 import type { MessageReminder } from './protocol/MessageReminder'
 import type { ScheduledMessage } from './protocol/ScheduledMessage'
+import { schedule_limits } from './protocol/limits'
 
-/** As the server's `schedule_limits` (protocol/src/rest.rs). */
-export const SCHEDULE_LIMITS = { maxScheduled: 50, maxReminders: 100, maxDaysAhead: 365 } as const
+/** The server's `schedule_limits` (generated into protocol/limits.ts, #415). */
+export const SCHEDULE_LIMITS = {
+  maxScheduled: schedule_limits.MAX_SCHEDULED,
+  maxReminders: schedule_limits.MAX_REMINDERS,
+  maxDaysAhead: schedule_limits.MAX_DAYS_AHEAD,
+} as const
 
 export type Pick = { label: string; at: string }
 

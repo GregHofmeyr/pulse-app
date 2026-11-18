@@ -5,8 +5,9 @@
 import type { DmLayout } from './protocol/DmLayout'
 import type { DmCategory } from './protocol/DmCategory'
 import type { DmPlacement } from './protocol/DmPlacement'
+import { dm_layout_limits } from './protocol/limits'
 
-export const DM_CATEGORY_CHARS = 32
+export const DM_CATEGORY_CHARS = dm_layout_limits.NAME_CHARS
 
 export type DmSections<T> = {
   notes: T[]
@@ -36,8 +37,8 @@ export const placementOf = (layout: DmLayout, channelId: string): DmPlacement | 
   layout.placements.find((p) => p.channel_id === channelId) ?? null
 
 /** Names no category may have (ignoring case, and "..." for "…"): the Move to category flyout's own entries (#419).
- *  The server's `dm_layout_limits::RESERVED_NAMES`, which refuses them too. */
-export const RESERVED_CATEGORY_NAMES = ['New category…', 'Remove from category']
+ *  The server's `dm_layout_limits::RESERVED_NAMES` (generated, #415), which refuses them too. */
+export const RESERVED_CATEGORY_NAMES: readonly string[] = dm_layout_limits.RESERVED_NAMES
 
 /** Whether `name` is one of [RESERVED_CATEGORY_NAMES]. */
 export function categoryNameReserved(name: string): boolean {

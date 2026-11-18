@@ -3,9 +3,17 @@
 import type { Plan } from './protocol/Plan'
 import type { PlanForecast } from './protocol/PlanForecast'
 import type { Rsvp } from './protocol/Rsvp'
+import { plan_limits } from './protocol/limits'
 
-/** As the server's `plan_limits` (protocol/src/rest.rs). */
-export const PLAN_LIMITS = { titleChars: 100, placeChars: 100, noteChars: 500, forecastDays: 16, remindMinutes: 60, maxHoursLong: 7 * 24 } as const
+/** The server's `plan_limits` (generated into protocol/limits.ts, #415). */
+export const PLAN_LIMITS = {
+  titleChars: plan_limits.TITLE_CHARS,
+  placeChars: plan_limits.PLACE_CHARS,
+  noteChars: plan_limits.NOTE_CHARS,
+  forecastDays: plan_limits.FORECAST_DAYS,
+  remindMinutes: plan_limits.REMIND_MINUTES,
+  maxHoursLong: plan_limits.MAX_HOURS_LONG,
+} as const
 
 /** The answers, in the card's order, with their buttons' words. */
 export const RSVPS: readonly { value: Rsvp; label: string }[] = [
