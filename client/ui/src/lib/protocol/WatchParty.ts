@@ -39,6 +39,11 @@ everyone_controls: boolean,
  */
 viewers: Array<UserId>, 
 /**
- * What plays next, in order.
+ * What plays next, in order. It goes with the party: ending the party clears it.
  */
-queue: Array<WatchPartyItem>, };
+queue: Array<WatchPartyItem>, 
+/**
+ * Who put the current video on (#464): its starter, or whoever queued it. They may skip it, as a controller may.
+ * Absent from a party that predates it.
+ */
+added_by?: UserId, };

@@ -2074,6 +2074,7 @@ mod tests {
             everyone_controls: false,
             viewers: vec![u],
             queue: vec![],
+            added_by: None,
         };
         let changed = Event::WatchPartyChanged {
             party,
@@ -2090,7 +2091,11 @@ mod tests {
             serde_json::from_str(r#"{"action":"seek","position_ms":90000}"#).unwrap();
         assert_eq!(a, WatchPartyAction::Seek { position_ms: 90000 });
         let a: WatchPartyAction = serde_json::from_str(r#"{"action":"next"}"#).unwrap();
-        assert_eq!(a, WatchPartyAction::Next);
+        assert_eq!(a, WatchPartyAction::Next { from: None });
+        // an old snapshot without `added_by` still reads
+        let mut old = v["d"]["party"].clone();
+        old.as_object_mut().unwrap().remove("added_by");
+        assert!(serde_json::from_value::<WatchParty>(old).is_ok());
         let a: WatchPartyAction =
             serde_json::from_str(r#"{"action":"load","video_id":"dQw4w9WgXcQ"}"#).unwrap();
         assert!(matches!(a, WatchPartyAction::Load { title: None, .. }));

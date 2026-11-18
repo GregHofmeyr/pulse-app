@@ -1731,12 +1731,17 @@ pub struct WatchParty {
     pub everyone_controls: bool,
     /// Who has the player open, in the order they joined it (the host passes to the next of them).
     pub viewers: Vec<UserId>,
-    /// What plays next, in order.
+    /// What plays next, in order. It goes with the party: ending the party clears it.
     #[serde(default)]
     pub queue: Vec<WatchPartyItem>,
+    /// Who put the current video on (#464): its starter, or whoever queued it. They may skip it, as a controller may.
+    /// Absent from a party that predates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub added_by: Option<UserId>,
 }
 
-/// A video waiting in a watch party's queue (#384).
+/// A video waiting in a watch party's queue (#384, #464).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct WatchPartyItem {
     pub video_id: String,
@@ -1744,6 +1749,10 @@ pub struct WatchPartyItem {
     #[ts(optional)]
     pub title: Option<String>,
     pub added_by: UserId,
+    /// The video's thumbnail, from its link card when the server has one (a `link_thumb` media hash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub thumb: Option<EmbedThumb>,
 }
 
 /// `PUT /channels/{id}/watch-party` (#384): start a watch party of a YouTube video (or, if one is on and you may
@@ -1775,7 +1784,7 @@ pub enum WatchPartyAction {
         #[serde(default)]
         title: Option<String>,
     },
-    /// Add a video to the end of the queue (anyone watching may).
+    /// Add a video to the end of the queue (anyone in the call may, #464).
     Enqueue {
         video_id: String,
         #[serde(default)]
@@ -1785,8 +1794,24 @@ pub enum WatchPartyAction {
     Unqueue {
         index: u32,
     },
-    /// The queue's next video now (or, with none, stop at the end).
-    Next,
+    /// Move the queue's `index`th video to `to` (#464; whoever may control, or whoever added it). A `to` past the end
+    /// is the end.
+    Move {
+        index: u32,
+        to: u32,
+    },
+    /// Play the queue's `index`th video now, from the start (#464; whoever may control).
+    PlayNow {
+        index: u32,
+    },
+    /// The queue's next video now (or, with none, stop at the end): a skip, or the player reaching the end. Whoever
+    /// may control may, and whoever put the current video on. With `from`, only while `from` is still the current
+    /// video: two players reaching the end at once move it on once.
+    Next {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        from: Option<String>,
+    },
     /// "Let everyone control" (the host only).
     EveryoneControls {
         on: bool,
