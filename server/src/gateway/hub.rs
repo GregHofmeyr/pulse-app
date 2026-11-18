@@ -220,6 +220,11 @@ pub struct Hub {
 struct Inner {
     next: AtomicU64,
     conns: Mutex<HashMap<ConnId, Conn>>,
+    /// Every connection whose socket is still open, by its user: registered and not yet unregistered. The hub drops
+    /// connections from `conns` itself (a logout, too slow, shutdown) before their sockets finish closing, so for a
+    /// moment a user can have open sockets and no connection (#449, [`Hub::is_closing`]). Locked only while `conns` is
+    /// held (after it).
+    open: Mutex<HashMap<ConnId, UserId>>,
     /// What each connection was last told about each person's presence, by (person, connection):
     /// per connection, not per viewer, because a viewer's new device starts from its own Ready
     /// while their other devices still show what they were told. Locked only while `conns` is held.
@@ -250,6 +255,11 @@ fn live(conns: &HashMap<ConnId, Conn>, user: UserId) -> (bool, bool) {
     let mut theirs = conns.values().filter(|c| c.user == user).peekable();
     let connected = theirs.peek().is_some();
     (connected, connected && theirs.all(|c| c.idle))
+}
+
+/// See [`Hub::is_closing`].
+fn closing(conns: &HashMap<ConnId, Conn>, open: &HashMap<ConnId, UserId>, user: UserId) -> bool {
+    !conns.values().any(|c| c.user == user) && open.values().any(|u| *u == user)
 }
 
 impl Hub {
@@ -285,6 +295,7 @@ impl Hub {
                 idle: false,
             },
         );
+        self.inner.open.lock().unwrap().insert(id, user);
         Some(Registration { id, rx, kick: krx })
     }
 
@@ -293,6 +304,7 @@ impl Hub {
     pub fn unregister(&self, id: ConnId) {
         let mut conns = self.inner.conns.lock().unwrap();
         let gone = conns.remove(&id);
+        self.inner.open.lock().unwrap().remove(&id);
         self.inner
             .announced
             .lock()
@@ -509,6 +521,14 @@ impl Hub {
             .any(|c| c.user == user)
     }
 
+    /// `user` has no connection left but some of their sockets are still closing: the hub dropped them all at once
+    /// (a logout, a restart) and not every one has been unregistered yet. The last of them to go records last-seen
+    /// and announces them offline (#449); until then nothing about them is announced.
+    pub fn is_closing(&self, user: UserId) -> bool {
+        let conns = self.inner.conns.lock().unwrap();
+        closing(&conns, &self.inner.open.lock().unwrap(), user)
+    }
+
     pub fn connections_for(&self, user: UserId) -> usize {
         self.inner
             .conns
@@ -723,6 +743,11 @@ impl Hub {
         };
         let now = crate::db::now();
         let mut conns = self.inner.conns.lock().unwrap();
+        if closing(&conns, &self.inner.open.lock().unwrap(), user) {
+            // Their sockets are still closing (#449): announced now, they'd go offline with the last-seen from
+            // before, and again once the last socket records it. That last one announces.
+            return None;
+        }
         let (connected, idle) = live(&conns, user);
         let mut views: HashMap<UserId, ServerFrame> = HashMap::new();
         let mut to: HashMap<ConnId, ServerFrame> = HashMap::new();

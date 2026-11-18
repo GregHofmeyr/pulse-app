@@ -138,6 +138,14 @@ async fn disconnected(s: &AppState, conn: ConnId, me: UserId, since: &str) {
         }
         return; // still connected elsewhere
     }
+    if s.hub.is_closing(me) {
+        // A logout or restart dropped all their connections at once and another of their sockets is still closing:
+        // the last one records last-seen and announces them offline, once (#449).
+        if was_listening {
+            crate::stage::listening_changed(s, me).await;
+        }
+        return;
+    }
     let _ = sqlx::query(
         "UPDATE users SET last_seen_at = ?
          WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at <= ?)",

@@ -703,6 +703,54 @@ async fn late_offline_after_a_reconnect_is_not_announced() {
 }
 
 #[tokio::test]
+async fn presence_synced_while_a_logout_closes_sockets_goes_offline_once() {
+    use pulse_server::gateway::hub::Hub;
+    let app = spawn().await;
+    let (a_id, _) = register(&app, "alex").await;
+    let (b_id, _) = register(&app, "sam").await;
+    let hub = Hub::default();
+    let mut watcher = hub.register(b_id, "w".into());
+    let one = hub.register(a_id, "t".into());
+    let two = hub.register(a_id, "t".into());
+    hub.sync_presence(&app.db, a_id).await;
+    // A logout takes both of alex's connections out of the hub. Before either socket has closed, something else
+    // announces alex (#449: the second socket's sync after its Ready, running late). Last-seen isn't written yet.
+    hub.drop_session("t");
+    assert_eq!(hub.sync_presence(&app.db, a_id).await, None);
+    // The sockets close: the first goes quietly, the last records last-seen and announces.
+    hub.unregister(one.id);
+    assert!(hub.is_closing(a_id));
+    assert_eq!(hub.sync_presence(&app.db, a_id).await, None);
+    let seen = "2026-11-18T10:00:00.000Z";
+    sqlx::query("UPDATE users SET last_seen_at = ? WHERE id = ?")
+        .bind(seen)
+        .bind(a_id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    hub.unregister(two.id);
+    assert!(!hub.is_closing(a_id));
+    hub.sync_presence(&app.db, a_id).await;
+    let mut got = Vec::new();
+    while let Ok(ServerFrame::Event(Event::PresenceChanged {
+        user_id,
+        online,
+        last_seen_at,
+        ..
+    })) = watcher.rx.try_recv()
+    {
+        if user_id == a_id {
+            got.push((online, last_seen_at));
+        }
+    }
+    assert_eq!(
+        got,
+        vec![(true, None), (false, Some(seen.to_string()))],
+        "offline once, with the last-seen the last socket wrote"
+    );
+}
+
+#[tokio::test]
 async fn concurrent_adds_never_exceed_the_group_cap() {
     let app = spawn().await;
     let (_, a) = register(&app, "alex").await;
