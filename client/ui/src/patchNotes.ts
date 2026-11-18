@@ -43,6 +43,7 @@ export const patchNotes: PatchNotes = {
     'Do Not Disturb for someone now also covers their calls (no ringing) and their going live (no notification)',
   ],
   qol: [
+    'Drag a conversation onto one of your categories, Pinned or the main list to move it there',
     'Signing someone out of everything takes effect within seconds, even if their app is open',
     'The Sunset card theme\'s orange is brighter, and secondary text on dark cards is a little lighter',
     'A tidier message box: attach files, wheels, polls, plans, game invites and Send later all live in the + menu',
