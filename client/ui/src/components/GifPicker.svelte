@@ -10,6 +10,7 @@
   // Picking one sends it; the star keeps it in your favourites.
   import { untrack } from 'svelte'
   import Icon from './Icon.svelte'
+  import type { Snippet } from 'svelte'
   import { animatedGif } from '../lib/animate.svelte'
   import { gifLink, gridMedia, masonry } from '../lib/giphy'
   import { gifFavs, isGifFav, loadGifFavs, toggleGifFav } from '../lib/gifs.svelte'
@@ -17,10 +18,12 @@
   import { api, errorText, type GifResult } from '../lib/tauri'
   import type { Gif } from '../lib/protocol/Gif'
 
-  let { onPick, onClose }: {
+  let { onPick, onClose, tabs }: {
     /** `link`: what the message says (the GIF's GIPHY page). */
     onPick: (gif: Gif, link: string) => void
     onClose: () => void
+    /** The Emoji | GIFs tabs above the search (the composer's picker, #461). */
+    tabs?: Snippet
   } = $props()
 
   const NEAR_END_PX = 300
@@ -143,6 +146,7 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="picker" role="dialog" aria-label="GIF picker" tabindex="-1" onkeydown={onKey}>
+  {#if tabs}<div class="tabs">{@render tabs()}</div>{/if}
   <div class="top">
     <input bind:this={searchEl} bind:value={query} class="search input input-sm" type="text" placeholder="Search GIPHY" aria-label="Search GIPHY"
       autocomplete="off" spellcheck="false" maxlength="50" disabled={notSetUp} />
@@ -182,6 +186,7 @@
 <style>
   /* the emoji picker's frame, rail, grid spacing and footer (EmojiPicker.svelte) */
   .picker { width: 360px; height: 420px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line-menu); border-radius: var(--radius-lg); box-shadow: var(--shadow-3); overflow: hidden; color: var(--text); outline: none; }
+  .tabs { display: flex; padding: 10px 10px 0; }
   .top { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
   .search { flex: 1; min-width: 0; }
   .body { flex: 1; min-height: 0; display: flex; }

@@ -19,6 +19,7 @@ import ImageEditDialog from './ImageEditDialog.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { StagedFile } from '../lib/tauri'
+import { plusItem } from './plusMenuHarness'
 
 const file = (id: string, name: string, extra: Partial<StagedFile> = {}): StagedFile => ({
   id, name, size: 1000, content_type: 'image/webp', kind: 'image', width: 400, height: 300, preview: 'data:image/png;base64,AA', ...extra,
@@ -195,7 +196,7 @@ describe('in the composer', () => {
       props: { placeholder: 'Message', draftKey: `K${Math.random()}`, replyingTo: null, onCancelReply: () => {}, onSend: () => {}, onTyping: () => {}, files: true },
     })
     flushSync()
-    button('Attach files').click()
+    plusItem('attach')!.click()
     await settle()
     button('Mark shot.webp as a spoiler').click()
     flushSync()

@@ -18,6 +18,7 @@ import { forgetPollDrafts } from './PollComposer.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { testReady } from '../lib/testReady'
+import { plusItem } from './plusMenuHarness'
 
 let cmp: ReturnType<typeof mount> | undefined
 function show() {
@@ -67,15 +68,11 @@ describe('/poll in the message box', () => {
     expect(invoke).not.toHaveBeenCalledWith('create_poll', expect.anything())
   })
 
-  it('the poll button by the wheel button opens and closes it', () => {
+  it('Poll in the + menu opens it, and the menu closes (#461)', () => {
     show()
-    const btn = document.querySelector<HTMLButtonElement>('button[aria-label="Poll"]')!
-    btn.click()
+    plusItem('poll')!.click()
     flushSync()
     expect(composer()).not.toBeNull()
-    expect(btn.getAttribute('aria-expanded')).toBe('true')
-    btn.click()
-    flushSync()
-    expect(composer()).toBeNull()
+    expect(document.querySelector('[role=menu][aria-label="Add to your message"]')).toBeNull()
   })
 })
