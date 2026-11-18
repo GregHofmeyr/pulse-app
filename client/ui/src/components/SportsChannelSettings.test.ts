@@ -8,6 +8,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import SportsChannelSettings from './SportsChannelSettings.svelte'
+import { chooseOption, selectLabels, selectTrigger, selectValue } from './selectHarness'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { Channel } from '../lib/protocol/Channel'
@@ -43,15 +44,13 @@ describe('SportsChannelSettings', () => {
   it("the owner picks among this server's text channels; none by default", async () => {
     open('U1')
     await settle()
-    const select = document.querySelector<HTMLSelectElement>('select')!
-    expect([...select.options].map((o) => o.textContent)).toEqual(['None (no cards)', '#general', '#sport'])
-    expect(select.value).toBe('')
-    select.value = 'SPORT'
-    select.dispatchEvent(new Event('change', { bubbles: true }))
+    const select = selectTrigger()!
+    expect(selectLabels(select)).toEqual(['None (no cards)', '#general', '#sport'])
+    expect(selectValue(select)).toBe('')
+    chooseOption(select, 'SPORT')
     await settle()
     expect(invoke).toHaveBeenCalledWith('set_sports_channel', { serverId: 'S1', channelId: 'SPORT', leagues: null })
-    select.value = ''
-    select.dispatchEvent(new Event('change', { bubbles: true }))
+    chooseOption(select, '')
     await settle()
     expect(invoke).toHaveBeenLastCalledWith('set_sports_channel', { serverId: 'S1', channelId: null, leagues: null })
   })
@@ -60,7 +59,7 @@ describe('SportsChannelSettings', () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'sports_channel' ? { channel_id: 'GENERAL', leagues: null } : undefined))
     open('U9')
     await settle()
-    expect(document.querySelector('select')).toBeNull()
+    expect(selectTrigger()).toBeNull()
     expect(document.body.textContent).toContain('Cards go to #general.')
     expect(document.querySelector('[data-league]')).toBeNull()
   })

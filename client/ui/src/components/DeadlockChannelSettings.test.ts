@@ -8,6 +8,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import DeadlockChannelSettings from './DeadlockChannelSettings.svelte'
+import { chooseOption, selectLabels, selectTrigger, selectValue } from './selectHarness'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { Channel } from '../lib/protocol/Channel'
@@ -49,12 +50,11 @@ describe('DeadlockChannelSettings', () => {
   it('none by default; picking a channel shows the kinds, each switchable', async () => {
     open('U1')
     await settle()
-    const select = document.querySelector<HTMLSelectElement>('select')!
-    expect([...select.options].map((o) => o.textContent)).toEqual(['None (no cards)', '#general'])
-    expect(select.value).toBe('')
+    const select = selectTrigger()!
+    expect(selectLabels(select)).toEqual(['None (no cards)', '#general'])
+    expect(selectValue(select)).toBe('')
     expect(document.querySelector('[data-kind]')).toBeNull()
-    select.value = 'GENERAL'
-    select.dispatchEvent(new Event('change', { bubbles: true }))
+    chooseOption(select, 'GENERAL')
     await settle()
     expect(invoke).toHaveBeenCalledWith('set_deadlock_channel', { serverId: 'S1', request: { channel_id: 'GENERAL' } })
     const patch = document.querySelector<HTMLInputElement>('[data-kind="patch_notes"]')!
@@ -69,7 +69,7 @@ describe('DeadlockChannelSettings', () => {
     stored.channel_id = 'GENERAL'
     open('U9')
     await settle()
-    expect(document.querySelector('select')).toBeNull()
+    expect(selectTrigger()).toBeNull()
     expect(document.body.textContent).toContain('Cards go to #general.')
   })
 })

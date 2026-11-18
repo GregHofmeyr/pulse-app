@@ -8,6 +8,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import AchievementsChannelSettings from './AchievementsChannelSettings.svelte'
+import { chooseOption, selectLabels, selectTrigger, selectValue } from './selectHarness'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { Channel } from '../lib/protocol/Channel'
@@ -43,15 +44,13 @@ describe('AchievementsChannelSettings', () => {
   it("the owner picks among this server's text channels; none by default", async () => {
     open('U1')
     await settle()
-    const select = document.querySelector<HTMLSelectElement>('select')!
-    expect([...select.options].map((o) => o.textContent)).toEqual(['None (no cards)', '#general', '#memes'])
-    expect(select.value).toBe('')
-    select.value = 'MEMES'
-    select.dispatchEvent(new Event('change', { bubbles: true }))
+    const select = selectTrigger()!
+    expect(selectLabels(select)).toEqual(['None (no cards)', '#general', '#memes'])
+    expect(selectValue(select)).toBe('')
+    chooseOption(select, 'MEMES')
     await settle()
     expect(invoke).toHaveBeenCalledWith('set_achievements_channel', { serverId: 'S1', channelId: 'MEMES' })
-    select.value = ''
-    select.dispatchEvent(new Event('change', { bubbles: true }))
+    chooseOption(select, '')
     await settle()
     expect(invoke).toHaveBeenLastCalledWith('set_achievements_channel', { serverId: 'S1', channelId: null })
   })
@@ -60,7 +59,7 @@ describe('AchievementsChannelSettings', () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'achievements_channel' ? { channel_id: 'GENERAL' } : undefined))
     open('U9')
     await settle()
-    expect(document.querySelector('select')).toBeNull()
+    expect(selectTrigger()).toBeNull()
     expect(document.body.textContent).toContain('Cards go to #general.')
   })
 })

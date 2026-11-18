@@ -72,4 +72,8 @@ describe('placePopover (#454)', () => {
     expect(placePopover({ left: 2, right: 20, top: 10, bottom: 30 }, { width: 240, height: 50 }, win, 'end').left).toBe(8)
     expect(placePopover({ left: 980, right: 998, top: 10, bottom: 30 }, { width: 240, height: 50 }, win).left).toBe(1000 - 240 - 8)
   })
+  it('prefer above (#455): above when it fits there, else below', () => {
+    expect(placePopover(bin, { width: 200, height: 80 }, win, 'start', 4, 'above').below).toBe(false)
+    expect(placePopover(bin, { width: 200, height: 200 }, win, 'start', 4, 'above').below).toBe(true)
+  })
 })

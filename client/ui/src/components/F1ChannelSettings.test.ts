@@ -8,6 +8,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import F1ChannelSettings from './F1ChannelSettings.svelte'
+import { chooseOption, selectLabels, selectTrigger, selectValue } from './selectHarness'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { f1Status, resetF1 } from '../lib/f1.svelte'
@@ -49,17 +50,15 @@ describe('F1ChannelSettings', () => {
   it("the owner picks among this server's text channels; none by default", async () => {
     open('U1')
     await settle()
-    const select = document.querySelector<HTMLSelectElement>('select')!
-    expect([...select.options].map((o) => o.textContent)).toEqual(['None (no F1 cards)', '#general', '#paddock'])
-    expect(select.value).toBe('')
-    select.value = 'PADDOCK'
-    select.dispatchEvent(new Event('change', { bubbles: true }))
+    const select = selectTrigger()!
+    expect(selectLabels(select)).toEqual(['None (no F1 cards)', '#general', '#paddock'])
+    expect(selectValue(select)).toBe('')
+    chooseOption(select, 'PADDOCK')
     await settle()
     expect(invoke).toHaveBeenCalledWith('set_f1_channel', { serverId: 'S1', channelId: 'PADDOCK', picksClose: null })
     // the banner's copy follows at once
     expect(f1Status.byServer.S1.channel_id).toBe('PADDOCK')
-    select.value = ''
-    select.dispatchEvent(new Event('change', { bubbles: true }))
+    chooseOption(select, '')
     await settle()
     expect(invoke).toHaveBeenLastCalledWith('set_f1_channel', { serverId: 'S1', channelId: null, picksClose: null })
   })
@@ -72,28 +71,27 @@ describe('F1ChannelSettings', () => {
     })
     open('U1')
     await settle()
-    const close = document.querySelector<HTMLSelectElement>('select[aria-label="Predictions close"]')!
-    expect([...close.options].map((o) => o.textContent)).toEqual(['At lights out', 'When qualifying starts'])
-    expect(close.value).toBe('lights_out')
-    close.value = 'qualifying'
-    close.dispatchEvent(new Event('change', { bubbles: true }))
+    const close = selectTrigger('Predictions close')!
+    expect(selectLabels(close)).toEqual(['At lights out', 'When qualifying starts'])
+    expect(selectValue(close)).toBe('lights_out')
+    chooseOption(close, 'qualifying')
     await settle()
     expect(invoke).toHaveBeenLastCalledWith('set_f1_channel', { serverId: 'S1', channelId: 'GENERAL', picksClose: 'qualifying' })
-    expect(close.value).toBe('qualifying')
+    expect(selectValue(close)).toBe('qualifying')
     expect(f1Status.byServer.S1.picks_close).toBe('qualifying')
   })
 
   it('with no channel there is no predictions choice', async () => {
     open('U1')
     await settle()
-    expect(document.querySelector('select[aria-label="Predictions close"]')).toBeNull()
+    expect(selectTrigger('Predictions close')).toBeNull()
   })
 
   it('anyone else reads the choice', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'f1_status' ? status('GENERAL') : undefined))
     open('U9')
     await settle()
-    expect(document.querySelector('select')).toBeNull()
+    expect(selectTrigger()).toBeNull()
     expect(document.body.textContent).toContain('F1 cards go to #general. Predictions close at lights out.')
   })
 })

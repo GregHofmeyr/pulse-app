@@ -12,6 +12,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import MessageItem from './MessageItem.svelte'
+import { chooseOption, selectOptions, selectValue } from './selectHarness'
 import { app } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
 import { f1Prefs } from '../lib/f1Prefs.svelte'
@@ -60,13 +61,10 @@ function reshow() {
   mountShown(app.state.messages.C1[0])
 }
 async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick(); flushSync() }
-const selects = () => [...document.querySelectorAll<HTMLSelectElement>('.predict select')]
+const selects = () => [...document.querySelectorAll<HTMLButtonElement>('.predict .select .trigger')]
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent!.trim() === text || b.getAttribute('aria-label') === text)
 function choose(i: number, value: string) {
-  const s = selects()[i]
-  s.value = value
-  s.dispatchEvent(new Event('change', { bubbles: true }))
-  flushSync()
+  chooseOption(selects()[i], value)
 }
 
 beforeEach(() => {
@@ -104,7 +102,7 @@ describe('the race weekend card', () => {
     choose(0, 'racer_a')
     choose(1, 'rider_b')
     // a driver picked already can't be picked again
-    expect([...selects()[2].options].find((o) => o.value === 'racer_a')!.disabled).toBe(true)
+    expect(selectOptions(selects()[2]).find((o) => o.value === 'racer_a')!.disabled).toBe(true)
     choose(2, 'speed_c')
     expect(button('Save picks')!.disabled).toBe(false)
     button('Save picks')!.click()
@@ -118,7 +116,7 @@ describe('the race weekend card', () => {
     // the dice: three different drivers from the field
     button('Pick three at random')!.click()
     flushSync()
-    const rolled = selects().map((s) => s.value)
+    const rolled = selects().map(selectValue)
     expect(new Set(rolled).size).toBe(3)
     expect(rolled.every((id) => FIELD.some((d) => d.id === id))).toBe(true)
     // and Clear mine takes it back

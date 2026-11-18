@@ -8,6 +8,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import SportsSettings, { clearTeamCache } from './SportsSettings.svelte'
+import { chooseOption, selectTrigger } from './selectHarness'
 import type { SportsStatus } from '../lib/protocol/SportsStatus'
 
 let cmp: ReturnType<typeof mount> | undefined
@@ -79,12 +80,10 @@ describe('SportsSettings', () => {
     expect(document.body.textContent).toContain('Following')
     expect(byLabel('Unfollow Coastal City')).not.toBeNull()
     // another league, then back: the PSL list isn't asked for again
-    const league = byLabel('League') as HTMLSelectElement
-    league.value = 'urc'
-    league.dispatchEvent(new Event('change', { bubbles: true }))
+    const league = selectTrigger('League')!
+    chooseOption(league, 'urc')
     await settle()
-    league.value = 'psl'
-    league.dispatchEvent(new Event('change', { bubbles: true }))
+    chooseOption(league, 'psl')
     await settle()
     expect(invoke.mock.calls.filter(([c, a]) => c === 'sports_teams' && (a as { league: string }).league === 'psl')).toHaveLength(1)
     byLabel('Unfollow Coastal City')!.click()

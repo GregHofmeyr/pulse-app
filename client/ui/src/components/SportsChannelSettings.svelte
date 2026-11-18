@@ -2,6 +2,7 @@
   // Server settings › Sports (#385): where the match cards for teams members follow go. The owner picks one of the
   // server's text channels, or none (the default: no cards); everyone else sees the choice. With a channel, the owner
   // can also limit which leagues post there (#406; every league by default, and at least one stays on).
+  import Select from './Select.svelte'
   import { app } from '../lib/store.svelte'
   import { errorText, sportsCmd } from '../lib/tauri'
   import { LEAGUE_NAMES, leagueName } from '../lib/sports'
@@ -63,10 +64,8 @@
   <p class="hint">On match day a card goes here for each match of a team a member follows (Settings › Sports): kick-off in everyone's own time, then the score as it changes, edited in place, and full time.</p>
   {#if owner}
     <label class="pick">Channel
-      <select class="input input-sm" aria-label="Sports channel" disabled={!loaded || saving} value={current ?? ''} onchange={(e) => void save(e.currentTarget.value || null)}>
-        <option value="">None (no cards)</option>
-        {#each textChannels as c (c.id)}<option value={c.id}>#{c.name}</option>{/each}
-      </select>
+      <Select size="sm" label="Sports channel" disabled={!loaded || saving} value={current ?? ''}
+        options={[{ value: '', label: 'None (no cards)' }, ...textChannels.map((c) => ({ value: c.id, label: `#${c.name}` }))]} onchange={(v) => void save(v || null)} />
     </label>
     {#if current}
       <p class="sub-title">Leagues that post here</p>
@@ -88,6 +87,8 @@
 <style>
   p { margin: 0; color: var(--text-2); font-size: 13px; }
   .pick, .row { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  /* the dropdown (#455): wide enough for a channel name, never past the pane */
+  .pick :global(.select) { flex: 1; min-width: 180px; max-width: 320px; }
   .sub-title { margin-top: 4px; font-weight: 600; color: var(--text); }
   .now { color: var(--text); }
   .error { color: var(--danger-text); }

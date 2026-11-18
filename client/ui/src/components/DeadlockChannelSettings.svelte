@@ -2,6 +2,7 @@
   // Server settings › Deadlock (#390): where members' Deadlock cards go and which kinds. The owner picks one of the
   // server's text channels, or none (the default: nothing posts), and switches post-match cards, the weekly rank
   // movers and patch notes (all on); everyone else sees the choice.
+  import Select from './Select.svelte'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import type { Server } from '../lib/protocol/Server'
@@ -54,10 +55,8 @@
   <p class="hint">Members who linked Steam get Deadlock cards here, from deadlock-api.com. Each member chooses what of theirs is shared.</p>
   {#if owner}
     <label class="pick">Channel
-      <select class="input input-sm" aria-label="Deadlock channel" disabled={!current || saving} value={current?.channel_id ?? ''} onchange={(e) => void save({ channel_id: e.currentTarget.value || null })}>
-        <option value="">None (no cards)</option>
-        {#each textChannels as c (c.id)}<option value={c.id}>#{c.name}</option>{/each}
-      </select>
+      <Select size="sm" label="Deadlock channel" disabled={!current || saving} value={current?.channel_id ?? ''}
+        options={[{ value: '', label: 'None (no cards)' }, ...textChannels.map((c) => ({ value: c.id, label: `#${c.name}` }))]} onchange={(v) => void save({ channel_id: v || null })} />
     </label>
     {#if current?.channel_id}
       {#each kinds as k (k.key)}
@@ -78,6 +77,8 @@
 <style>
   p { margin: 0; color: var(--text-2); font-size: 13px; }
   .pick, .row { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  /* the dropdown (#455): wide enough for a channel name, never past the pane */
+  .pick :global(.select) { flex: 1; min-width: 180px; max-width: 320px; }
   .sub { margin-left: 24px; color: var(--text-3); }
   .now { color: var(--text); }
   .error { color: var(--danger-text); }

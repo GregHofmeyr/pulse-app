@@ -2,6 +2,7 @@
   // Server settings › F1 (#386): where the F1 race weekend cards go. The owner picks one of the server's text channels,
   // or none (the default: no cards, no countdown, and the server never asks Jolpica-F1); everyone else sees the choice.
   // With a channel, the owner also picks when podium predictions close (#403): lights out (the default) or qualifying.
+  import Select from './Select.svelte'
   import { app } from '../lib/store.svelte'
   import { putF1Status } from '../lib/f1.svelte'
   import { errorText, f1Cmd } from '../lib/tauri'
@@ -73,16 +74,13 @@
   <p class="hint">Race weekends go here: a countdown to lights out, a card when the weekend starts with every session in each person's own time and podium predictions, a "lights out in 1 hour" line, a sprint's results on sprint weekends, then the podium, results, drivers' and constructors' standings and everyone's prediction scores.</p>
   {#if owner}
     <label class="pick">Channel
-      <select class="input input-sm" aria-label="F1 channel" disabled={!loaded || saving} value={current ?? ''} onchange={(e) => void pick(e.currentTarget.value)}>
-        <option value="">None (no F1 cards)</option>
-        {#each textChannels as c (c.id)}<option value={c.id}>#{c.name}</option>{/each}
-      </select>
+      <Select size="sm" label="F1 channel" disabled={!loaded || saving} value={current ?? ''}
+        options={[{ value: '', label: 'None (no F1 cards)' }, ...textChannels.map((c) => ({ value: c.id, label: `#${c.name}` }))]} onchange={(v) => void pick(v ?? '')} />
     </label>
     {#if current}
       <label class="pick">Predictions close
-        <select class="input input-sm" aria-label="Predictions close" disabled={!loaded || saving} value={picksClose} onchange={(e) => void pickClose(e.currentTarget.value as F1PicksClose)}>
-          {#each Object.entries(CLOSE_LABELS) as [value, label] (value)}<option {value}>{label}</option>{/each}
-        </select>
+        <Select size="sm" label="Predictions close" disabled={!loaded || saving} value={picksClose}
+          options={Object.entries(CLOSE_LABELS).map(([value, label]) => ({ value, label }))} onchange={(v) => void pickClose(v as F1PicksClose)} />
       </label>
     {/if}
   {:else if loaded}
@@ -95,6 +93,8 @@
 <style>
   p { margin: 0; color: var(--text-2); font-size: 13px; }
   .pick { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  /* the dropdown (#455): wide enough for a channel name, never past the pane */
+  .pick :global(.select) { flex: 1; min-width: 180px; max-width: 320px; }
   .now { color: var(--text); }
   .error { color: var(--danger-text); }
 </style>

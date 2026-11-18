@@ -4,6 +4,7 @@
   // qualifying by the server's choice, #403) you pick P1, P2
   // and P3 from the field (or let the dice pick), and change or clear your picks; everyone's picks show below, with
   // their points once the race is scored. Picks from everyone land live (F1PredictionsChanged).
+  import Select from './Select.svelte'
   import Avatar from './Avatar.svelte'
   import { SESSION_LABELS, closesEarly, countdown, driverById, driverShort, flagOf, picksOpen, picksReady, placeLine, pointsText, predictionOf, randomPodium, sessionWhen } from '../lib/f1'
   import { predictPodium } from '../lib/f1.svelte'
@@ -81,10 +82,8 @@
         <div class="picks">
           {#each [0, 1, 2] as i (i)}
             <label class="pick"><span class="pos">P{i + 1}</span>
-              <select class="input input-sm" aria-label="P{i + 1}" disabled={busy} value={picks[i] ?? ''} onchange={(e) => setPick(i, e.currentTarget.value)}>
-                <option value="">Pick a driver</option>
-                {#each card.drivers as d (d.id)}<option value={d.id} disabled={picks.includes(d.id) && picks[i] !== d.id}>{d.name}{d.team ? ` (${d.team})` : ''}</option>{/each}
-              </select>
+              <Select size="sm" label="P{i + 1}" disabled={busy} value={picks[i] ?? ''} onchange={(v) => setPick(i, v ?? '')}
+                options={[{ value: '', label: 'Pick a driver' }, ...card.drivers.map((d) => ({ value: d.id, label: `${d.name}${d.team ? ` (${d.team})` : ''}`, disabled: picks.includes(d.id) && picks[i] !== d.id }))]} />
             </label>
           {/each}
         </div>
@@ -135,7 +134,7 @@
   .hint { display: block; font-weight: 400; font-size: 12px; color: var(--text-3); }
   .picks { display: flex; flex-direction: column; gap: 6px; }
   .pick { display: flex; align-items: center; gap: 8px; }
-  .pick select { flex: 1; min-width: 0; }
+  .pick :global(.select) { flex: 1; min-width: 0; }
   .pos { width: 24px; flex: none; font-weight: 700; font-size: 12px; color: var(--text-2); }
   .actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .actions button { min-height: 30px; padding: 0 12px; border-radius: var(--radius-md); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid var(--line); background: var(--bg-3); color: var(--text); transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease); }

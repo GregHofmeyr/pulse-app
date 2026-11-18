@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Select from './Select.svelte'
   import { notifyPrefs, setNotificationsEnabled, setNotificationText } from '../lib/notifyPrefs.svelte'
   import { reminderPrefs, setReminderAlerts } from '../lib/reminderPrefs.svelte'
   import { setToastPref, TOAST_KINDS, toastPrefs } from '../lib/toastPrefs.svelte'
@@ -131,11 +132,8 @@
           <li class="settings-list-item">
             <Avatar id={p.user_id} name={p.name} size={28} />
             <span class="who-col"><span class="who">{p.name}</span><span class="until">{personDndUntilLabel(p.until, Date.parse(clock.nowIso))}</span></span>
-            <select class="input input-sm where" aria-label="Where Do Not Disturb applies for {p.name}" value={p.dms_only ? 'dms' : 'all'}
-              onchange={(e) => void setWhere(p, e.currentTarget.value === 'dms')}>
-              <option value="all">Everywhere</option>
-              <option value="dms">Only in DMs</option>
-            </select>
+            <span class="where"><Select size="sm" label="Where Do Not Disturb applies for {p.name}" value={p.dms_only ? 'dms' : 'all'}
+              options={[{ value: 'all', label: 'Everywhere' }, { value: 'dms', label: 'Only in DMs' }]} onchange={(v) => void setWhere(p, v === 'dms')} /></span>
             <button type="button" class="btn btn-secondary" aria-label="Turn off Do Not Disturb for {p.name}" onclick={() => void quietDo(() => setPersonDnd(p.user_id, null))}>Remove</button>
           </li>
         {/each}
@@ -164,5 +162,5 @@
   .add { align-self: flex-start; }
   .who-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .until { color: var(--text-3); font-size: 12px; }
-  .where { width: auto; flex-shrink: 0; }
+  .where { width: 140px; flex-shrink: 0; }
 </style>

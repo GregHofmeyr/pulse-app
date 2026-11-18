@@ -9,6 +9,7 @@
   // Settings › Sports (#385): "Sports score pings" (on by default), the teams you follow, and a team search per league
   // (PSL, URC, Premier League). On match day a followed team's match gets a card in the Sports channel of your servers
   // that have one. When the server has no API-Sports key, sports aren't set up: nothing to follow.
+  import Select from './Select.svelte'
   import { errorText, sportsCmd } from '../lib/tauri'
   import { leagueName, matchTeams, sameTeam } from '../lib/sports'
   import type { SportsLeague } from '../lib/protocol/SportsLeague'
@@ -100,9 +101,7 @@
 
     <h4 class="sub-title">Follow a team</h4>
     <div class="search">
-      <select class="input input-sm" aria-label="League" bind:value={league}>
-        {#each status.leagues as l (l)}<option value={l}>{leagueName(l)}</option>{/each}
-      </select>
+      <Select size="sm" label="League" value={league} options={status.leagues.map((l) => ({ value: l, label: leagueName(l) }))} onchange={(v) => (league = v as SportsLeague)} />
       <input class="input input-sm" type="search" aria-label="Search teams" placeholder="Search teams" bind:value={query} maxlength="60" />
     </div>
     {#if loadingTeams}
@@ -137,6 +136,7 @@
   .sub-title { margin: 8px 0 0; font-size: 13px; font-weight: 600; }
   .search { display: flex; gap: 6px; flex-wrap: wrap; }
   .search input { flex: 1; min-width: 160px; }
+  .search :global(.select) { min-width: 160px; }
   .who { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .who small { color: var(--text-3); }

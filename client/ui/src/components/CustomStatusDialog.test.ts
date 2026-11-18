@@ -7,6 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) })
 
 import { invoke } from '@tauri-apps/api/core'
 import CustomStatusDialog from './CustomStatusDialog.svelte'
+import { chooseOption, selectLabels, selectTrigger, selectValue } from './selectHarness'
 import { app, clock } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { endOfToday } from '../lib/customStatus'
@@ -25,10 +26,10 @@ function show(myCustomStatus: MyCustomStatus = { current: null, until: null, rec
   flushSync()
 }
 const input = () => document.querySelector<HTMLInputElement>('input[aria-label="Custom status"]')!
-const select = () => document.querySelector<HTMLSelectElement>('select')!
+const select = () => selectTrigger('Clear after')!
 const button = (t: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === t)
 const type = (v: string) => { input().value = v; input().dispatchEvent(new Event('input', { bubbles: true })); flushSync() }
-const choose = (v: string) => { select().value = v; select().dispatchEvent(new Event('change', { bubbles: true })); flushSync() }
+const choose = (v: string) => chooseOption(select(), v)
 const submit = async () => { document.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true })); await tick(); await tick(); flushSync() }
 
 beforeEach(() => {
@@ -49,8 +50,8 @@ describe('CustomStatusDialog (#152)', () => {
   it('a new one: clears at the end of today by default, the text sent as the server keeps it', async () => {
     show()
     expect(document.querySelector('[role=dialog]')?.getAttribute('aria-label')).toBe('Set a custom status')
-    expect([...select().options].map((o) => o.textContent)).toEqual(['30 minutes', '1 hour', '4 hours', 'Today', 'This week', "Don't clear"])
-    expect(select().value).toBe('today')
+    expect(selectLabels(select())).toEqual(['30 minutes', '1 hour', '4 hours', 'Today', 'This week', "Don't clear"])
+    expect(selectValue(select())).toBe('today')
     expect(button('Save')!.disabled).toBe(true)
     expect(button('Clear status')).toBeUndefined()
     type('  Gaming \n now ')
@@ -75,7 +76,7 @@ describe('CustomStatusDialog (#152)', () => {
     expect(document.querySelector('[role=dialog]')?.getAttribute('aria-label')).toBe('Edit your custom status')
     expect(input().value).toBe('Gaming')
     expect(document.querySelector('.emoji-btn img.status-emoji')?.getAttribute('alt')).toBe('🎮')
-    expect(select().value).toBe('keep')
+    expect(selectValue(select())).toBe('keep')
     type('Still gaming')
     await submit()
     expect(calls('set_custom_status')).toEqual([{ text: 'Still gaming', emoji: '🎮', until }])

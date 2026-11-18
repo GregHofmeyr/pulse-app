@@ -13,6 +13,7 @@ vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 
 import MemberMenu from './MemberMenu.svelte'
 import NotificationSettings from './NotificationSettings.svelte'
+import { chooseOption, selectTrigger, selectValue } from './selectHarness'
 import { app, clock, resetState } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
 import { shouldAlert, type AlertInput } from '../lib/conversations'
@@ -138,12 +139,11 @@ describe('Settings → Notifications', () => {
     show()
     expect(rows().map((r) => r.querySelector('.who')!.textContent)).toEqual(['kim', 'sam'])
     expect(rows()[0].querySelector('.until')!.textContent).toBe('Until you turn it off')
-    const where = rows()[1].querySelector<HTMLSelectElement>('select')!
-    expect(where.value).toBe('dms')
-    where.value = 'all'
-    where.dispatchEvent(new Event('change', { bubbles: true }))
+    const where = selectTrigger(undefined, rows()[1])!
+    expect(selectValue(where)).toBe('dms')
+    chooseOption(where, 'all')
     expect(invoke).toHaveBeenCalledWith('set_person_dnd', { userId: 'U2', request: { dms_only: false, until: later } })
-    rows()[0].querySelector<HTMLButtonElement>('button')!.click()
+    rows()[0].querySelector<HTMLButtonElement>('button[aria-label^="Turn off Do Not Disturb"]')!.click()
     expect(invoke).toHaveBeenCalledWith('set_person_dnd', { userId: 'U3', request: null })
     app.state = applyEvent(app.state, { t: 'PersonDndChanged', d: { user_id: 'U1', list: [{ user_id: 'U2', dms_only: false, until: later }] } }, 0)
     flushSync()

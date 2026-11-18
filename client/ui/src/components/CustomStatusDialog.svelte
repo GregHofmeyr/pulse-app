@@ -3,6 +3,7 @@
   // from a server you're in), and when it clears: 30 minutes, 1 hour, 4 hours, today, this week, or never. Your recent
   // ones fill the form with one click. The server sanitises the text and keeps the timer (it clears even with every
   // app closed); the length is counted here as it counts it, in characters.
+  import Select from './Select.svelte'
   import { onMount, tick, untrack } from 'svelte'
   import { modal } from '../lib/actions'
   import { app, clock } from '../lib/store.svelte'
@@ -106,10 +107,8 @@
       {#if problem}<p class="err" role="alert">{problem}</p>{:else if error}<p class="err" role="alert">{error}</p>{/if}
       <label class="clear-after">
         <span>Clear after</span>
-        <select class="input input-sm" bind:value={clearAfter} disabled={busy}>
-          {#if until}<option value={KEEP}>{keepLabel}</option>{/if}
-          {#each CLEAR_AFTER as c (c.id)}<option value={c.id}>{c.label}</option>{/each}
-        </select>
+        <Select size="sm" label="Clear after" value={clearAfter} disabled={busy} onchange={(v) => (clearAfter = v ?? 'never')}
+          options={[...(until ? [{ value: KEEP, label: keepLabel }] : []), ...CLEAR_AFTER.map((c) => ({ value: c.id, label: c.label }))]} />
       </label>
       {#if recent.length}
         <div class="recent" role="group" aria-label="Recent">
@@ -144,6 +143,7 @@
   .wipe { width: 28px; height: 28px; background: none; }
   .emoji-btn:hover:not(:disabled), .wipe:hover:not(:disabled) { background: var(--bg-4); color: var(--text); }
   .clear-after { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; color: var(--text-2); }
+  .clear-after :global(.select) { min-width: 160px; }
   .recent { display: flex; flex-direction: column; gap: 2px; }
   .recent .menu-item { min-width: 0; }
   .recent :global(.custom-status) { font-size: 13px; color: var(--text); }

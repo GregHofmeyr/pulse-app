@@ -1,6 +1,7 @@
 <script lang="ts">
   // Server settings › Achievements (#379): where members' Steam achievement cards go. The owner picks one of the
   // server's text channels, or none (the default: no cards); everyone else sees the choice.
+  import Select from './Select.svelte'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import type { Server } from '../lib/protocol/Server'
@@ -49,10 +50,8 @@
   <p class="hint">When a member who linked Steam unlocks achievements while playing, or finishes a game 100 %, a card goes here. Each member chooses whether to share theirs.</p>
   {#if owner}
     <label class="pick">Channel
-      <select class="input input-sm" aria-label="Achievements channel" disabled={!loaded || saving} value={current ?? ''} onchange={(e) => void pick(e.currentTarget.value)}>
-        <option value="">None (no cards)</option>
-        {#each textChannels as c (c.id)}<option value={c.id}>#{c.name}</option>{/each}
-      </select>
+      <Select size="sm" label="Achievements channel" disabled={!loaded || saving} value={current ?? ''}
+        options={[{ value: '', label: 'None (no cards)' }, ...textChannels.map((c) => ({ value: c.id, label: `#${c.name}` }))]} onchange={(v) => void pick(v ?? '')} />
     </label>
   {:else if loaded}
     <p class="now">{current ? `Cards go to #${nameOf(current)}.` : 'No channel: no cards are posted.'} Only the server's owner can change it.</p>
@@ -63,6 +62,8 @@
 <style>
   p { margin: 0; color: var(--text-2); font-size: 13px; }
   .pick { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  /* the dropdown (#455): wide enough for a channel name, never past the pane */
+  .pick :global(.select) { flex: 1; min-width: 180px; max-width: 320px; }
   .now { color: var(--text); }
   .error { color: var(--danger-text); }
 </style>
