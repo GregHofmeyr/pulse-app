@@ -172,7 +172,7 @@
     {/if}
     <div class="who">
       <!-- No server for the style: a card shows the person's own colour, never a role colour (spec §2) -->
-      <Name userId={user.id} serverId={null} text={name} interactive={false} size="card" bg={nameBg} user={preview ? user : undefined} />
+      <Name userId={user.id} serverId={null} text={name} interactive={false} size="card" bg={nameBg} user={preview ? user : undefined} play={preview || size === 'full'} />
       <div class="handle">@{user.username}{card.pronouns ? ` · ${card.pronouns}` : ''}</div>
     </div>
     {#if custom}

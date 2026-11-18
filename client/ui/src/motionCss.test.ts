@@ -76,6 +76,8 @@ describe('motion', () => {
     'components/TextChannel.svelte': /^jump-flash /,
     // a jumped-to clip's, the same (#120)
     'components/ClipFeed.svelte': /^jump-flash /,
+    // the name effects (#468): flourishes with their own loops, played only on hover, in the editor and a full profile
+    'components/Name.svelte': /^fx-/,
     // reduced motion: everything finishes at once
     'app.css': /^\.01ms !important$/,
   }
