@@ -64,13 +64,15 @@ pub struct Config {
     pub sports: SportsConfig,
     /// F1 race weekends (#386): where Jolpica-F1 is.
     pub f1: F1Config,
+    /// A path nobody legitimate ever asks for (#80, step 3; `PULSE_INVITE_DECOY`).
+    pub invite_decoy: String,
 }
 
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
     limits, stream_media_timeout, media_dir, media_min_free_bytes, updates_dir, totp_key, clips, embeds,
     launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock, steam, deadlock, plans, sports, f1 ;
-    livekit_secret
+    livekit_secret, invite_decoy
 });
 
 /// Plan something's forecast (#387): Open-Meteo's geocoding and forecast APIs (free, no key). The server calls them
@@ -397,6 +399,7 @@ impl Config {
             plans: plans(|k| std::env::var(k).ok())?,
             sports: sports(|k| std::env::var(k).ok()),
             f1: F1Config::default(),
+            invite_decoy: decoy(std::env::var("PULSE_INVITE_DECOY").ok().as_deref()),
         })
     }
 }
@@ -570,6 +573,15 @@ fn totp_key(raw: Option<&str>) -> anyhow::Result<Option<TotpKey>> {
 }
 
 /// `PULSE_LAUNCH_DATE`: unset or empty = none; else a `YYYY-MM-DD` date.
+/// `PULSE_INVITE_DECOY` as a path (a leading `/` added), or the default.
+fn decoy(raw: Option<&str>) -> String {
+    match raw.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(p) if p.starts_with('/') => p.to_string(),
+        Some(p) => format!("/{p}"),
+        None => "/i/staff-console".into(),
+    }
+}
+
 fn launch_date(raw: Option<&str>) -> anyhow::Result<Option<chrono::NaiveDate>> {
     match raw {
         None | Some("") => Ok(None),
@@ -765,6 +777,7 @@ mod tests {
                 ..SportsConfig::default()
             },
             f1: F1Config::default(),
+            invite_decoy: "/SECRET-DECOY".into(),
         };
         let d = format!("{cfg:?}");
         assert!(!d.contains("SECRET"), "{d}");
@@ -779,6 +792,14 @@ mod tests {
                 .find(|(n, _)| *n == k)
                 .map(|(_, v)| v.to_string())
         }
+    }
+
+    #[test]
+    fn the_decoy_is_a_path() {
+        assert_eq!(decoy(Some("x/y")), "/x/y");
+        assert_eq!(decoy(Some("/x")), "/x");
+        assert!(decoy(Some("  ")).starts_with('/'));
+        assert!(decoy(None).starts_with('/'));
     }
 
     #[test]

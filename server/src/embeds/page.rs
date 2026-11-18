@@ -254,7 +254,7 @@ fn html(p: EmbedProvider, player: &str, party: bool) -> String {
 }
 
 /// Escaped for a double-quoted HTML attribute.
-fn escape(s: &str) -> String {
+pub(crate) fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {

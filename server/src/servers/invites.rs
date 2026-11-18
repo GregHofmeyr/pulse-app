@@ -618,6 +618,8 @@ pub enum Failure {
     Expired,
     Revoked,
     UsedUp,
+    /// Something only a script would do (#80, step 3): blocks at once.
+    Trap,
 }
 
 impl Failure {
@@ -627,6 +629,7 @@ impl Failure {
             Self::Expired => "expired",
             Self::Revoked => "revoked",
             Self::UsedUp => "used_up",
+            Self::Trap => "trap",
         }
     }
 
@@ -640,9 +643,9 @@ impl Failure {
     }
 }
 
-/// Who is looking a code up, for the limits and the failure log.
-struct Seeker {
-    user: UserId,
+/// Who is looking a code up, for the limits and the failure log: signed in, or anyone (the public invite page).
+pub(crate) struct Seeker {
+    user: Option<UserId>,
     /// The address as the rate limits count it.
     ip: String,
     agent: Option<String>,
@@ -650,6 +653,10 @@ struct Seeker {
 
 impl Seeker {
     fn new(user: UserId, ip: std::net::IpAddr, headers: &HeaderMap) -> Self {
+        Self::anyone(Some(user), ip, headers)
+    }
+
+    pub(crate) fn anyone(user: Option<UserId>, ip: std::net::IpAddr, headers: &HeaderMap) -> Self {
         Self {
             user,
             ip: rate_key(ip).to_string(),
@@ -662,14 +669,14 @@ impl Seeker {
 }
 
 /// Note a lookup of `code` that didn't work. Never fails the request: a failure to log is logged.
-async fn log_failure(db: &SqlitePool, who: &Seeker, code: &str, kind: Failure) {
+pub(crate) async fn log_failure(db: &SqlitePool, who: &Seeker, code: &str, kind: Failure) {
     let code: String = code.chars().take(LOGGED_CODE_CHARS).collect();
     if let Err(e) = sqlx::query(
         "INSERT INTO invite_failures (at, ip, user_id, user_agent, code, kind) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(now())
     .bind(&who.ip)
-    .bind(who.user.to_string())
+    .bind(who.user.map(|u| u.to_string()))
     .bind(&who.agent)
     .bind(code)
     .bind(kind.as_str())
@@ -686,14 +693,29 @@ async fn log_failure(db: &SqlitePool, who: &Seeker, code: &str, kind: Failure) {
 pub async fn lookups_blocked(
     db: &SqlitePool,
     ip: &str,
-    user: UserId,
+    user: Option<UserId>,
     now: DateTime<Utc>,
 ) -> AppResult<bool> {
     let since = stamp(
         now - TimeDelta::seconds(rules::BLOCK_SECS)
             - TimeDelta::seconds(rules::UNKNOWN_WINDOW_SECS),
     );
-    for (col, key) in [("ip", ip.to_string()), ("user_id", user.to_string())] {
+    let trap_since = stamp(now - TimeDelta::seconds(rules::BLOCK_SECS));
+    let mut sources = vec![("ip", ip.to_string())];
+    if let Some(user) = user {
+        sources.push(("user_id", user.to_string()));
+    }
+    for (col, key) in sources {
+        let trapped: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT 1 FROM invite_failures WHERE kind = 'trap' AND {col} = ? AND at > ? LIMIT 1"
+        )))
+        .bind(&key)
+        .bind(&trap_since)
+        .fetch_optional(db)
+        .await?;
+        if trapped.is_some() {
+            return Ok(true);
+        }
         let times: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT at FROM invite_failures WHERE kind = 'unknown' AND {col} = ? AND at > ? ORDER BY at"
         )))
@@ -724,16 +746,90 @@ fn blocks(times: &[String], now: DateTime<Utc>) -> bool {
 }
 
 /// The guard in front of every code lookup: 429 while blocked, or past the lookups per address or per account.
-async fn guard(s: &AppState, who: &Seeker) -> AppResult<()> {
+pub(crate) async fn guard(s: &AppState, who: &Seeker) -> AppResult<()> {
     if lookups_blocked(&s.db, &who.ip, who.user, Utc::now()).await? {
         return Err(AppError::TooManyRequests(None));
     }
     if !s.limits.invite_lookup_ip.hit(&who.ip)
-        || !s.limits.invite_lookup_user.hit(&who.user.to_string())
+        || who
+            .user
+            .is_some_and(|u| !s.limits.invite_lookup_user.hit(&u.to_string()))
     {
         return Err(AppError::TooManyRequests(None));
     }
     Ok(())
+}
+
+/// What the public invite page shows for a code that works (#80, step 3): only what a card shows a stranger.
+pub(crate) struct PublicInvite {
+    pub name: String,
+    pub icon_hash: Option<String>,
+    pub member_count: i64,
+    pub online_count: i64,
+    pub inviter_name: String,
+    pub join_text: Option<String>,
+    /// It also signs someone new up (a server owner's link).
+    pub signup_ok: bool,
+}
+
+/// The invite behind `code` for the public page: `None` (logged) for anything that doesn't let someone in right now:
+/// unknown, revoked, expired, used up, or its server deleted. The page looks the same for all of them.
+pub(crate) async fn public_invite(
+    s: &AppState,
+    who: &Seeker,
+    code: &str,
+) -> AppResult<Option<PublicInvite>> {
+    let row = match found(s, who, code).await {
+        Ok(r) => r,
+        Err(AppError::NotFound) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let server = row.server()?;
+    if server_exists(&s.db, server).await.is_err() {
+        return Ok(None);
+    }
+    if let Some(f) = Failure::of(row.state(&now())) {
+        log_failure(&s.db, who, code, f).await;
+        return Ok(None);
+    }
+    let (name, icon_hash): (String, Option<String>) =
+        sqlx::query_as("SELECT name, icon_hash FROM servers WHERE id = ?")
+            .bind(server.to_string())
+            .fetch_one(&s.db)
+            .await?;
+    let member_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM server_members WHERE server_id = ?")
+            .bind(server.to_string())
+            .fetch_one(&s.db)
+            .await?;
+    Ok(Some(PublicInvite {
+        name,
+        icon_hash,
+        member_count,
+        online_count: online_to_anyone(s, server).await?,
+        inviter_name: crate::dms::routes::shown_name(&s.db, row.maker()?).await?,
+        join_text: row.join_text.clone(),
+        signup_ok: signup_server_in(&mut *s.db.acquire().await?, code)
+            .await?
+            .is_some(),
+    }))
+}
+
+/// Members of `server` who look online to someone who hides from nobody's list: connected and not Invisible.
+async fn online_to_anyone(s: &AppState, server: ServerId) -> AppResult<i64> {
+    let visible: Vec<String> = sqlx::query_scalar(
+        "SELECT m.user_id FROM server_members m JOIN users u ON u.id = m.user_id
+         WHERE m.server_id = ? AND u.presence <> 'invisible'",
+    )
+    .bind(server.to_string())
+    .fetch_all(&s.db)
+    .await?;
+    let online = s.hub.online_users();
+    Ok(visible
+        .iter()
+        .filter_map(|u| u.parse::<UserId>().ok())
+        .filter(|u| online.contains(u))
+        .count() as i64)
 }
 
 /// The invite behind `code`, or 404 (logged): unknown and revoked look the same.
@@ -984,6 +1080,86 @@ async fn accept_in(
     .execute(&mut *tx)
     .await?;
     Ok(Outcome::Joined(joined))
+}
+
+/// The code in `raw`: a code as typed, or the last part of a pasted invite link (`https://…/i/<code>`), trimmed.
+pub fn code_of(raw: &str) -> String {
+    let raw = raw.trim();
+    match raw.rsplit_once("/i/") {
+        Some((_, rest)) => rest
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or_default()
+            .to_string(),
+        None => raw.to_string(),
+    }
+}
+
+/// The server a sign-up with `code` would join (#80): a server owner's link that works right now (not revoked,
+/// expired or used up, not for one person) into a live server; `None` for anything else.
+pub(crate) async fn signup_server_in(
+    tx: &mut SqliteConnection,
+    code: &str,
+) -> AppResult<Option<ServerId>> {
+    if !well_formed(code) {
+        return Ok(None);
+    }
+    let server: Option<String> = sqlx::query_scalar(
+        "SELECT i.server_id FROM server_invites i JOIN servers sv ON sv.id = i.server_id AND sv.deleted_at IS NULL
+         WHERE i.code = ?1 AND i.signup_ok = 1 AND i.for_user IS NULL AND i.revoked_at IS NULL
+           AND (i.expires_at IS NULL OR i.expires_at > ?2) AND (i.max_uses IS NULL OR i.uses < i.max_uses)",
+    )
+    .bind(code)
+    .bind(now())
+    .fetch_optional(&mut *tx)
+    .await?;
+    server
+        .map(|s| s.parse().map_err(|e| anyhow::Error::from(e).into()))
+        .transpose()
+}
+
+/// A new account (`user`) joins `server` through `code` in the sign-up's write transaction (#80): the membership, the
+/// use counted and logged as one that made the account.
+pub(crate) async fn use_for_signup_in(
+    tx: &mut SqliteConnection,
+    code: &str,
+    server: ServerId,
+    user: UserId,
+) -> AppResult<crate::servers::routes::Joined> {
+    let joined = crate::servers::routes::add_member_in(tx, server, user).await?;
+    sqlx::query("UPDATE server_invites SET uses = uses + 1 WHERE code = ?")
+        .bind(code)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO server_invite_uses (code, user_id, used_at, created_account) VALUES (?, ?, ?, 1)",
+    )
+    .bind(code)
+    .bind(user.to_string())
+    .bind(now())
+    .execute(&mut *tx)
+    .await?;
+    Ok(joined)
+}
+
+/// After a sign-up through `code` committed (the caller still holding the hub's `in_order`, as a join does): the
+/// join's events, and its maker's Invites list.
+pub(crate) async fn announce_signup(
+    s: &AppState,
+    code: &str,
+    server: ServerId,
+    user: UserId,
+    joined: crate::servers::routes::Joined,
+) {
+    crate::servers::routes::announce_joined(s, server, user, joined).await;
+    match load(&s.db, code).await {
+        Ok(Some(row)) => match row.maker() {
+            Ok(maker) => invites_changed(s, server, [maker]).await,
+            Err(e) => tracing::error!(error = ?e, "bad invite maker"),
+        },
+        Ok(None) => {}
+        Err(e) => tracing::error!(error = ?e, "couldn't read back a sign-up's invite"),
+    }
 }
 
 /// Revoke `server`'s open direct invites to `user` (a ban), in the ban's transaction. Returns their makers.

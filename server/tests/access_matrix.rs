@@ -351,6 +351,10 @@ const PUBLIC: &[&str] = &[
     "GET /embed/{provider}/{id}",
     // invites: a preview shows only what a card may (see `servers::invites`)
     "GET /invites/{code}",
+    // the public invite page shows only what a card shows a stranger; the installer and robots.txt are public
+    "GET /i/{code}",
+    "GET /download/windows",
+    "GET /robots.txt",
     // a game invite is in a DM or group: members of it only
     "POST /messages/{id}/game-invite/join",
 ];
