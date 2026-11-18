@@ -39,7 +39,7 @@
   import type { Badge } from '../lib/protocol/Badge'
   import type { ProfileStats } from '../lib/protocol/ProfileStats'
 
-  let { user, card, badges, showcase = [], stats, serverId, size = 'quick', preview = false, loading = false, onViewFull, onClose }: {
+  let { user, card, badges, showcase = [], stats, serverId, size = 'quick', preview = false, loading = false, onViewFull, onClose, onEditAvatar, onEditBanner }: {
     user: User
     card: CardProfile
     badges: Badge[]
@@ -54,6 +54,10 @@
     loading?: boolean
     onViewFull?: () => void
     onClose?: () => void
+    /** The profile editor's preview (#467): hovering the avatar or banner shows a grey veil with a pencil, and a
+     *  click changes that picture. */
+    onEditAvatar?: () => void
+    onEditBanner?: () => void
   } = $props()
 
   // The showcase, in its order; names and icons come from the catalogue (fetched once, on first need).
@@ -162,13 +166,15 @@
   <!-- loading: the full banner height, so the card does not grow when the profile arrives (#173) -->
   <div class="banner" class:none={!banner && !loading}>
     {#if banner}<img src={mediaUrl(bannerStill ?? banner)} alt="" draggable="false" {@attach wireBanner} />{/if}
+    {#if onEditBanner}<button type="button" class="edit-veil" aria-label="Change banner" data-tip="Change banner" onclick={onEditBanner}><Icon name="pencil" size={20} /></button>{/if}
   </div>
   <div class="body">
     {#if !preview && size === 'quick'}
       <!-- the avatar is a way in to the full profile too -->
       <button type="button" class="ring avatar-link" aria-label="View full profile" onclick={viewFull}><Avatar id={user.id} {name} size={90} place="card" {presence} /></button>
     {:else}
-      <span class="ring"><Avatar id={user.id} {name} size={90} place="card" {presence} user={preview ? user : undefined} /></span>
+      <span class="ring"><Avatar id={user.id} {name} size={90} place="card" {presence} user={preview ? user : undefined} />
+        {#if onEditAvatar}<button type="button" class="edit-veil round" aria-label="Change avatar" data-tip="Change avatar" onclick={onEditAvatar}><Icon name="pencil" size={20} /></button>{/if}</span>
     {/if}
     <div class="who">
       <!-- No server for the style: a card shows the person's own colour, never a role colour (spec §2) -->
@@ -276,6 +282,10 @@
   .banner::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to bottom, transparent 60%, var(--card-top)); pointer-events: none; }
   /* no picture: nothing to fade (over the card's own gradient the fade drew a band, plain on a pale card) */
   .banner:not(:has(img))::after { content: none; }
+  /* the editor's preview (#467): a grey veil with a pencil over the avatar or banner, shown on hover or focus */
+  .edit-veil { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; border: 0; padding: 0; background: var(--scrim); color: var(--on-video); opacity: 0; cursor: pointer; transition: opacity var(--dur-fast) var(--ease); }
+  .edit-veil:hover, .edit-veil:focus-visible { opacity: 1; }
+  .edit-veil.round { inset: 4px; border-radius: 50%; }
   .body { padding: 0 calc(16px * var(--k)) calc(16px * var(--k)); display: flex; flex-direction: column; gap: calc(10px * var(--k)); }
   /* a thin cut-out round the avatar in the card's colour, and a status dot about a fifth of it (Discord's proportions) */
   .ring { align-self: flex-start; margin-top: calc(-44px * var(--k)); position: relative; border-radius: 50%; padding: 4px; background: var(--card-top); }

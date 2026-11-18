@@ -95,3 +95,23 @@ describe('server rail drag', () => {
     expect(onDrop).not.toHaveBeenCalled()
   })
 })
+
+describe('another kind of item (#467: the profile editor drags [data-badge])', () => {
+  it('drags the items its `item` attribute names', () => {
+    const row = document.createElement('ol')
+    ;['x', 'y'].forEach((id, i) => {
+      const b = document.createElement('button')
+      b.dataset.badge = id
+      b.getBoundingClientRect = () => ({ left: i * 60, right: i * 60 + 52, width: 52, top: 0, bottom: 52, height: 52, x: i * 60, y: 0, toJSON: () => ({}) })
+      row.append(b)
+    })
+    document.body.append(row)
+    const drop = vi.fn()
+    const a = railDrag(row, { onDrop: drop, item: 'badge' })
+    pointer('pointerdown', row.querySelector('[data-badge="x"]')!, 20)
+    pointer('pointermove', row, 110)
+    pointer('pointerup', row, 110)
+    expect(drop).toHaveBeenCalledWith('x', 1)
+    a.destroy()
+  })
+})

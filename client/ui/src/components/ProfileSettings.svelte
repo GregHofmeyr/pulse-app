@@ -1,7 +1,8 @@
 <script lang="ts">
-  // Settings → Profile (spec §4): settings on the left, a live preview on the right. Everything,
-  // uploads included, is staged in the draft until Save sends it in one request; the store isn't
-  // touched before then, so leaving without saving leaves you exactly as you were.
+  // Settings → Profile (spec §4; redesigned in #467): four tabs (About you, Card, Name style, Badges) on the left, the
+  // live preview always beside them (on top in a narrow window). Hovering the preview's avatar or banner offers to
+  // change it. Everything, uploads and the badge order included, is staged until Save sends it; the store isn't
+  // touched before then, so leaving without saving leaves you exactly as you were. Explanations are tooltips.
   import { flushSync, onDestroy, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import ProfileCard from './ProfileCard.svelte'
@@ -10,12 +11,16 @@
   import CropDialog from './CropDialog.svelte'
   import EmojiBox from './EmojiBox.svelte'
   import Segmented from './Segmented.svelte'
+  import BadgeIcon from './BadgeIcon.svelte'
   import { app, loadProfile } from '../lib/store.svelte'
   import { setProfile } from '../lib/state'
   import { api, errorText } from '../lib/tauri'
   import { BIO_LINE_BREAKS_MAX, BIO_MAX, charCount, draftFrom, editsSince, isDirty, isZalgo, nameProblem, normalBio, previewCard, previewUser, PRONOUNS_MAX, toRequest, type Draft } from '../lib/profileDraft'
-  import { radioKeys } from '../lib/actions'
-  import { presetFor, THEME_PRESETS } from '../lib/cardTheme'
+  import { clickOutside, radioKeys } from '../lib/actions'
+  import { cardVars, presetFor, THEME_PRESETS } from '../lib/cardTheme'
+  import { SHOWCASE_MAX, badgeStore, defaultShowcase, fallbackName } from '../lib/badges.svelte'
+  import { railDrag } from '../lib/railDrag'
+  import type { Badge } from '../lib/protocol/Badge'
   import { NAME_FONTS } from '../lib/nameFonts'
   import { NAME_EFFECTS } from '../lib/nameEffects'
   import { lightenForName, NAME_GRADIENTS, NAME_SOLIDS, type NamePreset } from '../lib/nameStyle'
@@ -33,6 +38,13 @@
 
   const uid = $props.id()
   type Kind = 'avatar' | 'banner'
+  type Tab = 'about' | 'card' | 'name' | 'badges'
+  const TABS: { key: Tab; label: string }[] = [
+    { key: 'about', label: 'About you' }, { key: 'card', label: 'Card' }, { key: 'name', label: 'Name style' }, { key: 'badges', label: 'Badges' },
+  ]
+  let tab = $state<Tab>('about')
+  /** The bio counter shows from here on (#467: only near the limit). */
+  const BIO_NEAR = 150
   const ACCEPT = 'image/png,image/jpeg,image/gif,image/webp'
   const SAVED_MS = 2000
 
@@ -55,10 +67,24 @@
   /** Bumped per kind by each upload, Remove and Reset: an upload that lands after a newer one of these is dropped. */
   const gen: Record<Kind, number> = { avatar: 0, banner: 0 }
 
+  // The card's badges (#467's Badges tab): up to SHOWCASE_MAX held badges in order, or `auto` (the rarest five, which
+  // follows later unlocks). Saved with the rest.
+  let showcase = $state<string[]>([])
+  let showcaseAuto = $state(true)
+  let savedShowcase = $state.raw<{ keys: string[]; auto: boolean }>({ keys: [], auto: true })
+  const held = $derived(new Map<string, Badge>((profile?.badges ?? []).map((b) => [b.key, b])))
+  const shownBadges = $derived(showcaseAuto ? defaultShowcase(profile?.badges ?? []) : showcase)
+  const showcaseChanged = $derived(showcaseAuto !== savedShowcase.auto || (!showcaseAuto && showcase.join() !== savedShowcase.keys.join()))
+  const wantsCatalogue = $derived(held.size > 0)
+  $effect(() => {
+    if (wantsCatalogue) untrack(() => void badgeStore.load())
+  })
+
   const me = $derived(app.state.me)
   const pu = $derived(me && draft ? previewUser(me, draft) : null)
   const pc = $derived(draft ? previewCard(draft) : null)
-  const changed = $derived(!!draft && !!saved && isDirty(draft, saved))
+  const profileChanged = $derived(!!draft && !!saved && isDirty(draft, saved))
+  const changed = $derived(profileChanged || showcaseChanged)
   const busy = $derived(uploading.avatar || uploading.banner)
   $effect(() => {
     dirty = changed || busy
@@ -114,6 +140,10 @@
     draft = draftFrom(p)
     customTheme = false
     customColour = false
+    const mine = new Set(p.badges.map((b) => b.key))
+    savedShowcase = { keys: (p.showcase ?? []).filter((k) => mine.has(k)), auto: !p.showcase_chosen }
+    showcase = [...savedShowcase.keys]
+    showcaseAuto = savedShowcase.auto
   }
 
   function load(id: string) {
@@ -228,6 +258,63 @@
     setColours(kind === 'solid' ? [a] : [a, b ?? a], true)
   }
 
+  // the tabs: a tablist, the arrows / Home / End move and pick
+  function tabKeys(e: KeyboardEvent) {
+    const i = TABS.findIndex((t) => t.key === tab)
+    const to = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i + TABS.length - 1) % TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : -1
+    if (to < 0) return
+    e.preventDefault()
+    tab = TABS[to].key
+    flushSync()
+    document.getElementById(`${uid}-tab-${tab}`)?.focus()
+  }
+
+  // The custom card theme's two pickers, in a popover by the + tile (#467)
+  let themePop = $state(false)
+  let plusTile = $state<HTMLElement>()
+  function openCustomTheme() {
+    customTheme = true
+    themePop = true
+  }
+
+  // The preview's avatar and banner (#467): a click on either opens that picture's file picker
+  const fileInputs: Record<Kind, HTMLInputElement | undefined> = $state({ avatar: undefined, banner: undefined })
+  const changePicture = (kind: Kind) => fileInputs[kind]?.click()
+
+  // --- the badges on your card (#467): drag to reorder; add, remove, or go back to the rarest five ---
+  const badgeName = (key: string) => {
+    const b = held.get(key)
+    const d = badgeStore.def(key)
+    return d?.name ?? (b?.hidden ? '???' : fallbackName(key))
+  }
+  function ownShowcase(): string[] {
+    // the first edit to the rarest five starts from them
+    if (showcaseAuto) {
+      showcaseAuto = false
+      showcase = defaultShowcase(profile?.badges ?? [])
+    }
+    return showcase
+  }
+  function moveBadge(key: string, to: number) {
+    const list = ownShowcase().filter((k) => k !== key)
+    list.splice(Math.max(0, Math.min(to, list.length)), 0, key)
+    showcase = list
+  }
+  function toggleBadge(key: string) {
+    const list = ownShowcase()
+    if (list.includes(key)) showcase = list.filter((k) => k !== key)
+    else if (list.length < SHOWCASE_MAX) showcase = [...list, key]
+  }
+  function badgeKeys(e: KeyboardEvent, key: string) {
+    // Alt+← / Alt+→ move the focused badge (the keyboard's drag)
+    if (!e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return
+    e.preventDefault()
+    const i = shownBadges.indexOf(key)
+    moveBadge(key, i + (e.key === 'ArrowLeft' ? -1 : 1))
+    flushSync()
+    document.querySelector<HTMLElement>(`[data-badge="${CSS.escape(key)}"]`)?.focus()
+  }
+
   function showBio(text: string) {
     bioBox?.setText({ text, caret: text.length }, false)
   }
@@ -247,26 +334,35 @@
   function save() {
     for (const p of allPickers) p.flush()
     if (!draft || saving || !changed || invalid || busy) return
-    const p = send($state.snapshot(draft))
+    const p = send($state.snapshot(draft), profileChanged, showcaseChanged ? (showcaseAuto ? [] : [...showcase]) : null)
     settling = p
     void p.finally(() => {
       if (!gone && settling === p) settling = null
     })
   }
 
-  /** Sends `sent`; edits made while it is on its way are kept on top of the answer. */
-  async function send(sent: Draft) {
+  /** Sends `sent` (when `withProfile`) and the card's badges (`keys`, `[]` for the rarest five; null when unchanged);
+   *  edits made while it is on its way are kept on top of the answer. */
+  async function send(sent: Draft, withProfile: boolean, keys: string[] | null) {
     saving = true
     saveError = null
+    const sentShowcase = { keys: [...showcase], auto: showcaseAuto }
     try {
-      const answer = await api.updateProfile(toRequest(sent))
+      if (keys) await api.setBadgeShowcase(keys)
+      const answer = withProfile ? await api.updateProfile(toRequest(sent)) : await loadProfile(app.state.me!.id)
       // The cache gets the answer even if the editor has gone meanwhile: the save went through.
       app.state = setProfile(app.state, answer)
       if (gone) return
       const edits = draft ? editsSince(sent, $state.snapshot(draft)) : {}
       const keepTheme = customTheme && ('themeTop' in edits || 'themeBottom' in edits)
       const keepColour = customColour && 'colors' in edits
+      const nowShowcase = { keys: [...showcase], auto: showcaseAuto }
       take(answer)
+      // a badge reorder made meanwhile stays too
+      if (nowShowcase.auto !== sentShowcase.auto || nowShowcase.keys.join() !== sentShowcase.keys.join()) {
+        showcase = nowShowcase.keys
+        showcaseAuto = nowShowcase.auto
+      }
       Object.assign(draft!, edits)
       customTheme = keepTheme
       customColour = keepColour
@@ -287,7 +383,7 @@
     <span class="settings-label">{title}</span>
     <div class="row">
       <label class="btn btn-secondary upload" class:disabled={uploading[kind]}>Upload
-        <input class="file" type="file" accept={ACCEPT} aria-label="Upload {kind}" disabled={uploading[kind]} onchange={(e) => pickFile(kind, e)} />
+        <input bind:this={fileInputs[kind]} class="file" type="file" accept={ACCEPT} aria-label="Upload {kind}" disabled={uploading[kind]} onchange={(e) => pickFile(kind, e)} />
       </label>
       <!-- during an upload, Remove cancels it -->
       <button type="button" class="btn btn-secondary" disabled={!hash && !uploading[kind]} onclick={() => remove(kind)}>Remove</button>
@@ -306,127 +402,203 @@
   {:else}
     <div class="layout">
       <div class="settings">
-        {#if nudge}
-          <div class="nudge" role="note">
-            <span><strong>Pick how your name looks.</strong> Capitals, spaces and emoji are all fine; your username stays for signing in.</span>
-            <button type="button" class="btn btn-secondary" onclick={dismissNudge}>Dismiss</button>
-          </div>
-        {/if}
-        <div class="settings-field name-field">
-          <span class="settings-label">Display name</span>
-          <!-- counted in characters, as the server counts -->
-          <input class="input text" type="text" aria-label="Display name" aria-invalid={!!nameError} bind:value={draft.displayName} />
-          <!-- the Zalgo easter egg (#209): a soft nudge, not an error; it still saves -->
-          {#if nameError}<p class="error" role="alert">{nameError}</p>{:else if isZalgo(draft.displayName)}<small class="zalgo" role="status">Zalgo? Really?</small>{:else}<small>How your name shows everywhere. Not unique: your @{me.username} tells you apart.</small>{/if}
+        <div class="tabs" role="tablist" aria-label="Profile" tabindex="-1" onkeydown={tabKeys}>
+          {#each TABS as t (t.key)}
+            <button type="button" role="tab" id="{uid}-tab-{t.key}" aria-selected={tab === t.key} aria-controls="{uid}-panel-{t.key}" tabindex={tab === t.key ? 0 : -1}
+              onclick={() => (tab = t.key)}>{t.label}</button>
+          {/each}
         </div>
 
-        {@render picture('avatar', 'Avatar', draft.avatarHash)}
-        {@render picture('banner', 'Banner', draft.bannerHash)}
-
-        <div class="settings-field theme">
-          <span class="settings-label">Card theme</span>
-          <div class="swatches" role="radiogroup" aria-label="Card theme" tabindex="-1" onkeydown={radioKeys}>
-            {#each THEME_PRESETS as p (p.key)}
-              <button type="button" role="radio" class="swatch" aria-label={p.label} aria-checked={themeKey === p.key} tabindex={themeKey === p.key ? 0 : -1}
-                style:background="linear-gradient({p.top}, {p.bottom})" onclick={() => setTheme(p.top, p.bottom)}></button>
-            {/each}
-            <!-- Custom shows the colours it holds (#141: next to the presets, pale ones looked like nothing was picked) -->
-            <button type="button" role="radio" class="chip toggle-chip custom-chip" aria-checked={themeKey === null} tabindex={themeKey === null ? 0 : -1} onclick={() => (customTheme = true)}>
-              {#if themeKey === null}<span class="mini" style:background="linear-gradient({draft.themeTop}, {draft.themeBottom})" aria-hidden="true"></span>{/if}Custom</button>
-          </div>
-          {#if themeKey === null}
-            <div class="row">
-              <label class="pick">
-                <input type="color" aria-label="Top colour" value={draft.themeTop} oninput={(e) => pickers.top.push(e.currentTarget.value)} onchange={() => pickers.top.flush()} />
-                <span>Top <code>{draft.themeTop}</code></span>
-              </label>
-              <label class="pick">
-                <input type="color" aria-label="Bottom colour" value={draft.themeBottom} oninput={(e) => pickers.bottom.push(e.currentTarget.value)} onchange={() => pickers.bottom.flush()} />
-                <span>Bottom <code>{draft.themeBottom}</code></span>
-              </label>
+        <!-- every tab stays on the page, only the picked one shown: a half-typed bio or an upload carries on across tabs -->
+        <div class="panel" role="tabpanel" id="{uid}-panel-about" aria-labelledby="{uid}-tab-about" hidden={tab !== 'about'}>
+          {#if nudge}
+            <div class="nudge" role="note">
+              <span><strong>Pick how your name looks.</strong> Capitals, spaces and emoji are all fine; your username stays for signing in.</span>
+              <button type="button" class="btn btn-secondary" onclick={dismissNudge}>Dismiss</button>
             </div>
           {/if}
-        </div>
-
-        <div class="settings-field">
-          <label class="toggle-row">
-            <input type="checkbox" role="switch" class="switch" aria-describedby="{uid}-glow" bind:checked={draft.glow} />
-            <span>Card glow</span>
-          </label>
-          <small id="{uid}-glow">A soft glow in your card's colours around it. Everyone sees your card as you set it.</small>
-        </div>
-
-        <div class="settings-field">
-          <span class="settings-label">Name font</span>
-          <div class="chips" role="radiogroup" aria-label="Name font" tabindex="-1" onkeydown={radioKeys}>
-            <button type="button" role="radio" class="chip toggle-chip" aria-checked={draft.font === null} tabindex={fontKnown ? (draft.font === null ? 0 : -1) : 0} onclick={() => (draft!.font = null)}>Default</button>
-            {#each NAME_FONTS as f (f.key)}
-              <button type="button" role="radio" class="chip toggle-chip" aria-checked={draft.font === f.key} tabindex={draft.font === f.key ? 0 : -1}
-                style="font-family: {f.family}; font-weight: {f.weight}; font-size: calc(13px * {f.scale})" onclick={() => (draft!.font = f.key)}>{f.label}</button>
-            {/each}
+          <div class="pictures">
+            {@render picture('avatar', 'Avatar', draft.avatarHash)}
+            {@render picture('banner', 'Banner', draft.bannerHash)}
+          </div>
+          <div class="two">
+            <div class="settings-field name-field">
+              <span class="settings-label">Display name</span>
+              <!-- counted in characters, as the server counts -->
+              <input class="input text" type="text" aria-label="Display name" aria-invalid={!!nameError} placeholder={me.username} bind:value={draft.displayName}
+                data-tip="How your name shows everywhere. Not unique: your @{me.username} tells you apart." />
+              <!-- the Zalgo easter egg (#209): a soft nudge, not an error; it still saves -->
+              {#if nameError}<p class="error" role="alert">{nameError}</p>{:else if isZalgo(draft.displayName)}<small class="zalgo" role="status">Zalgo? Really?</small>{/if}
+            </div>
+            <div class="settings-field">
+              <span class="settings-label">Pronouns</span>
+              <!-- counted in characters, as the server counts (maxlength counts UTF-16 units) -->
+              <input class="input text" type="text" aria-label="Pronouns" aria-invalid={pronounsOver} placeholder="Add pronouns" bind:value={draft.pronouns} />
+              {#if pronounsOver}<p class="error" role="alert">Pronouns can be up to 40 characters.</p>{/if}
+            </div>
+          </div>
+          <div class="settings-field">
+            <span class="settings-label">Bio</span>
+            <EmojiBox bind:this={bioBox} bind:text={draft.bio} label="Bio" class="bio" />
+            {#if bioLength >= BIO_NEAR}<small class="counter" class:over={bioOver}>{bioLength}/{BIO_MAX}</small>{/if}
+            {#if bioBreaksOver}<p class="error" role="alert">Your bio can have at most 4 line breaks.</p>{/if}
           </div>
         </div>
 
-        <div class="settings-field colour" bind:this={colourField}>
-          <span class="settings-label">Name colour</span>
-          <div class="swatches" role="radiogroup" aria-label="Name colour" tabindex="-1" onkeydown={colourKeys}>
-            <!-- no colour: a struck-through swatch, sized like the presets beside it -->
-            <button type="button" role="radio" class="swatch round none" aria-label="Default" data-tip="Default colour" aria-checked={colourKey === 'default'} tabindex={colourKey === 'default' ? 0 : -1} onclick={() => setColours([])}></button>
-            {#each NAME_SOLIDS as p (p.key)}
-              <button type="button" role="radio" class="swatch round" aria-label={p.label} aria-checked={colourKey === `solid:${p.key}`} tabindex={colourKey === `solid:${p.key}` ? 0 : -1}
-                style:background={p.colors[0]} onclick={() => setColours(p.colors)}></button>
-            {/each}
-            {#each NAME_GRADIENTS as p (p.key)}
-              <button type="button" role="radio" class="swatch round" aria-label="{p.label} gradient" aria-checked={colourKey === `gradient:${p.key}`} tabindex={colourKey === `gradient:${p.key}` ? 0 : -1}
-                style:background="linear-gradient(135deg, {p.colors[0]}, {p.colors[1]})" onclick={() => setColours(p.colors)}></button>
-            {/each}
-            <button type="button" role="radio" class="swatch round pick" aria-label="Custom" data-tip="Custom colour" aria-checked={colourKey === 'custom'} tabindex={colourKey === 'custom' ? 0 : -1} onclick={pickCustomColour}><Icon name="eyedropper" size={14} /></button>
+        <div class="panel" role="tabpanel" id="{uid}-panel-card" aria-labelledby="{uid}-tab-card" hidden={tab !== 'card'}>
+          <div class="settings-field theme">
+            <span class="settings-label">Theme</span>
+            <!-- each theme a small card in its own colours; + holds a custom pair, its pickers in a popover -->
+            <div class="themes" role="radiogroup" aria-label="Card theme" tabindex="-1" onkeydown={radioKeys}>
+              {#each THEME_PRESETS as p (p.key)}
+                <button type="button" role="radio" class="mini-card" aria-label={p.label} data-tip={p.label} aria-checked={themeKey === p.key} tabindex={themeKey === p.key ? 0 : -1}
+                  style={Object.entries(cardVars(p.top, p.bottom)).map(([k, v]) => `${k}: ${v}`).join('; ')} onclick={() => setTheme(p.top, p.bottom)}>{@render miniCard()}</button>
+              {/each}
+              <button bind:this={plusTile} type="button" role="radio" class="mini-card custom-tile" class:custom={themeKey === null} aria-label="Custom" data-tip="Custom colours" data-menu-toggle
+                aria-checked={themeKey === null} tabindex={themeKey === null ? 0 : -1}
+                style={themeKey === null ? Object.entries(cardVars(draft.themeTop, draft.themeBottom)).map(([k, v]) => `${k}: ${v}`).join('; ') : undefined}
+                onclick={() => (themePop && themeKey === null ? (themePop = false) : openCustomTheme())}>
+                {#if themeKey === null}{@render miniCard()}{:else}<Icon name="plus" size={18} />{/if}</button>
+            </div>
+            {#if themePop && themeKey === null}
+              <div class="theme-pop menu-surface pop-in" role="dialog" aria-label="Custom card colours" use:clickOutside={() => (themePop = false)}>
+                <label class="pick">
+                  <input type="color" aria-label="Top colour" value={draft.themeTop} oninput={(e) => pickers.top.push(e.currentTarget.value)} onchange={() => pickers.top.flush()} />
+                  <span>Top <code>{draft.themeTop}</code></span>
+                </label>
+                <label class="pick">
+                  <input type="color" aria-label="Bottom colour" value={draft.themeBottom} oninput={(e) => pickers.bottom.push(e.currentTarget.value)} onchange={() => pickers.bottom.flush()} />
+                  <span>Bottom <code>{draft.themeBottom}</code></span>
+                </label>
+              </div>
+            {/if}
           </div>
-          {#if colourKey === 'custom'}
-            <Segmented label="Custom colour" value={draft.colors.length >= 2 ? 'gradient' : 'solid'} onchange={setCustomCount}
-              options={[{ value: 'solid', label: 'Solid' }, { value: 'gradient', label: 'Gradient' }]} />
-            <div class="row">
-              {#each draft.colors as c, i}
-                <input type="color" aria-label={draft.colors.length >= 2 ? (i === 0 ? 'First colour' : 'Second colour') : 'Colour'} value={c}
-                  oninput={(e) => pickers.colours[i].push(e.currentTarget.value)} onchange={() => pickers.colours[i].flush()} />
+
+          <div class="settings-field">
+            <label class="toggle-row" data-tip="A soft glow in your card's colours around it. Everyone sees your card as you set it.">
+              <input type="checkbox" role="switch" class="switch" bind:checked={draft.glow} />
+              <span>Glow</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="panel" role="tabpanel" id="{uid}-panel-name" aria-labelledby="{uid}-tab-name" hidden={tab !== 'name'}>
+          <div class="settings-field">
+            <span class="settings-label">Font</span>
+            <!-- your own name, in each font -->
+            <div class="fonts" role="radiogroup" aria-label="Name font" tabindex="-1" onkeydown={radioKeys}>
+              <button type="button" role="radio" class="font-tile" aria-label="Default" data-tip="Default" aria-checked={draft.font === null} tabindex={fontKnown ? (draft.font === null ? 0 : -1) : 0} onclick={() => (draft!.font = null)}>
+                <Name userId={me.id} serverId={null} user={{ ...pu, style: { ...pu.style, font: null, effect: null } }} text={pu.display_name} interactive={false} /></button>
+              {#each NAME_FONTS as f (f.key)}
+                <button type="button" role="radio" class="font-tile" aria-label={f.label} data-tip={f.label} aria-checked={draft.font === f.key} tabindex={draft.font === f.key ? 0 : -1}
+                  data-font={f.family} onclick={() => (draft!.font = f.key)}>
+                  <Name userId={me.id} serverId={null} user={{ ...pu, style: { ...pu.style, font: f.key, effect: null } }} text={pu.display_name} interactive={false} /></button>
               {/each}
             </div>
-            {#if lightened}<small>Lightened so it reads on dark backgrounds.</small>{/if}
-          {/if}
-        </div>
+          </div>
 
-        <div class="settings-field">
-          <span class="settings-label">Name effect</span>
-          <!-- each effect drawn on your own name style; hover or focus one to see it move (#468) -->
-          <div class="chips" role="radiogroup" aria-label="Name effect" tabindex="-1" onkeydown={radioKeys}>
-            <button type="button" role="radio" class="chip toggle-chip" aria-checked={draft.effect === null} tabindex={effectKnown ? (draft.effect === null ? 0 : -1) : 0} onclick={() => (draft!.effect = null)}>None</button>
-            {#each NAME_EFFECTS as e (e.key)}
-              <button type="button" role="radio" class="chip toggle-chip fx-chip" aria-checked={draft.effect === e.key} tabindex={draft.effect === e.key ? 0 : -1} aria-label={e.label} data-tip={e.moves}
-                data-effect={e.key} onclick={() => (draft!.effect = e.key)} onpointerenter={() => (effectHot = e.key)} onpointerleave={() => (effectHot = null)}
-                onfocus={() => (effectHot = e.key)} onblur={() => (effectHot = null)}>
-                <Name userId={me.id} serverId={null} user={{ ...pu, style: { ...pu.style, effect: e.key } }} text={e.label} interactive={false} play={effectHot === e.key} />
-              </button>
-            {/each}
+          <div class="settings-field colour" bind:this={colourField}>
+            <span class="settings-label">Colour</span>
+            <div class="colours" role="radiogroup" aria-label="Name colour" tabindex="-1" onkeydown={colourKeys}>
+              <div class="colour-group">
+                <span class="group-label">Solid</span>
+                <div class="swatches">
+                  <!-- no colour: a struck-through swatch, sized like the presets beside it -->
+                  <button type="button" role="radio" class="swatch round none" aria-label="Default" data-tip="Default colour" aria-checked={colourKey === 'default'} tabindex={colourKey === 'default' ? 0 : -1} onclick={() => setColours([])}></button>
+                  {#each NAME_SOLIDS as p (p.key)}
+                    <button type="button" role="radio" class="swatch round" aria-label={p.label} data-tip={p.label} aria-checked={colourKey === `solid:${p.key}`} tabindex={colourKey === `solid:${p.key}` ? 0 : -1}
+                      style:background={p.colors[0]} onclick={() => setColours(p.colors)}></button>
+                  {/each}
+                </div>
+              </div>
+              <div class="colour-group">
+                <span class="group-label">Gradient</span>
+                <div class="swatches">
+                  {#each NAME_GRADIENTS as p (p.key)}
+                    <button type="button" role="radio" class="swatch round" aria-label="{p.label} gradient" data-tip={p.label} aria-checked={colourKey === `gradient:${p.key}`} tabindex={colourKey === `gradient:${p.key}` ? 0 : -1}
+                      style:background="linear-gradient(135deg, {p.colors[0]}, {p.colors[1]})" onclick={() => setColours(p.colors)}></button>
+                  {/each}
+                  <button type="button" role="radio" class="swatch round pick" aria-label="Custom" data-tip="Custom colour" aria-checked={colourKey === 'custom'} tabindex={colourKey === 'custom' ? 0 : -1} onclick={pickCustomColour}><Icon name="plus" size={14} /></button>
+                </div>
+              </div>
+            </div>
+            {#if colourKey === 'custom'}
+              <Segmented label="Custom colour" value={draft.colors.length >= 2 ? 'gradient' : 'solid'} onchange={setCustomCount}
+                options={[{ value: 'solid', label: 'Solid' }, { value: 'gradient', label: 'Gradient' }]} />
+              <div class="row">
+                {#each draft.colors as c, i}
+                  <input type="color" aria-label={draft.colors.length >= 2 ? (i === 0 ? 'First colour' : 'Second colour') : 'Colour'} value={c}
+                    data-tip={lightened ? 'Lightened so it reads on dark backgrounds' : undefined}
+                    oninput={(e) => pickers.colours[i].push(e.currentTarget.value)} onchange={() => pickers.colours[i].flush()} />
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <div class="settings-field">
+            <span class="settings-label">Effect</span>
+            <!-- each effect drawn on your own name style; hover or focus one to see it move (#468) -->
+            <div class="chips" role="radiogroup" aria-label="Name effect" tabindex="-1" onkeydown={radioKeys}>
+              <button type="button" role="radio" class="chip toggle-chip" aria-checked={draft.effect === null} tabindex={effectKnown ? (draft.effect === null ? 0 : -1) : 0} onclick={() => (draft!.effect = null)}>None</button>
+              {#each NAME_EFFECTS as e (e.key)}
+                <button type="button" role="radio" class="chip toggle-chip fx-chip" aria-checked={draft.effect === e.key} tabindex={draft.effect === e.key ? 0 : -1} aria-label={e.label} data-tip={e.moves}
+                  data-effect={e.key} onclick={() => (draft!.effect = e.key)} onpointerenter={() => (effectHot = e.key)} onpointerleave={() => (effectHot = null)}
+                  onfocus={() => (effectHot = e.key)} onblur={() => (effectHot = null)}>
+                  <Name userId={me.id} serverId={null} user={{ ...pu, style: { ...pu.style, effect: e.key } }} text={e.label} interactive={false} play={effectHot === e.key} />
+                </button>
+              {/each}
+            </div>
           </div>
         </div>
 
-        <div class="settings-field">
-          <span class="settings-label">Pronouns</span>
-          <!-- counted in characters, as the server counts (maxlength counts UTF-16 units) -->
-          <input class="input text" type="text" aria-label="Pronouns" aria-invalid={pronounsOver} bind:value={draft.pronouns} />
-          {#if pronounsOver}<p class="error" role="alert">Pronouns can be up to 40 characters.</p>{/if}
-        </div>
-
-        <div class="settings-field">
-          <span class="settings-label">Bio</span>
-          <EmojiBox bind:this={bioBox} bind:text={draft.bio} label="Bio" class="bio" />
-          <small class="counter" class:over={bioOver}>{bioLength}/{BIO_MAX}</small>
-          {#if bioBreaksOver}<p class="error" role="alert">Your bio can have at most 4 line breaks.</p>{/if}
+        <div class="panel" role="tabpanel" id="{uid}-panel-badges" aria-labelledby="{uid}-tab-badges" hidden={tab !== 'badges'}>
+          {#if held.size === 0}
+            <p class="muted">No badges yet. The ones you earn can go on your card.</p>
+          {:else}
+            <div class="settings-field">
+              <span class="settings-label">On your card</span>
+              <!-- drag to reorder (Alt+arrows from the keyboard); click one to take it off -->
+              <ol class="shown-badges" aria-label="Badges on your card" use:railDrag={{ item: 'badge', onDrop: moveBadge, disabled: shownBadges.length < 2 }}>
+                {#each shownBadges as key (key)}
+                  {@const b = held.get(key)}
+                  {#if b}
+                    {@const d = badgeStore.def(key)}
+                    <li>
+                      <button type="button" class="badge-slot" data-badge={key} aria-label="{badgeName(key)}: take off your card" data-tip="{badgeName(key)} · drag to move, click to take off"
+                        onkeydown={(e) => badgeKeys(e, key)} onclick={() => toggleBadge(key)}>
+                        <BadgeIcon icon={d?.icon ?? '🏆'} art={d?.art} rarity={b.rarity} tier={b.tier} tiers={d?.tiers.length ?? 1} first={b.first_earner} hidden={b.hidden} size="show" label={badgeName(key)} />
+                      </button>
+                    </li>
+                  {/if}
+                {:else}
+                  <li class="muted none">None on your card</li>
+                {/each}
+              </ol>
+              <div class="row">
+                <button type="button" class="btn btn-secondary" disabled={showcaseAuto} data-tip="Your five rarest, following new ones as you earn them" onclick={() => (showcaseAuto = true)}>Rarest five</button>
+                {#if showcaseAuto}<span class="muted">Showing your rarest five</span>{/if}
+              </div>
+            </div>
+            <div class="settings-field">
+              <span class="settings-label">Your badges</span>
+              <div class="all-badges">
+                {#each profile.badges as b (b.key)}
+                  {@const d = badgeStore.def(b.key)}
+                  {@const on = shownBadges.includes(b.key)}
+                  <button type="button" class="badge-pick" aria-pressed={on} disabled={!on && shownBadges.length >= SHOWCASE_MAX}
+                    aria-label={on ? `${badgeName(b.key)}: take off your card` : `${badgeName(b.key)}: add to your card`} data-tip={badgeName(b.key)} onclick={() => toggleBadge(b.key)}>
+                    <BadgeIcon icon={d?.icon ?? '🏆'} art={d?.art} rarity={b.rarity} tier={b.tier} tiers={d?.tiers.length ?? 1} first={b.first_earner} hidden={b.hidden} size="show" label={badgeName(b.key)} />
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
         </div>
       </div>
 
       <div class="preview" aria-label="Preview">
-        <ProfileCard user={pu} card={pc} badges={profile.badges} showcase={profile.showcase ?? []} stats={profile.stats} serverId={null} preview />
+        <ProfileCard user={pu} card={pc} badges={profile.badges} showcase={shownBadges} stats={profile.stats} serverId={null} preview
+          onEditAvatar={() => changePicture('avatar')} onEditBanner={() => changePicture('banner')} />
         <div class="line">
           <Avatar id={me.id} name={pu.display_name} user={pu} size={36} />
           <div class="said">
@@ -447,6 +619,11 @@
     </div>
   {/if}
 </section>
+
+{#snippet miniCard()}
+  <!-- a card in miniature: banner, avatar and two lines of text, in the theme's own colours -->
+  <span class="mc-banner"></span><span class="mc-avatar"></span><span class="mc-line"></span><span class="mc-line short"></span>
+{/snippet}
 
 {#if cropping}
   {#key cropping}
