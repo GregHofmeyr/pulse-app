@@ -149,6 +149,6 @@
   .recent :global(.custom-status) { font-size: 13px; color: var(--text); }
   .lbl { padding: 0 2px 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
   .err { margin: 0; font-size: 13px; color: var(--danger-text); }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
   .reset { margin-right: auto; }
 </style>

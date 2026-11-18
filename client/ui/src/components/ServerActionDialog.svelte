@@ -71,5 +71,5 @@
   p strong, label strong { color: var(--text); overflow-wrap: anywhere; }
   label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-2); }
   .err { font-size: 13px; color: var(--danger-text); }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 </style>

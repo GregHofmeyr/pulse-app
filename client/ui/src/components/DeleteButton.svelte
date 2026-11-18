@@ -4,6 +4,7 @@
   import { tick } from 'svelte'
   import Icon from './Icon.svelte'
   import { clickOutside, portal } from '../lib/actions'
+  import { placePopover } from '../lib/menuPlace'
 
   let { what, note = '', onConfirm }: { what: string; note?: string; onConfirm: () => void } = $props()
 
@@ -13,13 +14,14 @@
    *  the page (`portal`): left in the action bar's layer, the composer covered it on the last message. */
   let place = $state('')
   const WIDTH = 240
-  const ROOM = 120 // about the question's height
+  const ROOM = 120 // about the question's height, until it's on the page to measure
+  let box: HTMLDivElement | undefined = $state()
+  /** Below the bin, or above it near the window's bottom; never past the window's edges (#454): a long note
+   *  scrolls inside the box instead of running off the screen. */
   function placeBy(r: DOMRect) {
-    const left = Math.max(8, Math.min(r.right - WIDTH, window.innerWidth - WIDTH - 8))
-    const below = r.bottom + 6 + ROOM <= window.innerHeight
-    place = below
-      ? `position: fixed; left: ${left}px; top: ${r.bottom + 6}px`
-      : `position: fixed; left: ${left}px; bottom: ${window.innerHeight - r.top + 6}px`
+    const p = placePopover(r, { width: WIDTH, height: box?.offsetHeight || ROOM }, undefined, 'end')
+    const y = p.below ? `top: ${p.top}px` : `bottom: ${p.bottom}px`
+    place = `position: fixed; left: ${p.left}px; ${y}; max-height: ${p.maxHeight}px; --pop-origin: ${p.below ? 'top' : 'bottom'} right`
   }
   let keep: HTMLButtonElement | undefined = $state()
   let opener: HTMLButtonElement | undefined = $state()
@@ -29,6 +31,8 @@
     if (!asking && opener) placeBy(opener.getBoundingClientRect())
     asking = !asking
     await tick()
+    // again with its real height (a note makes it taller than the guess)
+    if (asking && opener) placeBy(opener.getBoundingClientRect())
     keep?.focus()
   }
   // A scroll would leave it floating away from its message.
@@ -54,7 +58,7 @@
 <span class="del">
   <button bind:this={opener} class="trigger" aria-label="Delete" aria-haspopup="dialog" aria-expanded={asking} data-menu-toggle onclick={press}><Icon name="trash" size={16} /></button>
   {#if asking}
-    <div class="ask menu-surface pop-in" role="alertdialog" aria-label="Delete {what}" style={place} use:portal use:clickOutside={close}>
+    <div bind:this={box} class="ask menu-surface pop-in" role="alertdialog" aria-label="Delete {what}" style={place} use:portal use:clickOutside={close}>
       <p>Delete this {what}?{note ? ` ${note}` : ''}</p>
       <button bind:this={keep} type="button" class="btn btn-secondary" onclick={() => close()}>Cancel</button>
       <button type="button" class="btn btn-danger go" onclick={confirm}>Delete</button>
@@ -68,7 +72,7 @@
   /* the action bar's look (MessageItem / QuoteItem `.actions button`) */
   .trigger { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .trigger:hover { color: var(--danger-text); }
-  .ask { z-index: 40; width: 240px; padding: 10px; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+  .ask { z-index: 40; width: 240px; max-width: calc(100vw - 16px); overflow-y: auto; padding: 10px; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
   .ask p { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--text); }
   .ask small { flex-basis: 100%; margin-top: 2px; font-size: 11px; color: var(--text-3); }
 </style>

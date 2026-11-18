@@ -85,6 +85,6 @@
   .field .menu-label { padding: 0 2px; }
   .hint { color: var(--text-3); font-size: 12px; }
   .error { margin: 0; color: var(--danger-text); font-size: 12px; }
-  .foot { display: flex; justify-content: flex-end; gap: 8px; }
+  .foot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
   .foot .btn { height: 30px; padding: 0 12px; font-size: 13px; }
 </style>

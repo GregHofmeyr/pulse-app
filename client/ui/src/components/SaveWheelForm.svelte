@@ -58,5 +58,5 @@
 <style>
   .save { display: flex; flex-direction: column; gap: 8px; }
   .error { margin: 0; color: var(--danger-text); font-size: 12px; }
-  .btns { display: flex; justify-content: flex-end; gap: 6px; }
+  .btns { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 </style>

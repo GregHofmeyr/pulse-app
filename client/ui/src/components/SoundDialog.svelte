@@ -320,6 +320,6 @@
   .handle:focus-visible .grip { stroke: var(--text); stroke-width: 1; vector-effect: non-scaling-stroke; }
   .boost { display: flex; flex-direction: column; gap: 4px; }
   input[type='range'] { accent-color: var(--accent); }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
   .prev { margin-right: auto; }
 </style>

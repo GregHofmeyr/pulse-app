@@ -158,5 +158,5 @@
   .zoom { display: flex; align-items: center; gap: 12px; color: var(--text-2); font-size: 12px; font-weight: 600; }
   .zoom input { flex: 1; }
   .error { margin: 0; color: var(--danger-text); }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 </style>

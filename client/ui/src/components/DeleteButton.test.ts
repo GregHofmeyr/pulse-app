@@ -94,6 +94,14 @@ describe('DeleteButton', () => {
     expect(ask()!.style.bottom).toBe('46px') // 6 px above the bin's top
   })
 
+  it('never taller than the room on its side, so a long note scrolls instead of leaving the window (#454)', () => {
+    const trash = show()
+    const h = window.innerHeight
+    trash.getBoundingClientRect = () => ({ left: 600, right: 630, top: h - 40, bottom: h - 12, width: 30, height: 28, x: 600, y: h - 40, toJSON() {} }) as DOMRect
+    click(trash)
+    expect(ask()!.style.maxHeight).toBe(`${h - 40 - 6 - 8}px`)
+  })
+
   it('scrolling closes it (it would drift away from its message)', () => {
     vi.useFakeTimers()
     click(show())

@@ -118,6 +118,6 @@
   .comment { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; }
   .none { margin: 6px 8px; color: var(--text-3); font-size: 13px; }
   .error { margin: 0; color: var(--danger-text); font-size: 12px; }
-  .foot { display: flex; justify-content: flex-end; gap: 8px; }
+  .foot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
   .foot .btn { height: 30px; padding: 0 12px; font-size: 13px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

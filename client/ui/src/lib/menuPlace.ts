@@ -30,3 +30,24 @@ export function placeFlyout(menuLeft: number, menuWidth: number, winWidth = wind
   if (rightRoom >= FLYOUT_ROOM) return { side: 'right', shift: 0 }
   return leftRoom > rightRoom ? { side: 'left', shift: FLYOUT_ROOM - leftRoom } : { side: 'right', shift: FLYOUT_ROOM - rightRoom }
 }
+
+/** A button's box in the window. */
+export type Anchor = { left: number; right: number; top: number; bottom: number }
+
+/** Where a popover hung off a button goes (#454): `top` when below, `bottom` (from the window's bottom) when above. */
+export type PopoverPlace = { left: number; below: boolean; top?: number; bottom?: number; maxHeight: number }
+
+/** A popover hung off a button: below it when it fits, else above when it fits there, else on the roomier side.
+ *  Lined up with the button's start (left) or end (right) edge, kept EDGE px inside the window across, and never
+ *  taller than the room on its side (`maxHeight`: give the popover that and `overflow-y: auto`, so a long one
+ *  scrolls instead of running off the screen). Above, it's pinned by its bottom, so its height needn't be known. */
+export function placePopover(a: Anchor, size: { width: number; height: number }, win = { width: window.innerWidth, height: window.innerHeight }, align: 'start' | 'end' = 'start', gap = 6): PopoverPlace {
+  const roomBelow = Math.max(0, win.height - a.bottom - gap - EDGE)
+  const roomAbove = Math.max(0, a.top - gap - EDGE)
+  const below = size.height <= roomBelow || (size.height > roomAbove && roomBelow >= roomAbove)
+  const want = align === 'end' ? a.right - size.width : a.left
+  const left = Math.max(EDGE, Math.min(want, win.width - size.width - EDGE))
+  return below
+    ? { left, below, top: a.bottom + gap, maxHeight: roomBelow }
+    : { left, below, bottom: win.height - a.top + gap, maxHeight: roomAbove }
+}

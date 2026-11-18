@@ -119,7 +119,7 @@
   .hint { margin: 0; font-size: 12px; color: var(--text-3); }
   .hint.bad { color: var(--warn-text); }
   .err { margin: 0; font-size: 13px; color: var(--danger-text); }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
   /* the Quote of the Year green, at the dialog-footer size */
   .go { height: 36px; padding: 0 16px; border-radius: var(--radius-md); font-size: 14px; }
 </style>

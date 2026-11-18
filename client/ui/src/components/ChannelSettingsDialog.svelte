@@ -64,5 +64,5 @@
   /* as in Voice & Audio */
   .hint { margin: -4px 0 0; font-size: 12px; color: var(--text-3); }
   .err { font-size: 13px; color: var(--danger-text); }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 </style>

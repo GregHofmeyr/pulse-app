@@ -190,5 +190,5 @@
   .level { display: inline-block; width: 28px; height: 6px; margin-right: 6px; vertical-align: middle; border-radius: var(--radius-xs); background: var(--line); overflow: hidden; }
   .level .fill { display: block; width: 100%; height: 100%; background: var(--accent); transform-origin: left; transition: transform var(--dur); }
   .err { margin: 0; font-size: 13px; color: var(--danger-text); }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 </style>

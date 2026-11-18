@@ -248,5 +248,5 @@
   .scrim { position: absolute; inset: 0; z-index: 6; display: grid; place-items: center; background: var(--scrim); }
   .ask { width: 240px; padding: 12px; gap: 10px; }
   .ask p { margin: 0; font-size: 13px; color: var(--text); }
-  .btns { display: flex; justify-content: flex-end; gap: 6px; }
+  .btns { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 </style>

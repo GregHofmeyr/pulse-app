@@ -39,5 +39,5 @@
   .overlay { position: fixed; inset: 0; z-index: 30; }
   .modal { width: min(400px, 100%); }
   p { margin: 0; font-size: 14px; color: var(--text-2); overflow-wrap: anywhere; }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 </style>

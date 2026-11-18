@@ -36,6 +36,7 @@ export const patchNotes: PatchNotes = {
     'Clip drop works on its own now, even with Game activity off (it moved to Settings › Chat)',
     'Very light, dark or grey custom accent colours no longer leave buttons and switches faint',
     'The Sunset profile card stays orange instead of turning brown, and the full profile card matches the quick one',
+    'The inbox tabs, delete prompts and dialog buttons no longer spill off the edge of their box or the screen',
   ],
   qol: [
     'Edit history is in the message menu too, not only behind "(edited)"',

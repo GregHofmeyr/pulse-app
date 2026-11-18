@@ -983,7 +983,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
 
 /* A toast or notice: a menu-surface card with the popup shadow. Each stack keeps its own place on screen and its own
    z-index; a dismiss button is `icon-btn icon-btn-xs`. */
-.toast { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 14px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: var(--radius-lg); box-shadow: var(--shadow-2); color: var(--text); font-size: 13px; }
+.toast { display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 16px); overflow-wrap: anywhere; padding: 8px 10px 8px 14px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: var(--radius-lg); box-shadow: var(--shadow-2); color: var(--text); font-size: 13px; }
 /* a notice with no buttons: even padding */
 .toast.notice { padding: 8px 14px; }
 

@@ -115,7 +115,7 @@
     <h2>Inbox{#if badge > 0}<span class="count" aria-label="{badge} unread">{badgeText(badge)}</span>{/if}</h2>
     <button type="button" class="btn btn-quiet sm" disabled={badge === 0} onclick={() => void markAllRead()}>Mark all read</button>
   </div>
-  <div class="tabs"><Segmented label="Show" options={TABS} value={inbox.tab} onchange={setTab} /></div>
+  <div class="tabs"><Segmented label="Show" size="sm" options={TABS} value={inbox.tab} onchange={setTab} /></div>
   <!-- custom filters (#307): the All and Mentions tabs only -->
   {#if itemTab}<InboxFilters />{/if}
   <div class="list" onscroll={scrolled}>
@@ -199,7 +199,8 @@
   .head { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
   h2 { flex: 1; margin: 0; font-size: 15px; display: flex; align-items: center; gap: 6px; }
   .count { min-width: 16px; height: 16px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-block; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((16px - 1cap) / 2) 4px; }
-  .tabs { padding: 0 8px; }
+  /* the six tabs outgrow 420px: the row scrolls inside the popover, never past its edge (#454) */
+  .tabs { min-width: 0; display: flex; padding: 0 8px; }
   .list { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
   .item { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; font: inherit; text-align: left; }
   .item:hover, .item:focus-visible { background: var(--bg-4); }

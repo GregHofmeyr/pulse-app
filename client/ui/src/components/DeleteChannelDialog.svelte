@@ -49,5 +49,5 @@
   .modal { width: min(400px, 100%); }
   p { margin: 0; font-size: 14px; color: var(--text-2); overflow-wrap: anywhere; }
   .err { font-size: 13px; color: var(--danger-text); }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 </style>

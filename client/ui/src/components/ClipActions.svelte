@@ -216,5 +216,5 @@
   textarea { resize: vertical; min-height: 64px; }
   /* a dialog's error line, as in every other dialog */
   .err { margin: 0; font-size: 13px; color: var(--danger-text); }
-  .foot { display: flex; justify-content: flex-end; gap: 8px; }
+  .foot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 </style>

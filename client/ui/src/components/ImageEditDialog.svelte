@@ -309,5 +309,5 @@
   .handle.sw { left: -8px; bottom: -8px; cursor: nesw-resize; }
   .dims, .note { margin: 0; font-size: 12px; color: var(--text-3); }
   .error { margin: 0; color: var(--danger-text); }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 </style>
