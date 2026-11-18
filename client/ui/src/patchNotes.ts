@@ -33,6 +33,7 @@ export const patchNotes: PatchNotes = {
     'Invites show as cards in chat, with a Join button',
     'Server owners can ban someone from their right-click menu, and see who is banned in Server settings › Bans',
     'A new profile card theme, Dusk: purple to deep rose',
+    'A fresh profile editor: tabs for About you, Card, Name style and Badges, with your card always in view. Hover your avatar or banner on it to change them, and drag your badges into the order you like',
     'Name effects: give your name Neon, Toon, Pop, Gummy, Prism, Shimmer, Glitch or Ember in Settings › Profile. They move when someone hovers your name or opens your profile',
   ],
   fixes: [
@@ -46,7 +47,6 @@ export const patchNotes: PatchNotes = {
   ],
   soon: [
     'Private servers you join by invite',
-    'A fresh profile editor with name effects',
     'A queue for watch parties, with Twitch',
   ],
   message: 'More to come ✨',
