@@ -76,6 +76,49 @@ pub fn processes() -> Vec<Proc> {
     Vec::new()
 }
 
+/// Every process by exe name only (one snapshot, no process opened): enough to tell Discord apart for Everything
+/// (#458) on every rescan.
+pub fn process_names() -> Vec<Proc> {
+    #[cfg(windows)]
+    return win::process_names();
+    #[cfg(not(windows))]
+    Vec::new()
+}
+
+/// The app's icon for the Go Live sound picker (#458), as a `data:image/png` URL: the exe's own icon on Windows (read
+/// once per path), else none.
+pub fn app_icon(exe: &str) -> Option<String> {
+    #[cfg(windows)]
+    {
+        use std::collections::HashMap;
+        use std::sync::{Mutex, OnceLock};
+        static ICONS: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+        let icons = ICONS.get_or_init(Default::default);
+        if let Some(i) = icons.lock().unwrap().get(exe) {
+            return i.clone();
+        }
+        let icon = win::exe_icon_png(exe).map(|png| {
+            use base64::Engine as _;
+            format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(png)
+            )
+        });
+        let mut icons = icons.lock().unwrap();
+        // bounded: the apps seen while choosing
+        if icons.len() >= 64 {
+            icons.clear();
+        }
+        icons.insert(exe.to_string(), icon.clone());
+        icon
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = exe;
+        None
+    }
+}
+
 /// How the shared window's app was found (logged; never the title itself).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -225,6 +268,106 @@ mod win {
             r.ok()?;
             Some(String::from_utf16_lossy(&buf[..len as usize]))
         }
+    }
+
+    /// Every process by exe name, nothing opened.
+    pub fn process_names() -> Vec<Proc> {
+        processes()
+            .into_iter()
+            .map(|(pid, parent, exe)| Proc { pid, parent, exe })
+            .collect()
+    }
+
+    /// The exe's first icon (32 px) as PNG bytes (#458). None when it has none or can't be read.
+    pub fn exe_icon_png(exe: &str) -> Option<Vec<u8>> {
+        use windows::Win32::Graphics::Gdi::{
+            BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, DeleteObject, GetDC,
+            GetDIBits, GetObjectW, HGDIOBJ, ReleaseDC,
+        };
+        use windows::Win32::UI::Shell::ExtractIconExW;
+        use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
+        use windows::core::HSTRING;
+
+        let path = HSTRING::from(exe);
+        let mut large = HICON::default();
+        // SAFETY: path is a valid wide string; one icon handle is asked for, into `large`.
+        let n = unsafe { ExtractIconExW(&path, 0, Some(&mut large as *mut HICON), None, 1) };
+        if n == 0 || large.is_invalid() {
+            return None;
+        }
+        let mut info = ICONINFO::default();
+        // SAFETY: `large` is a valid icon; GetIconInfo fills `info` with bitmaps we must delete.
+        let got = unsafe { GetIconInfo(large, &mut info) };
+        let png = got.ok().and_then(|_| {
+            let mut bm = BITMAP::default();
+            // SAFETY: hbmColor is a bitmap handle from GetIconInfo; bm is sized for BITMAP.
+            let ok = unsafe {
+                GetObjectW(
+                    HGDIOBJ(info.hbmColor.0),
+                    std::mem::size_of::<BITMAP>() as i32,
+                    Some((&mut bm as *mut BITMAP).cast()),
+                )
+            };
+            let (w, h) = (bm.bmWidth, bm.bmHeight);
+            if ok == 0 || info.hbmColor.is_invalid() || w <= 0 || h <= 0 || w > 256 || h > 256 {
+                return None;
+            }
+            let mut bi = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: w,
+                    // top-down rows
+                    biHeight: -h,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: BI_RGB.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut px = vec![0u8; (w * h * 4) as usize];
+            // SAFETY: a screen DC, released below; px holds w*h 32-bit pixels as bi describes.
+            let rows = unsafe {
+                let dc = GetDC(None);
+                let rows = GetDIBits(
+                    dc,
+                    info.hbmColor,
+                    0,
+                    h as u32,
+                    Some(px.as_mut_ptr().cast()),
+                    &mut bi,
+                    DIB_RGB_COLORS,
+                );
+                ReleaseDC(None, dc);
+                rows
+            };
+            if rows == 0 {
+                return None;
+            }
+            // BGRA to RGBA; an icon with no alpha at all (old style) is drawn opaque
+            let has_alpha = px.chunks_exact(4).any(|p| p[3] != 0);
+            for p in px.chunks_exact_mut(4) {
+                p.swap(0, 2);
+                if !has_alpha {
+                    p[3] = 255;
+                }
+            }
+            let img = image::RgbaImage::from_raw(w as u32, h as u32, px)?;
+            let mut out = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut out, image::ImageFormat::Png).ok()?;
+            Some(out.into_inner())
+        });
+        // SAFETY: the bitmaps GetIconInfo made and the icon ExtractIconExW made are ours to free.
+        unsafe {
+            if !info.hbmColor.is_invalid() {
+                let _ = DeleteObject(HGDIOBJ(info.hbmColor.0));
+            }
+            if !info.hbmMask.is_invalid() {
+                let _ = DeleteObject(HGDIOBJ(info.hbmMask.0));
+            }
+            let _ = DestroyIcon(large);
+        }
+        png
     }
 
     /// Every process, with its image path where readable (two apps can share an exe name).

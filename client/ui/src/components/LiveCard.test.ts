@@ -48,14 +48,14 @@ describe('LiveCard sound', () => {
     expect(meta()).toBe('720p60 · Sound: Firefox')
     stream.sound = status({ tier: 'everything', app: null })
     flushSync()
-    expect(meta()).toBe('720p60 · Sound: everything except Pulse')
+    expect(meta()).toBe('720p60 · Sound: everything except Pulse and Discord')
   })
 
   it('says_when_the_last_resort_is_in_use', () => {
     stream.live = live()
     stream.sound = status({ tier: 'lastResort', app: null })
     open()
-    expect(meta()).toBe('720p60 · Sound: everything except Pulse and music apps')
+    expect(meta()).toBe('720p60 · Sound: everything except Pulse, Discord and music apps')
     expect(document.querySelector('.meta [data-tip]')!.getAttribute('data-tip')).toContain("Couldn't tell which app owns this window")
   })
 
@@ -74,7 +74,7 @@ describe('LiveCard sound', () => {
     flushSync()
     expect(note()!.textContent).toContain('No sound from this app yet')
     const btn = note()!.querySelector('button')!
-    expect(btn.textContent!.trim()).toBe('Use everything except Pulse')
+    expect(btn.textContent!.trim()).toBe('Use everything except Pulse and Discord')
     btn.click()
     await settle()
     expect(invoke).toHaveBeenCalledWith('stream_audio_sound', { sound: 'everything' })

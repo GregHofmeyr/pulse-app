@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  /** One choice. `tip`: a tooltip on its row (why a disabled one can't be picked, #458). */
+  export type SelectOption = { value: string | null; label: string; disabled?: boolean; tip?: string }
+</script>
+
 <script lang="ts">
   // Themed dropdown (native <select> popups take the GTK or Windows theme's colours, #455): every dropdown in Pulse.
   // A button that opens a listbox. Keys as a native select: ↑ ↓ Home End move, Enter or Space picks, Esc and Tab
@@ -5,14 +10,14 @@
   // the highlighted option (aria-activedescendant; the select-only combobox pattern). The list is moved out to the page (`portal`, so a scrolling pane
   // or a card can't clip it) and placed by the button, kept inside the window: it opens upward when there's no room
   // below, and scrolls when it's longer than the room it has.
-  import { tick } from 'svelte'
+  import { tick, type Snippet } from 'svelte'
   import Icon from './Icon.svelte'
   import { portal } from '../lib/actions'
   import { placePopover } from '../lib/menuPlace'
   import { TYPE_AHEAD_MS, typeAheadIndex } from '../lib/typeAhead'
 
-  type Option = { value: string | null; label: string; disabled?: boolean }
-  let { value = $bindable(), options, label, onchange, drop = 'down', disabled = false, size = 'md' }: {
+  type Option = SelectOption
+  let { value = $bindable(), options, label, onchange, drop = 'down', disabled = false, size = 'md', row }: {
     value: string | null
     options: Option[]
     label: string
@@ -24,6 +29,9 @@
     disabled?: boolean
     /** `sm`: the 32px `.input-sm` size, for a settings row. */
     size?: 'md' | 'sm'
+    /** Draws an option (an icon, a meter) on the button (`button`: true) and in the list, in place of its label. Its
+     *  text should still start with the label: typing to jump reads the labels. */
+    row?: Snippet<[Option, { button: boolean; selected: boolean }]>
   } = $props()
 
   const uid = $props.id()
@@ -150,16 +158,16 @@
   <button bind:this={trigger} type="button" class="trigger" role="combobox" aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? listId : undefined}
     aria-activedescendant={open ? optId(active) : undefined} aria-label={label} data-value={value ?? ''} {disabled}
     onclick={() => (open ? hide() : void show())} onkeydown={key} onblur={() => setTimeout(hide, 120)}>
-    <span class="current">{current?.label}</span><Icon name="chevron" size={16} />
+    <span class="current">{#if row && current}{@render row(current, { button: true, selected: true })}{:else}{current?.label}{/if}</span><Icon name="chevron" size={16} />
   </button>
   {#if open}
     <!-- a press on the list keeps the focus on the button (so its blur doesn't close the list first) -->
     <ul bind:this={list} id={listId} class="list menu-surface pop-in" class:sm={size === 'sm'} role="listbox" aria-label={label} tabindex="-1"
       style={place} use:portal onmousedown={(e) => e.preventDefault()}>
       {#each options as o, i}
-        <li id={optId(i)} role="option" aria-selected={o.value === value} aria-disabled={o.disabled ? 'true' : undefined} data-value={o.value ?? ''}
+        <li id={optId(i)} role="option" aria-selected={o.value === value} aria-disabled={o.disabled ? 'true' : undefined} data-value={o.value ?? ''} data-tip={o.tip}
           class:active={i === active} onmousedown={(e) => { e.preventDefault(); pick(i) }} onmouseenter={() => { if (enabled(i)) active = i }}>
-          {o.label}
+          {#if row}{@render row(o, { button: false, selected: o.value === value })}{:else}{o.label}{/if}
         </li>
       {/each}
     </ul>

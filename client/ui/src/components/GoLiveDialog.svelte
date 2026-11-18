@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import Icon from './Icon.svelte'
+  import Select, { type SelectOption } from './Select.svelte'
   import { modal } from '../lib/actions'
   import { StreamRoom, type Picked } from '../lib/stream/room'
   import { resolutionsFor, type Fps } from '../lib/stream/encodings'
@@ -28,6 +29,14 @@
   const choices = $derived(soundChoices(picked.surface))
   // greyed out only when the app can't be told apart; never because it is silent right now
   const appUnknown = $derived(probe?.identified === false)
+  // the Pulse dropdown's rows (#458): the app by its own name and icon, then everything, then none
+  const soundOptions = $derived<SelectOption[]>(choices.map((c) => c === 'app'
+    ? { value: c, label: probe?.identified && probe.app ? probe.app : CHOICE_LABEL.app, disabled: appUnknown, tip: appUnknown ? UNIDENTIFIED_TIP : undefined }
+    : { value: c, label: CHOICE_LABEL[c] }))
+  function pickSound(v: string | null) {
+    sound = v as SoundChoice
+    choose(sound)
+  }
 
   $effect(() => {
     if (picked.surface !== 'window') return
@@ -124,6 +133,22 @@
   }
 </script>
 
+{#snippet soundRow(o: SelectOption, at: { button: boolean; selected: boolean })}
+  <span class="sound-opt">
+    {#if o.value === 'app'}
+      {#if probe?.icon}<img class="app-icon" src={probe.icon} alt="" draggable="false" />{:else}<Icon name="screen" size={16} />{/if}
+    {:else if o.value === 'everything'}<Icon name="speaker" size={16} />
+    {:else}<Icon name="speakerOff" size={16} />{/if}
+    <span class="opt-label">{o.label}</span>
+    {#if o.value === 'app' && at.selected && probe?.identified}
+      <!-- the app's level when last asked (#229), live while choosing: scaled, not sized, so it moves without a layout -->
+      <span class="level" data-sound-level role="meter" aria-label={probe.playing ? 'Playing sound' : 'Not playing sound right now'}
+        aria-valuemin={0} aria-valuemax={100} aria-valuenow={probe.playing ? probe.level : 0}>
+        <span class="fill" style:transform="scaleX({probe.playing ? Math.min(1, Math.max(0, probe.level / 100)) : 0})"></span></span>
+    {/if}
+  </span>
+{/snippet}
+
 <div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={cancel}></div>
   <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Go Live" tabindex="-1" use:modal={cancel}>
@@ -149,19 +174,10 @@
         <label><input type="radio" name="fps" value={f} bind:group={fps} /> {f} fps</label>
       {/each}
     </fieldset>
-    <fieldset disabled={busy}>
-      <legend>Sound</legend>
-      {#each choices as c}
-        {#if c === 'app'}
-          <label class:unknown={appUnknown} data-tip={appUnknown ? UNIDENTIFIED_TIP : undefined}>
-            <input type="radio" name="sound" value={c} bind:group={sound} disabled={appUnknown} onchange={() => choose(c)} /> {CHOICE_LABEL[c]}
-            {#if probe?.identified}<span class="hint">{#if probe.playing}<span class="level" data-sound-level aria-hidden="true"><span class="fill" style:transform="scaleX({Math.min(1, Math.max(0, probe.level / 100))})"></span></span>{/if}{probe.playing ? 'Playing sound' : 'Not playing sound right now'}</span>{/if}
-          </label>
-        {:else}
-          <label><input type="radio" name="sound" value={c} bind:group={sound} onchange={() => choose(c)} /> {CHOICE_LABEL[c]}</label>
-        {/if}
-      {/each}
-    </fieldset>
+    <div class="sound-row">
+      <span class="legend">Sound</span>
+      <div class="sound-select"><Select label="Sound" value={sound} options={soundOptions} onchange={pickSound} disabled={busy} row={soundRow} /></div>
+    </div>
     {#if inServer}<label class="check" data-tip="People in the server who aren't in this call can watch without showing up; you see how many (👻)"><input type="checkbox" bind:checked={allowGhosts} disabled={busy} /> Allow ghost viewers</label>{/if}
 
     {#if pickError || stream.error}<p class="err" role="alert">{pickError || stream.error}</p>{/if}
@@ -183,11 +199,15 @@
   legend { float: left; width: 96px; padding: 0; color: var(--text-2); font-size: 12px; font-weight: 600; }
   label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
   input { accent-color: var(--accent); }
-  .unknown { opacity: .5; cursor: not-allowed; }
-  /* wide enough for either hint, so the choices don't shift when playback starts or stops */
-  .hint { min-width: 150px; color: var(--text-3); font-size: 12px; }
-  /* the app's level when the hint was last asked for (#229): scaled, not sized, so it moves without a layout */
-  .level { display: inline-block; width: 28px; height: 6px; margin-right: 6px; vertical-align: middle; border-radius: var(--radius-xs); background: var(--line); overflow: hidden; }
+  /* the sound dropdown (#458), level with the radio rows' legends */
+  .sound-row { display: flex; align-items: center; }
+  .sound-row .legend { width: 96px; flex-shrink: 0; color: var(--text-2); font-size: 12px; font-weight: 600; }
+  .sound-select { flex: 1; min-width: 0; }
+  .sound-opt { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .sound-opt > :global(svg) { flex-shrink: 0; color: var(--text-3); }
+  .app-icon { width: 16px; height: 16px; flex-shrink: 0; object-fit: contain; }
+  .opt-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .level { flex-shrink: 0; display: inline-block; width: 36px; height: 6px; border-radius: var(--radius-xs); background: var(--line); overflow: hidden; }
   .level .fill { display: block; width: 100%; height: 100%; background: var(--accent); transform-origin: left; transition: transform var(--dur); }
   .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
