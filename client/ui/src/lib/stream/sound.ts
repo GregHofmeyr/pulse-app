@@ -8,12 +8,13 @@ export type SoundChoice = Sound | 'off'
 /** The picked window, for finding its app: the capture source's window handle when the webview gives one. */
 export type WindowRef = { hwnd: number | null; title: string }
 /** Before going live: whether the window's app can be told apart, whether it is playing now, and how loud (its
- * loudest audio session's peak, 0-100: the picker's level meter, #229). */
-export type SoundProbe = { identified: boolean; app: string | null; playing: boolean; level: number }
+ * loudest audio session's peak, 0-100: the picker's level meter, #229); `app` its friendly name and `icon` its icon
+ * (a data URL, #458; none off Windows or where it can't be read). */
+export type SoundProbe = { identified: boolean; app: string | null; playing: boolean; level: number; icon?: string | null }
 /** While live, from Rust: which source is heard (see `plan::Tier`), and whether anything has been since it began. */
 export type SoundStatus = { tier: 'app' | 'related' | 'everything' | 'lastResort'; app: string | null; heard: boolean; ms: number }
 
-export const CHOICE_LABEL: Record<SoundChoice, string> = { app: 'This app', everything: 'Everything except Pulse', off: 'No sound' }
+export const CHOICE_LABEL: Record<SoundChoice, string> = { app: 'This app', everything: 'Everything except Pulse and Discord', off: 'No sound' }
 export const UNIDENTIFIED_TIP = "Can't tell which app owns this window"
 /** The last-resort tier, said in the controls. */
 export const LAST_RESORT_TIP = "Couldn't tell which app owns this window: everything except Pulse, Discord and music apps"
@@ -48,9 +49,9 @@ export function soundLabel(audio: boolean, s: SoundStatus | null): string {
     case 'related':
       return `Sound: ${app} and related apps`
     case 'everything':
-      return 'Sound: everything except Pulse'
+      return 'Sound: everything except Pulse and Discord'
     case 'lastResort':
-      return 'Sound: everything except Pulse and music apps'
+      return 'Sound: everything except Pulse, Discord and music apps'
   }
 }
 

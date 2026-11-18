@@ -5,8 +5,8 @@ const status = (s: Partial<SoundStatus>): SoundStatus => ({ tier: 'app', app: 'F
 
 describe('stream sound choice', () => {
   it('a_window_share_offers_three_choices_a_screen_two', () => {
-    expect(soundChoices('window').map((c) => CHOICE_LABEL[c])).toEqual(['This app', 'Everything except Pulse', 'No sound'])
-    expect(soundChoices('monitor').map((c) => CHOICE_LABEL[c])).toEqual(['Everything except Pulse', 'No sound'])
+    expect(soundChoices('window').map((c) => CHOICE_LABEL[c])).toEqual(['This app', 'Everything except Pulse and Discord', 'No sound'])
+    expect(soundChoices('monitor').map((c) => CHOICE_LABEL[c])).toEqual(['Everything except Pulse and Discord', 'No sound'])
   })
 
   it('defaults_to_this_app_when_identified_else_everything', () => {
@@ -33,8 +33,8 @@ describe('stream sound choice', () => {
     expect(soundLabel(true, status({}))).toBe('Sound: Firefox')
     expect(soundLabel(true, status({ app: null }))).toBe('Sound: this app')
     expect(soundLabel(true, status({ tier: 'related' }))).toBe('Sound: Firefox and related apps')
-    expect(soundLabel(true, status({ tier: 'everything', app: null }))).toBe('Sound: everything except Pulse')
-    expect(soundLabel(true, status({ tier: 'lastResort', app: null }))).toBe('Sound: everything except Pulse and music apps')
+    expect(soundLabel(true, status({ tier: 'everything', app: null }))).toBe('Sound: everything except Pulse and Discord')
+    expect(soundLabel(true, status({ tier: 'lastResort', app: null }))).toBe('Sound: everything except Pulse, Discord and music apps')
   })
 
   it('says_no_sound_yet_only_for_this_app_after_a_while_unheard', () => {

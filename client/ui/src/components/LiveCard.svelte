@@ -64,7 +64,7 @@
       <div class="row note" role="status" data-note="no-sound">
         <span>No sound from this app yet</span>
         <span class="spacer"></span>
-        <button type="button" class="btn btn-secondary ghost" onclick={() => streamApi.switchSound('everything')}>Use everything except Pulse</button>
+        <button type="button" class="btn btn-secondary ghost" onclick={() => streamApi.switchSound('everything')}>Use everything except Pulse and Discord</button>
       </div>
     {/if}
     <div class="row">
