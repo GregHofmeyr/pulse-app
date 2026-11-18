@@ -21,7 +21,7 @@ import { notifyPrefs } from './notifyPrefs.svelte'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { noteReactionEvent } from './reactions'
 import { playSound } from './voiceui'
-import { messageSetFor } from './messageSounds.svelte'
+import { messageSetIn } from './messageSounds.svelte'
 import { loadMixer, soundGain } from './mixer'
 import { streamApi } from './stream/stream.svelte'
 import { windowFocus } from './windowFocus.svelte'
@@ -166,8 +166,8 @@ export function maybeAlert(e: Event) {
   }
   if (play) {
     lastPlayedAt = now
-    // someone with their own message sound (#312) dings with it
-    playSound('message', m.author_id ? messageSetFor(m.author_id) : undefined)
+    // someone with their own message sound (#312) dings with it, else a channel with its own (#378)
+    playSound('message', messageSetIn(m.author_id, m.channel_id))
   }
   const s = app.state
   const notice = notifyMessage(s, v, notifyPrefs)
