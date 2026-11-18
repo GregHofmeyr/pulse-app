@@ -2,13 +2,15 @@
   // A row of mutually exclusive options (a radio group) for settings panes and popovers. Too many options for its
   // box (the inbox's six tabs, #454): the row scrolls sideways instead of spilling out, the wheel scrolls it too,
   // a soft fade marks the side with more, and the picked option is always scrolled into view.
-  let { label, options, value, onchange, size = 'md' }: {
+  let { label, options, value, onchange, size = 'md', fill = false }: {
     label: string
     options: { value: T; label: string }[]
     value: T
     onchange: (v: T) => void
     /** `sm`: tighter padding and 13px text, for a popover's tab row. */
     size?: 'md' | 'sm'
+    /** Stretch across its box with every option the same width (the emoji/GIF picker's tabs, #461). */
+    fill?: boolean
   } = $props()
 
   let el: HTMLDivElement | undefined = $state()
@@ -51,7 +53,7 @@
   })
 </script>
 
-<div bind:this={el} class="seg" class:sm={size === 'sm'} class:more-start={more.start} class:more-end={more.end}
+<div bind:this={el} class="seg" class:sm={size === 'sm'} class:fill class:more-start={more.start} class:more-end={more.end}
   role="radiogroup" aria-label={label} onscroll={edges}>
   {#each options as o}
     <button type="button" role="radio" aria-checked={value === o.value} class:on={value === o.value} onclick={() => onchange(o.value)}>{o.label}</button>
@@ -66,6 +68,8 @@
   .seg.more-start { --fade-start: 28px; }
   .seg.more-end { --fade-end: 28px; }
   .seg button { flex: none; padding: 8px 14px; border: 0; background: transparent; color: var(--text-2); font-weight: 600; white-space: nowrap; }
+  .seg.fill { display: flex; align-self: stretch; }
+  .seg.fill button { flex: 1 1 0; }
   .seg.sm button { padding: 6px 10px; font-size: 13px; }
   .seg button:not(.on):hover { background: var(--bg-3); color: var(--text); }
   .seg button.on { background: var(--accent); color: var(--on-accent); }

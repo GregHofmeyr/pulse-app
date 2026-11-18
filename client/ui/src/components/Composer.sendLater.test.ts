@@ -10,6 +10,7 @@ import Composer from './Composer.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { serialize } from '../lib/composerDom'
+import { plusItem } from './plusMenuHarness'
 
 const NOW = new Date(2026, 10, 16, 10, 0).getTime()
 let cmp: ReturnType<typeof mount> | undefined
@@ -30,7 +31,8 @@ function type(box: HTMLElement, text: string) {
   box.dispatchEvent(new InputEvent('input', { bubbles: true }))
   flushSync()
 }
-const clock = () => document.querySelector<HTMLButtonElement>('button[aria-label="Send later"]')
+// Send later… lives in the + menu (#461)
+const clock = () => plusItem('later')
 const menu = () => document.querySelector<HTMLElement>('[role=menu][aria-label="Send later"]')
 const entries = () => [...(menu()?.querySelectorAll<HTMLButtonElement>('[role=menuitem]') ?? [])].map((b) => b.textContent?.trim())
 async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
@@ -52,6 +54,14 @@ describe('Send later (#299)', () => {
   it('only where messages can be scheduled', () => {
     show({ onSchedule: undefined })
     expect(clock()).toBeNull()
+  })
+
+  it('is the + menu\'s last row, after a divider (#461)', () => {
+    show({ files: true })
+    const item = clock()!
+    expect(item.textContent!.trim()).toBe('Send later…')
+    expect(item.previousElementSibling!.getAttribute('role')).toBe('separator')
+    expect(item.nextElementSibling).toBeNull()
   })
 
   it('schedules the text for a quick pick, and empties the box', async () => {

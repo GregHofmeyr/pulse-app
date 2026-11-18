@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// The composer's GIF button (#58): next to the emoji button where GIFs can be sent, it opens the GIF picker, and a
-// pick sends the GIF at once (what's typed stays) and closes the picker.
+// The composer's emoji and GIF picker (#461, GIFs from #58): one button opens one picker with Emoji | GIFs tabs where
+// GIFs can be sent, each tab with its own search, both the same size, opening on the tab last used. A GIF pick sends it
+// at once (what's typed stays) and closes the picker.
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -30,13 +31,16 @@ function show(extra: Record<string, unknown> = {}) {
   })
   flushSync()
 }
-const gifBtn = () => document.querySelector<HTMLButtonElement>('button[aria-label="GIF"]')
-const picker = () => document.querySelector('[role="dialog"][aria-label="GIF picker"]')
+const pickerBtn = () => document.querySelector<HTMLButtonElement>('button[aria-label="Emoji and GIFs"]')
+const gifPicker = () => document.querySelector('[role="dialog"][aria-label="GIF picker"]')
+const emojiPicker = () => document.querySelector('[role="dialog"][aria-label="Emoji picker"]')
+const tab = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Emoji or GIFs"] [role=radio]')].find((b) => b.textContent === label)
 const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); flushSync() }
 
 beforeEach(() => {
   resetGifFavs()
   onSendGif.mockClear()
+  localStorage.clear()
 })
 afterEach(() => {
   if (cmp) unmount(cmp)
@@ -44,40 +48,91 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('Composer GIF button', () => {
-  it('shows only where GIFs can be sent', () => {
+describe('Composer emoji and GIF picker (#461)', () => {
+  it('one button on the bar: no separate GIF button, and no tabs where GIFs can\'t be sent', () => {
     show()
-    expect(gifBtn()).toBeNull()
+    expect(pickerBtn()).toBeNull()
+    expect(document.querySelector('button[aria-label="GIF"]')).toBeNull()
+    document.querySelector<HTMLButtonElement>('button[aria-label="Emoji"]')!.click()
+    flushSync()
+    expect(emojiPicker()).not.toBeNull()
+    expect(tab('GIFs')).toBeUndefined()
     unmount(cmp!)
+    document.body.innerHTML = ''
     show({ onSendGif })
-    expect(gifBtn()).not.toBeNull()
-    expect(document.querySelector('.wrap')!.classList.contains('has-gif')).toBe(true)
+    expect(pickerBtn()).not.toBeNull()
+    expect(document.querySelector('button[aria-label="GIF"]')).toBeNull()
   })
 
-  it('toggles the GIF picker', () => {
+  it('opens on Emoji the first time; the tabs switch, and search follows the tab', async () => {
     show({ onSendGif })
-    gifBtn()!.click()
+    pickerBtn()!.click()
     flushSync()
-    expect(picker()).not.toBeNull()
-    expect(gifBtn()!.getAttribute('aria-expanded')).toBe('true')
-    gifBtn()!.click()
+    expect(pickerBtn()!.getAttribute('aria-expanded')).toBe('true')
+    expect(emojiPicker()).not.toBeNull()
+    expect(tab('Emoji')!.getAttribute('aria-checked')).toBe('true')
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Search emoji')
+    tab('GIFs')!.click()
     flushSync()
-    expect(picker()).toBeNull()
+    await flush()
+    expect(gifPicker()).not.toBeNull()
+    expect(emojiPicker()).toBeNull()
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Search GIPHY')
+    pickerBtn()!.click()
+    flushSync()
+    expect(gifPicker()).toBeNull()
   })
 
-  it('a pick sends the GIF at once, keeps what was typed and closes the picker', async () => {
+  it('opens on the tab last used', async () => {
+    show({ onSendGif })
+    pickerBtn()!.click()
+    flushSync()
+    tab('GIFs')!.click()
+    flushSync()
+    pickerBtn()!.click()
+    flushSync()
+    pickerBtn()!.click()
+    flushSync()
+    await flush()
+    expect(gifPicker()).not.toBeNull()
+    expect(tab('GIFs')!.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('both tabs are the same size, and the tab buttons too', async () => {
+    show({ onSendGif })
+    pickerBtn()!.click()
+    flushSync()
+    const group = document.querySelector('[role=radiogroup][aria-label="Emoji or GIFs"]')!
+    expect(group.classList.contains('fill')).toBe(true)
+    expect(document.querySelector('.emoji-popover')!.classList.contains('has-tabs')).toBe(true)
+  })
+
+  it('ArrowRight in the tab row switches tab', async () => {
+    show({ onSendGif })
+    pickerBtn()!.click()
+    flushSync()
+    tab('Emoji')!.focus()
+    tab('Emoji')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    flushSync()
+    await flush()
+    expect(gifPicker()).not.toBeNull()
+  })
+
+  it('a GIF pick sends it at once, keeps what was typed and closes the picker', async () => {
     show({ onSendGif })
     const box = document.querySelector<HTMLElement>('[role="textbox"]')!
     box.replaceChildren(document.createTextNode('half a thought'))
     box.dispatchEvent(new InputEvent('input', { bubbles: true }))
     flushSync()
-    gifBtn()!.click()
+    pickerBtn()!.click()
+    flushSync()
+    tab('GIFs')!.click()
     flushSync()
     await flush()
     document.querySelector<HTMLButtonElement>('.pick[aria-label="Yes GIF"]')!.click()
     flushSync()
     expect(onSendGif).toHaveBeenCalledWith({ id: 'abc', title: 'Yes GIF', width: 480, height: 270 }, 'https://giphy.com/gifs/yes-abc')
-    expect(picker()).toBeNull()
+    expect(gifPicker()).toBeNull()
     expect(serialize(box)).toBe('half a thought')
   })
 })
