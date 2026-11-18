@@ -33,6 +33,7 @@ export const patchNotes: PatchNotes = {
     'A redesigned quotes leaderboard that\'s easier to read and counts properly',
   ],
   fixes: [
+    'Updates no longer get missed at launch: if Pulse checks quickly, it now installs the new version instead of starting on the old one',
     'Clip drop works on its own now, even with Game activity off (it moved to Settings › Chat)',
     'Very light, dark or grey custom accent colours no longer leave buttons and switches faint',
     'The Sunset profile card stays orange instead of turning brown, and the full profile card matches the quick one',
