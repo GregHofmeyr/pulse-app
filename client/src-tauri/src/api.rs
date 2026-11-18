@@ -1681,11 +1681,14 @@ impl Api {
         invite_code: &str,
         username: &str,
         password: &str,
+        website: Option<&str>,
     ) -> Result<SessionResponse, ApiError> {
         let body = RegisterRequest {
             invite_code: invite_code.into(),
             username: username.into(),
             password: password.into(),
+            // the sign-up form's hidden field (#476): empty unless something filled in what no person sees
+            website: website.filter(|w| !w.is_empty()).map(str::to_string),
         };
         Self::parse(
             self.http
@@ -4873,7 +4876,10 @@ mod tests {
         let code = testing::invite(&app).await;
         let api = Api::new(&format!("http://{}", app.addr));
 
-        let reg = api.register(&code, "alex", "hunter2hunter2").await.unwrap();
+        let reg = api
+            .register(&code, "alex", "hunter2hunter2", None)
+            .await
+            .unwrap();
         assert_eq!(reg.user.username, "alex");
 
         let LoginOutcome::Session(login) = api.login("alex", "hunter2hunter2").await.unwrap()

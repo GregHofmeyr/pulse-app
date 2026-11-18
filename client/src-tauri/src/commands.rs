@@ -875,9 +875,12 @@ pub async fn register(
     invite_code: String,
     username: String,
     password: String,
+    website: Option<String>,
 ) -> Result<User, ApiError> {
     let api = core.start_login(&server_url)?;
-    let s = api.register(&invite_code, &username, &password).await?;
+    let s = api
+        .register(&invite_code, &username, &password, website.as_deref())
+        .await?;
     core.activate(&app, api, s.token, Some(s.user.id), true);
     Ok(s.user)
 }

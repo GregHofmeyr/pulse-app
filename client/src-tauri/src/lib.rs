@@ -12,6 +12,7 @@ pub mod gifs;
 pub mod hookwatch;
 pub mod hotkeys;
 pub mod idle;
+pub mod invite_links;
 pub mod ipc;
 pub mod keybinds;
 pub mod links;
@@ -137,8 +138,28 @@ pub fn run() {
     }
     builder
         .plugin(tauri_plugin_dialog::init())
+        // `pulse://invite/<code>` links (#476); a second launch's link arrives through single-instance
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             use tauri::Manager;
+            app.manage(invite_links::Pending::default());
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                // the installed app answers `pulse://` for this user; a dev build leaves the registration alone
+                #[cfg(windows)]
+                if !cfg!(debug_assertions)
+                    && let Err(e) = app.deep_link().register_all()
+                {
+                    tracing::warn!(error = %e, "couldn't register pulse:// links");
+                }
+                let h = app.handle().clone();
+                app.deep_link().on_open_url(move |e| {
+                    invite_links::opened(&h, e.urls().into_iter().map(|u| u.to_string()))
+                });
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    invite_links::opened(app.handle(), urls.into_iter().map(|u| u.to_string()));
+                }
+            }
             let profile = std::env::var("PULSE_PROFILE").ok();
             let dir = session::profile_dir(&app.path().app_data_dir()?, profile.as_deref());
             // Log file per profile; the guard must live as long as the app.
@@ -348,6 +369,7 @@ pub fn run() {
         })
         .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::handle)
         .invoke_handler(tauri::generate_handler![
+            invite_links::take_invite_link,
             commands::login,
             commands::login_mfa,
             commands::cancel_login,

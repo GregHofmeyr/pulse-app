@@ -23,6 +23,9 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": { "schemes": ["pulse"] }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMyMDA4NkU3MzgzM0MxMEYKUldRUHdUTTQ1NFlBd2g0T1RTd0VGS29ldWpZSGU0M1BPSGlCNSs3ZUxFZWxJQkZ3OHBzUnlNb0gK",
       "endpoints": ["https://pulsechat.co.za/updates/latest.json"],
