@@ -32,12 +32,14 @@ export const patchNotes: PatchNotes = {
     'Invite people to a server with a link, or straight from their right-click menu',
     'Invites show as cards in chat, with a Join button',
     'Server owners can ban someone from their right-click menu, and see who is banned in Server settings › Bans',
+    'A new profile card theme, Dusk: purple to deep rose',
   ],
   fixes: [
     'Restoring a deleted channel now tells you when the server is at its channel limit, and deleted channels no longer count toward it',
   ],
   qol: [
     'Signing someone out of everything takes effect within seconds, even if their app is open',
+    'The Sunset card theme\'s orange is brighter, and secondary text on dark cards is a little lighter',
   ],
   soon: [
     'Private servers you join by invite',
