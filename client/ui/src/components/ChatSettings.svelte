@@ -6,7 +6,7 @@
   import { planPrefs, setPlanReminders, setPlanSomething } from '../lib/plans.svelte'
   import { app } from '../lib/store.svelte'
   import { errorText } from '../lib/tauri'
-  import { f1Prefs, setF1RaceWeekends } from '../lib/f1Prefs.svelte'
+  import { f1Prefs, setF1RaceWeekends, setF1Strip, showF1WeekendAgain } from '../lib/f1Prefs.svelte'
   import { setWatchParties, watchPrefs } from '../lib/watchParty.svelte'
 
   const modes: { value: AnimateMode; label: string; help: string }[] = [
@@ -58,10 +58,20 @@
     <Segmented label="F1 race weekends" options={onOff} value={f1Prefs.on} onchange={setF1RaceWeekends} />
     <small>{f1Prefs.on ? "A server's F1 channel shows a countdown to the next race, and F1 cards open in full: the race weekend with podium predictions, the results and the scores. You get a notification when your predictions are scored." : 'No countdown, F1 cards fold to one line (click one to open it), and no notification when your predictions are scored (it still reaches your inbox).'} This device only.</small>
   </div>
+  <!-- the countdown strip on its own (#456): right-click the strip to turn it off or hide it for a weekend; back here -->
+  <div class="settings-field"><span class="settings-label">F1 COUNTDOWN STRIP</span>
+    <Segmented label="F1 countdown strip" options={onOff} value={f1Prefs.strip} onchange={setF1Strip} />
+    <small>{f1Prefs.strip ? "The strip atop a server's F1 channel with the countdown to lights out, the next session and the prediction leaders. Right-click it to hide it." : 'No strip atop the F1 channel. F1 cards are unchanged.'}{f1Prefs.on ? '' : ' (F1 race weekends is off, so it\'s hidden anyway.)'} This device only.</small>
+    {#if f1Prefs.hidden}
+      <div class="hidden-weekend"><small>Hidden for the {f1Prefs.hidden.name} weekend.</small>
+        <button type="button" class="btn btn-secondary" onclick={showF1WeekendAgain}>Show it again</button></div>
+    {/if}
+  </div>
   <!-- Clip drop (#382): its own feature (Windows only), apart from Game activity -->
   <ClipDropSettings />
 </section>
 
 <style>
   .err { color: var(--danger-text); }
+  .hidden-weekend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 </style>

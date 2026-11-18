@@ -43,6 +43,7 @@ export const patchNotes: PatchNotes = {
     'Someone removed from a server three times in two days needs the owner to let them back in (Server settings › Members › right-click › Allow back)',
     'Your achievement and Deadlock cards skip servers that have someone you hide your games from',
     'Every dropdown is a Pulse one now (channel pickers, F1 predictions, Clear after and more): no more plain system menus, and you can type to jump to an option',
+    'Right-click the F1 countdown strip to hide it for this weekend or turn it off (bring it back in Settings › Chat)',
   ],
   soon: [
     'Private servers you join by invite',

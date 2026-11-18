@@ -2,9 +2,12 @@
   // The F1 countdown banner (#386), atop a server's F1 channel: the next race weekend (flag, race, circuit), the
   // countdown to lights out, the next session in your own time (every session on a click), and the season's prediction
   // leaders. The server reads Jolpica-F1 and caches it; this asks the server every few minutes at most. Hidden with
-  // "F1 race weekends" off, outside the F1 channel, and between seasons.
+  // "F1 race weekends" off, outside the F1 channel, and between seasons. Right-click it (#456): hide it until the next
+  // race weekend, or turn the strip off (Settings › Chat › F1 countdown strip brings it back).
   import { SESSION_LABELS, countdown, flagOf, placeLine, pointsText, sessionWhen } from '../lib/f1'
-  import { f1Prefs, f1Status, loadF1Status } from '../lib/f1.svelte'
+  import { f1Status, loadF1Status } from '../lib/f1.svelte'
+  import { f1Prefs, hideF1Weekend, setF1Strip, weekendKey } from '../lib/f1Prefs.svelte'
+  import F1StripMenu from './F1StripMenu.svelte'
   import { clock } from '../lib/store.svelte'
   import { serverNow } from '../lib/serverClock'
 
@@ -17,17 +20,31 @@
     if (f1Prefs.on) void loadF1Status(serverId)
   })
   const st = $derived(f1Status.byServer[serverId])
-  const w = $derived(f1Prefs.on && st?.channel_id === channelId ? st.next : null)
+  const w = $derived(f1Prefs.on && f1Prefs.strip && st?.channel_id === channelId && st.next && f1Prefs.hidden?.key !== weekendKey(st.next) ? st.next : null)
   const now = $derived((void clock.nowIso, serverNow()))
   const left = $derived(w ? countdown(Date.parse(w.race_at), now) : null)
   const upcoming = $derived(w?.sessions.find((s) => Date.parse(s.starts_at) > now) ?? null)
   const leaders = $derived((st?.season_table ?? []).slice(0, 3))
   let open = $state(false)
+
+  let rowEl: HTMLButtonElement | undefined = $state()
+  let menu = $state<{ x: number; y: number } | null>(null)
+  function openMenu(e: MouseEvent) {
+    e.preventDefault()
+    menu = { x: e.clientX, y: e.clientY }
+  }
+  function menuKey(e: KeyboardEvent) {
+    if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+      e.preventDefault()
+      const r = rowEl!.getBoundingClientRect()
+      menu = { x: r.left + 24, y: r.bottom }
+    }
+  }
 </script>
 
 {#if w && left}
-  <div class="f1-banner" role="region" aria-labelledby="{uid}-t">
-    <button type="button" class="row" aria-expanded={open} onclick={() => (open = !open)}>
+  <div class="f1-banner" role="region" aria-labelledby="{uid}-t" oncontextmenu={openMenu}>
+    <button bind:this={rowEl} type="button" class="row" aria-expanded={open} onclick={() => (open = !open)} onkeydown={menuKey}>
       <span class="flag" aria-hidden="true">{flagOf(w.country)}</span>
       <span class="what">
         <span class="title" id="{uid}-t">{w.race_name}</span>
@@ -47,6 +64,10 @@
       <p class="leaders">Predictions: {#each leaders as row, i (row.user_id)}{i ? ' · ' : ''}<span class="who">{nameOf(row.user_id)}</span> {pointsText(row.points)}{/each}</p>
     {/if}
   </div>
+{/if}
+{#if menu && w && rowEl}
+  {@const weekend = w}
+  <F1StripMenu x={menu.x} y={menu.y} opener={rowEl} onClose={() => (menu = null)} onHideWeekend={() => hideF1Weekend(weekend)} onTurnOff={() => setF1Strip(false)} />
 {/if}
 
 <style>

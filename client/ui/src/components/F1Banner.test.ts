@@ -8,7 +8,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import F1Banner from './F1Banner.svelte'
-import { f1Prefs } from '../lib/f1Prefs.svelte'
+import { f1Prefs, setF1Strip, showF1WeekendAgain } from '../lib/f1Prefs.svelte'
 import { resetF1 } from '../lib/f1.svelte'
 
 const NOW = Date.parse('2030-03-12T07:00:00.000Z')
@@ -36,6 +36,8 @@ beforeEach(() => {
   vi.setSystemTime(NOW)
   resetF1()
   f1Prefs.on = true
+  setF1Strip(true)
+  showF1WeekendAgain()
   invoke.mockReset()
   invoke.mockImplementation(async (cmd: string) => (cmd === 'f1_status' ? STATUS : undefined))
 })
@@ -67,5 +69,65 @@ describe('F1Banner', () => {
     f1Prefs.on = false
     await show('F1')
     expect(document.querySelector('.f1-banner')).toBeNull()
+  })
+
+  describe('right-click menu (#456)', () => {
+    const menu = () => document.querySelector<HTMLElement>('[role=menu][aria-label="F1 strip"]')
+    const item = (t: string) => [...document.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find((b) => b.textContent!.trim() === t)!
+    function rightClick() {
+      document.querySelector('.f1-banner')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 50 }))
+      flushSync()
+    }
+
+    it('opens on right-click with Hide for this weekend and Turn off F1 strip', async () => {
+      await show('F1')
+      rightClick()
+      expect(menu()).not.toBeNull()
+      expect([...menu()!.querySelectorAll('[role=menuitem]')].map((b) => b.textContent!.trim())).toEqual(['Hide for this weekend', 'Turn off F1 strip'])
+      expect(document.activeElement).toBe(item('Hide for this weekend'))
+    })
+
+    it('Shift+F10 on the strip opens it too; Escape closes it and focus goes back', async () => {
+      await show('F1')
+      const row = document.querySelector<HTMLButtonElement>('.f1-banner .row')!
+      row.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+      flushSync()
+      expect(menu()).not.toBeNull()
+      menu()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      flushSync()
+      expect(menu()).toBeNull()
+      expect(document.activeElement).toBe(row)
+    })
+
+    it('Hide for this weekend hides it on this device until the next race weekend', async () => {
+      await show('F1')
+      rightClick()
+      item('Hide for this weekend').click()
+      flushSync()
+      expect(document.querySelector('.f1-banner')).toBeNull()
+      expect(menu()).toBeNull()
+      expect(f1Prefs.hidden).toEqual({ key: '2030-2', name: 'Harbour Grand Prix' })
+      expect(JSON.parse(localStorage.getItem('pulse.f1.hiddenWeekend')!)).toEqual({ key: '2030-2', name: 'Harbour Grand Prix' })
+      // the next weekend (round 3) shows again by itself
+      unmount(cmp!)
+      resetF1()
+      invoke.mockImplementation(async (cmd: string) => (cmd === 'f1_status' ? { ...STATUS, next: { ...STATUS.next, round: 3, race_name: 'Desert Grand Prix' } } : undefined))
+      await show('F1')
+      expect(document.querySelector('.f1-banner .title')!.textContent).toBe('Desert Grand Prix')
+    })
+
+    it('Turn off F1 strip flips its own switch (F1 cards untouched); Settings brings it back', async () => {
+      await show('F1')
+      rightClick()
+      item('Turn off F1 strip').click()
+      flushSync()
+      expect(document.querySelector('.f1-banner')).toBeNull()
+      expect(f1Prefs.strip).toBe(false)
+      expect(f1Prefs.on).toBe(true)
+      expect(localStorage.getItem('pulse.f1.strip')).toBe('off')
+      setF1Strip(true)
+      flushSync()
+      expect(document.querySelector('.f1-banner')).not.toBeNull()
+    })
   })
 })
