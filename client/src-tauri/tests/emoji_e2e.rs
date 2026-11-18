@@ -127,7 +127,12 @@ async fn emoji_reactions_and_media_end_to_end() {
 
     // 1. one server, a text channel, a message from alex
     let srv = api.create_server(&alex, "Main").await.unwrap();
-    api.join_server(&sam, srv.id).await.unwrap();
+    assert!(
+        testing::join_server(&app, &sam, srv.id)
+            .await
+            .status()
+            .is_success()
+    );
     let chan = api
         .create_channel(&alex, srv.id, ChannelKind::Text, "emoji-test")
         .await

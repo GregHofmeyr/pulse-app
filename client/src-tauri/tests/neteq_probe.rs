@@ -278,13 +278,7 @@ async fn neteq_buffer_vs_measured_lag() {
     let (_, alex) = testing::register(&app, "alex").await;
     let s = testing::create_server(&app, &alex, "Main").await;
     let (_, sam) = testing::register(&app, "sam").await;
-    let r = testing::post_json(
-        &app,
-        &sam,
-        &format!("/servers/{}/join", s.id),
-        serde_json::json!({}),
-    )
-    .await;
+    let r = testing::join_server(&app, &sam, s.id).await;
     assert!(r.status().is_success(), "join server: {}", r.status());
     let api = Api::new(&format!("http://{}", app.addr));
     let lounge = api

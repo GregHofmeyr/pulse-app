@@ -13,8 +13,8 @@ use pulse_protocol::rest::{
     EditQuoteRequest, Game, Gif, InboxPage, InvitePreview, Leaderboard, LeaderboardPeriod,
     LinkSpeakerRequest, MediaInfo, Member, Message, MuteTarget, NameArchivePage, NotifyLevel, Pin,
     PinDuration, PinnedMessage, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse,
-    SaveLayoutRequest, SearchRequest, SearchResults, Server, ServerBan, ServerBlock, ServerInvite,
-    ServerLayout, SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare, StartQotyRequest,
+    SaveLayoutRequest, SearchRequest, SearchResults, Server, ServerBan, ServerInvite, ServerLayout,
+    SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare, StartQotyRequest,
     TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
     WatchParty, WatchPartyAction,
 };
@@ -1180,16 +1180,6 @@ pub async fn save_layout(
 }
 
 #[tauri::command]
-pub async fn join_server(
-    app: AppHandle,
-    core: State<'_, Core>,
-    server_id: ServerId,
-) -> Result<(), ApiError> {
-    let (api, token) = core.current()?;
-    core.check(&app, api.join_server(&token, server_id).await)
-}
-
-#[tauri::command]
 pub async fn leave_server(
     app: AppHandle,
     core: State<'_, Core>,
@@ -1222,16 +1212,6 @@ pub async fn remove_server_member(
         &app,
         api.remove_server_member(&token, server_id, user_id).await,
     )
-}
-
-#[tauri::command]
-pub async fn list_server_blocks(
-    app: AppHandle,
-    core: State<'_, Core>,
-    server_id: ServerId,
-) -> Result<Vec<ServerBlock>, ApiError> {
-    let (api, token) = core.current()?;
-    core.check(&app, api.server_blocks(&token, server_id).await)
 }
 
 /// The signed-in server's address (#80): invite links are made from it, and links to it are recognised in chat.
@@ -1318,17 +1298,6 @@ pub async fn set_server_ban(
         &app,
         api.set_server_ban(&token, server_id, user_id, on).await,
     )
-}
-
-#[tauri::command]
-pub async fn allow_back(
-    app: AppHandle,
-    core: State<'_, Core>,
-    server_id: ServerId,
-    user_id: UserId,
-) -> Result<(), ApiError> {
-    let (api, token) = core.current()?;
-    core.check(&app, api.allow_back(&token, server_id, user_id).await)
 }
 
 #[tauri::command]

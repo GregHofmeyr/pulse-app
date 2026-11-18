@@ -135,14 +135,8 @@ async fn fixture() -> Fixture {
 /// Another user, a member of the server and counted as in the voice channel.
 async fn member(f: &Fixture, name: &str) -> (UserId, String) {
     let (uid, token) = testing::register(&f.app, name).await;
-    let joined = testing::post_json(
-        &f.app,
-        &token,
-        &format!("/servers/{}/join", f.server),
-        serde_json::json!({}),
-    )
-    .await;
-    assert_eq!(joined.status(), 204, "{name} joins the server");
+    let joined = testing::join_server(&f.app, &token, f.server).await;
+    assert_eq!(joined.status(), 200, "{name} joins the server");
     f.app.voice.join(f.channel, uid, "PA_test");
     (uid, token)
 }
@@ -267,14 +261,8 @@ async fn a_ghost_hears_stream_audio_and_cannot_publish() {
     let _turn = livekit_turn().await;
     let f = fixture().await;
     let (_, sam_token) = testing::register(&f.app, "sam").await;
-    let joined = testing::post_json(
-        &f.app,
-        &sam_token,
-        &format!("/servers/{}/join", f.server),
-        serde_json::json!({}),
-    )
-    .await;
-    assert_eq!(joined.status(), 204);
+    let joined = testing::join_server(&f.app, &sam_token, f.server).await;
+    assert_eq!(joined.status(), 200);
     f.api
         .go_live(
             &f.token,

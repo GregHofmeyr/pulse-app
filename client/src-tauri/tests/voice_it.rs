@@ -292,13 +292,7 @@ async fn one_client_hears_another_at_real_time() {
     let (_, alex) = testing::register(&app, "alex").await;
     let s = testing::create_server(&app, &alex, "Main").await;
     let (_, sam) = testing::register(&app, "sam").await;
-    let r = testing::post_json(
-        &app,
-        &sam,
-        &format!("/servers/{}/join", s.id),
-        serde_json::json!({}),
-    )
-    .await;
+    let r = testing::join_server(&app, &sam, s.id).await;
     assert!(r.status().is_success(), "join server: {}", r.status());
     let api = Api::new(&format!("http://{}", app.addr));
     let lounge = api
@@ -494,13 +488,7 @@ async fn leaving_while_devices_open_leaves_no_ghost() {
     let (_, alex) = testing::register(&app, "alex").await;
     let s = testing::create_server(&app, &alex, "Main").await;
     let (_, sam) = testing::register(&app, "sam").await;
-    let r = testing::post_json(
-        &app,
-        &sam,
-        &format!("/servers/{}/join", s.id),
-        serde_json::json!({}),
-    )
-    .await;
+    let r = testing::join_server(&app, &sam, s.id).await;
     assert!(r.status().is_success(), "join server: {}", r.status());
     let api = Api::new(&format!("http://{}", app.addr));
     let lounge = api
@@ -646,13 +634,7 @@ async fn leaving_mid_connect_leaves_no_ghost() {
     let (_, alex) = testing::register(&app, "alex").await;
     let s = testing::create_server(&app, &alex, "Main").await;
     let (sam_id, sam) = testing::register(&app, "sam").await;
-    let r = testing::post_json(
-        &app,
-        &sam,
-        &format!("/servers/{}/join", s.id),
-        serde_json::json!({}),
-    )
-    .await;
+    let r = testing::join_server(&app, &sam, s.id).await;
     assert!(r.status().is_success(), "join server: {}", r.status());
     let api = Api::new(&format!("http://{}", app.addr));
     let lounge = api
@@ -1081,7 +1063,12 @@ async fn two_tracks_from_one_person_both_play() {
     let (_, sam) = testing::register(&app, "sam").await;
     let s = testing::create_server(&app, &alex, "Main").await;
     let api = Api::new(&format!("http://{}", app.addr));
-    api.join_server(&sam, s.id).await.unwrap();
+    assert!(
+        testing::join_server(&app, &sam, s.id)
+            .await
+            .status()
+            .is_success()
+    );
     let lounge = api
         .channels(&alex, s.id)
         .await
@@ -1289,7 +1276,12 @@ async fn hears_a_peer_again_after_leaving_and_rejoining() {
     let (_, sam) = testing::register(&app, "sam").await;
     let s = testing::create_server(&app, &alex, "Main").await;
     let api = Api::new(&format!("http://{}", app.addr));
-    api.join_server(&sam, s.id).await.unwrap();
+    assert!(
+        testing::join_server(&app, &sam, s.id)
+            .await
+            .status()
+            .is_success()
+    );
     let lounge = api
         .channels(&alex, s.id)
         .await
@@ -1495,7 +1487,12 @@ async fn leaving_while_others_stay_releases_the_connection() {
     let (_, sam) = testing::register(&app, "sam").await;
     let s = testing::create_server(&app, &alex, "Main").await;
     let api = Api::new(&format!("http://{}", app.addr));
-    api.join_server(&sam, s.id).await.unwrap();
+    assert!(
+        testing::join_server(&app, &sam, s.id)
+            .await
+            .status()
+            .is_success()
+    );
     let lounge = api
         .channels(&alex, s.id)
         .await

@@ -75,7 +75,12 @@ async fn server_mute_drops_the_mic_at_livekit_and_undoing_it_publishes_again() {
     let (_, sam) = testing::register(&app, "sam").await;
     let api = Api::new(&format!("http://{}", app.addr));
     let s = testing::create_server(&app, &alex, "Main").await;
-    api.join_server(&sam, s.id).await.unwrap();
+    assert!(
+        testing::join_server(&app, &sam, s.id)
+            .await
+            .status()
+            .is_success()
+    );
     let lounge = api
         .channels(&alex, s.id)
         .await
@@ -153,7 +158,12 @@ async fn world() -> World {
     let sam = testing::register(&app, "sam").await;
     let api = Api::new(&format!("http://{}", app.addr));
     let s = testing::create_server(&app, &alex.1, "Main").await;
-    api.join_server(&sam.1, s.id).await.unwrap();
+    assert!(
+        testing::join_server(&app, &sam.1, s.id)
+            .await
+            .status()
+            .is_success()
+    );
     let lounge = api
         .channels(&alex.1, s.id)
         .await

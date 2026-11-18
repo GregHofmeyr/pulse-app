@@ -20,16 +20,16 @@ use pulse_protocol::rest::{
     PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, QuietSpin, RecoveryCodesResponse,
     RegisterRequest, RenameCategoryRequest, RenameChannelRequest, RenameEmojiRequest,
     ReopenQotyRequest, SaveLayoutRequest, SearchRequest, SearchResults, SendMessageRequest, Server,
-    ServerBan, ServerBlock, ServerInvite, ServerLayout, ServerOrderRequest, ServerVoiceMod,
-    SessionResponse, SetChannelBitrateRequest, SetClipViewRequest, SetCustomStatusRequest,
-    SetJoinSoundRequest, SetMuteRequest, SetNicknameRequest, SetNotifyLevelRequest,
-    SetServerVoiceRequest, SetShowcaseRequest, SetStatusRequest, Sound, SpinAgainRequest,
-    SpinWheelRequest, StageShare, StageShareRequest, StartAttachmentRequest, StartQotyRequest,
-    StartWatchPartyRequest, Status, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
-    ThreadSeenRequest, TransferServerRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
-    TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest,
-    UpdateSoundRequest, UpdateWheelRequest, UploadedPart, User, VoiceTokenResponse, WatchParty,
-    WatchPartyAction, WatchRequest, Wheel,
+    ServerBan, ServerInvite, ServerLayout, ServerOrderRequest, ServerVoiceMod, SessionResponse,
+    SetChannelBitrateRequest, SetClipViewRequest, SetCustomStatusRequest, SetJoinSoundRequest,
+    SetMuteRequest, SetNicknameRequest, SetNotifyLevelRequest, SetServerVoiceRequest,
+    SetShowcaseRequest, SetStatusRequest, Sound, SpinAgainRequest, SpinWheelRequest, StageShare,
+    StageShareRequest, StartAttachmentRequest, StartQotyRequest, StartWatchPartyRequest, Status,
+    StreamInfo, StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest,
+    TransferServerRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
+    TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest,
+    UpdateWheelRequest, UploadedPart, User, VoiceTokenResponse, WatchParty, WatchPartyAction,
+    WatchRequest, Wheel,
 };
 use serde::de::DeserializeOwned;
 
@@ -980,17 +980,6 @@ impl Api {
         .await
     }
 
-    pub async fn join_server(&self, token: &str, server: ServerId) -> Result<(), ApiError> {
-        Self::ok_empty(
-            self.http
-                .post(format!("{}/servers/{server}/join", self.base))
-                .bearer_auth(token)
-                .send()
-                .await,
-        )
-        .await
-    }
-
     /// Leave a server (#371). Its owner can't.
     pub async fn leave_server(&self, token: &str, server: ServerId) -> Result<(), ApiError> {
         Self::ok_empty(
@@ -1032,22 +1021,6 @@ impl Api {
                 .put(format!("{}/servers/{server}/owner", self.base))
                 .bearer_auth(token)
                 .json(&TransferServerRequest { user_id: user })
-                .send()
-                .await,
-        )
-        .await
-    }
-
-    /// The people blocked from rejoining a server (#418): its owner only.
-    pub async fn server_blocks(
-        &self,
-        token: &str,
-        server: ServerId,
-    ) -> Result<Vec<ServerBlock>, ApiError> {
-        Self::parse(
-            self.http
-                .get(format!("{}/servers/{server}/blocked", self.base))
-                .bearer_auth(token)
                 .send()
                 .await,
         )
@@ -1158,23 +1131,6 @@ impl Api {
             self.http.delete(url)
         };
         Self::ok_empty(req.bearer_auth(token).send().await).await
-    }
-
-    /// Let someone blocked from rejoining a server back (#418): its owner only.
-    pub async fn allow_back(
-        &self,
-        token: &str,
-        server: ServerId,
-        user: UserId,
-    ) -> Result<(), ApiError> {
-        Self::ok_empty(
-            self.http
-                .delete(format!("{}/servers/{server}/blocked/{user}", self.base))
-                .bearer_auth(token)
-                .send()
-                .await,
-        )
-        .await
     }
 
     pub async fn channels(&self, token: &str, server: ServerId) -> Result<Vec<Channel>, ApiError> {
@@ -4335,6 +4291,12 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// `token`'s user joins `server` (#80: by invite, the one way in).
+    async fn testing_join(app: &testing::TestApp, token: &str, server: ServerId) {
+        let r = testing::join_server(app, token, server).await;
+        assert!(r.status().is_success(), "join {}", r.status());
+    }
+
     /// A bare HTTP/1.1 server that answers every request with 204 and never closes an idle
     /// connection itself (axum's test server drops idle ones after 30 s: hyper's header read
     /// timeout), counting the connections made to it.
@@ -4556,7 +4518,7 @@ mod tests {
         let (sam_id, sam) = testing::register(&app, "sam").await;
         let s = testing::create_server(&app, &alex, "Main").await;
         let api = Api::new(&format!("http://{}", app.addr));
-        api.join_server(&sam, s.id).await.unwrap();
+        testing_join(&app, &sam, s.id).await;
         // the owner can't leave, in the server's words
         match api.leave_server(&alex, s.id).await {
             Err(ApiError::Forbidden(m)) => assert!(m.contains("owner"), "{m}"),
@@ -4564,7 +4526,7 @@ mod tests {
         }
         api.leave_server(&sam, s.id).await.unwrap();
         assert!(api.leave_server(&sam, s.id).await.is_err(), "already out");
-        api.join_server(&sam, s.id).await.unwrap();
+        testing_join(&app, &sam, s.id).await;
         // only the owner removes, and not themselves
         assert!(api.remove_server_member(&sam, s.id, alex_id).await.is_err());
         assert!(
@@ -4584,7 +4546,7 @@ mod tests {
         let (sam_id, sam) = testing::register(&app, "sam").await;
         let s = testing::create_server(&app, &alex, "Main").await;
         let api = Api::new(&format!("http://{}", app.addr));
-        api.join_server(&sam, s.id).await.unwrap();
+        testing_join(&app, &sam, s.id).await;
         assert!(api.transfer_server(&sam, s.id, sam_id).await.is_err());
         api.transfer_server(&alex, s.id, sam_id).await.unwrap();
         let listed = api.servers(&alex).await.unwrap();
@@ -4596,36 +4558,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn blocking_a_rejoin_and_allowing_back() {
-        let app = testing::spawn().await;
-        let (_, alex) = testing::register(&app, "alex").await;
-        let (sam_id, sam) = testing::register(&app, "sam").await;
-        let s = testing::create_server(&app, &alex, "Main").await;
-        let api = Api::new(&format!("http://{}", app.addr));
-        for _ in 0..3 {
-            api.join_server(&sam, s.id).await.unwrap();
-            api.remove_server_member(&alex, s.id, sam_id).await.unwrap();
-        }
-        assert!(api.join_server(&sam, s.id).await.is_err());
-        assert!(api.server_blocks(&sam, s.id).await.is_err(), "owner only");
-        let blocks = api.server_blocks(&alex, s.id).await.unwrap();
-        assert_eq!(
-            blocks.iter().map(|b| b.user_id).collect::<Vec<_>>(),
-            vec![sam_id]
-        );
-        assert!(api.allow_back(&sam, s.id, sam_id).await.is_err());
-        api.allow_back(&alex, s.id, sam_id).await.unwrap();
-        api.join_server(&sam, s.id).await.unwrap();
-    }
-
-    #[tokio::test]
     async fn archiving_a_channel() {
         let app = testing::spawn().await;
         let (_, alex) = testing::register(&app, "alex").await;
         let (_, sam) = testing::register(&app, "sam").await;
         let s = testing::create_server(&app, &alex, "Main").await;
         let api = Api::new(&format!("http://{}", app.addr));
-        api.join_server(&sam, s.id).await.unwrap();
+        testing_join(&app, &sam, s.id).await;
         let g = testing::general(&app, &alex, s.id).await;
         assert!(api.set_channel_archived(&sam, g.id, true).await.is_err());
         let ch = api.set_channel_archived(&alex, g.id, true).await.unwrap();
@@ -4642,7 +4581,7 @@ mod tests {
         let (sam_id, sam) = testing::register(&app, "sam").await;
         let s = testing::create_server(&app, &alex, "Main").await;
         let api = Api::new(&format!("http://{}", app.addr));
-        api.join_server(&sam, s.id).await.unwrap();
+        testing_join(&app, &sam, s.id).await;
         let g = testing::general(&app, &alex, s.id).await;
         let mine = testing::send(&app, &alex, g.id, "pizza tonight").await;
         let theirs = testing::send(&app, &sam, g.id, "pizza please").await;
@@ -5273,7 +5212,7 @@ mod tests {
         let (_, token) = testing::register(&app, "sam").await;
         let s = testing::create_server(&app, &owner, "Main").await;
         let api = Api::new(&format!("http://{}", app.addr));
-        api.join_server(&token, s.id).await.unwrap();
+        testing_join(&app, &token, s.id).await;
         let chans = api.channels(&token, s.id).await.unwrap();
         let general = chans
             .iter()
@@ -5484,14 +5423,8 @@ mod tests {
         let (api, token, uid, ch) = voice_fixture(&app, "alex").await;
         let (sam, sam_token) = testing::register(&app, "sam").await;
         let server = api.servers(&token).await.unwrap()[0].id;
-        let joined = testing::post_json(
-            &app,
-            &sam_token,
-            &format!("/servers/{server}/join"),
-            serde_json::json!({}),
-        )
-        .await;
-        assert_eq!(joined.status(), 204);
+        let joined = testing::join_server(&app, &sam_token, server).await;
+        assert_eq!(joined.status(), 200);
         app.voice.join(ch, uid, "PA_test");
         app.voice.join(ch, sam, "PA_test");
         api.go_live(&token, ch, settings()).await.unwrap();
@@ -5511,13 +5444,7 @@ mod tests {
         let (api, token, uid, ch) = voice_fixture(&app, "alex").await;
         let (sam, sam_token) = testing::register(&app, "sam").await;
         let server = api.servers(&token).await.unwrap()[0].id;
-        testing::post_json(
-            &app,
-            &sam_token,
-            &format!("/servers/{server}/join"),
-            serde_json::json!({}),
-        )
-        .await;
+        testing::join_server(&app, &sam_token, server).await;
         app.voice.join(ch, uid, "PA_test");
         api.go_live(&token, ch, settings()).await.unwrap();
         // as themselves, out of the call: refused (and the retry keys on Forbidden)
@@ -5901,7 +5828,7 @@ mod tests {
         let (sam_id, sam) = testing::register(&app, "sam").await;
         let s = testing::create_server(&app, &alex, "Main").await;
         let api = Api::new(&format!("http://{}", app.addr));
-        api.join_server(&sam, s.id).await.unwrap();
+        testing_join(&app, &sam, s.id).await;
         let ch = api
             .create_channel(&alex, s.id, ChannelKind::Quotes, "quotes")
             .await
@@ -5956,7 +5883,7 @@ mod tests {
         let (sam_id, sam) = testing::register(&app, "sam").await;
         let s = testing::create_server(&app, &alex, "Main").await;
         let api = Api::new(&format!("http://{}", app.addr));
-        api.join_server(&sam, s.id).await.unwrap();
+        testing_join(&app, &sam, s.id).await;
         let ch = api
             .create_channel(&alex, s.id, ChannelKind::Quotes, "quotes")
             .await
@@ -6001,7 +5928,7 @@ mod tests {
 
         // an award from someone who isn't the speaker
         let (_, jo) = testing::register(&app, "jo").await;
-        api.join_server(&jo, s.id).await.unwrap();
+        testing_join(&app, &jo, s.id).await;
         api.give_award(&jo, line_id).await.unwrap();
         let listed = api.messages(&jo, ch.id, None).await.unwrap();
         assert_eq!(listed[0].quote.as_ref().unwrap().lines[0].awards, 1);
@@ -6338,7 +6265,7 @@ mod tests {
         let (sam_id, sam) = testing::register(&app, "sam").await;
         let api = Api::new(&format!("http://{}", app.addr));
         let server = api.create_server(&alex, "Main").await.unwrap();
-        api.join_server(&sam, server.id).await.unwrap();
+        testing_join(&app, &sam, server.id).await;
         let lounge = api
             .channels(&alex, server.id)
             .await
@@ -6746,7 +6673,7 @@ mod tests {
         let (sam_id, sam) = testing::register(&app, "sam").await;
         let api = Api::new(&format!("http://{}", app.addr));
         let server = api.create_server(&alex, "Main").await.unwrap();
-        api.join_server(&sam, server.id).await.unwrap();
+        testing_join(&app, &sam, server.id).await;
 
         let m = api
             .set_nickname(&alex, server.id, sam_id, Some("Sammy".into()))
@@ -6863,14 +6790,8 @@ mod tests {
         let (_, alex) = testing::register(&app, "alex").await;
         let (sam_id, sam) = testing::register(&app, "sam").await;
         let s = testing::create_server(&app, &alex, "Main").await;
-        let r = testing::post_json(
-            &app,
-            &sam,
-            &format!("/servers/{}/join", s.id),
-            serde_json::json!({}),
-        )
-        .await;
-        assert_eq!(r.status(), 204);
+        let r = testing::join_server(&app, &sam, s.id).await;
+        assert_eq!(r.status(), 200);
         let g = testing::general(&app, &alex, s.id).await;
         let api = Api::new(&format!("http://{}", app.addr));
         let mine = testing::send(&app, &alex, g.id, "base").await;
@@ -7378,7 +7299,7 @@ mod tests {
         use pulse_protocol::rest::ConfirmClipRequest;
         let r = clip_rig(2048).await;
         let (sam_id, sam) = testing::register(&r.app, "sam").await;
-        r.api.join_server(&sam, r.server.id).await.unwrap();
+        testing_join(&r.app, &sam, r.server.id).await;
         let (alex_id, _) = r.api.me(&r.token).await.map(|u| (u.id, ())).unwrap();
         let mut ids = vec![];
         for (who, token) in [(alex_id, r.token.clone()), (sam_id, sam.clone())] {
