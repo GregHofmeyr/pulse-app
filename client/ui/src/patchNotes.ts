@@ -36,6 +36,8 @@ export const patchNotes: PatchNotes = {
     'Clip drop works on its own now, even with Game activity off (it moved to Settings › Chat)',
     'Very light, dark or grey custom accent colours no longer leave buttons and switches faint',
     'The Sunset profile card stays orange instead of turning brown, and the full profile card matches the quick one',
+    'Watch parties pause properly now: a pause stays paused for everyone instead of playing again, and clicking the video pauses it',
+    'Plans no longer guess a far-away place for the weather: a place it can\'t find nearby just shows no forecast',
   ],
   qol: [
     'Edit history is in the message menu too, not only behind "(edited)"',
