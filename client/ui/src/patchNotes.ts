@@ -32,6 +32,7 @@ export const patchNotes: PatchNotes = {
     'Invite people to a server with a link, or straight from their right-click menu',
     'Invites show as cards in chat, with a Join button',
     'Server owners can ban someone from their right-click menu, and see who is banned in Server settings › Bans',
+    'Servers are now private: you only see servers you\'re in, and you join with an invite',
   ],
   fixes: [
     'Restoring a deleted channel now tells you when the server is at its channel limit, and deleted channels no longer count toward it',
@@ -40,7 +41,6 @@ export const patchNotes: PatchNotes = {
     'Signing someone out of everything takes effect within seconds, even if their app is open',
   ],
   soon: [
-    'Private servers you join by invite',
     'A fresh profile editor with name effects',
     'A queue for watch parties, with Twitch',
   ],
