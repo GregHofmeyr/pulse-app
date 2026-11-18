@@ -5,18 +5,20 @@
 // (#330). The gradient between them is drawn in OKLab (no grey, dark midpoint). The card's inner surfaces are translucent overlays, so its colour shows through.
 import { contrast, luminance, parseHex, readable, shadeOklch, toHex, type Rgb } from './color'
 
-export type ThemeKey = 'sunset' | 'night' | 'forest' | 'berry' | 'plain'
+export type ThemeKey = 'sunset' | 'dusk' | 'night' | 'forest' | 'berry' | 'plain'
 export type ThemePreset = { key: ThemeKey; label: string; top: string; bottom: string }
 
 export const THEME_PRESETS: ThemePreset[] = [
   { key: 'sunset', label: 'Sunset', top: '#8a3cff', bottom: '#ff8a2a' },
+  // purple to deep rose (#444), beside Sunset
+  { key: 'dusk', label: 'Dusk', top: '#7a3cff', bottom: '#c2335f' },
   { key: 'night', label: 'Night sky', top: '#22325e', bottom: '#0d1430' },
   { key: 'forest', label: 'Forest', top: '#1f7a5a', bottom: '#0f2b3a' },
   { key: 'berry', label: 'Berry', top: '#c2457a', bottom: '#3a1f5e' },
   { key: 'plain', label: 'Plain', top: '#3a3d46', bottom: '#16171b' },
 ]
 
-export const DEFAULT_THEME = THEME_PRESETS[4]
+export const DEFAULT_THEME = THEME_PRESETS.find((p) => p.key === 'plain')!
 
 /** A card still loading (#173): flat neutral grey, not anyone's colours (nor the default theme's), so nothing recolours
  *  when the person's own theme arrives except into it. */
@@ -49,9 +51,10 @@ export const LIGHT_CARD: Ink = {
   light: true, text: '#17181c', text2: '#3f424b', toward: WHITE,
   panel: [WHITE, 0.4], field: [BLACK, 0.07], ok: '#1a7f4b', danger: '#c0262f', line: '23 24 28',
 }
-// A dark card: near-white text (as before), panels and the message box darker washes.
+// A dark card: near-white text (as before), panels and the message box darker washes. The secondary grey is close to
+// the text (#444): a lighter grey lets a bright end, like Sunset's orange, stay brighter and still read.
 export const DARK_CARD: Ink = {
-  light: false, text: '#f2f3f6', text2: '#d6d8df', toward: BLACK,
+  light: false, text: '#f2f3f6', text2: '#eceef3', toward: BLACK,
   panel: [BLACK, 0.22], field: [BLACK, 0.3], ok: '#5fd68f', danger: '#ff9d96', line: '242 243 246',
 }
 
