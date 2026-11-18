@@ -54,9 +54,10 @@ pub enum LoginOutcome {
     },
 }
 
-/// What a second-step login led to. Not `Debug`: the session holds the token.
+/// What a second-step login led to. Not `Debug`: the session holds the token. Boxed: a session
+/// is much bigger than the bare `Expired`.
 pub enum MfaOutcome {
-    Session(SessionResponse),
+    Session(Box<SessionResponse>),
     /// The ticket is gone (expired, spent, or too many wrong codes): start again with the password.
     Expired,
 }
@@ -1759,7 +1760,7 @@ impl Api {
         }
         match Self::parse(r).await {
             Err(ApiError::Unauthorized) => Err(ApiError::Rejected(WRONG_CODE.into())),
-            other => other.map(MfaOutcome::Session),
+            other => other.map(|s| MfaOutcome::Session(Box::new(s))),
         }
     }
 

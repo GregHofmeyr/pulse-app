@@ -73,11 +73,18 @@ pub struct User {
 }
 
 /// How a name is drawn: a bundled font and 0 (default), 1 (solid) or 2 (gradient, first to
-/// second) `#rrggbb` colours.
+/// second) `#rrggbb` colours, and a name effect (#468).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct NameStyle {
     pub font: Option<String>,
     pub colors: Vec<String>,
+    /// One of the name effects (`neon`, `toon`, `pop`, `gummy`, `prism`, `shimmer`, `glitch`,
+    /// `ember`), or none. A string, not an enum, so an older client reading an effect it doesn't
+    /// know still reads the user (and draws the name without it). Absent from older servers and
+    /// clients: none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub effect: Option<String>,
 }
 
 /// The parts of a profile card that are not part of [`User`].

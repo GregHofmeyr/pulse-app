@@ -15,6 +15,8 @@ export type Draft = {
   font: string | null
   /** As picked: the server lightens them on Save, the preview the same way. */
   colors: string[]
+  /** The name effect (#468), or none. */
+  effect: string | null
   pronouns: string
   bio: string
   /** How your name looks everywhere (#47), as typed: trimmed on Save. */
@@ -33,6 +35,7 @@ export function draftFrom(p: Profile): Draft {
     themeBottom: p.card.theme_bottom,
     font: p.user.style.font,
     colors: [...p.user.style.colors],
+    effect: p.user.style.effect ?? null,
     pronouns: p.card.pronouns ?? '',
     bio: p.card.bio ?? '',
     // an older server sends none: start from the username, as the migration does
@@ -55,7 +58,7 @@ export function toRequest(d: Draft): UpdateProfileRequest {
     banner_hash: d.bannerHash,
     theme_top: d.themeTop,
     theme_bottom: d.themeBottom,
-    style: { font: d.font, colors: [...d.colors] },
+    style: { font: d.font, colors: [...d.colors], effect: d.effect },
     pronouns: orNull(d.pronouns),
     bio: orNull(d.bio),
     display_name: d.displayName.trim(),
@@ -65,7 +68,7 @@ export function toRequest(d: Draft): UpdateProfileRequest {
 
 /** You as the draft would make you, name colours lightened as Save will store them. */
 export function previewUser(me: User, d: Draft): User {
-  return { ...me, display_name: d.displayName.trim() || me.username, avatar_hash: d.avatarHash, avatar_still: d.avatarStill, style: { font: d.font, colors: d.colors.map(lightenForName) } }
+  return { ...me, display_name: d.displayName.trim() || me.username, avatar_hash: d.avatarHash, avatar_still: d.avatarStill, style: { font: d.font, colors: d.colors.map(lightenForName), effect: d.effect } }
 }
 
 /** The card as the draft would make it. A custom theme pair is kept as picked (spec §4.3). */

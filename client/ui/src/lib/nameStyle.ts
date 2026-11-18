@@ -2,6 +2,7 @@
 // server/src/profiles/colors.rs; both must give identical results.
 import { contrast, isDark, luminance, parseHex, readable, toHex, type Rgb } from './color'
 import { fontByKey, type NameFont } from './nameFonts'
+import { effectByKey, effectCss, type NameEffect } from './nameEffects'
 import type { User } from './protocol/User'
 
 export const MIN_NAME_LUMINANCE = 0.39
@@ -54,24 +55,31 @@ export type Paint = { kind: 'plain' } | { kind: 'solid'; color: string } | { kin
  * solid, each gradient stop) keeps its hue and moves just far enough to reach that contrast there (#42), and on a dark
  * surface is never darker than the old rule (luminance 0.39); without them, that old rule alone.
  */
-export function resolveNameStyle(user: User | null, opts: { roleColor: string | null; showStyles: boolean; bg?: string; ratio?: number }): { font: NameFont | null; paint: Paint } {
+export function resolveNameStyle(user: User | null, opts: { roleColor: string | null; showStyles: boolean; bg?: string; ratio?: number }): ResolvedName {
   const font = opts.showStyles && user ? fontByKey(user.style.font) : null
+  // the name effect (#468) goes with the font: a role colour keeps it, styles off drops it
+  const effect = opts.showStyles && user ? effectByKey(user.style.effect) : null
   const fix = opts.bg && parseHex(opts.bg) ? (c: string) => readableName(c, opts.bg!, opts.ratio ?? 4.5) : lightenForName
-  if (opts.roleColor && parseHex(opts.roleColor)) return { font, paint: { kind: 'solid', color: fix(opts.roleColor) } }
+  if (opts.roleColor && parseHex(opts.roleColor)) return { font, effect, paint: { kind: 'solid', color: fix(opts.roleColor) } }
   const colors = opts.showStyles && user ? user.style.colors.filter((c) => parseHex(c)).map(fix) : []
-  if (colors.length >= 2) return { font, paint: { kind: 'gradient', from: colors[0], to: colors[1] } }
-  if (colors.length === 1) return { font, paint: { kind: 'solid', color: colors[0] } }
-  return { font, paint: { kind: 'plain' } }
+  if (colors.length >= 2) return { font, effect, paint: { kind: 'gradient', from: colors[0], to: colors[1] } }
+  if (colors.length === 1) return { font, effect, paint: { kind: 'solid', color: colors[0] } }
+  return { font, effect, paint: { kind: 'plain' } }
 }
 
-/** The inline style that draws a resolved name. */
-export function nameCss(r: { font: NameFont | null; paint: Paint }): string {
+export type ResolvedName = { font: NameFont | null; paint: Paint; effect?: NameEffect | null }
+
+/** The inline style that draws a resolved name. `effects`: with its name effect's (#468; Name.svelte draws the rest),
+ *  else without (a mention pill). */
+export function nameCss(r: ResolvedName, effects = false): string {
   const parts: string[] = []
   if (r.font) parts.push(`font-family: ${r.font.family}`, `font-weight: ${r.font.weight}`, `--name-scale: ${r.font.scale}`)
   else parts.push('--name-scale: 1')
+  const fx = effects && r.effect ? effectCss(r.effect, r.paint) : null
   if (r.paint.kind === 'solid') parts.push(`color: ${r.paint.color}`)
-  else if (r.paint.kind === 'gradient') {
+  else if (r.paint.kind === 'gradient' && !fx?.replacesPaint) {
     parts.push(`background-image: linear-gradient(90deg, ${r.paint.from}, ${r.paint.to})`, '-webkit-background-clip: text', 'background-clip: text', 'color: transparent')
   }
+  if (fx) parts.push(...fx.css)
   return parts.join('; ')
 }

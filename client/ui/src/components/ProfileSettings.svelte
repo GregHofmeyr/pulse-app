@@ -17,6 +17,7 @@
   import { radioKeys } from '../lib/actions'
   import { presetFor, THEME_PRESETS } from '../lib/cardTheme'
   import { NAME_FONTS } from '../lib/nameFonts'
+  import { NAME_EFFECTS } from '../lib/nameEffects'
   import { lightenForName, NAME_GRADIENTS, NAME_SOLIDS, type NamePreset } from '../lib/nameStyle'
   import type { CropRect } from '../lib/crop'
   import type { Profile } from '../lib/protocol/Profile'
@@ -63,6 +64,9 @@
     dirty = changed || busy
   })
 
+  // the effect chip under the pointer or keyboard plays (#468); the rest sit still
+  let effectHot = $state<string | null>(null)
+  const effectKnown = $derived(!!draft && (draft.effect === null || NAME_EFFECTS.some((e) => e.key === draft!.effect)))
   const fontKnown = $derived(!!draft && (draft.font === null || NAME_FONTS.some((f) => f.key === draft!.font)))
   const themeKey = $derived(draft && !customTheme ? presetFor(draft.themeTop, draft.themeBottom) : null)
   const same = (p: NamePreset) => draft !== null && p.colors.join() === draft.colors.join()
@@ -392,6 +396,21 @@
         </div>
 
         <div class="settings-field">
+          <span class="settings-label">Name effect</span>
+          <!-- each effect drawn on your own name style; hover or focus one to see it move (#468) -->
+          <div class="chips" role="radiogroup" aria-label="Name effect" tabindex="-1" onkeydown={radioKeys}>
+            <button type="button" role="radio" class="chip toggle-chip" aria-checked={draft.effect === null} tabindex={effectKnown ? (draft.effect === null ? 0 : -1) : 0} onclick={() => (draft!.effect = null)}>None</button>
+            {#each NAME_EFFECTS as e (e.key)}
+              <button type="button" role="radio" class="chip toggle-chip fx-chip" aria-checked={draft.effect === e.key} tabindex={draft.effect === e.key ? 0 : -1} aria-label={e.label} data-tip={e.moves}
+                data-effect={e.key} onclick={() => (draft!.effect = e.key)} onpointerenter={() => (effectHot = e.key)} onpointerleave={() => (effectHot = null)}
+                onfocus={() => (effectHot = e.key)} onblur={() => (effectHot = null)}>
+                <Name userId={me.id} serverId={null} user={{ ...pu, style: { ...pu.style, effect: e.key } }} text={e.label} interactive={false} play={effectHot === e.key} />
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <div class="settings-field">
           <span class="settings-label">Pronouns</span>
           <!-- counted in characters, as the server counts (maxlength counts UTF-16 units) -->
           <input class="input text" type="text" aria-label="Pronouns" aria-invalid={pronounsOver} bind:value={draft.pronouns} />
@@ -411,7 +430,7 @@
         <div class="line">
           <Avatar id={me.id} name={pu.display_name} user={pu} size={36} />
           <div class="said">
-            <Name userId={me.id} serverId={null} user={pu} text={pu.display_name} interactive={false} />
+            <Name userId={me.id} serverId={null} user={pu} text={pu.display_name} interactive={false} play />
             <p>Looking good!</p>
           </div>
         </div>
@@ -473,6 +492,8 @@
   .pick { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); cursor: pointer; }
   .pick code { font-size: 12px; color: var(--text-3); }
   .custom-chip { display: inline-flex; align-items: center; gap: 6px; }
+  /* an effect's chip shows it on your name style, a little larger so the effect reads */
+  .fx-chip { font-size: 15px; font-weight: 700; }
   .mini { width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--line-strong); }
   .toggle-row { display: flex; align-items: center; gap: 10px; font-weight: 600; cursor: pointer; }
   /* the shared field ring (EmojiBox turns the box's own outline off) */

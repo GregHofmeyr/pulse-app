@@ -140,6 +140,8 @@ windows = { version = "0.62", features = [
     "Win32_System_JobObjects",
     # links open in the default browser (links.rs).
     "Win32_UI_Shell",
+    # the Go Live sound picker's app icon (stream/procs.rs, #458): the exe icon's pixels.
+    "Win32_Graphics_Gdi",
     # message toasts (notify/windows.rs).
     "Foundation",
     "Data_Xml_Dom",

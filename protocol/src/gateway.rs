@@ -1534,6 +1534,29 @@ mod tests {
         assert_eq!(u.avatar_still, None);
         assert_eq!(u.style, crate::rest::NameStyle::default());
         assert!(u.style.font.is_none() && u.style.colors.is_empty());
+        assert!(u.style.effect.is_none());
+    }
+
+    /// #468: a name effect rides in the style; none is left out of the JSON, and a style without
+    /// one (an older peer's) reads as none.
+    #[test]
+    fn a_name_effect_round_trips_and_none_is_left_out() {
+        let style = crate::rest::NameStyle {
+            font: None,
+            colors: vec![],
+            effect: Some("ember".into()),
+        };
+        let v = serde_json::to_value(&style).unwrap();
+        assert_eq!(v["effect"], "ember");
+        assert_eq!(
+            serde_json::from_value::<crate::rest::NameStyle>(v).unwrap(),
+            style
+        );
+        let none = serde_json::to_value(crate::rest::NameStyle::default()).unwrap();
+        assert!(none.get("effect").is_none());
+        let old: crate::rest::NameStyle =
+            serde_json::from_value(serde_json::json!({ "font": null, "colors": [] })).unwrap();
+        assert_eq!(old.effect, None);
     }
 
     /// A v3 reader (without the profile fields) ignores them, so no protocol bump is needed.
@@ -1555,6 +1578,7 @@ mod tests {
             style: crate::rest::NameStyle {
                 font: Some("pacifico".into()),
                 colors: vec!["#ffc4a3".into(), "#ff7fae".into()],
+                effect: Some("neon".into()),
             },
         };
         let old: OldUser = serde_json::from_value(serde_json::to_value(&user).unwrap()).unwrap();

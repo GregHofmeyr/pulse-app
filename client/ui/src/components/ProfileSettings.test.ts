@@ -170,6 +170,29 @@ describe('ProfileSettings', () => {
     expect(app.state.me!.style).toEqual({ font: null, colors: [] })
   })
 
+  it('the name effect (#468): None and the eight, each on your own name style; a pick plays in the preview and saves', async () => {
+    await open()
+    const opts = [...group('Name effect').querySelectorAll<HTMLButtonElement>('[role=radio]')]
+    expect(opts.map((b) => b.getAttribute('aria-label') ?? b.textContent!.trim())).toEqual(['None', 'Neon', 'Toon', 'Pop', 'Gummy', 'Prism', 'Shimmer', 'Glitch', 'Ember'])
+    expect(option('Name effect', 'None').getAttribute('aria-checked')).toBe('true')
+    // each chip draws the effect, still until hovered
+    const neon = option('Name effect', 'Neon')
+    expect(neon.querySelector<HTMLElement>('.name')!.dataset.fx).toBe('neon')
+    expect(neon.querySelector('.name')!.classList.contains('fx-play')).toBe(false)
+    neon.dispatchEvent(new Event('pointerenter'))
+    flushSync()
+    expect(neon.querySelector('.name')!.classList.contains('fx-play')).toBe(true)
+    expect(neon.getAttribute('data-tip')).toBe('Glow pulses')
+    click(option('Name effect', 'Ember'))
+    // the preview plays it, in the line and on the card
+    expect(previewName().dataset.fx).toBe('ember')
+    expect(previewName().classList.contains('fx-play')).toBe(true)
+    expect(previewCard().querySelector<HTMLElement>('.name')!.classList.contains('fx-play')).toBe(true)
+    click(button('Save'))
+    const req = (calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request
+    expect(req.style.effect).toBe('ember')
+  })
+
   it('upload goes through crop then stages the hash without saving', async () => {
     let finish!: (m: MediaInfo) => void
     handlers.upload_avatar_media = () => new Promise<MediaInfo>((r) => (finish = r))
@@ -245,7 +268,7 @@ describe('ProfileSettings', () => {
     const req = (calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request
     expect(req).toEqual({
       avatar_hash: null, banner_hash: null, theme_top: '#1f7a5a', theme_bottom: '#0f2b3a',
-      style: { font: 'fredoka', colors: ['#000000'] }, pronouns: null, bio: 'hello', display_name: 'alex', glow: true,
+      style: { font: 'fredoka', colors: ['#000000'], effect: null }, pronouns: null, bio: 'hello', display_name: 'alex', glow: true,
     })
     const stored = saved({
       user: { ...alex, style: { font: 'fredoka', colors: ['#a8a8a8'] } },
