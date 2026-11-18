@@ -24,6 +24,28 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.15',
+  version: '0.2.15',
+  date: '18 November 2026',
+  new: [
+    'Check for updates yourself in Settings › Advanced › Updates',
+  ],
+  fixes: [
+    'Restoring a deleted channel now tells you when the server is at its channel limit, and deleted channels no longer count toward it',
+  ],
+  qol: [
+    'Signing someone out of everything takes effect within seconds, even if their app is open',
+  ],
+  soon: [
+    'Private servers you join by invite',
+    'A fresh profile editor with name effects',
+    'A queue for watch parties, with Twitch',
+  ],
+  message: 'More to come ✨',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.14',
   version: '0.2.14',
   date: '17 November 2026',
@@ -53,45 +75,4 @@ export const patchNotes: PatchNotes = {
     'A fresh profile editor',
   ],
   message: 'Game night, your way 🎮',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.13',
-  version: '0.2.13',
-  date: '17 November 2026',
-  new: [
-    'Watch parties: hit "Start watch party" on any YouTube video while you\'re in voice and everyone in the call watches in sync. Your volume is yours, and you can leave the party without leaving voice',
-    'Plan something: post an invite (📅 or /plan) with Going / Maybe / Can\'t, an end time, Add to calendar, the weather forecast and a reminder an hour before',
-    'Custom status: set a line of text and an emoji from the status menu, with a timer to clear it',
-    'Send later and Remind me: schedule a message from the clock button, or right-click any message to get reminded about it. Both live in new inbox tabs',
-    'Forward a message, see a message\'s edit history, and Save messages to a private Saved list with notes',
-    'Deadlock: post-match cards, your rank next to your name, squad stats on your profile card and a patch notes channel (pick it in Server settings › Deadlock)',
-    'F1 race weekends: a countdown, results with constructors and sprints, and podium predictions with a season table (Server settings › F1)',
-    'Steam: most hours played in the last two weeks on the Leaderboard, and one-click Join game when a friend is in a joinable lobby',
-    'Servers: leave a server, remove someone, hand over ownership, see the Members list, and archive old channels so they stay readable',
-    'View-once pictures, videos and sounds',
-    'Listening to now works with YouTube Music, Apple Music, Tidal, Deezer and foobar2000 too (switches in Settings › Privacy)',
-    'New badges: Touch Grass, Achievement Hunter and Podium Prophet. Completionist now has five tiers',
-  ],
-  fixes: [
-    'Removed or departed members can no longer edit their old messages, polls or plans in that server',
-    'Leaving a server cleans up your calls, streams, unreads, reminders and saved messages from it',
-  ],
-  qol: [
-    'Pin DMs to the top, sort them into your own categories, and arrange a server\'s channels just for you',
-    'Do Not Disturb for one person, and saved inbox filters (people, chats, only unread)',
-    'Chats with lots unread open at the first unread message, and the inbox has a Threads tab',
-    'Crop, rotate or draw on a picture before sending it',
-    'Edit a poll after posting it, and give picker wheel options weights and colour themes',
-    'Previews for .txt and .md files',
-    'New keybinds: Leave call and Go Live',
-    'People\'s current names show in system lines and search results',
-  ],
-  soon: [
-    'Live PSL, URC and Premier League scores',
-    'A redesigned quotes leaderboard',
-    'A fresh profile editor',
-  ],
-  message: 'Big night. Grab the popcorn 🍿',
 }
