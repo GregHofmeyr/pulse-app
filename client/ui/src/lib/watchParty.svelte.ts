@@ -5,7 +5,7 @@ import type { WatchPartyAction } from './protocol/WatchPartyAction'
 import { noteServerTime } from './serverClock'
 import { app, onAppEvent } from './store.svelte'
 import { api } from './tauri'
-import { validVideoId, watching } from './watchParty'
+import { linkIn, mediaFromLink, validMedia, watching, type PartyMedia } from './watchParty'
 
 const SETTING_KEY = 'pulse.watchParties'
 
@@ -35,13 +35,21 @@ export function setWatchParties(v: boolean): void {
 /** The party on in `channelId`, if any. */
 export const partyIn = (channelId: string | null | undefined): WatchParty | null => (channelId ? (app.state.watchParties[channelId] ?? null) : null)
 
-/** Start a party of `videoId` in `channelId` (or change its video, when you may). */
-export function startWatchParty(channelId: string, videoId: string, title: string | null): Promise<WatchParty> {
-  if (!validVideoId(videoId)) return Promise.reject(new Error("That isn't a YouTube video."))
-  return api.startWatchParty(channelId, videoId, title)
+/** Start a party of `video` in `channelId` (or change its video, when you may). */
+export function startWatchParty(channelId: string, video: PartyMedia, title: string | null): Promise<WatchParty> {
+  if (!validMedia(video.source, video.id)) return Promise.reject(new Error('That isn’t a video a watch party can play.'))
+  return api.startWatchParty(channelId, video.source, video.id, title)
 }
 
 export const watchPartyAction = (channelId: string, action: WatchPartyAction): Promise<void> => api.watchPartyAction(channelId, action)
+
+/** Add the video a pasted or dropped link points at to `channelId`'s party queue (#464). The server fills in its title
+ *  and thumbnail from a card it has (or fetches one). */
+export function enqueueLink(channelId: string, text: string): Promise<void> {
+  const m = mediaFromLink(linkIn(text))
+  if (!m) return Promise.reject(new Error('That isn’t a YouTube or Twitch link.'))
+  return watchPartyAction(channelId, { action: 'enqueue', source: m.source, video_id: m.id, title: null })
+}
 
 export const joinWatchParty = (channelId: string) => watchPartyAction(channelId, { action: 'join' })
 

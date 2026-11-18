@@ -36,9 +36,12 @@ export const patchNotes: PatchNotes = {
     'Invite links work for friends without Pulse too: the link opens a page with Open in Pulse and a Windows download, and a server owner\'s link signs them up straight into the server',
     'A fresh profile editor: tabs for About you, Card, Name style and Badges, with your card always in view. Hover your avatar or banner on it to change them, and drag your badges into the order you like',
     'Name effects: give your name Neon, Toon, Pop, Gummy, Prism, Shimmer, Glitch or Ember in Settings › Profile. They move when someone hovers your name or opens your profile',
+    'A queue for watch parties: anyone in the call can paste or drop in YouTube links from the Queue button, and the party moves on to the next video for everyone. Right-click a queued video to play it now, move it or remove it',
+    'Twitch in watch parties: VODs stay in sync like YouTube, live channels play and pause together until someone skips, and clips start together. Twitch cards for VODs and channels play in chat too',
   ],
   fixes: [
     'Restoring a deleted channel now tells you when the server is at its channel limit, and deleted channels no longer count toward it',
+    'Do Not Disturb for someone now also covers their calls (no ringing) and their going live (no notification)',
   ],
   qol: [
     'Signing someone out of everything takes effect within seconds, even if their app is open',
@@ -47,10 +50,10 @@ export const patchNotes: PatchNotes = {
     'Emoji and GIFs share one picker with tabs, and it opens on the one you used last',
     'Go Live\'s sound picker is a proper dropdown that shows the app by name and icon, with a live level meter',
     'Streaming "everything" leaves out Discord as well as Pulse, so a call there isn\'t carried into your stream',
+    'Right-click a pinned message or an incoming call for that person\'s menu',
   ],
   soon: [
     'Private servers you join by invite',
-    'A queue for watch parties, with Twitch',
   ],
   message: 'More to come ✨',
 }

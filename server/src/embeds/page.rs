@@ -14,6 +14,11 @@
 //! A watch party's page (`/embed/youtube/{id}?party=1`, #384) carries [`PARTY`] instead: YouTube's player without its
 //! own controls, which the app drives (play, pause, seek, volume) and hears (state, time, duration, errors) through
 //! this page, so everyone in the call watches the same moment.
+//!
+//! A Twitch VOD's or channel's party page (`/embed/twitch/video:<id>?party=1`, `/embed/twitch/channel:<login>?party=1`,
+//! #459) carries [`TWITCH_PARTY`]: the same two-way relay, spoken in the Twitch player's own postMessage protocol (what
+//! Twitch's embed script sends), so no script of Twitch's runs on the page. A clip has no control API: a party plays
+//! its ordinary page.
 
 use std::sync::LazyLock;
 
@@ -108,6 +113,42 @@ pub static PARTY_HASH: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
+/// A Twitch party page's script (#459): what [`PARTY`] does, for Twitch's player. From the app it passes on only play,
+/// pause, a seek (seconds), a volume (0 to 100, as Twitch's 0 to 1), mute and unmute, as the Twitch player's own
+/// commands; from the player (its own origin, this page's one frame) it tells the app only its state (as YouTube's
+/// numbers: 1 playing, 2 paused, 3 buffering, 0 ended, 5 ready), time and duration, and that it failed. Nothing else is
+/// read or passed on. [`TWITCH_PARTY_HASH`] allows exactly it.
+pub const TWITCH_PARTY: &str = concat!(
+    "(function(){var f=document.querySelector('iframe'),o=new URL(f.src).origin,N='twitch-embed-player-proxy',",
+    "S={Idle:2,Ready:5,Buffering:3,Playing:1,Ended:0};",
+    "function cmd(c,p){try{f.contentWindow.postMessage({eventName:c,params:p,namespace:N},o)}catch(_){}}",
+    "function tell(m){m.pulse='party';parent.postMessage(m,'*')}",
+    "function num(x,a,b){return typeof x==='number'&&isFinite(x)&&x>=a&&x<=b}",
+    "addEventListener('message',function(e){",
+    "if(parent!==window&&e.source===parent){var c=e.data;if(!c||typeof c!=='object'||c.pulse!=='party-cmd')return;",
+    "if(c.func==='play')cmd(3,null);else if(c.func==='pause')cmd(2,null);",
+    "else if(c.func==='seek'&&num(c.to,0,172800))cmd(4,c.to);",
+    "else if(c.func==='volume'&&num(c.to,0,100))cmd(11,c.to/100);",
+    "else if(c.func==='mute')cmd(10,true);else if(c.func==='unmute')cmd(10,false);return}",
+    "if(e.origin!==o||e.source!==f.contentWindow)return;var d=e.data;if(!d||typeof d!=='object')return;",
+    "if(d.namespace==='twitch-embed'){if(d.eventName==='ended')tell({state:'info',player:0});",
+    "else if(d.eventName==='error')tell({state:'error',code:null});return}",
+    "if(d.namespace!==N||d.eventName!=='UPDATE_STATE'||!d.params||typeof d.params!=='object')return;",
+    "var i=d.params,m={state:'info'};",
+    "if(i.ended===true)m.player=0;else if(typeof i.playback==='string'&&Object.prototype.hasOwnProperty.call(S,i.playback))m.player=S[i.playback];",
+    "if(num(i.currentTime,0,1e7))m.time=i.currentTime;",
+    "if(num(i.duration,0,1e7))m.duration=i.duration;",
+    "tell(m)})})();"
+);
+
+/// The CSP source that allows [`TWITCH_PARTY`] and nothing else.
+pub static TWITCH_PARTY_HASH: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "'sha256-{}'",
+        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(TWITCH_PARTY.as_bytes()))
+    )
+});
+
 /// Whether the provider's page carries [`RELAY`].
 fn relays(p: EmbedProvider) -> bool {
     p == EmbedProvider::Youtube
@@ -126,19 +167,28 @@ async fn page(
     let Path((provider, id)) = path.map_err(|_| AppError::NotFound)?;
     let provider = super::parse_provider(&provider);
     let start = start(provider, query.as_deref()).ok_or(AppError::NotFound)?;
-    let party = party(provider, query.as_deref()).ok_or(AppError::NotFound)?;
+    let party = party(provider, &id, query.as_deref()).ok_or(AppError::NotFound)?;
+    // Twitch takes a start only on a VOD's party page
+    if provider == EmbedProvider::Twitch
+        && start.is_some()
+        && !(party && providers::twitch_kind(&id).0 == Some("video"))
+    {
+        return Err(AppError::NotFound);
+    }
     let parent = public.host_str().ok_or(AppError::NotFound)?;
-    let player = if party {
-        providers::youtube_party_url(&id, start)
-    } else {
-        providers::player_url(provider, &id, start, parent)
+    let player = match (party, provider) {
+        (true, EmbedProvider::Twitch) => providers::twitch_party_url(&id, start, parent),
+        (true, _) => providers::youtube_party_url(&id, start),
+        (false, _) => providers::player_url(provider, &id, start, parent),
     }
     .ok_or(AppError::NotFound)?;
     let origin = Url::parse(&player)
         .map_err(|_| AppError::NotFound)?
         .origin()
         .ascii_serialization();
-    let script = if party {
+    let script = if party && provider == EmbedProvider::Twitch {
+        format!("script-src {}; ", *TWITCH_PARTY_HASH)
+    } else if party {
         format!("script-src {}; ", *PARTY_HASH)
     } else if relays(provider) {
         format!("script-src {}; ", *RELAY_HASH)
@@ -164,9 +214,9 @@ async fn page(
         .into_response())
 }
 
-/// The query's `start`: `Some(None)` without one; `Some(Some(n))` for YouTube with digits only,
-/// at most [`MAX_START`]; `None` (404) for anything else, a repeated `start` included. Other
-/// parameters are ignored, never passed on.
+/// The query's `start`: `Some(None)` without one; `Some(Some(n))` for YouTube (or a Twitch party page, #459, which
+/// uses it only for a VOD) with digits only, at most [`MAX_START`]; `None` (404) for anything else, a repeated `start`
+/// included. Other parameters are ignored, never passed on.
 fn start(provider: EmbedProvider, query: Option<&str>) -> Option<Option<u32>> {
     let Some(query) = query else {
         return Some(None);
@@ -177,7 +227,9 @@ fn start(provider: EmbedProvider, query: Option<&str>) -> Option<Option<u32>> {
     let Some((_, v)) = starts.next() else {
         return Some(None);
     };
-    if starts.next().is_some() || provider != EmbedProvider::Youtube {
+    if starts.next().is_some()
+        || !matches!(provider, EmbedProvider::Youtube | EmbedProvider::Twitch)
+    {
         return None;
     }
     if v.is_empty() || v.len() > 6 || !v.bytes().all(|b| b.is_ascii_digit()) {
@@ -187,9 +239,9 @@ fn start(provider: EmbedProvider, query: Option<&str>) -> Option<Option<u32>> {
     (n <= MAX_START).then_some(Some(n))
 }
 
-/// The query's `party`: `Some(false)` without one, `Some(true)` for YouTube's `party=1` (once), `None` (404) for
-/// anything else.
-fn party(provider: EmbedProvider, query: Option<&str>) -> Option<bool> {
+/// The query's `party`: `Some(false)` without one, `Some(true)` for `party=1` (once) on YouTube or a Twitch VOD or
+/// channel (#459), `None` (404) for anything else.
+fn party(provider: EmbedProvider, id: &str, query: Option<&str>) -> Option<bool> {
     let Some(query) = query else {
         return Some(false);
     };
@@ -202,7 +254,12 @@ fn party(provider: EmbedProvider, query: Option<&str>) -> Option<bool> {
         .collect();
     match found.as_slice() {
         [] => Some(false),
-        [v] if v == "1" && provider == EmbedProvider::Youtube => Some(true),
+        [v] if v == "1"
+            && (provider == EmbedProvider::Youtube
+                || provider == EmbedProvider::Twitch && providers::twitch_kind(id).0.is_some()) =>
+        {
+            Some(true)
+        }
         _ => None,
     }
 }
@@ -223,7 +280,9 @@ fn label(p: EmbedProvider) -> &'static str {
 fn html(p: EmbedProvider, player: &str, party: bool) -> String {
     let src = escape(player);
     let title = label(p);
-    let script = if party {
+    let script = if party && p == EmbedProvider::Twitch {
+        format!("<script>{TWITCH_PARTY}</script>")
+    } else if party {
         format!("<script>{PARTY}</script>")
     } else if relays(p) {
         format!("<script>{RELAY}</script>")
@@ -274,15 +333,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn party_only_for_youtube_and_only_1() {
-        use EmbedProvider::{Twitch, Youtube};
-        assert_eq!(party(Youtube, None), Some(false));
-        assert_eq!(party(Youtube, Some("start=5")), Some(false));
-        assert_eq!(party(Youtube, Some("party=1&start=5")), Some(true));
+    fn party_only_for_youtube_and_twitch_vods_and_channels_and_only_1() {
+        use EmbedProvider::{Spotify, Twitch, Youtube};
+        let y = "dQw4w9WgXcQ";
+        assert_eq!(party(Youtube, y, None), Some(false));
+        assert_eq!(party(Youtube, y, Some("start=5")), Some(false));
+        assert_eq!(party(Youtube, y, Some("party=1&start=5")), Some(true));
         for q in ["party=0", "party=", "party=yes", "party=1&party=1"] {
-            assert_eq!(party(Youtube, Some(q)), None, "{q}");
+            assert_eq!(party(Youtube, y, Some(q)), None, "{q}");
         }
-        assert_eq!(party(Twitch, Some("party=1")), None);
+        // Twitch (#459): a VOD or a channel; a clip has no control API
+        assert_eq!(party(Twitch, "video:123", Some("party=1")), Some(true));
+        assert_eq!(party(Twitch, "channel:alex", Some("party=1")), Some(true));
+        assert_eq!(party(Twitch, "FunnyClip", Some("party=1")), None);
+        assert_eq!(party(Spotify, "track:x", Some("party=1")), None);
     }
 
     #[test]

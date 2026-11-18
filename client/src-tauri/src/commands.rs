@@ -16,7 +16,7 @@ use pulse_protocol::rest::{
     SaveLayoutRequest, SearchRequest, SearchResults, Server, ServerBan, ServerBlock, ServerInvite,
     ServerLayout, SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare, StartQotyRequest,
     TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
-    WatchParty, WatchPartyAction,
+    WatchParty, WatchPartyAction, WatchSource,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -1439,20 +1439,27 @@ pub async fn share_to_stage(
     core.check(&app, api.share_to_stage(&token, channel_id, &url).await)
 }
 
-/// Start a YouTube watch party in a voice channel (#384), or change its video.
+/// Start a watch party in a voice channel (#384; Twitch too, #459), or change its video.
 #[tauri::command]
 pub async fn start_watch_party(
     app: AppHandle,
     core: State<'_, Core>,
     channel_id: ChannelId,
+    source: Option<WatchSource>,
     video_id: String,
     title: Option<String>,
 ) -> Result<WatchParty, ApiError> {
     let (api, token) = core.current()?;
     core.check(
         &app,
-        api.start_watch_party(&token, channel_id, &video_id, title)
-            .await,
+        api.start_watch_party(
+            &token,
+            channel_id,
+            source.unwrap_or_default(),
+            &video_id,
+            title,
+        )
+        .await,
     )
 }
 

@@ -1,4 +1,4 @@
-//! YouTube watch parties in voice (#384): someone in a server voice channel's call starts one from a YouTube card, and
+//! Watch parties in voice (#384; Twitch too, #459): someone in a server voice channel's call starts one from a YouTube card, and
 //! everyone in the call who opens it watches the same video at the same moment.
 //!
 //! The server holds only the shared state ([`WatchParty`]): the video, where it was (`position_ms`) at `set_at_ms` by
@@ -16,7 +16,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use pulse_protocol::ids::{ChannelId, UserId};
-use pulse_protocol::rest::{WatchParty, WatchPartyAction, WatchPartyItem};
+use pulse_protocol::rest::{
+    EmbedProvider, EmbedThumb, WatchParty, WatchPartyAction, WatchPartyItem, WatchSource,
+};
 
 /// The longest queue a party keeps.
 pub const MAX_QUEUE: usize = 50;
@@ -33,11 +35,31 @@ pub const RESTORE_WITHIN_MS: i64 = 5 * 60 * 1000;
 
 /// A YouTube video id: exactly 11 of `[A-Za-z0-9_-]`.
 pub fn valid_video_id(id: &str) -> bool {
-    id.len() == 11
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    WatchSource::Youtube.valid_id(id)
 }
+
+/// A party video's link preview, as the link previewer names it: its provider and id (`embeds::providers`).
+pub fn embed_of(source: WatchSource, id: &str) -> (EmbedProvider, String) {
+    match source {
+        WatchSource::Youtube => (EmbedProvider::Youtube, id.to_owned()),
+        WatchSource::TwitchVideo => (EmbedProvider::Twitch, format!("video:{id}")),
+        WatchSource::TwitchChannel => (EmbedProvider::Twitch, format!("channel:{id}")),
+        WatchSource::TwitchClip => (EmbedProvider::Twitch, id.to_owned()),
+    }
+}
+
+/// A party video's own page: what its card is fetched from (built from the validated id only).
+pub fn link_of(source: WatchSource, id: &str) -> String {
+    match source {
+        WatchSource::Youtube => format!("https://www.youtube.com/watch?v={id}"),
+        WatchSource::TwitchVideo => format!("https://www.twitch.tv/videos/{id}"),
+        WatchSource::TwitchChannel => format!("https://www.twitch.tv/{id}"),
+        WatchSource::TwitchClip => format!("https://clips.twitch.tv/{id}"),
+    }
+}
+
+/// What a party refuses a video id with.
+const NOT_PLAYABLE: &str = "that isn't a video a watch party can play";
 
 /// A title as a party keeps it: trimmed, no control characters, at most [`MAX_TITLE`] characters; `None` when that
 /// leaves nothing.
@@ -115,19 +137,20 @@ impl WatchState {
         &self,
         channel: ChannelId,
         me: UserId,
+        source: WatchSource,
         video_id: &str,
         title: Option<String>,
         now_ms: i64,
     ) -> Result<WatchParty, Refused> {
-        if !valid_video_id(video_id) {
-            return Err(Refused::Bad("that isn't a YouTube video"));
+        if !source.valid_id(video_id) {
+            return Err(Refused::Bad(NOT_PLAYABLE));
         }
         let mut map = self.lock();
         if let Some(p) = map.get_mut(&channel) {
             if !may_control(p, me) {
                 return Err(Refused::AlreadyOn);
             }
-            load(p, video_id, clean_title(title), now_ms);
+            load(p, source, video_id, clean_title(title), me, now_ms);
             if !p.viewers.contains(&me) {
                 p.viewers.push(me);
             }
@@ -136,6 +159,7 @@ impl WatchState {
         let p = WatchParty {
             channel_id: channel,
             host_id: me,
+            source,
             video_id: video_id.to_owned(),
             title: clean_title(title),
             position_ms: 0,
@@ -144,6 +168,7 @@ impl WatchState {
             everyone_controls: false,
             viewers: vec![me],
             queue: Vec::new(),
+            added_by: Some(me),
         };
         map.insert(channel, p.clone());
         Ok(p)
@@ -192,29 +217,37 @@ impl WatchState {
                 let playing = p.playing;
                 set(p, position_ms, playing, now_ms);
             }
-            WatchPartyAction::Load { video_id, title } => {
+            WatchPartyAction::Load {
+                source,
+                video_id,
+                title,
+            } => {
                 if !control {
                     return Err(Refused::NotAllowed);
                 }
-                if !valid_video_id(&video_id) {
-                    return Err(Refused::Bad("that isn't a YouTube video"));
+                if !source.valid_id(&video_id) {
+                    return Err(Refused::Bad(NOT_PLAYABLE));
                 }
-                load(p, &video_id, clean_title(title), now_ms);
+                load(p, source, &video_id, clean_title(title), me, now_ms);
             }
-            WatchPartyAction::Enqueue { video_id, title } => {
-                if !p.viewers.contains(&me) && !control {
-                    return Err(Refused::NotAllowed);
-                }
-                if !valid_video_id(&video_id) {
-                    return Err(Refused::Bad("that isn't a YouTube video"));
+            // anyone in the call (the route checks that) may add one (#464)
+            WatchPartyAction::Enqueue {
+                source,
+                video_id,
+                title,
+            } => {
+                if !source.valid_id(&video_id) {
+                    return Err(Refused::Bad(NOT_PLAYABLE));
                 }
                 if p.queue.len() >= MAX_QUEUE {
                     return Err(Refused::Bad("the queue is full"));
                 }
                 p.queue.push(WatchPartyItem {
+                    source,
                     video_id,
                     title: clean_title(title),
                     added_by: me,
+                    thumb: None,
                 });
             }
             WatchPartyAction::Unqueue { index } => {
@@ -227,9 +260,41 @@ impl WatchState {
                 }
                 p.queue.remove(i);
             }
-            WatchPartyAction::Next => {
+            WatchPartyAction::Move { index, to } => {
+                let i = usize::try_from(index).unwrap_or(usize::MAX);
+                let Some(item) = p.queue.get(i) else {
+                    return Err(Refused::Bad("that isn't in the queue"));
+                };
+                if !control && item.added_by != me {
+                    return Err(Refused::NotAllowed);
+                }
+                let to = usize::try_from(to)
+                    .unwrap_or(usize::MAX)
+                    .min(p.queue.len() - 1);
+                if to == i {
+                    return Ok(Outcome::Unchanged);
+                }
+                let item = p.queue.remove(i);
+                p.queue.insert(to, item);
+            }
+            WatchPartyAction::PlayNow { index } => {
                 if !control {
                     return Err(Refused::NotAllowed);
+                }
+                let i = usize::try_from(index).unwrap_or(usize::MAX);
+                if i >= p.queue.len() {
+                    return Err(Refused::Bad("that isn't in the queue"));
+                }
+                let item = p.queue.remove(i);
+                play_item(p, item, now_ms);
+            }
+            WatchPartyAction::Next { from } => {
+                if !control && p.added_by != Some(me) {
+                    return Err(Refused::NotAllowed);
+                }
+                // someone else's player (or skip) moved it on already
+                if from.is_some_and(|f| f != p.video_id) {
+                    return Ok(Outcome::Unchanged);
                 }
                 if p.queue.is_empty() {
                     // nothing next: it stops where it is (the end, when the video ran out)
@@ -237,7 +302,7 @@ impl WatchState {
                     set(p, at, false, now_ms);
                 } else {
                     let item = p.queue.remove(0);
-                    load(p, &item.video_id, item.title, now_ms);
+                    play_item(p, item, now_ms);
                 }
             }
             WatchPartyAction::EveryoneControls { on } => {
@@ -276,6 +341,49 @@ impl WatchState {
             return Outcome::Unchanged;
         }
         leave(&mut map, channel, user)
+    }
+
+    /// Give `video_id`'s card (#464) to the party in `channel`, wherever it lacks one: the current video's title, and
+    /// each queued copy's title and thumbnail. `Unchanged` when there was nothing to fill.
+    pub fn fill_card(
+        &self,
+        channel: ChannelId,
+        source: WatchSource,
+        video_id: &str,
+        title: Option<&str>,
+        thumb: Option<&EmbedThumb>,
+    ) -> Outcome {
+        let mut map = self.lock();
+        let Some(p) = map.get_mut(&channel) else {
+            return Outcome::Unchanged;
+        };
+        let title = clean_title(title.map(str::to_owned));
+        let mut changed = false;
+        if p.source == source && p.video_id == video_id && p.title.is_none() && title.is_some() {
+            p.title.clone_from(&title);
+            changed = true;
+        }
+        for item in p
+            .queue
+            .iter_mut()
+            .filter(|i| i.source == source && i.video_id == video_id)
+        {
+            if item.title.is_none() && title.is_some() {
+                item.title.clone_from(&title);
+                changed = true;
+            }
+            if item.thumb.is_none()
+                && let Some(t) = thumb
+            {
+                item.thumb = Some(t.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            Outcome::Changed(p.clone())
+        } else {
+            Outcome::Unchanged
+        }
     }
 
     /// Put back a party restored from its snapshot (#409).
@@ -403,10 +511,31 @@ fn set(p: &mut WatchParty, position_ms: u64, playing: bool, now_ms: i64) {
     p.set_at_ms = now_ms;
 }
 
-fn load(p: &mut WatchParty, video_id: &str, title: Option<String>, now_ms: i64) {
+fn load(
+    p: &mut WatchParty,
+    source: WatchSource,
+    video_id: &str,
+    title: Option<String>,
+    by: UserId,
+    now_ms: i64,
+) {
+    p.source = source;
     video_id.clone_into(&mut p.video_id);
     p.title = title;
+    p.added_by = Some(by);
     set(p, 0, true, now_ms);
+}
+
+/// A queued video on now, from the start, as its adder's.
+fn play_item(p: &mut WatchParty, item: WatchPartyItem, now_ms: i64) {
+    load(
+        p,
+        item.source,
+        &item.video_id,
+        item.title,
+        item.added_by,
+        now_ms,
+    );
 }
 
 /// `user` out of `channel`'s party: a host passes it to the next viewer, and the last viewer out ends it.
@@ -432,6 +561,7 @@ fn leave(map: &mut HashMap<ChannelId, WatchParty>, channel: ChannelId, user: Use
 mod tests {
     use super::*;
 
+    const Y: WatchSource = WatchSource::Youtube;
     const V: &str = "dQw4w9WgXcQ";
     const W: &str = "9bZkp7q19f0";
 
@@ -474,7 +604,7 @@ mod tests {
     fn the_position_runs_on_while_playing() {
         let st = WatchState::default();
         let (ch, alex) = (ChannelId::new(), UserId::new());
-        let p = st.start(ch, alex, V, None, 1_000).unwrap();
+        let p = st.start(ch, alex, Y, V, None, 1_000).unwrap();
         assert_eq!(position_at(&p, 1_000), 0);
         assert_eq!(position_at(&p, 4_500), 3_500);
         // a clock that went back never makes it negative
@@ -511,8 +641,8 @@ mod tests {
     fn only_the_host_controls_until_everyone_may() {
         let st = WatchState::default();
         let (ch, alex, sam) = (ChannelId::new(), UserId::new(), UserId::new());
-        st.start(ch, alex, V, Some("Song".into()), 0).unwrap();
-        assert_eq!(st.start(ch, sam, W, None, 0), Err(Refused::AlreadyOn));
+        st.start(ch, alex, Y, V, Some("Song".into()), 0).unwrap();
+        assert_eq!(st.start(ch, sam, Y, W, None, 0), Err(Refused::AlreadyOn));
         let play = || WatchPartyAction::Play { position_ms: 10 };
         assert_eq!(
             st.apply(ch, sam, play(), 1, |_| true),
@@ -548,7 +678,7 @@ mod tests {
         );
         changed(st.apply(ch, sam, play(), 2, |_| true).unwrap());
         // and now sam may change the video by starting one
-        let p = st.start(ch, sam, W, None, 3).unwrap();
+        let p = st.start(ch, sam, Y, W, None, 3).unwrap();
         assert_eq!((p.video_id.as_str(), p.host_id, p.title), (W, alex, None));
         // someone who isn't watching still can't, everyone or not
         let kim = UserId::new();
@@ -563,17 +693,19 @@ mod tests {
         let st = WatchState::default();
         let (ch, alex) = (ChannelId::new(), UserId::new());
         assert!(matches!(
-            st.start(ch, alex, "nope", None, 0),
+            st.start(ch, alex, Y, "nope", None, 0),
             Err(Refused::Bad(_))
         ));
         assert!(st.of(ch).is_none());
-        st.start(ch, alex, V, None, 0).unwrap();
+        st.start(ch, alex, Y, V, None, 0).unwrap();
         for a in [
             WatchPartyAction::Load {
+                source: Y,
                 video_id: "x\"><script>".into(),
                 title: None,
             },
             WatchPartyAction::Enqueue {
+                source: Y,
                 video_id: "short".into(),
                 title: None,
             },
@@ -589,10 +721,11 @@ mod tests {
     fn the_queue_plays_in_order() {
         let st = WatchState::default();
         let (ch, alex, sam) = (ChannelId::new(), UserId::new(), UserId::new());
-        st.start(ch, alex, V, None, 0).unwrap();
+        st.start(ch, alex, Y, V, None, 0).unwrap();
         st.apply(ch, sam, WatchPartyAction::Join, 0, |_| true)
             .unwrap();
         let enqueue = |id: &str| WatchPartyAction::Enqueue {
+            source: Y,
             video_id: id.into(),
             title: Some("Next".into()),
         };
@@ -609,12 +742,18 @@ mod tests {
             Err(Refused::Bad(_))
         ));
         assert_eq!(
-            st.apply(ch, sam, WatchPartyAction::Next, 0, |_| true),
+            st.apply(ch, sam, WatchPartyAction::Next { from: None }, 0, |_| true),
             Err(Refused::NotAllowed)
         );
         let p = changed(
-            st.apply(ch, alex, WatchPartyAction::Next, 5_000, |_| true)
-                .unwrap(),
+            st.apply(
+                ch,
+                alex,
+                WatchPartyAction::Next { from: None },
+                5_000,
+                |_| true,
+            )
+            .unwrap(),
         );
         assert_eq!(
             (p.video_id.as_str(), p.position_ms, p.playing, p.set_at_ms),
@@ -630,8 +769,14 @@ mod tests {
         assert!(p.queue.is_empty());
         // nothing next: it stops where it got to
         let p = changed(
-            st.apply(ch, alex, WatchPartyAction::Next, 8_000, |_| true)
-                .unwrap(),
+            st.apply(
+                ch,
+                alex,
+                WatchPartyAction::Next { from: None },
+                8_000,
+                |_| true,
+            )
+            .unwrap(),
         );
         assert_eq!(
             (p.video_id.as_str(), p.playing, p.position_ms),
@@ -647,6 +792,148 @@ mod tests {
     }
 
     #[test]
+    fn anyone_in_the_call_adds_and_adders_move_their_own() {
+        let st = WatchState::default();
+        let (ch, alex, sam, kim) = (
+            ChannelId::new(),
+            UserId::new(),
+            UserId::new(),
+            UserId::new(),
+        );
+        st.start(ch, alex, Y, V, None, 0).unwrap();
+        let enqueue = |id: &str| WatchPartyAction::Enqueue {
+            source: Y,
+            video_id: id.into(),
+            title: None,
+        };
+        // kim is in the call but hasn't opened the player: may still add (#464)
+        st.apply(ch, kim, enqueue(W), 0, |_| true).unwrap();
+        st.apply(ch, alex, enqueue(V), 0, |_| true).unwrap();
+        let p = changed(st.apply(ch, sam, enqueue(W), 0, |_| true).unwrap());
+        assert_eq!(
+            p.queue.iter().map(|i| i.added_by).collect::<Vec<_>>(),
+            [kim, alex, sam]
+        );
+        let mv = |index, to| WatchPartyAction::Move { index, to };
+        // sam moves theirs to the front; may not move alex's
+        assert_eq!(
+            st.apply(ch, sam, mv(1, 0), 0, |_| true),
+            Err(Refused::NotAllowed)
+        );
+        let p = changed(st.apply(ch, sam, mv(2, 0), 0, |_| true).unwrap());
+        assert_eq!(
+            p.queue.iter().map(|i| i.added_by).collect::<Vec<_>>(),
+            [sam, kim, alex]
+        );
+        // the host moves anyone's; past the end is the end; to where it is changes nothing
+        let p = changed(st.apply(ch, alex, mv(0, 99), 0, |_| true).unwrap());
+        assert_eq!(
+            p.queue.iter().map(|i| i.added_by).collect::<Vec<_>>(),
+            [kim, alex, sam]
+        );
+        assert_eq!(
+            st.apply(ch, alex, mv(2, 7), 0, |_| true),
+            Ok(Outcome::Unchanged)
+        );
+        assert!(matches!(
+            st.apply(ch, alex, mv(3, 0), 0, |_| true),
+            Err(Refused::Bad(_))
+        ));
+        // play now: controllers only, and it's the adder's video now
+        assert_eq!(
+            st.apply(ch, sam, WatchPartyAction::PlayNow { index: 2 }, 0, |_| true),
+            Err(Refused::NotAllowed)
+        );
+        let p = changed(
+            st.apply(
+                ch,
+                alex,
+                WatchPartyAction::PlayNow { index: 2 },
+                7_000,
+                |_| true,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            (p.video_id.as_str(), p.added_by, p.queue.len(), p.set_at_ms),
+            (W, Some(sam), 2, 7_000)
+        );
+    }
+
+    #[test]
+    fn the_adder_skips_their_own_and_a_stale_next_does_nothing() {
+        let st = WatchState::default();
+        let (ch, alex, sam) = (ChannelId::new(), UserId::new(), UserId::new());
+        let p = st.start(ch, alex, Y, V, None, 0).unwrap();
+        assert_eq!(p.added_by, Some(alex));
+        let enqueue = |id: &str| WatchPartyAction::Enqueue {
+            source: Y,
+            video_id: id.into(),
+            title: None,
+        };
+        st.apply(ch, sam, enqueue(W), 0, |_| true).unwrap();
+        st.apply(ch, alex, enqueue(V), 0, |_| true).unwrap();
+        // two players reach the end of V at once: it moves on once
+        let next = |from: &str| WatchPartyAction::Next {
+            from: Some(from.into()),
+        };
+        let p = changed(st.apply(ch, alex, next(V), 0, |_| true).unwrap());
+        assert_eq!((p.video_id.as_str(), p.added_by), (W, Some(sam)));
+        assert_eq!(
+            st.apply(ch, alex, next(V), 0, |_| true),
+            Ok(Outcome::Unchanged)
+        );
+        // W is sam's: sam may skip it, though sam doesn't control the party
+        let p = changed(st.apply(ch, sam, next(W), 0, |_| true).unwrap());
+        assert_eq!((p.video_id.as_str(), p.added_by), (V, Some(alex)));
+        assert_eq!(
+            st.apply(ch, sam, next(V), 0, |_| true),
+            Err(Refused::NotAllowed)
+        );
+        // the wire form without `from` still reads
+        let a: WatchPartyAction = serde_json::from_str(r#"{"action":"next"}"#).unwrap();
+        assert_eq!(a, WatchPartyAction::Next { from: None });
+    }
+
+    #[test]
+    fn a_card_fills_in_what_is_missing() {
+        let st = WatchState::default();
+        let (ch, alex) = (ChannelId::new(), UserId::new());
+        st.start(ch, alex, Y, V, None, 0).unwrap();
+        st.apply(
+            ch,
+            alex,
+            WatchPartyAction::Enqueue {
+                source: Y,
+                video_id: W.into(),
+                title: Some("Mine".into()),
+            },
+            0,
+            |_| true,
+        )
+        .unwrap();
+        let thumb = EmbedThumb {
+            hash: "h".into(),
+            width: 1,
+            height: 1,
+        };
+        let p = changed(st.fill_card(ch, Y, V, Some("Song"), Some(&thumb)));
+        assert_eq!(p.title.as_deref(), Some("Song"));
+        // the queued W keeps its own title, takes the thumbnail
+        let p = changed(st.fill_card(ch, Y, W, Some("Other"), Some(&thumb)));
+        assert_eq!(p.queue[0].title.as_deref(), Some("Mine"));
+        assert_eq!(p.queue[0].thumb, Some(thumb.clone()));
+        assert_eq!(
+            st.fill_card(ch, Y, W, Some("x"), Some(&thumb)),
+            Outcome::Unchanged
+        );
+        assert_eq!(
+            st.fill_card(ChannelId::new(), Y, W, None, None),
+            Outcome::Unchanged
+        );
+    }
+
+    #[test]
     fn the_host_hands_off_and_leaving_passes_it_on() {
         let st = WatchState::default();
         let (ch, alex, sam, kim, jo) = (
@@ -656,7 +943,7 @@ mod tests {
             UserId::new(),
             UserId::new(),
         );
-        st.start(ch, alex, V, None, 0).unwrap();
+        st.start(ch, alex, Y, V, None, 0).unwrap();
         st.apply(ch, sam, WatchPartyAction::Join, 0, |_| true)
             .unwrap();
         st.apply(ch, kim, WatchPartyAction::Join, 0, |_| true)
@@ -722,8 +1009,8 @@ mod tests {
     fn visible_and_removed_by_channel() {
         let st = WatchState::default();
         let (a, b, alex) = (ChannelId::new(), ChannelId::new(), UserId::new());
-        st.start(a, alex, V, None, 0).unwrap();
-        st.start(b, alex, W, None, 0).unwrap();
+        st.start(a, alex, Y, V, None, 0).unwrap();
+        st.start(b, alex, Y, W, None, 0).unwrap();
         assert_eq!(st.visible(&[a].into_iter().collect()).len(), 1);
         assert!(st.remove_channel(a));
         assert!(!st.remove_channel(a));

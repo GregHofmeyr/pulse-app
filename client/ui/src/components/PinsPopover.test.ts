@@ -195,4 +195,19 @@ describe('PinsPopover in quotes and clips channels (#257)', () => {
     await showIn('K1', [])
     expect(document.querySelector('.none')?.textContent).toBe('Nothing pinned yet. Pin a clip from its ⋯ menu to keep it here.')
   })
+
+  it("right-click a row (or Shift+F10 on its button) opens the menu of the person it names (#335)", async () => {
+    await show()
+    const menuOf = () => document.querySelector('[role=menu]')?.getAttribute('aria-label')
+    const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 })
+    rows()[0].dispatchEvent(e)
+    flushSync()
+    expect(e.defaultPrevented).toBe(true)
+    expect(menuOf()).toBe('Actions for sam')
+    button(rows()[1], 'Jump').dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+    flushSync()
+    expect(menuOf()).toBe('Actions for alex')
+    // no buttons on names or avatars: the row keeps only Jump and Unpin
+    expect([...rows()[0].querySelectorAll('button')].map((b) => b.textContent?.trim())).toEqual(['Jump', 'Unpin'])
+  })
 })

@@ -44,7 +44,7 @@ fn slug_char(b: u8) -> bool {
 /// - Instagram: its own embed page (`p:<code>` or `reel:<code>`, code 5 to 64 of `[A-Za-z0-9_-]`).
 /// - YouTube: the video's watch page (id 11 of `[A-Za-z0-9_-]`), at `start` seconds (at most a
 ///   week, as the embed page takes).
-/// - Twitch: the clip's own page (slug 1 to 100 of `[A-Za-z0-9_-]`).
+/// - Twitch: the clip's own page (slug 1 to 100 of `[A-Za-z0-9_-]`), or a VOD's or channel's (#459).
 pub fn popout_url(provider: EmbedProvider, id: &str, start: Option<u32>) -> Option<String> {
     let slug = |s: &str, min: usize, max: usize| {
         (min..=max).contains(&s.len()) && s.bytes().all(slug_char)
@@ -64,7 +64,19 @@ pub fn popout_url(provider: EmbedProvider, id: &str, start: Option<u32>) -> Opti
                 None => format!("https://www.youtube.com/watch?v={id}"),
             })
         }
-        EmbedProvider::Twitch => slug(id, 1, 100).then(|| format!("https://clips.twitch.tv/{id}")),
+        // a VOD (`video:<digits>`) or a channel (`channel:<login>`) too (#459): their pages on twitch.tv
+        EmbedProvider::Twitch => match id.split_once(':') {
+            None => slug(id, 1, 100).then(|| format!("https://clips.twitch.tv/{id}")),
+            Some(("video", v)) => ((1..=15).contains(&v.len())
+                && v.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| format!("https://www.twitch.tv/videos/{v}")),
+            Some(("channel", login)) => ((1..=25).contains(&login.len())
+                && login
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'))
+            .then(|| format!("https://www.twitch.tv/{login}")),
+            Some(_) => None,
+        },
         _ => None,
     }
 }
@@ -313,6 +325,24 @@ mod tests {
         );
         let long = "a".repeat(101);
         for bad in ["", long.as_str(), "a/b", "a?b=1", "a b", "a%2Fb"] {
+            assert_eq!(popout_url(Twitch, bad, None), None, "{bad}");
+        }
+        // a VOD and a channel (#459)
+        assert_eq!(
+            popout_url(Twitch, "video:123", None).as_deref(),
+            Some("https://www.twitch.tv/videos/123")
+        );
+        assert_eq!(
+            popout_url(Twitch, "channel:alex_1", None).as_deref(),
+            Some("https://www.twitch.tv/alex_1")
+        );
+        for bad in [
+            "video:v1",
+            "video:",
+            "channel:Alex",
+            "channel:a/b",
+            "other:x",
+        ] {
             assert_eq!(popout_url(Twitch, bad, None), None, "{bad}");
         }
     }

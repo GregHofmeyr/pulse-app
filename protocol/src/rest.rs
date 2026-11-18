@@ -1712,6 +1712,46 @@ pub struct PlanReminder {
     pub starts_at: String,
 }
 
+/// What a watch party plays (#459). Older parties and clients know only YouTube, the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchSource {
+    /// A YouTube video: synced play, pause and seek. Its id is 11 of `[A-Za-z0-9_-]`.
+    #[default]
+    Youtube,
+    /// A Twitch VOD (`twitch.tv/videos/<id>`): synced play, pause and seek. Its id is 1 to 15 digits.
+    TwitchVideo,
+    /// A Twitch channel, live: play and pause only, and it plays until skipped. Its id is the channel's login, 1 to 25
+    /// of `[a-z0-9_]`.
+    TwitchChannel,
+    /// A Twitch clip: everyone's starts together, but there's no control (pause is each viewer's own). Its id is the
+    /// clip's slug, 1 to 100 of `[A-Za-z0-9_-]`.
+    TwitchClip,
+}
+
+impl WatchSource {
+    /// Whether `id` is well formed for this source. Ids hold only characters that need no escaping in a URL.
+    pub fn valid_id(self, id: &str) -> bool {
+        let within = |min: usize, max: usize, ok: fn(u8) -> bool| {
+            (min..=max).contains(&id.len()) && id.bytes().all(ok)
+        };
+        let slug = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'-';
+        match self {
+            Self::Youtube => within(11, 11, slug),
+            Self::TwitchVideo => within(1, 15, |b| b.is_ascii_digit()),
+            Self::TwitchChannel => within(1, 25, |b| {
+                b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'
+            }),
+            Self::TwitchClip => within(1, 100, slug),
+        }
+    }
+
+    /// Whether everyone's player follows the party's position (seek included).
+    pub fn seeks(self) -> bool {
+        matches!(self, Self::Youtube | Self::TwitchVideo)
+    }
+}
+
 /// A YouTube watch party in a server voice channel (#384): one per channel, its state held in memory on the server.
 /// Each viewer's player is at `position_ms + (server now - set_at_ms)` while `playing`, else at `position_ms`. Gone
 /// when its last viewer leaves it or the call. Everyone sees that it's on (the channel list shows it); only the
@@ -1721,7 +1761,10 @@ pub struct WatchParty {
     pub channel_id: ChannelId,
     /// Who controls it (with everyone else too, while `everyone_controls`).
     pub host_id: UserId,
-    /// The YouTube video: 11 of `[A-Za-z0-9_-]`.
+    /// What `video_id` is on (#459): YouTube unless it says otherwise.
+    #[serde(default)]
+    pub source: WatchSource,
+    /// The video, VOD, channel or clip: valid for `source` ([`WatchSource::valid_id`]).
     pub video_id: String,
     /// The video's title as the starter's card showed it; absent when it had none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1736,25 +1779,38 @@ pub struct WatchParty {
     pub everyone_controls: bool,
     /// Who has the player open, in the order they joined it (the host passes to the next of them).
     pub viewers: Vec<UserId>,
-    /// What plays next, in order.
+    /// What plays next, in order. It goes with the party: ending the party clears it.
     #[serde(default)]
     pub queue: Vec<WatchPartyItem>,
+    /// Who put the current video on (#464): its starter, or whoever queued it. They may skip it, as a controller may.
+    /// Absent from a party that predates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub added_by: Option<UserId>,
 }
 
-/// A video waiting in a watch party's queue (#384).
+/// A video waiting in a watch party's queue (#384, #464).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct WatchPartyItem {
+    #[serde(default)]
+    pub source: WatchSource,
     pub video_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub title: Option<String>,
     pub added_by: UserId,
+    /// The video's thumbnail, from its link card when the server has one (a `link_thumb` media hash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub thumb: Option<EmbedThumb>,
 }
 
 /// `PUT /channels/{id}/watch-party` (#384): start a watch party of a YouTube video (or, if one is on and you may
 /// control it, change its video).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct StartWatchPartyRequest {
+    #[serde(default)]
+    pub source: WatchSource,
     pub video_id: String,
     #[serde(default)]
     pub title: Option<String>,
@@ -1776,12 +1832,16 @@ pub enum WatchPartyAction {
     },
     /// Play another video now, from the start.
     Load {
+        #[serde(default)]
+        source: WatchSource,
         video_id: String,
         #[serde(default)]
         title: Option<String>,
     },
-    /// Add a video to the end of the queue (anyone watching may).
+    /// Add a video to the end of the queue (anyone in the call may, #464).
     Enqueue {
+        #[serde(default)]
+        source: WatchSource,
         video_id: String,
         #[serde(default)]
         title: Option<String>,
@@ -1790,8 +1850,24 @@ pub enum WatchPartyAction {
     Unqueue {
         index: u32,
     },
-    /// The queue's next video now (or, with none, stop at the end).
-    Next,
+    /// Move the queue's `index`th video to `to` (#464; whoever may control, or whoever added it). A `to` past the end
+    /// is the end.
+    Move {
+        index: u32,
+        to: u32,
+    },
+    /// Play the queue's `index`th video now, from the start (#464; whoever may control).
+    PlayNow {
+        index: u32,
+    },
+    /// The queue's next video now (or, with none, stop at the end): a skip, or the player reaching the end. Whoever
+    /// may control may, and whoever put the current video on. With `from`, only while `from` is still the current
+    /// video: two players reaching the end at once move it on once.
+    Next {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        from: Option<String>,
+    },
     /// "Let everyone control" (the host only).
     EveryoneControls {
         on: bool,

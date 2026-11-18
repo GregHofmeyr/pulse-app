@@ -2,7 +2,8 @@
   // "Do Not Disturb for them" (#310): an item in every person's right-click menu (voice rows and call tiles, member
   // list, message author, DM list, profile card). Off: a flyout of how long (or "Only in DMs" until turned off). On: a
   // small bell-off line saying how long it lasts, and "Turn off Do Not Disturb for them". Their messages still
-  // arrive and count as unread; only the sound and the desktop notification are held back. Saved on your account, so
+  // arrive and count as unread; only the sound and the desktop notification are held back (their calls don't ring and
+  // their going live doesn't alert either, #426). Saved on your account, so
   // every device has it; they're never told. Never for yourself. The menu closes the flyout through the exported
   // functions, as with any MenuFlyout.
   import { app, clock, ui } from '../lib/store.svelte'

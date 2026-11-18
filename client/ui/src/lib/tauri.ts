@@ -45,6 +45,7 @@ import type { PinDuration } from './protocol/PinDuration'
 import type { PinnedMessage } from './protocol/PinnedMessage'
 import type { WatchParty } from './protocol/WatchParty'
 import type { WatchPartyAction } from './protocol/WatchPartyAction'
+import type { WatchSource } from './protocol/WatchSource'
 import type { StageShare } from './protocol/StageShare'
 import type { Wheel } from './protocol/Wheel'
 import type { CreateWheelRequest } from './protocol/CreateWheelRequest'
@@ -425,8 +426,8 @@ export const api = {
   /** Share a Spotify link to a voice channel's stage (#234); you must be in its call. */
   shareToStage: (channelId: string, url: string) => invoke<StageShare>('share_to_stage', { channelId, url }),
   /** Start a YouTube watch party in a voice channel (#384), or change its video; you must be in its call. */
-  startWatchParty: (channelId: string, videoId: string, title: string | null) =>
-    invoke<WatchParty>('start_watch_party', { channelId, videoId, title }),
+  startWatchParty: (channelId: string, source: WatchSource, videoId: string, title: string | null) =>
+    invoke<WatchParty>('start_watch_party', { channelId, source, videoId, title }),
   /** One change to a voice channel's watch party (#384); it arrives back as WatchPartyChanged or WatchPartyEnded. */
   watchPartyAction: (channelId: string, action: WatchPartyAction) => invoke<void>('watch_party_action', { channelId, action }),
   /** End a voice channel's watch party for everyone (#384; the host only). */
