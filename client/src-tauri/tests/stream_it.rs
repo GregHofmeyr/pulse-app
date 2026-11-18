@@ -4,7 +4,7 @@
 
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use livekit::options::TrackPublishOptions;
@@ -625,3 +625,122 @@ async fn a_room_closed_by_livekit_stops_publishing() {
     assert_eq!(*closed.lock().unwrap(), vec![f.channel]);
     drop(feeder);
 }
+
+/// A TCP relay to `to` on an ephemeral local port that holds every connection, unanswered, until
+/// the test opens it.
+struct Relay {
+    addr: std::net::SocketAddr,
+    open: tokio::sync::watch::Sender<bool>,
+    accepted: Arc<AtomicUsize>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Relay {
+    async fn held(to: std::net::SocketAddr) -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (open, rx) = tokio::sync::watch::channel(false);
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let count = accepted.clone();
+        let task = tokio::spawn(async move {
+            let mut conns = tokio::task::JoinSet::new();
+            while let Ok((mut inbound, _)) = listener.accept().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                let mut rx = rx.clone();
+                conns.spawn(async move {
+                    if rx.wait_for(|open| *open).await.is_err() {
+                        return;
+                    }
+                    if let Ok(mut outbound) = tokio::net::TcpStream::connect(to).await {
+                        let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                    }
+                });
+            }
+        });
+        Relay {
+            addr,
+            open,
+            accepted,
+            task,
+        }
+    }
+
+    fn open(&self) {
+        self.open.send_replace(true);
+    }
+}
+
+impl Drop for Relay {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// #341/#360: a leave while `#a` is still connecting ends that connect: when the connection lands
+/// after the leave, it is closed at once rather than left in the stream room (the epoch check in
+/// `ensure_connected`). The ticket request is held at a relay, so the leave lands mid-connect.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn a_connect_that_lands_after_a_leave_is_dropped() {
+    let _turn = livekit_turn().await;
+    let f = fixture().await;
+    let relay = Relay::held(f.app.addr).await;
+    let held_api = Api::new(&format!("http://{}", relay.addr));
+
+    // an observer in the stream room (alex's own `#v` connection) watches for `#a`
+    let (observer, mut events) = connect(&f, StreamRole::V, RoomOptions::default()).await;
+    let a_identity = format!("{}#a", f.uid);
+
+    let alex = Arc::new(StreamAudio::default());
+    let connecting = tokio::spawn({
+        let (alex, token, channel) = (alex.clone(), f.token.clone(), f.channel);
+        async move {
+            alex.ensure_connected(&held_api, &token, channel, false, no_mixer())
+                .await
+        }
+    });
+    wait_for("the ticket request to reach the relay", 5, || async {
+        relay.accepted.load(Ordering::SeqCst) > 0
+    })
+    .await;
+    assert!(!connecting.is_finished(), "the ticket request is held");
+    alex.leave().await;
+    relay.open();
+
+    let r = tokio::time::timeout(Duration::from_secs(20), connecting)
+        .await
+        .expect("the connect never finished")
+        .unwrap();
+    // this error comes only after `Room::connect` succeeded: the connection really landed
+    let err = r.expect_err("a connect that lands after a leave is dropped");
+    assert!(
+        err.to_string().contains("stopped while it connected"),
+        "{err}"
+    );
+    assert_eq!(alex.connected_channel().await, None);
+    assert!(
+        alex.start_publishing_raw().await.is_err(),
+        "nothing publishes after the leave"
+    );
+    // `#a` may have shown up for a moment; it must be gone, and stay gone
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    while let Ok(ev) = events.try_recv() {
+        if let RoomEvent::ParticipantConnected(p) = &ev {
+            println!("observer saw {} join", p.identity());
+        }
+    }
+    assert!(
+        !observer
+            .remote_participants()
+            .keys()
+            .any(|k| k.as_str() == a_identity),
+        "the dropped connect left #a in the stream room"
+    );
+    let _ = observer.close().await;
+}
+
+// The 5 s close limit (#360) has no test here: a real room can't make `Room::close` outlast it.
+// With LiveKit frozen mid-call (every socket open, nothing answered) the leave took milliseconds,
+// as livekit-signaling bounds its own close at 3 s. `stream::audio`'s unit test
+// `a_stuck_unpublish_or_close_gives_up_after_the_close_limit` covers the limit with a close that
+// never finishes.
