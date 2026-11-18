@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { startInviteLinks } from './lib/inviteLinks.svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { api, errorText } from './lib/tauri'
   import { app, resetState, startListening } from './lib/store.svelte'
@@ -64,7 +65,9 @@
       const unlistenBadges = startBadgeListening()
       const unlistenSounds = startSoundboardListening()
       const unlistenSteam = startSteamListening()
+      const invites = startInviteLinks().catch(() => () => {})
       off = () => {
+        void invites.then((f) => f())
         unlisten()
         unlistenVoice()
         unlistenUpdates()

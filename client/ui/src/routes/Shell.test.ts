@@ -34,6 +34,7 @@ import Shell from './Shell.svelte'
 import LivePopover from '../components/LivePopover.svelte'
 import { app, startListening } from '../lib/store.svelte'
 import { applyEvent, applyReady, emptyState } from '../lib/state'
+import { inviteLinks } from '../lib/inviteLinks.svelte'
 import { CONN_PILL_DELAY_MS } from '../lib/conn'
 import { startVoiceListening, voice } from '../lib/voice.svelte'
 import { stream, streamApi } from '../lib/stream/stream.svelte'
@@ -154,6 +155,24 @@ describe('Shell', () => {
     flushSync()
     expect(document.querySelector('[data-rejoin-blocked]')).toBeNull()
     expect(joinBtn().disabled).toBe(false)
+  })
+
+  it('an invite link that opened Pulse shows that invite\'s card, and nothing more until you choose (#476)', () => {
+    const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    app.state = { ...emptyState(), me }
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+    flushSync()
+    expect(document.querySelector('[role=dialog][aria-label="Server invite"]')).toBeNull()
+    inviteLinks.code = 'abcDEF2345'
+    flushSync()
+    const dialog = document.querySelector('[role=dialog][aria-label="Server invite"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog!.querySelector('[data-server-invite="abcDEF2345"]')).not.toBeNull()
+    expect(invoke).not.toHaveBeenCalledWith('accept_invite', expect.anything())
+    ;[...dialog!.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Close')!.click()
+    flushSync()
+    expect(document.querySelector('[role=dialog][aria-label="Server invite"]')).toBeNull()
+    expect(inviteLinks.code).toBeNull()
   })
 
   it('the top bar says why a refused connection is retrying', () => {

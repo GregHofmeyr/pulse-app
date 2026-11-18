@@ -273,8 +273,10 @@ export const api = {
   loginMfa: (code: string) => invoke<LoginResult>('login_mfa', { code }),
   /** Back from the code step: the core forgets the pending ticket. */
   cancelLogin: () => invoke<void>('cancel_login'),
-  register: (serverUrl: string, inviteCode: string, username: string, password: string) =>
-    invoke<User>('register', { serverUrl, inviteCode, username, password }),
+  register: (serverUrl: string, inviteCode: string, username: string, password: string, website = '') =>
+    invoke<User>('register', { serverUrl, inviteCode, username, password, website }),
+  /** The `pulse://invite/<code>` link that started the app, once (#476). */
+  takeInviteLink: () => invoke<string | null>('take_invite_link'),
   restoreSession: () => invoke<Restored>('restore_session'),
   logout: () => invoke<void>('logout'),
   /** Sign out every other device of this account; resolves to how many were signed out. */

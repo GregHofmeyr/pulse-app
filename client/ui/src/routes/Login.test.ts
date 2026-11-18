@@ -6,6 +6,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import Login from './Login.svelte'
+import { inviteLinks } from '../lib/inviteLinks.svelte'
 
 const USER = { id: 'u1', username: 'alex' }
 let cmp: ReturnType<typeof mount> | undefined
@@ -129,5 +130,53 @@ describe('Login', () => {
     await submit()
     const back = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Back')!
     expect(back.disabled).toBe(true)
+  })
+
+  describe('signing up with an invite (#80, #476)', () => {
+    const toRegister = () => {
+      cmp = mount(Login, { target: document.body, props: { onAuthed } })
+      flushSync()
+      ;[...document.querySelectorAll<HTMLButtonElement>('button.link')].find((b) => b.textContent?.includes('Create an account'))!.click()
+      flushSync()
+    }
+    const inviteInput = 'input[autocomplete=off]:not(.hp)'
+
+    it('a pasted invite link fills in its server and its code', async () => {
+      invoke.mockResolvedValue(USER)
+      toRegister()
+      type(inviteInput, '  https://pulse.example/i/abcDEF2345  ')
+      expect(document.querySelector<HTMLInputElement>('input[autocomplete=url]')!.value).toBe('https://pulse.example')
+      expect(document.querySelector<HTMLInputElement>(inviteInput)!.value).toBe('abcDEF2345')
+      type('input[autocomplete=username]', 'kim')
+      type('input[type=password]', 'hunter2hunter2')
+      await submit()
+      expect(calls('register')[0][1]).toEqual({
+        serverUrl: 'https://pulse.example', inviteCode: 'abcDEF2345', username: 'kim', password: 'hunter2hunter2', website: '',
+      })
+    })
+
+    it('the hidden field is out of reach and sent as typed', async () => {
+      invoke.mockResolvedValue(USER)
+      toRegister()
+      const hp = document.querySelector<HTMLInputElement>('input.hp')!
+      expect(hp.tabIndex).toBe(-1)
+      expect(hp.getAttribute('aria-hidden')).toBe('true')
+      type(inviteInput, 'abcDEF2345')
+      type('input.hp', 'bot.example')
+      type('input[autocomplete=username]', 'kim')
+      type('input[type=password]', 'hunter2hunter2')
+      await submit()
+      expect((calls('register')[0][1] as { website: string }).website).toBe('bot.example')
+    })
+
+    it('an invite link that opened Pulse while signed out becomes the sign-up code', () => {
+      cmp = mount(Login, { target: document.body, props: { onAuthed } })
+      flushSync()
+      inviteLinks.code = 'abcDEF2345'
+      flushSync()
+      expect(document.querySelector<HTMLInputElement>(inviteInput)!.value).toBe('abcDEF2345')
+      expect(document.querySelector('input[autocomplete=new-password]')).not.toBeNull()
+      expect(inviteLinks.code).toBeNull()
+    })
   })
 })
