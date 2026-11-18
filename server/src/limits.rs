@@ -48,6 +48,34 @@ pub mod caps {
     /// Categories in one server (#54). Far more than a sidebar needs; it only stops a script
     /// filling one with headings.
     pub const CATEGORIES_PER_SERVER: i64 = 50;
+    /// Server invites (#80) in one server that still let someone in (not expired, used up or revoked).
+    pub const LIVE_INVITES_PER_SERVER: i64 = 200;
+}
+
+/// Server invites (#80): what members may make, and how lookups of codes are guarded. Owners may make any expiry and
+/// any use limit, "never" and "no limit" included.
+pub mod server_invites {
+    /// A new invite's expiry when none is asked for: one day.
+    pub const DEFAULT_MAX_AGE_SECS: i64 = 24 * 3600;
+    /// A new invite's use limit when none is asked for.
+    pub const DEFAULT_MAX_USES: i64 = 1;
+    /// The longest expiry a member (not the owner) may give an invite: seven days.
+    pub const MEMBER_MAX_AGE_SECS: i64 = 7 * 24 * 3600;
+    /// The highest use limit a member (not the owner) may give an invite.
+    pub const MEMBER_MAX_USES: i64 = 25;
+    /// The longest expiry anyone may give an invite (it only keeps the arithmetic sane): ten years.
+    pub const MAX_AGE_SECS: i64 = 3650 * 24 * 3600;
+    /// Direct invites one member may send in 24 hours.
+    pub const DIRECT_PER_DAY: i64 = 30;
+    /// Unknown codes tried within [`UNKNOWN_WINDOW_SECS`], from one address or one account, that block its lookups
+    /// for [`BLOCK_SECS`]. Expired, used-up and revoked codes don't count: an old link never locks a friend out.
+    pub const UNKNOWN_CODES_TO_BLOCK: usize = 5;
+    pub const UNKNOWN_WINDOW_SECS: i64 = 3600;
+    pub const BLOCK_SECS: i64 = 24 * 3600;
+    /// How long failed code lookups are kept (security only, never shared).
+    pub const FAILURE_RETENTION_DAYS: i64 = 90;
+    /// How long an invite is kept after it stops working (expired, used up or revoked), so old cards still say why.
+    pub const DEAD_RETENTION_DAYS: i64 = 30;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -99,6 +127,12 @@ pub struct LimitsConfig {
     pub sound_play_user: Rate,
     /// Invite codes minted per user.
     pub invite_user: Rate,
+    /// Server invites (#80) made per member, links and direct invites together.
+    pub server_invite_user: Rate,
+    /// Server invite code lookups (preview and accept, #80) per client IP.
+    pub invite_lookup_ip: Rate,
+    /// Server invite code lookups (preview and accept, #80) per account.
+    pub invite_lookup_user: Rate,
     /// Message edits and deletes, reaction adds and removes, Go Live and watch, together per
     /// user (each one fans out an event). Stop and unwatch are teardown and never limited.
     pub mutate_user: Rate,
@@ -194,6 +228,9 @@ impl Default for LimitsConfig {
             sound_user: Rate::per_hour(120),
             sound_play_user: Rate::new(20, 8.0),
             invite_user: Rate::per_hour(10),
+            server_invite_user: Rate::per_hour(20),
+            invite_lookup_ip: Rate::per_hour(20),
+            invite_lookup_user: Rate::per_hour(20),
             mutate_user: Rate::new(30, 2.0),
             forward_user: Rate::new(10, 0.2),
             voice_state_user: Rate::new(10, 2.0),
@@ -258,6 +295,9 @@ impl LimitsConfig {
             sound_user: r,
             sound_play_user: r,
             invite_user: r,
+            server_invite_user: r,
+            invite_lookup_ip: r,
+            invite_lookup_user: r,
             mutate_user: r,
             forward_user: r,
             voice_state_user: r,
@@ -423,6 +463,9 @@ pub struct Limits {
     pub sound_user: Limiter,
     pub sound_play_user: Limiter,
     pub invite_user: Limiter,
+    pub server_invite_user: Limiter,
+    pub invite_lookup_ip: Limiter,
+    pub invite_lookup_user: Limiter,
     pub mutate_user: Limiter,
     pub forward_user: Limiter,
     pub voice_state_user: Limiter,
@@ -471,6 +514,9 @@ impl Limits {
             sound_user: Limiter::new(c.sound_user),
             sound_play_user: Limiter::new(c.sound_play_user),
             invite_user: Limiter::new(c.invite_user),
+            server_invite_user: Limiter::new(c.server_invite_user),
+            invite_lookup_ip: Limiter::new(c.invite_lookup_ip),
+            invite_lookup_user: Limiter::new(c.invite_lookup_user),
             mutate_user: Limiter::new(c.mutate_user),
             forward_user: Limiter::new(c.forward_user),
             voice_state_user: Limiter::new(c.voice_state_user),
