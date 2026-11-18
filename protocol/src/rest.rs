@@ -687,6 +687,128 @@ pub struct ServerBlock {
     pub blocked_at: String,
 }
 
+/// `POST /servers/{id}/invites` (#80): make an invite link, or a direct invite for one person (`for_user`). Any member
+/// may; only the owner may make one that never expires or has no use limit.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct CreateServerInviteRequest {
+    /// A direct invite: only this person can use it, once. It also arrives as a card in your DM with them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub for_user: Option<UserId>,
+    /// Seconds until it expires; `0` = never (the owner only). Absent: one day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub max_age_secs: Option<i64>,
+    /// How many people can join with it; `0` = no limit (the owner only). Absent: one. A direct invite is always one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub max_uses: Option<i64>,
+    /// The join button's text on the card, up to [`INVITE_JOIN_TEXT_CHARS`] characters on one line. Absent or blank:
+    /// the client's default ("Join <server>").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub join_text: Option<String>,
+}
+
+/// The longest custom join button text an invite may carry.
+pub const INVITE_JOIN_TEXT_CHARS: usize = 32;
+
+/// Whether an invite still lets someone in, and if not, why (#80). In an invite's preview it is as the viewer sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum InviteState {
+    Valid,
+    Expired,
+    UsedUp,
+    Revoked,
+    /// A direct invite for someone else (previews only).
+    ForSomeoneElse,
+    /// The viewer is already in the server (previews only).
+    AlreadyMember,
+    /// The viewer is banned from the server (previews only).
+    Banned,
+}
+
+/// An invite as its maker and the server's owner see it (`GET /servers/{id}/invites`, #80).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ServerInvite {
+    pub code: String,
+    pub server_id: ServerId,
+    pub created_by: UserId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub for_user: Option<UserId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub join_text: Option<String>,
+    pub created_at: String,
+    /// Absent: never expires.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub expires_at: Option<String>,
+    /// Absent: no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub max_uses: Option<i64>,
+    pub uses: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub revoked_at: Option<String>,
+    /// Valid, expired, used up or revoked.
+    pub state: InviteState,
+}
+
+/// `GET /invites/{code}` (#80): what an invite card shows. Nothing from inside the server but the faces of people the
+/// viewer already knows from another server or a DM.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct InvitePreview {
+    pub code: String,
+    pub server_id: ServerId,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub icon_hash: Option<String>,
+    /// The server's banner, once servers have one (always absent for now).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub banner_hash: Option<String>,
+    pub member_count: i64,
+    /// Members who look online to the viewer.
+    pub online_count: i64,
+    /// Up to three members the viewer shares another server or a DM with.
+    pub faces: Vec<User>,
+    pub inviter_id: UserId,
+    pub inviter_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub join_text: Option<String>,
+    /// For a direct invite: whose it is (the card says "For <name> only" to anyone else).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub for_user: Option<UserId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub for_user_name: Option<String>,
+    pub state: InviteState,
+}
+
+/// A direct invite's card in a DM (#80): the code to preview (`GET /invites/{code}`) and accept.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MessageServerInvite {
+    pub code: String,
+    pub server_id: ServerId,
+}
+
+/// `GET /servers/{id}/bans` (#80): someone the owner banned; their invites are refused. The owner's view only.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ServerBan {
+    pub user_id: UserId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub banned_by: Option<UserId>,
+    pub banned_at: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct CreateChannelRequest {
     pub kind: ChannelKind,
@@ -946,6 +1068,11 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub game_invite: Option<Box<GameInvite>>,
+    /// Set on a direct invite to a server (#80): the card's code. What the card shows is per viewer, so clients ask
+    /// for it (`GET /invites/{code}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub server_invite: Option<MessageServerInvite>,
 }
 
 /// What a group chat's system line says happened (#114).

@@ -113,7 +113,7 @@ pub(crate) async fn require_member(
     }
 }
 
-async fn insert_channel(
+pub(crate) async fn insert_channel(
     tx: &mut sqlx::SqliteConnection,
     server: Option<ServerId>,
     kind: ChannelKind,
@@ -334,6 +334,31 @@ async fn join(
             crate::servers::membership::BLOCKED_JOIN.into(),
         ));
     }
+    let joined = add_member_in(&mut tx, id, me).await?;
+    tx.commit().await?;
+    announce_joined(&s, id, me, joined).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// What [`add_member_in`] did, for [`announce_joined`] once the transaction commits.
+#[derive(Debug)]
+pub(crate) struct Joined {
+    /// False when they were already in it.
+    pub added: bool,
+    /// The server's live Quote of the Year, whose member count changed.
+    pub qoty: Option<pulse_protocol::ids::QotyEventId>,
+}
+
+/// Put `user` in `server` inside the caller's write transaction (`begin_write`, under the hub's `in_order`), the one way
+/// in for Join and invites (#80): one transaction, under the write lock, so a channel created concurrently is either
+/// seen here (and gets a read point) or sees them as a member in `create_channel`. They start at "all read": no wall
+/// of old unreads in a server they just joined. A join changes a live Quote of the Year's member count ("N of M"),
+/// which its events carry as absolute state, hence the order.
+pub(crate) async fn add_member_in(
+    tx: &mut sqlx::SqliteConnection,
+    id: ServerId,
+    me: UserId,
+) -> AppResult<Joined> {
     let added = sqlx::query(
         "INSERT OR IGNORE INTO server_members (server_id, user_id, joined_at) VALUES (?, ?, ?)",
     )
@@ -342,27 +367,28 @@ async fn join(
     .bind(now())
     .execute(&mut *tx)
     .await?
-    .rows_affected();
-    if added > 0 {
-        // Start at "all read": no wall of old unreads in a server you just joined.
-        let chat: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM channels WHERE server_id = ? AND kind IN ('text', 'quotes', 'clips', 'voice')",
-        )
-        .bind(id.to_string())
-        .fetch_all(&mut *tx)
-        .await?;
-        for ch in chat {
-            crate::reads::init_point(&mut tx, me, ch.parse().map_err(anyhow::Error::from)?).await?;
-        }
+    .rows_affected()
+        > 0;
+    if !added {
+        return Ok(Joined { added, qoty: None });
     }
-    let qoty = if added > 0 {
-        crate::qoty::live_in(&mut tx, id).await?
-    } else {
-        None
-    };
-    tx.commit().await?;
-    // The join has landed: a failed read-back is logged, and the rest still goes out.
-    if added > 0 {
+    let chat: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM channels WHERE server_id = ? AND kind IN ('text', 'quotes', 'clips', 'voice')",
+    )
+    .bind(id.to_string())
+    .fetch_all(&mut *tx)
+    .await?;
+    for ch in chat {
+        crate::reads::init_point(tx, me, ch.parse().map_err(anyhow::Error::from)?).await?;
+    }
+    let qoty = crate::qoty::live_in(tx, id).await?;
+    Ok(Joined { added, qoty })
+}
+
+/// After [`add_member_in`]'s transaction committed (still under `in_order`): `MemberJoined`, and the Quote of the Year's
+/// new count. The join has landed: a failed read-back is logged, and the rest still goes out.
+pub(crate) async fn announce_joined(s: &AppState, id: ServerId, me: UserId, joined: Joined) {
+    if joined.added {
         match member_of(&s.db, id, me).await {
             Ok(member) => {
                 s.hub
@@ -380,10 +406,9 @@ async fn join(
             }
         }
     }
-    if let Some(event) = qoty {
-        crate::qoty::publish_updated(&s, event).await;
+    if let Some(event) = joined.qoty {
+        crate::qoty::publish_updated(s, event).await;
     }
-    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn server_channels(db: &SqlitePool, id: ServerId) -> AppResult<Vec<Channel>> {
@@ -690,7 +715,7 @@ async fn open_notes(s: &AppState, me: UserId) -> AppResult<Channel> {
 }
 
 /// The 1:1 DM between `a` and `b`, if there is one.
-async fn existing_dm<'e>(
+pub(crate) async fn existing_dm<'e>(
     db: impl sqlx::SqliteExecutor<'e>,
     a: UserId,
     b: UserId,

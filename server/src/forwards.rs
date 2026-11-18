@@ -224,6 +224,7 @@ fn skeleton(f: &Stored) -> Message {
         group_line: None,
         member_line: None,
         game_invite: None,
+        server_invite: None,
     }
 }
 

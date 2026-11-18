@@ -14,6 +14,7 @@ import type { LinkEmbed } from "./LinkEmbed";
 import type { MemberLine } from "./MemberLine";
 import type { MessageId } from "./MessageId";
 import type { MessageKind } from "./MessageKind";
+import type { MessageServerInvite } from "./MessageServerInvite";
 import type { Pin } from "./Pin";
 import type { PinLine } from "./PinLine";
 import type { Plan } from "./Plan";
@@ -154,4 +155,9 @@ member_line?: MemberLine,
  * Set on an invite to play a game (#436): the card, as everyone in the chat sees it. Where to join is never in it:
  * a member of the chat asks for that (`POST /messages/{id}/game-invite/join`).
  */
-game_invite?: GameInvite, };
+game_invite?: GameInvite, 
+/**
+ * Set on a direct invite to a server (#80): the card's code. What the card shows is per viewer, so clients ask
+ * for it (`GET /invites/{code}`).
+ */
+server_invite?: MessageServerInvite, };

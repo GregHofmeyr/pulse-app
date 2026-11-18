@@ -18,6 +18,10 @@ pub struct Pruned {
     pub mfa_tickets: u64,
     pub reports: u64,
     pub inbox_reads: u64,
+    /// Server invites that stopped working long enough ago (#80).
+    pub server_invites: u64,
+    /// Failed invite code lookups past their keep (#80).
+    pub invite_failures: u64,
 }
 
 fn ts(t: DateTime<Utc>) -> String {
@@ -30,7 +34,8 @@ fn ts(t: DateTime<Utc>) -> String {
 ///   expired one is already refused as unknown, so the answer doesn't change);
 /// - expired two-factor login tickets;
 /// - reports older than [`REPORT_RETENTION_DAYS`];
-/// - inbox reads of items older than the inbox keeps them ([`crate::inbox::DAYS`], #306).
+/// - inbox reads of items older than the inbox keeps them ([`crate::inbox::DAYS`], #306);
+/// - server invites long after they stopped working, and old failed invite lookups (`servers::invites::prune`, #80).
 pub async fn prune(db: &SqlitePool, now: DateTime<Utc>) -> AppResult<Pruned> {
     let sessions = sqlx::query("DELETE FROM sessions WHERE expires_at <= ?")
         .bind(ts(now))
@@ -57,12 +62,15 @@ pub async fn prune(db: &SqlitePool, now: DateTime<Utc>) -> AppResult<Pruned> {
         .execute(db)
         .await?
         .rows_affected();
+    let server = crate::servers::invites::prune(db, now).await?;
     let pruned = Pruned {
         sessions,
         invites,
         mfa_tickets,
         reports,
         inbox_reads,
+        server_invites: server.invites,
+        invite_failures: server.failures,
     };
     if pruned != Pruned::default() {
         tracing::info!(
@@ -71,6 +79,8 @@ pub async fn prune(db: &SqlitePool, now: DateTime<Utc>) -> AppResult<Pruned> {
             mfa_tickets,
             reports,
             inbox_reads,
+            server_invites = pruned.server_invites,
+            invite_failures = pruned.invite_failures,
             "expired rows pruned"
         );
     }
