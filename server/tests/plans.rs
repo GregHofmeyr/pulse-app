@@ -627,8 +627,9 @@ async fn people_who_turned_plan_reminders_off_are_not_pinged() {
     );
 }
 
-/// A stand-in for Open-Meteo: geocoding knows "Cape Town" only; the forecast covers the next 16 days from today.
-/// Counts the calls of each.
+/// A stand-in for Open-Meteo: geocoding knows a few names (each answered the way Open-Meteo would, several results
+/// for a name that's in more than one country, a fuzzy match for "test"); the forecast covers the next 16 days from
+/// today. Counts the calls of each.
 #[derive(Clone, Default)]
 struct FakeMeteo {
     geocode: Arc<AtomicUsize>,
@@ -640,13 +641,41 @@ async fn fake_meteo() -> (FakeMeteo, String) {
     async fn geocode(State(c): State<FakeMeteo>, RawQuery(q): RawQuery) -> axum::Json<Value> {
         c.geocode.fetch_add(1, Ordering::SeqCst);
         let q = q.unwrap_or_default();
-        if q.contains("name=cape+town") || q.contains("name=cape%20town") {
-            axum::Json(
-                json!({"results": [{"name": "Cape Town", "latitude": -33.92584, "longitude": 18.42322,
-                                            "country": "South Africa"}]}),
-            )
-        } else {
+        assert!(q.contains("count=10"), "{q}");
+        let place = |name: &str, cc: &str, country: &str, pop: u64, lat: f64| {
+            json!({"name": name, "latitude": lat, "longitude": 18.4, "country_code": cc, "country": country,
+                   "admin1": "Somewhere", "population": pop})
+        };
+        let results = match q.split('&').find_map(|kv| kv.strip_prefix("name=")) {
+            Some("cape+town" | "cape%20town") => {
+                vec![place(
+                    "Cape Town",
+                    "ZA",
+                    "South Africa",
+                    3_400_000,
+                    -33.92584,
+                )]
+            }
+            // a fuzzy match far away: nothing called "test"
+            Some("test") => vec![place("Tesvillage", "XX", "Farland", 1_200, 1.0)],
+            // the big one abroad is the only exact name (East London is home, but not "london")
+            Some("london") => vec![
+                place("London", "GB", "United Kingdom", 8_900_000, 51.5),
+                place("East London", "ZA", "South Africa", 270_000, -33.0),
+            ],
+            // in both: home first, even though the one abroad is listed first
+            Some("springfield") => vec![
+                place("Springfield", "US", "United States", 160_000, 39.8),
+                place("Springfield", "ZA", "South Africa", 900, -26.2),
+            ],
+            // abroad and small: not guessed at
+            Some("smallville") => vec![place("Smallville", "US", "United States", 3_000, 38.0)],
+            _ => vec![],
+        };
+        if results.is_empty() {
             axum::Json(json!({"generationtime_ms": 0.1}))
+        } else {
+            axum::Json(json!({ "results": results }))
         }
     }
     async fn forecast(State(c): State<FakeMeteo>, RawQuery(q): RawQuery) -> axum::Json<Value> {
@@ -760,6 +789,81 @@ async fn no_forecast_when_open_meteo_is_down() {
         get_json(&app, &sam, &format!("/messages/{}/plan/forecast", m.id)).await;
     assert_eq!(f, None);
     // nothing cached from a failure: the next ask tries again
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM plan_geocodes")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test]
+async fn free_text_places_get_no_forecast_and_home_comes_first() {
+    let (meteo, base) = fake_meteo().await;
+    let mut cfg = test_config();
+    cfg.plans.geocode_base = base.clone();
+    cfg.plans.forecast_base = base;
+    let (app, [alex, sam, ..], _, g) = setup_with(cfg).await;
+    let place_of = |place: &'static str| {
+        let (app, alex, sam) = (&app, alex.clone(), sam.clone());
+        async move {
+            let m = create_ok(
+                app,
+                &alex,
+                g.id,
+                json!({"title": "Braai", "starts_at": at(TimeDelta::days(3)), "place": place}),
+            )
+            .await;
+            get_json::<Option<PlanForecast>>(
+                app,
+                &sam,
+                &format!("/messages/{}/plan/forecast", m.id),
+            )
+            .await
+            .map(|f| f.place)
+        }
+    };
+    // free text: no forecast rather than a village on another continent
+    assert_eq!(place_of("test").await, None);
+    assert_eq!(place_of("someone's house").await, None);
+    assert_eq!(place_of("Smallville").await, None);
+    // a name in both: the home country's
+    assert_eq!(
+        place_of("Springfield").await.as_deref(),
+        Some("Springfield, South Africa")
+    );
+    // only abroad, exactly that name and a big place: that one
+    assert_eq!(
+        place_of("London").await.as_deref(),
+        Some("London, United Kingdom")
+    );
+    assert_eq!(
+        place_of("Cape Town").await.as_deref(),
+        Some("Cape Town, South Africa")
+    );
+    assert_eq!(meteo.geocode.load(Ordering::SeqCst), 6);
+}
+
+#[tokio::test]
+async fn guesses_cached_before_the_fix_are_asked_again() {
+    let (app, ..) = setup().await;
+    let applied: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 67")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(applied, 1);
+    // a guess the old geocoding cached, as it would be on a server being upgraded
+    sqlx::query(
+        "INSERT INTO plan_geocodes (query, name, latitude, longitude, fetched_at) \
+         VALUES ('test', 'Tesvillage, Farland', 1.0, 18.4, '2026-11-17T10:00:00.000Z')",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0067_plan_geocodes_recheck.sql"))
+        .execute(&app.db)
+        .await
+        .unwrap();
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM plan_geocodes")
         .fetch_one(&app.db)
         .await

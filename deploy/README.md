@@ -179,6 +179,14 @@ league's schedule about once a day and reads matches live only while a followed 
 and scores stay paused. Each server's owner picks its Sports channel in Server settings (none by default), and can limit
 which leagues post there. Team logos come from `media.api-sports.io` (no key, no requests spent).
 
+### Plans' weather
+
+A plan's forecast (#387) comes from Open-Meteo (no key). Its place is looked up in the home country first,
+`PULSE_PLANS_COUNTRY` in `/srv/pulse/.env` (a two-letter ISO 3166 code; `ZA` when unset): a place there whose name
+matches, else a sizeable town abroad with exactly that name, else no forecast, so free text like "someone's house" never
+gets a far-away town's weather (#451). Change it and `just deploy`; places already looked up keep their answer for up to
+30 days.
+
 ## 7. Deploying and rolling back
 
 - Every push to `main` that passes CI builds `ghcr.io/greghofmeyr/pulse-server:<7-char commit>` and `:latest`
