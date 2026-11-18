@@ -17,6 +17,7 @@ import ComposerFiles from './ComposerFiles.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { StagedFile } from '../lib/tauri'
+import { plusItem } from './plusMenuHarness'
 
 const file = (id: string, name: string, size = 1000, extra: Partial<StagedFile> = {}): StagedFile => ({
   id, name, size, content_type: 'application/octet-stream', kind: 'file', width: null, height: null, preview: null, ...extra,
@@ -82,14 +83,14 @@ describe('ComposerFiles', () => {
 describe('Composer files', () => {
   it('has no attach button where files can\'t go', () => {
     show({})
-    expect(document.querySelector('[aria-label="Attach files"]')).toBeNull()
+    expect(plusItem('attach')).toBeNull()
   })
 
   it('picks files with the button and sends them with no text', async () => {
     answers.pick_attachment_files = () => ['/home/alex/report.pdf']
     answers.stage_attachment_paths = () => [{ status: 'staged', file: file('s1', 'report.pdf') }]
     const box = show()
-    document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
+    plusItem('attach')!.click()
     await settle()
     expect(calls.find((c) => c.cmd === 'stage_attachment_paths')!.args).toEqual({ paths: ['/home/alex/report.pdf'] })
     expect(chips()).toEqual(['report.pdf'])
@@ -106,7 +107,7 @@ describe('Composer files', () => {
       { status: 'staged', file: file('s2', 'b.pdf') },
     ]
     const box = show()
-    document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
+    plusItem('attach')!.click()
     await settle()
     const mark = document.querySelector<HTMLButtonElement>('[aria-label="Mark a.webp as a spoiler"]')!
     expect(mark.getAttribute('aria-pressed')).toBe('false')
@@ -153,7 +154,7 @@ describe('Composer files', () => {
     answers.zip_attachment_folder = () => file('z', 'mods.zip', 4096)
     answers.pick_attachment_files = () => ['/home/alex/mods']
     show()
-    document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
+    plusItem('attach')!.click()
     await settle()
     const zip = [...document.querySelectorAll('.folder button')].find((b) => b.textContent === 'Zip and send') as HTMLButtonElement
     expect(zip).toBeTruthy()
@@ -166,7 +167,7 @@ describe('Composer files', () => {
     flushSync()
 
     answers.pick_attachment_files = () => Array.from({ length: 11 }, (_, i) => `f${i}.txt`)
-    document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
+    plusItem('attach')!.click()
     await settle()
     expect(chips()).toHaveLength(10)
     expect(document.querySelector('[role=alert]')!.textContent).toBe('Up to 10 files per message.')
@@ -186,7 +187,7 @@ describe('Composer files', () => {
     }
     answers.pick_attachment_files = () => ['/home/alex/mods', '/home/alex/world']
     show()
-    document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
+    plusItem('attach')!.click()
     await settle()
     expect(document.querySelector('.folder span')!.textContent).toBe('mods and world are folders, which can\'t be sent as they are.')
     const zip = [...document.querySelectorAll('.folder button')].find((b) => b.textContent === 'Zip both and send') as HTMLButtonElement
@@ -218,7 +219,7 @@ describe('Composer files', () => {
     answers.pick_attachment_files = () => ['/big.zip']
     answers.stage_attachment_paths = () => [{ status: 'staged', file: file('b', 'big.zip', 2 * 1024 ** 3 + 1) }]
     show()
-    document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
+    plusItem('attach')!.click()
     await settle()
     expect(chips()).toEqual([])
     expect(document.querySelector('[role=alert]')!.textContent).toBe('Files can be up to 2 GB.')
@@ -229,7 +230,7 @@ describe('Composer files', () => {
     answers.stage_attachment_paths = () => [{ status: 'staged', file: file('w', 'world.zip', 300 * 1024 * 1024) }]
     const box = show()
     expect(document.querySelector('[aria-label="Big files expire in"]')).toBeNull()
-    document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
+    plusItem('attach')!.click()
     await settle()
     const group = document.querySelector('[aria-label="Big files expire in"]')!
     const choice = (label: string) => [...group.querySelectorAll('button')].find((b) => b.textContent === label)!
@@ -245,7 +246,7 @@ describe('Composer files', () => {
     answers.pick_attachment_files = () => ['/a.txt']
     answers.stage_attachment_paths = () => [{ status: 'staged', file: file('s1', 'a.txt') }]
     show()
-    document.querySelector<HTMLButtonElement>('[aria-label="Attach files"]')!.click()
+    plusItem('attach')!.click()
     await settle()
     document.querySelector<HTMLButtonElement>('[aria-label="Remove a.txt"]')!.click()
     flushSync()

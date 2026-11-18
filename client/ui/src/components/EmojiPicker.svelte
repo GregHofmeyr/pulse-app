@@ -6,13 +6,16 @@
   import { canonicalKey, groups, mediaUrl, reactionKey, savedTone, saveTone, search, standard, twemojiUrl, withSkin, type Std, type Tone } from '../lib/emoji'
   import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
   import Icon from './Icon.svelte'
+  import type { Snippet } from 'svelte'
 
-  let { onPick, onClose, servers, memberOf }: {
+  let { onPick, onClose, servers, memberOf, tabs }: {
     /** `keep`: Shift was held, so the caller leaves the picker open for the next pick. */
     onPick: (e: Std | CustomEmoji, opts: { keep: boolean }) => void
     onClose: () => void
     servers: Server[]
     memberOf: Set<string>
+    /** The Emoji | GIFs tabs above the search (the composer's picker, #461). */
+    tabs?: Snippet
   } = $props()
 
   type Item = Std | CustomEmoji
@@ -212,6 +215,7 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="picker" bind:this={root} role="dialog" aria-label="Emoji picker" tabindex="-1" onkeydown={onKey}>
+  {#if tabs}<div class="tabs">{@render tabs()}</div>{/if}
   <div class="top">
     <input bind:this={searchEl} bind:value={query} class="search input input-sm" type="text" placeholder="Search emoji" aria-label="Search emoji" autocomplete="off" spellcheck="false" />
     <div class="tones" role="group" aria-label="Skin tone">
@@ -285,6 +289,8 @@
   /* the menus' frame (#173: .menu-surface's border, radius and shadow) round a bg-2 panel: its tiles, rail and footer
      are drawn for bg-2, so the fill stays */
   .picker { width: 360px; height: 420px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line-menu); border-radius: var(--radius-lg); box-shadow: var(--shadow-3); overflow: hidden; color: var(--text); outline: none; }
+  /* the composer's Emoji | GIFs tabs (#461), the GIF picker's the same */
+  .tabs { display: flex; padding: 10px 10px 0; }
   .top { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
   /* the shared small field (.input .input-sm) */
   .search { flex: 1; min-width: 0; }

@@ -19,6 +19,7 @@ describe('cardTheme', () => {
   it('presets are exact', () => {
     expect(THEME_PRESETS).toEqual([
       { key: 'sunset', label: 'Sunset', top: '#8a3cff', bottom: '#ff8a2a' },
+      { key: 'dusk', label: 'Dusk', top: '#7a3cff', bottom: '#c2335f' },
       { key: 'night', label: 'Night sky', top: '#22325e', bottom: '#0d1430' },
       { key: 'forest', label: 'Forest', top: '#1f7a5a', bottom: '#0f2b3a' },
       { key: 'berry', label: 'Berry', top: '#c2457a', bottom: '#3a1f5e' },
@@ -31,6 +32,7 @@ describe('cardTheme', () => {
     expect(presetFor('#8a3cff', '#ff8a2a')).toBe('sunset')
     expect(presetFor('#8A3CFF', '#FF8A2A')).toBe('sunset')
     expect(presetFor('#3a3d46', '#16171b')).toBe('plain')
+    expect(presetFor('#7a3cff', '#c2335f')).toBe('dusk')
     expect(presetFor('#8a3cff', '#000000')).toBeNull()
   })
 
@@ -67,7 +69,7 @@ describe('the card is drawn in its own two colours (#156)', () => {
         expect(lum(drawn)).toBeGreaterThan(lum(picked) * 0.6)
       }
     }
-    for (const p of [THEME_PRESETS[1], THEME_PRESETS[4]]) expect(cardInk(p.top, p.bottom)).toEqual({ light: false, top: p.top, bottom: p.bottom })
+    for (const p of THEME_PRESETS.filter((x) => ['dusk', 'night', 'plain'].includes(x.key))) expect(cardInk(p.top, p.bottom)).toEqual({ light: false, top: p.top, bottom: p.bottom })
   })
 
   it('the app theme changes nothing but the lift', () => {
@@ -118,10 +120,31 @@ describe('the card is drawn in its own two colours (#156)', () => {
     const brown = toOklch(parseHex('#8f4d18')!)
     expect(C).toBeGreaterThan(brown[1] + 0.01)
     expect(C).toBeLessThanOrEqual(wasC)
-    expect(Math.abs(L - brown[0])).toBeLessThan(0.03)
+    // and lighter than that brown since the secondary grey got lighter (#444)
+    expect(L).toBeGreaterThan(brown[0])
     // and the text still reads on it and on the overlays over it
     const v = cardVars('#8a3cff', '#ff8a2a')
     for (const s of surfaces(v, DARK_CARD)) expect(contrast(v['--card-text-2'], s), s).toBeGreaterThanOrEqual(BODY_RATIO)
+  })
+
+  it('a lighter secondary grey on dark cards lets Sunset\'s orange stay bright (#444)', () => {
+    expect(DARK_CARD.text2).toBe('#eceef3')
+    const { bottom } = cardInk('#8a3cff', '#ff8a2a')
+    // about #b05200 (the most the 4.5:1 rule allows), well up from the #964a00 the old #d6d8df grey forced
+    expect(bottom).toBe('#a85400')
+    expect(lum(bottom)).toBeGreaterThan(lum('#964a00') * 1.2)
+  })
+
+  it('Dusk (#444) is a dark card drawn as picked, and every dark preset reads at 4.5:1', () => {
+    expect(cardInk('#7a3cff', '#c2335f')).toEqual({ light: false, top: '#7a3cff', bottom: '#c2335f' })
+    for (const p of THEME_PRESETS) {
+      const v = cardVars(p.top, p.bottom)
+      expect(cardInk(p.top, p.bottom).light).toBe(false)
+      for (const s of surfaces(v, DARK_CARD)) {
+        expect(contrast(v['--card-text'], s), `${p.key} ${s}`).toBeGreaterThanOrEqual(BODY_RATIO)
+        expect(contrast(v['--card-text-2'], s), `${p.key} 2 ${s}`).toBeGreaterThanOrEqual(BODY_RATIO)
+      }
+    }
   })
 
   it('the panels and the message box are translucent overlays; the solid panel colours are what they make', () => {

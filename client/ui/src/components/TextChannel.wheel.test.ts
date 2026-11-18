@@ -23,6 +23,7 @@ import { resetWheelCards } from '../lib/wheelCards'
 import { testReady } from '../lib/testReady'
 import { addQuietSpin, handleWheelEvent, resetWheels, setSpinQuietly } from '../lib/wheels.svelte'
 import { QUIET_CARD_MS } from '../lib/wheel'
+import { plusItem } from './plusMenuHarness'
 
 const spin = (options: string[], extra: Record<string, unknown> = {}) => ({ spinner_id: 'U2', wheel_id: null, name: null, options, winner: 1, angle: 100, ...extra })
 const line = (id: string, options: string[]) => ({ id, channel_id: 'C1', author_id: null, kind: 'system', content: '', reply_to_id: null, created_at: '2026-11-09T10:00:00.000Z',
@@ -138,17 +139,13 @@ describe('/wheel in the message box', () => {
     }
   })
 
-  it('the wheel button by the emoji button opens and closes the popover', () => {
+  it('Picker wheel in the + menu opens the popover (#461)', () => {
     show()
-    const btn = document.querySelector<HTMLButtonElement>('button[aria-label="Picker wheel"]')!
-    expect(btn.getAttribute('data-tip')).toBe('Picker wheel')
-    btn.click()
+    const item = plusItem('wheel')!
+    expect(item.textContent!.trim()).toBe('Picker wheel')
+    item.click()
     flushSync()
     expect(popover()).not.toBeNull()
-    expect(btn.getAttribute('aria-expanded')).toBe('true')
-    btn.click()
-    flushSync()
-    expect(popover()).toBeNull()
   })
 })
 
@@ -234,7 +231,7 @@ describe('your spin comes into view', () => {
     try {
       show()
       await scrolledUp()
-      document.querySelector<HTMLButtonElement>('button[aria-label="Picker wheel"]')!.click()
+      plusItem('wheel')!.click()
       flushSync()
       const field = document.querySelector<HTMLInputElement>('.wheel-popover input[aria-label="Add an option"]')!
       field.value = 'kim, jo'

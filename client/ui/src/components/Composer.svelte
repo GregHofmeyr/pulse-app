@@ -18,8 +18,8 @@
   import { onDestroy, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import EmojiBox, { type Snap } from './EmojiBox.svelte'
-  import EmojiPopover from './EmojiPopover.svelte'
-  import GifPopover from './GifPopover.svelte'
+  import EmojiGifPopover from './EmojiGifPopover.svelte'
+  import ComposerPlusMenu, { type PlusItem } from './ComposerPlusMenu.svelte'
   import WheelPopover from './WheelPopover.svelte'
   import PollComposer from './PollComposer.svelte'
   import PlanComposer from './PlanComposer.svelte'
@@ -328,28 +328,27 @@
   const serverName = (id: string) => app.state.servers.find((s) => s.id === id)?.name ?? ''
   const emojiText = (e: Std | CustomEmoji) => ('u' in e ? withSkin(e, tone) : customToken(e))
 
+  // the emoji and GIF picker (#461: one picker, Emoji | GIFs tabs)
   let picking = $state(false)
   let emojiBtn: HTMLButtonElement | undefined = $state()
-  // the GIF picker (#58)
-  let gifPicking = $state(false)
-  let gifBtn: HTMLButtonElement | undefined = $state()
   function pickGif(gif: Gif, link: string) {
-    gifPicking = false
+    picking = false
     onSendGif?.(gif, link)
     box?.focus()
   }
+  // the + menu (#461): attach, wheel, poll, plan, game invite and Send later all start from it, and the popovers
+  // they open sit by its button
+  let plusOpen = $state(false)
+  let plusBtn: HTMLButtonElement | undefined = $state()
   // the wheel popover (#158); `wheelPrefill`: options typed after `/wheel` (fewer than two)
   let wheeling = $state(false)
   let wheelPrefill = $state<string[] | null>(null)
-  let wheelBtn: HTMLButtonElement | undefined = $state()
   // the poll composer (#157); `pollPrefill`: what `/poll` was given
   let polling = $state(false)
   let pollPrefill = $state<{ question: string; options: string[] } | null>(null)
-  let pollBtn: HTMLButtonElement | undefined = $state()
   // the plan form (#387); `planPrefill`: the title `/plan` was given
   let planning = $state(false)
   let planPrefill = $state<string | null>(null)
-  let planBtn: HTMLButtonElement | undefined = $state()
   const planHere = $derived(!!planChannel && planPrefs.on)
   // Invite to game (#436): only while your own "Playing" shows a game
   const inviteHere = $derived(!!inviteChannel && inGame(app.state))
@@ -367,7 +366,6 @@
   }
   // Send later (#299): text only
   let later = $state(false)
-  let laterBtn: HTMLButtonElement | undefined = $state()
   const laterBlocked = $derived(
     files.length ? "Files can't be scheduled. Send them now, or remove them to schedule just the text."
     : !text.trim() ? 'Write a message first, then pick when it goes.'
@@ -380,6 +378,32 @@
     box.setText({ text: '', caret: 0 }, true, false)
     box.forget()
     lastTyping = null
+  }
+
+  // The + menu's rows (#461), each only where it applies: Attach files; the wheel, poll, plan and game invite;
+  // then Send later…
+  const plusItems = $derived.by<PlusItem[]>(() => {
+    const out: PlusItem[] = []
+    if (filesHere) out.push({ id: 'attach', label: 'Attach files', icon: 'paperclip', run: () => void pickFiles() })
+    const tools: PlusItem[] = []
+    if (wheelChannel) tools.push({ id: 'wheel', label: 'Picker wheel', icon: 'wheel', run: () => openWheel() })
+    if (pollChannel) tools.push({ id: 'poll', label: 'Poll', icon: 'poll', run: () => openPoll(null) })
+    if (planHere) tools.push({ id: 'plan', label: 'Plan something', icon: 'calendar', run: () => openPlan('') })
+    if (inviteHere) tools.push({ id: 'invite', label: 'Invite to game', icon: 'gamepad', disabled: inviting, run: () => void inviteToGame() })
+    if (tools.length && out.length) tools[0].sep = true
+    out.push(...tools)
+    if (onSchedule) out.push({ id: 'later', label: 'Send later…', icon: 'clock', sep: out.length > 0, run: () => openLater() })
+    return out
+  })
+  function closeTools() {
+    wheeling = false
+    polling = false
+    planning = false
+    later = false
+  }
+  function openLater() {
+    closeTools()
+    later = true
   }
 
   function syncCaret() {
@@ -484,25 +508,22 @@
   }
 
   /** Open the wheel popover (`/wheel` with fewer than two options), starting a quick wheel with `prefill`. */
-  export function openWheel(prefill: string[] = []) {
-    polling = false
-    planning = false
+  export function openWheel(prefill: string[] | null = null) {
+    closeTools()
     wheelPrefill = prefill
     wheeling = true
   }
 
   /** Open the poll composer (`/poll`), filled with what was typed after it. */
-  export function openPoll(prefill: { question: string; options: string[] }) {
-    wheeling = false
-    planning = false
+  export function openPoll(prefill: { question: string; options: string[] } | null) {
+    closeTools()
     pollPrefill = prefill
     polling = true
   }
 
   /** Open the plan form (`/plan`), its title filled with what was typed after it. */
   export function openPlan(prefill: string) {
-    wheeling = false
-    polling = false
+    closeTools()
     planPrefill = prefill || null
     planning = true
   }
@@ -513,7 +534,7 @@
   }
 </script>
 
-<div class="wrap" class:has-later={!!onSchedule} class:has-gif={!!onSendGif} class:has-wheel={!!wheelChannel} class:has-poll={!!pollChannel} class:has-plan={planHere} class:has-files={filesHere} bind:this={wrap} onfocusout={focusOut}
+<div class="wrap" class:has-plus={plusItems.length > 0} bind:this={wrap} onfocusout={focusOut}
   onpastecapture={pasteFiles}>
   {#if open}
     <div class="mentions menu-surface pop-in" role="listbox" aria-label="Mention someone">
@@ -594,57 +615,37 @@
   <EmojiBox bind:this={box} bind:text class="composer-input" label={placeholder} {placeholder} mention={mentionName}
     onkeydown={key} oninput={input} onclick={syncCaret} oncaret={(at) => (caret = at)}
     onkeyup={(e) => { if (e.key.startsWith('Arrow') && !shown) syncCaret() }} />
-  {#if onSchedule}
-    <button bind:this={laterBtn} class="emoji-btn later-btn" class:on={later} type="button" aria-label="Send later" data-tip="Send later" data-menu-toggle
-      aria-haspopup="menu" aria-expanded={later} onclick={() => (later = !later)}><Icon name="clock" size={20} /></button>
-    {#if later && laterBtn}
-      <SendLaterMenu anchor={laterBtn} blocked={laterBlocked} count={scheduledCount} onPick={schedule} onShowScheduled={() => onShowScheduled?.()} onClose={() => (later = false)} />
+  {#if plusItems.length}
+    <button bind:this={plusBtn} class="emoji-btn plus-btn" class:on={plusOpen} type="button" aria-label="More" data-tip="Attach files and more" data-menu-toggle
+      aria-haspopup="menu" aria-expanded={plusOpen} onclick={() => (plusOpen = !plusOpen)}><Icon name="plus" size={20} /></button>
+    {#if plusOpen && plusBtn}
+      <ComposerPlusMenu anchor={plusBtn} items={plusItems} onClose={() => (plusOpen = false)} />
+    {/if}
+    {#if plusBtn}
+      {#if later && onSchedule}
+        <SendLaterMenu anchor={plusBtn} blocked={laterBlocked} count={scheduledCount} onPick={schedule} onShowScheduled={() => onShowScheduled?.()} onClose={() => (later = false)} />
+      {/if}
+      {#if wheeling && wheelChannel}
+        {#key wheelPrefill}
+          <WheelPopover anchor={plusBtn} channelId={wheelChannel} {serverId} prefill={wheelPrefill} onClose={() => (wheeling = false)} />
+        {/key}
+      {/if}
+      {#if polling && pollChannel}
+        {#key pollPrefill}
+          <PollComposer anchor={plusBtn} channelId={pollChannel} prefill={pollPrefill} onClose={() => (polling = false)} />
+        {/key}
+      {/if}
+      {#if planning && planHere && planChannel}
+        {#key planPrefill}
+          <PlanComposer anchor={plusBtn} channelId={planChannel} prefill={planPrefill} onClose={() => (planning = false)} />
+        {/key}
+      {/if}
     {/if}
   {/if}
-  {#if filesHere}
-    <button class="emoji-btn attach-btn" type="button" aria-label="Attach files" data-tip="Attach files" onclick={pickFiles}><Icon name="paperclip" size={20} /></button>
-  {/if}
-  <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={20} /></button>
+  <button bind:this={emojiBtn} class="emoji-btn" class:on={picking} type="button" aria-label={onSendGif ? 'Emoji and GIFs' : 'Emoji'} data-tip={onSendGif ? 'Emoji and GIFs' : 'Emoji'} data-menu-toggle
+    aria-haspopup="dialog" aria-expanded={picking} onclick={() => (picking = !picking)}><Icon name="smile" size={20} /></button>
   {#if picking && emojiBtn}
-    <EmojiPopover anchor={emojiBtn} onPick={pickEmoji} onClose={() => (picking = false)} />
-  {/if}
-  {#if onSendGif}
-    <button bind:this={gifBtn} class="emoji-btn gif-btn" class:on={gifPicking} type="button" aria-label="GIF" data-tip="GIF" data-menu-toggle
-      aria-haspopup="dialog" aria-expanded={gifPicking} onclick={() => (gifPicking = !gifPicking)}><Icon name="gif" size={20} /></button>
-    {#if gifPicking && gifBtn}
-      <GifPopover anchor={gifBtn} onPick={pickGif} onClose={() => (gifPicking = false)} />
-    {/if}
-  {/if}
-  {#if wheelChannel}
-    <button bind:this={wheelBtn} class="emoji-btn wheel-btn" class:on={wheeling} type="button" aria-label="Picker wheel" data-tip="Picker wheel" data-menu-toggle
-      aria-haspopup="dialog" aria-expanded={wheeling} onclick={() => { wheelPrefill = null; wheeling = !wheeling }}><Icon name="wheel" size={20} /></button>
-    {#if wheeling && wheelBtn}
-      {#key wheelPrefill}
-        <WheelPopover anchor={wheelBtn} channelId={wheelChannel} {serverId} prefill={wheelPrefill} onClose={() => (wheeling = false)} />
-      {/key}
-    {/if}
-  {/if}
-  {#if pollChannel}
-    <button bind:this={pollBtn} class="emoji-btn poll-btn" class:on={polling} type="button" aria-label="Poll" data-tip="Poll" data-menu-toggle
-      aria-haspopup="dialog" aria-expanded={polling} onclick={() => { pollPrefill = null; polling = !polling }}><Icon name="poll" size={20} /></button>
-    {#if polling && pollBtn}
-      {#key pollPrefill}
-        <PollComposer anchor={pollBtn} channelId={pollChannel} prefill={pollPrefill} onClose={() => (polling = false)} />
-      {/key}
-    {/if}
-  {/if}
-  {#if planHere && planChannel}
-    <button bind:this={planBtn} class="emoji-btn plan-btn" class:on={planning} type="button" aria-label="Plan something" data-tip="Plan something" data-menu-toggle
-      aria-haspopup="dialog" aria-expanded={planning} onclick={() => { planPrefill = null; planning = !planning }}><Icon name="calendar" size={20} /></button>
-    {#if planning && planBtn}
-      {#key planPrefill}
-        <PlanComposer anchor={planBtn} channelId={planChannel} prefill={planPrefill} onClose={() => (planning = false)} />
-      {/key}
-    {/if}
-  {/if}
-  {#if inviteHere}
-    <button class="emoji-btn invite-btn" type="button" aria-label="Invite to game" data-tip="Invite to game" disabled={inviting}
-      onclick={() => void inviteToGame()}><Icon name="gamepad" size={20} /></button>
+    <EmojiGifPopover anchor={emojiBtn} onPick={pickEmoji} onPickGif={onSendGif ? pickGif : undefined} onClose={() => (picking = false)} />
   {/if}
 </div>
 
@@ -667,10 +668,7 @@
   .nudge-error { margin: 0 6px 4px 0; color: var(--danger-text); font-size: 12px; }
   .emoji-btn { position: absolute; right: 8px; bottom: 8px; width: 32px; height: 32px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); display: grid; place-items: center; }
   /* one step up from the box's bg-3, as every icon button's hover */
-  .emoji-btn:hover { background: var(--bg-4); color: var(--text); }
-  /* the picker wheel's button (#158), left of the emoji button */
-  .wheel-btn { right: 44px; }
-  .wheel-btn.on { background: var(--bg-4); color: var(--text); }
+  .emoji-btn:hover, .emoji-btn.on { background: var(--bg-4); color: var(--text); }
   .replying { display: flex; align-items: center; gap: 6px; padding: 8px 14px 0; font-size: 12px; color: var(--text-3); }
   .replying strong { color: var(--text-2); }
   .replying button { margin-left: auto; }
@@ -678,25 +676,6 @@
   .replying button:hover { background: var(--bg-4); }
   /* grows with what's in it (images included), up to 200px, then scrolls */
   .wrap :global(.composer-input) { min-height: 48px; max-height: 200px; padding: 14px 48px 14px 14px; }
-  .wrap.has-wheel :global(.composer-input) { padding-right: 84px; }
-  /* the poll button (#157), left of the wheel button */
-  .poll-btn { right: 80px; }
-  .poll-btn.on { background: var(--bg-4); color: var(--text); }
-  .wrap.has-poll :global(.composer-input) { padding-right: 120px; }
-  /* the GIF button (#58), right next to the emoji button: the wheel and poll buttons move one place left */
-  .gif-btn { right: 44px; }
-  .gif-btn.on { background: var(--bg-4); color: var(--text); }
-  .wrap.has-gif .wheel-btn { right: 80px; }
-  .wrap.has-gif .poll-btn { right: 116px; }
-  .wrap.has-gif :global(.composer-input) { padding-right: 84px; }
-  .wrap.has-gif.has-wheel :global(.composer-input) { padding-right: 120px; }
-  .wrap.has-gif.has-poll :global(.composer-input) { padding-right: 156px; }
-  /* the Plan something button (#387), left of the poll button */
-  .plan-btn { right: 116px; }
-  .plan-btn.on { background: var(--bg-4); color: var(--text); }
-  .wrap.has-plan :global(.composer-input) { padding-right: 156px; }
-  .wrap.has-gif .plan-btn { right: 152px; }
-  .wrap.has-gif.has-plan :global(.composer-input) { padding-right: 192px; }
   /* a dropped folder's offer to zip it (#57) */
   .folder { display: flex; align-items: center; gap: 8px; padding: 8px 12px 0; font-size: 12px; color: var(--text-3); }
   .folder .btn { height: 24px; padding: 0 8px; font-size: 12px; }
@@ -704,13 +683,7 @@
   .temp { display: flex; align-items: center; gap: 6px; padding: 8px 12px 0; font-size: 12px; color: var(--text-3); }
   .temp .btn { height: 24px; padding: 0 8px; font-size: 12px; }
   .temp .btn[aria-pressed='true'] { background: var(--bg-4); color: var(--text); }
-  /* attach files (#57): on the left, as in most chat apps */
-  .attach-btn { left: 8px; right: auto; }
-  .wrap.has-files :global(.composer-input) { padding-left: 48px; }
-  /* Send later (#299): on the left too, after the attach button */
-  .later-btn { left: 8px; right: auto; }
-  .later-btn.on { background: var(--bg-4); color: var(--text); }
-  .wrap.has-later :global(.composer-input) { padding-left: 48px; }
-  .wrap.has-files .later-btn { left: 44px; }
-  .wrap.has-files.has-later :global(.composer-input) { padding-left: 84px; }
+  /* the + menu's button (#461): on the left, as attach was */
+  .plus-btn { left: 8px; right: auto; }
+  .wrap.has-plus :global(.composer-input) { padding-left: 48px; }
 </style>
