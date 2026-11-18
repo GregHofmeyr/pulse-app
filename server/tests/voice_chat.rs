@@ -29,8 +29,8 @@ async fn world() -> World {
     let (_, sam) = register(&app, "sam").await;
     let (_, jo) = register(&app, "jo").await;
     let s = create_server(&app, &alex, "Main").await;
-    let r = post_json(&app, &sam, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam, s.id).await;
+    assert_eq!(r.status(), 200);
     let chans: Vec<Channel> = get_json(&app, &alex, &format!("/servers/{}/channels", s.id)).await;
     let lounge = chans
         .into_iter()
@@ -97,15 +97,25 @@ async fn members_send_read_edit_and_delete_in_a_voice_channel() {
     let m2 = send(&w.app, &w.sam, w.lounge.id, "loud and clear").await;
     let list: Vec<Message> = get_json(
         &w.app,
-        &w.jo,
+        &w.sam,
         &format!("/channels/{}/messages", w.lounge.id),
     )
     .await;
     assert_eq!(
         list.iter().map(|m| m.id).collect::<Vec<_>>(),
         vec![m2.id, m1.id],
-        "anyone can read it, in the server or not, like a text channel"
+        "everyone in the server reads it, like a text channel"
     );
+    // and nobody outside it (#80)
+    let r = w
+        .app
+        .http
+        .get(w.app.url(&format!("/channels/{}/messages", w.lounge.id)))
+        .bearer_auth(&w.jo)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
     let path = format!("/messages/{}", m1.id);
     assert_eq!(
         status(
@@ -178,7 +188,8 @@ async fn people_outside_the_server_cannot_post_or_react() {
         json!({"content": "let me in"}),
     )
     .await;
-    assert_eq!(r.status(), 403);
+    // a server you aren't in is hidden (#80): 404, as for a channel that isn't there
+    assert_eq!(r.status(), 404);
     assert_eq!(
         status(
             w.app.http.put(
@@ -188,7 +199,7 @@ async fn people_outside_the_server_cannot_post_or_react() {
             &w.jo
         )
         .await,
-        403
+        404
     );
 }
 
@@ -228,14 +239,8 @@ async fn unreads_and_mentions_count_for_everyone_in_the_server() {
     assert_eq!(counts(&w.app, &w.sam, w.lounge.id).await, Some((0, 0)));
     // a server joined after messages were said there starts with them read
     let (_, kim) = register(&w.app, "kim").await;
-    let r = post_json(
-        &w.app,
-        &kim,
-        &format!("/servers/{}/join", w.server),
-        json!({}),
-    )
-    .await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&w.app, &kim, w.server).await;
+    assert_eq!(r.status(), 200);
     assert_eq!(counts(&w.app, &kim, w.lounge.id).await, Some((0, 0)));
     // Ready's newest-message pointers stay a conversation list thing (DMs and groups)
     let ready = ready_of(&w.app, &w.sam).await;

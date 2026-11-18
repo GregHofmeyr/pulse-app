@@ -148,6 +148,8 @@ async fn people_with(limits: LimitsConfig) -> People {
     let (a, at) = register(&app, "alex").await;
     let (s, st) = register(&app, "sam").await;
     let (k, kt) = register(&app, "kim").await;
+    // they share a server: activity reaches only people who share something (#80)
+    acquaint(&app, &at, &[&st, &kt]).await;
     let (mut sam_ws, _) = hello(&app, &st).await;
     let (mut kim_ws, _) = hello(&app, &kt).await;
     let (mut alex_ws, _) = hello(&app, &at).await;
@@ -345,8 +347,8 @@ async fn over_the_limit_the_latest_still_lands() {
 /// alex's server with alex and sam in its Lounge call.
 async fn lounge(app: &TestApp, alex: &(UserId, String), sam: &(UserId, String)) -> Channel {
     let s = create_server(app, &alex.1, "Main").await;
-    let r = post_json(app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(app, &sam.1, s.id).await;
+    assert_eq!(r.status(), 200);
     let chans: Vec<Channel> = get_json(app, &alex.1, &format!("/servers/{}/channels", s.id)).await;
     let lounge = chans
         .into_iter()

@@ -1,10 +1,9 @@
-//! Bans (#80, step 1): a server's owner bans someone, which refuses their invites (`invites::accept`).
+//! Bans (#80): a server's owner bans someone, which refuses their invites (`invites::accept`). Servers are
+//! invite-only, so that keeps them out.
 //!
 //! `PUT /servers/{id}/bans/{user}` bans: the person is taken out of the server if they're in it (the same way out as a
-//! removal, `membership::take_out_banned`, except that it doesn't count towards a rejoin block), and any open direct
-//! invite to them is revoked. `DELETE` lifts it; `GET /servers/{id}/bans` lists them. The owner only, and only the
-//! owner's devices hear `BansChanged`. Servers are still open in this step, but a ban stops the open Join too
-//! (`routes::join`).
+//! removal, `membership::take_out`), and any open direct invite to them is revoked. `DELETE` lifts it;
+//! `GET /servers/{id}/bans` lists them. The owner only, and only the owner's devices hear `BansChanged`.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -94,7 +93,7 @@ async fn ban(
     tracing::info!(server = %id, user = %user, by = %me, "banned");
     // Out of the server if they're in it. The ban has landed, so an invite they accept from now on is refused.
     if crate::servers::routes::is_server_member(&s.db, id, user).await? {
-        match crate::servers::membership::take_out_banned(&s, id, user, me).await {
+        match crate::servers::membership::take_out(&s, id, user, Some(me)).await {
             Ok(()) | Err(AppError::NotFound) => {} // a leave won the race
             Err(e) => return Err(e),
         }

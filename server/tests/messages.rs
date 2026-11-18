@@ -9,7 +9,7 @@ async fn setup() -> (TestApp, String, String, pulse_protocol::rest::Channel) {
     let (_, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
     let s = create_server(&app, &a, "Main").await;
-    post_json(&app, &b, &format!("/servers/{}/join", s.id), json!({})).await;
+    join_server(&app, &b, s.id).await;
     let g = general(&app, &a, s.id).await;
     (app, a, b, g)
 }
@@ -243,7 +243,7 @@ async fn posting_in_a_voice_channel_is_its_chat() {
 }
 
 #[tokio::test]
-async fn non_member_cannot_post_in_server_403_but_can_read() {
+async fn non_member_can_neither_post_nor_read_a_server_channel() {
     let app = spawn().await;
     let (_, a) = register(&app, "alex").await;
     let (_, c) = register(&app, "jo").await;
@@ -259,10 +259,17 @@ async fn non_member_cannot_post_in_server_403_but_can_read() {
         )
         .await
         .status(),
-        403
+        404
     );
-    let list: Vec<Message> = get_json(&app, &c, &format!("/channels/{}/messages", g.id)).await;
-    assert_eq!(list.len(), 1);
+    // #80: a server you aren't in is hidden, its history too
+    let r = app
+        .http
+        .get(app.url(&format!("/channels/{}/messages", g.id)))
+        .bearer_auth(&c)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
 }
 
 // ---- around / after ----

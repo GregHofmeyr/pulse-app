@@ -236,8 +236,8 @@ async fn prune_drops_inbox_reads_of_items_past_30_days() {
     let (alex, alex_t) = register(&app, "alex").await;
     let (sam, sam_t) = register(&app, "sam").await;
     let s = create_server(&app, &alex_t, "Main").await;
-    let r = post_json(&app, &sam_t, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam_t, s.id).await;
+    assert_eq!(r.status(), 200);
     let ch = general(&app, &alex_t, s.id).await;
     let fresh = send(&app, &sam_t, ch.id, "@alex new").await;
     let old = pulse_protocol::ids::MessageId::floor(

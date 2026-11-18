@@ -235,7 +235,7 @@ async fn setup() -> (TestApp, FakeJolpica, [String; 4], ServerId, Channel) {
     let (_, jo) = register(&app, "jo").await;
     let s = create_server(&app, &alex, "Main").await;
     for t in [&sam, &kim] {
-        let r = post_json(&app, t, &format!("/servers/{}/join", s.id), json!({})).await;
+        let r = join_server(&app, t, s.id).await;
         assert!(r.status().is_success());
     }
     let g = general(&app, &alex, s.id).await;
@@ -447,8 +447,8 @@ async fn a_race_weekend_from_the_card_to_the_scores() {
         predict(&app, &jo, card.id, json!(["racer_a", "rider_b", "speed_c"]))
             .await
             .status(),
-        403,
-        "jo isn't in the server"
+        404,
+        "jo isn't in the server (#80: hidden)"
     );
     // alex picks, then takes it back
     predict(&app, &alex, card.id, json!(["dash_d", "zoom_e", "racer_a"])).await;

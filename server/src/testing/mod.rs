@@ -308,6 +308,62 @@ pub async fn create_server(app: &TestApp, token: &str, name: &str) -> pulse_prot
     r.json().await.unwrap()
 }
 
+/// An invite into `server` from its owner, minted straight into the DB (no expiry or use limit), for tests that need
+/// the way in (#80). A server that isn't there gets a code that isn't either.
+pub async fn owner_invite(app: &TestApp, server: impl std::fmt::Display) -> String {
+    let code = crate::servers::invites::new_code();
+    sqlx::query(
+        "INSERT INTO server_invites (code, server_id, created_by, created_at)
+         SELECT ?1, id, created_by, ?2 FROM servers WHERE id = ?3",
+    )
+    .bind(&code)
+    .bind(crate::db::now())
+    .bind(server.to_string())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    code
+}
+
+/// Join `server` as `token`'s user, the one way in (#80): an [`owner_invite`], accepted through the API and then deleted.
+/// Returns the accept's answer (200 with the server when it worked; 404 for a server that isn't there).
+pub async fn join_server(
+    app: &TestApp,
+    token: &str,
+    server: impl std::fmt::Display,
+) -> reqwest::Response {
+    let code = owner_invite(app, server).await;
+    let r = post_json(
+        app,
+        token,
+        &format!("/invites/{code}/accept"),
+        serde_json::json!({}),
+    )
+    .await;
+    // leave no invite behind (with its use), so tests that count invites see only their own
+    sqlx::query("DELETE FROM server_invites WHERE code = ?")
+        .bind(&code)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    r
+}
+
+/// Put everyone in one server `owner_token` makes ("Common"), so they share a server and see each other's presence
+/// (#80: presence reaches only people who share a server or a conversation). Returns its id.
+pub async fn acquaint(
+    app: &TestApp,
+    owner_token: &str,
+    others: &[&str],
+) -> pulse_protocol::ids::ServerId {
+    let server = create_server(app, owner_token, "Common").await.id;
+    for t in others {
+        let r = join_server(app, t, server).await;
+        assert_eq!(r.status(), 200, "join Common");
+    }
+    server
+}
+
 /// Create (or reuse) a DM/group with the given other users.
 pub async fn create_dm(
     app: &TestApp,

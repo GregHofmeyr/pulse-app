@@ -648,14 +648,8 @@ async fn going_live_and_watching_are_limited_but_stop_and_unwatch_are_not() {
     let (a_id, a) = register(&app, "alex").await;
     let (b_id, b) = register(&app, "sam").await;
     let srv = create_server(&app, &a, "Main").await;
-    let joined = post_json(
-        &app,
-        &b,
-        &format!("/servers/{}/join", srv.id),
-        serde_json::json!({}),
-    )
-    .await;
-    assert_eq!(joined.status(), 204);
+    let joined = join_server(&app, &b, srv.id).await;
+    assert_eq!(joined.status(), 200);
     let chans: Vec<pulse_protocol::rest::Channel> =
         get_json(&app, &a, &format!("/servers/{}/channels", srv.id)).await;
     let lounge = chans
@@ -717,6 +711,8 @@ async fn extra_voice_state_frames_are_dropped() {
     let (a_id, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
     let srv = create_server(&app, &a, "Main").await;
+    // the watcher is in the server: its calls reach members only (#80)
+    assert_eq!(join_server(&app, &b, srv.id).await.status(), 200);
     let chans: Vec<pulse_protocol::rest::Channel> =
         get_json(&app, &a, &format!("/servers/{}/channels", srv.id)).await;
     let lounge = chans
@@ -745,6 +741,8 @@ async fn unchanged_voice_flags_publish_nothing() {
     let (a_id, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
     let srv = create_server(&app, &a, "Main").await;
+    // the watcher is in the server: its calls reach members only (#80)
+    assert_eq!(join_server(&app, &b, srv.id).await.status(), 200);
     let chans: Vec<pulse_protocol::rest::Channel> =
         get_json(&app, &a, &format!("/servers/{}/channels", srv.id)).await;
     let lounge = chans
@@ -771,6 +769,8 @@ async fn limited_voice_state_frames_still_land_in_a_trailing_publish() {
     let (a_id, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
     let srv = create_server(&app, &a, "Main").await;
+    // the watcher is in the server: its calls reach members only (#80)
+    assert_eq!(join_server(&app, &b, srv.id).await.status(), 200);
     let chans: Vec<pulse_protocol::rest::Channel> =
         get_json(&app, &a, &format!("/servers/{}/channels", srv.id)).await;
     let lounge = chans

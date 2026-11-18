@@ -28,7 +28,7 @@ async fn lounge(app: &TestApp, token: &str) -> Channel {
 }
 
 async fn join_server(app: &TestApp, token: &str, server: ServerId) {
-    let r = post_json(app, token, &format!("/servers/{server}/join"), json!({})).await;
+    let r = common::join_server(app, token, server).await;
     assert!(r.status().is_success(), "join {}", r.status());
 }
 

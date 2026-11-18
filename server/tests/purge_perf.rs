@@ -43,8 +43,8 @@ async fn world() -> World {
     let alex = register(&app, "alex").await;
     let sam = register(&app, "sam").await;
     let s = create_server(&app, &alex.1, "Main").await;
-    let r = post_json(&app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam.1, s.id).await;
+    assert_eq!(r.status(), 200);
     let general = general(&app, &alex.1, s.id).await;
     let r = post_json(
         &app,

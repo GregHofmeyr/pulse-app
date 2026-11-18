@@ -120,6 +120,8 @@ async fn two() -> Two {
     let app = spawn().await;
     let (a, at) = register(&app, "alex").await;
     let (s, st) = register(&app, "sam").await;
+    // they share a server: presence reaches only people who share something (#80)
+    acquaint(&app, &at, &[&st]).await;
     let (mut sam_ws, _) = hello(&app, &st).await;
     let (mut alex_ws, _) = hello(&app, &at).await;
     for ws in [&mut sam_ws, &mut alex_ws] {

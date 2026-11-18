@@ -50,7 +50,8 @@ pub async fn advance(
 /// started (#50) (replies never count);
 /// mentions = your mentions in the main list after it, plus those in a quote's replies after your
 /// seen point for that quote.
-/// Channels without a point (never joined/initialised) are reported as fully read.
+/// Channels without a point (never joined/initialised) are reported as fully read; a point in a server you aren't in
+/// (one left from when servers were open, #80) isn't reported at all.
 pub async fn states_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<ReadState>> {
     read_states(db, me, None).await
 }
@@ -101,8 +102,8 @@ pub async fn counts_after_commit(
 
 /// The reply mentions still counted for a user: a mention in a live reply of a live quote, after the
 /// user's seen point for that quote. Shared by the per-channel counts and the seen-point list, so
-/// the two can never disagree: only channels the user has a read state for, and none in Recently
-/// deleted.
+/// the two can never disagree: only channels the user has a read state for, none in Recently
+/// deleted, and none in a server they aren't in (#80: a point left from when servers were open).
 /// Binds: user, channel (or NULL for all), channel.
 const COUNTED_REPLY_MENTIONS: &str = "FROM mentions mn JOIN messages m ON m.id = mn.message_id
     JOIN messages root ON root.id = m.thread_root_id
@@ -112,7 +113,10 @@ const COUNTED_REPLY_MENTIONS: &str = "FROM mentions mn JOIN messages m ON m.id =
       AND m.deleted_at IS NULL AND root.deleted_at IS NULL
       AND m.id > COALESCE(tr.last_seen_id, '')
       AND m.channel_id NOT IN (SELECT id FROM channels WHERE deleted_at IS NOT NULL
-                               OR server_id IN (SELECT id FROM servers WHERE deleted_at IS NOT NULL))";
+                               OR server_id IN (SELECT id FROM servers WHERE deleted_at IS NOT NULL))
+      AND NOT EXISTS (SELECT 1 FROM channels oc WHERE oc.id = m.channel_id AND oc.server_id IS NOT NULL
+                      AND NOT EXISTS (SELECT 1 FROM server_members om
+                                      WHERE om.server_id = oc.server_id AND om.user_id = mn.user_id))";
 
 async fn read_states(
     db: &SqlitePool,
@@ -139,7 +143,10 @@ async fn read_states(
          ) tm ON tm.channel_id = rs.channel_id
          WHERE rs.user_id = ? AND (? IS NULL OR rs.channel_id = ?)
            AND rs.channel_id NOT IN (SELECT id FROM channels WHERE deleted_at IS NOT NULL
-                                     OR server_id IN {DELETED_SERVERS})"
+                                     OR server_id IN {DELETED_SERVERS})
+           AND NOT EXISTS (SELECT 1 FROM channels oc WHERE oc.id = rs.channel_id AND oc.server_id IS NOT NULL
+                           AND NOT EXISTS (SELECT 1 FROM server_members om
+                                           WHERE om.server_id = oc.server_id AND om.user_id = rs.user_id))"
     );
     let only = only.map(|c| c.to_string());
     let rows: Vec<(String, Option<String>, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))

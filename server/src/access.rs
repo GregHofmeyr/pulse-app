@@ -132,9 +132,10 @@ pub async fn open_in(db: &mut SqliteConnection, id: ChannelId) -> AppResult<()> 
     }
 }
 
-/// 403 when `ch` is a server channel and `user` isn't in its server (they left or were removed): its channels stay
-/// readable to everyone, but changing what they posted there (editing a message, a poll or a plan; closing or
-/// cancelling one) is for members, as posting is. Deleting your own message stays allowed (#418).
+/// 403 when `ch` is a server channel and `user` isn't in its server (they left or were removed): changing what they
+/// posted there (editing a message, a poll or a plan; closing or cancelling one) is for members, as posting is.
+/// Deleting your own message stays allowed (#418). (A read through [`channel_for`] already answers 404 for someone not
+/// in it, #80; this guards the routes that look a channel up their own way.)
 pub async fn require_member_of(db: &SqlitePool, user: UserId, ch: &Channel) -> AppResult<()> {
     if let Some(server) = ch.server_id
         && !crate::servers::routes::is_server_member(db, server, user).await?
@@ -175,14 +176,18 @@ pub async fn is_channel_member(
     Ok(hit.is_some())
 }
 
-/// Whether `user` may read `ch`: a DM or group only if they are in it; a server channel always.
-/// Everything that reads messages (listing, search) goes through this one rule.
+/// Whether `user` may read `ch`: a server channel only if they are in its server (#80: servers are private), a DM or
+/// group only if they are in it. Everything that reads a channel (history, search, pins, threads, polls, plans, clips)
+/// goes through this one rule.
 pub async fn can_read(db: &SqlitePool, user: UserId, ch: &Channel) -> AppResult<bool> {
-    Ok(!ch.kind.is_private() || is_channel_member(db, user, ch.id).await?)
+    match ch.server_id {
+        Some(server) => crate::servers::routes::is_server_member(db, server, user).await,
+        None => Ok(ch.kind.is_private() && is_channel_member(db, user, ch.id).await?),
+    }
 }
 
-/// The channel, if `user` may see it. Missing and forbidden look identical (404) so private
-/// channels never leak their existence. Server channels are visible to every user.
+/// The channel, if `user` may see it. Missing and forbidden look identical (404), so neither a conversation nor a
+/// server you aren't in gives away that it exists.
 pub async fn channel_for(db: &SqlitePool, user: UserId, id: ChannelId) -> AppResult<Channel> {
     let ch = load_channel(db, id).await?.ok_or(AppError::NotFound)?;
     if !can_read(db, user, &ch).await? {
@@ -225,13 +230,13 @@ pub async fn readable_channel_ids_everywhere(
 }
 
 /// The channels of `server` that hold messages and `user` may read ([`can_read`]), in order.
-/// 404 when there is no such server (or it is deleted).
+/// 404 when there is no such server (or it is deleted), or they aren't in it (#80).
 pub async fn readable_server_channels(
     db: &SqlitePool,
     user: UserId,
     server: ServerId,
 ) -> AppResult<Vec<Channel>> {
-    crate::servers::routes::server_exists(db, server).await?;
+    crate::servers::routes::visible_to(db, server, user).await?;
     let rows: Vec<ChannelRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CHANNEL_COLS} FROM channels WHERE server_id = ? AND deleted_at IS NULL
          ORDER BY position, id"

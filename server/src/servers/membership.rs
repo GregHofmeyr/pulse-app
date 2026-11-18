@@ -14,22 +14,17 @@
 //! in its first text channel ("alex left the server", "sam was removed", #418). A custom status showing one of its
 //! emoji loses the emoji (#418).
 //!
-//! A removed person may rejoin: servers are public to the group, and Join server works as before, starting at "all
-//! read". But the third time the owner removes the same person within [`REMOVAL_WINDOW_HOURS`] (#418) they're blocked
-//! ([`record_removal`]): Join server refuses them ([`BLOCKED_JOIN`]) until the owner allows them back
-//! (`DELETE /servers/{id}/blocked/{user}`, [`allow_back`]), which clears the block and the removals it counted. The
-//! block has no expiry. Only the owner sees who's blocked (`GET /servers/{id}/blocked`, Server settings › Members);
-//! a block or an Allow back tells the owner's devices (`ServerBlocksChanged`, so an open Members pane asks again) and
-//! the person blocked (Ready's `rejoin_blocked` and `RejoinBlockChanged`, so they see why before they press Join,
-//! #431).
+//! Servers are invite-only (#80): someone who left or was removed is back only through a new invite, starting at "all
+//! read", and the owner's ban (`servers::bans`) refuses even that. `MemberLeft` reaches the person too, so their devices
+//! drop the server.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, post, put};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ServerId, UserId};
-use pulse_protocol::rest::{ServerBlock, TransferServerRequest};
+use pulse_protocol::rest::TransferServerRequest;
 
 use crate::AppState;
 use crate::auth::AuthUser;
@@ -41,17 +36,7 @@ pub fn router() -> Router<AppState> {
         .route("/servers/{id}/leave", post(leave))
         .route("/servers/{id}/members/{user}", delete(remove))
         .route("/servers/{id}/owner", put(transfer))
-        .route("/servers/{id}/blocked", get(blocked))
-        .route("/servers/{id}/blocked/{user}", delete(allow_back))
 }
-
-/// How many removals of the same person from the same server, within [`REMOVAL_WINDOW_HOURS`], block their rejoin.
-pub(crate) const REMOVALS_TO_BLOCK: i64 = 3;
-/// The window [`REMOVALS_TO_BLOCK`] counts removals in.
-pub(crate) const REMOVAL_WINDOW_HOURS: i64 = 48;
-/// What Join server says to someone blocked from rejoining.
-pub(crate) const BLOCKED_JOIN: &str = "You can't rejoin this server right now. Ask the owner.";
-const ONLY_OWNER_BLOCKS: &str = "Only the server's owner can see or lift rejoin blocks.";
 
 const OWNER_CANT_LEAVE: &str = "The owner can't leave their own server: hand it to someone else first (Server settings, Transfer ownership), or delete it.";
 const ONLY_OWNER_REMOVES: &str = "Only the server's owner can remove people.";
@@ -103,184 +88,6 @@ async fn remove(
     }
     take_out(&s, id, user, Some(me)).await?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// `GET /servers/{id}/blocked` (#418): the people blocked from rejoining, newest block first. The owner only (403 for
-/// anyone else).
-async fn blocked(
-    State(s): State<AppState>,
-    AuthUser(me): AuthUser,
-    Path(id): Path<ServerId>,
-) -> AppResult<Json<Vec<ServerBlock>>> {
-    server_exists(&s.db, id).await?;
-    if owner_of(&s, id).await? != me {
-        return Err(AppError::ForbiddenMsg(ONLY_OWNER_BLOCKS.into()));
-    }
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT user_id, blocked_at FROM server_blocks WHERE server_id = ? ORDER BY blocked_at DESC, user_id",
-    )
-    .bind(id.to_string())
-    .fetch_all(&s.db)
-    .await?;
-    rows.into_iter()
-        .map(|(user, blocked_at)| {
-            Ok(ServerBlock {
-                user_id: user.parse().map_err(anyhow::Error::from)?,
-                blocked_at,
-            })
-        })
-        .collect::<AppResult<Vec<_>>>()
-        .map(Json)
-}
-
-/// `DELETE /servers/{id}/blocked/{user}` (#418): the owner allows a blocked person back; their removals so far stop
-/// counting too. 403 for anyone but the owner, 404 when they aren't blocked. The owner is re-checked under the write
-/// lock, as a hand-over may have landed since.
-async fn allow_back(
-    State(s): State<AppState>,
-    AuthUser(me): AuthUser,
-    Path((id, user)): Path<(ServerId, UserId)>,
-) -> AppResult<StatusCode> {
-    if !s.limits.mutate_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests(None));
-    }
-    server_exists(&s.db, id).await?;
-    let mut tx = crate::db::begin_write(&s.db).await?;
-    server_live_in(&mut tx, id).await?;
-    let (sid, uid) = (id.to_string(), user.to_string());
-    let owner: String = sqlx::query_scalar("SELECT created_by FROM servers WHERE id = ?")
-        .bind(&sid)
-        .fetch_one(&mut *tx)
-        .await?;
-    if owner != me.to_string() {
-        return Err(AppError::ForbiddenMsg(ONLY_OWNER_BLOCKS.into()));
-    }
-    let gone = sqlx::query("DELETE FROM server_blocks WHERE server_id = ? AND user_id = ?")
-        .bind(&sid)
-        .bind(&uid)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-    if gone == 0 {
-        return Err(AppError::NotFound);
-    }
-    sqlx::query("DELETE FROM server_removals WHERE server_id = ? AND user_id = ?")
-        .bind(&sid)
-        .bind(&uid)
-        .execute(&mut *tx)
-        .await?;
-    tx.commit().await?;
-    tracing::info!(server = %id, user = %user, by = %me, "allowed back");
-    blocks_changed(&s, id, me, user, false).await;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// Tell `owner`'s devices that who's blocked from rejoining `server` changed, and `user` that they are (`blocked`) or
-/// aren't any more (#431).
-async fn blocks_changed(
-    s: &AppState,
-    server: ServerId,
-    owner: UserId,
-    user: UserId,
-    blocked: bool,
-) {
-    s.hub
-        .publish_all(
-            &s.db,
-            vec![
-                Event::ServerBlocksChanged {
-                    user_id: owner,
-                    server_id: server,
-                },
-                Event::RejoinBlockChanged {
-                    user_id: user,
-                    server_id: server,
-                    blocked,
-                },
-            ],
-        )
-        .await;
-}
-
-/// The live servers `user` is blocked from rejoining (#431), for their Ready.
-pub(crate) async fn blocked_servers(
-    db: &sqlx::SqlitePool,
-    user: UserId,
-) -> anyhow::Result<Vec<ServerId>> {
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT b.server_id FROM server_blocks b JOIN servers sv ON sv.id = b.server_id AND sv.deleted_at IS NULL
-         WHERE b.user_id = ? ORDER BY b.server_id",
-    )
-    .bind(user.to_string())
-    .fetch_all(db)
-    .await?;
-    ids.iter().map(|i| Ok(i.parse()?)).collect()
-}
-
-/// Whether `user` is blocked from rejoining `server` (#418), inside the join's write transaction.
-pub(crate) async fn blocked_in(
-    tx: &mut sqlx::SqliteConnection,
-    server: ServerId,
-    user: UserId,
-) -> AppResult<bool> {
-    let hit: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM server_blocks WHERE server_id = ? AND user_id = ?")
-            .bind(server.to_string())
-            .bind(user.to_string())
-            .fetch_optional(&mut *tx)
-            .await?;
-    Ok(hit.is_some())
-}
-
-/// Note that `by` removed `user` from `server` (#418), in the removal's transaction: removals older than the window go,
-/// and the [`REMOVALS_TO_BLOCK`]th within it blocks their rejoin. True when this one blocked them.
-async fn record_removal(
-    tx: &mut sqlx::SqliteConnection,
-    server: ServerId,
-    user: UserId,
-    by: UserId,
-) -> AppResult<bool> {
-    let (sid, uid) = (server.to_string(), user.to_string());
-    let at = crate::db::now();
-    let since =
-        crate::db::stamp(chrono::Utc::now() - chrono::TimeDelta::hours(REMOVAL_WINDOW_HOURS));
-    sqlx::query(
-        "DELETE FROM server_removals WHERE server_id = ? AND user_id = ? AND removed_at <= ?",
-    )
-    .bind(&sid)
-    .bind(&uid)
-    .bind(&since)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "INSERT INTO server_removals (server_id, user_id, removed_by, removed_at) VALUES (?, ?, ?, ?)",
-    )
-    .bind(&sid)
-    .bind(&uid)
-    .bind(by.to_string())
-    .bind(&at)
-    .execute(&mut *tx)
-    .await?;
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM server_removals WHERE server_id = ? AND user_id = ?",
-    )
-    .bind(&sid)
-    .bind(&uid)
-    .fetch_one(&mut *tx)
-    .await?;
-    if count < REMOVALS_TO_BLOCK {
-        return Ok(false);
-    }
-    let added = sqlx::query(
-        "INSERT OR IGNORE INTO server_blocks (server_id, user_id, blocked_at) VALUES (?, ?, ?)",
-    )
-    .bind(&sid)
-    .bind(&uid)
-    .bind(&at)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    Ok(added > 0)
 }
 
 /// `PUT /servers/{id}/owner`: its owner hands the server to another of its members (#418). 403 for anyone but the
@@ -361,27 +168,6 @@ pub(crate) async fn take_out(
     user: UserId,
     by: Option<UserId>,
 ) -> AppResult<()> {
-    take_out_counting(s, server, user, by, true).await
-}
-
-/// [`take_out`] for a ban (#80): the owner `by` removes `user`, but the removal doesn't count towards a rejoin block,
-/// since the ban already refuses them (and replaces the block when servers become invite-only).
-pub(crate) async fn take_out_banned(
-    s: &AppState,
-    server: ServerId,
-    user: UserId,
-    by: UserId,
-) -> AppResult<()> {
-    take_out_counting(s, server, user, Some(by), false).await
-}
-
-async fn take_out_counting(
-    s: &AppState,
-    server: ServerId,
-    user: UserId,
-    by: Option<UserId>,
-    count_removal: bool,
-) -> AppResult<()> {
     // A leave changes a live Quote of the Year's member count, which its events carry as absolute state: in commit
     // order, as a join publishes it.
     // their name as it is now, for the line's text (clients name them as they're called when they show it)
@@ -453,13 +239,8 @@ async fn take_out_counting(
     // Their LiveKit grants for its rooms go with the membership (a join with one is refused anyway); the participants
     // still carrying one are removed below, whatever identity they connected under, as a logout does (#418).
     let grants = crate::auth::session::drop_server_grants(&mut tx, user, server).await?;
-    // a removal counts towards blocking their rejoin (#418); a leave doesn't
-    let blocked = match by {
-        Some(by) if count_removal => record_removal(&mut tx, server, user, by).await?,
-        _ => false,
-    };
     tx.commit().await?;
-    tracing::info!(server = %server, user = %user, by = ?by, blocked, "left server");
+    tracing::info!(server = %server, user = %user, by = ?by, "left server");
     if let Some(message) = line {
         s.hub
             .publish(
@@ -481,9 +262,6 @@ async fn take_out_counting(
             },
         )
         .await;
-    if blocked && let Some(by) = by {
-        blocks_changed(s, server, by, user, true).await;
-    }
     for id in reminders {
         match id.parse() {
             Ok(id) => {
@@ -500,8 +278,9 @@ async fn take_out_counting(
     drop(order);
     if status_changed {
         crate::presence::custom::announce_own(s, user).await;
-        s.hub.sync_presence(&s.db, user).await;
     }
+    // they no longer share this server: presence both ways (#80)
+    crate::servers::routes::resync_presence(s, server, Some(user)).await;
     out_of_calls(s, server, user, by).await;
     // Their stream-room connections in its channels go too (#149): a ghost viewer isn't in the call, and a named
     // viewer's `#v` / `#a` may outlive their voice connection.
@@ -592,7 +371,7 @@ async fn out_of_calls(s: &AppState, server: ServerId, user: UserId, by: Option<U
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{create_server, post_json, register, spawn};
+    use crate::testing::{create_server, join_server, register, spawn};
 
     /// alex owns "Main", sam and kim are in it, and then (as if a hand-over landed after the route's owner check, before
     /// `take_out`'s transaction) the server is handed to sam.
@@ -603,14 +382,8 @@ mod tests {
         let (kim, k) = register(&app, "kim").await;
         let server = create_server(&app, &a, "Main").await.id;
         for t in [&s, &k] {
-            let r = post_json(
-                &app,
-                t,
-                &format!("/servers/{server}/join"),
-                serde_json::json!({}),
-            )
-            .await;
-            assert_eq!(r.status(), 204);
+            let r = join_server(&app, t, server).await;
+            assert_eq!(r.status(), 200);
         }
         sqlx::query("UPDATE servers SET created_by = ? WHERE id = ?")
             .bind(sam.to_string())

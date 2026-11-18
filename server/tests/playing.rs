@@ -143,6 +143,8 @@ async fn people_with(limits: LimitsConfig) -> People {
     let (a, at) = register(&app, "alex").await;
     let (s, st) = register(&app, "sam").await;
     let (k, kt) = register(&app, "kim").await;
+    // they share a server: activity reaches only people who share something (#80)
+    acquaint(&app, &at, &[&st, &kt]).await;
     let (mut sam_ws, _) = hello(&app, &st).await;
     let (mut kim_ws, _) = hello(&app, &kt).await;
     let (mut alex_ws, _) = hello(&app, &at).await;

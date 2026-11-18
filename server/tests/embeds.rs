@@ -112,8 +112,8 @@ async fn setup_full(limits: LimitsConfig, embeds: impl FnOnce(EmbedConfig) -> Em
     let (alex, alex_t) = register(&app, "alex").await;
     let (sam, sam_t) = register(&app, "sam").await;
     let server = create_server(&app, &alex_t, "Main").await.id;
-    let r = post_json(&app, &sam_t, &format!("/servers/{server}/join"), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam_t, server).await;
+    assert_eq!(r.status(), 200);
     let ch = general(&app, &alex_t, server).await.id;
     Env {
         app,

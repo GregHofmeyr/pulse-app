@@ -29,8 +29,8 @@ async fn world_with(app: TestApp) -> World {
     let kim = register(&app, "kim").await;
     let jo = register(&app, "jo").await;
     let server = create_server(&app, &alex.1, "Main").await.id;
-    let r = post_json(&app, &sam.1, &format!("/servers/{server}/join"), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam.1, server).await;
+    assert_eq!(r.status(), 200);
     World {
         app,
         alex,
@@ -569,7 +569,7 @@ async fn direct_invites_skip_yourself_members_the_banned_and_strangers() {
 }
 
 #[tokio::test]
-async fn a_ban_removes_them_without_a_rejoin_block_revokes_their_invite_and_refuses_accepts() {
+async fn a_ban_removes_them_revokes_their_invite_and_refuses_accepts() {
     let w = world().await;
     let link = make_ok(&w, &w.alex.1, json!({ "max_uses": 5 })).await;
     let direct = make_ok(&w, &w.sam.1, json!({ "for_user": w.kim.0 })).await;
@@ -593,13 +593,6 @@ async fn a_ban_removes_them_without_a_rejoin_block_revokes_their_invite_and_refu
         _ => None,
     })
     .await;
-    for t in ["server_removals", "server_blocks"] {
-        assert_eq!(
-            count(&w.app, &format!("SELECT COUNT(*) FROM {t}")).await,
-            0,
-            "{t}"
-        );
-    }
     assert_eq!(put(&w.app, &w.alex.1, &ban(w.kim.0)).await.status(), 204);
     let d = &direct.code;
     assert_eq!(
@@ -643,22 +636,17 @@ async fn a_ban_removes_them_without_a_rejoin_block_revokes_their_invite_and_refu
 }
 
 #[tokio::test]
-async fn a_banned_person_cant_use_the_open_join_either() {
+async fn the_open_join_lets_nobody_in_banned_or_not() {
     let w = world().await;
     let ban = format!("/servers/{}/bans/{}", w.server, w.sam.0);
     assert_eq!(put(&w.app, &w.alex.1, &ban).await.status(), 204);
-    assert!(!is_member(&w.app, w.server, w.sam.0).await);
     let join = format!("/servers/{}/join", w.server);
-    let r = post_json(&w.app, &w.sam.1, &join, json!({})).await;
-    assert_eq!(r.status(), 403, "a ban refuses the open Join");
+    for t in [&w.sam.1, &w.kim.1] {
+        let r = post_json(&w.app, t, &join, json!({})).await;
+        assert_eq!(r.status(), 403, "servers are invite-only (#80)");
+    }
     assert!(!is_member(&w.app, w.server, w.sam.0).await);
-    // someone not banned still joins; unbanned, sam can again
-    let r = post_json(&w.app, &w.kim.1, &join, json!({})).await;
-    assert_eq!(r.status(), 204);
-    assert_eq!(delete(&w.app, &w.alex.1, &ban).await.status(), 204);
-    let r = post_json(&w.app, &w.sam.1, &join, json!({})).await;
-    assert_eq!(r.status(), 204);
-    assert!(is_member(&w.app, w.server, w.sam.0).await);
+    assert!(!is_member(&w.app, w.server, w.kim.0).await);
 }
 
 #[tokio::test]

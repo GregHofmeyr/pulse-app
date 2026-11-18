@@ -47,8 +47,8 @@ async fn world_with(cfg: pulse_server::config::Config) -> World {
     let alex = register(&app, "alex").await;
     let sam = register(&app, "sam").await;
     let s = create_server(&app, &alex.1, "Main").await;
-    let r = post_json(&app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam.1, s.id).await;
+    assert_eq!(r.status(), 200);
     let r = post_json(
         &app,
         &alex.1,
@@ -69,14 +69,8 @@ async fn world_with(cfg: pulse_server::config::Config) -> World {
 
 impl World {
     async fn join(&self, token: &str) {
-        let r = post_json(
-            &self.app,
-            token,
-            &format!("/servers/{}/join", self.server),
-            json!({}),
-        )
-        .await;
-        assert_eq!(r.status(), 204);
+        let r = join_server(&self.app, token, self.server).await;
+        assert_eq!(r.status(), 200);
     }
     async fn member(&self, name: &str) -> (UserId, String) {
         let m = register(&self.app, name).await;

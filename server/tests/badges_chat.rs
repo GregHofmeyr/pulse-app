@@ -65,7 +65,7 @@ async fn holds(app: &TestApp, token: &str, user: UserId, key: &str) -> bool {
 }
 
 async fn join(app: &TestApp, token: &str, server: ServerId) {
-    let r = post_json(app, token, &format!("/servers/{server}/join"), json!({})).await;
+    let r = join_server(app, token, server).await;
     assert!(r.status().is_success(), "join {}", r.status());
 }
 

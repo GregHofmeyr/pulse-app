@@ -42,8 +42,8 @@ async fn your_order_is_yours_and_leaves_the_servers_alone() {
     let (sam_id, sam) = register(&app, "sam").await;
     let (_, jo) = register(&app, "jo").await;
     let s = create_server(&app, &alex, "Main").await;
-    let r = post_json(&app, &sam, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam, s.id).await;
+    assert_eq!(r.status(), 200);
     let general = general(&app, &alex, s.id).await;
     let r = post_json(
         &app,

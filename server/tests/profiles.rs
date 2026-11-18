@@ -66,14 +66,8 @@ async fn ready_carries_name_styles() {
     let (alex_id, alex) = register(&app, "alex").await;
     let (_, sam) = register(&app, "sam").await;
     let s = create_server(&app, &alex, "Main").await;
-    let r = post_json(
-        &app,
-        &sam,
-        &format!("/servers/{}/join", s.id),
-        serde_json::json!({}),
-    )
-    .await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam, s.id).await;
+    assert_eq!(r.status(), 200);
 
     let avatar = upload(&app, &alex, "avatar", gif()).await;
     assert!(avatar.still_hash.is_some());

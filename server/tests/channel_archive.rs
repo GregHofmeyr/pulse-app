@@ -39,7 +39,7 @@ async fn setup() -> Fx {
     let alex = register(&app, "alex").await;
     let sam = register(&app, "sam").await;
     let s = create_server(&app, &alex.1, "Main").await;
-    post_json(&app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
+    join_server(&app, &sam.1, s.id).await;
     let general = general(&app, &alex.1, s.id).await;
     Fx {
         app,

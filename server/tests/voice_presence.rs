@@ -200,18 +200,19 @@ async fn lounge(app: &TestApp, token: &str) -> (pulse_protocol::rest::Server, Ch
 }
 
 #[tokio::test]
-async fn token_requires_server_membership_403() {
+async fn token_requires_server_membership_404() {
     let app = spawn().await;
     let (_, a) = register(&app, "alex").await;
     let (_, c) = register(&app, "jo").await;
     let (s, l) = lounge(&app, &a).await;
+    // a server you aren't in is hidden (#80)
     assert_eq!(
         post_json(&app, &c, &format!("/voice/{}/token", l.id), json!({}))
             .await
             .status(),
-        403
+        404
     );
-    post_json(&app, &c, &format!("/servers/{}/join", s.id), json!({})).await;
+    join_server(&app, &c, s.id).await;
     assert_eq!(
         post_json(&app, &c, &format!("/voice/{}/token", l.id), json!({}))
             .await
@@ -225,7 +226,8 @@ async fn ready_includes_voice_rooms() {
     let app = spawn().await;
     let (a_id, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
-    let (_, l) = lounge(&app, &a).await;
+    let (s, l) = lounge(&app, &a).await;
+    assert_eq!(join_server(&app, &b, s.id).await.status(), 200); // #80: only members see its calls
     joined(&app, l.id, a_id).await;
     let (_ws, ready) = hello(&app, &b).await;
     let room = ready
@@ -244,6 +246,7 @@ async fn voice_state_frame_broadcasts_flags() {
     let (a_id, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
     let (s, l) = lounge(&app, &a).await;
+    assert_eq!(join_server(&app, &b, s.id).await.status(), 200); // #80: only members see its calls
     let g = general(&app, &a, s.id).await;
     joined(&app, l.id, a_id).await;
     let (mut wa, _) = hello(&app, &a).await;
@@ -276,6 +279,7 @@ async fn voice_state_from_user_not_in_voice_is_ignored() {
     let (_, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
     let (s, _) = lounge(&app, &a).await;
+    assert_eq!(join_server(&app, &b, s.id).await.status(), 200); // #80: only members see its calls
     let g = general(&app, &a, s.id).await;
     let (mut wa, _) = hello(&app, &a).await;
     let (mut wb, _) = hello(&app, &b).await;
@@ -325,7 +329,8 @@ async fn flags_declared_before_join_webhook_are_kept() {
     let app = spawn().await;
     let (a_id, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
-    let (_, l) = lounge(&app, &a).await;
+    let (s, l) = lounge(&app, &a).await;
+    assert_eq!(join_server(&app, &b, s.id).await.status(), 200); // #80: only members see its calls
     let (mut wa, _) = hello(&app, &a).await;
     wa.send(Ws::text(
         serde_json::to_string(&ClientFrame::VoiceState {
@@ -352,7 +357,8 @@ async fn voice_joined_event_carries_declared_flags() {
     let app = spawn().await;
     let (a_id, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
-    let (_, l) = lounge(&app, &a).await;
+    let (s, l) = lounge(&app, &a).await;
+    assert_eq!(join_server(&app, &b, s.id).await.status(), 200); // #80: only members see its calls
     let (mut wa, _) = hello(&app, &a).await;
     let (mut wb, _) = hello(&app, &b).await;
     let muted = VoiceFlags {

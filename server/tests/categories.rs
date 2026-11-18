@@ -548,8 +548,8 @@ async fn world_with(app: TestApp) -> World {
     let sam = register(&app, "sam").await;
     let jo = register(&app, "jo").await;
     let s = create_server(&app, &alex.1, "Main").await;
-    let r = post_json(&app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam.1, s.id).await;
+    assert_eq!(r.status(), 200);
     World {
         app,
         alex,
@@ -564,6 +564,17 @@ async fn world() -> World {
 }
 
 impl World {
+    /// The events of kim, who joins "Main" for it and does nothing: what everyone in the server hears (#80: someone
+    /// outside it, like jo, hears nothing).
+    async fn listener(&self) -> mpsc::Receiver<ServerFrame> {
+        let (kim, token) = register(&self.app, "kim").await;
+        assert_eq!(
+            join_server(&self.app, &token, self.server).await.status(),
+            200
+        );
+        self.app.hub.register(kim, String::new()).rx
+    }
+
     /// The server's layout as the database has it now.
     async fn layout(&self, server: ServerId) -> ServerLayout {
         let mut c = self.app.db.acquire().await.unwrap();
@@ -672,7 +683,7 @@ fn names(layout: &ServerLayout) -> Vec<&str> {
 async fn members_create_rename_and_delete_categories_and_everyone_hears() {
     let w = world().await;
     let before = w.revision().await;
-    let mut rx = w.app.hub.register(w.jo.0, String::new()).rx;
+    let mut rx = w.listener().await;
     let r = w.new_category(&w.sam.1, w.server, "  Gaming ").await;
     assert_eq!(r.status(), 200);
     let gaming: Category = r.json().await.unwrap();
@@ -745,7 +756,7 @@ async fn deleting_a_category_moves_its_channels_to_the_top_area_in_order() {
     let a = w.channel("a", Some(gaming.id)).await;
     let b = w.channel("b", Some(gaming.id)).await;
     let before = w.layout(w.server).await;
-    let mut rx = w.app.hub.register(w.jo.0, String::new()).rx;
+    let mut rx = w.listener().await;
     assert_eq!(
         delete(&w.app, &w.sam.1, &format!("/categories/{}", gaming.id)).await,
         204
@@ -775,7 +786,7 @@ async fn a_layout_saves_and_reaches_everyone() {
     let voice = base.categories[1].id;
     let general = channels_in(&base, Some(text))[0];
     let lounge = channels_in(&base, Some(voice))[0];
-    let mut rx = w.app.hub.register(w.jo.0, String::new()).rx;
+    let mut rx = w.listener().await;
     let r = w
         .save(
             &w.sam.1,
@@ -809,7 +820,7 @@ async fn a_layout_saves_and_reaches_everyone() {
     assert!(channels_in(&saved, Some(text)).is_empty());
     assert_eq!(saved, w.layout(w.server).await);
     let listed: Vec<Channel> =
-        get_json(&w.app, &w.jo.1, &format!("/servers/{}/channels", w.server)).await;
+        get_json(&w.app, &w.sam.1, &format!("/servers/{}/channels", w.server)).await;
     let g = listed.iter().find(|c| c.id == general).unwrap();
     assert_eq!((g.category_id, g.position), (Some(gaming.id), 0));
     assert_eq!(next_layout(&mut rx).await, saved);
@@ -950,7 +961,7 @@ async fn non_members_cant_save_a_layout() {
 async fn channels_are_created_inside_a_category() {
     let w = world().await;
     let gaming = w.category("Gaming").await;
-    let mut rx = w.app.hub.register(w.jo.0, String::new()).rx;
+    let mut rx = w.listener().await;
     let a = w.channel("a", Some(gaming.id)).await;
     let b = w.channel("b", Some(gaming.id)).await;
     assert_eq!((a.category_id, a.position), (Some(gaming.id), 0));
@@ -994,7 +1005,7 @@ async fn create_delete_and_restore_bump_the_revision() {
     let r0 = w.revision().await;
     let ch = w.channel("a", None).await;
     assert_eq!(w.revision().await, r0 + 1);
-    let mut rx = w.app.hub.register(w.jo.0, String::new()).rx;
+    let mut rx = w.listener().await;
     assert_eq!(
         delete(&w.app, &w.alex.1, &format!("/channels/{}", ch.id)).await,
         204
@@ -1100,12 +1111,13 @@ async fn layout_changes_are_rate_limited() {
 }
 
 #[tokio::test]
-async fn ready_carries_every_servers_layout() {
+async fn ready_carries_the_layout_of_each_server_you_are_in() {
     let w = world().await;
     let gaming = w.category("Gaming").await;
     let side = create_server(&w.app, &w.alex.1, "Side").await;
-    // jo is in neither and still gets both: like the channels, layouts are public.
-    let layouts = w.ready_layouts(w.jo.0).await;
+    // #80: jo is in neither and gets neither; alex, in both, gets both.
+    assert!(w.ready_layouts(w.jo.0).await.is_empty());
+    let layouts = w.ready_layouts(w.alex.0).await;
     assert_eq!(layouts.len(), 2);
     let main = layouts.iter().find(|l| l.server_id == w.server).unwrap();
     assert_eq!(

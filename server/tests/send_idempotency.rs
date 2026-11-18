@@ -24,7 +24,7 @@ async fn setup() -> Setup {
     let (_, a) = register(&app, "alex").await;
     let (b_id, b) = register(&app, "sam").await;
     let s = create_server(&app, &a, "Main").await;
-    post_json(&app, &b, &format!("/servers/{}/join", s.id), json!({})).await;
+    join_server(&app, &b, s.id).await;
     let g = general(&app, &a, s.id).await.id;
     Setup { app, a, b_id, b, g }
 }

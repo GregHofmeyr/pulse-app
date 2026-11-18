@@ -474,6 +474,8 @@ async fn publish_card(s: &AppState, me: UserId, other: UserId, card: Card) {
                         },
                     )
                     .await;
+                // they share a conversation now: presence both ways
+                s.hub.resync(&s.db, [me, other]).await;
             }
             Ok(None) => return,
             Err(e) => tracing::error!(error = ?e, "couldn't read back an invite's new DM"),

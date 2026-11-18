@@ -78,7 +78,7 @@ async fn a_saved_message_is_private_synced_and_its_note_editable() {
     let (_, alex) = register(&app, "alex").await;
     let (_, sam) = register(&app, "sam").await;
     let s = create_server(&app, &alex, "Main").await;
-    let r = post_json(&app, &sam, &format!("/servers/{}/join", s.id), json!({})).await;
+    let r = join_server(&app, &sam, s.id).await;
     assert!(r.status().is_success());
     let g = general(&app, &alex, s.id).await;
     let m = send(&app, &sam, g.id, "the address is 12 park lane").await;

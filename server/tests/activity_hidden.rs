@@ -12,7 +12,6 @@ use futures::{SinkExt, StreamExt};
 use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
 use pulse_protocol::ids::UserId;
 use pulse_protocol::rest::{ListeningUpdate, Playing, PlayingUpdate, Profile, SteamHours};
-use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
 type Socket =
@@ -110,6 +109,7 @@ async fn a_hidden_viewer_never_gets_your_game_and_still_sees_you_online() {
     let (alex, alex_t) = register(&app, "alex").await;
     let (sam, sam_t) = register(&app, "sam").await;
     let (_, kim_t) = register(&app, "kim").await;
+    acquaint(&app, &alex_t, &[&sam_t, &kim_t]).await; // they share a server: presence reaches them (#80)
 
     let r = hide(&app, &alex_t, sam, true).await;
     assert_eq!(r.status(), 200);
@@ -175,6 +175,7 @@ async fn hiding_takes_your_game_away_at_once_and_showing_sends_it_again() {
     let (alex, alex_t) = register(&app, "alex").await;
     let (sam, sam_t) = register(&app, "sam").await;
     let (_, kim_t) = register(&app, "kim").await;
+    acquaint(&app, &alex_t, &[&sam_t, &kim_t]).await; // they share a server: presence reaches them (#80)
     let (mut alex_ws, _) = hello(&app, &alex_t).await;
     let (mut sam_ws, _) = hello(&app, &sam_t).await;
     let (mut kim_ws, _) = hello(&app, &kim_t).await;
@@ -233,7 +234,7 @@ async fn steam_hours_still_show_to_whoever_you_hide_your_games_from() {
     let (_, kim_t) = register(&app, "kim").await;
     let server = create_server(&app, &alex_t, "Gamers").await;
     for t in [&sam_t, &kim_t] {
-        let r = post_json(&app, t, &format!("/servers/{}/join", server.id), json!({})).await;
+        let r = join_server(&app, t, server.id).await;
         assert!(r.status().is_success());
     }
     sqlx::query(

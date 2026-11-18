@@ -151,6 +151,8 @@ async fn three() -> Three {
     let alex = register(&app, "alex").await;
     let (sam_id, sam) = register(&app, "sam").await;
     let (kim_id, kim) = register(&app, "kim").await;
+    // they share a server: presence only reaches people who share something (#80)
+    acquaint(&app, &alex.1, &[&sam, &kim]).await;
     let (mut sam_ws, _) = hello(&app, &sam).await;
     let (mut kim_ws, _) = hello(&app, &kim).await;
     let (alex_ws, _) = hello(&app, &alex.1).await;
@@ -683,6 +685,7 @@ async fn never_connected_and_invisible_stays_never_seen() {
     let app = spawn().await;
     let (a_id, a) = register(&app, "alex").await;
     let (_, s) = register(&app, "sam").await;
+    acquaint(&app, &a, &[&s]).await; // #80: presence reaches only people who share a server
     let (mut sam_ws, _) = hello(&app, &s).await;
     drain(&mut sam_ws, 200).await;
     set_status(&app, &a, "invisible", None).await;

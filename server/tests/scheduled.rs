@@ -116,7 +116,7 @@ async fn setup() -> (TestApp, [String; 4], [UserId; 4], Channel) {
     let (jo_id, jo) = register(&app, "jo").await;
     let s = create_server(&app, &alex, "Main").await;
     for t in [&sam, &kim] {
-        let r = post_json(&app, t, &format!("/servers/{}/join", s.id), json!({})).await;
+        let r = join_server(&app, t, s.id).await;
         assert!(r.status().is_success());
     }
     let g = general(&app, &alex, s.id).await;
@@ -314,7 +314,7 @@ async fn only_its_author_edits_sends_now_or_deletes_a_scheduled_message() {
         schedule(&app, &jo, g.id, "hi", &at(TimeDelta::hours(1)))
             .await
             .status(),
-        403
+        404 // #80: a server you aren't in is hidden
     );
     for when in [
         at(TimeDelta::hours(-1)),

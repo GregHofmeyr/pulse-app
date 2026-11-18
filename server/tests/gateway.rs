@@ -118,9 +118,10 @@ fn msg(channel: ChannelId, content: &str) -> Message {
 async fn audience_table() {
     let app = spawn().await;
     let (a_id, a) = register(&app, "alex").await;
-    let (b_id, _) = register(&app, "sam").await;
+    let (b_id, b) = register(&app, "sam").await;
     let (c_id, _) = register(&app, "jo").await;
     let s = create_server(&app, &a, "Main").await;
+    assert_eq!(join_server(&app, &b, s.id).await.status(), 200);
     let text = general(&app, &a, s.id).await;
     let dm = create_dm(&app, &a, &[b_id]).await;
     let group = create_dm(&app, &a, &[b_id, c_id]).await;
@@ -133,7 +134,8 @@ async fn audience_table() {
                 message: msg(text.id, "hi"),
                 nonce: None,
             },
-            Audience::Everyone,
+            // the server's members only (#80): jo isn't in it
+            set(&[a_id, b_id]),
         ),
         (
             "dm message",
@@ -189,7 +191,8 @@ async fn audience_table() {
         (
             "server created",
             Event::ServerCreated { server: s.clone() },
-            Audience::Everyone,
+            // #80: its members, who are its creator alone when it's made
+            set(&[a_id, b_id]),
         ),
         (
             // published once the channel is gone: it can't be looked up, and needn't be
@@ -198,7 +201,25 @@ async fn audience_table() {
                 channel_id: ChannelId::new(),
                 server_id: s.id,
             },
-            Audience::Everyone,
+            set(&[a_id, b_id]),
+        ),
+        (
+            // the one who left hears it too, so their devices drop the server (#80)
+            "member left",
+            Event::MemberLeft {
+                server_id: s.id,
+                user_id: c_id,
+                removed_by: None,
+            },
+            set(&[a_id, b_id, c_id]),
+        ),
+        (
+            "server sound deleted",
+            Event::SoundDeleted {
+                server_id: s.id,
+                sound_id: "x".into(),
+            },
+            set(&[a_id, b_id]),
         ),
         (
             "unknown channel",
@@ -306,6 +327,7 @@ async fn message_event_reaches_server_members() {
     let (_, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
     let s = create_server(&app, &a, "Main").await;
+    assert_eq!(join_server(&app, &b, s.id).await.status(), 200);
     let g = general(&app, &a, s.id).await;
     let (mut wb, _) = hello(&app, &b).await;
     let sent = send(&app, &a, g.id, "hello all").await;
@@ -322,6 +344,10 @@ async fn outsider_receives_zero_private_events() {
     let (b_id, b) = register(&app, "sam").await;
     let (_, c) = register(&app, "jo").await;
     let s = create_server(&app, &a, "Main").await;
+    // all three share the server (#80: its marker reaches only members); the DM is alex and sam's
+    for t in [&b, &c] {
+        assert_eq!(join_server(&app, t, s.id).await.status(), 200);
+    }
     let g = general(&app, &a, s.id).await;
     let (mut wa, _) = hello(&app, &a).await;
     let (mut wb, _) = hello(&app, &b).await;
@@ -391,6 +417,7 @@ async fn slow_client_does_not_block_others() {
     let (slow_id, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
     let s = create_server(&app, &a, "Main").await;
+    assert_eq!(join_server(&app, &b, s.id).await.status(), 200);
     let g = general(&app, &a, s.id).await;
     let (_slow, _) = hello(&app, &a).await; // never read again
     let (mut fast, _) = hello(&app, &b).await;
@@ -503,7 +530,7 @@ async fn ready_groups_channels_and_members_per_server_and_conversation() {
     let s2 = create_server(&app, &sam, "Two").await;
     let s3 = create_server(&app, &riley, "Three").await; // only riley
     for (tok, srv) in [(&sam, s1.id), (&riley, s1.id), (&alex, s2.id)] {
-        let r = post_json(&app, tok, &format!("/servers/{srv}/join"), json!({})).await;
+        let r = join_server(&app, tok, srv).await;
         assert!(r.status().is_success());
     }
     nickname_and_channels(&app, &alex, s1.id, &["b", "a", "c"]).await;
@@ -532,8 +559,14 @@ async fn ready_groups_channels_and_members_per_server_and_conversation() {
     .await
     .unwrap();
 
-    // Same order and content as the per-server / per-conversation queries.
-    let servers = all_servers(&app.db).await.unwrap();
+    // Same order and content as the per-server / per-conversation queries, for the servers alex is in (#80: "Three",
+    // riley's alone, isn't there at all).
+    let servers: Vec<_> = all_servers(&app.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|x| x.id != s3.id)
+        .collect();
     assert_eq!(ready.servers, servers);
     let mut want_channels: Vec<Channel> = vec![];
     let mut want_members: Vec<(ServerId, Vec<Member>)> = vec![];
@@ -563,7 +596,10 @@ async fn ready_groups_channels_and_members_per_server_and_conversation() {
     };
     assert_eq!(names(s1.id), ["Lounge", "a", "b", "c", "general"]);
     assert_eq!(names(s2.id), ["Lounge", "general", "z"]);
-    assert_eq!(names(s3.id), ["Lounge", "general"]);
+    assert!(
+        names(s3.id).is_empty(),
+        "a server alex isn't in is hidden (#80)"
+    );
     let member_ids = |srv: ServerId| -> Vec<pulse_protocol::ids::UserId> {
         let mut v: Vec<_> = ready
             .members
@@ -583,7 +619,7 @@ async fn ready_groups_channels_and_members_per_server_and_conversation() {
     };
     assert_eq!(member_ids(s1.id), sorted(vec![alex_id, sam_id, riley_id]));
     assert_eq!(member_ids(s2.id), sorted(vec![alex_id, sam_id]));
-    assert_eq!(member_ids(s3.id), vec![riley_id]);
+    assert!(ready.members.iter().all(|m| m.server_id != s3.id));
     let nick = ready
         .members
         .iter()

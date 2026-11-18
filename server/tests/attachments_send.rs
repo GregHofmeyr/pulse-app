@@ -21,8 +21,8 @@ async fn world() -> World {
     let alex = register(&app, "alex").await;
     let sam = register(&app, "sam").await;
     let s = create_server(&app, &alex.1, "Main").await;
-    let r = post_json(&app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam.1, s.id).await;
+    assert_eq!(r.status(), 200);
     let text = general(&app, &alex.1, s.id).await;
     World {
         app,
@@ -479,9 +479,9 @@ async fn only_people_in_the_chat_get_links() {
     let (app, t, ch) = (&w.app, &w.alex.1, w.text.id);
     let a = upload(app, t, ch, "a.txt", "text/plain", b"x").await;
     let m = send_ok(app, t, ch, "", &[a]).await;
-    // a server channel is visible to all, so a non-member is refused (as clip links are)
+    // a server you aren't in is hidden (#80): its files are a 404
     let (_, kim) = register(app, "kim").await;
-    assert_eq!(urls(app, &kim, m.id).await.status(), 403);
+    assert_eq!(urls(app, &kim, m.id).await.status(), 404);
     // a DM's files are a 404 to anyone outside it: they can't learn it exists
     let dm = create_dm(app, t, &[w.sam.0]).await;
     let b = upload(app, t, dm.id, "b.txt", "text/plain", b"y").await;
@@ -813,7 +813,7 @@ async fn a_forward_shows_the_originals_files_by_reference_spoilers_and_all() {
     assert_eq!(links.len(), 1);
     assert_eq!(links[0].id, up.id);
     assert!(links[0].url.is_some());
-    assert_eq!(urls(app, &kim, m.id).await.status(), 403);
+    assert_eq!(urls(app, &kim, m.id).await.status(), 404);
     // the original deleted: its files go, and the forward has none
     let r = app
         .http
@@ -840,8 +840,8 @@ async fn a_view_once_file_opens_once_per_recipient() {
     let w = world().await;
     let (app, t, ch) = (&w.app, &w.alex.1, w.text.id);
     let (kim_id, kim) = register(app, "kim").await;
-    let r = post_json(app, &kim, &format!("/servers/{}/join", w.server), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(app, &kim, w.server).await;
+    assert_eq!(r.status(), 200);
     let bytes = webp(100);
     let r = post_json(
         app,

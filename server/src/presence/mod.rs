@@ -56,6 +56,38 @@ impl PresenceView {
     pub fn online(&self) -> bool {
         self.status != PresenceStatus::Offline
     }
+
+    /// What someone who shares no server, DM or group with a person sees of them (#80): offline, never seen, nothing
+    /// they're doing. Changes to presence (and what they listen to or play) reach only people who know them.
+    pub fn stranger() -> Self {
+        Self {
+            status: PresenceStatus::Offline,
+            last_seen_at: None,
+            idle: false,
+            custom: None,
+        }
+    }
+}
+
+/// The people who share a live server, a DM or a group with `user` (#80): the only ones who see their presence, what
+/// they listen to and what they play. The relation is mutual, so it also lists whose presence `user` sees.
+pub async fn known_to(db: &SqlitePool, user: UserId) -> anyhow::Result<HashSet<UserId>> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT b.user_id FROM server_members a
+           JOIN server_members b ON b.server_id = a.server_id
+           JOIN servers sv ON sv.id = a.server_id AND sv.deleted_at IS NULL
+         WHERE a.user_id = ?1
+         UNION
+         SELECT y.user_id FROM channel_members x JOIN channel_members y ON y.channel_id = x.channel_id
+         WHERE x.user_id = ?1",
+    )
+    .bind(user.to_string())
+    .fetch_all(db)
+    .await?;
+    Ok(ids
+        .iter()
+        .map(|i| i.parse())
+        .collect::<Result<HashSet<_>, _>>()?)
 }
 
 impl Subject {

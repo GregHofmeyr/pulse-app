@@ -25,7 +25,7 @@ async fn world(app: &TestApp) -> World {
     let alex = register(app, "alex").await;
     let sam = register(app, "sam").await;
     let s = create_server(app, &alex.1, "Main").await;
-    let r = post_json(app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
+    let r = join_server(app, &sam.1, s.id).await;
     assert!(r.status().is_success());
     let chans: Vec<Channel> = get_json(app, &alex.1, &format!("/servers/{}/channels", s.id)).await;
     let lounge = chans
@@ -105,13 +105,7 @@ async fn setting_it_again_keeps_who_did_it_and_publishes_nothing() {
     let app = spawn().await;
     let w = world(&app).await;
     let kim = register(&app, "kim").await;
-    post_json(
-        &app,
-        &kim.1,
-        &format!("/servers/{}/join", w.server),
-        json!({}),
-    )
-    .await;
+    join_server(&app, &kim.1, w.server).await;
     in_voice(&app, w.lounge.id, w.sam.0);
     set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": true})).await;
     let mut rx = app.hub.register(w.sam.0, String::new()).rx;

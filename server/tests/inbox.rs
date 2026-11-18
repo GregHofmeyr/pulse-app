@@ -67,8 +67,8 @@ async fn fx() -> Fx {
     let (kim, kim_t) = register(&app, "kim").await;
     let s = create_server(&app, &alex_t, "Main").await;
     for t in [&sam_t, &kim_t] {
-        let r = post_json(&app, t, &format!("/servers/{}/join", s.id), json!({})).await;
-        assert_eq!(r.status(), 204);
+        let r = join_server(&app, t, s.id).await;
+        assert_eq!(r.status(), 200);
     }
     let ch = general(&app, &alex_t, s.id).await;
     Fx {

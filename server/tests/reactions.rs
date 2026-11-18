@@ -108,7 +108,7 @@ fn summary(emoji: &str, count: u32, me: bool) -> ReactionSummary {
 }
 
 async fn join(app: &TestApp, token: &str, server: ServerId) {
-    let r = post_json(app, token, &format!("/servers/{server}/join"), json!({})).await;
+    let r = join_server(app, token, server).await;
     assert!(r.status().is_success());
 }
 
@@ -251,11 +251,11 @@ async fn cannot_react_where_you_cannot_see() {
     // Same answer as a message that never existed.
     assert_eq!(react(&app, &kim, MessageId::new(), "👍").await, 404);
 
-    // Server channels are visible to all, but only members take part.
+    // A server you aren't in is hidden (#80): its messages too.
     let srv = create_server(&app, &alex, "Main").await;
     let g = general(&app, &alex, srv.id).await;
     let public = send(&app, &alex, g.id, "hi").await;
-    assert_eq!(react(&app, &kim, public.id, "👍").await, 403);
+    assert_eq!(react(&app, &kim, public.id, "👍").await, 404);
 }
 
 #[tokio::test]

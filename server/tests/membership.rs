@@ -48,7 +48,7 @@ async fn world_with(app: TestApp) -> World {
     let jo = register(&app, "jo").await;
     let s = create_server(&app, &alex.1, "Main").await;
     for who in [&sam, &kim] {
-        assert_eq!(join(&app, &who.1, s.id).await, 204);
+        assert_eq!(join(&app, &who.1, s.id).await, 200);
     }
     let general = general(&app, &alex.1, s.id).await;
     World {
@@ -63,10 +63,7 @@ async fn world_with(app: TestApp) -> World {
 }
 
 async fn join(app: &TestApp, token: &str, server: ServerId) -> u16 {
-    post_json(app, token, &format!("/servers/{server}/join"), json!({}))
-        .await
-        .status()
-        .as_u16()
+    join_server(app, token, server).await.status().as_u16()
 }
 
 async fn leave(app: &TestApp, token: &str, server: ServerId) -> reqwest::Response {
@@ -84,12 +81,16 @@ async fn remove(app: &TestApp, token: &str, server: ServerId, user: UserId) -> u
         .as_u16()
 }
 
+/// Who is in the server, in join order (from the database: a list through the API needs someone in it).
 async fn members(w: &World) -> Vec<UserId> {
-    get_json::<Vec<Member>>(&w.app, &w.alex.1, &format!("/servers/{}/members", w.server))
-        .await
-        .into_iter()
-        .map(|m| m.user.id)
-        .collect()
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT user_id FROM server_members WHERE server_id = ? ORDER BY joined_at, user_id",
+    )
+    .bind(w.server.to_string())
+    .fetch_all(&w.app.db)
+    .await
+    .unwrap();
+    ids.iter().map(|i| i.parse().unwrap()).collect()
 }
 
 async fn count(app: &TestApp, sql: &str, a: &str, b: &str) -> i64 {
@@ -206,7 +207,7 @@ async fn leaving_takes_their_place_but_keeps_their_messages_and_a_rejoin_works()
         json!({"content": "still here?"}),
     )
     .await;
-    assert_eq!(r.status(), 403);
+    assert_eq!(r.status(), 404, "a server they aren't in is hidden (#80)");
     let m = send(&w.app, &w.kim.1, g, "@sam you there?").await;
     assert!(m.mentions.is_empty(), "{:?}", m.mentions);
     let r = w
@@ -217,7 +218,7 @@ async fn leaving_takes_their_place_but_keeps_their_messages_and_a_rejoin_works()
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status(), 403);
+    assert_eq!(r.status(), 404);
 
     // their bookmark of one of its messages reads as unavailable while they're out (#315), and a new one is refused
     let saved: Vec<pulse_protocol::rest::MessageBookmark> =
@@ -233,7 +234,7 @@ async fn leaving_takes_their_place_but_keeps_their_messages_and_a_rejoin_works()
     assert_eq!(r.status(), 404);
 
     // back in by joining, as before, at "all read"
-    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
+    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 200);
     let saved: Vec<pulse_protocol::rest::MessageBookmark> =
         get_json(&w.app, &w.sam.1, "/bookmarks").await;
     assert!(saved.iter().all(|b| b.message.is_some()), "{saved:?}");
@@ -346,7 +347,7 @@ async fn removing_someone_in_a_call_disconnects_them() {
         json!({}),
     )
     .await;
-    assert_eq!(r.status(), 403);
+    assert_eq!(r.status(), 404, "a server they aren't in is hidden (#80)");
 }
 
 async fn transfer(app: &TestApp, token: &str, server: ServerId, to: UserId) -> u16 {
@@ -480,7 +481,7 @@ async fn the_line_skips_an_archived_first_channel() {
 async fn members_carry_when_they_joined() {
     let w = world_with(spawn().await).await;
     let listed: Vec<Member> =
-        get_json(&w.app, &w.jo.1, &format!("/servers/{}/members", w.server)).await;
+        get_json(&w.app, &w.kim.1, &format!("/servers/{}/members", w.server)).await;
     assert_eq!(listed.len(), 3);
     assert!(listed.iter().all(|m| m.joined_at.is_some()), "{listed:?}");
     // joining is in order: the owner first
@@ -488,7 +489,7 @@ async fn members_carry_when_they_joined() {
     assert!(listed[0].joined_at <= listed[1].joined_at);
     // and the live event carries it too
     let mut kim_rx = w.app.hub.register(w.kim.0, String::new()).rx;
-    assert_eq!(join(&w.app, &w.jo.1, w.server).await, 204);
+    assert_eq!(join(&w.app, &w.jo.1, w.server).await, 200);
     let jo_id = w.jo.0;
     let at = wait_for(&mut kim_rx, |e| match e {
         Event::MemberJoined { member, .. } if member.user.id == jo_id => Some(member.joined_at),
@@ -574,257 +575,32 @@ async fn leaving_removes_stray_livekit_participants_by_grant() {
     );
 }
 
-// --- repeat removals (#418): the third removal of the same person within 48 hours blocks their rejoin until the
-// owner allows them back ---
+// --- invite-only (#80): no rejoin blocks; a removal or a ban is final until someone invites them again ---
 
-async fn blocked(app: &TestApp, token: &str, server: ServerId) -> reqwest::Response {
-    app.http
-        .get(app.url(&format!("/servers/{server}/blocked")))
-        .bearer_auth(token)
-        .send()
-        .await
-        .unwrap()
-}
-
-async fn allow_back(app: &TestApp, token: &str, server: ServerId, user: UserId) -> u16 {
-    app.http
-        .delete(app.url(&format!("/servers/{server}/blocked/{user}")))
-        .bearer_auth(token)
-        .send()
-        .await
-        .unwrap()
-        .status()
-        .as_u16()
-}
-
-/// alex removes sam `times` times, sam rejoining after each but the last.
-async fn remove_sam(w: &World, times: usize) {
-    for i in 0..times {
-        assert_eq!(remove(&w.app, &w.alex.1, w.server, w.sam.0).await, 204);
-        if i + 1 < times {
-            assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204, "rejoin {i}");
-        }
+#[tokio::test]
+async fn removing_someone_again_and_again_never_blocks_a_new_invite() {
+    // The rejoin block (#418) is gone with the open Join: a removed person is back only through an invite, however
+    // often they were removed, and the owner bans to keep them out.
+    let w = world_with(spawn().await).await;
+    for i in 0..4 {
+        assert_eq!(
+            remove(&w.app, &w.alex.1, w.server, w.sam.0).await,
+            204,
+            "removal {i}"
+        );
+        assert_eq!(
+            join(&w.app, &w.sam.1, w.server).await,
+            200,
+            "invited back {i}"
+        );
     }
-}
-
-async fn blocked_ids(w: &World) -> Vec<UserId> {
-    let r = blocked(&w.app, &w.alex.1, w.server).await;
-    assert_eq!(r.status(), 200);
-    r.json::<Vec<pulse_protocol::rest::ServerBlock>>()
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|b| b.user_id)
-        .collect()
-}
-
-#[tokio::test]
-async fn two_removals_still_allow_a_rejoin() {
-    let w = world_with(spawn().await).await;
-    remove_sam(&w, 2).await;
-    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
-    assert!(blocked_ids(&w).await.is_empty());
-    // leaving doesn't count
-    assert_eq!(leave(&w.app, &w.sam.1, w.server).await.status(), 204);
-    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
-}
-
-#[tokio::test]
-async fn the_third_removal_in_48_hours_blocks_a_rejoin() {
-    let w = world_with(spawn().await).await;
-    remove_sam(&w, 3).await;
-    let r = post_json(
-        &w.app,
-        &w.sam.1,
-        &format!("/servers/{}/join", w.server),
-        json!({}),
-    )
-    .await;
-    assert_eq!(r.status(), 403);
-    let body: serde_json::Value = r.json().await.unwrap();
-    assert_eq!(
-        body["message"],
-        "You can't rejoin this server right now. Ask the owner."
-    );
-    assert!(!members(&w).await.contains(&w.sam.0));
-    assert_eq!(blocked_ids(&w).await, vec![w.sam.0]);
-    // only sam: kim still comes and goes
-    assert_eq!(remove(&w.app, &w.alex.1, w.server, w.kim.0).await, 204);
-    assert_eq!(join(&w.app, &w.kim.1, w.server).await, 204);
-}
-
-#[tokio::test]
-async fn removals_older_than_48_hours_dont_count() {
-    let w = world_with(spawn().await).await;
-    remove_sam(&w, 2).await;
-    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
-    let old = (chrono::Utc::now() - chrono::TimeDelta::hours(49))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    sqlx::query("UPDATE server_removals SET removed_at = ?")
-        .bind(&old)
-        .execute(&w.app.db)
-        .await
-        .unwrap();
-    assert_eq!(remove(&w.app, &w.alex.1, w.server, w.sam.0).await, 204);
-    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
-    assert_eq!(
-        count(
-            &w.app,
-            "SELECT COUNT(*) FROM server_removals WHERE server_id = ? AND user_id = ?",
-            &w.server.to_string(),
-            &w.sam.0.to_string()
-        )
-        .await,
-        1,
-        "the old ones are pruned"
-    );
-}
-
-#[tokio::test]
-async fn a_block_outlives_48_hours_until_the_owner_allows_them_back() {
-    let w = world_with(spawn().await).await;
-    remove_sam(&w, 3).await;
-    let old = (chrono::Utc::now() - chrono::TimeDelta::days(5))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    for table in [
-        "server_removals SET removed_at",
-        "server_blocks SET blocked_at",
-    ] {
-        sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE {table} = ?")))
-            .bind(&old)
-            .execute(&w.app.db)
-            .await
-            .unwrap();
-    }
-    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 403, "still blocked");
-    assert_eq!(allow_back(&w.app, &w.alex.1, w.server, w.sam.0).await, 204);
-    assert!(blocked_ids(&w).await.is_empty());
-    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
-    assert!(members(&w).await.contains(&w.sam.0));
-    // allowing back cleared the counted removals: one more removal doesn't block again
-    assert_eq!(remove(&w.app, &w.alex.1, w.server, w.sam.0).await, 204);
-    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
-    assert_eq!(
-        allow_back(&w.app, &w.alex.1, w.server, w.sam.0).await,
-        404,
-        "not blocked"
-    );
-}
-
-#[tokio::test]
-async fn only_the_owner_sees_or_lifts_blocks() {
-    let w = world_with(spawn().await).await;
-    remove_sam(&w, 3).await;
-    assert_eq!(blocked(&w.app, &w.kim.1, w.server).await.status(), 403);
-    assert_eq!(allow_back(&w.app, &w.kim.1, w.server, w.sam.0).await, 403);
-    assert_eq!(allow_back(&w.app, &w.sam.1, w.server, w.sam.0).await, 403);
-    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 403);
-    // a new owner inherits them
     let r = w
         .app
         .http
-        .put(w.app.url(&format!("/servers/{}/owner", w.server)))
+        .get(w.app.url(&format!("/servers/{}/blocked", w.server)))
         .bearer_auth(&w.alex.1)
-        .json(&json!({ "user_id": w.kim.0 }))
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status(), 204);
-    assert_eq!(allow_back(&w.app, &w.alex.1, w.server, w.sam.0).await, 403);
-    assert_eq!(allow_back(&w.app, &w.kim.1, w.server, w.sam.0).await, 204);
-    assert_eq!(join(&w.app, &w.sam.1, w.server).await, 204);
-}
-
-/// `token`'s Ready, from a real gateway connection.
-async fn ready_of(app: &TestApp, token: &str) -> pulse_protocol::gateway::Ready {
-    use futures::{SinkExt, StreamExt};
-    use tokio_tungstenite::tungstenite::Message as Ws;
-    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
-        .await
-        .unwrap()
-        .0;
-    let hello = pulse_protocol::gateway::ClientFrame::Hello {
-        token: token.into(),
-        client_version: pulse_protocol::PROTOCOL_VERSION,
-    };
-    ws.send(Ws::text(serde_json::to_string(&hello).unwrap()))
-        .await
-        .unwrap();
-    loop {
-        let m = tokio::time::timeout(Duration::from_secs(3), ws.next())
-            .await
-            .expect("Ready arrives")
-            .unwrap()
-            .unwrap();
-        if let Ws::Text(t) = m
-            && let Ok(ServerFrame::Ready(r)) = serde_json::from_str::<ServerFrame>(&t)
-        {
-            return r;
-        }
-    }
-}
-
-#[tokio::test]
-async fn a_block_and_an_allow_back_tell_the_owners_devices_and_the_person() {
-    // #431: the owner's devices hear `ServerBlocksChanged` (an open Members pane asks again) when a removal blocks
-    // someone and when they allow them back; the person hears `RejoinBlockChanged` and has it in Ready, so they see
-    // why before they press Join. Nobody else hears either.
-    let w = world_with(spawn().await).await;
-    let mut alex_rx = w.app.hub.register(w.alex.0, String::new()).rx;
-    let mut sam_rx = w.app.hub.register(w.sam.0, String::new()).rx;
-    let mut kim_rx = w.app.hub.register(w.kim.0, String::new()).rx;
-    assert!(ready_of(&w.app, &w.sam.1).await.rejoin_blocked.is_empty());
-
-    remove_sam(&w, 3).await;
-    let server = w.server;
-    wait_for(&mut alex_rx, |e| match e {
-        Event::ServerBlocksChanged { user_id, server_id } if server_id == server => {
-            assert_eq!(user_id, w.alex.0);
-            Some(())
-        }
-        _ => None,
-    })
-    .await;
-    let blocked = wait_for(&mut sam_rx, |e| match e {
-        Event::RejoinBlockChanged {
-            server_id, blocked, ..
-        } if server_id == server => Some(blocked),
-        _ => None,
-    })
-    .await;
-    assert!(blocked);
-    assert_eq!(
-        ready_of(&w.app, &w.sam.1).await.rejoin_blocked,
-        vec![server]
-    );
-    assert!(ready_of(&w.app, &w.kim.1).await.rejoin_blocked.is_empty());
-
-    assert_eq!(allow_back(&w.app, &w.alex.1, server, w.sam.0).await, 204);
-    wait_for(&mut alex_rx, |e| {
-        matches!(e, Event::ServerBlocksChanged { server_id, .. } if server_id == server)
-            .then_some(())
-    })
-    .await;
-    let blocked = wait_for(&mut sam_rx, |e| match e {
-        Event::RejoinBlockChanged {
-            server_id, blocked, ..
-        } if server_id == server => Some(blocked),
-        _ => None,
-    })
-    .await;
-    assert!(!blocked);
-    assert!(ready_of(&w.app, &w.sam.1).await.rejoin_blocked.is_empty());
-
-    // kim heard neither
-    while let Ok(f) = kim_rx.try_recv() {
-        if let ServerFrame::Event(e) = f {
-            assert!(
-                !matches!(
-                    e,
-                    Event::ServerBlocksChanged { .. } | Event::RejoinBlockChanged { .. }
-                ),
-                "{e:?}"
-            );
-        }
-    }
+    assert_eq!(r.status(), 404, "the rejoin block list is gone");
 }

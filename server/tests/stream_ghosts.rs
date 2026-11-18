@@ -80,7 +80,7 @@ async fn world(app: &TestApp) -> World {
     let jo = register(app, "jo").await;
     let s = create_server(app, &alex.1, "Main").await;
     for who in [&sam, &kim] {
-        let r = post_json(app, &who.1, &format!("/servers/{}/join", s.id), json!({})).await;
+        let r = join_server(app, &who.1, s.id).await;
         assert!(r.status().is_success());
     }
     let chans: Vec<Channel> = get_json(app, &alex.1, &format!("/servers/{}/channels", s.id)).await;
@@ -323,9 +323,9 @@ async fn who_may_watch_as_a_ghost() {
         watch(&app, &w.kim.1, ch, w.alex.0, true).await.status(),
         403
     );
-    // not in the server: no
-    assert_eq!(ticket(&app, &w.jo.1, ch, "v", true).await.status(), 403);
-    assert_eq!(watch(&app, &w.jo.1, ch, w.alex.0, true).await.status(), 403);
+    // not in the server: no (it's hidden from them: 404, #80)
+    assert_eq!(ticket(&app, &w.jo.1, ch, "v", true).await.status(), 404);
+    assert_eq!(watch(&app, &w.jo.1, ch, w.alex.0, true).await.status(), 404);
     // a server member out of the call: yes
     assert_eq!(ticket(&app, &w.sam.1, ch, "v", true).await.status(), 200);
     assert_eq!(
@@ -802,8 +802,8 @@ async fn leaving_or_being_removed_ends_their_stream_room_connections() {
     );
     assert!(app.streams.get(ch, w.alex.0).unwrap().viewers.is_empty());
     assert!(!app.voice_members(ch).contains(&w.kim.0));
-    // a stream ticket is refused now
-    assert_eq!(ticket(&app, &w.kim.1, ch, "v", false).await.status(), 403);
+    // a stream ticket is refused now (the server is hidden from them: 404, #80)
+    assert_eq!(ticket(&app, &w.kim.1, ch, "v", false).await.status(), 404);
 }
 
 #[tokio::test]

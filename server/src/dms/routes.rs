@@ -298,15 +298,18 @@ async fn add_members(
     s.hub
         .publish(&s.db, Event::ChannelCreated { channel })
         .await; // reaches the newcomers too
+    let members = members_of(&s.db, id).await?;
     s.hub
         .publish(
             &s.db,
             Event::GroupMembersChanged {
                 channel_id: id,
-                user_ids: members_of(&s.db, id).await?,
+                user_ids: members.clone(),
             },
         )
         .await;
+    // the newcomers share a conversation with everyone in it now: presence both ways (#80)
+    s.hub.resync(&s.db, members).await;
     let mut names = Vec::new();
     for u in &new {
         names.push(shown_name(&s.db, *u).await?);
@@ -442,17 +445,22 @@ async fn announce_removal(
         )
         .await;
     if emptied {
+        s.hub.resync(&s.db, [user]).await; // they share this group with nobody now (#80)
         return Ok(());
     }
+    let members = members_of(&s.db, id).await?;
     s.hub
         .publish(
             &s.db,
             Event::GroupMembersChanged {
                 channel_id: id,
-                user_ids: members_of(&s.db, id).await?,
+                user_ids: members.clone(),
             },
         )
         .await;
+    // they no longer share this group: presence both ways (#80)
+    let both: Vec<UserId> = members.into_iter().chain([user]).collect();
+    s.hub.resync(&s.db, both).await;
     let (content, payload) = if user == me {
         (
             format!("{} left", shown_name(&s.db, me).await?),

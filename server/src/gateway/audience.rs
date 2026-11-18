@@ -3,14 +3,14 @@
 use std::collections::HashSet;
 
 use pulse_protocol::gateway::Event;
-use pulse_protocol::ids::UserId;
+use pulse_protocol::ids::{ServerId, UserId};
 use sqlx::SqlitePool;
 
 use crate::access::load_channel;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Audience {
-    /// Every connected user (server-scoped data; all servers are public to members of the group).
+    /// Every connected user: things about nobody's server or conversation (a new account, a profile).
     Everyone,
     /// Exactly these users. Empty means nobody.
     Users(HashSet<UserId>),
@@ -38,16 +38,30 @@ pub async fn audience_for(db: &SqlitePool, event: &Event) -> anyhow::Result<Audi
     ) {
         return Ok(Audience::Users(HashSet::new()));
     }
+    // A server-level event reaches that server's members only (#80): servers are private. Someone who just left (or
+    // was removed) hears it too, so their devices drop the server.
+    if let Some(server) = event.server_scope() {
+        let mut members = server_members(db, server).await?;
+        if let Event::MemberLeft { user_id, .. } = event {
+            members.insert(*user_id);
+        }
+        return Ok(Audience::Users(members));
+    }
     let Some(channel_id) = event.channel_id() else {
-        // ServerCreated / MemberJoined: server-level, public.
+        // About no server or conversation: a new account, a profile.
         return Ok(Audience::Everyone);
     };
     let Some(channel) = load_channel(db, channel_id).await? else {
         // Unknown channel: fail closed.
         return Ok(Audience::Users(HashSet::new()));
     };
+    if let Some(server) = channel.server_id {
+        // a server channel: its server's members (#80)
+        return Ok(Audience::Users(server_members(db, server).await?));
+    }
     if !channel.kind.is_private() {
-        return Ok(Audience::Everyone);
+        // a channel in no server that isn't a conversation: none exist, so fail closed
+        return Ok(Audience::Users(HashSet::new()));
     }
     let members: Vec<String> =
         sqlx::query_scalar("SELECT user_id FROM channel_members WHERE channel_id = ?")
@@ -60,4 +74,15 @@ pub async fn audience_for(db: &SqlitePool, event: &Event) -> anyhow::Result<Audi
             .map(|m| m.parse())
             .collect::<Result<_, _>>()?,
     ))
+}
+
+/// Everyone in `server`, deleted or not: a deleted server's events (its delete, its restore) reach the members it
+/// keeps.
+async fn server_members(db: &SqlitePool, server: ServerId) -> anyhow::Result<HashSet<UserId>> {
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT user_id FROM server_members WHERE server_id = ?")
+            .bind(server.to_string())
+            .fetch_all(db)
+            .await?;
+    Ok(ids.iter().map(|m| m.parse()).collect::<Result<_, _>>()?)
 }

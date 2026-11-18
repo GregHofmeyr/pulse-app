@@ -79,6 +79,7 @@ async fn last_seen_only_when_last_connection_closes() {
     let app = spawn().await;
     let (a_id, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
+    acquaint(&app, &a, &[&b]).await; // they share a server: presence reaches them (#80)
     let (mut watcher, _) = hello(&app, &b).await;
     let (ws1, _) = hello(&app, &a).await;
     let (ws2, _) = hello(&app, &a).await;
@@ -164,17 +165,7 @@ async fn joining_a_server_starts_all_read() {
     for i in 0..5 {
         send(&app, &a, g.id, &format!("old {i}")).await;
     }
-    assert_eq!(
-        post_json(
-            &app,
-            &b,
-            &format!("/servers/{}/join", s.id),
-            serde_json::json!({})
-        )
-        .await
-        .status(),
-        204
-    );
+    assert_eq!(join_server(&app, &b, s.id).await.status(), 200);
     let (_ws, ready) = hello(&app, &b).await;
     assert_eq!(
         read_state(&ready, g.id).await.unread,
@@ -299,13 +290,7 @@ async fn mentions_only_people_who_can_see_the_channel() {
         m2.mentions.is_empty(),
         "server channels: its members only (#371)"
     );
-    let r = post_json(
-        &app,
-        &c,
-        &format!("/servers/{}/join", s.id),
-        serde_json::json!({}),
-    )
-    .await;
+    let r = join_server(&app, &c, s.id).await;
     assert!(r.status().is_success());
     let m2 = send(&app, &a, g.id, "@jo @jo look").await;
     assert_eq!(m2.mentions, vec![c_id], "a member; deduped");
@@ -641,6 +626,7 @@ async fn logout_with_two_sockets_announces_offline_once() {
     let app = spawn().await;
     let (a_id, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
+    acquaint(&app, &a, &[&b]).await; // they share a server: presence reaches them (#80)
     let (mut watcher, _) = hello(&app, &b).await;
     let (_ws1, _) = hello(&app, &a).await;
     let (_ws2, _) = hello(&app, &a).await;
@@ -677,8 +663,9 @@ async fn logout_with_two_sockets_announces_offline_once() {
 async fn late_offline_after_a_reconnect_is_not_announced() {
     use pulse_server::gateway::hub::Hub;
     let app = spawn().await;
-    let (a_id, _) = register(&app, "alex").await;
-    let (b_id, _) = register(&app, "sam").await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    acquaint(&app, &a, &[&b]).await; // they share a server: presence reaches them (#80)
     let hub = Hub::default();
     let mut watcher = hub.register(b_id, "w".into());
     let old = hub.register(a_id, "t".into());
@@ -706,8 +693,9 @@ async fn late_offline_after_a_reconnect_is_not_announced() {
 async fn presence_synced_while_a_logout_closes_sockets_goes_offline_once() {
     use pulse_server::gateway::hub::Hub;
     let app = spawn().await;
-    let (a_id, _) = register(&app, "alex").await;
-    let (b_id, _) = register(&app, "sam").await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    acquaint(&app, &a, &[&b]).await; // they share a server: presence reaches them (#80)
     let hub = Hub::default();
     let mut watcher = hub.register(b_id, "w".into());
     let one = hub.register(a_id, "t".into());

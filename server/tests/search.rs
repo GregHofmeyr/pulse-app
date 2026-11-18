@@ -19,7 +19,7 @@ async fn setup() -> Fx {
     let alex = register(&app, "alex").await;
     let sam = register(&app, "sam").await;
     let s = create_server(&app, &alex.1, "Main").await;
-    post_json(&app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
+    join_server(&app, &sam.1, s.id).await;
     let general = general(&app, &alex.1, s.id).await;
     Fx {
         app,
@@ -612,13 +612,7 @@ async fn everywhere_searches_exactly_what_you_can_read() {
     let mut want = Vec::new();
     want.push(send(&f.app, &f.sam.1, f.general.id, "pizza main").await.id);
     let second = create_server(&f.app, &f.sam.1, "Second").await;
-    post_json(
-        &f.app,
-        &f.alex.1,
-        &format!("/servers/{}/join", second.id),
-        json!({}),
-    )
-    .await;
+    join_server(&f.app, &f.alex.1, second.id).await;
     let second_general = general(&f.app, &f.sam.1, second.id).await;
     want.push(
         send(&f.app, &f.sam.1, second_general.id, "pizza second")

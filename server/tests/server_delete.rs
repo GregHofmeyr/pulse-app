@@ -53,8 +53,8 @@ async fn world_with(app: TestApp) -> World {
     let jo = register(&app, "jo").await;
     let s = create_server(&app, &alex.1, "Main").await;
     assert_eq!(s.owner_id, Some(alex.0), "a new server says who owns it");
-    let r = post_json(&app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam.1, s.id).await;
+    assert_eq!(r.status(), 200);
     World {
         app,
         alex,
@@ -146,7 +146,8 @@ async fn a_deleted_server_is_gone_for_everyone_but_kept_whole() {
     let first = send(&w.app, &w.alex.1, general.id, "findable words @sam").await;
     let live = channels(&w).await;
     assert!(live.len() >= 2);
-    let mut rx = w.app.hub.register(w.jo.0, String::new()).rx;
+    // sam, in it, hears it go (#80: only its members hear anything of it)
+    let mut rx = w.app.hub.register(w.sam.0, String::new()).rx;
     let kim = register(&w.app, "kim").await;
 
     assert_eq!(delete_server(&w, &w.alex.1, w.server, "Main").await, 204);
@@ -226,14 +227,8 @@ async fn a_deleted_server_is_gone_for_everyone_but_kept_whole() {
         status(get(format!("/servers/{}/sounds", w.server)), &w.alex.1).await,
         403
     );
-    // Nobody can join it (Pulse has no per-server invites: joining is the way in).
-    let r = post_json(
-        &w.app,
-        &kim.1,
-        &format!("/servers/{}/join", w.server),
-        json!({}),
-    )
-    .await;
+    // Nobody can join it, even with an invite.
+    let r = join_server(&w.app, &kim.1, w.server).await;
     assert_eq!(r.status(), 404);
     let r = post_json(
         &w.app,
@@ -404,7 +399,7 @@ async fn the_owner_restores_and_everyone_gets_it_back() {
     assert_eq!(back.id, w.server);
     assert_eq!(back.owner_id, Some(w.alex.0));
 
-    match next_event(&mut jo_rx).await {
+    match next_event(&mut sam_rx).await {
         Event::ServerRestored { snapshot } => {
             assert_eq!(snapshot.server.id, w.server);
             assert!(snapshot.channels.iter().any(|c| c.id == general.id));
@@ -432,6 +427,13 @@ async fn the_owner_restores_and_everyone_gets_it_back() {
         }
     }
 
+    // jo, not in it, heard nothing of the restore (#80)
+    while let Ok(f) = jo_rx.try_recv() {
+        assert!(
+            !matches!(f, ServerFrame::Event(Event::ServerRestored { .. })),
+            "an outsider heard the restore"
+        );
+    }
     let listed: Vec<Server> = get_json(&w.app, &w.sam.1, "/servers").await;
     assert!(listed.iter().any(|s| s.id == w.server));
     let ready = ready_for(&w, w.sam.0).await;
@@ -833,11 +835,12 @@ async fn a_write_that_raced_the_delete_writes_nothing() {
     let sound_hash = "d".repeat(64);
     insert_media(&w.app, &emoji_hash, "emoji").await;
     insert_media(&w.app, &sound_hash, "sound").await;
+    let invite = owner_invite(&w.app, s).await;
     let cases: Vec<(&str, &str, String, serde_json::Value, &str)> = vec![
         (
             "join",
             &w.jo.1,
-            format!("/servers/{s}/join"),
+            format!("/invites/{invite}/accept"),
             json!({}),
             "server_members",
         ),

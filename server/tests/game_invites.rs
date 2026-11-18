@@ -268,13 +268,7 @@ async fn an_invite_hands_where_to_join_only_to_the_chat_and_never_in_a_message()
 
     // a forward carries the words only: no card, nothing to join, anywhere it goes
     let server = create_server(&app, &sam_t, "Gamers").await;
-    let r = post_json(
-        &app,
-        &kim_t,
-        &format!("/servers/{}/join", server.id),
-        json!({}),
-    )
-    .await;
+    let r = join_server(&app, &kim_t, server.id).await;
     assert!(r.status().is_success());
     let general = general(&app, &sam_t, server.id).await;
     let r = post_json(

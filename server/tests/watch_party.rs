@@ -37,8 +37,8 @@ async fn world() -> World {
     let jo = register(&app, "jo").await;
     let s = create_server(&app, &alex.1, "Main").await;
     for who in [&sam, &kim] {
-        let r = post_json(&app, &who.1, &format!("/servers/{}/join", s.id), json!({})).await;
-        assert_eq!(r.status(), 204);
+        let r = join_server(&app, &who.1, s.id).await;
+        assert_eq!(r.status(), 200);
     }
     let chans: Vec<Channel> = get_json(&app, &alex.1, &format!("/servers/{}/channels", s.id)).await;
     let lounge = chans
@@ -206,9 +206,9 @@ async fn starting_one_tells_everyone_and_late_joiners_get_it_in_ready() {
 #[tokio::test]
 async fn only_people_in_the_call_and_only_youtube_ids() {
     let w = world().await;
-    // kim is in the server but not the call; jo isn't even in the server
+    // kim is in the server but not the call; jo isn't even in the server (hidden from them: 404, #80)
     assert_eq!(w.start(&w.kim.1, V).await.status(), 403);
-    assert_eq!(w.start(&w.jo.1, V).await.status(), 403);
+    assert_eq!(w.start(&w.jo.1, V).await.status(), 404);
     for bad in ["short", "dQw4w9WgXcQ&x", "../../admin", "dQw4w9WgX\"Q"] {
         assert_eq!(w.start(&w.alex.1, bad).await.status(), 400, "{bad}");
     }

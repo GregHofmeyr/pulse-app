@@ -1,6 +1,6 @@
 //! What someone can still change after they leave a server or are removed from it (security review, post-0.2.12).
-//! Its channels stay readable to everyone, but their old messages, polls and plans are no longer theirs to edit;
-//! deleting their own message stays allowed (#418).
+//! Its channels are hidden from them now (#80: 404, as for a server that isn't there), so their old messages, polls and
+//! plans are no longer theirs to edit; deleting their own message stays allowed (#418).
 mod common;
 
 use common::*;
@@ -22,8 +22,8 @@ async fn world() -> World {
     let alex = register(&app, "alex").await;
     let sam = register(&app, "sam").await;
     let s = create_server(&app, &alex.1, "Main").await;
-    let r = post_json(&app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam.1, s.id).await;
+    assert_eq!(r.status(), 200);
     let general = general(&app, &alex.1, s.id).await;
     World {
         app,
@@ -130,7 +130,7 @@ async fn a_removed_member_cant_edit_or_close_their_poll() {
         json!({"question": "Burgers?", "options": [{"text": "yes", "from": 0}, {"text": "no", "from": 1}]}),
     )
     .await;
-    assert_eq!(r.status(), 403, "edit");
+    assert_eq!(r.status(), 404, "edit");
     let r = post_json(
         &w.app,
         &w.sam.1,
@@ -138,7 +138,7 @@ async fn a_removed_member_cant_edit_or_close_their_poll() {
         json!({}),
     )
     .await;
-    assert_eq!(r.status(), 403, "close");
+    assert_eq!(r.status(), 404, "close");
     let (question, closed): (String, Option<String>) =
         sqlx::query_as("SELECT question, closed_at FROM polls WHERE message_id = ?")
             .bind(poll.to_string())
@@ -162,7 +162,7 @@ async fn a_removed_member_cant_edit_or_cancel_their_plan() {
         json!({"title": "Moved", "starts_at": starts}),
     )
     .await;
-    assert_eq!(r.status(), 403, "edit");
+    assert_eq!(r.status(), 404, "edit");
     let r = post_json(
         &w.app,
         &w.sam.1,
@@ -170,7 +170,7 @@ async fn a_removed_member_cant_edit_or_cancel_their_plan() {
         json!({}),
     )
     .await;
-    assert_eq!(r.status(), 403, "cancel");
+    assert_eq!(r.status(), 404, "cancel");
     let (title, cancelled): (String, Option<String>) =
         sqlx::query_as("SELECT title, cancelled_at FROM plans WHERE message_id = ?")
             .bind(plan.to_string())

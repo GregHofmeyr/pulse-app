@@ -696,13 +696,7 @@ async fn only_the_owner_picks_one_of_the_servers_text_channels() {
     let server = create_server(&app, &alex, "Gamers").await;
     let other = create_server(&app, &kim, "Elsewhere").await;
     let general = general(&app, &alex, server.id).await;
-    let r = post_json(
-        &app,
-        &sam,
-        &format!("/servers/{}/join", server.id),
-        json!({}),
-    )
-    .await;
+    let r = join_server(&app, &sam, server.id).await;
     assert!(r.status().is_success());
     let path = format!("/servers/{}/achievements-channel", server.id);
     let put = |token: &str, body: serde_json::Value| {
@@ -785,7 +779,7 @@ async fn steam_hours_show_on_profiles_the_board_and_touch_grass() {
     let (_, kim_t) = register(&app, "kim").await;
     let server = create_server(&app, &alex_t, "Gamers").await;
     for t in [&sam_t, &kim_t] {
-        let r = post_json(&app, t, &format!("/servers/{}/join", server.id), json!({})).await;
+        let r = join_server(&app, t, server.id).await;
         assert!(r.status().is_success());
     }
     fake.played_recently(ALEX_STEAM, SPACE, 20 * 60);
@@ -913,13 +907,7 @@ async fn a_public_lobby_or_server_offers_join_to_those_who_see_them_playing() {
     let (alex, alex_t) = linked(&app, &fake, "alex", ALEX_STEAM).await;
     let (_, sam_t) = register(&app, "sam").await;
     let server = create_server(&app, &alex_t, "Gamers").await;
-    let r = post_json(
-        &app,
-        &sam_t,
-        &format!("/servers/{}/join", server.id),
-        json!({}),
-    )
-    .await;
+    let r = join_server(&app, &sam_t, server.id).await;
     assert!(r.status().is_success());
     let mut alex_ws = hello(&app, &alex_t).await;
     let mut sam_ws = hello(&app, &sam_t).await;
@@ -1194,7 +1182,7 @@ async fn achievement_cards_skip_servers_with_someone_you_hide_your_games_from() 
         .fetch_one(&app.db)
         .await
         .unwrap();
-    let r = post_json(&app, &sam_t, &format!("/servers/{gamers}/join"), json!({})).await;
+    let r = join_server(&app, &sam_t, gamers).await;
     assert!(r.status().is_success());
     let other = create_server(&app, &token, "Other").await;
     let other_general = general_of(&app, &token, other.id).await;

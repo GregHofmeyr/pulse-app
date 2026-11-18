@@ -64,8 +64,8 @@ async fn creates_a_quotes_channel() {
     let (alex_id, alex) = register(&app, "alex").await;
     let (sam_id, sam) = register(&app, "sam").await;
     let s = create_server(&app, &alex, "Main").await;
-    let r = post_json(&app, &sam, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam, s.id).await;
+    assert_eq!(r.status(), 200);
 
     let mut ws = hello(&app, &alex).await;
     let ch = create_quotes(&app, &alex, s.id).await;
@@ -110,8 +110,8 @@ async fn joining_gives_a_read_point_in_quotes_channels() {
     let (sam_id, sam) = register(&app, "sam").await;
     let s = create_server(&app, &alex, "Main").await;
     let ch = create_quotes(&app, &alex, s.id).await;
-    let r = post_json(&app, &sam, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam, s.id).await;
+    assert_eq!(r.status(), 200);
     let n: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM read_states WHERE channel_id = ? AND user_id = ?")
             .bind(ch.id.to_string())
@@ -158,9 +158,9 @@ async fn plain_messages_are_refused_in_a_quotes_channel() {
     )
     .await;
     assert_eq!(r.status(), 400);
-    // Not a member of the server: 403, as for a text channel.
+    // Not a member of the server: 404, as for a text channel (#80: a server you aren't in is hidden).
     let r = post_json(&app, &sam, &path, json!({ "content": "hi" })).await;
-    assert_eq!(r.status(), 403);
+    assert_eq!(r.status(), 404);
 }
 
 #[tokio::test]
@@ -549,8 +549,8 @@ async fn fixture() -> Fixture {
     let (alex, alex_t) = register(&app, "alex").await;
     let (sam, sam_t) = register(&app, "sam").await;
     let s = create_server(&app, &alex_t, "Main").await;
-    let r = post_json(&app, &sam_t, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam_t, s.id).await;
+    assert_eq!(r.status(), 200);
     let ch = create_quotes(&app, &alex_t, s.id).await;
     Fixture {
         app,
@@ -901,7 +901,11 @@ async fn quotes_need_a_quotes_channel_and_membership() {
     .await;
     assert_eq!(r.status(), 400, "text channel");
     let (_, jo) = register(&f.app, "jo").await;
-    assert_eq!(f.post(&jo, body.clone()).await.status(), 403, "non-member");
+    assert_eq!(
+        f.post(&jo, body.clone()).await.status(),
+        404,
+        "non-member (#80: hidden)"
+    );
     let dm = create_dm(&f.app, &f.alex_t, &[f.sam]).await;
     let r = post_json(
         &f.app,
@@ -1383,8 +1387,8 @@ async fn only_the_poster_edits() {
     let (_, jo_t) = register(&f.app, "jo").await;
     assert_eq!(
         f.put(&jo_t, m.id, body.clone()).await.status(),
-        403,
-        "not the poster"
+        404,
+        "not the poster, nor in the server (#80: hidden)"
     );
     // Not a quote at all.
     let msg_id = MessageId::new();
@@ -1782,8 +1786,8 @@ async fn replies_page_newest_first() {
         .unwrap();
     assert_eq!(
         r.status(),
-        200,
-        "server channels are readable by any signed-in user, like list"
+        404,
+        "#80: a server you aren't in is hidden, its threads too, like its list"
     );
 }
 
@@ -2263,7 +2267,11 @@ async fn seen_needs_server_membership() {
         .execute(&f.app.db)
         .await
         .unwrap();
-    assert_eq!(f.seen(&f.sam_t, q.id, r.id).await.status(), 403);
+    assert_eq!(
+        f.seen(&f.sam_t, q.id, r.id).await.status(),
+        404,
+        "#80: hidden"
+    );
 }
 
 #[tokio::test]
@@ -2483,14 +2491,8 @@ async fn awards_follow_the_rules() {
 
     // Two awarders, oldest first, absolute in the event.
     let (jo, jo_t) = register(&f.app, "jo").await;
-    let r = post_json(
-        &f.app,
-        &jo_t,
-        &format!("/servers/{}/join", f.server),
-        json!({}),
-    )
-    .await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&f.app, &jo_t, f.server).await;
+    assert_eq!(r.status(), 200);
     let ws = hello(&f.app, &f.sam_t).await;
     assert_eq!(f.award_status(&jo_t, line, true).await, 204);
     assert_eq!(f.award_status(&f.alex_t, line, true).await, 204);
@@ -2507,7 +2509,7 @@ async fn award_refusals() {
     let line = f.line_of(&q, 0);
     // Not a member of the server.
     let (_, out_t) = register(&f.app, "outsider").await;
-    assert_eq!(f.award_status(&out_t, line, true).await, 403);
+    assert_eq!(f.award_status(&out_t, line, true).await, 404, "#80: hidden");
     // Unknown line.
     assert_eq!(f.award_status(&f.alex_t, LineId::new(), true).await, 404);
     // Deleted quote.
@@ -2619,14 +2621,8 @@ async fn concurrent_awards_end_on_the_true_count() {
     let mut tokens = vec![f.alex_t.clone()];
     for n in 0..4 {
         let (_, t) = register(&f.app, &format!("user{n}")).await;
-        let r = post_json(
-            &f.app,
-            &t,
-            &format!("/servers/{}/join", f.server),
-            json!({}),
-        )
-        .await;
-        assert_eq!(r.status(), 204);
+        let r = join_server(&f.app, &t, f.server).await;
+        assert_eq!(r.status(), 200);
         tokens.push(t);
     }
     let mut ws = hello(&f.app, &f.sam_t).await;
@@ -2652,14 +2648,8 @@ async fn concurrent_awards_end_on_the_true_count() {
 async fn everyone_sees_awards_live() {
     let f = fixture().await;
     let (_, jo_t) = register(&f.app, "jo").await;
-    let r = post_json(
-        &f.app,
-        &jo_t,
-        &format!("/servers/{}/join", f.server),
-        json!({}),
-    )
-    .await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&f.app, &jo_t, f.server).await;
+    assert_eq!(r.status(), 200);
     let q = f.quote().await;
     let line = f.line_of(&q, 0);
     let mut ws = hello(&f.app, &jo_t).await;
@@ -3268,14 +3258,8 @@ impl Fixture {
     /// A third member.
     async fn kim(&self) -> (UserId, String) {
         let (kim, t) = register(&self.app, "kim").await;
-        let r = post_json(
-            &self.app,
-            &t,
-            &format!("/servers/{}/join", self.server),
-            json!({}),
-        )
-        .await;
-        assert_eq!(r.status(), 204);
+        let r = join_server(&self.app, &t, self.server).await;
+        assert_eq!(r.status(), 200);
         (kim, t)
     }
 }
@@ -3902,7 +3886,7 @@ async fn another_servers_quotes_stay_out() {
     .await
     .unwrap();
     assert_eq!(f.react(&f.alex_t, theirs.id, "😂").await, 204);
-    assert_eq!(f.react(&f.sam_t, theirs.id, "😂").await, 403);
+    assert_eq!(f.react(&f.sam_t, theirs.id, "😂").await, 404, "#80: hidden");
     f.award(theirs.quote.as_ref().unwrap().lines[0].id, f.sam)
         .await;
 
@@ -4499,8 +4483,8 @@ async fn read_all_is_for_members_only() {
     let (jo, jo_t) = register(&f.app, "jo").await;
     assert_eq!(
         f.read_all(&jo_t, f.ch.id).await.status(),
-        403,
-        "not in the server"
+        404,
+        "not in the server (#80: hidden)"
     );
     let rows: i64 = sqlx::query_scalar(
         "SELECT (SELECT COUNT(*) FROM read_states WHERE user_id = ?1)

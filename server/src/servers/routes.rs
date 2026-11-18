@@ -1,7 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
@@ -97,6 +96,16 @@ pub async fn is_server_member(db: &SqlitePool, server: ServerId, user: UserId) -
             .fetch_optional(db)
             .await?;
     Ok(hit.is_some())
+}
+
+/// `user` must be a member of `server` to see anything in it (#80): 404 when there is no such server or they aren't in
+/// it, so a server you aren't in looks exactly like one that doesn't exist.
+pub(crate) async fn visible_to(db: &SqlitePool, server: ServerId, user: UserId) -> AppResult<()> {
+    if is_server_member(db, server, user).await? {
+        Ok(())
+    } else {
+        Err(AppError::NotFound)
+    }
 }
 
 /// `user` must be a member of `server`: 404 when there is no such server, 403 when not a member.
@@ -311,37 +320,45 @@ pub async fn all_servers(db: &SqlitePool) -> AppResult<Vec<Server>> {
     rows.into_iter().map(server_from_row).collect()
 }
 
-async fn list_servers(State(s): State<AppState>, _: AuthUser) -> AppResult<Json<Vec<Server>>> {
-    Ok(Json(all_servers(&s.db).await?))
+/// The live servers `user` is in (#80: the only ones they see).
+pub async fn server_ids_of(
+    db: &SqlitePool,
+    user: UserId,
+) -> AppResult<std::collections::HashSet<ServerId>> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT m.server_id FROM server_members m JOIN servers s ON s.id = m.server_id AND s.deleted_at IS NULL
+         WHERE m.user_id = ?",
+    )
+    .bind(user.to_string())
+    .fetch_all(db)
+    .await?;
+    ids.iter()
+        .map(|i| Ok(i.parse().map_err(anyhow::Error::from)?))
+        .collect()
 }
 
-async fn join(
+/// `GET /servers`: the servers you're in (#80), as Ready lists them.
+async fn list_servers(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
-    Path(id): Path<ServerId>,
-) -> AppResult<StatusCode> {
-    server_exists(&s.db, id).await?;
-    // A join changes a live Quote of the Year's member count ("N of M"), which its events carry
-    // as absolute state: publish in commit order (in_order, then the write lock).
-    let _order = s.hub.in_order().await;
-    // One transaction, under the write lock: a channel created concurrently is either seen here
-    // (and gets a read point) or sees us as a member in create_channel.
-    let mut tx = crate::db::begin_write(&s.db).await?;
-    server_live_in(&mut tx, id).await?; // a delete committed since the check above (#287)
-    // removed three times within 48 hours: not until the owner allows them back (#418)
-    if crate::servers::membership::blocked_in(&mut tx, id, me).await? {
-        return Err(AppError::ForbiddenMsg(
-            crate::servers::membership::BLOCKED_JOIN.into(),
-        ));
-    }
-    // banned by the owner (#80): no way back in, by Join or by invite
-    if crate::servers::invites::banned(&mut *tx, id, me).await? {
-        return Err(AppError::ForbiddenMsg("You can't join this server.".into()));
-    }
-    let joined = add_member_in(&mut tx, id, me).await?;
-    tx.commit().await?;
-    announce_joined(&s, id, me, joined).await;
-    Ok(StatusCode::NO_CONTENT)
+) -> AppResult<Json<Vec<Server>>> {
+    let mine = server_ids_of(&s.db, me).await?;
+    Ok(Json(
+        all_servers(&s.db)
+            .await?
+            .into_iter()
+            .filter(|x| mine.contains(&x.id))
+            .collect(),
+    ))
+}
+
+/// What the old open Join says now (#80): servers are invite-only. Clients from before it show this text.
+pub const INVITE_ONLY: &str = "Servers are invite-only now. Ask someone for an invite.";
+
+/// `POST /servers/{id}/join`: gone (#80). Servers are invite-only (`POST /invites/{code}/accept`); an older client's
+/// Join gets [`INVITE_ONLY`] for any server, there or not, so it learns nothing.
+async fn join(_: AuthUser, Path(_): Path<ServerId>) -> AppError {
+    AppError::ForbiddenMsg(INVITE_ONLY.into())
 }
 
 /// What [`add_member_in`] did, for [`announce_joined`] once the transaction commits.
@@ -354,7 +371,7 @@ pub(crate) struct Joined {
 }
 
 /// Put `user` in `server` inside the caller's write transaction (`begin_write`, under the hub's `in_order`), the one way
-/// in for Join and invites (#80): one transaction, under the write lock, so a channel created concurrently is either
+/// in, for invites (#80): one transaction, under the write lock, so a channel created concurrently is either
 /// seen here (and gets a read point) or sees them as a member in `create_channel`. They start at "all read": no wall
 /// of old unreads in a server they just joined. A join changes a live Quote of the Year's member count ("N of M"),
 /// which its events carry as absolute state, hence the order.
@@ -389,10 +406,55 @@ pub(crate) async fn add_member_in(
     Ok(Joined { added, qoty })
 }
 
-/// After [`add_member_in`]'s transaction committed (still under `in_order`): `MemberJoined`, and the Quote of the Year's
-/// new count. The join has landed: a failed read-back is logged, and the rest still goes out.
+/// After [`add_member_in`]'s transaction committed (still under `in_order`): `ServerJoined` to the person, `MemberJoined`
+/// to everyone in it, and the Quote of the Year's new count; then presence both ways, as they now share a server. The join has landed: a failed read-back is logged, and the rest still goes out.
 pub(crate) async fn announce_joined(s: &AppState, id: ServerId, me: UserId, joined: Joined) {
     if joined.added {
+        // First the server itself to the person who joined (#80): they couldn't see it until now.
+        match super::deleted::snapshot_of(s, id).await {
+            Ok(snapshot) => {
+                let visible: std::collections::HashSet<ChannelId> =
+                    snapshot.channels.iter().map(|c| c.id).collect();
+                let voice = s
+                    .voice
+                    .rooms()
+                    .into_iter()
+                    .filter(|(c, _)| visible.contains(c))
+                    .map(|(channel_id, members)| pulse_protocol::gateway::VoiceRoom {
+                        channel_id,
+                        members: members
+                            .into_iter()
+                            .map(|(user_id, flags)| pulse_protocol::gateway::VoiceMember {
+                                user_id,
+                                flags,
+                            })
+                            .collect(),
+                    })
+                    .collect();
+                let streams = s
+                    .streams
+                    .all()
+                    .into_iter()
+                    .filter(|x| visible.contains(&x.channel_id))
+                    .collect();
+                s.hub
+                    .publish(
+                        &s.db,
+                        Event::ServerJoined {
+                            user_id: me,
+                            snapshot,
+                            voice,
+                            streams,
+                            stage_shares: s.voice.stage.visible(&visible),
+                            watch_parties: s.voice.watch.visible(&visible),
+                        },
+                    )
+                    .await;
+            }
+            Err(e) => {
+                tracing::error!(error = ?e, server = %id, %me, "couldn't read back a joined server to send");
+            }
+        }
         match member_of(&s.db, id, me).await {
             Ok(member) => {
                 s.hub
@@ -413,6 +475,33 @@ pub(crate) async fn announce_joined(s: &AppState, id: ServerId, me: UserId, join
     if let Some(event) = joined.qoty {
         crate::qoty::publish_updated(s, event).await;
     }
+    if joined.added {
+        resync_presence(s, id, None).await;
+    }
+}
+
+/// Presence both ways between everyone in `server` and `also` (#80): someone joined or left (or the server went or came
+/// back), so who shares a server with whom changed. Never fails; a failed read is logged.
+pub(crate) async fn resync_presence(s: &AppState, server: ServerId, also: Option<UserId>) {
+    let members: Vec<String> = match sqlx::query_scalar(
+        "SELECT user_id FROM server_members WHERE server_id = ?",
+    )
+    .bind(server.to_string())
+    .fetch_all(&s.db)
+    .await
+    {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!(error = ?e, server = %server, "couldn't list members to resync presence");
+            return;
+        }
+    };
+    let users: Vec<UserId> = members
+        .iter()
+        .filter_map(|m| m.parse::<UserId>().ok())
+        .chain(also)
+        .collect();
+    s.hub.resync(&s.db, users).await;
 }
 
 pub async fn server_channels(db: &SqlitePool, id: ServerId) -> AppResult<Vec<Channel>> {
@@ -447,10 +536,10 @@ pub async fn all_server_channels(db: &SqlitePool) -> AppResult<HashMap<ServerId,
 
 async fn list_channels(
     State(s): State<AppState>,
-    _: AuthUser,
+    AuthUser(me): AuthUser,
     Path(id): Path<ServerId>,
 ) -> AppResult<Json<Vec<Channel>>> {
-    server_exists(&s.db, id).await?;
+    visible_to(&s.db, id, me).await?;
     Ok(Json(server_channels(&s.db, id).await?))
 }
 
@@ -607,10 +696,10 @@ pub async fn all_server_members(db: &SqlitePool) -> AppResult<HashMap<ServerId, 
 
 async fn list_members(
     State(s): State<AppState>,
-    _: AuthUser,
+    AuthUser(me): AuthUser,
     Path(id): Path<ServerId>,
 ) -> AppResult<Json<Vec<Member>>> {
-    server_exists(&s.db, id).await?;
+    visible_to(&s.db, id, me).await?;
     Ok(Json(server_members(&s.db, id).await?))
 }
 
@@ -845,10 +934,12 @@ async fn create_dm(
             &s.db,
             Event::GroupMembersChanged {
                 channel_id: ch.id,
-                user_ids: members,
+                user_ids: members.clone(),
             },
         )
         .await;
+    // they share a conversation now: presence both ways (#80)
+    s.hub.resync(&s.db, members).await;
     if kind == ChannelKind::Group {
         let me_name = crate::auth::routes::load_user(&s.db, me)
             .await?

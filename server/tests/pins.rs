@@ -34,8 +34,8 @@ async fn world() -> World {
     let (sam_id, sam) = register(&app, "sam").await;
     let (_, jo) = register(&app, "jo").await;
     let s = create_server(&app, &alex, "Main").await;
-    let r = post_json(&app, &sam, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam, s.id).await;
+    assert_eq!(r.status(), 200);
     let general = general(&app, &alex, s.id).await.id;
     World {
         app,
@@ -129,11 +129,11 @@ async fn pin_list_and_unpin() {
     let p: Pin = r.json().await.unwrap();
     assert!(p.expires_at.is_some());
     assert_eq!(pin(&w.app, &w.alex, b.id, "forever").await.status(), 200);
-    let list = pins(&w.app, &w.jo, w.general).await;
+    let list = pins(&w.app, &w.sam, w.general).await;
     assert_eq!(
         list.iter().map(|p| p.message.id).collect::<Vec<_>>(),
         vec![b.id, a.id],
-        "newest pin first, readable by anyone who can read the channel"
+        "newest pin first, readable by anyone who can read the channel (#80: its members)"
     );
     assert_eq!(list[1].pin.expires_at, p.expires_at);
     assert_eq!(list[0].pin.expires_at, None, "Forever has no end");
@@ -209,10 +209,10 @@ async fn the_pin_posts_a_line_and_events_reach_the_chat() {
 async fn permissions() {
     let w = world().await;
     let a = send(&w.app, &w.alex, w.general, "plan").await;
-    // jo can read the server's channels but isn't in the server: like sending, refused
-    assert_eq!(pin(&w.app, &w.jo, a.id, "hour").await.status(), 403);
+    // jo isn't in the server: it's hidden from them (#80)
+    assert_eq!(pin(&w.app, &w.jo, a.id, "hour").await.status(), 404);
     assert_eq!(pin(&w.app, &w.sam, a.id, "hour").await.status(), 200);
-    assert_eq!(unpin(&w.app, &w.jo, a.id).await, 403);
+    assert_eq!(unpin(&w.app, &w.jo, a.id).await, 404);
 
     // a DM: only its two people
     let dm: Channel = create_dm(&w.app, &w.alex, &[w.sam_id]).await;
@@ -418,7 +418,7 @@ async fn editing_keeps_the_pin_and_messages_carry_it() {
     assert!(edited.pin.is_some(), "the edit's copy still shows the pin");
     let list = pins(&w.app, &w.alex, w.general).await;
     assert_eq!(list[0].message.content, "new plan");
-    let listed = messages(&w.app, &w.jo, w.general).await;
+    let listed = messages(&w.app, &w.sam, w.general).await;
     let m = listed.iter().find(|m| m.id == a.id).unwrap();
     let p = m.pin.as_ref().expect("a listed message carries its pin");
     assert!(p.expires_at.is_some());
@@ -718,7 +718,7 @@ async fn quotes_take_pins_with_a_line_that_says_quote() {
     assert_eq!(line.content, "sam pinned a quote for 1 day");
     assert_eq!(line.pin_line.map(|p| p.message_id), Some(q.id));
 
-    let list = pins(&w.app, &w.jo, quotes.id).await;
+    let list = pins(&w.app, &w.sam, quotes.id).await;
     assert_eq!(list.len(), 1);
     let listed = list[0]
         .message
@@ -729,8 +729,8 @@ async fn quotes_take_pins_with_a_line_that_says_quote() {
     assert_eq!(list[0].message.pin.as_ref(), Some(&list[0].pin));
 
     // the rules of any chat: outsiders refused, replies refused, Forever reads without a length
-    assert_eq!(pin(&w.app, &w.jo, q.id, "hour").await.status(), 403);
-    assert_eq!(unpin(&w.app, &w.jo, q.id).await, 403);
+    assert_eq!(pin(&w.app, &w.jo, q.id, "hour").await.status(), 404); // #80: hidden from outsiders
+    assert_eq!(unpin(&w.app, &w.jo, q.id).await, 404);
     let r = reply(&w, &w.sam, quotes.id, q.id).await;
     assert_eq!(pin(&w.app, &w.alex, r.id, "hour").await.status(), 400);
     assert_eq!(unpin(&w.app, &w.alex, q.id).await, 204);
@@ -776,7 +776,7 @@ async fn clips_take_pins_with_no_line() {
     .unwrap();
     assert_eq!(lines, 0);
 
-    let list = pins(&w.app, &w.jo, clips.id).await;
+    let list = pins(&w.app, &w.sam, clips.id).await;
     assert_eq!(list.len(), 1);
     let clip = list[0].message.clip.as_ref().expect("listed with its clip");
     assert!(!clip.thumb_hash.is_empty(), "with its thumbnail");
@@ -786,7 +786,7 @@ async fn clips_take_pins_with_no_line() {
         get_json(&w.app, &w.sam, &format!("/channels/{}/clips", clips.id)).await;
     assert!(feed.iter().find(|m| m.id == c.id).unwrap().pin.is_some());
 
-    assert_eq!(pin(&w.app, &w.jo, c.id, "hour").await.status(), 403);
+    assert_eq!(pin(&w.app, &w.jo, c.id, "hour").await.status(), 404); // #80: hidden from outsiders
     assert_eq!(pin(&w.app, &w.alex, c.id, "hour").await.status(), 409);
     assert_eq!(pin(&w.app, &w.alex, r.id, "hour").await.status(), 400);
     assert_eq!(unpin(&w.app, &w.alex, c.id).await, 204);

@@ -728,6 +728,9 @@ impl Hub {
     /// told anything new about their presence. Their custom status (#152) is part of the presence view, so it reaches
     /// exactly those who see them online.
     ///
+    /// Only people who share a server, a DM or a group with them see more than [`PresenceView::stranger`] (#80); call it
+    /// again for both sides when that changes ([`Self::resync`]).
+    ///
     /// Then what they're listening to (#275) and playing (#380), by the same rule: only to viewers they look online to
     /// (and to themselves), so going Invisible or hiding from someone takes it from them (`None`) as it takes the dot.
     /// Their game also skips anyone they hide what they're playing from (#436).
@@ -736,6 +739,14 @@ impl Hub {
         let subject = match load_subject(db, user).await {
             Ok(Some(s)) => s,
             Ok(None) => return None,
+            Err(e) => {
+                tracing::error!(error = ?e, "presence not announced");
+                return None;
+            }
+        };
+        // only people who share a server or a conversation with them see any of it (#80)
+        let known = match crate::presence::known_to(db, user).await {
+            Ok(k) => k,
             Err(e) => {
                 tracing::error!(error = ?e, "presence not announced");
                 return None;
@@ -758,7 +769,11 @@ impl Hub {
             let shown = self.inner.listening.latest(&conns, user, true);
             let game = self.shown_playing(&conns, user);
             for (id, c) in conns.iter() {
-                let view = view_for(&subject, c.user, connected, idle, &now);
+                let view = if c.user == user || known.contains(&c.user) {
+                    view_for(&subject, c.user, connected, idle, &now)
+                } else {
+                    PresenceView::stranger()
+                };
                 let sees = c.user == user || view.online();
                 let want = shown.as_ref().filter(|_| sees);
                 if self.inner.listening.tell(user, *id, want) {
@@ -813,6 +828,15 @@ impl Hub {
         (!to.is_empty()).then_some(connected)
     }
 
+    /// [`Self::sync_presence`] for each of `users`: after they start or stop sharing a server or a conversation (#80),
+    /// so each sees the others' presence, or stops seeing it.
+    pub async fn resync(&self, db: &SqlitePool, users: impl IntoIterator<Item = UserId>) {
+        let users: Vec<UserId> = users.into_iter().collect();
+        for user in users {
+            self.sync_presence(db, user).await;
+        }
+    }
+
     /// Everyone in `users` as `viewer` may see them, for the Ready of `viewer`'s connection
     /// `conn`; what it says is what later announcements to that connection are measured against.
     pub async fn people_for(
@@ -824,6 +848,7 @@ impl Hub {
     ) -> anyhow::Result<Vec<Person>> {
         let _order = self.inner.presence.lock().await;
         let all = load_all(db).await?;
+        let known = crate::presence::known_to(db, viewer).await?;
         let now = crate::db::now();
         let conns = self.inner.conns.lock().unwrap();
         let mut announced = self.inner.announced.lock().unwrap();
@@ -832,6 +857,8 @@ impl Hub {
             .map(|(user, last_seen_at)| {
                 let (connected, idle) = live(&conns, user.id);
                 let view = match all.get(&user.id) {
+                    // someone who shares nothing with them (#80)
+                    _ if user.id != viewer && !known.contains(&user.id) => PresenceView::stranger(),
                     Some(s) => view_for(s, viewer, connected, idle, &now),
                     // Someone who registered between the two reads: no status yet.
                     None => PresenceView {

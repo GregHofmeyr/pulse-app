@@ -104,14 +104,8 @@ async fn pair(
     let (a_id, a) = register(app, "alex").await;
     let (b_id, b) = register(app, "sam").await;
     let l = lounge(app, &a).await;
-    let joined = post_json(
-        app,
-        &b,
-        &format!("/servers/{}/join", l.server_id.unwrap()),
-        json!({}),
-    )
-    .await;
-    assert_eq!(joined.status(), 204);
+    let joined = join_server(app, &b, l.server_id.unwrap()).await;
+    assert_eq!(joined.status(), 200);
     app.voice.join(l.id, a_id, "PA_test");
     app.voice.join(l.id, b_id, "PA_test");
     let rx = app.hub.register(b_id, String::new()).rx;
@@ -241,12 +235,12 @@ async fn go_live_broadcasts_stream_started() {
 async fn go_live_requires_being_in_the_voice_channel() {
     let app = spawn().await;
     let (l, _, (_, b), _) = pair(&app).await;
-    // not in the call
+    // not in the call (nor the server, which is hidden from them: 404, #80)
     let (c_id, c) = register(&app, "jo").await;
-    assert_eq!(go_live(&app, &c, l.id, settings()).await.status(), 403);
+    assert_eq!(go_live(&app, &c, l.id, settings()).await.status(), 404);
     // in the call but never joined the server
     app.voice.join(l.id, c_id, "PA_c");
-    assert_eq!(go_live(&app, &c, l.id, settings()).await.status(), 403);
+    assert_eq!(go_live(&app, &c, l.id, settings()).await.status(), 404);
     assert_eq!(go_live(&app, &b, l.id, settings()).await.status(), 200);
 }
 
@@ -359,13 +353,13 @@ async fn watch_adds_a_viewer_and_unwatch_removes_it() {
         Event::ViewersChanged { viewers, .. } => assert!(viewers.is_empty()),
         other => panic!("unexpected {other:?}"),
     }
-    // not in voice
+    // not in voice (nor the server, which is hidden from them: 404, #80)
     let (_, c) = register(&app, "jo").await;
     assert_eq!(
         post_json(&app, &c, &watch, json!({"streamer": a_id}))
             .await
             .status(),
-        403
+        404
     );
 }
 
@@ -431,7 +425,7 @@ async fn unwatch_is_idempotent() {
         post_json(&app, &outsider, &unwatch, json!({"streamer": a_id}))
             .await
             .status(),
-        403
+        404 // a server you aren't in is hidden (#80)
     );
 }
 
@@ -1124,7 +1118,7 @@ async fn preview_needs_server_membership() {
         get_preview(&app, &outsider, l.id, a_id, None)
             .await
             .status(),
-        403
+        404, // a server you aren't in is hidden (#80)
     );
 }
 

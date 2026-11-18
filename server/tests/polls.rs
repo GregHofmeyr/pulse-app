@@ -83,7 +83,7 @@ async fn error(r: reqwest::Response) -> (u16, String) {
 }
 
 async fn join(app: &TestApp, token: &str, server: ServerId) {
-    let r = post_json(app, token, &format!("/servers/{server}/join"), json!({})).await;
+    let r = join_server(app, token, server).await;
     assert!(r.status().is_success());
 }
 
@@ -257,7 +257,7 @@ async fn posting_checks_the_poll_and_the_chat() {
         create(&app, &jo, g.id, poll_body("Q", &["a", "b"]))
             .await
             .status(),
-        403
+        404 // #80: a server you aren't in is hidden
     );
 }
 

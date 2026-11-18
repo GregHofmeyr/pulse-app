@@ -207,12 +207,22 @@ async fn ready_for(
 ) -> AppResult<Ready> {
     // A fixed number of queries however many servers and conversations there are: each table
     // is read once and regrouped here.
-    let servers = all_servers(db).await?;
+    // Only the servers `me` is in (#80): the others are hidden, with everything in them.
+    let mine = crate::servers::routes::server_ids_of(db, me).await?;
+    let servers: Vec<_> = all_servers(db)
+        .await?
+        .into_iter()
+        .filter(|s| mine.contains(&s.id))
+        .collect();
     let mut server_channels = all_server_channels(db).await?;
     // Read straight after the channels, so the revision and the placements they carry come from
     // as close to the same moment as can be. A save landing in between still heals: its
     // `LayoutChanged` (same or newer revision) is applied again on the client.
-    let layouts = crate::servers::categories::all_layouts(db).await?;
+    let layouts: Vec<_> = crate::servers::categories::all_layouts(db)
+        .await?
+        .into_iter()
+        .filter(|l| mine.contains(&l.server_id))
+        .collect();
     let mut server_members = all_server_members(db).await?;
     let mut channels = vec![];
     let mut members = vec![];
@@ -232,7 +242,7 @@ async fn ready_for(
         });
         channels.push(dm);
     }
-    // Same rule as `channel_for`: every server channel, and the DMs/groups `me` is in, which is
+    // Same rule as `channel_for`: the channels of the servers `me` is in, and the DMs/groups they're in, which is
     // exactly the channel list above.
     let visible: HashSet<ChannelId> = channels.iter().map(|c| c.id).collect();
     let mut voice = vec![];
@@ -275,18 +285,24 @@ async fn ready_for(
         hidden: crate::dms::routes::hidden_of(db, me).await?,
         latest: crate::reads::latest_for(db, me).await?,
         streams: live,
-        custom_emoji: crate::emoji::for_ready(db).await?,
+        custom_emoji: only_mine(crate::emoji::for_ready(db).await?, &mine, |e| e.server_id),
         frequent_emoji: crate::emoji::frequent(db, me, crate::emoji::FREQUENT).await?,
-        qoty: crate::qoty::for_ready(db).await?,
-        speaker_links: crate::quotes::links::for_ready(db).await?,
+        qoty: only_mine(crate::qoty::for_ready(db).await?, &mine, |q| q.server_id),
+        speaker_links: only_mine(crate::quotes::links::for_ready(db).await?, &mine, |l| {
+            l.server_id
+        }),
         thread_seen: crate::reads::thread_seen_for(db, me).await?,
-        games: crate::clips::games::for_ready(db).await?,
+        games: only_mine(crate::clips::games::for_ready(db).await?, &mine, |g| {
+            g.server_id
+        }),
         clip_views: crate::clips::views_for_ready(db, me).await?,
         private_nicknames: crate::profiles::private::of_owner(db, me).await?,
-        sounds: crate::sounds::for_ready(db).await?,
+        sounds: only_mine(crate::sounds::for_ready(db).await?, &mine, |x| x.server_id),
         sound_favourites: crate::sounds::favourites(db, me).await?,
         frequent_sounds: crate::sounds::frequent(db, me, crate::sounds::FREQUENT).await?,
-        server_voice: crate::voice::moderation::for_ready(db).await?,
+        server_voice: only_mine(crate::voice::moderation::for_ready(db).await?, &mine, |m| {
+            m.server_id
+        }),
         status: crate::presence::load_subject(db, me)
             .await?
             .map(|x| x.own(&now()))
@@ -302,7 +318,6 @@ async fn ready_for(
         dm_layout: crate::dms::layout::of(db, me).await?,
         person_dnd: crate::person_dnd::list(db, me).await?,
         activity_hidden: crate::activity_hidden::list(db, me).await?,
-        rejoin_blocked: crate::servers::membership::blocked_servers(db, me).await?,
         inbox_filters: crate::inbox::filters::list_for(db, me).await?,
         channel_orders: crate::servers::personal_order::list_for(db, me).await?,
         layouts,
@@ -311,6 +326,17 @@ async fn ready_for(
         watch_parties: voice_state.watch.visible(&visible),
         inbox_unread: Some(inbox_unread),
     })
+}
+
+/// The items of `all` that belong to one of the servers in `mine` (#80).
+fn only_mine<T>(
+    all: Vec<T>,
+    mine: &HashSet<pulse_protocol::ids::ServerId>,
+    server_of: impl Fn(&T) -> pulse_protocol::ids::ServerId,
+) -> Vec<T> {
+    all.into_iter()
+        .filter(|x| mine.contains(&server_of(x)))
+        .collect()
 }
 
 async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {

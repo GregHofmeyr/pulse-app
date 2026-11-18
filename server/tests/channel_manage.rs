@@ -105,8 +105,8 @@ async fn world_with(app: TestApp) -> World {
     let sam = register(&app, "sam").await;
     let jo = register(&app, "jo").await;
     let s = create_server(&app, &alex.1, "Main").await;
-    let r = post_json(&app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam.1, s.id).await;
+    assert_eq!(r.status(), 200);
     World {
         app,
         alex,
@@ -126,7 +126,8 @@ async fn world() -> World {
 async fn anyone_in_the_server_renames_a_channel_and_everyone_hears() {
     let w = world().await;
     let g = general(&w.app, &w.alex.1, w.server).await;
-    let mut rx = w.app.hub.register(w.jo.0, String::new()).rx;
+    // a member hears it (#80: someone outside the server hears nothing of it)
+    let mut rx = w.app.hub.register(w.alex.0, String::new()).rx;
     let r = patch(
         &w.app,
         &w.sam.1,
@@ -145,8 +146,12 @@ async fn anyone_in_the_server_renames_a_channel_and_everyone_hears() {
         Event::ChannelUpdated { channel } => assert_eq!(channel, ch),
         other => panic!("unexpected {other:?}"),
     }
-    let listed: Vec<Channel> =
-        get_json(&w.app, &w.jo.1, &format!("/servers/{}/channels", w.server)).await;
+    let listed: Vec<Channel> = get_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/servers/{}/channels", w.server),
+    )
+    .await;
     assert!(
         listed
             .iter()
@@ -186,7 +191,7 @@ async fn renaming_a_server_channel_is_checked() {
         patch(&w.app, &w.jo.1, &path, json!({ "name": "x" }))
             .await
             .status(),
-        403
+        404 // #80: a server you aren't in is hidden
     );
     // a server channel always has a name
     for name in [json!(null), json!(""), json!("   "), json!("x".repeat(65))] {
@@ -242,7 +247,8 @@ async fn anyone_in_the_server_sets_a_voice_channels_bitrate() {
     let w = world().await;
     let lounge = create_channel(&w.app, &w.alex.1, w.server, "voice", "Music").await;
     assert_eq!(lounge.bitrate, None, "a new channel is at Default");
-    let mut rx = w.app.hub.register(w.jo.0, String::new()).rx;
+    // a member hears it (#80: someone outside the server hears nothing of it)
+    let mut rx = w.app.hub.register(w.alex.0, String::new()).rx;
     let path = format!("/channels/{}/bitrate", lounge.id);
     let r = put_json(&w.app, &w.sam.1, &path, json!({ "bitrate": 256 })).await;
     assert_eq!(r.status(), 200);
@@ -253,8 +259,12 @@ async fn anyone_in_the_server_sets_a_voice_channels_bitrate() {
         Event::ChannelUpdated { channel } => assert_eq!(channel, ch),
         other => panic!("unexpected {other:?}"),
     }
-    let listed: Vec<Channel> =
-        get_json(&w.app, &w.jo.1, &format!("/servers/{}/channels", w.server)).await;
+    let listed: Vec<Channel> = get_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/servers/{}/channels", w.server),
+    )
+    .await;
     assert_eq!(
         listed.iter().find(|c| c.id == lounge.id).unwrap().bitrate,
         Some(256)
@@ -327,7 +337,7 @@ async fn setting_a_bitrate_is_checked() {
         put_json(&w.app, &w.jo.1, &path, json!({ "bitrate": 128 }))
             .await
             .status(),
-        403
+        404 // #80: a server you aren't in is hidden
     );
     // a channel without a call
     let g = general(&w.app, &w.alex.1, w.server).await;
@@ -413,7 +423,8 @@ async fn deleting_a_text_channel_moves_it_to_recently_deleted() {
     .await;
     assert!(r.is_success(), "mute {r}");
     let id = old.id.to_string();
-    let mut rx = w.app.hub.register(w.jo.0, String::new()).rx;
+    // a member hears it (#80: someone outside the server hears nothing of it)
+    let mut rx = w.app.hub.register(w.alex.0, String::new()).rx;
 
     assert_eq!(
         delete(&w.app, &w.sam.1, &format!("/channels/{}", old.id)).await,
@@ -537,7 +548,7 @@ async fn deleting_is_for_server_channels_and_their_members() {
     let g = general(&w.app, &w.alex.1, w.server).await;
     assert_eq!(
         delete(&w.app, &w.jo.1, &format!("/channels/{}", g.id)).await,
-        403
+        404 // #80: a server you aren't in is hidden
     );
     let dm = create_dm(&w.app, &w.alex.1, &[w.sam.0]).await;
     assert_eq!(
@@ -663,14 +674,8 @@ use pulse_protocol::rest::DeletedChannel;
 /// kim joins the server (a member who is neither the owner nor the deleter).
 async fn kim(w: &World) -> (UserId, String) {
     let kim = register(&w.app, "kim").await;
-    let r = post_json(
-        &w.app,
-        &kim.1,
-        &format!("/servers/{}/join", w.server),
-        json!({}),
-    )
-    .await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&w.app, &kim.1, w.server).await;
+    assert_eq!(r.status(), 200);
     kim
 }
 
@@ -765,7 +770,8 @@ async fn the_deleter_or_the_owner_restores_and_everyone_hears() {
     assert_eq!(restore(&w, &kim.1, old.id).await.status(), 403);
     assert_eq!(restore(&w, &w.jo.1, old.id).await.status(), 403);
 
-    let mut jo_rx = w.app.hub.register(w.jo.0, String::new()).rx;
+    // kim, a member, hears it (#80: someone outside the server hears nothing of it)
+    let mut kim_rx = w.app.hub.register(kim.0, String::new()).rx;
     let mut sam_rx = w.app.hub.register(w.sam.0, String::new()).rx;
     let r = restore(&w, &w.sam.1, old.id).await;
     assert_eq!(r.status(), 200);
@@ -776,7 +782,7 @@ async fn the_deleter_or_the_owner_restores_and_everyone_hears() {
     };
     assert_eq!(r.json::<Channel>().await.unwrap(), back);
 
-    match next_event(&mut jo_rx).await {
+    match next_event(&mut kim_rx).await {
         Event::ChannelRestored { channel } => assert_eq!(channel, back),
         other => panic!("unexpected {other:?}"),
     }

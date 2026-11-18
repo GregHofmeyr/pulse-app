@@ -115,7 +115,7 @@ async fn error(r: reqwest::Response) -> (u16, String) {
 }
 
 async fn join(app: &TestApp, token: &str, server: pulse_protocol::ids::ServerId) {
-    let r = post_json(app, token, &format!("/servers/{server}/join"), json!({})).await;
+    let r = join_server(app, token, server).await;
     assert!(r.status().is_success());
 }
 
@@ -437,7 +437,11 @@ async fn spins_are_refused_where_they_dont_belong() {
     // a voice channel's chat is fine
     spin_ok(&app, &alex, voice.id, two.clone()).await;
     // kim isn't in the server
-    assert_eq!(spin(&app, &kim, g.id, two.clone()).await.status(), 403);
+    assert_eq!(
+        spin(&app, &kim, g.id, two.clone()).await.status(),
+        404,
+        "#80: hidden"
+    );
     // a DM only for its two
     let dm = create_dm(&app, &alex, &[sam_id]).await;
     assert_eq!(dm.kind, ChannelKind::Dm);
@@ -545,7 +549,11 @@ async fn spin_again_and_remove_the_winner() {
     assert_eq!(list[0].options, vec!["a", "b", "c"]);
 
     // not for outsiders, nor from a line that isn't a spin
-    assert_eq!(again(&app, &kim, first.id, false).await.status(), 403);
+    assert_eq!(
+        again(&app, &kim, first.id, false).await.status(),
+        404,
+        "#80: hidden"
+    );
     let plain = send(&app, &alex, g.id, "hi").await;
     assert_eq!(again(&app, &alex, plain.id, false).await.status(), 404);
 
@@ -738,10 +746,10 @@ async fn a_quiet_spin_is_watched_live_and_leaves_nothing_behind() {
     assert!((0.0..360.0).contains(&q.spin.angle));
     assert_eq!(wheel_winner_at(q.spin.angle, 3), q.spin.winner as usize);
 
-    // everyone watching gets the identical spin (servers are public, as their messages are)
+    // everyone in the server watching gets the identical spin; kim, outside it, gets nothing (#80)
     assert_eq!(quiet_spun(&mut alex_ws).await.unwrap(), q);
     assert_eq!(quiet_spun(&mut sam_ws).await.unwrap(), q);
-    assert_eq!(quiet_spun(&mut kim_ws).await.unwrap(), q);
+    assert!(quiet_spun(&mut kim_ws).await.is_none());
     // a DM's quiet spin reaches only its two
     let dm = create_dm(&app, &alex, &[sam_id]).await;
     let in_dm = quiet_ok(&app, &sam, dm.id, json!({"options": ["a", "b"]})).await;
@@ -813,7 +821,11 @@ async fn quiet_spins_are_checked_like_spins() {
         quiet(&app, &alex, quotes.id, two.clone()).await.status(),
         400
     );
-    assert_eq!(quiet(&app, &kim, g.id, two.clone()).await.status(), 403);
+    assert_eq!(
+        quiet(&app, &kim, g.id, two.clone()).await.status(),
+        404,
+        "#80: hidden"
+    );
     // only options the saved wheel has (each as often as it has it), and still two of them
     for options in [
         json!(["Valheim", "Fortnite"]),

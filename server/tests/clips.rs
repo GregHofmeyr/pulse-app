@@ -64,8 +64,8 @@ async fn creates_a_clips_channel() {
     let (alex_id, alex) = register(&app, "alex").await;
     let (sam_id, sam) = register(&app, "sam").await;
     let s = create_server(&app, &alex, "Main").await;
-    let r = post_json(&app, &sam, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam, s.id).await;
+    assert_eq!(r.status(), 200);
 
     let mut ws = hello(&app, &alex).await;
     let ch = create_clips(&app, &alex, s.id).await;
@@ -104,8 +104,8 @@ async fn joining_gives_a_read_point_in_clips_channels() {
     let (sam_id, sam) = register(&app, "sam").await;
     let s = create_server(&app, &alex, "Main").await;
     let ch = create_clips(&app, &alex, s.id).await;
-    let r = post_json(&app, &sam, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam, s.id).await;
+    assert_eq!(r.status(), 200);
     assert_eq!(read_points(&app, ch.id, sam_id).await, 1);
 }
 
@@ -150,9 +150,9 @@ async fn plain_messages_are_refused_in_a_clips_channel() {
     )
     .await;
     assert_eq!(r.status(), 400);
-    // Not a member of the server: 403, as for a text channel.
+    // Not a member of the server: 404, as for a text channel (#80: a server you aren't in is hidden).
     let r = post_json(&app, &sam, &path, json!({ "content": "hi" })).await;
-    assert_eq!(r.status(), 403);
+    assert_eq!(r.status(), 404);
 }
 
 #[tokio::test]
@@ -503,8 +503,8 @@ async fn adding_a_game_is_case_and_space_insensitive() {
     let (alex_id, alex) = register(&app, "alex").await;
     let (_, sam) = register(&app, "sam").await;
     let s = create_server(&app, &alex, "Main").await;
-    let r = post_json(&app, &sam, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam, s.id).await;
+    assert_eq!(r.status(), 200);
     let mut ws = hello(&app, &sam).await;
 
     let g = add_game_ok(&app, &alex, s.id, "Overwatch 2").await;
@@ -767,8 +767,8 @@ async fn world() -> World {
     let alex = register(&app, "alex").await;
     let sam = register(&app, "sam").await;
     let s = create_server(&app, &alex.1, "Main").await;
-    let r = post_json(&app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam.1, s.id).await;
+    assert_eq!(r.status(), 200);
     let channel = create_clips(&app, &alex.1, s.id).await;
     World {
         app,
@@ -899,7 +899,7 @@ async fn tickets_check_the_rules() {
     assert_eq!(r.status(), 400, "a text channel");
     let outsider = register(&w.app, "kim").await;
     let r = ticket(&w.app, &outsider.1, w.channel.id, 1_000, 1_000).await;
-    assert_eq!(r.status(), 403, "not a member");
+    assert_eq!(r.status(), 404, "not a member (#80: hidden)");
     let r = ticket(&w.app, &w.alex.1, w.channel.id, 0, 1_000).await;
     assert_eq!(r.status(), 400, "empty");
     let r = ticket(&w.app, &w.alex.1, w.channel.id, MAX_BYTES + 1, 1_000).await;
@@ -1110,7 +1110,7 @@ async fn confirm_rechecks_membership() {
         .await
         .unwrap();
     let r = confirm(&w.app, &w.sam.1, &up, confirm_body(&thumb, None)).await;
-    assert_eq!(r.status(), 403);
+    assert_eq!(r.status(), 404, "#80: a server you aren't in is hidden");
 }
 
 #[tokio::test]
@@ -2185,9 +2185,9 @@ async fn play_urls_are_fresh_and_member_only() {
         assert_eq!(got.bytes().await.unwrap().to_vec(), bytes[..10].to_vec());
     }
 
-    // Someone who is not in the server: 403.
+    // Someone who is not in the server: 404 (#80: hidden).
     let kim = register(&w.app, "kim").await;
-    assert_eq!(play_url(&w.app, &kim.1, clip.id).await.status(), 403);
+    assert_eq!(play_url(&w.app, &kim.1, clip.id).await.status(), 404);
     // Not a clip at all: 404.
     assert_eq!(
         play_url(&w.app, &w.sam.1, pulse_protocol::ids::MessageId::new())
@@ -2450,7 +2450,7 @@ async fn view_preference_is_per_person_and_channel() {
     let kim = register(&w.app, "kim").await;
     assert_eq!(
         put(&kim.1, json!({ "view": "list" }), path).await.status(),
-        403
+        404 // #80: a server you aren't in is hidden
     );
 }
 

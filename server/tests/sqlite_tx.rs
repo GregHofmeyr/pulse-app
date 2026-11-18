@@ -108,7 +108,7 @@ async fn a_send_whose_mentions_fail_leaves_no_message() {
     let (_, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
     let s = create_server(&app, &a, "Main").await;
-    post_json(&app, &b, &format!("/servers/{}/join", s.id), json!({})).await;
+    join_server(&app, &b, s.id).await;
     let g = general(&app, &a, s.id).await.id;
     fail_writes(&app, "INSERT", "mentions").await;
 

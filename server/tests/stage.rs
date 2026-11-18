@@ -44,8 +44,8 @@ async fn world_with(cfg: Config) -> World {
     let sam = register(&app, "sam").await;
     let jo = register(&app, "jo").await;
     let s = create_server(&app, &alex.1, "Main").await;
-    let r = post_json(&app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam.1, s.id).await;
+    assert_eq!(r.status(), 200);
     let chans: Vec<Channel> = get_json(&app, &alex.1, &format!("/servers/{}/channels", s.id)).await;
     let lounge = chans
         .into_iter()
@@ -254,9 +254,10 @@ async fn sharing_a_song_puts_its_card_up_and_posts_the_link_in_chat() {
         chrono::Utc::now().fixed_offset() - chrono::DateTime::parse_from_rfc3339(&created).unwrap();
     assert!(age < chrono::Duration::seconds(30));
 
-    // everyone joining later sees it (jo isn't in the server but the channel is public)
-    let ready = ready_of(&w.app, &w.jo.1).await;
+    // everyone in the server connecting later sees it; jo, who isn't in it, doesn't (#80)
+    let ready = ready_of(&w.app, &w.sam.1).await;
     assert_eq!(ready.stage_shares, vec![s.clone()]);
+    assert!(ready_of(&w.app, &w.jo.1).await.stage_shares.is_empty());
 
     // sharing the same thing again (another copy of the link) changes nothing
     let other_copy = format!("https://open.spotify.com/track/{SPOTIFY_ID}?si=xyz");
@@ -337,11 +338,11 @@ async fn only_spotify_links_from_people_in_the_call() {
     let missing = "https://open.spotify.com/track/missing0000000000000000";
     assert_eq!(share(&w, &w.alex.1, missing).await.status(), 400);
 
-    // jo isn't in the server; kim is in it but not in the call
-    assert_eq!(share(&w, &w.jo.1, &track()).await.status(), 403);
+    // jo isn't in the server (hidden from them: 404, #80); kim is in it but not in the call
+    assert_eq!(share(&w, &w.jo.1, &track()).await.status(), 404);
     let kim = register(&w.app, "kim").await;
     let srv = w.lounge.server_id.unwrap();
-    post_json(&w.app, &kim.1, &format!("/servers/{srv}/join"), json!({})).await;
+    join_server(&w.app, &kim.1, srv).await;
     assert_eq!(share(&w, &kim.1, &track()).await.status(), 403);
 
     // a text channel has no stage
@@ -369,13 +370,7 @@ async fn anyone_in_the_call_may_stop_it() {
     next(&mut w.rx).await;
     // not in the call
     let kim = register(&w.app, "kim").await;
-    post_json(
-        &w.app,
-        &kim.1,
-        &format!("/servers/{}/join", w.lounge.server_id.unwrap()),
-        json!({}),
-    )
-    .await;
+    join_server(&w.app, &kim.1, w.lounge.server_id.unwrap()).await;
     assert_eq!(stop(&w, &kim.1, &s.id).await, 403);
     assert_eq!(stop(&w, &w.sam.1, "no-such-share").await, 404);
     assert_eq!(stop(&w, &w.sam.1, &s.id).await, 204);

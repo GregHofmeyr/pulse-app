@@ -108,7 +108,7 @@ async fn create_ok(
 }
 
 async fn join(app: &TestApp, token: &str, server: ServerId) {
-    let r = post_json(app, token, &format!("/servers/{server}/join"), json!({})).await;
+    let r = join_server(app, token, server).await;
     assert!(r.status().is_success());
 }
 

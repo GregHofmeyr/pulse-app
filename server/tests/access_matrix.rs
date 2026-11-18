@@ -1,9 +1,9 @@
 //! The access matrix (#80): what someone signed in but not in a server can read from it.
 //!
 //! [`MATRIX`] lists every route that reads a server's insides (or hands out a way in, like a voice token), and what an
-//! outsider gets from it today: `ExpectedLeak` (they read it, as servers are still open) or `Denied` (403/404, or a
-//! success that carries none of it). The test fails when any answer differs from the table, so the lockdown (step 2)
-//! flips the leaks to `Denied` one by one, and none can quietly come back.
+//! outsider gets from it: `Denied` (403/404, or a success that carries none of it) for every row since the lockdown
+//! (#80, step 2). The test fails when any answer differs from the table, so no leak can quietly come back.
+//! `ExpectedLeak` stays as what the test calls an answer that shows the server's insides.
 //!
 //! [`every_route_is_classified`] keeps the table whole: it reads every route the server registers (each
 //! `.route("…")` under `src/`, with the methods the router answers for it) and fails for one that is in neither the
@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Expect {
-    /// An outsider reads it today (servers are open); step 2 makes it `Denied`.
+    /// An outsider reads it. No row expects this since the lockdown (#80); an answer that shows the insides is one.
     ExpectedLeak,
     /// Refused (403 or 404), or a success carrying nothing of the server's.
     Denied,
@@ -93,19 +93,19 @@ const fn write(route: &'static str, url: &'static str, body: &'static str, expec
     }
 }
 
-/// Every read of a server's insides, and what an outsider gets today. The `ExpectedLeak` rows are step 2's to-do list.
+/// Every read of a server's insides, and what an outsider gets: since the lockdown (#80, step 2), nothing.
 const MATRIX: &[Read] = &[
     // the server itself
-    get_marked("GET /servers", "/servers", "{server}", ExpectedLeak),
+    get_marked("GET /servers", "/servers", "{server}", Denied),
     get(
         "GET /servers/{id}/channels",
         "/servers/{server}/channels",
-        ExpectedLeak,
+        Denied,
     ),
     get(
         "GET /servers/{id}/members",
         "/servers/{server}/members",
-        ExpectedLeak,
+        Denied,
     ),
     get(
         "GET /servers/{id}/members/{user}/names",
@@ -173,17 +173,11 @@ const MATRIX: &[Read] = &[
         "GET /servers/{id}/search",
         "/servers/{server}/search?q=hello",
         "{msg}",
-        ExpectedLeak,
+        Denied,
     ),
     get(
         "GET /servers/{id}/deleted-channels",
         "/servers/{server}/deleted-channels",
-        Denied,
-    )
-    .owner_only(),
-    get(
-        "GET /servers/{id}/blocked",
-        "/servers/{server}/blocked",
         Denied,
     )
     .owner_only(),
@@ -198,60 +192,48 @@ const MATRIX: &[Read] = &[
         "GET /channels/{id}/messages",
         "/channels/{text}/messages",
         "{msg}",
-        ExpectedLeak,
+        Denied,
     ),
     get_marked(
         "GET /channels/{id}/pins",
         "/channels/{text}/pins",
         "{msg}",
-        ExpectedLeak,
+        Denied,
     ),
     get(
         "GET /channels/{id}/clips",
         "/channels/{clips}/clips",
-        ExpectedLeak,
+        Denied,
     ),
     get(
         "GET /channels/{id}/clips/facets",
         "/channels/{clips}/clips/facets",
-        ExpectedLeak,
+        Denied,
     ),
     get_marked("GET /search", "/search?q=hello", "{msg}", Denied),
     // its messages
-    get(
-        "GET /messages/{id}/edits",
-        "/messages/{msg}/edits",
-        ExpectedLeak,
-    ),
+    get("GET /messages/{id}/edits", "/messages/{msg}/edits", Denied),
     get(
         "GET /messages/{id}/reactions/{emoji}",
         "/messages/{msg}/reactions/%F0%9F%91%8D",
-        ExpectedLeak,
+        Denied,
     ),
     get(
         "GET /messages/{id}/replies",
         "/messages/{quote}/replies",
-        ExpectedLeak,
+        Denied,
     ),
-    get(
-        "GET /messages/{id}/poll",
-        "/messages/{poll}/poll",
-        ExpectedLeak,
-    ),
-    get(
-        "GET /messages/{id}/plan",
-        "/messages/{plan}/plan",
-        ExpectedLeak,
-    ),
+    get("GET /messages/{id}/poll", "/messages/{poll}/poll", Denied),
+    get("GET /messages/{id}/plan", "/messages/{plan}/plan", Denied),
     get(
         "GET /messages/{id}/plan/forecast",
         "/messages/{plan}/plan/forecast",
-        ExpectedLeak,
+        Denied,
     ),
     get(
         "GET /messages/{id}/plan/ics",
         "/messages/{plan}/plan/ics",
-        ExpectedLeak,
+        Denied,
     ),
     get(
         "GET /messages/{id}/attachments/urls",
@@ -497,7 +479,6 @@ const WRITES: &[&str] = &[
     "PUT /servers/{id}/achievements-channel",
     "DELETE /servers/{id}/bans/{user}",
     "PUT /servers/{id}/bans/{user}",
-    "DELETE /servers/{id}/blocked/{user}",
     "POST /servers/{id}/categories",
     "POST /servers/{id}/channels",
     "PUT /servers/{id}/deadlock-channel",
@@ -505,7 +486,7 @@ const WRITES: &[&str] = &[
     "PUT /servers/{id}/f1-channel",
     "POST /servers/{id}/games",
     "POST /servers/{id}/invites",
-    // the open Join (step 2 removes it)
+    // the old open Join: refuses everyone with the same words (#80)
     "POST /servers/{id}/join",
     "DELETE /servers/{id}/join-sound",
     "PUT /servers/{id}/join-sound",
@@ -615,8 +596,8 @@ async fn world() -> World {
     let (sam_id, sam) = register(&app, "sam").await;
     let (_, jo) = register(&app, "jo").await;
     let server = create_server(&app, &alex, "Main").await.id;
-    let r = post_json(&app, &sam, &format!("/servers/{server}/join"), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam, server).await;
+    assert_eq!(r.status(), 200);
     let text = general(&app, &alex, server).await;
     let voice: Vec<Channel> = get_json(&app, &alex, &format!("/servers/{server}/channels")).await;
     let voice = voice

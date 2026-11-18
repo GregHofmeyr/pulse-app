@@ -21,8 +21,8 @@ async fn world() -> World {
     let alex = register(&app, "alex").await;
     let sam = register(&app, "sam").await;
     let s = create_server(&app, &alex.1, "Main").await;
-    let r = post_json(&app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam.1, s.id).await;
+    assert_eq!(r.status(), 200);
     let text = general(&app, &alex.1, s.id).await;
     World {
         app,
@@ -140,9 +140,9 @@ async fn refused_in_quotes_and_clips_channels() {
 async fn non_member_is_forbidden() {
     let w = world().await;
     let (_, kim) = register(&w.app, "kim").await;
+    // A server you aren't in looks like no channel at all (#80), as someone else's DM does.
     let r = start(&w.app, &kim, w.text.id, file("a.txt", 10, "text/plain")).await;
-    assert_eq!(r.status(), 403);
-    // Someone else's DM looks like no channel at all.
+    assert_eq!(r.status(), 404);
     let dm = create_dm(&w.app, &w.alex.1, &[w.sam.0]).await;
     let r = start(&w.app, &kim, dm.id, file("a.txt", 10, "text/plain")).await;
     assert_eq!(r.status(), 404);

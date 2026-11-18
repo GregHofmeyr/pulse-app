@@ -37,7 +37,7 @@ async fn a_forward_says_where_from_and_keeps_the_words_it_forwarded() {
     let (sam_id, sam) = register(&app, "sam").await;
     let (kim_id, kim) = register(&app, "kim").await;
     let s = create_server(&app, &alex, "Main").await;
-    let r = post_json(&app, &sam, &format!("/servers/{}/join", s.id), json!({})).await;
+    let r = join_server(&app, &sam, s.id).await;
     assert!(r.status().is_success());
     let g = general(&app, &alex, s.id).await;
     let original = send(&app, &alex, g.id, "movie night at 8, ||it's a surprise||").await;
@@ -115,7 +115,7 @@ async fn a_forward_says_where_from_and_keeps_the_words_it_forwarded() {
     assert_eq!(r.status(), 400);
 
     // kim forwards the forward back to the server: it points at the original, not at sam's DM
-    let r = post_json(&app, &kim, &format!("/servers/{}/join", s.id), json!({})).await;
+    let r = join_server(&app, &kim, s.id).await;
     assert!(r.status().is_success());
     let r = forward(&app, &kim, fwd.id, json!({"channel_id": g.id})).await;
     assert_eq!(r.status(), 200);
@@ -192,7 +192,7 @@ async fn only_what_you_can_see_goes_only_where_you_can_post() {
     let r = forward(&app, &sam, secret.id, json!({"channel_id": kim_jo.id})).await;
     assert_eq!(r.status(), 404);
     let r = forward(&app, &sam, secret.id, json!({"channel_id": g.id})).await;
-    assert_eq!(r.status(), 403);
+    assert_eq!(r.status(), 404, "#80: a server he isn't in is hidden");
     // nor can jo forward a server message she isn't a member for
     let public = send(&app, &alex, g.id, "welcome").await;
     let r = forward(&app, &jo, public.id, json!({"channel_id": kim_jo.id})).await;

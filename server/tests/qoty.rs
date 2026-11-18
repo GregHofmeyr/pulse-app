@@ -112,8 +112,8 @@ async fn fixture() -> Fixture {
     let (alex, alex_t) = register(&app, "alex").await;
     let (sam, sam_t) = register(&app, "sam").await;
     let s = create_server(&app, &alex_t, "Main").await;
-    let r = post_json(&app, &sam_t, &format!("/servers/{}/join", s.id), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(&app, &sam_t, s.id).await;
+    assert_eq!(r.status(), 200);
     let ch = create_quotes(&app, &alex_t, s.id, "quotes").await;
     Fixture {
         app,
@@ -130,14 +130,8 @@ impl Fixture {
     /// Another member of the server.
     async fn member(&self, name: &str) -> (UserId, String) {
         let (id, t) = register(&self.app, name).await;
-        let r = post_json(
-            &self.app,
-            &t,
-            &format!("/servers/{}/join", self.server),
-            json!({}),
-        )
-        .await;
-        assert_eq!(r.status(), 204);
+        let r = join_server(&self.app, &t, self.server).await;
+        assert_eq!(r.status(), 200);
         (id, t)
     }
     async fn call(
@@ -1726,9 +1720,10 @@ async fn joining_publishes_under_the_order_lock() {
     f.started().await;
     let (_, t) = register(&f.app, "kim").await;
     let guard = f.app.hub.in_order().await;
+    let invite = owner_invite(&f.app, f.server).await;
     let (http, url) = (
         f.app.http.clone(),
-        f.app.url(&format!("/servers/{}/join", f.server)),
+        f.app.url(&format!("/invites/{invite}/accept")),
     );
     let join = tokio::spawn(async move {
         http.post(url)
@@ -1742,7 +1737,7 @@ async fn joining_publishes_under_the_order_lock() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(!join.is_finished(), "the join waits on in_order");
     drop(guard);
-    assert_eq!(join.await.unwrap(), 204);
+    assert_eq!(join.await.unwrap(), 200);
 }
 
 #[tokio::test]

@@ -145,6 +145,8 @@ async fn three() -> (
     let (s_id, s) = register(&app, "sam").await;
     let (k_id, k) = register(&app, "kim").await;
     let (a_id, a) = register(&app, "alex").await;
+    // they share a server: presence reaches only people who share something (#80)
+    acquaint(&app, &a, &[&s, &k]).await;
     let (mut sam_ws, _) = hello(&app, &s).await;
     let (mut kim_ws, _) = hello(&app, &k).await;
     let (mut alex_ws, _) = hello(&app, &a).await;
@@ -446,12 +448,7 @@ async fn leaving_a_server_drops_its_emoji_from_your_status() {
     let (app, (_, a, _alex_ws), (s_id, s, mut sam_ws), (k_id, k, mut kim_ws)) = three().await;
     let srv = create_server(&app, &a, "alex's").await;
     for t in [&s, &k] {
-        assert!(
-            post_json(&app, t, &format!("/servers/{}/join", srv.id), json!({}))
-                .await
-                .status()
-                .is_success()
-        );
+        assert!(join_server(&app, t, srv.id).await.status().is_success());
     }
     let e = custom_emoji(&app, &a, srv.id, "pog").await;
     let key = format!("custom:{}", e.id);

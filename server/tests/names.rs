@@ -72,8 +72,8 @@ async fn put_json(
 }
 
 async fn join(app: &TestApp, token: &str, server: ServerId) {
-    let r = post_json(app, token, &format!("/servers/{server}/join"), json!({})).await;
-    assert_eq!(r.status(), 204);
+    let r = join_server(app, token, server).await;
+    assert_eq!(r.status(), 200);
 }
 
 async fn rename(

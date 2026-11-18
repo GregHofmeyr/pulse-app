@@ -73,7 +73,7 @@ async fn put_json(app: &TestApp, token: &str, path: &str, body: Value) -> reqwes
 }
 
 async fn join(app: &TestApp, token: &str, server: ServerId) {
-    let r = post_json(app, token, &format!("/servers/{server}/join"), json!({})).await;
+    let r = join_server(app, token, server).await;
     assert!(r.status().is_success());
 }
 
@@ -220,7 +220,7 @@ async fn posting_checks_the_plan_and_the_chat() {
         create(&app, &jo, g.id, body("ok", &at(TimeDelta::days(1))))
             .await
             .status(),
-        403
+        404 // #80: a server you aren't in is hidden
     );
     // not in a quotes channel
     let r = post_json(
@@ -273,7 +273,11 @@ async fn answers_change_live_and_each_person_has_one() {
     assert!(p.maybe.is_empty());
     assert_eq!(rsvp(&app, &sam, m.id, json!("nope")).await.status(), 422);
     // jo isn't in the server
-    assert_eq!(rsvp(&app, &jo, m.id, json!("going")).await.status(), 403);
+    assert_eq!(
+        rsvp(&app, &jo, m.id, json!("going")).await.status(),
+        404,
+        "#80: hidden"
+    );
     // the plan as fetched
     let p: Plan = get_json(&app, &sam, &format!("/messages/{}/plan", m.id)).await;
     assert_eq!(p.cant, vec![kim_id]);

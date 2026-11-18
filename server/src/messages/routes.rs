@@ -765,7 +765,15 @@ pub(crate) async fn own_message(
     id: MessageId,
 ) -> AppResult<(Message, Channel)> {
     let msg = load(db, Some(me), id).await?.ok_or(AppError::NotFound)?;
-    let channel = channel_for(db, me, msg.channel_id).await?;
+    // Your own message stays yours after you leave its server (#418: you can still delete it, though editing is for
+    // members, `access::require_member_of`); anyone else's in a channel you can't read is missing (#80).
+    let channel = if msg.author_id == Some(me) {
+        crate::access::load_channel(db, msg.channel_id)
+            .await?
+            .ok_or(AppError::NotFound)?
+    } else {
+        channel_for(db, me, msg.channel_id).await?
+    };
     if msg.deleted {
         return Err(AppError::NotFound);
     }

@@ -35,7 +35,7 @@ async fn edits_keep_earlier_versions_newest_first_for_anyone_who_can_see_it() {
     let (_, alex) = register(&app, "alex").await;
     let (_, sam) = register(&app, "sam").await;
     let s = create_server(&app, &alex, "Main").await;
-    let r = post_json(&app, &sam, &format!("/servers/{}/join", s.id), json!({})).await;
+    let r = join_server(&app, &sam, s.id).await;
     assert!(r.status().is_success());
     let g = general(&app, &alex, s.id).await;
     let m = send(&app, &alex, g.id, "first").await;

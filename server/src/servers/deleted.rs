@@ -127,6 +127,8 @@ pub async fn delete(
             end_gone_call(&s, *channel_id).await;
         }
     }
+    // nobody shares it any more (#80): presence both ways
+    crate::servers::routes::resync_presence(&s, id, None).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -195,11 +197,12 @@ pub async fn restore(
     if let Err(e) = republish_own_state(&s, id).await {
         tracing::error!(error = ?e, server = %id, "couldn't send a restored server's counts");
     }
+    crate::servers::routes::resync_presence(&s, id, None).await;
     Ok(Json(server))
 }
 
-/// What Ready would carry for `id`.
-async fn snapshot_of(s: &AppState, id: ServerId) -> AppResult<ServerSnapshot> {
+/// What Ready would carry for `id` (a restore's `ServerRestored`, a join's `ServerJoined`).
+pub(crate) async fn snapshot_of(s: &AppState, id: ServerId) -> AppResult<ServerSnapshot> {
     let row: ServerRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SERVER_COLS} FROM servers WHERE id = ?"
     )))
