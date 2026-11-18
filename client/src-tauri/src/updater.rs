@@ -300,8 +300,15 @@ pub fn start_launch_check(app: &AppHandle, store: crate::session::Store) {
         } else {
             None
         };
-        let _ = updates.launch.send(LaunchCheck::Done(offer));
+        publish_launch(&updates.launch, offer);
     });
+}
+
+/// The launch check's result, kept for the page to read whenever it asks. `send_replace`, never `send`: `send` drops
+/// the value while nobody is subscribed, and a fast check finishes before the page asks, so the update it found was lost
+/// and Pulse started on the old version with no "Restart to update" either (the login counted as checked) (#460).
+fn publish_launch(tx: &watch::Sender<LaunchCheck>, offer: Option<Offer>) {
+    tx.send_replace(LaunchCheck::Done(offer));
 }
 
 /// A running check: an offer goes to the page ("Restart to update"); finding nothing any more takes it away (`null`).
@@ -506,6 +513,21 @@ mod tests {
             tx.send(LaunchCheck::Done(Some(o))).unwrap();
         });
         assert_eq!(wait_launch(&mut rx, LAUNCH_WAIT).await, Some(offer));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn launch_result_kept_when_it_beats_the_page() {
+        // #460: the check finished (no one subscribed yet) before the page asked
+        let (tx, rx) = tokio::sync::watch::channel(LaunchCheck::Pending);
+        drop(rx);
+        let offer = Offer {
+            version: "0.2.13".into(),
+        };
+        publish_launch(&tx, Some(offer.clone()));
+        let mut rx = tx.subscribe();
+        let started = tokio::time::Instant::now();
+        assert_eq!(wait_launch(&mut rx, LAUNCH_WAIT).await, Some(offer));
+        assert_eq!(started.elapsed(), std::time::Duration::ZERO);
     }
 
     #[test]
