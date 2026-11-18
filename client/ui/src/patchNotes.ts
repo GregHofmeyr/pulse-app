@@ -51,6 +51,7 @@ export const patchNotes: PatchNotes = {
     'Go Live\'s sound picker is a proper dropdown that shows the app by name and icon, with a live level meter',
     'Streaming "everything" leaves out Discord as well as Pulse, so a call there isn\'t carried into your stream',
     'Right-click a pinned message or an incoming call for that person\'s menu',
+    'A plan\'s forecast now gives the temperature for when it starts, not just the day\'s range',
   ],
   soon: [
     'Private servers you join by invite',

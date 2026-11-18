@@ -1697,6 +1697,10 @@ pub struct PlanForecast {
     /// The day's highest chance of rain, in percent.
     #[serde(default)]
     pub rain_chance: Option<u8>,
+    /// Degrees Celsius in the hour the plan starts, at the place (#399); none from an older server or forecast.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub temp_at_start: Option<f32>,
 }
 
 /// A plan's reminder line (#387): "⏰ Braai at kim's starts in an hour · See plan".

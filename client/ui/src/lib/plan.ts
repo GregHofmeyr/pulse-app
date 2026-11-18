@@ -156,9 +156,12 @@ export function weatherOf(code: number): { emoji: string; text: string } {
   return { emoji: '🌡️', text: 'Forecast' }
 }
 
-/** The forecast's line: "Rain · 14°–25° · 70% chance of rain". */
+/** The forecast's line: "Rain · 22° at the start · 14°–25° · 70% chance of rain" (the temperature in the hour it
+ *  starts when the server has it, #399). */
 export function forecastLine(f: PlanForecast): string {
-  const parts = [weatherOf(f.code).text, `${Math.round(f.temp_min)}°–${Math.round(f.temp_max)}°`]
+  const parts = [weatherOf(f.code).text]
+  if (f.temp_at_start != null) parts.push(`${Math.round(f.temp_at_start)}° at the start`)
+  parts.push(`${Math.round(f.temp_min)}°–${Math.round(f.temp_max)}°`)
   if (f.rain_chance != null && f.rain_chance > 0) parts.push(`${f.rain_chance}% chance of rain`)
   return parts.join(' · ')
 }
