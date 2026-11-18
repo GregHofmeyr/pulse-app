@@ -615,6 +615,7 @@ fn purged_winner(id: &str) -> AppResult<Message> {
         group_line: None,
         member_line: None,
         game_invite: None,
+        server_invite: None,
     })
 }
 

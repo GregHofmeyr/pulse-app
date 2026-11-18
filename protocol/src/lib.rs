@@ -37,6 +37,12 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::CreateServerRequest::export_all(&cfg)?;
     rest::TransferServerRequest::export_all(&cfg)?;
     rest::ServerBlock::export_all(&cfg)?;
+    rest::CreateServerInviteRequest::export_all(&cfg)?;
+    rest::InviteState::export_all(&cfg)?;
+    rest::ServerInvite::export_all(&cfg)?;
+    rest::InvitePreview::export_all(&cfg)?;
+    rest::MessageServerInvite::export_all(&cfg)?;
+    rest::ServerBan::export_all(&cfg)?;
     rest::CreateChannelRequest::export_all(&cfg)?;
     rest::Category::export_all(&cfg)?;
     rest::ChannelPlacement::export_all(&cfg)?;

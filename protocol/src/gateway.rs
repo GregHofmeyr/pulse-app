@@ -380,6 +380,19 @@ pub enum Event {
         server_id: ServerId,
         blocked: bool,
     },
+    /// Only to its person's own sessions (#80): the invites of `server_id` they can see changed (one was made, used,
+    /// revoked or ended with a ban). Its maker and the server's owner each get one; an open Invites list asks again
+    /// (`GET /servers/{id}/invites`). Clients from before it skip it.
+    InvitesChanged {
+        user_id: UserId,
+        server_id: ServerId,
+    },
+    /// Only to its person's own sessions, a server's owner (#80): who is banned from their server changed. An open
+    /// Bans list asks again (`GET /servers/{id}/bans`). Clients from before it skip it.
+    BansChanged {
+        user_id: UserId,
+        server_id: ServerId,
+    },
     /// Someone is no longer in a server (#371): they left, or its owner removed them (`removed_by`). Everyone, like
     /// `MemberJoined`: member lists drop them, and the person themselves sees the server as one they aren't in (its
     /// counts and calls go from their rail). Clients from before it skip it and catch up on their next Ready.
@@ -1021,6 +1034,8 @@ impl Event {
             | Self::ActivityHiddenChanged { .. }
             | Self::ServerBlocksChanged { .. }
             | Self::RejoinBlockChanged { .. }
+            | Self::InvitesChanged { .. }
+            | Self::BansChanged { .. }
             | Self::InboxFiltersChanged { .. }
             | Self::ChannelOrderChanged { .. }
             | Self::ViewOnceOpened { .. }
@@ -1059,6 +1074,8 @@ impl Event {
             | Self::ActivityHiddenChanged { user_id, .. }
             | Self::ServerBlocksChanged { user_id, .. }
             | Self::RejoinBlockChanged { user_id, .. }
+            | Self::InvitesChanged { user_id, .. }
+            | Self::BansChanged { user_id, .. }
             | Self::InboxFiltersChanged { user_id, .. }
             | Self::ChannelOrderChanged { user_id, .. }
             | Self::ViewOnceOpened { user_id, .. }
