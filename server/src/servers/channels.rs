@@ -5,8 +5,11 @@
 //! A delete moves the channel to its server's Recently deleted (#112): invisible everywhere (the
 //! access rule and the channel listings skip it), nothing purged. From there the server owner or
 //! whoever deleted it may restore it; the owner may purge it now, and the sweeper purges it after
-//! [`RECENTLY_DELETED_DAYS`]. A deleted channel still counts toward the server's channel cap, so a
-//! restore never takes a server past it.
+//! [`RECENTLY_DELETED_DAYS`]. A deleted channel doesn't count toward the server's channel cap
+//! (`limits::caps::CHANNELS_PER_SERVER`), nor does one a part-way "Delete now" left behind (#364):
+//! only live channels do. A restore counts it again, so a restore into a server at the cap is
+//! refused (409 `channel_limit`). Aggregates about people (voice time, top reaction, the clip
+//! quota) still count activity in deleted channels.
 //!
 //! A purge goes in short batches (#108, `servers::purge`), so it can be cut off part-way by a
 //! restart. "Delete now" therefore first makes the channel due (as if its 7 days were up): from
@@ -533,6 +536,15 @@ pub async fn restore(
         || (owner_of(&mut tx, server).await? != me && deleted_by != Some(me))
     {
         return Err(AppError::Forbidden);
+    }
+    // Deleted channels don't count toward the cap (#364): coming back, this one does again.
+    if crate::servers::routes::live_channel_count(&mut tx, server).await?
+        >= crate::limits::caps::CHANNELS_PER_SERVER
+    {
+        return Err(AppError::ConflictCode(
+            "channel_limit",
+            "This server is at its channel limit. Free up some space first.".into(),
+        ));
     }
     // Before it is live again, so it isn't counted in its own bottom.
     let position = bottom_of(&mut tx, server, old.category_id).await?;

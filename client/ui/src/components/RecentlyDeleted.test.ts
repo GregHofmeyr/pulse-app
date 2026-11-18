@@ -80,6 +80,20 @@ describe('RecentlyDeleted', () => {
     expect(document.querySelectorAll('li')).toHaveLength(0)
   })
 
+  it('a restore into a full server keeps the row and says why (#364)', async () => {
+    await show([gone('T1', 'old-stuff', 'text')])
+    const full = 'This server is at its channel limit. Free up some space first.'
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'restore_channel') throw full
+      return cmd === 'list_deleted_channels' ? [gone('T1', 'old-stuff', 'text')] : undefined
+    })
+    button('Restore #old-stuff')!.click()
+    await settle()
+    flushSync()
+    expect(document.querySelector('[role=alert]')?.textContent).toBe(full)
+    expect(document.querySelectorAll('li')).toHaveLength(1)
+  })
+
   it('a restore refused because someone else purged it reloads the list and drops the row, saying so (#115)', async () => {
     await show([gone('T1', 'old-stuff', 'text'), gone('T2', 'other', 'text')])
     // purged elsewhere meanwhile: the server says it isn't there, and the list no longer has it

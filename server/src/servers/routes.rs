@@ -425,6 +425,21 @@ async fn list_channels(
     Ok(Json(server_channels(&s.db, id).await?))
 }
 
+/// The server channels that count toward [`caps::CHANNELS_PER_SERVER`]: the live ones. A channel
+/// in Recently deleted, or one a part-way "Delete now" left behind, doesn't (#364); a restore
+/// counts it again, so it is checked against the cap too.
+pub(crate) async fn live_channel_count(
+    db: &mut sqlx::SqliteConnection,
+    server: ServerId,
+) -> AppResult<i64> {
+    Ok(sqlx::query_scalar(
+        "SELECT COUNT(*) FROM channels WHERE server_id = ? AND deleted_at IS NULL",
+    )
+    .bind(server.to_string())
+    .fetch_one(db)
+    .await?)
+}
+
 async fn create_channel(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -448,11 +463,7 @@ async fn create_channel(
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     server_live_in(&mut tx, id).await?; // a delete committed since the check above (#287)
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE server_id = ?")
-        .bind(id.to_string())
-        .fetch_one(&mut *tx)
-        .await?;
-    if count >= caps::CHANNELS_PER_SERVER {
+    if live_channel_count(&mut tx, id).await? >= caps::CHANNELS_PER_SERVER {
         return Err(AppError::BadRequest(format!(
             "a server can have up to {} channels",
             caps::CHANNELS_PER_SERVER

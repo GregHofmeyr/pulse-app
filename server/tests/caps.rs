@@ -60,6 +60,104 @@ async fn channels_per_server_cap_100() {
     assert_eq!(r.status(), 200);
 }
 
+/// Deleted channels (Recently deleted, or left behind by a part-way "Delete now") don't count
+/// toward the cap; a restore counts one again and is refused while the server is full (#364).
+#[tokio::test]
+async fn deleted_channels_free_their_slot_and_a_restore_needs_one() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let srv = create_server(&app, &alex, "Main").await; // general + Lounge
+    let path = format!("/servers/{}/channels", srv.id);
+    let mut ids = Vec::new();
+    for i in 0..98 {
+        let r = post_json(
+            &app,
+            &alex,
+            &path,
+            json!({ "name": format!("c{i}"), "kind": "text" }),
+        )
+        .await;
+        assert_eq!(r.status(), 200, "channel {i}");
+        ids.push(r.json::<Channel>().await.unwrap().id);
+    }
+    let del = |id: ChannelId| {
+        let (app, alex) = (&app, &alex);
+        async move {
+            let r = app
+                .http
+                .delete(app.url(&format!("/channels/{id}")))
+                .bearer_auth(alex)
+                .send()
+                .await
+                .unwrap();
+            assert!(r.status().is_success(), "delete {id}: {}", r.status());
+        }
+    };
+    // One in Recently deleted frees a slot.
+    del(ids[0]).await;
+    let r = post_json(
+        &app,
+        &alex,
+        &path,
+        json!({ "name": "new1", "kind": "text" }),
+    )
+    .await;
+    assert_eq!(
+        r.status(),
+        200,
+        "a channel in Recently deleted no longer counts"
+    );
+    // One a part-way "Delete now" left behind (due, rows not yet purged) doesn't count either.
+    del(ids[1]).await;
+    sqlx::query("UPDATE channels SET deleted_at = '2000-01-01T00:00:00.000Z' WHERE id = ?")
+        .bind(ids[1].to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let r = post_json(
+        &app,
+        &alex,
+        &path,
+        json!({ "name": "new2", "kind": "text" }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "a half-purged channel no longer counts");
+    // The server is full again: restoring the Recently deleted one is refused, kindly.
+    let r = post_json(
+        &app,
+        &alex,
+        &format!("/channels/{}/restore", ids[0]),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 409);
+    let e: ApiError = r.json().await.unwrap();
+    assert_eq!(e.code, "channel_limit");
+    assert_eq!(
+        e.message,
+        "This server is at its channel limit. Free up some space first."
+    );
+    // Free a slot and the restore goes through, counting the channel again.
+    del(ids[2]).await;
+    let r = post_json(
+        &app,
+        &alex,
+        &format!("/channels/{}/restore", ids[0]),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let r = post_json(
+        &app,
+        &alex,
+        &path,
+        json!({ "name": "new3", "kind": "text" }),
+    )
+    .await;
+    let msg = bad_request(r, "the restored channel counts again").await;
+    assert!(msg.contains("100"), "{msg}");
+}
+
 async fn new_invite(app: &TestApp, token: &str) -> reqwest::Response {
     post_json(app, token, "/invites", json!({})).await
 }

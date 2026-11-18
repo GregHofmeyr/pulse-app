@@ -35,7 +35,8 @@ impl Rate {
 pub mod caps {
     /// Servers one user has created.
     pub const SERVERS_PER_USER: i64 = 10;
-    /// Channels (text and voice together) in one server.
+    /// Live channels (every kind together) in one server. Recently deleted ones, and ones a
+    /// part-way "Delete now" left behind, don't count (#364); restoring one counts it again.
     pub const CHANNELS_PER_SERVER: i64 = 100;
     /// Group conversations one user is a member of (1:1 DMs don't count).
     pub const GROUPS_PER_USER: i64 = 200;
