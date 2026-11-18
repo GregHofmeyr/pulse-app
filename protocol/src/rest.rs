@@ -1335,6 +1335,11 @@ pub struct Gif {
     pub title: String,
     pub width: u32,
     pub height: u32,
+    /// A GIPHY sticker (#293): drawn on the chat itself, without a GIF's frame (it has a transparent background).
+    /// Left out when false, so older clients and stored GIFs read as before.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub sticker: bool,
 }
 
 /// What a signed-in person's app needs to search GIPHY itself (#58; GIPHY forbids proxying): the server's key

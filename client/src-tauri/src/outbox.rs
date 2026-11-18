@@ -218,6 +218,7 @@ mod tests {
             title: "Yes".into(),
             width: 480,
             height: 270,
+            sticker: false,
         };
         ob.enqueue_gif(
             "n1".into(),

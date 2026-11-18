@@ -12,4 +12,9 @@ id: string,
 /**
  * GIPHY's title, the alt text (may be empty).
  */
-title: string, width: number, height: number, };
+title: string, width: number, height: number, 
+/**
+ * A GIPHY sticker (#293): drawn on the chat itself, without a GIF's frame (it has a transparent background).
+ * Left out when false, so older clients and stored GIFs read as before.
+ */
+sticker?: boolean, };

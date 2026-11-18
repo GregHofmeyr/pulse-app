@@ -28,6 +28,7 @@ export const patchNotes: PatchNotes = {
   version: '0.2.15',
   date: '18 November 2026',
   new: [
+    'Stickers: the GIF picker has a Stickers rail with GIPHY\'s stickers, which sit right on the chat',
     'Check for updates yourself in Settings › Advanced › Updates',
     'Invite people to a server with a link, or straight from their right-click menu',
     'Invites show as cards in chat, with a Join button',

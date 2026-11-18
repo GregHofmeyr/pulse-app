@@ -242,6 +242,35 @@ async fn a_picked_gif_is_stored_on_its_message() {
     assert_eq!(list[0].gif.as_ref().map(|g| g.id.as_str()), Some(ID));
 }
 
+/// #293: a GIPHY sticker goes as a GIF marked `sticker`, kept on its message; a plain GIF's JSON leaves it out.
+#[tokio::test]
+async fn a_sticker_is_kept_as_one() {
+    let app = spawn().await;
+    let (_, t) = register(&app, "alex").await;
+    let ch = chat(&app, &t).await;
+    let mut sticker = gif(ID);
+    sticker["sticker"] = json!(true);
+    let r = send_gif(
+        &app,
+        &t,
+        ch,
+        json!({ "content": format!("https://giphy.com/gifs/{ID}"), "gif": sticker }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let sent: Message = r.json().await.unwrap();
+    assert!(sent.gif.as_ref().unwrap().sticker);
+    let r = send_gif(&app, &t, ch, json!({ "content": link(ID), "gif": gif(ID) })).await;
+    let raw: Value = r.json().await.unwrap();
+    assert!(raw["gif"].get("sticker").is_none(), "{raw}");
+    let list: Vec<Message> = get_json(&app, &t, &format!("/channels/{ch}/messages")).await;
+    let stickers: Vec<bool> = list
+        .iter()
+        .map(|m| m.gif.as_ref().unwrap().sticker)
+        .collect();
+    assert_eq!(stickers.iter().filter(|s| **s).count(), 1);
+}
+
 #[tokio::test]
 async fn any_giphy_link_form_to_the_same_gif_is_accepted() {
     let app = spawn().await;

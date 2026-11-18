@@ -5,7 +5,7 @@
 import type { Message } from './protocol/Message'
 
 /** A GIF to draw in chat: its size is unknown for a pasted link. */
-export type ShownGif = { id: string; title: string; width: number | null; height: number | null }
+export type ShownGif = { id: string; title: string; width: number | null; height: number | null; sticker?: boolean }
 
 /** Most GIFs one message shows (as link previews). */
 export const MAX_GIFS = 3
@@ -66,7 +66,7 @@ function links(content: string): string[] {
 /** The GIFs a message shows: a picked GIF's own, else its GIPHY links' (up to [`MAX_GIFS`], each once). */
 export function gifsOf(m: Message): ShownGif[] {
   if (m.deleted) return []
-  if (m.gif) return [{ id: m.gif.id, title: m.gif.title, width: m.gif.width, height: m.gif.height }]
+  if (m.gif) return [{ id: m.gif.id, title: m.gif.title, width: m.gif.width, height: m.gif.height, ...(m.gif.sticker ? { sticker: true } : {}) }]
   const out: ShownGif[] = []
   for (const link of links(m.content)) {
     const id = gifIdOf(link)

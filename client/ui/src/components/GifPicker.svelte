@@ -5,7 +5,7 @@
 
 <script lang="ts">
   // The GIF picker (#58), in the emoji picker's frame: a search box, a rail (GIPHY: trending, or what you search;
-  // Favourites), a two-column grid and "Powered by GIPHY" in the footer (GIPHY's terms). The core searches GIPHY
+  // GIPHY's stickers the same way, #293; Favourites), a two-column grid and "Powered by GIPHY" in the footer (GIPHY's terms). The core searches GIPHY
   // itself with the server's key; results come in GIPHY's order with GIPHY's URLs untouched, and nothing is cached.
   // Picking one sends it; the star keeps it in your favourites.
   import { untrack } from 'svelte'
@@ -28,15 +28,16 @@
 
   const NEAR_END_PX = 300
 
-  type Tab = 'giphy' | 'favourites'
+  type Tab = 'giphy' | 'stickers' | 'favourites'
   /** One grid cell: a GIPHY result, or a favourite drawn from GIPHY's media links for its id. */
   type Cell = { gif: Gif; link: string; anim: string; still: string; w: number; h: number }
 
   let tab = $state<Tab>('giphy')
   let query = $state('')
   let results = $state<GifResult[]>([])
-  /** The search `results` are for ('' = trending) and the next page's offset. */
+  /** The search `results` are for ('' = trending), whether they're stickers, and the next page's offset. */
   let shownQuery = ''
+  let shownStickers = false
   let next = $state<number | null>(null)
   let loading = $state(false)
   let error = $state('')
@@ -47,21 +48,24 @@
   // a newer search makes an older answer moot
   let asked = 0
 
-  const fromResult = (r: GifResult): Cell => ({
-    gif: { id: r.id, title: r.title, width: r.width, height: r.height }, link: gifLink(r),
+  const fromResult = (r: GifResult, sticker: boolean): Cell => ({
+    gif: { id: r.id, title: r.title, width: r.width, height: r.height, ...(sticker ? { sticker: true } : {}) }, link: gifLink(r),
     anim: r.preview, still: r.still, w: r.preview_width, h: r.preview_height,
   })
   const fromFav = (g: Gif): Cell => ({ gif: g, link: `https://giphy.com/gifs/${g.id}`, ...gridMedia(g.id), w: g.width, h: g.height })
 
-  const cells = $derived(tab === 'favourites' ? gifFavs.list.map(fromFav) : results.map(fromResult))
+  // the results are dropped as the feed changes, so they are always the shown feed's
+  let resultsStickers = $state(false)
+  const cells = $derived(tab === 'favourites' ? gifFavs.list.map(fromFav) : results.map((r) => fromResult(r, resultsStickers)))
   const columns = $derived(masonry(cells, (c) => c.h / c.w))
 
-  async function load(q: string, offset: number) {
+  async function load(q: string, offset: number, stickers = tab === 'stickers') {
     const mine = ++asked
     loading = true
     error = ''
+    if (!offset && stickers !== resultsStickers) results = []
     try {
-      const page = await api.gifFeed(q, offset)
+      const page = await api.gifFeed(q, offset, stickers)
       if (mine !== asked) return
       if (!page) {
         notSetUp = true
@@ -70,6 +74,8 @@
         return
       }
       shownQuery = q
+      shownStickers = stickers
+      resultsStickers = stickers
       // a GIF already shown (GIPHY's pages can overlap) isn't shown twice
       const have = new Set(offset ? results.map((r) => r.id) : [])
       const fresh = page.gifs.filter((g) => !have.has(g.id) && !!have.add(g.id))
@@ -110,8 +116,15 @@
 
   function more() {
     // after a failed page, only Try again asks again: scrolling mustn't spend the server's GIPHY calls retrying
-    if (tab !== 'giphy' || loading || error || next === null || !scroller) return
-    if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - NEAR_END_PX) void load(shownQuery, next)
+    if (tab === 'favourites' || loading || error || next === null || !scroller) return
+    if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - NEAR_END_PX) void load(shownQuery, next, shownStickers)
+  }
+
+  /** GIFs or stickers: the same search (or trending), from the top. */
+  function pickFeed(t: 'giphy' | 'stickers') {
+    const was = tab
+    tab = t
+    if (was !== t && (t === 'stickers') !== resultsStickers) void load(query.trim(), 0)
   }
 
   function star(g: Gif) {
@@ -126,7 +139,7 @@
       // Enter in the box sends the first GIF showing, but only once it's a result of what's typed: never the
       // previous results while the search is still on its way
       ev.preventDefault()
-      const current = tab === 'favourites' || (!loading && query.trim() === shownQuery)
+      const current = tab === 'favourites' || (!loading && query.trim() === shownQuery && shownStickers === (tab === 'stickers'))
       if (current && cells[0]) onPick(cells[0].gif, cells[0].link)
     }
   }
@@ -134,13 +147,15 @@
 
 {#snippet cell(c: Cell)}
   {@const starred = isGifFav(c.gif.id)}
-  <div class="cell" style:aspect-ratio="{c.w} / {c.h}">
+  <div class="cell" class:sticker={c.gif.sticker} style:aspect-ratio="{c.w} / {c.h}">
     <button class="pick" type="button" aria-label={c.gif.title || 'GIF'} onclick={() => onPick(c.gif, c.link)}
       onmouseenter={() => (hovered = c.gif.title)} onmouseleave={() => (hovered = null)} onfocus={() => (hovered = c.gif.title)} onblur={() => (hovered = null)}>
       <img src={c.still} alt="" loading="lazy" draggable="false" {@attach animatedGif(c.anim, c.still)} />
     </button>
-    <button class="icon-btn icon-btn-xs icon-btn-overlay star" class:on={starred} type="button" aria-pressed={starred}
-      aria-label={starred ? 'Remove from favourite GIFs' : 'Add to favourite GIFs'} onclick={() => star(c.gif)}><Icon name="star" size={14} /></button>
+    {#if !c.gif.sticker}
+      <button class="icon-btn icon-btn-xs icon-btn-overlay star" class:on={starred} type="button" aria-pressed={starred}
+        aria-label={starred ? 'Remove from favourite GIFs' : 'Add to favourite GIFs'} onclick={() => star(c.gif)}><Icon name="star" size={14} /></button>
+    {/if}
   </div>
 {/snippet}
 
@@ -154,7 +169,9 @@
   <div class="body">
     <nav class="rail" aria-label="GIF sections">
       <button class="rail-btn" class:on={tab === 'giphy'} type="button" aria-label={query.trim() ? 'Search results' : 'Trending'} aria-pressed={tab === 'giphy'}
-        data-tip={query.trim() ? 'Search results' : 'Trending'} onclick={() => (tab = 'giphy')}><Icon name="trending" size={18} /></button>
+        data-tip={query.trim() ? 'Search results' : 'Trending'} onclick={() => pickFeed('giphy')}><Icon name="trending" size={18} /></button>
+      <button class="rail-btn" class:on={tab === 'stickers'} type="button" aria-label="Stickers" aria-pressed={tab === 'stickers'}
+        data-tip="Stickers" onclick={() => pickFeed('stickers')}><Icon name="sticker" size={18} /></button>
       <button class="rail-btn" class:on={tab === 'favourites'} type="button" aria-label="Favourites" aria-pressed={tab === 'favourites'}
         data-tip="Favourites" onclick={() => (tab = 'favourites')}><Icon name="star" size={18} /></button>
     </nav>
@@ -166,7 +183,7 @@
       {:else if tab === 'favourites' && !cells.length}
         <p class="none">{gifFavs.loaded ? 'Star a GIF to keep it here' : 'Loading…'}</p>
       {:else if !cells.length}
-        <p class="none">{loading ? 'Loading…' : query.trim() ? 'No GIFs found' : 'Nothing trending right now'}</p>
+        <p class="none">{loading ? 'Loading…' : query.trim() ? (tab === 'stickers' ? 'No stickers found' : 'No GIFs found') : 'Nothing trending right now'}</p>
       {:else}
         <div class="cols">
           {#each columns as col, i (i)}
@@ -199,6 +216,9 @@
   .cell { position: relative; border-radius: var(--radius-xs); overflow: hidden; background: var(--bg-3); }
   .pick { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer; }
   .pick img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  /* a sticker (#293) has a transparent background: on the picker itself, whole */
+  .cell.sticker { background: none; }
+  .cell.sticker .pick img { object-fit: contain; }
   .pick:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
   .star { position: absolute; top: 4px; right: 4px; opacity: 0; }
   .cell:hover .star, .star:focus-visible { opacity: 1; }

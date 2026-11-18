@@ -12,10 +12,10 @@ const r = (id: string, title = `${id} GIF`): GifResult => ({
   preview: `https://media1.giphy.com/media/v1.x/${id}/200w.webp?cid=c&rid=200w.webp&ct=g`, preview_width: 200, preview_height: 113,
   still: `https://media1.giphy.com/media/v1.x/${id}/200w_s.gif?cid=c&rid=200w_s.gif&ct=g`,
 })
-let feed: (query: string, offset: number) => Promise<GifPage | null>
+let feed: (query: string, offset: number, stickers?: boolean) => Promise<GifPage | null>
 let favs: Gif[] = []
 const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
-  if (cmd === 'gif_feed') return feed(args!.query as string, args!.offset as number)
+  if (cmd === 'gif_feed') return feed(args!.query as string, args!.offset as number, !!args!.stickers)
   if (cmd === 'gif_favourites') return favs
   return undefined
 })
@@ -45,7 +45,11 @@ function type(q: string) {
   search().dispatchEvent(new Event('input'))
   flushSync()
 }
-const feedCalls = () => invoke.mock.calls.filter(([c]) => c === 'gif_feed').map(([, a]) => a)
+// GIFs' calls as { query, offset }; a stickers call (#293) also says `stickers: true`
+const feedCalls = () => invoke.mock.calls.filter(([c]) => c === 'gif_feed').map(([, a]) => {
+  const { stickers, ...rest } = a as { query: string; offset: number; stickers: boolean }
+  return stickers ? { ...rest, stickers } : rest
+})
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -248,5 +252,29 @@ describe('GifPicker', () => {
     await flush()
     expect(gifFavs.list).toHaveLength(0)
     expect(text()).toContain('You can keep 200 favourite GIFs')
+  })
+
+  it('the Stickers rail shows GIPHY stickers for the same search, sent marked as stickers, with no star (#293)', async () => {
+    feed = async (q, offset, stickers) => ({ gifs: [r(`${stickers ? 'S' : 'G'}${q || 'T'}${offset}`)], next: null })
+    open()
+    await flush()
+    expect(labels()).toEqual(['GT0 GIF'])
+    rail('Stickers').click()
+    await flush()
+    expect(feedCalls()).toEqual([{ query: '', offset: 0 }, { query: '', offset: 0, stickers: true }])
+    expect(labels()).toEqual(['ST0 GIF'])
+    expect(picker().querySelector('.cell.sticker .star')).toBeNull()
+    type('wave')
+    vi.advanceTimersByTime(SEARCH_DELAY_MS)
+    await flush()
+    expect(feedCalls().at(-1)).toEqual({ query: 'wave', offset: 0, stickers: true })
+    cells()[0].click()
+    expect(picked.at(-1)![0]).toEqual({ id: 'Swave0', title: 'Swave0 GIF', width: 480, height: 270, sticker: true })
+    // back to GIFs: the same search as GIFs, and they carry no sticker mark
+    rail('Search results').click()
+    await flush()
+    expect(feedCalls().at(-1)).toEqual({ query: 'wave', offset: 0 })
+    cells()[0].click()
+    expect(picked.at(-1)![0]).toEqual({ id: 'Gwave0', title: 'Gwave0 GIF', width: 480, height: 270 })
   })
 })
