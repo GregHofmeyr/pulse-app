@@ -2066,6 +2066,7 @@ mod tests {
         let party = WatchParty {
             channel_id: ch,
             host_id: u,
+            source: crate::rest::WatchSource::Youtube,
             video_id: "dQw4w9WgXcQ".into(),
             title: None,
             position_ms: 0,
@@ -2098,7 +2099,30 @@ mod tests {
         assert!(serde_json::from_value::<WatchParty>(old).is_ok());
         let a: WatchPartyAction =
             serde_json::from_str(r#"{"action":"load","video_id":"dQw4w9WgXcQ"}"#).unwrap();
-        assert!(matches!(a, WatchPartyAction::Load { title: None, .. }));
+        assert!(matches!(
+            a,
+            WatchPartyAction::Load {
+                title: None,
+                source: crate::rest::WatchSource::Youtube,
+                ..
+            }
+        ));
+        let a: WatchPartyAction = serde_json::from_str(
+            r#"{"action":"enqueue","source":"twitch_video","video_id":"123"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            a,
+            WatchPartyAction::Enqueue {
+                source: crate::rest::WatchSource::TwitchVideo,
+                ..
+            }
+        ));
+        use crate::rest::WatchSource as S;
+        assert!(S::TwitchVideo.valid_id("2012345678") && !S::TwitchVideo.valid_id("v123"));
+        assert!(S::TwitchChannel.valid_id("alex_1") && !S::TwitchChannel.valid_id("Alex"));
+        assert!(S::TwitchClip.valid_id("FunnyClip-abc_12") && !S::TwitchClip.valid_id("a/b"));
+        assert!(!S::Youtube.valid_id("123"));
     }
 
     /// A server's layout is public like its channels: everyone hears it, as `ChannelDeleted`.

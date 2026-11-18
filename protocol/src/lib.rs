@@ -228,6 +228,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::StageShare::export_all(&cfg)?;
     rest::StageShareRequest::export_all(&cfg)?;
     rest::StageShareLine::export_all(&cfg)?;
+    rest::WatchSource::export_all(&cfg)?;
     rest::WatchParty::export_all(&cfg)?;
     rest::WatchPartyItem::export_all(&cfg)?;
     rest::StartWatchPartyRequest::export_all(&cfg)?;
