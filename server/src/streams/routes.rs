@@ -199,7 +199,12 @@ async fn go_live(
     if channel.server_id.is_none() {
         settings.allow_ghosts = false;
     }
-    let (info, event) = match s.streams.start(ch, me, settings, now()) {
+    let started = s.streams.start(ch, me, settings, now());
+    if let Err(e) = still_there(&s, ch).await {
+        s.streams.end(ch, me);
+        return Err(e);
+    }
+    let (info, event) = match started {
         Started::New(stream) => {
             crate::badges::streams::started(&s, &channel, &stream).await;
             (stream.clone(), Event::StreamStarted { stream })
@@ -241,10 +246,25 @@ async fn watch(
     }
     require_voice_member(&s, me, ch).await?;
     ensure_watchable(&s, me, ch, req.streamer)?;
-    if let Some(viewers) = s.streams.add_viewer(ch, req.streamer, me) {
+    let added = s.streams.add_viewer(ch, req.streamer, me);
+    if let Err(e) = still_there(&s, ch).await {
+        s.streams.remove_viewer(ch, req.streamer, me);
+        return Err(e);
+    }
+    if let Some(viewers) = added {
         publish_viewers(&s, ch, req.streamer, viewers).await;
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The channel's check again, under the write lock, once a go-live or a watch is in the state (#364): the channel
+/// may have been deleted since the request's check, its call already ended (`servers::channels::end_gone_call`)
+/// before this stream or viewer was there to end. A delete commits under that lock and only then ends the call, so
+/// either this sees it gone (the caller undoes what it added and answers 404) or the call's end comes after and
+/// takes it out.
+async fn still_there(s: &AppState, ch: ChannelId) -> AppResult<()> {
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    crate::access::channel_live_in(&mut tx, ch).await
 }
 
 async fn ghost_watch(

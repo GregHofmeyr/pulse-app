@@ -410,3 +410,58 @@ async fn a_send_that_raced_a_hard_delete_is_a_404() {
     .await;
     assert_eq!(status, 404, "{text}");
 }
+
+/// #364: going live, or starting to watch, in a voice channel deleted between the request's check
+/// and its taking effect answers 404 and leaves no stream or viewer behind. The delete ends the
+/// call (`end_gone_call`) only once it has committed; a stream or viewer added after that would
+/// stay in the state of a channel nobody can find.
+#[tokio::test]
+async fn going_live_or_watching_that_raced_a_channel_delete_leaves_nothing() {
+    let w = world().await;
+    let lounge = create_channel(&w, "voice").await.id;
+    w.app.voice.join(lounge, w.alex.0, "PA_alex");
+    w.app.voice.join(lounge, w.sam.0, "PA_sam");
+    let live = format!("/streams/{lounge}/live");
+    let settings = json!({"settings": {"height": 1080, "fps": 60, "audio": true}});
+
+    let req = request(
+        &w.app,
+        &w.alex.1,
+        reqwest::Method::POST,
+        &live,
+        Some(settings.clone()),
+    );
+    let (status, body) = racing(&w.app, SOFT_DELETE, lounge, req).await;
+    assert_eq!(status, 404, "go live: {body}");
+    assert!(
+        w.app.streams.get(lounge, w.alex.0).is_none(),
+        "no stream left"
+    );
+
+    restore(&w.app, lounge).await;
+    let r = request(
+        &w.app,
+        &w.alex.1,
+        reqwest::Method::POST,
+        &live,
+        Some(settings),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "go live");
+    let watch = format!("/streams/{lounge}/watch");
+    let req = request(
+        &w.app,
+        &w.sam.1,
+        reqwest::Method::POST,
+        &watch,
+        Some(json!({ "streamer": w.alex.0 })),
+    );
+    let (status, body) = racing(&w.app, SOFT_DELETE, lounge, req).await;
+    assert_eq!(status, 404, "watch: {body}");
+    let info = w.app.streams.get(lounge, w.alex.0).unwrap();
+    assert!(
+        info.viewers.is_empty(),
+        "no viewer left: {:?}",
+        info.viewers
+    );
+}
