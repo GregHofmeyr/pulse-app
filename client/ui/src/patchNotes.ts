@@ -33,6 +33,7 @@ export const patchNotes: PatchNotes = {
     'Invites show as cards in chat, with a Join button',
     'Server owners can ban someone from their right-click menu, and see who is banned in Server settings › Bans',
     'A new profile card theme, Dusk: purple to deep rose',
+    'Name effects: give your name Neon, Toon, Pop, Gummy, Prism, Shimmer, Glitch or Ember in Settings › Profile. They move when someone hovers your name or opens your profile',
   ],
   fixes: [
     'Restoring a deleted channel now tells you when the server is at its channel limit, and deleted channels no longer count toward it',
