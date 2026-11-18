@@ -29,11 +29,16 @@ macro_rules! redacting_debug {
 
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct RegisterRequest {
+    /// A sign-up code, or a server owner's invite code (#80), which also puts the new account in that server.
     pub invite_code: String,
     pub username: String,
     pub password: String,
+    /// Always empty from the app (#80).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub website: Option<String>,
 }
-redacting_debug!(RegisterRequest { username ; invite_code, password });
+redacting_debug!(RegisterRequest { username ; invite_code, password, website });
 
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct LoginRequest {
@@ -3667,6 +3672,7 @@ mod tests {
                     invite_code: s("SECRET-INVITE"),
                     username: s("alex"),
                     password: s("SECRET-PW"),
+                    website: None,
                 }
             ),
             format!(
