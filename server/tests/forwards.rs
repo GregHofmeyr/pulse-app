@@ -232,3 +232,68 @@ async fn forwards_are_rate_limited() {
     let r = forward(&app, &alex, m.id, json!({"channel_id": dm.id})).await;
     assert_eq!(r.status(), 429);
 }
+
+/// #415: a deleted original's forwards are all told, past the first batch ([`TELL_MAX`] at a time).
+#[tokio::test]
+async fn every_forward_hears_its_original_was_deleted() {
+    use pulse_protocol::gateway::{Event, ServerFrame};
+    use pulse_protocol::ids::MessageId;
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let (sam_id, sam) = register(&app, "sam").await;
+    let s = create_server(&app, &sam, "Main").await;
+    let g = general(&app, &sam, s.id).await;
+    let dm = create_dm(&app, &alex, &[sam_id]).await;
+    let original = send(&app, &alex, dm.id, "see you there").await;
+    let r = forward(&app, &sam, original.id, json!({"channel_id": g.id})).await;
+    assert_eq!(r.status(), 200);
+    let first: Message = r.json().await.unwrap();
+    // more forwards than one batch, copied in the database (the forward route is rate limited)
+    let total = pulse_server::forwards::TELL_MAX as usize + 5;
+    for _ in 1..total {
+        let id = MessageId::new().to_string();
+        sqlx::query(
+            "INSERT INTO messages (id, channel_id, author_id, kind, content, created_at)
+             SELECT ?, channel_id, author_id, kind, content, created_at FROM messages WHERE id = ?",
+        )
+        .bind(&id)
+        .bind(first.id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO message_forwards (message_id, source_id, source_channel_id, source_author_id,
+                 source_created_at, content, gif, has_comment)
+             SELECT ?, source_id, source_channel_id, source_author_id, source_created_at, content, gif, has_comment
+             FROM message_forwards WHERE message_id = ?",
+        )
+        .bind(&id)
+        .bind(first.id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+
+    let mut rx = app.hub.register(sam_id, String::new()).rx;
+    let r = app
+        .http
+        .delete(app.url(&format!("/messages/{}", original.id)))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    let mut told = std::collections::HashSet::new();
+    while told.len() < total {
+        let f = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("every forward is told")
+            .expect("hub open");
+        if let ServerFrame::Event(Event::MessageUpdated { message }) = f
+            && message.forwarded.as_ref().is_some_and(|f| f.unavailable)
+        {
+            told.insert(message.id);
+        }
+    }
+    assert_eq!(told.len(), total);
+}
