@@ -59,10 +59,10 @@
 </div>
 
 <style>
-  /* max-width + overflow-x: never wider than its box; it scrolls instead (no scrollbar: the fade says there's more) */
-  .seg { --fade-start: 0px; --fade-end: 0px; position: relative; display: inline-flex; align-self: flex-start; max-width: 100%; min-width: 0; border: 1px solid var(--bg-4); border-radius: var(--radius-md); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain;
-    mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent 100%); }
-  .seg::-webkit-scrollbar { display: none; }
+  /* max-width + overflow-x: never wider than its box; it scrolls instead, and the fade says there's more. The mask
+     only reads alpha: --bg-1 is just an opaque colour token here (every theme's is solid). */
+  .seg { --fade-start: 0px; --fade-end: 0px; position: relative; display: inline-flex; align-self: flex-start; max-width: 100%; min-width: 0; border: 1px solid var(--bg-4); border-radius: var(--radius-md); overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+    mask-image: linear-gradient(to right, transparent 0, var(--bg-1) var(--fade-start), var(--bg-1) calc(100% - var(--fade-end)), transparent 100%); }
   .seg.more-start { --fade-start: 28px; }
   .seg.more-end { --fade-end: 28px; }
   .seg button { flex: none; padding: 8px 14px; border: 0; background: transparent; color: var(--text-2); font-weight: 600; white-space: nowrap; }
