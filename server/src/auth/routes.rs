@@ -365,8 +365,11 @@ async fn user_named(
     Ok((name, id))
 }
 
-/// Delete every session of user `id`; returns how many were still live.
+/// Delete every session of user `id`; returns how many were still live. The owner tools run in
+/// their own process, so each session is noted as revoked first (#466): the running server's
+/// sweeper closes its sockets and calls.
 async fn revoke_all_in(conn: &mut sqlx::SqliteConnection, id: &str) -> anyhow::Result<u64> {
+    session::note_revoked_in(&mut *conn, id).await?;
     let live: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE user_id = ? AND expires_at > ?")
             .bind(id)

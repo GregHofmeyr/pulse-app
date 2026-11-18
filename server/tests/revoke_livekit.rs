@@ -439,6 +439,33 @@ async fn logout_others_removes_exactly_the_revoked_sessions_participants() {
     assert!(t.lk.connected(&t.dm.id.to_string(), &t.sam.to_string()));
 }
 
+/// #466: an owner reset runs in its own process; the running server's revoked-session sweeper
+/// removes every participant that person's sessions admitted (their calls and streams), and
+/// nobody else's.
+#[tokio::test]
+async fn an_owner_reset_removes_that_persons_participants_at_the_next_sweep() {
+    let t = setup().await;
+    pulse_server::streams::ghosts::spawn_revoked_sweeper(t.app.state(), Duration::from_millis(20));
+    pulse_server::auth::routes::reset_password(&t.app.db, "alex", "a brand new passphrase")
+        .await
+        .unwrap();
+    wait_for(&t.lk, 4).await;
+    assert_eq!(
+        calls(&t.lk),
+        set(&[
+            (t.lounge.id.to_string(), t.alex.to_string()),
+            (format!("{}~s", t.lounge.id), format!("{}#v", t.alex)),
+            (format!("{}~s", t.lounge.id), format!("{}#a", t.alex)),
+            (t.dm.id.to_string(), t.alex.to_string()),
+        ]),
+        "sam's DM call is untouched"
+    );
+    assert!(t.lk.connected(&t.dm.id.to_string(), &t.sam.to_string()));
+    // the notes were taken: a later sweep does nothing more
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(removed_count(&t.lk), 4);
+}
+
 #[tokio::test]
 async fn plain_logout_removes_only_that_sessions_participants() {
     let t = setup().await;

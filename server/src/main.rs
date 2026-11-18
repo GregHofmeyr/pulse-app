@@ -124,9 +124,10 @@ async fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
-        // The running server isn't told: REST calls with a deleted session fail at once and its
-        // ghost watches end within a minute (#372), but its open real-time connections and calls
-        // stay until they drop (restarting it ends them).
+        // The running server isn't told directly: REST calls with a deleted session fail at once,
+        // and the sessions are noted as revoked, so its sweeper closes their real-time connections
+        // (the apps go to sign-in) and ends their calls, streams and ghost watches within about
+        // 10 s (#372, #466).
         Cmd::ResetPassword { username } => {
             let cfg = cfg()?;
             let password = pulse_server::auth::routes::read_password_line(std::io::stdin().lock())?;

@@ -378,6 +378,47 @@ pub async fn revoke_others_in(
     })
 }
 
+/// Note every session of `user` as revoked, with the LiveKit grants they hold, before an owner
+/// tool deletes them from its own process (#466): the running server's sweeper
+/// ([`take_revoked`]) then closes their sockets and removes their call connections. Run it in
+/// the deleting transaction, before the delete (the grants go with the sessions). Only a
+/// revocation writes these notes; an expired session is never noted.
+pub async fn note_revoked_in(conn: &mut SqliteConnection, user: &str) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO revoked_sessions (token_hash, revoked_at)
+         SELECT token_hash, ? FROM sessions WHERE user_id = ? ON CONFLICT DO NOTHING",
+    )
+    .bind(ts(Utc::now()))
+    .bind(user)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "INSERT INTO revoked_grants (id, token_hash, room)
+         SELECT g.id, g.token_hash, g.room FROM livekit_grants g
+         JOIN sessions s ON s.token_hash = g.token_hash
+         WHERE s.user_id = ? ON CONFLICT DO NOTHING",
+    )
+    .bind(user)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Sessions revoked by another process ([`note_revoked_in`]), taken (the notes are deleted): their
+/// token hashes, and the LiveKit grants they held.
+pub async fn take_revoked(db: &SqlitePool) -> anyhow::Result<(Vec<String>, Vec<RevokedGrant>)> {
+    let mut tx = crate::db::begin_write(db).await?;
+    let grants: Vec<RevokedGrant> = sqlx::query_as("DELETE FROM revoked_grants RETURNING id, room")
+        .fetch_all(&mut *tx)
+        .await?;
+    let hashes: Vec<String> =
+        sqlx::query_scalar("DELETE FROM revoked_sessions RETURNING token_hash")
+            .fetch_all(&mut *tx)
+            .await?;
+    tx.commit().await?;
+    Ok((hashes, grants))
+}
+
 #[cfg(test)]
 mod tests {
     /// Stored session rows are keyed by this digest: a change would sign everyone out.

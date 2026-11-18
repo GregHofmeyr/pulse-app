@@ -257,6 +257,31 @@ pub async fn remove_revoked(s: &AppState, grants: &[RevokedGrant]) {
     remove_granted(s, grants).await;
 }
 
+/// Sessions an owner tool revoked from its own process (#466, `auth::session::note_revoked_in`):
+/// close their sockets (4001, so those apps go to sign-in) and remove the call and stream
+/// connections they admitted, as an in-process revoke does. Called by the revoked-session sweeper
+/// (`streams::ghosts::spawn_revoked_sweeper`). Never fails; problems are logged.
+pub async fn revoked_elsewhere(s: &AppState) {
+    let (hashes, grants) = match crate::auth::session::take_revoked(&s.db).await {
+        Ok(taken) => taken,
+        Err(e) => {
+            tracing::warn!(error = %e, "couldn't read sessions revoked elsewhere");
+            return;
+        }
+    };
+    if hashes.is_empty() {
+        return;
+    }
+    tracing::info!(
+        sessions = hashes.len(),
+        "closing sessions revoked by an owner tool"
+    );
+    for h in &hashes {
+        s.hub.drop_session(h);
+    }
+    remove_granted(s, &grants).await;
+}
+
 /// Remove every participant LiveKit reports carrying one of `grants` (per room, in parallel, within [`BUDGET`]),
 /// whatever identity it connected under: what a logout does for its sessions ([`remove_revoked`]), and what leaving a
 /// server does for the grants its member held in its rooms (#418). Never fails; problems are logged.

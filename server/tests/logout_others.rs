@@ -227,3 +227,68 @@ async fn session_revoked_between_auth_and_register_gets_no_socket() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(app.hub.connections_for(a_id), 0);
 }
+
+/// #466: the owner tools (`reset-password`, `revoke-sessions`) run in their own process. The
+/// running server's revoked-session sweeper closes those sessions' sockets (4001, so the app goes
+/// to sign-in); everyone else's stay open.
+#[tokio::test]
+async fn an_owner_reset_or_revoke_closes_that_persons_sockets_at_the_next_sweep() {
+    let app = spawn().await;
+    let (a_id, a1) = register(&app, "alex").await;
+    let a2 = login(&app, "alex").await;
+    let (s_id, s) = register(&app, "sam").await;
+    let mut ws_a1 = hello(&app, &a1).await;
+    let mut ws_a2 = hello(&app, &a2).await;
+    let mut ws_sam = hello(&app, &s).await;
+    pulse_server::streams::ghosts::spawn_revoked_sweeper(app.state(), Duration::from_millis(20));
+
+    // Only the database hears of it.
+    pulse_server::auth::routes::reset_password(&app.db, "alex", "a brand new passphrase")
+        .await
+        .unwrap();
+    for ws in [&mut ws_a1, &mut ws_a2] {
+        assert_eq!(
+            close_code(ws, Duration::from_secs(2)).await,
+            Some(CloseCode::Library(4001))
+        );
+    }
+    assert_eq!(app.hub.connections_for(a_id), 0);
+    assert_eq!(
+        close_code(&mut ws_sam, Duration::from_millis(200)).await,
+        None
+    );
+
+    // `revoke-sessions` too.
+    pulse_server::auth::routes::revoke_sessions(&app.db, "sam")
+        .await
+        .unwrap();
+    assert_eq!(
+        close_code(&mut ws_sam, Duration::from_secs(2)).await,
+        Some(CloseCode::Library(4001))
+    );
+    assert_eq!(app.hub.connections_for(s_id), 0);
+}
+
+/// #466: a session that merely expires (and is pruned) keeps its socket: nobody is kicked by
+/// expiry, only by a revoke.
+#[tokio::test]
+async fn an_expired_session_keeps_its_socket_through_the_sweep() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let mut ws = hello(&app, &a).await;
+    pulse_server::streams::ghosts::spawn_revoked_sweeper(app.state(), Duration::from_millis(20));
+    sqlx::query("UPDATE sessions SET expires_at = '2000-01-01T00:00:00.000Z'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    pulse_server::hygiene::prune(&app.db, chrono::Utc::now())
+        .await
+        .unwrap();
+    assert!(
+        !session::exists(&app.db, &session::hash_token(&a))
+            .await
+            .unwrap()
+    );
+    assert_eq!(close_code(&mut ws, Duration::from_millis(300)).await, None);
+    assert_eq!(app.hub.connections_for(a_id), 1);
+}

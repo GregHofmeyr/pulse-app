@@ -633,6 +633,41 @@ mod tests {
         );
     }
 
+    /// #466: an owner tool revokes the session from its own process; the server's sweeper closes
+    /// the socket (4001) and the client lands on sign-in instead of reconnecting.
+    #[tokio::test]
+    async fn a_session_revoked_by_an_owner_tool_ends_logged_out_and_stops() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _gw = GatewayHandle::spawn_with(
+            format!("http://{}", app.addr),
+            token,
+            tx,
+            Duration::from_millis(50),
+        );
+        next_ready(&mut rx).await;
+        pulse_server::streams::ghosts::spawn_revoked_sweeper(
+            app.state(),
+            Duration::from_millis(20),
+        );
+        pulse_server::auth::routes::revoke_sessions(&app.db, "alex")
+            .await
+            .unwrap();
+        loop {
+            match next(&mut rx).await {
+                GatewayUpdate::Connection(ConnState::LoggedOut) => break,
+                GatewayUpdate::Ready(_) => panic!("a revoked session got Ready again"),
+                _ => {}
+            }
+        }
+        let more = tokio::time::timeout(Duration::from_millis(800), rx.recv()).await;
+        assert!(
+            matches!(more, Err(_) | Ok(None)),
+            "unexpected retry: {more:?}"
+        );
+    }
+
     #[tokio::test]
     async fn reconnects_after_server_restart() {
         let app = testing::spawn().await;

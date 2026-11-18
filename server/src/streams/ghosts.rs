@@ -71,18 +71,23 @@ pub async fn sessions_revoked(s: &AppState) {
     removed(s, purged, "session_revoked").await;
 }
 
-/// How often [`spawn_revoked_sweeper`] looks for ghosts whose login session went.
-pub const REVOKED_SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+/// How often [`spawn_revoked_sweeper`] looks for sessions revoked elsewhere and ghosts whose login
+/// session went.
+pub const REVOKED_SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Check every `every` for ghosts whose login session isn't live any more (#372). Revoking in the server
-/// ([`sessions_revoked`]) ends them at once; this catches what it never hears of: the owner tools
-/// (`reset-password`, `revoke-sessions`) run in their own process, and a session can expire.
+/// Check every `every` for sessions the owner tools revoked and for ghosts whose login session isn't
+/// live any more (#372, #466). Revoking in the server ends them at once; this catches what it never
+/// hears of: the owner tools (`reset-password`, `revoke-sessions`) run in their own process. Their
+/// sessions are noted as revoked, so their sockets close and their calls end
+/// (`voice::revoke::revoked_elsewhere`); a session that merely expires keeps its socket and calls,
+/// and only its ghosts go.
 pub fn spawn_revoked_sweeper(s: AppState, every: std::time::Duration) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
+            crate::voice::revoke::revoked_elsewhere(&s).await;
             sessions_revoked(&s).await;
         }
     });
