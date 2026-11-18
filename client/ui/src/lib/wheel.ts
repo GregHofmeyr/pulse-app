@@ -1,8 +1,16 @@
 // The picker wheel's pure parts (#158): the `/wheel` command, editing a list of options, and the spin's geometry.
 // The server draws every spin's winner and final angle; these only read and animate them.
 
-/** As the server's `wheel_limits` (protocol/src/rest.rs). */
-export const WHEEL_LIMITS = { minOptions: 2, maxOptions: 100, optionChars: 60, nameChars: 40, maxWeight: 10 } as const
+import { wheel_limits } from './protocol/limits'
+
+/** The server's `wheel_limits` (generated into protocol/limits.ts, #415). */
+export const WHEEL_LIMITS = {
+  minOptions: wheel_limits.MIN_OPTIONS,
+  maxOptions: wheel_limits.MAX_OPTIONS,
+  optionChars: wheel_limits.OPTION_CHARS,
+  nameChars: wheel_limits.NAME_CHARS,
+  maxWeight: wheel_limits.MAX_WEIGHT,
+} as const
 
 /** A full spin: whole turns before the landing, over this long. Every client uses the same, so all show one spin. */
 export const SPIN_TURNS = 5
