@@ -5,9 +5,15 @@ import { gifOnly } from './giphy'
 import type { Message } from './protocol/Message'
 import type { Poll } from './protocol/Poll'
 import type { PollDuration } from './protocol/PollDuration'
+import { poll_limits } from './protocol/limits'
 
-/** As the server's `poll_limits` (protocol/src/rest.rs). */
-export const POLL_LIMITS = { questionChars: 200, optionChars: 80, minOptions: 2, maxOptions: 10 } as const
+/** The server's `poll_limits` (generated into protocol/limits.ts, #415). */
+export const POLL_LIMITS = {
+  questionChars: poll_limits.QUESTION_CHARS,
+  optionChars: poll_limits.OPTION_CHARS,
+  minOptions: poll_limits.MIN_OPTIONS,
+  maxOptions: poll_limits.MAX_OPTIONS,
+} as const
 
 /** The composer's Ends in choices, in order (1 day is the default). */
 export const POLL_ENDS: readonly { value: PollDuration; label: string }[] = [
