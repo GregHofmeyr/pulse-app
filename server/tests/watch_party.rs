@@ -275,8 +275,11 @@ async fn the_host_controls_until_everyone_may() {
     assert_eq!((p.playing, p.position_ms), (false, 30_000));
     // the queue: anyone watching adds, the next one plays from the start
     assert_eq!(
-        w.act(&w.sam.1, json!({"action": "enqueue", "video_id": W}))
-            .await,
+        w.act(
+            &w.sam.1,
+            json!({"action": "enqueue", "video_id": W, "title": "Next up"})
+        )
+        .await,
         204
     );
     assert_eq!(changed(&mut w.rx).await.queue.len(), 1);
@@ -474,4 +477,101 @@ async fn a_pause_sticks_for_everyone_and_play_resumes_where_it_paused() {
         pulse_server::watch::position_at(&p, p.set_at_ms + 1_000),
         43_500
     );
+}
+
+#[tokio::test]
+async fn the_queue_takes_anyone_in_the_call_and_a_card_a_message_showed() {
+    let mut w = world().await;
+    // a message once showed W's card: a queued W takes its title from it (#464)
+    let general = general(&w.app, &w.alex.1, w.lounge.server_id.unwrap()).await;
+    let m = send(&w.app, &w.alex.1, general.id, "look at this").await;
+    sqlx::query(
+        "INSERT INTO link_embeds (message_id, position, url, provider, provider_id, kind, title, fetched_at) \
+         VALUES (?, 0, ?, 'youtube', ?, 'player', 'From the card', '2026-01-01T00:00:00Z')",
+    )
+    .bind(m.id.to_string())
+    .bind(format!("https://www.youtube.com/watch?v={W}"))
+    .bind(W)
+    .execute(&w.app.db)
+    .await
+    .unwrap();
+    w.start(&w.alex.1, V).await;
+    changed(&mut w.rx).await;
+    // kim joins the call but doesn't open the player: may still add
+    w.app.voice.join(w.lounge.id, w.kim.0, "PA_kim");
+    assert_eq!(
+        w.act(&w.kim.1, json!({"action": "enqueue", "video_id": W}))
+            .await,
+        204
+    );
+    let p = changed(&mut w.rx).await;
+    assert_eq!(p.queue.len(), 1);
+    assert_eq!(p.queue[0].title.as_deref(), Some("From the card"));
+    assert_eq!(p.queue[0].added_by, w.kim.0);
+    assert!(!p.viewers.contains(&w.kim.0));
+    assert_eq!(
+        w.act(
+            &w.sam.1,
+            json!({"action": "enqueue", "video_id": V, "title": "Mine"})
+        )
+        .await,
+        204
+    );
+    changed(&mut w.rx).await;
+    // sam moves theirs first; kim may not move sam's
+    assert_eq!(
+        w.act(&w.kim.1, json!({"action": "move", "index": 1, "to": 0}))
+            .await,
+        403
+    );
+    assert_eq!(
+        w.act(&w.sam.1, json!({"action": "move", "index": 1, "to": 0}))
+            .await,
+        204
+    );
+    let p = changed(&mut w.rx).await;
+    assert_eq!(p.queue[0].added_by, w.sam.0);
+    // the host's player reaches the end: on to sam's
+    assert_eq!(
+        w.act(&w.alex.1, json!({"action": "next", "from": V})).await,
+        204
+    );
+    let p = changed(&mut w.rx).await;
+    assert_eq!(
+        (p.title.as_deref(), p.added_by),
+        (Some("Mine"), Some(w.sam.0))
+    );
+    // another player's "ended" for a video that's gone already changes nothing
+    assert_eq!(
+        w.act(&w.alex.1, json!({"action": "next", "from": W})).await,
+        204
+    );
+    quiet(&mut w.rx).await;
+    // it's sam's video: sam may skip it, though only alex controls the party
+    assert_eq!(
+        w.act(&w.sam.1, json!({"action": "next", "from": V})).await,
+        204
+    );
+    let p = changed(&mut w.rx).await;
+    assert_eq!((p.video_id.as_str(), p.added_by), (W, Some(w.kim.0)));
+    // play now and skipping someone else's are the controllers'
+    assert_eq!(w.act(&w.sam.1, json!({"action": "next"})).await, 403);
+    assert_eq!(
+        w.act(
+            &w.sam.1,
+            json!({"action": "enqueue", "video_id": V, "title": "Again"})
+        )
+        .await,
+        204
+    );
+    changed(&mut w.rx).await;
+    assert_eq!(
+        w.act(&w.sam.1, json!({"action": "play_now", "index": 0}))
+            .await,
+        403
+    );
+    // ending the party clears the queue with it
+    assert_eq!(w.end(&w.alex.1).await, 204);
+    next(&mut w.rx).await;
+    assert!(w.app.voice.watch.of(w.lounge.id).is_none());
 }
