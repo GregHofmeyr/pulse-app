@@ -81,8 +81,8 @@ pub struct PlansConfig {
     pub geocode_base: String,
     /// `https://api.open-meteo.com`; tests point it at a fake.
     pub forecast_base: String,
-    /// `PULSE_PLANS_COUNTRY`: the home country (ISO 3166 alpha-2, upper case; `ZA` by default) whose places a plan's
-    /// place is taken to be first (#451).
+    /// `PULSE_PLANS_COUNTRY`: the home country (ISO 3166 alpha-2, upper case; `ZA` by default), the only one a plan's
+    /// place is looked up in (#451).
     pub country: String,
 }
 

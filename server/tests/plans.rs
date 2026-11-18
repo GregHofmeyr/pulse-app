@@ -627,9 +627,8 @@ async fn people_who_turned_plan_reminders_off_are_not_pinged() {
     );
 }
 
-/// A stand-in for Open-Meteo: geocoding knows a few names (each answered the way Open-Meteo would, several results
-/// for a name that's in more than one country, a fuzzy match for "test"); the forecast covers the next 16 days from
-/// today. Counts the calls of each.
+/// A stand-in for Open-Meteo: geocoding knows a few South African names (and answers "test" and "london" with
+/// fuzzy matches, as Open-Meteo would); the forecast covers the next 16 days from today. Counts the calls of each.
 #[derive(Clone, Default)]
 struct FakeMeteo {
     geocode: Arc<AtomicUsize>,
@@ -641,35 +640,21 @@ async fn fake_meteo() -> (FakeMeteo, String) {
     async fn geocode(State(c): State<FakeMeteo>, RawQuery(q): RawQuery) -> axum::Json<Value> {
         c.geocode.fetch_add(1, Ordering::SeqCst);
         let q = q.unwrap_or_default();
-        assert!(q.contains("count=10"), "{q}");
-        let place = |name: &str, cc: &str, country: &str, pop: u64, lat: f64| {
-            json!({"name": name, "latitude": lat, "longitude": 18.4, "country_code": cc, "country": country,
-                   "admin1": "Somewhere", "population": pop})
+        // plans are local: only South Africa's places, several for fuzzy matching
+        assert!(
+            q.contains("count=10") && q.contains("countryCode=ZA"),
+            "{q}"
+        );
+        let place = |name: &str, lat: f64| {
+            json!({"name": name, "latitude": lat, "longitude": 18.4, "country_code": "ZA",
+                   "country": "South Africa", "admin1": "Somewhere"})
         };
         let results = match q.split('&').find_map(|kv| kv.strip_prefix("name=")) {
-            Some("cape+town" | "cape%20town") => {
-                vec![place(
-                    "Cape Town",
-                    "ZA",
-                    "South Africa",
-                    3_400_000,
-                    -33.92584,
-                )]
-            }
-            // a fuzzy match far away: nothing called "test"
-            Some("test") => vec![place("Tesvillage", "XX", "Farland", 1_200, 1.0)],
-            // the big one abroad is the only exact name (East London is home, but not "london")
-            Some("london") => vec![
-                place("London", "GB", "United Kingdom", 8_900_000, 51.5),
-                place("East London", "ZA", "South Africa", 270_000, -33.0),
-            ],
-            // in both: home first, even though the one abroad is listed first
-            Some("springfield") => vec![
-                place("Springfield", "US", "United States", 160_000, 39.8),
-                place("Springfield", "ZA", "South Africa", 900, -26.2),
-            ],
-            // abroad and small: not guessed at
-            Some("smallville") => vec![place("Smallville", "US", "United States", 3_000, 38.0)],
+            Some("cape+town" | "cape%20town") => vec![place("Cape Town", -33.92584)],
+            Some("stellenbosch") => vec![place("Stellenbosch", -33.93)],
+            // fuzzy matches only: nothing called "test", nor "london"
+            Some("test") => vec![place("Tesvillage", -25.0)],
+            Some("london") => vec![place("East London", -33.0)],
             _ => vec![],
         };
         if results.is_empty() {
@@ -797,7 +782,7 @@ async fn no_forecast_when_open_meteo_is_down() {
 }
 
 #[tokio::test]
-async fn free_text_places_get_no_forecast_and_home_comes_first() {
+async fn only_south_african_places_whose_name_matches_get_a_forecast() {
     let (meteo, base) = fake_meteo().await;
     let mut cfg = test_config();
     cfg.plans.geocode_base = base.clone();
@@ -822,25 +807,20 @@ async fn free_text_places_get_no_forecast_and_home_comes_first() {
             .map(|f| f.place)
         }
     };
-    // free text: no forecast rather than a village on another continent
+    // free text, or a place abroad: no forecast rather than a guess
     assert_eq!(place_of("test").await, None);
     assert_eq!(place_of("someone's house").await, None);
-    assert_eq!(place_of("Smallville").await, None);
-    // a name in both: the home country's
-    assert_eq!(
-        place_of("Springfield").await.as_deref(),
-        Some("Springfield, South Africa")
-    );
-    // only abroad, exactly that name and a big place: that one
-    assert_eq!(
-        place_of("London").await.as_deref(),
-        Some("London, United Kingdom")
-    );
+    assert_eq!(place_of("London").await, None);
+    // places in South Africa
     assert_eq!(
         place_of("Cape Town").await.as_deref(),
         Some("Cape Town, South Africa")
     );
-    assert_eq!(meteo.geocode.load(Ordering::SeqCst), 6);
+    assert_eq!(
+        place_of("Stellenbosch").await.as_deref(),
+        Some("Stellenbosch, South Africa")
+    );
+    assert_eq!(meteo.geocode.load(Ordering::SeqCst), 5);
 }
 
 #[tokio::test]

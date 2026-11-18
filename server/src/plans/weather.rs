@@ -4,9 +4,10 @@
 //! isn't asked about again and again), a spot's forecast for [`FORECAST_TTL_HOURS`]. When Open-Meteo can't be
 //! reached, a stale forecast still answers; with none, there is no forecast. Calls go one at a time server-wide.
 //!
-//! A place is never just Open-Meteo's first result (#451): of its top [`CANDIDATES`], one in the home country
-//! (`PULSE_PLANS_COUNTRY`) whose name matches comes first, else a big place abroad called exactly that; with neither,
-//! the place is unknown and there is no forecast (free text like "someone's house" stays free text).
+//! Plans are local (#451): only the home country's places are looked up (`PULSE_PLANS_COUNTRY`, `ZA` by default),
+//! and a place is never just Open-Meteo's first result: of its top [`CANDIDATES`] there, the first whose name matches
+//! the place is taken; with none, the place is unknown and there is no forecast (free text like "test" or "someone's
+//! house" stays free text, and nowhere abroad is guessed at).
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -70,20 +71,10 @@ struct GeoResult {
     country: Option<String>,
     #[serde(default)]
     country_code: Option<String>,
-    #[serde(default)]
-    admin1: Option<String>,
-    #[serde(default)]
-    admin2: Option<String>,
-    #[serde(default)]
-    population: Option<u64>,
 }
 
-/// How many results Open-Meteo is asked for: enough to find the home country's among a name's namesakes.
+/// How many results Open-Meteo is asked for: enough to find the one whose name matches among its fuzzy matches.
 const CANDIDATES: usize = 10;
-
-/// The fewest people a place abroad needs to be taken for a plan's place (a home-country place needs none): a name
-/// that's only a village somewhere far off is more likely free text than where the plan is.
-pub const ABROAD_MIN_POPULATION: u64 = 100_000;
 
 /// A name as compared: lower case, accents off, words single-spaced, no punctuation.
 fn fold(s: &str) -> String {
@@ -102,39 +93,39 @@ fn fold(s: &str) -> String {
     plain.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Whether a home-country result's name (or its province or district) is the place asked for: the same, or the
-/// place is its leading word(s) ("cape" for Cape Town).
-fn matches_at_home(g: &GeoResult, q: &str) -> bool {
+/// How well a result's name is the place asked for (`q`, folded): exactly (2), or the place is its leading word(s)
+/// (1: "cape" for Cape Town); else not at all (0: "durbs" isn't Durbanville).
+fn name_match(g: &GeoResult, q: &str) -> u8 {
     let name = fold(&g.name);
-    name == q
-        || name.starts_with(&format!("{q} "))
-        || [&g.admin1, &g.admin2]
-            .into_iter()
-            .flatten()
-            .any(|a| fold(a) == q)
+    if name == q {
+        2
+    } else if name.starts_with(&format!("{q} ")) {
+        1
+    } else {
+        0
+    }
 }
 
-/// The result that is the place asked for (`query`, already folded or not), or none: one in `home` (an ISO 3166
-/// alpha-2 code) whose name matches first; else one abroad called exactly that, big enough not to be a guess.
+/// The result that is the place asked for, or none: of those in `home` (an ISO 3166 alpha-2 code; Open-Meteo is
+/// asked for only those, and anything else is never taken) whose name matches, the first exact one, else the first
+/// it leads.
 fn choose(results: Vec<GeoResult>, query: &str, home: &str) -> Option<GeoResult> {
     let q = fold(query);
     if q.is_empty() {
         return None;
     }
-    let at_home = |g: &GeoResult| {
-        g.country_code
+    let mut best: Option<(u8, GeoResult)> = None;
+    for g in results {
+        let at_home = g
+            .country_code
             .as_deref()
-            .is_some_and(|c| c.eq_ignore_ascii_case(home))
-    };
-    if let Some(i) = results
-        .iter()
-        .position(|g| at_home(g) && matches_at_home(g, &q))
-    {
-        return results.into_iter().nth(i);
+            .is_some_and(|c| c.eq_ignore_ascii_case(home));
+        let m = if at_home { name_match(&g, &q) } else { 0 };
+        if m > best.as_ref().map_or(0, |(b, _)| *b) {
+            best = Some((m, g));
+        }
     }
-    results.into_iter().find(|g| {
-        !at_home(g) && fold(&g.name) == q && g.population.unwrap_or(0) >= ABROAD_MIN_POPULATION
-    })
+    best.map(|(_, g)| g)
 }
 
 /// Open-Meteo's daily forecast, as cached.
@@ -224,6 +215,7 @@ async fn ask_geocode(cfg: &PlansConfig, query: &str) -> Option<Option<Spot>> {
     url.query_pairs_mut()
         .append_pair("name", query)
         .append_pair("count", &CANDIDATES.to_string())
+        .append_pair("countryCode", &cfg.country)
         .append_pair("language", "en")
         .append_pair("format", "json");
     let r = match http().get(url).send().await {
@@ -425,21 +417,18 @@ mod tests {
         assert!(!in_window(t("2026-11-15T10:00:00Z"), now));
     }
 
-    fn geo(name: &str, cc: &str, admin1: Option<&str>, population: u64) -> GeoResult {
+    fn geo(name: &str, cc: &str) -> GeoResult {
         GeoResult {
             name: name.into(),
             latitude: 0.0,
             longitude: 0.0,
             country: None,
             country_code: Some(cc.into()),
-            admin1: admin1.map(Into::into),
-            admin2: None,
-            population: Some(population),
         }
     }
 
-    fn chosen(results: Vec<GeoResult>, query: &str) -> Option<(String, String)> {
-        choose(results, query, "ZA").map(|g| (g.name, g.country_code.unwrap_or_default()))
+    fn chosen(results: Vec<GeoResult>, query: &str) -> Option<String> {
+        choose(results, query, "ZA").map(|g| g.name)
     }
 
     #[test]
@@ -451,55 +440,30 @@ mod tests {
     }
 
     #[test]
-    fn the_place_asked_for_or_nothing() {
-        // the home country first, wherever it's listed
-        let r = vec![
-            geo("Springfield", "US", None, 160_000),
-            geo("Springfield", "ZA", None, 900),
-        ];
-        assert_eq!(
-            chosen(r, "springfield"),
-            Some(("Springfield".into(), "ZA".into()))
-        );
-        // at home, leading words do and the province does; case and accents don't matter
-        assert!(chosen(vec![geo("Cape Town", "ZA", None, 1)], "cape").is_some());
-        assert!(chosen(vec![geo("Cape Town", "ZA", None, 1)], "CAPE TOWN").is_some());
-        assert!(
-            chosen(
-                vec![geo("Kariega", "ZA", Some("Eastern Cape"), 1)],
-                "eastern cape"
-            )
-            .is_some()
-        );
-        assert!(chosen(vec![geo("Durbanville", "ZA", None, 1)], "durbs").is_none());
-        assert!(chosen(vec![geo("Muizenberg", "ZA", None, 1)], "berg").is_none());
-        // abroad: only that exact name, and only a big place
-        let r = || {
-            vec![
-                geo("London", "GB", None, 8_900_000),
-                geo("East London", "ZA", None, 270_000),
-            ]
-        };
-        assert_eq!(chosen(r(), "london"), Some(("London".into(), "GB".into())));
-        assert_eq!(
-            chosen(vec![geo("Tesvillage", "XX", None, 1_200)], "test"),
-            None
-        );
-        assert_eq!(chosen(vec![geo("Test", "XX", None, 1_200)], "test"), None);
-        assert_eq!(
-            chosen(vec![geo("Londonderry", "GB", None, 90_000)], "london"),
-            None
-        );
+    fn only_a_home_place_whose_name_matches() {
+        // an exact name beats one the place only leads, and either beats a fuzzy match listed first
+        let r = vec![geo("Stellenbosch Farms", "ZA"), geo("Stellenbosch", "ZA")];
+        assert_eq!(chosen(r, "stellenbosch").as_deref(), Some("Stellenbosch"));
+        let r = vec![geo("Kaapstad Oos", "ZA"), geo("Cape Town", "ZA")];
+        assert_eq!(chosen(r, "Cape Town").as_deref(), Some("Cape Town"));
+        // leading words do; case and accents don't matter
+        assert!(chosen(vec![geo("Cape Town", "ZA")], "cape").is_some());
+        assert!(chosen(vec![geo("Cape Town", "ZA")], "CAPE TOWN").is_some());
+        assert!(chosen(vec![geo("Pietermaritzburg", "ZA")], "piétermaritzburg").is_some());
+        // a fuzzy match isn't the place
+        assert_eq!(chosen(vec![geo("Durbanville", "ZA")], "durbs"), None);
+        assert_eq!(chosen(vec![geo("Muizenberg", "ZA")], "berg"), None);
+        assert_eq!(chosen(vec![geo("East London", "ZA")], "london"), None);
+        assert_eq!(chosen(vec![geo("Tesvillage", "ZA")], "test"), None);
         assert_eq!(chosen(vec![], "someone's house"), None);
-        assert_eq!(chosen(vec![geo("X", "ZA", None, 1)], "  "), None);
+        assert_eq!(chosen(vec![geo("X", "ZA")], "  "), None);
+        // never abroad, even called exactly that
+        assert_eq!(chosen(vec![geo("London", "GB")], "london"), None);
+        assert_eq!(chosen(vec![geo("Test", "XX")], "test"), None);
         // another home country
-        let r = vec![
-            geo("Springfield", "US", None, 160_000),
-            geo("Springfield", "ZA", None, 900),
-        ];
         assert_eq!(
-            choose(r, "springfield", "us").and_then(|g| g.country_code),
-            Some("US".into())
+            choose(vec![geo("London", "GB")], "london", "gb").map(|g| g.name),
+            Some("London".into())
         );
     }
 
