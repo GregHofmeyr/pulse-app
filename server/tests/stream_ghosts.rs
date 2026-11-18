@@ -692,6 +692,30 @@ async fn signing_out_removes_that_devices_ghost() {
 }
 
 #[tokio::test]
+async fn an_owner_password_reset_ends_their_ghost_at_the_next_sweep() {
+    let (app, lk) = spawn_lk(test_config()).await;
+    let w = world(&app).await;
+    let ch = w.lounge.id;
+    let room = format!("{ch}~s");
+    go_live(&app, &w.alex.1, ch, true).await;
+    let id = ghost_watching(&app, &lk, &w).await;
+    pulse_server::streams::ghosts::spawn_revoked_sweeper(app.state(), Duration::from_millis(20));
+    // a live session's ghost stays
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(app.streams.get(ch, w.alex.0).unwrap().ghosts, 1);
+    // the owner tool runs in its own process (#372): only the database hears of it
+    pulse_server::auth::routes::reset_password(&app.db, "sam", "a brand new passphrase")
+        .await
+        .unwrap();
+    assert!(
+        eventually(|| lk.removed().contains(&(room.clone(), format!("{id}#v")))).await,
+        "{:?}",
+        lk.removed()
+    );
+    assert_eq!(app.streams.get(ch, w.alex.0).unwrap().ghosts, 0);
+}
+
+#[tokio::test]
 async fn leaving_the_server_removes_their_stream_connections() {
     let (app, lk) = spawn_lk(test_config()).await;
     let w = world(&app).await;

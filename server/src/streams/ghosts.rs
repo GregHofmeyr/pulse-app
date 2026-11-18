@@ -71,6 +71,23 @@ pub async fn sessions_revoked(s: &AppState) {
     removed(s, purged, "session_revoked").await;
 }
 
+/// How often [`spawn_revoked_sweeper`] looks for ghosts whose login session went.
+pub const REVOKED_SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Check every `every` for ghosts whose login session isn't live any more (#372). Revoking in the server
+/// ([`sessions_revoked`]) ends them at once; this catches what it never hears of: the owner tools
+/// (`reset-password`, `revoke-sessions`) run in their own process, and a session can expire.
+pub fn spawn_revoked_sweeper(s: AppState, every: std::time::Duration) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(every);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            sessions_revoked(&s).await;
+        }
+    });
+}
+
 /// `user` left or was removed from `server`: their stream-room connections in its channels go,
 /// ghost and named. A join they make later is refused anyway (`voice::revoke::admit`). Called by
 /// the leave and remove-member routes (#371, `servers::membership`) once the membership row is gone.

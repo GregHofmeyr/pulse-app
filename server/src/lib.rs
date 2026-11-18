@@ -209,6 +209,8 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
         let s = state.clone();
         tokio::spawn(async move { steam::store::recompute_all(&s).await });
     }
+    // ghosts whose session went where the server didn't hear of it (#372: the owner tools, expiry)
+    streams::ghosts::spawn_revoked_sweeper(state.clone(), streams::ghosts::REVOKED_SWEEP_EVERY);
     streams::liveness::spawn(
         state.clone(),
         streams::liveness::CHECK_EVERY,
