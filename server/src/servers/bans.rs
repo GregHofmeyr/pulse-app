@@ -3,8 +3,8 @@
 //! `PUT /servers/{id}/bans/{user}` bans: the person is taken out of the server if they're in it (the same way out as a
 //! removal, `membership::take_out_banned`, except that it doesn't count towards a rejoin block), and any open direct
 //! invite to them is revoked. `DELETE` lifts it; `GET /servers/{id}/bans` lists them. The owner only, and only the
-//! owner's devices hear `BansChanged`. Servers are still open in this step, so a ban doesn't stop the open Join yet:
-//! that goes with the lockdown (step 2).
+//! owner's devices hear `BansChanged`. Servers are still open in this step, but a ban stops the open Join too
+//! (`routes::join`).
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;

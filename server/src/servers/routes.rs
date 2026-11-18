@@ -334,6 +334,10 @@ async fn join(
             crate::servers::membership::BLOCKED_JOIN.into(),
         ));
     }
+    // banned by the owner (#80): no way back in, by Join or by invite
+    if crate::servers::invites::banned(&mut *tx, id, me).await? {
+        return Err(AppError::ForbiddenMsg("You can't join this server.".into()));
+    }
     let joined = add_member_in(&mut tx, id, me).await?;
     tx.commit().await?;
     announce_joined(&s, id, me, joined).await;

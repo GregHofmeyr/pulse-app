@@ -643,6 +643,25 @@ async fn a_ban_removes_them_without_a_rejoin_block_revokes_their_invite_and_refu
 }
 
 #[tokio::test]
+async fn a_banned_person_cant_use_the_open_join_either() {
+    let w = world().await;
+    let ban = format!("/servers/{}/bans/{}", w.server, w.sam.0);
+    assert_eq!(put(&w.app, &w.alex.1, &ban).await.status(), 204);
+    assert!(!is_member(&w.app, w.server, w.sam.0).await);
+    let join = format!("/servers/{}/join", w.server);
+    let r = post_json(&w.app, &w.sam.1, &join, json!({})).await;
+    assert_eq!(r.status(), 403, "a ban refuses the open Join");
+    assert!(!is_member(&w.app, w.server, w.sam.0).await);
+    // someone not banned still joins; unbanned, sam can again
+    let r = post_json(&w.app, &w.kim.1, &join, json!({})).await;
+    assert_eq!(r.status(), 204);
+    assert_eq!(delete(&w.app, &w.alex.1, &ban).await.status(), 204);
+    let r = post_json(&w.app, &w.sam.1, &join, json!({})).await;
+    assert_eq!(r.status(), 204);
+    assert!(is_member(&w.app, w.server, w.sam.0).await);
+}
+
+#[tokio::test]
 async fn a_preview_shows_counts_and_only_faces_the_viewer_knows() {
     let w = world().await;
     // kim shares a DM with sam; jo knows nobody
