@@ -1801,7 +1801,12 @@ impl VoiceManager {
                         Dropped::AlreadyOver => {}
                     }
                 };
+                // Short tasks this loop starts (following a publish permission change, restoring the mic's
+                // bitrate): owned here, so they end with the call (this task aborted or done) instead of
+                // outliving it (#353).
+                let mut side = tokio::task::JoinSet::new();
                 loop {
+                    while side.try_join_next().is_some() {}
                     let ev = tokio::select! {
                         ev = room_events.recv() => match ev {
                             Some(ev) => ev,
@@ -1949,7 +1954,7 @@ impl VoiceManager {
                                     mic_out.clone(),
                                     mic_kbps.clone(),
                                 );
-                                tokio::spawn(async move {
+                                side.spawn(async move {
                                     follow_permission(&room, track, &mic, &kbps).await
                                 });
                             }
@@ -1962,7 +1967,7 @@ impl VoiceManager {
                             // under the mic's lock, so a change landing meanwhile isn't undone
                             let (track, mic, kbps) =
                                 (mic_track.clone(), mic_out.clone(), mic_kbps.clone());
-                            tokio::spawn(async move {
+                            side.spawn(async move {
                                 let _out = mic.lock().await;
                                 let kbps = kbps.load(Ordering::SeqCst);
                                 if let Err(e) = set_mic_bitrate(&track, kbps) {

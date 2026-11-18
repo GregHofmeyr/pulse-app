@@ -270,4 +270,18 @@ describe('VoiceSettings on Linux', () => {
     restore()
     invoke.mockImplementation(async () => undefined)
   })
+  it("a list that failed (the system took too long, #353) doesn't claim there's no sound server", async () => {
+    asLinux()
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_audio_devices') throw 'the system took too long to list audio devices'
+      return undefined
+    })
+    const c = mount(VoiceSettings, { target: document.body })
+    await settle()
+    expect(hint()).toBeUndefined()
+    unmount(c)
+    document.body.innerHTML = ''
+    restore()
+    invoke.mockImplementation(async () => undefined)
+  })
 })
