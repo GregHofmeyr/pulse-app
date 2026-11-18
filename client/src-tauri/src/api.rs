@@ -10,16 +10,17 @@ use pulse_protocol::rest::{
     AddGameRequest, AddMembersRequest, AddQotyOptionRequest, AttachmentUpload, AttachmentUrl,
     BadgeCatalogue, Category, ChangePasswordRequest, Channel, ChannelKind, ClipFacets, ClipStorage,
     ClipUpload, ClipUploadRequest, ClipUrl, ClipView, ConfirmClipRequest, CreateCategoryRequest,
-    CreateDmRequest, CreateEmojiRequest, CreateSoundRequest, CreateWheelRequest, CustomEmoji,
-    DeleteServerRequest, DeletedChannel, DeletedServer, EditClipRequest, EditMessageRequest,
-    EditQuoteRequest, EggRequest, Game, Gif, GifConfig, GoLiveRequest, HideEmbedRequest, InboxPage,
-    InboxReadAllRequest, InboxUnread, Leaderboard, LeaderboardPeriod, LinkSpeakerRequest,
-    LoginMfaRequest, LoginRequest, MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member,
-    Message, MfaRequired, MuteTarget, NameArchivePage, PartUrl, PartUrlsRequest, Pin, PinDuration,
-    PinRequest, PinnedMessage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, QuietSpin,
-    RecoveryCodesResponse, RegisterRequest, RenameCategoryRequest, RenameChannelRequest,
-    RenameEmojiRequest, ReopenQotyRequest, SaveLayoutRequest, SearchRequest, SearchResults,
-    SendMessageRequest, Server, ServerBlock, ServerLayout, ServerOrderRequest, ServerVoiceMod,
+    CreateDmRequest, CreateEmojiRequest, CreateServerInviteRequest, CreateSoundRequest,
+    CreateWheelRequest, CustomEmoji, DeleteServerRequest, DeletedChannel, DeletedServer,
+    EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest, Game, Gif, GifConfig,
+    GoLiveRequest, HideEmbedRequest, InboxPage, InboxReadAllRequest, InboxUnread, InvitePreview,
+    Leaderboard, LeaderboardPeriod, LinkSpeakerRequest, LoginMfaRequest, LoginRequest,
+    MarkBadgesSeenRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired, MuteTarget,
+    NameArchivePage, PartUrl, PartUrlsRequest, Pin, PinDuration, PinRequest, PinnedMessage,
+    PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, QuietSpin, RecoveryCodesResponse,
+    RegisterRequest, RenameCategoryRequest, RenameChannelRequest, RenameEmojiRequest,
+    ReopenQotyRequest, SaveLayoutRequest, SearchRequest, SearchResults, SendMessageRequest, Server,
+    ServerBan, ServerBlock, ServerInvite, ServerLayout, ServerOrderRequest, ServerVoiceMod,
     SessionResponse, SetChannelBitrateRequest, SetClipViewRequest, SetCustomStatusRequest,
     SetJoinSoundRequest, SetMuteRequest, SetNicknameRequest, SetNotifyLevelRequest,
     SetServerVoiceRequest, SetShowcaseRequest, SetStatusRequest, Sound, SpinAgainRequest,
@@ -94,6 +95,16 @@ pub enum ApiError {
     /// again, the video is fine.
     #[error("{0}")]
     PosterGone(String),
+}
+
+/// An invite code as it goes into a path (#80): letters and digits only, so nothing typed or pasted can reach another
+/// endpoint. Anything else is one the server would never know.
+pub fn invite_code(code: &str) -> Result<&str, ApiError> {
+    if !code.is_empty() && code.len() <= 64 && code.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        Ok(code)
+    } else {
+        Err(ApiError::Rejected("not found".into()))
+    }
 }
 
 /// A YouTube video id (#384): exactly 11 of `[A-Za-z0-9_-]`, as the server checks.
@@ -1041,6 +1052,112 @@ impl Api {
                 .await,
         )
         .await
+    }
+
+    /// Make an invite into a server (#80): a link, or a direct invite for one person (`for_user`). Any member.
+    pub async fn create_server_invite(
+        &self,
+        token: &str,
+        server: ServerId,
+        body: &CreateServerInviteRequest,
+    ) -> Result<ServerInvite, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/servers/{server}/invites", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A server's invites (#80): the owner sees all of them, a member their own.
+    pub async fn server_invites(
+        &self,
+        token: &str,
+        server: ServerId,
+    ) -> Result<Vec<ServerInvite>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/servers/{server}/invites", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// What an invite's card shows, as this person sees it (#80).
+    pub async fn invite_preview(&self, token: &str, code: &str) -> Result<InvitePreview, ApiError> {
+        let code = invite_code(code)?;
+        Self::parse(
+            self.http
+                .get(format!("{}/invites/{code}", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Revoke an invite (#80): its maker or the server's owner.
+    pub async fn revoke_invite(&self, token: &str, code: &str) -> Result<(), ApiError> {
+        let code = invite_code(code)?;
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/invites/{code}", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Join a server with an invite (#80). Returns the server.
+    pub async fn accept_invite(&self, token: &str, code: &str) -> Result<Server, ApiError> {
+        let code = invite_code(code)?;
+        Self::parse(
+            self.http
+                .post(format!("{}/invites/{code}/accept", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Who is banned from a server (#80): its owner only.
+    pub async fn server_bans(
+        &self,
+        token: &str,
+        server: ServerId,
+    ) -> Result<Vec<ServerBan>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/servers/{server}/bans", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Ban someone from a server (#80), or lift it (`on` false): its owner only.
+    pub async fn set_server_ban(
+        &self,
+        token: &str,
+        server: ServerId,
+        user: UserId,
+        on: bool,
+    ) -> Result<(), ApiError> {
+        let url = format!("{}/servers/{server}/bans/{user}", self.base);
+        let req = if on {
+            self.http.put(url)
+        } else {
+            self.http.delete(url)
+        };
+        Self::ok_empty(req.bearer_auth(token).send().await).await
     }
 
     /// Let someone blocked from rejoining a server back (#418): its owner only.

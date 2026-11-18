@@ -2,6 +2,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { User } from './protocol/User'
 import type { ServerBlock } from './protocol/ServerBlock'
+import type { ServerBan } from './protocol/ServerBan'
+import type { ServerInvite } from './protocol/ServerInvite'
+import type { InvitePreview } from './protocol/InvitePreview'
+import type { CreateServerInviteRequest } from './protocol/CreateServerInviteRequest'
 import type { MusicPlayer } from './protocol/MusicPlayer'
 import type { ScheduledMessage } from './protocol/ScheduledMessage'
 import type { MessageReminder } from './protocol/MessageReminder'
@@ -335,6 +339,22 @@ export const api = {
   listServerBlocks: (serverId: string) => invoke<ServerBlock[]>('list_server_blocks', { serverId }),
   /** Let someone blocked from rejoining a server back (#418): its owner only. */
   allowBack: (serverId: string, userId: string) => invoke<void>('allow_back', { serverId, userId }),
+  /** The signed-in server's address (#80): invite links are made from it. Null when signed out. */
+  serverOrigin: () => invoke<string | null>('server_origin'),
+  /** Make an invite (#80): a link, or a direct invite for one person (`for_user`, also a card in your DM with them). */
+  createServerInvite: (serverId: string, request: CreateServerInviteRequest) => invoke<ServerInvite>('create_server_invite', { serverId, request }),
+  /** A server's invites (#80): the owner sees all of them, a member their own. */
+  listServerInvites: (serverId: string) => invoke<ServerInvite[]>('list_server_invites', { serverId }),
+  /** What an invite's card shows, as you see it (#80). Lookups are rate limited: cache it (lib/serverInvites.svelte). */
+  invitePreview: (code: string) => invoke<InvitePreview>('invite_preview', { code }),
+  /** Revoke an invite (#80): its maker or the server's owner. */
+  revokeInvite: (code: string) => invoke<void>('revoke_invite', { code }),
+  /** Join a server with an invite (#80). */
+  acceptInvite: (code: string) => invoke<Server>('accept_invite', { code }),
+  /** Who's banned from a server (#80): its owner only. */
+  listServerBans: (serverId: string) => invoke<ServerBan[]>('list_server_bans', { serverId }),
+  /** Ban someone from a server, or lift it (`on` false) (#80): its owner only. */
+  setServerBan: (serverId: string, userId: string, on: boolean) => invoke<void>('set_server_ban', { serverId, userId, on }),
   listChannels: (serverId: string) => invoke<Channel[]>('list_channels', { serverId }),
   listMembers: (serverId: string) => invoke<Member[]>('list_members', { serverId }),
   listMessages: (channelId: string, before?: string) =>

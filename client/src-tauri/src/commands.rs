@@ -8,14 +8,15 @@ use pulse_protocol::ids::{
     CategoryId, ChannelId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId,
 };
 use pulse_protocol::rest::{
-    BadgeCatalogue, Category, Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji,
-    DeletedChannel, DeletedServer, EditClipRequest, EditQuoteRequest, Game, Gif, InboxPage,
-    Leaderboard, LeaderboardPeriod, LinkSpeakerRequest, MediaInfo, Member, Message, MuteTarget,
-    NameArchivePage, NotifyLevel, Pin, PinDuration, PinnedMessage, PostQuoteRequest, Profile,
-    QotyEvent, RecoveryCodesResponse, SaveLayoutRequest, SearchRequest, SearchResults, Server,
-    ServerBlock, ServerLayout, SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare,
-    StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest,
-    UpdateSoundRequest, User, WatchParty, WatchPartyAction,
+    BadgeCatalogue, Category, Channel, ClipFacets, ClipStorage, ClipUrl, ClipView,
+    CreateServerInviteRequest, CustomEmoji, DeletedChannel, DeletedServer, EditClipRequest,
+    EditQuoteRequest, Game, Gif, InboxPage, InvitePreview, Leaderboard, LeaderboardPeriod,
+    LinkSpeakerRequest, MediaInfo, Member, Message, MuteTarget, NameArchivePage, NotifyLevel, Pin,
+    PinDuration, PinnedMessage, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse,
+    SaveLayoutRequest, SearchRequest, SearchResults, Server, ServerBan, ServerBlock, ServerInvite,
+    ServerLayout, SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare, StartQotyRequest,
+    TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
+    WatchParty, WatchPartyAction,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -1231,6 +1232,92 @@ pub async fn list_server_blocks(
 ) -> Result<Vec<ServerBlock>, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.server_blocks(&token, server_id).await)
+}
+
+/// The signed-in server's address (#80): invite links are made from it, and links to it are recognised in chat.
+#[tauri::command]
+pub fn server_origin(core: State<'_, Core>) -> Option<String> {
+    let (api, _) = core.current().ok()?;
+    Some(api.base().to_owned())
+}
+
+#[tauri::command]
+pub async fn create_server_invite(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    request: CreateServerInviteRequest,
+) -> Result<ServerInvite, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.create_server_invite(&token, server_id, &request).await,
+    )
+}
+
+#[tauri::command]
+pub async fn list_server_invites(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<Vec<ServerInvite>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.server_invites(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn invite_preview(
+    app: AppHandle,
+    core: State<'_, Core>,
+    code: String,
+) -> Result<InvitePreview, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.invite_preview(&token, &code).await)
+}
+
+#[tauri::command]
+pub async fn revoke_invite(
+    app: AppHandle,
+    core: State<'_, Core>,
+    code: String,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.revoke_invite(&token, &code).await)
+}
+
+#[tauri::command]
+pub async fn accept_invite(
+    app: AppHandle,
+    core: State<'_, Core>,
+    code: String,
+) -> Result<Server, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.accept_invite(&token, &code).await)
+}
+
+#[tauri::command]
+pub async fn list_server_bans(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<Vec<ServerBan>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.server_bans(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn set_server_ban(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    user_id: UserId,
+    on: bool,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_server_ban(&token, server_id, user_id, on).await,
+    )
 }
 
 #[tauri::command]

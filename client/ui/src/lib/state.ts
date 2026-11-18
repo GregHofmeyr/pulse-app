@@ -114,6 +114,12 @@ export type AppState = {
   /** Bumped per server when who's blocked from rejoining it changes (#431, ServerBlocksChanged, its owner's only): an
    *  open Members pane asks again. */
   blocksRev: Record<string, number>
+  /** Bumped per server when the invites you can see in it change (#80, InvitesChanged, yours only): an open Invites
+   *  pane asks again. */
+  invitesRev: Record<string, number>
+  /** Bumped per server when who's banned from it changes (#80, BansChanged, its owner's only): an open Bans pane asks
+   *  again. */
+  bansRev: Record<string, number>
   /** Your saved inbox filters (#307), in order, on every device: from Ready and InboxFiltersChanged. */
   inboxFilters: InboxFilter[]
   /** Your own channel list orders (#304), by server id, yours only, on every device: from Ready and
@@ -205,7 +211,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], rejoinBlocked: [], blocksRev: {}, inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], rejoinBlocked: [], blocksRev: {}, invitesRev: {}, bansRev: {}, inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -1339,8 +1345,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'ViewOnceOpened':
       return s // kept by lib/viewOnce.svelte.ts (#311)
     case 'InvitesChanged':
+      return e.d.user_id === s.me?.id ? { ...s, invitesRev: { ...s.invitesRev, [e.d.server_id]: (s.invitesRev[e.d.server_id] ?? 0) + 1 } } : s
     case 'BansChanged':
-      return s // the Invites and Bans settings come with the client step of #80
+      return e.d.user_id === s.me?.id ? { ...s, bansRev: { ...s.bansRev, [e.d.server_id]: (s.bansRev[e.d.server_id] ?? 0) + 1 } } : s
     case 'ChannelOrderChanged': {
       if (e.d.user_id !== s.me?.id) return s
       const { [e.d.server_id]: _was, ...rest } = s.channelOrders

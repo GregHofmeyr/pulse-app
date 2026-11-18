@@ -26,6 +26,7 @@ import { loadMixer, soundGain } from './mixer'
 import { streamApi } from './stream/stream.svelte'
 import { windowFocus } from './windowFocus.svelte'
 import { forgetEmbedOrigin } from './linkPreviews.svelte'
+import { forgetInvitePreviews } from './invitePreviews.svelte'
 import { forgetClipLinks } from './clipLinks'
 import { forgetAttachmentLinks } from './attachmentLinks'
 import { planPrefs } from './planPrefs.svelte'
@@ -45,6 +46,7 @@ export type ServerAction =
   | { kind: 'leave'; serverId: string }
   | { kind: 'remove'; serverId: string; userId: string }
   | { kind: 'transfer'; serverId: string; userId: string }
+  | { kind: 'ban'; serverId: string; userId: string }
 
 export const app = new AppStore()
 
@@ -84,6 +86,11 @@ export const ui = $state({
   /** A server membership change waiting for its confirm (#371): you leaving a server, its owner removing someone, or
    *  its owner handing it to someone (#418). The shell asks (ServerActionDialog) and clears it. */
   serverAction: null as ServerAction | null,
+  /** The server whose Invite people dialog is open (#80): its tab's menu or the member list's "+ Invite" asks; the
+   *  shell shows it and clears it on close. */
+  inviteTo: null as string | null,
+  /** A request to switch to this server (#80: joined with an invite; the shell does it and clears it). */
+  goServer: null as string | null,
   /** A short line for the shell to show for a moment (it shows it and clears it). */
   notice: null as string | null,
   autoReported: false,
@@ -432,6 +439,9 @@ export function resetState() {
   ui.attachFiles = null
   forgetProfileLoads()
   forgetEmbedOrigin() // the next account may be on another server
+  forgetInvitePreviews() // and sees invite cards as itself
+  ui.inviteTo = null
+  ui.goServer = null
   forgetClipLinks() // the next account asks for its own play links
   forgetAttachmentLinks()
   app.state = emptyState()
