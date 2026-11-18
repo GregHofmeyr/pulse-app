@@ -6,6 +6,7 @@ import type { Message } from './protocol/Message'
 import { displayName } from './selectors'
 import { isMuted } from './conversations'
 import { dndActive } from './status'
+import { quietFrom } from './personDnd'
 
 /** How long a call lasted, to the nearest minute (at least one): "1 min", "12 min", "1 h 30 min", "2 h". */
 export function callDuration(startIso: string, endIso: string): string {
@@ -39,10 +40,12 @@ export function ringPlace(ring: CallRing, openChannelId: string | null): 'band' 
   return ring.channel_id === openChannelId ? 'band' : 'popover'
 }
 
-/** Whether a ring may grab your attention (popover, ringtone, OS notification): not under Do Not Disturb, and not in a
- * muted conversation. The band and the line show either way, so you can still join on purpose. */
+/** Whether a ring may grab your attention (popover, ringtone, OS notification): not under Do Not Disturb, not from
+ * someone on your per-person Do Not Disturb (#426; a call is always in a DM or group, so "Only in DMs" covers it too),
+ * and not in a muted conversation. The band and the line show either way, so you can still join on purpose. */
 export function ringAlerts(s: AppState, ring: CallRing, nowIso: string): boolean {
   if (dndActive(s, nowIso)) return false
+  if (quietFrom(s.personDnd, ring.caller_id, true, nowIso)) return false
   const ch = s.channels[ring.channel_id]
   return !(ch && isMuted(s, ch, nowIso))
 }

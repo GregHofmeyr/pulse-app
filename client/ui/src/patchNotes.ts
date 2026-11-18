@@ -40,6 +40,7 @@ export const patchNotes: PatchNotes = {
   ],
   fixes: [
     'Restoring a deleted channel now tells you when the server is at its channel limit, and deleted channels no longer count toward it',
+    'Do Not Disturb for someone now also covers their calls (no ringing) and their going live (no notification)',
   ],
   qol: [
     'Signing someone out of everything takes effect within seconds, even if their app is open',

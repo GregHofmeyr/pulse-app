@@ -124,7 +124,7 @@
 
   <div class="settings-field">
     <h3 class="settings-section-title">Do Not Disturb for people</h3>
-    <small>Their messages make no sound and no desktop notification, mentions included. They still arrive and count as unread. They're never told.</small>
+    <small>Their messages make no sound and no desktop notification, mentions included. Their calls don't ring, and their going live doesn't notify you. Their messages still arrive and count as unread. They're never told.</small>
     <button type="button" class="btn btn-secondary add" onclick={() => (pickingQuiet = true)}><Icon name="plus" size={14} /> Add person</button>
     {#if quiet.length}
       <ul class="quiet-list settings-list">
@@ -146,7 +146,7 @@
 </section>
 
 {#if pickingQuiet}
-  <PeoplePicker title="Do Not Disturb for" hint="Their messages won't make a sound or a notification. They're never told." only={quietCandidates} max={Infinity}
+  <PeoplePicker title="Do Not Disturb for" hint="Their messages, calls and streams won't make a sound or a notification. They're never told." only={quietCandidates} max={Infinity}
     action="Turn on" onDone={addQuiet} onClose={() => (pickingQuiet = false)} />
 {/if}
 
