@@ -54,6 +54,7 @@ import type { StreamInfo } from "./StreamInfo";
 import type { User } from "./User";
 import type { UserId } from "./UserId";
 import type { VoiceFlags } from "./VoiceFlags";
+import type { VoiceRoom } from "./VoiceRoom";
 import type { WatchParty } from "./WatchParty";
 import type { Wheel } from "./Wheel";
 
@@ -66,7 +67,11 @@ author_id: UserId | null, mentions: Array<UserId>,
 /**
  * Set when the deleted message was a reply: the quote whose thread it was in.
  */
-thread_root_id: MessageId | null, } } | { "t": "ChannelCreated", "d": { channel: Channel, } } | { "t": "ServerCreated", "d": { server: Server, } } | { "t": "ServerDeleted", "d": { server_id: ServerId, } } | { "t": "ServerRestored", "d": { snapshot: ServerSnapshot, } } | { "t": "MemberJoined", "d": { server_id: ServerId, member: Member, } } | { "t": "ServerOwnerChanged", "d": { server_id: ServerId, owner_id: UserId, previous_owner_id: UserId, } } | { "t": "ServerBlocksChanged", "d": { user_id: UserId, server_id: ServerId, } } | { "t": "RejoinBlockChanged", "d": { user_id: UserId, server_id: ServerId, blocked: boolean, } } | { "t": "InvitesChanged", "d": { user_id: UserId, server_id: ServerId, } } | { "t": "BansChanged", "d": { user_id: UserId, server_id: ServerId, } } | { "t": "MemberLeft", "d": { server_id: ServerId, user_id: UserId, removed_by?: UserId, } } | { "t": "MemberUpdated", "d": { server_id: ServerId, member: Member, } } | { "t": "PrivateNicknameChanged", "d": { user_id: UserId, target_id: UserId, nickname: string | null, } } | { "t": "Typing", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceJoined", "d": { channel_id: ChannelId, user_id: UserId, 
+thread_root_id: MessageId | null, } } | { "t": "ChannelCreated", "d": { channel: Channel, } } | { "t": "ServerCreated", "d": { server: Server, } } | { "t": "ServerDeleted", "d": { server_id: ServerId, } } | { "t": "ServerRestored", "d": { snapshot: ServerSnapshot, } } | { "t": "ServerJoined", "d": { user_id: UserId, snapshot: ServerSnapshot, 
+/**
+ * Who is in its voice rooms, its live streams, stage shares and watch parties right now, as Ready lists them.
+ */
+voice: Array<VoiceRoom>, streams: Array<StreamInfo>, stage_shares: Array<StageShare>, watch_parties: Array<WatchParty>, } } | { "t": "MemberJoined", "d": { server_id: ServerId, member: Member, } } | { "t": "ServerOwnerChanged", "d": { server_id: ServerId, owner_id: UserId, previous_owner_id: UserId, } } | { "t": "InvitesChanged", "d": { user_id: UserId, server_id: ServerId, } } | { "t": "BansChanged", "d": { user_id: UserId, server_id: ServerId, } } | { "t": "MemberLeft", "d": { server_id: ServerId, user_id: UserId, removed_by?: UserId, } } | { "t": "MemberUpdated", "d": { server_id: ServerId, member: Member, } } | { "t": "PrivateNicknameChanged", "d": { user_id: UserId, target_id: UserId, nickname: string | null, } } | { "t": "Typing", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceJoined", "d": { channel_id: ChannelId, user_id: UserId, 
 /**
  * The joiner's current mute/deafen (they may have declared it before the join landed).
  */

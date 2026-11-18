@@ -11,7 +11,8 @@ import type { Sound } from "./Sound";
 import type { SpeakerLink } from "./SpeakerLink";
 
 /**
- * A restored server as Ready would carry it (#184): `ServerRestored`.
+ * A server as Ready would carry it: a restored one (#184, `ServerRestored`), or one you just joined (#80,
+ * `ServerJoined`).
  */
 export type ServerSnapshot = { server: Server, channels: Array<Channel>, members: Array<Member>, 
 /**

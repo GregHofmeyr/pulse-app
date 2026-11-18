@@ -255,11 +255,6 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub activity_hidden: Vec<UserId>,
-    /// The servers you can't rejoin right now (#431): their owner removed you a third time within 48 hours, and hasn't
-    /// allowed you back. Yours only. Absent from older servers.
-    #[serde(default)]
-    #[ts(as = "Option<_>", optional)]
-    pub rejoin_blocked: Vec<ServerId>,
     /// Your saved inbox filters (#307), in order. Yours only. Absent from older servers.
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
@@ -284,7 +279,8 @@ pub struct ServerMembers {
     pub members: Vec<Member>,
 }
 
-/// A restored server as Ready would carry it (#184): `ServerRestored`.
+/// A server as Ready would carry it: a restored one (#184, `ServerRestored`), or one you just joined (#80,
+/// `ServerJoined`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct ServerSnapshot {
     pub server: Server,
@@ -355,6 +351,22 @@ pub enum Event {
     ServerRestored {
         snapshot: ServerSnapshot,
     },
+    /// Only to its person's own sessions (#80): they joined a server (by an invite), and here is what Ready would carry
+    /// for it, since servers you aren't in are hidden. Their counts in it start at "all read". Clients from before it
+    /// skip it and see the server on their next Ready.
+    ServerJoined {
+        user_id: UserId,
+        snapshot: ServerSnapshot,
+        /// Who is in its voice rooms, its live streams, stage shares and watch parties right now, as Ready lists them.
+        #[serde(default)]
+        voice: Vec<VoiceRoom>,
+        #[serde(default)]
+        streams: Vec<StreamInfo>,
+        #[serde(default)]
+        stage_shares: Vec<StageShare>,
+        #[serde(default)]
+        watch_parties: Vec<WatchParty>,
+    },
     MemberJoined {
         server_id: ServerId,
         member: Member,
@@ -365,20 +377,6 @@ pub enum Event {
         server_id: ServerId,
         owner_id: UserId,
         previous_owner_id: UserId,
-    },
-    /// Only to its person's own sessions, a server's owner: who is blocked from rejoining their server changed (#431),
-    /// a removal blocked someone or they allowed someone back. An open Members pane asks again
-    /// (`GET /servers/{id}/blocked`). Clients from before it skip it.
-    ServerBlocksChanged {
-        user_id: UserId,
-        server_id: ServerId,
-    },
-    /// Only to its person's own sessions: they can't rejoin `server_id` now (`blocked`), or can again (#431); the
-    /// change to [`Ready::rejoin_blocked`]. Clients from before it skip it.
-    RejoinBlockChanged {
-        user_id: UserId,
-        server_id: ServerId,
-        blocked: bool,
     },
     /// Only to its person's own sessions (#80): the invites of `server_id` they can see changed (one was made, used,
     /// revoked or ended with a ban). Its maker and the server's owner each get one; an open Invites list asks again
@@ -982,6 +980,7 @@ impl Event {
             Self::ServerCreated { .. }
             | Self::ServerDeleted { .. }
             | Self::ServerRestored { .. }
+            | Self::ServerJoined { .. }
             | Self::ChannelDeleted { .. }
             | Self::LayoutChanged { .. }
             | Self::MemberJoined { .. }
@@ -1032,14 +1031,48 @@ impl Event {
             | Self::DmLayoutChanged { .. }
             | Self::PersonDndChanged { .. }
             | Self::ActivityHiddenChanged { .. }
-            | Self::ServerBlocksChanged { .. }
-            | Self::RejoinBlockChanged { .. }
             | Self::InvitesChanged { .. }
             | Self::BansChanged { .. }
             | Self::InboxFiltersChanged { .. }
             | Self::ChannelOrderChanged { .. }
             | Self::ViewOnceOpened { .. }
             | Self::BadgeEarned { .. } => None,
+        }
+    }
+
+    /// The server a server-level event (one without a channel) is about, whose members alone receive it (#80): servers
+    /// are private, so nothing about one reaches anyone outside it. `None` for an event about no server (or one per
+    /// person, or carried by a channel: see [`Self::channel_id`]). `ServerCreated` is here too, though only its creator
+    /// is in it then.
+    pub fn server_scope(&self) -> Option<ServerId> {
+        match self {
+            Self::ServerCreated { server } => Some(server.id),
+            Self::ServerRestored { snapshot } | Self::ServerJoined { snapshot, .. } => {
+                Some(snapshot.server.id)
+            }
+            Self::ServerDeleted { server_id }
+            | Self::ChannelDeleted { server_id, .. }
+            | Self::MemberJoined { server_id, .. }
+            | Self::ServerOwnerChanged { server_id, .. }
+            | Self::MemberLeft { server_id, .. }
+            | Self::MemberUpdated { server_id, .. }
+            | Self::SpeakerLinksChanged { server_id, .. }
+            | Self::SoundDeleted { server_id, .. }
+            | Self::InvitesChanged { server_id, .. }
+            | Self::BansChanged { server_id, .. } => Some(*server_id),
+            Self::LayoutChanged { layout } => Some(layout.server_id),
+            Self::EmojiCreated { emoji }
+            | Self::EmojiUpdated { emoji }
+            | Self::EmojiDeleted { emoji } => Some(emoji.server_id),
+            Self::QotyStarted { event }
+            | Self::QotyUpdated { event }
+            | Self::QotyEnded { event } => Some(event.server_id),
+            Self::GameAdded { game } => Some(game.server_id),
+            Self::SoundCreated { sound } | Self::SoundUpdated { sound } => Some(sound.server_id),
+            Self::WheelSaved { wheel } => wheel.server_id,
+            Self::WheelDeleted { server_id, .. } => *server_id,
+            Self::ServerVoiceChanged { state } => Some(state.server_id),
+            _ => None,
         }
     }
 
@@ -1072,10 +1105,9 @@ impl Event {
             | Self::DmLayoutChanged { user_id, .. }
             | Self::PersonDndChanged { user_id, .. }
             | Self::ActivityHiddenChanged { user_id, .. }
-            | Self::ServerBlocksChanged { user_id, .. }
-            | Self::RejoinBlockChanged { user_id, .. }
             | Self::InvitesChanged { user_id, .. }
             | Self::BansChanged { user_id, .. }
+            | Self::ServerJoined { user_id, .. }
             | Self::InboxFiltersChanged { user_id, .. }
             | Self::ChannelOrderChanged { user_id, .. }
             | Self::ViewOnceOpened { user_id, .. }
@@ -1213,7 +1245,6 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             activity_hidden: vec![],
-            rejoin_blocked: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],
@@ -1312,7 +1343,6 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             activity_hidden: vec![],
-            rejoin_blocked: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],
@@ -1460,7 +1490,6 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             activity_hidden: vec![],
-            rejoin_blocked: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],

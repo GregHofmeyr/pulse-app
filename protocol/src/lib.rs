@@ -36,7 +36,6 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::DeletedServer::export_all(&cfg)?;
     rest::CreateServerRequest::export_all(&cfg)?;
     rest::TransferServerRequest::export_all(&cfg)?;
-    rest::ServerBlock::export_all(&cfg)?;
     rest::CreateServerInviteRequest::export_all(&cfg)?;
     rest::InviteState::export_all(&cfg)?;
     rest::ServerInvite::export_all(&cfg)?;
