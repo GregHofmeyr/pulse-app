@@ -29,6 +29,9 @@ export const patchNotes: PatchNotes = {
   date: '18 November 2026',
   new: [
     'Check for updates yourself in Settings › Advanced › Updates',
+    'Invite people to a server with a link, or straight from their right-click menu',
+    'Invites show as cards in chat, with a Join button',
+    'Server owners can ban someone from their right-click menu, and see who is banned in Server settings › Bans',
   ],
   fixes: [
     'Restoring a deleted channel now tells you when the server is at its channel limit, and deleted channels no longer count toward it',
