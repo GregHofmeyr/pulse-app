@@ -642,7 +642,7 @@ describe('join sound mute', () => {
 
 describe('watch party in the call (#384)', () => {
   const party = (host_id: string) => ({
-    channel_id: 'V1', host_id, video_id: 'dQw4w9WgXcQ', title: 'A video', position_ms: 0, playing: false, set_at_ms: 0,
+    channel_id: 'V1', host_id, source: 'youtube' as const, video_id: 'dQw4w9WgXcQ', title: 'A video', position_ms: 0, playing: false, set_at_ms: 0,
     everyone_controls: false, viewers: [host_id], queue: [],
   })
 

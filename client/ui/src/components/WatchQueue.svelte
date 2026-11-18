@@ -9,7 +9,7 @@
   import { isMediaHash, mediaUrl } from '../lib/emoji'
   import { placeMenu } from '../lib/menuPlace'
   import { errorText } from '../lib/tauri'
-  import { mayControl, mayEdit } from '../lib/watchParty'
+  import { mayControl, mayEdit, sourceLabel, untitled } from '../lib/watchParty'
   import { enqueueLink, watchPartyAction } from '../lib/watchParty.svelte'
   import type { WatchParty } from '../lib/protocol/WatchParty'
   import type { WatchPartyAction } from '../lib/protocol/WatchPartyAction'
@@ -150,16 +150,17 @@
         {@const thumb = thumbOf(item.thumb?.hash)}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <li class="row" class:dragging={dragFrom === i} class:over={dragOver === i && dragFrom !== i} tabindex="0"
-          aria-label="{item.title ?? 'A YouTube video'}, added by {nameOf(item.added_by)}"
+          aria-label="{item.title ?? untitled(item.source)}, {sourceLabel(item.source)}, added by {nameOf(item.added_by)}"
           draggable={editable} ondragstart={(e) => dragStart(e, i)} ondragover={(e) => over(e, i)} ondrop={(e) => drop(e, i)} ondragend={dragEnd}
           oncontextmenu={(e) => { e.preventDefault(); void openMenu(i, e.clientX, e.clientY, e.currentTarget as HTMLElement) }}
           onkeydown={(e) => rowKey(e, i)}>
           <span class="n" aria-hidden="true">{i + 1}</span>
           <span class="thumb" aria-hidden="true">
             {#if thumb}<img src={thumb} alt="" loading="lazy" />{:else}<Icon name="film" size={14} />{/if}
+            <span class="src" class:live={item.source === 'twitch_channel'}>{sourceLabel(item.source)}</span>
           </span>
           <span class="text">
-            <span class="t">{item.title ?? 'A YouTube video'}</span>
+            <span class="t">{item.title ?? untitled(item.source)}</span>
             <span class="by">added by {item.added_by === me ? 'you' : nameOf(item.added_by)}</span>
           </span>
         </li>
@@ -167,10 +168,10 @@
     </ol>
     <p class="tip">Right-click a video for more. Drag to reorder.</p>
   {:else}
-    <p class="empty">Nothing queued. Paste a YouTube link, or drop one on the watch party.</p>
+    <p class="empty">Nothing queued. Paste a YouTube or Twitch link, or drop one on the watch party.</p>
   {/if}
   <form class="add" onsubmit={add}>
-    <input bind:this={input} class="input input-sm" type="url" placeholder="Paste a YouTube link" aria-label="YouTube link to add" bind:value={link}
+    <input bind:this={input} class="input input-sm" type="url" placeholder="Paste a YouTube or Twitch link" aria-label="Link to add" bind:value={link}
       autocomplete="off" spellcheck="false" />
     <button type="submit" class="btn btn-primary sm" disabled={adding || !link.trim()}>Add</button>
   </form>
@@ -208,7 +209,10 @@
   .row.dragging { opacity: .5; }
   .row.over { box-shadow: inset 0 2px 0 var(--focus-ring); }
   .n { width: 14px; text-align: right; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; flex-shrink: 0; }
-  .thumb { width: 48px; height: 27px; border-radius: var(--radius-xs); overflow: hidden; background: var(--bg-inset); display: grid; place-items: center; color: var(--text-3); flex-shrink: 0; }
+  .thumb { position: relative; width: 48px; height: 27px; border-radius: var(--radius-xs); overflow: hidden; background: var(--bg-inset); display: grid; place-items: center; color: var(--text-3); flex-shrink: 0; }
+  /* the source badge on the thumbnail (#459): YouTube, Twitch, Live or Clip */
+  .src { position: absolute; left: 1px; bottom: 1px; padding: 0 3px; border-radius: 3px; font-size: 8px; font-weight: 700; line-height: 11px; text-transform: uppercase; color: var(--text); background: var(--bg-2); }
+  .src.live { color: var(--danger-text); }
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .t { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

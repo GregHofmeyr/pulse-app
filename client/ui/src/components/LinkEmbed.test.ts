@@ -438,7 +438,7 @@ describe('LinkEmbed', () => {
 describe('watch party (#384)', () => {
   const btn = (host: HTMLElement, text: string) => [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === text)
   const party = (over: Partial<WatchParty> = {}): WatchParty => ({
-    channel_id: 'V1', host_id: 'U1', video_id: 'aaaaaaaaaaa', position_ms: 0, playing: true, set_at_ms: 0, everyone_controls: false,
+    channel_id: 'V1', host_id: 'U1', source: 'youtube', video_id: 'aaaaaaaaaaa', position_ms: 0, playing: true, set_at_ms: 0, everyone_controls: false,
     viewers: ['U1'], queue: [], ...over,
   })
   beforeEach(() => {
@@ -461,7 +461,20 @@ describe('watch party (#384)', () => {
     await settle()
     btn(host, 'Start watch party')!.click()
     await settle()
-    expect(invoke).toHaveBeenCalledWith('start_watch_party', { channelId: 'V1', videoId: 'dQw4w9WgXcQ', title: 'A video' })
+    expect(invoke).toHaveBeenCalledWith('start_watch_party', { channelId: 'V1', source: 'youtube', videoId: 'dQw4w9WgXcQ', title: 'A video' })
+  })
+
+  it('a Twitch VOD, channel or clip card starts one too (#459)', async () => {
+    const tw = (provider_id: string) => yt({ url: 'https://www.twitch.tv/x', provider: 'twitch', provider_id, site_name: 'Twitch' })
+    for (const [id, source, videoId] of [['video:123', 'twitch_video', '123'], ['channel:alex', 'twitch_channel', 'alex'], ['FunnyClip-1', 'twitch_clip', 'FunnyClip-1']]) {
+      invoke.mockClear()
+      const host = show(tw(id))
+      await settle()
+      btn(host, 'Start watch party')!.click()
+      await settle()
+      expect(invoke).toHaveBeenCalledWith('start_watch_party', { channelId: 'V1', source, videoId, title: 'A video' })
+    }
+    expect(btn(show(tw('video:v1')), 'Start watch party')).toBeUndefined()
   })
 
   it('not out of a server call, with watch parties off, or for a bad id', async () => {
@@ -484,7 +497,7 @@ describe('watch party (#384)', () => {
     expect(btn(host, 'Play in watch party')).toBeDefined()
     btn(host, 'Add to queue')!.click()
     await settle()
-    expect(invoke).toHaveBeenCalledWith('watch_party_action', { channelId: 'V1', action: { action: 'enqueue', video_id: 'dQw4w9WgXcQ', title: 'A video' } })
+    expect(invoke).toHaveBeenCalledWith('watch_party_action', { channelId: 'V1', action: { action: 'enqueue', source: 'youtube', video_id: 'dQw4w9WgXcQ', title: 'A video' } })
     // sam hosts, alex watches: queue only
     app.state = { ...app.state, watchParties: { V1: party({ host_id: 'U2', viewers: ['U2', 'U1'] }) } }
     host = show(yt())
@@ -495,7 +508,7 @@ describe('watch party (#384)', () => {
     host = show(yt())
     expect(btn(host, 'Play in watch party')).toBeUndefined()
     expect(btn(host, 'Add to queue')).toBeDefined()
-    app.state = { ...app.state, watchParties: { V1: party({ video_id: 'dQw4w9WgXcQ' }) } }
+    app.state = { ...app.state, watchParties: { V1: party({ source: 'youtube' as const, video_id: 'dQw4w9WgXcQ' }) } }
     expect(show(yt()).textContent).toContain('In the watch party')
   })
 })

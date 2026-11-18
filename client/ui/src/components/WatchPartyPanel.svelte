@@ -13,7 +13,7 @@
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import { isMediaHash, mediaUrl } from '../lib/emoji'
-  import { clockText, correction, DRIFT_S, mayControl, maySkip, partyPlayerSrc, partySeconds, upNextIn, watching, YT, type PlayerCommand, type PlayerInfo } from '../lib/watchParty'
+  import { CLIP_S, clockText, correction, DRIFT_S, embedOf, mayControl, maySkip, partyPlayerSrc, partySeconds, sourceLabel, untitled, upNextIn, watching, YT, type PlayerCommand, type PlayerInfo } from '../lib/watchParty'
   import { endWatchParty, enqueueLink, joinWatchParty, leaveWatchParty, watchPartyAction } from '../lib/watchParty.svelte'
   import type { WatchParty } from '../lib/protocol/WatchParty'
 
@@ -31,7 +31,14 @@
   const open = $derived(inCall && watching(party, me))
   const control = $derived(mayControl(party, me))
   const host = $derived(party.host_id === me)
-  const title = $derived(party.title ?? 'A YouTube video')
+  // what it plays (#459): YouTube (synced), a Twitch VOD (synced), a live channel (play and pause, until skipped) or
+  // a clip (started together, no control)
+  const source = $derived(party.source ?? 'youtube')
+  const twitch = $derived(source !== 'youtube')
+  const live = $derived(source === 'twitch_channel')
+  const clip = $derived(source === 'twitch_clip')
+  const provider = $derived(twitch ? 'Twitch' : 'YouTube')
+  const title = $derived(party.title ?? untitled(source))
   const others = $derived(party.viewers.filter((v) => v !== me).length)
   const skip = $derived(maySkip(party, me))
 
@@ -83,21 +90,40 @@
   // would reload the player on each pause, play and seek, and the page autoplays, so a pause never stuck.
   const videoId = $derived(party.video_id)
   const src = $derived.by(() => {
-    const id = videoId
+    const m = { source, id: videoId }
     const o = origin.origin
-    return o ? untrack(() => partyPlayerSrc(o, id, partySeconds(party, serverNow()))) : null
+    return o ? untrack(() => partyPlayerSrc(o, m, partySeconds(party, serverNow()))) : null
   })
   let endedFor: string | null = null
   let lastSeek = 0
   // a new video starts the player's bookkeeping afresh (only a new video: not every change to the party)
   $effect(() => {
     void videoId
+    void source
     untrack(() => {
       info = { state: null, time: null, duration: null }
       refused = false
+      silent = false
       endedFor = null
       lastSeek = 0
     })
+  })
+  /** A Twitch VOD's or channel's player that never said anything back (Twitch refusing the app as its parent shows
+   *  only inside its frame, #88): it can still open in a window, unsynced. */
+  let silent = $state(false)
+  $effect(() => {
+    if (!open || !twitch || clip || !src) return
+    void src
+    const t = setTimeout(() => {
+      if (info.state === null) silent = true
+    }, 15_000)
+    return () => clearTimeout(t)
+  })
+  // a clip says nothing back: the party moves on from it a clip's longest after it started (whoever may skip it)
+  $effect(() => {
+    if (!open || !clip || !skip || !party.playing || seconds < CLIP_S || endedFor === party.video_id) return
+    endedFor = party.video_id
+    void watchPartyAction(party.channel_id, { action: 'next', from: party.video_id }).catch(() => {})
   })
 
   /** When we last told the player to pause: its own pause (below) is one we didn't ask for. */
@@ -151,9 +177,10 @@
       const m = d as { state?: unknown; code?: unknown; player?: unknown; time?: unknown; duration?: unknown }
       if (m.state === 'error') {
         if (m.code === YOUTUBE_FRAMING_ERROR) refused = true
-        else error = 'YouTube couldn’t play this video.'
+        else error = `${provider} couldn’t play this.`
         return
       }
+      silent = false
       if (!heard) {
         heard = true
         send({ func: 'volume', to: volume })
@@ -207,6 +234,8 @@
   let queueOpen = $state(false)
   let pill = $state<HTMLButtonElement>()
   const upNext = $derived(open && !refused ? upNextIn(party, seconds, duration) : null)
+  // a live channel plays until skipped: what's next shows the whole time
+  const liveNext = $derived(open && live && party.queue.length > 0)
   const nextItem = $derived(party.queue[0])
   const nextThumb = $derived(nextItem?.thumb && isMediaHash(nextItem.thumb.hash) ? mediaUrl(nextItem.thumb.hash) : null)
   const skipNow = () => act({ action: 'next', from: party.video_id })
@@ -229,7 +258,9 @@
   }
 
   function openInWindow() {
-    void api.openEmbedWindow('youtube', party.video_id, Math.floor(seconds) || null).catch((e) => (error = errorText(e)))
+    const e = embedOf({ source, id: party.video_id })
+    const start = source === 'youtube' ? Math.floor(seconds) || null : null
+    void api.openEmbedWindow(e.provider, e.id, start).catch((err) => (error = errorText(err)))
   }
 </script>
 
@@ -267,7 +298,7 @@
       <p class="note">Videos can’t play inside Pulse on this server.</p>
     {:else if refused}
       <div class="note">
-        YouTube won’t play inside Pulse on this device.
+        {provider} won’t play inside Pulse on this device.
         <button type="button" class="btn btn-secondary sm" onclick={openInWindow}>Open in a window</button>
         <small>It won’t stay in sync there.</small>
       </div>
@@ -277,32 +308,53 @@
           <iframe bind:this={frame} {src} title="Watch party: {title}" sandbox="allow-scripts allow-same-origin allow-presentation"
             allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>
         {/key}
-        <!-- clicks on the video are ours, not YouTube's: its player pausing itself on a click only got played over -->
-        <button type="button" class="shield" tabindex="-1" aria-label={control ? (party.playing ? 'Pause for everyone' : 'Play for everyone') : 'Video'}
-          class:control onclick={() => control && togglePlay()} ondblclick={fullscreen}></button>
+        {#if !clip}
+          <!-- clicks on the video are ours, not the player's: its pausing itself on a click only got played over. A clip
+               keeps its own controls (it has no control API; its pause is each viewer's own) -->
+          <button type="button" class="shield" tabindex="-1" aria-label={control ? (party.playing ? 'Pause for everyone' : 'Play for everyone') : 'Video'}
+            class:control onclick={() => control && togglePlay()} ondblclick={fullscreen}></button>
+        {/if}
       </div>
+      {#if silent}
+        <div class="note">
+          Twitch isn’t answering inside Pulse on this device, so it may not stay in sync.
+          <button type="button" class="btn btn-secondary sm" onclick={openInWindow}>Open in a window</button>
+        </div>
+      {/if}
     {/if}
     <div class="controls">
-      <button type="button" class="icon-btn" aria-label={party.playing ? 'Pause' : 'Play'} aria-disabled={!control}
-        data-tip={control ? (party.playing ? 'Pause for everyone' : 'Play for everyone') : `${nameOf(party.host_id)} controls it`}
-        onclick={() => control && togglePlay()}><Icon name={party.playing ? 'pause' : 'play'} size={18} /></button>
-      <span class="time">{clockText(dragging ?? seconds)}{#if duration} / {clockText(duration)}{/if}</span>
-      <input class="seek" type="range" min="0" max={duration ?? Math.max(1, Math.ceil(seconds))} step="1" value={dragging ?? Math.min(seconds, duration ?? seconds)}
-        aria-label="Position" aria-valuetext={clockText(dragging ?? seconds)} disabled={!control || !duration}
-        oninput={(e) => (dragging = +e.currentTarget.value)} onchange={(e) => seekTo(+e.currentTarget.value)} />
+      {#if clip}
+        <span class="badge" data-tip="Twitch clips can’t be controlled from Pulse">Clip</span>
+        <span class="time kind">Started together · pausing is just for you</span>
+      {:else}
+        <button type="button" class="icon-btn" aria-label={party.playing ? 'Pause' : 'Play'} aria-disabled={!control}
+          data-tip={control ? (party.playing ? 'Pause for everyone' : 'Play for everyone') : `${nameOf(party.host_id)} controls it`}
+          onclick={() => control && togglePlay()}><Icon name={party.playing ? 'pause' : 'play'} size={18} /></button>
+        {#if live}
+          <span class="badge live">Live</span>
+          <span class="time kind">Plays until skipped</span>
+        {:else}
+          <span class="time">{clockText(dragging ?? seconds)}{#if duration} / {clockText(duration)}{/if}</span>
+          <input class="seek" type="range" min="0" max={duration ?? Math.max(1, Math.ceil(seconds))} step="1" value={dragging ?? Math.min(seconds, duration ?? seconds)}
+            aria-label="Position" aria-valuetext={clockText(dragging ?? seconds)} disabled={!control || !duration}
+            oninput={(e) => (dragging = +e.currentTarget.value)} onchange={(e) => seekTo(+e.currentTarget.value)} />
+        {/if}
+      {/if}
       {#if skip && party.queue.length}
         <button type="button" class="btn btn-quiet sm" data-tip="Skip to the next video in the queue, for everyone" onclick={skipNow}>Skip</button>
       {/if}
-      <span class="vol" data-tip="Your volume (only you hear it)"><Icon name="volume" size={16} />
-        <input type="range" min="0" max="100" step="5" value={volume} aria-label="Video volume" oninput={(e) => setVolume(+e.currentTarget.value)} /></span>
+      {#if !clip}
+        <span class="vol" data-tip="Your volume (only you hear it)"><Icon name="volume" size={16} />
+          <input type="range" min="0" max="100" step="5" value={volume} aria-label="Video volume" oninput={(e) => setVolume(+e.currentTarget.value)} /></span>
+      {/if}
       <button type="button" class="icon-btn" aria-label="Full screen" data-tip="Full screen" onclick={fullscreen}><Icon name="fullscreen" size={16} /></button>
     </div>
-    {#if upNext !== null && nextItem}
+    {#if (upNext !== null || liveNext) && nextItem}
       <div class="up-next" role="status">
         <span class="un-thumb" aria-hidden="true">{#if nextThumb}<img src={nextThumb} alt="" />{:else}<Icon name="film" size={16} />{/if}</span>
         <span class="un-text">
-          <span class="un-label">Up next · in {upNext}s</span>
-          <span class="un-title">{nextItem.title ?? 'A YouTube video'}</span>
+          <span class="un-label">{upNext !== null ? `Up next · in ${upNext}s` : 'Up next · when this is skipped'}</span>
+          <span class="un-title"><span class="badge" class:live={nextItem.source === 'twitch_channel'}>{sourceLabel(nextItem.source)}</span> {nextItem.title ?? untitled(nextItem.source)}</span>
           <span class="un-by">added by {nextItem.added_by === me ? 'you' : nameOf(nextItem.added_by)}</span>
         </span>
         {#if skip}<button type="button" class="btn btn-secondary sm" onclick={skipNow}>Skip</button>{/if}
@@ -343,6 +395,9 @@
   .pill[aria-expanded='true'] { color: var(--accent-text); background: var(--accent-soft); }
   .party.dropping { border-color: var(--focus-ring); }
   /* "Up next" (#464): near the end, before it moves on */
+  .badge { display: inline-block; padding: 0 5px; border-radius: var(--radius-xs); font-size: 10px; font-weight: 700; line-height: 16px; text-transform: uppercase; letter-spacing: .03em; color: var(--text-2); background: var(--bg-inset); vertical-align: 1px; }
+  .badge.live { color: var(--danger-text); }
+  .kind { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .up-next { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: var(--radius-sm); background: var(--bg-3); min-width: 0; }
   .un-thumb { width: 64px; height: 36px; border-radius: var(--radius-xs); overflow: hidden; background: var(--bg-inset); display: grid; place-items: center; color: var(--text-3); flex-shrink: 0; }
   .un-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }

@@ -4,6 +4,7 @@
 import type { LinkEmbed } from './protocol/LinkEmbed'
 import type { WatchParty } from './protocol/WatchParty'
 import type { WatchPartyItem } from './protocol/WatchPartyItem'
+import type { WatchSource } from './protocol/WatchSource'
 
 /** How far (seconds) a player may drift from the party before it's seeked back. */
 export const DRIFT_S = 1.5
@@ -18,6 +19,56 @@ export const validVideoId = (id: string | null | undefined): id is string => !!i
 export function youtubeIdOf(e: LinkEmbed): string | null {
   return e.provider === 'youtube' && validVideoId(e.provider_id) ? e.provider_id : null
 }
+
+/** What a party can play (#459): a source and its id there. */
+export type PartyMedia = { source: WatchSource; id: string }
+
+/** Whether `id` is well formed for `source` (the server checks the same: `WatchSource::valid_id`). */
+export function validMedia(source: WatchSource, id: string | null | undefined): id is string {
+  if (!id) return false
+  switch (source) {
+    case 'youtube': return validVideoId(id)
+    case 'twitch_video': return /^[0-9]{1,15}$/.test(id)
+    case 'twitch_channel': return /^[a-z0-9_]{1,25}$/.test(id)
+    case 'twitch_clip': return /^[A-Za-z0-9_-]{1,100}$/.test(id)
+  }
+}
+
+const media = (source: WatchSource, id: string | null | undefined): PartyMedia | null => (validMedia(source, id) ? { source, id } : null)
+
+/** What a card plays in a party: a YouTube video, or a Twitch VOD (`video:<id>`), channel (`channel:<login>`) or clip
+ *  (a bare slug), as the server's link previews name them. */
+export function partyMediaOf(e: LinkEmbed): PartyMedia | null {
+  const id = e.provider_id
+  if (!id) return null
+  if (e.provider === 'youtube') return media('youtube', id)
+  if (e.provider !== 'twitch') return null
+  if (id.startsWith('video:')) return media('twitch_video', id.slice(6))
+  if (id.startsWith('channel:')) return media('twitch_channel', id.slice(8))
+  return media('twitch_clip', id)
+}
+
+/** A party video's id as its link preview and the embed page name it (`/embed/{provider}/{id}`). */
+export function embedOf(m: PartyMedia): { provider: 'youtube' | 'twitch'; id: string } {
+  switch (m.source) {
+    case 'youtube': return { provider: 'youtube', id: m.id }
+    case 'twitch_video': return { provider: 'twitch', id: `video:${m.id}` }
+    case 'twitch_channel': return { provider: 'twitch', id: `channel:${m.id}` }
+    case 'twitch_clip': return { provider: 'twitch', id: m.id }
+  }
+}
+
+/** A source's badge: YouTube, Twitch (a VOD), Live (a channel) or Clip. */
+export const sourceLabel = (s: WatchSource | undefined): string =>
+  s === 'twitch_video' ? 'Twitch' : s === 'twitch_channel' ? 'Live' : s === 'twitch_clip' ? 'Clip' : 'YouTube'
+
+/** What a party video's title reads as when it has none. */
+export const untitled = (s: WatchSource | undefined): string =>
+  s === 'twitch_video' ? 'A Twitch video' : s === 'twitch_channel' ? 'A Twitch channel' : s === 'twitch_clip' ? 'A Twitch clip' : 'A YouTube video'
+
+/** Twitch clips are at most a minute long and say nothing back (no control API): the party moves on from one this
+ *  long after it started. */
+export const CLIP_S = 60
 
 /** Where the party's video is (seconds) at `serverNowMs`: it runs on while playing. */
 export function partySeconds(p: Pick<WatchParty, 'position_ms' | 'playing' | 'set_at_ms'>, serverNowMs: number): number {
@@ -42,9 +93,36 @@ export const UP_NEXT_S = 15
 /** Seconds until the video ends while that's [`UP_NEXT_S`] or less, with something queued and the party playing (the
  *  "Up next" card's countdown); null otherwise, or while the player hasn't said how long the video is. */
 export function upNextIn(p: WatchParty, at: number, duration: number | null): number | null {
+  if (p.source === 'twitch_clip') duration = CLIP_S
+  if (p.source === 'twitch_channel') duration = null
   if (!p.queue.length || !p.playing || !duration || duration <= 0) return null
   const left = duration - at
   return left <= UP_NEXT_S ? Math.max(0, Math.ceil(left)) : null
+}
+
+/** Twitch's own pages, which look like `twitch.tv/<channel>` but aren't a channel (as the server's list). */
+const TWITCH_RESERVED = new Set(['directory', 'videos', 'search', 'settings', 'subscriptions', 'inventory', 'wallet', 'drops', 'downloads', 'jobs', 'p', 'turbo', 'prime', 'store', 'login', 'signup', 'friends', 'messages', 'moderator', 'popout', 'embed', 'team', 'broadcast', 'following'])
+
+/** What a pasted or dropped link plays in a party (#459): a YouTube video, or a Twitch VOD, channel or clip. Only the
+ *  providers' own hosts: a lookalike is no link. */
+export function mediaFromLink(text: string): PartyMedia | null {
+  const yt = youtubeIdFromLink(text)
+  if (yt) return { source: 'youtube', id: yt }
+  let u: URL
+  try {
+    u = new URL(text.trim())
+  } catch {
+    return null
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null
+  const host = u.hostname.toLowerCase()
+  const segs = u.pathname.split('/').filter(Boolean)
+  if (host === 'clips.twitch.tv') return segs.length === 1 && segs[0] !== 'embed' ? media('twitch_clip', segs[0]) : null
+  if (!['twitch.tv', 'www.twitch.tv', 'm.twitch.tv'].includes(host)) return null
+  if (segs.length === 3 && segs[1] === 'clip') return media('twitch_clip', segs[2])
+  if (segs.length === 2 && segs[0] === 'videos') return media('twitch_video', segs[1])
+  if (segs.length === 1 && !TWITCH_RESERVED.has(segs[0].toLowerCase())) return media('twitch_channel', segs[0].toLowerCase())
+  return null
 }
 
 /** The YouTube video a pasted or dropped link points at (watch, youtu.be, Shorts, embed and live links), or null.
@@ -94,6 +172,14 @@ export type PlayerCommand = { func: 'play' } | { func: 'pause' } | { func: 'seek
  *  [`DRIFT_S`] off. Nothing while the player hasn't said where it is, nor while it's buffering (its time stands
  *  still then, and seeking would only restart the wait). An ended video stays ended while the party plays past it. */
 export function correction(p: WatchParty, info: PlayerInfo, serverNowMs: number): PlayerCommand[] {
+  // a clip has no control API; a live channel plays and pauses but never seeks (it's always at the live edge)
+  if (p.source === 'twitch_clip') return []
+  if (p.source === 'twitch_channel') {
+    if (info.state === null) return []
+    if (p.playing && info.state !== YT.playing && info.state !== YT.buffering) return [{ func: 'play' }]
+    if (!p.playing && (info.state === YT.playing || info.state === YT.buffering)) return [{ func: 'pause' }]
+    return []
+  }
   if (info.state === null || info.time === null) return []
   const out: PlayerCommand[] = []
   const target = partySeconds(p, serverNowMs)
@@ -106,12 +192,17 @@ export function correction(p: WatchParty, info: PlayerInfo, serverNowMs: number)
   return out
 }
 
-/** The watch party page (our embed page in party mode: YouTube's player driven by Pulse) for `videoId`, starting at
- *  `startSeconds` (whole seconds; the first sync seeks precisely). */
-export function partyPlayerSrc(origin: string, videoId: string, startSeconds = 0): string {
-  const base = `${origin.replace(/\/+$/, '')}/embed/youtube/${encodeURIComponent(videoId)}?party=1`
+/** The watch party page (our embed page in party mode: the provider's player driven by Pulse) for a video, starting
+ *  at `startSeconds` (whole seconds; the first sync seeks precisely). A Twitch channel is live (no start); a Twitch
+ *  clip has no control API, so it's the clip's ordinary page (#459). A bare id is a YouTube video. */
+export function partyPlayerSrc(origin: string, video: PartyMedia | string, startSeconds = 0): string {
+  const m: PartyMedia = typeof video === 'string' ? { source: 'youtube', id: video } : video
+  const e = embedOf(m)
+  const page = `${origin.replace(/\/+$/, '')}/embed/${e.provider}/${encodeURIComponent(e.id)}`
+  if (m.source === 'twitch_clip') return page
+  const base = `${page}?party=1`
   const start = Math.floor(startSeconds)
-  return start > 0 && start <= 7 * 86400 ? `${base}&start=${start}` : base
+  return m.source !== 'twitch_channel' && start > 0 && start <= 7 * 86400 ? `${base}&start=${start}` : base
 }
 
 /** "1:05", "1:02:03". */

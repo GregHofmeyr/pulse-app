@@ -389,7 +389,7 @@ describe('streams', () => {
 
 describe('watch parties (#384)', () => {
   const party = (over: Partial<WatchParty> = {}): WatchParty => ({
-    channel_id: 'V1', host_id: 'U1', video_id: 'dQw4w9WgXcQ', position_ms: 0, playing: true, set_at_ms: 1, everyone_controls: false,
+    channel_id: 'V1', host_id: 'U1', source: 'youtube', video_id: 'dQw4w9WgXcQ', position_ms: 0, playing: true, set_at_ms: 1, everyone_controls: false,
     viewers: ['U1'], queue: [], ...over,
   })
 

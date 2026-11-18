@@ -31,7 +31,7 @@ const ready: Ready = {
   people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [], live_notify: [],
 }
 const party = (over: Partial<WatchParty> = {}): WatchParty => ({
-  channel_id: 'V1', host_id: 'U2', video_id: 'dQw4w9WgXcQ', title: 'A video', position_ms: 0, playing: true, set_at_ms: Date.now(),
+  channel_id: 'V1', host_id: 'U2', source: 'youtube', video_id: 'dQw4w9WgXcQ', title: 'A video', position_ms: 0, playing: true, set_at_ms: Date.now(),
   everyone_controls: false, viewers: ['U2'], queue: [], ...over,
 })
 
@@ -233,7 +233,7 @@ describe('the watch party panel (#384)', () => {
   })
 
   it('the queue pill opens every queued video, not just the first few (#409, #464)', async () => {
-    const queue = Array.from({ length: 8 }, (_, i) => ({ video_id: `video${i}abcd`, title: `Video ${i}`, added_by: 'U2' }))
+    const queue = Array.from({ length: 8 }, (_, i) => ({ source: 'youtube' as const, video_id: `video${i}abcd`, title: `Video ${i}`, added_by: 'U2' }))
     const host = show(party({ host_id: 'U1', viewers: ['U1'], queue }))
     await settle()
     const pill = btn(host, 'Queue · 8')!
@@ -255,7 +255,7 @@ describe('the watch party panel (#384)', () => {
   })
 
   it('someone in the call who isn’t the host adds by pasting a link, and changes only their own', async () => {
-    const queue = [{ video_id: 'aaaaaaaaaaa', added_by: 'U2' }, { video_id: 'bbbbbbbbbbb', added_by: 'U1' }]
+    const queue = [{ source: 'youtube' as const, video_id: 'aaaaaaaaaaa', added_by: 'U2' }, { source: 'youtube' as const, video_id: 'bbbbbbbbbbb', added_by: 'U1' }]
     const host = show(party({ viewers: ['U2', 'U1'], queue }))
     await settle()
     btn(host, 'Queue · 2')!.click()
@@ -266,7 +266,7 @@ describe('the watch party panel (#384)', () => {
     flushSync()
     host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
     await settle()
-    expect(actions()).toEqual([{ action: 'enqueue', video_id: '9bZkp7q19f0', title: null }])
+    expect(actions()).toEqual([{ action: 'enqueue', source: 'youtube', video_id: '9bZkp7q19f0', title: null }])
     const rows = host.querySelectorAll('.rows li')
     // sam's: nothing to do
     rows[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }))
@@ -289,11 +289,11 @@ describe('the watch party panel (#384)', () => {
     Object.defineProperty(e, 'dataTransfer', { value: { types: ['text/uri-list'], getData: (t: string) => (t === 'text/uri-list' ? '# c\nhttps://www.youtube.com/watch?v=9bZkp7q19f0' : '') } })
     host.querySelector('section')!.dispatchEvent(e)
     await settle()
-    expect(actions()).toEqual([{ action: 'enqueue', video_id: '9bZkp7q19f0', title: null }])
+    expect(actions()).toEqual([{ action: 'enqueue', source: 'youtube', video_id: '9bZkp7q19f0', title: null }])
   })
 
   it('near the end: an Up next card with a countdown and Skip; at the end the party moves on, once', async () => {
-    const host = show(party({ host_id: 'U1', viewers: ['U1'], position_ms: 290_000, set_at_ms: Date.now(), queue: [{ video_id: 'aaaaaaaaaaa', title: 'Next one', added_by: 'U2' }] }))
+    const host = show(party({ host_id: 'U1', viewers: ['U1'], position_ms: 290_000, set_at_ms: Date.now(), queue: [{ source: 'youtube' as const, video_id: 'aaaaaaaaaaa', title: 'Next one', added_by: 'U2' }] }))
     await settle()
     const f = host.querySelector('iframe')!
     const say = (data: object) => window.dispatchEvent(new MessageEvent('message', { data: { pulse: 'party', state: 'info', ...data }, origin: ORIGIN, source: f.contentWindow }))
@@ -310,11 +310,41 @@ describe('the watch party panel (#384)', () => {
   })
 
   it('whoever queued the current video may skip it, though they don’t control the party', async () => {
-    const host = show(party({ viewers: ['U2', 'U1'], added_by: 'U1', queue: [{ video_id: 'aaaaaaaaaaa', added_by: 'U2' }] }))
+    const host = show(party({ viewers: ['U2', 'U1'], added_by: 'U1', queue: [{ source: 'youtube' as const, video_id: 'aaaaaaaaaaa', added_by: 'U2' }] }))
     await settle()
     btn(host, 'Skip')!.click()
     await settle()
     expect(actions()).toEqual([{ action: 'next', from: 'dQw4w9WgXcQ' }])
+  })
+})
+
+describe('Twitch in the watch party (#459)', () => {
+  it('a VOD plays its Twitch party page and seeks like YouTube', async () => {
+    const host = show(party({ source: 'twitch_video', video_id: '123', viewers: ['U2', 'U1'], position_ms: 30_000, playing: false }))
+    await settle()
+    expect(host.querySelector('iframe')!.getAttribute('src')).toBe(`${ORIGIN}/embed/twitch/video%3A123?party=1&start=30`)
+    expect(host.querySelector('input.seek')).not.toBeNull()
+  })
+
+  it('a live channel: play and pause, no seek bar, and what is next shows until skipped', async () => {
+    const host = show(party({ source: 'twitch_channel', video_id: 'alex', host_id: 'U1', viewers: ['U1'], queue: [{ source: 'youtube', video_id: 'aaaaaaaaaaa', title: 'Next one', added_by: 'U2' }] }))
+    await settle()
+    expect(host.querySelector('iframe')!.getAttribute('src')).toBe(`${ORIGIN}/embed/twitch/channel%3Aalex?party=1`)
+    expect(host.querySelector('input.seek')).toBeNull()
+    expect(host.textContent).toContain('Plays until skipped')
+    expect(btn(host, 'Pause')).toBeDefined()
+    const card = host.querySelector('.up-next')!
+    expect(card.textContent).toContain('when this is skipped')
+    expect(card.textContent).toContain('Next one')
+  })
+
+  it('a clip: its own page and controls, labelled, and the party moves on a minute after it started', async () => {
+    const host = show(party({ source: 'twitch_clip', video_id: 'Clip1', host_id: 'U1', viewers: ['U1'], set_at_ms: Date.now() - 61_000, queue: [{ source: 'youtube', video_id: 'aaaaaaaaaaa', added_by: 'U2' }] }))
+    await settle()
+    expect(host.querySelector('iframe')!.getAttribute('src')).toBe(`${ORIGIN}/embed/twitch/Clip1`)
+    expect(host.querySelector('.player .shield')).toBeNull()
+    expect(host.textContent).toContain('pausing is just for you')
+    expect(actions()).toEqual([{ action: 'next', from: 'Clip1' }])
   })
 })
 

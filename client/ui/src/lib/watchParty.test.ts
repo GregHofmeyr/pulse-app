@@ -4,7 +4,7 @@ import type { WatchParty } from './protocol/WatchParty'
 import type { LinkEmbed } from './protocol/LinkEmbed'
 
 const party = (over: Partial<WatchParty> = {}): WatchParty => ({
-  channel_id: 'V1', host_id: 'U1', video_id: 'dQw4w9WgXcQ', position_ms: 10_000, playing: true, set_at_ms: 1_000_000,
+  channel_id: 'V1', host_id: 'U1', source: 'youtube', video_id: 'dQw4w9WgXcQ', position_ms: 10_000, playing: true, set_at_ms: 1_000_000,
   everyone_controls: false, viewers: ['U1', 'U2'], queue: [], ...over,
 })
 const info = (state: number | null, time: number | null, duration: number | null = 300) => ({ state, time, duration })
@@ -83,7 +83,7 @@ describe('the queue (#464)', () => {
 
   it('who may skip and edit, and when Up next shows', async () => {
     const { maySkip, mayEdit, upNextIn } = await import('./watchParty')
-    const item = { video_id: 'aaaaaaaaaaa', added_by: 'U2' }
+    const item = { source: 'youtube' as const, video_id: 'aaaaaaaaaaa', added_by: 'U2' }
     const p = party({ added_by: 'U2', queue: [item] })
     expect([maySkip(p, 'U1'), maySkip(p, 'U2'), maySkip(p, 'U3')]).toEqual([true, true, false])
     expect([mayEdit(p, item, 'U2'), mayEdit(p, { ...item, added_by: 'U3' }, 'U2')]).toEqual([true, false])
@@ -92,5 +92,36 @@ describe('the queue (#464)', () => {
     expect(upNextIn(p, 290, null)).toBeNull()
     expect(upNextIn({ ...p, queue: [] }, 290, 300)).toBeNull()
     expect(upNextIn({ ...p, playing: false }, 290, 300)).toBeNull()
+  })
+})
+
+describe('Twitch in the party (#459)', () => {
+  it('reads Twitch links and cards, and builds their party pages', async () => {
+    const { mediaFromLink, partyMediaOf, partyPlayerSrc } = await import('./watchParty')
+    expect(mediaFromLink('https://www.twitch.tv/videos/2012345678?t=1h')).toEqual({ source: 'twitch_video', id: '2012345678' })
+    expect(mediaFromLink('https://twitch.tv/Alex_1')).toEqual({ source: 'twitch_channel', id: 'alex_1' })
+    expect(mediaFromLink('https://clips.twitch.tv/FunnyClip-abc')).toEqual({ source: 'twitch_clip', id: 'FunnyClip-abc' })
+    expect(mediaFromLink('https://www.twitch.tv/alex/clip/FunnyClip-abc')).toEqual({ source: 'twitch_clip', id: 'FunnyClip-abc' })
+    expect(mediaFromLink('https://youtu.be/dQw4w9WgXcQ')).toEqual({ source: 'youtube', id: 'dQw4w9WgXcQ' })
+    for (const bad of ['https://www.twitch.tv/directory', 'https://www.twitch.tv/videos/v1', 'https://twitch.tv.evil.test/alex', 'https://www.twitch.tv/al.ex'])
+      expect(mediaFromLink(bad)).toBeNull()
+    const card = (provider_id: string) => ({ provider: 'twitch', provider_id }) as LinkEmbed
+    expect(partyMediaOf(card('video:123'))).toEqual({ source: 'twitch_video', id: '123' })
+    expect(partyMediaOf(card('channel:alex'))).toEqual({ source: 'twitch_channel', id: 'alex' })
+    expect(partyMediaOf(card('Clip1'))).toEqual({ source: 'twitch_clip', id: 'Clip1' })
+    expect(partyMediaOf(card('video:x'))).toBeNull()
+    const o = 'https://pulsechat.co.za'
+    expect(partyPlayerSrc(o, { source: 'twitch_video', id: '123' }, 90)).toBe(`${o}/embed/twitch/video%3A123?party=1&start=90`)
+    expect(partyPlayerSrc(o, { source: 'twitch_channel', id: 'alex' }, 90)).toBe(`${o}/embed/twitch/channel%3Aalex?party=1`)
+    expect(partyPlayerSrc(o, { source: 'twitch_clip', id: 'Clip1' }, 9)).toBe(`${o}/embed/twitch/Clip1`)
+  })
+
+  it('a live channel plays and pauses but never seeks; a clip takes no commands', () => {
+    const live = party({ source: 'twitch_channel', video_id: 'alex', position_ms: 0, playing: true })
+    expect(correction(live, info(YT.paused, 5, null), 1_000_000 + 600_000)).toEqual([{ func: 'play' }])
+    expect(correction(live, info(YT.playing, 5, null), 1_000_000 + 600_000)).toEqual([])
+    expect(correction({ ...live, playing: false }, info(YT.playing, 5, null), 0)).toEqual([{ func: 'pause' }])
+    const clip = party({ source: 'twitch_clip', video_id: 'Clip1' })
+    expect(correction(clip, info(YT.paused, 0), 9_999_999)).toEqual([])
   })
 })
