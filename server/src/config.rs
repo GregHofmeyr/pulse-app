@@ -81,6 +81,9 @@ pub struct PlansConfig {
     pub geocode_base: String,
     /// `https://api.open-meteo.com`; tests point it at a fake.
     pub forecast_base: String,
+    /// `PULSE_PLANS_COUNTRY`: the home country (ISO 3166 alpha-2, upper case; `ZA` by default), the only one a plan's
+    /// place is looked up in (#451).
+    pub country: String,
 }
 
 impl Default for PlansConfig {
@@ -88,8 +91,25 @@ impl Default for PlansConfig {
         Self {
             geocode_base: "https://geocoding-api.open-meteo.com".into(),
             forecast_base: "https://api.open-meteo.com".into(),
+            country: "ZA".into(),
         }
     }
+}
+
+/// Plans from the environment: `PULSE_PLANS_COUNTRY` (unset or empty = `ZA`), two letters or it's refused.
+fn plans(get: impl Fn(&str) -> Option<String>) -> anyhow::Result<PlansConfig> {
+    let mut cfg = PlansConfig::default();
+    if let Some(c) = get("PULSE_PLANS_COUNTRY")
+        .map(|c| c.trim().to_ascii_uppercase())
+        .filter(|c| !c.is_empty())
+    {
+        anyhow::ensure!(
+            c.len() == 2 && c.bytes().all(|b| b.is_ascii_uppercase()),
+            "PULSE_PLANS_COUNTRY: a two-letter country code (ISO 3166 alpha-2, like ZA), not {c:?}"
+        );
+        cfg.country = c;
+    }
+    Ok(cfg)
 }
 
 /// F1 race weekends (#386): Jolpica-F1 (the Ergast successor; free, no key). Only the server calls it, spaced out and
@@ -374,7 +394,7 @@ impl Config {
             quote_clock: None,
             steam: steam(|k| std::env::var(k).ok()),
             deadlock: deadlock(|k| std::env::var(k).ok()),
-            plans: PlansConfig::default(),
+            plans: plans(|k| std::env::var(k).ok())?,
             sports: sports(|k| std::env::var(k).ok()),
             f1: F1Config::default(),
         })
@@ -604,6 +624,16 @@ mod tests {
         let msg = format!("{:#}", bad.unwrap_err());
         assert!(msg.contains("GIPHY_RATING"));
         assert!(!msg.contains("s3cret-key"));
+    }
+
+    #[test]
+    fn plans_env() {
+        assert_eq!(plans(|_| None).unwrap().country, "ZA");
+        assert_eq!(plans(|_| Some("  ".into())).unwrap().country, "ZA");
+        assert_eq!(plans(|_| Some(" gb ".into())).unwrap().country, "GB");
+        for bad in ["ZAF", "Z", "Z1", "south africa"] {
+            assert!(plans(|_| Some(bad.into())).is_err(), "{bad}");
+        }
     }
 
     #[test]

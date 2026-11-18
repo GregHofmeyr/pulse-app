@@ -57,6 +57,8 @@ services:
       PULSE_DEADLOCK_API_KEY: ${PULSE_DEADLOCK_API_KEY:-}
       # Sports score pings (#385): an API-Sports key (api-football and api-rugby). Empty = sports off.
       PULSE_API_SPORTS_KEY: ${PULSE_API_SPORTS_KEY:-}
+      # Plans' weather (#451): the home country (two letters), the only one a plan's place is looked up in.
+      PULSE_PLANS_COUNTRY: ${PULSE_PLANS_COUNTRY:-ZA}
       RUST_LOG: info,sqlx=warn
     volumes:
       - ./data:/data

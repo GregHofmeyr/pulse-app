@@ -422,3 +422,56 @@ async fn a_stale_snapshot_is_dropped_and_an_ended_party_leaves_none() {
     next(&mut w.rx).await;
     assert_eq!(snapshot_at(&w.app, w.lounge.id).await, None);
 }
+
+#[tokio::test]
+async fn a_pause_sticks_for_everyone_and_play_resumes_where_it_paused() {
+    let mut w = world().await;
+    w.start(&w.alex.1, V).await;
+    changed(&mut w.rx).await;
+    assert_eq!(w.act(&w.sam.1, json!({"action": "join"})).await, 204);
+    changed(&mut w.rx).await;
+    let mut alex_rx = w.app.hub.register(w.alex.0, String::new()).rx;
+    assert_eq!(
+        w.act(&w.alex.1, json!({"action": "pause", "position_ms": 42_500}))
+            .await,
+        204
+    );
+    // everyone hears it, the pauser too, as paused at that moment
+    let p = changed(&mut w.rx).await;
+    assert_eq!((p.playing, p.position_ms), (false, 42_500));
+    assert_eq!(changed(&mut alex_rx).await, p);
+    // and it stays paused: nothing re-announces it playing, and its time stands still
+    quiet(&mut w.rx).await;
+    let now = chrono::Utc::now().timestamp_millis();
+    let held = w.app.voice.watch.of(w.lounge.id).unwrap();
+    assert!(!held.playing);
+    assert_eq!(
+        pulse_server::watch::position_at(&held, now + 60_000),
+        42_500
+    );
+    // a late joiner (in Ready) gets it paused at the same moment
+    let ready = ready_of(&w.app, &w.kim.1).await;
+    let seen = &ready.watch_parties[0];
+    assert_eq!((seen.playing, seen.position_ms), (false, 42_500));
+    // so does a restart (the snapshot is the paused party)
+    let voice = pulse_server::voice::VoiceState::default();
+    voice.join(w.lounge.id, w.alex.0, "PA_alex");
+    pulse_server::watch::restore(&w.app.db, &w.app.hub, &voice, now)
+        .await
+        .unwrap();
+    let back = voice.watch.of(w.lounge.id).unwrap();
+    assert_eq!((back.playing, back.position_ms), (false, 42_500));
+    changed(&mut w.rx).await;
+    // play picks up where it paused
+    assert_eq!(
+        w.act(&w.alex.1, json!({"action": "play", "position_ms": 42_500}))
+            .await,
+        204
+    );
+    let p = changed(&mut w.rx).await;
+    assert_eq!((p.playing, p.position_ms), (true, 42_500));
+    assert_eq!(
+        pulse_server::watch::position_at(&p, p.set_at_ms + 1_000),
+        43_500
+    );
+}

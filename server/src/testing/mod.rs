@@ -113,6 +113,7 @@ pub fn test_config() -> Config {
         plans: crate::config::PlansConfig {
             geocode_base: "http://127.0.0.1:1".into(),
             forecast_base: "http://127.0.0.1:1".into(),
+            ..Default::default()
         },
         // no key (sports dormant) and API-Sports unreachable unless a test points it at `fake_sports`
         sports: crate::config::SportsConfig {

@@ -132,6 +132,95 @@ describe('the watch party panel (#384)', () => {
     expect(posted.every(([, o]) => o === ORIGIN)).toBe(true)
   })
 
+  /** The panel mounted the way the voice panel does: its party follows the store. */
+  function showLive(p: WatchParty) {
+    app.state = { ...app.state, watchParties: { V1: p } }
+    const host = document.createElement('div')
+    document.body.append(host)
+    mounted.push(mount(WatchPartyPanel, { target: host, props: { get party() { return app.state.watchParties.V1 }, serverId: 'S1', inCall: true } }))
+    flushSync()
+    return host
+  }
+  const change = (over: Partial<WatchParty>) => {
+    app.state = { ...app.state, watchParties: { V1: { ...app.state.watchParties.V1, ...over } } }
+    flushSync()
+  }
+  function wire(f: HTMLIFrameElement) {
+    const posted: { func: string; to?: number }[] = []
+    Object.defineProperty(f, 'contentWindow', { value: { postMessage: (m: { func: string; to?: number }) => posted.push(m) } })
+    const say = (data: object) => window.dispatchEvent(new MessageEvent('message', { data: { pulse: 'party', state: 'info', ...data }, origin: ORIGIN, source: f.contentWindow }))
+    return { posted, say }
+  }
+
+  it('a pause keeps the same player (no reload, which autoplays from the top of the page) and it stays paused', async () => {
+    const host = showLive(party({ host_id: 'U1', viewers: ['U1', 'U2'], position_ms: 0, playing: true, set_at_ms: Date.now() - 5_000 }))
+    await settle()
+    const f = host.querySelector('iframe')!
+    const src = f.getAttribute('src')
+    expect(src).toContain('start=5')
+    const { posted, say } = wire(f)
+    // it's played on a few seconds since the page loaded
+    say({ player: 1, time: 9.3, duration: 300 })
+    // the pause comes back from the server (to the pauser too)
+    change({ playing: false, position_ms: 9_400, set_at_ms: Date.now() })
+    await settle()
+    expect(host.querySelector('iframe')).toBe(f)
+    expect(f.getAttribute('src')).toBe(src)
+    expect(posted.filter((c) => c.func !== 'volume').map((c) => c.func)).toEqual(['pause'])
+    // the player says it paused: nothing more is sent, ever (no play to fight it)
+    say({ player: 2, time: 9.4 })
+    posted.length = 0
+    await new Promise((r) => setTimeout(r, 1100))
+    expect(posted).toEqual([])
+    // resumed: the same player plays on from where it paused
+    change({ playing: true, position_ms: 9_400, set_at_ms: Date.now() })
+    await settle()
+    expect(host.querySelector('iframe')).toBe(f)
+    expect(posted.map((c) => c.func)).toEqual(['play'])
+  })
+
+  it('a late joiner to a paused party gets a paused player at the paused moment', async () => {
+    const host = showLive(party({ viewers: ['U2', 'U1'], position_ms: 95_000, playing: false, set_at_ms: Date.now() - 600_000 }))
+    await settle()
+    const f = host.querySelector('iframe')!
+    expect(f.getAttribute('src')).toBe(`${ORIGIN}/embed/youtube/dQw4w9WgXcQ?party=1&start=95`)
+    const { posted, say } = wire(f)
+    // the page autoplays: the party says paused, so it's paused there, and seeked to the moment
+    say({ player: 1, time: 95.2, duration: 300 })
+    await new Promise((r) => setTimeout(r, 1100))
+    expect(posted.filter((c) => c.func !== 'volume').map((c) => c.func)).toEqual(['pause'])
+    expect(host.querySelector('[aria-label="Play"]')).not.toBeNull()
+  })
+
+  it('a click on the video is the panel’s, not YouTube’s: the host’s click pauses for everyone', async () => {
+    const host = showLive(party({ host_id: 'U1', viewers: ['U1', 'U2'], playing: true, set_at_ms: Date.now() - 10_000 }))
+    await settle()
+    const shield = host.querySelector<HTMLElement>('.player .shield')!
+    expect(shield).not.toBeNull()
+    shield.click()
+    await settle()
+    expect(actions()).toEqual([{ action: 'pause', position_ms: expect.any(Number) }])
+  })
+
+  it('a click on the video by someone without control does nothing', async () => {
+    const host = showLive(party({ viewers: ['U2', 'U1'], playing: true }))
+    await settle()
+    host.querySelector<HTMLElement>('.player .shield')!.click()
+    await settle()
+    expect(actions()).toEqual([])
+  })
+
+  it('the host’s player pausing on its own (a media key, the system’s media controls) pauses the party instead of being fought', async () => {
+    const host = showLive(party({ host_id: 'U1', viewers: ['U1', 'U2'], playing: true, position_ms: 0, set_at_ms: Date.now() - 20_000 }))
+    await settle()
+    const { posted, say } = wire(host.querySelector('iframe')!)
+    say({ player: 1, time: 20, duration: 300 })
+    say({ player: 2, time: 20.1 })
+    await settle()
+    expect(actions()).toEqual([{ action: 'pause', position_ms: 20_100 }])
+    expect(posted.some((c) => c.func === 'play')).toBe(false)
+  })
+
   it('YouTube refusing to play framed offers the window instead', async () => {
     const host = show(party({ viewers: ['U2', 'U1'] }))
     await settle()
