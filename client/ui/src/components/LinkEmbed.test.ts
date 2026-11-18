@@ -490,10 +490,11 @@ describe('watch party (#384)', () => {
     host = show(yt())
     expect(btn(host, 'Play in watch party')).toBeUndefined()
     expect(btn(host, 'Add to queue')).toBeDefined()
-    // not watching: neither (Join is on the panel)
+    // in the call but not watching: still queues it (#464)
     app.state = { ...app.state, watchParties: { V1: party({ host_id: 'U2', viewers: ['U2'] }) } }
     host = show(yt())
-    expect(btn(host, 'Add to queue')).toBeUndefined()
+    expect(btn(host, 'Play in watch party')).toBeUndefined()
+    expect(btn(host, 'Add to queue')).toBeDefined()
     app.state = { ...app.state, watchParties: { V1: party({ video_id: 'dQw4w9WgXcQ' }) } }
     expect(show(yt()).textContent).toContain('In the watch party')
   })

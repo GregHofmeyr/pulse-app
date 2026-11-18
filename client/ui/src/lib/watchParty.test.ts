@@ -70,3 +70,27 @@ describe('watch party sync (#384)', () => {
     expect(clockText(-3)).toBe('0:00')
   })
 })
+
+describe('the queue (#464)', () => {
+  it('reads YouTube links, and only YouTube’s own', async () => {
+    const { youtubeIdFromLink, linkIn } = await import('./watchParty')
+    for (const ok of ['https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=3', 'https://youtu.be/dQw4w9WgXcQ', 'https://m.youtube.com/shorts/dQw4w9WgXcQ', ' https://youtube.com/live/dQw4w9WgXcQ '])
+      expect(youtubeIdFromLink(ok)).toBe('dQw4w9WgXcQ')
+    for (const bad of ['', 'dQw4w9WgXcQ', 'https://youtube.com.evil.test/watch?v=dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=short', 'javascript:alert(1)', 'https://www.youtube.com/channel/x'])
+      expect(youtubeIdFromLink(bad)).toBeNull()
+    expect(linkIn('# comment\r\nhttps://a.test/\nhttps://b.test/')).toBe('https://a.test/')
+  })
+
+  it('who may skip and edit, and when Up next shows', async () => {
+    const { maySkip, mayEdit, upNextIn } = await import('./watchParty')
+    const item = { video_id: 'aaaaaaaaaaa', added_by: 'U2' }
+    const p = party({ added_by: 'U2', queue: [item] })
+    expect([maySkip(p, 'U1'), maySkip(p, 'U2'), maySkip(p, 'U3')]).toEqual([true, true, false])
+    expect([mayEdit(p, item, 'U2'), mayEdit(p, { ...item, added_by: 'U3' }, 'U2')]).toEqual([true, false])
+    expect(upNextIn(p, 290.2, 300)).toBe(10)
+    expect(upNextIn(p, 200, 300)).toBeNull()
+    expect(upNextIn(p, 290, null)).toBeNull()
+    expect(upNextIn({ ...p, queue: [] }, 290, 300)).toBeNull()
+    expect(upNextIn({ ...p, playing: false }, 290, 300)).toBeNull()
+  })
+})

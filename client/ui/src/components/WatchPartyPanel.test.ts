@@ -232,28 +232,89 @@ describe('the watch party panel (#384)', () => {
     expect(invoke.mock.calls.some(([c]) => c === 'open_embed_window')).toBe(true)
   })
 
-  it('lists every queued video, not just the first few (#409)', async () => {
-    const queue = Array.from({ length: 8 }, (_, i) => ({ video_id: `video${i}abcd`, added_by: 'U2' }))
+  it('the queue pill opens every queued video, not just the first few (#409, #464)', async () => {
+    const queue = Array.from({ length: 8 }, (_, i) => ({ video_id: `video${i}abcd`, title: `Video ${i}`, added_by: 'U2' }))
     const host = show(party({ host_id: 'U1', viewers: ['U1'], queue }))
     await settle()
-    const rows = host.querySelectorAll('.queue li')
+    const pill = btn(host, 'Queue · 8')!
+    expect(pill.getAttribute('aria-expanded')).toBe('false')
+    pill.click()
+    flushSync()
+    const rows = host.querySelectorAll('.rows li')
     expect(rows.length).toBe(8)
-    expect(rows[7].textContent).toContain('video7abcd')
-    expect(host.textContent).not.toContain('more')
-    const removes = host.querySelectorAll<HTMLButtonElement>('[aria-label="Remove from queue"]')
-    removes[7].click()
+    expect(rows[7].textContent).toContain('Video 7')
+    expect(rows[7].textContent).toContain('added by sam')
+    // right-click a row: the host may play it now, move it or remove it
+    rows[7].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 10, clientY: 10 }))
+    await settle()
+    const items = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')].map((b) => b.textContent?.trim())
+    expect(items).toEqual(['Play now', 'Move to the top', 'Move up', 'Remove from queue'])
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === 'Remove from queue')!.click()
+    await settle()
     expect(actions()).toEqual([{ action: 'unqueue', index: 7 }])
   })
 
-  it('the host’s player moves the party on when the video ends', async () => {
-    const host = show(party({ host_id: 'U1', viewers: ['U1'], queue: [{ video_id: 'aaaaaaaaaaa', added_by: 'U2' }] }))
+  it('someone in the call who isn’t the host adds by pasting a link, and changes only their own', async () => {
+    const queue = [{ video_id: 'aaaaaaaaaaa', added_by: 'U2' }, { video_id: 'bbbbbbbbbbb', added_by: 'U1' }]
+    const host = show(party({ viewers: ['U2', 'U1'], queue }))
     await settle()
-    expect(host.textContent).toContain('aaaaaaaaaaa')
+    btn(host, 'Queue · 2')!.click()
+    flushSync()
+    const input = host.querySelector<HTMLInputElement>('input[type="url"]')!
+    input.value = 'https://youtu.be/9bZkp7q19f0?si=x'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await settle()
+    expect(actions()).toEqual([{ action: 'enqueue', video_id: '9bZkp7q19f0', title: null }])
+    const rows = host.querySelectorAll('.rows li')
+    // sam's: nothing to do
+    rows[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }))
+    await settle()
+    expect(document.querySelectorAll('[role="menuitem"]').length).toBe(0)
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    document.body.click()
+    await settle()
+    // alex's own: move and remove, no play now
+    rows[1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }))
+    await settle()
+    const items = [...document.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent?.trim())
+    expect(items).toEqual(['Move to the top', 'Move up', 'Remove from queue'])
+  })
+
+  it('a link dropped on the party is queued', async () => {
+    const host = show(party({ viewers: ['U2'] }))
+    await settle()
+    const e = new Event('drop', { bubbles: true, cancelable: true }) as DragEvent
+    Object.defineProperty(e, 'dataTransfer', { value: { types: ['text/uri-list'], getData: (t: string) => (t === 'text/uri-list' ? '# c\nhttps://www.youtube.com/watch?v=9bZkp7q19f0' : '') } })
+    host.querySelector('section')!.dispatchEvent(e)
+    await settle()
+    expect(actions()).toEqual([{ action: 'enqueue', video_id: '9bZkp7q19f0', title: null }])
+  })
+
+  it('near the end: an Up next card with a countdown and Skip; at the end the party moves on, once', async () => {
+    const host = show(party({ host_id: 'U1', viewers: ['U1'], position_ms: 290_000, set_at_ms: Date.now(), queue: [{ video_id: 'aaaaaaaaaaa', title: 'Next one', added_by: 'U2' }] }))
+    await settle()
     const f = host.querySelector('iframe')!
-    window.dispatchEvent(new MessageEvent('message', { data: { pulse: 'party', state: 'info', player: 0 }, origin: ORIGIN, source: f.contentWindow }))
-    window.dispatchEvent(new MessageEvent('message', { data: { pulse: 'party', state: 'info', player: 0 }, origin: ORIGIN, source: f.contentWindow }))
+    const say = (data: object) => window.dispatchEvent(new MessageEvent('message', { data: { pulse: 'party', state: 'info', ...data }, origin: ORIGIN, source: f.contentWindow }))
+    say({ player: 1, time: 290, duration: 300 })
+    flushSync()
+    const card = host.querySelector('.up-next')!
+    expect(card.textContent).toContain('Up next · in 10s')
+    expect(card.textContent).toContain('Next one')
+    expect(card.textContent).toContain('added by sam')
+    say({ player: 0 })
+    say({ player: 0 })
     await settle()
-    expect(actions()).toEqual([{ action: 'next' }])
+    expect(actions()).toEqual([{ action: 'next', from: 'dQw4w9WgXcQ' }])
+  })
+
+  it('whoever queued the current video may skip it, though they don’t control the party', async () => {
+    const host = show(party({ viewers: ['U2', 'U1'], added_by: 'U1', queue: [{ video_id: 'aaaaaaaaaaa', added_by: 'U2' }] }))
+    await settle()
+    btn(host, 'Skip')!.click()
+    await settle()
+    expect(actions()).toEqual([{ action: 'next', from: 'dQw4w9WgXcQ' }])
   })
 })
 

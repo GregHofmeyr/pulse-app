@@ -12,7 +12,7 @@
   import type { LinkEmbed } from '../lib/protocol/LinkEmbed'
   import { app } from '../lib/store.svelte'
   import { voice } from '../lib/voice.svelte'
-  import { mayControl, watching, youtubeIdOf } from '../lib/watchParty'
+  import { mayControl, youtubeIdOf } from '../lib/watchParty'
   import { partyIn, startWatchParty, watchPartyAction, watchPrefs } from '../lib/watchParty.svelte'
 
   let { embed, messageId, channelId = null, mine, onError = () => {} }: {
@@ -71,7 +71,8 @@
   const meId = $derived(app.state.me?.id ?? null)
   const partyPlaying = $derived(!!party && party.video_id === ytId)
   const partyControl = $derived(!!party && mayControl(party, meId))
-  const partyQueue = $derived(!!party && !partyPlaying && (partyControl || watching(party, meId)))
+  // anyone in the call may add to the queue (#464)
+  const partyQueue = $derived(!!party && !partyPlaying)
   let starting = $state(false)
   async function watchTogether(how: 'start' | 'queue') {
     if (!callCh || !ytId || starting) return

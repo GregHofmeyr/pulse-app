@@ -5,7 +5,7 @@ import type { WatchPartyAction } from './protocol/WatchPartyAction'
 import { noteServerTime } from './serverClock'
 import { app, onAppEvent } from './store.svelte'
 import { api } from './tauri'
-import { validVideoId, watching } from './watchParty'
+import { linkIn, validVideoId, watching, youtubeIdFromLink } from './watchParty'
 
 const SETTING_KEY = 'pulse.watchParties'
 
@@ -42,6 +42,14 @@ export function startWatchParty(channelId: string, videoId: string, title: strin
 }
 
 export const watchPartyAction = (channelId: string, action: WatchPartyAction): Promise<void> => api.watchPartyAction(channelId, action)
+
+/** Add the video a pasted or dropped link points at to `channelId`'s party queue (#464). The server fills in its title
+ *  and thumbnail from a card it has (or fetches one). */
+export function enqueueLink(channelId: string, text: string): Promise<void> {
+  const id = youtubeIdFromLink(linkIn(text))
+  if (!id) return Promise.reject(new Error('That isn’t a YouTube link.'))
+  return watchPartyAction(channelId, { action: 'enqueue', video_id: id, title: null })
+}
 
 export const joinWatchParty = (channelId: string) => watchPartyAction(channelId, { action: 'join' })
 

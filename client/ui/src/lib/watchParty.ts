@@ -3,6 +3,7 @@
 // correcting itself when it drifts too far.
 import type { LinkEmbed } from './protocol/LinkEmbed'
 import type { WatchParty } from './protocol/WatchParty'
+import type { WatchPartyItem } from './protocol/WatchPartyItem'
 
 /** How far (seconds) a player may drift from the party before it's seeked back. */
 export const DRIFT_S = 1.5
@@ -27,6 +28,55 @@ export function partySeconds(p: Pick<WatchParty, 'position_ms' | 'playing' | 'se
 /** Whether `me` may play, pause, seek and change the video (the host; anyone watching while everyone may). */
 export const mayControl = (p: WatchParty, me: string | null | undefined): boolean =>
   !!me && (p.host_id === me || (p.everyone_controls && p.viewers.includes(me)))
+
+/** Whether `me` may skip the current video (#464): whoever may control the party, and whoever put it on. */
+export const maySkip = (p: WatchParty, me: string | null | undefined): boolean => !!me && (mayControl(p, me) || p.added_by === me)
+
+/** Whether `me` may move or remove a queued video (#464): whoever may control the party, and whoever added it. */
+export const mayEdit = (p: WatchParty, item: WatchPartyItem, me: string | null | undefined): boolean =>
+  !!me && (mayControl(p, me) || item.added_by === me)
+
+/** How long before the end the "Up next" card shows (seconds). */
+export const UP_NEXT_S = 15
+
+/** Seconds until the video ends while that's [`UP_NEXT_S`] or less, with something queued and the party playing (the
+ *  "Up next" card's countdown); null otherwise, or while the player hasn't said how long the video is. */
+export function upNextIn(p: WatchParty, at: number, duration: number | null): number | null {
+  if (!p.queue.length || !p.playing || !duration || duration <= 0) return null
+  const left = duration - at
+  return left <= UP_NEXT_S ? Math.max(0, Math.ceil(left)) : null
+}
+
+/** The YouTube video a pasted or dropped link points at (watch, youtu.be, Shorts, embed and live links), or null.
+ *  The host must be YouTube's own: a lookalike is no link. */
+export function youtubeIdFromLink(text: string): string | null {
+  let u: URL
+  try {
+    u = new URL(text.trim())
+  } catch {
+    return null
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null
+  const host = u.hostname.toLowerCase()
+  const segs = u.pathname.split('/').filter(Boolean)
+  let id: string | null = null
+  if (host === 'youtu.be') id = segs.length === 1 ? segs[0] : null
+  else if (['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtube-nocookie.com', 'www.youtube-nocookie.com'].includes(host)) {
+    if (segs.length === 1 && segs[0] === 'watch') id = u.searchParams.get('v')
+    else if (segs.length === 2 && ['shorts', 'embed', 'live', 'v'].includes(segs[0])) id = segs[1]
+  }
+  return validVideoId(id) ? id : null
+}
+
+/** The first link in dropped or pasted text (a uri-list's first line that isn't a comment, or the text itself). */
+export function linkIn(text: string): string {
+  return (
+    text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l && !l.startsWith('#')) ?? ''
+  )
+}
 
 /** Whether `me` has the party open. */
 export const watching = (p: WatchParty | null | undefined, me: string | null | undefined): boolean => !!p && !!me && p.viewers.includes(me)
