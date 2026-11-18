@@ -236,6 +236,8 @@ async fn check_server<R: tauri::Runtime>(
         .updater_builder()
         .endpoints(vec![endpoint])
         .and_then(|b| b.header("Authorization", format!("Bearer {token}")))
+        // the server logs it with each check (#460); the updater's own User-Agent names only the plugin
+        .and_then(|b| b.header("X-Pulse-Version", app.package_info().version.to_string()))
         .map_err(|e| format!("updater setup: {e}"))?
         .version_comparator(|current, release| should_offer(&current, &release.version))
         // A download that stalls fails (and Pulse carries on) instead of leaving "Updating Pulse…" up for good; a
@@ -367,7 +369,28 @@ pub async fn update_launch(updates: tauri::State<'_, Updates>) -> Result<Option<
     Ok(wait_launch(&mut rx, LAUNCH_WAIT).await)
 }
 
-/// A fresh check against the signed-in server (the forced "update required" screen); `None` = nothing newer yet.
+/// What Settings shows about updates (#460): this app's version, whether it updates itself ([`updates_enabled`]), and
+/// whether its updates come from a package manager instead (Linux).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInfo {
+    pub version: String,
+    pub enabled: bool,
+    pub package_manager: bool,
+}
+
+/// [`UpdateInfo`] for Settings' "Check for updates".
+#[tauri::command]
+pub fn update_info(app: AppHandle) -> UpdateInfo {
+    UpdateInfo {
+        version: app.package_info().version.to_string(),
+        enabled: updates_enabled(),
+        package_manager: !cfg!(windows),
+    }
+}
+
+/// A fresh check against the signed-in server (the forced "update required" screen, and Settings' "Check for
+/// updates"); `None` = nothing newer yet.
 #[tauri::command]
 pub async fn update_check(app: AppHandle) -> Result<Option<Offer>, String> {
     let Some((server, token)) = current_session(&app) else {
@@ -537,6 +560,20 @@ mod tests {
         })
         .unwrap();
         assert_eq!(j, r#"{"version":"0.2.1"}"#);
+    }
+
+    #[test]
+    fn update_info_is_camel_case_json() {
+        let j = serde_json::to_string(&UpdateInfo {
+            version: "0.2.15".into(),
+            enabled: false,
+            package_manager: true,
+        })
+        .unwrap();
+        assert_eq!(
+            j,
+            r#"{"version":"0.2.15","enabled":false,"packageManager":true}"#
+        );
     }
 
     fn counting_handover() -> (

@@ -141,3 +141,93 @@ fn installer_names() {
         assert!(!installer_name_ok(bad), "{bad}");
     }
 }
+
+/// Without colour codes, so `field=value` reads as written.
+fn plain(log: &str) -> String {
+    let mut out = String::new();
+    let mut chars = log.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// #460: each manifest request is logged at info with the app's version (when it sends one), its
+/// updater's User-Agent and the status, refused ones included; never the token.
+#[tokio::test]
+async fn manifest_requests_are_logged_with_version_and_status_never_the_token() {
+    let root = tempfile::tempdir().unwrap();
+    let updates = root.path().join("updates");
+    std::fs::create_dir(&updates).unwrap();
+    std::fs::write(
+        updates.join("latest.json"),
+        br#"{"version":"0.2.15","platforms":{}}"#,
+    )
+    .unwrap();
+    let db_url = format!("sqlite://{}", root.path().join("pulse.db").display());
+    let dir = updates.to_str().unwrap().to_string();
+    let p = spawn_binary_on(db_url, &[("PULSE_UPDATES_DIR", &dir)], Some(root)).await;
+    let http = reqwest::Client::new();
+    let s: pulse_protocol::rest::SessionResponse = http
+        .post(p.url("/auth/register"))
+        .json(&serde_json::json!({"invite_code": binary_invite(&p), "username": "alex", "password": "hunter2hunter2"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let ask = |token: &str| {
+        http.get(p.url("/updates/latest.json"))
+            .bearer_auth(token)
+            .header("X-Pulse-Version", "0.2.2")
+            .header("User-Agent", "tauri-plugin-updater/2.14.1")
+            .send()
+    };
+    assert_eq!(ask(&s.token).await.unwrap().status(), 200);
+    assert_eq!(ask("not-a-real-token").await.unwrap().status(), 401);
+    // an app too old to send its version
+    let r = http
+        .get(p.url("/updates/latest.json"))
+        .bearer_auth(&s.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let lines = loop {
+        let log = plain(&p.log());
+        let lines: Vec<String> = log
+            .lines()
+            .filter(|l| l.contains("update check"))
+            .map(str::to_string)
+            .collect();
+        if lines.len() >= 3 || std::time::Instant::now() > deadline {
+            break lines;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert!(lines[0].contains("INFO"), "{}", lines[0]);
+    assert!(lines[0].contains("app_version=0.2.2"), "{}", lines[0]);
+    assert!(
+        lines[0].contains("user_agent=tauri-plugin-updater/2.14.1"),
+        "{}",
+        lines[0]
+    );
+    assert!(lines[0].contains("status=200"), "{}", lines[0]);
+    assert!(lines[1].contains("status=401"), "{}", lines[1]);
+    assert!(lines[2].contains("app_version=-"), "{}", lines[2]);
+    let log = p.log();
+    assert!(!log.contains(&s.token), "the session token was logged");
+    assert!(!log.contains("not-a-real-token"), "a token was logged");
+}

@@ -191,6 +191,9 @@ export type GifResult = { id: string; title: string; url: string; width: number;
 export type GifPage = { gifs: GifResult[]; next: number | null }
 
 export type UpdateOffer = { version: string }
+/** What Settings shows about updates (#460): this app's version, whether it updates itself (release Windows builds), and
+ *  whether its updates come from a package manager instead (Linux). */
+export type UpdateInfo = { version: string; enabled: boolean; packageManager: boolean }
 /** How far the installer download is (`pulse://update-progress`); `total` null = the size isn't known. */
 export type UpdateProgress = { downloaded: number; total: number | null }
 /** Strong (low delay)'s model, downloaded on first use (#77; also each `pulse://model` event). */
@@ -523,6 +526,8 @@ export const api = {
   updateLaunch: () => invoke<UpdateOffer | null>('update_launch'),
   /** A fresh check against the signed-in server now; null = no newer version (or signed out). */
   updateCheck: () => invoke<UpdateOffer | null>('update_check'),
+  /** This app's version and whether it updates itself (#460), for Settings' "Check for updates". */
+  updateInfo: () => invoke<UpdateInfo>('update_info'),
   /** Download and install the offer: Pulse closes and reopens on the new version. `restart` = asked for from the
    *  title bar, which the core refuses during a call. Rejects with why, and Pulse carries on as it was. */
   updateInstall: (restart: boolean) => invoke<void>('update_install', { restart }),

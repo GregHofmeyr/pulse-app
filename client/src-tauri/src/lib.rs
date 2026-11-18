@@ -665,6 +665,7 @@ pub fn run() {
             stream::set_stream_volume,
             updater::update_launch,
             updater::update_check,
+            updater::update_info,
             updater::update_install,
         ])
         .build(tauri::generate_context!())

@@ -5,7 +5,8 @@
 //! only friends can see or download a build. No manifest = 404, which the updater takes as "no update".
 use axum::Router;
 use axum::extract::{Path, Request, State};
-use axum::http::{HeaderValue, header};
+use axum::http::{HeaderMap, HeaderValue, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use tower::ServiceExt;
@@ -16,7 +17,44 @@ use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/updates/{file}", get(fetch))
+    Router::new()
+        .route("/updates/{file}", get(fetch))
+        .layer(axum::middleware::from_fn(log_check))
+}
+
+/// The header the app's updater sends its own version in (#460). Older apps send none: their
+/// updater's `User-Agent` names only the updater plugin.
+pub const VERSION_HEADER: &str = "x-pulse-version";
+
+/// A header's value for the log: printable ASCII only, at most 64 characters, `-` when absent.
+fn header_for_log(headers: &HeaderMap, name: impl header::AsHeaderName) -> String {
+    match headers.get(name).and_then(|v| v.to_str().ok()) {
+        Some(v) if !v.is_empty() => v
+            .chars()
+            .filter(|c| c.is_ascii_graphic() || *c == ' ')
+            .take(64)
+            .collect(),
+        _ => "-".into(),
+    }
+}
+
+/// Every manifest request is logged at info (#460), refused ones (401: signed out there) included, so a
+/// failing app's checks can be seen: the app's version, its updater's `User-Agent` and the status. Never
+/// the token.
+async fn log_check(req: Request, next: Next) -> Response {
+    if req.uri().path() != "/updates/latest.json" {
+        return next.run(req).await;
+    }
+    let version = header_for_log(req.headers(), VERSION_HEADER);
+    let agent = header_for_log(req.headers(), header::USER_AGENT);
+    let res = next.run(req).await;
+    tracing::info!(
+        app_version = %version,
+        user_agent = %agent,
+        status = res.status().as_u16(),
+        "update check"
+    );
+    res
 }
 
 /// Only an installer name `publish-update` writes: `Pulse_<X.Y.Z>_x64-setup.exe`, digits only. Checked before any

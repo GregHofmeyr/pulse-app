@@ -4,6 +4,7 @@
   import { api, errorText } from '../lib/tauri'
   import TwoFactorSettings from './TwoFactorSettings.svelte'
   import ChangePassword from './ChangePassword.svelte'
+  import UpdateSettings from './UpdateSettings.svelte'
 
   // null until the saved value is known: the box can't be changed before then
   let autoSend = $state<boolean | null>(null)
@@ -69,6 +70,8 @@
     <p class="hint">If Pulse crashes or closes unexpectedly, a report with the app log goes to the server the next time you sign in. Off: it is saved on this computer and you're asked whether to send it.</p>
     {#if reportError}<p class="err" role="alert">{reportError}</p>{/if}
   </div>
+
+  <UpdateSettings />
 
   <div>
     <h3 class="settings-section-title">Sessions</h3>
