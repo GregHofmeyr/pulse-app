@@ -667,15 +667,23 @@ async fn fake_meteo() -> (FakeMeteo, String) {
         c.forecast.fetch_add(1, Ordering::SeqCst);
         let q = q.unwrap_or_default();
         assert!(
-            q.contains("timezone=auto") && q.contains("forecast_days=16"),
+            q.contains("timezone=auto")
+                && q.contains("forecast_days=16")
+                && q.contains("hourly=temperature_2m"),
             "{q}"
         );
         let today = (Utc::now() + TimeDelta::hours(2)).date_naive();
         let days: Vec<String> = (0..16)
             .map(|i| (today + TimeDelta::days(i)).to_string())
             .collect();
+        let hours: Vec<String> = days
+            .iter()
+            .flat_map(|d| (0..24).map(move |h| format!("{d}T{h:02}:00")))
+            .collect();
+        let temps: Vec<f64> = (0..hours.len()).map(|i| (i % 24) as f64).collect();
         axum::Json(json!({
             "utc_offset_seconds": 7200,
+            "hourly": { "time": hours, "temperature_2m": temps },
             "daily": {
                 "time": days,
                 "weather_code": vec![61; 16],
@@ -720,6 +728,15 @@ async fn the_forecast_comes_through_the_server_and_is_cached() {
     assert_eq!(f.place, "Cape Town, South Africa");
     assert_eq!((f.code, f.rain_chance), (61, Some(70)));
     assert!((f.temp_max - 24.5).abs() < 0.01);
+    // the fake's hourly temperature is the local hour: the plan's start there (UTC+2)
+    let starts =
+        chrono::DateTime::parse_from_rfc3339(&m.plan.as_deref().unwrap().starts_at).unwrap();
+    let local_hour = (starts + TimeDelta::hours(2))
+        .format("%H")
+        .to_string()
+        .parse::<f32>()
+        .unwrap();
+    assert_eq!(f.temp_at_start, Some(local_hour));
     // cached: nobody asks Open-Meteo again, and a second plan at the same place uses the same answers
     assert!(forecast(kim.clone(), m.id).await.is_some());
     let m2 = create_ok(

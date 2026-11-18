@@ -115,6 +115,9 @@ describe('how it reads', () => {
     expect(forecastLine({ place: 'Cape Town', date: '2026-11-20', code: 61, temp_max: 24.6, temp_min: 14.2, rain_chance: 70 }))
       .toBe('Rain · 14°–25° · 70% chance of rain')
     expect(forecastLine({ place: 'Cape Town', date: '2026-11-20', code: 0, temp_max: 30, temp_min: 18, rain_chance: 0 })).toBe('Clear · 18°–30°')
+    // the hour it starts (#399)
+    expect(forecastLine({ place: 'Cape Town', date: '2026-11-20', code: 0, temp_max: 30, temp_min: 18, rain_chance: 0, temp_at_start: 25.6 }))
+      .toBe('Clear · 26° at the start · 18°–30°')
   })
 
   it("previews show the plan's title", () => {
