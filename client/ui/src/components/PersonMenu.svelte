@@ -5,14 +5,12 @@
   import type { PersonMenuAt } from '../lib/participantMenu'
   import MemberMenu from './MemberMenu.svelte'
 
-  let { menu, onClose, onMessage, onRemove, onAllowBack, onUnban, muteChannelId = null }: {
+  let { menu, onClose, onMessage, onRemove, onUnban, muteChannelId = null }: {
     menu: PersonMenuAt | null
     onClose: () => void
     onMessage?: (userId: string) => void
     /** A group's member list (#335): Remove from group. */
     onRemove?: (userId: string) => void
-    /** Someone blocked from rejoining a server you own (#418, Server settings › Members): Allow back. */
-    onAllowBack?: (userId: string) => void
     /** Someone banned from a server you own (#80, Server settings › Bans): Unban. */
     onUnban?: (userId: string) => void
     /** A message in your DM with them: Mute conversation mutes that DM. */
@@ -23,7 +21,7 @@
 {#if menu}
   {#key menu}
     <div class="person-menu" role="presentation" onkeydown={(e) => { if (e.key === 'Escape') e.stopPropagation() }}>
-      <MemberMenu serverId={menu.serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} {onRemove} {onAllowBack} {onUnban} {muteChannelId} {onClose} />
+      <MemberMenu serverId={menu.serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} {onRemove} {onUnban} {muteChannelId} {onClose} />
     </div>
   {/key}
 {/if}

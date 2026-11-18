@@ -1,7 +1,6 @@
 <script lang="ts">
-  // Server settings → Bans (#80), the owner's: who's banned, newest first, with when. A banned person can't join again
-  // by Join or by invite. Unban is on their right-click menu (ContextMenu / Shift+F10 from the keyboard), as Allow back
-  // is on Members. Asked when the pane opens and again on BansChanged (a ban or unban on any of the owner's devices).
+  // Server settings → Bans (#80), the owner's: who's banned, newest first, with when. A banned person can't join again,
+  // even by invite. Unban is on their right-click menu (ContextMenu / Shift+F10 from the keyboard). Asked when the pane opens and again on BansChanged (a ban or unban on any of the owner's devices).
   import { untrack } from 'svelte'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'

@@ -5,11 +5,13 @@ import type { Ready } from './protocol/Ready'
 
 export const testMe = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 
-/** `channels` all belong to server S1 unless they say otherwise; `over` replaces any other field. */
+/** `channels` all belong to server S1 unless they say otherwise; `over` replaces any other field. You're a member of
+ *  every server in it unless `over.members` says otherwise (#80: Ready only carries servers you're in). */
 export function testReady(channels: Channel[], over: Partial<Ready> = {}): Ready {
+  const servers = over.servers ?? [{ id: 'S1', name: 'Main', icon_hash: null }]
   return {
-    me: testMe, servers: [{ id: 'S1', name: 'Main', icon_hash: null }], channels,
-    members: [{ server_id: 'S1', members: [{ user: testMe, nickname: null }] }],
+    me: testMe, servers, channels,
+    members: servers.map((s) => ({ server_id: s.id, members: [{ user: testMe, nickname: null }] })),
     dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [], live_notify: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [],
     ...over,
   }

@@ -108,12 +108,6 @@ export type AppState = {
   /** Hide what I'm playing (#436): the people who never get your game activity, yours only, on every device. From
    *  Ready and ActivityHiddenChanged. */
   activityHidden: string[]
-  /** Servers you can't rejoin right now (#431: their owner removed you a third time within 48 hours), yours only.
-   *  From Ready and RejoinBlockChanged; Join server says why up front. */
-  rejoinBlocked: string[]
-  /** Bumped per server when who's blocked from rejoining it changes (#431, ServerBlocksChanged, its owner's only): an
-   *  open Members pane asks again. */
-  blocksRev: Record<string, number>
   /** Bumped per server when the invites you can see in it change (#80, InvitesChanged, yours only): an open Invites
    *  pane asks again. */
   invitesRev: Record<string, number>
@@ -211,7 +205,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], rejoinBlocked: [], blocksRev: {}, invitesRev: {}, bansRev: {}, inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], invitesRev: {}, bansRev: {}, inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -228,6 +222,16 @@ function presenceStatus(status: PresenceStatus | undefined, online: boolean): Pr
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
+  // Servers are private (#80): only the ones you're in. A server from before the lockdown still lists every server;
+  // the others are dropped here, with everything in them, so both look the same.
+  const me = r.me.id
+  const mine = new Set(r.members.filter((m) => m.members.some((x) => x.user.id === me)).map((m) => m.server_id))
+  let next = readyState(s, r)
+  for (const srv of r.servers) if (!mine.has(srv.id)) next = serverDeleted(next, srv.id)
+  return next
+}
+
+function readyState(s: AppState, r: Ready): AppState {
   const channels = Object.fromEntries(r.channels.map((c) => [c.id, c]))
   // Keep history we've already paged in, for channels that still exist.
   const messages = Object.fromEntries(Object.entries(s.messages).filter(([id]) => id in channels))
@@ -277,7 +281,6 @@ export function applyReady(s: AppState, r: Ready): AppState {
     personDnd: r.person_dnd ?? [],
     // absent from older servers: nobody
     activityHidden: r.activity_hidden ?? [],
-    rejoinBlocked: r.rejoin_blocked ?? [],
     // absent from older servers: none
     inboxFilters: r.inbox_filters ?? [],
     // absent from older servers: the server's order everywhere
@@ -1141,7 +1144,21 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'ChannelRestored':
       return { ...s, channels: { ...s.channels, [e.d.channel.id]: e.d.channel } }
     case 'ServerCreated':
+      // yours only (#80): a server from before the lockdown tells everyone
+      if (e.d.server.owner_id !== s.me?.id) return s
       return s.servers.some((x) => x.id === e.d.server.id) ? s : { ...s, servers: [...s.servers, e.d.server] }
+    // You joined a server (#80): everything Ready would carry for it.
+    case 'ServerJoined': {
+      if (e.d.user_id !== s.me?.id) return s
+      const next = serverRestored(s, e.d.snapshot)
+      return {
+        ...next,
+        voice: { ...next.voice, ...Object.fromEntries(e.d.voice.filter((v) => v.members.length > 0).map((v) => [v.channel_id, v.members])) },
+        streams: e.d.streams.reduce<AppState['streams']>((acc, x) => withStream(acc, x), next.streams),
+        stageShares: e.d.stage_shares.reduce<AppState['stageShares']>((acc, x) => withStageShare(acc, x), next.stageShares),
+        watchParties: { ...next.watchParties, ...Object.fromEntries(e.d.watch_parties.map((p) => [p.channel_id, p])) },
+      }
+    }
     case 'MemberJoined': {
       const list = s.members[e.d.server_id] ?? []
       if (list.some((m) => m.user.id === e.d.member.user.id)) return s
@@ -1155,17 +1172,15 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       servers[at] = { ...servers[at], owner_id: e.d.owner_id }
       return { ...s, servers }
     }
-    // Someone left a server or was removed from it (#371). For you, its counts go from your rail too (the server
-    // stays listed: you can join it again).
+    // Someone left a server or was removed from it (#371). For you, the server goes from your rail with everything in
+    // it (#80: servers are private; you're back only through an invite).
     case 'MemberLeft': {
       const sid = e.d.server_id
+      if (e.d.user_id === s.me?.id) return serverDeleted(s, sid)
       const list = s.members[sid]
-      const next = list?.some((m) => m.user.id === e.d.user_id)
+      return list?.some((m) => m.user.id === e.d.user_id)
         ? { ...s, members: { ...s.members, [sid]: list.filter((m) => m.user.id !== e.d.user_id) } }
         : s
-      if (e.d.user_id !== s.me?.id) return next
-      const reads = Object.fromEntries(Object.entries(next.reads).filter(([c]) => next.channels[c]?.server_id !== sid))
-      return { ...next, reads }
     }
     case 'MemberUpdated': {
       const list = s.members[e.d.server_id]
@@ -1333,13 +1348,6 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return e.d.user_id === s.me?.id ? { ...s, personDnd: e.d.list } : s
     case 'ActivityHiddenChanged':
       return e.d.user_id === s.me?.id ? { ...s, activityHidden: e.d.list } : s
-    case 'ServerBlocksChanged':
-      return e.d.user_id === s.me?.id ? { ...s, blocksRev: { ...s.blocksRev, [e.d.server_id]: (s.blocksRev[e.d.server_id] ?? 0) + 1 } } : s
-    case 'RejoinBlockChanged': {
-      if (e.d.user_id !== s.me?.id) return s
-      const rest = s.rejoinBlocked.filter((id) => id !== e.d.server_id)
-      return { ...s, rejoinBlocked: e.d.blocked ? [...rest, e.d.server_id] : rest }
-    }
     case 'InboxFiltersChanged':
       return e.d.user_id === s.me?.id ? { ...s, inboxFilters: e.d.filters } : s
     case 'ViewOnceOpened':

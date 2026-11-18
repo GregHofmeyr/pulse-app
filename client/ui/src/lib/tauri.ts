@@ -1,7 +1,6 @@
 // Typed wrappers over Tauri commands. The UI never calls the network itself.
 import { invoke } from '@tauri-apps/api/core'
 import type { User } from './protocol/User'
-import type { ServerBlock } from './protocol/ServerBlock'
 import type { ServerBan } from './protocol/ServerBan'
 import type { ServerInvite } from './protocol/ServerInvite'
 import type { InvitePreview } from './protocol/InvitePreview'
@@ -330,15 +329,10 @@ export const api = {
   reminderSeen: (id: string) => invoke<void>('reminder_seen', { id }),
   /** Claim telling you about a reminder missed while none of your devices was connected (#412): true for the one claim that wins. */
   reminderAlerted: (id: string) => invoke<boolean>('reminder_alerted', { id }),
-  joinServer: (serverId: string) => invoke<void>('join_server', { serverId }),
   leaveServer: (serverId: string) => invoke<void>('leave_server', { serverId }),
   removeServerMember: (serverId: string, userId: string) => invoke<void>('remove_server_member', { serverId, userId }),
   /** Hand a server to another of its members (#418): its owner only. */
   transferServer: (serverId: string, userId: string) => invoke<void>('transfer_server', { serverId, userId }),
-  /** The people blocked from rejoining a server (#418): its owner only. */
-  listServerBlocks: (serverId: string) => invoke<ServerBlock[]>('list_server_blocks', { serverId }),
-  /** Let someone blocked from rejoining a server back (#418): its owner only. */
-  allowBack: (serverId: string, userId: string) => invoke<void>('allow_back', { serverId, userId }),
   /** The signed-in server's address (#80): invite links are made from it. Null when signed out. */
   serverOrigin: () => invoke<string | null>('server_origin'),
   /** Make an invite (#80): a link, or a direct invite for one person (`for_user`, also a card in your DM with them). */

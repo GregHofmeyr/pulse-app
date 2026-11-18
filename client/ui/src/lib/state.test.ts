@@ -145,7 +145,7 @@ describe('applyEvent', () => {
     expect(Object.keys(s.channels)).toContain('C2')
   })
 
-  it('MemberLeft drops them from the list; for you, the server\'s counts go too (#371)', () => {
+  it('MemberLeft drops them from the list; for you, the server goes with everything in it (#371, #80)', () => {
     const sam = { user: { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] as string[] } }, nickname: null }
     let s = applyEvent(base(), { t: 'MemberJoined', d: { server_id: 'S1', member: sam } }, 0)
     s = { ...s, reads: { C1: { channel_id: 'C1', last_read_message_id: null, unread: 3, mentions: 1 } } }
@@ -153,9 +153,9 @@ describe('applyEvent', () => {
     expect(s.members['S1'].map((m) => m.user.id)).toEqual(['U1'])
     expect(s.reads['C1']?.unread).toBe(3)
     s = applyEvent(s, { t: 'MemberLeft', d: { server_id: 'S1', user_id: 'U1', removed_by: 'U3' } }, 0)
-    expect(s.members['S1']).toEqual([])
+    expect(s.members['S1']).toBeUndefined()
     expect(s.reads['C1']).toBeUndefined()
-    expect(s.servers.map((x) => x.id)).toEqual(['S1'])
+    expect(s.servers).toEqual([])
   })
 
   it('ServerOwnerChanged hands the server to its new owner (#418)', () => {
@@ -175,7 +175,7 @@ describe('applyEvent', () => {
   })
 
   it('server created adds a tab once', () => {
-    const e = { t: 'ServerCreated', d: { server: { id: 'S2', name: 'Other', icon_hash: null } } } as const
+    const e = { t: 'ServerCreated', d: { server: { id: 'S2', name: 'Other', icon_hash: null, owner_id: 'U1' } } } as const
     const s = applyEvent(applyEvent(base(), e, 0), e, 0)
     expect(s.servers.map((x) => x.id)).toEqual(['S1', 'S2'])
   })
@@ -1687,6 +1687,7 @@ describe('server delete (#184)', () => {
     let s = applyReady(emptyState(), ready({
       servers: [{ id: 'S1', name: 'Main', icon_hash: null }, { id: 'S2', name: 'Other', icon_hash: null }],
       channels: [ch('C1'), ch('V1', 'voice'), ch('C9', 'text', 'S2')],
+      members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }, { server_id: 'S2', members: [{ user: me, nickname: null }] }],
       sounds: [sound] as Ready['sounds'],
       custom_emoji: [emoji] as Ready['custom_emoji'],
       mutes: [{ target_kind: 'server', target_id: 'S1', until: null }, { target_kind: 'channel', target_id: 'C1', until: null }, { target_kind: 'channel', target_id: 'C9', until: null }],
@@ -1829,26 +1830,57 @@ describe('coming back after a reconnect (#329)', () => {
   })
 })
 
-describe('rejoin blocks (#431)', () => {
-  it('Ready carries the servers you can\'t rejoin; RejoinBlockChanged follows a block and an Allow back, yours only', () => {
-    let s = applyReady(emptyState(), ready({ rejoin_blocked: ['S9'] }))
-    expect(s.rejoinBlocked).toEqual(['S9'])
-    const me = s.me!.id
-    s = applyEvent(s, { t: 'RejoinBlockChanged', d: { user_id: me, server_id: 'S8', blocked: true } }, 0)
-    s = applyEvent(s, { t: 'RejoinBlockChanged', d: { user_id: me, server_id: 'S8', blocked: true } }, 0)
-    expect(s.rejoinBlocked).toEqual(['S9', 'S8'])
-    s = applyEvent(s, { t: 'RejoinBlockChanged', d: { user_id: me, server_id: 'S9', blocked: false } }, 0)
-    expect(s.rejoinBlocked).toEqual(['S8'])
-    const other = applyEvent(s, { t: 'RejoinBlockChanged', d: { user_id: 'someone-else', server_id: 'S7', blocked: true } }, 0)
-    expect(other).toBe(s)
-    // an older server sends none: nothing blocked
-    expect(applyReady(emptyState(), ready()).rejoinBlocked).toEqual([])
+describe('private servers (#80)', () => {
+  const sam = { ...me, id: 'U2', username: 'sam', display_name: 'sam' }
+  const other = { id: 'S2', name: 'Theirs', icon_hash: null, owner_id: 'U2' }
+
+  it('Ready keeps only the servers you\'re in, with what\'s in them (an older server still lists them all)', () => {
+    const s = applyReady(emptyState(), ready({
+      servers: [{ id: 'S1', name: 'Main', icon_hash: null }, other],
+      channels: [ch('C1'), ch('V1', 'voice'), { ...ch('C9'), server_id: 'S2' }],
+      members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }, { server_id: 'S2', members: [{ user: sam, nickname: null }] }],
+    }))
+    expect(s.servers.map((x) => x.id)).toEqual(['S1'])
+    expect(Object.keys(s.channels)).toEqual(['C1', 'V1'])
+    expect(s.members['S2']).toBeUndefined()
   })
 
-  it('ServerBlocksChanged bumps that server\'s blocks for the owner only', () => {
+  it('ServerJoined adds the server with its channels, members and who is in its calls', () => {
     let s = applyReady(emptyState(), ready())
-    s = applyEvent(s, { t: 'ServerBlocksChanged', d: { user_id: s.me!.id, server_id: 'S1' } }, 0)
-    expect(s.blocksRev.S1).toBe(1)
-    expect(applyEvent(s, { t: 'ServerBlocksChanged', d: { user_id: 'someone-else', server_id: 'S1' } }, 0)).toBe(s)
+    const snapshot = {
+      server: other,
+      channels: [{ ...ch('C9'), server_id: 'S2' }, { ...ch('V9', 'voice'), server_id: 'S2' }],
+      members: [{ user: sam, nickname: null }, { user: me, nickname: null }],
+      layout: { server_id: 'S2', revision: 3, categories: [], channels: [] },
+      custom_emoji: [], sounds: [], games: [], speaker_links: [], qoty: [], server_voice: [],
+    }
+    const voice = [{ channel_id: 'V9', members: [{ user_id: 'U2', flags: { muted: false, deafened: false } }] }]
+    // someone else's join isn't for this device
+    expect(applyEvent(s, { t: 'ServerJoined', d: { user_id: 'U2', snapshot, voice, streams: [], stage_shares: [], watch_parties: [] } } as never, 0)).toBe(s)
+    s = applyEvent(s, { t: 'ServerJoined', d: { user_id: me.id, snapshot, voice, streams: [], stage_shares: [], watch_parties: [] } } as never, 0)
+    expect(s.servers.map((x) => x.id)).toEqual(['S1', 'S2'])
+    expect(s.channels['C9'].server_id).toBe('S2')
+    expect(s.members['S2'].map((m) => m.user.id)).toEqual(['U2', 'U1'])
+    expect(s.layouts['S2'].revision).toBe(3)
+    expect(s.voice['V9'][0].user_id).toBe('U2')
+  })
+
+  it('leaving or being removed drops the server; someone else leaving only drops them', () => {
+    let s = applyReady(emptyState(), ready({ members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: null }] }] }))
+    s = applyEvent(s, { t: 'MemberLeft', d: { server_id: 'S1', user_id: 'U2' } }, 0)
+    expect(s.servers).toHaveLength(1)
+    expect(s.members['S1'].map((m) => m.user.id)).toEqual(['U1'])
+    s = applyEvent(s, { t: 'MemberLeft', d: { server_id: 'S1', user_id: me.id, removed_by: 'U2' } }, 0)
+    expect(s.servers).toEqual([])
+    expect(s.channels['C1']).toBeUndefined()
+    expect(s.members['S1']).toBeUndefined()
+  })
+
+  it('a server someone else made isn\'t yours to see (an older server tells everyone)', () => {
+    let s = applyReady(emptyState(), ready())
+    s = applyEvent(s, { t: 'ServerCreated', d: { server: other } }, 0)
+    expect(s.servers.map((x) => x.id)).toEqual(['S1'])
+    s = applyEvent(s, { t: 'ServerCreated', d: { server: { ...other, id: 'S3', owner_id: me.id } } }, 0)
+    expect(s.servers.map((x) => x.id)).toEqual(['S1', 'S3'])
   })
 })

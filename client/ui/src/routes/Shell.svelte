@@ -366,7 +366,7 @@
     try {
       await openConversation(await openDm(userId))
     } catch (e) {
-      error = errorText(e)
+      say(errorText(e))
     }
   }
 
@@ -388,7 +388,7 @@
         }
       }
     } catch (e) {
-      error = errorText(e)
+      say(errorText(e))
     }
   }
 
@@ -406,7 +406,6 @@
       createError = errorText(err)
     }
   }
-  let error = $state('')
 
   // in your own order (#185): drag a tab, Alt+Left / Alt+Right on it, or Move left / right in its menu
   const servers = $derived(orderedServers(app.state.servers, app.state.serverOrder))
@@ -418,8 +417,6 @@
   }
   const activeServer = $derived(servers.find((s) => s.id === activeServerId) ?? null)
   const member = $derived(activeServerId ? isMember(app.state, activeServerId) : false)
-  // its owner blocked you from rejoining (#431): Join says why up front
-  const rejoinBlocked = $derived(!!activeServerId && !member && app.state.rejoinBlocked.includes(activeServerId))
   const activeChannel = $derived(activeChannelId ? app.state.channels[activeChannelId] : null)
   /** A DM or group call's stream in full view (#51), in place of the conversation: its streamer, while it's watched. */
   const convoFull = $derived.by(() => {
@@ -741,15 +738,6 @@
     }
   }
 
-  async function join() {
-    if (!activeServerId) return
-    try {
-      await api.joinServer(activeServerId)
-    } catch (e) {
-      error = errorText(e)
-    }
-  }
-
   async function logout() {
     await api.logout()
     onLogout()
@@ -833,9 +821,9 @@
                 <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; if (activeServerId) requestCreateCategory(activeServerId) }}>Create category</button>
                 <!-- your own channel order (#304) -->
                 {#if app.state.channelOrders[sid]}
-                  <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; resetPersonalOrder(sid).catch((e: unknown) => (error = errorText(e))) }}>Reset to server order</button>
+                  <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; resetPersonalOrder(sid).catch((e: unknown) => say(errorText(e))) }}>Reset to server order</button>
                 {:else}
-                  <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; savePersonalOrder(sid, orderOf(sidebarLayout(app.state, sid))).catch((e: unknown) => (error = errorText(e))) }}>Arrange channels just for me</button>
+                  <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; savePersonalOrder(sid, orderOf(sidebarLayout(app.state, sid))).catch((e: unknown) => say(errorText(e))) }}>Arrange channels just for me</button>
                 {/if}
               {/if}
             </div>
@@ -881,17 +869,8 @@
     <main class="panel content">
       {#if activeServerId && member && !fullShown}<QotyBanner serverId={activeServerId} />{/if}
       {#if activeServerId && !member}
-        <div class="join">
-          <p>You're not in <strong>{activeServer?.name}</strong> yet.</p>
-          {#if rejoinBlocked}
-            <!-- #431: its owner removed you a third time; said before you press anything, as Join would say it -->
-            <button class="btn btn-lg btn-primary" disabled aria-describedby="rejoin-blocked">Join server</button>
-            <p class="error" id="rejoin-blocked" data-rejoin-blocked>You can't rejoin this server right now. Ask the owner.</p>
-          {:else}
-            <button class="btn btn-lg btn-primary" onclick={join}>Join server</button>
-          {/if}
-          {#if error && !rejoinBlocked}<p class="error">{error}</p>{/if}
-        </div>
+        <!-- a server you're not in is hidden (#80); this shows only for the moment it takes to go -->
+        <p class="empty">Pick a channel.</p>
       {:else if activeChannel?.kind === 'voice' && activeChannelId}
         <VoicePanel channelId={activeChannelId} serverId={activeServerId} onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />
       {:else if activeChannel?.kind === 'clips' && activeServerId && activeChannelId}
@@ -974,7 +953,7 @@
       <ServerMenu serverId={m.id} name={srv.name} x={m.x} y={m.y} opener={m.opener} onClose={() => (serverMenu = null)}
         onMoveLeft={at > 0 ? () => moved(stepServer(m.id, -1)) : undefined}
         onMoveRight={at >= 0 && at < servers.length - 1 ? () => moved(stepServer(m.id, 1)) : undefined}
-        onSettings={() => (serverSettingsId = m.id)} onError={(msg) => (error = msg)}
+        onSettings={() => (serverSettingsId = m.id)} onError={(msg) => say(msg)}
         onCreateCategory={() => { if (activeServerId !== m.id) selectServer(m.id); requestCreateCategory(m.id) }} />
     {/key}
   {/if}
@@ -1071,7 +1050,6 @@
   .me-btn.server, .me-btn.server:hover { background: var(--danger); color: var(--on-danger); }
   .content { position: relative; flex: 1; min-width: 0; background: var(--bg-2); display: flex; flex-direction: column; }
   .empty { margin: auto; color: var(--text-3); }
-  .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .error { color: var(--danger-text); }
   .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-block; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((16px - 1cap) / 2) 4px; }
   .tab .invc { color: var(--accent-text); display: grid; margin-left: -2px; }

@@ -2,22 +2,16 @@
   // Server settings → Members (#418): everyone in the server, with their avatar, name and when they joined, oldest
   // first (as the server lists them), the owner marked. Nothing to click on a row but the avatar's card: a person's
   // actions are on their right-click menu (ContextMenu / Shift+F10 on the avatar from the keyboard), the same menu as
-  // the member list's, so the owner finds Remove from server and Make owner there. Under them, for the owner only, the
-  // people blocked from rejoining (#418: removed three times within 48 hours), with when; Allow back is on their
-  // right-click menu. Asked of the server when the pane opens, and again when the member list or the owner changes (a
-  // removal is what blocks someone), after an Allow back, and when the owner's other device blocks or allows someone
-  // back (#431, ServerBlocksChanged).
-  import { untrack } from 'svelte'
+  // the member list's, so the owner finds Remove from server, Ban and Make owner there. (Who is kept out is under Bans:
+  // servers are invite-only, #80.)
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import PersonMenu from './PersonMenu.svelte'
   import { app } from '../lib/store.svelte'
-  import { api, errorText } from '../lib/tauri'
   import { displayName } from '../lib/selectors'
   import { formatMemberSince } from '../lib/profileFormat'
   import { personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
   import type { Server } from '../lib/protocol/Server'
-  import type { ServerBlock } from '../lib/protocol/ServerBlock'
 
   let { server }: { server: Server } = $props()
 
@@ -34,47 +28,6 @@
     menu = personMenuAt(e, userId, server.id, row, { row: true }) ?? menu
   }
 
-  // --- blocked from rejoining (#418), the owner's view ---
-  const owner = $derived(server.owner_id === app.state.me?.id)
-  let blocks = $state<ServerBlock[]>([])
-  let blockedMenu = $state<PersonMenuAt | null>(null)
-  let error = $state('')
-  let asked = 0
-  async function loadBlocks() {
-    const ask = ++asked
-    try {
-      const got = await api.listServerBlocks(server.id)
-      if (ask === asked) blocks = got ?? []
-    } catch (e) {
-      if (ask === asked) error = errorText(e)
-    }
-  }
-  // what asks again: a removal (the member count), a hand-over (`owner`) or a block change on any of the owner's devices;
-  // deriveds, so any other event leaves it be
-  const memberCount = $derived((app.state.members[server.id] ?? []).length)
-  const blocksRev = $derived(app.state.blocksRev[server.id] ?? 0)
-  $effect(() => {
-    void memberCount
-    void blocksRev
-    if (owner) untrack(() => void loadBlocks())
-    else blocks = []
-  })
-  const blocked = $derived(
-    blocks.map((b) => ({ id: b.user_id, name: displayName(app.state, server.id, b.user_id), since: formatMemberSince(b.blocked_at) })),
-  )
-  function openBlockedMenu(userId: string, e: MouseEvent | KeyboardEvent, row: HTMLElement) {
-    blockedMenu = personMenuAt(e, userId, server.id, row, { row: true }) ?? blockedMenu
-  }
-  async function allowBack(userId: string) {
-    error = ''
-    try {
-      await api.allowBack(server.id, userId)
-      blocks = blocks.filter((b) => b.user_id !== userId)
-    } catch (e) {
-      error = errorText(e)
-    }
-    void loadBlocks()
-  }
 </script>
 
 <section class="settings-pane">
@@ -93,31 +46,10 @@
       </div></li>
     {/each}
   </ul>
-  {#if owner && blocked.length}
-    <h3>Blocked</h3>
-    <p class="hint">Removed three times within 48 hours: they can't rejoin until you allow them back. Right-click someone to.</p>
-    <ul class="list" aria-label="Blocked from {server.name}">
-      {#each blocked as b (b.id)}
-        <li><div class="row hover-row" role="presentation" data-blocked={b.id} onpointerenter={() => (hovered = b.id)} onpointerleave={() => { if (hovered === b.id) hovered = null }}
-          oncontextmenu={(e) => openBlockedMenu(b.id, e, e.currentTarget)} onkeydown={(e) => openBlockedMenu(b.id, e, e.currentTarget)}>
-          <Avatar id={b.id} name={b.name} size={32} interactive serverId={server.id} hovered={() => hovered === b.id} />
-          <span class="who">
-            <span class="nm"><Name userId={b.id} serverId={server.id} text={b.name} /></span>
-            <small class="joined">Blocked {b.since}</small>
-          </span>
-        </div></li>
-      {/each}
-    </ul>
-  {/if}
-  {#if error}<p class="err" role="alert">{error}</p>{/if}
 </section>
 <PersonMenu {menu} onClose={() => (menu = null)} />
-<PersonMenu menu={blockedMenu} onAllowBack={allowBack} onClose={() => (blockedMenu = null)} />
 
 <style>
-  h3 { margin: 8px 0 0; font-size: 13px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
-  h3 + .hint { margin-top: -8px; }
-  .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .hint { margin: -12px 0 0; color: var(--text-3); font-size: 12px; }
   .list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
   .row { min-height: 48px; padding: 6px 10px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 12px; }

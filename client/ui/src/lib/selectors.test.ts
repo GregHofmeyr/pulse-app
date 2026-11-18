@@ -285,7 +285,8 @@ describe('groupedPending (#173: a sent message keeps the shape it will have once
 
 describe('serverPeople', () => {
   it("lists a server's members by the name shown there, findable by every name", () => {
-    const st = { ...s, privateNicks: { U2: 'Sammy' } }
+    // a server you aren't in never reaches the state (#80), so S2's members are set here
+    const st = { ...s, privateNicks: { U2: 'Sammy' }, members: { ...s.members, S2: [{ user: sam, nickname: null }] } }
     expect(serverPeople(st, 'S1')).toEqual([
       { id: 'U1', name: 'alex', username: 'alex', alts: ['alex'] },
       { id: 'U2', name: 'Big Dog', username: 'sam', alts: ['sam', 'Big Dog', 'Sammy'] },

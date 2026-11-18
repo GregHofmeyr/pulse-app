@@ -133,27 +133,19 @@ describe('Shell', () => {
     expect(document.querySelector('[role=menu]')).toBeNull()
   })
 
-  it('a server you\'re blocked from rejoining says why before you press Join, and follows an Allow back (#431)', () => {
+  it('there is no Join screen: being removed takes the server off the rail (#80)', () => {
     const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
-    app.state = { ...emptyState(), me, servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }, { id: 'S2', name: 'Beta', icon_hash: null }], rejoinBlocked: ['S1'] }
+    const member = { user: me, nickname: null }
+    app.state = { ...emptyState(), me, servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }, { id: 'S2', name: 'Beta', icon_hash: null }], members: { S1: [member], S2: [member] } }
     cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
     flushSync()
-    const tab = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes(name))!
-    const joinBtn = () => [...document.querySelectorAll<HTMLButtonElement>('.join button')].find((b) => b.textContent === 'Join server')!
-    tab('Alpha').click()
+    const tabs = () => [...document.querySelectorAll<HTMLButtonElement>('.tab')].map((t) => t.textContent!.trim())
+    expect(tabs().some((t) => t.includes('Alpha'))).toBe(true)
+    app.state = applyEvent(app.state, { t: 'MemberLeft', d: { server_id: 'S1', user_id: 'U1', removed_by: 'U2' } }, 0)
     flushSync()
-    expect(document.querySelector('[data-rejoin-blocked]')?.textContent).toBe("You can't rejoin this server right now. Ask the owner.")
-    expect(joinBtn().disabled).toBe(true)
-    tab('Beta').click()
-    flushSync()
-    expect(document.querySelector('[data-rejoin-blocked]')).toBeNull()
-    expect(joinBtn().disabled).toBe(false)
-    tab('Alpha').click()
-    flushSync()
-    app.state = applyEvent(app.state, { t: 'RejoinBlockChanged', d: { user_id: 'U1', server_id: 'S1', blocked: false } }, 0)
-    flushSync()
-    expect(document.querySelector('[data-rejoin-blocked]')).toBeNull()
-    expect(joinBtn().disabled).toBe(false)
+    expect(tabs().some((t) => t.includes('Alpha'))).toBe(false)
+    expect(tabs().some((t) => t.includes('Beta'))).toBe(true)
+    expect(document.body.textContent).not.toContain('Join server')
   })
 
   it('the top bar says why a refused connection is retrying', () => {

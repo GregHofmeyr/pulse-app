@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 // Server settings → Members (#418): avatar, name and join date for everyone in the server, the owner marked, no
 // buttons on the rows but the avatar's card; a person's actions are on their right-click menu (Remove from server and
-// Make owner for the owner). Under them, for the owner, the people blocked from rejoining (#418), with Allow back on
-// their right-click menu.
+// Make owner for the owner). The rejoin-block list is gone (#80: servers are invite-only, and bans keep people out).
 import { flushSync, mount, tick, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -108,80 +107,10 @@ describe('Server settings: Members', () => {
     expect(ids()).not.toContain('make-owner')
   })
 
-  describe('blocked from rejoining (#418)', () => {
-    const settle = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
-    const blockedRows = () => [...document.querySelectorAll<HTMLElement>('[data-blocked]')]
-    beforeEach(() => {
-      invoke.mockImplementation(async (cmd: string) =>
-        cmd === 'list_server_blocks' ? [{ user_id: 'U4', blocked_at: '2026-11-15T08:00:00.000Z' }] : undefined)
-    })
-
-    it('the owner sees who is blocked, and Allow back on their right-click lets them back', async () => {
-      open('U1')
-      await settle()
-      expect(invoke).toHaveBeenCalledWith('list_server_blocks', { serverId: 'S1' })
-      const list = blockedRows()
-      expect(list.map((r) => r.dataset.blocked)).toEqual(['U4'])
-      expect(list[0].textContent).toContain('jo')
-      expect(list[0].textContent).toContain('Blocked Nov 15, 2026')
-      rightClick(list[0])
-      expect(ids()).toContain('allow-back')
-      expect(ids()).not.toContain('remove-server')
-      invoke.mockImplementation(async () => [])
-      item('allow-back')!.click()
-      flushSync()
-      await settle()
-      expect(invoke).toHaveBeenCalledWith('allow_back', { serverId: 'S1', userId: 'U4' })
-      expect(blockedRows()).toHaveLength(0)
-      expect(document.querySelector('.content h3')).toBeNull()
-    })
-
-    it('members get no Allow back, and others never ask', async () => {
-      open('U1')
-      await settle()
-      rightClick(rows()[1])
-      expect(ids()).not.toContain('allow-back')
-      unmount(cmp!)
-      document.body.innerHTML = ''
-      invoke.mockClear()
-      open('U2')
-      await settle()
-      expect(invoke).not.toHaveBeenCalledWith('list_server_blocks', expect.anything())
-      expect(blockedRows()).toHaveLength(0)
-    })
-
-    it('a block change on another of the owner\'s devices asks again; other events don\'t (#431)', async () => {
-      open('U1')
-      await settle()
-      expect(blockedRows()).toHaveLength(1)
-      const asks = () => invoke.mock.calls.filter((c) => c[0] === 'list_server_blocks').length
-      expect(asks()).toBe(1)
-      invoke.mockImplementation(async () => [])
-      app.state = applyEvent(app.state, { t: 'ServerBlocksChanged', d: { user_id: 'U1', server_id: 'S2' } }, 0)
-      app.state = applyEvent(app.state, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U2' } } as never, 0)
-      flushSync()
-      await settle()
-      expect(asks()).toBe(1)
-      app.state = applyEvent(app.state, { t: 'ServerBlocksChanged', d: { user_id: 'U1', server_id: 'S1' } }, 0)
-      flushSync()
-      await settle()
-      expect(asks()).toBe(2)
-      expect(blockedRows()).toHaveLength(0)
-    })
-
-    it('a refused Allow back says why', async () => {
-      open('U1')
-      await settle()
-      invoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'allow_back') throw { kind: 'Forbidden', message: "Only the server's owner can see or lift rejoin blocks." }
-        return [{ user_id: 'U4', blocked_at: '2026-11-15T08:00:00.000Z' }]
-      })
-      rightClick(blockedRows()[0])
-      item('allow-back')!.click()
-      flushSync()
-      await settle()
-      expect(document.querySelector('.content [role=alert]')?.textContent).toContain('owner')
-      expect(blockedRows()).toHaveLength(1)
-    })
+  it('there is no list of people blocked from rejoining any more (#80: bans replace it)', () => {
+    open('U1')
+    flushSync()
+    expect(document.querySelector('[data-blocked]')).toBeNull()
+    expect(invoke).not.toHaveBeenCalledWith('list_server_blocks', expect.anything())
   })
 })

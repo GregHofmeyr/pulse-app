@@ -28,7 +28,10 @@ let cmp: ReturnType<typeof mount> | undefined
 let onJoinVoice = vi.fn()
 function render(over: Partial<Ready> = unread) {
   if (cmp) unmount(cmp)
-  app.state = applyReady(emptyState(), testReady(channels, over))
+  // a server you aren't in never reaches the state (#80): `over.members` is set after Ready, for the defensive paths
+  const { members, ...rest } = over
+  app.state = applyReady(emptyState(), testReady(channels, rest))
+  if (members) app.state = { ...app.state, members: Object.fromEntries(members.map((m) => [m.server_id, m.members])) }
   onJoinVoice = vi.fn()
   cmp = mount(ChannelList, {
     target: document.body,

@@ -478,7 +478,9 @@ function showLive(over: { member?: boolean; onSelect?: (id: string) => void; act
   if (cmp) unmount(cmp)
   document.body.innerHTML = ''
   resetSaves()
-  app.state = applyReady(emptyState(), testReady(live, { layouts, ...(over.member === false ? { members: [] } : {}) }))
+  app.state = applyReady(emptyState(), testReady(live, { layouts }))
+  // a server you aren't in never reaches the state (#80); its members are dropped after Ready, for the defensive paths
+  if (over.member === false) app.state = { ...app.state, members: { S1: [] } }
   cmp = mount(ChannelList, {
     target: document.body,
     props: { serverId: 'S1', activeChannelId: over.active ?? null, voiceChannelId: null, speaking: new Set<string>(), onSelect: over.onSelect ?? (() => {}), onJoinVoice: () => {}, onMessage: () => {}, onVoiceSettings: () => {} },

@@ -98,7 +98,9 @@ let onSelect = vi.fn()
 function show(over: { top?: boolean; cats?: Category[]; member?: boolean } = {}) {
   const channels = [...(over.top === false ? [] : [T0]), ...REST]
   const layouts = [{ server_id: 'S1', revision: 3, categories: over.cats ?? CATS, channels: [] }]
-  app.state = applyReady(emptyState(), testReady(channels, { layouts, ...(over.member === false ? { members: [] } : {}) }))
+  app.state = applyReady(emptyState(), testReady(channels, { layouts }))
+  // a server you aren't in never reaches the state (#80); its members are dropped after Ready, for the defensive paths
+  if (over.member === false) app.state = { ...app.state, members: { S1: [] } }
   onSelect = vi.fn()
   cmp = mount(ChannelList, {
     target: document.body,

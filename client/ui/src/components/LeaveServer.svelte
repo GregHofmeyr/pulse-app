@@ -35,7 +35,7 @@
     {:else}
       <p>
         Leaving <strong>{server.name}</strong> disconnects you from its voice channels, and its unread counts and
-        mentions go from your inbox. Your messages stay. It stays in your server list, where you can join it again.
+        mentions go from your inbox. Your messages stay. It leaves your server list, and you'll need an invite to come back.
       </p>
       {#if error}<p class="err" role="alert">{error}</p>{/if}
       <div class="actions">
