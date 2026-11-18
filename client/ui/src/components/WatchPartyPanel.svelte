@@ -75,16 +75,20 @@
     }
   }
 
-  // One page per video, starting where the party is when it loads (the first sync seeks precisely).
+  // One page per video, starting where the party is when it loads (the first sync seeks precisely). Only a new video
+  // (or embed origin) makes a new page: every party change is a new `party` object, and a page built from its position
+  // would reload the player on each pause, play and seek, and the page autoplays, so a pause never stuck.
+  const videoId = $derived(party.video_id)
   const src = $derived.by(() => {
-    const id = party.video_id
+    const id = videoId
     const o = origin.origin
     return o ? untrack(() => partyPlayerSrc(o, id, partySeconds(party, serverNow()))) : null
   })
   let endedFor: string | null = null
   let lastSeek = 0
+  // a new video starts the player's bookkeeping afresh (only a new video: not every change to the party)
   $effect(() => {
-    void party.video_id
+    void videoId
     untrack(() => {
       info = { state: null, time: null, duration: null }
       refused = false
@@ -93,9 +97,12 @@
     })
   })
 
+  /** When we last told the player to pause: its own pause (below) is one we didn't ask for. */
+  let pauseSentAt = 0
   function send(c: PlayerCommand | { func: 'volume'; to: number }) {
     const o = origin.origin
     if (!o || !frame?.contentWindow) return
+    if (c.func === 'pause') pauseSentAt = Date.now()
     frame.contentWindow.postMessage({ pulse: 'party-cmd', ...c }, new URL(o).origin)
   }
 
@@ -149,10 +156,16 @@
         send({ func: 'volume', to: volume })
       }
       const state = typeof m.player === 'number' ? m.player : info.state
+      const was = info.state
       info = {
         state,
         time: typeof m.time === 'number' ? m.time : info.time,
         duration: typeof m.duration === 'number' && m.duration > 0 ? m.duration : info.duration,
+      }
+      // the player paused itself while the party plays (a media key, the system's media controls): from someone who
+      // may control it, that's a pause for everyone, not something to play straight over
+      if (was === YT.playing && state === YT.paused && party.playing && control && Date.now() - pauseSentAt > 2000) {
+        void act({ action: 'pause', position_ms: Math.round((info.time ?? seconds) * 1000) })
       }
       // the video ran out: the host's player moves the party on (the queue's next, or it stops at the end)
       if (state === YT.ended && host && party.playing && endedFor !== party.video_id) {
@@ -229,6 +242,9 @@
           <iframe bind:this={frame} {src} title="Watch party: {title}" sandbox="allow-scripts allow-same-origin allow-presentation"
             allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>
         {/key}
+        <!-- clicks on the video are ours, not YouTube's: its player pausing itself on a click only got played over -->
+        <button type="button" class="shield" tabindex="-1" aria-label={control ? (party.playing ? 'Pause for everyone' : 'Play for everyone') : 'Video'}
+          class:control onclick={() => control && togglePlay()} ondblclick={fullscreen}></button>
       </div>
     {/if}
     <div class="controls">
@@ -275,8 +291,10 @@
   .note { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
   .note small { color: var(--text-3); }
   /* 16:9, as wide as the panel allows without taking more than half the window's height */
-  .player { width: min(100%, calc(50vh * 16 / 9)); aspect-ratio: 16 / 9; margin: 0 auto; border-radius: var(--radius-xs); overflow: hidden; background: var(--bg-inset); }
+  .player { position: relative; width: min(100%, calc(50vh * 16 / 9)); aspect-ratio: 16 / 9; margin: 0 auto; border-radius: var(--radius-xs); overflow: hidden; background: var(--bg-inset); }
   .player iframe { display: block; width: 100%; height: 100%; border: 0; }
+  .shield { position: absolute; inset: 0; padding: 0; border: 0; background: transparent; cursor: default; }
+  .shield.control { cursor: pointer; }
   .controls { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .controls .icon-btn[aria-disabled='true'] { opacity: .5; cursor: not-allowed; }
   .controls .icon-btn:not([aria-disabled='true']):hover { color: var(--text); background: var(--bg-3); }
