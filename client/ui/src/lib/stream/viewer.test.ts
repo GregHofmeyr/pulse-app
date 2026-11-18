@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { StreamInfo } from '../protocol/StreamInfo'
-import { admit, dropToast, ghostCount, layerFor, liveEndSound, MAX_TOASTS, pendingWatchReady, pushToast, toastFor, voiceOnlyStreamer, watchDisabledReason, watchMode, type Toast } from './viewer'
+import { emptyState } from '../state'
+import { admit, dropToast, ghostCount, layerFor, liveEndSound, liveQuiet, MAX_TOASTS, pendingWatchReady, pushToast, toastFor, voiceOnlyStreamer, watchDisabledReason, watchMode, type Toast } from './viewer'
 
 describe('toastFor', () => {
   it('only_people_in_that_voice_channel_get_the_toast', () => {
@@ -126,5 +127,31 @@ describe('liveEndSound', () => {
   it('my_own_stream_in_another_channel_is_silent', () => {
     expect(liveEndSound(end('me', 'timed_out'), st('c2', false))).toBe(false)
     expect(liveEndSound(end('me', 'crashed'), st(null, false))).toBe(false)
+  })
+})
+
+describe('liveQuiet (#426)', () => {
+  const now = '2026-11-05T10:00:05.000Z'
+  const base = () => ({
+    ...emptyState(),
+    channels: {
+      v1: { id: 'v1', server_id: 's1', kind: 'voice', name: 'Lounge', position: 0 },
+      dm1: { id: 'dm1', server_id: null, kind: 'dm', name: null, position: 0 },
+    },
+  }) as unknown as ReturnType<typeof emptyState>
+  it('alerts by default', () => {
+    expect(liveQuiet(base(), 'v1', 'sam', now)).toBe(false)
+  })
+  it('is quiet under your own Do Not Disturb', () => {
+    expect(liveQuiet({ ...base(), myStatus: { status: 'dnd', dnd_until: null } }, 'v1', 'sam', now)).toBe(true)
+  })
+  it('is quiet for a streamer on your per-person Do Not Disturb, until it runs out', () => {
+    const s = (dms_only: boolean, until: string | null) => ({ ...base(), personDnd: [{ user_id: 'sam', dms_only, until }] })
+    expect(liveQuiet(s(false, null), 'v1', 'sam', now)).toBe(true)
+    expect(liveQuiet(s(false, null), 'v1', 'kim', now)).toBe(false)
+    expect(liveQuiet(s(false, '2026-11-05T10:00:00.000Z'), 'v1', 'sam', now)).toBe(false)
+    // Only in DMs: a server voice channel still alerts, a DM call doesn't
+    expect(liveQuiet(s(true, null), 'v1', 'sam', now)).toBe(false)
+    expect(liveQuiet(s(true, null), 'dm1', 'sam', now)).toBe(true)
   })
 })

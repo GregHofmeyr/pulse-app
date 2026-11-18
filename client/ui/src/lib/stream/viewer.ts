@@ -3,6 +3,9 @@
 
 import type { StreamEndReason } from '../protocol/StreamEndReason'
 import type { StreamInfo } from '../protocol/StreamInfo'
+import type { AppState } from '../state'
+import { quietFrom } from '../personDnd'
+import { dndActive } from '../status'
 
 /** `where`: the channel ("#gaming"), on a toast for someone you follow going live outside your call (#60). */
 export type Toast = { channelId: string; streamer: string; name: string; where?: string }
@@ -18,6 +21,14 @@ export function toastFor(s: { channelId: string; streamer: string }, voiceChanne
 /** "Notify me when they go live" (#60): someone on your list started a stream (never you). */
 export function followAlert(streamer: string, meId: string, liveNotify: readonly string[]): boolean {
   return streamer !== meId && liveNotify.includes(streamer)
+}
+
+/** A stream start that alerts nobody here (no toast, no sound, no desktop notification): you're on Do Not Disturb (#45),
+ *  or the streamer is on your per-person Do Not Disturb (#426), "Only in DMs" counting for a DM or group call. */
+export function liveQuiet(s: AppState, channelId: string, streamer: string, nowIso: string): boolean {
+  if (dndActive(s, nowIso)) return true
+  const ch = s.channels[channelId]
+  return quietFrom(s.personDnd, streamer, !!ch && ch.server_id === null, nowIso)
 }
 
 /** Why Watch can't be used right now, or null when it can. Linux first: joining voice would not help there.

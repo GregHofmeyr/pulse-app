@@ -103,6 +103,18 @@ describe('ringing', () => {
     expect(ringAlerts(muted, ring(), now)).toBe(false)
     expect(ringAlerts(muted, ring('G1'), now)).toBe(true)
   })
+
+  it("doesn't alert for a caller on your per-person Do Not Disturb, Only in DMs included, until it runs out (#426)", () => {
+    const now = '2026-11-05T10:00:05.000Z'
+    const s = state()
+    const quiet = (dms_only: boolean, until: string | null) => ({ ...s, personDnd: [{ user_id: 'U2', dms_only, until }] })
+    expect(ringAlerts(quiet(false, null), ring(), now)).toBe(false)
+    expect(ringAlerts(quiet(true, null), ring(), now)).toBe(false)
+    expect(ringAlerts(quiet(true, null), ring('G1'), now)).toBe(false)
+    expect(ringAlerts(quiet(false, '2026-11-05T10:00:00.000Z'), ring(), now)).toBe(true)
+    // someone else on the list doesn't quiet this caller
+    expect(ringAlerts({ ...s, personDnd: [{ user_id: 'U3', dms_only: false, until: null }] }, ring(), now)).toBe(true)
+  })
 })
 
 describe('the ring notification tag (#176)', () => {
