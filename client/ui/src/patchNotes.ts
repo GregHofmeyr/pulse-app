@@ -38,6 +38,8 @@ export const patchNotes: PatchNotes = {
   ],
   qol: [
     'Signing someone out of everything takes effect within seconds, even if their app is open',
+    'A tidier message box: attach files, wheels, polls, plans, game invites and Send later all live in the + menu',
+    'Emoji and GIFs share one picker with tabs, and it opens on the one you used last',
   ],
   soon: [
     'Private servers you join by invite',
