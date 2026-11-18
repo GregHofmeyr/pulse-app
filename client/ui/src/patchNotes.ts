@@ -33,6 +33,7 @@ export const patchNotes: PatchNotes = {
     'Invites show as cards in chat, with a Join button',
     'Server owners can ban someone from their right-click menu, and see who is banned in Server settings › Bans',
     'A new profile card theme, Dusk: purple to deep rose',
+    'Invite links work for friends without Pulse too: the link opens a page with Open in Pulse and a Windows download, and a server owner\'s link signs them up straight into the server',
   ],
   fixes: [
     'Restoring a deleted channel now tells you when the server is at its channel limit, and deleted channels no longer count toward it',
