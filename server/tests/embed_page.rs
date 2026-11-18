@@ -4,7 +4,9 @@ mod common;
 
 use common::*;
 use pulse_server::config::{Config, EmbedConfig};
-use pulse_server::embeds::page::{PARTY, PARTY_HASH, RELAY, RELAY_HASH};
+use pulse_server::embeds::page::{
+    PARTY, PARTY_HASH, RELAY, RELAY_HASH, TWITCH_PARTY, TWITCH_PARTY_HASH,
+};
 use reqwest::{StatusCode, Url};
 
 const ANCESTORS: &str = "frame-ancestors http://tauri.localhost https://tauri.localhost tauri:";
@@ -76,6 +78,13 @@ async fn page(app: &TestApp, path: &str) -> (String, String) {
         };
         assert!(
             body.contains(&format!("<script>{script}</script>")),
+            "{body}"
+        );
+    } else if path.starts_with("/embed/twitch/") && path.contains("party=1") {
+        // a Twitch party page (#459): its own relay, in Twitch's player protocol
+        assert_eq!(lower.matches("<script").count(), 1, "{body}");
+        assert!(
+            body.contains(&format!("<script>{TWITCH_PARTY}</script>")),
             "{body}"
         );
     } else {
@@ -327,6 +336,60 @@ async fn a_watch_party_page_frames_youtube_without_its_controls() {
         "/embed/youtube/dQw4w9WgXcQ?party=1&party=1",
         "/embed/youtube/short?party=1",
         "/embed/twitch/FunnyClip-abc_12?party=1",
+    ] {
+        assert_eq!(get(&app, p).await.status(), StatusCode::NOT_FOUND, "{p}");
+    }
+}
+
+#[test]
+fn the_twitch_party_hash_is_its_scripts_sha256() {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let want =
+        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(TWITCH_PARTY.as_bytes()));
+    assert_eq!(*TWITCH_PARTY_HASH, format!("'sha256-{want}'"));
+    assert!(TWITCH_PARTY.contains("parent!==window&&e.source===parent"));
+    assert!(TWITCH_PARTY.contains("e.origin!==o||e.source!==f.contentWindow"));
+    assert!(
+        TWITCH_PARTY.contains("num(c.to,0,172800)") && TWITCH_PARTY.contains("num(c.to,0,100)")
+    );
+    // commands go to the player's own origin only, never '*'
+    assert!(TWITCH_PARTY.contains("namespace:N},o)"));
+    assert!(!TWITCH_PARTY.contains("eval") && !TWITCH_PARTY.contains("setChannel"));
+}
+
+#[tokio::test]
+async fn a_twitch_party_page_frames_a_vod_or_channel_without_its_controls() {
+    let app = app().await;
+    let parents = "parent=pulse.example.com&amp;parent=tauri.localhost&amp;parent=localhost";
+    let (src, csp) = page(&app, "/embed/twitch/video%3A123?party=1&start=90").await;
+    assert_eq!(
+        src,
+        format!(
+            "https://player.twitch.tv/?video=v123&amp;{parents}&amp;autoplay=true&amp;controls=false&amp;muted=false&amp;time=0h1m30s"
+        )
+    );
+    assert_eq!(
+        csp,
+        format!(
+            "default-src 'none'; script-src {}; style-src 'unsafe-inline'; frame-src https://player.twitch.tv; {ANCESTORS}; base-uri 'none'; form-action 'none'",
+            *TWITCH_PARTY_HASH
+        )
+    );
+    let (src, _) = page(&app, "/embed/twitch/channel:alex?party=1").await;
+    assert!(src.starts_with("https://player.twitch.tv/?channel=alex&amp;"));
+    // an ordinary VOD or channel card plays Twitch's player with no script
+    let (src, csp) = page(&app, "/embed/twitch/video:123").await;
+    assert_eq!(
+        src,
+        format!("https://player.twitch.tv/?video=v123&amp;{parents}&amp;autoplay=true")
+    );
+    assert_eq!(csp, csp_for("https://player.twitch.tv"));
+    for p in [
+        "/embed/twitch/channel:alex?party=1&start=5",
+        "/embed/twitch/video:123?start=5",
+        "/embed/twitch/video:v123?party=1",
+        "/embed/twitch/channel:Alex?party=1",
     ] {
         assert_eq!(get(&app, p).await.status(), StatusCode::NOT_FOUND, "{p}");
     }
