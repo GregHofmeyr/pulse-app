@@ -1,0 +1,6 @@
+# pnpm settings (pnpm 10+ reads them here, not from package.json). This is a single-package project.
+auditConfig:
+  ignoreGhsas:
+    # picomatch ReDoS (#470): build-time only (vite → picomatch, file patterns we write), no patched version yet.
+    # Remove once picomatch ships a fix.
+    - GHSA-fc5q-39xc-vjpf
