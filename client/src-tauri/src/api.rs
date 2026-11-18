@@ -29,7 +29,7 @@ use pulse_protocol::rest::{
     ThreadSeenRequest, TransferServerRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
     TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest,
     UpdateSoundRequest, UpdateWheelRequest, UploadedPart, User, VoiceTokenResponse, WatchParty,
-    WatchPartyAction, WatchRequest, Wheel,
+    WatchPartyAction, WatchRequest, WatchSource, Wheel,
 };
 use serde::de::DeserializeOwned;
 
@@ -108,13 +108,9 @@ pub fn invite_code(code: &str) -> Result<&str, ApiError> {
     }
 }
 
-/// A YouTube video id (#384): exactly 11 of `[A-Za-z0-9_-]`, as the server checks.
-pub fn watch_video_id(id: &str) -> bool {
-    id.len() == 11
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-}
+/// What a watch party refuses a bad video id with (ids are checked as the server checks them,
+/// `WatchSource::valid_id`, #384, #459).
+const NOT_PLAYABLE: &str = "that isn't a video a watch party can play";
 
 impl ApiError {
     /// The request (almost) certainly never reached Pulse: no connection, or the proxy found it
@@ -1385,22 +1381,25 @@ impl Api {
         .await
     }
 
-    /// Start a YouTube watch party in a server voice channel (#384), or change its video; you must be in its call.
+    /// Start a watch party in a server voice channel (#384; Twitch too, #459), or change its video; you must be in its
+    /// call.
     pub async fn start_watch_party(
         &self,
         token: &str,
         channel: ChannelId,
+        source: WatchSource,
         video_id: &str,
         title: Option<String>,
     ) -> Result<WatchParty, ApiError> {
-        if !watch_video_id(video_id) {
-            return Err(ApiError::Rejected("that isn't a YouTube video".into()));
+        if !source.valid_id(video_id) {
+            return Err(ApiError::Rejected(NOT_PLAYABLE.into()));
         }
         Self::parse(
             self.http
                 .put(format!("{}/channels/{channel}/watch-party", self.base))
                 .bearer_auth(token)
                 .json(&StartWatchPartyRequest {
+                    source,
                     video_id: video_id.into(),
                     title,
                 })
@@ -1418,12 +1417,16 @@ impl Api {
         action: &WatchPartyAction,
     ) -> Result<(), ApiError> {
         let id_ok = match action {
-            WatchPartyAction::Load { video_id, .. }
-            | WatchPartyAction::Enqueue { video_id, .. } => watch_video_id(video_id),
+            WatchPartyAction::Load {
+                source, video_id, ..
+            }
+            | WatchPartyAction::Enqueue {
+                source, video_id, ..
+            } => source.valid_id(video_id),
             _ => true,
         };
         if !id_ok {
-            return Err(ApiError::Rejected("that isn't a YouTube video".into()));
+            return Err(ApiError::Rejected(NOT_PLAYABLE.into()));
         }
         Self::ok_empty(
             self.http
@@ -6950,11 +6953,12 @@ mod tests {
         let api = Api::new(&format!("http://{}", app.addr));
         // a bad id never leaves the client
         let e = api
-            .start_watch_party(&token, lounge.id, "../pins/xx", None)
+            .start_watch_party(&token, lounge.id, WatchSource::Youtube, "../pins/xx", None)
             .await
             .unwrap_err();
         assert!(matches!(e, ApiError::Rejected(_)), "{e:?}");
         let load = WatchPartyAction::Load {
+            source: WatchSource::Youtube,
             video_id: "short".into(),
             title: None,
         };
@@ -6965,7 +6969,13 @@ mod tests {
         assert!(matches!(e, ApiError::Rejected(_)), "{e:?}");
         // not in the call
         let e = api
-            .start_watch_party(&token, lounge.id, "dQw4w9WgXcQ", Some("A video".into()))
+            .start_watch_party(
+                &token,
+                lounge.id,
+                WatchSource::Youtube,
+                "dQw4w9WgXcQ",
+                Some("A video".into()),
+            )
             .await
             .unwrap_err();
         assert!(matches!(e, ApiError::Forbidden(_)), "{e:?}");
