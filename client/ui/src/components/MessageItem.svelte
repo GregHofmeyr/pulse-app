@@ -39,6 +39,9 @@
   import { closePoll } from '../lib/polls.svelte'
   import PlanCard from './PlanCard.svelte'
   import GameInviteCard from './GameInviteCard.svelte'
+  import ServerInviteCard from './ServerInviteCard.svelte'
+  import { inviteCodesIn } from '../lib/serverInvites'
+  import { loadServerOrigin, serverOrigin } from '../lib/invitePreviews.svelte'
   import PlanComposer from './PlanComposer.svelte'
   import { cancelPlan } from '../lib/plans.svelte'
   import { planWhen } from '../lib/plan'
@@ -241,7 +244,7 @@
   // Forward… (#302): words, files or a GIF (not a poll or plan, nor a forward whose original is gone), to a chat picked
   // by where the menu opened from
   // view-once files (#311) can't be forwarded (the server refuses it too)
-  const forwardable = $derived(!message.poll && !message.plan && !message.forwarded?.unavailable && !message.attachments?.some((a) => a.view_once))
+  const forwardable = $derived(!message.poll && !message.plan && !message.server_invite && !message.forwarded?.unavailable && !message.attachments?.some((a) => a.view_once))
   let forwardAt = $state<HTMLElement | null>(null)
   const openForward = (opener: HTMLElement) =>
     (forwardAt = opener.isConnected ? opener : document.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`))
@@ -287,7 +290,13 @@
   const showable = $derived(mine && !archived && !!message.embeds_hidden && previews.show)
   const showEmbeds = () => api.showEmbeds(message.id).catch((e) => showError(errorText(e)))
   // a GIPHY link shows as the GIF (#58), never as a preview card (an older server may have made one)
-  const embeds = $derived(!pending && !message.deleted && previews.show ? (message.embeds ?? []).filter((e) => !gifIdOf(e.url)) : [])
+  // invite links to this server (#80) show as invite cards (a direct invite's message is its card), never as previews
+  const mayHaveInvites = $derived(!pending && !message.deleted && !message.server_invite && message.content.includes('/i/'))
+  $effect(() => {
+    if (mayHaveInvites) loadServerOrigin()
+  })
+  const inviteCodes = $derived(mayHaveInvites ? inviteCodesIn(message.content, serverOrigin.origin) : [])
+  const embeds = $derived(!pending && !message.deleted && previews.show ? (message.embeds ?? []).filter((e) => !gifIdOf(e.url) && !inviteCodesIn(e.url, serverOrigin.origin).length) : [])
   // GIFs (#58): a picked one, or the GIPHY links in the text; a message that is only the link shows only the GIF
   // a pasted link's GIF is a link preview: it follows "Show link previews" (a picked GIF always shows); one GIPHY
   // couldn't give falls back to the link
@@ -437,6 +446,9 @@
         {:else if message.game_invite}
           <!-- an invite to play (#436): the card stands in for its text -->
           <GameInviteCard {message} {nameOf} />
+        {:else if message.server_invite}
+          <!-- a direct invite to a server (#80): the card stands in for its text -->
+          <ServerInviteCard code={message.server_invite.code} />
         {:else}
           <!-- renderMessage output is DOMPurify-sanitised (allow-list, cached per message); the only {@html} in the app. -->
           {@const html = renderMessage(message, mentionNames, customEmoji)}
@@ -459,6 +471,7 @@
         {:else if !pending && !message.deleted && !message.forwarded && message.attachments?.length}
           <MessageFiles {message} onError={showError} />
         {/if}
+        {#each inviteCodes as c (c)}<ServerInviteCard code={c} />{/each}
         {#each embeds as e (e.url)}<LinkEmbed embed={e} messageId={message.id} channelId={message.channel_id} mine={mine && !archived} onError={showError} />{/each}
         {#if !pending}<ReactionRow {message} {meId} {nameOf} onError={showError} />{/if}
         {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
@@ -473,7 +486,7 @@
           {#if mine}
             {#if archived}{:else if message.plan}{#if planOpen}<button aria-label="Edit plan" onclick={(e) => editPlanCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
             {:else if message.poll}{#if endable}<button aria-label="Edit poll" onclick={(e) => editPollCard(e.currentTarget)}><Icon name="pencil" size={16} /></button>{/if}
-            {:else if !message.forwarded && !message.game_invite}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
+            {:else if !message.forwarded && !message.game_invite && !message.server_invite}<button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>{/if}
             {#if embeds.length && !archived}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
             <DeleteButton what={message.thread_root_id ? 'reply' : 'message'} onConfirm={() => void del()} />
           {/if}

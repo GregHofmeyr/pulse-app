@@ -3,7 +3,7 @@
   // (where the server may be none and View profile is left out: you're on it), or a message author in a DM or group
   // (#189: no server, so no server nickname). The profile, a message, server mute / deafen (#144: as the voice
   // participant menu's), and the nickname items, Appear offline to them (#45), and in a DM muting it (the DM list's
-  // flyout, #190), and in a group's member list Remove from group (#335); in a server you own, Remove from server (#371) and Make owner (#418, handing it
+  // flyout, #190), and in a group's member list Remove from group (#335), Invite to server (#80); in a server you own, Remove from server (#371), Ban (#80) and Make owner (#418, handing it
   // over, asked in the shell with the server's name), and on someone blocked from rejoining it Allow back (#418, from
   // Server settings › Members). Keyboard and focus work as in the voice participant menu.
   import { onMount, untrack } from 'svelte'
@@ -19,6 +19,7 @@
   import NicknameItems from './NicknameItems.svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import GameInviteItem from './GameInviteItem.svelte'
+  import ServerInviteItem from './ServerInviteItem.svelte'
   import HideGameItem from './HideGameItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
@@ -27,7 +28,7 @@
   import MuteFlyout from './MuteFlyout.svelte'
   import PersonDndItem from './PersonDndItem.svelte'
 
-  let { serverId, userId, x, y, opener, onClose, onMessage, onRemove, onAllowBack, fromCard = false, muteChannelId = null }: {
+  let { serverId, userId, x, y, opener, onClose, onMessage, onRemove, onAllowBack, onUnban, fromCard = false, muteChannelId = null }: {
     /** The server it opens in, or null (a card opened outside servers). */
     serverId: string | null
     userId: string
@@ -41,6 +42,8 @@
     onRemove?: (userId: string) => void
     /** Opened on someone blocked from rejoining a server you own (#418): Allow back. */
     onAllowBack?: (userId: string) => void
+    /** Opened on someone banned from a server you own (#80): Unban. */
+    onUnban?: (userId: string) => void
     /** Opened on their profile card: no View profile. */
     fromCard?: boolean
     /** Opened on a message in your DM with them: Mute conversation mutes that DM. */
@@ -74,7 +77,9 @@
   let soundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
   // per-person Do Not Disturb's (#310)
   let dndFlyout = $state<ReturnType<typeof PersonDndItem>>()
-  const flyouts = () => [flyout, soundFlyout, dndFlyout]
+  // Invite to server's (#80)
+  let inviteFlyout = $state<ReturnType<typeof ServerInviteItem>>()
+  const flyouts = () => [flyout, soundFlyout, dndFlyout, inviteFlyout]
   const closeSub = (refocus: boolean | 'if-inside') => { for (const f of flyouts()) f?.close(refocus) }
 
   let el = $state<HTMLElement>()
@@ -154,6 +159,7 @@
   {/if}
   <JoinGameItem {userId} {pick} />
   <GameInviteItem {userId} {pick} />
+  <ServerInviteItem bind:this={inviteFlyout} {userId} {pick} menuLeft={left} menuTop={top} />
   {#if serverId}
     {#each voiceIds as id (id)}<ServerVoiceItem {id} {serverId} {userId} {pick} />{/each}
   {/if}
@@ -178,10 +184,15 @@
     <span class="menu-sep" role="separator"></span>
     <button type="button" class="menu-item danger" role="menuitem" data-item="make-owner" onclick={() => pick(() => (ui.serverAction = { kind: 'transfer', serverId: sid, userId }))}>Make owner</button>
     <button type="button" class="menu-item danger" role="menuitem" data-item="remove-server" onclick={() => pick(() => (ui.serverAction = { kind: 'remove', serverId: sid, userId }))}>Remove from server</button>
+    <button type="button" class="menu-item danger" role="menuitem" data-item="ban" onclick={() => pick(() => (ui.serverAction = { kind: 'ban', serverId: sid, userId }))}>Ban</button>
   {/if}
   {#if onAllowBack && !self}
     <span class="menu-sep" role="separator"></span>
     <button type="button" class="menu-item" role="menuitem" data-item="allow-back" onclick={() => pick(() => onAllowBack(userId))}>Allow back</button>
+  {/if}
+  {#if onUnban && !self}
+    <span class="menu-sep" role="separator"></span>
+    <button type="button" class="menu-item" role="menuitem" data-item="unban" onclick={() => pick(() => onUnban(userId))}>Unban</button>
   {/if}
   {#if onRemove && !self}
     <span class="menu-sep" role="separator"></span>

@@ -17,6 +17,7 @@
   import NicknameItems from './NicknameItems.svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import GameInviteItem from './GameInviteItem.svelte'
+  import ServerInviteItem from './ServerInviteItem.svelte'
   import HideGameItem from './HideGameItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
@@ -122,7 +123,8 @@
   let soundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
   // and per-person Do Not Disturb's (#310)
   let dndFlyout = $state<ReturnType<typeof PersonDndItem>>()
-  const flyouts = () => [soundFlyout, dndFlyout]
+  let inviteFlyout = $state<ReturnType<typeof ServerInviteItem>>()
+  const flyouts = () => [soundFlyout, dndFlyout, inviteFlyout]
 
   function keydown(e: KeyboardEvent) {
     // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
@@ -171,6 +173,7 @@
   <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>
   <JoinGameItem {userId} {pick} />
   <GameInviteItem {userId} {pick} />
+  <ServerInviteItem bind:this={inviteFlyout} {userId} {pick} menuLeft={left} menuTop={top} />
   {#each ids as id (id)}
     {#if id === 'volume'}
       <div class="slider" role="none">

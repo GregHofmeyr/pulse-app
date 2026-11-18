@@ -9,9 +9,10 @@
   import { flushSync } from 'svelte'
   import { closeTimer } from '../lib/hoverIntent'
   import { placeFlyout } from '../lib/menuPlace'
+  import type { Snippet } from 'svelte'
   import Icon, { type IconName } from './Icon.svelte'
 
-  let { label, flyoutLabel, menuLeft, menuTop, choices, onPick, item = '', icon }: {
+  let { label, flyoutLabel, menuLeft, menuTop, choices, onPick, item = '', icon, lead }: {
     /** An icon before the label, in a menu whose items have them (a clip's menu, #257). */
     icon?: IconName
     /** The item's text, e.g. "Mute channel". */
@@ -22,8 +23,11 @@
     menuLeft: number
     menuTop: number
     /** The flyout's choices. With `checked` set on any, they are radio items and the checked one is ticked (as the
-     *  status menu ticks yours). */
-    choices: readonly { label: string; checked?: boolean }[]
+     *  status menu ticks yours). `disabled`: shown greyed, not picked, with `tip` saying why (#80: a server they're
+     *  already in). */
+    choices: readonly { label: string; checked?: boolean; disabled?: boolean; tip?: string }[]
+    /** Something before each choice's label (#80: a server's chip), given its index. */
+    lead?: Snippet<[number]>
     /** The choice at this index was picked. */
     onPick: (index: number) => void
     /** The item's `data-item` value, for menus that name their items (the person menu's "mute"). */
@@ -43,7 +47,7 @@
   const place = $derived(placeFlyout(menuLeft, menuW))
   const subSide = $derived(place.side)
   let subTop = $state(0)
-  const subItems = () => (sub ? [...sub.querySelectorAll<HTMLButtonElement>('[role^=menuitem]')] : [])
+  const subItems = () => (sub ? [...sub.querySelectorAll<HTMLButtonElement>('[role^=menuitem]:not([aria-disabled=true])')] : [])
   function focusSub(i: number) {
     const list = subItems()
     if (list.length) list[(i + list.length) % list.length].focus()
@@ -125,7 +129,8 @@
           <span class="grow">{c.label}</span>{#if c.checked}<Icon name="check" size={14} />{/if}
         </button>
       {:else}
-        <button type="button" class="menu-item" role="menuitem" onclick={() => onPick(i)}>{c.label}</button>
+        <button type="button" class="menu-item" class:off={c.disabled} role="menuitem" aria-disabled={c.disabled ? 'true' : undefined} data-tip={c.tip}
+          onclick={() => { if (!c.disabled) onPick(i) }}>{#if lead}{@render lead(i)}<span class="grow name">{c.label}</span>{:else}{c.label}{/if}</button>
       {/if}
     {/each}
   </div>
@@ -133,6 +138,10 @@
 
 <style>
   .grow { flex: 1; }
+  .name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .menu-item.off { color: var(--text-3); cursor: default; }
+  .menu-item.off:hover { background: transparent; }
+  .menu-item.off :global(.chip) { opacity: .5; }
   /* the chevron (a leading icon keeps the item's colour) */
   .has-sub > :global(svg:last-child) { color: var(--text-3); }
   /* beside the menu, past its 1px border, with a small gap the pointer crosses without closing it */

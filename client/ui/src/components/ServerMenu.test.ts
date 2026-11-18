@@ -125,7 +125,7 @@ describe('ServerMenu', () => {
   it('members get Create category (#54), which hands back to the shell and closes', () => {
     render(false, [], { member: true })
     // and Leave server (#371): they're in it, and it isn't theirs
-    expect(labels()).toEqual(['Server settings', 'Create category', 'Arrange channels just for me', 'Mute server', 'Notifications', 'Leave server'])
+    expect(labels()).toEqual(['Invite people', 'Server settings', 'Create category', 'Arrange channels just for me', 'Mute server', 'Notifications', 'Leave server'])
     item('Create category').click()
     flushSync()
     expect(onCreateCategory).toHaveBeenCalledTimes(1)
@@ -137,7 +137,7 @@ describe('ServerMenu', () => {
     expect(labels()).toEqual(['Server settings', 'Mute server', 'Notifications'])
     unmount(cmp!)
     render(false, [], { member: true, live: false })
-    expect(labels()).toEqual(['Server settings', 'Mute server', 'Notifications', 'Leave server'])
+    expect(labels()).toEqual(['Invite people', 'Server settings', 'Mute server', 'Notifications', 'Leave server'])
   })
 })
 

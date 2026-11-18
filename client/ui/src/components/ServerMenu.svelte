@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The right-click menu on a server tab (#161): Server settings (as the sidebar header's menu opens them), Mute
+  // The right-click menu on a server tab (#161): Invite people (#80, its members), Server settings (as the sidebar header's menu opens them), Mute
   // server as a durations flyout, the channel menu's (#131), or Unmute server, and Notifications: the server's level
   // as a flyout with yours ticked (#195), and Move left / Move right in your rail (#185: dragging's keyboard and menu
   // way), and Leave server (#371, asked first; not its owner's). Arrange channels just for me / Reset to server order
@@ -112,6 +112,9 @@
     const t = (e.target as Element).closest?.('[data-item]')
     if (t && t.parentElement === el) for (const f of flyouts()) if (t !== f?.trigger()) f?.closeSoon()
   }}>
+  {#if isMember(app.state, serverId)}
+    <button type="button" class="menu-item" role="menuitem" data-item="invite" onclick={() => pick(() => (ui.inviteTo = serverId))}>Invite people</button>
+  {/if}
   <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onSettings)}>Server settings</button>
   {#if canCreateCategory && onCreateCategory}
     <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onCreateCategory)}>Create category</button>

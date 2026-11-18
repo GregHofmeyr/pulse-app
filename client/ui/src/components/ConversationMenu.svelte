@@ -10,6 +10,7 @@
   import { onMount } from 'svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import GameInviteItem from './GameInviteItem.svelte'
+  import ServerInviteItem from './ServerInviteItem.svelte'
   import HideGameItem from './HideGameItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
   import JoinSoundMuteItem from './JoinSoundMuteItem.svelte'
@@ -90,7 +91,8 @@
   let levelFlyout = $state<ReturnType<typeof MenuFlyout>>()
   let soundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
   let dndFlyout = $state<ReturnType<typeof PersonDndItem>>()
-  const flyouts = () => [flyout, levelFlyout, soundFlyout, moveFlyout, dndFlyout]
+  let inviteFlyout = $state<ReturnType<typeof ServerInviteItem>>()
+  const flyouts = () => [flyout, levelFlyout, soundFlyout, moveFlyout, dndFlyout, inviteFlyout]
   // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
   function keydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && flyouts().some((f) => f?.isOpen())) {
@@ -190,6 +192,7 @@
         <AppearOfflineItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
         <HideGameItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
         <GameInviteItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
+        <ServerInviteItem bind:this={inviteFlyout} userId={dmWith} pick={(action) => { void action(); onClose() }} menuLeft={place?.left ?? 0} menuTop={place?.top ?? 0} />
       {/if}
       {#if isPrivate}
         <button class="menu-item" role="menuitem" onclick={() => run(() => api.closeConversation(channel.id), onLeft)}>Close conversation</button>

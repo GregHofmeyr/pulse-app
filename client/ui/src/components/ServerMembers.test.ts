@@ -83,7 +83,7 @@ describe('Server settings: Members', () => {
     open('U1')
     rightClick(rows()[1])
     expect(ids()).toContain('make-owner')
-    expect(ids().at(-1)).toBe('remove-server')
+    expect(ids().slice(-2)).toEqual(['remove-server', 'ban'])
     expect(item('make-owner')!.classList.contains('danger')).toBe(true)
     item('make-owner')!.click()
     flushSync()

@@ -1,6 +1,6 @@
 <script lang="ts">
   // Asks before a server membership change (#371): you leaving a server (its tab's menu, Server settings), or its owner
-  // removing someone (their person menu in that server). A dialog like a channel's delete, with Cancel focused first:
+  // removing or banning someone (#80) (their person menu in that server). A dialog like a channel's delete, with Cancel focused first:
   // it acts for good. Their messages stay either way, and the server stays listed, so Join server brings them back.
   // Handing the server over (#418, Server settings or Make owner on a person's menu) can't be taken back by the one
   // who did it, so typing the server's name, as it is, unlocks its button (as Delete server does).
@@ -13,8 +13,8 @@
 
   const server = $derived(app.state.servers.find((s) => s.id === action.serverId)?.name ?? 'this server')
   const person = $derived(action.kind === 'leave' ? '' : displayName(app.state, action.serverId, action.userId))
-  const title = $derived(action.kind === 'leave' ? `Leave ${server}` : action.kind === 'remove' ? `Remove ${person}` : `Make ${person} the owner`)
-  const confirm = $derived(action.kind === 'leave' ? 'Leave server' : action.kind === 'remove' ? 'Remove' : 'Transfer ownership')
+  const title = $derived(action.kind === 'leave' ? `Leave ${server}` : action.kind === 'remove' ? `Remove ${person}` : action.kind === 'ban' ? `Ban ${person}` : `Make ${person} the owner`)
+  const confirm = $derived(action.kind === 'leave' ? 'Leave server' : action.kind === 'remove' ? 'Remove' : action.kind === 'ban' ? 'Ban' : 'Transfer ownership')
   let typed = $state('')
   const unlocked = $derived(action.kind !== 'transfer' || typed.trim() === server)
   let busy = $state(false)
@@ -27,6 +27,7 @@
     try {
       if (action.kind === 'leave') await api.leaveServer(action.serverId)
       else if (action.kind === 'remove') await api.removeServerMember(action.serverId, action.userId)
+      else if (action.kind === 'ban') await api.setServerBan(action.serverId, action.userId, true)
       else await api.transferServer(action.serverId, action.userId)
       onClose()
     } catch (e) {
@@ -48,6 +49,8 @@
       <p>Leave <strong>{server}</strong>? If you're in one of its voice channels, you're disconnected. Your messages stay, and you can join it again from the server list.</p>
     {:else if action.kind === 'remove'}
       <p>Remove <strong>{person}</strong> from <strong>{server}</strong>? They're disconnected from its voice channels and streams. Their messages stay, and they can join again, unless it's the third time in 48 hours: then not until you allow them back (Server settings, Members).</p>
+    {:else if action.kind === 'ban'}
+      <p>Ban <strong>{person}</strong> from <strong>{server}</strong>? They're removed and can't join again until you unban them (Server settings, Bans). Their messages stay.</p>
     {:else}
       <p>Hand <strong>{server}</strong> to <strong>{person}</strong>? They become its owner, with everything only the owner can do, and you become a member like anyone else. Only they can hand it back.</p>
       <label>

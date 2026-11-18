@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app, clock } from '../lib/store.svelte'
+  import { app, clock, ui } from '../lib/store.svelte'
   import { byPresence, presenceOf } from '../lib/presence'
   import Avatar from './Avatar.svelte'
   import Icon from './Icon.svelte'
@@ -12,7 +12,7 @@
   import CustomStatusLine from './CustomStatusLine.svelte'
   import { customStatusOf } from '../lib/customStatus'
   import MemberMenu from './MemberMenu.svelte'
-  import { baseName, displayName } from '../lib/selectors'
+  import { baseName, displayName, isMember } from '../lib/selectors'
   import { isMenuKey, rowMenuAt } from '../lib/participantMenu'
   import { openCard } from '../lib/profileCard.svelte'
   import { loadDeadlockRanks, rankOf } from '../lib/deadlock.svelte'
@@ -73,6 +73,10 @@
 </script>
 
 <aside class="members" aria-label="Members">
+  <!-- Invite people (#80): any member, from the top of the list -->
+  {#if isMember(app.state, serverId)}
+    <button type="button" class="invite" onclick={() => (ui.inviteTo = serverId)}><Icon name="plus" size={14} /> Invite</button>
+  {/if}
   {#each sections as g, gi (g.key)}
   <div class="label">{g.label} — {g.list.length}</div>
   {#each drawnRows[gi] < g.list.length ? g.list.slice(0, drawnRows[gi]) : g.list as m (m.user.id)}
@@ -109,6 +113,8 @@
 
 <style>
   .members { width: var(--right-w, 240px); flex-shrink: 0; background: var(--bg-1); border-radius: var(--radius); padding: 8px; overflow-y: auto; }
+  .invite { width: 100%; height: 32px; margin-bottom: 2px; padding: 0 10px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-2); font: inherit; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .invite:hover { background: var(--bg-2); color: var(--text); }
   .label { padding: 14px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
   .row { cursor: pointer; height: 44px; padding: 0 10px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 10px; }
   /* 15 px: a styled name font (script, pixel) blurs at smaller sizes */

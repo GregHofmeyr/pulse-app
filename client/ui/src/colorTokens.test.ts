@@ -94,6 +94,7 @@ const ALLOWED: Record<string, (Allowed | Palette)[]> = {
   'components/Avatar.svelte': [{ uses: { '#fff': 1 }, reason: AVATAR }],
   'routes/Shell.svelte': [{ uses: { '#fff': 1 }, reason: AVATAR + ' (the server chip)' }],
   'components/QuickSwitcher.svelte': [{ uses: { '#fff': 1 }, reason: AVATAR + " (a server row's chip, as the tab's)" }],
+  'components/ServerChip.svelte': [{ uses: { '#fff': 1 }, reason: AVATAR + " (a server's chip in invites, as the tab's)" }],
   'components/ClipCard.svelte': [{ uses: { '#000': 2, '#fff': 3, 'rgba(0, 0, 0, .55)': 1, 'rgba(0, 0, 0, .75)': 2, 'rgba(0, 0, 0, .6)': 1 }, reason: VIDEO }],
   'components/ClipDownload.svelte': [
     { uses: { '#fff': 2, 'rgba(0, 0, 0, .6)': 2, 'rgba(0, 0, 0, .75)': 2, 'rgba(255, 255, 255, .25)': 1 }, reason: VIDEO + ' (the download icon and Show in folder)' },

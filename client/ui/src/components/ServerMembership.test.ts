@@ -79,7 +79,7 @@ describe('Remove from server on a person menu', () => {
   it('the owner gets it on someone else, asked first', () => {
     state('U1')
     show()
-    expect(ids().at(-1)).toBe('remove-server')
+    expect(ids().slice(-2)).toEqual(['remove-server', 'ban'])
     item('remove-server')!.click()
     flushSync()
     expect(ui.serverAction).toEqual({ kind: 'remove', serverId: 'S1', userId: 'U2' })

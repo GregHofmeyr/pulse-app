@@ -19,6 +19,7 @@
   import CustomStatusDialog from '../components/CustomStatusDialog.svelte'
   import ServerMenu from '../components/ServerMenu.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
+  import InviteDialog from '../components/InviteDialog.svelte'
   import ServerActionDialog from '../components/ServerActionDialog.svelte'
   import { requestCreateCategory } from '../lib/categoryUi.svelte'
   import { clickOutside, modal, narrowerThan } from '../lib/actions'
@@ -545,6 +546,16 @@
     })
   })
 
+  // Joined with an invite (#80): to the server.
+  $effect(() => {
+    const id = ui.goServer
+    if (!id) return
+    untrack(() => {
+      if (app.state.servers.some((x) => x.id === id)) selectServer(id)
+      ui.goServer = null
+    })
+  })
+
   // The watch in full view ended (stopped, the stream ended, voice left): no full view to go back to.
   $effect(() => {
     const f = callView.full
@@ -914,6 +925,7 @@
 <GroupIconCrop />
 {#if settingsServer}<ServerSettings server={settingsServer} onClose={() => (serverSettingsId = null)} />{/if}
 {#if ui.serverAction}<ServerActionDialog action={ui.serverAction} onClose={() => (ui.serverAction = null)} />{/if}
+{#if ui.inviteTo}{#key ui.inviteTo}<InviteDialog serverId={ui.inviteTo} onClose={() => (ui.inviteTo = null)} />{/key}{/if}
 {#if settingsOpen}<Settings section={settingsSection} onLogout={logout} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if stream.clash}<StreamClashDialog clash={stream.clash} />{/if}
