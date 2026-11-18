@@ -1,6 +1,8 @@
+pub mod bans;
 pub mod categories;
 pub mod channels;
 pub mod deleted;
+pub mod invites;
 pub mod membership;
 pub mod nicknames;
 pub mod order;

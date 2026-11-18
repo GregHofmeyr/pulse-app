@@ -361,6 +361,27 @@ pub(crate) async fn take_out(
     user: UserId,
     by: Option<UserId>,
 ) -> AppResult<()> {
+    take_out_counting(s, server, user, by, true).await
+}
+
+/// [`take_out`] for a ban (#80): the owner `by` removes `user`, but the removal doesn't count towards a rejoin block,
+/// since the ban already refuses them (and replaces the block when servers become invite-only).
+pub(crate) async fn take_out_banned(
+    s: &AppState,
+    server: ServerId,
+    user: UserId,
+    by: UserId,
+) -> AppResult<()> {
+    take_out_counting(s, server, user, Some(by), false).await
+}
+
+async fn take_out_counting(
+    s: &AppState,
+    server: ServerId,
+    user: UserId,
+    by: Option<UserId>,
+    count_removal: bool,
+) -> AppResult<()> {
     // A leave changes a live Quote of the Year's member count, which its events carry as absolute state: in commit
     // order, as a join publishes it.
     // their name as it is now, for the line's text (clients name them as they're called when they show it)
@@ -434,8 +455,8 @@ pub(crate) async fn take_out(
     let grants = crate::auth::session::drop_server_grants(&mut tx, user, server).await?;
     // a removal counts towards blocking their rejoin (#418); a leave doesn't
     let blocked = match by {
-        Some(by) => record_removal(&mut tx, server, user, by).await?,
-        None => false,
+        Some(by) if count_removal => record_removal(&mut tx, server, user, by).await?,
+        _ => false,
     };
     tx.commit().await?;
     tracing::info!(server = %server, user = %user, by = ?by, blocked, "left server");

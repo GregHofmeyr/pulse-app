@@ -68,6 +68,8 @@ pub fn router(state: AppState) -> Router {
         .merge(servers::routes::router())
         .merge(servers::nicknames::router())
         .merge(servers::membership::router())
+        .merge(servers::invites::router())
+        .merge(servers::bans::router())
         .merge(servers::order::router())
         .merge(servers::personal_order::router())
         .merge(servers::categories::router())

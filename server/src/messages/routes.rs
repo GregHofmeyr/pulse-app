@@ -162,6 +162,7 @@ fn from_row(r: Row) -> AppResult<Message> {
         },
         // set by `game_invites::attach`
         game_invite: None,
+        server_invite: None,
     })
 }
 
@@ -198,6 +199,7 @@ pub(crate) async fn load(
     crate::polls::attach(db, me, &mut one).await?;
     crate::plans::attach(db, &mut one).await?;
     crate::game_invites::attach(db, &mut one).await?;
+    crate::servers::invites::attach(db, &mut one).await?;
     crate::f1::attach(db, &mut one).await?;
     crate::attachments::attach(db, &mut one).await?;
     crate::forwards::attach(db, &mut one).await?;
@@ -273,6 +275,7 @@ pub(crate) async fn fill(
     crate::polls::attach(db, me, &mut page).await?;
     crate::plans::attach(db, &mut page).await?;
     crate::game_invites::attach(db, &mut page).await?;
+    crate::servers::invites::attach(db, &mut page).await?;
     crate::f1::attach(db, &mut page).await?;
     crate::attachments::attach(db, &mut page).await?;
     crate::forwards::attach(db, &mut page).await?;
@@ -615,6 +618,7 @@ pub(crate) async fn deliver(
         group_line: None,
         member_line: None,
         game_invite: None,
+        server_invite: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
@@ -805,6 +809,12 @@ async fn edit(
     // Nor an invite to play (#436): its card is the game as it was when sent.
     if msg.game_invite.is_some() {
         return Err(AppError::BadRequest("game invites can't be edited".into()));
+    }
+    // Nor an invite to a server (#80): its card is the invite.
+    if msg.server_invite.is_some() {
+        return Err(AppError::BadRequest(
+            "server invites can't be edited".into(),
+        ));
     }
     let is_clip: Option<i64> = sqlx::query_scalar("SELECT 1 FROM clips WHERE message_id = ?")
         .bind(id.to_string())
@@ -1095,6 +1105,7 @@ mod tests {
             group_line: None,
             member_line: None,
             game_invite: None,
+            server_invite: None,
         }
     }
 
