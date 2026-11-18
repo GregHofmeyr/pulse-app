@@ -1338,6 +1338,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return e.d.user_id === s.me?.id ? { ...s, inboxFilters: e.d.filters } : s
     case 'ViewOnceOpened':
       return s // kept by lib/viewOnce.svelte.ts (#311)
+    case 'InvitesChanged':
+    case 'BansChanged':
+      return s // the Invites and Bans settings come with the client step of #80
     case 'ChannelOrderChanged': {
       if (e.d.user_id !== s.me?.id) return s
       const { [e.d.server_id]: _was, ...rest } = s.channelOrders
