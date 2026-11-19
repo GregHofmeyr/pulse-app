@@ -377,5 +377,8 @@ pub fn limits_ts() -> String {
 }
 
 /// Gateway protocol version this build speaks. Bump when an old client would misbehave
-/// against a new server; the server tells older clients to update (close 4005).
-pub const PROTOCOL_VERSION: u32 = 3;
+/// against a new server; the server tells clients older than its minimum to update (close 4005).
+///
+/// 4: private servers (#80). A server you join arrives whole in `ServerJoined`; a version-3 client, which skips that
+/// event, is reconnected instead so its next Ready brings the server.
+pub const PROTOCOL_VERSION: u32 = 4;

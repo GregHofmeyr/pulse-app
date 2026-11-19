@@ -34,6 +34,11 @@ pub const CLOSE_UNAUTHORIZED: u16 = 4001;
 pub const CLOSE_UPDATE_REQUIRED: u16 = 4005;
 /// Close code for a connection over the per-user cap (existing connections are never kicked).
 pub const CLOSE_TOO_MANY_CONNECTIONS: u16 = 4006;
+/// Close code for a client that should connect again for a fresh Ready: a version-3 client that just joined a server
+/// (#80), whose `ServerJoined` it would skip. Older clients reconnect on any code they don't know.
+pub const CLOSE_RESYNC: u16 = 4007;
+/// The first protocol version that reads `ServerJoined` (#80, [`pulse_protocol::PROTOCOL_VERSION`] 4).
+const SERVER_JOINED_SINCE: u32 = 4;
 
 pub type ConnId = u64;
 
@@ -78,6 +83,8 @@ struct Conn {
     inbox: bool,
     /// This device says it has had no input for a while (#53, `ClientFrame::Idle`).
     idle: bool,
+    /// The protocol version its Hello said ([`Hub::set_client_version`]; this build's until then).
+    client_version: u32,
 }
 
 impl Conn {
@@ -298,10 +305,19 @@ impl Hub {
                 kick: Some(ktx),
                 inbox: false,
                 idle: false,
+                client_version: pulse_protocol::PROTOCOL_VERSION,
             },
         );
         self.inner.open.lock().unwrap().insert(id, user);
         Some(Registration { id, rx, kick: krx })
+    }
+
+    /// The protocol version `id`'s client speaks, from its Hello: a client too old for an event is reconnected
+    /// rather than sent it ([`CLOSE_RESYNC`]).
+    pub fn set_client_version(&self, id: ConnId, version: u32) {
+        if let Some(c) = self.inner.conns.lock().unwrap().get_mut(&id) {
+            c.client_version = version;
+        }
     }
 
     /// Remove a connection; returns (user, whether it was their last connection). `None` if the
@@ -990,9 +1006,15 @@ fn deliver_where(
     frame: &ServerFrame,
 ) -> bool {
     let before = conns.len();
+    let joined = matches!(frame, ServerFrame::Event(Event::ServerJoined { .. }));
     conns.retain(|id, c| {
         if !to(c) {
             return true;
+        }
+        if joined && c.client_version < SERVER_JOINED_SINCE {
+            // it would skip the event and miss the server it joined: its next Ready brings it (#80)
+            c.kick(CLOSE_RESYNC);
+            return false;
         }
         match c.tx.try_send(frame.clone()) {
             Ok(()) => true,

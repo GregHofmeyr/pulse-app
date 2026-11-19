@@ -74,7 +74,8 @@ async fn send(socket: &mut WebSocket, frame: &ServerFrame) -> bool {
 pub const MIN_CLIENT_VERSION: u32 = 3;
 
 enum Auth {
-    Ok(UserId, String),
+    /// The user, their session's token hash, and the protocol version the client speaks.
+    Ok(UserId, String, u32),
     Denied,
     /// The client is older than [`MIN_CLIENT_VERSION`].
     Outdated,
@@ -100,7 +101,7 @@ async fn authenticate(socket: &mut WebSocket, s: &AppState) -> Auth {
         return Auth::Outdated;
     }
     match session::authenticate(&s.db, &token).await {
-        Ok(Some(user)) => Auth::Ok(user, session::hash_token(&token)),
+        Ok(Some(user)) => Auth::Ok(user, session::hash_token(&token), client_version),
         Ok(None) => Auth::Denied,
         // Don't tell the client to re-auth (and wipe its keychain) because our DB hiccuped.
         Err(_) => Auth::Internal,
@@ -341,10 +342,10 @@ fn only_mine<T>(
 }
 
 async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
-    let (me, token_hash) = match authenticate(&mut socket, &s).await {
-        Auth::Ok(u, h) => {
+    let (me, token_hash, client_version) = match authenticate(&mut socket, &s).await {
+        Auth::Ok(u, h, v) => {
             s.limits.gateway_ip.refund(&ip_key);
-            (u, h)
+            (u, h, v)
         }
         Auth::Denied => return close(socket, CLOSE_UNAUTHORIZED, "unauthorized").await,
         Auth::Outdated => {
@@ -364,6 +365,7 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
         return close(socket, CLOSE_TOO_MANY_CONNECTIONS, "too many connections").await;
     };
     let (conn, mut rx, mut kick) = (reg.id, reg.rx, reg.kick);
+    s.hub.set_client_version(conn, client_version);
     let since = now(); // in the hub from here: see `disconnected`
     // A logout / logout-others may have landed between authenticate and try_register: its kick
     // ran before this socket was in the hub. Every revoke commits the DELETE and only then
