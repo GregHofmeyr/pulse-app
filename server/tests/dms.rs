@@ -239,7 +239,11 @@ async fn mark_read_syncs_own_sessions_only() {
     assert!(matches!(e, Event::ReadStateUpdated { user_id, .. } if user_id == b_id));
     // alex must not get it: send a marker and check it's the next thing alex sees
     send(&app, &a, dm.id, "marker").await;
-    let next = wait_for(&mut alex, |e| !matches!(e, Event::PresenceChanged { .. })).await;
+    // presence and the profile re-sync from becoming acquainted (#486) may still be arriving: skip those
+    let next = wait_for(&mut alex, |e| {
+        !matches!(e, Event::PresenceChanged { .. } | Event::UserCreated { .. })
+    })
+    .await;
     assert!(
         matches!(next, Event::MessageCreated { .. }),
         "alex saw {next:?}"
