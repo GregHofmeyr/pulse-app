@@ -231,3 +231,126 @@ async fn manifest_requests_are_logged_with_version_and_status_never_the_token() 
     assert!(!log.contains(&s.token), "the session token was logged");
     assert!(!log.contains("not-a-real-token"), "a token was logged");
 }
+
+/// Each person's last update check is kept (#534): their version and what they were told.
+#[tokio::test]
+async fn update_checks_are_recorded_per_person() {
+    let (app, dir) = app_with_updates().await;
+    let (alex, a) = register(&app, "alex").await;
+    let (sam, s) = register(&app, "sam").await;
+    let check = |token: String, version: Option<&'static str>| {
+        let mut req = app
+            .http
+            .get(app.url("/updates/latest.json"))
+            .bearer_auth(token);
+        if let Some(v) = version {
+            req = req.header("X-Pulse-Version", v);
+        }
+        req.send()
+    };
+    let row = |id: pulse_protocol::ids::UserId| {
+        sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
+            "SELECT check_version, check_result, checked_at FROM app_versions WHERE user_id = ?",
+        )
+        .bind(id.to_string())
+        .fetch_one(&app.db)
+    };
+
+    // nothing published yet
+    assert_eq!(
+        check(a.clone(), Some("0.2.14")).await.unwrap().status(),
+        404
+    );
+    let (v, r, at) = row(alex).await.unwrap();
+    assert_eq!(
+        (v.as_deref(), r.as_deref()),
+        (Some("0.2.14"), Some("no_manifest"))
+    );
+    assert!(at.is_some());
+
+    std::fs::write(
+        dir.path().join("latest.json"),
+        br#"{"version":"0.2.16","platforms":{}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        check(a.clone(), Some("0.2.14")).await.unwrap().status(),
+        200
+    );
+    assert_eq!(row(alex).await.unwrap().1.as_deref(), Some("offered"));
+    assert_eq!(
+        check(s.clone(), Some("0.2.16")).await.unwrap().status(),
+        200
+    );
+    assert_eq!(row(sam).await.unwrap().1.as_deref(), Some("up_to_date"));
+    // an app that sends no version (older than #460)
+    assert_eq!(check(s, None).await.unwrap().status(), 200);
+    let (v, r, _) = row(sam).await.unwrap();
+    assert_eq!((v, r.as_deref()), (None, Some("unknown")));
+    // a refused check (signed out) records nothing
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM app_versions")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 2);
+}
+
+/// A gateway connect notes the app's version from the upgrade's header, or none from an older app (#534).
+#[tokio::test]
+async fn connects_are_recorded_with_the_app_version() {
+    use futures::SinkExt;
+    use pulse_protocol::gateway::{ClientFrame, ServerFrame};
+    use tokio_tungstenite::tungstenite::{Message as Ws, client::IntoClientRequest};
+
+    let (app, _dir) = app_with_updates().await;
+    let (kim, k) = register(&app, "kim").await;
+    let (jo, j) = register(&app, "jo").await;
+    let connect = |token: String, version: Option<&'static str>| {
+        let mut req = app.ws_url("/gateway").into_client_request().unwrap();
+        if let Some(v) = version {
+            req.headers_mut()
+                .insert("X-Pulse-Version", v.parse().unwrap());
+        }
+        async move {
+            let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+            let f = serde_json::to_string(&ClientFrame::Hello {
+                token,
+                client_version: pulse_protocol::PROTOCOL_VERSION,
+            })
+            .unwrap();
+            ws.send(Ws::text(f)).await.unwrap();
+            match next_frame_beating(&mut ws, std::time::Duration::from_secs(3)).await {
+                Some(ServerFrame::Ready(_)) => ws,
+                other => panic!("expected Ready, got {other:?}"),
+            }
+        }
+    };
+    let _kim_ws = connect(k, Some("0.2.17")).await;
+    let _jo_ws = connect(j, None).await;
+
+    // written beside Ready, not before it
+    let row = |id: pulse_protocol::ids::UserId| {
+        sqlx::query_as::<_, (Option<String>, Option<String>)>(
+            "SELECT connect_version, connected_at FROM app_versions WHERE user_id = ?",
+        )
+        .bind(id.to_string())
+        .fetch_optional(&app.db)
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while (row(kim).await.unwrap().is_none() || row(jo).await.unwrap().is_none())
+        && std::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let (v, at) = row(kim).await.unwrap().expect("kim's connect");
+    assert_eq!(v.as_deref(), Some("0.2.17"));
+    assert!(at.is_some());
+    let (v, at) = row(jo).await.unwrap().expect("jo's connect");
+    assert_eq!(v, None);
+    assert!(at.is_some());
+
+    let rows = pulse_server::app_versions::list(&app.db).await.unwrap();
+    let out = pulse_server::app_versions::format_report(&rows, Some("0.2.17"));
+    assert!(out.contains("kim   0.2.17 "), "{out}");
+    assert!(out.contains("jo    ?"), "{out}");
+}
