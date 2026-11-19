@@ -31,7 +31,9 @@ export const patchNotes: PatchNotes = {
   fixes: [
     'The opened server card from an invite pack is sharp again (its text and icon were slightly blurry), and "✦ MYTHICAL PULL ✦" is easier to read in every theme',
   ],
-  qol: [],
+  qol: [
+    'Making a poll anonymous in a DM or a small group now warns that people can still work out a vote from the counts changing',
+  ],
   message: 'Polish 🧽',
 }
 

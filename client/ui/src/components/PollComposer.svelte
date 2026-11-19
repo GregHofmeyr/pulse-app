@@ -10,7 +10,8 @@
   // The poll composer above the message box (#157), the wheel popover's sibling: same frame, same place. A question
   // across the top, the options right under it (two rows to start, + Add option up to ten, removable past two), then
   // at the bottom, out of the way, the Multiple choice and Anonymous switches, Ends in and Post poll, which waits for
-  // a question and two filled options (the same one twice is fine). `/poll Question? a, b` opens it filled in.
+  // a question and two filled options (the same one twice is fine). Anonymous in a DM or a small group warns that a
+  // vote can still be worked out from the live counts (#267). `/poll Question? a, b` opens it filled in.
   // Its creator's Edit poll (#265) opens the same composer filled from the open poll, with Save changes: the question
   // and options change (Multiple choice, Anonymous and the end stay as posted). Removing or rewording an option that
   // has votes clears just those votes, so Save asks first, naming them.
@@ -18,7 +19,8 @@
   import Icon from './Icon.svelte'
   import Segmented from './Segmented.svelte'
   import { clickOutside } from '../lib/actions'
-  import { POLL_ENDS, POLL_LIMITS, clearedLabel, clearedVotes, editRows, pollReady } from '../lib/poll'
+  import { POLL_ENDS, POLL_LIMITS, anonymousGuessable, clearedLabel, clearedVotes, editRows, pollReady } from '../lib/poll'
+  import { app } from '../lib/store.svelte'
   import { editPoll, postPoll } from '../lib/polls.svelte'
   import { popoverStyle } from '../lib/reactions'
   import { errorText } from '../lib/tauri'
@@ -85,6 +87,8 @@
     void tick().then(() => (empty >= 0 ? focusOption(empty) : questionField?.focus()))
   })
 
+  // a DM or a small group: anonymous votes can still be worked out from the counts changing (#267)
+  const guessable = $derived(anonymousGuessable(app.state.channels[channelId]?.kind, app.state.dmMembers[channelId]?.length ?? 0))
   const ready = $derived(pollReady(question, options) && !busy)
   const full = $derived(options.length >= POLL_LIMITS.maxOptions)
 
@@ -172,7 +176,8 @@
       <label class="toggle"><input type="checkbox" role="switch" class="switch" bind:checked={multi} /><span>Multiple choice</span></label>
       <label class="toggle"><input type="checkbox" role="switch" class="switch" bind:checked={anonymous} aria-describedby="{uid}-anon" /><span>Anonymous</span></label>
     </div>
-    <small class="help" id="{uid}-anon">{anonymous ? 'Nobody sees who voted for what, you included.' : 'Everyone sees who voted for what.'}</small>
+    <small class="help" id="{uid}-anon">{anonymous ? 'Nobody sees who voted for what, you included.' : 'Everyone sees who voted for what.'}
+      {#if anonymous && guessable}<span class="warn" data-anon-warning>In a chat this small, people can still work out a vote from the counts changing.</span>{/if}</small>
     <div class="menu-label">Ends in</div>
     <Segmented label="Ends in" options={POLL_ENDS.map((o) => ({ value: o.value, label: o.label }))} value={ends} onchange={(v) => (ends = v)} />
   </div>
@@ -198,6 +203,7 @@
   .toggles { display: flex; flex-wrap: wrap; gap: 8px 20px; }
   .toggle { display: inline-flex; align-items: center; gap: 10px; font-size: 13px; cursor: pointer; }
   .help { color: var(--text-3); font-size: 11px; }
+  .help .warn { color: var(--warn-text); }
   .options { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .options li { display: flex; align-items: center; gap: 6px; }
   .options .input { flex: 1; min-width: 0; }
