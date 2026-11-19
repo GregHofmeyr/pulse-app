@@ -103,7 +103,9 @@ export class StreamRoom {
   static async connect(channelId: string, ghost = false): Promise<StreamRoom> {
     const t0 = performance.now()
     installRtxTime()
-    const room = new Room({ adaptiveStream: false, dynacast: true })
+    // stopLocalTrackOnUnpublish off: LiveKit giving up on the connection unpublishes the share without stopping its
+    // capture, which the store republishes on a new connection (#343); our own unpublish says whether to stop it
+    const room = new Room({ adaptiveStream: false, dynacast: true, stopLocalTrackOnUnpublish: false })
     // A LiveKit URL the CSP doesn't allow fails as a generic network error; the violation event says why.
     let blocked = false
     const onViolation = (e: SecurityPolicyViolationEvent) => {

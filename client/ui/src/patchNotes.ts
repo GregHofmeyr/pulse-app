@@ -29,10 +29,12 @@ export const patchNotes: PatchNotes = {
   date: '20 November 2026',
   new: [
     'Favourite stickers: star a sticker in the GIF picker or in chat, and find it again under Favourite stickers, a list of its own beside your favourite GIFs',
+    'Going live survives a short network drop: your stream shows Reconnecting and carries on by itself, with no need to pick the screen again',
   ],
   fixes: [
     'The opened server card from an invite pack is sharp again (its text and icon were slightly blurry), and "✦ MYTHICAL PULL ✦" is easier to read in every theme',
     'You can\'t schedule a message in a DM with someone you\'ve blocked any more (it used to wait until its time, then fail)',
+    'Voice: when your connection drops for a moment and comes back, nobody else hears you leave and rejoin',
   ],
   qol: [
     'In a full profile\'s Name Archive, click who made a change to see their profile, or right-click them for their menu',
