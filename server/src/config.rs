@@ -456,6 +456,10 @@ fn clip_store(get: impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<Cli
 pub struct CallTimings {
     pub ring: Duration,
     pub grace: Duration,
+    /// How long a voice connection that dropped off the network stays in its call (#281): back in
+    /// time, nobody hears a leave or a join; not back, the leave goes out then. Leaving on purpose
+    /// isn't held.
+    pub reconnect: Duration,
 }
 
 impl Default for CallTimings {
@@ -463,6 +467,7 @@ impl Default for CallTimings {
         Self {
             ring: Duration::from_secs(30),
             grace: Duration::from_secs(30),
+            reconnect: Duration::from_secs(10),
         }
     }
 }

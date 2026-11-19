@@ -252,3 +252,133 @@ async fn a_leave_from_a_deleted_channel_still_clears_its_voice_state() {
     );
     assert!(!app.voice_members(l.id).contains(&a_id));
 }
+
+/// A server whose held voice leaves (#281) wait a short moment.
+async fn spawn_quick_reconnect() -> TestApp {
+    let mut cfg = test_config();
+    cfg.calls.reconnect = std::time::Duration::from_millis(400);
+    spawn_with(cfg).await
+}
+
+/// `user`'s connection `sid` joining `room` with a fresh token's grant.
+async fn join_as(app: &TestApp, token: &str, room: ChannelId, user: UserId, sid: &str) {
+    let t = post_json(app, token, &format!("/voice/{room}/token"), json!({})).await;
+    assert_eq!(t.status(), 200);
+    let body =
+        json!({"event": "participant_joined", "id": "EV_test", "room": {"name": room.to_string()},
+        "participant": {"identity": user.to_string(), "sid": sid,
+            "attributes": {"pulse_grant": grant_of(app, t).await}}})
+        .to_string();
+    assert_eq!(webhook(app, &body, &signed(app, &body)).await.status(), 200);
+}
+
+/// `user`'s connection `sid` leaving `room`, as LiveKit reports it with `reason`.
+async fn leave_as(app: &TestApp, room: ChannelId, user: UserId, sid: &str, reason: &str) {
+    let body =
+        json!({"event": "participant_left", "id": "EV_test", "room": {"name": room.to_string()},
+        "participant": {"identity": user.to_string(), "sid": sid, "disconnectReason": reason}})
+        .to_string();
+    assert_eq!(webhook(app, &body, &signed(app, &body)).await.status(), 200);
+}
+
+/// The voice joins and leaves `rx` gets within `wait`.
+async fn voice_events(
+    rx: &mut tokio::sync::mpsc::Receiver<pulse_protocol::gateway::ServerFrame>,
+    wait: std::time::Duration,
+) -> Vec<Event> {
+    let mut out = Vec::new();
+    let until = tokio::time::Instant::now() + wait;
+    while let Ok(Some(frame)) = tokio::time::timeout_at(until, rx.recv()).await {
+        if let pulse_protocol::gateway::ServerFrame::Event(
+            e @ (Event::VoiceJoined { .. } | Event::VoiceLeft { .. }),
+        ) = frame
+        {
+            out.push(e);
+        }
+    }
+    out
+}
+
+/// #281: a connection lost to the network that comes back in time is a reconnect nobody else
+/// hears: no leave, no join, one session throughout.
+#[tokio::test]
+async fn a_quick_reconnect_after_a_network_drop_is_silent() {
+    let app = spawn_quick_reconnect().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    join_as(&app, &a, l.id, a_id, "PA_1").await;
+    // what alex's other device (and everyone in the server) is told
+    let mut rx = app.hub.register(a_id, String::new()).rx;
+
+    leave_as(&app, l.id, a_id, "PA_1", "CONNECTION_TIMEOUT").await;
+    assert!(
+        app.voice_members(l.id).contains(&a_id),
+        "still in the call while they may come back"
+    );
+    join_as(&app, &a, l.id, a_id, "PA_2").await;
+
+    let heard = voice_events(&mut rx, std::time::Duration::from_millis(900)).await;
+    assert!(heard.is_empty(), "nothing published: {heard:?}");
+    assert!(app.voice_members(l.id).contains(&a_id));
+    let open: i64 = sqlx::query_scalar("SELECT count(*) FROM voice_sessions WHERE left_at IS NULL")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let all: i64 = sqlx::query_scalar("SELECT count(*) FROM voice_sessions")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!((open, all), (1, 1), "the same session carries on");
+    // the replaced connection's late leave is stale, as before
+    leave_as(&app, l.id, a_id, "PA_1", "DUPLICATE_IDENTITY").await;
+    assert!(app.voice_members(l.id).contains(&a_id));
+}
+
+/// #281: not back in time, the held leave goes out then; leaving on purpose goes out at once.
+#[tokio::test]
+async fn a_network_drop_not_back_in_time_leaves_after_the_wait() {
+    let app = spawn_quick_reconnect().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (k_id, k) = register(&app, "kim").await;
+    let (s_id, _) = register(&app, "sam").await;
+    let l = lounge(&app, &a).await;
+    join_as(&app, &a, l.id, a_id, "PA_a").await;
+    let mut rx = app.hub.register(a_id, String::new()).rx;
+
+    leave_as(&app, l.id, a_id, "PA_a", "SIGNAL_CLOSE").await;
+    assert!(app.voice_members(l.id).contains(&a_id));
+    let heard = voice_events(&mut rx, std::time::Duration::from_millis(900)).await;
+    assert!(
+        matches!(heard.as_slice(), [Event::VoiceLeft { channel_id, user_id }] if (*channel_id, *user_id) == (l.id, a_id)),
+        "one leave, after the wait: {heard:?}"
+    );
+    assert!(!app.voice_members(l.id).contains(&a_id));
+    let open: i64 = sqlx::query_scalar("SELECT count(*) FROM voice_sessions WHERE left_at IS NULL")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(open, 0);
+
+    // a leave on purpose (here kim leaving a DM call) goes out at once, as before
+    let dm = create_dm(&app, &k, &[s_id]).await;
+    join_as(&app, &k, dm.id, k_id, "PA_k").await;
+    leave_as(&app, dm.id, k_id, "PA_k", "CLIENT_INITIATED").await;
+    assert!(
+        !app.voice_members(dm.id).contains(&k_id),
+        "left on purpose: at once"
+    );
+}
+
+/// #281: back from a drop in another channel, the old call is left first, so nobody is in two.
+#[tokio::test]
+async fn a_rejoin_elsewhere_ends_the_held_call_first() {
+    let app = spawn_quick_reconnect().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    let dm = create_dm(&app, &a, &[register(&app, "jo").await.0]).await;
+    join_as(&app, &a, l.id, a_id, "PA_1").await;
+    leave_as(&app, l.id, a_id, "PA_1", "CONNECTION_TIMEOUT").await;
+    join_as(&app, &a, dm.id, a_id, "PA_2").await;
+    assert!(!app.voice_members(l.id).contains(&a_id));
+    assert!(app.voice_members(dm.id).contains(&a_id));
+}

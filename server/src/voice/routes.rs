@@ -161,6 +161,12 @@ async fn webhook(
         }
         return Ok(StatusCode::OK);
     };
+    // A connection that dropped off the network (#281) usually comes back within seconds as a
+    // new one: its leave waits, so a quick rejoin is silent for everyone else.
+    if ev.event == "participant_left" && network_drop(p.disconnect_reason) {
+        hold_leave(&s, channel_id, user_id, &p.sid, p.disconnect_reason);
+        return Ok(StatusCode::OK);
+    }
     match ev.event.as_str() {
         "participant_joined" => joined(&s, &ch, user_id, &p.sid).await?,
         // a stale or aborted leave ends nothing, and stops here
@@ -177,6 +183,60 @@ async fn webhook(
         crate::voice::moderation::reconcile_join(&s, server, channel_id, user_id, p).await;
     }
     Ok(StatusCode::OK)
+}
+
+/// Whether a leave's LiveKit disconnect reason says the connection was lost rather than closed
+/// (#281): those are held for [`CallTimings::reconnect`]. Leaving, being removed, the room closing
+/// and an unknown reason (what older LiveKits send) go out at once, as before.
+///
+/// [`CallTimings::reconnect`]: crate::config::CallTimings
+fn network_drop(reason: i32) -> bool {
+    use livekit_protocol::DisconnectReason as R;
+    matches!(
+        R::try_from(reason),
+        Ok(R::ConnectionTimeout
+            | R::SignalClose
+            | R::StateMismatch
+            | R::MediaFailure
+            | R::ServerShutdown
+            | R::Migration)
+    )
+}
+
+/// Holds back the leave of `user`'s connection `sid` from `channel` for [`CallTimings::reconnect`]
+/// (#281). They stay in the voice state meanwhile, their session open and their stream, stage share
+/// and watch party place kept. A rejoin to the same call in time takes the hold and replaces the
+/// connection, so nothing is published; one elsewhere ends this call first (`joined`). Otherwise
+/// the leave goes ahead as if it had just come in, unless that connection was replaced meanwhile.
+///
+/// [`CallTimings::reconnect`]: crate::config::CallTimings
+fn hold_leave(s: &AppState, channel: ChannelId, user: UserId, sid: &str, reason: i32) {
+    let held = s.voice.hold_leave(channel, user, sid);
+    tracing::info!(%channel, %user, reason, "voice connection lost; its leave waits for a reconnect");
+    let (s, after) = (s.clone(), s.cfg.calls.reconnect);
+    tokio::spawn(async move {
+        tokio::time::sleep(after).await;
+        if !s.voice.release_held(user, &held) {
+            return;
+        }
+        if let Err(e) = end_held(&s, user, &held).await {
+            tracing::error!(error = ?e, %channel, %user, "held voice leave not applied");
+        }
+    });
+}
+
+/// The held leave `held` of `user` goes ahead: out of that call as `participant_left` would have
+/// taken them (a gone channel's call too).
+async fn end_held(s: &AppState, user: UserId, held: &crate::voice::state::Held) -> AppResult<()> {
+    match load_channel(&s.db, held.channel).await? {
+        Some(ch) => {
+            left_call(s, &ch, user, &held.sid, false).await?;
+        }
+        None => {
+            crate::servers::channels::out_of_gone_call(s, held.channel, user, &held.sid).await;
+        }
+    }
+    Ok(())
 }
 
 /// `user_id`'s connection `sid` (empty: whichever they're in on) left the call of `ch`, as the webhook loaded it: out
@@ -254,6 +314,14 @@ pub(crate) async fn left_call(
 /// webhook loaded it: into the voice state, a session row (server channels), the join published.
 async fn joined(s: &AppState, ch: &Channel, user_id: UserId, sid: &str) -> AppResult<()> {
     let channel_id = ch.id;
+    // back from a network drop (#281): to the same call, the hold just goes and the join below
+    // replaces the old connection without a word; to another, the old call is left first
+    if let Some(held) = s.voice.take_held(user_id)
+        && held.channel != channel_id
+        && let Err(e) = end_held(s, user_id, &held).await
+    {
+        tracing::error!(error = ?e, user = %user_id, "held voice leave not applied");
+    }
     if !s.voice.join(channel_id, user_id, sid) {
         return Ok(());
     }
