@@ -753,6 +753,25 @@ pub struct CreateServerInviteRequest {
     pub join_text: Option<String>,
 }
 
+/// `PATCH /invites/{code}` (#80): change a live invite link you made, keeping its code: how long it lasts (counted
+/// from when it was made), how many can use it, and its join button text. Absent fields stay as they are; the same
+/// rules as making one apply. Not for a direct invite.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+pub struct UpdateServerInviteRequest {
+    /// Seconds from when it was made until it expires; `0` = never (the owner only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub max_age_secs: Option<i64>,
+    /// How many people can join with it; `0` = no limit (the owner only). Never below how many already have.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub max_uses: Option<i64>,
+    /// The join button's text; blank clears it (back to the client's default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub join_text: Option<String>,
+}
+
 /// The longest custom join button text an invite may carry.
 pub const INVITE_JOIN_TEXT_CHARS: usize = 32;
 

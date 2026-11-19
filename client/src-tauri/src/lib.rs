@@ -402,6 +402,7 @@ pub fn run() {
             commands::create_server_invite,
             commands::list_server_invites,
             commands::invite_preview,
+            commands::update_invite,
             commands::revoke_invite,
             commands::accept_invite,
             commands::list_server_bans,

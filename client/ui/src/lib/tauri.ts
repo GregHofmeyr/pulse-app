@@ -5,6 +5,7 @@ import type { ServerBan } from './protocol/ServerBan'
 import type { ServerInvite } from './protocol/ServerInvite'
 import type { InvitePreview } from './protocol/InvitePreview'
 import type { CreateServerInviteRequest } from './protocol/CreateServerInviteRequest'
+import type { UpdateServerInviteRequest } from './protocol/UpdateServerInviteRequest'
 import type { MusicPlayer } from './protocol/MusicPlayer'
 import type { ScheduledMessage } from './protocol/ScheduledMessage'
 import type { MessageReminder } from './protocol/MessageReminder'
@@ -353,6 +354,8 @@ export const api = {
   /** What an invite's card shows, as you see it (#80). Lookups are rate limited: cache it (lib/serverInvites.svelte). */
   invitePreview: (code: string) => invoke<InvitePreview>('invite_preview', { code }),
   /** Revoke an invite (#80): its maker or the server's owner. */
+  /** Change a live invite link you made, keeping its code (#80): how long it lasts, its uses, its join text. */
+  updateInvite: (code: string, request: UpdateServerInviteRequest) => invoke<ServerInvite>('update_invite', { code, request }),
   revokeInvite: (code: string) => invoke<void>('revoke_invite', { code }),
   /** Join a server with an invite (#80). */
   acceptInvite: (code: string) => invoke<Server>('accept_invite', { code }),

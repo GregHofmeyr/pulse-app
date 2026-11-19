@@ -67,6 +67,11 @@ describe('profile pictures', () => {
     expect(invoke).toHaveBeenCalledWith('upload_banner_media', bytes, { headers: { 'x-pulse-crop': '0,0,5,2' } })
   })
 
+  it('updateInvite names its arguments (#80)', async () => {
+    await api.updateInvite('abcDEF2345', { join_text: 'Hop in' })
+    expect(invoke).toHaveBeenCalledWith('update_invite', { code: 'abcDEF2345', request: { join_text: 'Hop in' } })
+  })
+
   it('setServerIcon and renameServer name their arguments (#55)', async () => {
     await api.setServerIcon('S1', 'ab')
     expect(invoke).toHaveBeenCalledWith('set_server_icon', { serverId: 'S1', hash: 'ab' })

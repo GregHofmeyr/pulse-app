@@ -1,7 +1,8 @@
 //! A server's banner (#475): what its invite cards show over its chip, and the invite page too.
 //!
 //! `PUT /servers/{id}/banner` sets it to an upload from `POST /media/banner` (the profile banner's pipeline: the same
-//! crop, size limits, still and storage), or removes it (`hash: null`). Its owner only. Its members hear
+//! crop, size limits, still and storage), or removes it (`hash: null`). Any of its members may (v1 trust model, #55).
+//! Its members hear
 //! `ServerUpdated` (#80: servers are private). The upload it replaces is left to the unused-media sweep.
 
 use axum::extract::{Path, State};
@@ -20,7 +21,7 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/servers/{id}/banner", put(set_banner))
 }
 
-/// `PUT /servers/{id}/banner`: 403 for a member who isn't the owner, 404 for a deleted or unknown server or one you
+/// `PUT /servers/{id}/banner`: any member (v1 trust model, #55). 404 for a deleted or unknown server or one you
 /// aren't in (#80), 400 for a hash that
 /// isn't a live banner upload (it is fine when it is the banner already).
 async fn set_banner(
@@ -64,8 +65,8 @@ impl Picture {
     }
 }
 
-/// Set or remove one of a server's pictures, as its owner, and tell its members (`ServerUpdated`). The same rules
-/// for both: 404 unless you're in the live server, 403 unless you own it, 400 for a hash that isn't a live upload of
+/// Set or remove one of a server's pictures, as any of its members (v1 trust model, #55), and tell its members
+/// (`ServerUpdated`). The same rules for both: 404 unless you're in the live server, 400 for a hash that isn't a live upload of
 /// the right kind (fine when it is the picture already: nothing changes and nothing is said).
 pub(crate) async fn set_picture(
     s: &AppState,
@@ -85,19 +86,13 @@ pub(crate) async fn set_picture(
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     server_live_in(&mut tx, id).await?; // deleted since the check above
-    let (owner, current): (String, Option<String>) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT created_by, {} FROM servers WHERE id = ?",
+    let current: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT {} FROM servers WHERE id = ?",
         pic.column()
     )))
     .bind(id.to_string())
     .fetch_one(&mut *tx)
     .await?;
-    if owner != me.to_string() {
-        return Err(AppError::ForbiddenMsg(format!(
-            "Only the server's owner can change its {}.",
-            pic.noun()
-        )));
-    }
     if current == hash {
         drop(tx);
         return load_server(&s.db, id).await;

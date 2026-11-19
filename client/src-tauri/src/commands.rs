@@ -1294,6 +1294,18 @@ pub async fn invite_preview(
     core.check(&app, api.invite_preview(&token, &code).await)
 }
 
+/// Change a live invite link you made, keeping its code (#80).
+#[tauri::command]
+pub async fn update_invite(
+    app: AppHandle,
+    core: State<'_, Core>,
+    code: String,
+    request: pulse_protocol::rest::UpdateServerInviteRequest,
+) -> Result<ServerInvite, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.update_invite(&token, &code, &request).await)
+}
+
 #[tauri::command]
 pub async fn revoke_invite(
     app: AppHandle,

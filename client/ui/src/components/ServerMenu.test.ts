@@ -71,19 +71,19 @@ describe('ServerMenu', () => {
     expect(document.activeElement).toBe(item('Server settings'))
   })
 
-  it("Rename (#55) is its owner's only, and hands back to the shell", () => {
+  it('Rename (#55) is for anyone in it (v1 trust model), and hands back to the shell', () => {
     render()
     expect(labels()).not.toContain('Rename')
     unmount(cmp!)
     document.body.innerHTML = ''
-    app.state = { ...emptyState(), me, servers: [{ id: 'S1', name: 'Alpha', icon_hash: null, owner_id: 'U1' }] } as never
+    app.state = { ...emptyState(), me, servers: [{ id: 'S1', name: 'Alpha', icon_hash: null, owner_id: 'U2' }], members: { S1: [{ user: me, nickname: null }] } } as never
     const onRename = vi.fn()
     opener = document.createElement('button')
     document.body.append(opener)
     onClose = vi.fn()
     cmp = mount(ServerMenu, { target: document.body, props: { serverId: 'S1', name: 'Alpha', x: 20, y: 50, opener, onClose, onSettings, onRename, onError } })
     flushSync()
-    expect(labels().slice(0, 2)).toEqual(['Server settings', 'Rename'])
+    expect(labels().slice(0, 3)).toEqual(['Invite people', 'Server settings', 'Rename'])
     item('Rename').click()
     flushSync()
     expect(onRename).toHaveBeenCalledTimes(1)

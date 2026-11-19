@@ -27,7 +27,7 @@ use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
     ChannelKind, CreateServerInviteRequest, INVITE_JOIN_TEXT_CHARS, InvitePreview, InviteState,
-    Message, MessageServerInvite, Server, ServerInvite,
+    Message, MessageServerInvite, Server, ServerInvite, UpdateServerInviteRequest,
 };
 use sqlx::{SqliteConnection, SqlitePool};
 
@@ -41,7 +41,7 @@ use crate::servers::routes::{require_member, server_exists, server_live_in};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/servers/{id}/invites", get(list).post(create))
-        .route("/invites/{code}", get(preview).delete(revoke))
+        .route("/invites/{code}", get(preview).patch(update).delete(revoke))
         .route("/invites/{code}/accept", post(accept))
 }
 
@@ -639,6 +639,85 @@ async fn revoke(
         invites_changed(&s, server, [maker]).await;
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `PATCH /invites/{code}`: change a live invite link its maker made, keeping the code (the Invite dialog edits one
+/// link while it's open, #80). Only its maker: 404 for anyone else (as for an unknown code), 400 for a direct invite or
+/// one that no longer works, and the same limits as making one (403 past what a member may make; 400 for a use limit
+/// below its uses so far). Answers with the invite as it is now.
+async fn update(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(code): Path<String>,
+    Json(req): Json<UpdateServerInviteRequest>,
+) -> AppResult<Json<ServerInvite>> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    if !well_formed(&code) {
+        return Err(AppError::NotFound);
+    }
+    let join_text = req
+        .join_text
+        .as_deref()
+        .map(|t| clean_join_text(Some(t)))
+        .transpose()?;
+    let mut tx = begin_write(&s.db).await?;
+    let row = load(&mut *tx, &code).await?.ok_or(AppError::NotFound)?;
+    let server = row.server()?;
+    if row.maker()? != me {
+        return Err(AppError::NotFound);
+    }
+    server_live_in(&mut tx, server).await?;
+    if !member_in(&mut tx, server, me).await? {
+        return Err(AppError::NotFound);
+    }
+    if row.for_user.is_some() {
+        return Err(AppError::BadRequest(
+            "a direct invite can't be changed".into(),
+        ));
+    }
+    if row.state(&now()) != InviteState::Valid {
+        return Err(AppError::BadRequest("that invite no longer works".into()));
+    }
+    let owner = owner_of(&mut *tx, server).await? == me;
+    let made: DateTime<Utc> = DateTime::parse_from_rfc3339(&row.created_at)
+        .map_err(anyhow::Error::from)?
+        .with_timezone(&Utc);
+    // the same checks as making it, counted from when it was made
+    let ask = CreateServerInviteRequest {
+        for_user: None,
+        max_age_secs: req.max_age_secs,
+        max_uses: req.max_uses,
+        join_text: None,
+    };
+    let (expires_at, max_uses) = limits_for(&ask, owner, false, made)?;
+    if req.max_uses.is_some() && max_uses.is_some_and(|m| m < row.uses.max(1)) {
+        return Err(AppError::BadRequest(
+            "that's fewer uses than it has already had".into(),
+        ));
+    }
+    sqlx::query(
+        "UPDATE server_invites SET
+           expires_at = CASE WHEN ? THEN ? ELSE expires_at END,
+           max_uses = CASE WHEN ? THEN ? ELSE max_uses END,
+           join_text = CASE WHEN ? THEN ? ELSE join_text END
+         WHERE code = ?",
+    )
+    .bind(req.max_age_secs.is_some())
+    .bind(&expires_at)
+    .bind(req.max_uses.is_some())
+    .bind(max_uses)
+    .bind(join_text.is_some())
+    .bind(join_text.flatten())
+    .bind(&code)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    tracing::info!(server = %server, by = %me, "server invite changed");
+    invites_changed(&s, server, [me]).await;
+    let row = load(&s.db, &code).await?.ok_or(AppError::NotFound)?;
+    Ok(Json(row.view(&now())?))
 }
 
 /// Why a looked-up code didn't work, as the failure log records it.

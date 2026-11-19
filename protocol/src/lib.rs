@@ -37,6 +37,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::CreateServerRequest::export_all(&cfg)?;
     rest::TransferServerRequest::export_all(&cfg)?;
     rest::CreateServerInviteRequest::export_all(&cfg)?;
+    rest::UpdateServerInviteRequest::export_all(&cfg)?;
     rest::InviteState::export_all(&cfg)?;
     rest::ServerInvite::export_all(&cfg)?;
     rest::InvitePreview::export_all(&cfg)?;
