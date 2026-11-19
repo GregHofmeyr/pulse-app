@@ -5,7 +5,7 @@
   import type { PersonMenuAt } from '../lib/participantMenu'
   import MemberMenu from './MemberMenu.svelte'
 
-  let { menu, onClose, onMessage, onRemove, onUnban, muteChannelId = null }: {
+  let { menu, onClose, onMessage, onRemove, onUnban, onViewProfile, muteChannelId = null }: {
     menu: PersonMenuAt | null
     onClose: () => void
     onMessage?: (userId: string) => void
@@ -15,13 +15,15 @@
     onUnban?: (userId: string) => void
     /** A message in your DM with them: Mute conversation mutes that DM. */
     muteChannelId?: string | null
+    /** Inside a full profile (#335): View profile switches it to them (their card can't open over it). */
+    onViewProfile?: (userId: string) => void
   } = $props()
 </script>
 
 {#if menu}
   {#key menu}
     <div class="person-menu" role="presentation" onkeydown={(e) => { if (e.key === 'Escape') e.stopPropagation() }}>
-      <MemberMenu serverId={menu.serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} {onRemove} {onUnban} {muteChannelId} {onClose} />
+      <MemberMenu serverId={menu.serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} {onRemove} {onUnban} {onViewProfile} {muteChannelId} {onClose} />
     </div>
   {/key}
 {/if}

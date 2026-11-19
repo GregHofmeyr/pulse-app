@@ -11,7 +11,7 @@ import { invoke } from '@tauri-apps/api/core'
 import FullProfile from './FullProfile.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
-import { closeCard, closeFull } from '../lib/profileCard.svelte'
+import { closeCard, closeFull, profileUi } from '../lib/profileCard.svelte'
 import { badgeStore } from '../lib/badges.svelte'
 import type { User } from '../lib/protocol/User'
 import type { Profile } from '../lib/protocol/Profile'
@@ -104,6 +104,29 @@ describe('FullProfile', () => {
     expect(rows[0].textContent).toContain('by alex')
     expect(rows[0].textContent).toContain('Oct 20, 2026')
     expect(rows[1].textContent).toContain('Older')
+  })
+
+  it("who made a change: their name opens their full profile here, and right-click their person menu (#335)", () => {
+    const onClose = show(profile({ name_archive: [{ server_id: 'S1', name: 'Newer', changed_by: 'U1', changed_at: '2026-10-20T00:00:00Z' }] }))
+    const by = panel('Name Archive')!.querySelector<HTMLButtonElement>('button.by')!
+    expect(by.textContent).toBe('alex')
+    by.click()
+    expect(profileUi.full).toEqual({ userId: 'U1', serverId: 'S1' })
+    closeFull()
+    by.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
+    flushSync()
+    const menu = document.querySelector<HTMLElement>('.modal [role="menu"]')!
+    expect(menu).not.toBeNull()
+    menu.querySelector<HTMLButtonElement>('[data-item="profile"]')!.click()
+    flushSync()
+    expect(profileUi.full).toEqual({ userId: 'U1', serverId: 'S1' })
+    expect(profileUi.card).toBeNull()
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+    // from the keyboard too
+    by.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.querySelector('.modal [role="menu"]')).not.toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('trophy case shows No trophies yet, then badges', () => {

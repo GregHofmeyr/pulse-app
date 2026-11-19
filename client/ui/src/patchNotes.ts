@@ -35,6 +35,7 @@ export const patchNotes: PatchNotes = {
     'You can\'t schedule a message in a DM with someone you\'ve blocked any more (it used to wait until its time, then fail)',
   ],
   qol: [
+    'In a full profile\'s Name Archive, click who made a change to see their profile, or right-click them for their menu',
     'A watch party opened in a window moves on with the party to its next video, and closes when you leave the party',
     'Making a poll anonymous in a DM or a small group now warns that people can still work out a vote from the counts changing',
   ],
