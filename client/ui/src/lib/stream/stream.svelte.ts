@@ -23,8 +23,20 @@ import { notifyPrefs } from '../notifyPrefs.svelte'
 import { windowFocus } from '../windowFocus.svelte'
 import { windowHandle, type Sound, type SoundStatus, type WindowRef } from './sound'
 
-/** `sound`: where stream audio comes from while `audio` is on (switchable live; unset reads as This app). */
-type Live = { channelId: string; res: Res; fps: Fps; audio: boolean; allowGhosts: boolean; audioMuted: boolean; label: string; encoderWarning: boolean; sound?: Sound }
+/** `sound`: where stream audio comes from while `audio` is on (switchable live; unset reads as This app).
+ *  `reconnecting`: the `#v` connection was lost and the share is being republished on a new one (#343). */
+type Live = {
+  channelId: string
+  res: Res
+  fps: Fps
+  audio: boolean
+  allowGhosts: boolean
+  audioMuted: boolean
+  label: string
+  encoderWarning: boolean
+  sound?: Sound
+  reconnecting?: boolean
+}
 /** `ghost`: watched from outside that voice channel, under an anonymous identity (counted, never named). */
 export type Watching = { channelId: string; streamer: string; quality: Quality; view: View; ghost?: boolean }
 
@@ -91,6 +103,11 @@ const PREVIEW_EVERY_MS = 15_000
  */
 const AUDIO_RECONNECTS_MAX = 3
 const AUDIO_RECONNECT_WINDOW_MS = 60_000
+/**
+ * A share whose `#v` connection LiveKit gave up on is republished on a new one (#343): tries with backoff from
+ * `firstMs` up to `maxMs` apart, for `windowMs` (inside the 60 s the server keeps it Reconnecting). Mutable for tests.
+ */
+export const RESUME = { firstMs: 1_000, maxMs: 8_000, windowMs: 50_000 }
 /** A stream a server restart dropped from Ready and that comes back within this is re-announced, not new. */
 const BACK_WITHIN_MS = 60_000
 
@@ -233,14 +250,65 @@ async function roomLost(mine: number) {
     await endWatches((w) => w.channelId === channelId && !!w.ghost, false)
     return
   }
-  stream.notice = stream.live ? 'Streaming stopped: the connection was lost' : LOST
   // only what was on the lost connection: a watch started on a new one meanwhile stays
   const lost = new Set(stream.watching.map((w) => streamKey(w.channelId, w.streamer)))
-  if (stream.live) {
-    liveGen.cancel()
-    await endLive(true)
-  }
+  if (lost.size) stream.notice = LOST
+  // our share survives a blip (#343): the capture carries on, and goes out again on a new connection
+  if (stream.live) void resumeLive(stream.live)
   await endWatches((w) => lost.has(streamKey(w.channelId, w.streamer)), true)
+}
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Republishes `live`'s capture on a new `#v` connection after LiveKit gave up on the old one (#343), trying with
+ * backoff for `RESUME.windowMs`; the server shows it Reconnecting meanwhile and Live again once `#v` is back. Stop, a
+ * voice change, the server ending it or the capture ending call it off; out of time, the share ends and says so.
+ */
+async function resumeLive(live: Live) {
+  const token = liveGen.next()
+  const going = () => liveGen.current(token) && stream.live === live
+  live.reconnecting = true
+  streamCmd.log({ ev: 'live_resume_start' })
+  const deadline = Date.now() + RESUME.windowMs
+  let backoff = RESUME.firstMs
+  for (let attempt = 1; going(); attempt++) {
+    const track = liveTrack
+    if (!track || track.mediaStreamTrack.readyState === 'ended') return onTrackEnded()
+    try {
+      const room = await ensureRoom(live.channelId)
+      if (!going()) return stopIfOrphaned(track)
+      await room.publish(track, live.res, live.fps)
+      if (!going()) {
+        // stopped while publishing: that stop's unpublish may have run before this publish landed
+        if (stream.live !== live) await room.unpublish().catch(logError('unpublish_error'))
+        await releaseIfIdle()
+        return stopIfOrphaned(track)
+      }
+      live.reconnecting = false
+      streamCmd.log({ ev: 'live_resumed', attempt })
+      stopOutDiag?.()
+      stopOutDiag = startDiagnostics('out', () => room.localStats(), live.fps, (warn) => {
+        if (stream.live) stream.live.encoderWarning = warn
+      })
+      return
+    } catch (e) {
+      logError('live_resume_error')(e)
+    }
+    if (Date.now() + backoff > deadline) break
+    await wait(backoff)
+    backoff = Math.min(backoff * 2, RESUME.maxMs)
+  }
+  if (!going()) return
+  streamCmd.log({ ev: 'live_resume_given_up' })
+  stream.notice = 'Streaming stopped: the connection was lost'
+  liveGen.cancel()
+  await endLive(true)
+}
+
+/** A capture a resume was holding when its share ended meanwhile: nothing will publish it again, so it stops. */
+function stopIfOrphaned(track: LocalVideoTrack) {
+  if (liveTrack !== track) track.stop()
 }
 
 /** Watch again what a restart dropped, for each of `streams` (now listed, or just started) it was on. */
@@ -610,7 +678,7 @@ async function goLive(token: number, channelId: string, track: LocalVideoTrack, 
   // muted stays muted from the last Go Live
   const audioMuted = audio && loadAudioMuted()
   const sound: Sound = settings.sound ?? 'app'
-  stream.live = { channelId, res, fps, audio, allowGhosts, audioMuted, label, encoderWarning: false, sound }
+  stream.live = { channelId, res, fps, audio, allowGhosts, audioMuted, label, encoderWarning: false, sound, reconnecting: false }
   stream.sound = null
   streamCmd.log({ ev: 'live', res, fps, audio, allowGhosts, ...(audio ? { sound } : {}) })
   // the shared window closed (or the capture otherwise ended); it may already have, before we listened

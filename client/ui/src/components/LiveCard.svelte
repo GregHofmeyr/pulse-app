@@ -43,6 +43,7 @@
     <div class="row">
       <span class="dot"></span>
       <strong>You're live</strong>
+      {#if live.reconnecting}<span class="pill" role="status" data-tip="The connection dropped: your share goes out again as soon as it's back">Reconnecting…</span>{/if}
       <span class="meta">{live.res}p{live.fps}{#if sound}{' · '}<span data-tip={stream.sound?.tier === 'lastResort' && live.audio ? LAST_RESORT_TIP : undefined}>{sound}</span>{/if}</span>
       <span class="spacer"></span>
       <button type="button" class="btn btn-secondary ghost" onclick={toggleHidden}>{hidden ? 'Show preview' : 'Hide preview'}</button>
@@ -97,6 +98,7 @@
   .allow input { accent-color: var(--accent); }
   .tile .allow { color: #fff; font-size: 12px; }
   .warn { margin: 0; font-size: 13px; color: var(--warn-text); }
+  .pill { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--warn-bg, var(--bg-3)); color: var(--warn-text); white-space: nowrap; }
   /* the tile variant: the preview fills the tile; the rows float over it as top and bottom bars */
   .card.tile { position: absolute; inset: 0; margin: 0; padding: 0; max-width: none; width: auto; gap: 0; border: 0; border-radius: 0; background: #000; align-self: stretch; }
   .tile .preview { position: absolute; inset: 0; }
