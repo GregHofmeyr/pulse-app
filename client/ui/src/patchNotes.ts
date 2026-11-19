@@ -29,10 +29,13 @@ export const patchNotes: PatchNotes = {
   date: '20 November 2026',
   new: [],
   fixes: [
+    'The opened server card from an invite pack is sharp again (its text and icon were slightly blurry), and "✦ MYTHICAL PULL ✦" is easier to read in every theme',
     'Voice: when your connection drops for a moment and comes back, nobody else hears you leave and rejoin',
   ],
-  qol: [],
-  message: 'Smoother calls 🎧',
+  qol: [
+    'Making a poll anonymous in a DM or a small group now warns that people can still work out a vote from the counts changing',
+  ],
+  message: 'Polish 🧽',
 }
 
 /** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */

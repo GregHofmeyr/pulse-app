@@ -4,11 +4,9 @@
 export const PACK = {
   gold: '#f2b33d',
   goldGlow: 'rgba(242, 179, 61, .6)',
-  goldGlowStrong: 'rgba(242, 179, 61, 1)',
   goldHalo: 'rgba(242, 179, 61, .25)',
   goldBurst: 'rgba(242, 179, 61, .18)',
   rose: '#c2335f',
-  roseGlow: 'rgba(194, 51, 95, .6)',
   periwinkle: '#8b9cff',
   mint: '#3fb27f',
   onGold: '#1d1405',

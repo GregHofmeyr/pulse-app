@@ -127,6 +127,8 @@ describe('contrast, every theme and tint', () => {
     need('--on-danger', '--danger', 4.5)
     need('--on-quote-green', '--quote-green', 4.5)
     need('--tooltip-text', '--tooltip-bg', 4.5)
+    // the invite card's "✦ MYTHICAL PULL ✦" on the card's surface (#517)
+    need('--pack-gold-text', '--bg-1', 4.5)
     expect(fails).toEqual([])
   })
 })
