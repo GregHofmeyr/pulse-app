@@ -117,6 +117,8 @@
   --rarity-mythical: #ff5c8a;
   --first-gold: #f5cd52;
   --first-gold-soft: rgba(245, 205, 82, .35);
+  /* the invite card's "✦ MYTHICAL PULL ✦" (#517): the pack's gold, deepened on light themes, at 4.5:1 on --bg-1 */
+  --pack-gold-text: #f6c453;
   --badge-new: #f2616b;
   /* --text-3, translucent, so the thumb reads on every surface it sits on (--bg-0 to --bg-4). Plain rgb(), not
      color-mix(): an engine without color-mix() would make the thumb invisible. */
@@ -204,6 +206,7 @@
   --rarity-mythical: #ff5c8a;
   --first-gold: #f5cd52;
   --first-gold-soft: rgba(245, 205, 82, .35);
+  --pack-gold-text: #f6c453;
   --badge-new: #f2616b;
 }
 
@@ -287,6 +290,7 @@
   --rarity-mythical: #ff5c8a;
   --first-gold: #f5cd52;
   --first-gold-soft: rgba(245, 205, 82, .35);
+  --pack-gold-text: #f6c453;
   --badge-new: #f2616b;
 }
 
@@ -370,6 +374,7 @@
   --rarity-mythical: #ff5c8a;
   --first-gold: #f5cd52;
   --first-gold-soft: rgba(245, 205, 82, .35);
+  --pack-gold-text: #f6c453;
   --badge-new: #f2616b;
 }
 [data-theme='ember'] {
@@ -451,6 +456,7 @@
   --rarity-mythical: #ff5c8a;
   --first-gold: #f5cd52;
   --first-gold-soft: rgba(245, 205, 82, .35);
+  --pack-gold-text: #f6c453;
   --badge-new: #f2616b;
 }
 [data-theme='plum'] {
@@ -532,6 +538,7 @@
   --rarity-mythical: #ff5c8a;
   --first-gold: #f5cd52;
   --first-gold-soft: rgba(245, 205, 82, .35);
+  --pack-gold-text: #f6c453;
   --badge-new: #f2616b;
 }
 
@@ -616,6 +623,7 @@
   --rarity-mythical: #c42a5c;
   --first-gold: #a87a08;
   --first-gold-soft: rgba(168, 122, 8, .35);
+  --pack-gold-text: #7a4f00;
   --badge-new: #c8323a;
 }
 
@@ -701,6 +709,7 @@
   --rarity-mythical: #c42a5c;
   --first-gold: #a87a08;
   --first-gold-soft: rgba(168, 122, 8, .35);
+  --pack-gold-text: #7a4f00;
   --badge-new: #c8323a;
 }
 [data-theme='light'][data-tint='pink'] {
