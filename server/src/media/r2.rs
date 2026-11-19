@@ -332,8 +332,9 @@ impl R2 {
         }
     }
 
-    /// The `clips-check` probe: PUT, HEAD, GET and DELETE one small object through signed URLs, after checking that
-    /// the store refuses a body longer than the signed length, for a whole object and for a multipart part (#298).
+    /// The `clips-check` probe: PUT, HEAD, GET and DELETE one small object through signed URLs, checking that the
+    /// store refuses a body longer than the signed length, first for a whole object and at the end for a multipart
+    /// part (#298).
     /// `Err` names the failing step and its HTTP status.
     pub async fn probe(&self) -> Result<(), String> {
         const BODY: &[u8] = b"pulse clips-chk\n";
@@ -357,7 +358,6 @@ impl R2 {
             let _ = self.delete(&key).await;
             return Err(e);
         }
-        self.part_length_probe(ttl).await?;
 
         let (url, _) = self.upload_url(&key, BODY.len() as u64, "application/octet-stream", ttl);
         let r = self
@@ -418,7 +418,8 @@ impl R2 {
         if !del.status().is_success() {
             return Err(status("DELETE", del.status()));
         }
-        Ok(())
+        // last, once the round trip has shown the credentials work: a refusal here is about parts, not access
+        self.part_length_probe(ttl).await
     }
 
     /// The `clips-check` part length step (#298): a multipart part URL signed for N bytes must be refused a longer
