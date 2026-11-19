@@ -78,6 +78,8 @@ describe('motion', () => {
     'components/ClipFeed.svelte': /^jump-flash /,
     // the name effects (#468): flourishes with their own loops, played only on hover, in the editor and a full profile
     'components/Name.svelte': /^fx-/,
+    // the invite pack's tear, rip and card rise (#511): the design's own timings
+    'components/ServerInviteCard.svelte': /^(pack-|transform \d|opacity \d|clip-path \d)/,
     // reduced motion: everything finishes at once
     'app.css': /^\.01ms !important$/,
   }
