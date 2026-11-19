@@ -18,6 +18,9 @@
   import { livePin, pinTip } from '../lib/pins'
   import { serverNow } from '../lib/serverClock'
   import type { Message } from '../lib/protocol/Message'
+  import PersonMenu from './PersonMenu.svelte'
+  import { messagePerson } from '../lib/messagePerson'
+  import { personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
 
   let {
     message,
@@ -61,15 +64,20 @@
   let over = $state(false)
   // Edit history (#301, #415): "(edited)" opens the versions
   let historyAt = $state<HTMLElement | null>(null)
+  // the poster's person menu (#335): right-click (or ContextMenu / Shift+F10 on) their name or avatar
+  let personMenu = $state<PersonMenuAt | null>(null)
+  function openPersonMenu(e: MouseEvent | KeyboardEvent, zone: HTMLElement) {
+    personMenu = personMenuAt(e, message.author_id, serverId || null, zone) ?? personMenu
+  }
 </script>
 
 {#if clip}
   <article class="clip-item" class:compact data-clip-id={message.id} data-message-id={message.id} style:contain-intrinsic-size="auto {estimate}px"
     onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}>
-    <Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={compact ? 32 : 40} interactive={!!message.author_id} serverId={serverId || null} hovered={() => over} />
+    <span class="person-zone" role="presentation" oncontextmenu={(e) => openPersonMenu(e, e.currentTarget)} onkeydown={(e) => openPersonMenu(e, e.currentTarget)}><Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={compact ? 32 : 40} interactive={!!message.author_id} serverId={serverId || null} hovered={() => over} /></span>
     <div class="body">
       <div class="meta">
-        <strong>{#if message.author_id}<Name userId={message.author_id} serverId={serverId || null} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</strong>
+        <span class="person-zone" role="presentation" oncontextmenu={(e) => openPersonMenu(e, e.currentTarget)} onkeydown={(e) => openPersonMenu(e, e.currentTarget)}><strong>{#if message.author_id}<Name userId={message.author_id} serverId={serverId || null} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</strong></span>
         {#if game}<span class="game">{game}</span>{/if}
         <span class="time">{when}</span>
         {#if message.edited_at}<button type="button" class="edited" aria-haspopup="dialog" aria-expanded={!!historyAt} data-tip="See edit history" data-menu-toggle
@@ -92,7 +100,10 @@
   <EditHistoryDialog anchor={historyAt} messageId={message.id} onClose={() => (historyAt = null)} />
 {/if}
 
+<PersonMenu menu={personMenu} onMessage={messagePerson} onClose={() => (personMenu = null)} />
+
 <style>
+  .person-zone { display: contents; }
   /* drawn only near the screen; until it is, its size is the estimate set inline (the 480/260 here are fallbacks) */
   .clip-item { display: flex; gap: 14px; padding: 8px 18px; content-visibility: auto; contain-intrinsic-size: auto 480px; container-type: inline-size; }
   .clip-item:hover { background: var(--hover-tint); }
