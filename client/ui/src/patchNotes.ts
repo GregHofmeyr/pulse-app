@@ -38,6 +38,7 @@ export const patchNotes: PatchNotes = {
   qol: [
     'A watch party opened in a window moves on with the party to its next video, and closes when you leave the party',
     'Making a poll anonymous in a DM or a small group now warns that people can still work out a vote from the counts changing',
+    'Linux: you show as Idle after 30 minutes away on Hyprland, sway and other wlroots desktops too',
   ],
   message: 'Polish 🧽',
 }
