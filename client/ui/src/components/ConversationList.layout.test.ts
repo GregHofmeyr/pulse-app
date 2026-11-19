@@ -215,7 +215,8 @@ describe('drag onto a section (#419)', () => {
   let under: Element | null = null
   beforeEach(() => {
     under = null
-    document.elementFromPoint = () => under
+    // the lifted row is on top of what's under the pointer, as in a real layout
+    document.elementsFromPoint = () => [document.querySelector('.row.lifted'), under].filter((x): x is Element => !!x)
   })
 
   it('dropping a conversation on a category moves it there, and the click that ends the drag opens nothing', async () => {

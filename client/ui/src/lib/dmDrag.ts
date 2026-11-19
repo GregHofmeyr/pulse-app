@@ -35,8 +35,8 @@ export type ConvDragOptions = {
   onLift?: (lifted: boolean) => void
   /** No dragging (nowhere to drop: no categories and nothing pinned). */
   disabled?: boolean
-  /** What's under a point (`document.elementFromPoint`; tests pass their own). */
-  hitTest?: (x: number, y: number) => Element | null
+  /** What's under a point, top first (`document.elementsFromPoint`; tests pass their own). */
+  hitTest?: (x: number, y: number) => Element[]
 }
 
 type Drag = { id: string; pointerId: number; startX: number; startY: number; row: HTMLElement; live: boolean; over: HTMLElement | null }
@@ -45,7 +45,7 @@ export function convDrag(node: HTMLElement, options: ConvDragOptions) {
   let opts = options
   let drag: Drag | null = null
 
-  const hit = (x: number, y: number) => (opts.hitTest ?? ((a: number, b: number) => document.elementFromPoint(a, b)))(x, y)
+  const hit = (x: number, y: number) => (opts.hitTest ?? ((a: number, b: number) => document.elementsFromPoint?.(a, b) ?? []))(x, y)
 
   function mark(el: HTMLElement | null) {
     if (!drag || drag.over === el) return
@@ -87,9 +87,11 @@ export function convDrag(node: HTMLElement, options: ConvDragOptions) {
       if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return
       start(drag)
     }
-    // the lifted row takes no pointer (CSS), so the hit test sees what's under it
     drag.row.style.transform = `translate(${dx}px, ${dy}px)`
-    const under = hit(e.clientX, e.clientY)?.closest<HTMLElement>('[data-drop]') ?? null
+    // what's under the lifted row (it's on top, and keeps the pointer capture, so it isn't made pointer-transparent)
+    const row = drag.row
+    const below = hit(e.clientX, e.clientY).find((el) => !row.contains(el))
+    const under = below?.closest<HTMLElement>('[data-drop]') ?? null
     mark(under && node.contains(under) ? under : null)
   }
 
