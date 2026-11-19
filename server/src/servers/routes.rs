@@ -268,6 +268,7 @@ async fn create_server(
         owner_id: Some(me),
         banner_hash: None,
         banner_still: None,
+        icon_still: None,
     };
     s.hub
         .publish(
@@ -300,7 +301,8 @@ async fn create_server(
 
 /// The columns [`server_from_row`] reads, from `servers`.
 pub(crate) const SERVER_COLS: &str = "id, name, icon_hash, created_by, banner_hash, \
-     (SELECT m.still_hash FROM media m WHERE m.hash = banner_hash) AS banner_still";
+     (SELECT m.still_hash FROM media m WHERE m.hash = banner_hash) AS banner_still, \
+     (SELECT m.still_hash FROM media m WHERE m.hash = icon_hash) AS icon_still";
 
 pub(crate) type ServerRow = (
     String,
@@ -309,10 +311,11 @@ pub(crate) type ServerRow = (
     String,
     Option<String>,
     Option<String>,
+    Option<String>,
 );
 
 pub(crate) fn server_from_row(
-    (id, name, icon_hash, owner, banner_hash, banner_still): ServerRow,
+    (id, name, icon_hash, owner, banner_hash, banner_still, icon_still): ServerRow,
 ) -> AppResult<Server> {
     Ok(Server {
         id: id.parse().map_err(anyhow::Error::from)?,
@@ -321,6 +324,7 @@ pub(crate) fn server_from_row(
         owner_id: Some(owner.parse().map_err(anyhow::Error::from)?),
         banner_hash,
         banner_still,
+        icon_still,
     })
 }
 

@@ -70,6 +70,7 @@ pub fn router(state: AppState) -> Router {
         .merge(servers::invites::router())
         .merge(servers::invite_page::router())
         .merge(servers::banner::router())
+        .merge(servers::overview::router())
         .merge(servers::bans::router())
         .merge(servers::order::router())
         .merge(servers::personal_order::router())
