@@ -4648,7 +4648,10 @@ mod tests {
         assert_eq!(got.icon_hash.as_deref(), Some(pic.hash.as_str()));
         let got = api.set_server_icon(&alex, s.id, None).await.unwrap();
         assert_eq!(got.icon_hash, None);
-        let got = api.rename_server(&alex, s.id, "Lounge".into()).await.unwrap();
+        let got = api
+            .rename_server(&alex, s.id, "Lounge".into())
+            .await
+            .unwrap();
         assert_eq!(got.name, "Lounge");
     }
 
