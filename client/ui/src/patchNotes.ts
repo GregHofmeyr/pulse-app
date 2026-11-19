@@ -36,6 +36,7 @@ export const patchNotes: PatchNotes = {
     'You can\'t schedule a message in a DM with someone you\'ve blocked any more (it used to wait until its time, then fail)',
     'Voice: when your connection drops for a moment and comes back, nobody else hears you leave and rejoin',
     'A stream whose streamer is still connected but sending nothing now ends after a minute, instead of staying live on a black screen',
+    'With animations turned off (Windows "Animation effects"), a server invite still arrives as a sealed pack: click it, press Enter or give it a short drag and the card is just there, with no animation',
   ],
   qol: [
     'In a full profile\'s Name Archive, click who made a change to see their profile, or right-click them for their menu',
