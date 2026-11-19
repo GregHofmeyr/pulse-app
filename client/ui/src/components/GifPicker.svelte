@@ -5,7 +5,7 @@
 
 <script lang="ts">
   // The GIF picker (#58), in the emoji picker's frame: a search box, a rail (GIPHY: trending, or what you search;
-  // GIPHY's stickers the same way, #293; Favourites), a two-column grid and "Powered by GIPHY" in the footer (GIPHY's terms). The core searches GIPHY
+  // GIPHY's stickers the same way, #293; Favourites; Favourite stickers, their own list, #498), a two-column grid and "Powered by GIPHY" in the footer (GIPHY's terms). The core searches GIPHY
   // itself with the server's key; results come in GIPHY's order with GIPHY's URLs untouched, and nothing is cached.
   // Picking one sends it; the star keeps it in your favourites.
   import { untrack } from 'svelte'
@@ -13,7 +13,7 @@
   import type { Snippet } from 'svelte'
   import { animatedGif } from '../lib/animate.svelte'
   import { gifLink, gridMedia, masonry } from '../lib/giphy'
-  import { gifFavs, isGifFav, loadGifFavs, toggleGifFav } from '../lib/gifs.svelte'
+  import { favGifs, favLabel, favStickers, gifFavs, isGifFav, loadGifFavs, toggleGifFav } from '../lib/gifs.svelte'
   import { app } from '../lib/store.svelte'
   import { api, errorText, type GifResult } from '../lib/tauri'
   import type { Gif } from '../lib/protocol/Gif'
@@ -28,7 +28,7 @@
 
   const NEAR_END_PX = 300
 
-  type Tab = 'giphy' | 'stickers' | 'favourites'
+  type Tab = 'giphy' | 'stickers' | 'favourites' | 'stickerFavs'
   /** One grid cell: a GIPHY result, or a favourite drawn from GIPHY's media links for its id. */
   type Cell = { gif: Gif; link: string; anim: string; still: string; w: number; h: number }
 
@@ -56,7 +56,8 @@
 
   // the results are dropped as the feed changes, so they are always the shown feed's
   let resultsStickers = $state(false)
-  const cells = $derived(tab === 'favourites' ? gifFavs.list.map(fromFav) : results.map((r) => fromResult(r, resultsStickers)))
+  const favTab = $derived(tab === 'favourites' || tab === 'stickerFavs')
+  const cells = $derived(tab === 'favourites' ? favGifs().map(fromFav) : tab === 'stickerFavs' ? favStickers().map(fromFav) : results.map((r) => fromResult(r, resultsStickers)))
   const columns = $derived(masonry(cells, (c) => c.h / c.w))
 
   async function load(q: string, offset: number, stickers = tab === 'stickers') {
@@ -94,7 +95,7 @@
   $effect(() => {
     const q = query.trim()
     return untrack(() => {
-      if (q && tab === 'favourites') tab = 'giphy'
+      if (q && favTab) tab = tab === 'stickerFavs' ? 'stickers' : 'giphy'
       if (first) {
         first = false
         void load(q, 0)
@@ -116,7 +117,7 @@
 
   function more() {
     // after a failed page, only Try again asks again: scrolling mustn't spend the server's GIPHY calls retrying
-    if (tab === 'favourites' || loading || error || next === null || !scroller) return
+    if (favTab || loading || error || next === null || !scroller) return
     if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - NEAR_END_PX) void load(shownQuery, next, shownStickers)
   }
 
@@ -139,7 +140,7 @@
       // Enter in the box sends the first GIF showing, but only once it's a result of what's typed: never the
       // previous results while the search is still on its way
       ev.preventDefault()
-      const current = tab === 'favourites' || (!loading && query.trim() === shownQuery && shownStickers === (tab === 'stickers'))
+      const current = favTab || (!loading && query.trim() === shownQuery && shownStickers === (tab === 'stickers'))
       if (current && cells[0]) onPick(cells[0].gif, cells[0].link)
     }
   }
@@ -152,10 +153,8 @@
       onmouseenter={() => (hovered = c.gif.title)} onmouseleave={() => (hovered = null)} onfocus={() => (hovered = c.gif.title)} onblur={() => (hovered = null)}>
       <img src={c.still} alt="" loading="lazy" draggable="false" {@attach animatedGif(c.anim, c.still)} />
     </button>
-    {#if !c.gif.sticker}
-      <button class="icon-btn icon-btn-xs icon-btn-overlay star" class:on={starred} type="button" aria-pressed={starred}
-        aria-label={starred ? 'Remove from favourite GIFs' : 'Add to favourite GIFs'} onclick={() => star(c.gif)}><Icon name="star" size={14} /></button>
-    {/if}
+    <button class="icon-btn icon-btn-xs icon-btn-overlay star" class:on={starred} type="button" aria-pressed={starred}
+      aria-label={favLabel(starred, !!c.gif.sticker)} onclick={() => star(c.gif)}><Icon name="star" size={14} /></button>
   </div>
 {/snippet}
 
@@ -174,14 +173,16 @@
         data-tip="Stickers" onclick={() => pickFeed('stickers')}><Icon name="sticker" size={18} /></button>
       <button class="rail-btn" class:on={tab === 'favourites'} type="button" aria-label="Favourites" aria-pressed={tab === 'favourites'}
         data-tip="Favourites" onclick={() => (tab = 'favourites')}><Icon name="star" size={18} /></button>
+      <button class="rail-btn" class:on={tab === 'stickerFavs'} type="button" aria-label="Favourite stickers" aria-pressed={tab === 'stickerFavs'}
+        data-tip="Favourite stickers" onclick={() => (tab = 'stickerFavs')}><Icon name="stickerStar" size={18} /></button>
     </nav>
     <div class="grid" bind:this={scroller} onscroll={more}>
       {#if notSetUp}
         <p class="none">GIFs aren't set up on this server yet</p>
       {:else if error && !cells.length}
         <p class="none" role="alert">{error}</p>
-      {:else if tab === 'favourites' && !cells.length}
-        <p class="none">{gifFavs.loaded ? 'Star a GIF to keep it here' : 'Loading…'}</p>
+      {:else if favTab && !cells.length}
+        <p class="none">{gifFavs.loaded ? (tab === 'stickerFavs' ? 'Star a sticker to keep it here' : 'Star a GIF to keep it here') : 'Loading…'}</p>
       {:else if !cells.length}
         <p class="none">{loading ? 'Loading…' : query.trim() ? (tab === 'stickers' ? 'No stickers found' : 'No GIFs found') : 'Nothing trending right now'}</p>
       {:else}

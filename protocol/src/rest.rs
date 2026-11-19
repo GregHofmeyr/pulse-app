@@ -1412,6 +1412,14 @@ pub struct GifConfig {
 }
 redacting_debug!(GifConfig { rating ; api_key });
 
+/// `GET /gifs/favourites`'s query (#498): plain, favourite GIFs only (what older apps expect); `with_stickers`, your
+/// favourite stickers too, each marked `sticker`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GifFavouritesQuery {
+    #[serde(default)]
+    pub with_stickers: bool,
+}
+
 /// GIF limits (#58), shared so the client can say them before the server refuses.
 pub mod gif_limits {
     /// Characters of a GIF id.
@@ -1420,6 +1428,7 @@ pub mod gif_limits {
     pub const TITLE_CHARS: usize = 140;
     /// Largest width or height accepted.
     pub const MAX_SIDE: u32 = 8192;
+    /// Favourite GIFs a person keeps, and favourite stickers (#498), each.
     pub const FAVOURITES_PER_PERSON: i64 = 200;
 }
 

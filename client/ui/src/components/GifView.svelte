@@ -2,12 +2,12 @@
   // A GIF in chat (#58): a picked one or a pasted GIPHY link, drawn from GIPHY's media links for its id (nothing of
   // GIPHY's is stored). It plays while the window is focused and it's on screen; under reduced motion it shows its
   // still until pointed at or clicked (lib/animate.svelte.ts shouldPlayGif). A star on hover keeps it in your
-  // favourites. A GIPHY sticker (#293) sits on the chat itself (no frame behind its transparency) and has no star:
-  // favourites are GIFs.
+  // favourites. A GIPHY sticker (#293) sits on the chat itself (no frame behind its transparency); its star keeps it
+  // in your favourite stickers, a list of their own (#498).
   import Icon from './Icon.svelte'
   import { animatedGif, motion } from '../lib/animate.svelte'
   import { chatSize, gifMedia, type ShownGif } from '../lib/giphy'
-  import { isGifFav, loadGifFavs, toggleGifFav } from '../lib/gifs.svelte'
+  import { favLabel, isGifFav, loadGifFavs, toggleGifFav } from '../lib/gifs.svelte'
   import { app } from '../lib/store.svelte'
   import { errorText } from '../lib/tauri'
 
@@ -33,7 +33,7 @@
     const width = gif.width ?? natural?.width ?? 200
     const height = gif.height ?? natural?.height ?? 200
     void loadGifFavs(me)
-      .then(() => toggleGifFav({ id: gif.id, title: gif.title, width, height }))
+      .then(() => toggleGifFav({ id: gif.id, title: gif.title, width, height, ...(gif.sticker ? { sticker: true } : {}) }))
       .catch((e) => onError(errorText(e)))
   }
   function seen(img: HTMLImageElement) {
@@ -51,11 +51,9 @@
     <img src={media.still} alt={label} width={size?.width} height={size?.height} draggable="false"
       onload={(e) => seen(e.currentTarget as HTMLImageElement)} onerror={onFail} {@attach animatedGif(media.anim, media.still, () => toggled)} />
   </button>
-  {#if !gif.sticker}
-    <button class="icon-btn icon-btn-sm icon-btn-overlay star" class:on={starred} type="button"
-      aria-label={starred ? 'Remove from favourite GIFs' : 'Add to favourite GIFs'} aria-pressed={starred} data-tip={starred ? 'Unfavourite' : 'Favourite'}
-      onclick={star}><Icon name="star" size={16} /></button>
-  {/if}
+  <button class="icon-btn icon-btn-sm icon-btn-overlay star" class:on={starred} type="button"
+    aria-label={favLabel(starred, !!gif.sticker)} aria-pressed={starred} data-tip={starred ? 'Unfavourite' : 'Favourite'}
+    onclick={star}><Icon name="star" size={16} /></button>
 </div>
 
 <style>

@@ -609,7 +609,7 @@ export const api = {
     invoke<void>('send_reply', { channelId, rootId, content, replyToId, nonce, gif }),
   /** GIFs (#58): a page of GIPHY results (`query` blank: trending) from `offset`; null when GIFs aren't set up on this server. */
   gifFeed: (query: string, offset = 0, stickers = false) => invoke<GifPage | null>('gif_feed', { query, offset, stickers }),
-  /** Your favourite GIFs, newest first. */
+  /** Your favourite GIFs and stickers (#498, each marked `sticker`), newest first. */
   gifFavourites: () => invoke<Gif[]>('gif_favourites'),
   setGifFavourite: (gif: Gif, on: boolean) => invoke<void>('set_gif_favourite', { gif, on }),
   markRepliesSeen: (rootId: string, messageId: string) => invoke<void>('mark_replies_seen', { rootId, messageId }),

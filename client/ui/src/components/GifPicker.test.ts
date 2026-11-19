@@ -221,6 +221,47 @@ describe('GifPicker', () => {
     expect(rail('Search results').getAttribute('aria-pressed')).toBe('true')
   })
 
+  it('favourite stickers are their own list (#498): starred from Stickers, kept off Favourites, sent as stickers', async () => {
+    favs = [{ id: 'fav1', title: 'Fav one', width: 300, height: 200 }, { id: 'stk1', title: 'Wave', width: 200, height: 200, sticker: true }]
+    feed = async (q, offset, stickers) => ({ gifs: [r(`${stickers ? 'S' : 'G'}${q || 'T'}${offset}`)], next: null })
+    open()
+    await flush()
+    rail('Favourites').click()
+    flushSync()
+    expect(labels()).toEqual(['Fav one'])
+    rail('Favourite stickers').click()
+    flushSync()
+    expect(labels()).toEqual(['Wave'])
+    expect(picker().querySelector('.cell.sticker')).not.toBeNull()
+    cells()[0].click()
+    expect(picked.at(-1)![0]).toEqual(favs[1])
+    // a sticker starred from the Stickers rail joins them, marked
+    rail('Stickers').click()
+    await flush()
+    picker().querySelector<HTMLButtonElement>('.cell .star[aria-label="Add to favourite stickers"]')!.click()
+    await flush()
+    expect(invoke).toHaveBeenCalledWith('set_gif_favourite', { gif: expect.objectContaining({ id: 'ST0', sticker: true }), on: true })
+    rail('Favourite stickers').click()
+    flushSync()
+    expect(labels()).toEqual(['ST0 GIF', 'Wave'])
+    rail('Favourites').click()
+    flushSync()
+    expect(labels()).toEqual(['Fav one'])
+    // typing a search from Favourite stickers searches stickers
+    rail('Favourite stickers').click()
+    flushSync()
+    type('wave')
+    expect(rail('Stickers').getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('no favourite stickers yet says how to add one (#498)', async () => {
+    open()
+    await flush()
+    rail('Favourite stickers').click()
+    flushSync()
+    expect(text()).toContain('Star a sticker to keep it here')
+  })
+
   it('no favourites yet says how to add one', async () => {
     open()
     await flush()
@@ -254,7 +295,7 @@ describe('GifPicker', () => {
     expect(text()).toContain('You can keep 200 favourite GIFs')
   })
 
-  it('the Stickers rail shows GIPHY stickers for the same search, sent marked as stickers, with no star (#293)', async () => {
+  it('the Stickers rail shows GIPHY stickers for the same search, sent marked as stickers (#293)', async () => {
     feed = async (q, offset, stickers) => ({ gifs: [r(`${stickers ? 'S' : 'G'}${q || 'T'}${offset}`)], next: null })
     open()
     await flush()
@@ -263,7 +304,7 @@ describe('GifPicker', () => {
     await flush()
     expect(feedCalls()).toEqual([{ query: '', offset: 0 }, { query: '', offset: 0, stickers: true }])
     expect(labels()).toEqual(['ST0 GIF'])
-    expect(picker().querySelector('.cell.sticker .star')).toBeNull()
+    expect(picker().querySelector('.cell.sticker .star')!.getAttribute('aria-label')).toBe('Add to favourite stickers')
     type('wave')
     vi.advanceTimersByTime(SEARCH_DELAY_MS)
     await flush()

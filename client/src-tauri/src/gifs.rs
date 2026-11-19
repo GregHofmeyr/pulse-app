@@ -326,14 +326,14 @@ pub async fn gif_feed(
     )
 }
 
-/// Your favourite GIFs, newest first.
+/// Your favourite GIFs and stickers (#498), newest first, each sticker marked.
 #[tauri::command]
 pub async fn gif_favourites(app: AppHandle, core: State<'_, Core>) -> Result<Vec<Gif>, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.gif_favourites(&token).await)
 }
 
-/// Star (`on`) or unstar a GIF.
+/// Star (`on`) or unstar a GIF or a sticker.
 #[tauri::command]
 pub async fn set_gif_favourite(
     app: AppHandle,
@@ -581,9 +581,20 @@ mod tests {
             height: 270,
             sticker: false,
         };
+        let s = Gif {
+            id: "stk456".into(),
+            sticker: true,
+            ..g.clone()
+        };
         api.add_gif_favourite(&token, &g).await.unwrap();
-        assert_eq!(api.gif_favourites(&token).await.unwrap(), vec![g.clone()]);
+        api.add_gif_favourite(&token, &s).await.unwrap();
+        // the stickers come back marked (#498)
+        assert_eq!(
+            api.gif_favourites(&token).await.unwrap(),
+            vec![s.clone(), g.clone()]
+        );
         api.remove_gif_favourite(&token, &g.id).await.unwrap();
+        api.remove_gif_favourite(&token, &s.id).await.unwrap();
         assert!(api.gif_favourites(&token).await.unwrap().is_empty());
     }
 }

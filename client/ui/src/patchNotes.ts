@@ -27,7 +27,9 @@ export const patchNotes: PatchNotes = {
   id: '0.2.17',
   version: '0.2.17',
   date: '20 November 2026',
-  new: [],
+  new: [
+    'Favourite stickers: star a sticker in the GIF picker or in chat, and find it again under Favourite stickers, a list of its own beside your favourite GIFs',
+  ],
   fixes: [
     'The opened server card from an invite pack is sharp again (its text and icon were slightly blurry), and "✦ MYTHICAL PULL ✦" is easier to read in every theme',
   ],

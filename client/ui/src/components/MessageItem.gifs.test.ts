@@ -58,11 +58,11 @@ afterEach(() => {
 })
 
 describe('GIFs in chat', () => {
-  it('a sticker (#293) shows on the chat itself, framed by nothing, and has no star', () => {
+  it('a sticker (#293) shows on the chat itself, framed by nothing; its star is for favourite stickers (#498)', () => {
     show(picked({ gif: { id: ID, title: 'Wave Sticker', width: 480, height: 480, sticker: true } }))
     expect(gifs()).toHaveLength(1)
     expect(gifs()[0].classList.contains('sticker')).toBe(true)
-    expect(gifs()[0].querySelector('.star')).toBeNull()
+    expect(gifs()[0].querySelector('.star')!.getAttribute('aria-label')).toBe('Add to favourite stickers')
     expect(img().getAttribute('alt')).toBe('Wave Sticker')
   })
   it('a picked GIF shows alone, playing, sized by its shape, its title the alt text', () => {
@@ -129,6 +129,15 @@ describe('GIFs in chat', () => {
     expect(invoke).toHaveBeenCalledWith('set_gif_favourite', { gif: { id: ID, title: 'Excited Yes GIF', width: 480, height: 270 }, on: true })
     expect(gifFavs.list.map((g) => g.id)).toEqual([ID])
     expect(gifs()[0].querySelector('.star')!.getAttribute('aria-label')).toBe('Remove from favourite GIFs')
+  })
+
+  it('a sticker\'s star adds it to your favourite stickers, marked (#498)', async () => {
+    show(picked({ gif: { id: ID, title: 'Wave Sticker', width: 480, height: 480, sticker: true } }))
+    await flush()
+    gifs()[0].querySelector<HTMLButtonElement>('.star')!.click()
+    await flush()
+    expect(invoke).toHaveBeenCalledWith('set_gif_favourite', { gif: { id: ID, title: 'Wave Sticker', width: 480, height: 480, sticker: true }, on: true })
+    expect(gifs()[0].querySelector('.star')!.getAttribute('aria-label')).toBe('Remove from favourite stickers')
   })
 
   it('a GIF GIPHY can’t give falls back to its link', () => {
