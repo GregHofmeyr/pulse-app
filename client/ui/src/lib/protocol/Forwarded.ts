@@ -20,7 +20,8 @@ message_id: MessageId, channel_id: ChannelId,
  */
 channel_kind: ChannelKind, 
 /**
- * The channel's name, for a server's channel only.
+ * The channel's name, for a server's channel only, and only on a forward posted in that same server (#80): a
+ * forward elsewhere leaves it out, and a client names the channel from its own copy when its user is in it.
  */
 channel_name: string | null, server_id: ServerId | null, 
 /**

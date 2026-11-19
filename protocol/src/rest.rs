@@ -1143,7 +1143,8 @@ pub struct Forwarded {
     pub channel_id: ChannelId,
     /// The kind of chat it was said in: a DM or group is never named.
     pub channel_kind: ChannelKind,
-    /// The channel's name, for a server's channel only.
+    /// The channel's name, for a server's channel only, and only on a forward posted in that same server (#80): a
+    /// forward elsewhere leaves it out, and a client names the channel from its own copy when its user is in it.
     pub channel_name: Option<String>,
     pub server_id: Option<ServerId>,
     /// The thread it was a reply in, if any (to open it there).

@@ -51,6 +51,9 @@ describe('forwarding (#302)', () => {
     expect(forwardedFrom(s, fwd({ channel_kind: 'voice', channel_name: 'Lounge' }))).toBe('Lounge in Main')
     expect(forwardedFrom(s, fwd({ channel_kind: 'dm', channel_name: null, server_id: null }))).toBe('a DM')
     expect(forwardedFrom(s, fwd({ channel_kind: 'group', channel_name: null, server_id: null }))).toBe('a group')
+    // a forward outside its server carries no channel name (#80): named from your own copy, or not at all
+    expect(forwardedFrom(s, fwd({ channel_name: null }))).toBe('#general in Main')
+    expect(forwardedFrom(s, fwd({ channel_id: 'NOPE', channel_name: null, server_id: 'S9' }))).toBe('a server channel')
   })
 
   it('the original opens only where you can see it, and not once it is gone', () => {

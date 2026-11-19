@@ -62,7 +62,8 @@ async fn a_forward_says_where_from_and_keeps_the_words_it_forwarded() {
     assert_eq!(f.message_id, original.id);
     assert_eq!(f.channel_id, g.id);
     assert_eq!(f.channel_kind, ChannelKind::Text);
-    assert_eq!(f.channel_name.as_deref(), Some("general"));
+    // a forward out of its server doesn't name the channel (#80: kim isn't in Main); sam's app names it from its own
+    assert_eq!(f.channel_name, None);
     assert_eq!(f.author_id, Some(alex_id));
     assert_eq!(f.created_at, original.created_at);
     // the spoiler stays a spoiler
@@ -123,6 +124,8 @@ async fn a_forward_says_where_from_and_keeps_the_words_it_forwarded() {
     let a = again.forwarded.unwrap();
     assert_eq!(a.message_id, original.id);
     assert_eq!(a.channel_id, g.id);
+    // back in its own server, where everyone reading is a member: named
+    assert_eq!(a.channel_name.as_deref(), Some("general"));
     assert_eq!(a.content, "movie night at 8, ||it's a surprise||");
 }
 

@@ -140,17 +140,35 @@ fn stored_from(r: Row) -> AppResult<(MessageId, Stored)> {
     ))
 }
 
-/// How a forward of `f` reads now, and the original's files: unavailable (nothing of it) once the original or its
-/// chat is gone.
-async fn view(db: &SqlitePool, f: &Stored) -> AppResult<(Forwarded, Vec<Attachment>)> {
+/// How a forward of `f` posted in `here` reads now, and the original's files: unavailable (nothing of it) once the
+/// original or its chat is gone. A server channel's name comes along only when `here` is in that same server (#80):
+/// servers are private, so a forward in a DM, a group or another server doesn't name a channel its readers may not be
+/// in (the forwarder chose to share the words, not the server's insides). A reader who is in it sees the name from
+/// their own copy of the channel.
+async fn view(
+    db: &SqlitePool,
+    f: &Stored,
+    here: ChannelId,
+) -> AppResult<(Forwarded, Vec<Attachment>)> {
     let live: Option<(Option<String>,)> =
         sqlx::query_as("SELECT thread_root_id FROM messages WHERE id = ? AND deleted_at IS NULL")
             .bind(f.source_id.to_string())
             .fetch_optional(db)
             .await?;
     let ch = load_channel(db, f.source_channel_id).await?;
+    let here_server = if here == f.source_channel_id {
+        ch.as_ref().and_then(|c| c.server_id)
+    } else {
+        load_channel(db, here).await?.and_then(|c| c.server_id)
+    };
     let (channel_kind, channel_name, server_id) = match &ch {
-        Some(c) => (c.kind, c.server_id.and(c.name.clone()), c.server_id),
+        Some(c) => (
+            c.kind,
+            c.server_id
+                .filter(|s| here_server == Some(*s))
+                .and(c.name.clone()),
+            c.server_id,
+        ),
         None => (ChannelKind::Text, None, None),
     };
     let mut out = Forwarded {
@@ -250,8 +268,8 @@ pub async fn attach(db: &SqlitePool, msgs: &mut [Message]) -> AppResult<()> {
     let rows: Vec<Row> = q.build_query_as().fetch_all(db).await?;
     for row in rows {
         let (id, f) = stored_from(row)?;
-        let (fwd, files) = view(db, &f).await?;
         if let Some(m) = msgs.iter_mut().find(|m| m.id == id) {
+            let (fwd, files) = view(db, &f, m.channel_id).await?;
             if !f.has_comment {
                 m.content = stand_in(&fwd);
             }
@@ -436,7 +454,7 @@ async fn forward(
         has_comment,
         ..stored
     };
-    let (view, files) = view(&s.db, &stored).await?;
+    let (view, files) = view(&s.db, &stored, ch.id).await?;
     if view.unavailable {
         return Err(AppError::NotFound);
     }

@@ -32,13 +32,18 @@ export function forwardList(targets: readonly Place[], query: string, recents: r
 export const targetLabel = (p: Place) => (p.kind === 'text' ? `#${p.name}` : p.name)
 
 /** Where a forward came from, as its header says it: `#general in Main` (a voice chat by its name), or just "a DM" /
- *  "a group": a conversation is never named. */
+ *  "a group": a conversation is never named. A forward outside its server carries no channel name (#80: servers are
+ *  private), so it's named from your own copy of the channel when you're in that server, and is "a server channel"
+ *  when you aren't. */
 export function forwardedFrom(s: AppState, f: Forwarded): string {
   if (f.channel_kind === 'dm') return 'a DM'
   if (f.channel_kind === 'group') return 'a group'
-  const name = f.channel_name ?? 'a channel'
+  const mine = s.channels[f.channel_id]
+  const name = f.channel_name ?? mine?.name
+  if (!name) return 'a server channel'
   const shown = f.channel_kind === 'voice' ? name : `#${name}`
-  const server = f.server_id ? s.servers.find((x) => x.id === f.server_id)?.name : null
+  const serverId = f.server_id ?? mine?.server_id
+  const server = serverId ? s.servers.find((x) => x.id === serverId)?.name : null
   return server ? `${shown} in ${server}` : shown
 }
 
