@@ -1035,6 +1035,24 @@ impl Api {
         .await
     }
 
+    /// Set (a banner-upload hash) or remove a server's banner (#475): its owner only.
+    pub async fn set_server_banner(
+        &self,
+        token: &str,
+        server: ServerId,
+        hash: Option<String>,
+    ) -> Result<Server, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/servers/{server}/banner", self.base))
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::SetServerBannerRequest { hash })
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// The people blocked from rejoining a server (#418): its owner only.
     pub async fn server_blocks(
         &self,
@@ -4600,6 +4618,37 @@ mod tests {
         // the old owner may leave now
         api.leave_server(&alex, s.id).await.unwrap();
         assert!(api.transfer_server(&alex, s.id, alex_id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_server_banner_round_trips_through_the_core() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (_, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let pic = api
+            .upload_profile_media(
+                &alex,
+                ProfileMediaKind::Banner,
+                crate::media::tests::PNG.to_vec(),
+                None,
+            )
+            .await
+            .unwrap();
+        // only its owner
+        assert!(
+            api.set_server_banner(&sam, s.id, Some(pic.hash.clone()))
+                .await
+                .is_err()
+        );
+        let got = api
+            .set_server_banner(&alex, s.id, Some(pic.hash.clone()))
+            .await
+            .unwrap();
+        assert_eq!(got.banner_hash.as_deref(), Some(pic.hash.as_str()));
+        let got = api.set_server_banner(&alex, s.id, None).await.unwrap();
+        assert_eq!(got.banner_hash, None);
     }
 
     #[tokio::test]

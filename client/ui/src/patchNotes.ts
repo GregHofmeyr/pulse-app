@@ -40,6 +40,7 @@ export const patchNotes: PatchNotes = {
     'Name effects: give your name Neon, Toon, Pop, Gummy, Prism, Shimmer, Glitch or Ember in Settings › Profile. They move when someone hovers your name or opens your profile',
     'A queue for watch parties: anyone in the call can paste or drop in YouTube links from the Queue button, and the party moves on to the next video for everyone. Right-click a queued video to play it now, move it or remove it',
     'Twitch in watch parties: VODs stay in sync like YouTube, live channels play and pause together until someone skips, and clips start together. Twitch cards for VODs and channels play in chat too',
+    'Server banners: a server\'s owner can give it a banner in Server settings › Banner, and its invites show it',
   ],
   fixes: [
     'Restoring a deleted channel now tells you when the server is at its channel limit, and deleted channels no longer count toward it',

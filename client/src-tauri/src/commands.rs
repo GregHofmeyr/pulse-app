@@ -1213,6 +1213,18 @@ pub async fn transfer_server(
     core.check(&app, api.transfer_server(&token, server_id, user_id).await)
 }
 
+/// A server's banner (#475): a banner-upload hash, or `None` to remove it. Its owner only.
+#[tauri::command]
+pub async fn set_server_banner(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    hash: Option<String>,
+) -> Result<Server, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_server_banner(&token, server_id, hash).await)
+}
+
 #[tauri::command]
 pub async fn remove_server_member(
     app: AppHandle,

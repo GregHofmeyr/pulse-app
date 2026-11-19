@@ -1,11 +1,10 @@
 <script lang="ts">
   // An invite to a server (#80), as a card: a direct invite's message, or an invite link pasted in a message. A banner
-  // (the server has none yet, so a gradient of its colour and the accent), its chip over the banner's edge, its name,
+  // (the server's own, #475, else a gradient of its colour and the accent), its chip over the banner's edge, its name,
   // "N online · M members", up to three faces you know, and the Join button (the invite's own words, else "Join
   // <server>"). Once you're in: "You're in" and Open. Expired, used, revoked or unknown, someone else's, or banned:
   // greyed with why. What it shows is per viewer, asked of the server once the card is on screen and kept for the
   // session (lib/invitePreviews.svelte): lookups are rate limited, so it never asks in a loop.
-  import { avatarColor } from '../lib/avatar'
   import { isMember } from '../lib/selectors'
   import { app, ui } from '../lib/store.svelte'
   import { errorText } from '../lib/tauri'
@@ -14,6 +13,7 @@
   import { cardView, countsLine, type CardState } from '../lib/serverInvites'
   import Avatar from './Avatar.svelte'
   import ServerChip from './ServerChip.svelte'
+  import ServerBanner from './ServerBanner.svelte'
 
   let { code }: { code: string } = $props()
 
@@ -69,7 +69,7 @@
 </script>
 
 <section bind:this={root} class="card" class:dead={view?.dead} class:loading={!view} aria-label={preview ? `Invite to ${preview.name}` : 'Server invite'} data-server-invite={code} data-state={shown ?? 'loading'}>
-  <div class="banner" style:--srv={avatarColor(preview?.server_id ?? code)}></div>
+  <div class="banner" class:pic={!!preview?.banner_hash}><ServerBanner id={preview?.server_id ?? code} hash={preview?.banner_hash} still={preview?.banner_still} /></div>
   <div class="body">
     <span class="icon">
       {#if preview}
@@ -104,7 +104,8 @@
 <style>
   /* the game invite card's frame (#436): bg-2 on the chat, a line round it */
   .card { position: relative; overflow: hidden; max-width: 440px; margin-top: 4px; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-lg); }
-  .banner { height: 56px; background: linear-gradient(120deg, var(--srv), var(--accent-strong) 70%, var(--bg-3)); opacity: .85; }
+  .banner { height: 56px; opacity: .85; }
+  .banner.pic { height: 72px; opacity: 1; }
   .dead .banner, .loading .banner { filter: grayscale(1); opacity: .35; }
   .body { display: flex; align-items: flex-end; gap: 12px; padding: 0 12px 12px; margin-top: -24px; }
   .icon { flex-shrink: 0; padding: 3px; border-radius: 32%; background: var(--bg-2); display: inline-grid; }

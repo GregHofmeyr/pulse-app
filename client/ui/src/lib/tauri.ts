@@ -338,6 +338,8 @@ export const api = {
   removeServerMember: (serverId: string, userId: string) => invoke<void>('remove_server_member', { serverId, userId }),
   /** Hand a server to another of its members (#418): its owner only. */
   transferServer: (serverId: string, userId: string) => invoke<void>('transfer_server', { serverId, userId }),
+  /** A server's banner (#475): a banner-upload hash, or null to remove it. Its owner only. */
+  setServerBanner: (serverId: string, hash: string | null) => invoke<Server>('set_server_banner', { serverId, hash }),
   /** The people blocked from rejoining a server (#418): its owner only. */
   listServerBlocks: (serverId: string) => invoke<ServerBlock[]>('list_server_blocks', { serverId }),
   /** Let someone blocked from rejoining a server back (#418): its owner only. */
