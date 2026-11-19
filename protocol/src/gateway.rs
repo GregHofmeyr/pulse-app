@@ -379,8 +379,8 @@ pub enum Event {
         owner_id: UserId,
         previous_owner_id: UserId,
     },
-    /// Its owner changed how a server looks (#475, #55: its banner or icon set or removed, or its name). Only to the server's members: the
-    /// server as it is now. Clients from before it skip it and catch up on their next Ready.
+    /// Its owner changed how a server looks (#475, #55: its banner or icon set or removed, or its name). Only to the
+    /// server's members: the server as it is now. Clients from before it skip it and catch up on their next Ready.
     ServerUpdated {
         server: Server,
     },

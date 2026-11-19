@@ -141,7 +141,7 @@
       <div class="glow" aria-hidden="true" style:--glow={avatarColor(serverId)}></div>
     {/if}
     <header>
-      <span class="chip-in"><ServerChip id={serverId} {name} iconHash={server?.icon_hash} size={48} /></span>
+      <span class="chip-in"><ServerChip id={serverId} {name} iconHash={server?.icon_hash} still={server?.icon_still} size={48} /></span>
       <h1 class="modal-title">Invite to {name}</h1>
       <button class="icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" size={16} /></button>
     </header>

@@ -1215,6 +1215,30 @@ pub async fn set_server_banner(
     core.check(&app, api.set_server_banner(&token, server_id, hash).await)
 }
 
+/// A server's icon (#55): an avatar-upload hash, or `None` to remove it. Its owner only.
+#[tauri::command]
+pub async fn set_server_icon(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    hash: Option<String>,
+) -> Result<Server, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_server_icon(&token, server_id, hash).await)
+}
+
+/// Rename a server (#55). Its owner only.
+#[tauri::command]
+pub async fn rename_server(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    name: String,
+) -> Result<Server, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.rename_server(&token, server_id, name).await)
+}
+
 #[tauri::command]
 pub async fn remove_server_member(
     app: AppHandle,

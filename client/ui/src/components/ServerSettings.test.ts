@@ -39,6 +39,27 @@ describe('ServerSettings dialog', () => {
   const settle = () => new Promise((r) => setTimeout(r, 0))
   const emoji = { id: 'X1', server_id: 'S1', name: 'pog', hash: 'h1', still_hash: null, animated: false, added_by: null, created_at: '2026-10-01T00:00:00.000Z' }
 
+  // Overview is the first page (#55): the emoji tests go to Emoji first
+  const emojiTab = () => {
+    ;[...document.querySelectorAll<HTMLButtonElement>('nav button')].find((b) => b.textContent === 'Emoji')!.click()
+    flushSync()
+  }
+
+  it('Esc in the server name field puts the name back, not closing the dialog (#55)', () => {
+    app.state = { ...emptyState(), me: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } } } as never
+    const onClose = vi.fn()
+    cmp = mount(ServerSettings, { target: document.body, props: { server: { id: 'S1', name: 'Home', icon_hash: null, owner_id: 'U1' }, onClose } })
+    flushSync()
+    const field = document.querySelector<HTMLInputElement>('input[aria-label="Server name"]')!
+    field.value = 'Away'
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    esc(field)
+    flushSync()
+    expect(field.value).toBe('Home')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('Esc in the add form closes the form, not the dialog', async () => {
     invoke.mockReset()
     invoke.mockResolvedValue({ hash: 'nh', content_type: 'image/webp', width: 128, height: 128, frames: 1, animated: false, still_hash: null })
@@ -46,6 +67,7 @@ describe('ServerSettings dialog', () => {
     const onClose = vi.fn()
     cmp = mount(ServerSettings, { target: document.body, props: { server: { id: 'S1', name: 'Home', icon_hash: null }, onClose } })
     flushSync()
+    emojiTab()
     const file = document.querySelector<HTMLInputElement>('input[type=file]')!
     Object.defineProperty(file, 'files', { value: [new File([new Uint8Array([1])], 'a.png')], configurable: true })
     file.dispatchEvent(new Event('change', { bubbles: true }))
@@ -62,6 +84,7 @@ describe('ServerSettings dialog', () => {
     const onClose = vi.fn()
     cmp = mount(ServerSettings, { target: document.body, props: { server: { id: 'S1', name: 'Home', icon_hash: null }, onClose } })
     flushSync()
+    emojiTab()
     document.querySelector<HTMLButtonElement>('button[aria-label="Rename :pog:"]')!.click()
     flushSync()
     esc(document.querySelector('input[aria-label="Rename emoji"]')!)

@@ -338,6 +338,10 @@ export const api = {
   transferServer: (serverId: string, userId: string) => invoke<void>('transfer_server', { serverId, userId }),
   /** A server's banner (#475): a banner-upload hash, or null to remove it. Its owner only. */
   setServerBanner: (serverId: string, hash: string | null) => invoke<Server>('set_server_banner', { serverId, hash }),
+  /** A server's icon (#55): an avatar-upload hash (the same square crop), or null to remove it. Its owner only. */
+  setServerIcon: (serverId: string, hash: string | null) => invoke<Server>('set_server_icon', { serverId, hash }),
+  /** Rename a server (#55). Its owner only. */
+  renameServer: (serverId: string, name: string) => invoke<Server>('rename_server', { serverId, name }),
   /** The signed-in server's address (#80): invite links are made from it. Null when signed out. */
   serverOrigin: () => invoke<string | null>('server_origin'),
   /** Make an invite (#80): a link, or a direct invite for one person (`for_user`, also a card in your DM with them). */

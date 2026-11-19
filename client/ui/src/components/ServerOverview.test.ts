@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// Server banners (#475), the app side: Server settings › Banner (its owner's only: upload through the crop, then set;
-// Remove), the invite card and the Invite dialog showing it, and the gradient when there's none.
+// Server settings › Overview (#55; the banner from #475 moved in): its owner changes the icon (the avatar's square
+// crop), the banner (the profile banner's crop) and the name; everyone else sees how it looks. Then the invite card and
+// the Invite dialog showing the banner, and the gradient when there's none.
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeMatchMedia, FakeIntersectionObserver } from '../lib/testMotion'
@@ -52,44 +53,79 @@ function openSettings(s: Server) {
   cmp = mount(ServerSettings, { target: document.body, props: { server: s, onClose: () => {} } })
   flushSync()
 }
-const tab = () => [...document.querySelectorAll<HTMLButtonElement>('nav button')].find((b) => b.textContent === 'Banner')
+const tab = () => [...document.querySelectorAll<HTMLButtonElement>('nav button')].find((b) => b.textContent === 'Overview')
 
-describe('Server settings › Banner', () => {
-  it("is its owner's only", () => {
+/** Pick `file` in the hidden input labelled `label`, then apply the crop it opens. */
+async function pickAndCrop(label: string) {
+  const input = document.querySelector<HTMLInputElement>(`input[type=file][aria-label="${label}"]`)!
+  expect(input.accept).toBe('image/png,image/jpeg,image/gif,image/webp')
+  Object.defineProperty(input, 'files', { configurable: true, value: [new File([new Uint8Array([1, 2, 3])], 'a.png', { type: 'image/png' })] })
+  input.dispatchEvent(new Event('change', { bubbles: true }))
+  flushSync()
+  const crop = await vi.waitFor(() => {
+    const d = document.querySelector<HTMLElement>('[role=dialog][aria-label^="Crop"]')
+    const i = d?.querySelector<HTMLImageElement>('img')
+    if (!d || !i) throw new Error('no crop image yet')
+    return { d, i }
+  })
+  const title = crop.d.getAttribute('aria-label')
+  crop.i.dispatchEvent(new Event('load'))
+  flushSync()
+  button('Apply', crop.d)!.click()
+  flushSync()
+  return title
+}
+
+describe('Server settings › Overview (#55)', () => {
+  it('is the first page, for everyone; the Banner page is gone', () => {
     openSettings(server({ owner_id: 'U2' }))
-    expect(tab()).toBeUndefined()
+    const names = [...document.querySelectorAll<HTMLButtonElement>('nav button')].map((b) => b.textContent)
+    expect(names[0]).toBe('Overview')
+    expect(names).not.toContain('Banner')
+    expect(document.querySelector('.content h2')!.textContent).toBe('Overview')
   })
 
-  it('shows the gradient with no banner, and Remove is off', () => {
+  it("someone else's server: how it looks, nothing to change", () => {
+    openSettings(server({ owner_id: 'U2', banner_hash: BN }))
+    expect(document.querySelector<HTMLImageElement>('.content .server-banner img')!.src).toContain(BN)
+    expect(document.querySelector('[aria-label="Change icon"]')).toBeNull()
+    expect(document.querySelector('[aria-label="Change banner"]')).toBeNull()
+    expect(document.querySelector('input[aria-label="Server name"]')).toBeNull()
+    expect(document.querySelector('.content .hint')!.textContent).toContain('Only its owner')
+  })
+
+  it('shows the gradient and initial with neither picture, and both Removes are off', () => {
     openSettings(server())
     tab()!.click()
     flushSync()
-    expect(document.querySelector('.content h2')!.textContent).toBe('Banner')
     expect(document.querySelector('.content .server-banner img')).toBeNull()
-    expect(button('Remove')!.disabled).toBe(true)
+    expect(document.querySelector('.content .icon span.chip')!.textContent).toBe('A')
+    expect(button('Remove icon')!.disabled).toBe(true)
+    expect(button('Remove banner')!.disabled).toBe(true)
   })
 
-  it('uploads through the crop as a banner, then sets it', async () => {
+  it('the icon area opens the square crop, then uploads as an avatar and sets it', async () => {
+    handlers.upload_avatar_media = () => ({ hash: BN, content_type: 'image/webp', width: 256, height: 256, frames: 1, animated: false, still_hash: null })
+    handlers.set_server_icon = () => server({ icon_hash: BN })
+    openSettings(server())
+    const area = document.querySelector<HTMLButtonElement>('button[aria-label="Change icon"]')!
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Upload icon"]')!
+    const clicked = vi.spyOn(input, 'click').mockImplementation(() => {})
+    area.click()
+    expect(clicked).toHaveBeenCalled()
+    expect(area.querySelector('.pencil')).not.toBeNull()
+    expect(await pickAndCrop('Upload icon')).toBe('Crop avatar')
+    await vi.waitFor(() => {
+      if (!calls('set_server_icon').length) throw new Error('not set yet')
+    })
+    expect(calls('set_server_icon')).toEqual([{ serverId: 'S1', hash: BN }])
+  })
+
+  it('the banner area crops as a banner, then sets it', async () => {
     handlers.upload_banner_media = () => ({ hash: BN, content_type: 'image/webp', width: 960, height: 384, frames: 1, animated: false, still_hash: null })
     handlers.set_server_banner = () => server({ banner_hash: BN })
     openSettings(server())
-    tab()!.click()
-    flushSync()
-    const input = document.querySelector<HTMLInputElement>('input[type=file][aria-label="Upload banner"]')!
-    expect(input.accept).toBe('image/png,image/jpeg,image/gif,image/webp')
-    Object.defineProperty(input, 'files', { configurable: true, value: [new File([new Uint8Array([1, 2, 3])], 'a.png', { type: 'image/png' })] })
-    input.dispatchEvent(new Event('change', { bubbles: true }))
-    flushSync()
-    const crop = await vi.waitFor(() => {
-      const d = document.querySelector<HTMLElement>('[role=dialog][aria-label^="Crop"]')
-      const i = d?.querySelector<HTMLImageElement>('img')
-      if (!d || !i) throw new Error('no crop image yet')
-      return { d, i }
-    })
-    crop.i.dispatchEvent(new Event('load'))
-    flushSync()
-    button('Apply', crop.d)!.click()
-    flushSync()
+    expect(await pickAndCrop('Upload banner')).toBe('Crop banner')
     await vi.waitFor(() => {
       if (!calls('set_server_banner').length) throw new Error('not set yet')
     })
@@ -97,22 +133,43 @@ describe('Server settings › Banner', () => {
     expect(calls('set_server_banner')).toEqual([{ serverId: 'S1', hash: BN }])
   })
 
-  it('shows the banner it has, and Remove clears it', async () => {
-    openSettings(server({ banner_hash: BN }))
-    tab()!.click()
-    flushSync()
+  it('shows the pictures it has, and Remove clears each', async () => {
+    openSettings(server({ banner_hash: BN, icon_hash: ST }))
     expect(document.querySelector<HTMLImageElement>('.content .server-banner img')!.src).toContain(BN)
-    button('Remove')!.click()
+    expect(document.querySelector<HTMLImageElement>('.content .icon img.chip')!.src).toContain(ST)
+    button('Remove banner')!.click()
     await settle()
     expect(calls('set_server_banner')).toEqual([{ serverId: 'S1', hash: null }])
+    button('Remove icon')!.click()
+    await settle()
+    expect(calls('set_server_icon')).toEqual([{ serverId: 'S1', hash: null }])
+  })
+
+  it('renames it with Save or Enter, trimmed; Save is off until the name changes', async () => {
+    handlers.rename_server = () => server({ name: 'Lounge' })
+    openSettings(server())
+    const field = document.querySelector<HTMLInputElement>('input[aria-label="Server name"]')!
+    expect(field.value).toBe('Alpha')
+    expect(button('Save')!.disabled).toBe(true)
+    field.value = '  Lounge '
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    expect(button('Save')!.disabled).toBe(false)
+    button('Save')!.click()
+    await settle()
+    expect(calls('rename_server')).toEqual([{ serverId: 'S1', name: 'Lounge' }])
+    field.value = 'Beta'
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await settle()
+    expect(calls('rename_server')).toEqual([{ serverId: 'S1', name: 'Lounge' }, { serverId: 'S1', name: 'Beta' }])
   })
 
   it('says why when it fails', async () => {
     handlers.set_server_banner = () => Promise.reject({ message: 'Only the server\'s owner can change its banner.' })
     openSettings(server({ banner_hash: BN }))
-    tab()!.click()
-    flushSync()
-    button('Remove')!.click()
+    button('Remove banner')!.click()
     await settle()
     expect(document.querySelector('.content [role=alert]')!.textContent).toContain('owner can change its banner')
   })
