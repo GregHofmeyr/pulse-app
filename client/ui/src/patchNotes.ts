@@ -38,7 +38,6 @@ export const patchNotes: PatchNotes = {
   qol: [
     'Rename a server in place, from the name at the top of its channel list or from right-click on its icon',
     'Right-click a channel › Move to category; Move up and Move down are gone, since dragging reorders',
-    'Invite cards are bigger and easier to read: the banner gets its own strip and the words sit below it',
     'Anyone in a server can change its icon, banner and name, not just its owner',
     'Your profile, online status and what you\'re up to reach only people you share a server, a DM or a group with',
   ],
