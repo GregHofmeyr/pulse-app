@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The right-click menu on a server tab (#161): Invite people (#80, its members), Server settings (as the sidebar header's menu opens them), Rename (#55, its owner's), Mute
+  // The right-click menu on a server tab (#161): Invite people (#80, its members), Server settings (as the sidebar header's menu opens them), Rename (#55, anyone in it), Mute
   // server as a durations flyout, the channel menu's (#131), or Unmute server, and Notifications: the server's level
   // as a flyout with yours ticked (#195), and Move left / Move right in your rail (#185: dragging's keyboard and menu
   // way), and Leave server (#371, asked first; not its owner's). Arrange channels just for me / Reset to server order
@@ -27,7 +27,7 @@
     opener: HTMLElement
     onClose: () => void
     onSettings: () => void
-    /** Rename (#55): its owner's; the name at the top of its channel list becomes a field. */
+    /** Rename (#55): anyone in it (v1 trust model); the name at the top of its channel list becomes a field. */
     onRename?: () => void
     /** Create category (#54): members of a server with categories; the channel list opens the field. */
     onCreateCategory?: () => void
@@ -42,7 +42,6 @@
     app.state.mutes.some((m) => m.target_kind === 'server' && m.target_id === serverId && (m.until === null || m.until > clock.nowIso)),
   )
   // Leave server (#371): anyone in it but its owner (there's no handing a server over, so the owner can't)
-  const owner = $derived(app.state.servers.find((s) => s.id === serverId)?.owner_id === app.state.me?.id && !!app.state.me)
   const canLeave = $derived(isMember(app.state, serverId) && app.state.servers.find((s) => s.id === serverId)?.owner_id !== app.state.me?.id)
   // an older server has no categories to add to
   const canCreateCategory = $derived(!!onCreateCategory && isMember(app.state, serverId) && !!app.state.layouts[serverId])
@@ -119,7 +118,7 @@
     <button type="button" class="menu-item" role="menuitem" data-item="invite" onclick={() => pick(() => (ui.inviteTo = serverId))}>Invite people</button>
   {/if}
   <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onSettings)}>Server settings</button>
-  {#if owner && onRename}
+  {#if isMember(app.state, serverId) && onRename}
     <button type="button" class="menu-item" role="menuitem" data-item="rename" onclick={() => pick(onRename)}>Rename</button>
   {/if}
   {#if canCreateCategory && onCreateCategory}

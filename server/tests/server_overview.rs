@@ -1,5 +1,5 @@
-//! Server settings › Overview (#55): only its owner sets or removes a server's icon (a picture from the avatar upload)
-//! or renames it; its members alone hear `ServerUpdated` (#80), and Ready carries it; invite previews show the icon;
+//! Server settings › Overview (#55): any of its members sets or removes a server's icon (a picture from the avatar
+//! upload) or renames it (v1 trust model); its members alone hear `ServerUpdated` (#80), and Ready carries it; invite previews show the icon;
 //! it survives the media sweep while in use.
 mod common;
 
@@ -148,7 +148,7 @@ fn updates(events: &[Event], server: ServerId) -> Vec<Server> {
 }
 
 #[tokio::test]
-async fn only_the_owner_sets_and_removes_the_icon_and_only_members_hear() {
+async fn members_set_and_remove_the_icon_and_only_members_hear() {
     let app = spawn().await;
     let (_, alex) = register(&app, "alex").await;
     let (_, sam) = register(&app, "sam").await;
@@ -160,12 +160,8 @@ async fn only_the_owner_sets_and_removes_the_icon_and_only_members_hear() {
     drain(&mut sam_ws, 200).await;
     drain(&mut jo_ws, 200).await;
 
-    // a member who isn't its owner can't; to an outsider the server isn't there (#80)
+    // to an outsider the server isn't there (#80)
     let pic = upload(&app, &sam, "/media/avatar", png()).await;
-    assert_eq!(
-        set_icon(&app, &sam, server, Some(&pic.hash)).await.status(),
-        403
-    );
     assert_eq!(set_icon(&app, &jo, server, None).await.status(), 404);
     // a banner upload isn't an icon, and an unknown hash has expired
     let banner = upload(&app, &alex, "/media/banner", png()).await;
@@ -216,8 +212,8 @@ async fn only_the_owner_sets_and_removes_the_icon_and_only_members_hear() {
     let p: InvitePreview = get_json(&app, &jo, &format!("/invites/{code}")).await;
     assert_eq!(p.icon_hash.as_deref(), Some(pic.hash.as_str()));
 
-    // the owner removes it
-    let r = set_icon(&app, &alex, server, None).await;
+    // a member who isn't its owner removes it (v1 trust model)
+    let r = set_icon(&app, &sam, server, None).await;
     assert_eq!(r.status(), 200);
     assert_eq!(r.json::<Server>().await.unwrap().icon_hash, None);
     let heard = updates(&drain(&mut sam_ws, 400).await, server);
@@ -241,7 +237,7 @@ async fn an_animated_icon_carries_its_still() {
 }
 
 #[tokio::test]
-async fn only_the_owner_renames_it_and_only_members_hear() {
+async fn members_rename_it_and_only_members_hear() {
     let app = spawn().await;
     let (_, alex) = register(&app, "alex").await;
     let (_, sam) = register(&app, "sam").await;
@@ -253,7 +249,6 @@ async fn only_the_owner_renames_it_and_only_members_hear() {
     drain(&mut sam_ws, 200).await;
     drain(&mut jo_ws, 200).await;
 
-    assert_eq!(rename(&app, &sam, server, "Mine").await.status(), 403);
     assert_eq!(rename(&app, &jo, server, "Mine").await.status(), 404);
     assert_eq!(rename(&app, &alex, server, "   ").await.status(), 400);
     assert_eq!(
@@ -262,8 +257,8 @@ async fn only_the_owner_renames_it_and_only_members_hear() {
     );
     assert!(updates(&drain(&mut sam_ws, 300).await, server).is_empty());
 
-    // trimmed, and everyone in it hears
-    let r = rename(&app, &alex, server, "  Lounge ").await;
+    // trimmed, and everyone in it hears; any member may (v1 trust model)
+    let r = rename(&app, &sam, server, "  Lounge ").await;
     assert_eq!(r.status(), 200);
     assert_eq!(r.json::<Server>().await.unwrap().name, "Lounge");
     let heard = updates(&drain(&mut sam_ws, 400).await, server);

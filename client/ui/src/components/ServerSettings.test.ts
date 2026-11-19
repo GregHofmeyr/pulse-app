@@ -46,7 +46,8 @@ describe('ServerSettings dialog', () => {
   }
 
   it('Esc in the server name field puts the name back, not closing the dialog (#55)', () => {
-    app.state = { ...emptyState(), me: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } } } as never
+    const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    app.state = { ...emptyState(), me, members: { S1: [{ user: me, nickname: null }] } } as never
     const onClose = vi.fn()
     cmp = mount(ServerSettings, { target: document.body, props: { server: { id: 'S1', name: 'Home', icon_hash: null, owner_id: 'U1' }, onClose } })
     flushSync()

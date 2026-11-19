@@ -822,7 +822,7 @@
           {#if serverMenuOpen}
             <div class="menu head-menu menu-surface pop-in" role="menu" use:clickOutside={closeServerMenu}>
               <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsId = activeServerId }}>Server settings</button>
-              {#if activeServer.owner_id && activeServer.owner_id === app.state.me?.id}
+              {#if member}
                 <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; renamingServerId = activeServerId }}>Rename</button>
               {/if}
               {#if member && activeServerId && app.state.layouts[activeServerId]}

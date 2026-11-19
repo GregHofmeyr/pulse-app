@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// Server settings › Overview (#55; the banner from #475 moved in): its owner changes the icon (the avatar's square
-// crop), the banner (the profile banner's crop) and the name; everyone else sees how it looks. Then the invite card and
+// Server settings › Overview (#55; the banner from #475 moved in): anyone in it changes the icon (the avatar's square
+// crop), the banner (the profile banner's crop) and the name; someone not in it sees how it looks. Then the invite card and
 // the Invite dialog showing the banner, and the gradient when there's none.
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -39,7 +39,7 @@ beforeEach(() => {
   handlers = {}
   invoke.mockClear()
   FakeIntersectionObserver.all = []
-  app.state = { ...emptyState(), me: alex, servers: [server()] } as never
+  app.state = { ...emptyState(), me: alex, servers: [server()], members: { S1: [{ user: alex, nickname: null }] } } as never
   Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { configurable: true, get: () => 800 })
   Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { configurable: true, get: () => 600 })
 })
@@ -85,13 +85,20 @@ describe('Server settings › Overview (#55)', () => {
     expect(document.querySelector('.content h2')!.textContent).toBe('Overview')
   })
 
-  it("someone else's server: how it looks, nothing to change", () => {
+  it('anyone in it may change it, not only its owner (v1 trust model)', () => {
+    openSettings(server({ owner_id: 'U2' }))
+    expect(document.querySelector('[aria-label="Change icon"]')).not.toBeNull()
+    expect(document.querySelector('input[aria-label="Server name"]')).not.toBeNull()
+  })
+
+  it('someone not in it: how it looks, nothing to change', () => {
+    app.state = { ...app.state, members: {} } as never
     openSettings(server({ owner_id: 'U2', banner_hash: BN }))
     expect(document.querySelector<HTMLImageElement>('.content .server-banner img')!.src).toContain(BN)
     expect(document.querySelector('[aria-label="Change icon"]')).toBeNull()
     expect(document.querySelector('[aria-label="Change banner"]')).toBeNull()
     expect(document.querySelector('input[aria-label="Server name"]')).toBeNull()
-    expect(document.querySelector('.content .hint')!.textContent).toContain('Only its owner')
+    expect(document.querySelector('.content .hint')!.textContent).toContain('Only people in')
   })
 
   it('shows the gradient and initial with neither picture, and both Removes are off', () => {

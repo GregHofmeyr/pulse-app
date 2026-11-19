@@ -1,9 +1,9 @@
 <script lang="ts">
   // Server settings › Overview (#55), the first page: the server's icon and banner shown together as its invite card
-  // shows them, then its name. Its owner changes them (as with the banner, #475): the icon and the banner are each one
+  // shows them, then its name. Anyone in it changes them (the v1 trust model): the icon and the banner are each one
   // big clickable area with a pencil on hover, opening the same crop as your avatar (the icon, square) or profile banner
-  // (the banner); Remove takes either away. Everyone else sees how it looks. Everyone in it sees a change as it lands
-  // (`ServerUpdated`).
+  // (the banner); Remove takes either away. Someone not in it only sees how it looks. Everyone in it sees a change as
+  // it lands (`ServerUpdated`).
   import { onDestroy } from 'svelte'
   import CropDialog from './CropDialog.svelte'
   import Icon from './Icon.svelte'
@@ -11,13 +11,14 @@
   import ServerChip from './ServerChip.svelte'
   import { api, errorText } from '../lib/tauri'
   import { app } from '../lib/store.svelte'
+  import { isMember } from '../lib/selectors'
   import type { CropRect } from '../lib/crop'
   import type { Server } from '../lib/protocol/Server'
 
   let { server }: { server: Server } = $props()
 
   const ACCEPT = 'image/png,image/jpeg,image/gif,image/webp'
-  const owner = $derived(!!server.owner_id && server.owner_id === app.state.me?.id)
+  const canEdit = $derived(isMember(app.state, server.id))
   let cropping = $state<{ kind: 'avatar' | 'banner'; file: File } | null>(null)
   let busy = $state(false)
   let error = $state<string | null>(null)
@@ -86,7 +87,7 @@
   <h2>Overview</h2>
   <!-- the invite card's top: the banner, the icon over its bottom edge -->
   <div class="looks" aria-label="How {server.name} looks">
-    {#if owner}
+    {#if canEdit}
       <button type="button" class="pic banner edit" aria-label="Change banner" disabled={busy} onclick={() => bannerInput?.click()}>
         <ServerBanner id={server.id} hash={server.banner_hash} still={server.banner_still} />
         <span class="pencil" aria-hidden="true"><Icon name="pencil" size={20} /></span>
@@ -100,7 +101,7 @@
       <div class="pic icon"><ServerChip id={server.id} name={server.name} iconHash={server.icon_hash} still={server.icon_still} size={80} radius="24px" /></div>
     {/if}
   </div>
-  {#if owner}
+  {#if canEdit}
     <input bind:this={iconInput} class="file" type="file" accept={ACCEPT} aria-label="Upload icon" tabindex="-1" disabled={busy} onchange={(e) => pick('avatar', e)} />
     <input bind:this={bannerInput} class="file" type="file" accept={ACCEPT} aria-label="Upload banner" tabindex="-1" disabled={busy} onchange={(e) => pick('banner', e)} />
     <div class="row">
@@ -116,7 +117,7 @@
     </label>
     {#if busy}<span class="muted" role="status">Saving…</span>{/if}
   {:else}
-    <p class="hint">Only its owner can change {server.name}'s icon, banner and name.</p>
+    <p class="hint">Only people in {server.name} can change its icon, banner and name.</p>
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>

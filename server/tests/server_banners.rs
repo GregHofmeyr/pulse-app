@@ -1,4 +1,4 @@
-//! Server banners (#475): only its owner sets or removes one (a picture from the profile banner upload); its members
+//! Server banners (#475): any of its members sets or removes one (v1 trust model, #55) (a picture from the profile banner upload); its members
 //! alone hear `ServerUpdated` (#80), and Ready and `ServerJoined` carry it; invite previews and the invite page show it; it survives the media
 //! sweep while in use.
 mod common;
@@ -123,7 +123,7 @@ fn banner_updates(events: &[Event], server: ServerId) -> Vec<Option<String>> {
 }
 
 #[tokio::test]
-async fn only_the_owner_sets_and_removes_it_and_only_members_hear() {
+async fn members_set_and_remove_it_and_only_members_hear() {
     let app = spawn().await;
     let (_, alex) = register(&app, "alex").await;
     let (_, sam) = register(&app, "sam").await;
@@ -144,14 +144,8 @@ async fn only_the_owner_sets_and_removes_it_and_only_members_hear() {
     drain(&mut sam_ws, 200).await;
     drain(&mut jo_ws, 200).await;
 
-    // a member who isn't its owner can't; to an outsider the server isn't there (#80)
+    // to an outsider the server isn't there (#80)
     let pic = upload(&app, &sam, "/media/banner", png()).await;
-    assert_eq!(
-        set_banner(&app, &sam, server, Some(&pic.hash))
-            .await
-            .status(),
-        403
-    );
     assert_eq!(set_banner(&app, &jo, server, None).await.status(), 404);
     // an avatar upload isn't a banner, and an unknown hash has expired
     let avatar = upload(&app, &alex, "/media/avatar", png()).await;
@@ -219,8 +213,8 @@ async fn only_the_owner_sets_and_removes_it_and_only_members_hear() {
         Some(pic.hash.as_str())
     );
 
-    // the owner removes it
-    let r = set_banner(&app, &alex, server, None).await;
+    // a member who isn't its owner removes it (v1 trust model, #55)
+    let r = set_banner(&app, &sam, server, None).await;
     assert_eq!(r.status(), 200);
     assert_eq!(r.json::<Server>().await.unwrap().banner_hash, None);
     assert_eq!(
