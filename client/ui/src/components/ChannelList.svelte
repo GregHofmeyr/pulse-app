@@ -11,6 +11,7 @@
   import type { Channel } from '../lib/protocol/Channel'
   import type { Category } from '../lib/protocol/Category'
   import { app, clock, ui } from '../lib/store.svelte'
+  import { isBlocked } from '../lib/blocks'
   import { resetPersonalOrder, savePersonalOrder } from '../lib/channelOrder.svelte'
   import { callRoster, isMember, serverVoiceTip, type Occupant } from '../lib/selectors'
   import { stageShareIn } from '../lib/state'
@@ -98,7 +99,7 @@
   const mutedForMe = (userId: string) => !!voice.localMutes[userId] && userId !== app.state.me?.id
   /** A voice row is a button: its label is all a screen reader reads, so it carries the state too. */
   const occupantLabel = (p: Occupant) =>
-    [p.name, mutedForMe(p.userId) && 'muted for you', lowerFirst(serverVoiceTip(app.state, serverId, p)) ?? (p.deafened ? 'deafened' : p.muted && 'muted')].filter(Boolean).join(', ')
+    [isBlocked(app.state, p.userId) ? "Blocked person, can't hear" : p.name, mutedForMe(p.userId) && 'muted for you', lowerFirst(serverVoiceTip(app.state, serverId, p)) ?? (p.deafened ? 'deafened' : p.muted && 'muted')].filter(Boolean).join(', ')
   const lowerFirst = (t: string | null) => (t ? t[0].toLowerCase() + t.slice(1) : null)
   $effect(() => () => prefetch.cancel())
 
@@ -630,7 +631,8 @@
       onkeydown={(e) => occupantKey(e, c.id, p)}
       onpointerenter={() => (hoveredOccupant = p.userId)} onpointerleave={() => { if (hoveredOccupant === p.userId) hoveredOccupant = null }}>
       <span class="ring" class:speaking={speaking.has(p.userId)}><Avatar id={p.userId} name={p.name} size={22} hovered={() => hoveredOccupant === p.userId} /></span>
-      <span class="grow"><Name userId={p.userId} {serverId} interactive={false} surface="side" /></span>
+      <!-- someone you've blocked (#474): not their name, and you can't hear them -->
+      <span class="grow">{#if isBlocked(app.state, p.userId)}<span class="blocked-name">Blocked person · can't hear</span>{:else}<Name userId={p.userId} {serverId} interactive={false} surface="side" />{/if}</span>
       {#if p.pending}
         <span class="joining">Joining…</span><span class="spinner" role="progressbar" aria-label="Joining"></span>
       {:else}
@@ -795,6 +797,7 @@
   @media (prefers-reduced-motion: reduce) { .occupant.arrived, .occupant.arrived::before { animation: none; } }
   .occupant.pending { opacity: .6; }
   .joining { font-size: 11px; color: var(--text-2); }
+  .blocked-name { color: var(--text-3); font-style: italic; }
   .spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--text-3); border-top-color: transparent; animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }

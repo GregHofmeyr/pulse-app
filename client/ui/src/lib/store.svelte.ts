@@ -2,6 +2,7 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
+import { isBlocked } from './blocks'
 import type { Gif } from './protocol/Gif'
 import type { CardProfile } from './protocol/CardProfile'
 import type { Profile } from './protocol/Profile'
@@ -90,6 +91,8 @@ export const ui = $state({
   /** The server whose Invite people dialog is open (#80): its tab's menu or the member list's "+ Invite" asks; the
    *  shell shows it and clears it on close. */
   inviteTo: null as string | null,
+  /** Someone to block (#474): Block… on their person menu asks; the shell shows the dialog and clears it. */
+  blockAsk: null as string | null,
   /** A request to switch to this server (#80: joined with an invite; the shell does it and clears it). */
   goServer: null as string | null,
   /** A short line for the shell to show for a moment (it shows it and clears it). */
@@ -153,7 +156,8 @@ export function maybeAlert(e: Event) {
     level: notifyLevel(app.state, ch),
     // the real time, not the clock: a DND timer ends exactly when it ends
     dnd: dndActive(app.state, nowIso),
-    quiet: quietFrom(app.state.personDnd, m.author_id, ch.server_id === null, nowIso),
+    // someone you've blocked (#474) never alerts you either
+    quiet: quietFrom(app.state.personDnd, m.author_id, ch.server_id === null, nowIso) || isBlocked(app.state, m.author_id),
     planReminders: planPrefs.on,
     f1Scores: f1Prefs.on,
     lastPlayedAt,
@@ -454,6 +458,7 @@ export function resetState() {
   forgetEmbedOrigin() // the next account may be on another server
   forgetInvitePreviews() // and sees invite cards as itself
   ui.inviteTo = null
+  ui.blockAsk = null
   ui.goServer = null
   forgetClipLinks() // the next account asks for its own play links
   forgetAttachmentLinks()

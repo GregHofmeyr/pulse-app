@@ -90,7 +90,7 @@ describe('GroupMembers row menu (#135): the server member list\'s person menu, w
     three()
     rightClick(rowOf('sam'))
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for sam')
-    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline', 'hide-game', 'remove'])
+    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline', 'hide-game', 'block', 'remove'])
     expect(label('private-nick')).toBe('Change nickname')
     expect(document.activeElement).toBe(items()[0])
   })

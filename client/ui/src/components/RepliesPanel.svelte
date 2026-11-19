@@ -2,6 +2,7 @@
   // The replies to one quote or clip (spec §3.6): it is pinned at the top, then a normal chat about it.
   // Replies live in `app.state.threads[root]`, never in the channel's list.
   import { tick, untrack } from 'svelte'
+  import { isHidden } from '../lib/blocks'
   import Composer from './Composer.svelte'
   import Icon from './Icon.svelte'
   import MessageItem from './MessageItem.svelte'
@@ -30,7 +31,8 @@
   const rootId = untrack(() => root.id)
   const channelId = untrack(() => root.channel_id)
   const meId = $derived(app.state.me?.id ?? '')
-  const replies = $derived(app.state.threads[rootId] ?? [])
+  // someone blocked with Hide completely (#474) isn't drawn here either
+  const replies = $derived((app.state.threads[rootId] ?? []).filter((m) => !isHidden(app.state, m.author_id)))
   const byId = $derived(new Map(replies.map((m) => [m.id, m])))
   const pending = $derived((app.state.pending[channelId] ?? []).filter((p) => p.thread_root_id === rootId))
   /** Fetched since the last Ready (a reconnect clears it, and the thread is fetched again). */

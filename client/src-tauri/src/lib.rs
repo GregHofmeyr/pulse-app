@@ -516,6 +516,7 @@ pub fn run() {
             commands::set_live_notify,
             commands::set_person_dnd,
             commands::set_activity_hidden,
+            commands::set_block,
             commands::send_game_invite,
             commands::game_invite_join,
             commands::steam_status,

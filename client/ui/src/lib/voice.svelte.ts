@@ -12,6 +12,7 @@ import { loadAudioConfig, loadLocalMutes, loadVolumes, peerCallSound, playSound,
 import { isJoining, reduceStage, type StageState } from './voicestage'
 import { holdOwnCue, ownJoin, peerJoin } from './joinSounds'
 import { joinSounds, playJoin } from './joinSounds.svelte'
+import { isBlocked } from './blocks'
 
 export const voice = $state({
   channelId: null as string | null,
@@ -166,6 +167,11 @@ function leaveIfRemoved(e: AppEvent) {
   if (inCall && e.t === 'ChannelDeleted') voice.ended = { reason: 'channel_deleted', channelId: c }
 }
 
+/** What someone is heard at for you, given who's blocked (#474): 0 when blocked or muted for you, else your volume. */
+function peerPercent(userId: string, blocked: ReadonlySet<string>): number {
+  return blocked.has(userId) || voice.localMutes[userId] ? 0 : (voice.volumes[userId] ?? 100)
+}
+
 export async function startVoiceListening() {
   const offApp = onAppEvent(leaveIfRemoved)
   const offBitrate = onAppEvent(followBitrate)
@@ -179,7 +185,8 @@ export async function startVoiceListening() {
     const myId = app.state.me?.id
     if (e.t === 'VoiceJoined' && myId && e.d.user_id === myId) own.announced(e.d.channel_id, e.d.join_sound ?? null)
     const ctx = { myId, channelId: voice.channelId, connection: voice.connection }
-    const join = peerJoin(e, { ...ctx, level: joinSounds.level, mutes: joinSounds.mutes })
+    // someone you've blocked (#474): no join sound of theirs
+    const join = e.t === 'VoiceJoined' && isBlocked(app.state, e.d.user_id) ? null : peerJoin(e, { ...ctx, level: joinSounds.level, mutes: joinSounds.mutes })
     if (join && e.t === 'VoiceJoined') {
       const channel = e.d.channel_id
       playJoin(join, e.d.user_id, () => voice.channelId === channel)
@@ -188,6 +195,16 @@ export async function startVoiceListening() {
     const snd = peerCallSound(e, ctx)
     if (snd) playSound(snd)
   })
+  // You can't hear someone you've blocked (#474): silent for you while blocked, back to your own setting after.
+  let blockedBefore = new Set(app.state.blocks.map((b) => b.user_id))
+  const offBlocks = onAppEvent((e) => {
+    if (e.t !== 'BlocksChanged' || e.d.user_id !== app.state.me?.id) return
+    const now = new Set(e.d.list.map((b) => b.user_id))
+    for (const u of now) if (!blockedBefore.has(u)) void invoke('set_peer_volume', { userId: u, percent: 0 }).catch(() => {})
+    for (const u of blockedBefore) if (!now.has(u)) void invoke('set_peer_volume', { userId: u, percent: peerPercent(u, now) }).catch(() => {})
+    blockedBefore = now
+  })
+  const offBlocksReady = onAppReady(() => (blockedBefore = new Set(app.state.blocks.map((b) => b.user_id))))
   const offVoice = await listen<VoiceEvent>('voice://event', ({ payload: e }) => {
     voice.stage = reduceStage(voice.stage, e)
     switch (e.kind) {
@@ -273,6 +290,8 @@ export async function startVoiceListening() {
     offDisconnect()
     offServerCue()
     offPeers()
+    offBlocks()
+    offBlocksReady()
     own.reset()
     offVoice()
   }
@@ -300,8 +319,10 @@ export const voiceApi = {
     try {
       // remembered per-user volumes and local mutes go first: the core keeps them with or without a session,
       // so nobody muted for you is heard on arrival (and they go straight to 0: no blip at their remembered volume)
-      for (const [userId, percent] of Object.entries(voice.volumes)) if (!voice.localMutes[userId]) await invoke('set_peer_volume', { userId, percent })
+      for (const [userId, percent] of Object.entries(voice.volumes)) if (!voice.localMutes[userId] && !isBlocked(app.state, userId)) await invoke('set_peer_volume', { userId, percent })
       for (const userId of Object.keys(voice.localMutes)) await invoke('set_peer_volume', { userId, percent: 0 })
+      // nor anyone you've blocked (#474)
+      for (const b of app.state.blocks) await invoke('set_peer_volume', { userId: b.user_id, percent: 0 })
     } catch (e) {
       voice.error = errText(e)
     }
@@ -356,7 +377,7 @@ export const voiceApi = {
       voice.localMutes = rest
       saveLocalMutes(rest)
     }
-    await invoke('set_peer_volume', { userId, percent })
+    await invoke('set_peer_volume', { userId, percent: isBlocked(app.state, userId) ? 0 : percent })
   },
   /** "Mute for me": silent for you only, and remembered. Off brings back the volume you'd set (default 100). */
   async setLocalMute(userId: string, on: boolean) {
@@ -366,7 +387,7 @@ export const voiceApi = {
       voice.localMutes = rest
     }
     saveLocalMutes(voice.localMutes)
-    await invoke('set_peer_volume', { userId, percent: on ? 0 : (voice.volumes[userId] ?? 100) })
+    await invoke('set_peer_volume', { userId, percent: on || isBlocked(app.state, userId) ? 0 : (voice.volumes[userId] ?? 100) })
   },
   setAudioConfig: (config: AudioConfig) => invoke('set_audio_config', { config }),
   listDevices: () => invoke<{ inputs: { name: string; is_default: boolean }[]; outputs: { name: string; is_default: boolean }[] }>('list_audio_devices'),

@@ -7,6 +7,7 @@ import { loadAudioConfig } from './voiceui'
 import { app, onAppEvent } from './store.svelte'
 import { voice } from './voice.svelte'
 import { memberServers } from './reactions'
+import { isBlocked } from './blocks'
 import { loadSoundMutes, saveSoundMutes, shouldPlay, warmOrder } from './soundboard'
 import { soundboardCmd, type HearNow } from './tauri'
 import type { Sound } from './protocol/Sound'
@@ -97,7 +98,8 @@ export function startSoundboardListening(): () => void {
     if (e.t !== 'SoundPlayed') return
     const { master, soundboard: level } = mixer.calls
     const ctx = { myChannel: voice.channelId, volume_pct: master > 0 ? level : 0, mutes: muted.people }
-    if (!shouldPlay(e.d, ctx)) return
+    // nor anyone you've blocked (#474)
+    if (!shouldPlay(e.d, ctx) || isBlocked(app.state, e.d.user_id)) return
     const ms = e.d.duration_ms || app.state.sounds[e.d.sound_id]?.duration_ms || FALLBACK_RING_MS
     soundboardCmd
       // the player: the core cuts off their previous sound (#214); others' carry on

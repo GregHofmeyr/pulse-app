@@ -18,6 +18,7 @@
   import NicknameDialog from '../components/NicknameDialog.svelte'
   import CustomStatusDialog from '../components/CustomStatusDialog.svelte'
   import ServerMenu from '../components/ServerMenu.svelte'
+  import BlockDialog from '../components/BlockDialog.svelte'
   import ServerChip from '../components/ServerChip.svelte'
   import ServerNameEdit from '../components/ServerNameEdit.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
@@ -913,6 +914,7 @@
 <GroupIconCrop />
 {#if settingsServer}<ServerSettings server={settingsServer} onClose={() => (serverSettingsId = null)} />{/if}
 {#if ui.serverAction}<ServerActionDialog action={ui.serverAction} onClose={() => (ui.serverAction = null)} />{/if}
+{#if ui.blockAsk}{#key ui.blockAsk}<BlockDialog userId={ui.blockAsk} onClose={() => (ui.blockAsk = null)} />{/key}{/if}
 {#if inviteLinks.code}{#key inviteLinks.code}<InviteLinkDialog code={inviteLinks.code} onClose={() => (inviteLinks.code = null)} />{/key}{/if}
 {#if ui.inviteTo}{#key ui.inviteTo}<InviteDialog serverId={ui.inviteTo} onClose={() => (ui.inviteTo = null)} />{/key}{/if}
 {#if settingsOpen}<Settings section={settingsSection} onLogout={logout} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}

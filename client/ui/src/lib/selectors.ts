@@ -5,6 +5,7 @@ import type { User } from './protocol/User'
 import type { AppState } from './state'
 import type { Message } from './protocol/Message'
 import type { Mentionable } from './mentions'
+import { isHidden } from './blocks'
 
 const byPosition = (a: Channel, b: Channel) => a.position - b.position || (a.name ?? '').localeCompare(b.name ?? '')
 
@@ -88,7 +89,8 @@ export type RosterEntry = Occupant & { pending: boolean }
  * minus you straight away after leaving. */
 export function callRoster(s: AppState, serverId: string | null, channelId: string, me: SelfVoice): RosterEntry[] {
   const myId = s.me?.id
-  let list: RosterEntry[] = voiceOccupants(s, serverId, channelId).map((o) => ({ ...o, pending: o.userId === myId && channelId === me.channelId && me.joining }))
+  // someone blocked with Hide completely (#474) has no row, and isn't counted
+  let list: RosterEntry[] = voiceOccupants(s, serverId, channelId).filter((o) => !isHidden(s, o.userId)).map((o) => ({ ...o, pending: o.userId === myId && channelId === me.channelId && me.joining }))
   if (channelId === me.leaving && channelId !== me.channelId) list = list.filter((o) => o.userId !== myId)
   if (myId && s.me && channelId === me.channelId && !list.some((o) => o.userId === myId)) {
     list.push({ userId: myId, name: displayName(s, serverId, myId), muted: false, deafened: false, ...serverVoiceOf(s, serverId, myId), pending: me.joining })
@@ -98,7 +100,7 @@ export function callRoster(s: AppState, serverId: string | null, channelId: stri
 
 export function typingNames(s: AppState, serverId: string | null, channelId: string, now: number): string[] {
   return Object.entries(s.typing[channelId] ?? {})
-    .filter(([user, until]) => until > now && user !== s.me?.id)
+    .filter(([user, until]) => until > now && user !== s.me?.id && !isHidden(s, user))
     .map(([user]) => displayName(s, serverId, user))
 }
 

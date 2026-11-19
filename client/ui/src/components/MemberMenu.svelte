@@ -18,6 +18,7 @@
   import { openCard } from '../lib/profileCard.svelte'
   import NicknameItems from './NicknameItems.svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
+  import BlockItem from './BlockItem.svelte'
   import GameInviteItem from './GameInviteItem.svelte'
   import ServerInviteItem from './ServerInviteItem.svelte'
   import HideGameItem from './HideGameItem.svelte'
@@ -168,6 +169,7 @@
   <PersonDndItem bind:this={dndFlyout} {userId} {pick} menuLeft={left} menuTop={top} />
   <AppearOfflineItem {userId} {pick} />
   <HideGameItem {userId} {pick} />
+  <BlockItem {userId} {pick} />
   {#if muteChannelId && !self}
     <span class="menu-sep" role="separator"></span>
     {#if muted}
