@@ -29,6 +29,7 @@ export const patchNotes: PatchNotes = {
   date: '18 November 2026',
   new: [
     'Give a channel or group its own message sound from its right-click menu (someone\'s own message sound still wins)',
+    'Stickers: the GIF picker has a Stickers rail with GIPHY\'s stickers, which sit right on the chat',
     'Check for updates yourself in Settings › Advanced › Updates',
     'Invite people to a server with a link, or straight from their right-click menu',
     'Invites show as cards in chat, with a Join button',

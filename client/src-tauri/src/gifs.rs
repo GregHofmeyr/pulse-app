@@ -13,8 +13,8 @@ use tauri::{AppHandle, State};
 use crate::api::{Api, ApiError};
 use crate::commands::Core;
 
-/// GIPHY's GIF endpoints.
-pub const GIPHY_API: &str = "https://api.giphy.com/v1/gifs";
+/// GIPHY's API: its GIF endpoints under `gifs/`, its stickers' under `stickers/` (#293).
+pub const GIPHY_API: &str = "https://api.giphy.com/v1";
 /// GIFs per page (GIPHY's beta keys allow up to 50).
 pub const PAGE: u32 = 24;
 /// GIPHY's longest search.
@@ -166,8 +166,15 @@ impl Giphy {
         }
     }
 
-    /// One page of `query`'s results, or of trending when it is empty.
-    async fn page(&self, key: &Key, query: &str, offset: u32) -> Result<GifPage, ApiError> {
+    /// One page of `query`'s results, or of trending when it is empty: GIFs, or GIPHY's stickers.
+    async fn page(
+        &self,
+        key: &Key,
+        query: &str,
+        offset: u32,
+        stickers: bool,
+    ) -> Result<GifPage, ApiError> {
+        let feed = if stickers { "stickers" } else { "gifs" };
         let query: String = query.trim().chars().take(MAX_QUERY_CHARS).collect();
         let (path, max) = if query.is_empty() {
             ("trending", TRENDING_MAX_OFFSET)
@@ -187,7 +194,7 @@ impl Giphy {
         }
         let resp = self
             .http
-            .get(format!("{}/{path}", self.base))
+            .get(format!("{}/{feed}/{path}", self.base))
             .query(&params)
             .send()
             .await
@@ -275,19 +282,20 @@ impl Gifs {
         Ok(Some(key))
     }
 
-    /// One page of GIFs for `query` (trending when it is blank) from `offset`; `None` when GIFs aren't set up on
-    /// `api`'s server.
+    /// One page of GIFs (or stickers) for `query` (trending when it is blank) from `offset`; `None` when GIFs aren't
+    /// set up on `api`'s server.
     pub async fn feed(
         &self,
         api: &Api,
         token: &str,
         query: &str,
         offset: u32,
+        stickers: bool,
     ) -> Result<Option<GifPage>, ApiError> {
         let Some(key) = self.key(api, token).await? else {
             return Ok(None);
         };
-        let r = self.giphy.page(&key, query, offset).await;
+        let r = self.giphy.page(&key, query, offset, stickers).await;
         if let Err(ApiError::Told {
             status: 401 | 403, ..
         }) = &r
@@ -307,11 +315,14 @@ pub async fn gif_feed(
     gifs: State<'_, Gifs>,
     query: String,
     offset: Option<u32>,
+    stickers: Option<bool>,
 ) -> Result<Option<GifPage>, ApiError> {
     let (api, token) = core.current()?;
+    let stickers = stickers.unwrap_or(false);
     core.check(
         &app,
-        gifs.feed(&api, &token, &query, offset.unwrap_or(0)).await,
+        gifs.feed(&api, &token, &query, offset.unwrap_or(0), stickers)
+            .await,
     )
 }
 
@@ -369,7 +380,11 @@ mod tests {
         let fake = fake_giphy::FakeGiphy::start().await;
         let (_app, api, token) = server(Some(fake_giphy::KEY)).await;
         let gifs = Gifs::new(&fake.base());
-        let page = gifs.feed(&api, &token, "  ", 0).await.unwrap().unwrap();
+        let page = gifs
+            .feed(&api, &token, "  ", 0, false)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
             page.gifs.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),
             ["Fake0a", "Fake0b"],
@@ -407,7 +422,7 @@ mod tests {
         let (_app, api, token) = server(Some(fake_giphy::KEY)).await;
         let gifs = Gifs::new(&fake.base());
         let page = gifs
-            .feed(&api, &token, "  happy dance & cats ", 28)
+            .feed(&api, &token, "  happy dance & cats ", 28, false)
             .await
             .unwrap()
             .unwrap();
@@ -421,8 +436,24 @@ mod tests {
         assert_eq!(q["q"], "happy dance & cats");
         assert_eq!(q["offset"], "28");
         // a long query is cut to GIPHY's 50 characters
-        gifs.feed(&api, &token, &"x".repeat(80), 0).await.unwrap();
+        gifs.feed(&api, &token, &"x".repeat(80), 0, false)
+            .await
+            .unwrap();
         assert_eq!(query_of(&fake.requests()[1])["q"], "x".repeat(50));
+    }
+
+    #[tokio::test]
+    async fn stickers_come_from_giphys_sticker_endpoints() {
+        let fake = fake_giphy::FakeGiphy::start().await;
+        let (_app, api, token) = server(Some(fake_giphy::KEY)).await;
+        let gifs = Gifs::new(&fake.base());
+        let page = gifs.feed(&api, &token, "", 0, true).await.unwrap().unwrap();
+        assert_eq!(page.gifs[0].id, "Sticker0a");
+        gifs.feed(&api, &token, "wave", 0, true).await.unwrap();
+        let reqs = fake.requests();
+        assert!(reqs[0].starts_with("/v1/stickers/trending?"), "{}", reqs[0]);
+        assert!(reqs[1].starts_with("/v1/stickers/search?"), "{}", reqs[1]);
+        assert_eq!(query_of(&reqs[1])["q"], "wave");
     }
 
     #[tokio::test]
@@ -440,7 +471,7 @@ mod tests {
         let api = Api::new(&format!("http://{}", app.addr));
         let gifs = Gifs::new(&fake.base());
         for q in ["", "cats", "dogs"] {
-            gifs.feed(&api, &token, q, 0).await.unwrap().unwrap();
+            gifs.feed(&api, &token, q, 0, false).await.unwrap().unwrap();
         }
         assert_eq!(fake.requests().len(), 3);
         assert_eq!(query_of(&fake.requests()[2])["rating"], "g");
@@ -451,7 +482,12 @@ mod tests {
         let fake = fake_giphy::FakeGiphy::start().await;
         let (_app, api, token) = server(None).await;
         let gifs = Gifs::new(&fake.base());
-        assert!(gifs.feed(&api, &token, "cats", 0).await.unwrap().is_none());
+        assert!(
+            gifs.feed(&api, &token, "cats", 0, false)
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert!(fake.requests().is_empty());
     }
 
@@ -461,13 +497,13 @@ mod tests {
         let (_app, api, token) = server(Some(fake_giphy::KEY)).await;
         let gifs = Gifs::new(&fake.base());
         fake.set_status(429);
-        let e = gifs.feed(&api, &token, "cats", 0).await.unwrap_err();
+        let e = gifs.feed(&api, &token, "cats", 0, false).await.unwrap_err();
         assert!(
             matches!(&e, ApiError::Told { status: 429, message } if message == BUSY),
             "{e:?}"
         );
         fake.set_status(500);
-        let e = gifs.feed(&api, &token, "cats", 0).await.unwrap_err();
+        let e = gifs.feed(&api, &token, "cats", 0, false).await.unwrap_err();
         assert!(matches!(&e, ApiError::Told { message, .. } if message == UNREACHABLE));
         assert!(!matches!(e, ApiError::Unauthorized));
     }
@@ -477,7 +513,7 @@ mod tests {
         let fake = fake_giphy::FakeGiphy::start().await;
         let (_app, api, token) = server(Some("an-old-key")).await;
         let gifs = Gifs::new(&fake.base());
-        let e = gifs.feed(&api, &token, "cats", 0).await.unwrap_err();
+        let e = gifs.feed(&api, &token, "cats", 0, false).await.unwrap_err();
         assert!(
             matches!(&e, ApiError::Told { status: 401, message } if message == KEY_REFUSED),
             "a refused key is GIPHY's, not a sign-out: {e:?}"
@@ -490,7 +526,7 @@ mod tests {
         let (_app, api, token) = server(Some(fake_giphy::KEY)).await;
         // nothing listens here
         let gifs = Gifs::new("http://127.0.0.1:9/v1/gifs");
-        let e = gifs.feed(&api, &token, "cats", 0).await.unwrap_err();
+        let e = gifs.feed(&api, &token, "cats", 0, false).await.unwrap_err();
         assert!(matches!(&e, ApiError::Told { message, .. } if message == UNREACHABLE));
     }
 
@@ -543,6 +579,7 @@ mod tests {
             title: "Yes".into(),
             width: 480,
             height: 270,
+            sticker: false,
         };
         api.add_gif_favourite(&token, &g).await.unwrap();
         assert_eq!(api.gif_favourites(&token).await.unwrap(), vec![g.clone()]);
