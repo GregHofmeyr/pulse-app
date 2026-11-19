@@ -660,8 +660,8 @@ async fn set_mute(
         .until
         .as_deref()
         .map(|t| {
-            chrono::DateTime::parse_from_rfc3339(t)
-                .map(|t| crate::db::stamp(t.with_timezone(&chrono::Utc)))
+            crate::times::parse(t)
+                .map(crate::db::stamp)
                 .map_err(|_| AppError::BadRequest("until must be an RFC 3339 time".into()))
         })
         .transpose()?;

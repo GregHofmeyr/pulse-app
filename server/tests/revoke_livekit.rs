@@ -824,8 +824,8 @@ async fn grant_ids(app: &TestApp) -> BTreeSet<String> {
 }
 
 async fn age_grant(app: &TestApp, id: &str, minutes: i64) {
-    let at = (chrono::Utc::now() - chrono::Duration::minutes(minutes))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let at =
+        pulse_server::db::stamp(jiff::Timestamp::now() - jiff::SignedDuration::from_mins(minutes));
     sqlx::query("UPDATE livekit_grants SET issued_at = ? WHERE id = ?")
         .bind(at)
         .bind(id)

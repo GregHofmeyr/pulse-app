@@ -311,9 +311,11 @@ async fn rugby_teams(State(w): State<Shared>, h: HeaderMap, Query(q): Q) -> Resp
 }
 
 fn fixture_json(m: &FakeMatch, with_events: bool) -> serde_json::Value {
-    let date = chrono::DateTime::from_timestamp(m.kickoff, 0)
+    let date = jiff::Timestamp::from_second(m.kickoff)
+        .ok()
         .unwrap()
-        .to_rfc3339();
+        .strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        .to_string();
     let long = match m.status.as_str() {
         "NS" => "Not Started",
         "1H" => "First Half",
@@ -361,7 +363,7 @@ async fn fixtures(State(w): State<Shared>, h: HeaderMap, Query(q): Q) -> Respons
     }
     let day = |key: &str| {
         q.get(key)
-            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+            .and_then(|d| jiff::civil::Date::strptime("%Y-%m-%d", d).ok())
     };
     let (from, to) = (day("from"), day("to"));
     let league = league_of(&q);
@@ -369,9 +371,7 @@ async fn fixtures(State(w): State<Shared>, h: HeaderMap, Query(q): Q) -> Respons
         .iter()
         .filter(|m| Some(m.league) == league)
         .filter(|m| {
-            let d = chrono::DateTime::from_timestamp(m.kickoff, 0)
-                .unwrap()
-                .date_naive();
+            let d = crate::times::utc_date(jiff::Timestamp::from_second(m.kickoff).unwrap());
             from.is_none_or(|f| d >= f) && to.is_none_or(|t| d <= t)
         })
         .map(|m| fixture_json(m, false))
@@ -387,13 +387,13 @@ async fn games(State(w): State<Shared>, h: HeaderMap, Query(q): Q) -> Response {
     let league = league_of(&q);
     let date = q
         .get("date")
-        .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
+        .and_then(|d| jiff::civil::Date::strptime("%Y-%m-%d", d).ok());
     let items = matches
         .iter()
         .filter(|m| Some(m.league) == league)
-        .filter(|m| date.is_none_or(|d| chrono::DateTime::from_timestamp(m.kickoff, 0).unwrap().date_naive() == d))
+        .filter(|m| date.is_none_or(|d| crate::times::utc_date(jiff::Timestamp::from_second(m.kickoff).unwrap()) == d))
         .map(|m| {
-            let t = chrono::DateTime::from_timestamp(m.kickoff, 0).unwrap();
+            let t = jiff::Timestamp::from_second(m.kickoff).ok().unwrap();
             let long = match m.status.as_str() {
                 "NS" => "Not Started",
                 "FT" => "Finished",
@@ -401,7 +401,7 @@ async fn games(State(w): State<Shared>, h: HeaderMap, Query(q): Q) -> Response {
                 _ => "In Play",
             };
             serde_json::json!({
-                "id": m.id, "date": t.to_rfc3339(), "time": t.format("%H:%M").to_string(), "timestamp": m.kickoff,
+                "id": m.id, "date": t.strftime("%Y-%m-%dT%H:%M:%S+00:00").to_string(), "time": t.strftime("%H:%M").to_string(), "timestamp": m.kickoff,
                 "timezone": "UTC", "week": "8", "status": {"long": long, "short": m.status},
                 "country": {"id": 26, "name": "World", "code": null, "flag": null},
                 "league": {"id": m.league, "name": "United Rugby Championship", "type": "Cup",

@@ -47,6 +47,7 @@ pub mod stage;
 pub mod state;
 pub mod steam;
 pub mod streams;
+pub mod times;
 pub mod updates;
 pub mod voice;
 pub mod watch;

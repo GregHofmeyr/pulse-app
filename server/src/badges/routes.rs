@@ -5,7 +5,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use chrono::Utc;
+use jiff::Timestamp;
 use pulse_protocol::rest::{BadgeCatalogue, EggRequest, MarkBadgesSeenRequest, SetShowcaseRequest};
 
 use super::catalogue::stat;
@@ -144,8 +144,8 @@ async fn muted_talk(State(s): State<AppState>, AuthUser(me): AuthUser) -> AppRes
     {
         return Ok(StatusCode::NO_CONTENT);
     }
-    let now = Utc::now();
-    let (now_unix, today) = (now.timestamp(), sast_day(now));
+    let now = Timestamp::now();
+    let (now_unix, today) = (now.as_second(), sast_day(now));
     let mut tx = begin_write(&s.db).await?;
     let last_at = stats::get(&mut tx, me, stat::DOOS_LAST_AT).await?;
     let day = stats::get(&mut tx, me, stat::DOOS_DAY).await?;

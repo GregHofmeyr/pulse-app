@@ -27,7 +27,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use chrono::{Datelike, TimeZone};
 use pulse_protocol::rest::{SportsLeague, SportsPhase};
 
 use crate::config::SportsConfig;
@@ -62,11 +61,11 @@ pub fn league_name(league: SportsLeague) -> &'static str {
 
 /// The season API-Sports files a date under: all three leagues run from about August to June and are named by the
 /// year they start in.
-pub fn season_for(date: chrono::NaiveDate) -> i32 {
+pub fn season_for(date: jiff::civil::Date) -> i32 {
     if date.month() >= 7 {
-        date.year()
+        i32::from(date.year())
     } else {
-        date.year() - 1
+        i32::from(date.year()) - 1
     }
 }
 
@@ -82,10 +81,13 @@ pub fn phase_of(status: &str) -> SportsPhase {
 
 /// South African time (UTC+2 all year): the fallback text older apps show names kick-off in it.
 pub fn sast(unix: i64) -> String {
-    let tz = chrono::FixedOffset::east_opt(2 * 3600).expect("a valid offset");
-    tz.timestamp_opt(unix, 0)
-        .single()
-        .map(|t| t.format("%H:%M").to_string())
+    jiff::Timestamp::from_second(unix)
+        .map(|t| {
+            crate::badges::time::SAST
+                .to_datetime(t)
+                .strftime("%H:%M")
+                .to_string()
+        })
         .unwrap_or_default()
 }
 
@@ -202,7 +204,7 @@ pub async fn state_set(db: &sqlx::SqlitePool, key: &str, value: &str) -> sqlx::R
 
 /// Whether the unix-seconds marker `key` is missing or older than `every`.
 pub async fn due(db: &sqlx::SqlitePool, key: &str, every: Duration) -> bool {
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     state_get(db, key)
         .await
         .and_then(|v| v.parse::<i64>().ok())
@@ -211,7 +213,7 @@ pub async fn due(db: &sqlx::SqlitePool, key: &str, every: Duration) -> bool {
 
 /// Set the unix-seconds marker `key` to now.
 pub async fn mark(db: &sqlx::SqlitePool, key: &str) -> sqlx::Result<()> {
-    state_set(db, key, &chrono::Utc::now().timestamp().to_string()).await
+    state_set(db, key, &jiff::Timestamp::now().as_second().to_string()).await
 }
 
 #[cfg(test)]
@@ -220,7 +222,7 @@ mod tests {
 
     #[test]
     fn seasons_start_in_july() {
-        let d = |y, m, day| chrono::NaiveDate::from_ymd_opt(y, m, day).unwrap();
+        let d = jiff::civil::date;
         assert_eq!(season_for(d(2026, 11, 16)), 2026);
         assert_eq!(season_for(d(2027, 5, 30)), 2026);
         assert_eq!(season_for(d(2027, 7, 1)), 2027);

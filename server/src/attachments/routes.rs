@@ -107,7 +107,7 @@ async fn start(
     )
     .bind(me.to_string())
     .bind(crate::db::stamp(
-        chrono::Utc::now() - chrono::Duration::hours(super::PENDING_TTL_HOURS),
+        jiff::Timestamp::now() - jiff::SignedDuration::from_hours(super::PENDING_TTL_HOURS),
     ))
     .fetch_one(&mut *tx)
     .await?;
@@ -117,8 +117,8 @@ async fn start(
         )));
     }
     // The server-wide room for big files: everything temporary not yet deleted, sent or not.
-    let now_at = chrono::Utc::now();
-    let expires_at = temp_days.map(|d| crate::db::stamp(now_at + chrono::Duration::days(d.into())));
+    let now_at = jiff::Timestamp::now();
+    let expires_at = temp_days.map(|d| crate::db::stamp(now_at + crate::times::days(d.into())));
     if temp_days.is_some() {
         let live: i64 = sqlx::query_scalar(
             "SELECT COALESCE(SUM(size), 0) FROM attachments
@@ -134,7 +134,7 @@ async fn start(
         )
         .bind(me.to_string())
         .bind(crate::db::stamp(
-            now_at - chrono::Duration::hours(super::PENDING_TTL_HOURS),
+            now_at - jiff::SignedDuration::from_hours(super::PENDING_TTL_HOURS),
         ))
         .fetch_one(&mut *tx)
         .await?;
@@ -198,7 +198,7 @@ async fn start(
             url: None,
             content_type: content_type.into(),
             expires_at: crate::db::stamp(
-                now_at + chrono::Duration::from_std(URL_TTL).map_err(anyhow::Error::from)?,
+                now_at + jiff::SignedDuration::try_from(URL_TTL).map_err(anyhow::Error::from)?,
             ),
             multipart: Some(MultipartInfo {
                 part_size: s.cfg.part_size,

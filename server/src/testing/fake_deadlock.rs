@@ -340,8 +340,8 @@ async fn steam_news(State(s): State<Shared>) -> Response {
         .patches
         .iter()
         .map(|(title, link, published, content)| {
-            let date = chrono::DateTime::parse_from_rfc3339(published)
-                .map(|t| t.timestamp())
+            let date = crate::times::parse(published)
+                .map(|t| t.as_second())
                 .unwrap_or(0);
             serde_json::json!({"gid": "1", "title": title, "url": link, "contents": content, "date": date})
         })

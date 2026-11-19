@@ -1,7 +1,7 @@
 //! Periodic database cleanup. Runs hourly next to the media cleanup (`media::spawn_cleanup`).
 use std::time::Duration;
 
-use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
+use jiff::Timestamp;
 use sqlx::SqlitePool;
 
 use crate::auth::invites;
@@ -24,8 +24,8 @@ pub struct Pruned {
     pub invite_failures: u64,
 }
 
-fn ts(t: DateTime<Utc>) -> String {
-    t.to_rfc3339_opts(SecondsFormat::Millis, true)
+fn ts(t: Timestamp) -> String {
+    crate::db::stamp(t)
 }
 
 /// Delete what has outlived its purpose, one statement per table:
@@ -36,7 +36,7 @@ fn ts(t: DateTime<Utc>) -> String {
 /// - reports older than [`REPORT_RETENTION_DAYS`];
 /// - inbox reads of items older than the inbox keeps them ([`crate::inbox::DAYS`], #306);
 /// - server invites long after they stopped working, and old failed invite lookups (`servers::invites::prune`, #80).
-pub async fn prune(db: &SqlitePool, now: DateTime<Utc>) -> AppResult<Pruned> {
+pub async fn prune(db: &SqlitePool, now: Timestamp) -> AppResult<Pruned> {
     let sessions = sqlx::query("DELETE FROM sessions WHERE expires_at <= ?")
         .bind(ts(now))
         .execute(db)
@@ -53,7 +53,7 @@ pub async fn prune(db: &SqlitePool, now: DateTime<Utc>) -> AppResult<Pruned> {
         .await?
         .rows_affected();
     let reports = sqlx::query("DELETE FROM bug_reports WHERE created_at <= ?")
-        .bind(ts(now - TimeDelta::days(REPORT_RETENTION_DAYS)))
+        .bind(ts(now - crate::times::days(REPORT_RETENTION_DAYS)))
         .execute(db)
         .await?
         .rows_affected();
@@ -93,7 +93,7 @@ pub fn spawn_prune(db: SqlitePool) {
         let mut tick = tokio::time::interval(Duration::from_secs(3600));
         loop {
             tick.tick().await;
-            if let Err(e) = prune(&db, Utc::now()).await {
+            if let Err(e) = prune(&db, Timestamp::now()).await {
                 tracing::warn!(error = %e, "database cleanup failed");
             }
         }

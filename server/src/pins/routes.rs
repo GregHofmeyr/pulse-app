@@ -21,7 +21,7 @@ use crate::messages::system;
 use crate::servers::routes::is_server_member;
 
 /// How recent your own line for a message must be for a re-pin to bring it up to date rather than post another.
-const RELINE_WITHIN: chrono::Duration = chrono::Duration::minutes(10);
+const RELINE_WITHIN: jiff::SignedDuration = jiff::SignedDuration::from_mins(10);
 
 /// A pin's line: posted now, or an earlier one of yours brought up to date.
 enum Line {
@@ -75,14 +75,14 @@ async fn pin(
     if msg.thread_root_id.is_some() {
         return Err(AppError::BadRequest("replies can't be pinned".into()));
     }
-    let at = chrono::Utc::now();
+    let at = jiff::Timestamp::now();
     let pin = Pin {
         pinned_by: me,
         pinned_at: stamp(at),
         expires_at: match req.duration {
-            PinDuration::Hour => Some(stamp(at + chrono::Duration::hours(1))),
-            PinDuration::Day => Some(stamp(at + chrono::Duration::days(1))),
-            PinDuration::Week => Some(stamp(at + chrono::Duration::weeks(1))),
+            PinDuration::Hour => Some(stamp(at + jiff::SignedDuration::from_hours(1))),
+            PinDuration::Day => Some(stamp(at + crate::times::days(1))),
+            PinDuration::Week => Some(stamp(at + crate::times::weeks(1))),
             PinDuration::Forever => None,
         },
     };
@@ -237,11 +237,11 @@ async fn post_line(
     channel: ChannelId,
     id: MessageId,
     me: UserId,
-    at: chrono::DateTime<chrono::Utc>,
+    at: jiff::Timestamp,
     content: String,
     payload: serde_json::Value,
 ) -> AppResult<Line> {
-    let since = (at - RELINE_WITHIN).timestamp_millis().max(0) as u64;
+    let since = (at - RELINE_WITHIN).as_millisecond().max(0) as u64;
     let earlier: Option<String> = sqlx::query_scalar(
         "SELECT id FROM messages WHERE channel_id = ? AND id >= ? AND kind = 'system' AND deleted_at IS NULL \
          AND json_extract(system_payload, '$.type') = ? AND json_extract(system_payload, '$.message_id') = ? \

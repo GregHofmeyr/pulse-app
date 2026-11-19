@@ -19,7 +19,6 @@ pub mod worker;
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
@@ -54,12 +53,8 @@ pub fn card(payload: &str) -> Option<F1Card> {
 
 /// A time as the fallback text says it: UTC, the one time everyone reads the same way.
 fn utc_text(at: &str) -> String {
-    DateTime::parse_from_rfc3339(at)
-        .map(|t| {
-            t.with_timezone(&Utc)
-                .format("%a %-d %b %Y, %H:%M UTC")
-                .to_string()
-        })
+    crate::times::parse(at)
+        .map(|t| t.strftime("%a %-d %b %Y, %H:%M UTC").to_string())
         .unwrap_or_else(|_| at.to_string())
 }
 

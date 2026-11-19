@@ -79,7 +79,9 @@ async fn register(
         return Err(AppError::TooManyRequests(None));
     }
     let who = crate::servers::invites::Seeker::anyone(None, ip, &headers);
-    if crate::servers::invites::lookups_blocked(&s.db, &ip_key, None, chrono::Utc::now()).await? {
+    if crate::servers::invites::lookups_blocked(&s.db, &ip_key, None, jiff::Timestamp::now())
+        .await?
+    {
         return Err(AppError::TooManyRequests(None));
     }
     if req.website.as_deref().is_some_and(|w| !w.trim().is_empty()) {
@@ -109,7 +111,7 @@ async fn register_with(s: &AppState, mut req: RegisterRequest) -> AppResult<Json
     check_password_rule(&req.password)?;
     req.invite_code = crate::servers::invites::code_of(&req.invite_code);
     // Check the invite before anything expensive (and before revealing whether a username exists).
-    let cutoff = invites::cutoff(chrono::Utc::now());
+    let cutoff = invites::cutoff(jiff::Timestamp::now());
     let found: Option<(Option<String>, String)> =
         sqlx::query_as("SELECT used_by, created_at FROM invites WHERE code = ?")
             .bind(&req.invite_code)

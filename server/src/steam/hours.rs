@@ -115,7 +115,8 @@ pub async fn one(s: &AppState, user: UserId, steam_id: &str) -> AppResult<()> {
 /// Server `server`'s board: its members who share Steam hours and played some in the last two weeks, most first. The
 /// same for every member, including anyone a member hides what they're playing from (#438).
 pub async fn board(db: &SqlitePool, server: ServerId) -> AppResult<Vec<SteamHoursEntry>> {
-    let fresh = crate::db::stamp(chrono::Utc::now() - chrono::Duration::hours(STALE_HOURS));
+    let fresh =
+        crate::db::stamp(jiff::Timestamp::now() - jiff::SignedDuration::from_hours(STALE_HOURS));
     let rows: Vec<(String, i64)> = sqlx::query_as(
         "SELECT l.user_id, l.recent_minutes FROM steam_links l
          JOIN server_members m ON m.user_id = l.user_id AND m.server_id = ?

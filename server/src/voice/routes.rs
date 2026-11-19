@@ -4,7 +4,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use axum::{Json, Router};
-use chrono::Utc;
+use jiff::Timestamp;
 use livekit_api::access_token::{AccessToken, TokenVerifier, VideoGrants};
 use livekit_api::webhooks::WebhookReceiver;
 use pulse_protocol::gateway::Event;
@@ -340,7 +340,10 @@ async fn joined(s: &AppState, ch: &Channel, user_id: UserId, sid: &str) -> AppRe
     // which runs after and never fails the webhook.
     let mut opened = None;
     if let Some(server) = ch.server_id {
-        let (id, at) = (pulse_protocol::ids::next_ulid().to_string(), Utc::now());
+        let (id, at) = (
+            pulse_protocol::ids::next_ulid().to_string(),
+            Timestamp::now(),
+        );
         sqlx::query(
             "INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES (?, ?, ?, ?)",
         )

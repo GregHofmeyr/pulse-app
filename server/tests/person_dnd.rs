@@ -101,7 +101,8 @@ async fn the_list_follows_you_to_every_device_and_no_one_else() {
     assert_eq!(next_list(&mut other_device).await.unwrap(), list);
 
     // kim, only in DMs, for an hour
-    let until = (chrono::Utc::now() + chrono::TimeDelta::hours(1)).to_rfc3339();
+    let until =
+        pulse_server::times::rfc3339(jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1));
     let r = call(
         &app,
         reqwest::Method::PUT,
@@ -196,7 +197,7 @@ async fn run_out_ones_read_as_gone_and_bad_asks_are_refused() {
     // one that ran out (as if its time passed) isn't in the list
     let r = put(
         format!("/me/person-dnd/{sam_id}"),
-        json!({ "until": (chrono::Utc::now() + chrono::TimeDelta::minutes(5)).to_rfc3339() }),
+        json!({ "until": pulse_server::times::rfc3339(jiff::Timestamp::now() + jiff::SignedDuration::from_mins(5)) }),
     )
     .await;
     assert_eq!(r.status(), 200);

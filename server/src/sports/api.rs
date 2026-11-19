@@ -272,7 +272,7 @@ fn errors_of(v: &serde_json::Value) -> Option<Vec<(String, String)>> {
 
 /// The UTC day the allowance counts.
 pub fn quota_day() -> String {
-    chrono::Utc::now().format("%Y-%m-%d").to_string()
+    jiff::Timestamp::now().strftime("%Y-%m-%d").to_string()
 }
 
 impl Api {
@@ -575,8 +575,8 @@ impl Api {
         db: &SqlitePool,
         league: u32,
         season: i32,
-        from: chrono::NaiveDate,
-        to: chrono::NaiveDate,
+        from: jiff::civil::Date,
+        to: jiff::civil::Date,
     ) -> Result<Vec<Match>, ApiError> {
         let items: Vec<FxItem> = self
             .get(
@@ -625,7 +625,7 @@ impl Api {
         db: &SqlitePool,
         league: u32,
         season: i32,
-        date: Option<chrono::NaiveDate>,
+        date: Option<jiff::civil::Date>,
     ) -> Result<Vec<Match>, ApiError> {
         let mut query = vec![
             ("league", league.to_string()),

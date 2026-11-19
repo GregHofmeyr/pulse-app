@@ -646,7 +646,11 @@ async fn posts_a_two_line_quote() {
     assert_eq!(q.lines[0].text.as_deref(), Some("this is a quote"));
     assert_eq!(q.lines[1].speaker_id, Some(f.alex));
     assert_eq!(q.lines[1].text.as_deref(), Some("and this builds on it"));
-    let year: i32 = chrono::Utc::now().format("%Y").to_string().parse().unwrap();
+    let year: i32 = jiff::Timestamp::now()
+        .strftime("%Y")
+        .to_string()
+        .parse()
+        .unwrap();
     assert_eq!(q.year, year);
     assert_eq!(q.said_on, None);
     assert_eq!(
@@ -847,7 +851,7 @@ async fn image_lines_use_the_media_row() {
 #[tokio::test]
 async fn today_sets_the_year_within_a_day() {
     let f = fixture().await;
-    let utc = chrono::Utc::now().date_naive();
+    let utc = pulse_server::times::utc_date(jiff::Timestamp::now());
     let posted_on = |m: &Message| {
         let id = m.id.to_string();
         let db = f.app.db.clone();
@@ -862,15 +866,21 @@ async fn today_sets_the_year_within_a_day() {
     let cases = [
         (utc.to_string(), utc.to_string()),
         (
-            (utc - chrono::Days::new(1)).to_string(),
-            (utc - chrono::Days::new(1)).to_string(),
+            (utc - jiff::Span::new().days(1)).to_string(),
+            (utc - jiff::Span::new().days(1)).to_string(),
         ),
         (
-            (utc + chrono::Days::new(1)).to_string(),
-            (utc + chrono::Days::new(1)).to_string(),
+            (utc + jiff::Span::new().days(1)).to_string(),
+            (utc + jiff::Span::new().days(1)).to_string(),
         ),
-        ((utc + chrono::Days::new(2)).to_string(), utc.to_string()),
-        ((utc - chrono::Days::new(2)).to_string(), utc.to_string()),
+        (
+            (utc + jiff::Span::new().days(2)).to_string(),
+            utc.to_string(),
+        ),
+        (
+            (utc - jiff::Span::new().days(2)).to_string(),
+            utc.to_string(),
+        ),
         ("not-a-date".to_string(), utc.to_string()),
         ("2026-13-45".to_string(), utc.to_string()),
     ];
@@ -2045,7 +2055,11 @@ async fn replies_get_normal_reactions() {
 #[tokio::test]
 async fn a_system_card_gets_normal_reactions() {
     let f = fixture().await;
-    let year: i32 = chrono::Utc::now().format("%Y").to_string().parse().unwrap();
+    let year: i32 = jiff::Timestamp::now()
+        .strftime("%Y")
+        .to_string()
+        .parse()
+        .unwrap();
     let r = post_json(
         &f.app,
         &f.alex_t,
@@ -3543,13 +3557,13 @@ async fn ranked_quotes_carry_the_score_they_were_ranked_by() {
 /// calendar rules on fixed dates.
 #[tokio::test]
 async fn periods_count_by_the_local_day_posted() {
-    use chrono::Datelike;
     let f = fixture().await;
-    let today = chrono::Utc::now().date_naive();
-    let month1 = today.with_day(1).unwrap();
-    let jan1 = chrono::NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap();
-    let day = chrono::Duration::days(1);
-    let monday = today - chrono::Duration::days(i64::from(today.weekday().num_days_from_monday()));
+    let today = pulse_server::times::utc_date(jiff::Timestamp::now());
+    let month1 = today.first_of_month();
+    let jan1 = today.first_of_year();
+    let day = pulse_server::times::days(1);
+    let monday =
+        today - pulse_server::times::days(i64::from(today.weekday().to_monday_zero_offset()));
     // (posted on, in this week, in this month, in this year)
     let posted: Vec<_> = [
         today,

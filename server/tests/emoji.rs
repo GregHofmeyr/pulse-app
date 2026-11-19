@@ -397,8 +397,8 @@ async fn deleted_emoji_media_is_cleaned() {
 async fn frequent_ranks_with_decay() {
     let app = spawn().await;
     let (alex, _) = register(&app, "alex").await;
-    let day0 = chrono::Utc::now() - chrono::Duration::days(30);
-    let day30 = chrono::Utc::now();
+    let day0 = jiff::Timestamp::now() - pulse_server::times::days(30);
+    let day30 = jiff::Timestamp::now();
     let mut conn = app.db.acquire().await.unwrap();
     let x = vec!["x".to_string()];
     for _ in 0..3 {
@@ -518,13 +518,13 @@ async fn media_vanishing_during_create_is_400() {
 async fn usage_decays_on_write() {
     let app = spawn().await;
     let (alex, _) = register(&app, "alex").await;
-    let now = chrono::Utc::now();
-    let then = now - chrono::Duration::days(7);
+    let now = jiff::Timestamp::now();
+    let then = now - pulse_server::times::days(7);
     sqlx::query(
         "INSERT INTO emoji_usage (user_id, emoji, score, last_used_at) VALUES (?, 'x', 4.0, ?)",
     )
     .bind(alex.to_string())
-    .bind(then.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    .bind(pulse_server::db::stamp(then))
     .execute(&app.db)
     .await
     .unwrap();
@@ -628,7 +628,7 @@ async fn seed_usage(app: &TestApp, user: UserId, emoji: &str, score: f64) {
     .bind(user.to_string())
     .bind(emoji)
     .bind(score)
-    .bind(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    .bind(pulse_server::db::stamp(jiff::Timestamp::now()))
     .execute(&app.db)
     .await
     .unwrap();

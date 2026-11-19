@@ -425,7 +425,7 @@ async fn after_a_restart_the_same_game_soon_reopens_the_invite() {
     // one of them is past its grace
     sqlx::query("UPDATE game_invites SET restart_grace_until = ? WHERE message_id = ?")
         .bind(pulse_server::db::stamp(
-            chrono::Utc::now() - chrono::Duration::minutes(1),
+            jiff::Timestamp::now() - jiff::SignedDuration::from_mins(1),
         ))
         .bind(late.id.to_string())
         .execute(&app.db)

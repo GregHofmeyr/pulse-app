@@ -79,8 +79,8 @@ async fn share(
         Some(t) => crate::embeds::keep_thumb(&s.db, t).await?,
         None => None,
     };
-    let at = chrono::Utc::now();
-    let ttl = chrono::Duration::from_std(s.cfg.stage_share_ttl).map_err(anyhow::Error::from)?;
+    let at = jiff::Timestamp::now();
+    let ttl = jiff::SignedDuration::try_from(s.cfg.stage_share_ttl).map_err(anyhow::Error::from)?;
     let mut share = StageShare {
         id: pulse_protocol::ids::next_ulid().to_string(),
         channel_id: id,

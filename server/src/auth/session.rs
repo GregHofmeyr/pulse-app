@@ -1,7 +1,7 @@
 //! Opaque session tokens: 256-bit random, only the SHA-256 is stored, 90-day sliding expiry.
 
 use base64::Engine;
-use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::ids::UserId;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -9,10 +9,10 @@ use sqlx::{SqliteConnection, SqlitePool};
 
 const LIFETIME_DAYS: i64 = 90;
 /// Only rewrite expiry when the last recorded use is older than this (avoids a write per request).
-const SLIDE_EVERY: Duration = Duration::hours(1);
+const SLIDE_EVERY: SignedDuration = SignedDuration::from_hours(1);
 
-fn ts(t: DateTime<Utc>) -> String {
-    t.to_rfc3339_opts(SecondsFormat::Millis, true)
+fn ts(t: Timestamp) -> String {
+    crate::db::stamp(t)
 }
 
 pub fn hash_token(token: &str) -> String {
@@ -24,7 +24,7 @@ pub async fn is_live(db: &SqlitePool, token_hash: &str) -> anyhow::Result<bool> 
     let hit: Option<i64> =
         sqlx::query_scalar("SELECT 1 FROM sessions WHERE token_hash = ? AND expires_at > ?")
             .bind(token_hash)
-            .bind(ts(Utc::now()))
+            .bind(ts(Timestamp::now()))
             .fetch_optional(db)
             .await?;
     Ok(hit.is_some())
@@ -40,7 +40,7 @@ pub async fn create_in(conn: &mut SqliteConnection, user: UserId) -> anyhow::Res
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
-    let now = Utc::now();
+    let now = Timestamp::now();
     sqlx::query(
         "INSERT INTO sessions (token_hash, user_id, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?, ?)",
     )
@@ -48,7 +48,7 @@ pub async fn create_in(conn: &mut SqliteConnection, user: UserId) -> anyhow::Res
     .bind(user.to_string())
     .bind(ts(now))
     .bind(ts(now))
-    .bind(ts(now + Duration::days(LIFETIME_DAYS)))
+    .bind(ts(now + crate::times::days(LIFETIME_DAYS)))
     .execute(conn)
     .await?;
     Ok(token)
@@ -107,14 +107,14 @@ pub async fn authenticate(db: &SqlitePool, token: &str) -> anyhow::Result<Option
     let Some((user_id, last_used, expires)) = row else {
         return Ok(None);
     };
-    let now = Utc::now();
-    if DateTime::parse_from_rfc3339(&expires)?.with_timezone(&Utc) <= now {
+    let now = Timestamp::now();
+    if crate::times::parse(&expires)? <= now {
         return Ok(None);
     }
-    if DateTime::parse_from_rfc3339(&last_used)?.with_timezone(&Utc) + SLIDE_EVERY < now {
+    if crate::times::parse(&last_used)? + SLIDE_EVERY < now {
         sqlx::query("UPDATE sessions SET last_used_at = ?, expires_at = ? WHERE token_hash = ?")
             .bind(ts(now))
-            .bind(ts(now + Duration::days(LIFETIME_DAYS)))
+            .bind(ts(now + crate::times::days(LIFETIME_DAYS)))
             .bind(&h)
             .execute(db)
             .await?;
@@ -136,7 +136,7 @@ pub const GRANT_ATTRIBUTE: &str = "pulse_grant";
 
 /// A grant whose participant left is pruned after this: LiveKit tokens live 10 minutes, plus a
 /// margin for a reconnect that rejoins with the same (refreshed) token.
-const GRANT_LEFT_FOR: Duration = Duration::minutes(15);
+const GRANT_LEFT_FOR: SignedDuration = SignedDuration::from_mins(15);
 /// Never-joined grants kept per session (the newest); older ones are pruned. They are not aged
 /// out: a lost join webhook makes a connected grant look never-joined, and it must stay known
 /// for a later revoke and for that device's next full reconnect. 100 is well above a hover
@@ -177,7 +177,7 @@ pub async fn record_grant(
     let mut bytes = [0u8; 16];
     rand::rng().fill_bytes(&mut bytes);
     let id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
-    let (now, h) = (Utc::now(), hash_token(token));
+    let (now, h) = (Timestamp::now(), hash_token(token));
     let done = sqlx::query(
         "INSERT INTO livekit_grants (id, token_hash, room, identity, issued_at)
          SELECT ?, token_hash, ?, ?, ? FROM sessions WHERE token_hash = ? AND expires_at > ?",
@@ -237,7 +237,7 @@ pub async fn admit_join(
     .bind(grant)
     .bind(room)
     .bind(identity)
-    .bind(ts(Utc::now()))
+    .bind(ts(Timestamp::now()))
     .execute(db)
     .await?;
     Ok(done.rows_affected() > 0)
@@ -253,7 +253,7 @@ pub async fn connected_grant(db: &SqlitePool, room: &str, identity: &str) -> any
     )
     .bind(room)
     .bind(identity)
-    .bind(ts(Utc::now()))
+    .bind(ts(Timestamp::now()))
     .fetch_optional(db)
     .await?;
     Ok(hit.is_some())
@@ -301,7 +301,7 @@ pub async fn drop_server_grants(
 /// with it (a full reconnect's late leave for the old connection doesn't count).
 pub async fn note_left(db: &SqlitePool, grant: &str, sid: &str) -> anyhow::Result<()> {
     sqlx::query("UPDATE livekit_grants SET left_at = ? WHERE id = ? AND joined_sid = ?")
-        .bind(ts(Utc::now()))
+        .bind(ts(Timestamp::now()))
         .bind(grant)
         .bind(sid)
         .execute(db)
@@ -356,7 +356,7 @@ pub async fn revoke_others_in(
     )
     .bind(&user)
     .bind(&keep)
-    .bind(ts(Utc::now()))
+    .bind(ts(Timestamp::now()))
     .fetch_one(&mut *conn)
     .await?;
     let grants = sqlx::query_as(
@@ -388,7 +388,7 @@ pub async fn note_revoked_in(conn: &mut SqliteConnection, user: &str) -> anyhow:
         "INSERT INTO revoked_sessions (token_hash, revoked_at)
          SELECT token_hash, ? FROM sessions WHERE user_id = ? ON CONFLICT DO NOTHING",
     )
-    .bind(ts(Utc::now()))
+    .bind(ts(Timestamp::now()))
     .bind(user)
     .execute(&mut *conn)
     .await?;

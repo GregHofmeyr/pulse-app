@@ -17,7 +17,7 @@ pub mod threads;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::Timestamp;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{INBOX_SNIPPET_CHARS, InboxItem, InboxKind, InboxSnippet, Message};
@@ -34,8 +34,8 @@ pub use routes::router;
 pub const DAYS: i64 = 30;
 
 /// The smallest message id still in the inbox at `now`.
-pub fn cutoff(now: DateTime<Utc>) -> MessageId {
-    MessageId::floor((now - TimeDelta::days(DAYS)).timestamp_millis().max(0) as u64)
+pub fn cutoff(now: Timestamp) -> MessageId {
+    MessageId::floor((now - crate::times::days(DAYS)).as_millisecond().max(0) as u64)
 }
 
 /// The user's visible items, the way the mention badges count them: a chat they have a read point in, not
@@ -84,12 +84,12 @@ pub async fn unread<'e>(db: impl SqliteExecutor<'e>, me: UserId) -> AppResult<u3
         threads::unseen_count_sql(5, 6, 7),
     )))
     .bind(me.to_string())
-    .bind(cutoff(Utc::now()).to_string())
+    .bind(cutoff(Timestamp::now()).to_string())
     .bind(now())
     .bind(me.to_string())
     .bind(me.to_string())
     .bind(now())
-    .bind(cutoff(Utc::now()).to_string())
+    .bind(cutoff(Timestamp::now()).to_string())
     .fetch_one(db)
     .await?;
     Ok(n as u32)
@@ -140,7 +140,7 @@ pub async fn list(db: &SqlitePool, me: UserId, filter: Filter) -> AppResult<Vec<
     sql.push_str(" ORDER BY mn.message_id DESC LIMIT ?");
     let mut q = sqlx::query_as::<_, (String, bool, bool)>(sqlx::AssertSqlSafe(sql))
         .bind(me.to_string())
-        .bind(cutoff(Utc::now()).to_string())
+        .bind(cutoff(Timestamp::now()).to_string())
         .bind(now());
     if let Some(b) = filter.before {
         q = q.bind(b.to_string());
@@ -587,7 +587,7 @@ async fn with_items_in(
         "SELECT DISTINCT mn.user_id FROM mentions mn JOIN messages m ON m.id = mn.message_id
          JOIN channels c ON c.id = m.channel_id WHERE mn.message_id >= ",
     );
-    q.push_bind(cutoff(Utc::now()).to_string());
+    q.push_bind(cutoff(Timestamp::now()).to_string());
     q.push(" AND (c.id IN (");
     let mut list = q.separated(", ");
     list.push_bind("");
@@ -618,7 +618,7 @@ async fn visible<'e>(
             "SELECT mn.explicit, {READ} {ITEMS} AND mn.message_id = ?"
         )))
         .bind(me.to_string())
-        .bind(cutoff(Utc::now()).to_string())
+        .bind(cutoff(Timestamp::now()).to_string())
         .bind(now())
         .bind(message.to_string())
         .fetch_optional(db)

@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 use super::{TICKET_TTL_HOURS, object_key};
 use crate::AppState;
@@ -26,14 +26,14 @@ pub struct SweepReport {
 
 /// Delete tickets older than 25 h (the TTL plus the grace period) and unreferenced clip media older than 1 h, the object first and
 /// then the row. A failed object delete keeps the row, so the next run tries again.
-pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<SweepReport> {
+pub async fn run(s: &AppState, now: Timestamp) -> AppResult<SweepReport> {
     let mut report = SweepReport::default();
     let Some(r2) = &s.r2 else { return Ok(report) };
 
     let tickets: Vec<(String, String)> =
         sqlx::query_as("SELECT id, key FROM clip_uploads WHERE created_at < ?")
             .bind(stamp(
-                now - chrono::Duration::hours(TICKET_TTL_HOURS + TICKET_GRACE_HOURS),
+                now - jiff::SignedDuration::from_hours(TICKET_TTL_HOURS + TICKET_GRACE_HOURS),
             ))
             .fetch_all(&s.db)
             .await?;
@@ -63,7 +63,9 @@ pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<SweepReport> {
          WHERE kind = 'clip' AND created_at < ?
            AND NOT EXISTS (SELECT 1 FROM clips WHERE clips.video_key = media.hash)",
     )
-    .bind(stamp(now - chrono::Duration::hours(ORPHAN_AFTER_HOURS)))
+    .bind(stamp(
+        now - jiff::SignedDuration::from_hours(ORPHAN_AFTER_HOURS),
+    ))
     .fetch_all(&s.db)
     .await?;
     for hash in orphans {
@@ -92,7 +94,7 @@ pub fn spawn(s: AppState) {
     }
     tokio::spawn(async move {
         loop {
-            match run(&s, Utc::now()).await {
+            match run(&s, Timestamp::now()).await {
                 Ok(r) if r.tickets + r.orphans > 0 => {
                     tracing::info!(tickets = r.tickets, orphans = r.orphans, "clip sweep");
                 }
