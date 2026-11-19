@@ -1,8 +1,7 @@
 <script lang="ts">
   // An invite to a server (#80), as a card: a direct invite's message, or an invite link pasted in a message. A banner
-  // strip of its own (the server's, #475, else a solid gradient of its two colours), its chip over the banner's bottom
-  // edge as on a profile card, then, all on the card's own surface (never over the picture), who invited you, its
-  // name, "N online · M members", up to three faces you know, and the Join button on the right (the invite's own words, else "Join
+  // (the server's own, #475, else a gradient of its colour and the accent), its chip over the banner's edge, its name,
+  // "N online · M members", up to three faces you know, and the Join button (the invite's own words, else "Join
   // <server>"). Once you're in: "You're in" and Open. Expired, used, revoked or unknown, someone else's, or banned:
   // greyed with why. What it shows is per viewer, asked of the server once the card is on screen and kept for the
   // session (lib/invitePreviews.svelte): lookups are rate limited, so it never asks in a loop.
@@ -71,15 +70,14 @@
 
 <section bind:this={root} class="card" class:dead={view?.dead} class:loading={!view} aria-label={preview ? `Invite to ${preview.name}` : 'Server invite'} data-server-invite={code} data-state={shown ?? 'loading'}>
   <div class="banner" class:pic={!!preview?.banner_hash}><ServerBanner id={preview?.server_id ?? code} hash={preview?.banner_hash} still={preview?.banner_still} /></div>
-  <!-- the chip over the banner's bottom edge; nothing else touches the banner -->
-  <span class="icon">
-    {#if preview}
-      <ServerChip id={preview.server_id} name={preview.name} iconHash={preview.icon_hash} size={56} />
-    {:else}
-      <span class="unknown" aria-hidden="true">?</span>
-    {/if}
-  </span>
   <div class="body">
+    <span class="icon">
+      {#if preview}
+        <ServerChip id={preview.server_id} name={preview.name} iconHash={preview.icon_hash} size={48} />
+      {:else}
+        <span class="unknown" aria-hidden="true">?</span>
+      {/if}
+    </span>
     <div class="info">
       {#if preview}
         <span class="head">{mine ? 'You sent an invite' : `${preview.inviter_name} invited you`}</span>
@@ -105,23 +103,21 @@
 
 <style>
   /* the game invite card's frame (#436): bg-2 on the chat, a line round it */
-  .card { position: relative; overflow: hidden; width: min(100%, 520px); margin-top: 4px; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-lg); }
-  /* the banner's own strip: no text ever sits on it */
-  .banner { height: 96px; }
+  .card { position: relative; overflow: hidden; max-width: 440px; margin-top: 4px; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+  .banner { height: 56px; opacity: .85; }
+  .banner.pic { height: 72px; opacity: 1; }
   .dead .banner, .loading .banner { filter: grayscale(1); opacity: .35; }
-  /* the chip over the banner's bottom edge, ringed in the card's colour (as a profile card's avatar) */
-  .icon { position: relative; display: inline-grid; margin: -32px 0 0 16px; padding: 4px; border-radius: 30%; background: var(--bg-2); }
+  .body { display: flex; align-items: flex-end; gap: 12px; padding: 0 12px 12px; margin-top: -24px; }
+  .icon { flex-shrink: 0; padding: 3px; border-radius: 32%; background: var(--bg-2); display: inline-grid; }
   .dead .icon :global(.chip) { filter: grayscale(1); opacity: .6; }
-  .unknown { width: 56px; height: 56px; border-radius: 28%; background: var(--bg-3); color: var(--text-3); display: grid; place-items: center; font-size: 24px; font-weight: 700; }
-  /* everything else on the card's own surface: the theme's text colours, whatever the banner is */
-  .body { display: flex; align-items: center; gap: 12px; padding: 6px 16px 16px; }
+  .unknown { width: 48px; height: 48px; border-radius: 28%; background: var(--bg-3); color: var(--text-3); display: grid; place-items: center; font-size: 22px; font-weight: 700; }
   .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .head { font-size: 12px; font-weight: 600; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .name { font-size: 16px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .name { font-size: 15px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dead .name, .muted { color: var(--text-2); }
   .counts, .note { font-size: 12px; color: var(--text-2); }
   .dead .note { color: var(--text-3); }
-  .faces { display: flex; flex-shrink: 0; }
+  .faces { display: flex; flex-shrink: 0; padding-bottom: 4px; }
   .face { display: inline-grid; border-radius: 50%; box-shadow: 0 0 0 2px var(--bg-2); --ring: var(--bg-2); }
   .face + .face { margin-left: -6px; }
   /* a live action: the accent, like Join game */
@@ -130,5 +126,5 @@
   .join:disabled { opacity: .6; cursor: default; }
   .join.open { background: var(--bg-3); color: var(--text); }
   .dead .join { background: var(--bg-3); color: var(--text-3); opacity: 1; }
-  .err { margin: 0; padding: 0 16px 12px; color: var(--danger-text); font-size: 13px; }
+  .err { margin: 0; padding: 0 12px 10px; color: var(--danger-text); font-size: 13px; }
 </style>
