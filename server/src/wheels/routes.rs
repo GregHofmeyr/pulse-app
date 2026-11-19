@@ -480,7 +480,10 @@ async fn post_spin(s: &AppState, me: UserId, ch: &Channel, picked: Picked) -> Ap
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, channel).await?; // channel deleted since (#109)
     crate::access::open_in(&mut tx, channel).await?; // archived (#303): read-only
+    // in a DM with someone who has blocked you (#474) it looks spun and never reaches them; one you've blocked: refused
+    let withheld = crate::blocks::dm_post(&mut tx, ch, me).await?;
     let line = system::insert(&mut tx, channel, content, payload).await?;
+    crate::blocks::withhold_line(&mut tx, line.id, withheld).await?;
     let inserted = sqlx::query(
         "INSERT INTO wheel_spins (message_id, channel_id, spinner_id, wheel_id, name, options, winner, angle, created_at, weights, palette)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -508,11 +511,9 @@ async fn post_spin(s: &AppState, me: UserId, ch: &Channel, picked: Picked) -> Ap
         }
     }
     if ch.kind.is_private() {
-        // Like a new message or a call line, a spin reopens the conversation for anyone who closed it.
-        sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ?")
-            .bind(channel.to_string())
-            .execute(&mut *tx)
-            .await?;
+        // Like a new message or a call line, a spin reopens the conversation for anyone who closed it (a withheld
+        // one, only for its spinner).
+        crate::blocks::reopen(&mut tx, channel, withheld, me).await?;
     }
     tx.commit().await?;
     s.hub

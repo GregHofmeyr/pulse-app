@@ -2118,6 +2118,11 @@ pub struct ReactionSummary {
     pub emoji: String,
     pub count: u32,
     pub me: bool,
+    /// Who reacted (#508), so a client can leave out of `count` the people it hides (#474, Hide completely). Absent
+    /// from older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub users: Option<Vec<UserId>>,
 }
 
 /// A person with their presence as the receiving viewer may see it (#45): someone Invisible, or

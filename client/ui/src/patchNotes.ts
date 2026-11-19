@@ -44,6 +44,7 @@ export const patchNotes: PatchNotes = {
     'Right-click a channel › Move to category; Move up and Move down are gone, since dragging reorders',
     'Anyone in a server can change its icon, banner and name, not just its owner',
     'Your profile, online status and what you\'re up to reach only people you share a server, a DM or a group with',
+    'A DM with someone you\'ve blocked says so where you\'d type, and Hide completely leaves their reactions out of the counts',
   ],
   message: 'Your servers, your people 🔒',
 }

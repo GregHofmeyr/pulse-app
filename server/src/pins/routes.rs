@@ -160,7 +160,19 @@ async fn pin(
     .await?;
     let line = match said {
         Some((content, payload)) => {
-            Some(post_line(&mut tx, ch.id, id, me, at, content, payload).await?)
+            let line = post_line(&mut tx, ch.id, id, me, at, content, payload).await?;
+            // In a DM with someone who has blocked you (#474), your pin's line is withheld from them, as a message
+            // would be: it doesn't reopen a DM they closed.
+            let withheld = match crate::messages::routes::dm_other(&mut tx, &ch, me).await? {
+                Some(other) => crate::blocks::withhold_for(&mut *tx, me, other).await?,
+                None => None,
+            };
+            let line_id = match &line {
+                Line::New(m) => m.id,
+                Line::Refreshed(l) => *l,
+            };
+            crate::blocks::withhold_line(&mut tx, line_id, withheld).await?;
+            Some(line)
         }
         None => None,
     };

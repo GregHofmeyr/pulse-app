@@ -499,6 +499,9 @@ pub async fn remind_due(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
             reminder_payload(&line)?,
         )
         .await?;
+        // the reminder of a withheld plan (#474) is withheld from the same person
+        let from = crate::blocks::withheld_from(&mut tx, p.message_id).await?;
+        crate::blocks::withhold_line(&mut tx, msg.id, from).await?;
         // a typed mention each: the inbox and notifications take it as one
         crate::messages::mentions::store(&mut tx, msg.id, &people, true).await?;
         tx.commit().await?;

@@ -9,7 +9,9 @@ use common::*;
 use futures::{SinkExt, StreamExt};
 use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
 use pulse_protocol::ids::{ChannelId, UserId};
-use pulse_protocol::rest::{Block, BlockMode, Message, PresenceStatus, Profile, ServerInvite};
+use pulse_protocol::rest::{
+    Block, BlockMode, Member, Message, PresenceStatus, Profile, ServerInvite,
+};
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
@@ -319,4 +321,196 @@ async fn they_see_you_offline_with_an_emptied_profile() {
     let a = ready.people.iter().find(|p| p.user.id == alex_id).unwrap();
     assert_eq!(a.status, PresenceStatus::Online);
     assert!(a.user.avatar_hash.is_some());
+}
+
+/// The `User` of `who` among `members`.
+fn member_user(members: &[Member], who: UserId) -> &pulse_protocol::rest::User {
+    &members.iter().find(|m| m.user.id == who).unwrap().user
+}
+
+#[tokio::test]
+async fn member_payloads_show_you_emptied_to_them() {
+    // #508: the `User` inside members (Ready, the members list, joins, changes, a joined server's snapshot) is emptied
+    // for the person you've blocked, as everywhere else
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (sam_id, sam) = register(&app, "sam").await;
+    let (_, kim) = register(&app, "kim").await;
+    let common = acquaint(&app, &alex, &[&sam, &kim]).await;
+    sqlx::query("UPDATE users SET avatar_hash = ? WHERE id = ?")
+        .bind("ab".repeat(32))
+        .bind(alex_id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(block(&app, &alex, sam_id, "hide").await.status(), 200);
+
+    // Ready's members and the members list: emptied for sam, as it is for kim
+    let (mut sam_ws, ready) = hello(&app, &sam).await;
+    let m = &ready
+        .members
+        .iter()
+        .find(|m| m.server_id == common)
+        .unwrap()
+        .members;
+    assert_eq!(member_user(m, alex_id).avatar_hash, None);
+    let (mut kim_ws, ready) = hello(&app, &kim).await;
+    let m = &ready
+        .members
+        .iter()
+        .find(|m| m.server_id == common)
+        .unwrap()
+        .members;
+    assert!(member_user(m, alex_id).avatar_hash.is_some());
+    let list: Vec<Member> = get_json(&app, &sam, &format!("/servers/{common}/members")).await;
+    assert_eq!(member_user(&list, alex_id).avatar_hash, None);
+    let list: Vec<Member> = get_json(&app, &kim, &format!("/servers/{common}/members")).await;
+    assert!(member_user(&list, alex_id).avatar_hash.is_some());
+    drain(&mut sam_ws, 200).await;
+    drain(&mut kim_ws, 200).await;
+
+    // a change: alex's nickname
+    let r = app
+        .http
+        .put(app.url(&format!("/servers/{common}/members/{alex_id}/nickname")))
+        .bearer_auth(&alex)
+        .json(&json!({ "nickname": "Al" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let updated = |events: Vec<Event>| {
+        events.into_iter().find_map(|e| match e {
+            Event::MemberUpdated { member, .. } if member.user.id == alex_id => Some(member),
+            _ => None,
+        })
+    };
+    let to_sam = updated(drain(&mut sam_ws, 300).await).unwrap();
+    assert_eq!(to_sam.nickname.as_deref(), Some("Al"));
+    assert_eq!(to_sam.user.avatar_hash, None);
+    assert!(
+        updated(drain(&mut kim_ws, 300).await)
+            .unwrap()
+            .user
+            .avatar_hash
+            .is_some()
+    );
+
+    // a join: alex joins kim's server with sam in it
+    let kims = create_server(&app, &kim, "Kim's").await.id;
+    assert_eq!(join_server(&app, &sam, kims).await.status(), 200);
+    drain(&mut sam_ws, 200).await;
+    assert_eq!(join_server(&app, &alex, kims).await.status(), 200);
+    let joined = drain(&mut sam_ws, 300)
+        .await
+        .into_iter()
+        .find_map(|e| match e {
+            Event::MemberJoined { member, .. } if member.user.id == alex_id => Some(member),
+            _ => None,
+        });
+    assert_eq!(joined.unwrap().user.avatar_hash, None);
+
+    // a joined server's snapshot: sam joins one alex is already in
+    let other = create_server(&app, &kim, "Other").await.id;
+    assert_eq!(join_server(&app, &alex, other).await.status(), 200);
+    drain(&mut sam_ws, 200).await;
+    assert_eq!(join_server(&app, &sam, other).await.status(), 200);
+    let snapshot = drain(&mut sam_ws, 300)
+        .await
+        .into_iter()
+        .find_map(|e| match e {
+            Event::ServerJoined { snapshot, .. } => Some(snapshot),
+            _ => None,
+        });
+    assert_eq!(
+        member_user(&snapshot.unwrap().members, alex_id).avatar_hash,
+        None
+    );
+}
+
+#[tokio::test]
+async fn reactions_say_who_reacted() {
+    // #508: so a client can leave the people it hides out of the count
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let (sam_id, sam) = register(&app, "sam").await;
+    let (kim_id, kim) = register(&app, "kim").await;
+    let s = acquaint(&app, &alex, &[&sam, &kim]).await;
+    let chat = general(&app, &alex, s).await.id;
+    let m = send(&app, &alex, chat, "hello").await;
+    for t in [&sam, &kim] {
+        let r = app
+            .http
+            .put(app.url(&format!("/messages/{}/reactions/👍", m.id)))
+            .bearer_auth(t)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 204);
+    }
+    let list: Vec<Message> = get_json(&app, &alex, &format!("/channels/{chat}/messages")).await;
+    let r = &list.iter().find(|x| x.id == m.id).unwrap().reactions[0];
+    assert_eq!(r.count, 2);
+    let mut users = r.users.clone().unwrap();
+    users.sort();
+    let mut want = vec![sam_id, kim_id];
+    want.sort();
+    assert_eq!(users, want);
+}
+
+#[tokio::test]
+async fn nothing_of_theirs_reopens_a_dm_you_closed() {
+    // #508: their call, poll, plan, spin or message in your DM stays withheld and leaves it closed; yours are refused
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (sam_id, sam) = register(&app, "sam").await;
+    let dm = create_dm(&app, &sam, &[alex_id]).await.id;
+    send(&app, &sam, dm, "before").await;
+    let r = post_json(&app, &alex, &format!("/channels/{dm}/close"), json!({})).await;
+    assert!(r.status().is_success(), "{}", r.status());
+    assert_eq!(block(&app, &alex, sam_id, "line").await.status(), 200);
+    let (mut alex_ws, _) = hello(&app, &alex).await;
+    drain(&mut alex_ws, 200).await;
+
+    let starts = (chrono::Utc::now() + chrono::TimeDelta::days(3)).to_rfc3339();
+    let posts = [
+        (format!("/calls/{dm}"), json!({})),
+        (
+            format!("/channels/{dm}/polls"),
+            json!({"question": "Pizza?", "options": ["yes", "no"], "ends_in": "day"}),
+        ),
+        (
+            format!("/channels/{dm}/plans"),
+            json!({"title": "Braai", "starts_at": starts}),
+        ),
+        (
+            format!("/channels/{dm}/wheel-spins"),
+            json!({"options": ["a", "b"]}),
+        ),
+        (
+            format!("/channels/{dm}/messages"),
+            json!({"content": "hello?"}),
+        ),
+    ];
+    for (path, body) in &posts {
+        let r = post_json(&app, &sam, path, body.clone()).await;
+        assert!(r.status().is_success(), "{path}: {}", r.status());
+    }
+    let heard = drain(&mut alex_ws, 400).await;
+    assert!(created(&heard).is_empty(), "{:?}", created(&heard));
+    assert!(!heard.iter().any(|e| matches!(
+        e,
+        Event::ConversationVisibility { hidden: false, .. } | Event::CallStarted { .. }
+    )));
+    let (_ws, ready) = hello(&app, &alex).await;
+    assert!(ready.hidden.contains(&dm), "still closed for alex");
+    assert_eq!(history(&app, &alex, dm).await, vec!["before"]);
+    // sam sees all of it as posted
+    assert_eq!(history(&app, &sam, dm).await.len(), 6);
+
+    // alex can't post a poll, plan or spin to someone they've blocked, as with a message
+    for (path, body) in &posts[1..] {
+        let r = post_json(&app, &alex, path, body.clone()).await;
+        assert_eq!(r.status(), 403, "{path}");
+    }
 }

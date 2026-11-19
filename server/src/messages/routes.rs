@@ -687,15 +687,7 @@ pub(crate) async fn deliver(
     }
     // A 1:1 DM with someone who has blocked you (#474): it looks sent and never reaches them. One you've blocked:
     // refused (unblock them first).
-    let withheld = match dm_other(&mut tx, ch, me).await? {
-        Some(other) if crate::blocks::has_blocked(&mut *tx, me, other).await? => {
-            return Err(AppError::ForbiddenMsg(
-                "You've blocked them. Unblock them to send a message.".into(),
-            ));
-        }
-        Some(other) => crate::blocks::withhold_for(&mut *tx, me, other).await?,
-        None => None,
-    };
+    let withheld = crate::blocks::dm_post(&mut tx, ch, me).await?;
     let (mentioned, pinged): (Vec<UserId>, Vec<UserId>) = match withheld {
         Some(w) => (
             mentioned.into_iter().filter(|u| *u != w).collect(),
@@ -737,12 +729,7 @@ pub(crate) async fn deliver(
         // A new message reopens closed conversations (clients un-hide on MessageCreated).
         // Server channels can't be closed, so they skip this write entirely.
         // One withheld (#474) reopens it only for its sender.
-        sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ? AND (? IS NULL OR user_id = ?)")
-            .bind(id.to_string())
-            .bind(withheld.map(|_| me.to_string()))
-            .bind(me.to_string())
-            .execute(&mut *tx)
-            .await?;
+        crate::blocks::reopen(&mut tx, id, withheld, me).await?;
     }
     // Sending marks your own read point (you've obviously seen everything up to here).
     let mut thread_cleared = None;

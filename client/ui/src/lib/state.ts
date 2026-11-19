@@ -1443,10 +1443,16 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       // The event carries the absolute count, so a reordered pair still ends on the latest value.
       const mine = user_id === s.me?.id
       const me = mine ? e.t === 'ReactionAdded' : undefined
+      // who reacted follows too (#508: Hide completely leaves the people you hide out of the count)
+      const who = (users: string[] | undefined) => {
+        if (!users) return undefined
+        const rest = users.filter((u) => u !== user_id)
+        return e.t === 'ReactionAdded' ? [...rest, user_id] : rest
+      }
       const apply = (m: Message): Message => {
         const has = m.reactions.some((r) => r.emoji === emoji)
-        const reactions = (has ? m.reactions : [...m.reactions, { emoji, count, me: false }])
-          .map((r) => (r.emoji === emoji ? { ...r, count, me: me ?? r.me } : r))
+        const reactions = (has ? m.reactions : [...m.reactions, { emoji, count, me: false, users: [] }])
+          .map((r) => (r.emoji === emoji ? { ...r, count, me: me ?? r.me, users: who(r.users) } : r))
           .filter((r) => r.count > 0)
         return { ...m, reactions }
       }

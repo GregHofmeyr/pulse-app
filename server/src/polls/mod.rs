@@ -443,9 +443,11 @@ pub(crate) async fn close_in(
     };
     let content = ended_text(who, &ended.winners, ended.votes);
     let payload = system::poll_ended_payload(&ended)?;
-    Ok(Some(
-        system::insert(&mut *tx, p.channel_id, content, payload).await?,
-    ))
+    let line = system::insert(&mut *tx, p.channel_id, content, payload).await?;
+    // the end of a withheld poll (#474) is withheld from the same person
+    let from = crate::blocks::withheld_from(&mut *tx, p.message_id).await?;
+    crate::blocks::withhold_line(&mut *tx, line.id, from).await?;
+    Ok(Some(line))
 }
 
 /// The creator's name as the ended line shows it.

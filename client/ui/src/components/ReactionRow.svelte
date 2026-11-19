@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
-  import { isBlocked, isHidden } from '../lib/blocks'
+  import { isBlocked, isHidden, shownCount } from '../lib/blocks'
   import type { Message } from '../lib/protocol/Message'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { Std } from '../lib/emoji'
@@ -54,6 +54,8 @@
 
   let tipFailed = false
   const reaction = (key: string) => message.reactions.find((r) => r.emoji === key)
+  // Hide completely (#508): the count leaves out the people you hide, and a chip only they reacted with doesn't show
+  const chips = $derived(message.reactions.map((r) => ({ r, n: shownCount(app.state, r) })).filter((x) => x.n > 0))
 
   // Fetched fresh each time the tip opens: a cache could not tell "one left, one joined" from no
   // change. Only the newest request may fill it; a slow earlier one would show an older list.
@@ -134,9 +136,9 @@
   }
 </script>
 
-{#if !message.deleted && (message.reactions.length > 0 || (!archived && (suggest.length > 0 || alwaysAdd)))}
+{#if !message.deleted && (chips.length > 0 || (!archived && (suggest.length > 0 || alwaysAdd)))}
   <div class="reactions">
-    {#each message.reactions as r (r.emoji)}
+    {#each chips as { r, n } (r.emoji)}
       {@const c = r.emoji.startsWith('custom:') ? customOf(r.emoji) : undefined}
       {@const custom = r.emoji.startsWith('custom:')}
       {@const why = r.me && !archived ? null : blocked(r.emoji)}
@@ -159,7 +161,7 @@
           {:else}
             <span class="gone">:{c?.name ?? r.emoji}:</span>
           {/if}
-          <span class="n">{r.count}</span>
+          <span class="n">{n}</span>
         </button>
         <!-- the names for a screen reader; the shared tooltip shows them (data-tip above) -->
         {#if tipFor === r.emoji && tipText}<span class="tip sr-only" id={tipId(r.emoji)}>{tipText}{#if why}<span class="why"> {why}</span>{/if}</span>{/if}

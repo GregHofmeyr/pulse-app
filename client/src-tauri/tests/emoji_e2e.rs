@@ -115,6 +115,7 @@ fn summary(emoji: &str, count: u32, me: bool) -> ReactionSummary {
         emoji: emoji.into(),
         count,
         me,
+        users: None,
     }
 }
 
@@ -196,7 +197,10 @@ async fn emoji_reactions_and_media_end_to_end() {
     }
     let want = |me_thumb, me_custom| [summary("👍", 2, me_thumb), summary(&custom, 1, me_custom)];
     let find = |msgs: Vec<pulse_protocol::rest::Message>| {
-        msgs.into_iter().find(|m| m.id == msg.id).unwrap().reactions
+        let r = msgs.into_iter().find(|m| m.id == msg.id).unwrap().reactions;
+        r.into_iter()
+            .map(|r| ReactionSummary { users: None, ..r })
+            .collect::<Vec<_>>()
     };
     assert_eq!(
         find(api.messages(&alex, chan.id, None).await.unwrap()),

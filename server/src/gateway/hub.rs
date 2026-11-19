@@ -630,16 +630,26 @@ impl Hub {
         let mut out = Vec::with_capacity(events.len());
         for event in events {
             match audience_for(db, &event).await {
-                Ok(a) => out.push((a, event)),
+                Ok(a) => {
+                    // a member's `User` reaches the people they've blocked emptied (#508)
+                    let views = match crate::blocks::member_views(db, &event).await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::error!(error = ?e, "member_views failed; event dropped");
+                            continue;
+                        }
+                    };
+                    out.push((a, event, views))
+                }
                 Err(e) => tracing::error!(error = ?e, "audience_for failed; event dropped"),
             }
         }
-        let jobs = crate::inbox::follow_ups(self, out.iter().map(|(_, e)| e));
+        let jobs = crate::inbox::follow_ups(self, out.iter().map(|(_, e, _)| e));
         {
             let mut conns = self.inner.conns.lock().unwrap();
             let mut dropped = false;
-            for (audience, event) in out {
-                dropped |= deliver(&mut conns, &audience, &ServerFrame::Event(event));
+            for (audience, event, views) in out {
+                dropped |= deliver_views(&mut conns, &audience, event, views);
             }
             if dropped {
                 self.prune_inbox(&conns);
@@ -744,9 +754,16 @@ impl Hub {
                 .filter(|u| audience.includes(*u))
                 .collect(),
         );
-        let frame = ServerFrame::Event(event);
+        // a member's `User` reaches the people they've blocked emptied (#508)
+        let views = match crate::blocks::member_views(db, &event).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = ?e, "member_views failed; event dropped");
+                return;
+            }
+        };
         let mut conns = self.inner.conns.lock().unwrap();
-        if deliver(&mut conns, &allowed, &frame) {
+        if deliver_views(&mut conns, &allowed, event, views) {
             self.prune_inbox(&conns);
         }
     }
@@ -1059,6 +1076,32 @@ fn deliver(
     frame: &ServerFrame,
 ) -> bool {
     deliver_where(conns, |c| audience.includes(c.user), frame)
+}
+
+/// Queue `event` for every connection in `audience`, the people in `views` getting their own copy instead (#508,
+/// [`crate::blocks::member_views`]); drop connections that can't keep up (true when any was).
+fn deliver_views(
+    conns: &mut HashMap<ConnId, Conn>,
+    audience: &super::audience::Audience,
+    event: Event,
+    views: Vec<(UserId, Event)>,
+) -> bool {
+    if views.is_empty() {
+        return deliver(conns, audience, &ServerFrame::Event(event));
+    }
+    let mut dropped = false;
+    let others: HashSet<UserId> = views.iter().map(|(u, _)| *u).collect();
+    for (viewer, copy) in views {
+        if audience.includes(viewer) {
+            dropped |= deliver_where(conns, |c| c.user == viewer, &ServerFrame::Event(copy));
+        }
+    }
+    dropped
+        | deliver_where(
+            conns,
+            |c| audience.includes(c.user) && !others.contains(&c.user),
+            &ServerFrame::Event(event),
+        )
 }
 
 /// Queue `frame` for every connection `to` picks; drop connections that can't keep up (true when any was).

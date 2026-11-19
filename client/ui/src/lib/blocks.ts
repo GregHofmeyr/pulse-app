@@ -10,6 +10,7 @@
 import type { Block } from './protocol/Block'
 import type { BlockMode } from './protocol/BlockMode'
 import type { Message } from './protocol/Message'
+import type { ReactionSummary } from './protocol/ReactionSummary'
 
 type WithBlocks = { blocks: readonly Block[] }
 
@@ -73,4 +74,11 @@ export function blockedReplyText(s: WithBlocks, repliedToAuthor: string | null |
 export function blockedLabel(s: WithBlocks, userId: string): string | null {
   const mode = blockOf(s, userId)
   return mode === 'line' ? 'Blocked person' : mode === 'hide' ? '' : null
+}
+
+/** A reaction's count as you see it (#508): Hide completely leaves out the people you hide. 0: its chip doesn't show.
+ *  An older server doesn't say who reacted: its count as it is. */
+export function shownCount(s: WithBlocks, r: ReactionSummary): number {
+  if (!r.users || !s.blocks.some((b) => b.mode === 'hide')) return r.count
+  return Math.max(0, r.count - r.users.filter((id) => isHidden(s, id)).length)
 }

@@ -488,23 +488,23 @@ describe('reactions and custom emoji', () => {
       let s1 = loaded ? s : { ...s, messages: {} }
       s1 = applyEvent(s1, ev('ReactionAdded', 'U1', 1), 0)
       s1 = applyEvent(s1, ev('ReactionAdded', 'U2', 2), 0)
-      expect(s1.latest['D1'].reactions, String(loaded)).toEqual([{ emoji: '👍', count: 2, me: true }])
-      if (loaded) expect(s1.messages['D1'][0].reactions).toEqual([{ emoji: '👍', count: 2, me: true }])
+      expect(s1.latest['D1'].reactions, String(loaded)).toMatchObject([{ emoji: '👍', count: 2, me: true }])
+      if (loaded) expect(s1.messages['D1'][0].reactions).toMatchObject([{ emoji: '👍', count: 2, me: true }])
       s1 = applyEvent(s1, ev('ReactionRemoved', 'U1', 1), 0)
-      expect(s1.latest['D1'].reactions).toEqual([{ emoji: '👍', count: 1, me: false }])
+      expect(s1.latest['D1'].reactions).toMatchObject([{ emoji: '👍', count: 1, me: false }])
     }
   })
 
   it('counts another user\'s reaction without touching me', () => {
     const s = applyEvent(withMsg(), react('ReactionAdded', 'U2', 1), 0)
-    expect(s.messages['C1'][0].reactions).toEqual([{ emoji: '👍', count: 1, me: false }])
+    expect(s.messages['C1'][0].reactions).toMatchObject([{ emoji: '👍', count: 1, me: false }])
   })
 
   it('sets me when the reaction is mine, and clears it on removal', () => {
     let s = applyEvent(withMsg(), react('ReactionAdded', 'U1', 2), 0)
-    expect(s.messages['C1'][0].reactions).toEqual([{ emoji: '👍', count: 2, me: true }])
+    expect(s.messages['C1'][0].reactions).toMatchObject([{ emoji: '👍', count: 2, me: true }])
     s = applyEvent(s, react('ReactionRemoved', 'U2', 1), 0)
-    expect(s.messages['C1'][0].reactions[0]).toEqual({ emoji: '👍', count: 1, me: true })
+    expect(s.messages['C1'][0].reactions[0]).toMatchObject({ emoji: '👍', count: 1, me: true })
     s = applyEvent(s, react('ReactionRemoved', 'U1', 0), 0)
     expect(s.messages['C1'][0].reactions).toEqual([])
   })
@@ -820,7 +820,7 @@ describe('quotes', () => {
     let s = withQuote()
     s = applyEvent(s, { t: 'ReactionAdded', d: { channel_id: 'Q1', message_id: 'M1', emoji: '👍', user_id: 'U1', count: 1 } }, 0)
     s = applyEvent(s, { t: 'MessageUpdated', d: { message: qmsg('M1') } }, 0)
-    expect(s.messages['Q1'][0].reactions).toEqual([{ emoji: '👍', count: 1, me: true }])
+    expect(s.messages['Q1'][0].reactions).toMatchObject([{ emoji: '👍', count: 1, me: true }])
   })
 
   it('awards update from events and mark mine', () => {
@@ -899,7 +899,7 @@ describe('quotes', () => {
       let s = base()
       expect(s.messages['Q1']).toBeUndefined()
       s = applyEvent(s, { t: 'ReactionAdded', d: { channel_id: 'Q1', message_id: 'M1', emoji: '😂', user_id: 'U2', count: 2 } }, 0)
-      expect(optOf(s).reactions).toEqual([{ emoji: '😂', count: 2, me: false }])
+      expect(optOf(s).reactions).toMatchObject([{ emoji: '😂', count: 2, me: false }])
       s = applyEvent(s, { t: 'MessageUpdated', d: { message: q('fixed') } }, 0)
       expect(optOf(s).quote!.lines[0].text).toBe('fixed')
       expect(optOf(s).quote!.lines[0].awarded).toBe(true)
@@ -987,7 +987,7 @@ describe('quotes', () => {
   it('reactions on a reply update the reply in its thread', () => {
     let s = created(fetched(withQuote()), reply('R1', 'M1'))
     s = applyEvent(s, { t: 'ReactionAdded', d: { channel_id: 'Q1', message_id: 'R1', emoji: '👍', user_id: 'U1', count: 1 } }, 0)
-    expect(s.threads['M1'][0].reactions).toEqual([{ emoji: '👍', count: 1, me: true }])
+    expect(s.threads['M1'][0].reactions).toMatchObject([{ emoji: '👍', count: 1, me: true }])
     s = applyEvent(s, { t: 'ReactionRemoved', d: { channel_id: 'Q1', message_id: 'R1', emoji: '👍', user_id: 'U1', count: 0 } }, 0)
     expect(s.threads['M1'][0].reactions).toEqual([])
     expect(s.messages['Q1'].map((m) => m.id)).toEqual(['M1'])
@@ -1091,7 +1091,7 @@ describe('quotes', () => {
     s = applyEvent(s, { t: 'QuoteAwardChanged', d: { channel_id: 'Q1', message_id: 'M1', line_id: 'L1', user_id: 'U1', given: true, count: 1, awarders: ['U1'] } }, 0)
     expect(s.openRoot?.quote?.lines[0]).toMatchObject({ awards: 1, awarded: true })
     s = applyEvent(s, { t: 'ReactionAdded', d: { channel_id: 'Q1', message_id: 'M1', emoji: '👍', user_id: 'U2', count: 1 } }, 0)
-    expect(s.openRoot?.reactions).toEqual([{ emoji: '👍', count: 1, me: false }])
+    expect(s.openRoot?.reactions).toMatchObject([{ emoji: '👍', count: 1, me: false }])
     s = created(fetched(s), reply('R2', 'M1'))
     expect(s.openRoot?.quote).toMatchObject({ reply_count: 2, last_reply_id: 'R2' })
     s = applyEvent(s, delRoot(), 0)
@@ -1396,8 +1396,8 @@ describe('clips', () => {
     let s = open(base(), {}, [cm('M1')])
     s = holdThread(s, s.clipFeeds[feedKey('K1', {})].items[0])
     s = applyEvent(s, { t: 'ReactionAdded', d: { channel_id: 'K1', message_id: 'M1', emoji: '👍', user_id: 'U1', count: 1 } }, 0)
-    expect(s.clipFeeds[feedKey('K1', {})].items[0].reactions).toEqual([{ emoji: '👍', count: 1, me: true }])
-    expect(s.openRoot!.reactions).toEqual([{ emoji: '👍', count: 1, me: true }])
+    expect(s.clipFeeds[feedKey('K1', {})].items[0].reactions).toMatchObject([{ emoji: '👍', count: 1, me: true }])
+    expect(s.openRoot!.reactions).toMatchObject([{ emoji: '👍', count: 1, me: true }])
     s = applyEvent(s, { t: 'ReactionRemoved', d: { channel_id: 'K1', message_id: 'M1', emoji: '👍', user_id: 'U1', count: 0 } }, 0)
     expect(s.clipFeeds[feedKey('K1', {})].items[0].reactions).toEqual([])
   })

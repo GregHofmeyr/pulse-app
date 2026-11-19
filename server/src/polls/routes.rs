@@ -157,6 +157,8 @@ async fn create(
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, id).await?; // channel deleted since (#109)
     crate::access::open_in(&mut tx, id).await?; // archived (#303): read-only
+    // in a DM with someone who has blocked you (#474) it looks sent and never reaches them; one you've blocked: refused
+    let withheld = crate::blocks::dm_post(&mut tx, &ch, me).await?;
     // minted under the write lock, so ids keep commit order (as a send)
     msg.id = MessageId::new();
     msg.created_at = now();
@@ -164,12 +166,13 @@ async fn create(
         message_id: msg.id,
         ..stored
     };
-    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, created_at) VALUES (?, ?, ?, 'normal', ?, ?)")
+    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, created_at, withheld_from) VALUES (?, ?, ?, 'normal', ?, ?, ?)")
         .bind(msg.id.to_string())
         .bind(id.to_string())
         .bind(me.to_string())
         .bind(&msg.content)
         .bind(&msg.created_at)
+        .bind(withheld.map(|w| w.to_string()))
         .execute(&mut *tx)
         .await?;
     sqlx::query(
@@ -187,11 +190,8 @@ async fn create(
     .execute(&mut *tx)
     .await?;
     if ch.kind.is_private() {
-        // A new message reopens closed conversations.
-        sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ?")
-            .bind(id.to_string())
-            .execute(&mut *tx)
-            .await?;
+        // A new message reopens closed conversations (a withheld one, only for its sender).
+        crate::blocks::reopen(&mut tx, id, withheld, me).await?;
     }
     // a poll counts as a message toward the server chat badges, as a send does (never in DMs or groups)
     let badged = ch.server_id.is_some();

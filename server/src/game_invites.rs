@@ -494,15 +494,7 @@ async fn create(
     let at = now();
     // In a DM with someone who has blocked you (#474) it looks sent and never reaches them; one you've blocked:
     // refused, as a message is.
-    let withheld = match crate::messages::routes::dm_other(&mut tx, &ch, me).await? {
-        Some(other) if crate::blocks::has_blocked(&mut *tx, me, other).await? => {
-            return Err(AppError::ForbiddenMsg(
-                "You've blocked them. Unblock them to send a message.".into(),
-            ));
-        }
-        Some(other) => crate::blocks::withhold_for(&mut *tx, me, other).await?,
-        None => None,
-    };
+    let withheld = crate::blocks::dm_post(&mut tx, &ch, me).await?;
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, created_at, withheld_from) VALUES (?, ?, ?, 'normal', ?, ?, ?)")
         .bind(msg_id.to_string())
         .bind(id.to_string())
@@ -539,12 +531,7 @@ async fn create(
     .execute(&mut *tx)
     .await?;
     // A new message reopens closed conversations (a withheld one, only for its sender).
-    sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ? AND (? IS NULL OR user_id = ?)")
-        .bind(id.to_string())
-        .bind(withheld.map(|_| me.to_string()))
-        .bind(me.to_string())
-        .execute(&mut *tx)
-        .await?;
+    crate::blocks::reopen(&mut tx, id, withheld, me).await?;
     let moved = crate::reads::advance(&mut tx, me, id, msg_id).await?;
     tx.commit().await?;
     let msg = crate::messages::routes::load(&s.db, Some(me), msg_id)

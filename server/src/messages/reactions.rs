@@ -367,7 +367,9 @@ pub async fn summaries(
     if ids.is_empty() {
         return Ok(out);
     }
-    let mut q = sqlx::QueryBuilder::new("SELECT message_id, emoji, COUNT(*), MAX(user_id = ");
+    let mut q = sqlx::QueryBuilder::new(
+        "SELECT message_id, emoji, COUNT(*), GROUP_CONCAT(user_id), MAX(user_id = ",
+    );
     q.push_bind(me.map(|u| u.to_string()).unwrap_or_default());
     q.push(") FROM reactions WHERE message_id IN (");
     let mut list = q.separated(", ");
@@ -375,14 +377,21 @@ pub async fn summaries(
         list.push_bind(id.to_string());
     }
     q.push(") GROUP BY message_id, emoji ORDER BY MIN(created_at), MIN(rowid)");
-    let rows: Vec<(String, String, i64, bool)> = q.build_query_as().fetch_all(db).await?;
-    for (m, emoji, count, me) in rows {
+    let rows: Vec<(String, String, i64, String, bool)> = q.build_query_as().fetch_all(db).await?;
+    for (m, emoji, count, users, me) in rows {
+        // who reacted (#508): a client leaves out the people it hides (#474)
+        let users = users
+            .split(',')
+            .map(str::parse)
+            .collect::<Result<Vec<UserId>, _>>()
+            .map_err(anyhow::Error::from)?;
         out.entry(m.parse().map_err(anyhow::Error::from)?)
             .or_default()
             .push(ReactionSummary {
                 emoji,
                 count: count as u32,
                 me,
+                users: Some(users),
             });
     }
     Ok(out)

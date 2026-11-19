@@ -226,13 +226,17 @@ async fn ready_for(
         .filter(|l| mine.contains(&l.server_id))
         .collect();
     let mut server_members = all_server_members(db).await?;
+    // the people who've blocked me show emptied (#508), as in `people`
+    let blockers = crate::blocks::blocked_by(db, me).await?;
     let mut channels = vec![];
     let mut members = vec![];
     for srv in &servers {
         channels.extend(server_channels.remove(&srv.id).unwrap_or_default());
+        let mut list = server_members.remove(&srv.id).unwrap_or_default();
+        crate::blocks::empty_members(&mut list, &blockers);
         members.push(ServerMembers {
             server_id: srv.id,
-            members: server_members.remove(&srv.id).unwrap_or_default(),
+            members: list,
         });
     }
     let mut conversation_members = crate::dms::routes::members_of_my_conversations(db, me).await?;

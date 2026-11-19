@@ -715,3 +715,18 @@ describe('chips you cannot add to', () => {
     expect(document.querySelectorAll('.chip.suggest').length).toBe(1)
   })
 })
+
+describe('Hide completely (#508)', () => {
+  it("counts without the people you hide, and drops a chip only they reacted with", () => {
+    load(msg({ reactions: [{ emoji: '👍', count: 2, me: false, users: ['U2', 'U3'] }, { emoji: '😂', count: 1, me: false, users: ['U3'] }] }))
+    app.state = { ...app.state, blocks: [{ user_id: 'U3', mode: 'hide' }] }
+    cmp = mount(ReactionRow, { target: document.body, props: { message: cur(), meId: 'U1', nameOf: (id: string | null) => id ?? '', onError } })
+    flushSync()
+    expect(chips().map((c) => c.querySelector('.n')!.textContent)).toEqual(['1'])
+    // a line still counts them
+    app.state = { ...app.state, blocks: [{ user_id: 'U3', mode: 'line' }] }
+    flushSync()
+    expect(chips().map((c) => c.querySelector('.n')!.textContent)).toEqual(['2', '1'])
+  })
+})
+

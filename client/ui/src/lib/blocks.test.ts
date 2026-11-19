@@ -1,7 +1,7 @@
 // Blocking a person (#474), the pure part: how someone you've blocked shows in the message list, replies, reactions
 // and voice rows.
 import { describe, expect, it } from 'vitest'
-import { blockedCountText, blockedLabel, blockedReplyText, blockOf, isBlocked, isHidden, listRows } from './blocks'
+import { blockedCountText, blockedLabel, blockedReplyText, blockOf, isBlocked, isHidden, listRows, shownCount } from './blocks'
 import type { Message } from './protocol/Message'
 
 const msg = (id: string, author: string | null, kind: Message['kind'] = 'normal'): Message =>
@@ -49,5 +49,15 @@ describe('blocks', () => {
     expect(blockedLabel(s, 'SAM')).toBe('Blocked person')
     expect(blockedLabel(s, 'KIM')).toBe('')
     expect(blockedLabel(s, 'JO')).toBeNull()
+  })
+
+  it('a reaction count leaves out the people you hide, and only them (#508)', () => {
+    const r = { emoji: '👍', count: 3, me: false, users: ['JO', 'KIM', 'SAM'] }
+    // KIM is hidden; SAM (a line) still counts
+    expect(shownCount(s, r)).toBe(2)
+    expect(shownCount(s, { ...r, count: 1, users: ['KIM'] })).toBe(0)
+    expect(shownCount({ blocks: [] }, r)).toBe(3)
+    // an older server doesn't say who reacted: its count as it is
+    expect(shownCount(s, { emoji: '👍', count: 3, me: false })).toBe(3)
   })
 })

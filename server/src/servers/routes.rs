@@ -730,7 +730,10 @@ async fn list_members(
     Path(id): Path<ServerId>,
 ) -> AppResult<Json<Vec<Member>>> {
     visible_to(&s.db, id, me).await?;
-    Ok(Json(server_members(&s.db, id).await?))
+    let mut list = server_members(&s.db, id).await?;
+    // the people who've blocked you show emptied (#508)
+    crate::blocks::empty_members(&mut list, &crate::blocks::blocked_by(&s.db, me).await?);
+    Ok(Json(list))
 }
 
 pub async fn dms_of(db: &SqlitePool, user: UserId) -> AppResult<Vec<Channel>> {

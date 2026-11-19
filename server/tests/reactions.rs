@@ -96,7 +96,14 @@ async fn reactions_of(app: &TestApp, token: &str, msg: &Message) -> Vec<Reaction
         &format!("/channels/{}/messages", msg.channel_id),
     )
     .await;
-    page.into_iter().find(|m| m.id == msg.id).unwrap().reactions
+    bare(page.into_iter().find(|m| m.id == msg.id).unwrap().reactions)
+}
+
+/// Reactions without who reacted (checked on their own).
+fn bare(r: Vec<ReactionSummary>) -> Vec<ReactionSummary> {
+    r.into_iter()
+        .map(|r| ReactionSummary { users: None, ..r })
+        .collect()
 }
 
 fn summary(emoji: &str, count: u32, me: bool) -> ReactionSummary {
@@ -104,6 +111,7 @@ fn summary(emoji: &str, count: u32, me: bool) -> ReactionSummary {
         emoji: emoji.into(),
         count,
         me,
+        users: None,
     }
 }
 
@@ -420,7 +428,7 @@ async fn list_and_load_carry_summaries() {
     assert_eq!(r.status(), 200);
     match next_frame(&mut ws, Duration::from_secs(3)).await {
         Some(ServerFrame::Event(Event::MessageUpdated { message })) => assert_eq!(
-            message.reactions,
+            bare(message.reactions),
             [summary("😂", 1, false), summary("👍", 2, false)]
         ),
         other => panic!("{other:?}"),

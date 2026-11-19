@@ -117,28 +117,15 @@ pub async fn start(s: &AppState, me: UserId, ch: &Channel) -> AppResult<StartCal
             rang: false,
         });
     }
-    let (mut call, created) = create(s, ch.id, me).await?;
+    let (mut call, created) = create(s, ch, me).await?;
     // Someone who has blocked you (#474) isn't rung: to you the call just rings out. In a DM its line is withheld
-    // from them, as a message would be.
+    // from them, as a message would be (see `create`).
     let blockers = crate::blocks::blocked_by(&s.db, me).await?;
     let others: HashSet<UserId> = members(s, ch.id)
         .await?
         .into_iter()
         .filter(|u| *u != me && !blockers.contains(u))
         .collect();
-    if ch.kind == pulse_protocol::rest::ChannelKind::Dm
-        && let Some(line) = call.info.line_id
-        && let Some(other) = members(s, ch.id)
-            .await?
-            .into_iter()
-            .find(|u| *u != me && blockers.contains(u))
-    {
-        sqlx::query("UPDATE messages SET withheld_from = ? WHERE id = ?")
-            .bind(other.to_string())
-            .bind(line.to_string())
-            .execute(&s.db)
-            .await?;
-    }
     let expires_at =
         stamp(Utc::now() + ChronoDuration::from_std(s.cfg.calls.ring).unwrap_or_default());
     call.ringing = others.clone();
@@ -187,7 +174,7 @@ async fn try_joined(s: &AppState, ch: &Channel, user: UserId) -> AppResult<()> {
     let call = match open.entry(ch.id) {
         std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
         std::collections::hash_map::Entry::Vacant(v) => {
-            let (call, line) = create(s, ch.id, user).await?;
+            let (call, line) = create(s, ch, user).await?;
             tracing::info!(call = %call.info.id, channel = %ch.id, "call started by a join");
             created = Some((call.info.clone(), line));
             v.insert(call)
@@ -307,9 +294,10 @@ pub async fn arm_empty_calls(s: &AppState) {
 /// Store a new call and its line ("alex started a call"); not yet announced.
 async fn create(
     s: &AppState,
-    channel: ChannelId,
+    ch: &Channel,
     by: UserId,
 ) -> AppResult<(Open, pulse_protocol::rest::Message)> {
+    let channel = ch.id;
     let id = CallId::new();
     let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id = ?")
         .bind(by.to_string())
@@ -341,11 +329,15 @@ async fn create(
     .bind(line.id.to_string())
     .execute(&mut *tx)
     .await?;
-    // Like a new message, the line reopens the conversation for anyone who closed it.
-    sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ?")
-        .bind(channel.to_string())
-        .execute(&mut *tx)
-        .await?;
+    // In a DM with someone who has blocked the caller (#474), the line is withheld from them, and reopens the
+    // conversation only for the caller: a DM the blocker closed stays closed. Otherwise, like a new message, it reopens
+    // the conversation for anyone who closed it.
+    let withheld = match crate::messages::routes::dm_other(&mut tx, ch, by).await? {
+        Some(other) => crate::blocks::withhold_for(&mut *tx, by, other).await?,
+        None => None,
+    };
+    crate::blocks::withhold_line(&mut tx, line.id, withheld).await?;
+    crate::blocks::reopen(&mut tx, channel, withheld, by).await?;
     tx.commit().await?;
     let info = CallInfo {
         id,

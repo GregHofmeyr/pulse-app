@@ -1,7 +1,9 @@
 <script lang="ts">
   import { flushSync, onMount, tick, untrack } from 'svelte'
   import Icon from './Icon.svelte'
-  import { blockedCountText, listRows } from '../lib/blocks'
+  import { blockedCountText, isBlocked, listRows } from '../lib/blocks'
+  import PersonMenu from './PersonMenu.svelte'
+  import { personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
   import MessageItem from './MessageItem.svelte'
   import QuoteComposer from './QuoteComposer.svelte'
   import QuoteItem from './QuoteItem.svelte'
@@ -342,6 +344,10 @@
   const others = $derived((app.state.dmMembers[channelId] ?? []).filter((u) => u !== app.state.me?.id))
   // your notes to self (#308): nobody to call, add or be alerted by
   const notes = $derived(isNotes(app.state, channelId))
+  // your DM with someone you've blocked (#508): a quiet notice instead of the composer (the server refuses a send).
+  // Unblock is in their right-click menu, on the notice as on their name.
+  const blockedPeer = $derived(channel?.kind === 'dm' && !notes && others.length === 1 && isBlocked(app.state, others[0]) ? others[0] : null)
+  let blockedMenu = $state<PersonMenuAt | null>(null)
   const muted = $derived(channel ? isMuted(app.state, channel, clock.nowIso) : false)
   // the phone button (#50): start this conversation's call (ringing the others), or join the one going on
   const callGoing = $derived(!!app.state.calls[channelId])
@@ -971,6 +977,13 @@
   {:else if channel?.archived_at}
     <!-- archived (#303): read-only for everyone until its owner unarchives it; the server refuses posts anyway -->
     <p class="archived-note" role="status">This channel is archived, so it's read-only.</p>
+  {:else if blockedPeer}
+    <!-- focusable for its menu key (Shift+F10): Unblock is in that menu -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+    <p class="archived-note blocked-note" role="status" tabindex="0" data-tip="Right-click to unblock"
+      oncontextmenu={(e) => (blockedMenu = personMenuAt(e, blockedPeer, null, e.currentTarget))}
+      onkeydown={(e) => { const m = personMenuAt(e, blockedPeer, null, e.currentTarget); if (m) blockedMenu = m }}>You blocked {title}. Unblock to message.</p>
+    <PersonMenu menu={blockedMenu} onClose={() => (blockedMenu = null)} />
   {:else}
   {#if scheduledHere.length}
     <div class="sched-line">

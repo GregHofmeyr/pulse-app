@@ -12,7 +12,11 @@
 //! - **You always look offline to them, with an emptied profile**: the presence rule ([`crate::presence`]) treats them
 //!   as someone you appear offline to, and every copy of your profile they get (Ready, introductions, profile
 //!   changes, your profile card) has the default avatar and no banner, bio, status, badges, games or name style.
-//!   Your messages in servers you share stay readable to them.
+//!   Your messages in servers you share stay readable to them. That holds for your `User` inside member payloads too
+//!   (Ready, the members list, joins, changes and a joined server's snapshot: [`member_views`]).
+//! - **Nothing of theirs reopens a DM you closed**: their calls, polls, plans, spins, pins and game invites there are
+//!   withheld like a message ([`dm_post`], [`withhold_line`]), and reopen it only for them ([`reopen`]).
+//! - **Reactions say who reacted**, so your client leaves the people you hide out of the counts.
 //!
 //! You can't message someone you've blocked (unblock them first).
 
@@ -115,6 +119,74 @@ pub async fn withhold_for<'e>(
     other: UserId,
 ) -> AppResult<Option<UserId>> {
     Ok(has_blocked(db, other, author).await?.then_some(other))
+}
+
+/// Before `me` posts anything in `ch` (a message, poll, plan, spin, game invite): in a 1:1 DM with someone they've
+/// blocked, refused (unblock them first); with someone who has blocked them, who it's withheld from (#474).
+pub async fn dm_post(
+    tx: &mut sqlx::SqliteConnection,
+    ch: &pulse_protocol::rest::Channel,
+    me: UserId,
+) -> AppResult<Option<UserId>> {
+    match crate::messages::routes::dm_other(&mut *tx, ch, me).await? {
+        Some(other) if has_blocked(&mut *tx, me, other).await? => Err(AppError::ForbiddenMsg(
+            "You've blocked them. Unblock them to send a message.".into(),
+        )),
+        Some(other) => withhold_for(&mut *tx, me, other).await,
+        None => Ok(None),
+    }
+}
+
+/// A new post by `me` in conversation `channel` reopens it for anyone who had closed it; one `withheld` from
+/// someone (#474) reopens it only for `me`, so nothing of theirs brings back a DM the blocker closed.
+pub async fn reopen(
+    tx: &mut sqlx::SqliteConnection,
+    channel: pulse_protocol::ids::ChannelId,
+    withheld: Option<UserId>,
+    me: UserId,
+) -> AppResult<()> {
+    sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ? AND (? IS NULL OR user_id = ?)")
+        .bind(channel.to_string())
+        .bind(withheld.map(|_| me.to_string()))
+        .bind(me.to_string())
+        .execute(&mut *tx)
+        .await?;
+    Ok(())
+}
+
+/// Withhold the line `line` from `from`, when someone: a line about something withheld (a call, a pin, a poll's end,
+/// a plan's reminder) is withheld from the same person.
+pub async fn withhold_line(
+    tx: &mut sqlx::SqliteConnection,
+    line: pulse_protocol::ids::MessageId,
+    from: Option<UserId>,
+) -> AppResult<()> {
+    if let Some(from) = from {
+        sqlx::query("UPDATE messages SET withheld_from = ? WHERE id = ?")
+            .bind(from.to_string())
+            .bind(line.to_string())
+            .execute(&mut *tx)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Who the message `id` was withheld from, if anyone.
+pub async fn withheld_from(
+    tx: &mut sqlx::SqliteConnection,
+    id: pulse_protocol::ids::MessageId,
+) -> AppResult<Option<UserId>> {
+    let from: Option<Option<String>> =
+        sqlx::query_scalar("SELECT withheld_from FROM messages WHERE id = ?")
+            .bind(id.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+    from.flatten()
+        .map(|f| {
+            f.parse()
+                .map_err(|e| AppError::from(anyhow::Error::from(e)))
+        })
+        .transpose()
 }
 
 /// The person named: real and not you. Also the rate limit.
@@ -277,6 +349,69 @@ pub fn emptied_profile(p: pulse_protocol::rest::Profile) -> pulse_protocol::rest
         showcase_chosen: false,
         ..p
     }
+}
+
+/// `members` as someone sees them who was blocked by each of `blockers` (#508): those people's `User` emptied, as
+/// everywhere else they show.
+pub fn empty_members(members: &mut [pulse_protocol::rest::Member], blockers: &HashSet<UserId>) {
+    if blockers.is_empty() {
+        return;
+    }
+    for m in members.iter_mut() {
+        if blockers.contains(&m.user.id) {
+            m.user = emptied_user(m.user.clone());
+        }
+    }
+}
+
+/// The members an event carries a `User` for: a join or change, or a whole server's.
+fn members_of(event: &mut Event) -> Option<&mut [pulse_protocol::rest::Member]> {
+    match event {
+        Event::MemberJoined { member, .. } | Event::MemberUpdated { member, .. } => {
+            Some(std::slice::from_mut(member))
+        }
+        Event::ServerJoined { snapshot, .. } | Event::ServerRestored { snapshot } => {
+            Some(&mut snapshot.members)
+        }
+        _ => None,
+    }
+}
+
+/// For an event that carries members (#508), the copy each person blocked by any of them gets instead: those
+/// members' `User` emptied. Everyone else gets `event` as it is (and so does everyone, for any other event).
+pub async fn member_views(db: &SqlitePool, event: &Event) -> anyhow::Result<Vec<(UserId, Event)>> {
+    let mut probe = event.clone();
+    let Some(members) = members_of(&mut probe) else {
+        return Ok(vec![]);
+    };
+    if members.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut q =
+        sqlx::QueryBuilder::new("SELECT blocker_id, target_id FROM blocks WHERE blocker_id IN (");
+    let mut list = q.separated(", ");
+    for m in members.iter() {
+        list.push_bind(m.user.id.to_string());
+    }
+    q.push(")");
+    let pairs: Vec<(String, String)> = q.build_query_as().fetch_all(db).await?;
+    let mut by_viewer: std::collections::HashMap<UserId, HashSet<UserId>> = Default::default();
+    for (blocker, target) in pairs {
+        by_viewer
+            .entry(target.parse()?)
+            .or_default()
+            .insert(blocker.parse()?);
+    }
+    Ok(by_viewer
+        .into_iter()
+        .map(|(viewer, blockers)| {
+            let mut copy = event.clone();
+            if let Some(members) = members_of(&mut copy) {
+                empty_members(members, &blockers);
+            }
+            (viewer, copy)
+        })
+        .collect())
 }
 
 /// The message an event in a conversation is about, if any (its withholding decides who hears of it).
