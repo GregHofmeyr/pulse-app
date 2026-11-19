@@ -39,6 +39,7 @@ pub async fn handler(
     ws: WebSocketUpgrade,
     State(s): State<AppState>,
     ClientIp(ip): ClientIp,
+    headers: axum::http::HeaderMap,
 ) -> Response {
     // Spend up front (like login) so a burst of attempts can't all slip past; the token comes
     // back once the socket authenticates, so only failed or abandoned attempts keep the spend.
@@ -46,9 +47,11 @@ pub async fn handler(
     if !s.limits.gateway_ip.hit(&ip_key) {
         return AppError::TooManyRequests(None).into_response();
     }
+    // the app's own version (#534), sent beside Hello by apps from 0.2.17; `None` from older ones
+    let app_version = crate::app_versions::header_version(&headers);
     ws.max_message_size(MAX_CLIENT_FRAME)
         .max_frame_size(MAX_CLIENT_FRAME)
-        .on_upgrade(move |socket| run(socket, s, ip_key))
+        .on_upgrade(move |socket| run(socket, s, ip_key, app_version))
 }
 
 async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
@@ -347,7 +350,7 @@ fn only_mine<T>(
         .collect()
 }
 
-async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
+async fn run(mut socket: WebSocket, s: AppState, ip_key: String, app_version: Option<String>) {
     let (me, token_hash, client_version) = match authenticate(&mut socket, &s).await {
         Auth::Ok(u, h, v) => {
             s.limits.gateway_ip.refund(&ip_key);
@@ -378,7 +381,13 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
     // kicks, so after registering either this re-check sees the row gone, or the kick (which
     // now finds this conn) fires and the loop below closes the socket with 4001.
     match session::exists(&s.db, &token_hash).await {
-        Ok(true) => {}
+        Ok(true) => {
+            // off the path to Ready: a reconnect wave after a restart shouldn't queue behind these writes
+            let db = s.db.clone();
+            tokio::spawn(async move {
+                crate::app_versions::record_connect(&db, me, app_version.as_deref()).await
+            });
+        }
         Ok(false) => {
             disconnected(&s, conn, me, &since).await;
             return close(socket, CLOSE_UNAUTHORIZED, "unauthorized").await;

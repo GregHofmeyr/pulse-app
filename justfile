@@ -217,6 +217,10 @@ storage:
 clips-storage:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server clip-storage'
 
+# who's on which app version: each person's version, last update check (and what it was told) and last seen (#534)
+versions:
+    ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server versions'
+
 # a single-use invite on the live server (valid 24 h)
 invite-prod:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server create-invite'

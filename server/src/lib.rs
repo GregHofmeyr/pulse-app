@@ -1,6 +1,7 @@
 pub mod access;
 pub mod activity;
 pub mod activity_hidden;
+pub mod app_versions;
 pub mod attachments;
 pub mod auth;
 pub mod badges;

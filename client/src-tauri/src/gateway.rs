@@ -430,8 +430,22 @@ async fn session(
     t: &Tuning,
     after_ready: &AfterReady,
 ) -> End {
+    // The app's own version beside Hello (#534), so the server knows who's on what even when their updater never ran.
+    let req = {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let Ok(mut req) = url.into_client_request() else {
+            return End::Retry(Went::Failed);
+        };
+        req.headers_mut().insert(
+            "X-Pulse-Version",
+            tokio_tungstenite::tungstenite::http::HeaderValue::from_static(env!(
+                "CARGO_PKG_VERSION"
+            )),
+        );
+        req
+    };
     let mut ws =
-        match tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(url)).await {
+        match tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(req)).await {
             Ok(Ok((ws, _))) => ws,
             Ok(Err(tokio_tungstenite::tungstenite::Error::Http(resp)))
                 if resp.status()
