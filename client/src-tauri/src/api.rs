@@ -4706,7 +4706,12 @@ mod tests {
             .unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].status, Status::Dnd);
-        assert!(api.set_server_status(&alex, s.id, None).await.unwrap().is_empty());
+        assert!(
+            api.set_server_status(&alex, s.id, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         // only in a server you're in
         assert!(
             api.set_server_status(&sam, s.id, Some(Status::Dnd))
