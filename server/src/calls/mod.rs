@@ -118,11 +118,27 @@ pub async fn start(s: &AppState, me: UserId, ch: &Channel) -> AppResult<StartCal
         });
     }
     let (mut call, created) = create(s, ch.id, me).await?;
+    // Someone who has blocked you (#474) isn't rung: to you the call just rings out. In a DM its line is withheld
+    // from them, as a message would be.
+    let blockers = crate::blocks::blocked_by(&s.db, me).await?;
     let others: HashSet<UserId> = members(s, ch.id)
         .await?
         .into_iter()
-        .filter(|u| *u != me)
+        .filter(|u| *u != me && !blockers.contains(u))
         .collect();
+    if ch.kind == pulse_protocol::rest::ChannelKind::Dm
+        && let Some(line) = call.info.line_id
+        && let Some(other) = members(s, ch.id)
+            .await?
+            .into_iter()
+            .find(|u| *u != me && blockers.contains(u))
+    {
+        sqlx::query("UPDATE messages SET withheld_from = ? WHERE id = ?")
+            .bind(other.to_string())
+            .bind(line.to_string())
+            .execute(&s.db)
+            .await?;
+    }
     let expires_at =
         stamp(Utc::now() + ChronoDuration::from_std(s.cfg.calls.ring).unwrap_or_default());
     call.ringing = others.clone();

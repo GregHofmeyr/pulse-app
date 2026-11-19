@@ -381,6 +381,8 @@ struct Card {
     /// The DM was made for it (nobody had one yet).
     new_dm: bool,
     moved: bool,
+    /// They've blocked `me` (#474): the card looks sent and never reaches them.
+    withheld: bool,
 }
 
 /// Post the card for direct invite `code` in `me`'s DM with `other` (made now if they have none), mentioning them so
@@ -429,31 +431,50 @@ async fn post_card_in(
     };
     // minted under the write lock, so ids keep commit order (as a send)
     let message = MessageId::new();
-    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, created_at) VALUES (?, ?, ?, 'normal', ?, ?)")
+    // Someone who has blocked the inviter (#474, #80): the invite is skipped quietly. Its card is withheld from them
+    // like a DM, with no ping, and the DM stays closed for them.
+    let withheld = crate::blocks::has_blocked(&mut *tx, other, me).await?;
+    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, created_at, withheld_from) VALUES (?, ?, ?, 'normal', ?, ?, ?)")
         .bind(message.to_string())
         .bind(channel.to_string())
         .bind(me.to_string())
         .bind(&content)
         .bind(now())
+        .bind(withheld.then(|| other.to_string()))
         .execute(&mut *tx)
         .await?;
-    crate::messages::mentions::store(tx, message, &[other], true).await?;
+    if !withheld {
+        crate::messages::mentions::store(tx, message, &[other], true).await?;
+    }
     sqlx::query("UPDATE server_invites SET message_id = ? WHERE code = ?")
         .bind(message.to_string())
         .bind(code)
         .execute(&mut *tx)
         .await?;
-    // A new message reopens closed conversations.
-    sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ?")
+    // A new message reopens closed conversations (a withheld one, only for its sender).
+    sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ? AND (? = 0 OR user_id = ?)")
         .bind(channel.to_string())
+        .bind(withheld)
+        .bind(me.to_string())
         .execute(&mut *tx)
         .await?;
+    if withheld && new_dm {
+        sqlx::query(
+            "INSERT OR IGNORE INTO dm_hidden (user_id, channel_id, hidden_at) VALUES (?, ?, ?)",
+        )
+        .bind(other.to_string())
+        .bind(channel.to_string())
+        .bind(now())
+        .execute(&mut *tx)
+        .await?;
+    }
     let moved = crate::reads::advance(tx, me, channel, message).await?;
     Ok(Card {
         channel,
         message,
         new_dm,
         moved,
+        withheld,
     })
 }
 
@@ -462,16 +483,23 @@ async fn publish_card(s: &AppState, me: UserId, other: UserId, card: Card) {
     if card.new_dm {
         match crate::access::load_channel(&s.db, card.channel).await {
             Ok(Some(channel)) => {
+                // made for a withheld card (#474): only its sender hears of it
+                let to: std::collections::HashSet<UserId> = if card.withheld {
+                    [me].into()
+                } else {
+                    [me, other].into()
+                };
                 s.hub
-                    .publish(&s.db, Event::ChannelCreated { channel })
+                    .publish_to(&s.db, Event::ChannelCreated { channel }, &to)
                     .await;
                 s.hub
-                    .publish(
+                    .publish_to(
                         &s.db,
                         Event::GroupMembersChanged {
                             channel_id: card.channel,
                             user_ids: vec![me, other],
                         },
+                        &to,
                     )
                     .await;
                 // they share a conversation now: presence both ways

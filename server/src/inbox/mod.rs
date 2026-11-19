@@ -51,6 +51,7 @@ const ITEMS: &str = "FROM mentions mn
     LEFT JOIN inbox_cleared ic ON ic.user_id = mn.user_id
     WHERE mn.user_id = ? AND mn.message_id >= ?
       AND m.deleted_at IS NULL AND COALESCE(m.author_id, '') != mn.user_id
+      AND NOT EXISTS (SELECT 1 FROM blocks bk WHERE bk.blocker_id = mn.user_id AND bk.target_id = m.author_id)
       AND (m.thread_root_id IS NULL OR root.deleted_at IS NULL)
       AND c.deleted_at IS NULL
       AND (c.server_id IS NULL OR c.server_id NOT IN (SELECT id FROM servers WHERE deleted_at IS NOT NULL))

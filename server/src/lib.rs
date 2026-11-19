@@ -4,6 +4,7 @@ pub mod activity_hidden;
 pub mod attachments;
 pub mod auth;
 pub mod badges;
+pub mod blocks;
 pub mod bookmarks;
 pub mod calls;
 pub mod clips;
@@ -98,6 +99,7 @@ pub fn router(state: AppState) -> Router {
         .merge(streams::notify::router())
         .merge(person_dnd::router())
         .merge(activity_hidden::router())
+        .merge(blocks::router())
         .merge(game_invites::router())
         .merge(stage::routes::router())
         .merge(watch::routes::router())

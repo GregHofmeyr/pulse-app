@@ -413,6 +413,8 @@ const WRITES: &[&str] = &[
     "POST /livekit/webhook",
     "DELETE /me/activity-hidden/{id}",
     "PUT /me/activity-hidden/{id}",
+    "DELETE /me/blocks/{id}",
+    "PUT /me/blocks/{id}",
     "DELETE /me/appear-offline/{id}",
     "PUT /me/appear-offline/{id}",
     "POST /me/badges/egg",

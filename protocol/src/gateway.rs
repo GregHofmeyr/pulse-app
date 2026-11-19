@@ -7,7 +7,7 @@ use crate::ids::{
     BookmarkId, CallId, ChannelId, LineId, MessageId, ReminderId, ScheduledId, ServerId, UserId,
 };
 use crate::rest::{
-    Badge, CallInfo, CallRing, CardProfile, Channel, ChannelOrder, ClipView, ClipViewPref,
+    Badge, Block, CallInfo, CallRing, CardProfile, Channel, ChannelOrder, ClipView, ClipViewPref,
     CustomEmoji, CustomStatus, DmLayout, F1Prediction, Game, GameInvite, InboxFilter, InboxItem,
     Listening, ListeningUpdate, Member, Message, MessageBookmark, MessageReminder, Mute,
     MyCustomStatus, NotifyLevelPref, OwnStatus, Person, PersonDnd, PinnedMessage, Plan, Playing,
@@ -256,6 +256,11 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub activity_hidden: Vec<UserId>,
+    /// The people you've blocked (#474), each with how they show, in the order you blocked them. Yours only. Absent
+    /// from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub blocks: Vec<Block>,
     /// Your saved inbox filters (#307), in order. Yours only. Absent from older servers.
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
@@ -556,6 +561,12 @@ pub enum Event {
     ActivityHiddenChanged {
         user_id: UserId,
         list: Vec<UserId>,
+    },
+    /// Only to its person's own sessions: the people they've blocked changed (#474), the whole new [`Ready::blocks`].
+    /// Clients from before it skip it.
+    BlocksChanged {
+        user_id: UserId,
+        list: Vec<Block>,
     },
     /// Only to its person's own sessions: their saved inbox filters changed (#307), the whole new
     /// [`Ready::inbox_filters`]. Clients from before it skip it.
@@ -1041,6 +1052,7 @@ impl Event {
             | Self::DmLayoutChanged { .. }
             | Self::PersonDndChanged { .. }
             | Self::ActivityHiddenChanged { .. }
+            | Self::BlocksChanged { .. }
             | Self::InvitesChanged { .. }
             | Self::BansChanged { .. }
             | Self::InboxFiltersChanged { .. }
@@ -1115,6 +1127,7 @@ impl Event {
             | Self::DmLayoutChanged { user_id, .. }
             | Self::PersonDndChanged { user_id, .. }
             | Self::ActivityHiddenChanged { user_id, .. }
+            | Self::BlocksChanged { user_id, .. }
             | Self::InvitesChanged { user_id, .. }
             | Self::BansChanged { user_id, .. }
             | Self::ServerJoined { user_id, .. }
@@ -1255,6 +1268,7 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             activity_hidden: vec![],
+            blocks: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],
@@ -1353,6 +1367,7 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             activity_hidden: vec![],
+            blocks: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],
@@ -1500,6 +1515,7 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             activity_hidden: vec![],
+            blocks: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],

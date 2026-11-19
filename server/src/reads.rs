@@ -112,6 +112,7 @@ const COUNTED_REPLY_MENTIONS: &str = "FROM mentions mn JOIN messages m ON m.id =
     WHERE mn.user_id = ? AND (? IS NULL OR m.channel_id = ?) AND m.thread_root_id IS NOT NULL
       AND m.deleted_at IS NULL AND root.deleted_at IS NULL
       AND m.id > COALESCE(tr.last_seen_id, '')
+      AND NOT EXISTS (SELECT 1 FROM blocks bk WHERE bk.blocker_id = mn.user_id AND bk.target_id = m.author_id)
       AND m.channel_id NOT IN (SELECT id FROM channels WHERE deleted_at IS NOT NULL
                                OR server_id IN (SELECT id FROM servers WHERE deleted_at IS NOT NULL))
       AND NOT EXISTS (SELECT 1 FROM channels oc WHERE oc.id = m.channel_id AND oc.server_id IS NOT NULL
@@ -128,12 +129,14 @@ async fn read_states(
             (SELECT COUNT(*) FROM messages m WHERE m.channel_id = rs.channel_id
                AND m.id > COALESCE(rs.last_read_message_id, '')
                AND m.deleted_at IS NULL AND m.thread_root_id IS NULL
+               AND (m.withheld_from IS NULL OR m.withheld_from != rs.user_id)
                AND (m.kind = 'normal' AND COALESCE(m.author_id, '') != rs.user_id
                     OR m.kind = 'system' AND json_extract(m.system_payload, '$.type') = 'call'
                        AND COALESCE(json_extract(m.system_payload, '$.started_by'), '') != rs.user_id)),
             (SELECT COUNT(*) FROM mentions mn JOIN messages m ON m.id = mn.message_id
                WHERE mn.user_id = rs.user_id AND m.channel_id = rs.channel_id
                AND m.deleted_at IS NULL AND m.thread_root_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM blocks bk WHERE bk.blocker_id = rs.user_id AND bk.target_id = m.author_id)
                AND m.id > COALESCE(rs.last_read_message_id, '')) + COALESCE(tm.n, 0)
          FROM read_states rs
          LEFT JOIN (
@@ -200,7 +203,8 @@ pub async fn thread_seen_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<Threa
 /// The newest message of each DM/group `me` belongs to.
 pub async fn latest_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<Message>> {
     let ids: Vec<String> = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT (SELECT MAX(m.id) FROM messages m WHERE m.channel_id = cm.channel_id)
+        "SELECT (SELECT MAX(m.id) FROM messages m WHERE m.channel_id = cm.channel_id
+                 AND (m.withheld_from IS NULL OR m.withheld_from != cm.user_id))
          FROM channel_members cm WHERE cm.user_id = ?",
     )
     .bind(me.to_string())

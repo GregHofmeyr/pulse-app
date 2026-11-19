@@ -320,6 +320,7 @@ async fn ready_for(
         dm_layout: crate::dms::layout::of(db, me).await?,
         person_dnd: crate::person_dnd::list(db, me).await?,
         activity_hidden: crate::activity_hidden::list(db, me).await?,
+        blocks: crate::blocks::list(db, me).await?,
         inbox_filters: crate::inbox::filters::list_for(db, me).await?,
         channel_orders: crate::servers::personal_order::list_for(db, me).await?,
         layouts,
