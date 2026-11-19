@@ -117,27 +117,21 @@ describe('the Invite dialog', () => {
     expect(seg('Uses').map((b) => b.textContent)).toContain('No limit')
   })
 
-  it('a change makes a fresh link and revokes the one nobody copied; a copied one is kept', async () => {
+  it('a change is saved onto the same link: its code never changes and nothing is revoked', async () => {
     await open()
     seg('Expires').find((b) => b.textContent === '7 days')!.click()
     await settle()
-    expect(calls('create_server_invite').at(-1)!.request).toEqual({ max_age_secs: 604800, max_uses: 1, join_text: undefined })
-    expect(linkField().value).toMatch(/codeaaaaa2$/)
-    expect(calls('revoke_invite')).toEqual([{ code: 'codeaaaaa1' }])
-    // copied: kept when the next change replaces it
-    const writeText = vi.fn(async () => {})
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
-    ;[...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.includes('Copy'))!.click()
-    await settle()
-    expect(writeText).toHaveBeenCalledWith('https://pulsechat.co.za/i/codeaaaaa2')
-    expect(document.body.textContent).toContain('Copied')
+    expect(calls('create_server_invite')).toHaveLength(1)
+    expect(calls('update_invite')).toEqual([{ code: 'codeaaaaa1', request: { max_age_secs: 604800, max_uses: 1, join_text: '' } }])
+    expect(linkField().value).toMatch(/codeaaaaa1$/)
     seg('Uses').find((b) => b.textContent === '5')!.click()
     await settle()
-    expect(calls('create_server_invite').at(-1)!.request).toEqual({ max_age_secs: 604800, max_uses: 5, join_text: undefined })
-    expect(calls('revoke_invite')).toEqual([{ code: 'codeaaaaa1' }])
+    expect(calls('update_invite').at(-1)).toEqual({ code: 'codeaaaaa1', request: { max_age_secs: 604800, max_uses: 5, join_text: '' } })
+    expect(calls('revoke_invite')).toEqual([])
+    expect(linkField().value).toMatch(/codeaaaaa1$/)
   })
 
-  it('the button text waits for a pause, then makes the link with it', async () => {
+  it('the button text waits for a pause, then is saved onto the link', async () => {
     await open()
     vi.useFakeTimers()
     const field = document.querySelector<HTMLInputElement>('input[placeholder="Join Alpha"]')!
@@ -145,11 +139,44 @@ describe('the Invite dialog', () => {
     field.value = 'Come hang'
     field.dispatchEvent(new Event('input', { bubbles: true }))
     flushSync()
-    expect(calls('create_server_invite')).toHaveLength(1)
+    expect(calls('update_invite')).toHaveLength(0)
     vi.advanceTimersByTime(700)
     vi.useRealTimers()
     await settle()
-    expect(calls('create_server_invite').at(-1)!.request).toEqual({ max_age_secs: 86400, max_uses: 1, join_text: 'Come hang' })
+    expect(calls('create_server_invite')).toHaveLength(1)
+    expect(calls('update_invite').at(-1)).toEqual({ code: 'codeaaaaa1', request: { max_age_secs: 86400, max_uses: 1, join_text: 'Come hang' } })
+  })
+
+  it('typing, leaving the field, then Copy: the same link, copied inside the click, and kept on close', async () => {
+    await open()
+    let release: (() => void) | undefined
+    // the save is still on its way when Copy is pressed
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'update_invite') return new Promise((r) => (release = () => r(invite({ code: 'codeaaaaa1', join_text: 'Come hang' }))))
+      return answer(cmd, args)
+    })
+    const field = document.querySelector<HTMLInputElement>('input[placeholder="Join Alpha"]')!
+    field.value = 'Come hang'
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    field.dispatchEvent(new FocusEvent('blur'))
+    field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    flushSync()
+    expect(calls('update_invite')).toHaveLength(1)
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    const copy = [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.includes('Copy'))!
+    expect(copy.disabled).toBe(false)
+    copy.click()
+    // synchronously, in the click itself
+    expect(writeText).toHaveBeenCalledWith('https://pulsechat.co.za/i/codeaaaaa1')
+    release?.()
+    await settle()
+    expect(linkField().value).toMatch(/codeaaaaa1$/)
+    expect(calls('create_server_invite')).toHaveLength(1)
+    unmount(cmp!)
+    cmp = undefined
+    await settle()
+    expect(calls('revoke_invite')).toEqual([])
   })
 
   it('lists people you know who are not in it; Invite sends a direct invite and becomes Sent', async () => {

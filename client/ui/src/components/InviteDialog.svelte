@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  /** How long the button text waits for a pause in typing before it makes a new link. */
+  /** How long the button text waits for a pause in typing before it's saved to the link. */
   export const JOIN_TEXT_WAIT_MS = 700
 </script>
 
@@ -8,9 +8,9 @@
   // on a soft glow of its colours (or its banner, #475); people you know (another server or a DM) who aren't in it, each with Invite (a direct
   // invite: a card in your DM with them, then "Sent"); and a ready link with Copy, how long it lasts and how many can
   // use it (a day and one, as the server's defaults; "Never" and "No limit" are the owner's), and the card's button
-  // text. Changing any of them makes a fresh link; the one it replaces is revoked if it never left the dialog (never
-  // copied), and so is the last one on close: nobody else can have it. Links are rate limited, so the button text
-  // waits for a pause in typing.
+  // text. The dialog makes ONE link and keeps its code while it's open: changing any of those saves it to that link
+  // (`PATCH /invites/{code}`), so the code shown never changes. It's revoked on close if it never left the dialog
+  // (never copied): nobody else can have it. The button text waits for a pause in typing.
   import { onDestroy, onMount } from 'svelte'
   import { modal } from '../lib/actions'
   import { avatarColor } from '../lib/avatar'
@@ -75,17 +75,18 @@
   const link = $derived(current && serverOrigin.origin ? inviteLink(serverOrigin.origin, current.code) : '')
   const revoke = (code: string) => void api.revokeInvite(code).catch(() => {})
 
+  /** Make the dialog's one link (once, on open). */
   async function mint() {
     const mine = ++seq
     making = true
     linkError = ''
     try {
       const made = await api.createServerInvite(serverId, { max_age_secs: expiry, max_uses: uses, join_text: joinText.trim() || undefined })
-      // a newer choice was made meanwhile, or the dialog closed: nobody saw this one
-      if (mine !== seq || closed) return revoke(made.code)
-      const was = current
+      // the dialog closed meanwhile: nobody saw this one
+      if (closed) return revoke(made.code)
       current = { code: made.code, copied: false }
-      if (was && !was.copied) revoke(was.code)
+      // a choice made while it was being made goes onto it
+      if (dirty) void save()
     } catch (e) {
       if (mine === seq) linkError = errorText(e)
     } finally {
@@ -94,25 +95,50 @@
   }
   onMount(() => void mint())
 
+  // Changes go onto the same link (its code never changes). One save at a time; a change made during one is saved
+  // after it, with everything as it is then.
+  let dirty = false
+  let saving = false
+  async function save() {
+    dirty = true
+    if (!current || saving || closed) return
+    saving = true
+    dirty = false
+    linkError = ''
+    const code = current.code
+    try {
+      await api.updateInvite(code, { max_age_secs: expiry, max_uses: uses, join_text: joinText.trim() })
+    } catch (e) {
+      if (!closed) linkError = errorText(e)
+    } finally {
+      saving = false
+      if (dirty && !closed) void save()
+    }
+  }
+
   let typing: ReturnType<typeof setTimeout> | undefined
   function textChanged() {
     clearTimeout(typing)
-    typing = setTimeout(() => void mint(), JOIN_TEXT_WAIT_MS)
+    typing = setTimeout(() => {
+      typing = undefined
+      void save()
+    }, JOIN_TEXT_WAIT_MS)
   }
   function textDone() {
     if (typing === undefined) return
     clearTimeout(typing)
     typing = undefined
-    void mint()
+    void save()
   }
-  const setExpiry = (v: number) => { if (v !== expiry) { expiry = v; void mint() } }
-  const setUses = (v: number) => { if (v !== uses) { uses = v; void mint() } }
+  const setExpiry = (v: number) => { if (v !== expiry) { expiry = v; void save() } }
+  const setUses = (v: number) => { if (v !== uses) { uses = v; void save() } }
 
   let flashTimer: ReturnType<typeof setTimeout> | undefined
   async function copy() {
     if (!current || !link) return
     current.copied = true
     try {
+      // called at once, inside the click: a webview may refuse the clipboard outside a user gesture
       await navigator.clipboard.writeText(link)
       copiedFlash = true
       clearTimeout(flashTimer)

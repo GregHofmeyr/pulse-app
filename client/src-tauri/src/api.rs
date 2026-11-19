@@ -1125,6 +1125,25 @@ impl Api {
         .await
     }
 
+    /// Change a live invite link you made, keeping its code (#80): how long it lasts, its uses, its join text.
+    pub async fn update_invite(
+        &self,
+        token: &str,
+        code: &str,
+        request: &pulse_protocol::rest::UpdateServerInviteRequest,
+    ) -> Result<ServerInvite, ApiError> {
+        let code = invite_code(code)?;
+        Self::parse(
+            self.http
+                .patch(format!("{}/invites/{code}", self.base))
+                .bearer_auth(token)
+                .json(request)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Revoke an invite (#80): its maker or the server's owner.
     pub async fn revoke_invite(&self, token: &str, code: &str) -> Result<(), ApiError> {
         let code = invite_code(code)?;
@@ -4634,7 +4653,7 @@ mod tests {
             )
             .await
             .unwrap();
-        // only its owner
+        // only its members (sam isn't in it)
         assert!(
             api.set_server_icon(&sam, s.id, Some(pic.hash.clone()))
                 .await
@@ -4671,7 +4690,7 @@ mod tests {
             )
             .await
             .unwrap();
-        // only its owner
+        // only its members (sam isn't in it)
         assert!(
             api.set_server_banner(&sam, s.id, Some(pic.hash.clone()))
                 .await

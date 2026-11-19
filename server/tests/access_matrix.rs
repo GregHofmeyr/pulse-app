@@ -410,6 +410,7 @@ const WRITES: &[&str] = &[
     "POST /invites",
     "POST /invites/{code}/accept",
     "DELETE /invites/{code}",
+    "PATCH /invites/{code}",
     "POST /livekit/webhook",
     "DELETE /me/activity-hidden/{id}",
     "PUT /me/activity-hidden/{id}",

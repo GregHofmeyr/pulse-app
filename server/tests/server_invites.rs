@@ -944,3 +944,140 @@ async fn the_sweep_drops_long_dead_invites_and_old_failures() {
         .unwrap();
     assert_eq!(codes, ["new"]);
 }
+
+async fn patch(app: &TestApp, token: &str, code: &str, body: Value) -> reqwest::Response {
+    app.http
+        .patch(app.url(&format!("/invites/{code}")))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn its_maker_changes_a_link_and_the_code_stays() {
+    let w = world().await;
+    let inv = make_ok(&w, &w.sam.1, json!({})).await;
+    let code = inv.code.clone();
+    // the join text, trimmed; then cleared
+    let r = patch(
+        &w.app,
+        &w.sam.1,
+        &code,
+        json!({ "join_text": "  Come hang " }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let got: ServerInvite = r.json().await.unwrap();
+    assert_eq!(got.code, code);
+    assert_eq!(got.join_text.as_deref(), Some("Come hang"));
+    assert_eq!(got.max_uses, Some(1), "absent fields stay as they were");
+    let got: ServerInvite = patch(&w.app, &w.sam.1, &code, json!({ "join_text": "" }))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(got.join_text, None);
+    // how long it lasts (from when it was made) and its uses
+    let got: ServerInvite = patch(
+        &w.app,
+        &w.sam.1,
+        &code,
+        json!({ "max_age_secs": 3600, "max_uses": 5 }),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(got.max_uses, Some(5));
+    let made = chrono::DateTime::parse_from_rfc3339(&got.created_at).unwrap();
+    let ends = chrono::DateTime::parse_from_rfc3339(got.expires_at.as_deref().unwrap()).unwrap();
+    assert_eq!((ends - made).num_seconds(), 3600);
+    // a member's limits still apply; the owner's don't
+    assert_eq!(
+        patch(&w.app, &w.sam.1, &code, json!({ "max_uses": 0 }))
+            .await
+            .status(),
+        403
+    );
+    let mine = make_ok(&w, &w.alex.1, json!({})).await;
+    let got: ServerInvite = patch(
+        &w.app,
+        &w.alex.1,
+        &mine.code,
+        json!({ "max_age_secs": 0, "max_uses": 0 }),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert_eq!((got.expires_at, got.max_uses), (None, None));
+    // one line, not too long
+    assert_eq!(
+        patch(&w.app, &w.sam.1, &code, json!({ "join_text": "a\nb" }))
+            .await
+            .status(),
+        400
+    );
+    // still one invite: nothing new was made
+    let list: Vec<ServerInvite> =
+        get_json(&w.app, &w.alex.1, &format!("/servers/{}/invites", w.server)).await;
+    assert_eq!(list.iter().filter(|i| i.code == code).count(), 1);
+}
+
+#[tokio::test]
+async fn only_its_maker_changes_a_link_and_only_while_it_works() {
+    let w = world().await;
+    let inv = make_ok(&w, &w.sam.1, json!({})).await;
+    // not even the owner, nor an outsider: as for an unknown code
+    assert_eq!(
+        patch(&w.app, &w.alex.1, &inv.code, json!({ "join_text": "x" }))
+            .await
+            .status(),
+        404
+    );
+    assert_eq!(
+        patch(&w.app, &w.kim.1, &inv.code, json!({ "join_text": "x" }))
+            .await
+            .status(),
+        404
+    );
+    assert_eq!(
+        patch(&w.app, &w.sam.1, "nopenopeno", json!({}))
+            .await
+            .status(),
+        404
+    );
+    // a direct invite can't be changed
+    let direct = make_ok(&w, &w.sam.1, json!({ "for_user": w.kim.0 })).await;
+    assert_eq!(
+        patch(&w.app, &w.sam.1, &direct.code, json!({ "join_text": "x" }))
+            .await
+            .status(),
+        400
+    );
+    // a revoked one neither
+    assert_eq!(
+        delete(&w.app, &w.sam.1, &format!("/invites/{}", inv.code))
+            .await
+            .status(),
+        204
+    );
+    assert_eq!(
+        patch(&w.app, &w.sam.1, &inv.code, json!({ "join_text": "x" }))
+            .await
+            .status(),
+        400
+    );
+    // a use limit can't drop below the uses it has had
+    let five = make_ok(&w, &w.sam.1, json!({ "max_uses": 5 })).await;
+    assert_eq!(accept(&w.app, &w.kim.1, &five.code).await.status(), 200);
+    assert_eq!(accept(&w.app, &w.jo.1, &five.code).await.status(), 200);
+    assert_eq!(
+        patch(&w.app, &w.sam.1, &five.code, json!({ "max_uses": 1 }))
+            .await
+            .status(),
+        400
+    );
+}
