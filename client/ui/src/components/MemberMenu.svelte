@@ -29,7 +29,7 @@
   import MuteFlyout from './MuteFlyout.svelte'
   import PersonDndItem from './PersonDndItem.svelte'
 
-  let { serverId, userId, x, y, opener, onClose, onMessage, onRemove, onUnban, fromCard = false, muteChannelId = null }: {
+  let { serverId, userId, x, y, opener, onClose, onMessage, onRemove, onUnban, onViewProfile, fromCard = false, muteChannelId = null }: {
     /** The server it opens in, or null (a card opened outside servers). */
     serverId: string | null
     userId: string
@@ -45,6 +45,8 @@
     onUnban?: (userId: string) => void
     /** Opened on their profile card: no View profile. */
     fromCard?: boolean
+    /** View profile, where their card can't open (inside a full profile, #335): what to do instead. */
+    onViewProfile?: (userId: string) => void
     /** Opened on a message in your DM with them: Mute conversation mutes that DM. */
     muteChannelId?: string | null
   } = $props()
@@ -151,7 +153,7 @@
   }}>
   <!-- the card opens beside the row the menu came from -->
   {#if !fromCard}
-    <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>
+    <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(() => (onViewProfile ? onViewProfile(userId) : openCard(userId, serverId, opener)))}>View profile</button>
   {/if}
   {#if onMessage && !self}
     <button type="button" class="menu-item" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>

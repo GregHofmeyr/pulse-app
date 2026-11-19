@@ -541,3 +541,65 @@ async fn one_due_while_no_device_was_connected_is_told_once_by_the_first_to_clai
     let mine: Vec<MessageReminder> = get_json(&app, &alex, "/reminders").await;
     assert!(mine[0].due && !mine[0].missed && !mine[0].seen);
 }
+
+async fn block(app: &TestApp, token: &str, who: UserId) {
+    let r = req(
+        app,
+        reqwest::Method::PUT,
+        token,
+        &format!("/me/blocks/{who}"),
+        Some(json!({ "mode": "line" })),
+    )
+    .await;
+    assert!(r.status().is_success(), "{}", r.status());
+}
+
+#[tokio::test]
+async fn scheduled_messages_respect_blocks() {
+    // #412 (re-check DM blocking, #474): a DM with someone you've blocked takes no scheduled message; blocking them
+    // before one goes fails it; one to someone who has blocked you is posted withheld from them, never refused
+    let (app, [alex, _, kim, _], [alex_id, sam_id, kim_id, _], _) = setup().await;
+    let dm = create_dm(&app, &alex, &[sam_id]).await;
+    let made = schedule_ok(
+        &app,
+        &alex,
+        dm.id,
+        "later, sam",
+        &at(TimeDelta::minutes(30)),
+    )
+    .await;
+    block(&app, &alex, sam_id).await;
+    let r = schedule(&app, &alex, dm.id, "another", &at(TimeDelta::minutes(30))).await;
+    assert_eq!(r.status(), 403);
+    let s = app.state();
+    let later = Utc::now() + TimeDelta::hours(1);
+    assert_eq!(
+        pulse_server::scheduled::send_due(&s, later).await.unwrap(),
+        0
+    );
+    let mine: Vec<ScheduledMessage> = get_json(&app, &alex, "/scheduled").await;
+    assert_eq!(mine.len(), 1);
+    assert_eq!(mine[0].id, made.id);
+    assert!(mine[0].failed.as_deref().unwrap().contains("blocked"));
+
+    // kim blocks alex: alex's scheduled message to kim still goes, and kim never sees it
+    let dm2 = create_dm(&app, &alex, &[kim_id]).await;
+    schedule_ok(&app, &alex, dm2.id, "hi kim", &at(TimeDelta::minutes(30))).await;
+    block(&app, &kim, alex_id).await;
+    assert_eq!(
+        pulse_server::scheduled::send_due(&s, later).await.unwrap(),
+        1
+    );
+    assert!(
+        history(&app, &alex, dm2.id)
+            .await
+            .iter()
+            .any(|m| m.content == "hi kim")
+    );
+    assert!(
+        !history(&app, &kim, dm2.id)
+            .await
+            .iter()
+            .any(|m| m.content == "hi kim")
+    );
+}

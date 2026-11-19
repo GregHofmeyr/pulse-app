@@ -33,10 +33,12 @@ export const patchNotes: PatchNotes = {
   ],
   fixes: [
     'The opened server card from an invite pack is sharp again (its text and icon were slightly blurry), and "✦ MYTHICAL PULL ✦" is easier to read in every theme',
+    'You can\'t schedule a message in a DM with someone you\'ve blocked any more (it used to wait until its time, then fail)',
     'Voice: when your connection drops for a moment and comes back, nobody else hears you leave and rejoin',
     'A stream whose streamer is still connected but sending nothing now ends after a minute, instead of staying live on a black screen',
   ],
   qol: [
+    'In a full profile\'s Name Archive, click who made a change to see their profile, or right-click them for their menu',
     'A watch party opened in a window moves on with the party to its next video, and closes when you leave the party',
     'Making a poll anonymous in a DM or a small group now warns that people can still work out a vote from the counts changing',
     'Linux: you show as Idle after 30 minutes away on Hyprland, sway and other wlroots desktops too',

@@ -14,6 +14,10 @@
   import { twemojiUrl } from '../lib/emoji'
   import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
   import { api, errorText } from '../lib/tauri'
+  import { openFull } from '../lib/profileCard.svelte'
+  import { messagePerson } from '../lib/messagePerson'
+  import { personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
+  import PersonMenu from './PersonMenu.svelte'
   import type { NameChange } from '../lib/protocol/NameChange'
   import { formatMemberSince, formatVoice } from '../lib/profileFormat'
   import type { CardProfile } from '../lib/protocol/CardProfile'
@@ -82,7 +86,25 @@
   })
   const serverName = (id: string) => app.state.servers.find((s) => s.id === id)?.name ?? 'a server'
   const customOf = (key: string) => app.state.customEmoji[key.slice(7)]
+
+  // Who made a Name Archive change (#335): their name is a button that opens their full profile here (their card
+  // can't open over this one), and right-click (or ContextMenu / Shift+F10 on it) opens their person menu, drawn
+  // inside this dialog so it isn't inert. Message closes the profile and goes to your DM with them.
+  let menu = $state<PersonMenuAt | null>(null)
+  function byMenu(e: MouseEvent | KeyboardEvent, who: string, sid: string | null) {
+    menu = personMenuAt(e, who, sid, e.currentTarget as HTMLElement) ?? menu
+  }
+  const viewHere = (sid: string | null) => (who: string) => openFull(who, sid)
+  function messageFromHere(who: string) {
+    onClose()
+    messagePerson(who)
+  }
 </script>
+
+{#snippet by(who: string, sid: string | null)}
+  <span>by <button type="button" class="by" aria-label="{displayName(app.state, sid, who)}'s profile" onclick={() => openFull(who, sid)}
+    oncontextmenu={(e) => byMenu(e, who, sid)} onkeydown={(e) => byMenu(e, who, sid)}><Name userId={who} serverId={sid} interactive={false} bg={boardBg} /></button></span>
+{/snippet}
 
 <div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={onClose}></div>
@@ -130,7 +152,7 @@
               {#each serverArchive.entries as e, i (`${i}\t${e.changed_at}\t${e.changed_by}`)}
                 <li>
                   {#if e.name}<strong class="name-clip">{e.name}</strong>{:else}<strong class="reset">Reset</strong>{/if}
-                  <span>by <Name userId={e.changed_by} {serverId} interactive={false} bg={boardBg} /></span>
+                  {@render by(e.changed_by, serverId)}
                   <time datetime={e.changed_at}>{formatMemberSince(e.changed_at)}</time>
                 </li>
               {/each}
@@ -147,7 +169,7 @@
               <li>
                 <strong class="name-clip">{e.name}</strong>
                 <span>{serverName(e.server_id)}</span>
-                <span>by <Name userId={e.changed_by} serverId={e.server_id} interactive={false} bg={boardBg} /></span>
+                {@render by(e.changed_by, e.server_id)}
                 <time datetime={e.changed_at}>{formatMemberSince(e.changed_at)}</time>
               </li>
             {/each}
@@ -159,6 +181,8 @@
         <TrophyCase badges={cached?.badges ?? []} showcase={cached?.showcase ?? []} showcaseChosen={cached?.showcase_chosen ?? false} mine={userId === app.state.me?.id} />
       </section>
     </div>
+    <!-- inside the dialog, so it isn't inert; its Esc goes no further than the menu -->
+    <PersonMenu {menu} onMessage={messageFromHere} onViewProfile={viewHere(menu?.serverId ?? null)} onClose={() => (menu = null)} />
   </div>
 </div>
 
@@ -203,6 +227,8 @@
   .archive { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
   .archive li { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
   .archive span, .archive time { color: var(--card-text-2); }
+  .archive .by { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  .archive .by:hover { text-decoration: underline; }
   .archive .reset { font-style: italic; font-weight: 500; color: var(--card-text-2); }
   .count { margin: -4px 0 10px; font-size: 13px; color: var(--card-text-2); }
   .more { margin: 10px 0 0; }
