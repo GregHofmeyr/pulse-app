@@ -207,10 +207,13 @@ async fn only_the_owner_sets_and_removes_it_and_only_members_hear() {
     let list: Vec<Server> = get_json(&app, &jo, "/servers").await;
     assert!(list.iter().all(|s| s.id != server));
     assert_eq!(join_server(&app, &jo, server).await.status(), 200);
-    let joined = drain(&mut jo_ws, 400).await.into_iter().find_map(|e| match e {
-        Event::ServerJoined { snapshot, .. } if snapshot.server.id == server => Some(snapshot),
-        _ => None,
-    });
+    let joined = drain(&mut jo_ws, 400)
+        .await
+        .into_iter()
+        .find_map(|e| match e {
+            Event::ServerJoined { snapshot, .. } if snapshot.server.id == server => Some(snapshot),
+            _ => None,
+        });
     assert_eq!(
         joined.expect("ServerJoined").server.banner_hash.as_deref(),
         Some(pic.hash.as_str())

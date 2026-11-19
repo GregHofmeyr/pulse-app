@@ -344,7 +344,10 @@ async fn name_archive_and_renames() {
     assert_eq!(join_server(&app, &sam, sb.id).await.status(), 200);
     let p = profile_of(&app, &sam, alex_id).await;
     assert_eq!(
-        p.name_archive.iter().map(|e| e.server_id).collect::<Vec<_>>(),
+        p.name_archive
+            .iter()
+            .map(|e| e.server_id)
+            .collect::<Vec<_>>(),
         vec![sb.id]
     );
 }

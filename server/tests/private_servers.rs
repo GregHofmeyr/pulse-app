@@ -424,7 +424,10 @@ async fn people_and_their_profiles_reach_only_who_shares_something() {
         .iter()
         .position(|(_, e)| matches!(e, Event::UserCreated { user } if user.id == w.alex.0))
         .expect("alex's profile reaches jo once they share a DM");
-    assert!(intro < seen.len() - 1, "the profile comes before the presence");
+    assert!(
+        intro < seen.len() - 1,
+        "the profile comes before the presence"
+    );
     save_bio(&w.app, &w.alex.1, "second").await;
     until(
         &mut jo_ws,
@@ -460,9 +463,9 @@ async fn people_and_their_profiles_reach_only_who_shares_something() {
     )
     .await;
     assert!(
-        !seen.iter().any(
-            |(_, e)| matches!(e, Event::ProfileUpdated { user, .. } if user.id == kim.0)
-        ),
+        !seen
+            .iter()
+            .any(|(_, e)| matches!(e, Event::ProfileUpdated { user, .. } if user.id == kim.0)),
         "{seen:?}"
     );
     // and a fresh Ready leaves kim out

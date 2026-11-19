@@ -120,7 +120,10 @@ async fn ready_lists_who_you_share_something_with_with_presence() {
     let (c_id, _) = register(&app, "kim").await;
     acquaint(&app, &a, &[&b]).await;
     let (_ws, ready) = hello(&app, &a).await;
-    assert!(ready.people.iter().all(|p| p.user.id != c_id), "kim shares nothing (#486)");
+    assert!(
+        ready.people.iter().all(|p| p.user.id != c_id),
+        "kim shares nothing (#486)"
+    );
     let me = ready.people.iter().find(|p| p.user.id == a_id).unwrap();
     let sam = ready.people.iter().find(|p| p.user.id == b_id).unwrap();
     assert!(me.online && !sam.online);
