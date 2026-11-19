@@ -37,6 +37,7 @@ export const patchNotes: PatchNotes = {
   ],
   qol: [
     'Rename a server in place, from the name at the top of its channel list or from right-click on its icon',
+    'Settings › About: which version you\'re on, the server you\'re connected to, Check for updates, and this version\'s patch notes',
     'Right-click a channel › Move to category; Move up and Move down are gone, since dragging reorders',
     'Anyone in a server can change its icon, banner and name, not just its owner',
     'Your profile, online status and what you\'re up to reach only people you share a server, a DM or a group with',
