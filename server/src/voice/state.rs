@@ -17,6 +17,17 @@ struct Member {
 
 type Rooms = HashMap<ChannelId, HashMap<UserId, Member>>;
 
+/// A leave held back for [`CallTimings::reconnect`] (#281): which call, which connection, and which
+/// hold (a later hold for the same person replaces it).
+///
+/// [`CallTimings::reconnect`]: crate::config::CallTimings
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Held {
+    pub channel: ChannelId,
+    pub sid: String,
+    id: u64,
+}
+
 /// What a `participant_left` meant.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Left {
@@ -47,6 +58,10 @@ pub struct VoiceState {
     /// When each person last left each channel (#278): back within [`JOIN_SOUND_EVERY`] is a reconnect, not a
     /// join, so it plays no join sound. Only recent leaves are kept; forgotten on restart.
     recent_leaves: Arc<Mutex<HashMap<(UserId, ChannelId), Instant>>>,
+    /// Connections that dropped off the network (#281), still in the room while they may come
+    /// back: a rejoin in time takes the hold and nobody hears a leave or a join. One per person.
+    held: Arc<Mutex<HashMap<UserId, Held>>>,
+    next_hold: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// A join sound plays at most once per this long per person (#121); joins in between get the normal cue.
@@ -95,6 +110,37 @@ impl VoiceState {
         last.retain(|_, t| now.saturating_duration_since(*t) < JOIN_SOUND_EVERY);
         last.insert(user, now);
         true
+    }
+
+    /// Hold back the leave of `user`'s connection `sid` from `channel` (#281); the returned hold is
+    /// what [`Self::release_held`] later checks is still the one waiting.
+    pub fn hold_leave(&self, channel: ChannelId, user: UserId, sid: &str) -> Held {
+        let held = Held {
+            channel,
+            sid: sid.to_owned(),
+            id: self
+                .next_hold
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        };
+        self.held.lock().unwrap().insert(user, held.clone());
+        held
+    }
+
+    /// The leave held back for `user`, taken: their rejoin came in time (or went elsewhere).
+    pub fn take_held(&self, user: UserId) -> Option<Held> {
+        self.held.lock().unwrap().remove(&user)
+    }
+
+    /// True (and the hold gone) if `held` is still waiting for `user`: its time is up and nothing
+    /// took it, so the leave goes ahead.
+    pub fn release_held(&self, user: UserId, held: &Held) -> bool {
+        let mut all = self.held.lock().unwrap();
+        if all.get(&user).is_some_and(|h| h.id == held.id) {
+            all.remove(&user);
+            true
+        } else {
+            false
+        }
     }
 
     /// Record `user`'s connection `sid`; true if they weren't already in the room.
@@ -305,5 +351,22 @@ mod tests {
             Left::NotPresent
         );
         assert!(v.take_join_sound(alex, lounge, t0 + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn a_held_leave_goes_ahead_only_if_nothing_took_it() {
+        let v = VoiceState::default();
+        let (alex, sam) = (UserId::new(), UserId::new());
+        let lounge = ChannelId::new();
+        let first = v.hold_leave(lounge, alex, "PA_1");
+        let sams = v.hold_leave(lounge, sam, "PA_s");
+        // alex drops again before the first hold is up: only the newest hold counts
+        let second = v.hold_leave(lounge, alex, "PA_2");
+        assert!(!v.release_held(alex, &first));
+        assert_eq!(v.take_held(alex), Some(second.clone()), "a rejoin takes it");
+        assert!(!v.release_held(alex, &second), "taken: nothing to release");
+        assert!(v.release_held(sam, &sams));
+        assert!(!v.release_held(sam, &sams), "released once");
+        assert_eq!(v.take_held(sam), None);
     }
 }

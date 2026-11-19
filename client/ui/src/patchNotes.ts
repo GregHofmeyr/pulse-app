@@ -33,6 +33,7 @@ export const patchNotes: PatchNotes = {
   ],
   fixes: [
     'The opened server card from an invite pack is sharp again (its text and icon were slightly blurry), and "✦ MYTHICAL PULL ✦" is easier to read in every theme',
+    'Voice: when your connection drops for a moment and comes back, nobody else hears you leave and rejoin',
   ],
   qol: [
     'A watch party opened in a window moves on with the party to its next video, and closes when you leave the party',
