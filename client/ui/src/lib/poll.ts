@@ -2,6 +2,7 @@
 // voting choices and how a poll reads.
 import { timeLeft } from './pins'
 import { gifOnly } from './giphy'
+import type { ChannelKind } from './protocol/ChannelKind'
 import type { Message } from './protocol/Message'
 import type { Poll } from './protocol/Poll'
 import type { PollDuration } from './protocol/PollDuration'
@@ -126,4 +127,12 @@ export function clearedVotes(p: Poll, rows: EditRow[]): { option: string; votes:
 export function clearedLabel(cleared: { option: string; votes: number }[]): string {
   const n = cleared.reduce((a, c) => a + c.votes, 0)
   return `This clears ${plural(n, 'vote')} (${cleared.map((c) => c.option).join(', ')}).`
+}
+
+/** The most people (you included) a group can have for an anonymous poll there to warn that votes can be worked out. */
+export const SMALL_GROUP = 5
+/** Whether an anonymous poll here could give votes away (#267): counts update live, so in a DM, or a group small
+ *  enough to see who just acted, a vote can be worked out from the count changing. Server channels never warn. */
+export function anonymousGuessable(kind: ChannelKind | undefined, members: number): boolean {
+  return kind === 'dm' || (kind === 'group' && members <= SMALL_GROUP)
 }
