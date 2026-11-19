@@ -76,9 +76,9 @@ pub async fn fetch(url: &str, key: &str, secret: &str, budget: Duration) -> anyh
                 };
                 // 0 (or negative) means LiveKit didn't set it: treat as now, not 1970.
                 let joined_at = (p.joined_at > 0)
-                    .then(|| chrono::DateTime::from_timestamp(p.joined_at, 0))
+                    .then(|| jiff::Timestamp::from_second(p.joined_at).ok())
                     .flatten()
-                    .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+                    .map(crate::db::stamp)
                     .unwrap_or_else(crate::db::now);
                 out.voice.push(LiveParticipant {
                     channel,
@@ -276,7 +276,7 @@ pub async fn sync(s: &AppState, started_at: &str, budget: Duration) -> anyhow::R
         &s.db,
         &s.hub,
         &s.voice,
-        chrono::Utc::now().timestamp_millis(),
+        jiff::Timestamp::now().as_millisecond(),
     )
     .await
     {

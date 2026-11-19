@@ -468,10 +468,10 @@ fn expires_at(signed: &Url, ttl: Duration) -> String {
     let date = signed
         .query_pairs()
         .find(|(k, _)| k == "X-Amz-Date")
-        .and_then(|(_, v)| chrono::NaiveDateTime::parse_from_str(&v, "%Y%m%dT%H%M%SZ").ok())
-        .map(|d| d.and_utc())
-        .unwrap_or_else(chrono::Utc::now);
-    (date + ttl).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        .and_then(|(_, v)| jiff::civil::DateTime::strptime("%Y%m%dT%H%M%SZ", &*v).ok())
+        .and_then(|d| jiff::tz::Offset::UTC.to_timestamp(d).ok())
+        .unwrap_or_else(jiff::Timestamp::now);
+    crate::db::stamp(date + ttl)
 }
 
 #[cfg(test)]
@@ -679,7 +679,7 @@ mod tests {
             .await
             .unwrap();
         // The fake's clock runs a minute ahead of the signer.
-        fake.set_now(Some(chrono::Utc::now().timestamp() + 60));
+        fake.set_now(Some(jiff::Timestamp::now().as_second() + 60));
         assert_eq!(r2.head("clips/cc.mp4").await.unwrap(), Some(2));
         r2.delete("clips/cc.mp4").await.unwrap();
         assert!(fake.object("clips/cc.mp4").is_none());
@@ -699,12 +699,13 @@ mod tests {
                     .1
                     .to_string()
             };
-            let signed = chrono::NaiveDateTime::parse_from_str(&q("X-Amz-Date"), "%Y%m%dT%H%M%SZ")
-                .unwrap()
-                .and_utc();
+            let signed = jiff::tz::Offset::UTC
+                .to_timestamp(
+                    jiff::civil::DateTime::strptime("%Y%m%dT%H%M%SZ", q("X-Amz-Date")).unwrap(),
+                )
+                .unwrap();
             let secs: i64 = q("X-Amz-Expires").parse().unwrap();
-            let want = (signed + chrono::Duration::seconds(secs))
-                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            let want = crate::db::stamp(signed + jiff::SignedDuration::from_secs(secs));
             assert_eq!(exp, want);
             assert!(exp.ends_with(".000Z"), "{exp}");
         }

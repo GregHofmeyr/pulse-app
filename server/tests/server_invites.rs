@@ -4,8 +4,8 @@ mod common;
 
 use std::time::Duration;
 
-use chrono::{TimeDelta, Utc};
 use common::*;
+use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::gateway::{Event, ServerFrame};
 use pulse_protocol::ids::{ServerId, UserId};
 use pulse_protocol::rest::{InvitePreview, InviteState, Message, ServerBan, ServerInvite};
@@ -180,10 +180,10 @@ async fn a_new_invite_lasts_a_day_and_lets_one_person_in() {
     assert_eq!(inv.max_uses, Some(1));
     assert_eq!(inv.uses, 0);
     assert_eq!(inv.state, InviteState::Valid);
-    let expires = chrono::DateTime::parse_from_rfc3339(inv.expires_at.as_deref().unwrap()).unwrap();
-    let left = expires.with_timezone(&Utc) - Utc::now();
+    let expires = pulse_server::times::parse(inv.expires_at.as_deref().unwrap()).unwrap();
+    let left = expires.duration_since(Timestamp::now());
     assert!(
-        left > TimeDelta::hours(23) && left <= TimeDelta::hours(24),
+        left > SignedDuration::from_hours(23) && left <= SignedDuration::from_hours(24),
         "{left}"
     );
     // only the owner's links may later double as sign-up codes
@@ -361,7 +361,7 @@ async fn two_people_racing_a_single_use_invite_give_one_member() {
 async fn an_expired_invite_is_refused_and_logged() {
     let w = world().await;
     let inv = make_ok(&w, &w.sam.1, json!({ "max_uses": 5 })).await;
-    let past = pulse_server::db::stamp(Utc::now() - TimeDelta::minutes(1));
+    let past = pulse_server::db::stamp(Timestamp::now() - SignedDuration::from_mins(1));
     sql(
         &w.app,
         &format!(
@@ -771,7 +771,9 @@ async fn too_many_unknown_codes_block_lookups_for_a_while() {
     );
 
     // a day later, both are free again
-    let day = pulse_server::db::stamp(Utc::now() - TimeDelta::seconds(rules::BLOCK_SECS + 60));
+    let day = pulse_server::db::stamp(
+        Timestamp::now() - SignedDuration::from_secs(rules::BLOCK_SECS + 60),
+    );
     sql(&w.app, &format!("UPDATE invite_failures SET at = '{day}'")).await;
     assert_eq!(
         lookup(&w.app, &w.sam.1, &inv.code, "10.9.0.1", false)
@@ -786,7 +788,7 @@ async fn expired_and_revoked_codes_never_block() {
     let w = world().await;
     let dead = make_ok(&w, &w.alex.1, json!({})).await;
     let good = make_ok(&w, &w.alex.1, json!({ "max_uses": 0 })).await;
-    let past = pulse_server::db::stamp(Utc::now() - TimeDelta::minutes(1));
+    let past = pulse_server::db::stamp(Timestamp::now() - SignedDuration::from_mins(1));
     sql(
         &w.app,
         &format!(
@@ -883,7 +885,7 @@ async fn direct_invites_are_limited_per_day() {
         "links aren't direct invites"
     );
     // a day on, they may again
-    let old = pulse_server::db::stamp(Utc::now() - TimeDelta::hours(25));
+    let old = pulse_server::db::stamp(Timestamp::now() - SignedDuration::from_hours(25));
     sql(
         &w.app,
         &format!("UPDATE server_invites SET created_at = '{old}' WHERE for_user IS NOT NULL"),
@@ -900,8 +902,8 @@ async fn direct_invites_are_limited_per_day() {
 #[tokio::test]
 async fn the_sweep_drops_long_dead_invites_and_old_failures() {
     let w = world().await;
-    let now = Utc::now();
-    let ago = |days: i64| pulse_server::db::stamp(now - TimeDelta::days(days));
+    let now = Timestamp::now();
+    let ago = |days: i64| pulse_server::db::stamp(now - pulse_server::times::days(days));
     let keep = rules::DEAD_RETENTION_DAYS - 1;
     let drop = rules::DEAD_RETENTION_DAYS + 1;
     let (s, a) = (w.server, w.alex.0);
@@ -991,9 +993,9 @@ async fn its_maker_changes_a_link_and_the_code_stays() {
     .await
     .unwrap();
     assert_eq!(got.max_uses, Some(5));
-    let made = chrono::DateTime::parse_from_rfc3339(&got.created_at).unwrap();
-    let ends = chrono::DateTime::parse_from_rfc3339(got.expires_at.as_deref().unwrap()).unwrap();
-    assert_eq!((ends - made).num_seconds(), 3600);
+    let made = pulse_server::times::parse(&got.created_at).unwrap();
+    let ends = pulse_server::times::parse(got.expires_at.as_deref().unwrap()).unwrap();
+    assert_eq!(ends.duration_since(made).as_secs(), 3600);
     // a member's limits still apply; the owner's don't
     assert_eq!(
         patch(&w.app, &w.sam.1, &code, json!({ "max_uses": 0 }))

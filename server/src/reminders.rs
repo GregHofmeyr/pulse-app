@@ -16,7 +16,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::Timestamp;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{MessageId, ReminderId, UserId};
 use pulse_protocol::rest::{
@@ -181,7 +181,7 @@ async fn create(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
-    let remind_at = crate::scheduled::future_time(&req.remind_at, Utc::now())?;
+    let remind_at = crate::scheduled::future_time(&req.remind_at, Timestamp::now())?;
     let channel: Option<String> =
         sqlx::query_scalar("SELECT channel_id FROM messages WHERE id = ? AND deleted_at IS NULL")
             .bind(message.to_string())
@@ -350,10 +350,10 @@ pub(crate) async fn mark_all_seen(s: &AppState, me: UserId) -> AppResult<bool> {
 /// Send every reminder due at `now` (up to [`SWEEP_BATCH`]): each lands in its person's inbox and their devices hear
 /// it. One whose message they can no longer see goes quietly. Due ones older than the inbox's days go too. Returns
 /// how many were sent.
-pub async fn remind_due(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
+pub async fn remind_due(s: &AppState, now: Timestamp) -> AppResult<usize> {
     let at = stamp(now);
     sqlx::query("DELETE FROM message_reminders WHERE fired_at IS NOT NULL AND fired_at < ?")
-        .bind(stamp(now - TimeDelta::days(crate::inbox::DAYS)))
+        .bind(stamp(now - crate::times::days(crate::inbox::DAYS)))
         .execute(&s.db)
         .await?;
     let due: Vec<(String, String)> = sqlx::query_as(
@@ -414,7 +414,7 @@ pub fn spawn_sweeper(s: AppState) {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
-            match remind_due(&s, Utc::now()).await {
+            match remind_due(&s, Timestamp::now()).await {
                 Ok(0) => {}
                 Ok(n) => tracing::debug!(n, "message reminders sent"),
                 Err(e) => tracing::warn!(error = %e, "message reminder sweep failed"),

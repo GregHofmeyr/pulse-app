@@ -17,21 +17,18 @@ use crate::messages::system;
 
 /// When the rank movers post (#402): Mondays at this hour UTC (09:00 in South Africa), or at the first ranks tick
 /// after it.
-pub const MOVERS_WEEKDAY: chrono::Weekday = chrono::Weekday::Mon;
-pub const MOVERS_HOUR_UTC: u32 = 7;
+pub const MOVERS_WEEKDAY: jiff::civil::Weekday = jiff::civil::Weekday::Monday;
+pub const MOVERS_HOUR_UTC: i8 = 7;
 
 /// The latest movers slot at or before `now`: the last [`MOVERS_WEEKDAY`] at [`MOVERS_HOUR_UTC`].
-pub fn movers_slot(now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
-    use chrono::{Datelike, TimeZone};
+pub fn movers_slot(now: jiff::Timestamp) -> jiff::Timestamp {
+    let today = crate::times::utc_date(now);
     let back =
-        (now.weekday().num_days_from_monday() + 7 - MOVERS_WEEKDAY.num_days_from_monday()) % 7;
-    let day = now.date_naive() - chrono::Duration::days(i64::from(back));
-    let slot = chrono::Utc.from_utc_datetime(
-        &day.and_hms_opt(MOVERS_HOUR_UTC, 0, 0)
-            .expect("a valid hour"),
-    );
+        (today.weekday().to_monday_zero_offset() + 7 - MOVERS_WEEKDAY.to_monday_zero_offset()) % 7;
+    let slot = crate::times::utc_midnight(today) - crate::times::days(i64::from(back))
+        + jiff::SignedDuration::from_hours(i64::from(MOVERS_HOUR_UTC));
     if slot > now {
-        slot - chrono::Duration::days(7)
+        slot - crate::times::days(7)
     } else {
         slot
     }
@@ -43,8 +40,8 @@ pub const MAX_MOVERS: usize = 10;
 mod slot_tests {
     use super::*;
 
-    fn t(s: &str) -> chrono::DateTime<chrono::Utc> {
-        chrono::DateTime::parse_from_rfc3339(s).unwrap().to_utc()
+    fn t(s: &str) -> jiff::Timestamp {
+        crate::times::parse(s).unwrap()
     }
 
     #[test]
@@ -176,15 +173,14 @@ async fn set_state(db: &SqlitePool, key: &str, value: &str) -> sqlx::Result<()> 
 /// The weekly rank movers, once a movers slot ([`movers_slot`]) has passed since the last run (the first time only
 /// starts the clock).
 pub async fn movers_tick(s: &AppState) -> AppResult<()> {
-    movers_at(s, chrono::Utc::now()).await
+    movers_at(s, jiff::Timestamp::now()).await
 }
 
 /// [`movers_tick`] as if it were `now`.
-pub async fn movers_at(s: &AppState, now: chrono::DateTime<chrono::Utc>) -> AppResult<()> {
+pub async fn movers_at(s: &AppState, now: jiff::Timestamp) -> AppResult<()> {
     let last = state(&s.db, "movers_at")
         .await?
-        .and_then(|t| chrono::DateTime::parse_from_rfc3339(&t).ok())
-        .map(|t| t.to_utc());
+        .and_then(|t| crate::times::parse(&t).ok());
     let Some(last) = last else {
         set_state(&s.db, "movers_at", &crate::db::stamp(now)).await?;
         return Ok(());

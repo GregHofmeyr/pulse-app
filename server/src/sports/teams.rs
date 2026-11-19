@@ -52,7 +52,7 @@ pub async fn list(s: &AppState, league: SportsLeague) -> AppResult<Vec<SportsTea
 }
 
 async fn refresh(s: &AppState, league: SportsLeague) -> AppResult<()> {
-    let season = season_for(chrono::Utc::now().date_naive());
+    let season = season_for(crate::times::utc_date(jiff::Timestamp::now()));
     let stale = || async {
         due(&s.db, &fetched_key(league), s.cfg.sports.teams_every).await
             || super::state_get(&s.db, &season_key(league)).await != Some(season.to_string())

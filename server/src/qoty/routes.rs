@@ -4,7 +4,7 @@
 use axum::extract::{Path, State};
 use axum::routing::{post, put};
 use axum::{Json, Router};
-use chrono::Utc;
+use jiff::Timestamp;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{QotyEventId, ServerId, UserId};
 use pulse_protocol::rest::{
@@ -75,7 +75,7 @@ async fn start(
 ) -> AppResult<Json<QotyEvent>> {
     limit(&s, me)?;
     crate::media::writes_ok(&s.cfg)?;
-    let this_year = chrono::Datelike::year(&Utc::now());
+    let this_year = i32::from(crate::times::utc_date(Timestamp::now()).year());
     if !(FIRST_YEAR..=this_year).contains(&req.year) {
         return Err(AppError::BadRequest(format!(
             "pick a year from {FIRST_YEAR} to {this_year}"
@@ -107,7 +107,7 @@ async fn start(
         )));
     }
     let id = QotyEventId::new();
-    let started = Utc::now();
+    let started = Timestamp::now();
     sqlx::query(
         "INSERT INTO qoty_events (id, server_id, year, started_by, started_at, ends_at)
          VALUES (?, ?, ?, ?, ?, ?)",
@@ -333,8 +333,8 @@ async fn reopen(
             "Only a vote that was ended early can be reopened.".into(),
         ));
     }
-    let reopened = Utc::now();
-    if stamp(reopened - chrono::Duration::hours(REOPEN_HOURS)) >= ended_at {
+    let reopened = Timestamp::now();
+    if stamp(reopened - jiff::SignedDuration::from_hours(REOPEN_HOURS)) >= ended_at {
         return Err(AppError::Conflict(
             "It's too late to reopen this vote: it ended more than a day ago.".into(),
         ));

@@ -20,7 +20,7 @@ pub mod routes;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use chrono::{Duration as ChronoDuration, Utc};
+use jiff::Timestamp;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{CallId, ChannelId, UserId};
 use pulse_protocol::rest::{
@@ -126,8 +126,9 @@ pub async fn start(s: &AppState, me: UserId, ch: &Channel) -> AppResult<StartCal
         .into_iter()
         .filter(|u| *u != me && !blockers.contains(u))
         .collect();
-    let expires_at =
-        stamp(Utc::now() + ChronoDuration::from_std(s.cfg.calls.ring).unwrap_or_default());
+    let expires_at = stamp(
+        Timestamp::now() + jiff::SignedDuration::try_from(s.cfg.calls.ring).unwrap_or_default(),
+    );
     call.ringing = others.clone();
     call.ring = Some((me, expires_at));
     // The caller connects after this answer: until they do, the call is empty and waits like any.

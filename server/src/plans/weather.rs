@@ -13,7 +13,7 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::rest::{PlanForecast, plan_limits};
 use reqwest::Url;
 use serde::Deserialize;
@@ -168,10 +168,10 @@ pub async fn geocode(
     db: &SqlitePool,
     cfg: &PlansConfig,
     place: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> AppResult<Option<Spot>> {
     let key = query_key(place);
-    let fresh = stamp(now - TimeDelta::days(GEOCODE_TTL_DAYS));
+    let fresh = stamp(now - crate::times::days(GEOCODE_TTL_DAYS));
     type Cached = (Option<String>, Option<f64>, Option<f64>);
     let read = || async {
         sqlx::query_as::<_, Cached>(
@@ -258,7 +258,7 @@ async fn forecast_for(
     db: &SqlitePool,
     cfg: &PlansConfig,
     spot: &Spot,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> AppResult<Option<ForecastAnswer>> {
     let key = spot.key();
     let read = || async {
@@ -269,7 +269,7 @@ async fn forecast_for(
         .fetch_optional(db)
         .await
     };
-    let fresh = stamp(now - TimeDelta::hours(FORECAST_TTL_HOURS));
+    let fresh = stamp(now - SignedDuration::from_hours(FORECAST_TTL_HOURS));
     let parse = |body: &str| serde_json::from_str::<ForecastAnswer>(body).ok();
     let cached = read().await?;
     if let Some((body, at)) = &cached
@@ -337,14 +337,10 @@ async fn ask_forecast(cfg: &PlansConfig, spot: &Spot) -> Option<String> {
 /// The day a plan starting at `starts_at` falls on at the spot (whose offset from UTC the forecast gives), out of
 /// the forecast, with the temperature in the hour it starts when the forecast has it; `None` when that day isn't in
 /// it.
-pub fn pick(
-    answer: &ForecastAnswer,
-    spot: &Spot,
-    starts_at: DateTime<Utc>,
-) -> Option<PlanForecast> {
-    let local = starts_at + TimeDelta::seconds(answer.utc_offset_seconds);
-    let date = local.format("%Y-%m-%d").to_string();
-    let hour = local.format("%Y-%m-%dT%H:00").to_string();
+pub fn pick(answer: &ForecastAnswer, spot: &Spot, starts_at: Timestamp) -> Option<PlanForecast> {
+    let local = starts_at + SignedDuration::from_secs(answer.utc_offset_seconds);
+    let date = local.strftime("%Y-%m-%d").to_string();
+    let hour = local.strftime("%Y-%m-%dT%H:00").to_string();
     let temp_at_start = answer.hourly.as_ref().and_then(|h| {
         let i = h.time.iter().position(|t| *t == hour)?;
         h.temperature_2m.get(i).copied().flatten().map(|t| t as f32)
@@ -370,9 +366,9 @@ pub fn pick(
 
 /// Whether a plan starting at `starts_at` can have a forecast at `now`: it hasn't long started, and its day is
 /// within the forecast's reach.
-pub fn in_window(starts_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
-    starts_at > now - TimeDelta::hours(12)
-        && starts_at < now + TimeDelta::days(plan_limits::FORECAST_DAYS)
+pub fn in_window(starts_at: Timestamp, now: Timestamp) -> bool {
+    starts_at > now - SignedDuration::from_hours(12)
+        && starts_at < now + crate::times::days(plan_limits::FORECAST_DAYS)
 }
 
 /// The forecast for `place` on the day of `starts_at`, if there is one.
@@ -380,8 +376,8 @@ pub async fn forecast(
     db: &SqlitePool,
     cfg: &PlansConfig,
     place: &str,
-    starts_at: DateTime<Utc>,
-    now: DateTime<Utc>,
+    starts_at: Timestamp,
+    now: Timestamp,
 ) -> AppResult<Option<PlanForecast>> {
     if !in_window(starts_at, now) {
         return Ok(None);
@@ -399,8 +395,8 @@ pub async fn forecast(
 mod tests {
     use super::*;
 
-    fn t(s: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    fn t(s: &str) -> Timestamp {
+        crate::times::parse(s).unwrap()
     }
 
     #[test]

@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
-use chrono::Utc;
 use common::*;
+use jiff::Timestamp;
 use livekit_api::access_token::AccessToken;
 use pulse_protocol::ids::{ChannelId, ServerId, UserId};
 use pulse_protocol::rest::{BadgeCatalogue, Channel, Profile, StreamInfo};
@@ -77,7 +77,9 @@ async fn backdate(app: &TestApp, user: UserId, secs: i64) {
     let n = sqlx::query(
         "UPDATE voice_sessions SET joined_at = ? WHERE user_id = ? AND left_at IS NULL",
     )
-    .bind(stamp(Utc::now() - chrono::Duration::seconds(secs)))
+    .bind(stamp(
+        Timestamp::now() - jiff::SignedDuration::from_secs(secs),
+    ))
     .bind(user.to_string())
     .execute(&app.db)
     .await
@@ -327,7 +329,7 @@ async fn early_bird_first_in_the_server_today() {
     assert_eq!(stat_of(&app, alex, stat::EARLY_BIRD_DAYS).await, 10);
     assert_eq!(
         stat_of(&app, alex, stat::EARLY_BIRD_LAST_DAY).await,
-        sast_day(Utc::now())
+        sast_day(Timestamp::now())
     );
     assert!(holds(&app, &a, alex, "early_bird").await);
     // second in isn't first
@@ -364,15 +366,15 @@ async fn early_bird_not_when_voice_ran_past_midnight() {
     join_server(&app, &b, l.server_id.unwrap()).await;
     join_server(&app, &k, l.server_id.unwrap()).await;
     // kim was in from 23:00 until just after midnight (South African time)
-    let midnight = sast_day_start(Utc::now());
+    let midnight = sast_day_start(Timestamp::now());
     sqlx::query(
         "INSERT INTO voice_sessions (id, user_id, channel_id, joined_at, left_at) VALUES (?, ?, ?, ?, ?)",
     )
     .bind(pulse_protocol::ids::next_ulid().to_string())
     .bind(kim.to_string())
     .bind(l.id.to_string())
-    .bind(stamp(midnight - chrono::Duration::hours(1)))
-    .bind(stamp(midnight + chrono::Duration::milliseconds(1)))
+    .bind(stamp(midnight - jiff::SignedDuration::from_hours(1)))
+    .bind(stamp(midnight + jiff::SignedDuration::from_millis(1)))
     .execute(&app.db)
     .await
     .unwrap();
@@ -558,7 +560,7 @@ async fn muted_talk_caps_at_five_a_day_and_shows_progress() {
             "report {n}"
         );
     }
-    let today = sast_day(Utc::now());
+    let today = sast_day(Timestamp::now());
     assert_eq!(stat_of(&app, alex, stat::DOOS_DAY).await, today);
     assert_eq!(stat_of(&app, alex, stat::DOOS_DAY_COUNT).await, 5);
     // the count was yesterday's: today's first counts
@@ -595,7 +597,7 @@ async fn early_adopter_needs_a_launch_date() {
     let (alex, a) = register(&app, "alex").await;
     // no launch date: nobody, sweep or not
     assert!(
-        sweep::run(&app.state(), Utc::now())
+        sweep::run(&app.state(), Timestamp::now())
             .await
             .unwrap()
             .is_empty()
@@ -604,16 +606,17 @@ async fn early_adopter_needs_a_launch_date() {
 
     let with_launch = |days_ago: i64| {
         let mut st = app.state();
-        let today = (Utc::now() + chrono::Duration::hours(2)).date_naive();
+        let today =
+            pulse_server::times::utc_date(Timestamp::now() + jiff::SignedDuration::from_hours(2));
         st.cfg = Arc::new(pulse_server::config::Config {
-            launch_date: Some(today - chrono::Duration::days(days_ago)),
+            launch_date: Some(today - pulse_server::times::days(days_ago)),
             ..(*app.cfg).clone()
         });
         st
     };
     // a launch eight days before alex joined: too late for alex
     assert!(
-        sweep::run(&with_launch(8), Utc::now())
+        sweep::run(&with_launch(8), Timestamp::now())
             .await
             .unwrap()
             .is_empty()
@@ -621,20 +624,20 @@ async fn early_adopter_needs_a_launch_date() {
     assert!(!holds(&app, &a, alex, "early_adopter").await);
     // a launch tomorrow hasn't happened yet
     assert!(
-        sweep::run(&with_launch(-1), Utc::now())
+        sweep::run(&with_launch(-1), Timestamp::now())
             .await
             .unwrap()
             .is_empty()
     );
     // launched today: alex joined in the first week
     assert_eq!(
-        sweep::run(&with_launch(0), Utc::now()).await.unwrap(),
+        sweep::run(&with_launch(0), Timestamp::now()).await.unwrap(),
         vec![alex]
     );
     assert!(holds(&app, &a, alex, "early_adopter").await);
     // once only
     assert!(
-        sweep::run(&with_launch(0), Utc::now())
+        sweep::run(&with_launch(0), Timestamp::now())
             .await
             .unwrap()
             .is_empty()

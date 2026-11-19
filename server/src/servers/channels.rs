@@ -375,8 +375,8 @@ pub(crate) async fn held(
 
 /// Deleted at or before this, a channel is due to be purged: the sweeper takes it, and it can no
 /// longer be restored (unless [`held`], when it never will be purged).
-pub(crate) fn due(now: chrono::DateTime<chrono::Utc>) -> String {
-    crate::db::stamp(now - chrono::Duration::days(RECENTLY_DELETED_DAYS))
+pub(crate) fn due(now: jiff::Timestamp) -> String {
+    crate::db::stamp(now - crate::times::days(RECENTLY_DELETED_DAYS))
 }
 
 /// Whether channel `id` is still deleted and due by `due` (`false`: restored, or purged by someone
@@ -462,11 +462,9 @@ async fn member_in(db: &mut SqliteConnection, server: ServerId, user: UserId) ->
 
 /// When a channel (or server) deleted at `deleted_at` is due to be purged.
 pub(crate) fn purge_at(deleted_at: &str) -> AppResult<String> {
-    let at = chrono::DateTime::parse_from_rfc3339(deleted_at)
-        .map_err(anyhow::Error::from)?
-        .with_timezone(&chrono::Utc);
+    let at = crate::times::parse(deleted_at).map_err(anyhow::Error::from)?;
     Ok(crate::db::stamp(
-        at + chrono::Duration::days(RECENTLY_DELETED_DAYS),
+        at + crate::times::days(RECENTLY_DELETED_DAYS),
     ))
 }
 
@@ -488,7 +486,7 @@ pub async fn list_deleted(
     .bind(server.to_string())
     .fetch_all(&mut *db)
     .await?;
-    let due = due(chrono::Utc::now());
+    let due = due(jiff::Timestamp::now());
     let mut out = Vec::with_capacity(rows.len());
     for (id, sid, kind, name, position, category, icon, still, bitrate, archived, by, at) in rows {
         let channel = channel_from_row((
@@ -529,7 +527,7 @@ pub async fn restore(
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     let (old, server, deleted_by, at) = deleted_channel(&mut tx, id).await?;
-    if at <= due(chrono::Utc::now()) && held(&mut tx, id, old.kind).await?.is_none() {
+    if at <= due(jiff::Timestamp::now()) && held(&mut tx, id, old.kind).await?.is_none() {
         return Err(AppError::NotFound);
     }
     if !member_in(&mut tx, server, me).await?
@@ -749,7 +747,7 @@ async fn make_due(s: &AppState, me: UserId, id: ChannelId) -> AppResult<String> 
     if let Some(why) = held(&mut tx, id, ch.kind).await? {
         return Err(AppError::Conflict(why.into()));
     }
-    let due = due(chrono::Utc::now());
+    let due = due(jiff::Timestamp::now());
     sqlx::query("UPDATE channels SET deleted_at = ?1 WHERE id = ?2 AND deleted_at > ?1")
         .bind(&due)
         .bind(id.to_string())
@@ -810,14 +808,14 @@ async fn purge(
 /// "Delete now", including one whose purge was cut off), except those [`held`] (they stay in
 /// Recently deleted, flagged) and those of a deleted server (frozen with it, #184: its own purge
 /// takes them). Returns how many went.
-pub async fn purge_expired(s: &AppState, now: chrono::DateTime<chrono::Utc>) -> AppResult<u32> {
+pub async fn purge_expired(s: &AppState, now: jiff::Timestamp) -> AppResult<u32> {
     purge_expired_batched(s, now, PURGE_BATCH).await
 }
 
 /// [`purge_expired`] deleting at most `batch` messages per transaction.
 pub async fn purge_expired_batched(
     s: &AppState,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jiff::Timestamp,
     batch: i64,
 ) -> AppResult<u32> {
     let due = due(now);
@@ -850,7 +848,7 @@ const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 pub fn spawn_sweeper(s: AppState) {
     tokio::spawn(async move {
         loop {
-            match purge_expired(&s, chrono::Utc::now()).await {
+            match purge_expired(&s, jiff::Timestamp::now()).await {
                 Ok(n) if n > 0 => tracing::info!(channels = n, "Recently deleted purged"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = ?e, "Recently deleted sweep failed"),

@@ -7,7 +7,7 @@ use std::time::Instant;
 use crate::AppState;
 
 /// How long the matches seen are kept (profiles show the last one).
-pub const KEEP_MATCHES: chrono::Duration = chrono::Duration::days(90);
+pub const KEEP_MATCHES: jiff::SignedDuration = crate::times::days(90);
 
 /// Poll forever.
 pub fn spawn(s: AppState) {
@@ -50,7 +50,7 @@ pub async fn slow_tick(s: &AppState) {
     if let Err(e) = super::patches::tick(s).await {
         tracing::warn!(error = ?e, "Deadlock patch notes not handled");
     }
-    let cutoff = crate::db::stamp(chrono::Utc::now() - KEEP_MATCHES);
+    let cutoff = crate::db::stamp(jiff::Timestamp::now() - KEEP_MATCHES);
     if let Err(e) = sqlx::query("DELETE FROM deadlock_matches WHERE started_at < ?")
         .bind(cutoff)
         .execute(&s.db)

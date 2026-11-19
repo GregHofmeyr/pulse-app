@@ -92,11 +92,11 @@ async fn create(
     let ch = poll_channel(&s, me, id).await?;
     let question = clean_question(&req.question)?;
     let options = clean_options(req.options)?;
-    let at = chrono::Utc::now();
+    let at = jiff::Timestamp::now();
     let ends_at = match req.ends_in {
-        PollDuration::Hour => Some(stamp(at + chrono::Duration::hours(1))),
-        PollDuration::Day => Some(stamp(at + chrono::Duration::days(1))),
-        PollDuration::Week => Some(stamp(at + chrono::Duration::weeks(1))),
+        PollDuration::Hour => Some(stamp(at + jiff::SignedDuration::from_hours(1))),
+        PollDuration::Day => Some(stamp(at + crate::times::days(1))),
+        PollDuration::Week => Some(stamp(at + crate::times::weeks(1))),
         PollDuration::Never => None,
     };
     let mut msg = Message {

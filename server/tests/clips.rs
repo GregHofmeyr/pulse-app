@@ -1156,7 +1156,7 @@ async fn the_twenty_first_clip_in_an_hour_waits() {
         429
     );
 
-    let old = pulse_server::db::stamp(chrono::Utc::now() - chrono::Duration::minutes(61));
+    let old = pulse_server::db::stamp(jiff::Timestamp::now() - jiff::SignedDuration::from_mins(61));
     sqlx::query("UPDATE clip_uploads SET created_at = ?")
         .bind(old)
         .execute(&w.app.db)
@@ -1685,7 +1685,7 @@ async fn a_failed_object_delete_is_retried_by_the_sweeper() {
     );
     let down = pulse_server::clips::sweep::run(
         &w.app.state(),
-        chrono::Utc::now() + chrono::Duration::hours(2),
+        jiff::Timestamp::now() + jiff::SignedDuration::from_hours(2),
     )
     .await
     .unwrap();
@@ -1699,7 +1699,7 @@ async fn a_failed_object_delete_is_retried_by_the_sweeper() {
 
     let report = pulse_server::clips::sweep::run(
         &w.app.state(),
-        chrono::Utc::now() + chrono::Duration::hours(2),
+        jiff::Timestamp::now() + jiff::SignedDuration::from_hours(2),
     )
     .await
     .unwrap();
@@ -1714,7 +1714,7 @@ async fn a_failed_object_delete_is_retried_by_the_sweeper() {
 async fn age_ticket(app: &TestApp, up: &ClipUpload, hours: i64) {
     sqlx::query("UPDATE clip_uploads SET created_at = ? WHERE id = ?")
         .bind(pulse_server::db::stamp(
-            chrono::Utc::now() - chrono::Duration::hours(hours),
+            jiff::Timestamp::now() - jiff::SignedDuration::from_hours(hours),
         ))
         .bind(up.id.to_string())
         .execute(&app.db)
@@ -1754,14 +1754,14 @@ async fn expired_tickets_and_orphans_are_swept() {
         .bind(k)
         .bind(w.alex.0.to_string())
         .bind(pulse_server::db::stamp(
-            chrono::Utc::now() - chrono::Duration::hours(age),
+            jiff::Timestamp::now() - jiff::SignedDuration::from_hours(age),
         ))
         .execute(&w.app.db)
         .await
         .unwrap();
     }
 
-    let report = pulse_server::clips::sweep::run(&w.app.state(), chrono::Utc::now())
+    let report = pulse_server::clips::sweep::run(&w.app.state(), jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!((report.tickets, report.orphans), (1, 1));
@@ -1790,7 +1790,7 @@ async fn expired_tickets_and_orphans_are_swept() {
 
     // A failed delete keeps the rows for next time.
     s3.set_down(true);
-    let later = chrono::Utc::now() + chrono::Duration::hours(30);
+    let later = jiff::Timestamp::now() + jiff::SignedDuration::from_hours(30);
     let report = pulse_server::clips::sweep::run(&w.app.state(), later)
         .await
         .unwrap();
@@ -1834,7 +1834,7 @@ async fn a_ticket_for_a_deleted_channel_is_swept() {
     );
 
     age_ticket(&w.app, &up, 26).await;
-    let report = pulse_server::clips::sweep::run(&w.app.state(), chrono::Utc::now())
+    let report = pulse_server::clips::sweep::run(&w.app.state(), jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(report.tickets, 1);
@@ -1912,12 +1912,12 @@ async fn a_sweep_never_removes_a_posted_clips_object() {
     .bind(w.alex.0.to_string())
     .bind(w.channel.id.to_string())
     .bind(pulse_server::db::stamp(
-        chrono::Utc::now() - chrono::Duration::hours(30),
+        jiff::Timestamp::now() - jiff::SignedDuration::from_hours(30),
     ))
     .execute(&w.app.db)
     .await
     .unwrap();
-    let report = pulse_server::clips::sweep::run(&w.app.state(), chrono::Utc::now())
+    let report = pulse_server::clips::sweep::run(&w.app.state(), jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(report.orphans, 0);
@@ -1945,7 +1945,7 @@ async fn a_sweep_never_holds_the_write_lock_across_storage_calls() {
     s3.set_down(true);
     let state = w.app.state();
     let sweep = tokio::spawn(async move {
-        pulse_server::clips::sweep::run(&state, chrono::Utc::now())
+        pulse_server::clips::sweep::run(&state, jiff::Timestamp::now())
             .await
             .unwrap()
     });
@@ -1978,7 +1978,7 @@ async fn a_sweep_never_holds_the_write_lock_across_storage_calls() {
 
     s3.set_delay(Duration::ZERO);
     s3.set_down(false);
-    let report = pulse_server::clips::sweep::run(&w.app.state(), chrono::Utc::now())
+    let report = pulse_server::clips::sweep::run(&w.app.state(), jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(report.tickets, 1);
@@ -1994,7 +1994,7 @@ async fn a_ticket_inside_the_grace_period_is_left_alone() {
     put_object(&w.app, &up, vec![1u8; 10]).await;
     let object = format!("clips/{}.mp4", ticket_key(&w.app, &up).await);
     age_ticket(&w.app, &up, 24).await;
-    let report = pulse_server::clips::sweep::run(&w.app.state(), chrono::Utc::now())
+    let report = pulse_server::clips::sweep::run(&w.app.state(), jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(report.tickets, 0);
@@ -2653,7 +2653,7 @@ async fn purging_a_clips_channel_removes_its_objects() {
     // ...until it is purged.
     let swept = pulse_server::servers::channels::purge_expired(
         &w.app.state(),
-        chrono::Utc::now() + chrono::Duration::days(8),
+        jiff::Timestamp::now() + pulse_server::times::days(8),
     )
     .await
     .unwrap();
@@ -2749,7 +2749,7 @@ async fn purging_a_deleted_server_removes_its_clip_objects() {
     // ...until it is purged.
     let swept = pulse_server::servers::deleted::purge_expired(
         &w.app.state(),
-        chrono::Utc::now() + chrono::Duration::days(8),
+        jiff::Timestamp::now() + pulse_server::times::days(8),
     )
     .await
     .unwrap();

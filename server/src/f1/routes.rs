@@ -3,7 +3,7 @@
 use axum::extract::{Path, State};
 use axum::routing::{get, put};
 use axum::{Json, Router};
-use chrono::Utc;
+use jiff::Timestamp;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId};
 use pulse_protocol::rest::{
     ChannelKind, F1PicksClose, F1Prediction, F1PredictionRequest, F1Status, SetF1ChannelRequest,
@@ -53,7 +53,7 @@ async fn current(s: &AppState, server: ServerId) -> AppResult<F1Status> {
         let mut conn = s.db.acquire().await?;
         super::picks_close_of(&mut conn, server).await?
     };
-    let at = Utc::now();
+    let at = Timestamp::now();
     let schedule = jolpica::schedule(&s.db, &s.cfg.f1, at).await?;
     let next = jolpica::next_weekend(&schedule, at).cloned();
     let season = next
@@ -202,7 +202,7 @@ async fn predict(
             F1PicksClose::Qualifying => "predictions closed when qualifying started".into(),
         })
     };
-    if stamp(Utc::now()) >= close_at {
+    if stamp(Timestamp::now()) >= close_at {
         return Err(closed());
     }
     let picks = match &req.picks {
@@ -219,7 +219,7 @@ async fn predict(
     if super::weekend_card(&mut tx, id).await?.is_none() {
         return Err(AppError::NotFound);
     }
-    if stamp(Utc::now()) >= close_at {
+    if stamp(Timestamp::now()) >= close_at {
         return Err(closed());
     }
     match picks {

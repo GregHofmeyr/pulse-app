@@ -351,9 +351,9 @@ pub fn writes_ok(cfg: &crate::config::Config) -> AppResult<()> {
 /// commit, so it sees the files gone and rewrites them (see `put_one`). A still goes with its
 /// parent. Returns how many were deleted.
 pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<u64> {
-    let cutoff = chrono::Utc::now()
-        - chrono::Duration::from_std(grace).context("cleanup grace out of range")?;
-    let cutoff = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let cutoff = jiff::Timestamp::now()
+        - jiff::SignedDuration::try_from(grace).context("cleanup grace out of range")?;
+    let cutoff = crate::db::stamp(cutoff);
     let mut tx = db.begin().await?;
     let gone: Vec<String> = sqlx::query_scalar(
         "DELETE FROM media

@@ -472,7 +472,8 @@ async fn nothing_of_theirs_reopens_a_dm_you_closed() {
     let (mut alex_ws, _) = hello(&app, &alex).await;
     drain(&mut alex_ws, 200).await;
 
-    let starts = (chrono::Utc::now() + chrono::TimeDelta::days(3)).to_rfc3339();
+    let starts =
+        pulse_server::times::rfc3339(jiff::Timestamp::now() + pulse_server::times::days(3));
     let posts = [
         (format!("/calls/{dm}"), json!({})),
         (

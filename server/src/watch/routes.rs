@@ -26,7 +26,7 @@ pub fn router() -> Router<AppState> {
 }
 
 fn now_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    jiff::Timestamp::now().as_millisecond()
 }
 
 /// A server voice channel the caller can see, belongs to the server of, and is in the call of right now.

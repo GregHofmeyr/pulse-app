@@ -161,7 +161,7 @@ pub const MAX_ELAPSED: u64 = 30 * 24 * 3600;
 
 /// What a client's "Playing" says, checked: `None` when there's no name. A Steam app id that can't be one is dropped
 /// (no art); `started_at` is `now` less the seconds played. The art is the server's to add.
-pub fn clean_playing(u: PlayingUpdate, now: chrono::DateTime<chrono::Utc>) -> Option<Playing> {
+pub fn clean_playing(u: PlayingUpdate, now: jiff::Timestamp) -> Option<Playing> {
     Some(Playing {
         name: text(&u.name)?,
         steam_app_id: u
@@ -170,7 +170,7 @@ pub fn clean_playing(u: PlayingUpdate, now: chrono::DateTime<chrono::Utc>) -> Op
         started_at: u
             .elapsed_secs
             .filter(|s| *s <= MAX_ELAPSED)
-            .map(|s| crate::db::stamp(now - chrono::Duration::seconds(s as i64))),
+            .map(|s| crate::db::stamp(now - jiff::SignedDuration::from_secs(s as i64))),
         art: None,
         // only the Steam poller sets it (#381)
         join: None,
@@ -215,7 +215,7 @@ pub fn playing_received(s: &AppState, conn: ConnId, me: UserId, update: Option<P
     let s = s.clone();
     tokio::spawn(async move {
         let hide_art = update.as_ref().is_some_and(|u| u.hide_art);
-        let playing = match update.and_then(|u| clean_playing(u, chrono::Utc::now())) {
+        let playing = match update.and_then(|u| clean_playing(u, jiff::Timestamp::now())) {
             Some(mut p) => {
                 // achievements (#379) follow the app id even when art (and so the id) isn't shown
                 if let Some(id) = p.steam_app_id {
@@ -255,9 +255,7 @@ mod tests {
 
     #[test]
     fn playing_is_cleaned_and_its_start_is_server_time() {
-        let now = chrono::DateTime::parse_from_rfc3339("2026-11-16T20:00:00Z")
-            .unwrap()
-            .to_utc();
+        let now = crate::times::parse("2026-11-16T20:00:00Z").unwrap();
         let p = clean_playing(
             PlayingUpdate {
                 steam_app_id: Some(570),

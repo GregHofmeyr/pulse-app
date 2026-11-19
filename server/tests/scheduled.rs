@@ -5,9 +5,9 @@ mod common;
 
 use std::time::Duration;
 
-use chrono::{TimeDelta, Utc};
 use common::*;
 use futures::{SinkExt, StreamExt};
+use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::gateway::{ClientFrame, ServerFrame};
 use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::{
@@ -61,8 +61,8 @@ async fn next_raw(ws: &mut Socket, pick: impl Fn(&Value) -> bool) -> Option<Valu
     }
 }
 
-fn at(from_now: TimeDelta) -> String {
-    (Utc::now() + from_now).to_rfc3339()
+fn at(from_now: SignedDuration) -> String {
+    pulse_server::times::rfc3339(Timestamp::now() + from_now)
 }
 
 async fn req(
@@ -142,7 +142,7 @@ async fn a_scheduled_message_is_posted_once_at_its_time_as_its_author() {
         &alex,
         g.id,
         "  hi @sam :wave: ",
-        &at(TimeDelta::hours(1)),
+        &at(SignedDuration::from_hours(1)),
     )
     .await;
     assert_eq!(made.content, "hi @sam :wave:");
@@ -162,7 +162,7 @@ async fn a_scheduled_message_is_posted_once_at_its_time_as_its_author() {
     let s = app.state();
     // not yet
     assert_eq!(
-        pulse_server::scheduled::send_due(&s, Utc::now())
+        pulse_server::scheduled::send_due(&s, Timestamp::now())
             .await
             .unwrap(),
         0
@@ -174,7 +174,7 @@ async fn a_scheduled_message_is_posted_once_at_its_time_as_its_author() {
             .any(|m| m.content.contains("hi"))
     );
     // its time: posted as alex, mentions resolved then
-    let later = Utc::now() + TimeDelta::hours(2);
+    let later = Timestamp::now() + SignedDuration::from_hours(2);
     assert_eq!(
         pulse_server::scheduled::send_due(&s, later).await.unwrap(),
         1
@@ -209,7 +209,7 @@ async fn a_scheduled_message_is_checked_again_and_kept_as_failed_when_it_cant_go
         &kim,
         group.id,
         "see you all",
-        &at(TimeDelta::minutes(30)),
+        &at(SignedDuration::from_mins(30)),
     )
     .await;
     let (mut ws, _) = hello(&app, &kim).await;
@@ -224,7 +224,7 @@ async fn a_scheduled_message_is_checked_again_and_kept_as_failed_when_it_cant_go
     .await;
     assert!(r.status().is_success());
     let s = app.state();
-    let later = Utc::now() + TimeDelta::hours(1);
+    let later = Timestamp::now() + SignedDuration::from_hours(1);
     assert_eq!(
         pulse_server::scheduled::send_due(&s, later).await.unwrap(),
         0
@@ -265,7 +265,14 @@ async fn a_scheduled_message_is_checked_again_and_kept_as_failed_when_it_cant_go
 #[tokio::test]
 async fn only_its_author_edits_sends_now_or_deletes_a_scheduled_message() {
     let (app, [alex, sam, _, jo], _, g) = setup().await;
-    let made = schedule_ok(&app, &alex, g.id, "draft", &at(TimeDelta::hours(3))).await;
+    let made = schedule_ok(
+        &app,
+        &alex,
+        g.id,
+        "draft",
+        &at(SignedDuration::from_hours(3)),
+    )
+    .await;
     let path = format!("/scheduled/{}", made.id);
     // someone else's is never there
     for (m, p) in [
@@ -282,7 +289,7 @@ async fn only_its_author_edits_sends_now_or_deletes_a_scheduled_message() {
         reqwest::Method::PATCH,
         &alex,
         &path,
-        Some(json!({"content": "final", "send_at": at(TimeDelta::hours(5))})),
+        Some(json!({"content": "final", "send_at": at(SignedDuration::from_hours(5))})),
     )
     .await;
     assert_eq!(r.status(), 200);
@@ -311,20 +318,20 @@ async fn only_its_author_edits_sends_now_or_deletes_a_scheduled_message() {
     assert_eq!(r.status(), 404, "sent: gone");
     // somewhere jo can't post, a time gone or too far, nothing to say: refused
     assert_eq!(
-        schedule(&app, &jo, g.id, "hi", &at(TimeDelta::hours(1)))
+        schedule(&app, &jo, g.id, "hi", &at(SignedDuration::from_hours(1)))
             .await
             .status(),
         404 // #80: a server you aren't in is hidden
     );
     for when in [
-        at(TimeDelta::hours(-1)),
-        at(TimeDelta::days(400)),
+        at(SignedDuration::from_hours(-1)),
+        at(pulse_server::times::days(400)),
         "soon".into(),
     ] {
         assert_eq!(schedule(&app, &alex, g.id, "hi", &when).await.status(), 400);
     }
     assert_eq!(
-        schedule(&app, &alex, g.id, "  ", &at(TimeDelta::hours(1)))
+        schedule(&app, &alex, g.id, "  ", &at(SignedDuration::from_hours(1)))
             .await
             .status(),
         400
@@ -334,7 +341,7 @@ async fn only_its_author_edits_sends_now_or_deletes_a_scheduled_message() {
 #[tokio::test]
 async fn a_person_has_at_most_so_many_scheduled_messages() {
     let (app, [alex, ..], _, g) = setup().await;
-    let when = at(TimeDelta::hours(1));
+    let when = at(SignedDuration::from_hours(1));
     for i in 0..schedule_limits::MAX_SCHEDULED {
         schedule_ok(&app, &alex, g.id, &format!("m{i}"), &when).await;
     }
@@ -351,7 +358,7 @@ async fn a_reminder_lands_in_its_persons_inbox_once_at_its_time() {
         &app,
         &alex,
         &format!("/messages/{}/reminders", m.id),
-        json!({"remind_at": at(TimeDelta::minutes(20))}),
+        json!({"remind_at": at(SignedDuration::from_mins(20))}),
     )
     .await;
     assert_eq!(r.status(), 201);
@@ -372,19 +379,19 @@ async fn a_reminder_lands_in_its_persons_inbox_once_at_its_time() {
         &app,
         &jo,
         &format!("/messages/{}/reminders", private.id),
-        json!({"remind_at": at(TimeDelta::minutes(20))}),
+        json!({"remind_at": at(SignedDuration::from_mins(20))}),
     )
     .await;
     assert_eq!(r.status(), 404);
 
     let s = app.state();
     assert_eq!(
-        pulse_server::reminders::remind_due(&s, Utc::now())
+        pulse_server::reminders::remind_due(&s, Timestamp::now())
             .await
             .unwrap(),
         0
     );
-    let later = Utc::now() + TimeDelta::hours(1);
+    let later = Timestamp::now() + SignedDuration::from_hours(1);
     assert_eq!(
         pulse_server::reminders::remind_due(&s, later)
             .await
@@ -460,7 +467,7 @@ async fn mark_all_read_reads_due_reminders_and_a_deleted_message_reminds_no_one(
             &app,
             &alex,
             &format!("/messages/{}/reminders", m.id),
-            json!({"remind_at": at(TimeDelta::minutes(5))}),
+            json!({"remind_at": at(SignedDuration::from_mins(5))}),
         )
         .await;
         assert_eq!(r.status(), 201);
@@ -476,7 +483,7 @@ async fn mark_all_read_reads_due_reminders_and_a_deleted_message_reminds_no_one(
     .await;
     assert!(r.status().is_success());
     let s = app.state();
-    let later = Utc::now() + TimeDelta::hours(1);
+    let later = Timestamp::now() + SignedDuration::from_hours(1);
     assert_eq!(
         pulse_server::reminders::remind_due(&s, later)
             .await
@@ -504,14 +511,14 @@ async fn one_due_while_no_device_was_connected_is_told_once_by_the_first_to_clai
         &app,
         &alex,
         &format!("/messages/{}/reminders", m.id),
-        json!({"remind_at": at(TimeDelta::minutes(5))}),
+        json!({"remind_at": at(SignedDuration::from_mins(5))}),
     )
     .await;
     let made: MessageReminder = r.json().await.unwrap();
     assert!(!made.missed);
     // alex has no device connected when it comes due
     let s = app.state();
-    let later = Utc::now() + TimeDelta::hours(1);
+    let later = Timestamp::now() + SignedDuration::from_hours(1);
     assert_eq!(
         pulse_server::reminders::remind_due(&s, later)
             .await
@@ -565,14 +572,21 @@ async fn scheduled_messages_respect_blocks() {
         &alex,
         dm.id,
         "later, sam",
-        &at(TimeDelta::minutes(30)),
+        &at(SignedDuration::from_mins(30)),
     )
     .await;
     block(&app, &alex, sam_id).await;
-    let r = schedule(&app, &alex, dm.id, "another", &at(TimeDelta::minutes(30))).await;
+    let r = schedule(
+        &app,
+        &alex,
+        dm.id,
+        "another",
+        &at(SignedDuration::from_mins(30)),
+    )
+    .await;
     assert_eq!(r.status(), 403);
     let s = app.state();
-    let later = Utc::now() + TimeDelta::hours(1);
+    let later = Timestamp::now() + SignedDuration::from_hours(1);
     assert_eq!(
         pulse_server::scheduled::send_due(&s, later).await.unwrap(),
         0
@@ -584,7 +598,14 @@ async fn scheduled_messages_respect_blocks() {
 
     // kim blocks alex: alex's scheduled message to kim still goes, and kim never sees it
     let dm2 = create_dm(&app, &alex, &[kim_id]).await;
-    schedule_ok(&app, &alex, dm2.id, "hi kim", &at(TimeDelta::minutes(30))).await;
+    schedule_ok(
+        &app,
+        &alex,
+        dm2.id,
+        "hi kim",
+        &at(SignedDuration::from_mins(30)),
+    )
+    .await;
     block(&app, &kim, alex_id).await;
     assert_eq!(
         pulse_server::scheduled::send_due(&s, later).await.unwrap(),

@@ -103,7 +103,7 @@ pub async fn accept_totp(
         return Ok(false);
     };
     let secret = totp::decrypt(key, user, &blob)?;
-    let now_unix = u64::try_from(chrono::Utc::now().timestamp()).unwrap_or(0);
+    let now_unix = u64::try_from(jiff::Timestamp::now().as_second()).unwrap_or(0);
     let Some(step) = totp::match_step(&secret, code, now_unix) else {
         return Ok(false);
     };
@@ -416,7 +416,7 @@ pub async fn issue_ticket_in(conn: &mut SqliteConnection, user: UserId) -> AppRe
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     let ticket = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
-    let expires = chrono::Utc::now() + chrono::Duration::minutes(TICKET_MINUTES);
+    let expires = jiff::Timestamp::now() + jiff::SignedDuration::from_mins(TICKET_MINUTES);
     sqlx::query("DELETE FROM mfa_tickets WHERE expires_at <= ?")
         .bind(now())
         .execute(&mut *conn)
@@ -424,7 +424,7 @@ pub async fn issue_ticket_in(conn: &mut SqliteConnection, user: UserId) -> AppRe
     sqlx::query("INSERT INTO mfa_tickets (ticket_hash, user_id, expires_at) VALUES (?, ?, ?)")
         .bind(hash_ticket(&ticket))
         .bind(user.to_string())
-        .bind(expires.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        .bind(crate::db::stamp(expires))
         .execute(&mut *conn)
         .await?;
     Ok(ticket)

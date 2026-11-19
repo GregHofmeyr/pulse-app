@@ -22,7 +22,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
@@ -229,7 +229,7 @@ fn limits_for(
     req: &CreateServerInviteRequest,
     owner: bool,
     direct: bool,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> AppResult<(Option<String>, Option<i64>)> {
     let age = req.max_age_secs.unwrap_or(rules::DEFAULT_MAX_AGE_SECS);
     if !(0..=rules::MAX_AGE_SECS).contains(&age) {
@@ -241,7 +241,7 @@ fn limits_for(
             rules::MEMBER_MAX_AGE_SECS / 86_400
         )));
     }
-    let expires_at = (age > 0).then(|| stamp(now + TimeDelta::seconds(age)));
+    let expires_at = (age > 0).then(|| stamp(now + SignedDuration::from_secs(age)));
     if direct {
         // only that person, once
         return Ok((expires_at, Some(1)));
@@ -289,7 +289,7 @@ async fn create(
             return Err(AppError::BadRequest("unknown user".into()));
         }
     }
-    let at = Utc::now();
+    let at = Timestamp::now();
     let created_at = stamp(at);
     // A direct invite's card goes out in order with the DM's other messages.
     let _order = s.hub.in_order().await;
@@ -330,7 +330,7 @@ async fn create(
             "SELECT COUNT(*) FROM server_invites WHERE created_by = ? AND for_user IS NOT NULL AND created_at > ?",
         )
         .bind(me.to_string())
-        .bind(stamp(at - TimeDelta::days(1)))
+        .bind(stamp(at - crate::times::days(1)))
         .fetch_one(&mut *tx)
         .await?;
         if today >= rules::DIRECT_PER_DAY {
@@ -681,9 +681,7 @@ async fn update(
         return Err(AppError::BadRequest("that invite no longer works".into()));
     }
     let owner = owner_of(&mut *tx, server).await? == me;
-    let made: DateTime<Utc> = DateTime::parse_from_rfc3339(&row.created_at)
-        .map_err(anyhow::Error::from)?
-        .with_timezone(&Utc);
+    let made: Timestamp = crate::times::parse(&row.created_at).map_err(anyhow::Error::from)?;
     // the same checks as making it, counted from when it was made
     let ask = CreateServerInviteRequest {
         for_user: None,
@@ -803,13 +801,13 @@ pub async fn lookups_blocked(
     db: &SqlitePool,
     ip: &str,
     user: Option<UserId>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> AppResult<bool> {
     let since = stamp(
-        now - TimeDelta::seconds(rules::BLOCK_SECS)
-            - TimeDelta::seconds(rules::UNKNOWN_WINDOW_SECS),
+        now - SignedDuration::from_secs(rules::BLOCK_SECS)
+            - SignedDuration::from_secs(rules::UNKNOWN_WINDOW_SECS),
     );
-    let trap_since = stamp(now - TimeDelta::seconds(rules::BLOCK_SECS));
+    let trap_since = stamp(now - SignedDuration::from_secs(rules::BLOCK_SECS));
     let mut sources = vec![("ip", ip.to_string())];
     if let Some(user) = user {
         sources.push(("user_id", user.to_string()));
@@ -840,23 +838,22 @@ pub async fn lookups_blocked(
 }
 
 /// [`lookups_blocked`]'s rule over one source's unknown-code times (sorted).
-fn blocks(times: &[String], now: DateTime<Utc>) -> bool {
+fn blocks(times: &[String], now: Timestamp) -> bool {
     let n = rules::UNKNOWN_CODES_TO_BLOCK;
-    let times: Vec<DateTime<Utc>> = times
+    let times: Vec<Timestamp> = times
         .iter()
-        .filter_map(|t| DateTime::parse_from_rfc3339(t).ok())
-        .map(|t| t.with_timezone(&Utc))
+        .filter_map(|t| crate::times::parse(t).ok())
         .collect();
     times.windows(n).any(|w| {
         let (first, last) = (w[0], w[n - 1]);
-        last - first < TimeDelta::seconds(rules::UNKNOWN_WINDOW_SECS)
-            && last + TimeDelta::seconds(rules::BLOCK_SECS) > now
+        last.duration_since(first) < SignedDuration::from_secs(rules::UNKNOWN_WINDOW_SECS)
+            && last + SignedDuration::from_secs(rules::BLOCK_SECS) > now
     })
 }
 
 /// The guard in front of every code lookup: 429 while blocked, or past the lookups per address or per account.
 pub(crate) async fn guard(s: &AppState, who: &Seeker) -> AppResult<()> {
-    if lookups_blocked(&s.db, &who.ip, who.user, Utc::now()).await? {
+    if lookups_blocked(&s.db, &who.ip, who.user, Timestamp::now()).await? {
         return Err(AppError::TooManyRequests(None));
     }
     if !s.limits.invite_lookup_ip.hit(&who.ip)
@@ -1314,8 +1311,8 @@ pub struct Pruned {
 /// Delete invites [`rules::DEAD_RETENTION_DAYS`] after they stopped working (revoked, expired, or used up at their last
 /// use), and failed lookups older than [`rules::FAILURE_RETENTION_DAYS`]. Run hourly with the other cleanup
 /// (`hygiene::prune`).
-pub async fn prune(db: &SqlitePool, now: DateTime<Utc>) -> AppResult<Pruned> {
-    let dead = stamp(now - TimeDelta::days(rules::DEAD_RETENTION_DAYS));
+pub async fn prune(db: &SqlitePool, now: Timestamp) -> AppResult<Pruned> {
+    let dead = stamp(now - crate::times::days(rules::DEAD_RETENTION_DAYS));
     let invites = sqlx::query(
         "DELETE FROM server_invites WHERE revoked_at <= ?1 OR expires_at <= ?1
            OR (max_uses IS NOT NULL AND uses >= max_uses
@@ -1326,7 +1323,9 @@ pub async fn prune(db: &SqlitePool, now: DateTime<Utc>) -> AppResult<Pruned> {
     .await?
     .rows_affected();
     let failures = sqlx::query("DELETE FROM invite_failures WHERE at <= ?")
-        .bind(stamp(now - TimeDelta::days(rules::FAILURE_RETENTION_DAYS)))
+        .bind(stamp(
+            now - crate::times::days(rules::FAILURE_RETENTION_DAYS),
+        ))
         .execute(db)
         .await?
         .rows_affected();
@@ -1351,30 +1350,33 @@ mod tests {
         assert!(!well_formed("abcdefghi0"));
     }
 
-    fn at(t: DateTime<Utc>) -> String {
+    fn at(t: Timestamp) -> String {
         stamp(t)
     }
 
     #[test]
     fn unknown_codes_block_only_when_bunched_and_only_for_a_while() {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let n = rules::UNKNOWN_CODES_TO_BLOCK as i64;
         let bunched: Vec<String> = (0..n)
-            .map(|i| at(now - TimeDelta::minutes(n - i)))
+            .map(|i| at(now - SignedDuration::from_mins(n - i)))
             .collect();
         assert!(blocks(&bunched, now));
         assert!(!blocks(&bunched[1..], now), "one fewer doesn't");
         // spread over more than the window: no block
         let spread: Vec<String> = (0..n)
             .map(|i| {
-                at(now - TimeDelta::seconds(rules::UNKNOWN_WINDOW_SECS / (n - 1) * (n - i) + 60))
+                at(now
+                    - SignedDuration::from_secs(
+                        rules::UNKNOWN_WINDOW_SECS / (n - 1) * (n - i) + 60,
+                    ))
             })
             .collect();
         assert!(!blocks(&spread, now));
         // bunched, but the block has run out
-        let old = now - TimeDelta::seconds(rules::BLOCK_SECS) - TimeDelta::minutes(1);
+        let old = now - SignedDuration::from_secs(rules::BLOCK_SECS) - SignedDuration::from_mins(1);
         let stale: Vec<String> = (0..n)
-            .map(|i| at(old - TimeDelta::minutes(n - i)))
+            .map(|i| at(old - SignedDuration::from_mins(n - i)))
             .collect();
         assert!(!blocks(&stale, now));
     }

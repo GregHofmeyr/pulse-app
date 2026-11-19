@@ -153,7 +153,7 @@ async fn a_send_elsewhere_isnt_held_up_by_the_whole_purge() {
     let purge = tokio::spawn(async move {
         pulse_server::servers::channels::purge_expired_batched(
             &s,
-            chrono::Utc::now() + chrono::Duration::days(8),
+            jiff::Timestamp::now() + pulse_server::times::days(8),
             20,
         )
         .await
@@ -307,7 +307,7 @@ async fn a_purge_cut_off_part_way_finishes_on_the_next_run() {
     assert_no_orphans(&w.app).await;
 
     // The next sweep (no need to wait the 7 days: "Delete now" made it due) finishes it.
-    let swept = pulse_server::servers::channels::purge_expired(&s, chrono::Utc::now())
+    let swept = pulse_server::servers::channels::purge_expired(&s, jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(swept, 1);
@@ -356,7 +356,7 @@ async fn two_purges_of_one_channel_both_finish() {
         .await
         .unwrap();
     let (a, b) = (w.app.state(), w.app.state());
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     let (x, y) = tokio::join!(
         pulse_server::servers::channels::purge_expired_batched(&a, now, 7),
         pulse_server::servers::channels::purge_expired_batched(&b, now, 11),
@@ -415,7 +415,8 @@ async fn a_delete_now_racing_the_sweep_answers_204() {
     let sweep = async {
         // Let the click make the channel due first, so the sweep takes it too.
         tokio::time::sleep(Duration::from_millis(50)).await;
-        pulse_server::servers::channels::purge_expired_batched(&s, chrono::Utc::now(), 300).await
+        pulse_server::servers::channels::purge_expired_batched(&s, jiff::Timestamp::now(), 300)
+            .await
     };
     let (click, swept) = tokio::join!(click, sweep);
     swept.unwrap();
@@ -520,7 +521,7 @@ async fn an_emptied_group_cut_off_part_way_stays_gone_and_the_sweep_finishes_it(
         assert_eq!(status(r, t).await, 404, "unreachable");
     }
     // Recently deleted's sweep is for server channels
-    let later = chrono::Utc::now() + chrono::Duration::days(30);
+    let later = jiff::Timestamp::now() + pulse_server::times::days(30);
     assert_eq!(
         pulse_server::servers::channels::purge_expired_batched(&s, later, 3)
             .await

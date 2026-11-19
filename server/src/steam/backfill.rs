@@ -21,7 +21,7 @@ pub fn kick(s: &AppState) {
 /// The next link due a backfill, not counting those `tried` this run: waiting ones, and private ones Steam last
 /// refused over an hour ago.
 async fn next_due(s: &AppState, tried: &[String]) -> sqlx::Result<Option<(String, String)>> {
-    let hour_ago = crate::db::stamp(chrono::Utc::now() - chrono::Duration::hours(1));
+    let hour_ago = crate::db::stamp(jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1));
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT user_id, steam_id FROM steam_links
          WHERE share_achievements = 1

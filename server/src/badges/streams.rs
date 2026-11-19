@@ -63,7 +63,7 @@ async fn close(s: &AppState, info: &StreamInfo) -> AppResult<bool> {
     let Some((start, end)) = row else {
         return Ok(false);
     };
-    let secs = (parse(&end)? - parse(&start)?).num_seconds();
+    let secs = parse(&end)?.duration_since(parse(&start)?).as_secs();
     if secs > 0 {
         stats::add(&mut tx, info.user_id, stat::STREAM_SECS, secs).await?;
     }

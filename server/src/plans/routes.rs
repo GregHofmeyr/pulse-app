@@ -4,7 +4,7 @@ use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{
@@ -128,7 +128,7 @@ async fn create(
     }
     crate::media::writes_ok(&s.cfg)?;
     let ch = plan_channel(&s, me, id).await?;
-    let at = Utc::now();
+    let at = Timestamp::now();
     let c = clean(&req, at)?;
     let mut msg = Message {
         id: MessageId::new(),
@@ -300,7 +300,7 @@ async fn edit(
     crate::media::writes_ok(&s.cfg)?;
     let p = visible(&s, me, id).await?;
     still_member(&s, me, &p).await?;
-    let at = Utc::now();
+    let at = Timestamp::now();
     let c: Cleaned = clean(&req, at)?;
     let mut tx = begin_write(&s.db).await?;
     crate::access::channel_live_in(&mut tx, p.channel_id).await?;
@@ -426,17 +426,10 @@ async fn forecast(
     let (Some(place), None) = (&p.place, &p.cancelled_at) else {
         return Ok(Json(None));
     };
-    let Ok(starts) = DateTime::parse_from_rfc3339(&p.starts_at) else {
+    let Ok(starts) = crate::times::parse(&p.starts_at) else {
         return Ok(Json(None));
     };
-    let f = super::weather::forecast(
-        &s.db,
-        &s.cfg.plans,
-        place,
-        starts.with_timezone(&Utc),
-        Utc::now(),
-    )
-    .await?;
+    let f = super::weather::forecast(&s.db, &s.cfg.plans, place, starts, Timestamp::now()).await?;
     Ok(Json(f))
 }
 
@@ -448,7 +441,7 @@ async fn ics(
 ) -> AppResult<Response> {
     visible(&s, me, id).await?;
     let plan = current(&s, id).await?;
-    let body = super::ics::calendar(id, &plan, "pulse", Utc::now());
+    let body = super::ics::calendar(id, &plan, "pulse", Timestamp::now());
     let name = super::ics::file_name(&plan.title);
     // the name as an RFC 5987 `filename*`, so any title survives; the plain one is ASCII only
     let ascii: String = name
