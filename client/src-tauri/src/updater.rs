@@ -2,9 +2,12 @@
 //! `/updates/latest.json`, asked with the session token, names a newer signed installer.
 //!
 //! - At launch the check starts in `setup` (before the page loads); the page waits at most [`LAUNCH_WAIT`] for it and
-//!   shows "Updating Pulse…" when it found one.
+//!   shows "Updating Pulse…" when it found one. A check still running then carries on (up to [`CHECK_TIMEOUT`]), and
+//!   what it finds is offered like a running check's (#536).
 //! - While running: after each login's first Ready and every [`RECHECK_EVERY`]; an offer goes to the page as
-//!   [`UPDATE_EVENT`] ("Restart to update", never during a call: [`may_restart`]).
+//!   [`UPDATE_EVENT`] ("Restart to update", never during a call: [`may_restart`]; in a call the page says the update
+//!   is ready and applies when you restart). A failed check tries again sooner ([`retry_delay`]).
+//! - Closing the window quits Pulse (there's no tray), so the next launch's check is the one that installs.
 //! - Release Windows builds only ([`updates_enabled`]). A failed check or install logs why and leaves Pulse as it is.
 //! - The token only ever goes to the server it belongs to: the endpoint is that server, and a download URL on any
 //!   other origin is refused ([`same_origin`]) before anything is fetched.
@@ -20,9 +23,12 @@ use url::Url;
 
 /// How long the page waits at launch for the check that started in `setup`.
 pub const LAUNCH_WAIT: Duration = Duration::from_secs(4);
-/// How long one check (the manifest request) may take. Never the updater's own `.timeout()`: that bounds the
-/// installer download too.
-pub const CHECK_TIMEOUT: Duration = Duration::from_secs(4);
+/// How long one background check (the manifest request: at launch, after login, periodic) may take. The page never
+/// waits for it longer than [`LAUNCH_WAIT`], so a slow connection still gets its answer, just later (#536). Never the
+/// updater's own `.timeout()`: that bounds the installer download too.
+pub const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long Settings' "Check for updates" (and the "update required" screen) waits: someone is watching.
+pub const MANUAL_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 /// The longest the installer download may go without receiving anything before it fails.
 pub const DOWNLOAD_STALL: Duration = Duration::from_secs(30);
 /// While running, how often to look again.
@@ -35,6 +41,25 @@ pub const PROGRESS_EVENT: &str = "pulse://update-progress";
 /// Release Windows builds update; Linux, debug builds and `PULSE_NO_UPDATE=1` never ask.
 pub fn updates_enabled() -> bool {
     cfg!(windows) && !cfg!(debug_assertions) && std::env::var_os("PULSE_NO_UPDATE").is_none()
+}
+
+/// After the `failures`-th failed check in a row, how long until the next try (#536): 1, 2, 4, 8 and 16 minutes, then
+/// `None` (the periodic check, every [`RECHECK_EVERY`], carries on from there).
+pub fn retry_delay(failures: u32) -> Option<Duration> {
+    match failures {
+        1..=5 => Some(Duration::from_secs(60 << (failures - 1))),
+        _ => None,
+    }
+}
+
+/// After the `attempt`-th failed download, how long until the next (#536): a dropped connection gets two more tries
+/// (after 2 s, then 10 s); anything else (a bad signature, a full disk) fails at once.
+pub fn download_retry_delay(attempt: u32, transient: bool) -> Option<Duration> {
+    match (transient, attempt) {
+        (true, 1) => Some(Duration::from_secs(2)),
+        (true, 2) => Some(Duration::from_secs(10)),
+        _ => None,
+    }
 }
 
 /// Offer only a strictly newer version (the updater never downgrades).
@@ -97,6 +122,54 @@ pub async fn wait_launch(rx: &mut watch::Receiver<LaunchCheck>, wait: Duration) 
     }
 }
 
+/// The launch check's result between the core and the page (#536). The page waits at most [`LAUNCH_WAIT`]; a check
+/// that finishes after it gave up is offered as a running offer instead of being dropped. One lock orders the two, so
+/// a result landing just as the page gives up goes to exactly one of them.
+pub struct LaunchHandoff {
+    tx: watch::Sender<LaunchCheck>,
+    page_gave_up: Mutex<bool>,
+}
+
+impl Default for LaunchHandoff {
+    fn default() -> Self {
+        Self {
+            tx: watch::channel(LaunchCheck::Pending).0,
+            page_gave_up: Mutex::new(false),
+        }
+    }
+}
+
+impl LaunchHandoff {
+    /// The page's ask: what the launch check found, waiting at most `wait`. `None` = start normally (and if the check
+    /// is still running, what it finds goes out as a running offer).
+    pub async fn page_wait(&self, wait: Duration) -> Option<Offer> {
+        let mut rx = self.tx.subscribe();
+        // what it found is read again under the lock below, so a result landing just now isn't missed
+        let _ = wait_launch(&mut rx, wait).await;
+        let mut gave_up = self.page_gave_up.lock().unwrap();
+        match &*self.tx.borrow() {
+            LaunchCheck::Done(offer) => offer.clone(),
+            LaunchCheck::Pending => {
+                *gave_up = true;
+                None
+            }
+        }
+    }
+
+    /// The check's result: kept for the page (`send_replace`, never `send`: `send` drops the value while nobody is
+    /// subscribed, #460). Returns the offer to send as a running one when the page stopped waiting already.
+    pub fn publish(&self, offer: Option<Offer>) -> Option<Offer> {
+        let gave_up = self.page_gave_up.lock().unwrap();
+        self.tx.send_replace(LaunchCheck::Done(offer.clone()));
+        if *gave_up { offer } else { None }
+    }
+
+    #[cfg(test)]
+    fn subscribe(&self) -> watch::Receiver<LaunchCheck> {
+        self.tx.subscribe()
+    }
+}
+
 /// Around the installer taking over (Windows): the plugin runs [`Handover::before_exit`] just before it starts the
 /// installer and ends the process (the crash marker is cleared, the log closed). If starting the installer fails, the
 /// install comes back with an error and Pulse carries on, so [`Handover::install_failed`] undoes that (#233).
@@ -147,11 +220,13 @@ fn keep_found<T: Clone>(
 
 /// The updater's state in the app (managed).
 pub struct Updates {
-    launch: watch::Sender<LaunchCheck>,
+    launch: LaunchHandoff,
     /// The newest update a check found, ready to install.
     #[cfg(windows)]
     found: Mutex<Option<tauri_plugin_updater::Update>>,
     installing: AtomicBool,
+    /// A failed check's retries are scheduled ([`check_with_retries`]): another failing check needn't start more.
+    retrying: AtomicBool,
     /// The login checked already (its token), by the launch check or its first Ready: one check per login.
     checked_login: Mutex<Option<String>>,
     /// Around the installer taking over and the process ending (Windows): crash marker, log.
@@ -162,10 +237,11 @@ pub struct Updates {
 impl Updates {
     pub fn new(handover: Arc<Handover>) -> Self {
         Self {
-            launch: watch::channel(LaunchCheck::Pending).0,
+            launch: LaunchHandoff::default(),
             #[cfg(windows)]
             found: Mutex::new(None),
             installing: AtomicBool::new(false),
+            retrying: AtomicBool::new(false),
             checked_login: Mutex::new(None),
             handover,
         }
@@ -196,24 +272,30 @@ impl Updates {
         app: &AppHandle,
         server: &str,
         token: &str,
+        timeout: Duration,
     ) -> Result<Option<Offer>, String> {
         if !updates_enabled() {
             return Ok(None);
         }
         #[cfg(windows)]
         {
+            let started = std::time::Instant::now();
             let found = keep_found(
                 &self.found,
-                check_server(app, server, token, self.handover.clone()).await,
+                check_server(app, server, token, self.handover.clone(), timeout).await,
             )?;
-            if let Some(u) = &found {
-                tracing::info!(version = %u.version, "update: a newer version is available");
+            let took_ms = started.elapsed().as_millis() as u64;
+            match &found {
+                Some(u) => {
+                    tracing::info!(version = %u.version, took_ms, "update: a newer version is available")
+                }
+                None => tracing::info!(took_ms, "update: up to date"),
             }
             Ok(found.map(|u| Offer { version: u.version }))
         }
         #[cfg(not(windows))]
         {
-            let _ = (app, server, token);
+            let _ = (app, server, token, timeout);
             Ok(None)
         }
     }
@@ -226,6 +308,7 @@ async fn check_server<R: tauri::Runtime>(
     server: &str,
     token: &str,
     handover: Arc<Handover>,
+    timeout: Duration,
 ) -> Result<Option<tauri_plugin_updater::Update>, String> {
     use tauri_plugin_updater::UpdaterExt;
     let base = Url::parse(server).map_err(|e| format!("bad server address: {e}"))?;
@@ -246,8 +329,13 @@ async fn check_server<R: tauri::Runtime>(
         .on_before_exit(move || handover.before_exit())
         .build()
         .map_err(|e| format!("updater setup: {e}"))?;
-    let found = match tokio::time::timeout(CHECK_TIMEOUT, updater.check()).await {
-        Err(_) => return Err("the update check timed out".into()),
+    let found = match tokio::time::timeout(timeout, updater.check()).await {
+        Err(_) => {
+            return Err(format!(
+                "the update check timed out after {} s",
+                timeout.as_secs()
+            ));
+        }
         // a non-2xx answer (401: signed out there, 404: nothing published) ends as "release not found"
         Ok(Err(tauri_plugin_updater::Error::ReleaseNotFound)) => {
             tracing::info!("update: the server offers no update");
@@ -278,6 +366,7 @@ pub fn start_launch_check(app: &AppHandle, store: crate::session::Store) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let updates = app.state::<Updates>();
+        let mut failed = false;
         let offer = if updates_enabled() {
             // keychain reads block: not on the runtime's threads
             let stored = tauri::async_runtime::spawn_blocking(move || store.load())
@@ -285,15 +374,20 @@ pub fn start_launch_check(app: &AppHandle, store: crate::session::Store) {
                 .ok()
                 .flatten();
             match stored {
-                None => None,
+                None => {
+                    tracing::info!("update: signed out at launch; the first login checks");
+                    None
+                }
                 Some((server, token)) => {
                     // this login's first Ready needn't ask again (unless this check fails)
                     updates.claim_login(&token);
-                    match updates.check(&app, &server, &token).await {
+                    tracing::info!("update: launch check started");
+                    match updates.check(&app, &server, &token, CHECK_TIMEOUT).await {
                         Ok(offer) => offer,
                         Err(e) => {
                             updates.release_login(&token);
                             tracing::warn!(error = %e, "update: launch check failed; starting this version");
+                            failed = true;
                             None
                         }
                     }
@@ -302,32 +396,90 @@ pub fn start_launch_check(app: &AppHandle, store: crate::session::Store) {
         } else {
             None
         };
-        publish_launch(&updates.launch, offer);
+        if let Some(late) = updates.launch.publish(offer) {
+            // #536: the page stopped waiting and started this version; offer it as "Restart to update"
+            tracing::info!(version = %late.version, "update: the launch check finished after the page stopped waiting; offering it while running");
+            let _ = app.emit(UPDATE_EVENT, Some(&late));
+        }
+        if failed {
+            // #536: its login's Ready may have come and gone already; don't wait the full RECHECK_EVERY
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                check_with_retries(&app, "launch retry", 1).await
+            });
+        }
     });
 }
 
-/// The launch check's result, kept for the page to read whenever it asks. `send_replace`, never `send`: `send` drops
-/// the value while nobody is subscribed, and a fast check finishes before the page asks, so the update it found was lost
-/// and Pulse started on the old version with no "Restart to update" either (the login counted as checked) (#460).
-fn publish_launch(tx: &watch::Sender<LaunchCheck>, offer: Option<Offer>) {
-    tx.send_replace(LaunchCheck::Done(offer));
+/// What a running check came to.
+#[derive(Debug)]
+enum Ran {
+    /// Not asked: why (signed out, installing).
+    Skipped(&'static str),
+    Checked,
+    Failed,
 }
 
 /// A running check: an offer goes to the page ("Restart to update"); finding nothing any more takes it away (`null`).
-async fn check_running(app: &AppHandle, why: &str) {
+async fn check_running(app: &AppHandle, why: &str) -> Ran {
     let Some((server, token)) = current_session(app) else {
-        return;
+        return Ran::Skipped("signed out");
     };
     let updates = app.state::<Updates>();
     if updates.installing.load(Ordering::SeqCst) {
-        return;
+        return Ran::Skipped("installing");
     }
-    match updates.check(app, &server, &token).await {
+    match updates.check(app, &server, &token, CHECK_TIMEOUT).await {
         Ok(offer) => {
             let _ = app.emit(UPDATE_EVENT, &offer);
+            Ran::Checked
         }
-        Err(e) => tracing::warn!(error = %e, why, "update: check failed"),
+        Err(e) => {
+            tracing::warn!(error = %e, why, "update: check failed");
+            Ran::Failed
+        }
     }
+}
+
+/// A running check that, when it fails, tries again after [`retry_delay`] instead of waiting for the next periodic
+/// one (#536). `failed`: how many failed already (the launch check's failure counts; it waits before its first try).
+/// One set of retries at a time: a check that would start beside them leaves it to them.
+async fn check_with_retries(app: &AppHandle, why: &'static str, mut failed: u32) {
+    let updates = app.state::<Updates>();
+    if updates.retrying.swap(true, Ordering::SeqCst) {
+        tracing::info!(
+            why,
+            "update: retries are already scheduled; not checking now"
+        );
+        return;
+    }
+    loop {
+        if failed > 0 {
+            let Some(wait) = retry_delay(failed) else {
+                tracing::warn!(
+                    failed,
+                    "update: still failing; the next periodic check tries again"
+                );
+                break;
+            };
+            tracing::info!(
+                failed,
+                wait_s = wait.as_secs(),
+                why,
+                "update: trying again soon"
+            );
+            tokio::time::sleep(wait).await;
+        }
+        match check_running(app, why).await {
+            Ran::Failed => failed += 1,
+            Ran::Skipped(reason) => {
+                tracing::info!(reason, why, "update: check skipped");
+                break;
+            }
+            Ran::Checked => break,
+        }
+    }
+    updates.retrying.store(false, Ordering::SeqCst);
 }
 
 /// The gateway's Ready (commands::forward): the first one of each login checks (a login after a signed-out start,
@@ -343,7 +495,7 @@ pub fn after_ready(app: &AppHandle, token: &str) {
         return;
     }
     let app = app.clone();
-    tauri::async_runtime::spawn(async move { check_running(&app, "login").await });
+    tauri::async_runtime::spawn(async move { check_with_retries(&app, "login", 0).await });
 }
 
 /// Every [`RECHECK_EVERY`] while Pulse runs.
@@ -357,7 +509,7 @@ pub fn spawn_periodic(app: &AppHandle) {
             tokio::time::interval_at(tokio::time::Instant::now() + RECHECK_EVERY, RECHECK_EVERY);
         loop {
             tick.tick().await;
-            check_running(&app, "periodic").await;
+            check_with_retries(&app, "periodic", 0).await;
         }
     });
 }
@@ -365,8 +517,13 @@ pub fn spawn_periodic(app: &AppHandle) {
 /// What the launch check found (waits at most [`LAUNCH_WAIT`] for it); `None` = start normally.
 #[tauri::command]
 pub async fn update_launch(updates: tauri::State<'_, Updates>) -> Result<Option<Offer>, String> {
-    let mut rx = updates.launch.subscribe();
-    Ok(wait_launch(&mut rx, LAUNCH_WAIT).await)
+    let offer = updates.launch.page_wait(LAUNCH_WAIT).await;
+    match &offer {
+        Some(o) => tracing::info!(version = %o.version, "update: installing at launch"),
+        None if updates_enabled() => tracing::info!("update: starting this version"),
+        None => {}
+    }
+    Ok(offer)
 }
 
 /// What Settings shows about updates (#460): this app's version, whether it updates itself ([`updates_enabled`]), and
@@ -397,7 +554,7 @@ pub async fn update_check(app: AppHandle) -> Result<Option<Offer>, String> {
         return Ok(None);
     };
     app.state::<Updates>()
-        .check(&app, &server, &token)
+        .check(&app, &server, &token, MANUAL_CHECK_TIMEOUT)
         .await
         .inspect_err(|e| tracing::warn!(error = %e, "update: check failed"))
 }
@@ -409,7 +566,9 @@ pub async fn update_install(app: AppHandle, restart: bool) -> Result<(), String>
     if restart {
         let voice = app.state::<crate::voice::VoiceManager>();
         let in_call = voice.current_channel().await.is_some() || voice.rejoining().is_some();
-        may_restart(in_call).map_err(|e| e.to_string())?;
+        may_restart(in_call)
+            .inspect_err(|_| tracing::info!("update: restart refused, in a call"))
+            .map_err(|e| e.to_string())?;
     }
     #[cfg(windows)]
     {
@@ -439,23 +598,43 @@ async fn download_and_install(
     app: &AppHandle,
     update: &tauri_plugin_updater::Update,
 ) -> Result<(), String> {
-    let mut downloaded = 0u64;
-    let mut last_emit: Option<std::time::Instant> = None;
-    let bytes = update
-        .download(
-            |chunk, total| {
-                downloaded += chunk as u64;
-                // a few updates a second are plenty for a progress bar
-                let due = last_emit.is_none_or(|t| t.elapsed() >= Duration::from_millis(100));
-                if due || total == Some(downloaded) {
-                    last_emit = Some(std::time::Instant::now());
-                    let _ = app.emit(PROGRESS_EVENT, Progress { downloaded, total });
-                }
-            },
-            || tracing::info!("update: downloaded, verifying the signature"),
-        )
-        .await
-        .map_err(|e| format!("the download failed: {e}"))?;
+    let mut attempt = 0;
+    let bytes = loop {
+        attempt += 1;
+        let mut downloaded = 0u64;
+        let mut last_emit: Option<std::time::Instant> = None;
+        let got = update
+            .download(
+                |chunk, total| {
+                    downloaded += chunk as u64;
+                    // a few updates a second are plenty for a progress bar
+                    let due = last_emit.is_none_or(|t| t.elapsed() >= Duration::from_millis(100));
+                    if due || total == Some(downloaded) {
+                        last_emit = Some(std::time::Instant::now());
+                        let _ = app.emit(PROGRESS_EVENT, Progress { downloaded, total });
+                    }
+                },
+                || tracing::info!("update: downloaded, verifying the signature"),
+            )
+            .await;
+        match got {
+            Ok(bytes) => break bytes,
+            Err(e) => {
+                // #536: a dropped connection tries again; a bad signature or the like doesn't
+                let transient = matches!(
+                    e,
+                    tauri_plugin_updater::Error::Reqwest(_)
+                        | tauri_plugin_updater::Error::Network(_)
+                        | tauri_plugin_updater::Error::Io(_)
+                );
+                let Some(wait) = download_retry_delay(attempt, transient) else {
+                    return Err(format!("the download failed: {e}"));
+                };
+                tracing::warn!(error = %e, attempt, wait_s = wait.as_secs(), "update: download failed; trying again");
+                tokio::time::sleep(wait).await;
+            }
+        }
+    };
     tracing::info!(version = %update.version, "update: installing; Pulse will close and reopen");
     // The installer's exit skips RunEvent::Exit: wind down now, so no ffmpeg holds the files it replaces.
     crate::wind_down(app).await;
@@ -541,16 +720,87 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn launch_result_kept_when_it_beats_the_page() {
         // #460: the check finished (no one subscribed yet) before the page asked
-        let (tx, rx) = tokio::sync::watch::channel(LaunchCheck::Pending);
-        drop(rx);
+        let handoff = LaunchHandoff::default();
         let offer = Offer {
             version: "0.2.13".into(),
         };
-        publish_launch(&tx, Some(offer.clone()));
-        let mut rx = tx.subscribe();
+        assert_eq!(
+            handoff.publish(Some(offer.clone())),
+            None,
+            "the page still asks"
+        );
         let started = tokio::time::Instant::now();
-        assert_eq!(wait_launch(&mut rx, LAUNCH_WAIT).await, Some(offer));
+        assert_eq!(handoff.page_wait(LAUNCH_WAIT).await, Some(offer.clone()));
         assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+        let mut rx = handoff.subscribe();
+        assert_eq!(wait_launch(&mut rx, LAUNCH_WAIT).await, Some(offer));
+    }
+
+    /// #536: a launch check slower than LAUNCH_WAIT isn't dropped: the page starts this version, and what the check
+    /// finds afterwards is offered as a running offer.
+    #[tokio::test(start_paused = true)]
+    async fn a_late_launch_check_is_offered_while_running() {
+        let handoff = LaunchHandoff::default();
+        let started = tokio::time::Instant::now();
+        assert_eq!(handoff.page_wait(LAUNCH_WAIT).await, None);
+        assert_eq!(started.elapsed(), LAUNCH_WAIT);
+        let offer = Offer {
+            version: "0.2.16".into(),
+        };
+        assert_eq!(handoff.publish(Some(offer.clone())), Some(offer));
+        // finding nothing late is nothing to offer
+        let handoff = LaunchHandoff::default();
+        assert_eq!(handoff.page_wait(LAUNCH_WAIT).await, None);
+        assert_eq!(handoff.publish(None), None);
+    }
+
+    /// #536: finishing while the page waits goes to the page only (installed at launch), never also as a running offer.
+    #[tokio::test(start_paused = true)]
+    async fn a_launch_check_inside_the_wait_goes_to_the_page_only() {
+        let handoff = Arc::new(LaunchHandoff::default());
+        let offer = Offer {
+            version: "0.2.16".into(),
+        };
+        let (h, o) = (handoff.clone(), offer.clone());
+        let checker = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            h.publish(Some(o))
+        });
+        assert_eq!(handoff.page_wait(LAUNCH_WAIT).await, Some(offer));
+        assert_eq!(checker.await.unwrap(), None);
+    }
+
+    #[test]
+    fn failed_checks_back_off_then_leave_it_to_the_periodic_check() {
+        let mins: Vec<u64> = (1..=5)
+            .map(|n| retry_delay(n).unwrap().as_secs() / 60)
+            .collect();
+        assert_eq!(mins, [1, 2, 4, 8, 16]);
+        assert_eq!(retry_delay(0), None);
+        assert_eq!(retry_delay(6), None);
+        let total: Duration = (1..=5).filter_map(retry_delay).sum();
+        assert!(
+            total <= RECHECK_EVERY + Duration::from_secs(60),
+            "{total:?}"
+        );
+    }
+
+    #[test]
+    fn only_a_dropped_download_is_retried() {
+        assert_eq!(download_retry_delay(1, true), Some(Duration::from_secs(2)));
+        assert_eq!(download_retry_delay(2, true), Some(Duration::from_secs(10)));
+        assert_eq!(download_retry_delay(3, true), None, "three tries in all");
+        assert_eq!(
+            download_retry_delay(1, false),
+            None,
+            "a bad signature fails at once"
+        );
+    }
+
+    #[test]
+    fn background_checks_outlast_the_launch_wait() {
+        assert!(CHECK_TIMEOUT > LAUNCH_WAIT);
+        assert!(MANUAL_CHECK_TIMEOUT <= CHECK_TIMEOUT);
     }
 
     #[test]
@@ -698,6 +948,7 @@ mod tests {
             &format!("http://{addr}/"),
             "tok-401",
             Arc::new(h),
+            CHECK_TIMEOUT,
         )
         .await;
         assert!(matches!(found, Ok(None)), "401 is no update");

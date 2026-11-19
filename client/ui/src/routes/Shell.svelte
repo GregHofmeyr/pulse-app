@@ -40,7 +40,7 @@
   import PatchNotes from '../components/PatchNotes.svelte'
   import { patchNotes, previousPatchNotes } from '../patchNotes'
   import { markPatchNotesSeen, patchNotesSeen } from '../lib/patchNotesSeen.svelte'
-  import { installUpdate, restartBlocked, updates } from '../lib/updates.svelte'
+  import { installUpdate, restartBlocked, updates, UPDATE_READY_TIP } from '../lib/updates.svelte'
   import CrashReportPrompt from '../components/CrashReportPrompt.svelte'
   import ConversationList from '../components/ConversationList.svelte'
   import GoLiveDialog from '../components/GoLiveDialog.svelte'
@@ -168,7 +168,16 @@
     // a failure is logged and its reason shows in the button's tooltip (#233): the button stays, try again later
     installUpdate(true).catch(() => {})
   }
-  const updateTip = $derived(updateBlocked ? 'Finish your call first' : updates.error ? `Couldn't update: ${updates.error}` : undefined)
+  // #536: in a call it says the update is ready instead (quiet, never a restart); the call ending brings the button back
+  const updateTip = $derived(updateBlocked ? UPDATE_READY_TIP : updates.error ? `Couldn't update: ${updates.error}` : undefined)
+  const updateShown = $derived(updates.offer ? (updateBlocked ? 'ready in a call' : 'restart') : null)
+  let updateShownLogged: string | null = null
+  $effect(() => {
+    // what you were shown, for a report about an update that never happened (#536)
+    if (updateShown === updateShownLogged) return
+    updateShownLogged = updateShown
+    if (updateShown) void api.uiLog(`update: title bar shows ${updateShown === 'restart' ? 'Restart to update' : 'Update ready (in a call)'}`, 'info')
+  })
   /** Your avatar and name (#168): one control, opening your own card (status and Settings are on it). */
   let meButton = $state<HTMLButtonElement>()
   const myCardOpen = $derived(!!meButton && profileUi.card?.opener === meButton)
@@ -794,9 +803,10 @@
       <span class="conn auto-report" role="status">Something went wrong in Pulse last time, so we sent Greg a report. <button aria-label="Dismiss" onclick={() => (ui.autoReported = false)}>×</button></span>
     {/if}
     <!-- #155: icon only; the app-wide tooltip reads its aria-label -->
-    <!-- #82: a newer Pulse is ready; aria-disabled, not disabled, in a call: a disabled button swallows the hover that shows the tooltip -->
+    <!-- #82: a newer Pulse is ready; aria-disabled, not disabled, in a call: a disabled button swallows the hover that shows the tooltip.
+         #536: in a call it reads "Update ready" (it applies when you restart), and "Restart to update" once the call ends -->
     {#if updates.offer}
-      <button class="win update" class:off={updateBlocked} aria-disabled={updateBlocked} data-tip={updateTip} onclick={restartToUpdate}>Restart to update</button>
+      <button class="win update" class:off={updateBlocked} aria-disabled={updateBlocked} data-tip={updateTip} onclick={restartToUpdate}>{updateBlocked ? 'Update ready' : 'Restart to update'}</button>
     {/if}
     <!-- #306: the inbox, your mentions and replies everywhere; its count of unread ones -->
     <span class="inbox-anchor">
@@ -1019,7 +1029,7 @@
   .win.notes .new-dot { top: 3px; right: 6px; width: 8px; height: 8px; }
   /* Restart to update (#82): the same quiet title bar button, with words; dimmed (no hover) while in a call */
   .win.update { width: auto; padding: 0 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
-  .win.update.off { opacity: .5; cursor: not-allowed; }
+  .win.update.off { opacity: .7; cursor: default; }
   .win.update.off:hover { background: transparent; color: var(--text-3); }
   .body { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 0 8px 8px; }
   .panel { border-radius: var(--radius); overflow: hidden; }

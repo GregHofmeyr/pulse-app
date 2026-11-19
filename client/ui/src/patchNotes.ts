@@ -36,12 +36,14 @@ export const patchNotes: PatchNotes = {
     'You can\'t schedule a message in a DM with someone you\'ve blocked any more (it used to wait until its time, then fail)',
     'Voice: when your connection drops for a moment and comes back, nobody else hears you leave and rejoin',
     'A stream whose streamer is still connected but sending nothing now ends after a minute, instead of staying live on a black screen',
+    'Updates: a slow update check at launch no longer gets dropped (the update is offered once it\'s found), a failed check tries again within minutes instead of half an hour, and a dropped download tries again by itself',
   ],
   qol: [
     'In a full profile\'s Name Archive, click who made a change to see their profile, or right-click them for their menu',
     'A watch party opened in a window moves on with the party to its next video, and closes when you leave the party',
     'Making a poll anonymous in a DM or a small group now warns that people can still work out a vote from the counts changing',
     'Linux: you show as Idle after 30 minutes away on Hyprland, sway and other wlroots desktops too',
+    'In a call, the title bar says "Update ready" when a new version is waiting: it applies when you restart Pulse, never mid-call, and "Restart to update" comes back when the call ends',
   ],
   message: 'Polish 🧽',
 }

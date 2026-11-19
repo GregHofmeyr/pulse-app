@@ -43,6 +43,10 @@ export async function installUpdate(restart: boolean): Promise<void> {
   }
 }
 
+/** In a call the title bar says "Update ready" with this (#536): nothing restarts mid-call, and quitting Pulse installs
+ *  it at the next launch. */
+export const UPDATE_READY_TIP = 'It applies when you restart Pulse. Restart to update comes back when your call ends'
+
 /** "Restart to update" waits while you're in a call (a stream needs one too): it never cuts a call. Joining one, or
  *  one that's reconnecting, counts (the core refuses then too). */
 export function restartBlocked(): boolean {
