@@ -1049,6 +1049,8 @@ async fn notification_levels_share_the_mutate_limit() {
     let (_, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
     let srv = create_server(&app, &a, "Main").await;
+    // a server's level is for its members (#80)
+    assert_eq!(join_server(&app, &b, srv.id).await.status(), 200);
     let body =
         serde_json::json!({ "target_kind": "server", "target_id": srv.id, "level": "mentions" });
     let put = || app.http.put(app.url("/notify-levels")).json(&body);

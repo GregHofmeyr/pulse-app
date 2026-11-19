@@ -631,14 +631,14 @@ pub async fn hidden_of(db: &SqlitePool, me: UserId) -> AppResult<Vec<ChannelId>>
         .map_err(anyhow::Error::from)?)
 }
 
-/// 404 unless `me` can see the target (servers are public unless deleted, #184; channels via
-/// channel_for).
+/// 404 unless `me` can see the target: a server they're in (#80; not one in Recently deleted, #184), a channel through
+/// channel_for. A server they aren't in looks like none at all.
 async fn check_target(s: &AppState, me: UserId, kind: MuteTarget, id: &str) -> AppResult<()> {
     match kind {
         MuteTarget::Server => {
             let server: pulse_protocol::ids::ServerId =
                 id.parse().map_err(|_| AppError::NotFound)?;
-            crate::servers::routes::server_exists(&s.db, server).await
+            crate::servers::routes::visible_to(&s.db, server, me).await
         }
         MuteTarget::Channel => {
             let ch: ChannelId = id.parse().map_err(|_| AppError::NotFound)?;
