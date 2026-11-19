@@ -24,6 +24,21 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.16',
+  version: '0.2.16',
+  date: '19 November 2026',
+  new: [
+    'Servers are now private: you only see servers you\'re in, and you join with an invite',
+  ],
+  fixes: [],
+  qol: [
+    'Your profile, online status and what you\'re up to reach only people you share a server, a DM or a group with',
+  ],
+  message: 'Your servers, your people 🔒',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.15',
   version: '0.2.15',
   date: '18 November 2026',
@@ -63,37 +78,4 @@ export const patchNotes: PatchNotes = {
     'Private servers you join by invite',
   ],
   message: 'More to come ✨',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.14',
-  version: '0.2.14',
-  date: '17 November 2026',
-  new: [
-    'Invite to game: right-click someone (or hit the 🎮 button in a DM) to send a Join card for the game you\'re in. Only the people in that chat can join, and it works even when your game activity is hidden',
-    'Hide what I\'m playing: right-click someone to stop them seeing the game you\'re in (and joining it). They still see you online. Manage the list in Settings › Privacy › Game activity',
-    'A redesigned quotes leaderboard that\'s easier to read and counts properly',
-  ],
-  fixes: [
-    'Updates no longer get missed at launch: if Pulse checks quickly, it now installs the new version instead of starting on the old one',
-    'Clip drop works on its own now, even with Game activity off (it moved to Settings › Chat)',
-    'Very light, dark or grey custom accent colours no longer leave buttons and switches faint',
-    'The Sunset profile card stays orange instead of turning brown, and the full profile card matches the quick one',
-    'The inbox tabs, delete prompts and dialog buttons no longer spill off the edge of their box or the screen',
-    'Watch parties pause properly now: a pause stays paused for everyone instead of playing again, and clicking the video pauses it',
-    'Plans no longer guess a far-away place for the weather: a place it can\'t find nearby just shows no forecast',
-  ],
-  qol: [
-    'Edit history is in the message menu too, not only behind "(edited)"',
-    'Someone removed from a server three times in two days needs the owner to let them back in (Server settings › Members › right-click › Allow back)',
-    'Your achievement and Deadlock cards skip servers that have someone you hide your games from',
-    'Every dropdown is a Pulse one now (channel pickers, F1 predictions, Clear after and more): no more plain system menus, and you can type to jump to an option',
-    'Right-click the F1 countdown strip to hide it for this weekend or turn it off (bring it back in Settings › Chat)',
-  ],
-  soon: [
-    'Private servers you join by invite',
-    'A fresh profile editor',
-  ],
-  message: 'Game night, your way 🎮',
 }
