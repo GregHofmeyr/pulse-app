@@ -167,7 +167,8 @@ async fn a_dm_is_never_named_and_a_deleted_original_leaves_nothing() {
     assert_eq!(f.content, "");
     assert_eq!(got.content, "↪ Forwarded a message");
     let raw = serde_json::to_string(&seen).unwrap();
-    assert!(!raw.contains("555"), "{raw}");
+    // the forwarded words, not "555" alone: a random id can contain 555
+    assert!(!raw.contains("my new number"), "{raw}");
     // nor does search find it by them any more
     assert!(search(&app, &sam, s.id, "number").await.hits.is_empty());
     // and it can't be forwarded on
