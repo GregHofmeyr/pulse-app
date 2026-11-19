@@ -73,7 +73,7 @@ pub async fn get(
     row.map(from_row).transpose()
 }
 
-/// Every server's mutes / deafens in force (servers are public, like their members).
+/// Every server's mutes / deafens in force; Ready keeps only those of the servers its reader is in (#80).
 pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<ServerVoiceMod>> {
     // a deleted server's are gone with it (#184)
     let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(

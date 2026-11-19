@@ -340,7 +340,7 @@ pub enum Event {
         server: Server,
     },
     /// Its owner deleted a server (#184): it moves to their Recently deleted, where nobody else
-    /// sees it, so it leaves everyone's rail with all it holds (everyone: servers are public). A
+    /// sees it, so it leaves its members' rails with all it holds (only its members, #80). A
     /// `ChannelDeleted` for each of its channels comes first, for clients from before this event,
     /// which skip it.
     ServerDeleted {
@@ -372,7 +372,7 @@ pub enum Event {
         server_id: ServerId,
         member: Member,
     },
-    /// Its owner handed a server to another of its members (#418). Everyone (servers are public): the server's
+    /// Its owner handed a server to another of its members (#418). Only to its members (#80): the server's
     /// `owner_id` is now `owner_id`. Clients from before it skip it and catch up on their next Ready.
     ServerOwnerChanged {
         server_id: ServerId,
@@ -397,8 +397,8 @@ pub enum Event {
         user_id: UserId,
         server_id: ServerId,
     },
-    /// Someone is no longer in a server (#371): they left, or its owner removed them (`removed_by`). Everyone, like
-    /// `MemberJoined`: member lists drop them, and the person themselves sees the server as one they aren't in (its
+    /// Someone is no longer in a server (#371): they left, or its owner removed them (`removed_by`). Its members and
+    /// the person themselves (#80): member lists drop them, and the person themselves sees the server as one they aren't in (its
     /// counts and calls go from their rail). Clients from before it skip it and catch up on their next Ready.
     MemberLeft {
         server_id: ServerId,
@@ -407,7 +407,7 @@ pub enum Event {
         #[ts(optional)]
         removed_by: Option<UserId>,
     },
-    /// Someone's server nickname changed (everyone, like `MemberJoined`).
+    /// Someone's server nickname changed (its server's members, like `MemberJoined`).
     MemberUpdated {
         server_id: ServerId,
         member: Member,
@@ -597,8 +597,8 @@ pub enum Event {
         channel: Channel,
     },
     /// A server channel was deleted: moved to its server's Recently deleted, where nobody sees it
-    /// (everyone: server channels are public, and the channel can't be looked up by the time this
-    /// is published, so it isn't scoped to it).
+    /// (its server's members, #80: the channel can't be looked up by the time this is published, so
+    /// it's scoped to the server, not the channel).
     ChannelDeleted {
         channel_id: ChannelId,
         server_id: ServerId,
@@ -609,8 +609,8 @@ pub enum Event {
         channel: Channel,
     },
     /// A server's channel list layout changed (#54): a category made, renamed or deleted, a
-    /// channel made, moved, deleted or restored. Carries the whole layout. Everyone, like
-    /// `ChannelDeleted`: server channels and their categories are public.
+    /// channel made, moved, deleted or restored. Carries the whole layout. Only to the server's
+    /// members (#80), like `ChannelDeleted`.
     LayoutChanged {
         layout: ServerLayout,
     },
@@ -757,7 +757,7 @@ pub enum Event {
     QotyEnded {
         event: QotyEvent,
     },
-    /// A game was added to a server's registry (everyone).
+    /// A game was added to a server's registry (its members).
     GameAdded {
         game: Game,
     },
@@ -781,7 +781,7 @@ pub enum Event {
     SoundUpdated {
         sound: Sound,
     },
-    /// A saved picker wheel was made or changed (#158): a server wheel reaches everyone (servers are public), a
+    /// A saved picker wheel was made or changed (#158): a server wheel reaches its server's members (#80), a
     /// Just me wheel only its owner.
     WheelSaved {
         wheel: Wheel,
@@ -794,7 +794,7 @@ pub enum Event {
         #[serde(default)]
         owner_id: Option<UserId>,
     },
-    /// A sound was removed from a server's soundboard (everyone).
+    /// A sound was removed from a server's soundboard (its members).
     SoundDeleted {
         server_id: ServerId,
         sound_id: String,
@@ -822,13 +822,13 @@ pub enum Event {
         user_id: UserId,
         frequent: Vec<String>,
     },
-    /// Someone server muted / deafened a member, or undid it (everyone, like other server-level
-    /// state). Both `None` means it is gone.
+    /// Someone server muted / deafened a member, or undid it (its server's members, like other
+    /// server-level state). Both `None` means it is gone.
     ServerVoiceChanged {
         state: ServerVoiceMod,
     },
     /// Only to the disconnected user's own sessions: `by` disconnected them from `channel_id`'s
-    /// call (the usual `VoiceLeft` follows for everyone).
+    /// call (the usual `VoiceLeft` follows for the channel's audience).
     VoiceDisconnected {
         channel_id: ChannelId,
         user_id: UserId,
@@ -1626,7 +1626,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_updated_goes_to_everyone() {
+    fn profile_updated_is_routed_by_person_not_channel() {
         let e = Event::ProfileUpdated {
             user: User {
                 id: UserId::new(),
@@ -1694,9 +1694,10 @@ mod tests {
     }
 
     #[test]
-    fn member_updates_go_to_everyone() {
+    fn member_updates_go_to_the_server() {
+        let server_id = ServerId::new();
         let e = Event::MemberUpdated {
-            server_id: ServerId::new(),
+            server_id,
             member: Member {
                 user: User {
                     id: UserId::new(),
@@ -1711,6 +1712,7 @@ mod tests {
                 joined_at: None,
             },
         };
+        assert_eq!(e.server_scope(), Some(server_id));
         assert_eq!((e.channel_id(), e.only_for()), (None, None));
     }
 
@@ -1786,7 +1788,7 @@ mod tests {
         assert!(!serde_json::to_string(&m).unwrap().contains("\"call\""));
     }
 
-    /// Picker wheels (#158): a server wheel's events reach everyone, a Just me wheel's only its owner; a spin rides
+    /// Picker wheels (#158): a server wheel's events reach its server, a Just me wheel's only its owner; a spin rides
     /// on its line's `MessageCreated` and an older message without `wheel` still parses.
     #[test]
     fn wheel_events_are_scoped() {
@@ -2164,9 +2166,9 @@ mod tests {
         assert!(!S::Youtube.valid_id("123"));
     }
 
-    /// A server's layout is public like its channels: everyone hears it, as `ChannelDeleted`.
+    /// A server's layout reaches its members (#80), as `ChannelDeleted` does.
     #[test]
-    fn layout_changed_goes_to_everyone() {
+    fn layout_changed_goes_to_the_server() {
         let server_id = ServerId::new();
         let e = Event::LayoutChanged {
             layout: ServerLayout {
@@ -2186,6 +2188,7 @@ mod tests {
                 }],
             },
         };
+        assert_eq!(e.server_scope(), Some(server_id));
         assert_eq!((e.channel_id(), e.only_for()), (None, None));
     }
 }
