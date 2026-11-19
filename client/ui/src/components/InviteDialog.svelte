@@ -186,7 +186,7 @@
   .glow { position: absolute; inset: 0 0 auto 0; height: 150px; pointer-events: none; opacity: .32;
     background: radial-gradient(55% 100% at 22% 0%, var(--glow), transparent 72%), radial-gradient(50% 90% at 82% 0%, var(--accent-strong), transparent 70%);
     animation: glow-in var(--dur-slow) var(--ease) both; }
-  .glow.pic { opacity: .5; background: none; -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent); mask-image: linear-gradient(to bottom, #000 30%, transparent); }
+  .glow.pic { opacity: .5; background: none; -webkit-mask-image: linear-gradient(to bottom, var(--bg-1) 30%, transparent); mask-image: linear-gradient(to bottom, var(--bg-1) 30%, transparent); }
   @keyframes glow-in { from { opacity: 0; transform: translateY(-12px); } }
   .chip-in { display: inline-grid; animation: chip-pop var(--dur-slow) var(--ease) var(--dur) both; }
   @keyframes chip-pop { from { opacity: 0; transform: scale(.7) rotate(-6deg); } 70% { transform: scale(1.06); } }
