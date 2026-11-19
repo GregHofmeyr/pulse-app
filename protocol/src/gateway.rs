@@ -378,7 +378,7 @@ pub enum Event {
         owner_id: UserId,
         previous_owner_id: UserId,
     },
-    /// Its owner changed how a server looks (#475: its banner set or removed). Everyone (servers are public): the
+    /// Its owner changed how a server looks (#475: its banner set or removed). Only to the server's members: the
     /// server as it is now. Clients from before it skip it and catch up on their next Ready.
     ServerUpdated {
         server: Server,
@@ -1052,7 +1052,7 @@ impl Event {
     /// is in it then.
     pub fn server_scope(&self) -> Option<ServerId> {
         match self {
-            Self::ServerCreated { server } => Some(server.id),
+            Self::ServerCreated { server } | Self::ServerUpdated { server } => Some(server.id),
             Self::ServerRestored { snapshot } | Self::ServerJoined { snapshot, .. } => {
                 Some(snapshot.server.id)
             }

@@ -1,5 +1,5 @@
-//! Server banners (#475): only its owner sets or removes one (a picture from the profile banner upload); everyone
-//! hears `ServerUpdated` and Ready carries it; invite previews and the invite page show it; it survives the media
+//! Server banners (#475): only its owner sets or removes one (a picture from the profile banner upload); its members
+//! alone hear `ServerUpdated` (#80), and Ready and `ServerJoined` carry it; invite previews and the invite page show it; it survives the media
 //! sweep while in use.
 mod common;
 
@@ -123,14 +123,13 @@ fn banner_updates(events: &[Event], server: ServerId) -> Vec<Option<String>> {
 }
 
 #[tokio::test]
-async fn only_the_owner_sets_and_removes_it_and_everyone_hears() {
+async fn only_the_owner_sets_and_removes_it_and_only_members_hear() {
     let app = spawn().await;
     let (_, alex) = register(&app, "alex").await;
     let (_, sam) = register(&app, "sam").await;
     let (_, jo) = register(&app, "jo").await;
     let server = create_server(&app, &alex, "Main").await.id;
-    let r = post_json(&app, &sam, &format!("/servers/{server}/join"), json!({})).await;
-    assert_eq!(r.status(), 204);
+    assert_eq!(join_server(&app, &sam, server).await.status(), 200);
     let (mut sam_ws, ready) = hello(&app, &sam).await;
     let (mut jo_ws, _) = hello(&app, &jo).await;
     assert_eq!(
@@ -145,7 +144,7 @@ async fn only_the_owner_sets_and_removes_it_and_everyone_hears() {
     drain(&mut sam_ws, 200).await;
     drain(&mut jo_ws, 200).await;
 
-    // a member who isn't its owner can't, nor can an outsider
+    // a member who isn't its owner can't; to an outsider the server isn't there (#80)
     let pic = upload(&app, &sam, "/media/banner", png()).await;
     assert_eq!(
         set_banner(&app, &sam, server, Some(&pic.hash))
@@ -153,7 +152,7 @@ async fn only_the_owner_sets_and_removes_it_and_everyone_hears() {
             .status(),
         403
     );
-    assert_eq!(set_banner(&app, &jo, server, None).await.status(), 403);
+    assert_eq!(set_banner(&app, &jo, server, None).await.status(), 404);
     // an avatar upload isn't a banner, and an unknown hash has expired
     let avatar = upload(&app, &alex, "/media/avatar", png()).await;
     assert_eq!(
@@ -180,15 +179,12 @@ async fn only_the_owner_sets_and_removes_it_and_everyone_hears() {
         got.banner_still, None,
         "a still banner has no separate still"
     );
-    // everyone hears, members and outsiders alike (servers are public)
+    // its members hear, an outsider doesn't (#80)
     assert_eq!(
         banner_updates(&drain(&mut sam_ws, 400).await, server),
         vec![Some(pic.hash.clone())]
     );
-    assert_eq!(
-        banner_updates(&drain(&mut jo_ws, 400).await, server),
-        vec![Some(pic.hash.clone())]
-    );
+    assert!(banner_updates(&drain(&mut jo_ws, 400).await, server).is_empty());
     // the same again changes nothing and says nothing
     assert_eq!(
         set_banner(&app, &alex, server, Some(&pic.hash))
@@ -198,13 +194,27 @@ async fn only_the_owner_sets_and_removes_it_and_everyone_hears() {
     );
     assert!(banner_updates(&drain(&mut sam_ws, 300).await, server).is_empty());
 
-    // a new connection's Ready and the server list carry it
-    let (_ws, ready) = hello(&app, &jo).await;
+    // a member's new Ready and server list carry it
+    let (_ws, ready) = hello(&app, &sam).await;
     let s = ready.servers.iter().find(|s| s.id == server).unwrap();
     assert_eq!(s.banner_hash.as_deref(), Some(pic.hash.as_str()));
-    let list: Vec<Server> = get_json(&app, &jo, "/servers").await;
+    let list: Vec<Server> = get_json(&app, &sam, "/servers").await;
     let s = list.iter().find(|s| s.id == server).unwrap();
     assert_eq!(s.banner_hash.as_deref(), Some(pic.hash.as_str()));
+    // the outsider's don't; joining brings it in `ServerJoined`
+    let (_, ready) = hello(&app, &jo).await;
+    assert!(ready.servers.iter().all(|s| s.id != server));
+    let list: Vec<Server> = get_json(&app, &jo, "/servers").await;
+    assert!(list.iter().all(|s| s.id != server));
+    assert_eq!(join_server(&app, &jo, server).await.status(), 200);
+    let joined = drain(&mut jo_ws, 400).await.into_iter().find_map(|e| match e {
+        Event::ServerJoined { snapshot, .. } if snapshot.server.id == server => Some(snapshot),
+        _ => None,
+    });
+    assert_eq!(
+        joined.expect("ServerJoined").server.banner_hash.as_deref(),
+        Some(pic.hash.as_str())
+    );
 
     // the owner removes it
     let r = set_banner(&app, &alex, server, None).await;

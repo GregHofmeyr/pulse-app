@@ -1,8 +1,8 @@
 //! A server's banner (#475): what its invite cards show over its chip, and the invite page too.
 //!
 //! `PUT /servers/{id}/banner` sets it to an upload from `POST /media/banner` (the profile banner's pipeline: the same
-//! crop, size limits, still and storage), or removes it (`hash: null`). Its owner only. Everyone hears
-//! `ServerUpdated` (servers are public). The upload it replaces is left to the unused-media sweep.
+//! crop, size limits, still and storage), or removes it (`hash: null`). Its owner only. Its members hear
+//! `ServerUpdated` (#80: servers are private). The upload it replaces is left to the unused-media sweep.
 
 use axum::extract::{Path, State};
 use axum::routing::put;
@@ -14,13 +14,14 @@ use pulse_protocol::rest::{Server, SetServerBannerRequest};
 use crate::AppState;
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
-use crate::servers::routes::{load_server, server_exists, server_live_in};
+use crate::servers::routes::{load_server, server_live_in, visible_to};
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/servers/{id}/banner", put(set_banner))
 }
 
-/// `PUT /servers/{id}/banner`: 403 for anyone but the owner, 404 for a deleted or unknown server, 400 for a hash that
+/// `PUT /servers/{id}/banner`: 403 for a member who isn't the owner, 404 for a deleted or unknown server or one you
+/// aren't in (#80), 400 for a hash that
 /// isn't a live banner upload (it is fine when it is the banner already).
 async fn set_banner(
     State(s): State<AppState>,
@@ -31,7 +32,7 @@ async fn set_banner(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
-    server_exists(&s.db, id).await?;
+    visible_to(&s.db, id, me).await?;
     if req.hash.is_some() {
         crate::media::writes_ok(&s.cfg)?;
     }
