@@ -202,3 +202,12 @@ describe('a DM in the list', () => {
     ;[...document.querySelectorAll<HTMLElement>('[role=menu] .menu-item')].find((b) => b.textContent?.trim() === 'Unmute join sound')!.click()
   })
 })
+
+describe("a group's own message sound (#378)", () => {
+  it('its right-click menu has Message sound for the group', () => {
+    cmp = mount(ConversationMenu, { target: document.body, props: { channel: group, muted: false, show: 'all', at: { x: 10, y: 10 }, onClose: () => {}, onLeft: () => {} } })
+    flushSync()
+    const sound = document.querySelector<HTMLElement>('[data-item="channel-message-sound"]')
+    expect(sound?.textContent).toContain('Message sound')
+  })
+})
