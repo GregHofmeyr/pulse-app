@@ -142,7 +142,7 @@ describe('Settings: Log out (#168)', () => {
     const nav = [...document.querySelectorAll<HTMLButtonElement>('nav button')]
     const out = nav.at(-1)!
     expect(out.textContent?.trim()).toBe('Log out')
-    expect(nav.at(-2)!.textContent).toBe('Advanced')
+    expect(nav.at(-2)!.textContent).toBe('About')
     expect(out.classList.contains('danger')).toBe(true)
     // set apart from the sections, not one of them
     expect(out.getAttribute('aria-current')).toBeNull()

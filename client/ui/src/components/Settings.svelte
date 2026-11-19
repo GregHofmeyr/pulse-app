@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  export type Section = 'profile' | 'appearance' | 'voice' | 'keybinds' | 'chat' | 'wheels' | 'notifications' | 'privacy' | 'sports' | 'deleted' | 'advanced'
+  export type Section = 'profile' | 'appearance' | 'voice' | 'keybinds' | 'chat' | 'wheels' | 'notifications' | 'privacy' | 'sports' | 'deleted' | 'advanced' | 'about'
 </script>
 
 <script lang="ts">
@@ -17,6 +17,7 @@
   import WheelSettings from './WheelSettings.svelte'
   import DeletedServers from './DeletedServers.svelte'
   import SportsSettings from './SportsSettings.svelte'
+  import AboutSettings from './AboutSettings.svelte'
   let { onClose, onLogout, section = 'voice' }: {
     onClose: () => void
     /** Log out (#168): the last item of the navigation, under the sections, as on Discord. */
@@ -41,6 +42,8 @@
     // the servers you deleted (#184): a deleted server has no Server settings to hold its Recently deleted
     { key: 'deleted', label: 'Recently deleted' },
     { key: 'advanced', label: 'Advanced' },
+    // which Pulse this is, where it's connected, updates and this version's notes (#506)
+    { key: 'about', label: 'About' },
   ]
 
   // Unsaved profile changes: every way out (close, backdrop, Escape, another section) asks first.
@@ -117,7 +120,7 @@
     {/if}
     {#if current === 'profile'}<ProfileSettings bind:dirty={profileDirty} bind:settling={profileSettling} />
     {:else if current === 'appearance'}<AppearanceSettings />
-    {:else if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else if current === 'wheels'}<WheelSettings />{:else if current === 'notifications'}<NotificationSettings />{:else if current === 'privacy'}<PrivacySettings />{:else if current === 'sports'}<SportsSettings />{:else if current === 'deleted'}<DeletedServers />{:else}<AdvancedSettings />{/if}
+    {:else if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else if current === 'wheels'}<WheelSettings />{:else if current === 'notifications'}<NotificationSettings />{:else if current === 'privacy'}<PrivacySettings />{:else if current === 'sports'}<SportsSettings />{:else if current === 'deleted'}<DeletedServers />{:else if current === 'about'}<AboutSettings />{:else}<AdvancedSettings />{/if}
   </div>
 </div>
 </div>

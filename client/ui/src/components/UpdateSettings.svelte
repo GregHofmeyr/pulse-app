@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Settings › Advanced › Updates (#460): this Pulse's version and a "Check for updates" that asks the server now,
+  // Settings › About › Updates (#460, moved from Advanced in #506): this Pulse's version and a "Check for updates" that asks the server now,
   // so a failed check is never silent. Only the Windows app updates itself; elsewhere updates come from the
   // package manager, and a build that doesn't update (a dev build) shows just its version.
   import { onMount } from 'svelte'
