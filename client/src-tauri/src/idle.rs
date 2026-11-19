@@ -4,8 +4,9 @@
 //!
 //! On Windows the input source is `GetLastInputInfo`, read every [`POLL`] (one cheap call, no hook). On Linux it's
 //! the first desktop idle signal that answers over D-Bus (#374, [`linux`]): the screen saver's session idle time
-//! (KDE), Mutter's idle monitor (GNOME), then logind's idle hint for this session (set by whatever runs the idle
-//! timeout). Where none answers, or nothing ever sets the hint, the device never says it's idle, as before.
+//! (KDE), Mutter's idle monitor (GNOME), the Wayland `ext-idle-notify-v1` protocol (Hyprland, sway and other wlroots
+//! compositors), then logind's idle hint for this session (set by whatever runs the idle timeout). Where none answers,
+//! or nothing ever sets the hint, the device never says it's idle, as before.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
