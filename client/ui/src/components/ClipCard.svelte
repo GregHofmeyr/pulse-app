@@ -20,6 +20,9 @@
   import { livePin, pinTip } from '../lib/pins'
   import { serverNow } from '../lib/serverClock'
   import type { Message } from '../lib/protocol/Message'
+  import PersonMenu from './PersonMenu.svelte'
+  import { messagePerson } from '../lib/messagePerson'
+  import { personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
 
   let {
     message,
@@ -70,6 +73,11 @@
   }
   // the poster's avatar animates while the pointer is over the card
   let over = $state(false)
+  // the poster's person menu (#335): right-click (or ContextMenu / Shift+F10 on) their name or avatar
+  let personMenu = $state<PersonMenuAt | null>(null)
+  function openPersonMenu(e: MouseEvent | KeyboardEvent, zone: HTMLElement) {
+    personMenu = personMenuAt(e, message.author_id, serverId || null, zone) ?? personMenu
+  }
 </script>
 
 {#if clip}
@@ -92,8 +100,8 @@
     <div class="info">
       <ClipCaption {message} />
       <div class="meta">
-        <Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={20} interactive={!!message.author_id} serverId={serverId || null} hovered={() => over} />
-        <span class="who">{#if message.author_id}<Name userId={message.author_id} serverId={serverId || null} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</span>
+        <span class="person-zone" role="presentation" oncontextmenu={(e) => openPersonMenu(e, e.currentTarget)} onkeydown={(e) => openPersonMenu(e, e.currentTarget)}><Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={20} interactive={!!message.author_id} serverId={serverId || null} hovered={() => over} /></span>
+        <span class="person-zone" role="presentation" oncontextmenu={(e) => openPersonMenu(e, e.currentTarget)} onkeydown={(e) => openPersonMenu(e, e.currentTarget)}><span class="who">{#if message.author_id}<Name userId={message.author_id} serverId={serverId || null} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</span></span>
         {#if game}<span class="game">{game}</span>{/if}
         <span class="grow"></span>
         {#if onOpenReplies}<button type="button" class="icon-btn icon-btn-sm" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={16} /></button>{/if}
@@ -107,7 +115,10 @@
   </article>
 {/if}
 
+<PersonMenu menu={personMenu} onMessage={messagePerson} onClose={() => (personMenu = null)} />
+
 <style>
+  .person-zone { display: contents; }
   /* drawn only near the screen; the size is a typical card until it is */
   .card { min-width: 0; display: flex; flex-direction: column; border-radius: var(--radius-lg); background: var(--bg-2); border: 1px solid var(--bg-3); content-visibility: auto; contain-intrinsic-size: auto 340px; }
   .media { position: relative; background: #000; border-radius: var(--radius-lg) 12px 0 0; overflow: hidden; }

@@ -90,9 +90,11 @@
   let flyout = $state<ReturnType<typeof MuteFlyout>>()
   let levelFlyout = $state<ReturnType<typeof MenuFlyout>>()
   let soundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
+  // a group's own message sound (#378; a DM's is its person's), on this device
+  let groupSoundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
   let dndFlyout = $state<ReturnType<typeof PersonDndItem>>()
   let inviteFlyout = $state<ReturnType<typeof ServerInviteItem>>()
-  const flyouts = () => [flyout, levelFlyout, soundFlyout, moveFlyout, dndFlyout, inviteFlyout]
+  const flyouts = () => [flyout, levelFlyout, soundFlyout, groupSoundFlyout, moveFlyout, dndFlyout, inviteFlyout]
   // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
   function keydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && flyouts().some((f) => f?.isOpen())) {
@@ -152,6 +154,9 @@
       {:else}
         <MuteFlyout bind:this={flyout} label="Mute conversation" flyoutLabel="Mute {conversationName(app.state, channel.id)} for" menuLeft={at.x} menuTop={at.y}
           onPick={muteFor} />
+      {/if}
+      {#if group}
+        <MessageSoundItem bind:this={groupSoundFlyout} channelId={channel.id} pick={(action) => { void action(); onClose() }} menuLeft={at.x} menuTop={at.y} />
       {/if}
     {:else if withMute}
       <!-- the bell (#203, #236): the same items and flyouts as the right-click menus -->

@@ -281,9 +281,9 @@
   .notes-pic { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; display: grid; place-items: center; background: var(--bg-3); color: var(--text-2); }
   .err { padding: 0 10px 6px; font-size: 12px; color: var(--danger-text); }
   /* drag onto a section (#419): sections lay out as part of the list; the lifted row follows the pointer above the
-     rest and takes no pointer (so what's under it is found); the section under it lights its heading */
+     rest (the hit test looks past it); the section under it lights its heading */
   .drop { display: contents; }
-  .row:global(.lifted) { position: relative; z-index: 5; pointer-events: none; opacity: .85; background: var(--bg-3); box-shadow: var(--shadow-2); }
+  .row:global(.lifted) { position: relative; z-index: 5; opacity: .85; background: var(--bg-3); box-shadow: var(--shadow-2); }
   .list:global(.dragging) { cursor: grabbing; }
   .drop:global(.drop-here) > .label { color: var(--accent-text); background: var(--bg-2); border-radius: var(--radius-sm); }
 </style>

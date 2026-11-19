@@ -58,6 +58,13 @@ afterEach(() => {
 })
 
 describe('GIFs in chat', () => {
+  it('a sticker (#293) shows on the chat itself, framed by nothing, and has no star', () => {
+    show(picked({ gif: { id: ID, title: 'Wave Sticker', width: 480, height: 480, sticker: true } }))
+    expect(gifs()).toHaveLength(1)
+    expect(gifs()[0].classList.contains('sticker')).toBe(true)
+    expect(gifs()[0].querySelector('.star')).toBeNull()
+    expect(img().getAttribute('alt')).toBe('Wave Sticker')
+  })
   it('a picked GIF shows alone, playing, sized by its shape, its title the alt text', () => {
     show(picked())
     expect(content()).toBeNull() // only the GIF: its link is for older clients

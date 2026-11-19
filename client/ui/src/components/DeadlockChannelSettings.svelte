@@ -31,7 +31,7 @@
   type Kind = 'match_cards' | 'rank_movers' | 'patch_notes'
   const kinds: { key: Kind; label: string; help: string }[] = [
     { key: 'match_cards', label: 'Post-match cards', help: "Hero, K/D/A, win or loss, length and rank change after members' matches; friends in the same match share a card." },
-    { key: 'rank_movers', label: 'Weekly rank movers', help: 'Once a week: whose rank went up or down.' },
+    { key: 'rank_movers', label: 'Weekly rank movers', help: 'Every Monday morning: whose rank went up or down that week.' },
     { key: 'patch_notes', label: 'Patch notes', help: 'Each Deadlock update, with the heroes it touches.' },
   ]
   async function save(change: { channel_id?: string | null } & Partial<Record<Kind, boolean>>) {
