@@ -27,7 +27,9 @@ export const patchNotes: PatchNotes = {
   id: '0.2.17',
   version: '0.2.17',
   date: '20 November 2026',
-  new: [],
+  new: [
+    'Going live survives a short network drop: your stream shows Reconnecting and carries on by itself, with no need to pick the screen again',
+  ],
   fixes: [
     'The opened server card from an invite pack is sharp again (its text and icon were slightly blurry), and "✦ MYTHICAL PULL ✦" is easier to read in every theme',
   ],
