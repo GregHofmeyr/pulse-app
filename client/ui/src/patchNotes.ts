@@ -37,6 +37,7 @@ export const patchNotes: PatchNotes = {
     'Voice: when your connection drops for a moment and comes back, nobody else hears you leave and rejoin',
     'A stream whose streamer is still connected but sending nothing now ends after a minute, instead of staying live on a black screen',
     'Updates: a slow update check at launch no longer gets dropped (the update is offered once it\'s found), a failed check tries again within minutes instead of half an hour, and a dropped download tries again by itself',
+    'With animations turned off (Windows "Animation effects"), a server invite still arrives as a sealed pack: click it, press Enter or give it a short drag and the card is just there, with no animation',
   ],
   qol: [
     'In a full profile\'s Name Archive, click who made a change to see their profile, or right-click them for their menu',

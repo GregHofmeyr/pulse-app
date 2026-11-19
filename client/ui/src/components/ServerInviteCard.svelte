@@ -4,8 +4,9 @@
   // a window, "PULSE · SERVER PACK", its name and who it's from. Holding and dragging across the top tears it (a
   // glowing zigzag follows, the strip lifts; let go early and it springs back); at TEAR_AT of the width it rips, the
   // strip flies off and a holo card rises out with a gold burst. Enter or Space opens it too. Its sender sees the card
-  // already open, a dead invite is the card greyed with why, and with reduced motion it's just open. Once opened it
-  // stays open on this device (lib/invitePack). The space is reserved up front, so nothing shifts.
+  // already open, and a dead invite is the card greyed with why. With reduced motion it arrives sealed too, held still,
+  // and a click, Enter or a short drag opens it at once: no flight, burst or rise, the card is just there (#538). Once
+  // opened it stays open on this device (lib/invitePack). The space is reserved up front, so nothing shifts.
   //
   // The card: "✦ MYTHICAL PULL ✦" (always: there are no tiers), the banner (or the server's colours), the ringed icon,
   // its name, who it's from with "N online · M members", and Join (the invite's own words), Open once you're in. What
@@ -19,7 +20,7 @@
   import { acceptInvite } from '../lib/inviteActions.svelte'
   import { cardView, countsLine, type CardState } from '../lib/serverInvites'
   import { avatarColors } from '../lib/avatar'
-  import { NO_TEAR, RIP_MS, markOpened, press, prefersReducedMotion, progressOf, startStage, stretch, wasOpened, type PackStage, type Tear } from '../lib/invitePack'
+  import { NO_TEAR, RIP_MS, markOpened, openingStage, press, prefersReducedMotion, progressOf, ripAt, startStage, stretch, wasOpened, type PackStage, type Tear } from '../lib/invitePack'
   import { PACK } from '../lib/packColors'
   import ServerChip from './ServerChip.svelte'
   import ServerBanner from './ServerBanner.svelte'
@@ -64,7 +65,7 @@
   const openedBefore = wasOpened(code)
   const reduced = prefersReducedMotion()
   /** How this card starts, once its preview is in. */
-  const start = $derived(preview && shown ? startStage({ mine, valid: shown === 'valid', reducedMotion: reduced, opened: openedBefore }) : null)
+  const start = $derived(preview && shown ? startStage({ mine, valid: shown === 'valid', opened: openedBefore }) : null)
   /** Opening it here: tearing done, then open. */
   let phase = $state<'idle' | 'ripping' | 'done'>('idle')
   const stage = $derived<PackStage | null>(start === 'sealed' ? (phase === 'ripping' ? 'ripping' : phase === 'done' ? 'open' : 'sealed') : start)
@@ -78,9 +79,14 @@
   function open() {
     if (stage !== 'sealed') return
     tear = NO_TEAR
+    markOpened(code)
+    if (openingStage(reduced) === 'open') {
+      // reduced motion (#538): the card is simply there, no rip, burst or rise
+      phase = 'done'
+      return
+    }
     phase = 'ripping'
     opening = true
-    markOpened(code)
     clearTimeout(timer)
     timer = setTimeout(() => (phase = 'done'), RIP_MS)
   }
@@ -98,16 +104,16 @@
   }
   function move(e: PointerEvent) {
     if (!tear.dragging || stage !== 'sealed') return
-    const r = stretch(tear, rel(e).x)
+    const r = stretch(tear, rel(e).x, ripAt(reduced))
     tear = r.tear
     if (r.rip) open()
   }
   function up() {
     if (stage === 'sealed') tear = NO_TEAR
   }
-  // a click with no pointer is Enter or Space on the pack
-  function keyOpen(e: MouseEvent) {
-    if (e.detail === 0) open()
+  // a click with no pointer is Enter or Space on the pack; with reduced motion any click opens it (#538)
+  function clickOpen(e: MouseEvent) {
+    if (e.detail === 0 || reduced) open()
   }
 
   // the zigzag the perforation and the tear follow: the seam's teeth (y 0↔8), 3px thick
@@ -115,7 +121,8 @@
   const ZIGZAG = `polygon(${[...XS.map((x, i) => `${x}% ${i % 2 ? 0 : 8}px`), ...XS.map((x, i) => `${x}% ${(i % 2 ? 0 : 8) + 3}px`).reverse()].join(', ')})`
   const SEAM_TEETH = `polygon(0 0, 100% 0, ${XS.map((x, i) => `${x}% ${i % 2 ? 50 : 58}px`).reverse().join(', ')})`
   const SEAM_FLAT = 'polygon(0 0, 100% 0, 99.2% 58px, 0.8% 58px)'
-  const lift = $derived(stage === 'sealed' ? progress : 0)
+  // with reduced motion the strip stays put while you drag (#538)
+  const lift = $derived(stage === 'sealed' && !reduced ? progress : 0)
 
   let joining = $state(false)
   let error = $state('')
@@ -183,8 +190,8 @@
 
     {#if preview && (stage === 'sealed' || stage === 'ripping')}
       <div class="float">
-        <button type="button" class="pack" class:dragging={tear.dragging} aria-label="Server pack from {from}: {preview.name}. Drag across the top, or press Enter, to open it."
-          onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} onclick={keyOpen}>
+        <button type="button" class="pack" class:dragging={tear.dragging} aria-label="Server pack from {from}: {preview.name}. {reduced ? 'Click or press Enter' : 'Drag across the top, or press Enter,'} to open it."
+          onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} onclick={clickOpen}>
           <span class="body">
             <span class="foil" style:background-position="0 -50px"></span>
             <span class="edges"></span>
@@ -213,7 +220,7 @@
           </span>
           <span class="spark" class:on={tear.dragging && stage === 'sealed'} style:left="{(tear.cursor * 100).toFixed(1)}%"></span>
         </button>
-        <span class="hint">Drag across the top to tear it open</span>
+        <span class="hint">{reduced ? 'Click to open it' : 'Drag across the top to tear it open'}</span>
       </div>
     {/if}
   {/if}
@@ -316,5 +323,6 @@
   @keyframes pack-hintfade { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
   /* a paused window or a stream: it holds still */
   :global(.streaming) .zone *, :global(.unfocused) .zone * { animation-play-state: paused; }
-  @media (prefers-reduced-motion: reduce) { .zone *, .zone { animation: none !important; transition: none !important; } }
+  /* less motion (#538): the pack is held still (no bob, zip or sweep) and a click opens it, so it reads as one */
+  @media (prefers-reduced-motion: reduce) { .zone *, .zone { animation: none !important; transition: none !important; } .pack, .pack.dragging { cursor: pointer; } }
 </style>
