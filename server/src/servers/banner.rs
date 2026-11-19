@@ -8,7 +8,7 @@ use axum::extract::{Path, State};
 use axum::routing::put;
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
-use pulse_protocol::ids::ServerId;
+use pulse_protocol::ids::{ServerId, UserId};
 use pulse_protocol::rest::{Server, SetServerBannerRequest};
 
 use crate::AppState;
@@ -29,35 +29,84 @@ async fn set_banner(
     Path(id): Path<ServerId>,
     Json(req): Json<SetServerBannerRequest>,
 ) -> AppResult<Json<Server>> {
+    set_picture(&s, me, id, req.hash, Picture::Banner)
+        .await
+        .map(Json)
+}
+
+/// Which of a server's pictures [`set_picture`] changes: its column and the upload kind it takes.
+#[derive(Clone, Copy)]
+pub(crate) enum Picture {
+    /// From `POST /media/banner` (#475).
+    Banner,
+    /// From `POST /media/avatar`, the same square crop as an avatar (#55).
+    Icon,
+}
+
+impl Picture {
+    fn column(self) -> &'static str {
+        match self {
+            Self::Banner => "banner_hash",
+            Self::Icon => "icon_hash",
+        }
+    }
+    fn kind(self) -> &'static str {
+        match self {
+            Self::Banner => "banner",
+            Self::Icon => "avatar",
+        }
+    }
+    fn noun(self) -> &'static str {
+        match self {
+            Self::Banner => "banner",
+            Self::Icon => "icon",
+        }
+    }
+}
+
+/// Set or remove one of a server's pictures, as its owner, and tell its members (`ServerUpdated`). The same rules
+/// for both: 404 unless you're in the live server, 403 unless you own it, 400 for a hash that isn't a live upload of
+/// the right kind (fine when it is the picture already: nothing changes and nothing is said).
+pub(crate) async fn set_picture(
+    s: &AppState,
+    me: UserId,
+    id: ServerId,
+    hash: Option<String>,
+    pic: Picture,
+) -> AppResult<Server> {
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
     visible_to(&s.db, id, me).await?;
-    if req.hash.is_some() {
+    if hash.is_some() {
         crate::media::writes_ok(&s.cfg)?;
     }
     // Hold the order guard so two quick changes publish in commit order.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     server_live_in(&mut tx, id).await?; // deleted since the check above
-    let (owner, current): (String, Option<String>) =
-        sqlx::query_as("SELECT created_by, banner_hash FROM servers WHERE id = ?")
-            .bind(id.to_string())
-            .fetch_one(&mut *tx)
-            .await?;
+    let (owner, current): (String, Option<String>) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT created_by, {} FROM servers WHERE id = ?",
+        pic.column()
+    )))
+    .bind(id.to_string())
+    .fetch_one(&mut *tx)
+    .await?;
     if owner != me.to_string() {
-        return Err(AppError::ForbiddenMsg(
-            "Only the server's owner can change its banner.".into(),
-        ));
+        return Err(AppError::ForbiddenMsg(format!(
+            "Only the server's owner can change its {}.",
+            pic.noun()
+        )));
     }
-    if current == req.hash {
+    if current == hash {
         drop(tx);
-        return Ok(Json(load_server(&s.db, id).await?));
+        return load_server(&s.db, id).await;
     }
-    if let Some(hash) = &req.hash {
+    if let Some(hash) = &hash {
         let found: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM media WHERE hash = ? AND kind = 'banner'")
+            sqlx::query_scalar("SELECT 1 FROM media WHERE hash = ? AND kind = ?")
                 .bind(hash)
+                .bind(pic.kind())
                 .fetch_optional(&mut *tx)
                 .await?;
         if found.is_none() {
@@ -66,14 +115,17 @@ async fn set_banner(
             ));
         }
     }
-    sqlx::query("UPDATE servers SET banner_hash = ? WHERE id = ?")
-        .bind(&req.hash)
-        .bind(id.to_string())
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE servers SET {} = ? WHERE id = ?",
+        pic.column()
+    )))
+    .bind(&hash)
+    .bind(id.to_string())
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     let server = load_server(&s.db, id).await?;
-    tracing::info!(server = %id, set = req.hash.is_some(), "server banner changed");
+    tracing::info!(server = %id, set = hash.is_some(), picture = pic.noun(), "server picture changed");
     s.hub
         .publish(
             &s.db,
@@ -82,5 +134,5 @@ async fn set_banner(
             },
         )
         .await;
-    Ok(Json(server))
+    Ok(server)
 }

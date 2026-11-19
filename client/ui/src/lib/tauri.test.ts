@@ -67,6 +67,15 @@ describe('profile pictures', () => {
     expect(invoke).toHaveBeenCalledWith('upload_banner_media', bytes, { headers: { 'x-pulse-crop': '0,0,5,2' } })
   })
 
+  it('setServerIcon and renameServer name their arguments (#55)', async () => {
+    await api.setServerIcon('S1', 'ab')
+    expect(invoke).toHaveBeenCalledWith('set_server_icon', { serverId: 'S1', hash: 'ab' })
+    await api.setServerIcon('S1', null)
+    expect(invoke).toHaveBeenCalledWith('set_server_icon', { serverId: 'S1', hash: null })
+    await api.renameServer('S1', 'Lounge')
+    expect(invoke).toHaveBeenCalledWith('rename_server', { serverId: 'S1', name: 'Lounge' })
+  })
+
   it('setServerBanner names its arguments (#475)', async () => {
     await api.setServerBanner('S1', 'ab')
     expect(invoke).toHaveBeenCalledWith('set_server_banner', { serverId: 'S1', hash: 'ab' })

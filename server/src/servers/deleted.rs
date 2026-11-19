@@ -145,6 +145,7 @@ pub async fn list(
         String,
         Option<String>,
         Option<String>,
+        Option<String>,
         String,
     )> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SERVER_COLS}, deleted_at FROM servers
@@ -155,9 +156,9 @@ pub async fn list(
     .await?;
     let due = due(chrono::Utc::now());
     let mut out = Vec::with_capacity(rows.len());
-    for (id, name, icon, owner, banner, banner_still, deleted_at) in rows {
+    for (id, name, icon, owner, banner, banner_still, icon_still, deleted_at) in rows {
         out.push(DeletedServer {
-            server: server_from_row((id, name, icon, owner, banner, banner_still))?,
+            server: server_from_row((id, name, icon, owner, banner, banner_still, icon_still))?,
             can_restore: deleted_at > due,
             purge_at: purge_at(&deleted_at)?,
             deleted_at,

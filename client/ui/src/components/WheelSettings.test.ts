@@ -150,7 +150,7 @@ describe('where the Wheels pages are', () => {
     cmp = mount(ServerSettings, { target: document.body, props: { server, onClose: () => {} } })
     flushSync()
     const nav = [...document.querySelectorAll('nav button')].map((b) => b.textContent)
-    expect(nav.slice(0, 3)).toEqual(['Emoji', 'Soundboard', 'Wheels'])
+    expect(nav.slice(0, 4)).toEqual(['Overview', 'Emoji', 'Soundboard', 'Wheels'])
   })
 
   it('your Settings has Wheels after Chat', () => {

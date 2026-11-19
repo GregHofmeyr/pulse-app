@@ -574,6 +574,10 @@ pub struct Server {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub banner_still: Option<String>,
+    /// An animated icon's still (#55), for when it shouldn't move.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub icon_still: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2483,6 +2487,19 @@ pub struct SetGroupIconRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct SetServerBannerRequest {
     pub hash: Option<String>,
+}
+
+/// `PUT /servers/{id}/icon` (#55): the hash of a picture from `POST /media/avatar` (the same square crop), or `None` to
+/// remove it. Its owner only.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SetServerIconRequest {
+    pub hash: Option<String>,
+}
+
+/// `PUT /servers/{id}/name` (#55): a server's new name, 1-64 characters once trimmed. Its owner only.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct RenameServerRequest {
+    pub name: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]

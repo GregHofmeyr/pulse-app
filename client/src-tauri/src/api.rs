@@ -1042,6 +1042,42 @@ impl Api {
         .await
     }
 
+    /// Set (an avatar-upload hash) or remove a server's icon (#55): its owner only.
+    pub async fn set_server_icon(
+        &self,
+        token: &str,
+        server: ServerId,
+        hash: Option<String>,
+    ) -> Result<Server, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/servers/{server}/icon", self.base))
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::SetServerIconRequest { hash })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Rename a server (#55): its owner only.
+    pub async fn rename_server(
+        &self,
+        token: &str,
+        server: ServerId,
+        name: String,
+    ) -> Result<Server, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/servers/{server}/name", self.base))
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::RenameServerRequest { name })
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Make an invite into a server (#80): a link, or a direct invite for one person (`for_user`). Any member.
     pub async fn create_server_invite(
         &self,
@@ -4580,6 +4616,43 @@ mod tests {
         // the old owner may leave now
         api.leave_server(&alex, s.id).await.unwrap();
         assert!(api.transfer_server(&alex, s.id, alex_id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_server_icon_and_name_round_trip_through_the_core() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (_, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let pic = api
+            .upload_profile_media(
+                &alex,
+                ProfileMediaKind::Avatar,
+                crate::media::tests::PNG.to_vec(),
+                None,
+            )
+            .await
+            .unwrap();
+        // only its owner
+        assert!(
+            api.set_server_icon(&sam, s.id, Some(pic.hash.clone()))
+                .await
+                .is_err()
+        );
+        assert!(api.rename_server(&sam, s.id, "Mine".into()).await.is_err());
+        let got = api
+            .set_server_icon(&alex, s.id, Some(pic.hash.clone()))
+            .await
+            .unwrap();
+        assert_eq!(got.icon_hash.as_deref(), Some(pic.hash.as_str()));
+        let got = api.set_server_icon(&alex, s.id, None).await.unwrap();
+        assert_eq!(got.icon_hash, None);
+        let got = api
+            .rename_server(&alex, s.id, "Lounge".into())
+            .await
+            .unwrap();
+        assert_eq!(got.name, "Lounge");
     }
 
     #[tokio::test]

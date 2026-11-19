@@ -18,6 +18,8 @@
   import NicknameDialog from '../components/NicknameDialog.svelte'
   import CustomStatusDialog from '../components/CustomStatusDialog.svelte'
   import ServerMenu from '../components/ServerMenu.svelte'
+  import ServerChip from '../components/ServerChip.svelte'
+  import ServerNameEdit from '../components/ServerNameEdit.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
   import InviteDialog from '../components/InviteDialog.svelte'
   import ServerActionDialog from '../components/ServerActionDialog.svelte'
@@ -215,6 +217,8 @@
     toggle: (side) => (panels[side] = !panels[side]),
   })
   let serverMenuOpen = $state(false)
+  /** The server being renamed in place at the top of its channel list (#55), when it's the one showing. */
+  let renamingServerId = $state<string | null>(null)
   let serverToggle = $state<HTMLButtonElement>()
   /** The same for the server menu. */
   function closeServerMenu(e: Event) {
@@ -767,11 +771,8 @@
         {@const talking = inVoice(app.state, s.id)}
         <button class="tab" data-server={s.id} class:active={activeServerId === s.id} aria-label={callAt === s.id ? `${s.name} (you're in a call here)` : undefined} onclick={() => selectServer(s.id)}
           onkeydown={(e) => tabKeys(e, s.id)} oncontextmenu={(e) => { e.preventDefault(); serverMenu = { id: s.id, x: e.clientX, y: e.clientY, opener: e.currentTarget } }}>
-          {#if callAt === s.id}
-            <span class="chip call-here" style:background={avatarColor(s.id)}>{initial(s.name)}{@render callBadge()}</span>{s.name}
-          {:else}
-            <span class="chip" style:background={avatarColor(s.id)}>{initial(s.name)}</span>{s.name}
-          {/if}
+          <!-- its icon (#55) when it has one, else its initial on its colour -->
+          <span class="chip" class:call-here={callAt === s.id} class:pic={!!s.icon_hash} style:background={s.icon_hash ? undefined : avatarColor(s.id)}>{#if s.icon_hash}<ServerChip id={s.id} name={s.name} iconHash={s.icon_hash} still={s.icon_still} size={22} radius="var(--radius-xs)" />{:else}{initial(s.name)}{/if}{#if callAt === s.id}{@render callBadge()}{/if}</span>{s.name}
           <!-- the badge already says it for your own call's server -->
           {#if talking > 0 && callAt !== s.id}<span class="invc" aria-label="{talking} in voice" data-tip="{talking} in voice"><Icon name="speaker" size={14} /></span>{/if}
           {#if badge.mentions > 0}<span class="pill">{badge.mentions}</span>{:else if badge.dot}<span class="dot" aria-label="new messages"></span>{/if}
@@ -812,12 +813,18 @@
   <div class="body" bind:this={bodyEl} use:narrowerThan={{ px: NARROW_BODY, set: (v) => (narrowBody = v) }}>
     <aside id={PANEL_ID.left} class="panel side" hidden={hideLeft} bind:this={sidePanel} style:width="{fitted.left}px">
       <div class="panel-head">
-        {#if activeServer}
+        {#if activeServer && renamingServerId === activeServer.id}
+          {@const sid = activeServer.id}
+          <ServerNameEdit server={activeServer} onDone={(fromKey) => { if (renamingServerId === sid) renamingServerId = null; if (fromKey) void tick().then(() => serverToggle?.focus()) }} />
+        {:else if activeServer}
           <button bind:this={serverToggle} class="head-btn" data-menu-toggle aria-haspopup="menu" aria-expanded={serverMenuOpen}
             onclick={() => (serverMenuOpen = !serverMenuOpen)}>{activeServer.name}<Icon name="chevron" size={14} /></button>
           {#if serverMenuOpen}
             <div class="menu head-menu menu-surface pop-in" role="menu" use:clickOutside={closeServerMenu}>
               <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsId = activeServerId }}>Server settings</button>
+              {#if activeServer.owner_id && activeServer.owner_id === app.state.me?.id}
+                <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; renamingServerId = activeServerId }}>Rename</button>
+              {/if}
               {#if member && activeServerId && app.state.layouts[activeServerId]}
                 {@const sid = activeServerId}
                 <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; if (activeServerId) requestCreateCategory(activeServerId) }}>Create category</button>
@@ -957,6 +964,7 @@
         onMoveLeft={at > 0 ? () => moved(stepServer(m.id, -1)) : undefined}
         onMoveRight={at >= 0 && at < servers.length - 1 ? () => moved(stepServer(m.id, 1)) : undefined}
         onSettings={() => (serverSettingsId = m.id)} onError={(msg) => say(msg)}
+        onRename={() => { if (activeServerId !== m.id) selectServer(m.id); renamingServerId = m.id }}
         onCreateCategory={() => { if (activeServerId !== m.id) selectServer(m.id); requestCreateCategory(m.id) }} />
     {/key}
   {/if}

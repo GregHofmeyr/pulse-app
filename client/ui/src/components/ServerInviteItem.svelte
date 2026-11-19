@@ -33,7 +33,7 @@
   export const trigger = (): HTMLButtonElement | undefined => inner?.trigger()
 </script>
 
-{#snippet chip(i: number)}<ServerChip id={servers[i].id} name={servers[i].name} iconHash={servers[i].icon_hash} size={18} />{/snippet}
+{#snippet chip(i: number)}<ServerChip id={servers[i].id} name={servers[i].name} iconHash={servers[i].icon_hash} still={servers[i].icon_still} size={18} />{/snippet}
 
 {#if !self && servers.length}
   <MenuFlyout bind:this={inner} label="Invite to server" flyoutLabel="Invite to a server" {menuLeft} {menuTop} item="invite-server"

@@ -16,4 +16,8 @@ banner_hash?: string,
 /**
  * An animated banner's still, for when it shouldn't move.
  */
-banner_still?: string, };
+banner_still?: string, 
+/**
+ * An animated icon's still (#55), for when it shouldn't move.
+ */
+icon_still?: string, };

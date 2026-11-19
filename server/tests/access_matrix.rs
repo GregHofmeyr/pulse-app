@@ -498,6 +498,7 @@ const WRITES: &[&str] = &[
     "POST /servers/{id}/emoji",
     "PUT /servers/{id}/f1-channel",
     "POST /servers/{id}/games",
+    "PUT /servers/{id}/icon",
     "POST /servers/{id}/invites",
     // the old open Join: refuses everyone with the same words (#80)
     "POST /servers/{id}/join",
@@ -507,6 +508,7 @@ const WRITES: &[&str] = &[
     "POST /servers/{id}/leave",
     "DELETE /servers/{id}/members/{user}",
     "PUT /servers/{id}/members/{user}/nickname",
+    "PUT /servers/{id}/name",
     "PUT /servers/{id}/owner",
     "POST /servers/{id}/qoty",
     "POST /servers/{id}/restore",

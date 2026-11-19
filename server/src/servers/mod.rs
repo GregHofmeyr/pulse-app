@@ -8,6 +8,7 @@ pub mod invites;
 pub mod membership;
 pub mod nicknames;
 pub mod order;
+pub mod overview;
 pub mod personal_order;
 pub(crate) mod purge;
 pub mod routes;
