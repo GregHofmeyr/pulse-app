@@ -82,7 +82,7 @@ describe('a text channel', () => {
   it('right_click_opens_its_menu_at_the_pointer_with_read_mute_rename_and_delete', () => {
     rightClick('old-stuff')
     expect(menu()?.getAttribute('aria-label')).toBe('Actions for #old-stuff')
-    expect(labels()).toEqual(['Mark as read', 'Mute channel', 'Notifications', 'Message sound', 'Rename channel…', 'Delete channel…'])
+    expect(labels()).toEqual(['Mark as read', 'Mute channel', 'Notifications', 'Message sound', 'Rename', 'Delete channel…'])
     expect(menu()!.style.left).toBe('40px')
   })
 
@@ -144,7 +144,7 @@ describe('a text channel', () => {
   it('rename_edits_the_name_in_the_row_and_saves_it_like_a_new_channel_name', async () => {
     invoke.mockResolvedValue({ id: 'T1', server_id: 'S1', kind: 'text', name: 'chat-room', position: 0 })
     rightClick('general')
-    item('Rename channel…')!.click()
+    item('Rename')!.click()
     flushSync()
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Rename #general"]')!
     expect(input.value).toBe('general')
@@ -160,7 +160,7 @@ describe('a text channel', () => {
   it('focus_is_back_on_the_row_after_a_rename', async () => {
     invoke.mockResolvedValue({ id: 'T1', server_id: 'S1', kind: 'text', name: 'chat', position: 0 })
     rightClick('general')
-    item('Rename channel…')!.click()
+    item('Rename')!.click()
     flushSync()
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Rename #general"]')!
     input.value = 'chat'
@@ -188,7 +188,7 @@ describe('a text channel', () => {
 
   it('escape_leaves_a_rename_without_saving', async () => {
     rightClick('general')
-    item('Rename channel…')!.click()
+    item('Rename')!.click()
     flushSync()
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Rename #general"]')!
     input.value = 'nope'
@@ -202,7 +202,7 @@ describe('a text channel', () => {
   it('a_refused_rename_says_why_and_keeps_the_field', async () => {
     invoke.mockRejectedValue({ kind: 'rejected', message: 'name must be 1-64 characters' })
     rightClick('general')
-    item('Rename channel…')!.click()
+    item('Rename')!.click()
     flushSync()
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Rename #general"]')!
     input.value = 'x'
@@ -297,7 +297,7 @@ describe('the mute flyout', () => {
     expect(muteItem().getAttribute('aria-controls')).toBe(flyout()!.id)
     // hover only: focus stays where it was
     expect(flyout()!.contains(document.activeElement)).toBe(false)
-    hover(item('Rename channel…')!)
+    hover(item('Rename')!)
     // hover intent (#173): crossing another item on the way to the flyout doesn't close it at once
     expect(flyout()).not.toBeNull()
     vi.advanceTimersByTime(SUBMENU_CLOSE_DELAY); flushSync()
@@ -310,7 +310,7 @@ describe('the mute flyout', () => {
     vi.useFakeTimers()
     rightClick('general', 600)
     hover(muteItem())
-    hover(item('Rename channel…')!)
+    hover(item('Rename')!)
     vi.advanceTimersByTime(SUBMENU_CLOSE_DELAY / 2)
     flyout()!.dispatchEvent(new Event('pointerenter'))
     vi.advanceTimersByTime(SUBMENU_CLOSE_DELAY * 2); flushSync()
@@ -391,7 +391,7 @@ describe('the mute flyout', () => {
     rightClick('general')
     muteItem().focus()
     key(muteItem(), 'ArrowRight')
-    hover(item('Rename channel…')!)
+    hover(item('Rename')!)
     vi.advanceTimersByTime(SUBMENU_CLOSE_DELAY); flushSync()
     vi.useRealTimers()
     expect(flyout()).toBeNull()
@@ -423,7 +423,7 @@ describe('a voice channel', () => {
   it('offers_join_then_its_chats_read_mute_and_notifications_then_rename_and_delete', () => {
     // #226: its chat has unreads, a mute and a notification level like a text channel
     rightClick('Lounge')
-    expect(labels()).toEqual(['Join', 'Mark as read', 'Mute channel', 'Notifications', 'Message sound', 'Channel settings…', 'Rename channel…', 'Delete channel…'])
+    expect(labels()).toEqual(['Join', 'Mark as read', 'Mute channel', 'Notifications', 'Message sound', 'Channel settings…', 'Rename', 'Delete channel…'])
     item('Join')!.click()
     flushSync()
     expect(onJoinVoice).toHaveBeenCalledWith('V1')
@@ -441,7 +441,7 @@ describe('a voice channel', () => {
   it('renames_keeping_its_case', async () => {
     invoke.mockResolvedValue({ id: 'V1', server_id: 'S1', kind: 'voice', name: 'Game Night', position: 0 })
     rightClick('Lounge')
-    item('Rename channel…')!.click()
+    item('Rename')!.click()
     flushSync()
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Rename Lounge"]')!
     input.value = 'Game Night'
@@ -612,7 +612,7 @@ describe('outside the server', () => {
   it('only_reading_and_muting_are_offered', () => {
     render({ ...unread, members: [{ server_id: 'S1', members: [{ user: { ...testMe, id: 'U9' }, nickname: null }] }] })
     rightClick('old-stuff')
-    expect(labels()).not.toContain('Rename channel…')
+    expect(labels()).not.toContain('Rename')
     expect(labels()).not.toContain('Delete channel…')
     expect(labels()).toContain('Mark as read')
     rightClick('Lounge')

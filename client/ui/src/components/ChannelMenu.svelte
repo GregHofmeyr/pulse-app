@@ -2,9 +2,10 @@
   // The right-click menu on a sidebar channel row (or Shift+F10 / the menu key on it). Text, quotes
   // and clips: mark as read, mute (a flyout of durations, #131) and notifications (its level or following its server,
   // a flyout with yours ticked, #195); voice: join or leave, then the same three for its chat (#226). Anyone in the
-  // server may rename and
-  // delete (v1 trust model), and open a voice channel's settings (#75); those are handed back to the list, which
-  // edits in the row and asks in a dialog. The server's owner may archive or unarchive a text channel (#303).
+  // server may rename (in the row, #55), move it to another category (#55: a flyout; dragging reorders, so there's no
+  // Move up / Move down) and delete (v1 trust model), and open a voice channel's settings (#75); those are handed back
+  // to the list, which edits in the row and asks in a dialog. The server's owner may archive or unarchive a text
+  // channel (#303).
   import { onMount, untrack } from 'svelte'
   import { app, clock } from '../lib/store.svelte'
   import { placeMenu } from '../lib/menuPlace'
@@ -19,7 +20,7 @@
   import MessageSoundItem from './MessageSoundItem.svelte'
   import type { Channel } from '../lib/protocol/Channel'
 
-  let { channel, member, x, y, opener, onClose, onRename, onDelete, onJoin, onError, onSettings = () => {}, onMoveUp, onMoveDown, canMoveUp = false, canMoveDown = false }: {
+  let { channel, member, x, y, opener, onClose, onRename, onDelete, onJoin, onError, onSettings = () => {}, categories, onMoveTo }: {
     channel: Channel
     /** You're in the channel's server: you may rename, delete and join. */
     member: boolean
@@ -35,12 +36,10 @@
     onError: (message: string) => void
     /** Channel settings… (#75): a voice channel's, for members. */
     onSettings?: () => void
-    /** Move up / Move down (#54), the keyboard's way to drag: given only to members on a server with categories. */
-    onMoveUp?: () => void
-    onMoveDown?: () => void
-    /** False at the very top / bottom of the list: that move is shown, disabled. */
-    canMoveUp?: boolean
-    canMoveDown?: boolean
+    /** Move to category (#55): the places it can go (null: no category, at the top), the one it's in ticked. Given
+     *  only to members on a server with categories. */
+    categories?: { id: string | null; name: string; current: boolean }[]
+    onMoveTo?: (categoryId: string | null) => void
   } = $props()
 
   const isVoice = $derived(channel.kind === 'voice')
@@ -85,7 +84,16 @@
   let levelFlyout = $state<ReturnType<typeof MenuFlyout>>()
   // the channel's own message sound (#378), on this device
   let soundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
-  const flyouts = () => [flyout, levelFlyout, soundFlyout]
+  // Move to category (#55)
+  let moveFlyout = $state<ReturnType<typeof MenuFlyout>>()
+  const moveChoices = $derived((categories ?? []).map((c) => ({ label: c.name, checked: c.current })))
+  const pickMove = (i: number) => {
+    const to = categories?.[i]
+    if (!to || to.current || !onMoveTo) return pick(() => {})
+    const move = onMoveTo
+    pick(() => move(to.id))
+  }
+  const flyouts = () => [flyout, levelFlyout, soundFlyout, moveFlyout]
   const closeSub = (refocus: boolean | 'if-inside') => { for (const f of flyouts()) f?.close(refocus) }
   const level = $derived(channelLevel(app.state, channel.id))
   const levelChoices = $derived(CHANNEL_LEVELS.map((l) => ({ label: l.label, checked: l.level === level })))
@@ -160,7 +168,11 @@
   {#if member}
     <span class="menu-sep"></span>
     {#if isVoice}<button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onSettings)}>Channel settings…</button>{/if}
-    <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onRename)}>Rename channel…</button>
+    <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onRename)}>Rename</button>
+    {#if categories?.length && onMoveTo}
+      <MenuFlyout bind:this={moveFlyout} label="Move to category" flyoutLabel="Move {label} to" menuLeft={left} menuTop={top}
+        choices={moveChoices} onPick={pickMove} />
+    {/if}
     {#if canArchive}
       {#if channel.archived_at}
         <button type="button" class="menu-item" role="menuitem" data-item="unarchive" onclick={() => pick(setArchived(false))}>Unarchive channel</button>
@@ -169,11 +181,6 @@
       {/if}
     {/if}
     <button type="button" class="menu-item danger" role="menuitem" data-item onclick={() => pick(onDelete)}>Delete channel…</button>
-    {#if onMoveUp && onMoveDown}
-      <span class="menu-sep"></span>
-      <button type="button" class="menu-item" role="menuitem" data-item disabled={!canMoveUp} onclick={() => pick(onMoveUp)}>Move up</button>
-      <button type="button" class="menu-item" role="menuitem" data-item disabled={!canMoveDown} onclick={() => pick(onMoveDown)}>Move down</button>
-    {/if}
   {/if}
 </div>
 

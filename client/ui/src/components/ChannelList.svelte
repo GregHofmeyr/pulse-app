@@ -251,6 +251,33 @@
     if (to) setCollapsed(`cat:${to}`, false)
     saveMove(next, `.row[data-channel="${id}"]`)
   }
+  /** Move to category (#55), the channel menu's: where it can go (no category, then each category in order), the one
+   *  it's in ticked. None on an older server, outside it, or for an archived channel (it isn't in the order). */
+  function moveTargets(c: Channel): { id: string | null; name: string; current: boolean }[] | undefined {
+    if (!arrange || c.archived_at) return undefined
+    const cats = layout.sections.filter((x) => x.category)
+    if (!cats.length) return undefined
+    const o = order()
+    if (!o.top.includes(c.id) && !o.cats.some((x) => x.channels.includes(c.id))) return undefined
+    return [
+      { id: null, name: 'No category', current: o.top.includes(c.id) },
+      ...cats.map((x) => ({ id: x.category!.id, name: x.name, current: !!o.cats.find((k) => k.id === x.category!.id)?.channels.includes(c.id) })),
+    ]
+  }
+  /** Put a channel at the end of a category (or of the uncategorised channels at the top), saved like a keyboard move. */
+  function moveToCategory(id: string, to: string | null) {
+    const o = order()
+    const index = to === null ? o.top.length : (o.cats.find((x) => x.id === to)?.channels.length ?? 0)
+    const next = placeChannel(o, id, { category: to, index })
+    if (JSON.stringify(next) === JSON.stringify(o)) return
+    const c = app.state.channels[id]
+    if (c) {
+      const catName = (cid: string) => layout.sections.find((x) => x.category?.id === cid)?.name ?? ''
+      void sayMove(channelMoveText(next, c, catName))
+    }
+    if (to) setCollapsed(`cat:${to}`, false)
+    saveMove(next, `.row[data-channel="${id}"]`)
+  }
   function moveCategory(id: string, dir: -1 | 1) {
     const next = stepCategory(order(), id, dir)
     if (!next) return
@@ -667,8 +694,7 @@
   {@const c = chanMenu.channel}
   {#key chanMenu}<ChannelMenu channel={c} {member} x={chanMenu.x} y={chanMenu.y} opener={chanMenu.opener} onClose={() => (chanMenu = null)}
     onRename={() => startRename(c)} onDelete={() => (deleting = c)} onJoin={() => onJoinVoice(c.id)} onError={(m) => (chanError = m)} onSettings={() => (settingsOf = c)}
-    onMoveUp={arrange ? () => moveChannel(c.id, -1) : undefined} onMoveDown={arrange ? () => moveChannel(c.id, 1) : undefined}
-    canMoveUp={arrange && !!stepChannel(order(), c.id, -1)} canMoveDown={arrange && !!stepChannel(order(), c.id, 1)} />{/key}
+    categories={moveTargets(c)} onMoveTo={(to) => moveToCategory(c.id, to)} />{/key}
 {/if}
 {#if catMenu}
   {@const cat = catMenu.category}

@@ -765,16 +765,39 @@ describe('ChannelList by categories', () => {
     }
   })
 
-  it("Move up / Move down in a channel's menu", async () => {
+  it("a channel's menu moves it to another category, and has no Move up / Move down (#55)", async () => {
     showLive()
     rightClick(rowOf('Q1'))
-    expect(menuItems().map((b) => b.textContent?.trim()).slice(-2)).toEqual(['Move up', 'Move down'])
-    menuItem('Move up').click()
+    const labels = menuItems().map((b) => b.textContent?.trim())
+    expect(labels).not.toContain('Move up')
+    expect(labels).not.toContain('Move down')
+    const trigger = menuItem('Move to category')
+    expect(labels.indexOf('Move to category')).toBe(labels.indexOf('Rename') + 1)
+    trigger.dispatchEvent(new Event('pointerover', { bubbles: true }))
+    trigger.dispatchEvent(new Event('pointerenter'))
+    flushSync()
+    const flyout = document.querySelector<HTMLElement>('[role=menu][aria-label="Move #quotes to"]')!
+    const choices = [...flyout.querySelectorAll<HTMLButtonElement>('[role^=menuitem]')]
+    expect(choices.map((b) => b.textContent?.trim())).toEqual(['No category', 'Text Channels', 'Gaming', 'Voice Channels'])
+    expect(choices.map((b) => b.getAttribute('aria-checked'))).toEqual(['false', 'false', 'true', 'false'])
+    choices[1].click()
     await flush()
+    // to the end of Text Channels
     expect(savedLayout()).toEqual([{ revision: 3, uncategorised: ['T0'], categories: [{ id: 'C1', channels: ['T1', 'T2', 'Q1'] }, { id: 'C2', channels: ['V2'] }, { id: 'C3', channels: ['V1'] }] }])
-    rightClick(rowOf('T0'))
-    expect(menuItem('Move up').disabled).toBe(true)
-    expect(menuItem('Move down').disabled).toBe(false)
+    expect(document.querySelector('[data-moves]')!.textContent).toBe('Moved #quotes to Text Channels, position 3')
+  })
+
+  it('"No category" puts a channel at the end of the top', async () => {
+    showLive()
+    rightClick(rowOf('T1'))
+    const trigger = menuItem('Move to category')
+    trigger.dispatchEvent(new Event('pointerover', { bubbles: true }))
+    trigger.dispatchEvent(new Event('pointerenter'))
+    flushSync()
+    const flyout = document.querySelector<HTMLElement>('[role=menu][aria-label="Move #general to"]')!
+    ;[...flyout.querySelectorAll<HTMLButtonElement>('[role^=menuitem]')][0].click()
+    await flush()
+    expect(savedLayout()).toEqual([{ revision: 3, uncategorised: ['T0', 'T1'], categories: [{ id: 'C1', channels: ['T2'] }, { id: 'C2', channels: ['Q1', 'V2'] }, { id: 'C3', channels: ['V1'] }] }])
   })
 
   it('outside the server: no +, no category menu, no moves', () => {
@@ -788,7 +811,7 @@ describe('ChannelList by categories', () => {
     press(headingOf('C1'), 'ArrowDown', { altKey: true })
     expect(savedLayout()).toEqual([])
     rightClick(rowOf('T1'))
-    expect(menuItems().map((b) => b.textContent?.trim())).not.toContain('Move up')
+    expect(menuItems().map((b) => b.textContent?.trim())).not.toContain('Move to category')
   })
 
   it('Create category opens a heading-styled field at the end of the list', async () => {
