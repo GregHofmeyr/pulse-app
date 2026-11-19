@@ -333,7 +333,9 @@ pub async fn claim(
         return Err(AppError::BadRequest("A file is attached twice.".into()));
     }
     let r2 = storage(s)?;
-    let since = crate::db::stamp(chrono::Utc::now() - chrono::Duration::hours(PENDING_TTL_HOURS));
+    let since = crate::db::stamp(
+        jiff::Timestamp::now() - jiff::SignedDuration::from_hours(PENDING_TTL_HOURS),
+    );
     let now = crate::db::now();
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
@@ -403,7 +405,7 @@ pub async fn bind(
     ids: &[AttachmentId],
     atts: &mut [Attachment],
 ) -> AppResult<()> {
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     for (position, id) in ids.iter().enumerate() {
         let times: Option<(Option<String>, String)> =
             sqlx::query_as("SELECT expires_at, created_at FROM attachments WHERE id = ?")
@@ -411,11 +413,7 @@ pub async fn bind(
                 .fetch_optional(&mut *tx)
                 .await?;
         if let Some((Some(expires), created)) = times {
-            let parse = |t: &str| {
-                chrono::DateTime::parse_from_rfc3339(t)
-                    .map(|d| d.with_timezone(&chrono::Utc))
-                    .map_err(anyhow::Error::from)
-            };
+            let parse = |t: &str| crate::times::parse(t).map_err(anyhow::Error::from);
             let moved = crate::db::stamp(now + (parse(&expires)? - parse(&created)?));
             sqlx::query("UPDATE attachments SET expires_at = ? WHERE id = ?")
                 .bind(&moved)

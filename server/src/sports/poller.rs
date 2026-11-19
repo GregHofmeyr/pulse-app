@@ -197,8 +197,8 @@ pub async fn schedule(s: &AppState, league: SportsLeague) -> AppResult<()> {
         return Ok(());
     }
     super::mark(&s.db, &tried).await?;
-    let now = chrono::Utc::now();
-    let today = now.date_naive();
+    let now = jiff::Timestamp::now();
+    let today = crate::times::utc_date(now);
     let season = season_for(today);
     let api = s.sports.api();
     let got = if league.rugby() {
@@ -206,8 +206,8 @@ pub async fn schedule(s: &AppState, league: SportsLeague) -> AppResult<()> {
             .await
             .map(|games| {
                 let (from, to) = (
-                    now.timestamp() - 86_400,
-                    now.timestamp() + AHEAD_DAYS * 86_400,
+                    now.as_second() - 86_400,
+                    now.as_second() + AHEAD_DAYS * 86_400,
                 );
                 games
                     .into_iter()
@@ -220,7 +220,7 @@ pub async fn schedule(s: &AppState, league: SportsLeague) -> AppResult<()> {
             league_id(league),
             season,
             today,
-            today + chrono::Days::new(2),
+            today + jiff::Span::new().days(2),
         )
         .await
     };
@@ -306,7 +306,7 @@ async fn set_done(s: &AppState, f: &Fixture) -> sqlx::Result<()> {
 
 /// Match-day cards for what kicks off within the banner lead.
 pub async fn banners(s: &AppState) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     let lead = s.cfg.sports.banner_lead.as_secs() as i64;
     let window = s.cfg.sports.window.as_secs() as i64;
     for f in pending(s).await? {
@@ -357,7 +357,7 @@ pub fn window_minutes_left(fixtures: &[(i64, i64)], now: i64) -> u64 {
 /// Read `sport`'s live matches once if it's time, and edit their cards.
 pub async fn live(s: &AppState, sport: Sport) -> AppResult<()> {
     let cfg = &s.cfg.sports;
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     let window = cfg.window.as_secs() as i64;
     let max_window = cfg.max_window.as_secs() as i64;
     let mut carded = Vec::new();
@@ -418,11 +418,11 @@ pub async fn live(s: &AppState, sport: Sport) -> AppResult<()> {
         }
         Sport::Rugby => {
             // one request per league and day covers every game on it
-            let mut days: BTreeMap<(SportsLeague, chrono::NaiveDate), BTreeSet<u32>> =
+            let mut days: BTreeMap<(SportsLeague, jiff::civil::Date), BTreeSet<u32>> =
                 BTreeMap::new();
             for f in &live_now {
-                if let Some(t) = chrono::DateTime::from_timestamp(f.kickoff, 0) {
-                    days.entry((f.league, t.date_naive()))
+                if let Ok(t) = jiff::Timestamp::from_second(f.kickoff) {
+                    days.entry((f.league, crate::times::utc_date(t)))
                         .or_default()
                         .insert(f.id);
                 }
@@ -475,7 +475,7 @@ pub fn stale(f: &Fixture, now: i64, window: i64, max_window: i64) -> bool {
 /// Matches past their longest window are done (no more reads), and a card left without live data says so (#406);
 /// done ones older than [`KEEP_DAYS`] go.
 pub async fn expire(s: &AppState) -> AppResult<()> {
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     let (window, max_window) = (
         s.cfg.sports.window.as_secs() as i64,
         s.cfg.sports.max_window.as_secs() as i64,
@@ -543,8 +543,9 @@ pub async fn targets(s: &AppState, f: &Fixture) -> AppResult<Vec<(ChannelId, Vec
 
 /// RFC 3339 (UTC, seconds) for unix seconds.
 fn rfc3339(unix: i64) -> String {
-    chrono::DateTime::from_timestamp(unix, 0)
-        .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+    jiff::Timestamp::from_second(unix)
+        .ok()
+        .map(crate::times::rfc3339_secs)
         .unwrap_or_default()
 }
 

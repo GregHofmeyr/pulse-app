@@ -247,13 +247,13 @@ async fn sweeping_a_joined_upload_whose_bookkeeping_failed_deletes_its_object() 
     // as if the join landed but clearing the upload id didn't
     sqlx::query("UPDATE attachments SET upload_id = 'up-lost', created_at = ?")
         .bind(pulse_server::db::stamp(
-            chrono::Utc::now() - chrono::Duration::hours(26),
+            jiff::Timestamp::now() - jiff::SignedDuration::from_hours(26),
         ))
         .execute(&app.db)
         .await
         .unwrap();
     assert_eq!(s3(app).keys().len(), 1);
-    let r = pulse_server::attachments::sweep::run(&app.state(), chrono::Utc::now())
+    let r = pulse_server::attachments::sweep::run(&app.state(), jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(r.pending, 1);
@@ -323,10 +323,10 @@ async fn complete_then_send_posts_with_expiry_counted_from_sending() {
     // it took an hour to upload
     sqlx::query("UPDATE attachments SET created_at = ?, expires_at = ?")
         .bind(pulse_server::db::stamp(
-            chrono::Utc::now() - chrono::Duration::hours(1),
+            jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1),
         ))
         .bind(pulse_server::db::stamp(
-            chrono::Utc::now() + chrono::Duration::hours(23),
+            jiff::Timestamp::now() + jiff::SignedDuration::from_hours(23),
         ))
         .execute(&app.db)
         .await
@@ -335,14 +335,13 @@ async fn complete_then_send_posts_with_expiry_counted_from_sending() {
     let r = send_files(app, t, ch, &[up.id]).await;
     assert_eq!(r.status(), 200);
     let m: Message = r.json().await.unwrap();
-    let exp = chrono::DateTime::parse_from_rfc3339(m.attachments[0].expires_at.as_deref().unwrap())
-        .unwrap();
-    let left = exp.with_timezone(&chrono::Utc) - chrono::Utc::now();
+    let exp = pulse_server::times::parse(m.attachments[0].expires_at.as_deref().unwrap()).unwrap();
+    let left = exp.duration_since(jiff::Timestamp::now());
     assert!(
-        left > chrono::Duration::hours(23) + chrono::Duration::minutes(55),
+        left > jiff::SignedDuration::from_hours(23) + jiff::SignedDuration::from_mins(55),
         "{left}"
     );
-    assert!(left <= chrono::Duration::hours(24), "{left}");
+    assert!(left <= jiff::SignedDuration::from_hours(24), "{left}");
     assert!(!m.attachments[0].expired);
     assert_eq!(m.content, "📎 world.zip");
     // sam gets a link
@@ -365,7 +364,7 @@ async fn expired_temp_is_purged_and_shows_expired() {
     assert_eq!(s3(app).keys().len(), 1);
     let r = pulse_server::attachments::sweep::run(
         &app.state(),
-        chrono::Utc::now() + chrono::Duration::days(2),
+        jiff::Timestamp::now() + pulse_server::times::days(2),
     )
     .await
     .unwrap();
@@ -408,12 +407,12 @@ async fn sweep_and_cancel_abort_unfinished_multipart_uploads() {
     assert_eq!(s3(app).open_uploads(), 1);
     sqlx::query("UPDATE attachments SET created_at = ?")
         .bind(pulse_server::db::stamp(
-            chrono::Utc::now() - chrono::Duration::hours(26),
+            jiff::Timestamp::now() - jiff::SignedDuration::from_hours(26),
         ))
         .execute(&app.db)
         .await
         .unwrap();
-    let r = pulse_server::attachments::sweep::run(&app.state(), chrono::Utc::now())
+    let r = pulse_server::attachments::sweep::run(&app.state(), jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(r.pending, 1);

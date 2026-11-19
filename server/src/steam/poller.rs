@@ -70,9 +70,9 @@ pub async fn tick(s: &AppState) {
             let start = playing
                 .as_ref()
                 .and_then(|p| p.started_at.as_deref())
-                .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-                .map(|t| t.timestamp())
-                .unwrap_or_else(|| chrono::Utc::now().timestamp());
+                .and_then(|t| crate::times::parse(t).ok())
+                .map(|t| t.as_second())
+                .unwrap_or_else(|| jiff::Timestamp::now().as_second());
             (app, start - SESSION_SLACK_SECS)
         });
         let Some((app, session_start)) = s.steam.observe(user, now_app, s.cfg.steam.tail) else {

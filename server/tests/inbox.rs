@@ -361,7 +361,7 @@ async fn a_conversation_you_left_leaves_the_inbox() {
 async fn items_older_than_30_days_are_gone() {
     let f = fx().await;
     let old = MessageId::floor(
-        (chrono::Utc::now() - chrono::Duration::days(31)).timestamp_millis() as u64,
+        (jiff::Timestamp::now() - pulse_server::times::days(31)).as_millisecond() as u64,
     );
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES (?, ?, ?, '@alex old', '2020-01-01T00:00:00.000Z')")
         .bind(old.to_string())
@@ -881,7 +881,8 @@ async fn next_mutes(ws: &mut Socket) -> Option<Vec<pulse_protocol::rest::Mute>> 
 #[tokio::test]
 async fn a_timed_mute_running_out_tells_every_device_the_count() {
     let f = fx().await;
-    let later = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(1));
+    let later =
+        pulse_server::db::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1));
     let server = f.ch.server_id.unwrap().to_string();
     let ch = f.ch.id.to_string();
     let mine = send(&f.app, &f.alex_t, f.ch.id, "base").await;
@@ -958,7 +959,8 @@ async fn a_timed_mute_running_out_tells_every_device_the_count() {
 #[tokio::test]
 async fn a_mute_that_ran_out_offline_is_cleared_quietly() {
     let f = fx().await;
-    let later = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(8));
+    let later =
+        pulse_server::db::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_hours(8));
     let ch = f.ch.id.to_string();
     let mine = send(&f.app, &f.alex_t, f.ch.id, "base").await;
     f.reply(&f.sam_t, f.ch.id, mine.id, "plain").await;
@@ -978,7 +980,8 @@ async fn a_mute_that_ran_out_offline_is_cleared_quietly() {
 #[tokio::test]
 async fn one_owner_failing_to_be_told_does_not_skip_the_rest() {
     let f = fx().await;
-    let later = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(1));
+    let later =
+        pulse_server::db::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1));
     let ch = f.ch.id.to_string();
     f.mute_for(&f.alex_t, "channel", &ch, &later).await;
     f.run_out(f.alex, &ch).await;

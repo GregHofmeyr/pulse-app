@@ -187,10 +187,13 @@ async fn sharing_a_song_puts_its_card_up_and_posts_the_link_in_chat() {
     let thumb = s.embed.thumb.clone().expect("the art");
     // 3 h after it was shared
     let (at, until) = (
-        chrono::DateTime::parse_from_rfc3339(&s.shared_at).unwrap(),
-        chrono::DateTime::parse_from_rfc3339(&s.expires_at).unwrap(),
+        pulse_server::times::parse(&s.shared_at).unwrap(),
+        pulse_server::times::parse(&s.expires_at).unwrap(),
     );
-    assert_eq!(until - at, chrono::Duration::hours(3));
+    assert_eq!(
+        until.duration_since(at),
+        jiff::SignedDuration::from_hours(3)
+    );
 
     match next(&mut w.rx).await {
         Event::StageShared { share } => assert_eq!(share, s),
@@ -250,9 +253,8 @@ async fn sharing_a_song_puts_its_card_up_and_posts_the_link_in_chat() {
         .fetch_one(&w.app.db)
         .await
         .unwrap();
-    let age =
-        chrono::Utc::now().fixed_offset() - chrono::DateTime::parse_from_rfc3339(&created).unwrap();
-    assert!(age < chrono::Duration::seconds(30));
+    let age = jiff::Timestamp::now().duration_since(pulse_server::times::parse(&created).unwrap());
+    assert!(age < jiff::SignedDuration::from_secs(30));
 
     // everyone in the server connecting later sees it; jo, who isn't in it, doesn't (#80)
     let ready = ready_of(&w.app, &w.sam.1).await;

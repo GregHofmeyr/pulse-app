@@ -157,7 +157,7 @@ impl FakeS3 {
 impl Shared {
     fn now(&self) -> i64 {
         match self.now.load(Ordering::SeqCst) {
-            0 => chrono::Utc::now().timestamp(),
+            0 => jiff::Timestamp::now().as_second(),
             t => t,
         }
     }
@@ -607,9 +607,10 @@ fn signed_at(query: &str) -> Option<i64> {
     let date = query
         .split('&')
         .find_map(|p| p.strip_prefix("X-Amz-Date="))?;
-    chrono::NaiveDateTime::parse_from_str(&percent_decode(date), "%Y%m%dT%H%M%SZ")
+    jiff::civil::DateTime::strptime("%Y%m%dT%H%M%SZ", percent_decode(date))
         .ok()
-        .map(|t| t.and_utc().timestamp())
+        .and_then(|t| jiff::tz::Offset::UTC.to_timestamp(t).ok())
+        .map(|t| t.as_second())
 }
 
 /// Check a presigned request as of unix time `now`. `path` and `query` are as sent (encoded);
@@ -664,10 +665,11 @@ pub(super) fn verify(
     if credential != format!("{}/{scope}", creds.key_id) {
         return Err(("AccessDenied", "Unknown access key or wrong scope"));
     }
-    let signed_at = chrono::NaiveDateTime::parse_from_str(date, "%Y%m%dT%H%M%SZ")
-        .map_err(|_| BAD)?
-        .and_utc()
-        .timestamp();
+    let signed_at = jiff::civil::DateTime::strptime("%Y%m%dT%H%M%SZ", date)
+        .ok()
+        .and_then(|t| jiff::tz::Offset::UTC.to_timestamp(t).ok())
+        .ok_or(BAD)?
+        .as_second();
     if now >= signed_at + expires {
         return Err(("AccessDenied", "Request has expired"));
     }
@@ -746,7 +748,7 @@ mod tests {
     }
 
     fn now() -> i64 {
-        chrono::Utc::now().timestamp()
+        jiff::Timestamp::now().as_second()
     }
 
     #[test]
@@ -765,12 +767,7 @@ mod tests {
             "host".to_string(),
             "examplebucket.s3.amazonaws.com".to_string(),
         )];
-        let at = chrono::NaiveDate::from_ymd_opt(2013, 5, 24)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc()
-            .timestamp();
+        let at = crate::times::utc_midnight(jiff::civil::date(2013, 5, 24)).as_second();
         assert_eq!(
             verify("GET", "/test.txt", query, &headers, &creds, at + 100),
             Ok(())

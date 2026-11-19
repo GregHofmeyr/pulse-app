@@ -281,7 +281,7 @@ async fn an_expired_session_keeps_its_socket_through_the_sweep() {
         .execute(&app.db)
         .await
         .unwrap();
-    pulse_server::hygiene::prune(&app.db, chrono::Utc::now())
+    pulse_server::hygiene::prune(&app.db, jiff::Timestamp::now())
         .await
         .unwrap();
     assert!(

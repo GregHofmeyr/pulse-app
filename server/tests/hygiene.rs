@@ -1,13 +1,13 @@
 //! Periodic database cleanup, and the free-disk guard on write routes.
 mod common;
 
-use chrono::{Duration, Utc};
 use common::*;
+use jiff::{SignedDuration, Timestamp};
 use pulse_server::hygiene::prune;
 use serde_json::json;
 
-fn ts(d: Duration) -> String {
-    (Utc::now() + d).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+fn ts(d: SignedDuration) -> String {
+    pulse_server::db::stamp(Timestamp::now() + d)
 }
 
 async fn count(app: &TestApp, sql: &str) -> i64 {
@@ -29,9 +29,9 @@ async fn prune_removes_expired_rows_and_keeps_fresh_ones() {
         "INSERT INTO sessions (token_hash, user_id, created_at, last_used_at, expires_at) VALUES ('old', ?, ?, ?, ?)",
     )
     .bind(&alex)
-    .bind(ts(Duration::days(-200)))
-    .bind(ts(Duration::days(-100)))
-    .bind(ts(Duration::days(-10)))
+    .bind(ts(pulse_server::times::days(-200)))
+    .bind(ts(pulse_server::times::days(-100)))
+    .bind(ts(pulse_server::times::days(-10)))
     .execute(&app.db)
     .await
     .unwrap();
@@ -39,7 +39,7 @@ async fn prune_removes_expired_rows_and_keeps_fresh_ones() {
     sqlx::query(
         "INSERT INTO livekit_grants (id, token_hash, room, identity, issued_at) VALUES ('g', 'old', 'r', 'alex', ?)",
     )
-    .bind(ts(Duration::days(-11)))
+    .bind(ts(pulse_server::times::days(-11)))
     .execute(&app.db)
     .await
     .unwrap();
@@ -56,9 +56,9 @@ async fn prune_removes_expired_rows_and_keeps_fresh_ones() {
         )
         .bind(code)
         .bind(&alex)
-        .bind(ts(Duration::hours(-age_h)))
+        .bind(ts(SignedDuration::from_hours(-age_h)))
         .bind(used_by)
-        .bind(used_by.map(|_| ts(Duration::hours(-age_h))))
+        .bind(used_by.map(|_| ts(SignedDuration::from_hours(-age_h))))
         .execute(&app.db)
         .await
         .unwrap();
@@ -66,8 +66,8 @@ async fn prune_removes_expired_rows_and_keeps_fresh_ones() {
 
     // MFA tickets.
     for (hash, exp) in [
-        ("told", Duration::minutes(-1)),
-        ("tnew", Duration::minutes(4)),
+        ("told", SignedDuration::from_mins(-1)),
+        ("tnew", SignedDuration::from_mins(4)),
     ] {
         sqlx::query("INSERT INTO mfa_tickets (ticket_hash, user_id, expires_at) VALUES (?, ?, ?)")
             .bind(hash)
@@ -85,13 +85,13 @@ async fn prune_removes_expired_rows_and_keeps_fresh_ones() {
         )
         .bind(id)
         .bind(&alex)
-        .bind(ts(Duration::days(-age)))
+        .bind(ts(pulse_server::times::days(-age)))
         .execute(&app.db)
         .await
         .unwrap();
     }
 
-    let n = prune(&app.db, Utc::now()).await.unwrap();
+    let n = prune(&app.db, Timestamp::now()).await.unwrap();
     assert_eq!(
         (n.sessions, n.invites, n.mfa_tickets, n.reports),
         (1, 2, 1, 1)
@@ -133,7 +133,7 @@ async fn prune_removes_expired_rows_and_keeps_fresh_ones() {
 
     // A second pass has nothing to do.
     assert_eq!(
-        prune(&app.db, Utc::now()).await.unwrap(),
+        prune(&app.db, Timestamp::now()).await.unwrap(),
         Default::default()
     );
 }
@@ -153,12 +153,14 @@ async fn invite_cap_still_counts_after_prune() {
         "UPDATE invites SET created_at = ? WHERE code IN
          (SELECT code FROM invites WHERE created_by = ? LIMIT 2)",
     )
-    .bind((Utc::now() - Duration::hours(25)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    .bind(pulse_server::db::stamp(
+        Timestamp::now() - SignedDuration::from_hours(25),
+    ))
     .bind(alex.to_string())
     .execute(&app.db)
     .await
     .unwrap();
-    let pruned = prune(&app.db, Utc::now()).await.unwrap();
+    let pruned = prune(&app.db, Timestamp::now()).await.unwrap();
     assert_eq!(pruned.invites, 2);
     let mine = format!("SELECT COUNT(*) FROM invites WHERE created_by = '{alex}'");
     assert_eq!(count(&app, &mine).await, cap - 2, "the fresh ones survive");
@@ -241,13 +243,13 @@ async fn prune_drops_inbox_reads_of_items_past_30_days() {
     let ch = general(&app, &alex_t, s.id).await;
     let fresh = send(&app, &sam_t, ch.id, "@alex new").await;
     let old = pulse_protocol::ids::MessageId::floor(
-        (Utc::now() - Duration::days(31)).timestamp_millis() as u64,
+        (Timestamp::now() - pulse_server::times::days(31)).as_millisecond() as u64,
     );
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES (?, ?, ?, 'old', ?)")
         .bind(old.to_string())
         .bind(ch.id.to_string())
         .bind(sam.to_string())
-        .bind(ts(Duration::days(-31)))
+        .bind(ts(pulse_server::times::days(-31)))
         .execute(&app.db)
         .await
         .unwrap();
@@ -259,7 +261,7 @@ async fn prune_drops_inbox_reads_of_items_past_30_days() {
             .await
             .unwrap();
     }
-    let n = prune(&app.db, Utc::now()).await.unwrap();
+    let n = prune(&app.db, Timestamp::now()).await.unwrap();
     assert_eq!(n.inbox_reads, 1);
     let left: Vec<String> = sqlx::query_scalar("SELECT message_id FROM inbox_reads")
         .fetch_all(&app.db)

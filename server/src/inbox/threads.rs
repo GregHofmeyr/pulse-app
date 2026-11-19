@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use chrono::Utc;
+use jiff::Timestamp;
 use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{InboxThread, InboxThreads};
 use sqlx::SqlitePool;
@@ -106,7 +106,7 @@ pub async fn list(db: &SqlitePool, me: UserId) -> AppResult<InboxThreads> {
     );
     q.push_bind(me.to_string());
     q.push(" AND tr.root_id = x.thread_root_id WHERE x.deleted_at IS NULL AND x.id >= ");
-    q.push_bind(cutoff(Utc::now()).to_string());
+    q.push_bind(cutoff(Timestamp::now()).to_string());
     q.push(" AND COALESCE(x.author_id, '') != ");
     q.push_bind(me.to_string());
     q.push(" AND x.id > COALESCE(tr.last_seen_id, '') AND x.id > COALESCE((SELECT MAX(y.id) FROM messages y WHERE y.thread_root_id = x.thread_root_id AND y.deleted_at IS NULL AND y.author_id = ");

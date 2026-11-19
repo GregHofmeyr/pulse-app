@@ -72,8 +72,7 @@ async fn use_slides_expiry_forward() {
     let u = user(&app.db).await;
     let t = session::create(&app.db, u).await.unwrap();
     // pretend it was last used long ago and expires soon
-    let soon = (chrono::Utc::now() + chrono::Duration::days(1))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let soon = pulse_server::db::stamp(jiff::Timestamp::now() + pulse_server::times::days(1));
     sqlx::query("UPDATE sessions SET expires_at = ?, last_used_at = '2000-01-01T00:00:00.000Z'")
         .bind(&soon)
         .execute(&app.db)
@@ -84,8 +83,8 @@ async fn use_slides_expiry_forward() {
         .fetch_one(&app.db)
         .await
         .unwrap();
-    let exp = chrono::DateTime::parse_from_rfc3339(&exp).unwrap();
-    assert!(exp > chrono::Utc::now() + chrono::Duration::days(89));
+    let exp = pulse_server::times::parse(&exp).unwrap();
+    assert!(exp > jiff::Timestamp::now() + pulse_server::times::days(89));
 }
 
 #[tokio::test]

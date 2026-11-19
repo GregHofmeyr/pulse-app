@@ -363,9 +363,9 @@ async fn the_owners_recently_deleted_lists_their_own_deleted_servers() {
     assert_eq!(d.server.id, w.server);
     assert_eq!(d.server.name, "Main");
     assert!(d.can_restore);
-    let at = chrono::DateTime::parse_from_rfc3339(&d.deleted_at).unwrap();
-    let purge = chrono::DateTime::parse_from_rfc3339(&d.purge_at).unwrap();
-    assert_eq!(purge - at, chrono::Duration::days(7));
+    let at = pulse_server::times::parse(&d.deleted_at).unwrap();
+    let purge = pulse_server::times::parse(&d.purge_at).unwrap();
+    assert_eq!(purge.duration_since(at), pulse_server::times::days(7));
     // sam sees only his own
     let list = deleted_list(&w, &w.sam.1).await;
     assert_eq!(list.len(), 1);
@@ -618,17 +618,18 @@ async fn the_sweeper_purges_a_server_after_seven_days_in_batches() {
 
     assert_eq!(delete_server(&w, &w.alex.1, w.server, "Main").await, 204);
     let s = w.app.state();
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
 
     // While the server is deleted its own Recently deleted channel waits too (frozen).
-    let swept = pulse_server::servers::channels::purge_expired(&s, now + chrono::Duration::days(8))
-        .await
-        .unwrap();
+    let swept =
+        pulse_server::servers::channels::purge_expired(&s, now + pulse_server::times::days(8))
+            .await
+            .unwrap();
     assert_eq!(swept, 0, "a deleted server's channels are left to it");
 
     let swept = pulse_server::servers::deleted::purge_expired_batched(
         &s,
-        now + chrono::Duration::days(6),
+        now + pulse_server::times::days(6),
         2,
     )
     .await
@@ -637,7 +638,7 @@ async fn the_sweeper_purges_a_server_after_seven_days_in_batches() {
     assert_eq!(deleted_list(&w, &w.alex.1).await.len(), 1);
     let swept = pulse_server::servers::deleted::purge_expired_batched(
         &s,
-        now + chrono::Duration::days(8),
+        now + pulse_server::times::days(8),
         2,
     )
     .await
@@ -722,7 +723,7 @@ async fn a_reply_older_than_what_it_answers_doesnt_stop_the_purge() {
     assert_eq!(delete_server(&w, &w.alex.1, w.server, "Main").await, 204);
     let swept = pulse_server::servers::deleted::purge_expired_batched(
         &w.app.state(),
-        chrono::Utc::now() + chrono::Duration::days(8),
+        jiff::Timestamp::now() + pulse_server::times::days(8),
         2,
     )
     .await
@@ -743,7 +744,8 @@ async fn a_reply_older_than_what_it_answers_doesnt_stop_the_purge() {
 async fn once_due_it_cant_be_restored() {
     let w = world().await;
     assert_eq!(delete_server(&w, &w.alex.1, w.server, "Main").await, 204);
-    let eight_days_ago = pulse_server::db::stamp(chrono::Utc::now() - chrono::Duration::days(8));
+    let eight_days_ago =
+        pulse_server::db::stamp(jiff::Timestamp::now() - pulse_server::times::days(8));
     sqlx::query("UPDATE servers SET deleted_at = ? WHERE id = ?")
         .bind(&eight_days_ago)
         .bind(w.server.to_string())

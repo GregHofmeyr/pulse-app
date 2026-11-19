@@ -18,7 +18,7 @@ pub mod weather;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{
@@ -268,15 +268,14 @@ fn one_line(raw: &str, max: usize, what: &str) -> AppResult<String> {
 /// The request's fields, trimmed and checked at `at`: a title, a start that isn't over (a few minutes' grace for a
 /// slow form) and at most [`plan_limits::MAX_DAYS_AHEAD`] away, an optional end after the start (at most
 /// [`plan_limits::MAX_HOURS_LONG`] later), and an optional place and note (blank = none).
-pub fn clean(req: &CreatePlanRequest, at: DateTime<Utc>) -> AppResult<Cleaned> {
+pub fn clean(req: &CreatePlanRequest, at: Timestamp) -> AppResult<Cleaned> {
     let title = one_line(&req.title, plan_limits::TITLE_CHARS, "title")?;
-    let starts = DateTime::parse_from_rfc3339(req.starts_at.trim())
-        .map_err(|_| AppError::BadRequest("a plan's time isn't a date and time".into()))?
-        .with_timezone(&Utc);
-    if starts < at - TimeDelta::minutes(5) {
+    let starts = crate::times::parse(req.starts_at.trim())
+        .map_err(|_| AppError::BadRequest("a plan's time isn't a date and time".into()))?;
+    if starts < at - SignedDuration::from_mins(5) {
         return Err(AppError::BadRequest("that time has already passed".into()));
     }
-    if starts > at + TimeDelta::days(plan_limits::MAX_DAYS_AHEAD) {
+    if starts > at + crate::times::days(plan_limits::MAX_DAYS_AHEAD) {
         return Err(AppError::BadRequest(
             "a plan can be at most two years ahead".into(),
         ));
@@ -284,15 +283,14 @@ pub fn clean(req: &CreatePlanRequest, at: DateTime<Utc>) -> AppResult<Cleaned> {
     let ends_at = match req.ends_at.as_deref().map(str::trim) {
         None | Some("") => None,
         Some(e) => {
-            let ends = DateTime::parse_from_rfc3339(e)
-                .map_err(|_| AppError::BadRequest("a plan's end isn't a date and time".into()))?
-                .with_timezone(&Utc);
+            let ends = crate::times::parse(e)
+                .map_err(|_| AppError::BadRequest("a plan's end isn't a date and time".into()))?;
             if ends <= starts {
                 return Err(AppError::BadRequest(
                     "a plan has to end after it starts".into(),
                 ));
             }
-            if ends > starts + TimeDelta::hours(plan_limits::MAX_HOURS_LONG) {
+            if ends > starts + SignedDuration::from_hours(plan_limits::MAX_HOURS_LONG) {
                 return Err(AppError::BadRequest(
                     "a plan can run for at most a week".into(),
                 ));
@@ -329,33 +327,33 @@ pub fn clean(req: &CreatePlanRequest, at: DateTime<Utc>) -> AppResult<Cleaned> {
 
 /// What `reminded_at` starts as for a plan starting at `starts_at`, made or moved at `now`: already done when the
 /// reminder's time has come (everyone just saw the plan), otherwise still to come.
-pub fn reminded_at_for(starts_at: &str, now: DateTime<Utc>) -> Option<String> {
-    let starts = DateTime::parse_from_rfc3339(starts_at)
-        .ok()?
-        .with_timezone(&Utc);
-    (starts - TimeDelta::minutes(plan_limits::REMIND_MINUTES) <= now).then(|| stamp(now))
+pub fn reminded_at_for(starts_at: &str, now: Timestamp) -> Option<String> {
+    let starts = crate::times::parse(starts_at).ok()?;
+    (starts - SignedDuration::from_mins(plan_limits::REMIND_MINUTES) <= now).then(|| stamp(now))
 }
 
 /// The plan as text, for clients that don't know plans (and previews, search and notifications). The time is UTC:
 /// the one time everyone can read the same way.
 pub fn fallback_text(c: &Cleaned) -> String {
-    let utc = |s: &str| DateTime::parse_from_rfc3339(s).map(|t| t.with_timezone(&Utc));
+    let utc = |s: &str| crate::times::parse(s);
     let when = match utc(&c.starts_at) {
         Ok(start) => {
             let end = c.ends_at.as_deref().and_then(|e| utc(e).ok());
             match end {
                 // the same day: just the end's time; another day: its day too
-                Some(end) if end.date_naive() == start.date_naive() => format!(
-                    "{}–{} UTC",
-                    start.format("%a %-d %b %Y, %H:%M"),
-                    end.format("%H:%M")
-                ),
+                Some(end) if crate::times::utc_date(end) == crate::times::utc_date(start) => {
+                    format!(
+                        "{}–{} UTC",
+                        start.strftime("%a %-d %b %Y, %H:%M"),
+                        end.strftime("%H:%M")
+                    )
+                }
                 Some(end) => format!(
                     "{} – {} UTC",
-                    start.format("%a %-d %b %Y, %H:%M"),
-                    end.format("%a %-d %b, %H:%M")
+                    start.strftime("%a %-d %b %Y, %H:%M"),
+                    end.strftime("%a %-d %b, %H:%M")
                 ),
-                None => start.format("%a %-d %b %Y, %H:%M UTC").to_string(),
+                None => start.strftime("%a %-d %b %Y, %H:%M UTC").to_string(),
             }
         }
         Err(_) => c.starts_at.clone(),
@@ -446,9 +444,9 @@ async fn to_remind(db: &mut SqliteConnection, p: &Stored) -> AppResult<Vec<UserI
 /// haven't started: one whose hour passed while the server was down is marked done without a line). Returns how
 /// many lines it posted. A plan in a channel that is in Recently deleted (or whose server is) is left for after a
 /// restore, as polls are (#334).
-pub async fn remind_due(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
+pub async fn remind_due(s: &AppState, now: Timestamp) -> AppResult<usize> {
     let at = stamp(now);
-    let due_by = stamp(now + TimeDelta::minutes(plan_limits::REMIND_MINUTES));
+    let due_by = stamp(now + SignedDuration::from_mins(plan_limits::REMIND_MINUTES));
     let rows: Vec<StoredRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {STORED_COLS} WHERE p.reminded_at IS NULL AND p.cancelled_at IS NULL AND p.starts_at <= ? \
          AND m.deleted_at IS NULL AND p.channel_id IN (SELECT id FROM channels WHERE deleted_at IS NULL \
@@ -528,7 +526,7 @@ pub fn spawn_sweeper(s: AppState) {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
-            match remind_due(&s, Utc::now()).await {
+            match remind_due(&s, Timestamp::now()).await {
                 Ok(0) => {}
                 Ok(n) => tracing::debug!(n, "plan reminders sent"),
                 Err(e) => tracing::warn!(error = %e, "plan reminder sweep failed"),
@@ -551,10 +549,8 @@ mod tests {
         }
     }
 
-    fn at() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-11-16T10:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc)
+    fn at() -> Timestamp {
+        crate::times::parse("2026-11-16T10:00:00Z").unwrap()
     }
 
     #[test]

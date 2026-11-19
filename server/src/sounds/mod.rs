@@ -105,7 +105,7 @@ pub(crate) fn bad_volume() -> AppError {
 /// Count a play of `sound` for `user`: bump the sound's total and decay-and-add their personal
 /// score (same 14-day half-life as emoji).
 pub async fn record_play(conn: &mut SqliteConnection, user: UserId, sound: &str) -> AppResult<()> {
-    record_play_at(conn, user, sound, chrono::Utc::now()).await
+    record_play_at(conn, user, sound, jiff::Timestamp::now()).await
 }
 
 /// [`record_play`] with the clock injected.
@@ -113,7 +113,7 @@ pub async fn record_play_at(
     conn: &mut SqliteConnection,
     user: UserId,
     sound: &str,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jiff::Timestamp,
 ) -> AppResult<()> {
     let prev: Option<(f64, String)> = sqlx::query_as(
         "SELECT score, last_used_at FROM sound_usage WHERE user_id = ? AND sound_id = ?",
@@ -143,7 +143,7 @@ pub async fn record_play_at(
 /// The `n` sounds `user` plays most (scores decayed to now), best first. Sounds of servers they
 /// are not in are skipped and the next ones fill their places.
 pub async fn frequent(db: &SqlitePool, user: UserId, n: usize) -> AppResult<Vec<String>> {
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     let rows: Vec<(String, f64, String)> = sqlx::query_as(
         "SELECT u.sound_id, u.score, u.last_used_at FROM sound_usage u
          JOIN sounds s ON s.id = u.sound_id

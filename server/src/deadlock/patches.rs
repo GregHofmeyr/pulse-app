@@ -16,7 +16,7 @@ use crate::error::AppResult;
 use crate::messages::system;
 
 /// Updates older than this when first seen are remembered, not posted.
-pub const FRESH_FOR: chrono::Duration = chrono::Duration::days(14);
+pub const FRESH_FOR: jiff::SignedDuration = crate::times::days(14);
 /// The most updates posted in one check.
 pub const MAX_POSTS: usize = 3;
 /// The start of the notes shown, in characters.
@@ -115,7 +115,7 @@ pub async fn tick(s: &AppState) -> AppResult<()> {
         }
         fresh.push((k, p));
     }
-    let cutoff = chrono::Utc::now() - FRESH_FOR;
+    let cutoff = jiff::Timestamp::now() - FRESH_FOR;
     let mut posted = 0;
     let channels = if first {
         vec![]
@@ -135,8 +135,7 @@ pub async fn tick(s: &AppState) -> AppResult<()> {
             .bind(now())
             .execute(&s.db)
             .await?;
-        let recent = chrono::DateTime::parse_from_rfc3339(&p.published_at)
-            .is_ok_and(|t| t.to_utc() >= cutoff);
+        let recent = crate::times::parse(&p.published_at).is_ok_and(|t| t >= cutoff);
         if first || !recent || posted >= MAX_POSTS || channels.is_empty() {
             continue;
         }

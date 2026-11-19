@@ -8,8 +8,8 @@ const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
 pub const TTL_HOURS: i64 = 24;
 
 /// Invites created at or before this instant have expired.
-pub fn cutoff(now: chrono::DateTime<chrono::Utc>) -> String {
-    (now - chrono::TimeDelta::hours(TTL_HOURS)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+pub fn cutoff(now: jiff::Timestamp) -> String {
+    crate::db::stamp(now - jiff::SignedDuration::from_hours(TTL_HOURS))
 }
 
 /// Create a single-use invite code (10 chars, unambiguous alphabet), valid for 24 hours.
@@ -41,7 +41,7 @@ pub async fn outstanding(conn: &mut SqliteConnection, by: UserId) -> sqlx::Resul
         "SELECT COUNT(*) FROM invites WHERE created_by = ? AND used_by IS NULL AND created_at > ?",
     )
     .bind(by.to_string())
-    .bind(cutoff(chrono::Utc::now()))
+    .bind(cutoff(jiff::Timestamp::now()))
     .fetch_one(conn)
     .await
 }

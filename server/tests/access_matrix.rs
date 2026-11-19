@@ -670,7 +670,8 @@ async fn world() -> World {
         "poll",
     )
     .await;
-    let starts = (chrono::Utc::now() + chrono::TimeDelta::days(3)).to_rfc3339();
+    let starts =
+        pulse_server::times::rfc3339(jiff::Timestamp::now() + pulse_server::times::days(3));
     let plan: Message = ok_json(
         post_json(
             &app,
@@ -763,7 +764,8 @@ async fn world() -> World {
         notes.insert(t.clone(), ch.id.to_string());
     }
 
-    let tomorrow = (chrono::Utc::now() + chrono::TimeDelta::days(1)).to_rfc3339();
+    let tomorrow =
+        pulse_server::times::rfc3339(jiff::Timestamp::now() + pulse_server::times::days(1));
     let vars = HashMap::from([
         ("{server}", server.to_string()),
         ("{text}", text.id.to_string()),

@@ -723,9 +723,9 @@ async fn recently_deleted_lists_who_when_and_what_each_viewer_may_do() {
         (d.can_restore, d.can_purge, d.held.clone()),
         (true, true, None)
     );
-    let at = chrono::DateTime::parse_from_rfc3339(&d.deleted_at).unwrap();
-    let purge = chrono::DateTime::parse_from_rfc3339(&d.purge_at).unwrap();
-    assert_eq!(purge - at, chrono::Duration::days(7));
+    let at = pulse_server::times::parse(&d.deleted_at).unwrap();
+    let purge = pulse_server::times::parse(&d.purge_at).unwrap();
+    assert_eq!(purge.duration_since(at), pulse_server::times::days(7));
     // sam deleted it: restore only
     let d = mine(deleted_list(&w, &w.sam.1).await);
     assert_eq!((d.can_restore, d.can_purge), (true, false));
@@ -937,15 +937,17 @@ async fn the_sweeper_purges_after_seven_days() {
         204
     );
     let s = w.app.state();
-    let now = chrono::Utc::now();
-    let swept = pulse_server::servers::channels::purge_expired(&s, now + chrono::Duration::days(6))
-        .await
-        .unwrap();
+    let now = jiff::Timestamp::now();
+    let swept =
+        pulse_server::servers::channels::purge_expired(&s, now + pulse_server::times::days(6))
+            .await
+            .unwrap();
     assert_eq!(swept, 0);
     assert_eq!(deleted_list(&w, &w.alex.1).await.len(), 1);
-    let swept = pulse_server::servers::channels::purge_expired(&s, now + chrono::Duration::days(8))
-        .await
-        .unwrap();
+    let swept =
+        pulse_server::servers::channels::purge_expired(&s, now + pulse_server::times::days(8))
+            .await
+            .unwrap();
     assert_eq!(swept, 1);
     let id = old.id.to_string();
     assert_eq!(

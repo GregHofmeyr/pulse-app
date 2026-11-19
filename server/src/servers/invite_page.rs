@@ -238,7 +238,7 @@ async fn download(
     req: Request,
 ) -> Response {
     let ip_key = rate_key(ip).to_string();
-    match super::invites::lookups_blocked(&s.db, &ip_key, None, chrono::Utc::now()).await {
+    match super::invites::lookups_blocked(&s.db, &ip_key, None, jiff::Timestamp::now()).await {
         Ok(false) => {}
         Ok(true) => return AppError::TooManyRequests(None).into_response(),
         Err(e) => return e.into_response(),

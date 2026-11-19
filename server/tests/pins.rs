@@ -323,14 +323,16 @@ async fn a_timed_pin_expires_and_the_event_fires() {
     assert_eq!(pin(&w.app, &w.alex, a.id, "hour").await.status(), 200);
     assert_eq!(pin(&w.app, &w.alex, b.id, "forever").await.status(), 200);
     let mut ws = hello(&w.app, &w.sam).await;
-    let soon = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::minutes(30));
+    let soon =
+        pulse_server::db::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_mins(30));
     assert_eq!(
         pulse_server::pins::expire_overdue(&w.app.state(), &soon)
             .await
             .unwrap(),
         0
     );
-    let later = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(2));
+    let later =
+        pulse_server::db::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_hours(2));
     assert_eq!(
         pulse_server::pins::expire_overdue(&w.app.state(), &later)
             .await
@@ -529,7 +531,8 @@ async fn a_line_from_a_while_ago_or_deleted_is_left_alone() {
     // alex's line for `a` is from 20 minutes ago (its id says when it was posted)
     assert_eq!(pin(&w.app, &w.alex, a.id, "day").await.status(), 200);
     let old = pin_lines(&messages(&w.app, &w.alex, w.general).await)[0].id;
-    let then = (chrono::Utc::now() - chrono::Duration::minutes(20)).timestamp_millis() as u64;
+    let then =
+        (jiff::Timestamp::now() - jiff::SignedDuration::from_mins(20)).as_millisecond() as u64;
     sqlx::query("UPDATE messages SET id = ? WHERE id = ?")
         .bind(MessageId::floor(then).to_string())
         .bind(old.to_string())

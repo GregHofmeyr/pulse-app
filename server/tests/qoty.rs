@@ -81,7 +81,7 @@ async fn seen(ws: &mut Socket) -> Vec<Seen> {
 }
 
 fn this_year() -> i32 {
-    chrono::Datelike::year(&chrono::Utc::now())
+    i32::from(pulse_server::times::utc_date(jiff::Timestamp::now()).year())
 }
 
 struct Fixture {
@@ -472,9 +472,9 @@ async fn start_input_is_checked() {
     let r = f.start(&f.alex_t, 2000, Some(20160)).await;
     assert_eq!(r.status(), 200);
     let e: QotyEvent = r.json().await.unwrap();
-    let ends = chrono::DateTime::parse_from_rfc3339(e.ends_at.as_deref().unwrap()).unwrap();
-    let started = chrono::DateTime::parse_from_rfc3339(&e.started_at).unwrap();
-    assert_eq!((ends - started).num_minutes(), 20160);
+    let ends = pulse_server::times::parse(e.ends_at.as_deref().unwrap()).unwrap();
+    let started = pulse_server::times::parse(&e.started_at).unwrap();
+    assert_eq!(ends.duration_since(started).as_mins(), 20160);
 }
 
 // ---------- voting ----------
@@ -776,10 +776,9 @@ async fn ending_early_by_anyone() {
     let ended = f.ended(&kim_t, e.id).await;
     assert_eq!(ended.end_reason, Some(QotyEndReason::Early));
     assert_eq!(ended.ended_by, Some(kim));
-    let at = chrono::DateTime::parse_from_rfc3339(ended.ended_at.as_deref().unwrap()).unwrap();
-    let until =
-        chrono::DateTime::parse_from_rfc3339(ended.reopen_until.as_deref().unwrap()).unwrap();
-    assert_eq!((until - at).num_hours(), 24);
+    let at = pulse_server::times::parse(ended.ended_at.as_deref().unwrap()).unwrap();
+    let until = pulse_server::times::parse(ended.reopen_until.as_deref().unwrap()).unwrap();
+    assert_eq!(until.duration_since(at).as_hours(), 24);
     assert_eq!(f.end(&f.alex_t, e.id).await.status(), 409, "already ended");
 
     let cards = f.cards(f.ch.id).await;
@@ -1062,8 +1061,7 @@ async fn reopen_within_a_day_of_an_early_end() {
     assert_eq!(f.cards(f.ch.id).await.len(), 1, "one card, the new one");
     f.sql(&format!(
         "UPDATE qoty_events SET ended_at = '{}' WHERE id = '{}'",
-        (chrono::Utc::now() - chrono::Duration::hours(25))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        pulse_server::db::stamp(jiff::Timestamp::now() - jiff::SignedDuration::from_hours(25)),
         e.id
     ))
     .await;
@@ -1934,7 +1932,7 @@ impl Fixture {
     async fn sweep_a_week_on(&self) -> u32 {
         pulse_server::servers::channels::purge_expired(
             &self.app.state(),
-            chrono::Utc::now() + chrono::Duration::days(8),
+            jiff::Timestamp::now() + pulse_server::times::days(8),
         )
         .await
         .unwrap()
@@ -2160,7 +2158,7 @@ async fn a_vote_reopened_during_a_purge_drops_the_options_being_purged() {
     let reopened: QotyEvent = r.json().await.unwrap();
     assert_eq!(option_ids(&reopened), vec![kept.id]);
     // The next sweep finishes the purge.
-    let swept = pulse_server::servers::channels::purge_expired(&s, chrono::Utc::now())
+    let swept = pulse_server::servers::channels::purge_expired(&s, jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(swept, 1);

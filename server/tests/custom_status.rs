@@ -259,7 +259,8 @@ async fn text_is_sanitised_and_bad_requests_are_refused() {
             .unwrap();
     // FE0F dropped, as a reaction key
     assert_eq!(row, (Some("on a break".into()), Some("❤".into())));
-    let soon = |h| pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(h));
+    let soon =
+        |h| pulse_server::db::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_hours(h));
     for (body, why) in [
         (json!({ "text": "x".repeat(129) }), "too long"),
         (json!({ "text": "   " }), "empty"),
@@ -315,7 +316,8 @@ async fn custom_emoji_need_their_server() {
 #[tokio::test]
 async fn timer_clears_on_read_then_the_sweep_tells_everyone() {
     let (app, (a_id, a, mut alex_ws), (_, s, mut sam_ws), _) = three().await;
-    let until = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::minutes(30));
+    let until =
+        pulse_server::db::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_mins(30));
     assert_eq!(
         set_custom(
             &app,

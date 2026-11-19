@@ -5,7 +5,7 @@ pub mod routes;
 
 use std::collections::HashSet;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ServerId, UserId};
 use pulse_protocol::rest::CustomEmoji;
@@ -98,7 +98,7 @@ pub async fn record_use(
     user: UserId,
     emojis: &[String],
 ) -> AppResult<()> {
-    record_use_at(conn, user, emojis, Utc::now()).await
+    record_use_at(conn, user, emojis, Timestamp::now()).await
 }
 
 /// [`record_use`] with the clock injected, so tests can age scores.
@@ -106,9 +106,9 @@ pub async fn record_use_at(
     conn: &mut SqliteConnection,
     user: UserId,
     emojis: &[String],
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> AppResult<()> {
-    let at = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let at = crate::db::stamp(now);
     let mut seen = HashSet::new();
     for emoji in emojis {
         let emoji = &canonical_key(emoji);
@@ -142,11 +142,11 @@ pub async fn record_use_at(
     Ok(())
 }
 
-pub(crate) fn decayed(score: f64, last_used_at: &str, now: DateTime<Utc>) -> f64 {
-    let Ok(last) = DateTime::parse_from_rfc3339(last_used_at) else {
+pub(crate) fn decayed(score: f64, last_used_at: &str, now: Timestamp) -> f64 {
+    let Ok(last) = crate::times::parse(last_used_at) else {
         return score;
     };
-    let days = (now - last.with_timezone(&Utc)).num_milliseconds().max(0) as f64 / 86_400_000.0;
+    let days = (now.duration_since(last).as_millis().max(0) as i64) as f64 / 86_400_000.0;
     score * 0.5f64.powf(days / HALF_LIFE_DAYS)
 }
 
@@ -154,7 +154,7 @@ pub(crate) fn decayed(score: f64, last_used_at: &str, now: DateTime<Utc>) -> f64
 /// Custom emoji that were deleted, or whose server `user` isn't in, are skipped and the next ones
 /// down fill their places. (The same "usable" rule as `messages::reactions::live_keys`.)
 pub async fn frequent(db: &SqlitePool, user: UserId, n: usize) -> AppResult<Vec<String>> {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let rows: Vec<(String, f64, String)> = sqlx::query_as(
         "SELECT u.emoji, u.score, u.last_used_at FROM emoji_usage u
          WHERE u.user_id = ?1

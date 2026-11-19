@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 use super::{PENDING_TTL_HOURS, Stored};
 use crate::AppState;
@@ -26,7 +26,7 @@ pub struct SweepReport {
     pub expired: u32,
 }
 
-pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<SweepReport> {
+pub async fn run(s: &AppState, now: Timestamp) -> AppResult<SweepReport> {
     let mut report = SweepReport::default();
     let Some(r2) = &s.r2 else { return Ok(report) };
 
@@ -37,7 +37,7 @@ pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<SweepReport> {
          WHERE message_id IS NULL AND (created_at < ? OR channel_id IS NULL)",
     )
     .bind(stamp(
-        now - chrono::Duration::hours(PENDING_TTL_HOURS + GRACE_HOURS),
+        now - jiff::SignedDuration::from_hours(PENDING_TTL_HOURS + GRACE_HOURS),
     ))
     .fetch_all(&s.db)
     .await?;
@@ -124,7 +124,7 @@ pub fn spawn(s: AppState) {
     }
     tokio::spawn(async move {
         loop {
-            match run(&s, Utc::now()).await {
+            match run(&s, Timestamp::now()).await {
                 Ok(r) if r.pending + r.deleted + r.expired > 0 => tracing::info!(
                     pending = r.pending,
                     deleted = r.deleted,

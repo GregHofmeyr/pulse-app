@@ -10,7 +10,7 @@
 use axum::extract::{Path, State};
 use axum::routing::put;
 use axum::{Json, Router};
-use chrono::Utc;
+use jiff::Timestamp;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::UserId;
 use pulse_protocol::rest::{PersonDnd, PersonDndRequest};
@@ -83,7 +83,7 @@ async fn set(
     let until = req
         .until
         .as_deref()
-        .map(|u| crate::scheduled::future_time(u, Utc::now()))
+        .map(|u| crate::scheduled::future_time(u, Timestamp::now()))
         .transpose()?;
     let target = target(&s, me, &id).await?;
     let mut tx = crate::db::begin_write(&s.db).await?;

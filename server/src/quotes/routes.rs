@@ -30,11 +30,11 @@ pub fn router() -> Router<AppState> {
 }
 
 /// The day a quote counts for: the client's own date if it is within a day of UTC's, else UTC's.
-fn posted_on(today: Option<&str>) -> chrono::NaiveDate {
-    let utc = chrono::Utc::now().date_naive();
+fn posted_on(today: Option<&str>) -> jiff::civil::Date {
+    let utc = crate::times::utc_date(jiff::Timestamp::now());
     today
-        .and_then(|t| chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").ok())
-        .filter(|d| (*d - utc).num_days().abs() <= 1)
+        .and_then(|t| jiff::civil::Date::strptime("%Y-%m-%d", t).ok())
+        .filter(|d| (d.duration_since(utc).as_hours() / 24).abs() <= 1)
         .unwrap_or(utc)
 }
 
@@ -89,7 +89,7 @@ async fn post_quote(
     sqlx::query("INSERT INTO quotes (message_id, posted_on, year) VALUES (?, ?, ?)")
         .bind(msg_id.to_string())
         .bind(day.to_string())
-        .bind(chrono::Datelike::year(&day))
+        .bind(i32::from(day.year()))
         .execute(&mut *tx)
         .await?;
     for (position, l) in lines.iter().enumerate() {
@@ -100,7 +100,7 @@ async fn post_quote(
         &mut tx,
         me,
         &speakers,
-        s.cfg.quote_clock.unwrap_or_else(chrono::Utc::now),
+        s.cfg.quote_clock.unwrap_or_else(jiff::Timestamp::now),
     )
     .await?;
     let moved = crate::reads::advance(&mut tx, me, id, msg_id).await?;
@@ -341,14 +341,13 @@ struct BoardQuery {
 
 /// The first day of `period` around `day`, as `quotes.posted_on` stores days; `None` for all time.
 /// A week starts on Monday.
-fn period_start(period: LeaderboardPeriod, day: chrono::NaiveDate) -> Option<String> {
-    use chrono::Datelike;
+fn period_start(period: LeaderboardPeriod, day: jiff::civil::Date) -> Option<String> {
     let start = match period {
         LeaderboardPeriod::Week => {
-            day - chrono::Duration::days(i64::from(day.weekday().num_days_from_monday()))
+            day - crate::times::days(i64::from(day.weekday().to_monday_zero_offset()))
         }
-        LeaderboardPeriod::Month => day.with_day(1)?,
-        LeaderboardPeriod::Year => chrono::NaiveDate::from_ymd_opt(day.year(), 1, 1)?,
+        LeaderboardPeriod::Month => day.first_of_month(),
+        LeaderboardPeriod::Year => day.first_of_year(),
         LeaderboardPeriod::All => return None,
     };
     Some(start.to_string())
@@ -420,7 +419,7 @@ async fn leaderboard(
     members_only(&s, server, me).await?;
     let year = q
         .year
-        .unwrap_or_else(|| chrono::Datelike::year(&chrono::Utc::now()));
+        .unwrap_or_else(|| i32::from(crate::times::utc_date(jiff::Timestamp::now()).year()));
     if !YEARS.contains(&year) {
         return Err(AppError::BadRequest("that isn't a year we can show".into()));
     }
@@ -707,8 +706,8 @@ async fn search(
 mod tests {
     use super::*;
 
-    fn d(s: &str) -> chrono::NaiveDate {
-        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    fn d(s: &str) -> jiff::civil::Date {
+        jiff::civil::Date::strptime("%Y-%m-%d", s).unwrap()
     }
 
     #[test]

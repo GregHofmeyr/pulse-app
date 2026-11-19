@@ -445,7 +445,8 @@ async fn dnd_shows_as_dnd_and_its_timer_expires() {
         mut alex_ws,
         ..
     } = three().await;
-    let until = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(1));
+    let until =
+        pulse_server::db::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1));
     assert_eq!(set_status(&app, &a, "dnd", Some(&until)).await, 204);
     assert_eq!(
         about(&drain(&mut sam_ws, 300).await, a_id),
@@ -506,7 +507,8 @@ async fn invisible_on_a_timer_returns_to_online() {
         mut alex_ws,
         ..
     } = three().await;
-    let until = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(8));
+    let until =
+        pulse_server::db::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_hours(8));
     assert_eq!(set_status(&app, &a, "invisible", Some(&until)).await, 204);
     let frozen = about(&drain(&mut sam_ws, 300).await, a_id);
     assert_eq!(frozen.len(), 1);
@@ -572,7 +574,8 @@ async fn invisible_again_after_a_run_out_timer_freezes_anew() {
         alex_ws: _alex_ws,
         ..
     } = three().await;
-    let until = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(1));
+    let until =
+        pulse_server::db::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1));
     assert_eq!(set_status(&app, &a, "invisible", Some(&until)).await, 204);
     let first = db_str(&app, "SELECT invisible_at FROM users WHERE id = ?", a_id).await;
     sqlx::query("UPDATE users SET dnd_until = '2000-01-01T00:00:00.000Z' WHERE id = ?")
@@ -643,7 +646,8 @@ async fn own_sessions_get_status_and_dnd_end_on_every_device() {
     let (_, a) = register(&app, "alex").await;
     let (mut one, _) = hello(&app, &a).await;
     let (mut two, _) = hello(&app, &a).await;
-    let until = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(8));
+    let until =
+        pulse_server::db::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_hours(8));
     assert_eq!(set_status(&app, &a, "dnd", Some(&until)).await, 204);
     for ws in [&mut one, &mut two] {
         wait_for(ws, |e| matches!(e, Event::StatusChanged { status: OwnStatus { status: Status::Dnd, dnd_until: Some(u) }, .. } if *u == until)).await;
@@ -661,9 +665,10 @@ async fn own_sessions_get_status_and_dnd_end_on_every_device() {
 async fn bad_requests_are_refused() {
     let app = spawn().await;
     let (a_id, a) = register(&app, "alex").await;
-    let past = pulse_server::db::stamp(chrono::Utc::now() - chrono::Duration::minutes(1));
-    let far = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::days(8));
-    let soon = pulse_server::db::stamp(chrono::Utc::now() + chrono::Duration::hours(1));
+    let past = pulse_server::db::stamp(jiff::Timestamp::now() - jiff::SignedDuration::from_mins(1));
+    let far = pulse_server::db::stamp(jiff::Timestamp::now() + pulse_server::times::days(8));
+    let soon =
+        pulse_server::db::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1));
     assert_eq!(set_status(&app, &a, "dnd", Some(&past)).await, 400);
     assert_eq!(set_status(&app, &a, "dnd", Some(&far)).await, 400);
     assert_eq!(set_status(&app, &a, "dnd", Some("tomorrow")).await, 400);

@@ -134,7 +134,8 @@ async fn leaving_takes_their_place_but_keeps_their_messages_and_a_rejoin_works()
     let theirs = send(&w.app, &w.sam.1, g, "bye all").await;
     // a mention and a reminder in the server
     send(&w.app, &w.kim.1, g, "@sam see you").await;
-    let at = (chrono::Utc::now() + chrono::TimeDelta::minutes(30)).to_rfc3339();
+    let at =
+        pulse_server::times::rfc3339(jiff::Timestamp::now() + jiff::SignedDuration::from_mins(30));
     let r = post_json(
         &w.app,
         &w.sam.1,

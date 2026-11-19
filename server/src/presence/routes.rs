@@ -5,7 +5,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::put;
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::UserId;
 use pulse_protocol::rest::{CustomStatus, SetCustomStatusRequest, SetStatusRequest, Status};
@@ -18,7 +18,7 @@ use crate::error::{AppError, AppResult};
 
 /// The longest DND or Invisible timer the server takes (the client offers at most "until tomorrow
 /// morning").
-pub const MAX_DND: chrono::Duration = chrono::Duration::days(7);
+pub const MAX_DND: jiff::SignedDuration = crate::times::days(7);
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -34,22 +34,21 @@ fn too_fast() -> AppError {
 }
 
 /// A timer's end as stored, if it's a real time in the next [`MAX_DND`].
-fn dnd_end(raw: &str, at: DateTime<Utc>) -> AppResult<String> {
+fn dnd_end(raw: &str, at: Timestamp) -> AppResult<String> {
     timer_end(raw, at, MAX_DND)
 }
 
 /// A timer's end as stored, if it's a real time in the next `max`.
-fn timer_end(raw: &str, at: DateTime<Utc>, max: chrono::Duration) -> AppResult<String> {
-    let t = DateTime::parse_from_rfc3339(raw)
-        .map_err(|_| AppError::BadRequest("That end time isn't a time.".into()))?
-        .with_timezone(&Utc);
+fn timer_end(raw: &str, at: Timestamp, max: jiff::SignedDuration) -> AppResult<String> {
+    let t = crate::times::parse(raw)
+        .map_err(|_| AppError::BadRequest("That end time isn't a time.".into()))?;
     if t <= at {
         return Err(AppError::BadRequest("That end time has passed.".into()));
     }
     if t > at + max {
         return Err(AppError::BadRequest(format!(
             "A status can be timed for up to {} days.",
-            max.num_days()
+            max.as_hours() / 24
         )));
     }
     Ok(stamp(t))
@@ -60,7 +59,7 @@ async fn set_status(
     AuthUser(me): AuthUser,
     Json(req): Json<SetStatusRequest>,
 ) -> AppResult<StatusCode> {
-    let at = Utc::now();
+    let at = Timestamp::now();
     let dnd_until = match (&req.dnd_until, req.status) {
         (None, _) => None,
         // Invisible times out like DND (#153)
@@ -247,7 +246,7 @@ async fn set_custom(
     AuthUser(me): AuthUser,
     Json(req): Json<SetCustomStatusRequest>,
 ) -> AppResult<StatusCode> {
-    let at = Utc::now();
+    let at = Timestamp::now();
     let text = super::custom::clean_text(&req.text)?;
     let emoji = match req.emoji.as_deref().map(str::trim) {
         None | Some("") => None,

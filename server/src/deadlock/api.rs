@@ -393,11 +393,11 @@ fn retry_after(h: &HeaderMap) -> Option<Duration> {
 /// One `/v2/patches` item: `title`, `link`, `pub_date`, `content` (forum and Steam items alike).
 pub fn parse_feed_item(v: &serde_json::Value) -> Option<Patch> {
     let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
-    let published = chrono::DateTime::parse_from_rfc3339(&s("pub_date")?).ok()?;
+    let published = crate::times::parse(&s("pub_date")?).ok()?;
     Some(Patch {
         title: s("title")?,
         link: s("link")?,
-        published_at: crate::db::stamp(published.to_utc()),
+        published_at: crate::db::stamp(published),
         content: s("content").unwrap_or_default(),
     })
 }
@@ -428,7 +428,7 @@ pub fn parse_steam_news(body: &[u8]) -> Option<Vec<Patch>> {
             .into_iter()
             .filter_map(|i| {
                 Some(Patch {
-                    published_at: crate::db::stamp(chrono::DateTime::from_timestamp(i.date, 0)?),
+                    published_at: crate::db::stamp(jiff::Timestamp::from_second(i.date).ok()?),
                     title: i.title,
                     link: i.url,
                     content: i.contents,

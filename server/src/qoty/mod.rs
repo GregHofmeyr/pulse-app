@@ -15,7 +15,7 @@ pub use routes::router;
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{MessageId, QotyEventId, ServerId, UserId};
 use pulse_protocol::rest::{Message, QotyEndReason, QotyEvent, QotyOption};
@@ -39,10 +39,8 @@ pub const FIRST_YEAR: i32 = 2000;
 /// every option to everyone.
 pub const MAX_OPTIONS: usize = 50;
 
-fn parse_time(s: &str) -> AppResult<DateTime<Utc>> {
-    Ok(DateTime::parse_from_rfc3339(s)
-        .map_err(anyhow::Error::from)?
-        .with_timezone(&Utc))
+fn parse_time(s: &str) -> AppResult<Timestamp> {
+    Ok(crate::times::parse(s).map_err(anyhow::Error::from)?)
 }
 
 /// `None` (open until ended) or a length in [`MINUTES`].
@@ -56,8 +54,8 @@ pub(crate) fn check_minutes(minutes: Option<u32>) -> AppResult<()> {
 }
 
 /// When a vote of `minutes` starting `now` ends.
-pub(crate) fn ends_at(now: DateTime<Utc>, minutes: Option<u32>) -> Option<String> {
-    minutes.map(|m| stamp(now + chrono::Duration::minutes(i64::from(m))))
+pub(crate) fn ends_at(now: Timestamp, minutes: Option<u32>) -> Option<String> {
+    minutes.map(|m| stamp(now + jiff::SignedDuration::from_mins(i64::from(m))))
 }
 
 fn reason_of(s: &str) -> AppResult<QotyEndReason> {
@@ -240,7 +238,7 @@ async fn build(db: &SqlitePool, row: EventRow, me: Option<UserId>) -> AppResult<
     let end_reason = end_reason.as_deref().map(reason_of).transpose()?;
     let reopen_until = match (&ended_at, end_reason) {
         (Some(at), Some(QotyEndReason::Early)) => Some(stamp(
-            parse_time(at)? + chrono::Duration::hours(REOPEN_HOURS),
+            parse_time(at)? + jiff::SignedDuration::from_hours(REOPEN_HOURS),
         )),
         _ => None,
     };
@@ -265,7 +263,7 @@ async fn build(db: &SqlitePool, row: EventRow, me: Option<UserId>) -> AppResult<
 /// reopen button can show), oldest first. Every server's, as QotY events go to everyone, and as
 /// the events show them (nothing marked as yours), so the first update changes nothing else.
 pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<QotyEvent>> {
-    let since = stamp(Utc::now() - chrono::Duration::hours(REOPEN_HOURS));
+    let since = stamp(Timestamp::now() - jiff::SignedDuration::from_hours(REOPEN_HOURS));
     let rows: Vec<EventRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {EVENT_COLS} FROM qoty_events
          WHERE (ended_at IS NULL OR (end_reason = 'early' AND ended_at > ?))
