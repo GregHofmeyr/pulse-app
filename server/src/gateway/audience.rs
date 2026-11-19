@@ -76,12 +76,17 @@ pub async fn audience_for(db: &SqlitePool, event: &Event) -> anyhow::Result<Audi
             .bind(channel_id.to_string())
             .fetch_all(db)
             .await?;
-    Ok(Audience::Users(
-        members
-            .iter()
-            .map(|m| m.parse())
-            .collect::<Result<_, _>>()?,
-    ))
+    let mut members: HashSet<UserId> = members
+        .iter()
+        .map(|m| m.parse())
+        .collect::<Result<_, _>>()?;
+    // A 1:1 DM with someone you've blocked (#474): what they send and do there never reaches you.
+    if channel.kind == pulse_protocol::rest::ChannelKind::Dm {
+        for u in crate::blocks::dm_drop(db, event, &members).await? {
+            members.remove(&u);
+        }
+    }
+    Ok(Audience::Users(members))
 }
 
 /// Everyone in `server`, deleted or not: a deleted server's events (its delete, its restore) reach the members it

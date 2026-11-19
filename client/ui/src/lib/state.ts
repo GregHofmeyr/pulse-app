@@ -4,6 +4,7 @@ import type { CallInfo } from './protocol/CallInfo'
 import type { DmLayout } from './protocol/DmLayout'
 import type { PersonDnd } from './protocol/PersonDnd'
 import type { ServerStatus } from './protocol/ServerStatus'
+import type { Block } from './protocol/Block'
 import type { GameInvite } from './protocol/GameInvite'
 import type { InboxFilter } from './protocol/InboxFilter'
 import type { ChannelOrder } from './protocol/ChannelOrder'
@@ -112,6 +113,9 @@ export type AppState = {
   /** Your own status in each server where it differs from your main one (#154), yours only, on every device. From
    *  Ready and MyServerStatusesChanged. */
   myServerStatuses: ServerStatus[]
+  /** The people you've blocked (#474), each with how they show, yours only, on every device. From Ready and
+   *  BlocksChanged (lib/blocks.ts). */
+  blocks: Block[]
   /** Bumped per server when the invites you can see in it change (#80, InvitesChanged, yours only): an open Invites
    *  pane asks again. */
   invitesRev: Record<string, number>
@@ -209,7 +213,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], myServerStatuses: [], invitesRev: {}, bansRev: {}, inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], myServerStatuses: [], blocks: [], invitesRev: {}, bansRev: {}, inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -286,6 +290,7 @@ function readyState(s: AppState, r: Ready): AppState {
     // absent from older servers: nobody
     activityHidden: r.activity_hidden ?? [],
     myServerStatuses: r.server_statuses ?? [],
+    blocks: r.blocks ?? [],
     // absent from older servers: none
     inboxFilters: r.inbox_filters ?? [],
     // absent from older servers: the server's order everywhere
@@ -1367,6 +1372,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return e.d.user_id === s.me?.id ? { ...s, activityHidden: e.d.list } : s
     case 'MyServerStatusesChanged':
       return e.d.user_id === s.me?.id ? { ...s, myServerStatuses: e.d.list } : s
+    case 'BlocksChanged':
+      return e.d.user_id === s.me?.id ? { ...s, blocks: e.d.list } : s
     case 'InboxFiltersChanged':
       return e.d.user_id === s.me?.id ? { ...s, inboxFilters: e.d.filters } : s
     case 'ViewOnceOpened':

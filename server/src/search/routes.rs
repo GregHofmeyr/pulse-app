@@ -321,7 +321,7 @@ async fn run(
     page.truncate(PAGE as usize);
     // Read past even if every hit on the page is dropped below: the next page starts after it.
     let next_cursor = more.then(|| page[page.len() - 1].0.to_string());
-    let rows = rows_in_order(s, &page).await?;
+    let rows = rows_in_order(s, me, &page).await?;
 
     let total = if search.cursor.is_some() {
         None
@@ -391,13 +391,16 @@ fn indexed_text(m: &Message) -> String {
 
 /// The page's messages, in the page's order. One deleted since the page was read is left out
 /// (its row comes back deleted, and a deleted message is never a hit).
-async fn rows_in_order(s: &AppState, page: &[(i64, String)]) -> AppResult<Vec<Row>> {
+async fn rows_in_order(s: &AppState, me: UserId, page: &[(i64, String)]) -> AppResult<Vec<Row>> {
     if page.is_empty() {
         return Ok(vec![]);
     }
+    // nor a DM withheld from you (#474)
     let mut q = QueryBuilder::new(format!(
-        "SELECT {COLS} FROM messages WHERE deleted_at IS NULL AND id IN ("
+        "SELECT {COLS} FROM messages WHERE deleted_at IS NULL AND (withheld_from IS NULL OR withheld_from != "
     ));
+    q.push_bind(me.to_string());
+    q.push(") AND id IN (");
     let mut list = q.separated(", ");
     for (_, id) in page {
         list.push_bind(id.as_str());

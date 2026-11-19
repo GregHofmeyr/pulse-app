@@ -170,6 +170,15 @@ describe('applyEvent', () => {
     expect(applyEvent(t, { t: 'ServerUpdated', d: { server: { ...sv, id: 'S9' } } }, 0)).toBe(t)
   })
 
+  it('Ready and BlocksChanged keep your blocks (#474); someone else\'s change is ignored', () => {
+    expect(applyReady(emptyState(), ready()).blocks).toEqual([])
+    const s = applyReady(emptyState(), ready({ blocks: [{ user_id: 'U2', mode: 'hide' }] }))
+    expect(s.blocks).toEqual([{ user_id: 'U2', mode: 'hide' }])
+    const t = applyEvent(s, { t: 'BlocksChanged', d: { user_id: 'U1', list: [] } }, 0)
+    expect(t.blocks).toEqual([])
+    expect(applyEvent(s, { t: 'BlocksChanged', d: { user_id: 'U9', list: [] } }, 0)).toBe(s)
+  })
+
   it('ServerOwnerChanged hands the server to its new owner (#418)', () => {
     const s = applyEvent(base(), { t: 'ServerOwnerChanged', d: { server_id: 'S1', owner_id: 'U2', previous_owner_id: 'U1' } }, 0)
     expect(s.servers.find((x) => x.id === 'S1')?.owner_id).toBe('U2')

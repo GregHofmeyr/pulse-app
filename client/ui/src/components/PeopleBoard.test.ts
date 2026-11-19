@@ -140,7 +140,7 @@ describe('PeopleBoard person menu (#135)', () => {
     flushSync()
     expect(e.defaultPrevented).toBe(true)
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for sam')
-    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline', 'hide-game'])
+    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline', 'hide-game', 'block'])
   })
 
   it('Shift+F10 on the name opens it; Esc gives focus back', () => {

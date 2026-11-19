@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app, clock, ui } from '../lib/store.svelte'
+  import { isHidden } from '../lib/blocks'
   import { byPresence, presenceOf } from '../lib/presence'
   import Avatar from './Avatar.svelte'
   import Icon from './Icon.svelte'
@@ -20,7 +21,8 @@
   import { thumbUrl } from '../lib/achievements'
 
   let { serverId, onMessage }: { serverId: string; onMessage?: (userId: string) => void } = $props()
-  const members = $derived(app.state.members[serverId] ?? [])
+  // someone blocked with Hide completely (#474) isn't listed or counted
+  const members = $derived((app.state.members[serverId] ?? []).filter((m) => !isHidden(app.state, m.user.id)))
   // Online (DND included) above Offline, as Discord does (#170): only by what you're told, so someone Invisible or
   // hiding from you is Offline. A section with nobody in it has no heading.
   const sections = $derived.by(() => {

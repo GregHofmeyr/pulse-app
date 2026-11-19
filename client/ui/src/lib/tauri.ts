@@ -57,6 +57,8 @@ import type { CreatePollRequest } from './protocol/CreatePollRequest'
 import type { EditPollRequest } from './protocol/EditPollRequest'
 import type { DmLayout } from './protocol/DmLayout'
 import type { PersonDnd } from './protocol/PersonDnd'
+import type { Block } from './protocol/Block'
+import type { BlockMode } from './protocol/BlockMode'
 import type { InboxFilter } from './protocol/InboxFilter'
 import type { ViewOnceState } from './protocol/ViewOnceState'
 import type { ChannelOrder } from './protocol/ChannelOrder'
@@ -521,6 +523,8 @@ export const api = {
   joinSteamGame: (join: SteamJoin) => invoke<void>('join_steam_game', { join }),
   // Hide what I'm playing (#436): your whole list back
   setActivityHidden: (userId: string, on: boolean) => invoke<string[]>('set_activity_hidden', { userId, on }),
+  /** Block someone (#474) with how they show, or unblock them (null). Your whole list back. */
+  setBlock: (userId: string, mode: BlockMode | null) => invoke<Block[]>('set_block', { userId, mode }),
   // Invite to game (#436): the invite's message; where to join is asked for only when Join is pressed
   sendGameInvite: (channelId: string) => invoke<Message>('send_game_invite', { channelId }),
   gameInviteJoin: (messageId: string) => invoke<SteamJoin>('game_invite_join', { messageId }),

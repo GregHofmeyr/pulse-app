@@ -2330,6 +2330,24 @@ impl Api {
         Self::parse(req.bearer_auth(token).send().await).await
     }
 
+    /// Block someone (#474) with how they show (`Some`), or unblock them (`None`). Your whole list back.
+    pub async fn set_block(
+        &self,
+        token: &str,
+        user: UserId,
+        mode: Option<pulse_protocol::rest::BlockMode>,
+    ) -> Result<Vec<pulse_protocol::rest::Block>, ApiError> {
+        let url = self.url(&["me", "blocks", &user.to_string()])?;
+        let req = match mode {
+            Some(mode) => self
+                .http
+                .put(url)
+                .json(&pulse_protocol::rest::BlockRequest { mode }),
+            None => self.http.delete(url),
+        };
+        Self::parse(req.bearer_auth(token).send().await).await
+    }
+
     /// Invite a DM or group to the game you're playing (#436): its message, with the card.
     pub async fn send_game_invite(
         &self,
@@ -6576,6 +6594,27 @@ mod tests {
         );
         let ch = api.set_group_icon(&alex, g.id, None).await.unwrap();
         assert_eq!(ch.icon_hash, None);
+    }
+
+    #[tokio::test]
+    async fn blocks_round_trip_through_the_core() {
+        use pulse_protocol::rest::BlockMode;
+        let app = testing::spawn().await;
+        let (alex_id, alex) = testing::register(&app, "alex").await;
+        let (sam_id, _) = testing::register(&app, "sam").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let list = api
+            .set_block(&alex, sam_id, Some(BlockMode::Hide))
+            .await
+            .unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].mode, BlockMode::Hide);
+        assert!(api.set_block(&alex, sam_id, None).await.unwrap().is_empty());
+        assert!(
+            api.set_block(&alex, alex_id, Some(BlockMode::Line))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

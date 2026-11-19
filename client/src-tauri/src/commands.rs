@@ -2610,6 +2610,18 @@ pub async fn set_activity_hidden(
     core.check(&app, api.set_activity_hidden(&token, user_id, on).await)
 }
 
+/// Block someone (#474) with how they show, or unblock them (`mode: None`). Your whole list back.
+#[tauri::command]
+pub async fn set_block(
+    app: AppHandle,
+    core: State<'_, Core>,
+    user_id: UserId,
+    mode: Option<pulse_protocol::rest::BlockMode>,
+) -> Result<Vec<pulse_protocol::rest::Block>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_block(&token, user_id, mode).await)
+}
+
 /// Invite a DM or group to the game you're playing (#436).
 #[tauri::command]
 pub async fn send_game_invite(

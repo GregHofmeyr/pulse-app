@@ -1,6 +1,7 @@
 <script lang="ts">
   import { flushSync, onMount, tick, untrack } from 'svelte'
   import Icon from './Icon.svelte'
+  import { blockedCountText, listRows } from '../lib/blocks'
   import MessageItem from './MessageItem.svelte'
   import QuoteComposer from './QuoteComposer.svelte'
   import QuoteItem from './QuoteItem.svelte'
@@ -261,6 +262,11 @@
   let drawnAll = $state(untrack(() => ui.jump?.channelId === channelId || ui.openReplies?.channelId === channelId))
   const from = $derived(drawnAll ? 0 : Math.max(0, messages.length - firstCount))
   const shown = $derived(from ? messages.slice(from) : messages)
+  // Blocked people (#474): a run of 'line' messages is one row until its Show is pressed (this visit only); 'hide'
+  // ones aren't drawn at all.
+  let shownBlocked = $state<Set<string>>(new Set())
+  const showBlocked = (key: string) => (shownBlocked = new Set([...shownBlocked, key]))
+  const rows = $derived(listRows(app.state, shown, shownBlocked))
   let drawTimer: ReturnType<typeof setTimeout> | undefined
   let drawFrame = 0
   const nextFrame = () => (drawFrame = requestAnimationFrame(() => (drawTimer = setTimeout(drawMore))))
@@ -906,8 +912,13 @@
       {:else if isVoice}This is the start of {title}'s chat.
       {:else}This is the start of #{title}.{/if}
     </div>{/if}
-    {#each shown as m, j (m.id)}
-      {@const i = from + j}
+    {#each rows as row (row.kind === 'blocked' ? `blocked:${row.key}` : row.message.id)}
+      {#if row.kind === 'blocked'}
+        <!-- a run of messages from someone you've blocked (#474): one line, and Show draws them -->
+        <div class="blocked-run" data-blocked-run={row.key}>{blockedCountText(row.messages.length)} · <button type="button" class="link" onclick={() => showBlocked(row.key)}>Show</button></div>
+      {:else}
+      {@const m = row.message}
+      {@const i = from + row.index}
       {#if i === newIndex}<div class="newline" role="separator" aria-label="New messages">NEW</div>{/if}
       {#if m.qoty_card && serverId}
         <QotyCard message={m} {serverId} quote={m.qoty_card.message_id ? (byId.get(m.qoty_card.message_id) ?? null) : null} />
@@ -923,6 +934,7 @@
         onReply={() => (replyTo = m)}
         onEdit={async (c) => { await api.editMessage(m.id, c) }}
         onDelete={() => api.deleteMessage(m.id)} onEditClosed={() => composer?.focus()} />
+      {/if}
       {/if}
     {/each}
     {#each pendingMessages as pm, i (pm.id)}
@@ -1012,6 +1024,10 @@
   .list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 0 8px; display: flex; flex-direction: column; }
   .list:focus { outline: none; } /* focused only from code, as a fallback: no ring */
   .start { padding: 16px 18px; color: var(--text-3); font-size: 13px; }
+  /* a run of messages from someone you've blocked (#474) */
+  .blocked-run { margin: 2px 18px; padding: 6px 10px; border-radius: var(--radius-sm); color: var(--text-3); font-size: 13px; }
+  .blocked-run .link { border: 0; padding: 0; background: none; color: var(--accent-text); font: inherit; cursor: pointer; }
+  .blocked-run .link:hover { text-decoration: underline; }
   /* Send later (#299): this chat's scheduled messages, a quiet line above the box */
   .sched-line { padding: 0 18px 4px; }
   .sched-btn { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); font: inherit; font-size: 12px; }

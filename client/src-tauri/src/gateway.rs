@@ -1093,6 +1093,7 @@ mod tests {
                         person_dnd: vec![],
                         activity_hidden: vec![],
                         server_statuses: vec![],
+                        blocks: vec![],
                         inbox_filters: vec![],
                         channel_orders: vec![],
                         calls: vec![],

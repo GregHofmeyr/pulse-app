@@ -840,10 +840,13 @@ impl Hub {
                 } else if let Some(u) = &profile
                     && introduced.insert((user, *id))
                 {
-                    intro_to.insert(
-                        *id,
-                        ServerFrame::Event(Event::UserCreated { user: u.clone() }),
-                    );
+                    // someone they've blocked gets them emptied (#474)
+                    let u = if subject.blocked.contains(&c.user) {
+                        crate::blocks::emptied_user(u.clone())
+                    } else {
+                        u.clone()
+                    };
+                    intro_to.insert(*id, ServerFrame::Event(Event::UserCreated { user: u }));
                 }
                 let view = if knows {
                     view_for(&subject, c.user, connected, idle, &now)
@@ -997,6 +1000,15 @@ impl Hub {
                         )
                     }
                     _ => vec![],
+                };
+                // someone who blocked them shows emptied (#474)
+                let user = if all
+                    .get(&user.id)
+                    .is_some_and(|s| s.blocked.contains(&viewer))
+                {
+                    crate::blocks::emptied_user(user)
+                } else {
+                    user
                 };
                 if let Some(conn) = conn {
                     announced.insert((user.id, conn), (view.clone(), in_servers.clone()));

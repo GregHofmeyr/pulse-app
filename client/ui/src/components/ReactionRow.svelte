@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
+  import { isBlocked, isHidden } from '../lib/blocks'
   import type { Message } from '../lib/protocol/Message'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { Std } from '../lib/emoji'
@@ -65,7 +66,10 @@
     if (!keep) tipText = ''
     try {
       const ids = await api.listReactors(message.id, key)
-      if (req === tipReq) tipText = tooltipText(ids.map((id) => nameOf(id)), count)
+      // someone you've blocked (#474): counted, never named (Hide completely: not counted either)
+      const hidden = ids.filter((id) => isHidden(app.state, id)).length
+      const named = ids.filter((id) => !isBlocked(app.state, id))
+      if (req === tipReq) tipText = tooltipText(named.map((id) => nameOf(id)), count - hidden)
     } catch (err) {
       console.warn('could not load reactors', err)
       if (req === tipReq) {

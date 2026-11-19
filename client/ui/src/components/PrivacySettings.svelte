@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Settings → Privacy (#45): the people you appear offline to, each with Remove. Add person (#188) opens the people
+  // Settings → Privacy (#45): the people you appear offline to, each with Remove; then Blocked people (#474). Add person (#188) opens the people
   // picker with anyone you could hide from; their right-click menu ("Appear offline to them") does it too. Private to
   // you, like private nicknames: they're never told.
   import Avatar from './Avatar.svelte'
@@ -12,6 +12,7 @@
   import { playerName, songLine } from '../lib/activity'
   import type { MusicPlayer } from '../lib/protocol/MusicPlayer'
   import GameActivitySettings from './GameActivitySettings.svelte'
+  import BlockedPeople from './BlockedPeople.svelte'
   const uid = $props.id()
   // "Spotify is playing …", "A browser is playing …" (an older core sends no player: Spotify)
   const readingName = (p: MusicPlayer | undefined) => {
@@ -108,6 +109,7 @@
     {/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
   </div>
+  <BlockedPeople />
 </section>
 
 {#if picking}

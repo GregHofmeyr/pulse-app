@@ -176,6 +176,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::DmPlacementRequest::export_all(&cfg)?;
     rest::PersonDndRequest::export_all(&cfg)?;
     rest::SetServerStatusRequest::export_all(&cfg)?;
+    rest::BlockRequest::export_all(&cfg)?;
     rest::InboxFiltersRequest::export_all(&cfg)?;
     rest::ChannelOrderRequest::export_all(&cfg)?;
     rest::ViewOnceState::export_all(&cfg)?;

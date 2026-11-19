@@ -422,6 +422,33 @@ pub struct PersonDnd {
     pub until: Option<String>,
 }
 
+/// What you see of someone you've blocked (#474) in servers you share. Their DMs, calls, invites, pings and sounds
+/// never reach you either way, you can't hear them in voice, and they see you offline with an emptied profile.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockMode {
+    /// A "Blocked message" line where their messages were (a run collapses into one, with Show).
+    #[default]
+    Line,
+    /// Nothing of them at all: no messages, member or voice row, reactions or typing.
+    Hide,
+}
+
+/// Someone you've blocked (#474), and how they show. Yours only; they're never told.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Block {
+    pub user_id: UserId,
+    #[serde(default)]
+    pub mode: BlockMode,
+}
+
+/// `PUT /me/blocks/{user_id}` (#474): block someone, or change how a block shows.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct BlockRequest {
+    #[serde(default)]
+    pub mode: BlockMode,
+}
+
 /// `PUT /me/person-dnd/{user_id}` (#310): turn Do Not Disturb on for someone (or change it).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
 pub struct PersonDndRequest {

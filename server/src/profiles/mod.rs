@@ -115,7 +115,8 @@ pub async fn load_profile(
     let steam_recent_minutes = crate::steam::store::profile_hours(&mut tx, user).await?;
     tx.commit().await?;
 
-    Ok(Some(Profile {
+    let hidden_from_viewer = crate::blocks::has_blocked(db, user, viewer).await?;
+    let profile = Profile {
         user: row.user.into_user()?,
         card: CardProfile {
             banner_hash: row.banner_hash,
@@ -139,6 +140,12 @@ pub async fn load_profile(
         showcase,
         showcase_chosen,
         name_archive,
+    };
+    // someone they've blocked sees it emptied (#474)
+    Ok(Some(if hidden_from_viewer {
+        crate::blocks::emptied_profile(profile)
+    } else {
+        profile
     }))
 }
 
