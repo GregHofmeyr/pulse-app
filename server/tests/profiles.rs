@@ -54,6 +54,7 @@ fn styled(u: &User, id: pulse_protocol::ids::UserId, avatar: &MediaInfo) {
         NameStyle {
             font: Some(FONT.into()),
             colors: COLOURS.map(String::from).to_vec(),
+            effect: None,
         }
     );
     assert_eq!(u.avatar_hash.as_ref(), Some(&avatar.hash));
@@ -530,6 +531,7 @@ async fn saves_a_whole_profile_and_tells_everyone() {
         style: NameStyle {
             font: Some("pacifico".into()),
             colors: vec!["#ffbe7a".into(), "#ff7fae".into()],
+            effect: Some("shimmer".into()),
         },
         pronouns: Some("they/them".into()),
         bio: Some("one\ntwo\nthree".into()),
@@ -563,6 +565,31 @@ async fn saves_a_whole_profile_and_tells_everyone() {
     assert_eq!(seen.style, req.style);
 }
 
+/// #468: an effect saved is kept (and read back), and saving without one clears it.
+#[tokio::test]
+async fn a_name_effect_is_saved_and_cleared() {
+    let app = spawn().await;
+    let (id, alex) = register(&app, "alex").await;
+    let mut req = request();
+    req.style.effect = Some("ember".into());
+    let p: Profile = put_profile(&app, &alex, &req).await.json().await.unwrap();
+    assert_eq!(p.user.style.effect.as_deref(), Some("ember"));
+    assert_eq!(
+        profile_of(&app, &alex, id)
+            .await
+            .user
+            .style
+            .effect
+            .as_deref(),
+        Some("ember")
+    );
+    let me: User = get_json(&app, &alex, "/me").await;
+    assert_eq!(me.style.effect.as_deref(), Some("ember"));
+    req.style.effect = None;
+    let p: Profile = put_profile(&app, &alex, &req).await.json().await.unwrap();
+    assert_eq!(p.user.style.effect, None);
+}
+
 #[tokio::test]
 async fn custom_colours_are_lightened() {
     let app = spawn().await;
@@ -586,6 +613,10 @@ async fn bad_input_is_refused() {
     let mut r = request();
     r.style.font = Some("comic-sans".into());
     refused(&app, &alex, &r, "Unknown name font.").await;
+
+    let mut r = request();
+    r.style.effect = Some("sparkle".into());
+    refused(&app, &alex, &r, "Unknown name effect.").await;
 
     let mut r = request();
     r.style.colors = vec!["blue".into()];

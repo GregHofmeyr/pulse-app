@@ -12,7 +12,7 @@
   import type { LinkEmbed } from '../lib/protocol/LinkEmbed'
   import { app } from '../lib/store.svelte'
   import { voice } from '../lib/voice.svelte'
-  import { mayControl, watching, youtubeIdOf } from '../lib/watchParty'
+  import { mayControl, partyMediaOf } from '../lib/watchParty'
   import { partyIn, startWatchParty, watchPartyAction, watchPrefs } from '../lib/watchParty.svelte'
 
   let { embed, messageId, channelId = null, mine, onError = () => {} }: {
@@ -62,24 +62,26 @@
     }
   }
 
-  // Watch party (#384): a YouTube card, while you're in a server voice channel's call, starts one there (or, with one
+  // Watch party (#384): a YouTube (or Twitch, #459) card, while you're in a server voice channel's call, starts one there (or, with one
   // on, plays in it or joins its queue).
-  const ytId = $derived(youtubeIdOf(embed))
+  // a YouTube video, or a Twitch VOD, channel or clip (#459)
+  const media = $derived(partyMediaOf(embed))
   const callCh = $derived(voice.connection === 'connected' && voice.channelId ? app.state.channels[voice.channelId] : null)
-  const canWatch = $derived(!!ytId && watchPrefs.on && callCh?.kind === 'voice' && !!callCh.server_id)
+  const canWatch = $derived(!!media && watchPrefs.on && callCh?.kind === 'voice' && !!callCh.server_id)
   const party = $derived(canWatch ? partyIn(callCh!.id) : null)
   const meId = $derived(app.state.me?.id ?? null)
-  const partyPlaying = $derived(!!party && party.video_id === ytId)
+  const partyPlaying = $derived(!!party && !!media && (party.source ?? 'youtube') === media.source && party.video_id === media.id)
   const partyControl = $derived(!!party && mayControl(party, meId))
-  const partyQueue = $derived(!!party && !partyPlaying && (partyControl || watching(party, meId)))
+  // anyone in the call may add to the queue (#464)
+  const partyQueue = $derived(!!party && !partyPlaying)
   let starting = $state(false)
   async function watchTogether(how: 'start' | 'queue') {
-    if (!callCh || !ytId || starting) return
+    if (!callCh || !media || starting) return
     starting = true
     try {
-      if (how === 'queue') await watchPartyAction(callCh.id, { action: 'enqueue', video_id: ytId, title: embed.title ?? null })
+      if (how === 'queue') await watchPartyAction(callCh.id, { action: 'enqueue', source: media.source, video_id: media.id, title: embed.title ?? null })
       else {
-        await startWatchParty(callCh.id, ytId, embed.title ?? null)
+        await startWatchParty(callCh.id, media, embed.title ?? null)
         // the party's player takes over from the card's
         stop(key)
       }

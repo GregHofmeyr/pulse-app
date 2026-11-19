@@ -1,7 +1,9 @@
+pub mod banner;
 pub mod bans;
 pub mod categories;
 pub mod channels;
 pub mod deleted;
+pub mod invite_page;
 pub mod invites;
 pub mod membership;
 pub mod nicknames;

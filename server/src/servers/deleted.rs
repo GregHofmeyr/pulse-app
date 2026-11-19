@@ -137,19 +137,27 @@ pub async fn list(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
 ) -> AppResult<Json<Vec<DeletedServer>>> {
-    let rows: Vec<(String, String, Option<String>, String, String)> =
-        sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT {SERVER_COLS}, deleted_at FROM servers
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {SERVER_COLS}, deleted_at FROM servers
          WHERE created_by = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id"
-        )))
-        .bind(me.to_string())
-        .fetch_all(&s.db)
-        .await?;
+    )))
+    .bind(me.to_string())
+    .fetch_all(&s.db)
+    .await?;
     let due = due(chrono::Utc::now());
     let mut out = Vec::with_capacity(rows.len());
-    for (id, name, icon, owner, deleted_at) in rows {
+    for (id, name, icon, owner, banner, banner_still, deleted_at) in rows {
         out.push(DeletedServer {
-            server: server_from_row((id, name, icon, owner))?,
+            server: server_from_row((id, name, icon, owner, banner, banner_still))?,
             can_restore: deleted_at > due,
             purge_at: purge_at(&deleted_at)?,
             deleted_at,

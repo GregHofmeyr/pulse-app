@@ -24,6 +24,10 @@ export const pinConversation = async (channelId: string, pinned: boolean): Promi
 export const moveConversation = async (channelId: string, categoryId: string | null): Promise<DmLayout> =>
   put(await dmLayoutCmd.place(channelId, { ...current(channelId), category_id: categoryId }))
 
+/** Put a conversation where a drag dropped it (#419): pinned or not, and in which category, in one change. */
+export const placeConversation = async (channelId: string, placement: { pinned: boolean; category_id: string | null }): Promise<DmLayout> =>
+  put(await dmLayoutCmd.place(channelId, placement))
+
 /** A new category, last; resolves with its id. */
 export async function createCategory(name: string): Promise<string> {
   const before = new Set(app.state.dmLayout.categories.map((c) => c.id))

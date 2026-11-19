@@ -29,11 +29,16 @@ macro_rules! redacting_debug {
 
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct RegisterRequest {
+    /// A sign-up code, or a server owner's invite code (#80), which also puts the new account in that server.
     pub invite_code: String,
     pub username: String,
     pub password: String,
+    /// Always empty from the app (#80).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub website: Option<String>,
 }
-redacting_debug!(RegisterRequest { username ; invite_code, password });
+redacting_debug!(RegisterRequest { username ; invite_code, password, website });
 
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct LoginRequest {
@@ -68,11 +73,18 @@ pub struct User {
 }
 
 /// How a name is drawn: a bundled font and 0 (default), 1 (solid) or 2 (gradient, first to
-/// second) `#rrggbb` colours.
+/// second) `#rrggbb` colours, and a name effect (#468).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct NameStyle {
     pub font: Option<String>,
     pub colors: Vec<String>,
+    /// One of the name effects (`neon`, `toon`, `pop`, `gummy`, `prism`, `shimmer`, `glitch`,
+    /// `ember`), or none. A string, not an enum, so an older client reading an effect it doesn't
+    /// know still reads the user (and draws the name without it). Absent from older servers and
+    /// clients: none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub effect: Option<String>,
 }
 
 /// The parts of a profile card that are not part of [`User`].
@@ -526,6 +538,15 @@ pub struct Server {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub owner_id: Option<UserId>,
+    /// Its banner (#475): a picture from `POST /media/banner`, set by its owner. Absent when it has none (invite
+    /// cards then draw a gradient of its colours).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub banner_hash: Option<String>,
+    /// An animated banner's still, for when it shouldn't move.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub banner_still: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -759,10 +780,14 @@ pub struct InvitePreview {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub icon_hash: Option<String>,
-    /// The server's banner, once servers have one (always absent for now).
+    /// The server's banner (#475), if it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub banner_hash: Option<String>,
+    /// An animated banner's still, for when it shouldn't move.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub banner_still: Option<String>,
     pub member_count: i64,
     /// Members who look online to the viewer.
     pub online_count: i64,
@@ -1319,6 +1344,11 @@ pub struct Gif {
     pub title: String,
     pub width: u32,
     pub height: u32,
+    /// A GIPHY sticker (#293): drawn on the chat itself, without a GIF's frame (it has a transparent background).
+    /// Left out when false, so older clients and stored GIFs read as before.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub sticker: bool,
 }
 
 /// What a signed-in person's app needs to search GIPHY itself (#58; GIPHY forbids proxying): the server's key
@@ -1681,6 +1711,10 @@ pub struct PlanForecast {
     /// The day's highest chance of rain, in percent.
     #[serde(default)]
     pub rain_chance: Option<u8>,
+    /// Degrees Celsius in the hour the plan starts, at the place (#399); none from an older server or forecast.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub temp_at_start: Option<f32>,
 }
 
 /// A plan's reminder line (#387): "⏰ Braai at kim's starts in an hour · See plan".
@@ -1689,6 +1723,46 @@ pub struct PlanReminder {
     pub plan_message_id: MessageId,
     pub title: String,
     pub starts_at: String,
+}
+
+/// What a watch party plays (#459). Older parties and clients know only YouTube, the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchSource {
+    /// A YouTube video: synced play, pause and seek. Its id is 11 of `[A-Za-z0-9_-]`.
+    #[default]
+    Youtube,
+    /// A Twitch VOD (`twitch.tv/videos/<id>`): synced play, pause and seek. Its id is 1 to 15 digits.
+    TwitchVideo,
+    /// A Twitch channel, live: play and pause only, and it plays until skipped. Its id is the channel's login, 1 to 25
+    /// of `[a-z0-9_]`.
+    TwitchChannel,
+    /// A Twitch clip: everyone's starts together, but there's no control (pause is each viewer's own). Its id is the
+    /// clip's slug, 1 to 100 of `[A-Za-z0-9_-]`.
+    TwitchClip,
+}
+
+impl WatchSource {
+    /// Whether `id` is well formed for this source. Ids hold only characters that need no escaping in a URL.
+    pub fn valid_id(self, id: &str) -> bool {
+        let within = |min: usize, max: usize, ok: fn(u8) -> bool| {
+            (min..=max).contains(&id.len()) && id.bytes().all(ok)
+        };
+        let slug = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'-';
+        match self {
+            Self::Youtube => within(11, 11, slug),
+            Self::TwitchVideo => within(1, 15, |b| b.is_ascii_digit()),
+            Self::TwitchChannel => within(1, 25, |b| {
+                b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'
+            }),
+            Self::TwitchClip => within(1, 100, slug),
+        }
+    }
+
+    /// Whether everyone's player follows the party's position (seek included).
+    pub fn seeks(self) -> bool {
+        matches!(self, Self::Youtube | Self::TwitchVideo)
+    }
 }
 
 /// A YouTube watch party in a server voice channel (#384): one per channel, its state held in memory on the server.
@@ -1700,7 +1774,10 @@ pub struct WatchParty {
     pub channel_id: ChannelId,
     /// Who controls it (with everyone else too, while `everyone_controls`).
     pub host_id: UserId,
-    /// The YouTube video: 11 of `[A-Za-z0-9_-]`.
+    /// What `video_id` is on (#459): YouTube unless it says otherwise.
+    #[serde(default)]
+    pub source: WatchSource,
+    /// The video, VOD, channel or clip: valid for `source` ([`WatchSource::valid_id`]).
     pub video_id: String,
     /// The video's title as the starter's card showed it; absent when it had none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1715,25 +1792,38 @@ pub struct WatchParty {
     pub everyone_controls: bool,
     /// Who has the player open, in the order they joined it (the host passes to the next of them).
     pub viewers: Vec<UserId>,
-    /// What plays next, in order.
+    /// What plays next, in order. It goes with the party: ending the party clears it.
     #[serde(default)]
     pub queue: Vec<WatchPartyItem>,
+    /// Who put the current video on (#464): its starter, or whoever queued it. They may skip it, as a controller may.
+    /// Absent from a party that predates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub added_by: Option<UserId>,
 }
 
-/// A video waiting in a watch party's queue (#384).
+/// A video waiting in a watch party's queue (#384, #464).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct WatchPartyItem {
+    #[serde(default)]
+    pub source: WatchSource,
     pub video_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub title: Option<String>,
     pub added_by: UserId,
+    /// The video's thumbnail, from its link card when the server has one (a `link_thumb` media hash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub thumb: Option<EmbedThumb>,
 }
 
 /// `PUT /channels/{id}/watch-party` (#384): start a watch party of a YouTube video (or, if one is on and you may
 /// control it, change its video).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct StartWatchPartyRequest {
+    #[serde(default)]
+    pub source: WatchSource,
     pub video_id: String,
     #[serde(default)]
     pub title: Option<String>,
@@ -1755,12 +1845,16 @@ pub enum WatchPartyAction {
     },
     /// Play another video now, from the start.
     Load {
+        #[serde(default)]
+        source: WatchSource,
         video_id: String,
         #[serde(default)]
         title: Option<String>,
     },
-    /// Add a video to the end of the queue (anyone watching may).
+    /// Add a video to the end of the queue (anyone in the call may, #464).
     Enqueue {
+        #[serde(default)]
+        source: WatchSource,
         video_id: String,
         #[serde(default)]
         title: Option<String>,
@@ -1769,8 +1863,24 @@ pub enum WatchPartyAction {
     Unqueue {
         index: u32,
     },
-    /// The queue's next video now (or, with none, stop at the end).
-    Next,
+    /// Move the queue's `index`th video to `to` (#464; whoever may control, or whoever added it). A `to` past the end
+    /// is the end.
+    Move {
+        index: u32,
+        to: u32,
+    },
+    /// Play the queue's `index`th video now, from the start (#464; whoever may control).
+    PlayNow {
+        index: u32,
+    },
+    /// The queue's next video now (or, with none, stop at the end): a skip, or the player reaching the end. Whoever
+    /// may control may, and whoever put the current video on. With `from`, only while `from` is still the current
+    /// video: two players reaching the end at once move it on once.
+    Next {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        from: Option<String>,
+    },
     /// "Let everyone control" (the host only).
     EveryoneControls {
         on: bool,
@@ -2337,6 +2447,13 @@ pub struct RenameChannelRequest {
 /// A group's icon (#56): the hash of a picture from `POST /media/avatar`, or `None` to clear it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct SetGroupIconRequest {
+    pub hash: Option<String>,
+}
+
+/// `PUT /servers/{id}/banner` (#475): the hash of a picture from `POST /media/banner`, or `None` to remove it. Its
+/// owner only.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SetServerBannerRequest {
     pub hash: Option<String>,
 }
 
@@ -3658,6 +3775,7 @@ mod tests {
                     invite_code: s("SECRET-INVITE"),
                     username: s("alex"),
                     password: s("SECRET-PW"),
+                    website: None,
                 }
             ),
             format!(

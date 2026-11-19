@@ -82,7 +82,7 @@ describe('a text channel', () => {
   it('right_click_opens_its_menu_at_the_pointer_with_read_mute_rename_and_delete', () => {
     rightClick('old-stuff')
     expect(menu()?.getAttribute('aria-label')).toBe('Actions for #old-stuff')
-    expect(labels()).toEqual(['Mark as read', 'Mute channel', 'Notifications', 'Rename channel…', 'Delete channel…'])
+    expect(labels()).toEqual(['Mark as read', 'Mute channel', 'Notifications', 'Message sound', 'Rename channel…', 'Delete channel…'])
     expect(menu()!.style.left).toBe('40px')
   })
 
@@ -423,7 +423,7 @@ describe('a voice channel', () => {
   it('offers_join_then_its_chats_read_mute_and_notifications_then_rename_and_delete', () => {
     // #226: its chat has unreads, a mute and a notification level like a text channel
     rightClick('Lounge')
-    expect(labels()).toEqual(['Join', 'Mark as read', 'Mute channel', 'Notifications', 'Channel settings…', 'Rename channel…', 'Delete channel…'])
+    expect(labels()).toEqual(['Join', 'Mark as read', 'Mute channel', 'Notifications', 'Message sound', 'Channel settings…', 'Rename channel…', 'Delete channel…'])
     item('Join')!.click()
     flushSync()
     expect(onJoinVoice).toHaveBeenCalledWith('V1')
@@ -617,5 +617,23 @@ describe('outside the server', () => {
     expect(labels()).toContain('Mark as read')
     rightClick('Lounge')
     expect(menu()).toBeNull()
+  })
+})
+
+describe("the channel's message sound (#378)", () => {
+  it('picking a set keeps it for the channel on this device, ticked next time; Default clears it', () => {
+    rightClick('general', 600)
+    hover(item('Message sound')!)
+    const sounds = () => [...document.querySelectorAll<HTMLButtonElement>('[role=menu][aria-label="Message sound for this channel"] [role=menuitemradio]')]
+    expect(sounds()[0].textContent?.trim()).toMatch(/^Default/)
+    sounds().find((b) => b.textContent?.trim() === 'Goofy')!.click()
+    flushSync()
+    expect(JSON.parse(localStorage.getItem('pulse.channelMessageSounds')!)).toEqual({ T1: 'goofy' })
+    rightClick('general', 600)
+    hover(item('Message sound')!)
+    expect(sounds().filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.textContent?.trim())).toEqual(['Goofy'])
+    sounds()[0].click()
+    flushSync()
+    expect(JSON.parse(localStorage.getItem('pulse.channelMessageSounds')!)).toEqual({})
   })
 })

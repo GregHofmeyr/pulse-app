@@ -1172,6 +1172,14 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       servers[at] = { ...servers[at], owner_id: e.d.owner_id }
       return { ...s, servers }
     }
+    // Its owner changed how a server looks (#475: its banner): the server as it is now.
+    case 'ServerUpdated': {
+      const at = s.servers.findIndex((x) => x.id === e.d.server.id)
+      if (at < 0) return s
+      const servers = s.servers.slice()
+      servers[at] = e.d.server
+      return { ...s, servers }
+    }
     // Someone left a server or was removed from it (#371). For you, the server goes from your rail with everything in
     // it (#80: servers are private; you're back only through an invite).
     case 'MemberLeft': {

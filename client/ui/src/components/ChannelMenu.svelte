@@ -16,6 +16,7 @@
   import MenuFlyout from './MenuFlyout.svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
+  import MessageSoundItem from './MessageSoundItem.svelte'
   import type { Channel } from '../lib/protocol/Channel'
 
   let { channel, member, x, y, opener, onClose, onRename, onDelete, onJoin, onError, onSettings = () => {}, onMoveUp, onMoveDown, canMoveUp = false, canMoveDown = false }: {
@@ -82,7 +83,9 @@
   // The mute flyout (#131; shared with the server tab's menu, #161) and the notifications one (#195)
   let flyout = $state<ReturnType<typeof MuteFlyout>>()
   let levelFlyout = $state<ReturnType<typeof MenuFlyout>>()
-  const flyouts = () => [flyout, levelFlyout]
+  // the channel's own message sound (#378), on this device
+  let soundFlyout = $state<ReturnType<typeof MessageSoundItem>>()
+  const flyouts = () => [flyout, levelFlyout, soundFlyout]
   const closeSub = (refocus: boolean | 'if-inside') => { for (const f of flyouts()) f?.close(refocus) }
   const level = $derived(channelLevel(app.state, channel.id))
   const levelChoices = $derived(CHANNEL_LEVELS.map((l) => ({ label: l.label, checked: l.level === level })))
@@ -152,6 +155,7 @@
     {/if}
     <MenuFlyout bind:this={levelFlyout} label="Notifications" flyoutLabel="Notifications for {label}" menuLeft={left} menuTop={top}
       choices={levelChoices} onPick={pickLevel} />
+    <MessageSoundItem bind:this={soundFlyout} channelId={channel.id} {pick} menuLeft={left} menuTop={top} />
   {/if}
   {#if member}
     <span class="menu-sep"></span>

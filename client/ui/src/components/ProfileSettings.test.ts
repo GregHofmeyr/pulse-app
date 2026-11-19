@@ -16,6 +16,7 @@ import type { User } from '../lib/protocol/User'
 import type { Profile } from '../lib/protocol/Profile'
 import type { UpdateProfileRequest } from '../lib/protocol/UpdateProfileRequest'
 import type { MediaInfo } from '../lib/protocol/MediaInfo'
+import type { Badge } from '../lib/protocol/Badge'
 
 const alex: User = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const saved = (over: Partial<Profile> = {}): Profile => ({
@@ -59,6 +60,8 @@ const previewCard = () => document.querySelector<HTMLElement>('.preview .card')!
 const previewLine = () => document.querySelector<HTMLElement>('.preview .line')!
 const previewName = () => previewLine().querySelector<HTMLElement>('.name')!
 const click = (el: HTMLElement) => { el.click(); flushSync() }
+/** Shows a tab (#467): only the picked tab's fields are shown (and can take focus). */
+const showTab = (label: string) => click([...document.querySelectorAll<HTMLButtonElement>('[role=tab]')].find((t) => t.textContent!.trim() === label)!)
 // a pick in a native colour picker: its input, then its change as it closes (input alone lands on the next frame)
 const setColor = (el: HTMLInputElement, v: string) => {
   el.value = v
@@ -109,6 +112,182 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+const badge = (key: string, rarity: Badge['rarity'], earned_at = '2026-11-01T00:00:00Z'): Badge =>
+  ({ key, earned_at, first_earner: false, tier: 0, rarity, first_tiers: [], count: 1, hidden: false, seen: true }) as Badge
+// jsdom has no PointerEvent: a MouseEvent with a pointerId stands in (as lib/railDrag.test.ts)
+function pointer(type: string, el: Element, x: number) {
+  const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, button: 0 })
+  Object.defineProperty(e, 'pointerId', { value: 1 })
+  el.dispatchEvent(e)
+}
+
+describe('the redesigned editor (#467)', () => {
+  const tabs = () => [...document.querySelectorAll<HTMLButtonElement>('[role=tablist][aria-label="Profile"] [role=tab]')]
+  const panel = (label: string) => document.getElementById(tabs().find((t) => t.textContent!.trim() === label)!.getAttribute('aria-controls')!)!
+
+  it('four tabs, About you first; only the picked one shows, the preview always does', async () => {
+    await open()
+    expect(tabs().map((t) => t.textContent!.trim())).toEqual(['About you', 'Card', 'Name style', 'Badges'])
+    expect(tabs()[0].getAttribute('aria-selected')).toBe('true')
+    expect(panel('About you').hidden).toBe(false)
+    for (const l of ['Card', 'Name style', 'Badges']) expect(panel(l).hidden).toBe(true)
+    // what each holds
+    expect(panel('About you').querySelector('input[aria-label="Display name"]')).not.toBeNull()
+    expect(panel('About you').querySelector('input[aria-label="Pronouns"]')).not.toBeNull()
+    expect(panel('About you').querySelector('[role=textbox][aria-label="Bio"]')).not.toBeNull()
+    expect(panel('About you').querySelector('input[aria-label="Upload avatar"]')).not.toBeNull()
+    expect(panel('Card').querySelector('[role=radiogroup][aria-label="Card theme"]')).not.toBeNull()
+    expect(panel('Card').querySelector('input[role=switch]')).not.toBeNull()
+    expect(panel('Name style').querySelector('[aria-label="Name font"]')).not.toBeNull()
+    expect(panel('Name style').querySelector('[aria-label="Name colour"]')).not.toBeNull()
+    expect(panel('Name style').querySelector('[aria-label="Name effect"]')).not.toBeNull()
+    showTab('Card')
+    expect(panel('Card').hidden).toBe(false)
+    expect(panel('About you').hidden).toBe(true)
+    expect(previewCard()).not.toBeNull()
+  })
+
+  it('the arrow keys, Home and End move between the tabs', async () => {
+    await open()
+    tabs()[0].focus()
+    tabs()[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.activeElement).toBe(tabs()[1])
+    expect(tabs()[1].getAttribute('aria-selected')).toBe('true')
+    tabs()[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(tabs()[3].getAttribute('aria-selected')).toBe('true')
+    tabs()[3].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(tabs()[0].getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('an edit on one tab is kept on another, and nothing is saved until Save', async () => {
+    await open()
+    type(document.querySelector<HTMLInputElement>('input[aria-label="Pronouns"]')!, 'she/her')
+    showTab('Card')
+    click(option('Card theme', 'Forest'))
+    showTab('About you')
+    expect(document.querySelector<HTMLInputElement>('input[aria-label="Pronouns"]')!.value).toBe('she/her')
+    expect(calls('update_profile')).toHaveLength(0)
+    expect(document.body.textContent).toContain('Unsaved changes')
+  })
+
+  it('the preview\'s avatar and banner offer to change them: a click opens that picture\'s picker', async () => {
+    await open()
+    const opened: string[] = []
+    const spy = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (this: HTMLInputElement) { opened.push(this.getAttribute('aria-label')!) })
+    try {
+      const avatar = previewCard().querySelector<HTMLButtonElement>('button.edit-veil[aria-label="Change avatar"]')!
+      const banner = previewCard().querySelector<HTMLButtonElement>('button.edit-veil[aria-label="Change banner"]')!
+      expect(avatar.querySelector('svg')).not.toBeNull() // the pencil
+      click(avatar)
+      click(banner)
+      expect(opened).toEqual(['Upload avatar', 'Upload banner'])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('less text: the display name note is a tooltip, and the bio counter shows only near the limit', async () => {
+    await open()
+    const name = document.querySelector<HTMLInputElement>('input[aria-label="Display name"]')!
+    expect(document.body.textContent).not.toContain('How your name shows everywhere')
+    expect(name.dataset.tip).toContain('How your name shows everywhere')
+    expect(document.querySelector('.counter')).toBeNull()
+    typeBio('x'.repeat(150))
+    expect(document.querySelector('.counter')!.textContent).toBe('150/190')
+  })
+
+  it('card themes are mini cards in their own colours', async () => {
+    await open()
+    const berry = option('Card theme', 'Berry')
+    expect(berry.classList.contains('mini-card')).toBe(true)
+    expect(berry.getAttribute('style')).toContain('--card-top: #b83c72')
+    expect(berry.querySelector('.mc-avatar')).not.toBeNull()
+    // Dusk (#444) is there too
+    expect(option('Card theme', 'Dusk')).toBeDefined()
+  })
+
+  it('name colours sit in Solid and Gradient sections, then the custom +', async () => {
+    await open()
+    const groups = [...group('Name colour').querySelectorAll('.colour-group')]
+    expect(groups.map((g) => g.querySelector('.group-label')!.textContent)).toEqual(['Solid', 'Gradient'])
+    const labels = (g: Element) => [...g.querySelectorAll('[role=radio]')].map((r) => r.getAttribute('aria-label'))
+    expect(labels(groups[0])).toEqual(['Default', 'Peach', 'Lilac', 'Mint', 'Sky'])
+    expect(labels(groups[1])).toEqual(['Sunset gradient', 'Ice gradient', 'Mint gradient', 'Peach gradient', 'Aurora gradient', 'Custom'])
+  })
+
+  describe('Badges', () => {
+    const held = [badge('a_common', 'common'), badge('b_rare', 'rare'), badge('c_epic', 'epic'), badge('d_legend', 'legendary')]
+    const slots = () => [...document.querySelectorAll<HTMLElement>('.shown-badges [data-badge]')].map((b) => b.dataset.badge)
+    const previewBadges = () => [...previewCard().querySelectorAll('.badges [aria-label]')].map((b) => b.getAttribute('aria-label'))
+    const withRects = () => document.querySelectorAll<HTMLElement>('.shown-badges [data-badge]').forEach((b, i) => {
+      b.getBoundingClientRect = () => ({ left: i * 60, right: i * 60 + 52, width: 52, top: 0, bottom: 52, height: 52, x: i * 60, y: 0, toJSON: () => ({}) })
+    })
+
+    it('with none earned, it says so', async () => {
+      await open()
+      expect(panel('Badges').textContent).toContain('No badges yet')
+    })
+
+    it('the rarest five by default; a drag reorders them, and the preview follows', async () => {
+      await open(saved({ badges: held, showcase: ['d_legend', 'c_epic', 'b_rare', 'a_common'], showcase_chosen: false }))
+      showTab('Badges')
+      expect(slots()).toEqual(['d_legend', 'c_epic', 'b_rare', 'a_common'])
+      expect(panel('Badges').textContent).toContain('Showing your rarest five')
+      withRects()
+      const first = document.querySelector<HTMLElement>('[data-badge="d_legend"]')!
+      pointer('pointerdown', first, 20)
+      pointer('pointermove', first, 150)
+      pointer('pointerup', first, 150)
+      flushSync()
+      expect(slots()).toEqual(['c_epic', 'b_rare', 'd_legend', 'a_common'])
+      expect(previewBadges()).toEqual(['C Epic', 'B Rare', 'D Legend', 'A Common'])
+      expect(document.body.textContent).toContain('Unsaved changes')
+    })
+
+    it('Alt+arrows move the focused badge; clicking one takes it off; one from your badges goes on the end', async () => {
+      await open(saved({ badges: held, showcase: ['a_common', 'b_rare'], showcase_chosen: true }))
+      showTab('Badges')
+      const b = document.querySelector<HTMLElement>('[data-badge="b_rare"]')!
+      b.focus()
+      b.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, bubbles: true, cancelable: true }))
+      flushSync()
+      expect(slots()).toEqual(['b_rare', 'a_common'])
+      expect(document.activeElement).toBe(document.querySelector('[data-badge="b_rare"]'))
+      click(document.querySelector<HTMLElement>('[data-badge="a_common"]')!)
+      expect(slots()).toEqual(['b_rare'])
+      click(document.querySelector<HTMLElement>('.all-badges [aria-label="D Legend: add to your card"]')!)
+      expect(slots()).toEqual(['b_rare', 'd_legend'])
+    })
+
+    it('Save sends the order (and only the order, when nothing else changed); Rarest five sends none', async () => {
+      handlers.get_profile = () => saved({ badges: held, showcase: ['a_common', 'b_rare'], showcase_chosen: true })
+      await open(saved({ badges: held, showcase: ['a_common', 'b_rare'], showcase_chosen: true }))
+      showTab('Badges')
+      const b = document.querySelector<HTMLElement>('[data-badge="b_rare"]')!
+      b.focus()
+      b.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, bubbles: true, cancelable: true }))
+      flushSync()
+      handlers.get_profile = () => saved({ badges: held, showcase: ['b_rare', 'a_common'], showcase_chosen: true })
+      click(button('Save'))
+      await vi.waitFor(() => expect(calls('set_badge_showcase')).toHaveLength(1))
+      expect(calls('set_badge_showcase')[0][1]).toEqual({ keys: ['b_rare', 'a_common'] })
+      expect(calls('update_profile')).toHaveLength(0)
+      await vi.waitFor(() => {
+        flushSync()
+        expect(document.body.textContent).not.toContain('Unsaved changes')
+      })
+      click(button('Rarest five'))
+      expect(slots()).toEqual(['d_legend', 'c_epic', 'b_rare', 'a_common'])
+      click(button('Save'))
+      await vi.waitFor(() => expect(calls('set_badge_showcase')).toHaveLength(2))
+      expect(calls('set_badge_showcase')[1][1]).toEqual({ keys: [] })
+    })
+  })
+})
+
 describe('ProfileSettings', () => {
   it('presets update the preview', async () => {
     const state = await open()
@@ -136,13 +315,15 @@ describe('ProfileSettings', () => {
     expect(previewCard().getAttribute('style')).toContain('--glow-bottom: #ffff00')
     expect(option('Card theme', 'Custom').getAttribute('aria-checked')).toBe('true')
 
-    const note = 'Lightened so it reads on dark backgrounds.'
+    // the note is a tooltip on the wells now (#467: explanations become tooltips)
+    const note = 'Lightened so it reads on dark backgrounds'
+    const tips = () => [...document.querySelectorAll<HTMLInputElement>('.colour input[type=color]')].map((i) => i.dataset.tip)
     click(option('Name colour', 'Custom'))
-    expect(document.body.textContent).not.toContain(note)
+    expect(tips()).toEqual([undefined])
     const pick = document.querySelector<HTMLInputElement>('.colour input[type=color]')!
     setColor(pick, '#000000')
     expect(previewName().getAttribute('style')).toContain('color: rgb(168, 168, 168)')
-    expect(document.body.textContent).toContain(note)
+    expect(tips()).toEqual([note])
     click(option('Custom colour', 'Gradient'))
     const pickers = document.querySelectorAll<HTMLInputElement>('.colour input[type=color]')
     expect(pickers).toHaveLength(2)
@@ -150,15 +331,16 @@ describe('ProfileSettings', () => {
     expect(previewName().getAttribute('style')).toContain('linear-gradient(90deg, rgb(168, 168, 168), rgb(161, 161, 255))')
     setColor(pickers[0], '#ffc4a3')
     setColor(pickers[1], '#a3d8ff')
-    expect(document.body.textContent).not.toContain(note)
+    expect(tips()).toEqual([undefined, undefined])
   })
 
   it('picking a font and gradient restyles the preview name', async () => {
     await open()
     const fonts = [...group('Name font').querySelectorAll<HTMLButtonElement>('[role=radio]')]
-    expect(fonts.map((b) => b.textContent!.trim())).toEqual(['Default', 'Elegant', 'Rounded', 'Pixel', 'Script', 'Handwritten', 'Grotesque', 'Quirky', 'Techy', 'Bold', '8-bit', 'Racing', 'Retro', 'Brush', 'Stencil'])
-    // each label is drawn in its own face
-    expect(fonts[3].getAttribute('style')).toContain('Press Start 2P')
+    expect(fonts.map((b) => b.getAttribute('aria-label'))).toEqual(['Default', 'Elegant', 'Rounded', 'Pixel', 'Script', 'Handwritten', 'Grotesque', 'Quirky', 'Techy', 'Bold', '8-bit', 'Racing', 'Retro', 'Brush', 'Stencil'])
+    // each tile is your own name in that face (#467)
+    expect(fonts.every((b) => b.textContent!.trim() === 'alex')).toBe(true)
+    expect(fonts[3].querySelector('.name')!.getAttribute('style')).toContain('Press Start 2P')
     click(option('Name font', 'Techy'))
     click(option('Name colour', 'Aurora gradient'))
     const css = previewName().getAttribute('style')!
@@ -168,6 +350,29 @@ describe('ProfileSettings', () => {
     expect(previewLine().textContent).toContain('Looking good!')
     // nothing outside the editor changed
     expect(app.state.me!.style).toEqual({ font: null, colors: [] })
+  })
+
+  it('the name effect (#468): None and the eight, each on your own name style; a pick plays in the preview and saves', async () => {
+    await open()
+    const opts = [...group('Name effect').querySelectorAll<HTMLButtonElement>('[role=radio]')]
+    expect(opts.map((b) => b.getAttribute('aria-label') ?? b.textContent!.trim())).toEqual(['None', 'Neon', 'Toon', 'Pop', 'Gummy', 'Prism', 'Shimmer', 'Glitch', 'Ember'])
+    expect(option('Name effect', 'None').getAttribute('aria-checked')).toBe('true')
+    // each chip draws the effect, still until hovered
+    const neon = option('Name effect', 'Neon')
+    expect(neon.querySelector<HTMLElement>('.name')!.dataset.fx).toBe('neon')
+    expect(neon.querySelector('.name')!.classList.contains('fx-play')).toBe(false)
+    neon.dispatchEvent(new Event('pointerenter'))
+    flushSync()
+    expect(neon.querySelector('.name')!.classList.contains('fx-play')).toBe(true)
+    expect(neon.getAttribute('data-tip')).toBe('Glow pulses')
+    click(option('Name effect', 'Ember'))
+    // the preview plays it, in the line and on the card
+    expect(previewName().dataset.fx).toBe('ember')
+    expect(previewName().classList.contains('fx-play')).toBe(true)
+    expect(previewCard().querySelector<HTMLElement>('.name')!.classList.contains('fx-play')).toBe(true)
+    click(button('Save'))
+    const req = (calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request
+    expect(req.style.effect).toBe('ember')
   })
 
   it('upload goes through crop then stages the hash without saving', async () => {
@@ -245,7 +450,7 @@ describe('ProfileSettings', () => {
     const req = (calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request
     expect(req).toEqual({
       avatar_hash: null, banner_hash: null, theme_top: '#1f7a5a', theme_bottom: '#0f2b3a',
-      style: { font: 'fredoka', colors: ['#000000'] }, pronouns: null, bio: 'hello', display_name: 'alex', glow: true,
+      style: { font: 'fredoka', colors: ['#000000'], effect: null }, pronouns: null, bio: 'hello', display_name: 'alex', glow: true,
     })
     const stored = saved({
       user: { ...alex, style: { font: 'fredoka', colors: ['#a8a8a8'] } },
@@ -308,6 +513,7 @@ describe('ProfileSettings', () => {
       const opened: HTMLInputElement[] = []
       const spy = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (this: HTMLInputElement) { opened.push(this) })
       try {
+        showTab('Name style')
         const def = option('Name colour', 'Default')
         def.focus()
         def.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
@@ -419,7 +625,9 @@ describe('ProfileSettings', () => {
   it('the glow switch (#156): on by default, saved with the profile, the preview follows it', async () => {
     const state = await open()
     const glow = document.querySelector<HTMLInputElement>('input[role=switch]')!
-    expect(glow.closest('label')!.textContent).toContain('Card glow')
+    expect(glow.closest('label')!.textContent!.trim()).toBe('Glow')
+    // what it does is a tooltip (#467)
+    expect(glow.closest('label')!.dataset.tip).toContain('soft glow')
     expect(glow.checked).toBe(true)
     expect(previewCard().classList.contains('glow')).toBe(true)
     click(glow)
@@ -438,13 +646,18 @@ describe('ProfileSettings', () => {
 
   it('the custom theme shows its colours: on the Custom chip and as hex beside each well (#141)', async () => {
     await open(saved({ card: { ...saved().card, theme_top: '#ffb6d9', theme_bottom: '#ffffff' } }))
-    const chip = option('Card theme', 'Custom')
-    expect(chip.querySelector<HTMLElement>('.mini')!.style.background).toContain('linear-gradient')
+    // the + tile is a mini card in the custom colours (#467), and opens their pickers in a popover
+    const tile = option('Card theme', 'Custom')
+    expect(tile.getAttribute('style')).toContain('--card-top: #ffb6d9')
+    expect(tile.querySelector('.mc-banner')).not.toBeNull()
+    expect(document.querySelector('[role=dialog][aria-label="Custom card colours"]')).toBeNull()
+    click(tile)
     const labels = [...document.querySelectorAll('.theme .pick')].map((l) => l.textContent!.replace(/\s+/g, ' ').trim())
     expect(labels).toEqual(['Top #ffb6d9', 'Bottom #ffffff'])
-    // a preset picked: no custom colours shown
+    // a preset picked: the + shows no colours
     click(option('Card theme', 'Night sky'))
-    expect(option('Card theme', 'Custom').querySelector('.mini')).toBeNull()
+    expect(option('Card theme', 'Custom').querySelector('.mc-banner')).toBeNull()
+    expect(document.querySelector('[role=dialog][aria-label="Custom card colours"]')).toBeNull()
   })
 
   it('a saved custom card theme is what the editor shows after signing out and in (#139)', async () => {
@@ -466,6 +679,7 @@ describe('ProfileSettings', () => {
     resetState()
     await open(saved({ card: { ...saved().card, theme_top: '#ffb6d9', theme_bottom: '#ffffff' } }))
     expect(option('Card theme', 'Custom').getAttribute('aria-checked')).toBe('true')
+    click(option('Card theme', 'Custom'))
     const [t2, b2] = document.querySelectorAll<HTMLInputElement>('.theme input[type=color]')
     expect([t2?.value, b2?.value]).toEqual(['#ffb6d9', '#ffffff'])
     expect(previewCard().getAttribute('style')).toContain('--glow-top: #ffb6d9')
@@ -794,6 +1008,7 @@ describe('ProfileSettings', () => {
 
   it('radio groups: one tab stop each, arrow keys move and pick', async () => {
     await open()
+    showTab('Card')
     const radios = [...group('Card theme').querySelectorAll<HTMLButtonElement>('[role=radio]')]
     expect(radios.filter((r) => r.tabIndex === 0)).toEqual([option('Card theme', 'Plain')])
     const plain = radios.indexOf(option('Card theme', 'Plain'))
@@ -806,6 +1021,7 @@ describe('ProfileSettings', () => {
     expect(next.tabIndex).toBe(0)
     expect(radios[plain].tabIndex).toBe(-1)
     // wraps backwards from the first
+    showTab('Name style')
     const fonts = [...group('Name font').querySelectorAll<HTMLButtonElement>('[role=radio]')]
     fonts[0].focus()
     fonts[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))

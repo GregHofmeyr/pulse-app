@@ -46,7 +46,7 @@ describe('nameStyle', () => {
 
   it('show styles off: default font and colour, role colour kept', () => {
     const u = user('fredoka', ['#ffc4a3'])
-    expect(resolveNameStyle(u, { roleColor: null, showStyles: false })).toEqual({ font: null, paint: { kind: 'plain' } })
+    expect(resolveNameStyle(u, { roleColor: null, showStyles: false })).toEqual({ font: null, effect: null, paint: { kind: 'plain' } })
     const r = resolveNameStyle(u, { roleColor: '#a3d8ff', showStyles: false })
     expect(r.font).toBeNull()
     expect(r.paint).toEqual({ kind: 'solid', color: '#a3d8ff' })
@@ -57,7 +57,7 @@ describe('nameStyle', () => {
     expect(resolveNameStyle(user(null, ['#ffbe7a', '#ff7fae']), o).paint).toEqual({ kind: 'gradient', from: '#ffbe7a', to: '#ff7fae' })
     expect(resolveNameStyle(user(null, ['#ffc4a3']), o).paint).toEqual({ kind: 'solid', color: '#ffc4a3' })
     expect(resolveNameStyle(user(null, []), o).paint).toEqual({ kind: 'plain' })
-    expect(resolveNameStyle(null, o)).toEqual({ font: null, paint: { kind: 'plain' } })
+    expect(resolveNameStyle(null, o)).toEqual({ font: null, effect: null, paint: { kind: 'plain' } })
   })
 
   it('an unknown font key falls back to default', () => {

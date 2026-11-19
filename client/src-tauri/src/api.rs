@@ -29,7 +29,7 @@ use pulse_protocol::rest::{
     TransferServerRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
     TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest,
     UpdateWheelRequest, UploadedPart, User, VoiceTokenResponse, WatchParty, WatchPartyAction,
-    WatchRequest, Wheel,
+    WatchRequest, WatchSource, Wheel,
 };
 use serde::de::DeserializeOwned;
 
@@ -54,9 +54,10 @@ pub enum LoginOutcome {
     },
 }
 
-/// What a second-step login led to. Not `Debug`: the session holds the token.
+/// What a second-step login led to. Not `Debug`: the session holds the token. Boxed: a session
+/// is much bigger than the bare `Expired`.
 pub enum MfaOutcome {
-    Session(SessionResponse),
+    Session(Box<SessionResponse>),
     /// The ticket is gone (expired, spent, or too many wrong codes): start again with the password.
     Expired,
 }
@@ -107,13 +108,9 @@ pub fn invite_code(code: &str) -> Result<&str, ApiError> {
     }
 }
 
-/// A YouTube video id (#384): exactly 11 of `[A-Za-z0-9_-]`, as the server checks.
-pub fn watch_video_id(id: &str) -> bool {
-    id.len() == 11
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-}
+/// What a watch party refuses a bad video id with (ids are checked as the server checks them,
+/// `WatchSource::valid_id`, #384, #459).
+const NOT_PLAYABLE: &str = "that isn't a video a watch party can play";
 
 impl ApiError {
     /// The request (almost) certainly never reached Pulse: no connection, or the proxy found it
@@ -1027,6 +1024,24 @@ impl Api {
         .await
     }
 
+    /// Set (a banner-upload hash) or remove a server's banner (#475): its owner only.
+    pub async fn set_server_banner(
+        &self,
+        token: &str,
+        server: ServerId,
+        hash: Option<String>,
+    ) -> Result<Server, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/servers/{server}/banner", self.base))
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::SetServerBannerRequest { hash })
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Make an invite into a server (#80): a link, or a direct invite for one person (`for_user`). Any member.
     pub async fn create_server_invite(
         &self,
@@ -1340,22 +1355,25 @@ impl Api {
         .await
     }
 
-    /// Start a YouTube watch party in a server voice channel (#384), or change its video; you must be in its call.
+    /// Start a watch party in a server voice channel (#384; Twitch too, #459), or change its video; you must be in its
+    /// call.
     pub async fn start_watch_party(
         &self,
         token: &str,
         channel: ChannelId,
+        source: WatchSource,
         video_id: &str,
         title: Option<String>,
     ) -> Result<WatchParty, ApiError> {
-        if !watch_video_id(video_id) {
-            return Err(ApiError::Rejected("that isn't a YouTube video".into()));
+        if !source.valid_id(video_id) {
+            return Err(ApiError::Rejected(NOT_PLAYABLE.into()));
         }
         Self::parse(
             self.http
                 .put(format!("{}/channels/{channel}/watch-party", self.base))
                 .bearer_auth(token)
                 .json(&StartWatchPartyRequest {
+                    source,
                     video_id: video_id.into(),
                     title,
                 })
@@ -1373,12 +1391,16 @@ impl Api {
         action: &WatchPartyAction,
     ) -> Result<(), ApiError> {
         let id_ok = match action {
-            WatchPartyAction::Load { video_id, .. }
-            | WatchPartyAction::Enqueue { video_id, .. } => watch_video_id(video_id),
+            WatchPartyAction::Load {
+                source, video_id, ..
+            }
+            | WatchPartyAction::Enqueue {
+                source, video_id, ..
+            } => source.valid_id(video_id),
             _ => true,
         };
         if !id_ok {
-            return Err(ApiError::Rejected("that isn't a YouTube video".into()));
+            return Err(ApiError::Rejected(NOT_PLAYABLE.into()));
         }
         Self::ok_empty(
             self.http
@@ -1637,11 +1659,14 @@ impl Api {
         invite_code: &str,
         username: &str,
         password: &str,
+        website: Option<&str>,
     ) -> Result<SessionResponse, ApiError> {
         let body = RegisterRequest {
             invite_code: invite_code.into(),
             username: username.into(),
             password: password.into(),
+            // the sign-up form's hidden field (#476): empty unless something filled in what no person sees
+            website: website.filter(|w| !w.is_empty()).map(str::to_string),
         };
         Self::parse(
             self.http
@@ -1712,7 +1737,7 @@ impl Api {
         }
         match Self::parse(r).await {
             Err(ApiError::Unauthorized) => Err(ApiError::Rejected(WRONG_CODE.into())),
-            other => other.map(MfaOutcome::Session),
+            other => other.map(|s| MfaOutcome::Session(Box::new(s))),
         }
     }
 
@@ -4558,6 +4583,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_server_banner_round_trips_through_the_core() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (_, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let pic = api
+            .upload_profile_media(
+                &alex,
+                ProfileMediaKind::Banner,
+                crate::media::tests::PNG.to_vec(),
+                None,
+            )
+            .await
+            .unwrap();
+        // only its owner
+        assert!(
+            api.set_server_banner(&sam, s.id, Some(pic.hash.clone()))
+                .await
+                .is_err()
+        );
+        let got = api
+            .set_server_banner(&alex, s.id, Some(pic.hash.clone()))
+            .await
+            .unwrap();
+        assert_eq!(got.banner_hash.as_deref(), Some(pic.hash.as_str()));
+        let got = api.set_server_banner(&alex, s.id, None).await.unwrap();
+        assert_eq!(got.banner_hash, None);
+    }
+
+    #[tokio::test]
     async fn archiving_a_channel() {
         let app = testing::spawn().await;
         let (_, alex) = testing::register(&app, "alex").await;
@@ -4812,7 +4868,10 @@ mod tests {
         let code = testing::invite(&app).await;
         let api = Api::new(&format!("http://{}", app.addr));
 
-        let reg = api.register(&code, "alex", "hunter2hunter2").await.unwrap();
+        let reg = api
+            .register(&code, "alex", "hunter2hunter2", None)
+            .await
+            .unwrap();
         assert_eq!(reg.user.username, "alex");
 
         let LoginOutcome::Session(login) = api.login("alex", "hunter2hunter2").await.unwrap()
@@ -6870,11 +6929,12 @@ mod tests {
         let api = Api::new(&format!("http://{}", app.addr));
         // a bad id never leaves the client
         let e = api
-            .start_watch_party(&token, lounge.id, "../pins/xx", None)
+            .start_watch_party(&token, lounge.id, WatchSource::Youtube, "../pins/xx", None)
             .await
             .unwrap_err();
         assert!(matches!(e, ApiError::Rejected(_)), "{e:?}");
         let load = WatchPartyAction::Load {
+            source: WatchSource::Youtube,
             video_id: "short".into(),
             title: None,
         };
@@ -6885,7 +6945,13 @@ mod tests {
         assert!(matches!(e, ApiError::Rejected(_)), "{e:?}");
         // not in the call
         let e = api
-            .start_watch_party(&token, lounge.id, "dQw4w9WgXcQ", Some("A video".into()))
+            .start_watch_party(
+                &token,
+                lounge.id,
+                WatchSource::Youtube,
+                "dQw4w9WgXcQ",
+                Some("A video".into()),
+            )
             .await
             .unwrap_err();
         assert!(matches!(e, ApiError::Forbidden(_)), "{e:?}");

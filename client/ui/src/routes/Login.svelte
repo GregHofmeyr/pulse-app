@@ -4,12 +4,31 @@
   import { defaultServer } from '../lib/config'
   import type { User } from '../lib/protocol/User'
   import ReportBug from '../components/ReportBug.svelte'
+  import { inviteLinks, splitInviteLink } from '../lib/inviteLinks.svelte'
 
   let { notice = '', onAuthed }: { notice?: string; onAuthed: (u: User) => void } = $props()
 
   let mode = $state<'login' | 'register'>('login')
   let serverUrl = $state(defaultServer(import.meta.env))
   let inviteCode = $state('')
+  // hidden from people (#476): left empty by anyone who can see the form
+  let website = $state('')
+  // A pasted invite link (#80: a server owner's link signs you up into its server) fills in the server too.
+  function inviteInput() {
+    const { server, code } = splitInviteLink(inviteCode)
+    if (server) {
+      serverUrl = server
+      inviteCode = code
+    }
+  }
+  // Signed out, an invite link that opened Pulse (#476) is a sign-up code
+  $effect(() => {
+    const c = inviteLinks.code
+    if (!c) return
+    mode = 'register'
+    inviteCode = c
+    inviteLinks.code = null
+  })
   let username = $state('')
   let password = $state('')
   let busy = $state(false)
@@ -58,7 +77,7 @@
           step = 'code'
         } else back(EXPIRED)
       } else {
-        onAuthed(await api.register(serverUrl, inviteCode.trim(), username.trim(), password))
+        onAuthed(await api.register(serverUrl, splitInviteLink(inviteCode).code, username.trim(), password, website))
       }
     } catch (err) {
       error = errorText(err)
@@ -89,7 +108,8 @@
     {:else}
       <label>Server <input class="input" bind:value={serverUrl} required autocomplete="url" /></label>
       {#if mode === 'register'}
-        <label>Invite code <input class="input" bind:value={inviteCode} required autocomplete="off" /></label>
+        <label>Invite code or link <input class="input" bind:value={inviteCode} oninput={inviteInput} required autocomplete="off" /></label>
+        <input class="hp" type="text" name="website" bind:value={website} tabindex="-1" autocomplete="off" aria-hidden="true" />
       {/if}
       <label>Username <input class="input" bind:value={username} required autocomplete="username" autocapitalize="off" spellcheck="false" /></label>
       <label>Password
@@ -109,6 +129,7 @@
 </main>
 
 <style>
+  .hp { position: absolute; left: -10000px; width: 1px; height: 1px; opacity: 0; }
   main { height: 100%; display: grid; place-items: center; align-content: center; gap: 14px; background: var(--bg-0); }
   .card {
     width: 360px; padding: 28px; border-radius: var(--radius-xl); background: var(--bg-2);

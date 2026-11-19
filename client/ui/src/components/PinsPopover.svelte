@@ -17,6 +17,9 @@
   import { formatDuration, gameName } from '../lib/clips'
   import { mediaUrl } from '../lib/emoji'
   import { speakerOf } from '../lib/quotes'
+  import { messagePerson } from '../lib/messagePerson'
+  import { personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
+  import PersonMenu from './PersonMenu.svelte'
   import type { Message } from '../lib/protocol/Message'
 
   let { channelId, serverId, onJump, onClose }: {
@@ -64,6 +67,18 @@
     if (!m.quote) return nameOf(m.author_id)
     return [...new Set(m.quote.lines.map((l) => speakerOf(app.state, serverId ?? '', l).name))].join(', ')
   }
+  // A row's person menu (#335): whoever the row names, the one speaker of a quote (else its poster), the author of
+  // anything else. Right-click the row, or ContextMenu / Shift+F10 on its buttons (it bubbles to the row).
+  let menu = $state<PersonMenuAt | null>(null)
+  function rowPerson(m: Message): string | null {
+    if (!m.quote) return m.author_id
+    const ids = new Set(m.quote.lines.map((l) => speakerOf(app.state, serverId ?? '', l).userId))
+    const [only] = ids
+    return ids.size === 1 && only ? only : m.author_id
+  }
+  function personMenu(e: MouseEvent | KeyboardEvent, m: Message, row: HTMLElement) {
+    menu = personMenuAt(e, rowPerson(m), serverId, row, { row: true }) ?? menu
+  }
   function what(m: Message): string {
     if (m.quote) return m.quote.lines.map((l) => (l.media ? (l.caption ? `[image] ${l.caption}` : '[image]') : `“${l.text ?? ''}”`)).join(' ')
     if (m.clip) return m.content.trim() || gameName(app.state, serverId ?? '', m) || `Clip · ${formatDuration(m.clip.duration_ms)}`
@@ -93,7 +108,9 @@
   {:else}
     {#each pins as p (p.message.id)}
       {@const m = p.message}
-      <div class="pin">
+      <!-- the menu is a pointer shortcut; from the keyboard, ContextMenu / Shift+F10 on a button (it bubbles here) -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="pin" oncontextmenu={(e) => personMenu(e, m, e.currentTarget)} onkeydown={(e) => personMenu(e, m, e.currentTarget)}>
         {#if m.clip}<img class="thumb" src={mediaUrl(m.clip.thumb_hash)} alt="" loading="lazy" decoding="async" />{/if}
         <div class="text">
           <span class="author">{who(m)}</span>
@@ -107,6 +124,8 @@
       <p class="none">Nothing pinned yet. {none}</p>
     {/each}
   {/if}
+  <!-- inside the popover (a press on it isn't outside); its Esc goes no further than the menu -->
+  <PersonMenu {menu} onMessage={messagePerson} onClose={() => (menu = null)} />
 </div>
 
 <style>

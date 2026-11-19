@@ -3,7 +3,8 @@
 //!
 //! - `GET /v1/gifs/search?api_key&q&limit&offset&rating` and `GET /v1/gifs/trending?api_key&limit&offset&rating`
 //!   answer a page shaped like GIPHY's (sizes as strings, as GIPHY sends them): two GIFs, `Fake<n>a` and `Fake<n>b`
-//!   for offset `n`, titled after the query (or "Trending"), out of [`TOTAL`].
+//!   for offset `n`, titled after the query (or "Trending"), out of [`TOTAL`]. `/v1/stickers/…` answers the same
+//!   with stickers, `Sticker<n>a` and `Sticker<n>b` (#293).
 //! - [`FakeGiphy::set_status`] makes every answer that status instead (429: over the key's limit).
 //! - An `api_key` other than [`KEY`] gets a 401, as GIPHY answers a bad key.
 
@@ -43,7 +44,7 @@ impl FakeGiphy {
             status: Arc::new(AtomicU16::new(200)),
         };
         let app = Router::new()
-            .route("/v1/gifs/{kind}", get(page))
+            .route("/v1/{feed}/{kind}", get(page))
             .with_state(shared.clone());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         FakeGiphy {
@@ -53,9 +54,9 @@ impl FakeGiphy {
         }
     }
 
-    /// What the app's GIPHY client is pointed at instead of `https://api.giphy.com/v1/gifs`.
+    /// What the app's GIPHY client is pointed at instead of `https://api.giphy.com/v1`.
     pub fn base(&self) -> String {
-        format!("http://127.0.0.1:{}/v1/gifs", self.port)
+        format!("http://127.0.0.1:{}/v1", self.port)
     }
 
     /// Every request's path and query, in order.
@@ -95,7 +96,7 @@ fn gif(id: &str, title: &str) -> Value {
 
 async fn page(
     State(s): State<Shared>,
-    Path(kind): Path<String>,
+    Path((feed, kind)): Path<(String, String)>,
     Query(q): Query<std::collections::HashMap<String, String>>,
     uri: Uri,
 ) -> Response {
@@ -116,6 +117,11 @@ async fn page(
         )
             .into_response();
     }
+    let prefix = match feed.as_str() {
+        "gifs" => "Fake",
+        "stickers" => "Sticker",
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
     let title = match kind.as_str() {
         "search" => q.get("q").cloned().unwrap_or_default(),
         "trending" => "Trending".to_string(),
@@ -123,8 +129,8 @@ async fn page(
     };
     let offset: u32 = q.get("offset").and_then(|o| o.parse().ok()).unwrap_or(0);
     let data = vec![
-        gif(&format!("Fake{offset}a"), &format!("{title} GIF")),
-        gif(&format!("Fake{offset}b"), &format!("{title} GIF too")),
+        gif(&format!("{prefix}{offset}a"), &format!("{title} GIF")),
+        gif(&format!("{prefix}{offset}b"), &format!("{title} GIF too")),
     ];
     axum::Json(json!({
         "data": data,

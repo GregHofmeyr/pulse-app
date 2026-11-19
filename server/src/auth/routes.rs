@@ -69,6 +69,7 @@ pub async fn load_user(db: &SqlitePool, id: UserId) -> AppResult<User> {
 async fn register(
     State(s): State<AppState>,
     ClientIp(ip): ClientIp,
+    headers: axum::http::HeaderMap,
     Json(req): Json<RegisterRequest>,
 ) -> AppResult<Json<SessionResponse>> {
     // Spend up front so parallel guesses can't all slip past before any pays. Only a wrong,
@@ -76,6 +77,20 @@ async fn register(
     let ip_key = crate::limits::rate_key(ip).to_string();
     if !s.limits.register_ip.hit(&ip_key) {
         return Err(AppError::TooManyRequests(None));
+    }
+    let who = crate::servers::invites::Seeker::anyone(None, ip, &headers);
+    if crate::servers::invites::lookups_blocked(&s.db, &ip_key, None, chrono::Utc::now()).await? {
+        return Err(AppError::TooManyRequests(None));
+    }
+    if req.website.as_deref().is_some_and(|w| !w.trim().is_empty()) {
+        crate::servers::invites::log_failure(
+            &s.db,
+            &who,
+            "register",
+            crate::servers::invites::Failure::Trap,
+        )
+        .await;
+        return Err(AppError::NotFound);
     }
     let res = register_with(&s, req).await;
     if !matches!(res, Err(AppError::NotFound | AppError::Gone)) {
@@ -92,6 +107,7 @@ async fn register_with(s: &AppState, mut req: RegisterRequest) -> AppResult<Json
         ));
     }
     check_password_rule(&req.password)?;
+    req.invite_code = crate::servers::invites::code_of(&req.invite_code);
     // Check the invite before anything expensive (and before revealing whether a username exists).
     let cutoff = invites::cutoff(chrono::Utc::now());
     let found: Option<(Option<String>, String)> =
@@ -99,8 +115,16 @@ async fn register_with(s: &AppState, mut req: RegisterRequest) -> AppResult<Json
             .bind(&req.invite_code)
             .fetch_optional(&s.db)
             .await?;
+    // A server owner's invite link signs up too (#80), and puts the new account in its server.
+    let mut server_invite = None;
     match found {
-        None => return Err(AppError::NotFound),
+        None => {
+            let mut c = s.db.acquire().await?;
+            match crate::servers::invites::signup_server_in(&mut c, &req.invite_code).await? {
+                Some(server) => server_invite = Some(server),
+                None => return Err(AppError::NotFound),
+            }
+        }
         // Expired looks exactly like unknown.
         Some((_, created)) if created <= cutoff => return Err(AppError::NotFound),
         Some((Some(_), _)) => return Err(AppError::Gone),
@@ -110,6 +134,11 @@ async fn register_with(s: &AppState, mut req: RegisterRequest) -> AppResult<Json
     let id = UserId::new();
     let at = now();
 
+    // a join publishes in commit order (`servers::routes::add_member_in`)
+    let order = match server_invite {
+        Some(_) => Some(s.hub.in_order().await),
+        None => None,
+    };
     let mut tx = crate::db::begin_write(&s.db).await?;
     let inserted = sqlx::query(
         "INSERT INTO users (id, username, display_name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -128,6 +157,23 @@ async fn register_with(s: &AppState, mut req: RegisterRequest) -> AppResult<Json
         return Err(AppError::Conflict("username taken".into()));
     }
     inserted?;
+    if server_invite.is_some() {
+        // Again under the write lock: an invite used up, revoked or expired (or its server deleted) since wins.
+        let Some(server) =
+            crate::servers::invites::signup_server_in(&mut tx, &req.invite_code).await?
+        else {
+            tx.rollback().await?;
+            return Err(AppError::Gone);
+        };
+        let joined =
+            crate::servers::invites::use_for_signup_in(&mut tx, &req.invite_code, server, id)
+                .await?;
+        tx.commit().await?;
+        let session = finish_register(s, id, req.username).await?;
+        crate::servers::invites::announce_signup(s, &req.invite_code, server, id, joined).await;
+        drop(order);
+        return Ok(session);
+    }
     // Atomic single-use redemption: only the transaction that flips used_by wins.
     let claimed = sqlx::query(
         "UPDATE invites SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL AND created_at > ?",
@@ -152,12 +198,21 @@ async fn register_with(s: &AppState, mut req: RegisterRequest) -> AppResult<Json
         });
     }
     tx.commit().await?;
+    drop(order);
+    finish_register(s, id, req.username).await
+}
 
+/// After a sign-up commits: the session, and everyone hears of the new account.
+async fn finish_register(
+    s: &AppState,
+    id: UserId,
+    username: String,
+) -> AppResult<Json<SessionResponse>> {
     let token = session::create(&s.db, id).await?;
     let user = User {
         id,
-        display_name: req.username.clone(),
-        username: req.username,
+        display_name: username.clone(),
+        username,
         avatar_hash: None,
         avatar_still: None,
         style: Default::default(),

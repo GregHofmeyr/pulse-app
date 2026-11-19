@@ -44,6 +44,7 @@ import type { PinDuration } from './protocol/PinDuration'
 import type { PinnedMessage } from './protocol/PinnedMessage'
 import type { WatchParty } from './protocol/WatchParty'
 import type { WatchPartyAction } from './protocol/WatchPartyAction'
+import type { WatchSource } from './protocol/WatchSource'
 import type { StageShare } from './protocol/StageShare'
 import type { Wheel } from './protocol/Wheel'
 import type { CreateWheelRequest } from './protocol/CreateWheelRequest'
@@ -272,8 +273,10 @@ export const api = {
   loginMfa: (code: string) => invoke<LoginResult>('login_mfa', { code }),
   /** Back from the code step: the core forgets the pending ticket. */
   cancelLogin: () => invoke<void>('cancel_login'),
-  register: (serverUrl: string, inviteCode: string, username: string, password: string) =>
-    invoke<User>('register', { serverUrl, inviteCode, username, password }),
+  register: (serverUrl: string, inviteCode: string, username: string, password: string, website = '') =>
+    invoke<User>('register', { serverUrl, inviteCode, username, password, website }),
+  /** The `pulse://invite/<code>` link that started the app, once (#476). */
+  takeInviteLink: () => invoke<string | null>('take_invite_link'),
   restoreSession: () => invoke<Restored>('restore_session'),
   logout: () => invoke<void>('logout'),
   /** Sign out every other device of this account; resolves to how many were signed out. */
@@ -333,6 +336,8 @@ export const api = {
   removeServerMember: (serverId: string, userId: string) => invoke<void>('remove_server_member', { serverId, userId }),
   /** Hand a server to another of its members (#418): its owner only. */
   transferServer: (serverId: string, userId: string) => invoke<void>('transfer_server', { serverId, userId }),
+  /** A server's banner (#475): a banner-upload hash, or null to remove it. Its owner only. */
+  setServerBanner: (serverId: string, hash: string | null) => invoke<Server>('set_server_banner', { serverId, hash }),
   /** The signed-in server's address (#80): invite links are made from it. Null when signed out. */
   serverOrigin: () => invoke<string | null>('server_origin'),
   /** Make an invite (#80): a link, or a direct invite for one person (`for_user`, also a card in your DM with them). */
@@ -417,8 +422,8 @@ export const api = {
   /** Share a Spotify link to a voice channel's stage (#234); you must be in its call. */
   shareToStage: (channelId: string, url: string) => invoke<StageShare>('share_to_stage', { channelId, url }),
   /** Start a YouTube watch party in a voice channel (#384), or change its video; you must be in its call. */
-  startWatchParty: (channelId: string, videoId: string, title: string | null) =>
-    invoke<WatchParty>('start_watch_party', { channelId, videoId, title }),
+  startWatchParty: (channelId: string, source: WatchSource, videoId: string, title: string | null) =>
+    invoke<WatchParty>('start_watch_party', { channelId, source, videoId, title }),
   /** One change to a voice channel's watch party (#384); it arrives back as WatchPartyChanged or WatchPartyEnded. */
   watchPartyAction: (channelId: string, action: WatchPartyAction) => invoke<void>('watch_party_action', { channelId, action }),
   /** End a voice channel's watch party for everyone (#384; the host only). */
@@ -589,7 +594,7 @@ export const api = {
   sendReply: (channelId: string, rootId: string, content: string, replyToId: string | null, nonce: string, gif: Gif | null = null) =>
     invoke<void>('send_reply', { channelId, rootId, content, replyToId, nonce, gif }),
   /** GIFs (#58): a page of GIPHY results (`query` blank: trending) from `offset`; null when GIFs aren't set up on this server. */
-  gifFeed: (query: string, offset = 0) => invoke<GifPage | null>('gif_feed', { query, offset }),
+  gifFeed: (query: string, offset = 0, stickers = false) => invoke<GifPage | null>('gif_feed', { query, offset, stickers }),
   /** Your favourite GIFs, newest first. */
   gifFavourites: () => invoke<Gif[]>('gif_favourites'),
   setGifFavourite: (gif: Gif, on: boolean) => invoke<void>('set_gif_favourite', { gif, on }),

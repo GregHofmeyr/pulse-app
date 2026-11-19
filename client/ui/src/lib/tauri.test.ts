@@ -67,6 +67,13 @@ describe('profile pictures', () => {
     expect(invoke).toHaveBeenCalledWith('upload_banner_media', bytes, { headers: { 'x-pulse-crop': '0,0,5,2' } })
   })
 
+  it('setServerBanner names its arguments (#475)', async () => {
+    await api.setServerBanner('S1', 'ab')
+    expect(invoke).toHaveBeenCalledWith('set_server_banner', { serverId: 'S1', hash: 'ab' })
+    await api.setServerBanner('S1', null)
+    expect(invoke).toHaveBeenCalledWith('set_server_banner', { serverId: 'S1', hash: null })
+  })
+
   it('getProfile and updateProfile name their arguments', async () => {
     await api.getProfile('U1')
     expect(invoke).toHaveBeenCalledWith('get_profile', { userId: 'U1' })

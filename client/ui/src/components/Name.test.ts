@@ -14,8 +14,8 @@ import { surfacesFor } from '../lib/themes'
 import { contrast, toHex } from '../lib/color'
 
 let cmp: ReturnType<typeof mount> | undefined
-const user = (style: { font: string | null; colors: string[] }) => ({ id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style })
-function setup(style: { font: string | null; colors: string[] }, roleColor?: string) {
+const user = (style: { font: string | null; colors: string[]; effect?: string | null }) => ({ id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style })
+function setup(style: { font: string | null; colors: string[]; effect?: string | null }, roleColor?: string) {
   app.state = {
     ...emptyState(),
     members: { S1: [{ user: user(style), nickname: null }] },
@@ -38,6 +38,65 @@ afterEach(() => {
   if (cmp) unmount(cmp)
   cmp = undefined
   document.body.innerHTML = ''
+})
+
+describe('Name effects (#468)', () => {
+  it('a name carries its effect, still unless it plays', () => {
+    setup({ font: null, colors: ['#a3d8ff'], effect: 'neon' })
+    const el = show()
+    expect(el.dataset.fx).toBe('neon')
+    expect(el.classList.contains('fx-play')).toBe(false)
+    expect(el.getAttribute('style')).toContain('--fx-a: #a3d8ff')
+    expect(el.textContent).toBe('sam')
+  })
+
+  it('play makes it move (the editor, a full profile)', () => {
+    setup({ font: null, colors: [], effect: 'glitch' })
+    expect(show({ interactive: false, play: true }).classList.contains('fx-play')).toBe(true)
+  })
+
+  it('no effect, or styles off, draws no effect; a role colour keeps it, drawn in the role colour', () => {
+    setup({ font: null, colors: [] })
+    expect(show().dataset.fx).toBeUndefined()
+    unmount(cmp!)
+    setup({ font: null, colors: [], effect: 'toon' }, '#a3d8ff')
+    const el = show()
+    expect(el.dataset.fx).toBe('toon')
+    expect(el.getAttribute('style')).toContain('--fx-a: #a3d8ff')
+    unmount(cmp!)
+    appearance.showNameStyles = false
+    setup({ font: null, colors: ['#a3d8ff'], effect: 'toon' })
+    expect(show().dataset.fx).toBeUndefined()
+  })
+
+  it('an effect this app does not know is left off', () => {
+    setup({ font: null, colors: [], effect: 'sparkle' })
+    expect(show().dataset.fx).toBeUndefined()
+  })
+
+  it('Pop bounces letter by letter, read out as the whole name', () => {
+    setup({ font: null, colors: ['#ffbe7a', '#ff7fae'], effect: 'pop' })
+    const el = show({ interactive: false })
+    const ls = [...el.querySelectorAll<HTMLElement>('.fx-l')]
+    expect(ls.map((l) => l.textContent)).toEqual(['s', 'a', 'm'])
+    expect(ls[0].style.color).toBe('rgb(255, 190, 122)')
+    expect(el.querySelector('.fx-letters')!.getAttribute('aria-hidden')).toBe('true')
+    expect(el.querySelector('.sr-only')!.textContent).toBe('sam')
+    // the gradient is on the letters, not the box (a moving letter can't show its parent's clipped gradient)
+    expect(el.getAttribute('style')).not.toContain('linear-gradient')
+  })
+
+  it('a mention pill never takes the effect', async () => {
+    const { nameCss, resolveNameStyle } = await import('../lib/nameStyle')
+    const u = user({ font: null, colors: ['#a3d8ff'], effect: 'neon' }) as never
+    expect(nameCss(resolveNameStyle(u, { roleColor: null, showStyles: true }))).not.toContain('--fx')
+  })
+
+  it('the effects sit still under reduced motion, and move only on hover or .fx-play', () => {
+    const css = readFileSync(resolve(__dirname, 'Name.svelte'), 'utf8')
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.name\[data-fx\], \.name\[data-fx\]::after, \.name\[data-fx\] \.fx-l \{ animation: none !important; \}/)
+    for (const m of css.matchAll(/^\s*([^@{}\n]*)\{[^}]*animation: fx-/gm)) expect(m[1], m[1]).toMatch(/(:hover|\.fx-play)/)
+  })
 })
 
 describe('Name', () => {

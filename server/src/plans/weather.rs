@@ -1,5 +1,6 @@
 //! A plan's forecast (#387) from Open-Meteo (free, no key): its geocoding API turns the place into a spot, and its
-//! daily forecast (16 days) gives the plan's day there. Only the server calls them, and it caches hard, in the
+//! daily forecast (16 days) gives the plan's day there, with its hourly temperatures the one at the plan's start
+//! (#399). Only the server calls them, and it caches hard, in the
 //! database so a restart keeps the cache: a place for [`GEOCODE_TTL_DAYS`] (a place it doesn't know too, so a typo
 //! isn't asked about again and again), a spot's forecast for [`FORECAST_TTL_HOURS`]. When Open-Meteo can't be
 //! reached, a stale forecast still answers; with none, there is no forecast. Calls go one at a time server-wide.
@@ -134,6 +135,16 @@ pub struct ForecastAnswer {
     #[serde(default)]
     pub utc_offset_seconds: i64,
     pub daily: Daily,
+    /// Absent from a forecast cached before #399.
+    #[serde(default)]
+    pub hourly: Option<Hourly>,
+}
+
+/// Open-Meteo's hourly temperatures: `time` is the place's local hour (`YYYY-MM-DDTHH:00`).
+#[derive(Debug, Deserialize)]
+pub struct Hourly {
+    pub time: Vec<String>,
+    pub temperature_2m: Vec<Option<f64>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -304,6 +315,7 @@ async fn ask_forecast(cfg: &PlansConfig, spot: &Spot) -> Option<String> {
             "daily",
             "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
         )
+        .append_pair("hourly", "temperature_2m")
         .append_pair("timezone", "auto")
         .append_pair("forecast_days", &plan_limits::FORECAST_DAYS.to_string());
     let r = match http().get(url).send().await {
@@ -323,7 +335,8 @@ async fn ask_forecast(cfg: &PlansConfig, spot: &Spot) -> Option<String> {
 }
 
 /// The day a plan starting at `starts_at` falls on at the spot (whose offset from UTC the forecast gives), out of
-/// the forecast; `None` when that day isn't in it.
+/// the forecast, with the temperature in the hour it starts when the forecast has it; `None` when that day isn't in
+/// it.
 pub fn pick(
     answer: &ForecastAnswer,
     spot: &Spot,
@@ -331,6 +344,11 @@ pub fn pick(
 ) -> Option<PlanForecast> {
     let local = starts_at + TimeDelta::seconds(answer.utc_offset_seconds);
     let date = local.format("%Y-%m-%d").to_string();
+    let hour = local.format("%Y-%m-%dT%H:00").to_string();
+    let temp_at_start = answer.hourly.as_ref().and_then(|h| {
+        let i = h.time.iter().position(|t| *t == hour)?;
+        h.temperature_2m.get(i).copied().flatten().map(|t| t as f32)
+    });
     let d = &answer.daily;
     let i = d.time.iter().position(|t| *t == date)?;
     let code = (*d.weather_code.get(i)?)?;
@@ -346,6 +364,7 @@ pub fn pick(
             .copied()
             .flatten()
             .map(|p| p.clamp(0.0, 100.0) as u8),
+        temp_at_start,
     })
 }
 
@@ -406,6 +425,40 @@ mod tests {
         assert_eq!(pick(&answer, &spot, t("2026-11-20T22:30:00Z")), None);
         // a day not in it
         assert_eq!(pick(&answer, &spot, t("2026-11-25T10:00:00Z")), None);
+        // cached before #399: no hourly, so no temperature at the start
+        assert_eq!(f.temp_at_start, None);
+    }
+
+    #[test]
+    fn the_temperature_is_the_one_in_the_hour_it_starts_there() {
+        let answer: ForecastAnswer = serde_json::from_str(
+            r#"{"utc_offset_seconds":7200,"daily":{"time":["2026-11-20"],
+                "weather_code":[0],"temperature_2m_max":[30.0],"temperature_2m_min":[15.0]},
+                "hourly":{"time":["2026-11-20T17:00","2026-11-20T18:00","2026-11-20T19:00"],
+                "temperature_2m":[27.4,25.6,null]}}"#,
+        )
+        .unwrap();
+        let spot = Spot {
+            name: "Cape Town, South Africa".into(),
+            latitude: -33.92,
+            longitude: 18.42,
+        };
+        // 16:30 UTC is 18:30 there: the 18:00 hour
+        let f = pick(&answer, &spot, t("2026-11-20T16:30:00Z")).unwrap();
+        assert!((f.temp_at_start.unwrap() - 25.6).abs() < 0.01);
+        // an hour it has no value for, or not in it: the day's forecast without one
+        assert_eq!(
+            pick(&answer, &spot, t("2026-11-20T17:00:00Z"))
+                .unwrap()
+                .temp_at_start,
+            None
+        );
+        assert_eq!(
+            pick(&answer, &spot, t("2026-11-20T08:00:00Z"))
+                .unwrap()
+                .temp_at_start,
+            None
+        );
     }
 
     #[test]

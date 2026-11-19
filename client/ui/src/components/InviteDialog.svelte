@@ -5,7 +5,7 @@
 
 <script lang="ts">
   // Invite people to a server (#80), from its tab's menu or the member list's "+ Invite". The server's chip and name
-  // on a soft glow of its colours; people you know (another server or a DM) who aren't in it, each with Invite (a direct
+  // on a soft glow of its colours (or its banner, #475); people you know (another server or a DM) who aren't in it, each with Invite (a direct
   // invite: a card in your DM with them, then "Sent"); and a ready link with Copy, how long it lasts and how many can
   // use it (a day and one, as the server's defaults; "Never" and "No limit" are the owner's), and the card's button
   // text. Changing any of them makes a fresh link; the one it replaces is revoked if it never left the dialog (never
@@ -26,6 +26,7 @@
   import Name from './Name.svelte'
   import Segmented from './Segmented.svelte'
   import ServerChip from './ServerChip.svelte'
+  import ServerBanner from './ServerBanner.svelte'
 
   let { serverId, onClose }: { serverId: string; onClose: () => void } = $props()
 
@@ -133,7 +134,12 @@
 <div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={onClose}></div>
   <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Invite to {name}" tabindex="-1" use:modal={onClose} data-invite-dialog>
-    <div class="glow" aria-hidden="true" style:--glow={avatarColor(serverId)}></div>
+    {#if server?.banner_hash}
+      <!-- its banner (#475), fading into the dialog, in place of the glow -->
+      <div class="glow pic" aria-hidden="true"><ServerBanner id={serverId} hash={server.banner_hash} still={server.banner_still} /></div>
+    {:else}
+      <div class="glow" aria-hidden="true" style:--glow={avatarColor(serverId)}></div>
+    {/if}
     <header>
       <span class="chip-in"><ServerChip id={serverId} {name} iconHash={server?.icon_hash} size={48} /></span>
       <h1 class="modal-title">Invite to {name}</h1>
@@ -180,6 +186,7 @@
   .glow { position: absolute; inset: 0 0 auto 0; height: 150px; pointer-events: none; opacity: .32;
     background: radial-gradient(55% 100% at 22% 0%, var(--glow), transparent 72%), radial-gradient(50% 90% at 82% 0%, var(--accent-strong), transparent 70%);
     animation: glow-in var(--dur-slow) var(--ease) both; }
+  .glow.pic { opacity: .5; background: none; -webkit-mask-image: linear-gradient(to bottom, var(--bg-1) 30%, transparent); mask-image: linear-gradient(to bottom, var(--bg-1) 30%, transparent); }
   @keyframes glow-in { from { opacity: 0; transform: translateY(-12px); } }
   .chip-in { display: inline-grid; animation: chip-pop var(--dur-slow) var(--ease) var(--dur) both; }
   @keyframes chip-pop { from { opacity: 0; transform: scale(.7) rotate(-6deg); } 70% { transform: scale(1.06); } }

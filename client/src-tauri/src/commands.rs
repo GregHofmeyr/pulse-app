@@ -16,7 +16,7 @@ use pulse_protocol::rest::{
     SaveLayoutRequest, SearchRequest, SearchResults, Server, ServerBan, ServerInvite, ServerLayout,
     SetMuteRequest, SetNotifyLevelRequest, Sound, StageShare, StartQotyRequest,
     TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
-    WatchParty, WatchPartyAction,
+    WatchParty, WatchPartyAction, WatchSource,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -875,9 +875,12 @@ pub async fn register(
     invite_code: String,
     username: String,
     password: String,
+    website: Option<String>,
 ) -> Result<User, ApiError> {
     let api = core.start_login(&server_url)?;
-    let s = api.register(&invite_code, &username, &password).await?;
+    let s = api
+        .register(&invite_code, &username, &password, website.as_deref())
+        .await?;
     core.activate(&app, api, s.token, Some(s.user.id), true);
     Ok(s.user)
 }
@@ -1200,6 +1203,18 @@ pub async fn transfer_server(
     core.check(&app, api.transfer_server(&token, server_id, user_id).await)
 }
 
+/// A server's banner (#475): a banner-upload hash, or `None` to remove it. Its owner only.
+#[tauri::command]
+pub async fn set_server_banner(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    hash: Option<String>,
+) -> Result<Server, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_server_banner(&token, server_id, hash).await)
+}
+
 #[tauri::command]
 pub async fn remove_server_member(
     app: AppHandle,
@@ -1405,20 +1420,27 @@ pub async fn share_to_stage(
     core.check(&app, api.share_to_stage(&token, channel_id, &url).await)
 }
 
-/// Start a YouTube watch party in a voice channel (#384), or change its video.
+/// Start a watch party in a voice channel (#384; Twitch too, #459), or change its video.
 #[tauri::command]
 pub async fn start_watch_party(
     app: AppHandle,
     core: State<'_, Core>,
     channel_id: ChannelId,
+    source: Option<WatchSource>,
     video_id: String,
     title: Option<String>,
 ) -> Result<WatchParty, ApiError> {
     let (api, token) = core.current()?;
     core.check(
         &app,
-        api.start_watch_party(&token, channel_id, &video_id, title)
-            .await,
+        api.start_watch_party(
+            &token,
+            channel_id,
+            source.unwrap_or_default(),
+            &video_id,
+            title,
+        )
+        .await,
     )
 }
 
@@ -1813,12 +1835,25 @@ pub struct AudioDevices {
     outputs: Vec<DeviceInfo>,
 }
 
-/// async: runs on the runtime, not the UI thread (device enumeration can block).
+/// How long Settings waits for the system to list its audio devices (#353): enumeration can block for seconds (a
+/// Bluetooth headset waking, many virtual endpoints).
+const LIST_DEVICES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Device enumeration can block, so it runs on a blocking thread (never a runtime worker or the UI thread), and the
+/// page waits at most [`LIST_DEVICES_TIMEOUT`] for it (a list still stuck then finishes on its own and is dropped).
 #[tauri::command]
-pub async fn list_audio_devices() -> AudioDevices {
-    AudioDevices {
+pub async fn list_audio_devices() -> Result<AudioDevices, String> {
+    let list = tokio::task::spawn_blocking(|| AudioDevices {
         inputs: crate::voice::devices::list_inputs(),
         outputs: crate::voice::devices::list_outputs(),
+    });
+    match tokio::time::timeout(LIST_DEVICES_TIMEOUT, list).await {
+        Ok(Ok(d)) => Ok(d),
+        Ok(Err(e)) => Err(format!("couldn't list audio devices: {e}")),
+        Err(_) => {
+            tracing::warn!("voice: listing audio devices timed out");
+            Err("the system took too long to list audio devices".into())
+        }
     }
 }
 

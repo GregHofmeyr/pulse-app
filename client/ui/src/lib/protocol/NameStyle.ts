@@ -2,6 +2,13 @@
 
 /**
  * How a name is drawn: a bundled font and 0 (default), 1 (solid) or 2 (gradient, first to
- * second) `#rrggbb` colours.
+ * second) `#rrggbb` colours, and a name effect (#468).
  */
-export type NameStyle = { font: string | null, colors: Array<string>, };
+export type NameStyle = { font: string | null, colors: Array<string>, 
+/**
+ * One of the name effects (`neon`, `toon`, `pop`, `gummy`, `prism`, `shimmer`, `glitch`,
+ * `ember`), or none. A string, not an enum, so an older client reading an effect it doesn't
+ * know still reads the user (and draws the name without it). Absent from older servers and
+ * clients: none.
+ */
+effect?: string | null, };

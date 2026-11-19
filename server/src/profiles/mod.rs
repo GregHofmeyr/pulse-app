@@ -155,6 +155,12 @@ pub const NAME_FONTS: [&str; 14] = [
     "black-ops-one",
 ];
 
+/// The name effects (#468), stored by key in `users.name_effect`. A literal copy is in
+/// client/ui/src/lib/nameEffects.test.ts.
+pub const NAME_EFFECTS: [&str; 8] = [
+    "neon", "toon", "pop", "gummy", "prism", "shimmer", "glitch", "ember",
+];
+
 const PRONOUNS_MAX: usize = 40;
 const BIO_MAX: usize = 190;
 const BIO_LINE_BREAKS_MAX: usize = 4;
@@ -170,6 +176,8 @@ pub struct Validated {
     pub font: Option<String>,
     /// Lightened, lowercase `#rrggbb`, at most two.
     pub colors: Vec<String>,
+    /// One of [`NAME_EFFECTS`], or none (#468).
+    pub effect: Option<String>,
     pub pronouns: Option<String>,
     pub bio: Option<String>,
     /// `None`: keep the current display name.
@@ -210,6 +218,11 @@ pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
     let font = match req.style.font {
         Some(f) if NAME_FONTS.contains(&f.as_str()) => Some(f),
         Some(_) => return Err(bad("Unknown name font.")),
+        None => None,
+    };
+    let effect = match req.style.effect {
+        Some(e) if NAME_EFFECTS.contains(&e.as_str()) => Some(e),
+        Some(_) => return Err(bad("Unknown name effect.")),
         None => None,
     };
     if req.style.colors.len() > 2 {
@@ -261,11 +274,29 @@ pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
         theme_bottom: theme(&req.theme_bottom)?,
         font,
         colors,
+        effect,
         pronouns,
         bio,
         display_name,
         glow: req.glow,
     })
+}
+
+#[cfg(test)]
+mod name_effect_tests {
+    use super::NAME_EFFECTS;
+
+    /// A literal copy of `NAME_EFFECTS` in client/ui/src/lib/nameEffects.test.ts: change one side
+    /// and both tests fail.
+    #[test]
+    fn keys_match_the_ui_list() {
+        assert_eq!(
+            NAME_EFFECTS,
+            [
+                "neon", "toon", "pop", "gummy", "prism", "shimmer", "glitch", "ember"
+            ]
+        );
+    }
 }
 
 #[cfg(test)]

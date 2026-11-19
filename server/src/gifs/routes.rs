@@ -53,6 +53,7 @@ async fn favourites(
                 title,
                 width: u32::try_from(width).unwrap_or(1),
                 height: u32::try_from(height).unwrap_or(1),
+                sticker: false,
             })
             .collect(),
     ))

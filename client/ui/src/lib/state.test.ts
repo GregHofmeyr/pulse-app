@@ -158,6 +158,18 @@ describe('applyEvent', () => {
     expect(s.servers).toEqual([])
   })
 
+  it('ServerUpdated replaces the server as it is now (#475)', () => {
+    const before = base()
+    const sv = before.servers[0]
+    const s = applyEvent(before, { t: 'ServerUpdated', d: { server: { ...sv, banner_hash: 'bn', banner_still: 'st' } } }, 0)
+    expect(s.servers[0]).toMatchObject({ id: sv.id, banner_hash: 'bn', banner_still: 'st' })
+    // removed again
+    const t = applyEvent(s, { t: 'ServerUpdated', d: { server: { ...sv } } }, 0)
+    expect(t.servers[0].banner_hash).toBeUndefined()
+    // a server this client doesn't know: nothing changes
+    expect(applyEvent(t, { t: 'ServerUpdated', d: { server: { ...sv, id: 'S9' } } }, 0)).toBe(t)
+  })
+
   it('ServerOwnerChanged hands the server to its new owner (#418)', () => {
     const s = applyEvent(base(), { t: 'ServerOwnerChanged', d: { server_id: 'S1', owner_id: 'U2', previous_owner_id: 'U1' } }, 0)
     expect(s.servers.find((x) => x.id === 'S1')?.owner_id).toBe('U2')
@@ -389,7 +401,7 @@ describe('streams', () => {
 
 describe('watch parties (#384)', () => {
   const party = (over: Partial<WatchParty> = {}): WatchParty => ({
-    channel_id: 'V1', host_id: 'U1', video_id: 'dQw4w9WgXcQ', position_ms: 0, playing: true, set_at_ms: 1, everyone_controls: false,
+    channel_id: 'V1', host_id: 'U1', source: 'youtube', video_id: 'dQw4w9WgXcQ', position_ms: 0, playing: true, set_at_ms: 1, everyone_controls: false,
     viewers: ['U1'], queue: [], ...over,
   })
 

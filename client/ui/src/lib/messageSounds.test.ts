@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Message sounds per person (#312): a different "New message" sound for someone, on this device.
 import { beforeEach, describe, expect, it } from 'vitest'
-import { loadMessageSounds, messageSoundChoices, messageSoundSet, saveMessageSounds, withMessageSound } from './messageSounds'
+import { loadChannelMessageSounds, loadMessageSounds, messageSoundChoices, messageSoundIn, messageSoundSet, saveChannelMessageSounds, saveMessageSounds, withMessageSound } from './messageSounds'
 
 beforeEach(() => localStorage.clear())
 
@@ -38,5 +38,23 @@ describe('message sounds per person', () => {
     expect(c.filter((x) => x.checked).length).toBe(1)
     const g = messageSoundChoices('goofy', 'classic')
     expect(g.find((x) => x.checked)!.set).toBe('goofy')
+  })
+})
+
+describe('message sounds per channel (#378)', () => {
+  it("a channel's own sound plays there, unless the author has their own; a system line takes the channel's", () => {
+    const people = { U2: 'goofy' as const }
+    const channels = { C1: 'minimal-glass' as const }
+    expect(messageSoundIn(people, channels, 'U3', 'C1', 'classic')).toBe('minimal-glass')
+    expect(messageSoundIn(people, channels, 'U2', 'C1', 'classic')).toBe('goofy')
+    expect(messageSoundIn(people, channels, 'U3', 'C2', 'classic')).toBe('classic')
+    expect(messageSoundIn(people, channels, null, 'C1', 'classic')).toBe('minimal-glass')
+  })
+
+  it('kept on this device apart from the people', () => {
+    saveChannelMessageSounds({ C1: 'goofy' })
+    saveMessageSounds({ U2: 'classic' })
+    expect(loadChannelMessageSounds()).toEqual({ C1: 'goofy' })
+    expect(loadMessageSounds()).toEqual({ U2: 'classic' })
   })
 })

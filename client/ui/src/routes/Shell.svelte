@@ -21,6 +21,8 @@
   import ServerSettings from '../components/ServerSettings.svelte'
   import InviteDialog from '../components/InviteDialog.svelte'
   import ServerActionDialog from '../components/ServerActionDialog.svelte'
+  import InviteLinkDialog from '../components/InviteLinkDialog.svelte'
+  import { inviteLinks } from '../lib/inviteLinks.svelte'
   import { requestCreateCategory } from '../lib/categoryUi.svelte'
   import { clickOutside, modal, narrowerThan } from '../lib/actions'
   import { exitFade } from '../lib/exit'
@@ -904,6 +906,7 @@
 <GroupIconCrop />
 {#if settingsServer}<ServerSettings server={settingsServer} onClose={() => (serverSettingsId = null)} />{/if}
 {#if ui.serverAction}<ServerActionDialog action={ui.serverAction} onClose={() => (ui.serverAction = null)} />{/if}
+{#if inviteLinks.code}{#key inviteLinks.code}<InviteLinkDialog code={inviteLinks.code} onClose={() => (inviteLinks.code = null)} />{/key}{/if}
 {#if ui.inviteTo}{#key ui.inviteTo}<InviteDialog serverId={ui.inviteTo} onClose={() => (ui.inviteTo = null)} />{/key}{/if}
 {#if settingsOpen}<Settings section={settingsSection} onLogout={logout} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}

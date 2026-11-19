@@ -16,9 +16,8 @@ import type { Fps, Res } from './encodings'
 import { loadAudioMuted, loadGoLive, loadStreamVolumes, saveAudioMuted, saveGoLive, saveStreamVolumes, type GoLive } from './prefs'
 import { StreamRoom } from './room'
 import { motion } from '../animate.svelte'
-import { admit, followAlert, layerFor, liveEndSound, toastFor, voiceOnlyStreamer, type Quality, type View } from './viewer'
+import { admit, followAlert, layerFor, liveEndSound, liveQuiet, toastFor, voiceOnlyStreamer, type Quality, type View } from './viewer'
 import { removeToast, showToast } from './viewer.svelte'
-import { dndActive } from '../status'
 import { liveNotice, liveWhere } from '../notify'
 import { notifyPrefs } from '../notifyPrefs.svelte'
 import { windowFocus } from '../windowFocus.svelte'
@@ -867,9 +866,9 @@ export const streamApi = {
       const k = streamKey(channelId, streamer)
       const back = Date.now() - (vanished.get(k) ?? -Infinity) < BACK_WITHIN_MS
       vanished.delete(k)
-      // a stream re-announced after a server restart isn't news; Do Not Disturb (#45) skips the toasts, the sound and
-      // the desktop notification
-      const quiet = back || dndActive(app.state, new Date().toISOString())
+      // a stream re-announced after a server restart isn't news; Do Not Disturb (#45), yours or yours for the streamer
+      // (#426), skips the toasts, the sound and the desktop notification
+      const quiet = back || liveQuiet(app.state, channelId, streamer, new Date().toISOString())
       const inCall = toastFor({ channelId, streamer }, voice.channelId, meId())
       if (!quiet && inCall) {
         showToast({ channelId, streamer, name: nameOf(channelId, streamer) })

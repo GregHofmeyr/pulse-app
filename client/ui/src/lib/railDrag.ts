@@ -1,5 +1,6 @@
 // Drag to reorder the server tabs (#185), hand-built on pointer events like the channel list's drag (lib/drag.ts),
-// whose slot and shift rules it reuses on the horizontal axis. A tab is any `[data-server]` element inside the node.
+// whose slot and shift rules it reuses on the horizontal axis. A tab is any `[data-server]` element inside the node
+// (or `[data-<item>]`: the profile editor's badge row, #467, drags `[data-badge]`).
 //
 // Smooth under load (#103): every tab is measured once when the drag starts; each frame then only writes
 // `transform`s. A press becomes a drag only past DRAG_THRESHOLD, so a click still opens the server and right-click
@@ -14,6 +15,8 @@ export type RailDragOptions = {
   onDrop: (id: string, index: number) => void
   /** No dragging (e.g. a single server). */
   disabled?: boolean
+  /** The data attribute that marks an item and holds its id (default `server`: `[data-server]`). */
+  item?: string
 }
 
 type Drag = {
@@ -29,7 +32,8 @@ export function railDrag(node: HTMLElement, options: RailDragOptions) {
   let opts = options
   let drag: Drag | null = null
 
-  const tabs = () => [...node.querySelectorAll<HTMLElement>('[data-server]')]
+  const attr = () => opts.item ?? 'server'
+  const tabs = () => [...node.querySelectorAll<HTMLElement>(`[data-${attr()}]`)]
 
   function clear() {
     // the lifted tab loses `lifted` first, so it eases back with the others on a cancel
@@ -106,9 +110,9 @@ export function railDrag(node: HTMLElement, options: RailDragOptions) {
 
   function down(e: PointerEvent) {
     if (opts.disabled || e.button !== 0 || drag) return
-    const tab = (e.target as Element).closest?.<HTMLElement>('[data-server]')
+    const tab = (e.target as Element).closest?.<HTMLElement>(`[data-${attr()}]`)
     if (!tab || !node.contains(tab)) return
-    drag = { id: tab.dataset.server!, pointerId: e.pointerId, startX: e.clientX, tab, live: null }
+    drag = { id: tab.getAttribute(`data-${attr()}`)!, pointerId: e.pointerId, startX: e.clientX, tab, live: null }
   }
 
   function cancel(e: PointerEvent) {

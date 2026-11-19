@@ -39,10 +39,11 @@
       const d = await voiceApi.listDevices()
       inputs = d.inputs
       outputs = d.outputs
+      // only a real list says anything about the sound server (a timed-out one is empty, #353)
+      listed = true
     } catch {
       /* device list is optional */
     }
-    listed = true
   })
   // Strong (low delay)'s model (#77): where it is, and its download's progress while the page is open
   onMount(() => {

@@ -65,10 +65,7 @@ pub fn detect(url: &Url) -> Detection {
             [slug] if slug != "embed" => Some(plain(EmbedProvider::Twitch, slug.into())),
             _ => None,
         },
-        "twitch.tv" | "www.twitch.tv" | "m.twitch.tv" => match segs[..] {
-            [_, "clip", slug] => Some(plain(EmbedProvider::Twitch, slug.into())),
-            _ => None,
-        },
+        "twitch.tv" | "www.twitch.tv" | "m.twitch.tv" => twitch(&segs),
         "instagram.com" | "www.instagram.com" => instagram(&segs),
         "vm.tiktok.com" | "vt.tiktok.com" | "spotify.link" | "on.soundcloud.com" => {
             return Detection::Short;
@@ -182,6 +179,60 @@ fn seconds(t: &str) -> Option<u32> {
         total = total.checked_add(n.checked_mul(unit)?)?;
     }
     (num.is_empty() && total > 0).then_some(total)
+}
+
+/// Twitch's own pages, which look like `twitch.tv/<channel>` but aren't a channel.
+const TWITCH_RESERVED: [&str; 24] = [
+    "directory",
+    "videos",
+    "search",
+    "settings",
+    "subscriptions",
+    "inventory",
+    "wallet",
+    "drops",
+    "downloads",
+    "jobs",
+    "p",
+    "turbo",
+    "prime",
+    "store",
+    "login",
+    "signup",
+    "friends",
+    "messages",
+    "moderator",
+    "popout",
+    "embed",
+    "team",
+    "broadcast",
+    "following",
+];
+
+/// Twitch (#459): a clip (`<channel>/clip/<slug>`, a bare slug), a VOD (`videos/<digits>`, kept as `video:<digits>`)
+/// or a channel, live or not (`<login>`, kept lowercased as `channel:<login>`).
+fn twitch(segs: &[&str]) -> Option<Detected> {
+    match *segs {
+        [_, "clip", slug] => Some(plain(EmbedProvider::Twitch, slug.into())),
+        ["videos", id] => Some(plain(EmbedProvider::Twitch, format!("{TWITCH_VIDEO}:{id}"))),
+        [login] if !TWITCH_RESERVED.contains(&login.to_ascii_lowercase().as_str()) => Some(plain(
+            EmbedProvider::Twitch,
+            format!("{TWITCH_CHANNEL}:{}", login.to_ascii_lowercase()),
+        )),
+        _ => None,
+    }
+}
+
+/// The kinds a Twitch id carries besides a clip's bare slug.
+const TWITCH_VIDEO: &str = "video";
+const TWITCH_CHANNEL: &str = "channel";
+
+/// A Twitch id's kind and value: a VOD's digits, a channel's login, or (`None` kind) a clip's slug.
+pub fn twitch_kind(id: &str) -> (Option<&str>, &str) {
+    match id.split_once(':') {
+        Some((kind, rest)) => (Some(kind), rest),
+        None => (None, id),
+    }
 }
 
 fn tiktok(segs: &[&str]) -> Option<Detected> {
@@ -311,7 +362,14 @@ pub fn valid_id(p: EmbedProvider, id: &str) -> bool {
                     })
                 })
         }
-        EmbedProvider::Twitch => chars(id, 1, 100, slug_char),
+        EmbedProvider::Twitch => match twitch_kind(id) {
+            (None, slug) => chars(slug, 1, 100, slug_char),
+            (Some(TWITCH_VIDEO), v) => chars(v, 1, 15, |b| b.is_ascii_digit()),
+            (Some(TWITCH_CHANNEL), login) => chars(login, 1, 25, |b| {
+                b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'
+            }),
+            _ => false,
+        },
         EmbedProvider::Instagram => id.split_once(':').is_some_and(|(kind, code)| {
             matches!(kind, "p" | "reel") && chars(code, 5, 64, slug_char)
         }),
@@ -357,9 +415,18 @@ pub fn player_url(
             if !host_ok {
                 return None;
             }
-            format!(
-                "https://clips.twitch.tv/embed?clip={id}&parent={parent_host}&parent=tauri.localhost&parent=localhost&autoplay=true"
-            )
+            let parents = format!("parent={parent_host}&parent=tauri.localhost&parent=localhost");
+            match twitch_kind(id) {
+                (None, clip) => {
+                    format!("https://clips.twitch.tv/embed?clip={clip}&{parents}&autoplay=true")
+                }
+                (Some(TWITCH_VIDEO), v) => {
+                    format!("https://player.twitch.tv/?video=v{v}&{parents}&autoplay=true")
+                }
+                (Some(_), login) => {
+                    format!("https://player.twitch.tv/?channel={login}&{parents}&autoplay=true")
+                }
+            }
         }
         EmbedProvider::Instagram => {
             let (kind, code) = id.split_once(':')?;
@@ -383,6 +450,23 @@ pub fn youtube_party_url(id: &str, start: Option<u32>) -> Option<String> {
     Some(format!(
         "https://www.youtube-nocookie.com/embed/{id}?autoplay=1&enablejsapi=1&controls=0&disablekb=1&rel=0&playsinline=1{start}"
     ))
+}
+
+/// A watch party's Twitch player (#459): a VOD's or a channel's, as [`player_url`]'s, without Twitch's own controls
+/// (Pulse's drive it), from `start` seconds (a VOD only). `None` for a clip (no control API: a party plays its
+/// ordinary player), a bad id or a bad parent.
+pub fn twitch_party_url(id: &str, start: Option<u32>, parent_host: &str) -> Option<String> {
+    if !valid_id(EmbedProvider::Twitch, id) || twitch_kind(id).0.is_none() {
+        return None;
+    }
+    let base = player_url(EmbedProvider::Twitch, id, None, parent_host)?;
+    let time = match (twitch_kind(id).0, start.filter(|&s| s > 0)) {
+        (Some(TWITCH_VIDEO), Some(s)) => {
+            format!("&time={}h{}m{}s", s / 3600, s % 3600 / 60, s % 60)
+        }
+        _ => String::new(),
+    };
+    Some(format!("{base}&controls=false&muted=false{time}"))
 }
 
 #[cfg(test)]
@@ -654,9 +738,22 @@ mod tests {
         assert_eq!(det("https://clips.twitch.tv/FunnyClip-abc_12"), c);
         assert_eq!(det("https://www.twitch.tv/alex/clip/FunnyClip-abc_12"), c);
         assert_eq!(det("https://m.twitch.tv/alex/clip/FunnyClip-abc_12?x=1"), c);
+        // VODs and channels (#459)
+        assert_eq!(
+            det("https://www.twitch.tv/videos/2012345678?t=1h2m"),
+            known(Twitch, "video:2012345678", None, false)
+        );
+        assert_eq!(
+            det("https://www.twitch.tv/Alex_1"),
+            known(Twitch, "channel:alex_1", None, false)
+        );
         for u in [
-            "https://www.twitch.tv/alex",
-            "https://www.twitch.tv/videos/123",
+            "https://www.twitch.tv/directory",
+            "https://www.twitch.tv/Settings",
+            "https://www.twitch.tv/videos/v123",
+            "https://www.twitch.tv/videos",
+            "https://www.twitch.tv/alex/videos",
+            "https://www.twitch.tv/al.ex",
             "https://clips.twitch.tv/",
             "https://clips.twitch.tv/bad.slug",
         ] {
@@ -782,6 +879,51 @@ mod tests {
             player_url(Instagram, "reel:Cabc_12-x", None, "pulse.example.com").as_deref(),
             Some("https://www.instagram.com/reel/Cabc_12-x/embed/")
         );
+    }
+
+    #[test]
+    fn twitch_players_and_party_players() {
+        let parents = "parent=pulse.example.com&parent=tauri.localhost&parent=localhost";
+        assert_eq!(
+            player_url(Twitch, "video:123", None, "pulse.example.com"),
+            Some(format!(
+                "https://player.twitch.tv/?video=v123&{parents}&autoplay=true"
+            ))
+        );
+        assert_eq!(
+            player_url(Twitch, "channel:alex", None, "pulse.example.com"),
+            Some(format!(
+                "https://player.twitch.tv/?channel=alex&{parents}&autoplay=true"
+            ))
+        );
+        assert_eq!(
+            twitch_party_url("video:123", Some(3723), "pulse.example.com"),
+            Some(format!(
+                "https://player.twitch.tv/?video=v123&{parents}&autoplay=true&controls=false&muted=false&time=1h2m3s"
+            ))
+        );
+        // a channel is live: no start
+        assert_eq!(
+            twitch_party_url("channel:alex", Some(60), "pulse.example.com"),
+            Some(format!(
+                "https://player.twitch.tv/?channel=alex&{parents}&autoplay=true&controls=false&muted=false"
+            ))
+        );
+        for bad in [
+            "Clip1",
+            "video:v1",
+            "channel:Alex",
+            "other:x",
+            "video:",
+            "channel:a&b",
+        ] {
+            assert_eq!(
+                twitch_party_url(bad, None, "pulse.example.com"),
+                None,
+                "{bad}"
+            );
+        }
+        assert_eq!(twitch_party_url("video:1", None, "a&b"), None);
     }
 
     #[test]

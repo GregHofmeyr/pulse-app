@@ -52,9 +52,8 @@ pub fn stand_in(view: &Forwarded) -> String {
     STAND_IN.to_owned()
 }
 
-/// How many of an original's forwards are told when it is deleted (one at a time; the rest read as unavailable on
-/// their next load).
-const TELL_MAX: i64 = 200;
+/// How many of an original's forwards are told at a time when it is deleted ([`tell_deleted`]).
+pub const TELL_MAX: i64 = 200;
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/messages/{id}/forward", post(forward))
@@ -275,13 +274,35 @@ pub(crate) async fn files_of(db: &SqlitePool, message: MessageId) -> AppResult<O
 }
 
 /// After an original's delete (under its `in_order` guard): each of its forwards' viewers hear it now reads as
-/// unavailable. A failure is logged (the delete has landed).
+/// unavailable. The first [`TELL_MAX`] are told here; any more go on in a task, [`TELL_MAX`] at a time, each batch under
+/// its own ordering guard (taken once the delete's is let go), so a much-forwarded message never holds the lock long and
+/// every forward is still told (#415). A failure is logged (the delete has landed).
 pub(crate) async fn tell_deleted(s: &AppState, original: MessageId) {
+    let Some(mut after) = tell_batch(s, original, None).await else {
+        return;
+    };
+    let s = s.clone();
+    tokio::spawn(async move {
+        loop {
+            let _order = s.hub.in_order().await;
+            match tell_batch(&s, original, Some(&after)).await {
+                Some(last) => after = last,
+                None => break,
+            }
+        }
+    });
+}
+
+/// One batch of [`tell_deleted`]: up to [`TELL_MAX`] of the original's live forwards after `after` (by id), each told
+/// with a MessageUpdated. The last id when the batch was full (there may be more), else `None`.
+async fn tell_batch(s: &AppState, original: MessageId, after: Option<&str>) -> Option<String> {
     let ids: Vec<String> = match sqlx::query_scalar(
         "SELECT f.message_id FROM message_forwards f JOIN messages m ON m.id = f.message_id
-         WHERE f.source_id = ? AND m.deleted_at IS NULL ORDER BY f.message_id LIMIT ?",
+         WHERE f.source_id = ? AND m.deleted_at IS NULL AND f.message_id > ?
+         ORDER BY f.message_id LIMIT ?",
     )
     .bind(original.to_string())
+    .bind(after.unwrap_or(""))
     .bind(TELL_MAX)
     .fetch_all(&s.db)
     .await
@@ -289,9 +310,12 @@ pub(crate) async fn tell_deleted(s: &AppState, original: MessageId) {
         Ok(ids) => ids,
         Err(e) => {
             tracing::error!(error = ?e, %original, "couldn't find a deleted message's forwards");
-            return;
+            return None;
         }
     };
+    let more = (ids.len() as i64 == TELL_MAX)
+        .then(|| ids.last().cloned())
+        .flatten();
     for id in ids {
         let Ok(id) = id.parse::<MessageId>() else {
             continue;
@@ -306,6 +330,7 @@ pub(crate) async fn tell_deleted(s: &AppState, original: MessageId) {
             Err(e) => tracing::error!(error = ?e, %id, "couldn't load a forward to tell"),
         }
     }
+    more
 }
 
 /// The chat a forward goes to, with a send's checks: there, `me` may post in it (a server's: a member), and it takes

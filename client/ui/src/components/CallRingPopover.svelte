@@ -8,15 +8,29 @@
   import { declineCall, joinCall, popoverRings } from '../lib/calls.svelte'
   import { conversationName } from '../lib/conversations'
   import { displayName } from '../lib/selectors'
+  import { messagePerson } from '../lib/messagePerson'
+  import { personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
+  import PersonMenu from './PersonMenu.svelte'
 
   const rings = $derived(popoverRings())
+  // The caller's person menu (#335): right-click the card, or ContextMenu / Shift+F10 on Join or Decline (it bubbles
+  // to the card). Its Esc goes no further than the menu.
+  let menu = $state<PersonMenuAt | null>(null)
+  function callerMenu(e: MouseEvent | KeyboardEvent, callerId: string, card: HTMLElement) {
+    menu = personMenuAt(e, callerId, null, card) ?? menu
+  }
+  // the ring ended (answered, declined, timed out): its caller's menu goes with it
+  $effect(() => {
+    if (menu && !rings.some((r) => r.caller_id === menu?.userId)) menu = null
+  })
 </script>
 
 <div class="stack" aria-live="polite">
   {#each rings as r (r.call_id)}
     {@const caller = displayName(app.state, null, r.caller_id)}
     {@const group = app.state.channels[r.channel_id]?.kind === 'group'}
-    <div class="ring pop-in" role="alertdialog" aria-label="Incoming call from {caller}">
+    <div class="ring pop-in" role="alertdialog" tabindex="-1" aria-label="Incoming call from {caller}"
+      oncontextmenu={(e) => callerMenu(e, r.caller_id, e.currentTarget)} onkeydown={(e) => callerMenu(e, r.caller_id, e.currentTarget)}>
       <span class="av"><Avatar id={r.caller_id} name={caller} size={40} /></span>
       <span class="text">
         {#if group}
@@ -32,6 +46,7 @@
     </div>
   {/each}
 </div>
+<PersonMenu {menu} onMessage={messagePerson} onClose={() => (menu = null)} />
 
 <style>
   /* top centre, over the content; only the cards take clicks */

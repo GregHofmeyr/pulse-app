@@ -378,6 +378,11 @@ pub enum Event {
         owner_id: UserId,
         previous_owner_id: UserId,
     },
+    /// Its owner changed how a server looks (#475: its banner set or removed). Everyone (servers are public): the
+    /// server as it is now. Clients from before it skip it and catch up on their next Ready.
+    ServerUpdated {
+        server: Server,
+    },
     /// Only to its person's own sessions (#80): the invites of `server_id` they can see changed (one was made, used,
     /// revoked or ended with a ban). Its maker and the server's owner each get one; an open Invites list asks again
     /// (`GET /servers/{id}/invites`). Clients from before it skip it.
@@ -985,6 +990,7 @@ impl Event {
             | Self::LayoutChanged { .. }
             | Self::MemberJoined { .. }
             | Self::ServerOwnerChanged { .. }
+            | Self::ServerUpdated { .. }
             | Self::MemberLeft { .. }
             | Self::MemberUpdated { .. }
             | Self::UserCreated { .. }
@@ -1563,6 +1569,29 @@ mod tests {
         assert_eq!(u.avatar_still, None);
         assert_eq!(u.style, crate::rest::NameStyle::default());
         assert!(u.style.font.is_none() && u.style.colors.is_empty());
+        assert!(u.style.effect.is_none());
+    }
+
+    /// #468: a name effect rides in the style; none is left out of the JSON, and a style without
+    /// one (an older peer's) reads as none.
+    #[test]
+    fn a_name_effect_round_trips_and_none_is_left_out() {
+        let style = crate::rest::NameStyle {
+            font: None,
+            colors: vec![],
+            effect: Some("ember".into()),
+        };
+        let v = serde_json::to_value(&style).unwrap();
+        assert_eq!(v["effect"], "ember");
+        assert_eq!(
+            serde_json::from_value::<crate::rest::NameStyle>(v).unwrap(),
+            style
+        );
+        let none = serde_json::to_value(crate::rest::NameStyle::default()).unwrap();
+        assert!(none.get("effect").is_none());
+        let old: crate::rest::NameStyle =
+            serde_json::from_value(serde_json::json!({ "font": null, "colors": [] })).unwrap();
+        assert_eq!(old.effect, None);
     }
 
     /// A v3 reader (without the profile fields) ignores them, so no protocol bump is needed.
@@ -1584,6 +1613,7 @@ mod tests {
             style: crate::rest::NameStyle {
                 font: Some("pacifico".into()),
                 colors: vec!["#ffc4a3".into(), "#ff7fae".into()],
+                effect: Some("neon".into()),
             },
         };
         let old: OldUser = serde_json::from_value(serde_json::to_value(&user).unwrap()).unwrap();
@@ -2071,6 +2101,7 @@ mod tests {
         let party = WatchParty {
             channel_id: ch,
             host_id: u,
+            source: crate::rest::WatchSource::Youtube,
             video_id: "dQw4w9WgXcQ".into(),
             title: None,
             position_ms: 0,
@@ -2079,6 +2110,7 @@ mod tests {
             everyone_controls: false,
             viewers: vec![u],
             queue: vec![],
+            added_by: None,
         };
         let changed = Event::WatchPartyChanged {
             party,
@@ -2095,10 +2127,37 @@ mod tests {
             serde_json::from_str(r#"{"action":"seek","position_ms":90000}"#).unwrap();
         assert_eq!(a, WatchPartyAction::Seek { position_ms: 90000 });
         let a: WatchPartyAction = serde_json::from_str(r#"{"action":"next"}"#).unwrap();
-        assert_eq!(a, WatchPartyAction::Next);
+        assert_eq!(a, WatchPartyAction::Next { from: None });
+        // an old snapshot without `added_by` still reads
+        let mut old = v["d"]["party"].clone();
+        old.as_object_mut().unwrap().remove("added_by");
+        assert!(serde_json::from_value::<WatchParty>(old).is_ok());
         let a: WatchPartyAction =
             serde_json::from_str(r#"{"action":"load","video_id":"dQw4w9WgXcQ"}"#).unwrap();
-        assert!(matches!(a, WatchPartyAction::Load { title: None, .. }));
+        assert!(matches!(
+            a,
+            WatchPartyAction::Load {
+                title: None,
+                source: crate::rest::WatchSource::Youtube,
+                ..
+            }
+        ));
+        let a: WatchPartyAction = serde_json::from_str(
+            r#"{"action":"enqueue","source":"twitch_video","video_id":"123"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            a,
+            WatchPartyAction::Enqueue {
+                source: crate::rest::WatchSource::TwitchVideo,
+                ..
+            }
+        ));
+        use crate::rest::WatchSource as S;
+        assert!(S::TwitchVideo.valid_id("2012345678") && !S::TwitchVideo.valid_id("v123"));
+        assert!(S::TwitchChannel.valid_id("alex_1") && !S::TwitchChannel.valid_id("Alex"));
+        assert!(S::TwitchClip.valid_id("FunnyClip-abc_12") && !S::TwitchClip.valid_id("a/b"));
+        assert!(!S::Youtube.valid_id("123"));
     }
 
     /// A server's layout is public like its channels: everyone hears it, as `ChannelDeleted`.

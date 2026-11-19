@@ -127,8 +127,12 @@ pub fn test_config() -> Config {
             min_gap: Duration::ZERO,
             ..Default::default()
         },
+        invite_decoy: TEST_DECOY.into(),
     }
 }
+
+/// The decoy path in `test_config`.
+pub const TEST_DECOY: &str = "/i/test-decoy";
 
 /// Where `test_config` pins the quote badges' clock: 12:00 South African time, far from the small
 /// hours, so no quote test earns 3 am Thoughts by accident whenever it runs (#127).

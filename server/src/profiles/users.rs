@@ -7,8 +7,8 @@ use crate::error::AppResult;
 use crate::profiles::colors;
 
 /// What [`UserRow`] reads, for a query that selects from `users u` with [`USER_JOIN`].
-pub const USER_COLS: &str =
-    "u.id, u.username, u.display_name, u.avatar_hash, av.still_hash, u.name_font, u.name_color";
+pub const USER_COLS: &str = "u.id, u.username, u.display_name, u.avatar_hash, av.still_hash, u.name_font, u.name_color, \
+     u.name_effect";
 /// Brings in the avatar's still (`av.still_hash`).
 pub const USER_JOIN: &str = "LEFT JOIN media av ON av.hash = u.avatar_hash";
 
@@ -21,6 +21,7 @@ pub struct UserRow {
     pub still_hash: Option<String>,
     pub name_font: Option<String>,
     pub name_color: Option<String>,
+    pub name_effect: Option<String>,
 }
 
 impl UserRow {
@@ -43,6 +44,10 @@ impl UserRow {
                             .collect()
                     })
                     .unwrap_or_default(),
+                // Only an effect this server knows (#468).
+                effect: self
+                    .name_effect
+                    .filter(|e| super::NAME_EFFECTS.contains(&e.as_str())),
             },
         })
     }
@@ -61,6 +66,7 @@ mod tests {
             still_hash: None,
             name_font: None,
             name_color: name_color.map(str::to_owned),
+            name_effect: None,
         }
     }
 
@@ -72,5 +78,17 @@ mod tests {
         assert_eq!(colors(Some("#ffc4a3")), ["#ffc4a3"]);
         assert_eq!(colors(Some("#ffc4a3,#ff7fae")), ["#ffc4a3", "#ff7fae"]);
         assert_eq!(colors(Some("#ffc4a3,,nope")), ["#ffc4a3"]);
+    }
+
+    #[test]
+    fn only_known_name_effects_are_kept() {
+        let effect = |e: Option<&str>| {
+            let mut r = row(None);
+            r.name_effect = e.map(str::to_owned);
+            r.into_user().unwrap().style.effect
+        };
+        assert_eq!(effect(None), None);
+        assert_eq!(effect(Some("ember")).as_deref(), Some("ember"));
+        assert_eq!(effect(Some("sparkle")), None);
     }
 }

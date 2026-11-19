@@ -17,7 +17,9 @@
   import { errorText } from '../lib/tauri'
   import DmCategoryMenu from './DmCategoryMenu.svelte'
   import { DM_CATEGORY_CHARS, categoryNameOk, categoryNameReserved, dmSections } from '../lib/dmLayout'
-  import { renameCategory, setCategoryCollapsed } from '../lib/dmLayout.svelte'
+  import { placeConversation, renameCategory, setCategoryCollapsed } from '../lib/dmLayout.svelte'
+  import { placementOf } from '../lib/dmLayout'
+  import { convDrag, dropPlacement, type DropTarget } from '../lib/dmDrag'
   import { isMenuKey, menuPoint } from '../lib/participantMenu'
   import type { DmCategory } from '../lib/protocol/DmCategory'
 
@@ -52,6 +54,15 @@
     return f().catch((e) => (layoutError = errorText(e)))
   }
   const toggle = (id: string, collapsed: boolean) => report(() => setCategoryCollapsed(id, collapsed))
+  // Drag a conversation onto a category, Pinned or the main list (#419; lib/dmDrag.ts). While one is lifted, an empty
+  // Pinned and main list show as places to drop too.
+  let lifted = $state(false)
+  const canDrag = $derived(sections.categories.length > 0 || sections.pinned.length > 0)
+  function dropped(id: string, target: DropTarget) {
+    const p = placementOf(app.state.dmLayout, id)
+    const next = dropPlacement({ pinned: p?.pinned ?? false, category_id: p?.category_id ?? null }, target)
+    if (next) void report(() => placeConversation(id, next))
+  }
   let catMenu = $state<null | { category: DmCategory; x: number; y: number; opener: HTMLElement }>(null)
   function openCatMenu(e: MouseEvent | KeyboardEvent, category: DmCategory) {
     e.preventDefault()
@@ -126,7 +137,7 @@
   {@const badge = c.muted ? c.mentions : c.unread}
   {@const live = streamers(c.channel.id)}
   {@const custom = c.channel.kind === 'dm' && people[0] && !(c.unread > 0 && !c.muted) ? customStatusOf(app.state, people[0], clock.nowIso) : null}
-  <button class="row" class:active={c.channel.id === activeId} class:unread={c.unread > 0 && !c.muted} class:muted={c.muted}
+  <button class="row" data-conv={c.notes ? undefined : c.channel.id} class:active={c.channel.id === activeId} class:unread={c.unread > 0 && !c.muted} class:muted={c.muted}
     onclick={() => onOpen(c.channel.id)}
     onpointerenter={() => (hovered = c.channel.id)} onpointerleave={() => { if (hovered === c.channel.id) hovered = null }}
     oncontextmenu={(e) => { e.preventDefault(); if (c.notes) return; ctx ={ id: c.channel.id, x: e.clientX, y: Math.min(e.clientY, innerHeight - 250) } }}>
@@ -158,7 +169,7 @@
 
 <button class="btn btn-lg btn-quiet new" onclick={onNew}><Icon name="plus" size={16} /> New message</button>
 
-<div class="list">
+<div class="list" use:convDrag={{ onDrop: dropped, onLift: (on) => (lifted = on), disabled: !canDrag }}>
   {#if !hasNotes}
     <button class="row" onclick={openNotes}>
       {@render notesPicture()}
@@ -167,12 +178,15 @@
     {#if notesError}<p class="err" role="alert">{notesError}</p>{/if}
   {/if}
   {#each sections.notes as c (c.channel.id)}{@render row(c)}{/each}
-  {#if sections.pinned.length}
-    <div class="label"><span class="section static"><Icon name="pin" size={11} />Pinned</span></div>
-    {#each sections.pinned as c (c.channel.id)}{@render row(c)}{/each}
+  {#if sections.pinned.length || lifted}
+    <div class="drop" data-drop="pinned">
+      <div class="label"><span class="section static"><Icon name="pin" size={11} />Pinned</span></div>
+      {#each sections.pinned as c (c.channel.id)}{@render row(c)}{/each}
+    </div>
   {/if}
   {#each sections.categories as sec (sec.category.id)}
     {@const cat = sec.category}
+    <div class="drop" data-drop="category:{cat.id}">
     {#if renaming === cat.id}
       <div class="label renaming">
         <input class="input input-sm grow" use:focus bind:value={renameValue} maxlength={DM_CATEGORY_CHARS} aria-label="Rename category {cat.name}"
@@ -190,17 +204,20 @@
     {/if}
     {#if !cat.collapsed}
       {#each sec.items as c (c.channel.id)}{@render row(c)}{/each}
-      {#if !sec.items.length}<p class="none">Right-click a conversation to move it here.</p>{/if}
+      {#if !sec.items.length}<p class="none">Drag a conversation here, or right-click it to move it.</p>{/if}
     {:else}
       <!-- folded: only the one you're in stays in sight -->
       {#each sec.items.filter((c) => c.channel.id === activeId) as c (c.channel.id)}{@render row(c)}{/each}
     {/if}
+    </div>
   {/each}
   {#if layoutError}<p class="err" role="alert">{layoutError}</p>{/if}
-  {#if (sections.pinned.length || sections.categories.length) && sections.rest.length}
-    <div class="label"><span class="section static">Conversations</span></div>
-  {/if}
-  {#each sections.rest as c (c.channel.id)}{@render row(c)}{/each}
+  <div class="drop" data-drop="rest">
+    {#if (sections.pinned.length || sections.categories.length) && (sections.rest.length || lifted)}
+      <div class="label"><span class="section static">Conversations</span></div>
+    {/if}
+    {#each sections.rest as c (c.channel.id)}{@render row(c)}{/each}
+  </div>
   {#if !list.length}
     <p class="empty">No conversations yet. Say hi to someone from Your people.</p>
   {/if}
@@ -263,4 +280,10 @@
   /* your notes (#308): a round tile the size of a DM's avatar */
   .notes-pic { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; display: grid; place-items: center; background: var(--bg-3); color: var(--text-2); }
   .err { padding: 0 10px 6px; font-size: 12px; color: var(--danger-text); }
+  /* drag onto a section (#419): sections lay out as part of the list; the lifted row follows the pointer above the
+     rest (the hit test looks past it); the section under it lights its heading */
+  .drop { display: contents; }
+  .row:global(.lifted) { position: relative; z-index: 5; opacity: .85; background: var(--bg-3); box-shadow: var(--shadow-2); }
+  .list:global(.dragging) { cursor: grabbing; }
+  .drop:global(.drop-here) > .label { color: var(--accent-text); background: var(--bg-2); border-radius: var(--radius-sm); }
 </style>

@@ -56,7 +56,11 @@ tract-core = "=0.21.4"
 tract-onnx = "=0.23.9"
 tract-pulse = "=0.23.9"
 tract-hir = "=0.23.9"
-tauri-plugin-single-instance = "2"
+# Its `deep-link` feature hands a second launch's `pulse://` link to the running app (#476).
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+# `pulse://invite/<code>` links (#476): registered for the user at startup (Windows), handled in Rust only (no webview
+# permission is granted); the app only ever shows the invite's card.
+tauri-plugin-deep-link = "2"
 # The clip editor's file picker, called from Rust only (no webview permission is granted).
 tauri-plugin-dialog = "2"
 # "Show in folder" after a download (#333): `reveal_item_in_dir`, called from Rust only on a path
@@ -136,6 +140,8 @@ windows = { version = "0.62", features = [
     "Win32_System_JobObjects",
     # links open in the default browser (links.rs).
     "Win32_UI_Shell",
+    # the Go Live sound picker's app icon (stream/procs.rs, #458): the exe icon's pixels.
+    "Win32_Graphics_Gdi",
     # message toasts (notify/windows.rs).
     "Foundation",
     "Data_Xml_Dom",

@@ -50,7 +50,7 @@ beforeEach(() => {
 })
 
 /** The list top to bottom: headings as `# NAME`, rows as their names. */
-const outline = () => [...document.querySelectorAll<HTMLElement>('.list > .label, .list > .row')]
+const outline = () => [...document.querySelectorAll<HTMLElement>('.list .label, .list .row')]
   .map((el) => (el.classList.contains('label') ? `# ${el.textContent!.replace(/\s+/g, ' ').trim()}` : el.querySelector('.name')!.textContent!.trim()))
   .filter((t) => t !== 'Notes')
 const rowFor = (text: string) => [...document.querySelectorAll<HTMLElement>('.list .row')].find((r) => r.querySelector('.name')?.textContent?.includes(text))!
@@ -66,7 +66,7 @@ describe('pins and categories (#305)', () => {
   it('without any, the list is as it was: no headings', () => {
     show({ categories: [], placements: [] })
     expect(outline().sort()).toEqual(['jo', 'sam', 'squad'])
-    expect(document.querySelector('.list > .label')).toBeNull()
+    expect(document.querySelector('.list .label')).toBeNull()
   })
 
   it('Pinned first, then each category, then the rest under Conversations', () => {
@@ -203,5 +203,79 @@ describe('categoryNameOk (#419)', () => {
     for (const n of ['New category…', ' new category... ', 'REMOVE FROM CATEGORY']) expect(categoryNameOk(n)).toBe(false)
     expect(categoryNameOk('New category')).toBe(true)
     expect(categoryNameOk('Friends')).toBe(true)
+  })
+})
+
+describe('drag onto a section (#419)', () => {
+  const ev = (el: Element, type: string, x: number, y: number) => {
+    el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }))
+    flushSync()
+  }
+  // jsdom has no layout: what's "under the pointer" is whatever this says
+  let under: Element | null = null
+  beforeEach(() => {
+    under = null
+    // the lifted row is on top of what's under the pointer, as in a real layout
+    document.elementsFromPoint = () => [document.querySelector('.row.lifted'), under].filter((x): x is Element => !!x)
+  })
+
+  it('dropping a conversation on a category moves it there, and the click that ends the drag opens nothing', async () => {
+    const onOpen = vi.fn()
+    show({ categories: [FRIENDS], placements: [] })
+    unmount(cmp!)
+    cmp = mount(ConversationList, { target: document.body, props: { activeId: null, onOpen, onNew: () => {}, onLeft: () => {} } })
+    flushSync()
+    const row = rowFor('sam')
+    ev(row, 'pointerdown', 10, 200)
+    ev(row, 'pointermove', 12, 201) // under the threshold: still a click
+    expect(row.classList.contains('lifted')).toBe(false)
+    under = document.querySelector('[data-drop="category:K1"] .label')
+    ev(row, 'pointermove', 10, 60)
+    expect(row.classList.contains('lifted')).toBe(true)
+    expect(document.querySelector('[data-drop="category:K1"]')!.classList.contains('drop-here')).toBe(true)
+    // an empty Pinned shows while lifted, to drop on
+    expect(document.querySelector('[data-drop="pinned"]')).not.toBeNull()
+    answer = { categories: [FRIENDS], placements: [{ channel_id: 'D1', pinned: false, category_id: 'K1' }] }
+    ev(row, 'pointerup', 10, 60)
+    row.click()
+    await flush()
+    expect(onOpen).not.toHaveBeenCalled()
+    expect(invoke).toHaveBeenCalledWith('place_dm', { channelId: 'D1', request: { pinned: false, category_id: 'K1' } })
+    expect(outline().slice(0, 3)).toEqual(['# Friends', 'sam', '# Conversations'])
+    expect(document.querySelector('[data-drop="pinned"]')).toBeNull()
+    expect(document.querySelector('.drop-here')).toBeNull()
+  })
+
+  it('Escape puts it back; a drop outside every section or where it already is asks nothing', async () => {
+    show({ categories: [FRIENDS], placements: [{ channel_id: 'G1', pinned: false, category_id: 'K1' }] })
+    const row = rowFor('squad')
+    ev(row, 'pointerdown', 10, 100)
+    under = document.querySelector('[data-drop="rest"] .label')
+    ev(row, 'pointermove', 10, 200)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(row.classList.contains('lifted')).toBe(false)
+    expect(row.style.transform).toBe('')
+    ev(row, 'pointerup', 10, 200)
+    // where it already is
+    ev(row, 'pointerdown', 10, 100)
+    under = document.querySelector('[data-drop="category:K1"] .label')
+    ev(row, 'pointermove', 10, 120)
+    ev(row, 'pointerup', 10, 120)
+    // outside
+    ev(row, 'pointerdown', 10, 100)
+    under = null
+    ev(row, 'pointermove', 300, 120)
+    ev(row, 'pointerup', 300, 120)
+    await flush()
+    expect(invoke).not.toHaveBeenCalledWith('place_dm', expect.anything())
+  })
+
+  it('with no categories and nothing pinned there is nowhere to drop: no drag', () => {
+    show({ categories: [], placements: [] })
+    const row = rowFor('sam')
+    ev(row, 'pointerdown', 10, 100)
+    ev(row, 'pointermove', 10, 200)
+    expect(row.classList.contains('lifted')).toBe(false)
   })
 })

@@ -266,6 +266,8 @@ async fn create_server(
         name,
         icon_hash: None,
         owner_id: Some(me),
+        banner_hash: None,
+        banner_still: None,
     };
     s.hub
         .publish(
@@ -297,17 +299,41 @@ async fn create_server(
 }
 
 /// The columns [`server_from_row`] reads, from `servers`.
-pub(crate) const SERVER_COLS: &str = "id, name, icon_hash, created_by";
+pub(crate) const SERVER_COLS: &str = "id, name, icon_hash, created_by, banner_hash, \
+     (SELECT m.still_hash FROM media m WHERE m.hash = banner_hash) AS banner_still";
 
-pub(crate) type ServerRow = (String, String, Option<String>, String);
+pub(crate) type ServerRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+);
 
-pub(crate) fn server_from_row((id, name, icon_hash, owner): ServerRow) -> AppResult<Server> {
+pub(crate) fn server_from_row(
+    (id, name, icon_hash, owner, banner_hash, banner_still): ServerRow,
+) -> AppResult<Server> {
     Ok(Server {
         id: id.parse().map_err(anyhow::Error::from)?,
         name,
         icon_hash,
         owner_id: Some(owner.parse().map_err(anyhow::Error::from)?),
+        banner_hash,
+        banner_still,
     })
+}
+
+/// One server as [`server_from_row`] reads it, deleted or not.
+pub(crate) async fn load_server(db: &SqlitePool, id: ServerId) -> AppResult<Server> {
+    let row: ServerRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {SERVER_COLS} FROM servers WHERE id = ?"
+    )))
+    .bind(id.to_string())
+    .fetch_optional(db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    server_from_row(row)
 }
 
 /// Every server, but those in Recently deleted (#184).

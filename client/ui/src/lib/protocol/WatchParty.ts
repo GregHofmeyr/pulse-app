@@ -2,6 +2,7 @@
 import type { ChannelId } from "./ChannelId";
 import type { UserId } from "./UserId";
 import type { WatchPartyItem } from "./WatchPartyItem";
+import type { WatchSource } from "./WatchSource";
 
 /**
  * A YouTube watch party in a server voice channel (#384): one per channel, its state held in memory on the server.
@@ -15,7 +16,11 @@ export type WatchParty = { channel_id: ChannelId,
  */
 host_id: UserId, 
 /**
- * The YouTube video: 11 of `[A-Za-z0-9_-]`.
+ * What `video_id` is on (#459): YouTube unless it says otherwise.
+ */
+source: WatchSource, 
+/**
+ * The video, VOD, channel or clip: valid for `source` ([`WatchSource::valid_id`]).
  */
 video_id: string, 
 /**
@@ -39,6 +44,11 @@ everyone_controls: boolean,
  */
 viewers: Array<UserId>, 
 /**
- * What plays next, in order.
+ * What plays next, in order. It goes with the party: ending the party clears it.
  */
-queue: Array<WatchPartyItem>, };
+queue: Array<WatchPartyItem>, 
+/**
+ * Who put the current video on (#464): its starter, or whoever queued it. They may skip it, as a controller may.
+ * Absent from a party that predates it.
+ */
+added_by?: UserId, };

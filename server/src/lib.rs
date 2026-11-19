@@ -56,7 +56,6 @@ pub mod testing;
 use axum::Router;
 use axum::routing::get;
 
-use crate::error::AppError;
 pub use crate::state::AppState;
 
 pub fn router(state: AppState) -> Router {
@@ -69,6 +68,8 @@ pub fn router(state: AppState) -> Router {
         .merge(servers::nicknames::router())
         .merge(servers::membership::router())
         .merge(servers::invites::router())
+        .merge(servers::invite_page::router())
+        .merge(servers::banner::router())
         .merge(servers::bans::router())
         .merge(servers::order::router())
         .merge(servers::personal_order::router())
@@ -121,7 +122,7 @@ pub fn router(state: AppState) -> Router {
         .merge(steam::routes::router())
         .merge(deadlock::routes::router())
         .merge(sports::routes::router())
-        .fallback(|| async { AppError::NotFound })
+        .fallback(servers::invite_page::fallback)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
 }

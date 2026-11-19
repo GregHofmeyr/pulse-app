@@ -41,17 +41,26 @@ describe('profileDraft', () => {
     const d = draftFrom(profile)
     expect(d).toEqual({
       avatarHash: 'a1', avatarStill: 'a1s', bannerHash: 'b1', bannerStill: null,
-      themeTop: '#c2457a', themeBottom: '#3a1f5e', font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'],
+      themeTop: '#c2457a', themeBottom: '#3a1f5e', font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'], effect: null,
       pronouns: 'they/them', bio: 'hi\nthere', displayName: profile.user.display_name, glow: true,
     })
     expect(toRequest(d)).toEqual({
       avatar_hash: 'a1', banner_hash: 'b1', theme_top: '#c2457a', theme_bottom: '#3a1f5e',
-      style: { font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'] }, pronouns: 'they/them', bio: 'hi\nthere',
+      style: { font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'], effect: null }, pronouns: 'they/them', bio: 'hi\nthere',
       display_name: profile.user.display_name, glow: true,
     })
     // the draft holds its own colours: editing it never touches the profile
     d.colors.push('#000000')
     expect(profile.user.style.colors).toHaveLength(2)
+  })
+
+  it('the name effect (#468): read from the style (none from an older server), sent and previewed as set', () => {
+    expect(draftFrom({ ...profile, user: { ...profile.user, style: { ...profile.user.style, effect: 'ember' } } }).effect).toBe('ember')
+    expect(draftFrom(profile).effect).toBeNull()
+    const d = { ...draftFrom(profile), effect: 'glitch' }
+    expect(toRequest(d).style.effect).toBe('glitch')
+    expect(previewUser(profile.user, d).style.effect).toBe('glitch')
+    expect(isDirty(d, draftFrom(profile))).toBe(true)
   })
 
   it('the card glow (#156): read from the card, on when an older server sends none, sent and previewed as set', () => {
@@ -102,7 +111,7 @@ describe('profileDraft', () => {
     // a black and a pure blue custom gradient: shown as Save will store them (the shared vectors)
     const d: Draft = { ...draftFrom(profile), colors: ['#000000', '#0000FF'], font: 'orbitron', avatarHash: 'new', avatarStill: null, pronouns: '', bio: '' }
     const u = previewUser(alex, d)
-    expect(u.style).toEqual({ font: 'orbitron', colors: ['#a8a8a8', '#a1a1ff'] })
+    expect(u.style).toEqual({ font: 'orbitron', colors: ['#a8a8a8', '#a1a1ff'], effect: null })
     expect(u.avatar_hash).toBe('new')
     expect(u.avatar_still).toBeNull()
     expect(u.id).toBe('U1')
