@@ -29,9 +29,13 @@ export const patchNotes: PatchNotes = {
   date: '19 November 2026',
   new: [
     'Servers are now private: you only see servers you\'re in, and you join with an invite',
+    'Server icons: a server\'s owner can give it a picture, shown on the server bar, invites and everywhere else it appears',
+    'Server settings › Overview: the server\'s icon, banner and name in one place, shown together the way its invites show them',
   ],
   fixes: [],
   qol: [
+    'Rename a server in place, from the name at the top of its channel list or from right-click on its icon',
+    'Right-click a channel › Move to category; Move up and Move down are gone, since dragging reorders',
     'Your profile, online status and what you\'re up to reach only people you share a server, a DM or a group with',
   ],
   message: 'Your servers, your people 🔒',
