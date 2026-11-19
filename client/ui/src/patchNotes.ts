@@ -52,6 +52,7 @@ export const patchNotes: PatchNotes = {
     'Streaming "everything" leaves out Discord as well as Pulse, so a call there isn\'t carried into your stream',
     'Right-click a pinned message or an incoming call for that person\'s menu',
     'A plan\'s forecast now gives the temperature for when it starts, not just the day\'s range',
+    'Deadlock rank movers now post every Monday morning, instead of a week after the first run',
   ],
   soon: [
     'Private servers you join by invite',

@@ -417,8 +417,8 @@ async fn ranks_show_on_the_member_list_and_movers_post_weekly() {
     assert!(a.rank.image.is_some());
     assert_eq!(fake.calls("rank"), 1, "one batch call for everyone");
 
-    // the first movers run starts the clock; a week later the movement since posts, most up first
-    let t0 = chrono::Utc::now();
+    // the first movers run starts the clock; the next Monday morning the movement since posts, most up first (#402)
+    let t0 = tuesday();
     pulse_server::deadlock::ranks::movers_at(&s, t0)
         .await
         .unwrap();
@@ -430,7 +430,7 @@ async fn ranks_show_on_the_member_list_and_movers_post_weekly() {
         .unwrap();
     assert!(
         cards(app, &w.alex.1, w.general).await.is_empty(),
-        "not a week yet"
+        "not Monday yet"
     );
     pulse_server::deadlock::ranks::movers_at(&s, t0 + chrono::Duration::days(7))
         .await
@@ -822,7 +822,7 @@ async fn hiding_your_games_from_a_member_keeps_your_deadlock_out_of_their_server
     }
 
     // the weekly movers skip alex in a server sam is in
-    let t0 = chrono::Utc::now();
+    let t0 = tuesday();
     pulse_server::deadlock::ranks::movers_at(&s, t0)
         .await
         .unwrap();
@@ -886,4 +886,11 @@ async fn a_friends_line_added_later_drops_the_line_of_someone_who_now_hides_thei
     );
     assert!(!msg.content.contains("alex"), "{}", msg.content);
     assert!(msg.content.contains("sam lost as Haze"), "{}", msg.content);
+}
+
+/// A Tuesday morning: three days on is Friday (no movers yet), seven days on is past the next Monday's slot.
+fn tuesday() -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339("2026-11-17T10:00:00Z")
+        .unwrap()
+        .to_utc()
 }

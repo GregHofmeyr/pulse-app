@@ -1,6 +1,6 @@
 //! Ranks (#390): everyone linked who shows their rank is read in one batch call about every half hour; the member
-//! list and profiles show the stored badge. Once a week the movers (anyone whose rank changed since the last movers)
-//! post in each Deadlock channel that takes them.
+//! list and profiles show the stored badge. Once a week, on Monday morning (#402), the movers (anyone whose rank
+//! changed since the last movers) post in each Deadlock channel that takes them.
 
 use std::collections::HashMap;
 
@@ -15,10 +15,63 @@ use crate::db::now;
 use crate::error::AppResult;
 use crate::messages::system;
 
-/// How often the rank movers post.
-pub const MOVERS_EVERY: chrono::Duration = chrono::Duration::days(7);
+/// When the rank movers post (#402): Mondays at this hour UTC (09:00 in South Africa), or at the first ranks tick
+/// after it.
+pub const MOVERS_WEEKDAY: chrono::Weekday = chrono::Weekday::Mon;
+pub const MOVERS_HOUR_UTC: u32 = 7;
+
+/// The latest movers slot at or before `now`: the last [`MOVERS_WEEKDAY`] at [`MOVERS_HOUR_UTC`].
+pub fn movers_slot(now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    use chrono::{Datelike, TimeZone};
+    let back =
+        (now.weekday().num_days_from_monday() + 7 - MOVERS_WEEKDAY.num_days_from_monday()) % 7;
+    let day = now.date_naive() - chrono::Duration::days(i64::from(back));
+    let slot = chrono::Utc.from_utc_datetime(
+        &day.and_hms_opt(MOVERS_HOUR_UTC, 0, 0)
+            .expect("a valid hour"),
+    );
+    if slot > now {
+        slot - chrono::Duration::days(7)
+    } else {
+        slot
+    }
+}
 /// The most movers on one card.
 pub const MAX_MOVERS: usize = 10;
+
+#[cfg(test)]
+mod slot_tests {
+    use super::*;
+
+    fn t(s: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(s).unwrap().to_utc()
+    }
+
+    #[test]
+    fn the_slot_is_the_last_monday_morning() {
+        // 2026-11-16 is a Monday
+        assert_eq!(
+            movers_slot(t("2026-11-16T07:00:00Z")),
+            t("2026-11-16T07:00:00Z")
+        );
+        assert_eq!(
+            movers_slot(t("2026-11-16T06:59:59Z")),
+            t("2026-11-09T07:00:00Z")
+        );
+        assert_eq!(
+            movers_slot(t("2026-11-18T23:00:00Z")),
+            t("2026-11-16T07:00:00Z")
+        );
+        assert_eq!(
+            movers_slot(t("2026-11-22T23:59:00Z")),
+            t("2026-11-16T07:00:00Z")
+        );
+        assert_eq!(
+            movers_slot(t("2026-11-23T08:00:00Z")),
+            t("2026-11-23T07:00:00Z")
+        );
+    }
+}
 
 /// A person's stored Deadlock row.
 #[derive(Clone, Debug, sqlx::FromRow)]
@@ -120,7 +173,8 @@ async fn set_state(db: &SqlitePool, key: &str, value: &str) -> sqlx::Result<()> 
     Ok(())
 }
 
-/// The weekly rank movers, when a week has passed since the last (the first time only starts the clock).
+/// The weekly rank movers, once a movers slot ([`movers_slot`]) has passed since the last run (the first time only
+/// starts the clock).
 pub async fn movers_tick(s: &AppState) -> AppResult<()> {
     movers_at(s, chrono::Utc::now()).await
 }
@@ -135,7 +189,7 @@ pub async fn movers_at(s: &AppState, now: chrono::DateTime<chrono::Utc>) -> AppR
         set_state(&s.db, "movers_at", &crate::db::stamp(now)).await?;
         return Ok(());
     };
-    if now - last < MOVERS_EVERY {
+    if last >= movers_slot(now) {
         return Ok(());
     }
     // a dark week posts nothing (ranks weren't read) but the week still turns over
