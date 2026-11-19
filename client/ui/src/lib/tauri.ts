@@ -449,9 +449,12 @@ export const api = {
   /** Our embed page's origin, only when signed in to the server the app's CSP allows framing; else null. */
   embedOrigin: () => invoke<string | null>('embed_origin'),
   /** Instagram plays in a capability-free pop-out window (one at a time). */
-  /** `start`: a YouTube start time in seconds. */
-  openEmbedWindow: (provider: EmbedProvider, id: string, start: number | null = null) =>
-    invoke<void>('open_embed_window', { provider, id, start }),
+  /** `start`: a YouTube start time in seconds. `owner` (a watch party's `party:<channel>`, #409) tags the window so
+   *  only its opener closes it. */
+  openEmbedWindow: (provider: EmbedProvider, id: string, start: number | null = null, owner?: string) =>
+    invoke<void>('open_embed_window', owner ? { provider, id, start, owner } : { provider, id, start }),
+  /** Closes the pop-out if `owner` opened it and it's still open; whether it did (#409). */
+  closeEmbedWindow: (owner: string) => invoke<boolean>('close_embed_window', { owner }),
   sendTyping: (channelId: string) => invoke<void>('send_typing', { channelId }),
   /** The raw file goes as the request body (a JSON number array would be slow at 2 MB). */
   uploadEmojiMedia: (bytes: Uint8Array) => invoke<MediaInfo>('upload_emoji_media', bytes),

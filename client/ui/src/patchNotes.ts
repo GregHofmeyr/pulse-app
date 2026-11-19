@@ -34,6 +34,7 @@ export const patchNotes: PatchNotes = {
     'The opened server card from an invite pack is sharp again (its text and icon were slightly blurry), and "✦ MYTHICAL PULL ✦" is easier to read in every theme',
   ],
   qol: [
+    'A watch party opened in a window moves on with the party to its next video, and closes when you leave the party',
     'Making a poll anonymous in a DM or a small group now warns that people can still work out a vote from the counts changing',
   ],
   message: 'Polish 🧽',

@@ -192,6 +192,7 @@ pub fn run() {
             create_main_window(app, &webview_data, window_bg::load(&dir))?;
             app.manage(window_bg::Dir(dir.clone()));
             app.manage(embed_window::WebviewData(webview_data));
+            app.manage(embed_window::WindowOwner::default());
             startup::mark("window_built");
             let emitter = app.handle().clone();
             let outbox = outbox::Outbox::new(std::sync::Arc::new(
@@ -437,6 +438,7 @@ pub fn run() {
             commands::embed_origin,
             window_bg::set_window_background,
             embed_window::open_embed_window,
+            embed_window::close_embed_window,
             commands::join_voice,
             commands::set_voice_bitrate,
             commands::set_channel_bitrate,
