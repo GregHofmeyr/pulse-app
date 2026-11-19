@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { endedSummary, nextChoices, parsePollArgs, percent, pollReady, pollStatus, totalLabel, winners } from './poll'
+import { anonymousGuessable, endedSummary, nextChoices, parsePollArgs, percent, pollReady, pollStatus, totalLabel, winners } from './poll'
 import type { Poll } from './protocol/Poll'
 
 const poll = (over: Partial<Poll> = {}): Poll => ({
@@ -88,5 +88,16 @@ describe('the status line', () => {
     expect(totalLabel(poll({ voters: 4 }))).toBe('4 votes')
     expect(totalLabel(poll({ voters: 1, multi: true }))).toBe('1 voter')
     expect(totalLabel(poll({ voters: 0, multi: true }))).toBe('0 voters')
+  })
+})
+
+describe('anonymous votes that can be worked out (#267)', () => {
+  it('a DM and a group of up to five warn; a bigger group and server channels never do', () => {
+    expect(anonymousGuessable('dm', 2)).toBe(true)
+    expect(anonymousGuessable('group', 3)).toBe(true)
+    expect(anonymousGuessable('group', 5)).toBe(true)
+    expect(anonymousGuessable('group', 6)).toBe(false)
+    expect(anonymousGuessable('text', 2)).toBe(false)
+    expect(anonymousGuessable(undefined, 0)).toBe(false)
   })
 })

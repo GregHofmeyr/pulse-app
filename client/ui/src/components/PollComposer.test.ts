@@ -107,6 +107,24 @@ describe('PollComposer', () => {
     expect(app.state.messages.C1.map((m) => m.id)).toEqual(['M1'])
   })
 
+  it('Anonymous in a DM or a small group warns that votes can be worked out; a bigger group does not (#267)', () => {
+    const ch = (kind: 'dm' | 'group') => ({ id: 'C1', server_id: null, kind, name: null, position: 0 })
+    const warning = () => pop().querySelector('[data-anon-warning]')
+    app.state = { ...app.state, channels: { C1: ch('dm') }, dmMembers: { C1: ['U1', 'U2'] } }
+    open()
+    expect(warning()).toBeNull()
+    switchFor('Anonymous').click()
+    flushSync()
+    expect(warning()!.textContent).toContain('work out a vote')
+    unmount(cmp!)
+    app.state = { ...app.state, channels: { C1: ch('group') }, dmMembers: { C1: ['U1', 'U2', 'U3', 'U4', 'U5', 'U6'] } }
+    open()
+    switchFor('Anonymous').click()
+    flushSync()
+    expect(switchFor('Anonymous').checked).toBe(true)
+    expect(warning()).toBeNull()
+  })
+
   it('shows a refusal and stays open', async () => {
     refuse = 'Too many requests'
     open({ question: 'Q?', options: ['a', 'b'] })
