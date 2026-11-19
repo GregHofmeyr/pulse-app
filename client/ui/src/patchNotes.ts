@@ -32,6 +32,7 @@ export const patchNotes: PatchNotes = {
   ],
   fixes: [
     'The opened server card from an invite pack is sharp again (its text and icon were slightly blurry), and "✦ MYTHICAL PULL ✦" is easier to read in every theme',
+    'You can\'t schedule a message in a DM with someone you\'ve blocked any more (it used to wait until its time, then fail)',
   ],
   qol: [
     'A watch party opened in a window moves on with the party to its next video, and closes when you leave the party',

@@ -128,7 +128,9 @@ async fn list(
 }
 
 /// The chat `me` may schedule a message in: one they could send in now (a DM or group they're in, a server chat
-/// of a server they're in), not a quotes or clips channel. Checked again when it's posted.
+/// of a server they're in), not a quotes or clips channel, not a DM with someone they've blocked (#474; #412).
+/// Checked again when it's posted: blocking them before then fails it, and one to someone who has blocked `me` is
+/// posted withheld from them, as any send is (never a refusal that would tell `me`).
 async fn postable(s: &AppState, me: UserId, id: ChannelId) -> AppResult<()> {
     let ch = channel_for(&s.db, me, id).await?;
     if matches!(ch.kind, ChannelKind::Quotes | ChannelKind::Clips)
@@ -142,6 +144,14 @@ async fn postable(s: &AppState, me: UserId, id: ChannelId) -> AppResult<()> {
         && !is_server_member(&s.db, server, me).await?
     {
         return Err(AppError::Forbidden);
+    }
+    let mut conn = s.db.acquire().await?;
+    if let Some(other) = crate::messages::routes::dm_other(&mut conn, &ch, me).await?
+        && crate::blocks::has_blocked(&mut *conn, me, other).await?
+    {
+        return Err(AppError::ForbiddenMsg(
+            "You've blocked them. Unblock them to schedule a message.".into(),
+        ));
     }
     Ok(())
 }
