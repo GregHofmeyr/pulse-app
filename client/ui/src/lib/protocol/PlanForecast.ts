@@ -25,4 +25,8 @@ temp_max: number, temp_min: number,
 /**
  * The day's highest chance of rain, in percent.
  */
-rain_chance: number | null, };
+rain_chance: number | null, 
+/**
+ * Degrees Celsius in the hour the plan starts, at the place (#399); none from an older server or forecast.
+ */
+temp_at_start?: number, };
