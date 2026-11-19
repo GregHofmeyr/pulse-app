@@ -112,6 +112,13 @@ const MATRIX: &[Read] = &[
         "/servers/{server}/members/{sam}/names",
         Denied,
     ),
+    // a profile's name archive: only the names given in servers the reader is in (anyone may read the rest)
+    get_marked(
+        "GET /users/{id}/profile",
+        "/users/{sam}/profile",
+        "{server}",
+        Denied,
+    ),
     get(
         "GET /servers/{id}/members/{user}/deadlock",
         "/servers/{server}/members/{sam}/deadlock",
@@ -323,7 +330,6 @@ const PUBLIC: &[&str] = &[
     "GET /servers/deleted",
     "GET /wheels/mine",
     "GET /attachment-uploads/{id}/parts",
-    "GET /users/{id}/profile",
     // DMs and groups only: a server channel is refused (400) and searched with the server's search (in the matrix)
     "GET /channels/{id}/search",
     // uploaded files: anyone with the (unguessable) link, as decided for #80
@@ -637,6 +643,15 @@ async fn world() -> World {
     )
     .await;
     assert!(r.status().is_success(), "pin {}", r.status());
+    // a nickname, in the server's name archive
+    let r = put_json(
+        &app,
+        &alex,
+        &format!("/servers/{server}/members/{sam_id}/nickname"),
+        json!({ "nickname": "Sammy" }),
+    )
+    .await;
+    assert!(r.status().is_success(), "nickname {}", r.status());
     // a poll and a plan
     let poll: Message = ok_json(
         post_json(

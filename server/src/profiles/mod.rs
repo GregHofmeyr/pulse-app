@@ -81,11 +81,16 @@ pub async fn load_profile(
             .fetch_one(&mut *tx)
             .await?;
     let times_renamed = times_renamed as u32;
+    // Only names given in servers `viewer` is in (#80): a server's nicknames are its own.
     let archive: Vec<(String, Option<String>, String, String)> = sqlx::query_as(
         "SELECT server_id, new_nick, changed_by, changed_at FROM nickname_history \
-         WHERE target_user_id = ? ORDER BY changed_at DESC, id DESC LIMIT ?",
+         WHERE target_user_id = ? AND server_id IN \
+           (SELECT m.server_id FROM server_members m JOIN servers s ON s.id = m.server_id \
+            WHERE m.user_id = ? AND s.deleted_at IS NULL) \
+         ORDER BY changed_at DESC, id DESC LIMIT ?",
     )
     .bind(&id)
+    .bind(viewer.to_string())
     .bind(PROFILE_ARCHIVE_MAX)
     .fetch_all(&mut *tx)
     .await?;

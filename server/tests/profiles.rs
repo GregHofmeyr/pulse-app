@@ -303,7 +303,7 @@ async fn top_reaction_counts_live_messages_only() {
 async fn name_archive_and_renames() {
     let app = spawn().await;
     let (alex_id, alex) = register(&app, "alex").await;
-    let (sam_id, _) = register(&app, "sam").await;
+    let (sam_id, sam) = register(&app, "sam").await;
     let sa = create_server(&app, &alex, "A").await;
     let sb = create_server(&app, &alex, "B").await;
 
@@ -336,6 +336,17 @@ async fn name_archive_and_renames() {
     assert_eq!(p.name_archive[1].name, "Old");
     assert_eq!(p.name_archive[1].server_id, sa.id);
     assert_eq!(p.name_archive[1].changed_by, alex_id);
+
+    // someone else sees only the names given in servers they're in (#80); the count stays whole
+    let p = profile_of(&app, &sam, alex_id).await;
+    assert_eq!(p.stats.times_renamed, 3);
+    assert!(p.name_archive.is_empty(), "{:?}", p.name_archive);
+    assert_eq!(join_server(&app, &sam, sb.id).await.status(), 200);
+    let p = profile_of(&app, &sam, alex_id).await;
+    assert_eq!(
+        p.name_archive.iter().map(|e| e.server_id).collect::<Vec<_>>(),
+        vec![sb.id]
+    );
 }
 
 #[tokio::test]
