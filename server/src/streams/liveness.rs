@@ -5,7 +5,8 @@
 //!
 //! Every [`CHECK_EVERY`], LiveKit is asked who is in each stream room with a `Live` stream
 //! (RoomService ListParticipants, all rooms at once). A streamer whose `#v` connection isn't
-//! there starts a clock; seen again (or rejoined, or re-announced) stops it; still missing
+//! there, or is there without a screen share published (#523: a republish after a blip that never
+//! landed, a client stuck between attempts, which would otherwise stay Live on a black tile), starts a clock; seen again (or rejoined, or re-announced) stops it; still missing
 //! `stream_media_timeout` after the first miss ends the stream, as the leave webhook and its
 //! timeout would: the stream (and so the watches on it) and the streamer's own watches (watching
 //! rides the same connection). The mirror case is covered too: a `Reconnecting` stream (the leave
@@ -24,6 +25,7 @@ use std::time::{Duration, Instant};
 
 use livekit_api::services::room::RoomClient;
 use livekit_protocol::participant_info::State;
+use livekit_protocol::{ParticipantInfo, TrackSource};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::{StreamEndReason, StreamStatus};
@@ -40,8 +42,8 @@ pub const BUDGET: Duration = Duration::from_secs(5);
 
 /// Who LiveKit says is connected to a room.
 pub trait StreamRooms {
-    /// The identities connected to `room` (none if LiveKit has no such room); an error when
-    /// LiveKit couldn't say.
+    /// The identities connected to `room` (none if LiveKit has no such room), a `#v` only while it
+    /// publishes a screen share ([`listed`]); an error when LiveKit couldn't say.
     fn connected(&self, room: &str)
     -> impl Future<Output = anyhow::Result<HashSet<String>>> + Send;
 }
@@ -82,12 +84,25 @@ impl StreamRooms for LiveKitRooms {
                 Ok(Err(e)) if not_found(&e) => return Ok(HashSet::new()),
                 Ok(r) => r?,
             };
-        Ok(participants
-            .into_iter()
-            .filter(|p| p.state != State::Disconnected as i32)
-            .map(|p| p.identity)
-            .collect())
+        Ok(listed(participants))
     }
+}
+
+/// The identities in a room's participant list that count (pure): connected ones, and a `#v` (a
+/// streamer's or viewer's video connection) only while it publishes a screen share (#523), so a
+/// streamer connected with nothing going out is as missing as one that's gone.
+pub fn listed(participants: Vec<ParticipantInfo>) -> HashSet<String> {
+    participants
+        .into_iter()
+        .filter(|p| p.state != State::Disconnected as i32)
+        .filter(|p| {
+            !p.identity.ends_with("#v")
+                || p.tracks
+                    .iter()
+                    .any(|t| t.source == TrackSource::ScreenShare as i32)
+        })
+        .map(|p| p.identity)
+        .collect()
 }
 
 /// What one round of checks did.
@@ -214,4 +229,42 @@ pub fn spawn(s: AppState, every: Duration, grace: Duration) {
             failing = c.unknown.iter().map(|(ch, _)| *ch).collect();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use livekit_protocol::TrackInfo;
+
+    use super::*;
+
+    fn p(identity: &str, state: State, sources: &[TrackSource]) -> ParticipantInfo {
+        ParticipantInfo {
+            identity: identity.into(),
+            state: state as i32,
+            tracks: sources
+                .iter()
+                .map(|s| TrackInfo {
+                    source: *s as i32,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_video_connection_counts_only_while_it_shares_a_screen() {
+        let got = listed(vec![
+            p("alex#v", State::Active, &[TrackSource::ScreenShare]),
+            // connected, nothing published (a republish that never landed): as good as gone
+            p("sam#v", State::Active, &[]),
+            p("kim#v", State::Active, &[TrackSource::Camera]),
+            // stream audio rides its own connection, and needs no screen share
+            p("sam#a", State::Active, &[TrackSource::ScreenShareAudio]),
+            p("jo#v", State::Disconnected, &[TrackSource::ScreenShare]),
+            p("jo#a", State::Joining, &[]),
+        ]);
+        let want: HashSet<String> = ["alex#v", "sam#a", "jo#a"].map(String::from).into();
+        assert_eq!(got, want);
+    }
 }
