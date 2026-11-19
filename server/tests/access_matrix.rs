@@ -507,6 +507,7 @@ const WRITES: &[&str] = &[
     "POST /servers/{id}/leave",
     "DELETE /servers/{id}/members/{user}",
     "PUT /servers/{id}/members/{user}/nickname",
+    "PUT /servers/{id}/my-status",
     "PUT /servers/{id}/name",
     "PUT /servers/{id}/owner",
     "POST /servers/{id}/qoty",

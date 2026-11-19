@@ -38,6 +38,7 @@ pub mod reminders;
 pub mod reports;
 pub mod scheduled;
 pub mod search;
+pub mod server_status;
 pub mod servers;
 pub mod sounds;
 pub mod sports;
@@ -99,6 +100,7 @@ pub fn router(state: AppState) -> Router {
         .merge(streams::notify::router())
         .merge(person_dnd::router())
         .merge(activity_hidden::router())
+        .merge(server_status::router())
         .merge(game_invites::router())
         .merge(stage::routes::router())
         .merge(watch::routes::router())

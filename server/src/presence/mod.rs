@@ -39,6 +39,8 @@ pub struct Subject {
     pub custom_until: Option<String>,
     /// The people they hide what they're playing from (#436).
     pub game_hidden: HashSet<UserId>,
+    /// Their own status in some servers (#154): server → (status, when set). See `crate::server_status`.
+    pub server_status: HashMap<pulse_protocol::ids::ServerId, (Status, String)>,
 }
 
 /// What one viewer sees of one person.
@@ -155,6 +157,11 @@ impl Subject {
         viewer == self.id || !self.game_hidden.contains(&viewer)
     }
 
+    /// Whether a server status of Online (#154) may show them online to `viewer`: not someone they appear offline to.
+    pub fn may_show_online_to(&self, viewer: UserId) -> bool {
+        !self.hidden.get(&viewer).is_some_and(|(_, active)| *active)
+    }
+
     /// Whether this person hides from `viewer` at all right now.
     fn hides_from(&self, viewer: UserId, now: &str) -> bool {
         self.invisible(now) || self.hidden.get(&viewer).is_some_and(|(_, active)| *active)
@@ -242,6 +249,7 @@ fn subject(r: Row) -> anyhow::Result<Subject> {
         custom: r.5.map(|text| CustomStatus { text, emoji: r.6 }),
         custom_until: r.7,
         game_hidden: HashSet::new(),
+        server_status: HashMap::new(),
     })
 }
 
@@ -272,6 +280,7 @@ pub async fn load_subject(db: &SqlitePool, id: UserId) -> anyhow::Result<Option<
     for t in game_hidden {
         s.game_hidden.insert(t.parse()?);
     }
+    s.server_status = crate::server_status::load_for(db, id).await?;
     Ok(Some(s))
 }
 
@@ -305,6 +314,11 @@ pub async fn load_all(db: &SqlitePool) -> anyhow::Result<HashMap<UserId, Subject
             s.game_hidden.insert(t.parse()?);
         }
     }
+    for (u, st) in crate::server_status::load_all(db).await? {
+        if let Some(s) = all.get_mut(&u) {
+            s.server_status = st;
+        }
+    }
     Ok(all)
 }
 
@@ -336,6 +350,7 @@ mod tests {
             custom: None,
             custom_until: None,
             game_hidden: HashSet::new(),
+            server_status: HashMap::new(),
         }
     }
 
