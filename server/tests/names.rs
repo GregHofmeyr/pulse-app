@@ -195,10 +195,11 @@ async fn new_users_start_with_their_username_as_display_name() {
 }
 
 #[tokio::test]
-async fn a_display_name_saves_and_reaches_everyone_live() {
+async fn a_display_name_saves_and_reaches_who_knows_them_live() {
     let app = spawn().await;
     let (alex_id, alex) = register(&app, "alex").await;
     let (_, sam) = register(&app, "sam").await;
+    acquaint(&app, &alex, &[&sam]).await; // a profile reaches who shares something (#486)
     let (mut sam_ws, _) = hello(&app, &sam).await;
 
     let r = put_profile(&app, &alex, &profile_request(Some("  Alex 🎸 the Great  "))).await;

@@ -527,11 +527,12 @@ async fn profile_event(ws: &mut Socket) -> Event {
 }
 
 #[tokio::test]
-async fn saves_a_whole_profile_and_tells_everyone() {
+async fn saves_a_whole_profile_and_tells_who_knows_them() {
     let app = spawn().await;
     let (alex_id, alex) = register(&app, "alex").await;
     let (_, sam) = register(&app, "sam").await;
     let (_, kim) = register(&app, "kim").await;
+    acquaint(&app, &alex, &[&kim, &sam]).await; // a profile reaches who shares something (#486)
     let mut kim_ws = connected(&app, &kim).await;
 
     let req = UpdateProfileRequest {
@@ -826,6 +827,7 @@ async fn card_glow_is_saved_and_older_clients_keep_it() {
     let (alex_id, alex) = register(&app, "alex").await;
     let (_, sam) = register(&app, "sam").await;
     assert!(profile_of(&app, &sam, alex_id).await.card.glow);
+    acquaint(&app, &alex, &[&sam]).await; // a profile reaches who shares something (#486)
 
     let mut sam_ws = connected(&app, &sam).await;
     let mut req = request();

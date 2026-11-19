@@ -113,11 +113,14 @@ async fn last_seen_only_when_last_connection_closes() {
 }
 
 #[tokio::test]
-async fn ready_lists_everyone_with_presence() {
+async fn ready_lists_who_you_share_something_with_with_presence() {
     let app = spawn().await;
     let (a_id, a) = register(&app, "alex").await;
-    let (b_id, _) = register(&app, "sam").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let (c_id, _) = register(&app, "kim").await;
+    acquaint(&app, &a, &[&b]).await;
     let (_ws, ready) = hello(&app, &a).await;
+    assert!(ready.people.iter().all(|p| p.user.id != c_id), "kim shares nothing (#486)");
     let me = ready.people.iter().find(|p| p.user.id == a_id).unwrap();
     let sam = ready.people.iter().find(|p| p.user.id == b_id).unwrap();
     assert!(me.online && !sam.online);
@@ -678,11 +681,13 @@ async fn late_offline_after_a_reconnect_is_not_announced() {
     hub.sync_presence(&app.db, a_id).await;
     assert_eq!(hub.sync_presence(&app.db, a_id).await, None);
     let mut got = Vec::new();
-    while let Ok(ServerFrame::Event(Event::PresenceChanged {
-        user_id, online, ..
-    })) = watcher.rx.try_recv()
-    {
-        if user_id == a_id {
+    // (alex's profile comes first, #486: the watcher had no Ready)
+    while let Ok(f) = watcher.rx.try_recv() {
+        if let ServerFrame::Event(Event::PresenceChanged {
+            user_id, online, ..
+        }) = f
+            && user_id == a_id
+        {
             got.push(online);
         }
     }
@@ -720,14 +725,15 @@ async fn presence_synced_while_a_logout_closes_sockets_goes_offline_once() {
     assert!(!hub.is_closing(a_id));
     hub.sync_presence(&app.db, a_id).await;
     let mut got = Vec::new();
-    while let Ok(ServerFrame::Event(Event::PresenceChanged {
-        user_id,
-        online,
-        last_seen_at,
-        ..
-    })) = watcher.rx.try_recv()
-    {
-        if user_id == a_id {
+    while let Ok(f) = watcher.rx.try_recv() {
+        if let ServerFrame::Event(Event::PresenceChanged {
+            user_id,
+            online,
+            last_seen_at,
+            ..
+        }) = f
+            && user_id == a_id
+        {
             got.push((online, last_seen_at));
         }
     }

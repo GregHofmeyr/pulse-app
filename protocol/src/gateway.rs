@@ -122,7 +122,8 @@ pub struct Ready {
     pub dm_members: Vec<DmMembers>,
     /// Who is in which voice room right now (only rooms you may see).
     pub voice: Vec<VoiceRoom>,
-    /// Everyone with an account, with presence.
+    /// The people you share a server, a DM or a group with, and you (#486), with presence. Anyone else is left out:
+    /// a client looks up someone it meets in older messages by their id (`GET /users/{id}/profile`).
     pub people: Vec<Person>,
     /// Your private read points with unread/mention counts.
     pub read_states: Vec<ReadState>,
@@ -441,6 +442,9 @@ pub enum Event {
         user_id: UserId,
         flags: VoiceFlags,
     },
+    /// A person's profile for someone who has no copy (#486): a new account, to the people it shares something with, or
+    /// someone you just came to share a server, a DM or a group with (sent before their presence). A copy you have is
+    /// replaced.
     UserCreated {
         user: User,
     },
@@ -580,7 +584,7 @@ pub enum Event {
         user_id: UserId,
         id: BookmarkId,
     },
-    /// Someone saved their profile; goes to everyone, like presence.
+    /// Someone saved their profile; to the people who share a server, a DM or a group with them (#486), like presence.
     ProfileUpdated {
         user: User,
         card: CardProfile,

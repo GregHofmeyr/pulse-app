@@ -10,7 +10,8 @@ use crate::access::load_channel;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Audience {
-    /// Every connected user: things about nobody's server or conversation (a new account, a profile).
+    /// Every connected user. Nothing goes to everyone since accounts and profiles narrowed (#486); it stays as what an
+    /// event about nobody's server, conversation or person would get.
     Everyone,
     /// Exactly these users. Empty means nobody.
     Users(HashSet<UserId>),
@@ -47,8 +48,15 @@ pub async fn audience_for(db: &SqlitePool, event: &Event) -> anyhow::Result<Audi
         }
         return Ok(Audience::Users(members));
     }
+    // A new account or a profile change (#486): only people who share a server, a DM or a group with them, as their
+    // presence, and their own sessions. Someone who comes to share one later is introduced by the presence sync.
+    if let Event::UserCreated { user } | Event::ProfileUpdated { user, .. } = event {
+        let mut known = crate::presence::known_to(db, user.id).await?;
+        known.insert(user.id);
+        return Ok(Audience::Users(known));
+    }
     let Some(channel_id) = event.channel_id() else {
-        // About no server or conversation: a new account, a profile.
+        // About no server, conversation or person.
         return Ok(Audience::Everyone);
     };
     let Some(channel) = load_channel(db, channel_id).await? else {

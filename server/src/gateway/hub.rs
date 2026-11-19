@@ -229,6 +229,11 @@ struct Inner {
     /// per connection, not per viewer, because a viewer's new device starts from its own Ready
     /// while their other devices still show what they were told. Locked only while `conns` is held.
     announced: Mutex<HashMap<(UserId, ConnId), PresenceView>>,
+    /// Whose profile each connection has, by (person, connection) (#486): Ready's people, or a `UserCreated` since.
+    /// Only people who share a server, a DM or a group with them (and they themselves) are in it; the presence sync
+    /// adds someone who comes to share one, with their profile, and forgets someone who no longer does. Locked only
+    /// while `conns` is held.
+    introduced: Mutex<HashSet<(UserId, ConnId)>>,
     /// Held across reading presence from the database and telling viewers, by every announcement
     /// and by Ready's people, so a status change and a connect can't reorder what anyone is told.
     presence: tokio::sync::Mutex<()>,
@@ -310,6 +315,11 @@ impl Hub {
             .lock()
             .unwrap()
             .retain(|(_, conn), _| *conn != id);
+        self.inner
+            .introduced
+            .lock()
+            .unwrap()
+            .retain(|(_, conn)| *conn != id);
         self.inner.listening.forget(id);
         self.inner.playing.forget(id);
         if gone.is_some() {
@@ -752,6 +762,25 @@ impl Hub {
                 return None;
             }
         };
+        // Someone who comes to know them (and has no copy yet) gets their profile first (#486), read only when needed.
+        let unintroduced = {
+            let conns = self.inner.conns.lock().unwrap();
+            let introduced = self.inner.introduced.lock().unwrap();
+            conns.iter().any(|(id, c)| {
+                (c.user == user || known.contains(&c.user)) && !introduced.contains(&(user, *id))
+            })
+        };
+        let profile = if unintroduced {
+            match crate::auth::routes::load_user(db, user).await {
+                Ok(u) => Some(u),
+                Err(e) => {
+                    tracing::error!(error = ?e, "a profile not introduced");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let now = crate::db::now();
         let mut conns = self.inner.conns.lock().unwrap();
         if closing(&conns, &self.inner.open.lock().unwrap(), user) {
@@ -764,12 +793,26 @@ impl Hub {
         let mut to: HashMap<ConnId, ServerFrame> = HashMap::new();
         let mut listening_to: HashMap<ConnId, ServerFrame> = HashMap::new();
         let mut playing_to: HashMap<ConnId, ServerFrame> = HashMap::new();
+        let mut intro_to: HashMap<ConnId, ServerFrame> = HashMap::new();
         {
             let mut announced = self.inner.announced.lock().unwrap();
+            let mut introduced = self.inner.introduced.lock().unwrap();
             let shown = self.inner.listening.latest(&conns, user, true);
             let game = self.shown_playing(&conns, user);
             for (id, c) in conns.iter() {
-                let view = if c.user == user || known.contains(&c.user) {
+                let knows = c.user == user || known.contains(&c.user);
+                if !knows {
+                    // they share nothing now: a later share introduces them again, with the profile as it is then
+                    introduced.remove(&(user, *id));
+                } else if let Some(u) = &profile
+                    && introduced.insert((user, *id))
+                {
+                    intro_to.insert(
+                        *id,
+                        ServerFrame::Event(Event::UserCreated { user: u.clone() }),
+                    );
+                }
+                let view = if knows {
                     view_for(&subject, c.user, connected, idle, &now)
                 } else {
                     PresenceView::stranger()
@@ -798,7 +841,10 @@ impl Hub {
                         }),
                     );
                 }
-                if announced.get(&(user, *id)) == Some(&view) {
+                if announced.get(&(user, *id)) == Some(&view)
+                    // never told of them (#486): a stranger is nobody they have, so there's nothing to say
+                    || !knows && !announced.contains_key(&(user, *id))
+                {
                     continue;
                 }
                 let frame = views
@@ -818,8 +864,10 @@ impl Hub {
                 to.insert(*id, frame);
             }
         }
-        // the presence first: a client drops the activity of someone who went offline
-        let dropped = send_each(&mut conns, &to)
+        // the profile first (a client ignores presence for someone it doesn't have), then the presence: a client drops
+        // the activity of someone who went offline
+        let dropped = send_each(&mut conns, &intro_to)
+            | send_each(&mut conns, &to)
             | send_each(&mut conns, &listening_to)
             | send_each(&mut conns, &playing_to);
         if dropped {
@@ -837,7 +885,8 @@ impl Hub {
         }
     }
 
-    /// Everyone in `users` as `viewer` may see them, for the Ready of `viewer`'s connection
+    /// Those of `users` who share a server, a DM or a group with `viewer` (and `viewer`), as `viewer` may see them
+    /// (#486), for the Ready of `viewer`'s connection
     /// `conn`; what it says is what later announcements to that connection are measured against.
     pub async fn people_for(
         &self,
@@ -852,8 +901,11 @@ impl Hub {
         let now = crate::db::now();
         let conns = self.inner.conns.lock().unwrap();
         let mut announced = self.inner.announced.lock().unwrap();
+        let mut introduced = self.inner.introduced.lock().unwrap();
         Ok(users
             .into_iter()
+            // only people who share a server, a DM or a group with them, and themselves (#486)
+            .filter(|(user, _)| user.id == viewer || known.contains(&user.id))
             .map(|(user, last_seen_at)| {
                 let (connected, idle) = live(&conns, user.id);
                 let view = match all.get(&user.id) {
@@ -883,6 +935,7 @@ impl Hub {
                     .flatten();
                 if let Some(conn) = conn {
                     announced.insert((user.id, conn), view.clone());
+                    introduced.insert((user.id, conn));
                     self.inner.listening.tell(user.id, conn, listening.as_ref());
                     self.inner.playing.tell(user.id, conn, playing.as_ref());
                 }

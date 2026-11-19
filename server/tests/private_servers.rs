@@ -101,15 +101,19 @@ async fn an_outsider_gets_nothing_of_a_server_until_an_invite_brings_it_whole() 
     let (mut sam_ws, _) = hello(&w.app, &w.sam.1).await;
     let (mut jo_ws, ready) = hello(&w.app, &w.jo.1).await;
 
-    // Ready: none of it, and its members (who share nothing with jo) look offline, never seen
+    // Ready: none of it, nor its members (who share nothing with jo, #486)
     assert!(ready.servers.is_empty(), "{:?}", ready.servers);
     assert!(ready.members.is_empty());
     assert!(ready.layouts.is_empty());
     assert!(ready.channels.iter().all(|c| c.server_id.is_none()));
-    for who in [w.alex.0, w.sam.0] {
-        let p = ready.people.iter().find(|p| p.user.id == who).unwrap();
-        assert!(!p.online && p.last_seen_at.is_none(), "{p:?}");
-    }
+    assert!(
+        ready
+            .people
+            .iter()
+            .all(|p| p.user.id != w.alex.0 && p.user.id != w.sam.0),
+        "{:?}",
+        ready.people
+    );
 
     // the members chat, react, type, pin, make a channel and come and go
     let m = send(&w.app, &w.alex.1, w.general.id, "hello in here").await;
@@ -161,19 +165,8 @@ async fn an_outsider_gets_nothing_of_a_server_until_an_invite_brings_it_whole() 
         w.alex.0.to_string(),
         w.sam.0.to_string(),
     ];
+    // not even a stranger's presence (#486): they're nobody jo has
     for (raw, e) in &seen {
-        // the stranger's view (offline, never seen, nothing else) may be repeated to them: it says nothing
-        if matches!(
-            e,
-            Event::PresenceChanged {
-                online: false,
-                last_seen_at: None,
-                custom_status: None,
-                ..
-            }
-        ) {
-            continue;
-        }
         assert!(
             !names.iter().any(|n| raw.contains(n.as_str())),
             "an outsider got {e:?}"
@@ -323,8 +316,7 @@ async fn someone_removed_hears_it_and_then_nothing_more() {
 async fn presence_reaches_only_people_who_share_something() {
     let w = world().await;
     let (mut jo_ws, ready) = hello(&w.app, &w.jo.1).await;
-    let alex = ready.people.iter().find(|p| p.user.id == w.alex.0).unwrap();
-    assert!(!alex.online);
+    assert!(ready.people.iter().all(|p| p.user.id != w.alex.0));
     // alex comes online: jo, who shares nothing with them, isn't told
     let (_alex_ws, _) = hello(&w.app, &w.alex.1).await;
     // a DM between them: now they know each other, and jo sees alex online
@@ -338,4 +330,142 @@ async fn presence_reaches_only_people_who_share_something() {
         unreachable!()
     };
     assert!(online, "the first word about alex is that they're online");
+}
+
+/// alex saves a profile with `bio`.
+async fn save_bio(app: &TestApp, token: &str, bio: &str) {
+    let r = app
+        .http
+        .put(app.url("/me/profile"))
+        .bearer_auth(token)
+        .json(&json!({
+            "theme_top": "#8a3cff",
+            "theme_bottom": "#ff8a2a",
+            "style": { "font": null, "colors": [] },
+            "bio": bio,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+}
+
+/// The fence for a socket: a DM `from` opens with `to`, and the message in it.
+async fn fence(app: &TestApp, from: &str, to: pulse_protocol::ids::UserId) -> Message {
+    let dm = create_dm(app, from, &[to]).await;
+    send(app, from, dm.id, "fence").await
+}
+
+#[tokio::test]
+async fn people_and_their_profiles_reach_only_who_shares_something() {
+    let w = world().await;
+    let kim = register(&w.app, "kim").await;
+    // kim and jo know each other (a DM), and nobody else
+    create_dm(&w.app, &kim.1, &[w.jo.0]).await;
+
+    // Ready's people: you and who you share something with (#486)
+    let (_, ready) = hello(&w.app, &w.jo.1).await;
+    let mut ids: Vec<_> = ready.people.iter().map(|p| p.user.id).collect();
+    ids.sort();
+    let mut want = vec![w.jo.0, kim.0];
+    want.sort();
+    assert_eq!(ids, want);
+    let (mut sam_ws, ready) = hello(&w.app, &w.sam.1).await;
+    let mut ids: Vec<_> = ready.people.iter().map(|p| p.user.id).collect();
+    ids.sort();
+    let mut want = vec![w.alex.0, w.sam.0];
+    want.sort();
+    assert_eq!(ids, want);
+    let (mut jo_ws, _) = hello(&w.app, &w.jo.1).await;
+
+    // alex's profile change reaches sam (a server in common), not jo
+    save_bio(&w.app, &w.alex.1, "first").await;
+    let seen = until(
+        &mut sam_ws,
+        |e| matches!(e, Event::ProfileUpdated { user, .. } if user.id == w.alex.0),
+    )
+    .await;
+    assert!(!seen.is_empty());
+    let note = fence(&w.app, &kim.1, w.jo.0).await;
+    let seen = until(
+        &mut jo_ws,
+        |e| matches!(e, Event::MessageCreated { message, .. } if message.id == note.id),
+    )
+    .await;
+    let alex = w.alex.0.to_string();
+    for (raw, e) in &seen {
+        assert!(!raw.contains(&alex), "jo heard of alex: {e:?}");
+    }
+    // a new account is told to nobody it shares nothing with
+    let new = Event::UserCreated {
+        user: pulse_protocol::rest::User {
+            id: kim.0,
+            username: "kim".into(),
+            display_name: "kim".into(),
+            avatar_hash: None,
+            avatar_still: None,
+            style: Default::default(),
+        },
+    };
+    assert_eq!(
+        audience_for(&w.app.db, &new).await.unwrap(),
+        Audience::Users([kim.0, w.jo.0].into_iter().collect())
+    );
+
+    // a DM with alex: jo gets alex's profile, then their presence (#486)
+    let (_alex_ws, _) = hello(&w.app, &w.alex.1).await;
+    create_dm(&w.app, &w.alex.1, &[w.jo.0]).await;
+    let seen = until(
+        &mut jo_ws,
+        |e| matches!(e, Event::PresenceChanged { user_id, .. } if *user_id == w.alex.0),
+    )
+    .await;
+    let intro = seen
+        .iter()
+        .position(|(_, e)| matches!(e, Event::UserCreated { user } if user.id == w.alex.0))
+        .expect("alex's profile reaches jo once they share a DM");
+    assert!(intro < seen.len() - 1, "the profile comes before the presence");
+    save_bio(&w.app, &w.alex.1, "second").await;
+    until(
+        &mut jo_ws,
+        |e| matches!(e, Event::ProfileUpdated { user, .. } if user.id == w.alex.0),
+    )
+    .await;
+
+    // a group with sam: sam and kim meet the same way
+    let group = create_dm(&w.app, &w.sam.1, &[w.jo.0, kim.0]).await;
+    until(
+        &mut sam_ws,
+        |e| matches!(e, Event::UserCreated { user } if user.id == kim.0),
+    )
+    .await;
+    // sam leaves the group: kim's profile changes no longer reach sam
+    let r = w
+        .app
+        .http
+        .delete(
+            w.app
+                .url(&format!("/channels/{}/members/{}", group.id, w.sam.0)),
+        )
+        .bearer_auth(&w.sam.1)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    save_bio(&w.app, &kim.1, "after").await;
+    let note = fence(&w.app, &w.alex.1, w.sam.0).await;
+    let seen = until(
+        &mut sam_ws,
+        |e| matches!(e, Event::MessageCreated { message, .. } if message.id == note.id),
+    )
+    .await;
+    assert!(
+        !seen.iter().any(
+            |(_, e)| matches!(e, Event::ProfileUpdated { user, .. } if user.id == kim.0)
+        ),
+        "{seen:?}"
+    );
+    // and a fresh Ready leaves kim out
+    let (_, ready) = hello(&w.app, &w.sam.1).await;
+    assert!(ready.people.iter().all(|p| p.user.id != kim.0));
 }

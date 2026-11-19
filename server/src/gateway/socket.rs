@@ -161,7 +161,8 @@ async fn disconnected(s: &AppState, conn: ConnId, me: UserId, since: &str) {
     }
 }
 
-/// Everyone with an account, with their presence as `viewer` may see it (#45).
+/// The people `viewer` shares a server, a DM or a group with, and `viewer` themselves (#486), with their presence as
+/// `viewer` may see it (#45).
 pub async fn people(
     db: &SqlitePool,
     hub: &Hub,

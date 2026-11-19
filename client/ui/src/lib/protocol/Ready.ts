@@ -44,7 +44,8 @@ export type Ready = { me: User, servers: Array<Server>, channels: Array<Channel>
  */
 voice: Array<VoiceRoom>, 
 /**
- * Everyone with an account, with presence.
+ * The people you share a server, a DM or a group with, and you (#486), with presence. Anyone else is left out:
+ * a client looks up someone it meets in older messages by their id (`GET /users/{id}/profile`).
  */
 people: Array<Person>, 
 /**
