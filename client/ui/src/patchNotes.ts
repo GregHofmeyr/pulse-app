@@ -31,6 +31,7 @@ export const patchNotes: PatchNotes = {
     'Servers are now private: you only see servers you\'re in, and you join with an invite',
     'Server icons: a server\'s owner can give it a picture, shown on the server bar, invites and everywhere else it appears',
     'Server settings › Overview: the server\'s icon, banner and name in one place, shown together the way its invites show them',
+    'Block someone from their right-click menu or Settings › Privacy: their DMs, calls, invites, pings and sounds stop reaching you, and they see you offline. Pick whether their messages show as a \'Blocked message\' line or vanish completely',
   ],
   fixes: [],
   qol: [
