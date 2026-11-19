@@ -19,6 +19,7 @@
   import CustomStatusDialog from '../components/CustomStatusDialog.svelte'
   import ServerMenu from '../components/ServerMenu.svelte'
   import ServerChip from '../components/ServerChip.svelte'
+  import { STATUS_LABEL, myStatusIn } from '../lib/serverStatus'
   import ServerNameEdit from '../components/ServerNameEdit.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
   import InviteDialog from '../components/InviteDialog.svelte'
@@ -772,7 +773,7 @@
         <button class="tab" data-server={s.id} class:active={activeServerId === s.id} aria-label={callAt === s.id ? `${s.name} (you're in a call here)` : undefined} onclick={() => selectServer(s.id)}
           onkeydown={(e) => tabKeys(e, s.id)} oncontextmenu={(e) => { e.preventDefault(); serverMenu = { id: s.id, x: e.clientX, y: e.clientY, opener: e.currentTarget } }}>
           <!-- its icon (#55) when it has one, else its initial on its colour -->
-          <span class="chip" class:call-here={callAt === s.id} class:pic={!!s.icon_hash} style:background={s.icon_hash ? undefined : avatarColor(s.id)}>{#if s.icon_hash}<ServerChip id={s.id} name={s.name} iconHash={s.icon_hash} still={s.icon_still} size={22} radius="var(--radius-xs)" />{:else}{initial(s.name)}{/if}{#if callAt === s.id}{@render callBadge()}{/if}</span>{s.name}
+          <span class="chip" class:call-here={callAt === s.id} class:pic={!!s.icon_hash} style:background={s.icon_hash ? undefined : avatarColor(s.id)}>{#if s.icon_hash}<ServerChip id={s.id} name={s.name} iconHash={s.icon_hash} still={s.icon_still} size={22} radius="var(--radius-xs)" />{:else}{initial(s.name)}{/if}{#if callAt === s.id}{@render callBadge()}{/if}{#if myStatusIn(app.state, s.id)}{@const st = myStatusIn(app.state, s.id)}<span class="own-status s-{st}" role="img" aria-label="Your status here: {STATUS_LABEL[st ?? 'online']}" data-tip="Your status here: {STATUS_LABEL[st ?? 'online']}"></span>{/if}</span>{s.name}
           <!-- the badge already says it for your own call's server -->
           {#if talking > 0 && callAt !== s.id}<span class="invc" aria-label="{talking} in voice" data-tip="{talking} in voice"><Icon name="speaker" size={14} /></span>{/if}
           {#if badge.mentions > 0}<span class="pill">{badge.mentions}</span>{:else if badge.dot}<span class="dot" aria-label="new messages"></span>{/if}
@@ -992,7 +993,12 @@
   nav:global(.dragging) :global(*) { cursor: grabbing; }
   nav :global([data-server].lifted) { position: relative; z-index: 2; background: var(--bg-2); box-shadow: var(--shadow-1); transition: none; }
   nav:global(.settling) :global([data-server]) { transition: none !important; }
-  .chip { width: 22px; height: 22px; border-radius: var(--radius-xs); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+  /* a dot on its corner: your own status in that server (#154) */
+  .own-status { position: absolute; right: -3px; bottom: -3px; width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 2px var(--bg-0); }
+  .own-status.s-online { background: var(--ok); }
+  .own-status.s-dnd { background: var(--danger); }
+  .own-status.s-invisible { background: var(--presence-off); }
+  .chip { position: relative; width: 22px; height: 22px; border-radius: var(--radius-xs); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
   .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
   .grow { flex: 1; align-self: stretch; }
   .conn { font-size: 12px; font-weight: 600; color: var(--warn-text); padding: 4px 10px; border-radius: var(--radius-lg); background: var(--warn-soft); margin-right: 6px; }

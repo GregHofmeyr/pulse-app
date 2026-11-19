@@ -396,6 +396,7 @@ pub fn run() {
             commands::remove_server_member,
             commands::transfer_server,
             commands::set_server_banner,
+            commands::set_server_status,
             commands::set_server_icon,
             commands::rename_server,
             commands::server_origin,

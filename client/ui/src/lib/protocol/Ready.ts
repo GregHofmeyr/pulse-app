@@ -27,6 +27,7 @@ import type { Server } from "./Server";
 import type { ServerId } from "./ServerId";
 import type { ServerLayout } from "./ServerLayout";
 import type { ServerMembers } from "./ServerMembers";
+import type { ServerStatus } from "./ServerStatus";
 import type { ServerVoiceMod } from "./ServerVoiceMod";
 import type { Sound } from "./Sound";
 import type { SpeakerLink } from "./SpeakerLink";
@@ -200,6 +201,11 @@ person_dnd?: Array<PersonDnd>,
  * servers.
  */
 activity_hidden?: Array<UserId>, 
+/**
+ * Your own status in each server where it differs from your main one (#154). Yours only. Absent from older
+ * servers.
+ */
+server_statuses?: Array<ServerStatus>, 
 /**
  * Your saved inbox filters (#307), in order. Yours only. Absent from older servers.
  */

@@ -12,19 +12,24 @@ const LABEL: Record<PresenceKind, string> = { online: 'Online', idle: 'Idle', dn
 const of = (kind: PresenceKind, lastSeen: string | null = null): Presence => ({ kind, label: LABEL[kind], lastSeen })
 
 /** Yourself: your own status (a run-out DND timer is Online at `nowIso`). Anyone else: as the server lets you see
- *  them; an older server sends no status, so it goes by `online`. Someone unknown: offline, never seen. */
-export function presenceOf(s: AppState, userId: string, nowIso: string): Presence {
+ *  them; an older server sends no status, so it goes by `online`. Someone unknown: offline, never seen.
+ *  In a server (`serverId`, #154): someone's own status there, when they've set one (yours: as you set it). */
+export function presenceOf(s: AppState, userId: string, nowIso: string, serverId: string | null = null): Presence {
   const p = s.people[userId]
   if (userId === s.me?.id) {
+    // your own status in this server, where you've set one: Invisible shows as yours, the rest as they read
+    const here = serverId ? s.myServerStatuses.find((x) => x.server_id === serverId)?.status : undefined
     // your own Idle shows too (#53), but only over Online: the server never sends it otherwise
-    const own = ownStatus(s, nowIso)
+    const own = here ?? ownStatus(s, nowIso)
     return of(own === 'online' && p?.idle ? 'idle' : own)
   }
   if (!p) return of('offline')
-  const status = p.status ?? (p.online ? 'online' : 'offline')
+  const here = serverId ? p.in_servers?.find((x) => x.server_id === serverId) : undefined
+  const status = here ? here.status : (p.status ?? (p.online ? 'online' : 'offline'))
+  const idle = here ? !!here.idle : p.idle
   if (status === 'dnd') return of('dnd')
-  if (status === 'online') return of(p.idle ? 'idle' : 'online')
-  return of('offline', p.last_seen_at)
+  if (status === 'online') return of(idle ? 'idle' : 'online')
+  return of('offline', here ? here.last_seen_at : p.last_seen_at)
 }
 
 /** On: online, idle or DND (they're here, just maybe away or not to be disturbed). */
@@ -37,12 +42,12 @@ export const presenceRank = (p: Presence) => (p.kind === 'idle' ? 1 : isOn(p) ? 
  *  the idle (#53) at the end of Online in that order too. Goes
  *  only by what you're told: the server sends someone Invisible or hiding from you as offline, so they're Offline;
  *  so are you while Invisible, as everyone else sees you. */
-export function byPresence<T>(s: AppState, items: readonly T[], idOf: (item: T) => string, nowIso: string): { online: T[]; offline: T[] } {
+export function byPresence<T>(s: AppState, items: readonly T[], idOf: (item: T) => string, nowIso: string, serverId: string | null = null): { online: T[]; offline: T[] } {
   const online: T[] = []
   const idle: T[] = []
   const offline: T[] = []
   for (const it of items) {
-    const p = presenceOf(s, idOf(it), nowIso)
+    const p = presenceOf(s, idOf(it), nowIso, serverId)
     ;(p.kind === 'idle' ? idle : isOn(p) ? online : offline).push(it)
   }
   return { online: [...online, ...idle], offline }

@@ -33,6 +33,7 @@ import type { DeletedChannel } from './protocol/DeletedChannel'
 import type { DeletedServer } from './protocol/DeletedServer'
 import type { Member } from './protocol/Member'
 import type { Status } from './protocol/Status'
+import type { ServerStatus } from './protocol/ServerStatus'
 import type { StartCallResponse } from './protocol/StartCallResponse'
 import type { ServerVoiceMod } from './protocol/ServerVoiceMod'
 import type { Message } from './protocol/Message'
@@ -339,6 +340,8 @@ export const api = {
   transferServer: (serverId: string, userId: string) => invoke<void>('transfer_server', { serverId, userId }),
   /** A server's banner (#475): a banner-upload hash, or null to remove it. Its owner only. */
   setServerBanner: (serverId: string, hash: string | null) => invoke<Server>('set_server_banner', { serverId, hash }),
+  /** Your status in one server (#154), or null for Same as everywhere. Your whole list back. */
+  setServerStatus: (serverId: string, status: Status | null) => invoke<ServerStatus[]>('set_server_status', { serverId, status }),
   /** A server's icon (#55): an avatar-upload hash (the same square crop), or null to remove it. Its owner only. */
   setServerIcon: (serverId: string, hash: string | null) => invoke<Server>('set_server_icon', { serverId, hash }),
   /** Rename a server (#55). Its owner only. */

@@ -3,6 +3,7 @@ import type { CustomStatus } from "./CustomStatus";
 import type { Listening } from "./Listening";
 import type { Playing } from "./Playing";
 import type { PresenceStatus } from "./PresenceStatus";
+import type { ServerPresence } from "./ServerPresence";
 import type { User } from "./User";
 
 /**
@@ -37,4 +38,9 @@ playing?: Playing,
  * Their custom status (#152), by the same rule as `listening`: only while they look online to this viewer (and
  * always to themselves). Absent otherwise, and from older servers.
  */
-custom_status?: CustomStatus, };
+custom_status?: CustomStatus, 
+/**
+ * How they look inside servers you share where they've set a status of their own (#154). Absent when none, and
+ * from older servers.
+ */
+in_servers?: Array<ServerPresence>, };

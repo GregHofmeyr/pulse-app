@@ -1024,6 +1024,24 @@ impl Api {
         .await
     }
 
+    /// Your status in one server (#154), or `None` for Same as everywhere. Your whole list back.
+    pub async fn set_server_status(
+        &self,
+        token: &str,
+        server: ServerId,
+        status: Option<pulse_protocol::rest::Status>,
+    ) -> Result<Vec<pulse_protocol::rest::ServerStatus>, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/servers/{server}/my-status", self.base))
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::SetServerStatusRequest { status })
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Set (a banner-upload hash) or remove a server's banner (#475): its owner only.
     pub async fn set_server_banner(
         &self,
@@ -4672,6 +4690,29 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(got.name, "Lounge");
+    }
+
+    #[tokio::test]
+    async fn a_server_status_round_trips_through_the_core() {
+        use pulse_protocol::rest::Status;
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (_, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let list = api
+            .set_server_status(&alex, s.id, Some(Status::Dnd))
+            .await
+            .unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].status, Status::Dnd);
+        assert!(api.set_server_status(&alex, s.id, None).await.unwrap().is_empty());
+        // only in a server you're in
+        assert!(
+            api.set_server_status(&sam, s.id, Some(Status::Dnd))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

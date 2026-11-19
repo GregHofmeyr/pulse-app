@@ -14,7 +14,7 @@ import { downloads } from './downloads.svelte'
 import { api, type AttachmentProgress, type DownloadProgress, type StagedFile } from './tauri'
 import { loadUnsent, saveUnsent } from './unsent'
 import { isMuted, messageSound, notifyLevel, onScreen, SOUND_GAP_MS } from './conversations'
-import { dndActive } from './status'
+import { dndIn } from './serverStatus'
 import { quietFrom } from './personDnd'
 import { notifyMessage, NotifyThrottle } from './notify'
 import { notifyPrefs } from './notifyPrefs.svelte'
@@ -152,7 +152,8 @@ export function maybeAlert(e: Event) {
     muted: isMuted(app.state, ch, nowIso),
     level: notifyLevel(app.state, ch),
     // the real time, not the clock: a DND timer ends exactly when it ends
-    dnd: dndActive(app.state, nowIso),
+    // your status in this server, where you set one (#154), else your main DND
+    dnd: dndIn(app.state, ch.server_id, nowIso),
     quiet: quietFrom(app.state.personDnd, m.author_id, ch.server_id === null, nowIso),
     planReminders: planPrefs.on,
     f1Scores: f1Prefs.on,

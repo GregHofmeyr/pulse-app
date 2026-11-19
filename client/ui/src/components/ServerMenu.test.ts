@@ -90,6 +90,26 @@ describe('ServerMenu', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it('My status here (#154): for members, a flyout with yours ticked; picking one sets it', async () => {
+    render()
+    expect(labels()).not.toContain('My status here')
+    unmount(cmp!)
+    document.body.innerHTML = ''
+    render(false, [], { member: true })
+    app.state = { ...app.state, myServerStatuses: [{ server_id: 'S1', status: 'dnd' }] } as never
+    flushSync()
+    const item = items().find((b) => b.textContent?.trim() === 'My status here')!
+    hover(item)
+    const fly = document.querySelector<HTMLElement>('[role=menu][aria-label="My status in Alpha"]')!
+    const choices = [...fly.querySelectorAll<HTMLButtonElement>('[role^=menuitem]')]
+    expect(choices.map((c) => c.textContent?.trim())).toEqual(['Same as everywhere', 'Online', 'Do Not Disturb', 'Invisible'])
+    expect(choices.map((c) => c.getAttribute('aria-checked'))).toEqual(['false', 'false', 'true', 'false'])
+    choices[3].click()
+    await Promise.resolve()
+    expect(invoke).toHaveBeenCalledWith('set_server_status', { serverId: 'S1', status: 'invisible' })
+    expect(onClose).toHaveBeenCalled()
+  })
+
   it('Server settings opens the settings and closes the menu', () => {
     render()
     item('Server settings').click()
@@ -144,7 +164,7 @@ describe('ServerMenu', () => {
   it('members get Create category (#54), which hands back to the shell and closes', () => {
     render(false, [], { member: true })
     // and Leave server (#371): they're in it, and it isn't theirs
-    expect(labels()).toEqual(['Invite people', 'Server settings', 'Create category', 'Arrange channels just for me', 'Mute server', 'Notifications', 'Leave server'])
+    expect(labels()).toEqual(['Invite people', 'Server settings', 'Create category', 'Arrange channels just for me', 'Mute server', 'Notifications', 'My status here', 'Leave server'])
     item('Create category').click()
     flushSync()
     expect(onCreateCategory).toHaveBeenCalledTimes(1)
@@ -156,7 +176,7 @@ describe('ServerMenu', () => {
     expect(labels()).toEqual(['Server settings', 'Mute server', 'Notifications'])
     unmount(cmp!)
     render(false, [], { member: true, live: false })
-    expect(labels()).toEqual(['Invite people', 'Server settings', 'Mute server', 'Notifications', 'Leave server'])
+    expect(labels()).toEqual(['Invite people', 'Server settings', 'Mute server', 'Notifications', 'My status here', 'Leave server'])
   })
 })
 
