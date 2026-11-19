@@ -26,6 +26,9 @@ use tokio::sync::{mpsc, oneshot};
 use super::audience::{Audience, audience_for};
 use crate::presence::{PresenceView, load_all, load_subject, view_for};
 
+/// What a connection was last told of someone's presence: their view, and inside which servers it differs (#154).
+type Told = (PresenceView, Vec<ServerPresence>);
+
 pub const QUEUE: usize = 256;
 /// Close code sent to a client the hub dropped for falling behind (it should resync via Ready).
 pub const CLOSE_TOO_SLOW: u16 = 4003;
@@ -236,7 +239,7 @@ struct Inner {
     /// per connection, not per viewer, because a viewer's new device starts from its own Ready
     /// while their other devices still show what they were told. Locked only while `conns` is held.
     /// With it, how they look inside servers where they've set a status of their own (#154).
-    announced: Mutex<HashMap<(UserId, ConnId), (PresenceView, Vec<ServerPresence>)>>,
+    announced: Mutex<HashMap<(UserId, ConnId), Told>>,
     /// Whose profile each connection has, by (person, connection) (#486): Ready's people, or a `UserCreated` since.
     /// Only people who share a server, a DM or a group with them (and they themselves) are in it; the presence sync
     /// adds someone who comes to share one, with their profile, and forgets someone who no longer does. Locked only

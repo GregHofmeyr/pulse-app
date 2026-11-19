@@ -52,6 +52,7 @@ fn owner_only_events_name_their_owner() {
         status: Default::default(),
         idle: false,
         custom_status: None,
+        in_servers: vec![],
     };
     assert_eq!(p.only_for(), None);
     assert_eq!(p.channel_id(), None);
