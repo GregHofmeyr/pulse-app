@@ -144,14 +144,13 @@ pub async fn list(
         Option<String>,
         Option<String>,
         String,
-    )> =
-        sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT {SERVER_COLS}, deleted_at FROM servers
+    )> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {SERVER_COLS}, deleted_at FROM servers
          WHERE created_by = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id"
-        )))
-        .bind(me.to_string())
-        .fetch_all(&s.db)
-        .await?;
+    )))
+    .bind(me.to_string())
+    .fetch_all(&s.db)
+    .await?;
     let due = due(chrono::Utc::now());
     let mut out = Vec::with_capacity(rows.len());
     for (id, name, icon, owner, banner, banner_still, deleted_at) in rows {
