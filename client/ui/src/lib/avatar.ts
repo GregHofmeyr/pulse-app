@@ -7,4 +7,11 @@ export function avatarColor(id: string): string {
   return PALETTE[h % PALETTE.length]
 }
 
+/** Two stable colours from an id (#475, #55): its avatar colour and the next in the palette. A server's banner
+ *  fallback is a gradient of the two, solid end to end. */
+export function avatarColors(id: string): [string, string] {
+  const first = avatarColor(id)
+  return [first, PALETTE[(PALETTE.indexOf(first) + 3) % PALETTE.length]]
+}
+
 export const initial = (name: string) => name.trim().charAt(0).toUpperCase() || '?'

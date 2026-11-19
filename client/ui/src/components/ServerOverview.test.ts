@@ -200,6 +200,29 @@ describe('invite cards and the Invite dialog', () => {
     expect(img.src).toMatch(new RegExp(`(${BN}|${ST})$`))
   })
 
+  it('the card keeps every word off the banner: chip over its edge, the text below on the card (#55)', async () => {
+    await card(preview({ code: 'layoutCd23', banner_hash: BN }))
+    const c = document.querySelector<HTMLElement>('[data-server-invite]')!
+    expect(c.querySelector('.banner')!.textContent?.trim()).toBe('')
+    const body = c.querySelector('.body')!
+    expect(body.textContent).toContain('sam invited you')
+    expect(body.textContent).toContain('Beta')
+    expect(body.querySelector('button.join')).not.toBeNull()
+    // the chip sits between the banner and the text, not inside either
+    expect(c.querySelector('.icon .chip')).not.toBeNull()
+    expect(c.querySelector('.banner .chip')).toBeNull()
+  })
+
+  it("the fallback gradient is the server's two colours, solid end to end", async () => {
+    await card(preview({ code: 'twoColrs23' }))
+    const b = document.querySelector<HTMLElement>('[data-server-invite] .server-banner')!
+    const one = b.style.getPropertyValue('--srv')
+    const two = b.style.getPropertyValue('--srv-2')
+    expect(one).toMatch(/^#[0-9a-f]{6}$/)
+    expect(two).toMatch(/^#[0-9a-f]{6}$/)
+    expect(two).not.toBe(one)
+  })
+
   it('the card falls back to the gradient', async () => {
     await card(preview({ code: 'noBanner23' }))
     expect(document.querySelector('[data-server-invite] .server-banner')).not.toBeNull()
