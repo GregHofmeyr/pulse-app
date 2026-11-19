@@ -769,9 +769,11 @@ async fn clips_check_reports_ok_against_the_fake() {
     assert!(!out.contains(FAKE_SECRET), "{out}");
     // Probed and cleaned up.
     assert!(fake.keys().is_empty(), "{:?}", fake.keys());
-    // The over-long PUT is refused at the signature check, so it never reaches the log.
+    // The over-long PUTs (the object's, then the part's) are refused at the signature check, so they never reach
+    // the log: the object round trip, then the part step's multipart upload started and aborted (#298).
     let verbs: Vec<_> = fake.requests().iter().map(|(m, _)| m.to_string()).collect();
-    assert_eq!(verbs, ["PUT", "HEAD", "GET", "DELETE"]);
+    assert_eq!(verbs, ["PUT", "HEAD", "GET", "DELETE", "POST", "DELETE"]);
+    assert_eq!(fake.open_uploads(), 0);
 
     // A wrong secret names the failing step and its status.
     let bad = [

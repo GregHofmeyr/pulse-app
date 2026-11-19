@@ -429,8 +429,9 @@ Setup, once, in the Cloudflare dashboard and on the server:
 3. `ssh -t pulse@pulse 'TERM=xterm-256color nano /srv/pulse/.env'` → fill `CLIPS_R2_BUCKET`, `CLIPS_R2_ACCESS_KEY_ID`,
    `CLIPS_R2_SECRET_ACCESS_KEY`. The endpoint is `https://<account-id>.r2.cloudflarestorage.com`, built by
    `compose.yml` from `R2_ACCOUNT_ID`.
-4. `just deploy`, then `just clips-check`: it writes, reads and deletes one small object with the live settings
-   and says which step failed if one does.
+4. `just deploy`, then `just clips-check`: it checks that R2 refuses a body longer than the signed length (for a
+   whole object, and for a part of a multipart upload, which it starts and aborts under `temp/`), then writes, reads
+   and deletes one small object with the live settings, and says which step failed if one does.
 
 5. Recommended (#298, still open): two R2 lifecycle rules on that bucket, as a backstop to the sweep.
    R2 → the bucket → Settings → Object lifecycle rules: delete objects with the prefix `temp/` 8 days after upload
