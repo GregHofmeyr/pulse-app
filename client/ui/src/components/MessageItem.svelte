@@ -4,6 +4,7 @@
 
 <script lang="ts">
   import { actionBarFocus } from '../lib/focus'
+  import { blockedReplyText } from '../lib/blocks'
   import Icon from './Icon.svelte'
   import DeleteButton from './DeleteButton.svelte'
   import EmojiBox from './EmojiBox.svelte'
@@ -416,7 +417,10 @@
   <!-- focus anywhere inside shows the action bar (hover alone left keyboard users without it) -->
   <div class="msg" data-message-id={message.id} {...actionBarFocus((v) => (focusIn = v))} class:grouped class:mentioned={!!meId && message.mentions.includes(meId)}
     onpointerenter={() => (rowHover = true)} onpointerleave={() => (rowHover = false)} oncontextmenu={(e) => openMsgMenu(e, e.currentTarget)}>
-    {#if replyTo}
+    {#if replyTo && blockedReplyText(app.state, replyTo.author_id)}
+      <!-- a reply to someone you've blocked (#474): neither their name nor their words -->
+      <div class="reply blocked-reply"><span class="hook"></span><span class="snippet">{blockedReplyText(app.state, replyTo.author_id)}</span></div>
+    {:else if replyTo}
       <div class="reply"><span class="hook"></span><strong role="presentation" oncontextmenu={(e) => { if (replyTo?.author_id) openAuthorMenu(e, e.currentTarget, replyTo.author_id) }} onkeydown={replyKey}>{#if replyTo.author_id}<Name userId={replyTo.author_id} {serverId} text={nameOf(replyTo.author_id)} />{:else}{nameOf(null)}{/if}</strong>
         <span class="snippet">{replyTo.deleted ? 'original message deleted' : showMentions(shownText(replyTo), lookup, (id) => displayName(app.state, serverId, id)).slice(0, 120)}</span></div>
     {:else if message.reply_to_id}

@@ -422,6 +422,33 @@ pub struct PersonDnd {
     pub until: Option<String>,
 }
 
+/// What you see of someone you've blocked (#474) in servers you share. Their DMs, calls, invites, pings and sounds
+/// never reach you either way, you can't hear them in voice, and they see you offline with an emptied profile.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockMode {
+    /// A "Blocked message" line where their messages were (a run collapses into one, with Show).
+    #[default]
+    Line,
+    /// Nothing of them at all: no messages, member or voice row, reactions or typing.
+    Hide,
+}
+
+/// Someone you've blocked (#474), and how they show. Yours only; they're never told.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Block {
+    pub user_id: UserId,
+    #[serde(default)]
+    pub mode: BlockMode,
+}
+
+/// `PUT /me/blocks/{user_id}` (#474): block someone, or change how a block shows.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct BlockRequest {
+    #[serde(default)]
+    pub mode: BlockMode,
+}
+
 /// `PUT /me/person-dnd/{user_id}` (#310): turn Do Not Disturb on for someone (or change it).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
 pub struct PersonDndRequest {
@@ -2124,6 +2151,11 @@ pub struct Person {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub custom_status: Option<CustomStatus>,
+    /// How they look inside servers you share where they've set a status of their own (#154). Absent when none, and
+    /// from older servers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<ServerPresence>>", optional)]
+    pub in_servers: Vec<ServerPresence>,
 }
 
 /// What someone's music player is playing (#275, other players #322), read by their own Pulse from the OS media
@@ -2289,6 +2321,33 @@ pub enum PresenceStatus {
     Dnd,
     #[default]
     Offline,
+}
+
+/// Your own status in one server (#154), overriding your main status there only: members see it in that server, and
+/// your main status everywhere else (DMs included). Yours only.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ServerStatus {
+    pub server_id: ServerId,
+    pub status: Status,
+}
+
+/// `PUT /servers/{id}/my-status` (#154): your status in that server, or `None` for "Same as everywhere".
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct SetServerStatusRequest {
+    #[serde(default)]
+    pub status: Option<Status>,
+}
+
+/// How someone looks to you inside one server where they've set a status of their own (#154): in that server's
+/// member list and voice rows, instead of their main presence. Only servers you share with them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ServerPresence {
+    pub server_id: ServerId,
+    pub status: PresenceStatus,
+    pub last_seen_at: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub idle: bool,
 }
 
 /// The status you set for yourself (#45); saved on your account and applied everywhere.

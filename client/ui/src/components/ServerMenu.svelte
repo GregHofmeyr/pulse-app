@@ -3,7 +3,8 @@
   // server as a durations flyout, the channel menu's (#131), or Unmute server, and Notifications: the server's level
   // as a flyout with yours ticked (#195), and Move left / Move right in your rail (#185: dragging's keyboard and menu
   // way), and Leave server (#371, asked first; not its owner's). Arrange channels just for me / Reset to server order
-  // (#304): your own order of its channel list. Keyboard as in the channel menu.
+  // (#304): your own order of its channel list. My status here (#154): a flyout of your status in it alone. Keyboard as
+  // in the channel menu.
   import { onMount, untrack } from 'svelte'
   import { app, clock, ui } from '../lib/store.svelte'
   import { placeMenu } from '../lib/menuPlace'
@@ -15,6 +16,7 @@
   import MenuFlyout from './MenuFlyout.svelte'
   import MuteFlyout from './MuteFlyout.svelte'
   import { isMember } from '../lib/selectors'
+  import { SERVER_STATUS_CHOICES } from '../lib/serverStatus'
   import { orderOf, sidebarLayout } from '../lib/layout'
   import { resetPersonalOrder, savePersonalOrder } from '../lib/channelOrder.svelte'
 
@@ -58,7 +60,12 @@
   let closed = false
   let flyout = $state<ReturnType<typeof MuteFlyout>>()
   let levelFlyout = $state<ReturnType<typeof MenuFlyout>>()
-  const flyouts = () => [flyout, levelFlyout]
+  // My status here (#154): yours in this server only; members see it there, everyone your main status elsewhere
+  let statusFlyout = $state<ReturnType<typeof MenuFlyout>>()
+  const myHere = $derived(app.state.myServerStatuses.find((x) => x.server_id === serverId)?.status ?? null)
+  const statusChoices = $derived(SERVER_STATUS_CHOICES.map((c) => ({ label: c.label, checked: c.status === myHere })))
+  const pickStatus = (i: number) => pick(report(() => api.setServerStatus(serverId, SERVER_STATUS_CHOICES[i].status)))
+  const flyouts = () => [flyout, levelFlyout, statusFlyout]
   const level = $derived(serverLevel(app.state, serverId))
   const levelChoices = $derived(NOTIFY_LEVELS.map((l) => ({ label: l.label, checked: l.level === level })))
   const pickLevel = (i: number) => pick(report(() => api.setNotifyLevel('server', serverId, serverLevelToSet(NOTIFY_LEVELS[i].level))))
@@ -139,6 +146,10 @@
   {/if}
   <MenuFlyout bind:this={levelFlyout} label="Notifications" flyoutLabel="Notifications for {name}" menuLeft={left} menuTop={top}
     choices={levelChoices} onPick={pickLevel} />
+  {#if isMember(app.state, serverId)}
+    <MenuFlyout bind:this={statusFlyout} item="my-status" label="My status here" flyoutLabel="My status in {name}" menuLeft={left} menuTop={top}
+      choices={statusChoices} onPick={pickStatus} />
+  {/if}
   {#if canLeave}
     <span class="menu-sep" role="separator"></span>
     <button type="button" class="menu-item danger" role="menuitem" data-item="leave" onclick={() => pick(() => (ui.serverAction = { kind: 'leave', serverId }))}>Leave server</button>

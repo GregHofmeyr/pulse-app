@@ -7,13 +7,13 @@ use crate::ids::{
     BookmarkId, CallId, ChannelId, LineId, MessageId, ReminderId, ScheduledId, ServerId, UserId,
 };
 use crate::rest::{
-    Badge, CallInfo, CallRing, CardProfile, Channel, ChannelOrder, ClipView, ClipViewPref,
+    Badge, Block, CallInfo, CallRing, CardProfile, Channel, ChannelOrder, ClipView, ClipViewPref,
     CustomEmoji, CustomStatus, DmLayout, F1Prediction, Game, GameInvite, InboxFilter, InboxItem,
     Listening, ListeningUpdate, Member, Message, MessageBookmark, MessageReminder, Mute,
     MyCustomStatus, NotifyLevelPref, OwnStatus, Person, PersonDnd, PinnedMessage, Plan, Playing,
     PlayingUpdate, PresenceStatus, PrivateNickname, QotyEvent, QuietSpin, ReadState, RingEndReason,
-    ScheduledMessage, Server, ServerLayout, ServerVoiceMod, Sound, SpeakerLink, StageShare,
-    SteamStatus, StreamEndReason, StreamInfo, User, WatchParty, Wheel,
+    ScheduledMessage, Server, ServerLayout, ServerPresence, ServerStatus, ServerVoiceMod, Sound,
+    SpeakerLink, StageShare, SteamStatus, StreamEndReason, StreamInfo, User, WatchParty, Wheel,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -256,6 +256,16 @@ pub struct Ready {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub activity_hidden: Vec<UserId>,
+    /// Your own status in each server where it differs from your main one (#154). Yours only. Absent from older
+    /// servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub server_statuses: Vec<ServerStatus>,
+    /// The people you've blocked (#474), each with how they show, in the order you blocked them. Yours only. Absent
+    /// from older servers.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub blocks: Vec<Block>,
     /// Your saved inbox filters (#307), in order. Yours only. Absent from older servers.
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
@@ -466,6 +476,17 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         custom_status: Option<CustomStatus>,
+        /// How they look inside servers you share where they've set a status of their own (#154), the whole list.
+        /// Omitted when none (and by older servers).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[ts(as = "Option<Vec<ServerPresence>>", optional)]
+        in_servers: Vec<ServerPresence>,
+    },
+    /// Only to its person's own sessions: their status in each server where it differs changed (#154), the whole new
+    /// [`Ready::server_statuses`]. Clients from before it skip it.
+    MyServerStatusesChanged {
+        user_id: UserId,
+        list: Vec<ServerStatus>,
     },
     /// Only to your own sessions: your custom status, its end or your recent ones changed (#152): you set or cleared
     /// it, or its timer ran out. Clients from before it skip it.
@@ -556,6 +577,12 @@ pub enum Event {
     ActivityHiddenChanged {
         user_id: UserId,
         list: Vec<UserId>,
+    },
+    /// Only to its person's own sessions: the people they've blocked changed (#474), the whole new [`Ready::blocks`].
+    /// Clients from before it skip it.
+    BlocksChanged {
+        user_id: UserId,
+        list: Vec<Block>,
     },
     /// Only to its person's own sessions: their saved inbox filters changed (#307), the whole new
     /// [`Ready::inbox_filters`]. Clients from before it skip it.
@@ -1041,6 +1068,8 @@ impl Event {
             | Self::DmLayoutChanged { .. }
             | Self::PersonDndChanged { .. }
             | Self::ActivityHiddenChanged { .. }
+            | Self::MyServerStatusesChanged { .. }
+            | Self::BlocksChanged { .. }
             | Self::InvitesChanged { .. }
             | Self::BansChanged { .. }
             | Self::InboxFiltersChanged { .. }
@@ -1115,6 +1144,8 @@ impl Event {
             | Self::DmLayoutChanged { user_id, .. }
             | Self::PersonDndChanged { user_id, .. }
             | Self::ActivityHiddenChanged { user_id, .. }
+            | Self::MyServerStatusesChanged { user_id, .. }
+            | Self::BlocksChanged { user_id, .. }
             | Self::InvitesChanged { user_id, .. }
             | Self::BansChanged { user_id, .. }
             | Self::ServerJoined { user_id, .. }
@@ -1255,6 +1286,8 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             activity_hidden: vec![],
+            server_statuses: vec![],
+            blocks: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],
@@ -1353,6 +1386,8 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             activity_hidden: vec![],
+            server_statuses: vec![],
+            blocks: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],
@@ -1500,6 +1535,8 @@ mod tests {
             dm_layout: Default::default(),
             person_dnd: vec![],
             activity_hidden: vec![],
+            server_statuses: vec![],
+            blocks: vec![],
             inbox_filters: vec![],
             channel_orders: vec![],
             calls: vec![],
@@ -2037,6 +2074,7 @@ mod tests {
                 text: "Gaming".into(),
                 emoji: Some("🎮".into()),
             }),
+            in_servers: vec![],
         };
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["d"]["custom_status"]["text"], "Gaming");
@@ -2067,6 +2105,7 @@ mod tests {
             status: PresenceStatus::Online,
             idle,
             custom_status: None,
+            in_servers: vec![],
         };
         let on = serde_json::to_value(e(true)).unwrap();
         assert_eq!(on["d"]["idle"], true);

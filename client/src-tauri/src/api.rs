@@ -1024,6 +1024,24 @@ impl Api {
         .await
     }
 
+    /// Your status in one server (#154), or `None` for Same as everywhere. Your whole list back.
+    pub async fn set_server_status(
+        &self,
+        token: &str,
+        server: ServerId,
+        status: Option<pulse_protocol::rest::Status>,
+    ) -> Result<Vec<pulse_protocol::rest::ServerStatus>, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/servers/{server}/my-status", self.base))
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::SetServerStatusRequest { status })
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Set (a banner-upload hash) or remove a server's banner (#475): its owner only.
     pub async fn set_server_banner(
         &self,
@@ -2308,6 +2326,24 @@ impl Api {
             self.http.put(url)
         } else {
             self.http.delete(url)
+        };
+        Self::parse(req.bearer_auth(token).send().await).await
+    }
+
+    /// Block someone (#474) with how they show (`Some`), or unblock them (`None`). Your whole list back.
+    pub async fn set_block(
+        &self,
+        token: &str,
+        user: UserId,
+        mode: Option<pulse_protocol::rest::BlockMode>,
+    ) -> Result<Vec<pulse_protocol::rest::Block>, ApiError> {
+        let url = self.url(&["me", "blocks", &user.to_string()])?;
+        let req = match mode {
+            Some(mode) => self
+                .http
+                .put(url)
+                .json(&pulse_protocol::rest::BlockRequest { mode }),
+            None => self.http.delete(url),
         };
         Self::parse(req.bearer_auth(token).send().await).await
     }
@@ -4675,6 +4711,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_server_status_round_trips_through_the_core() {
+        use pulse_protocol::rest::Status;
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (_, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let list = api
+            .set_server_status(&alex, s.id, Some(Status::Dnd))
+            .await
+            .unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].status, Status::Dnd);
+        assert!(
+            api.set_server_status(&alex, s.id, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // only in a server you're in
+        assert!(
+            api.set_server_status(&sam, s.id, Some(Status::Dnd))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn a_server_banner_round_trips_through_the_core() {
         let app = testing::spawn().await;
         let (_, alex) = testing::register(&app, "alex").await;
@@ -6530,6 +6594,27 @@ mod tests {
         );
         let ch = api.set_group_icon(&alex, g.id, None).await.unwrap();
         assert_eq!(ch.icon_hash, None);
+    }
+
+    #[tokio::test]
+    async fn blocks_round_trip_through_the_core() {
+        use pulse_protocol::rest::BlockMode;
+        let app = testing::spawn().await;
+        let (alex_id, alex) = testing::register(&app, "alex").await;
+        let (sam_id, _) = testing::register(&app, "sam").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let list = api
+            .set_block(&alex, sam_id, Some(BlockMode::Hide))
+            .await
+            .unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].mode, BlockMode::Hide);
+        assert!(api.set_block(&alex, sam_id, None).await.unwrap().is_empty());
+        assert!(
+            api.set_block(&alex, alex_id, Some(BlockMode::Line))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

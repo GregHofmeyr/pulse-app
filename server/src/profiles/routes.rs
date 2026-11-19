@@ -126,14 +126,31 @@ async fn save(
     let profile = load_profile(&s.db, me, me)
         .await?
         .ok_or(AppError::NotFound)?;
+    // the people they've blocked get it emptied (#474); everyone else who knows them, as it is
+    let blocked: std::collections::HashSet<UserId> = crate::blocks::list(&s.db, me)
+        .await?
+        .into_iter()
+        .map(|b| b.user_id)
+        .collect();
+    let mut known = crate::presence::known_to(&s.db, me).await?;
+    known.insert(me);
+    let (shown, emptied): (std::collections::HashSet<_>, std::collections::HashSet<_>) =
+        known.into_iter().partition(|u| !blocked.contains(u));
     s.hub
-        .publish(
+        .publish_to(
             &s.db,
             Event::ProfileUpdated {
                 user: profile.user.clone(),
                 card: profile.card.clone(),
             },
+            &shown,
         )
         .await;
+    if !emptied.is_empty() {
+        let (user, card) = crate::blocks::emptied(profile.user.clone(), profile.card.clone());
+        s.hub
+            .publish_to(&s.db, Event::ProfileUpdated { user, card }, &emptied)
+            .await;
+    }
     Ok(Json(profile))
 }

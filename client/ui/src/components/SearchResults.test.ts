@@ -177,7 +177,7 @@ describe("a result's person menu (#135): its author's", () => {
     flushSync()
     expect(e.defaultPrevented).toBe(true)
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for sam')
-    expect(ids()).toEqual(['profile', 'message', 'invite-server', 'nick', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline', 'hide-game'])
+    expect(ids()).toEqual(['profile', 'message', 'invite-server', 'nick', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline', 'hide-game', 'block'])
   })
 
   it('Shift+F10 on a focused result opens it; Esc closes just the menu (not the search) and focus goes back', () => {

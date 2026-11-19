@@ -596,7 +596,7 @@ describe('the person menu on a quote (#135): its poster and its member speakers'
     show(quote([line()], { author_id: 'U2' }))
     expect(rightClick(document.querySelector('.meta .name')!).defaultPrevented).toBe(true)
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for sam')
-    expect(ids()).toEqual(['profile', 'message', 'invite-server', 'nick', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline', 'hide-game'])
+    expect(ids()).toEqual(['profile', 'message', 'invite-server', 'nick', 'private-nick', 'live-notify', 'message-sound', 'person-dnd', 'appear-offline', 'hide-game', 'block'])
     key(document.activeElement!, 'Escape')
     rightClick(document.querySelector('.avbtn')!)
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for sam')

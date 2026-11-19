@@ -133,6 +133,7 @@ const ALLOWED: Record<string, (Allowed | Palette)[]> = {
   'lib/avatar.ts': [{ total: 8, reason: 'the fallback avatar palette: ' + CONTENT }],
   'lib/nameStyle.ts': [{ total: 15, reason: 'the name colour presets people pick from: ' + CONTENT }],
   'lib/nameEffects.ts': [{ total: 13, reason: "the name effects' own colours (#468: a glow's white core, Prism's rainbow, Ember's fire and ash): " + CONTENT }],
+  'lib/packColors.ts': [{ total: 38, reason: "the invite pack's gold, holo rainbow and the light and shade on its foil (#511): " + CONTENT }],
   'lib/cardTheme.ts': [{ total: 30, reason: "the profile card's own themes, drawn the same in every app theme: " + CONTENT }],
   'lib/themes.ts': [{ total: 79, reason: 'the theme table app.css mirrors (themeCss.test.ts keeps the two equal) and the accent presets' }],
   'lib/wheelColours.ts': [{ total: 3, reason: "the picker wheel's slices and their label colours (see below): " + CONTENT }],

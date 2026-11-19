@@ -20,7 +20,7 @@ import ServerSettings from './ServerSettings.svelte'
 import ServerActionDialog from './ServerActionDialog.svelte'
 import { app, resetState, ui } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
-import { invitePreviews } from '../lib/invitePreviews.svelte'
+import { forgetInvitePreviews, invitePreviews } from '../lib/invitePreviews.svelte'
 import type { InvitePreview } from '../lib/protocol/InvitePreview'
 import type { Message } from '../lib/protocol/Message'
 import type { ServerInvite } from '../lib/protocol/ServerInvite'
@@ -63,6 +63,8 @@ const settle = async () => {
   flushSync()
 }
 beforeEach(() => {
+  // an opened invite pack stays open on this device (#511): each test starts with none opened
+  localStorage.clear()
   resetState()
   invoke.mockReset()
   invoke.mockResolvedValue(undefined)
@@ -271,6 +273,14 @@ describe('the invite card', () => {
     return card
   }
   const button = () => document.querySelector<HTMLButtonElement>('.join')
+  /** Open the sealed pack (#511) as Enter on it does, then let the rip finish. */
+  const openPack = async () => {
+    vi.useFakeTimers()
+    document.querySelector<HTMLElement>('.pack')!.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }))
+    vi.advanceTimersByTime(700)
+    vi.useRealTimers()
+    flushSync()
+  }
   const reject = (message: string) => () => Promise.reject({ message })
 
   it('looks the code up once it is on screen, and only once per code', async () => {
@@ -290,12 +300,16 @@ describe('the invite card', () => {
     expect(calls('invite_preview')).toHaveLength(1)
   })
 
-  it('valid: the server, its counts, faces you know, and Join; joining goes there', async () => {
+  it('valid: sealed until opened, then the server, who it is from, its counts and Join; joining goes there', async () => {
     const card = await show(() => preview({ join_text: 'Hop in' }))
+    // sealed: Join waits inside the pack
+    expect(card.dataset.stage).toBe('sealed')
+    expect(button()!.disabled).toBe(true)
+    await openPack()
+    expect(card.dataset.stage).toBe('open')
     expect(card.textContent).toContain('Beta')
-    expect(card.textContent).toContain('3 online · 12 members')
-    expect(card.textContent).toContain('sam invited you')
-    expect(card.querySelectorAll('.face')).toHaveLength(1)
+    expect(card.textContent).toContain('from sam · 3 online · 12 members')
+    expect(card.textContent).toContain('✦ MYTHICAL PULL ✦')
     expect(button()!.textContent).toBe('Hop in')
     invoke.mockImplementation(async (cmd: string) => (cmd === 'accept_invite' ? app.state.servers[1] : undefined))
     button()!.click()
@@ -303,6 +317,47 @@ describe('the invite card', () => {
     expect(calls('accept_invite')).toEqual([{ code: CODE }])
     expect(ui.goServer).toBe('S2')
     expect(button()!.textContent).toBe('Open')
+  })
+
+  it('the pack (#511): its sender sees the card open; once opened it stays open on this device', async () => {
+    let card = await show(() => preview({ inviter_id: 'U1', inviter_name: 'alex' }))
+    expect(card.dataset.stage).toBe('open')
+    expect(document.querySelector('.pack')).toBeNull()
+    expect(card.textContent).toContain('from you')
+    unmount(cmp!)
+    cmp = undefined
+    document.body.innerHTML = ''
+    forgetInvitePreviews()
+    card = await show(() => preview())
+    expect(card.dataset.stage).toBe('sealed')
+    expect(document.querySelector('.pack')!.getAttribute('aria-label')).toContain('press Enter')
+    await openPack()
+    expect(localStorage.getItem(`pulse.invitePack.${CODE}`)).toBe('1')
+    unmount(cmp!)
+    cmp = undefined
+    document.body.innerHTML = ''
+    forgetInvitePreviews()
+    card = await show(() => preview())
+    expect(card.dataset.stage).toBe('open')
+  })
+
+  it('the pack: a dead invite skips it, and with reduced motion it is simply open', async () => {
+    let card = await show(() => preview({ state: 'expired' }))
+    expect(card.dataset.stage).toBe('open')
+    expect(card.classList.contains('dead')).toBe(true)
+    expect(document.querySelector('.rarity')).toBeNull()
+    unmount(cmp!)
+    cmp = undefined
+    document.body.innerHTML = ''
+    forgetInvitePreviews()
+    vi.stubGlobal('matchMedia', fakeMatchMedia(true).matchMedia)
+    try {
+      card = await show(() => preview())
+      expect(card.dataset.stage).toBe('open')
+      expect(document.querySelector('.pack')).toBeNull()
+    } finally {
+      vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
+    }
   })
 
   it('without join text: Join <server>', async () => {
@@ -343,6 +398,7 @@ describe('the invite card', () => {
 
   it('a refused join says what the invite is now', async () => {
     await show(() => preview())
+    await openPack()
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'accept_invite') throw { message: 'This invite has expired.' }
       return undefined

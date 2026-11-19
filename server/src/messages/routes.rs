@@ -172,10 +172,13 @@ pub(crate) async fn load(
     me: Option<UserId>,
     id: MessageId,
 ) -> AppResult<Option<Message>> {
+    // a DM withheld from `me` (#474) isn't there for them
     let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {COLS} FROM messages WHERE id = ?"
+        "SELECT {COLS} FROM messages WHERE id = ? AND (? IS NULL OR withheld_from IS NULL OR withheld_from != ?)"
     )))
     .bind(id.to_string())
+    .bind(me.map(|u| u.to_string()))
+    .bind(me.map(|u| u.to_string()))
     .fetch_optional(db)
     .await?;
     let Some(mut m) = row.map(from_row).transpose()? else {
@@ -297,6 +300,7 @@ struct ListQuery {
 /// `bound` (returned newest first, so every slice reads the same way), otherwise the rows just below.
 async fn slice(
     db: &SqlitePool,
+    viewer: UserId,
     channel: ChannelId,
     bound: &str,
     newer: bool,
@@ -304,10 +308,12 @@ async fn slice(
 ) -> AppResult<Vec<Row>> {
     let (cmp, order) = if newer { (">", "ASC") } else { ("<", "DESC") };
     let mut rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {COLS} FROM messages WHERE channel_id = ? AND id {cmp} ? AND thread_root_id IS NULL ORDER BY id {order} LIMIT ?"
+        "SELECT {COLS} FROM messages WHERE channel_id = ? AND id {cmp} ? AND thread_root_id IS NULL \
+         AND (withheld_from IS NULL OR withheld_from != ?) ORDER BY id {order} LIMIT ?"
     )))
     .bind(channel.to_string())
     .bind(bound)
+    .bind(viewer.to_string())
     .bind(n)
     .fetch_all(db)
     .await?;
@@ -340,14 +346,16 @@ async fn list(
     };
     let limit = page.limit();
     let rows = if let Some(after) = q.after {
-        slice(&s.db, id, &after.to_string(), true, limit).await?
+        slice(&s.db, me, id, &after.to_string(), true, limit).await?
     } else if let Some(target) = q.around {
         // The target must be a main-list message of this channel (deleted and system ones count).
         let anchor: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT {COLS} FROM messages WHERE id = ? AND channel_id = ? AND thread_root_id IS NULL"
+            "SELECT {COLS} FROM messages WHERE id = ? AND channel_id = ? AND thread_root_id IS NULL \
+             AND (withheld_from IS NULL OR withheld_from != ?)"
         )))
         .bind(target.to_string())
         .bind(id.to_string())
+        .bind(me.to_string())
         .fetch_optional(&s.db)
         .await?;
         let anchor = anchor.ok_or(AppError::NotFound)?;
@@ -355,12 +363,12 @@ async fn list(
         // Three plain queries, no transaction: the table is append-only and deletes are soft, so a
         // concurrent write can only shift the window's edges.
         // Each side gets its share; one running out doesn't give its room to the other.
-        let mut rows = slice(&s.db, id, &bound, true, limit - 1 - limit / 2).await?;
+        let mut rows = slice(&s.db, me, id, &bound, true, limit - 1 - limit / 2).await?;
         rows.push(anchor);
-        rows.extend(slice(&s.db, id, &bound, false, limit / 2).await?);
+        rows.extend(slice(&s.db, me, id, &bound, false, limit / 2).await?);
         rows
     } else {
-        slice(&s.db, id, &page.bounds().1, false, limit).await?
+        slice(&s.db, me, id, &page.bounds().1, false, limit).await?
     };
     Ok(Json(fill(&s.db, Some(me), rows).await?))
 }
@@ -554,6 +562,30 @@ pub(crate) async fn post_plain(
     .await
 }
 
+/// The other person in a 1:1 DM `ch`, when it is one.
+pub(crate) async fn dm_other(
+    tx: &mut sqlx::SqliteConnection,
+    ch: &Channel,
+    me: UserId,
+) -> AppResult<Option<UserId>> {
+    if ch.kind != ChannelKind::Dm {
+        return Ok(None);
+    }
+    let other: Option<String> = sqlx::query_scalar(
+        "SELECT user_id FROM channel_members WHERE channel_id = ? AND user_id != ? LIMIT 1",
+    )
+    .bind(ch.id.to_string())
+    .bind(me.to_string())
+    .fetch_optional(&mut *tx)
+    .await?;
+    other
+        .map(|o| {
+            o.parse()
+                .map_err(|e| AppError::from(anyhow::Error::from(e)))
+        })
+        .transpose()
+}
+
 /// Store `out` from `me` in `ch` and fan it out: the send path after its checks.
 pub(crate) async fn deliver(
     s: &AppState,
@@ -653,7 +685,26 @@ pub(crate) async fn deliver(
             .await?
             .ok_or(AppError::NotFound);
     }
-    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at, nonce, thread_root_id, gif, caption_is_fallback) VALUES (?, ?, ?, 'normal', ?, ?, ?, ?, ?, ?, ?)")
+    // A 1:1 DM with someone who has blocked you (#474): it looks sent and never reaches them. One you've blocked:
+    // refused (unblock them first).
+    let withheld = match dm_other(&mut tx, ch, me).await? {
+        Some(other) if crate::blocks::has_blocked(&mut *tx, me, other).await? => {
+            return Err(AppError::ForbiddenMsg(
+                "You've blocked them. Unblock them to send a message.".into(),
+            ));
+        }
+        Some(other) => crate::blocks::withhold_for(&mut *tx, me, other).await?,
+        None => None,
+    };
+    let (mentioned, pinged): (Vec<UserId>, Vec<UserId>) = match withheld {
+        Some(w) => (
+            mentioned.into_iter().filter(|u| *u != w).collect(),
+            pinged.into_iter().filter(|u| *u != w).collect(),
+        ),
+        None => (mentioned, pinged),
+    };
+    msg.mentions = mentioned.iter().chain(&pinged).copied().collect();
+    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at, nonce, thread_root_id, gif, caption_is_fallback, withheld_from) VALUES (?, ?, ?, 'normal', ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(msg.id.to_string())
         .bind(id.to_string())
         .bind(me.to_string())
@@ -664,6 +715,7 @@ pub(crate) async fn deliver(
         .bind(thread_root_id.map(|r| r.to_string()))
         .bind(&gif_json)
         .bind(msg.caption_is_fallback)
+        .bind(withheld.map(|w| w.to_string()))
         .execute(&mut *tx)
         .await?;
     crate::attachments::bind(&mut tx, me, msg.id, &attachment_ids, &mut msg.attachments).await?;
@@ -684,8 +736,11 @@ pub(crate) async fn deliver(
     if ch.kind.is_private() {
         // A new message reopens closed conversations (clients un-hide on MessageCreated).
         // Server channels can't be closed, so they skip this write entirely.
-        sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ?")
+        // One withheld (#474) reopens it only for its sender.
+        sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ? AND (? IS NULL OR user_id = ?)")
             .bind(id.to_string())
+            .bind(withheld.map(|_| me.to_string()))
+            .bind(me.to_string())
             .execute(&mut *tx)
             .await?;
     }

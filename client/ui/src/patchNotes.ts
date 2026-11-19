@@ -31,6 +31,9 @@ export const patchNotes: PatchNotes = {
     'Servers are now private: you only see servers you\'re in, and you join with an invite',
     'Server icons: anyone in a server can give it a picture, shown on the server bar, invites and everywhere else it appears',
     'Server settings › Overview: the server\'s icon, banner and name in one place, shown together the way its invites show them',
+    'My status here: right-click a server to be Online, Do Not Disturb or Invisible in that server only. Its members see it there, everyone sees your usual status everywhere else, and a dot on the server marks it',
+    'Server invites arrive as a sealed card pack in the server\'s colours: drag across the top to tear it open and pull a mythical server card (once opened, it stays open)',
+    'Block someone from their right-click menu or Settings › Privacy: their DMs, calls, invites, pings and sounds stop reaching you, and they see you offline. Pick whether their messages show as a \'Blocked message\' line or vanish completely',
   ],
   fixes: [
     'The Invite dialog keeps one link while it\'s open: changing the button text, expiry or uses no longer swaps the link (or breaks Copy)',

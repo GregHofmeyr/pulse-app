@@ -39,6 +39,10 @@ pub struct Subject {
     pub custom_until: Option<String>,
     /// The people they hide what they're playing from (#436).
     pub game_hidden: HashSet<UserId>,
+    /// Their own status in some servers (#154): server → (status, when set). See `crate::server_status`.
+    pub server_status: HashMap<pulse_protocol::ids::ServerId, (Status, String)>,
+    /// The people they've blocked (#474): to them they're always offline, never seen, and play nothing.
+    pub blocked: HashSet<UserId>,
 }
 
 /// What one viewer sees of one person.
@@ -152,7 +156,14 @@ impl Subject {
     /// Whether `viewer` may see this person's game activity (#436), when they see them online at all: never hidden
     /// from themselves.
     pub fn shows_game_to(&self, viewer: UserId) -> bool {
-        viewer == self.id || !self.game_hidden.contains(&viewer)
+        viewer == self.id || !self.game_hidden.contains(&viewer) && !self.blocked.contains(&viewer)
+    }
+
+    /// Whether a server status of Online (#154) may show them online to `viewer`: not someone they appear offline to,
+    /// nor someone they've blocked (#474).
+    pub fn may_show_online_to(&self, viewer: UserId) -> bool {
+        !self.hidden.get(&viewer).is_some_and(|(_, active)| *active)
+            && !self.blocked.contains(&viewer)
     }
 
     /// Whether this person hides from `viewer` at all right now.
@@ -207,6 +218,10 @@ pub fn view_for(
             }
         };
     }
+    // someone they've blocked (#474): always offline, never seen
+    if s.blocked.contains(&viewer) {
+        return offline(None);
+    }
     if s.hides_from(viewer, now) {
         return offline(s.frozen_for(viewer, now));
     }
@@ -242,6 +257,8 @@ fn subject(r: Row) -> anyhow::Result<Subject> {
         custom: r.5.map(|text| CustomStatus { text, emoji: r.6 }),
         custom_until: r.7,
         game_hidden: HashSet::new(),
+        server_status: HashMap::new(),
+        blocked: HashSet::new(),
     })
 }
 
@@ -271,6 +288,15 @@ pub async fn load_subject(db: &SqlitePool, id: UserId) -> anyhow::Result<Option<
             .await?;
     for t in game_hidden {
         s.game_hidden.insert(t.parse()?);
+    }
+    s.server_status = crate::server_status::load_for(db, id).await?;
+    let blocked: Vec<String> =
+        sqlx::query_scalar("SELECT target_id FROM blocks WHERE blocker_id = ?")
+            .bind(id.to_string())
+            .fetch_all(db)
+            .await?;
+    for t in blocked {
+        s.blocked.insert(t.parse()?);
     }
     Ok(Some(s))
 }
@@ -305,6 +331,19 @@ pub async fn load_all(db: &SqlitePool) -> anyhow::Result<HashMap<UserId, Subject
             s.game_hidden.insert(t.parse()?);
         }
     }
+    for (u, st) in crate::server_status::load_all(db).await? {
+        if let Some(s) = all.get_mut(&u) {
+            s.server_status = st;
+        }
+    }
+    let blocked: Vec<(String, String)> = sqlx::query_as("SELECT blocker_id, target_id FROM blocks")
+        .fetch_all(db)
+        .await?;
+    for (o, t) in blocked {
+        if let Some(s) = all.get_mut(&o.parse()?) {
+            s.blocked.insert(t.parse()?);
+        }
+    }
     Ok(all)
 }
 
@@ -336,7 +375,23 @@ mod tests {
             custom: None,
             custom_until: None,
             game_hidden: HashSet::new(),
+            server_status: HashMap::new(),
+            blocked: HashSet::new(),
         }
+    }
+
+    #[test]
+    fn someone_blocked_sees_them_offline_and_never_seen() {
+        let mut s = alex();
+        let sam = UserId::new();
+        s.blocked.insert(sam);
+        assert_eq!(
+            view_for(&s, sam, true, false, NOW),
+            PresenceView::stranger()
+        );
+        assert!(!s.shows_game_to(sam));
+        assert!(view_for(&s, UserId::new(), true, false, NOW).online());
+        assert!(view_for(&s, s.id, true, false, NOW).online());
     }
 
     #[test]

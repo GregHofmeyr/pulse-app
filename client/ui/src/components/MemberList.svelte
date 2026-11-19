@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app, clock, ui } from '../lib/store.svelte'
+  import { isHidden } from '../lib/blocks'
   import { byPresence, presenceOf } from '../lib/presence'
   import Avatar from './Avatar.svelte'
   import Icon from './Icon.svelte'
@@ -20,11 +21,12 @@
   import { thumbUrl } from '../lib/achievements'
 
   let { serverId, onMessage }: { serverId: string; onMessage?: (userId: string) => void } = $props()
-  const members = $derived(app.state.members[serverId] ?? [])
+  // someone blocked with Hide completely (#474) isn't listed or counted
+  const members = $derived((app.state.members[serverId] ?? []).filter((m) => !isHidden(app.state, m.user.id)))
   // Online (DND included) above Offline, as Discord does (#170): only by what you're told, so someone Invisible or
   // hiding from you is Offline. A section with nobody in it has no heading.
   const sections = $derived.by(() => {
-    const { online, offline } = byPresence(app.state, members, (m) => m.user.id, clock.nowIso)
+    const { online, offline } = byPresence(app.state, members, (m) => m.user.id, clock.nowIso, serverId)
     return [{ key: 'online', label: 'Online', list: online }, { key: 'offline', label: 'Offline', list: offline }].filter((g) => g.list.length)
   })
   // Opening cheaply (#238): a server's list draws its first rows with the switch and the rest (a big server's hundreds)
@@ -93,7 +95,7 @@
     <div class="row hover-row" class:off={g.key === 'offline'} data-section={g.key} data-card-anchor role="presentation"
       onclick={(e) => { if (!(e.target as Element).closest('button')) openCard(m.user.id, serverId, e.currentTarget) }} onpointerenter={() => (hovered = m.user.id)} onpointerleave={() => { if (hovered === m.user.id) hovered = null }}
       oncontextmenu={(e) => { e.preventDefault(); openMenu(m.user.id, e, e.currentTarget) }} onkeydown={(e) => rowKey(m.user.id, e)}>
-      <Avatar id={m.user.id} {name} size={32} presence={presenceOf(app.state, m.user.id, clock.nowIso)} interactive {serverId} hovered={() => hovered === m.user.id} />
+      <Avatar id={m.user.id} {name} size={32} presence={presenceOf(app.state, m.user.id, clock.nowIso, serverId)} interactive {serverId} hovered={() => hovered === m.user.id} />
       <!-- their custom status (#152), else the game they're playing (#392), else what they're listening to (#275),
            takes the line under the name; Spotify's icon sits at the row's end, only with its line -->
       <span class="who"><Name userId={m.user.id} {serverId} text={name} surface="side" />{#if custom}<CustomStatusLine status={custom} />{:else if playing}<PlayingLine {playing} />{:else if listening}<ListeningLine {listening} icon={false} />{:else if name !== base}<small class="name-clip">{base}</small>{/if}</span>

@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use axum::extract::{Path, State};
 use axum::routing::{get, post, put};
@@ -949,23 +949,40 @@ async fn create_dm(
             .await?;
         crate::reads::init_point(&mut tx, u, ch.id).await?;
     }
+    // A DM with someone who has blocked you (#474): made for you, closed and unheard of for them.
+    let mut to: HashSet<UserId> = std::iter::once(me).chain(others.iter().copied()).collect();
+    if kind == ChannelKind::Dm {
+        for u in others.iter().copied() {
+            if crate::blocks::has_blocked(&mut *tx, u, me).await? {
+                sqlx::query("INSERT OR IGNORE INTO dm_hidden (user_id, channel_id, hidden_at) VALUES (?, ?, ?)")
+                    .bind(u.to_string())
+                    .bind(ch.id.to_string())
+                    .bind(&at)
+                    .execute(&mut *tx)
+                    .await?;
+                to.remove(&u);
+            }
+        }
+    }
     tx.commit().await?;
     s.hub
-        .publish(
+        .publish_to(
             &s.db,
             Event::ChannelCreated {
                 channel: ch.clone(),
             },
+            &to,
         )
         .await;
     let members: Vec<UserId> = std::iter::once(me).chain(others.iter().copied()).collect();
     s.hub
-        .publish(
+        .publish_to(
             &s.db,
             Event::GroupMembersChanged {
                 channel_id: ch.id,
                 user_ids: members.clone(),
             },
+            &to,
         )
         .await;
     // they share a conversation now: presence both ways (#80)

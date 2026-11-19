@@ -3,6 +3,7 @@
 import type { AppState } from './state'
 import type { CallRing } from './protocol/CallRing'
 import type { Message } from './protocol/Message'
+import { isBlocked } from './blocks'
 import { displayName } from './selectors'
 import { isMuted } from './conversations'
 import { dndActive } from './status'
@@ -46,6 +47,8 @@ export function ringPlace(ring: CallRing, openChannelId: string | null): 'band' 
 export function ringAlerts(s: AppState, ring: CallRing, nowIso: string): boolean {
   if (dndActive(s, nowIso)) return false
   if (quietFrom(s.personDnd, ring.caller_id, true, nowIso)) return false
+  // someone you've blocked (#474): the server doesn't ring you, and nothing here does either
+  if (isBlocked(s, ring.caller_id)) return false
   const ch = s.channels[ring.channel_id]
   return !(ch && isMuted(s, ch, nowIso))
 }

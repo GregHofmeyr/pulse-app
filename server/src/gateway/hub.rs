@@ -19,12 +19,15 @@ use std::sync::{Arc, Mutex};
 
 use pulse_protocol::gateway::{Event, ServerFrame};
 use pulse_protocol::ids::UserId;
-use pulse_protocol::rest::{Listening, Person, Playing, SteamJoin, User};
+use pulse_protocol::rest::{Listening, Person, Playing, ServerPresence, SteamJoin, User};
 use sqlx::SqlitePool;
 use tokio::sync::{mpsc, oneshot};
 
 use super::audience::{Audience, audience_for};
 use crate::presence::{PresenceView, load_all, load_subject, view_for};
+
+/// What a connection was last told of someone's presence: their view, and inside which servers it differs (#154).
+type Told = (PresenceView, Vec<ServerPresence>);
 
 pub const QUEUE: usize = 256;
 /// Close code sent to a client the hub dropped for falling behind (it should resync via Ready).
@@ -235,7 +238,8 @@ struct Inner {
     /// What each connection was last told about each person's presence, by (person, connection):
     /// per connection, not per viewer, because a viewer's new device starts from its own Ready
     /// while their other devices still show what they were told. Locked only while `conns` is held.
-    announced: Mutex<HashMap<(UserId, ConnId), PresenceView>>,
+    /// With it, how they look inside servers where they've set a status of their own (#154).
+    announced: Mutex<HashMap<(UserId, ConnId), Told>>,
     /// Whose profile each connection has, by (person, connection) (#486): Ready's people, or a `UserCreated` since.
     /// Only people who share a server, a DM or a group with them (and they themselves) are in it; the presence sync
     /// adds someone who comes to share one, with their profile, and forgets someone who no longer does. Locked only
@@ -797,6 +801,19 @@ impl Hub {
         } else {
             None
         };
+        // who is in each server where they've set a status of their own (#154): each viewer sees it in the ones they share
+        let status_members = if subject.server_status.is_empty() {
+            HashMap::new()
+        } else {
+            match crate::server_status::members_of(db, subject.server_status.keys().copied()).await
+            {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::error!(error = ?e, "presence not announced");
+                    return None;
+                }
+            }
+        };
         let now = crate::db::now();
         let mut conns = self.inner.conns.lock().unwrap();
         if closing(&conns, &self.inner.open.lock().unwrap(), user) {
@@ -823,10 +840,13 @@ impl Hub {
                 } else if let Some(u) = &profile
                     && introduced.insert((user, *id))
                 {
-                    intro_to.insert(
-                        *id,
-                        ServerFrame::Event(Event::UserCreated { user: u.clone() }),
-                    );
+                    // someone they've blocked gets them emptied (#474)
+                    let u = if subject.blocked.contains(&c.user) {
+                        crate::blocks::emptied_user(u.clone())
+                    } else {
+                        u.clone()
+                    };
+                    intro_to.insert(*id, ServerFrame::Event(Event::UserCreated { user: u }));
                 }
                 let view = if knows {
                     view_for(&subject, c.user, connected, idle, &now)
@@ -857,12 +877,26 @@ impl Hub {
                         }),
                     );
                 }
-                if announced.get(&(user, *id)) == Some(&view)
+                let in_servers = if knows {
+                    crate::server_status::views_for(
+                        &subject,
+                        c.user,
+                        &view,
+                        |sv| status_members.get(&sv).is_some_and(|m| m.contains(&c.user)),
+                        connected,
+                        idle,
+                    )
+                } else {
+                    vec![]
+                };
+                let told = (view, in_servers);
+                if announced.get(&(user, *id)) == Some(&told)
                     // never told of them (#486): a stranger is nobody they have, so there's nothing to say
                     || !knows && !announced.contains_key(&(user, *id))
                 {
                     continue;
                 }
+                let (view, in_servers) = &told;
                 let frame = views
                     .entry(c.user)
                     .or_insert_with(|| {
@@ -873,10 +907,11 @@ impl Hub {
                             status: view.status,
                             idle: view.idle,
                             custom_status: view.custom.clone(),
+                            in_servers: in_servers.clone(),
                         })
                     })
                     .clone();
-                announced.insert((user, *id), view);
+                announced.insert((user, *id), told);
                 to.insert(*id, frame);
             }
         }
@@ -914,6 +949,10 @@ impl Hub {
         let _order = self.inner.presence.lock().await;
         let all = load_all(db).await?;
         let known = crate::presence::known_to(db, viewer).await?;
+        // the servers they're in: someone's own status in one (#154) shows to them there
+        let mine = crate::servers::routes::server_ids_of(db, viewer)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
         let now = crate::db::now();
         let conns = self.inner.conns.lock().unwrap();
         let mut announced = self.inner.announced.lock().unwrap();
@@ -949,8 +988,30 @@ impl Hub {
                 let playing = (sees && shows_game)
                     .then(|| self.shown_playing(&conns, user.id))
                     .flatten();
+                let in_servers = match all.get(&user.id) {
+                    Some(s) if user.id == viewer || known.contains(&user.id) => {
+                        crate::server_status::views_for(
+                            s,
+                            viewer,
+                            &view,
+                            |sv| mine.contains(&sv),
+                            connected,
+                            idle,
+                        )
+                    }
+                    _ => vec![],
+                };
+                // someone who blocked them shows emptied (#474)
+                let user = if all
+                    .get(&user.id)
+                    .is_some_and(|s| s.blocked.contains(&viewer))
+                {
+                    crate::blocks::emptied_user(user)
+                } else {
+                    user
+                };
                 if let Some(conn) = conn {
-                    announced.insert((user.id, conn), view.clone());
+                    announced.insert((user.id, conn), (view.clone(), in_servers.clone()));
                     introduced.insert((user.id, conn));
                     self.inner.listening.tell(user.id, conn, listening.as_ref());
                     self.inner.playing.tell(user.id, conn, playing.as_ref());
@@ -964,6 +1025,7 @@ impl Hub {
                     listening,
                     playing,
                     custom_status: view.custom,
+                    in_servers,
                 }
             })
             .collect())

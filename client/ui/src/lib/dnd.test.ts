@@ -158,6 +158,7 @@ describe('what DND touches', () => {
       .sort()
     // lib/calls.ts: ringing for incoming calls (#50: no popover, ringtone or notification under DND; calls.svelte.test.ts)
     // lib/stream/viewer.ts: the live toast, sound and notification (`liveQuiet`, with per-person DND, #426)
-    expect(callers).toEqual(['lib/badges.svelte.ts', 'lib/calls.ts', 'lib/store.svelte.ts', 'lib/stream/viewer.ts'])
+    // lib/serverStatus.ts: the message alerts (lib/store.svelte.ts), through your status in that server (#154)
+    expect(callers).toEqual(['lib/badges.svelte.ts', 'lib/calls.ts', 'lib/serverStatus.ts', 'lib/stream/viewer.ts'])
   })
 })

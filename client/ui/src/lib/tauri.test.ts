@@ -81,6 +81,20 @@ describe('profile pictures', () => {
     expect(invoke).toHaveBeenCalledWith('rename_server', { serverId: 'S1', name: 'Lounge' })
   })
 
+  it('setServerStatus names its arguments (#154)', async () => {
+    await api.setServerStatus('S1', 'dnd')
+    expect(invoke).toHaveBeenCalledWith('set_server_status', { serverId: 'S1', status: 'dnd' })
+    await api.setServerStatus('S1', null)
+    expect(invoke).toHaveBeenCalledWith('set_server_status', { serverId: 'S1', status: null })
+  })
+
+  it('setBlock names its arguments (#474)', async () => {
+    await api.setBlock('U2', 'hide')
+    expect(invoke).toHaveBeenCalledWith('set_block', { userId: 'U2', mode: 'hide' })
+    await api.setBlock('U2', null)
+    expect(invoke).toHaveBeenCalledWith('set_block', { userId: 'U2', mode: null })
+  })
+
   it('setServerBanner names its arguments (#475)', async () => {
     await api.setServerBanner('S1', 'ab')
     expect(invoke).toHaveBeenCalledWith('set_server_banner', { serverId: 'S1', hash: 'ab' })

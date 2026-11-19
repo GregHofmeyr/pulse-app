@@ -1203,6 +1203,18 @@ pub async fn transfer_server(
     core.check(&app, api.transfer_server(&token, server_id, user_id).await)
 }
 
+/// Your status in one server (#154), or `None` for Same as everywhere. Your whole list back.
+#[tauri::command]
+pub async fn set_server_status(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    status: Option<pulse_protocol::rest::Status>,
+) -> Result<Vec<pulse_protocol::rest::ServerStatus>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_server_status(&token, server_id, status).await)
+}
+
 /// A server's banner (#475): a banner-upload hash, or `None` to remove it. Its owner only.
 #[tauri::command]
 pub async fn set_server_banner(
@@ -2596,6 +2608,18 @@ pub async fn set_activity_hidden(
 ) -> Result<Vec<UserId>, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.set_activity_hidden(&token, user_id, on).await)
+}
+
+/// Block someone (#474) with how they show, or unblock them (`mode: None`). Your whole list back.
+#[tauri::command]
+pub async fn set_block(
+    app: AppHandle,
+    core: State<'_, Core>,
+    user_id: UserId,
+    mode: Option<pulse_protocol::rest::BlockMode>,
+) -> Result<Vec<pulse_protocol::rest::Block>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_block(&token, user_id, mode).await)
 }
 
 /// Invite a DM or group to the game you're playing (#436).

@@ -105,9 +105,11 @@ async fn read_all(
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     let newest: Option<String> = sqlx::query_scalar(
-        "SELECT MAX(id) FROM messages WHERE channel_id = ? AND thread_root_id IS NULL",
+        "SELECT MAX(id) FROM messages WHERE channel_id = ? AND thread_root_id IS NULL
+           AND (withheld_from IS NULL OR withheld_from != ?)",
     )
     .bind(id.to_string())
+    .bind(me.to_string())
     .fetch_one(&mut *tx)
     .await?;
     let newest: Option<MessageId> = newest
