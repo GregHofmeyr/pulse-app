@@ -42,6 +42,9 @@ const STYLE: &str = concat!(
     ".icon{width:88px;height:88px;margin:0 auto 16px;border-radius:24px;display:flex;align-items:center;",
     "justify-content:center;background:#7c5cff;font-size:40px;font-weight:700;overflow:hidden}",
     ".icon img{width:100%;height:100%;object-fit:cover}",
+    ".banner{height:120px;margin:-32px -28px 0;border-radius:20px 20px 0 0;overflow:hidden;background:#2c2840}",
+    ".banner img{width:100%;height:100%;object-fit:cover;display:block}",
+    ".banner+.icon{position:relative;margin-top:-44px;box-shadow:0 0 0 6px #1c1928}",
     ".from{margin:0;color:#a9a3bd;font-size:14px}h1{margin:4px 0 6px;font-size:26px;line-height:1.2;",
     "overflow-wrap:anywhere}.counts{margin:0 0 24px;color:#a9a3bd;font-size:14px}",
     ".btn{display:block;width:100%;margin:10px 0 0;padding:12px 16px;border:0;border-radius:12px;font:inherit;",
@@ -129,13 +132,14 @@ fn live(code: &str, inv: &PublicInvite) -> Response {
         Some(h) => format!("<img src=\"/media/{}\" alt=\"\">", escape(h)),
         None => escape(&inv.name.chars().next().unwrap_or('?').to_string()),
     };
+    let banner = banner_html(inv.banner_hash.as_deref(), inv.banner_still.as_deref());
     let button = escape(inv.join_text.as_deref().unwrap_or("Open in Pulse"));
     let people = |n: i64, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
     html(
         StatusCode::OK,
         &format!("Join {} on Pulse", inv.name),
         &format!(
-            "<div class=\"icon\">{icon}</div>\
+            "{banner}<div class=\"icon\">{icon}</div>\
              <p class=\"from\">{} invited you to</p><h1>{name}</h1>\
              <p class=\"counts\">{} online · {}</p>\
              <a class=\"btn primary\" href=\"pulse://invite/{}\">{button}</a>{DOWNLOAD}\
@@ -150,6 +154,27 @@ fn live(code: &str, inv: &PublicInvite) -> Response {
                 "Already on Pulse? Open it to join."
             },
         ),
+    )
+}
+
+/// The server's banner (#475) over the top of the card, if it has one. An animated one holds still for someone who
+/// asked for less motion (the page has no script, so the browser picks).
+fn banner_html(hash: Option<&str>, still: Option<&str>) -> String {
+    let Some(hash) = hash else {
+        return String::new();
+    };
+    let still = still
+        .filter(|s| *s != hash)
+        .map(|s| {
+            format!(
+                "<source media=\"(prefers-reduced-motion: reduce)\" srcset=\"/media/{}\">",
+                escape(s)
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "<div class=\"banner\"><picture>{still}<img src=\"/media/{}\" alt=\"\"></picture></div>",
+        escape(hash)
     )
 }
 

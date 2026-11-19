@@ -366,6 +366,11 @@ pub enum Event {
         owner_id: UserId,
         previous_owner_id: UserId,
     },
+    /// Its owner changed how a server looks (#475: its banner set or removed). Everyone (servers are public): the
+    /// server as it is now. Clients from before it skip it and catch up on their next Ready.
+    ServerUpdated {
+        server: Server,
+    },
     /// Only to its person's own sessions, a server's owner: who is blocked from rejoining their server changed (#431),
     /// a removal blocked someone or they allowed someone back. An open Members pane asks again
     /// (`GET /servers/{id}/blocked`). Clients from before it skip it.
@@ -986,6 +991,7 @@ impl Event {
             | Self::LayoutChanged { .. }
             | Self::MemberJoined { .. }
             | Self::ServerOwnerChanged { .. }
+            | Self::ServerUpdated { .. }
             | Self::MemberLeft { .. }
             | Self::MemberUpdated { .. }
             | Self::UserCreated { .. }

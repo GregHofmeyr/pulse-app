@@ -538,6 +538,15 @@ pub struct Server {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub owner_id: Option<UserId>,
+    /// Its banner (#475): a picture from `POST /media/banner`, set by its owner. Absent when it has none (invite
+    /// cards then draw a gradient of its colours).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub banner_hash: Option<String>,
+    /// An animated banner's still, for when it shouldn't move.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub banner_still: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -780,10 +789,14 @@ pub struct InvitePreview {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub icon_hash: Option<String>,
-    /// The server's banner, once servers have one (always absent for now).
+    /// The server's banner (#475), if it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub banner_hash: Option<String>,
+    /// An animated banner's still, for when it shouldn't move.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub banner_still: Option<String>,
     pub member_count: i64,
     /// Members who look online to the viewer.
     pub online_count: i64,
@@ -2443,6 +2456,13 @@ pub struct RenameChannelRequest {
 /// A group's icon (#56): the hash of a picture from `POST /media/avatar`, or `None` to clear it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct SetGroupIconRequest {
+    pub hash: Option<String>,
+}
+
+/// `PUT /servers/{id}/banner` (#475): the hash of a picture from `POST /media/banner`, or `None` to remove it. Its
+/// owner only.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SetServerBannerRequest {
     pub hash: Option<String>,
 }
 

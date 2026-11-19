@@ -1,3 +1,4 @@
+pub mod banner;
 pub mod bans;
 pub mod categories;
 pub mod channels;

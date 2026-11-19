@@ -10,9 +10,13 @@ import type { UserId } from "./UserId";
  */
 export type InvitePreview = { code: string, server_id: ServerId, name: string, icon_hash?: string, 
 /**
- * The server's banner, once servers have one (always absent for now).
+ * The server's banner (#475), if it has one.
  */
-banner_hash?: string, member_count: number, 
+banner_hash?: string, 
+/**
+ * An animated banner's still, for when it shouldn't move.
+ */
+banner_still?: string, member_count: number, 
 /**
  * Members who look online to the viewer.
  */

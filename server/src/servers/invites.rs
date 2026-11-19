@@ -764,6 +764,8 @@ pub(crate) async fn guard(s: &AppState, who: &Seeker) -> AppResult<()> {
 pub(crate) struct PublicInvite {
     pub name: String,
     pub icon_hash: Option<String>,
+    pub banner_hash: Option<String>,
+    pub banner_still: Option<String>,
     pub member_count: i64,
     pub online_count: i64,
     pub inviter_name: String,
@@ -792,11 +794,7 @@ pub(crate) async fn public_invite(
         log_failure(&s.db, who, code, f).await;
         return Ok(None);
     }
-    let (name, icon_hash): (String, Option<String>) =
-        sqlx::query_as("SELECT name, icon_hash FROM servers WHERE id = ?")
-            .bind(server.to_string())
-            .fetch_one(&s.db)
-            .await?;
+    let (name, icon_hash, banner_hash, banner_still) = looks(&s.db, server).await?;
     let member_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM server_members WHERE server_id = ?")
             .bind(server.to_string())
@@ -805,6 +803,8 @@ pub(crate) async fn public_invite(
     Ok(Some(PublicInvite {
         name,
         icon_hash,
+        banner_hash,
+        banner_still,
         member_count,
         online_count: online_to_anyone(s, server).await?,
         inviter_name: crate::dms::routes::shown_name(&s.db, row.maker()?).await?,
@@ -813,6 +813,21 @@ pub(crate) async fn public_invite(
             .await?
             .is_some(),
     }))
+}
+
+/// What a card shows of how `server` looks: its name, icon, and banner (#475) with an animated one's still.
+#[allow(clippy::type_complexity)]
+async fn looks(
+    db: &SqlitePool,
+    server: ServerId,
+) -> AppResult<(String, Option<String>, Option<String>, Option<String>)> {
+    Ok(sqlx::query_as(
+        "SELECT s.name, s.icon_hash, s.banner_hash, m.still_hash FROM servers s
+         LEFT JOIN media m ON m.hash = s.banner_hash WHERE s.id = ?",
+    )
+    .bind(server.to_string())
+    .fetch_one(db)
+    .await?)
 }
 
 /// Members of `server` who look online to someone who hides from nobody's list: connected and not Invisible.
@@ -879,11 +894,7 @@ async fn preview(
     if let Some(f) = Failure::of(state) {
         log_failure(&s.db, &who, &code, f).await;
     }
-    let (name, icon_hash): (String, Option<String>) =
-        sqlx::query_as("SELECT name, icon_hash FROM servers WHERE id = ?")
-            .bind(server.to_string())
-            .fetch_one(&s.db)
-            .await?;
+    let (name, icon_hash, banner_hash, banner_still) = looks(&s.db, server).await?;
     let member_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM server_members WHERE server_id = ?")
             .bind(server.to_string())
@@ -895,7 +906,8 @@ async fn preview(
         server_id: server,
         name,
         icon_hash,
-        banner_hash: None,
+        banner_hash,
+        banner_still,
         member_count,
         online_count: online_count(&s, server, me).await?,
         faces: faces(&s.db, server, me).await?,

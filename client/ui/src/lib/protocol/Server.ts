@@ -7,4 +7,13 @@ export type Server = { id: ServerId, name: string, icon_hash: string | null,
  * Who owns it (its creator): only they may delete or restore it (#184). Absent from older
  * servers.
  */
-owner_id?: UserId, };
+owner_id?: UserId, 
+/**
+ * Its banner (#475): a picture from `POST /media/banner`, set by its owner. Absent when it has none (invite
+ * cards then draw a gradient of its colours).
+ */
+banner_hash?: string, 
+/**
+ * An animated banner's still, for when it shouldn't move.
+ */
+banner_still?: string, };

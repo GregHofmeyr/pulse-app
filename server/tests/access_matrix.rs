@@ -499,6 +499,7 @@ const WRITES: &[&str] = &[
     "POST /servers",
     "DELETE /servers/{id}",
     "PUT /servers/{id}/achievements-channel",
+    "PUT /servers/{id}/banner",
     "DELETE /servers/{id}/bans/{user}",
     "PUT /servers/{id}/bans/{user}",
     "DELETE /servers/{id}/blocked/{user}",
