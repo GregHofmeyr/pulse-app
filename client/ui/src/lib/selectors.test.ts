@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState } from './state'
-import { roleColorFor, userOf, callRoster, channelsFor, displayName, groupedWith, groupedPending, isLive, isMember, liveIn, mentionablesFor, nameOfIn, pillNamesFor, serverPeople, typingNames, voiceOccupants, inServerVoice } from './selectors'
+import { onUnknownPerson, roleColorFor, userOf, callRoster, channelsFor, displayName, groupedWith, groupedPending, isLive, isMember, liveIn, mentionablesFor, nameOfIn, pillNamesFor, serverPeople, typingNames, voiceOccupants, inServerVoice } from './selectors'
 import type { Message } from './protocol/Message'
 import type { Ready } from './protocol/Ready'
 import type { StreamInfo } from './protocol/StreamInfo'
@@ -344,6 +344,23 @@ describe('userOf and roleColorFor', () => {
     expect(userOf(applyReady(emptyState(), base), 'U1')?.avatar_hash).toBe('ppl')
     expect(userOf(applyReady(emptyState(), { ...base, people: [] }), 'U1')?.avatar_hash).toBe('mem')
     expect(userOf(applyReady(emptyState(), { ...base, people: [], members: [] }), 'U1')?.avatar_hash).toBe('me')
+  })
+
+  it("someone the state doesn't have is looked up once, then read from their profile (#486)", () => {
+    const asked: string[] = []
+    onUnknownPerson((id) => asked.push(id))
+    try {
+      const s = applyReady(emptyState(), r)
+      expect(userOf(s, 'U9')).toBeNull()
+      expect(asked).toEqual(['U9'])
+      const kim = { ...sam, id: 'U9', username: 'kim', display_name: 'kim' }
+      const t = { ...s, profiles: { U9: { user: kim } as never } }
+      expect(userOf(t, 'U9')).toEqual(kim)
+      expect(displayName(t, null, 'U9')).toBe('kim')
+      expect(asked).toEqual(['U9'])
+    } finally {
+      onUnknownPerson(null)
+    }
   })
 
   it('roleColorFor reads the fixture map', () => {

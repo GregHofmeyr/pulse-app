@@ -20,6 +20,7 @@ import { notifyMessage, NotifyThrottle } from './notify'
 import { notifyPrefs } from './notifyPrefs.svelte'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { noteReactionEvent } from './reactions'
+import { onUnknownPerson } from './selectors'
 import { playSound } from './voiceui'
 import { messageSetIn } from './messageSounds.svelte'
 import { loadMixer, soundGain } from './mixer'
@@ -287,9 +288,21 @@ export const PROFILE_STALE_MS = 5 * 60_000
 /** Bumped by resetState and on every Ready: a load started before it must not write into the new state. */
 let loadEpoch = 0
 
+/** The people looked up because a message named someone the state doesn't have (#486), each asked once a Ready. */
+const askedPeople = new Set<string>()
+onUnknownPerson((id) => {
+  if (askedPeople.has(id) || !app.state.me) return
+  askedPeople.add(id)
+  // after the render that asked: the answer lands in `profiles`, which `userOf` reads
+  void Promise.resolve()
+    .then(() => loadProfile(id))
+    .catch(() => {})
+})
+
 /** Forget every profile load in flight (their answers are dropped) and every fetch time. */
 function forgetProfileLoads() {
   loadEpoch++
+  askedPeople.clear()
   profileLoads.clear()
   updatedDuringLoad.clear()
   profileFetchedAt.clear()

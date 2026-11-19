@@ -1220,8 +1220,12 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       if (!list) return s
       return { ...s, voice: { ...s.voice, [c]: list.map((m) => (m.user_id === u ? { ...m, flags } : m)) } }
     }
-    case 'UserCreated':
-      return s.people[e.d.user.id] ? s : { ...s, people: { ...s.people, [e.d.user.id]: { user: e.d.user, online: false, last_seen_at: null, status: 'offline' } } }
+    // A new account, or someone you just came to share a server, a DM or a group with (#486): a copy you have takes
+    // their profile as it is now, and keeps its presence (their presence follows).
+    case 'UserCreated': {
+      const had = s.people[e.d.user.id]
+      return { ...s, people: { ...s.people, [e.d.user.id]: had ? { ...had, user: e.d.user } : { user: e.d.user, online: false, last_seen_at: null, status: 'offline' } } }
+    }
     case 'PresenceChanged': {
       const p = s.people[e.d.user_id]
       if (!p) return s

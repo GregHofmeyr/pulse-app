@@ -102,7 +102,8 @@ describe('the plan card', () => {
     invoke.mockResolvedValueOnce(plan({ going: ['U3'] }))
     rsvp('Going').click()
     await settle()
-    expect(invoke).toHaveBeenLastCalledWith('rsvp_plan', { messageId: 'M1', rsvp: null })
+    // the last answer sent (someone this state doesn't have is looked up meanwhile, #486)
+    expect(invoke.mock.calls.filter((c) => c[0] === 'rsvp_plan').at(-1)).toEqual(['rsvp_plan', { messageId: 'M1', rsvp: null }])
   })
 
   it('a refused answer says why', async () => {

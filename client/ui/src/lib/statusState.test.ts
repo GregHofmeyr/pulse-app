@@ -61,6 +61,11 @@ describe('status events', () => {
     const s = applyEvent(base(), { t: 'UserCreated', d: { user: kim } }, 0)
     expect(s.people.U3).toMatchObject({ online: false, status: 'offline' })
   })
+  it('UserCreated for someone you have takes their profile and keeps their presence (#486)', () => {
+    const renamed = { ...sam, display_name: 'Sam!' }
+    const s = applyEvent(base(), { t: 'UserCreated', d: { user: renamed } }, 0)
+    expect(s.people.U2).toMatchObject({ user: renamed, online: true, status: 'online' })
+  })
   it('StatusChanged for you sets your status; for anyone else it is ignored', () => {
     const own = { status: 'dnd' as const, dnd_until: null }
     const s = applyEvent(base(), { t: 'StatusChanged', d: { user_id: 'U1', status: own } }, 0)

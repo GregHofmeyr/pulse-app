@@ -189,13 +189,25 @@ export function nameOfIn(state: () => AppState, serverId: string | null): (userI
 }
 
 /** The freshest copy of a user we hold: people, then any server's members, then me. */
+/** Told the id of someone [userOf] can't find (#486: Ready lists only the people you share a server, a DM or a group
+ *  with, so the author of an older message may be missing). The store looks them up; nothing is set in tests. */
+let unknownPerson: ((id: string) => void) | null = null
+export function onUnknownPerson(hook: ((id: string) => void) | null) {
+  unknownPerson = hook
+}
+
 export function userOf(s: AppState, id: string): User | null {
   if (s.people[id]) return s.people[id].user
   for (const list of Object.values(s.members)) {
     const m = list.find((x) => x.user.id === id)
     if (m) return m.user
   }
-  return s.me?.id === id ? s.me : null
+  if (s.me?.id === id) return s.me
+  // someone you share nothing with now, looked up by id (their profile, once it's in)
+  const looked = s.profiles[id]
+  if (looked) return looked.user
+  unknownPerson?.(id)
+  return null
 }
 
 /** The user's role colour in a server, if any (always none until the roles push). */
