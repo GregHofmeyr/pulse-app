@@ -357,11 +357,12 @@ pub fn preview_text(bytes: &[u8]) -> Option<String> {
 }
 
 /// A name safe to suggest in a Save dialog: the server cleaned it already; this is the last line
-/// (no path, nothing Windows refuses).
+/// (no path, nothing Windows refuses, no bidirectional controls that make `x<RLO>fdp.exe` read as `xexe.pdf`).
 fn safe_name(name: &str) -> String {
     let last = name.rsplit(['/', '\\']).next().unwrap_or_default();
     let cleaned: String = last
         .chars()
+        .filter(|c| !crate::saved_files::is_bidi_control(*c))
         .map(|c| match c {
             '<' | '>' | ':' | '"' | '|' | '?' | '*' => '_',
             c if c.is_control() => '_',
@@ -401,6 +402,15 @@ mod tests {
         assert_eq!(safe_name("a:b?.txt"), "a_b_.txt");
         assert_eq!(safe_name("..."), "file");
         assert_eq!(safe_name("name. "), "name");
+        // bidirectional controls are dropped, so the name reads as what it is
+        assert_eq!(safe_name("invoice\u{202E}fdp.exe"), "invoicefdp.exe");
+        assert_eq!(
+            safe_name(
+                "\u{200E}a\u{200F}b\u{202A}\u{202B}\u{202C}\u{202D}\u{2066}\u{2067}\u{2068}\u{2069}\u{061C}.txt"
+            ),
+            "ab.txt"
+        );
+        assert_eq!(safe_name("\u{202E}"), "file");
     }
 
     #[test]

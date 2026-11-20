@@ -92,9 +92,13 @@ pub fn kind_str(kind: AttachmentKind) -> &'static str {
     }
 }
 
-/// Characters that reorder text: an override can make `exe.pdf` look like `fdp.exe`.
+/// Characters that reorder text: an override can make `exe.pdf` look like `fdp.exe`. The embeddings, overrides and
+/// isolates, and the marks (LRM, RLM, ALM) too.
 fn is_bidi_control(c: char) -> bool {
-    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+    matches!(
+        c,
+        '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}'
+    )
 }
 
 /// A file name as shown and saved: the last path segment only, with no control or bidi
@@ -588,6 +592,10 @@ mod tests {
         assert_eq!(clean_name("C:\\Users\\x\\b.txt").as_deref(), Some("b.txt"));
         assert_eq!(clean_name("  ..hidden \n").as_deref(), Some("hidden"));
         assert_eq!(clean_name("a\u{2067}b\u{0}c").as_deref(), Some("abc"));
+        assert_eq!(
+            clean_name("\u{200e}a\u{200f}b\u{061c}c.txt").as_deref(),
+            Some("abc.txt")
+        );
         // what Windows would save: the warning must see the real extension
         assert_eq!(clean_name("setup.exe.").as_deref(), Some("setup.exe"));
         assert_eq!(clean_name("setup.exe . ").as_deref(), Some("setup.exe"));

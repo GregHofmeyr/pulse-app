@@ -3307,7 +3307,11 @@ pub(crate) async fn save_reporting(
         );
     };
     match download::save_watched(req, dest, on_progress, run.flag()).await {
-        Ok(()) => Ok(true),
+        Ok(()) => {
+            // every save from the network (clip, image, plan, attachment) is marked as downloaded
+            crate::saved_files::mark_downloaded(dest).await;
+            Ok(true)
+        }
         Err(DownloadError::Cancelled) => Ok(false),
         Err(e) => Err(e),
     }

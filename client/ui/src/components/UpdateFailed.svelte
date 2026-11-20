@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { FailedUpdate } from '../lib/tauri'
+  import { safeHref } from '../lib/safeHref'
 
   // #460: the last install didn't finish (Pulse found itself still on the old version). It won't download it again by
   // itself for a while ("Restart to update" still can); this says so, with the installer to get by hand.
@@ -8,7 +9,7 @@
 
 <div class="update-failed" role="alert">
   <p>Couldn't update to {failed.version}.
-    {#if failed.downloadUrl}<a href={failed.downloadUrl} target="_blank" rel="noreferrer">Download it</a> and run it to update.{/if}
+    {#if failed.downloadUrl}<a href={safeHref(failed.downloadUrl)} target="_blank" rel="noreferrer">Download it</a> and run it to update.{/if}
   </p>
   <button type="button" class="btn btn-secondary" onclick={onClose}>Dismiss</button>
 </div>

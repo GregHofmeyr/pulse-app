@@ -57,6 +57,8 @@ jobs:
       - run: cargo test --profile release-test -p pulse-client --lib 'hotkeys::'
       # The session.json fallback's owner-only DACL is Windows-only too.
       - run: cargo test --profile release-test -p pulse-client --lib 'session::'
+      # Saved downloads get the Mark-of-the-Web (an NTFS Zone.Identifier stream), Windows-only too.
+      - run: cargo test --profile release-test -p pulse-client --lib 'saved_files::'
       # App updates (#82) are on only in release Windows builds: their checks, with updating enabled.
       - run: cargo test --profile release-test -p pulse-client --lib 'updater::'
       # WASAPI process loopback: a runner with no audio endpoint can't activate it, so it doesn't block the build.
