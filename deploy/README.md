@@ -195,6 +195,12 @@ town's weather (#451). Change it and `just deploy`; places already looked up kee
   ssh'd), then takes a backup, pulls exactly the verified digest, pins it (below), restarts in a few seconds, and prints
   the commit that's now live. Right after a merge, `latest` is still the previous build until the image workflow
   finishes (about ten minutes): check the printed commit. Clients reconnect on their own and voice keeps going.
+- **No 502s during the restart (#272).** For the second or so the server isn't listening, Caddy holds each request
+  (API calls, the gateway's reconnect) and dials again every 250 ms for up to 15 s (`lb_try_duration` in the
+  Caddyfile) instead of answering 502: clients see a short pause, not an error. `deploy.sh` reloads a running Caddy
+  with the copied Caddyfile before it restarts the server, so a change there already applies to that restart. Check
+  it after a deploy: `docker compose logs --since 5m caddy | grep -c 'connection refused'` should be 0: a request held
+  and then served logs nothing, and only one still refused after 15 s logs an error.
 - One-time, for the deploy that first adds `0006_livekit_grants`: deploy while nobody's in a call, or expect
   them to rejoin once. Calls connected before it carry no grant id, so the next time LiveKit fully reconnects one
   (a network change or a long drop, not a quick resume), or a token fetched just before the deploy is used, the

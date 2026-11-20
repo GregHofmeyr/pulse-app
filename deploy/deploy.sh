@@ -197,6 +197,11 @@ image=$(pull_image "$tag" "$pin")
 set_env .env PULSE_TAG "$tag"
 set_env .env PULSE_IMAGE "$image"
 echo "pinned: $image"
+# A running Caddy takes the Caddyfile just copied before the server restarts, so a change to how it waits for the
+# server during a restart (#272) already covers this one. A Caddy that isn't up yet reads the file when it starts.
+if [ -n "$(docker compose ps -q caddy 2>/dev/null)" ]; then
+  reload_caddy
+fi
 docker compose up -d --remove-orphans
 reload_caddy
 for _ in $(seq 1 30); do
