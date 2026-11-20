@@ -3,6 +3,9 @@
 //! `just publish-update` (deploy/publish-update.sh) fills `cfg.updates_dir` (`/data/updates`): `latest.json` and
 //! `Pulse_<X.Y.Z>_x64-setup.exe`, the current version and the one before. The app asks with its session token, so
 //! only friends can see or download a build. No manifest = 404, which the updater takes as "no update".
+//!
+//! `GET /updates/version` needs no session: the published version only (no installer URL or signature), so a
+//! signed-out app can say an update is waiting for when it signs in.
 use axum::Router;
 use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, header};
@@ -15,9 +18,11 @@ use tower_http::services::ServeFile;
 use crate::AppState;
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
+use crate::limits::{ClientIp, rate_key};
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/updates/version", get(latest_version))
         .route("/updates/{file}", get(fetch))
         .layer(axum::middleware::from_fn(log_check))
 }
@@ -25,6 +30,10 @@ pub fn router() -> Router<AppState> {
 /// The header the app's updater sends its own version in (#460). Older apps send none: their
 /// updater's `User-Agent` names only the updater plugin.
 pub const VERSION_HEADER: &str = "x-pulse-version";
+
+/// The header apps from 0.2.18 send their platform in (`windows`, `linux`, `macos`), beside [`VERSION_HEADER`]: only
+/// the Windows app updates itself, so the others are never turned away to update.
+pub const PLATFORM_HEADER: &str = "x-pulse-platform";
 
 /// A header's value for the log: printable ASCII only, at most 64 characters, `-` when absent.
 fn header_for_log(headers: &HeaderMap, name: impl header::AsHeaderName) -> String {
@@ -57,6 +66,32 @@ async fn log_check(req: Request, next: Next) -> Response {
     res
 }
 
+/// The published version, for anyone: `{"version": "X.Y.Z"}`, or 204 when nothing is published (or the manifest
+/// names no version). Never the manifest itself: its installer URL and signature stay behind sign-in.
+async fn latest_version(State(s): State<AppState>, ClientIp(ip): ClientIp) -> Response {
+    if !s.limits.version_ip.hit(&rate_key(ip).to_string()) {
+        return AppError::TooManyRequests(None).into_response();
+    }
+    let path = s.cfg.updates_dir.join("latest.json");
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return axum::http::StatusCode::NO_CONTENT.into_response();
+        }
+        Err(e) => {
+            return AppError::from(anyhow::anyhow!("read {}: {e}", path.display())).into_response();
+        }
+    };
+    match crate::app_versions::manifest_version(&bytes) {
+        Some(version) => (
+            [(header::CACHE_CONTROL, "no-store")],
+            axum::Json(pulse_protocol::rest::LatestVersion { version }),
+        )
+            .into_response(),
+        None => axum::http::StatusCode::NO_CONTENT.into_response(),
+    }
+}
+
 /// Only an installer name `publish-update` writes: `Pulse_<X.Y.Z>_x64-setup.exe`, digits only. Checked before any
 /// path is built, so nothing else in the dir (`latest.json.tmp`, `.sig`, `.incoming/`) and nothing outside it is served.
 pub fn installer_name_ok(name: &str) -> bool {
@@ -80,20 +115,20 @@ async fn fetch(
     req: Request,
 ) -> AppResult<Response> {
     if file == "latest.json" {
-        use crate::app_versions::{CheckResult, header_version, manifest_version, record_check};
+        use crate::app_versions::{CheckResult, header_version, manifest_version};
         // who asked on which version, and what they were told, outlasts the log (#534)
         let version = header_version(req.headers());
         let path = s.cfg.updates_dir.join("latest.json");
         let bytes = match tokio::fs::read(&path).await {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                record_check(&s.db, me, version.as_deref(), CheckResult::NoManifest).await;
+                spawn_record(&s, me, version, CheckResult::NoManifest);
                 return Err(AppError::NotFound);
             }
             Err(e) => return Err(anyhow::anyhow!("read {}: {e}", path.display()).into()),
         };
         let result = CheckResult::of(version.as_deref(), manifest_version(&bytes).as_deref());
-        record_check(&s.db, me, version.as_deref(), result).await;
+        spawn_record(&s, me, version, result);
         return Ok((
             [
                 (header::CONTENT_TYPE, "application/json"),
@@ -118,4 +153,17 @@ async fn fetch(
         HeaderValue::from_static("application/octet-stream"),
     );
     Ok(res)
+}
+
+/// Note the check off the request path (#534): the app's answer never waits on a SQLite write.
+fn spawn_record(
+    s: &AppState,
+    me: pulse_protocol::ids::UserId,
+    version: Option<String>,
+    result: crate::app_versions::CheckResult,
+) {
+    let db = s.db.clone();
+    tokio::spawn(async move {
+        crate::app_versions::record_check(&db, me, version.as_deref(), result).await
+    });
 }

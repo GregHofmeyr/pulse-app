@@ -4913,3 +4913,11 @@ pub struct SportsCard {
     #[serde(default)]
     pub no_updates: bool,
 }
+
+/// `GET /updates/version` (no session needed): the newest published app version, and nothing else (no installer
+/// URL or signature, which stay behind sign-in). A signed-out app says "An update is available. Sign in to get it."
+/// 204 when nothing is published.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LatestVersion {
+    pub version: String,
+}

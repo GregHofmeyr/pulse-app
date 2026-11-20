@@ -135,6 +135,8 @@ pub struct LimitsConfig {
     pub invite_lookup_user: Rate,
     /// Windows installer downloads from the public download link (#80, step 3) per client IP.
     pub download_ip: Rate,
+    /// Signed-out update checks (`GET /updates/version`, the version only) per client IP.
+    pub version_ip: Rate,
     /// Message edits and deletes, reaction adds and removes, Go Live and watch, together per
     /// user (each one fans out an event). Stop and unwatch are teardown and never limited.
     pub mutate_user: Rate,
@@ -234,6 +236,7 @@ impl Default for LimitsConfig {
             invite_lookup_ip: Rate::per_hour(20),
             invite_lookup_user: Rate::per_hour(20),
             download_ip: Rate::per_hour(10),
+            version_ip: Rate::per_hour(30),
             mutate_user: Rate::new(30, 2.0),
             forward_user: Rate::new(10, 0.2),
             voice_state_user: Rate::new(10, 2.0),
@@ -302,6 +305,7 @@ impl LimitsConfig {
             invite_lookup_ip: r,
             invite_lookup_user: r,
             download_ip: r,
+            version_ip: r,
             mutate_user: r,
             forward_user: r,
             voice_state_user: r,
@@ -471,6 +475,7 @@ pub struct Limits {
     pub invite_lookup_ip: Limiter,
     pub invite_lookup_user: Limiter,
     pub download_ip: Limiter,
+    pub version_ip: Limiter,
     pub mutate_user: Limiter,
     pub forward_user: Limiter,
     pub voice_state_user: Limiter,
@@ -523,6 +528,7 @@ impl Limits {
             invite_lookup_ip: Limiter::new(c.invite_lookup_ip),
             invite_lookup_user: Limiter::new(c.invite_lookup_user),
             download_ip: Limiter::new(c.download_ip),
+            version_ip: Limiter::new(c.version_ip),
             mutate_user: Limiter::new(c.mutate_user),
             forward_user: Limiter::new(c.forward_user),
             voice_state_user: Limiter::new(c.voice_state_user),

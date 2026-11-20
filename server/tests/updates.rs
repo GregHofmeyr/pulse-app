@@ -248,12 +248,28 @@ async fn update_checks_are_recorded_per_person() {
         }
         req.send()
     };
-    let row = |id: pulse_protocol::ids::UserId| {
-        sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
-            "SELECT check_version, check_result, checked_at FROM app_versions WHERE user_id = ?",
-        )
-        .bind(id.to_string())
-        .fetch_one(&app.db)
+    // noted off the request path: wait for the row to say `result`
+    let row = |id: pulse_protocol::ids::UserId, result: &'static str| {
+        let db = app.db.clone();
+        async move {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                let r = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
+                    "SELECT check_version, check_result, checked_at FROM app_versions WHERE user_id = ?",
+                )
+                .bind(id.to_string())
+                .fetch_optional(&db)
+                .await
+                .unwrap();
+                match r {
+                    Some(r) if r.1.as_deref() == Some(result) => return r,
+                    r if std::time::Instant::now() > deadline => {
+                        panic!("expected {result}, got {r:?}")
+                    }
+                    _ => tokio::time::sleep(std::time::Duration::from_millis(20)).await,
+                }
+            }
+        }
     };
 
     // nothing published yet
@@ -261,7 +277,7 @@ async fn update_checks_are_recorded_per_person() {
         check(a.clone(), Some("0.2.14")).await.unwrap().status(),
         404
     );
-    let (v, r, at) = row(alex).await.unwrap();
+    let (v, r, at) = row(alex, "no_manifest").await;
     assert_eq!(
         (v.as_deref(), r.as_deref()),
         (Some("0.2.14"), Some("no_manifest"))
@@ -277,15 +293,15 @@ async fn update_checks_are_recorded_per_person() {
         check(a.clone(), Some("0.2.14")).await.unwrap().status(),
         200
     );
-    assert_eq!(row(alex).await.unwrap().1.as_deref(), Some("offered"));
+    row(alex, "offered").await;
     assert_eq!(
         check(s.clone(), Some("0.2.16")).await.unwrap().status(),
         200
     );
-    assert_eq!(row(sam).await.unwrap().1.as_deref(), Some("up_to_date"));
+    assert_eq!(row(sam, "up_to_date").await.0.as_deref(), Some("0.2.16"));
     // an app that sends no version (older than #460)
     assert_eq!(check(s, None).await.unwrap().status(), 200);
-    let (v, r, _) = row(sam).await.unwrap();
+    let (v, r, _) = row(sam, "unknown").await;
     assert_eq!((v, r.as_deref()), (None, Some("unknown")));
     // a refused check (signed out) records nothing
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM app_versions")
@@ -353,4 +369,52 @@ async fn connects_are_recorded_with_the_app_version() {
     let out = pulse_server::app_versions::format_report(&rows, Some("0.2.17"));
     assert!(out.contains("kim   0.2.17 "), "{out}");
     assert!(out.contains("jo    ?"), "{out}");
+}
+
+/// `GET /updates/version` needs no session (signed-out apps) and says only the version: never the installer's URL
+/// or signature, which stay behind sign-in.
+#[tokio::test]
+async fn version_only_needs_no_session_and_leaks_no_installer() {
+    let (app, dir) = app_with_updates().await;
+    // nothing published
+    assert_eq!(get(&app, "/updates/version", None).await.status(), 204);
+
+    std::fs::write(
+        dir.path().join("latest.json"),
+        br#"{"version":"0.2.18","notes":"n","pub_date":"2026-11-20T00:00:00Z","platforms":{"windows-x86_64":{"url":"https://example.invalid/updates/Pulse_0.2.18_x64-setup.exe","signature":"SIGNATURE-BYTES"}}}"#,
+    )
+    .unwrap();
+    let r = get(&app, "/updates/version", None).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["cache-control"], "no-store");
+    let body = r.text().await.unwrap();
+    let v: pulse_protocol::rest::LatestVersion = serde_json::from_str(&body).unwrap();
+    assert_eq!(v.version, "0.2.18");
+    for leak in ["url", "setup.exe", "SIGNATURE", "signature", "platforms"] {
+        assert!(!body.contains(leak), "{leak} in {body}");
+    }
+    // a bad token doesn't turn it away either
+    assert_eq!(
+        get(&app, "/updates/version", Some("not-a-token"))
+            .await
+            .status(),
+        200
+    );
+    // a manifest without a version is "nothing published"
+    std::fs::write(dir.path().join("latest.json"), br#"{"platforms":{}}"#).unwrap();
+    assert_eq!(get(&app, "/updates/version", None).await.status(), 204);
+}
+
+/// The version-only check is limited per address like the other signed-out endpoints.
+#[tokio::test]
+async fn version_only_is_rate_limited() {
+    let root = tempfile::tempdir().unwrap();
+    let mut cfg = test_config();
+    cfg.updates_dir = root.path().to_path_buf();
+    cfg.limits.version_ip = pulse_server::limits::Rate::new(2, 0.0001);
+    let app = spawn_with(cfg).await;
+    for _ in 0..2 {
+        assert_eq!(get(&app, "/updates/version", None).await.status(), 204);
+    }
+    assert_eq!(get(&app, "/updates/version", None).await.status(), 429);
 }

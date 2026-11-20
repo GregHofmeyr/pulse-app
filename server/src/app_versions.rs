@@ -6,7 +6,7 @@ use pulse_protocol::ids::UserId;
 use sqlx::SqlitePool;
 
 use crate::db::now;
-use crate::updates::VERSION_HEADER;
+use crate::updates::{PLATFORM_HEADER, VERSION_HEADER};
 
 /// The app's own version from its `X-Pulse-Version` header: up to 32 of `0-9 A-Z a-z . + -`, `None` when absent
 /// or anything else (it's stored and printed, so nothing odd gets in).
@@ -17,6 +17,30 @@ pub fn header_version(headers: &HeaderMap) -> Option<String> {
         && v.bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'-'));
     ok.then(|| v.to_string())
+}
+
+/// The app's platform from its `X-Pulse-Platform` header (0.2.18 on), lower case: up to 16 of `a-z 0-9 _ -`,
+/// `None` when absent or anything else.
+pub fn header_platform(headers: &HeaderMap) -> Option<String> {
+    let v = headers
+        .get(PLATFORM_HEADER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .to_ascii_lowercase();
+    let ok = !v.is_empty()
+        && v.len() <= 16
+        && v.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'));
+    ok.then_some(v)
+}
+
+/// The straggler rescue: whether the gateway closes this connect with 4005 (update required) so the app reaches its
+/// forced update screen. Only apps that say no version (every app before 0.2.17), and never one that says it isn't
+/// Windows (no updater there). Apps before 0.2.18 say no platform, so a Linux build without the version header is
+/// turned away too until it's rebuilt.
+pub fn needs_rescue(enabled: bool, version: Option<&str>, platform: Option<&str>) -> bool {
+    enabled && version.is_none() && platform.is_none_or(|p| p == "windows")
 }
 
 /// `X.Y.Z` as numbers; anything after a `-` or `+` is ignored. `None` when it isn't three numbers.
@@ -224,6 +248,29 @@ mod tests {
             h.insert(VERSION_HEADER, bad.parse().unwrap());
             assert_eq!(header_version(&h), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn header_platform_takes_a_plain_name() {
+        let mut h = HeaderMap::new();
+        assert_eq!(header_platform(&h), None);
+        h.insert(PLATFORM_HEADER, " Windows ".parse().unwrap());
+        assert_eq!(header_platform(&h).as_deref(), Some("windows"));
+        for bad in ["", "lin ux", "linux;x", &"a".repeat(17)] {
+            h.insert(PLATFORM_HEADER, bad.parse().unwrap());
+            assert_eq!(header_platform(&h), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn rescue_only_for_unversioned_apps_that_can_update() {
+        assert!(needs_rescue(true, None, None));
+        assert!(needs_rescue(true, None, Some("windows")));
+        assert!(!needs_rescue(true, None, Some("linux")));
+        assert!(!needs_rescue(true, None, Some("macos")));
+        assert!(!needs_rescue(true, Some("0.2.17"), None));
+        assert!(!needs_rescue(true, Some("0.2.18"), Some("windows")));
+        assert!(!needs_rescue(false, None, None));
     }
 
     #[test]
