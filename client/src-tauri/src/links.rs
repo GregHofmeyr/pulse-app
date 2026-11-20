@@ -16,17 +16,21 @@ pub fn for_browser(u: &url::Url) -> bool {
         && u.password().is_none()
 }
 
-/// Whether the main window may go to `u` itself: the app's own page (`tauri://localhost`,
-/// `http(s)://tauri.localhost`, and the dev server on localhost) and anything that isn't a web
-/// page. A website goes to the browser instead ([`main_navigation`]).
+/// Whether the main window may go to `u` itself: the app's own page only (`tauri://localhost`,
+/// `http(s)://tauri.localhost`, the dev server on localhost) and an empty `about:` page
+/// (`about:blank`, `about:srcdoc`). Everything else is refused: a website goes to the browser
+/// instead ([`main_navigation`]); any other scheme (`file:`, a UNC path, `ms-settings:`,
+/// `javascript:`, `data:`, …) goes nowhere.
 pub fn main_may_navigate(u: &url::Url) -> bool {
-    if !matches!(u.scheme(), "http" | "https") {
-        return true;
+    match u.scheme() {
+        "http" | "https" => matches!(
+            u.host_str(),
+            Some("tauri.localhost" | "localhost" | "127.0.0.1" | "[::1]")
+        ),
+        "tauri" => u.host_str() == Some("localhost"),
+        "about" => matches!(u.path(), "blank" | "srcdoc"),
+        _ => false,
     }
-    matches!(
-        u.host_str(),
-        Some("tauri.localhost" | "localhost" | "127.0.0.1" | "[::1]")
-    )
 }
 
 /// The main window's `on_navigation`: its own pages load, a website opens in the browser.
@@ -209,8 +213,26 @@ mod tests {
             "http://localhost:1420/",
             "http://127.0.0.1:1420/",
             "about:blank",
+            "about:srcdoc",
         ] {
             assert!(main_may_navigate(&u(own)), "{own}");
+        }
+        for elsewhere in [
+            "file:///C:/Windows/System32/calc.exe",
+            "file://attacker.example/share/x.exe",
+            "ms-settings:display",
+            "search-ms:query=x",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+            "blob:https://tauri.localhost/0b0b",
+            "smb://attacker.example/share",
+            "steam://run/440",
+            "tauri://evil.example/",
+            "about:config",
+            "asset://localhost/C:/x.html",
+            "pulse-media://localhost/x",
+        ] {
+            assert!(!main_may_navigate(&u(elsewhere)), "{elsewhere}");
         }
         for site in [
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",

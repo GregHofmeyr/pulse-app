@@ -3,6 +3,7 @@
   // hero art, K/D/A, win or loss, rank change), the weekly rank movers, or a patch (the start of its notes, the heroes
   // it names, a link). Pictures are the server's copies: no third party is contacted.
   import type { DeadlockCard } from '../lib/protocol/DeadlockCard'
+  import { safeHref } from '../lib/safeHref'
   import { thumbUrl } from '../lib/achievements'
   import { deltaText, durationText, kdaText, rankText, stepsText } from '../lib/deadlock'
 
@@ -50,7 +51,7 @@
 {:else if card.kind === 'patch'}
   <section class="dl patch" data-message-id={messageId} aria-label="Deadlock update: {card.title}">
     <div class="head"><span aria-hidden="true">📜</span> Deadlock update <span class="time">{time}</span></div>
-    <a class="title" href={card.link} target="_blank" rel="noopener noreferrer">{card.title}</a>
+    <a class="title" href={safeHref(card.link)} target="_blank" rel="noopener noreferrer">{card.title}</a>
     {#if card.summary}<p class="summary">{card.summary}</p>{/if}
     {#if card.heroes.length}
       <div class="heroes">

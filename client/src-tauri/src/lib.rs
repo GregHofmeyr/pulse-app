@@ -23,6 +23,7 @@ pub mod notify;
 pub mod outbox;
 pub mod qr;
 pub mod reports;
+pub mod saved_files;
 pub mod session;
 pub mod soundboard;
 pub mod sounds;

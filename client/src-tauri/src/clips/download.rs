@@ -51,7 +51,9 @@ pub fn stem_or(caption: &str, fallback: &str) -> String {
     let kept: String = line
         .chars()
         .map(|c| if c.is_whitespace() { ' ' } else { c })
-        .filter(|c| !c.is_control() && !REFUSED.contains(*c))
+        .filter(|c| {
+            !c.is_control() && !crate::saved_files::is_bidi_control(*c) && !REFUSED.contains(*c)
+        })
         .collect();
     let short: String = kept
         .split_whitespace()
@@ -326,6 +328,9 @@ mod tests {
         assert_eq!(suggested_stem(r#"a/b\c:d*e?f"g<h>i|j"#), "abcdefghij");
         assert_eq!(suggested_stem("tab\there"), "tab here");
         assert_eq!(suggested_stem("clutch :fire: 1v3"), "clutch fire 1v3");
+        // bidirectional controls would make the name read as something else
+        assert_eq!(suggested_stem("gg\u{202E}4pm.exe"), "gg4pm.exe");
+        assert_eq!(suggested_stem("\u{2067}\u{200F}"), "clip");
     }
 
     #[test]

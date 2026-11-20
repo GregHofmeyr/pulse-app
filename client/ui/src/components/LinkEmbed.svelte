@@ -10,6 +10,7 @@
   import { aspect, audioHeight, canPopOut, JAM_SUBTITLE, playable, playerSrc, popsOut, providerLabel, sandboxFor, spotifyCard, YOUTUBE_FRAMING_ERROR } from '../lib/embeds'
   import { embed as origin, fallBack, fallen, loadEmbedOrigin, play, player, playerKey, stop } from '../lib/linkPreviews.svelte'
   import type { LinkEmbed } from '../lib/protocol/LinkEmbed'
+  import { safeHref } from '../lib/safeHref'
   import { app } from '../lib/store.svelte'
   import { voice } from '../lib/voice.svelte'
   import { mayControl, partyMediaOf } from '../lib/watchParty'
@@ -171,13 +172,13 @@
   <div class="embed spotify" class:playing={active} bind:this={root}>
     <div class="text">
       <span class="label sp-label"><SpotifyIcon /><span class="sp-kind">{sp.label ? `Spotify · ${sp.label}` : 'Spotify'}</span></span>
-      <a class="title" href={embed.url} target="_blank" rel="noopener noreferrer" data-tip={spTitle}>{spTitle}</a>
+      <a class="title" href={safeHref(embed.url)} target="_blank" rel="noopener noreferrer" data-tip={spTitle}>{spTitle}</a>
       {#if spSub}<p class="sub" data-tip={spSub}>{spSub}</p>{/if}
       <div class="actions">
         {#if canPlay && origin.origin && !active}
           <button class="btn btn-quiet sp-play" onclick={() => play(key)}><Icon name="play" size={14} />Play</button>
         {/if}
-        <a class="btn {sp.jam ? 'btn-primary' : 'btn-secondary'} sp-open" href={embed.url} target="_blank" rel="noopener noreferrer">{sp.action}</a>
+        <a class="btn {sp.jam ? 'btn-primary' : 'btn-secondary'} sp-open" href={safeHref(embed.url)} target="_blank" rel="noopener noreferrer">{sp.action}</a>
         {#if canShare}
           {#if onStage}
             <span class="btn btn-quiet sp-share on-stage" aria-disabled="true">On the stage</span>
@@ -204,7 +205,7 @@
   <div class="embed" class:big class:playing={active} bind:this={root}>
     <div class="text">
       <span class="label">{label}{#if embed.author}<span class="by"> · {embed.author}</span>{/if}</span>
-      <a class="title" href={embed.url} target="_blank" rel="noopener noreferrer">{embed.title ?? embed.url}</a>
+      <a class="title" href={safeHref(embed.url)} target="_blank" rel="noopener noreferrer">{embed.title ?? embed.url}</a>
       {#if embed.description}<p class="desc">{embed.description}</p>{/if}
       {#if canWatch}
         <div class="actions">
@@ -242,7 +243,7 @@
               <Icon name="play" size={big ? 22 : 14} />
             </button>
           {:else}
-            <a class="play" href={embed.url} target="_blank" rel="noopener noreferrer" aria-label="Play {embed.title ?? label} (opens in your browser)" data-tip="Open in your browser">
+            <a class="play" href={safeHref(embed.url)} target="_blank" rel="noopener noreferrer" aria-label="Play {embed.title ?? label} (opens in your browser)" data-tip="Open in your browser">
               <Icon name="play" size={big ? 22 : 14} />
             </a>
           {/if}
