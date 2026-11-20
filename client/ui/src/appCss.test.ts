@@ -38,8 +38,11 @@ describe('the global scrollbar', () => {
     const bar = rule('::-webkit-scrollbar')
     expect(bar.getPropertyValue('width')).toBe('10px')
     expect(bar.getPropertyValue('height')).toBe('10px') // horizontal ones (code blocks, the full view strip) match
-    expect(rule('::-webkit-scrollbar-track').getPropertyValue('background')).toBe('transparent')
-    expect(rule('::-webkit-scrollbar-corner').getPropertyValue('background')).toBe('transparent')
+    // the `background` shorthand serializes to its shortest form (`none`), so read the longhands
+    for (const sel of ['::-webkit-scrollbar-track', '::-webkit-scrollbar-corner']) {
+      expect(rule(sel).getPropertyValue('background-color'), sel).toBe('transparent')
+      expect(rule(sel).getPropertyValue('background-image'), sel).toBe('none')
+    }
     const thumb = rule('::-webkit-scrollbar-thumb')
     expect(thumb.getPropertyValue('background-color')).toBe('var(--scrollbar-thumb)')
     expect(thumb.getPropertyValue('border-radius')).not.toBe('')
@@ -89,7 +92,8 @@ describe('motion', () => {
     const media = [...sheet.cssRules].find((r): r is CSSMediaRule => r instanceof CSSMediaRule && /prefers-reduced-motion: ?reduce/.test(r.conditionText))
     expect(media).toBeDefined()
     const all = styleRules(media!.cssRules)[0]
-    expect(all.selectorText).toContain('*:not(.spinner)')
+    // serialized as a browser does: the implied `*` is dropped, so `*:not(.spinner)` reads `:not(.spinner)`
+    expect(all.selectorText.split(',').map((s) => s.trim())).toContain(':not(.spinner)')
     expect(all.style.getPropertyValue('animation-duration')).toBe('0.01ms')
     expect(all.style.getPropertyPriority('animation-duration')).toBe('important')
     expect(all.style.getPropertyValue('transition-duration')).toBe('0.01ms')

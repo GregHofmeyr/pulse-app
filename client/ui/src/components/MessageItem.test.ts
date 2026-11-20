@@ -628,13 +628,15 @@ describe('mention pill CSS', () => {
     style.textContent = css
     document.head.append(style)
     try {
-      document.body.innerHTML = '<div class="content svelte-test"><span class="mention" style="--name-scale: 1.2">@kim</span></div>'
-      const pill = document.querySelector<HTMLElement>('.mention')!
-      const cs = getComputedStyle(pill)
-      expect(cs.fontSize).toBe('calc(1em * var(--name-scale, 1))')
-      // the same compensation Name uses: the line box stays 1.5 of the message's font
-      expect(cs.lineHeight).toBe('calc(1.5em / var(--name-scale, 1))')
-      expect(cs.verticalAlign).toBe('baseline')
+      // the message's font is jsdom's default 16px; computed values resolve calc() and var()
+      document.body.innerHTML = '<div class="content svelte-test"><span class="mention" style="--name-scale: 1.2">@kim</span><span class="mention">@jo</span></div>'
+      const [scaled, plain] = [...document.querySelectorAll<HTMLElement>('.mention')].map((p) => getComputedStyle(p))
+      expect(scaled.fontSize).toBe('19.2px') // 1.2 × 16px
+      // the same compensation Name uses: the line box stays 1.5 of the message's font, whatever the scale
+      expect(scaled.lineHeight).toBe('24px')
+      expect(plain.fontSize).toBe('16px')
+      expect(plain.lineHeight).toBe('24px')
+      expect(scaled.verticalAlign).toBe('baseline')
     } finally {
       style.remove()
     }

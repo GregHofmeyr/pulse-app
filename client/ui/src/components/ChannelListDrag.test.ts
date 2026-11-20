@@ -149,8 +149,9 @@ describe('dragging a channel', () => {
     move(125)
     // lifted, following the pointer; memes moved up into its place; a drop line shows
     expect(rowOf('T1').classList.contains('lifted')).toBe(true)
-    expect(rowOf('T1').style.transform).toBe('translate3d(0, 45px, 0)')
-    expect(rowOf('T2').style.transform).toBe('translate3d(0, -34px, 0)')
+    // read back serialized as a browser does: lengths keep their unit (`0` → `0px`)
+    expect(rowOf('T1').style.transform).toBe('translate3d(0px, 45px, 0px)')
+    expect(rowOf('T2').style.transform).toBe('translate3d(0px, -34px, 0px)')
     expect(document.querySelector('.list')!.classList.contains('dragging')).toBe(true)
     expect(document.querySelector('.drop-line')).not.toBeNull()
     up(125)
@@ -388,7 +389,7 @@ describe('dragging a category', () => {
     move(150)
     const c3 = document.querySelector<HTMLElement>('.cat[data-category="C3"]')!
     expect(c3.classList.contains('lifted')).toBe(true)
-    expect(document.querySelector<HTMLElement>('.cat[data-category="C2"]')!.style.transform).toBe('translate3d(0, 64px, 0)')
+    expect(document.querySelector<HTMLElement>('.cat[data-category="C2"]')!.style.transform).toBe('translate3d(0px, 64px, 0px)')
     up(150)
     heading.click()
     expect(savedLayout()).toEqual([{ revision: 3, uncategorised: ['T0'], categories: [{ id: 'C1', channels: ['T1', 'T2'] }, { id: 'C3', channels: ['V1'] }, { id: 'C2', channels: ['Q1', 'V2'] }] }])

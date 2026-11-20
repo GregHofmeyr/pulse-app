@@ -134,7 +134,7 @@ describe('ClipFeed', () => {
     const style = document.createElement('style')
     style.textContent = css
     document.head.append(style)
-    expect(getComputedStyle(grid).gridTemplateColumns).toBe('repeat(3, minmax(0, 1fr))')
+    expect(getComputedStyle(grid).gridTemplateColumns).toBe('repeat(3, minmax(0px, 1fr))') // computed: `0` → `0px`
     expect(css).toMatch(/@media \(max-width: ?899\.98px\)\s*\{\s*\.grid\.[\w-]+\s*\{\s*grid-template-columns: ?repeat\(2, ?minmax\(0, ?1fr\)\)/)
     style.remove()
   })

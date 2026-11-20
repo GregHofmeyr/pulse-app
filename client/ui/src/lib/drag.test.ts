@@ -85,7 +85,7 @@ describe('sortableList: a drop that changes nothing', () => {
     rows[0].dispatchEvent(point('pointerdown', 10))
     window.dispatchEvent(point('pointermove', 20))
     window.dispatchEvent(point('pointermove', 60))
-    expect(rows[1].style.transform).toBe('translate3d(0, -34px, 0)')
+    expect(rows[1].style.transform).toBe('translate3d(0px, -34px, 0px)') // serialized as a browser does
     window.dispatchEvent(point('pointerup', 60))
     expect(onDrop).toHaveBeenCalledOnce()
     expect(list.classList.contains('settling')).toBe(false)

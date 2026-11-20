@@ -31,16 +31,19 @@ const probe = (html: string) => {
 }
 
 const source = (file: string) => readFileSync(resolve(__dirname, file), 'utf8')
+/** A token's computed colour: computed values resolve var(), so a probe's colour is compared with this. */
+const token = (name: string) => probe(`<div data-probe style="color: var(${name})"></div>`).color
 
 describe('dialog footer buttons', () => {
   it('the crop dialog: Apply is the accent button and Cancel a bordered one, not browser defaults; disabled shows', () => {
     const s = scoped('CropDialog.svelte')
     const apply = (dis = '') => probe(`<div class="actions ${s}"><button data-probe class="btn btn-lg btn-primary ${s}" ${dis}></button></div>`)
-    expect(apply().color).toBe('var(--on-accent)')
+    expect(apply().color).toBe(token('--on-accent'))
     expect(apply().opacity).not.toBe('0.5')
     expect(apply('disabled').opacity).toBe('0.5')
+    const text2 = token('--text-2')
     const cancel = probe(`<div class="actions ${s}"><button data-probe class="btn btn-lg btn-secondary ${s}"></button></div>`)
-    expect(cancel.color).toBe('var(--text-2)')
+    expect(cancel.color).toBe(text2)
     expect(cancel.height).toBe('36px')
     // the probes match what the template renders
     expect(source('CropDialog.svelte')).toContain('<button type="button" class="btn btn-lg btn-secondary" onclick={onCancel}>Cancel</button>')
@@ -50,7 +53,7 @@ describe('dialog footer buttons', () => {
   it("a clip's Save is the accent button, and dims while it saves", () => {
     const s = scoped('ClipActions.svelte')
     const save = (dis = '') => probe(`<div><button data-probe class="btn btn-lg btn-primary ${s}" ${dis}></button></div>`)
-    expect(save().color).toBe('var(--on-accent)')
+    expect(save().color).toBe(token('--on-accent'))
     expect(save('disabled').opacity).toBe('0.5')
     expect(source('ClipActions.svelte')).toContain('<button type="button" class="btn btn-lg btn-primary" disabled={busy} onclick={() => void save()}>Save</button>')
   })
@@ -66,10 +69,11 @@ describe('dialog footer buttons', () => {
 
   it('the people picker search shows focus (it turned the focus ring off and had no other sign)', () => {
     const s = scoped('PeoplePicker.svelte')
+    const ring = token('--focus-ring')
     document.body.innerHTML = `<div><input class="search ${s}"></div>`
     const input = document.querySelector<HTMLInputElement>('input')!
     input.focus()
-    expect(getComputedStyle(input).outline).toBe('2px solid var(--focus-ring)')
+    expect(getComputedStyle(input).outline).toBe(`2px solid ${ring}`)
   })
 
   it('the voice settings primary looks disabled when it is', () => {
@@ -99,13 +103,14 @@ describe('text fields', () => {
       ['EmojiPicker.svelte', 'search input input-sm'],
       ['Soundboard.svelte', 'search input input-sm'],
     ]
+    const [accent, ring] = [token('--accent'), token('--focus-ring')]
     for (const [file, cls] of fields) {
       const s = scoped(file)
       document.body.innerHTML = `<div><input class="${cls} ${s}"></div>`
       const input = document.querySelector<HTMLInputElement>('input')!
-      expect(getComputedStyle(input).borderColor, file).not.toBe('var(--accent)')
+      expect(getComputedStyle(input).borderColor, file).not.toBe(accent)
       input.focus()
-      expect(getComputedStyle(input).outline, file).toBe('2px solid var(--focus-ring)')
+      expect(getComputedStyle(input).outline, file).toBe(`2px solid ${ring}`)
       // the probe matches what the template renders
       expect(source(file), file).toContain(`class="${cls}"`)
       // jsdom drops a border shorthand that holds a var(), so the accent border is checked in the source
