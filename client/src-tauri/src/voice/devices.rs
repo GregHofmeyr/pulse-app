@@ -5,7 +5,7 @@
 //! edge, so a device switching rate mid-call (BT headset mode = 16 kHz) can't break pitch or speed.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
@@ -109,6 +109,13 @@ pub struct ProcCfg {
 pub struct NsStatus {
     pub active: NsLevel,
     pub note: Option<String>,
+}
+
+/// Lock `m` even if a panic poisoned it. For the locks the audio callbacks, the mic processor and the call's meter
+/// loop take: what they guard is plain values (queues, meters, the APM), and one panic must not turn every later lock
+/// into another panic, least of all on the real-time output thread (speakers gone for the rest of the call).
+pub(crate) fn relock<T: ?Sized>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 pub fn input_gain(pct: u16) -> f32 {
@@ -231,6 +238,16 @@ pub fn downmix(data: &[f32], channels: usize) -> impl Iterator<Item = f32> + '_ 
     let ch = channels.max(1);
     data.chunks(ch)
         .map(move |f| f.iter().sum::<f32>() / ch as f32)
+}
+
+/// What an output buffer plays, as mono: the average of each frame's front pair, which is all the mixer writes
+/// ([`super::mixer::fill_front`]). Averaging a 5.1 frame's silent rear channels in would make the echo reference
+/// (and the speaker meter) three times too quiet.
+pub fn front_mono(data: &[f32], channels: usize) -> impl Iterator<Item = f32> + '_ {
+    data.chunks(channels.max(1)).map(|f| {
+        let front = &f[..f.len().min(2)];
+        front.iter().sum::<f32>() / front.len().max(1) as f32
+    })
 }
 
 fn to_i16(v: f32) -> i16 {
@@ -448,11 +465,11 @@ impl Shared {
 
     /// Where Strong (low delay)'s downloaded model is (#77); `None` = it can't be had (tests, or before setup).
     pub fn low_delay_model(&self) -> Option<Arc<crate::models::ModelStore>> {
-        self.low_delay_model.lock().unwrap().clone()
+        relock(&self.low_delay_model).clone()
     }
 
     pub fn set_low_delay_model(&self, store: Option<Arc<crate::models::ModelStore>>) {
-        *self.low_delay_model.lock().unwrap() = store;
+        *relock(&self.low_delay_model) = store;
     }
 
     /// Speaker callbacks since the last call that found the mixer busy (played silence).
@@ -461,20 +478,20 @@ impl Shared {
     }
 
     pub fn set_mic_sink(&self, sink: Option<Box<dyn super::processor::FrameSink>>) {
-        let old = std::mem::replace(&mut *self.mic_sink.lock().unwrap(), sink);
+        let old = std::mem::replace(&mut *relock(&self.mic_sink), sink);
         // dropped after the lock: the processor's next frame doesn't wait on its teardown
         drop(old);
     }
 
     /// (mic rms, speaker rms) since the last call.
     pub fn take_sent_level(&self) -> f32 {
-        self.sent_meter.lock().unwrap().take().0
+        relock(&self.sent_meter).take().0
     }
 
     pub fn take_levels(&self) -> (f32, f32) {
         (
-            self.mic_meter.lock().unwrap().take().0,
-            self.spk_meter.lock().unwrap().take().0,
+            relock(&self.mic_meter).take().0,
+            relock(&self.spk_meter).take().0,
         )
     }
 
@@ -547,7 +564,7 @@ impl Shared {
                     scratch.resize(frames, 0.0);
                     playout.fill(scratch, |buf| mixer.mix_into(buf, 1, master));
                     for (frame, v) in out.chunks_mut(ch).zip(scratch.iter()) {
-                        frame.fill(*v);
+                        super::mixer::fill_front(frame, *v);
                     }
                 }
             }
@@ -560,12 +577,12 @@ impl Shared {
         // take the APM lock here (this callback is real-time; the processor can hold it for ms).
         // The meter is cosmetic: skip it rather than wait for the levels task.
         let mut meter = self.spk_meter.try_lock().ok();
-        let mut echo = self.echo_ref.lock().unwrap();
+        let mut echo = relock(&self.echo_ref);
         if echo.rate != rate {
             echo.rate = rate;
             echo.samples.clear();
         }
-        for v in downmix(out, channels) {
+        for v in front_mono(out, channels) {
             if let Some(m) = meter.as_mut() {
                 m.add(v);
             }
@@ -580,7 +597,7 @@ impl Shared {
     /// by the mic processor before each capture block, so render and capture stay in order.
     pub(crate) fn feed_echo_reference(&self) {
         let (rate, mut played) = {
-            let mut echo = self.echo_ref.lock().unwrap();
+            let mut echo = relock(&self.echo_ref);
             let chunk = (echo.rate / 100).max(1) as usize;
             let whole = echo.samples.len() / chunk * chunk;
             (echo.rate, echo.samples.drain(..whole).collect::<Vec<i16>>())
@@ -589,7 +606,7 @@ impl Shared {
             return;
         }
         let chunk = (rate / 100) as usize;
-        let mut apm = self.apm.lock().unwrap();
+        let mut apm = relock(&self.apm);
         for c in played.chunks_mut(chunk) {
             let r = apm.process_reverse_stream(c, rate as i32, 1);
             self.warn_apm_once(r, "playback");
@@ -605,14 +622,14 @@ impl Shared {
     }
 
     pub fn set_ns_status(&self, s: NsStatus) {
-        let mut st = self.ns_status.lock().unwrap();
+        let mut st = relock(&self.ns_status);
         if st.0.as_ref() != Some(&s) {
             *st = (Some(s), true);
         }
     }
 
     pub fn take_ns_status_change(&self) -> Option<NsStatus> {
-        let mut st = self.ns_status.lock().unwrap();
+        let mut st = relock(&self.ns_status);
         if !st.1 {
             return None;
         }
@@ -622,17 +639,14 @@ impl Shared {
 
     /// The processor's per-block report: mic meter, own speaking ring, gate indicator.
     pub fn add_mic_level(&self, level: f32, sent: bool) {
-        self.mic_meter.lock().unwrap().add(level);
-        self.sent_meter
-            .lock()
-            .unwrap()
-            .add(if sent { level } else { 0.0 });
+        relock(&self.mic_meter).add(level);
+        relock(&self.sent_meter).add(if sent { level } else { 0.0 });
         self.gate_open.store(sent, Ordering::Relaxed);
     }
 
     pub fn apply_config(&self, cfg: &AudioConfig) {
         {
-            let mut p = self.proc_cfg.lock().unwrap();
+            let mut p = relock(&self.proc_cfg);
             *p = ProcCfg {
                 level: cfg.noise_suppression,
                 auto: cfg.auto_sensitivity,
@@ -641,7 +655,7 @@ impl Shared {
                 version: p.version + 1,
             };
         }
-        let mut a = self.apm_cfg.lock().unwrap();
+        let mut a = relock(&self.apm_cfg);
         a.mode = cfg.echo_mode;
         a.agc = cfg.auto_gain;
         self.rebuild_apm(&mut a);
@@ -649,7 +663,7 @@ impl Shared {
 
     /// The output device just opened (`device`, and what the system says it is): Auto follows it.
     pub fn set_output(&self, device: &str, output: Output) {
-        let mut a = self.apm_cfg.lock().unwrap();
+        let mut a = relock(&self.apm_cfg);
         a.output = output;
         a.device = device.to_owned();
         self.rebuild_apm(&mut a);
@@ -658,7 +672,7 @@ impl Shared {
     /// What echo cancellation decided, if that changed since the last call (the first call always
     /// has it): for the settings page (#172).
     pub fn take_echo_status_change(&self) -> Option<EchoStatus> {
-        let mut a = self.apm_cfg.lock().unwrap();
+        let mut a = relock(&self.apm_cfg);
         let (status, changed) = &mut a.status;
         std::mem::take(changed).then_some(*status)
     }
@@ -666,7 +680,7 @@ impl Shared {
     /// Whether echo cancellation runs now.
     #[cfg(test)]
     pub fn echo_running(&self) -> bool {
-        self.apm_cfg.lock().unwrap().built.0
+        relock(&self.apm_cfg).built.0
     }
 
     fn rebuild_apm(&self, a: &mut ApmCfg) {
@@ -688,7 +702,7 @@ impl Shared {
         let wanted = (echo, a.agc);
         if a.built != wanted {
             // WebRTC's own noise suppression stays off: Off means none, and suppressors never stack.
-            *self.apm.lock().unwrap() = AudioProcessingModule::new(echo, a.agc, true, false);
+            *relock(&self.apm) = AudioProcessingModule::new(echo, a.agc, true, false);
             a.built = wanted;
         }
     }
@@ -744,13 +758,26 @@ impl<R: Send + 'static> Parked<R> {
         open_timeout: Duration,
         build: impl FnOnce() -> anyhow::Result<(T, R)> + Send + 'static,
     ) -> anyhow::Result<Self> {
+        Self::spawn_cancellable(name, open_timeout, move |_| build())
+    }
+
+    /// [`Self::spawn`], with `build` told whether it was given up on: set once the wait timed out, so a build that
+    /// finishes late can skip its side effects (starting the stream, telling echo cancellation about the output)
+    /// before it's closed.
+    pub fn spawn_cancellable<T: 'static>(
+        name: &str,
+        open_timeout: Duration,
+        build: impl FnOnce(&std::sync::atomic::AtomicBool) -> anyhow::Result<(T, R)> + Send + 'static,
+    ) -> anyhow::Result<Self> {
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let gave_up = cancelled.clone();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<R>>();
         let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
         let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
         std::thread::Builder::new()
             .name(name.into())
             .spawn(move || {
-                match build() {
+                match build(&cancelled) {
                     Ok((resource, value)) => {
                         let _ = ready_tx.send(Ok(value));
                         let _ = stop_rx.recv(); // park until told to stop (or the handle is dropped)
@@ -769,6 +796,7 @@ impl<R: Send + 'static> Parked<R> {
                 done: done_rx,
             }),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                gave_up.store(true, Ordering::SeqCst);
                 let _ = stop_tx.send(());
                 Err(anyhow!("didn't open within {} s", open_timeout.as_secs()))
             }
@@ -816,10 +844,10 @@ fn open_half(
         // a different (or reopened) mic gets judged afresh
         shared.mic_silence.lock().unwrap().restart();
     }
-    Parked::spawn(
+    Parked::spawn_cancellable(
         if input { "pulse-audio-in" } else { "pulse-audio-out" },
         Duration::from_secs(5),
-        move || {
+        move |cancelled| {
             let dev = find_device(input, name.as_deref())?;
             let cfg = if input {
                 prefer_internal_rate(dev.default_input_config()?, dev.supported_input_configs()?)
@@ -845,10 +873,15 @@ fn open_half(
                     shared.on_output(d, ch, rate, &mut mixbuf, &mut playout)
                 })?
             };
+            // given up on while it was opening (a slow Bluetooth headset): don't start it, and don't let a device
+            // nobody uses decide echo cancellation. Dropped here, closed.
+            if cancelled.load(Ordering::SeqCst) {
+                return Err(anyhow!("opened too late"));
+            }
             stream.play()?;
             let name = device_name(&dev).unwrap_or_default();
             tracing::info!(device = %name, rate, ch, fmt = ?cfg.sample_format(), "audio {side} opened");
-            if !input {
+            if !input && !cancelled.load(Ordering::SeqCst) {
                 // Auto echo cancellation follows the output (#76): every open, so a switch re-decides
                 decides.set_output(&name, super::echo::output_of(&dev));
             }
@@ -1949,6 +1982,47 @@ mod tests {
             closed.load(Ordering::SeqCst),
             "close returned before the resource was dropped"
         );
+    }
+
+    /// Review 6: a build that finishes after the wait gave up is told so, and can skip its side effects.
+    #[test]
+    fn a_late_open_is_told_it_was_given_up_on() {
+        use std::sync::atomic::AtomicBool;
+        let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+        let r =
+            Parked::<u32>::spawn_cancellable("test", Duration::from_millis(50), move |cancelled| {
+                let at_start = cancelled.load(Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(200));
+                let _ = seen_tx.send((at_start, cancelled.load(Ordering::SeqCst)));
+                Ok(((), 7))
+            });
+        assert!(r.is_err());
+        let (at_start, at_end) = seen_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(!at_start && at_end);
+        // one that opens in time never sees it set
+        let flag = Arc::new(AtomicBool::new(true));
+        let f = flag.clone();
+        let p =
+            Parked::<u32>::spawn_cancellable("test", Duration::from_secs(1), move |cancelled| {
+                f.store(cancelled.load(Ordering::SeqCst), Ordering::SeqCst);
+                Ok(((), 7))
+            })
+            .unwrap();
+        assert!(!flag.load(Ordering::SeqCst));
+        p.close();
+    }
+
+    /// Review 7: the echo reference hears the front pair (all the mixer writes), not an average with silent rears.
+    #[test]
+    fn the_echo_reference_is_the_front_pair() {
+        let surround = [0.4f32, 0.2, 0.0, 0.0, 0.0, 0.0];
+        let mono: Vec<f32> = front_mono(&surround, 6).collect();
+        assert_eq!(mono.len(), 1);
+        assert!((mono[0] - 0.3).abs() < 1e-6);
+        let stereo: Vec<f32> = front_mono(&[0.2, 0.4], 2).collect();
+        assert!((stereo[0] - 0.3).abs() < 1e-6);
+        let one: Vec<f32> = front_mono(&[0.5, 0.25], 1).collect();
+        assert_eq!(one, vec![0.5, 0.25]);
     }
 
     #[test]
