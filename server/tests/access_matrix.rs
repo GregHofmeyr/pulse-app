@@ -335,6 +335,8 @@ const PUBLIC: &[&str] = &[
     // uploaded files: anyone with the (unguessable) link, as decided for #80
     "GET /media/{hash}",
     "GET /updates/{file}",
+    // the published version only, for signed-out apps (#460); the manifest and installers need a session
+    "GET /updates/version",
     "GET /models/{name}",
     "GET /embed/{provider}/{id}",
     // invites: a preview shows only what a card may (see `servers::invites`)
