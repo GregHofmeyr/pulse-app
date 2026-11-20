@@ -267,14 +267,17 @@ describe('mini-preview', () => {
     style.textContent = css
     document.head.append(style)
     try {
+      // the area's insets, as the component sets them inline; computed values resolve the calc():
+      // 68px below the area's top or 96px above its bottom, 16px in from its side
+      const insets = '--area-top: 10px; --area-left: 20px; --area-right: 30px; --area-bottom: 40px'
       const corners: Record<string, [string, string, string]> = {
-        tl: ['top', 'left', 'calc(var(--area-top) + 68px)|calc(var(--area-left) + 16px)'],
-        tr: ['top', 'right', 'calc(var(--area-top) + 68px)|calc(var(--area-right) + 16px)'],
-        bl: ['bottom', 'left', 'calc(var(--area-bottom) + 96px)|calc(var(--area-left) + 16px)'],
-        br: ['bottom', 'right', 'calc(var(--area-bottom) + 96px)|calc(var(--area-right) + 16px)'],
+        tl: ['top', 'left', '78px|36px'],
+        tr: ['top', 'right', '78px|46px'],
+        bl: ['bottom', 'left', '136px|36px'],
+        br: ['bottom', 'right', '136px|46px'],
       }
       for (const [corner, [v, h, want]] of Object.entries(corners)) {
-        document.body.innerHTML = `<div class="mini-preview ${corner} svelte-test" id="m"></div>`
+        document.body.innerHTML = `<div class="mini-preview ${corner} svelte-test" id="m" style="${insets}"></div>`
         const cs = getComputedStyle(document.getElementById('m')!)
         expect(cs.position, corner).toBe('fixed')
         expect(cs.zIndex, corner).toBe('4')

@@ -27,8 +27,11 @@ const rule = (sel: RegExp) => {
 
 describe('the actions box on your own card', () => {
   it('has no light edge on top of the status row: no box-shadow border between the rows', () => {
+    // the same as an element with no shadow at all: jsdom 31 computes that initial value as
+    // `currentcolor none` (browsers say `none`), so compare with it rather than the literal
+    const unstyled = getComputedStyle(el('<div data-probe></div>')).boxShadow
     const second = el('<div class="actions $s"><button class="$s"></button><button data-probe class="$s"></button></div>')
-    expect(getComputedStyle(second).boxShadow).toMatch(/^(none)?$/)
+    expect(getComputedStyle(second).boxShadow).toBe(unstyled)
   })
 
   it('separates the rows with a faint 1px line inset from both sides, not full width', () => {

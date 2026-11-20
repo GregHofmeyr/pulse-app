@@ -12,7 +12,10 @@ beforeAll(() => {
   const css = compile(src, { filename: 'FullView.svelte', css: 'external', cssHash: () => scope }).css!.code
   const style = document.createElement('style')
   style.textContent = css
-  document.head.append(style)
+  // the colour tokens, from app.css: computed values resolve var(), so they must be defined
+  const app = document.createElement('style')
+  app.textContent = readFileSync(resolve(__dirname, '../app.css'), 'utf8')
+  document.head.append(app, style)
 })
 
 const el = (html: string) => {
@@ -47,18 +50,22 @@ describe('the full view bar', () => {
   it("the chat and full screen buttons are the corner toggles' size and look, and the strip is a panel", () => {
     const tool = getComputedStyle(el('<div class="bar $s"><button data-probe class="tool $s"></button></div>'))
     expect([tool.width, tool.height, tool.flexShrink]).toEqual(['32px', '32px', '0'])
-    const on = getComputedStyle(el('<button data-probe class="tool $s" aria-pressed="true"></button>'))
-    const toggleOn = getComputedStyle(el('<button data-probe class="panel-toggle $s" aria-pressed="true"></button>'))
-    expect(on.backgroundColor).toBe(toggleOn.backgroundColor)
+    // read each value at once: a computed style is live, and empty once its element leaves the document
+    const on = getComputedStyle(el('<button data-probe class="tool $s" aria-pressed="true"></button>')).backgroundColor
+    const toggleOn = getComputedStyle(el('<button data-probe class="panel-toggle $s" aria-pressed="true"></button>')).backgroundColor
+    const off = getComputedStyle(el('<button data-probe class="tool $s" aria-pressed="false"></button>')).backgroundColor
+    expect(on).toBe(toggleOn)
+    expect(on).not.toBe(off)
     const strip = getComputedStyle(el('<aside data-probe class="side-chat $s"></aside>'))
     expect(strip.flexShrink).toBe('0')
     expect(src).toMatch(/\.side-chat \{[^}]*background: var\(--bg-1\)[^}]*border-left: 1px solid var\(--bg-3\)/)
   })
 
   it('a pressed toggle looks pressed, and still answers a hover', () => {
-    const on = getComputedStyle(el('<button data-probe class="panel-toggle $s" aria-pressed="true"></button>'))
-    const off = getComputedStyle(el('<button data-probe class="panel-toggle $s" aria-pressed="false"></button>'))
-    expect(on.color).not.toBe(off.color)
+    const on = getComputedStyle(el('<button data-probe class="panel-toggle $s" aria-pressed="true"></button>')).color
+    const off = getComputedStyle(el('<button data-probe class="panel-toggle $s" aria-pressed="false"></button>')).color
+    expect(on).not.toBe('')
+    expect(on).not.toBe(off)
     // jsdom can't hover: the pressed hover rule exists and changes the pressed background
     expect(src).toMatch(/\.panel-toggle\[aria-pressed='true'\]:hover, \.tool\[aria-pressed='true'\]:hover \{ background: var\(--accent-strong\)/)
   })
