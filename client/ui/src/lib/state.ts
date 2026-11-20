@@ -83,6 +83,10 @@ export type AppState = {
   messages: Record<string, Message[]> // channelId -> oldest..newest
   pending: Record<string, Pending[]> // channelId -> unsent
   typing: Record<string, Record<string, number>> // channelId -> userId -> expiresAt (ms)
+  /** The channel whose messages view is open (the shell's active channel, `setShownChannel`), if known. Live messages for
+   *  any other channel are kept to what leaving it keeps (`trimHistory`), so a channel never opened in a session that
+   *  runs for days doesn't hold every message ever posted there. Absent (unknown): nothing is trimmed. */
+  shown?: string | null
   /** Which channels have had their latest page fetched (cleared on every Ready so we backfill,
    * except a detached window's). `end`: the list reaches the latest message (false for a window
    * into the past, from a jump). `missed`: live messages a detached list didn't take in (oldest
@@ -497,12 +501,13 @@ export function setF1Predictions(s: AppState, channel: string, id: string, predi
 
 function upsertMessage(list: Message[] | undefined, m: Message): Message[] {
   const cur = list ?? []
+  // ULIDs sort by time, so a live message is almost always newer than everything held: append it.
+  if (!cur.length || cur[cur.length - 1].id < m.id) return [...cur, m]
   const i = cur.findIndex((x) => x.id === m.id)
   if (i >= 0) return cur.map((x, j) => (j === i ? m : x))
-  // ULIDs sort by time: insert in order (almost always at the end).
-  const next = [...cur, m]
-  next.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-  return next
+  // Out of order: insert it where it belongs (the list is sorted, so the first newer one marks the spot).
+  const at = cur.findIndex((x) => x.id > m.id)
+  return [...cur.slice(0, at), m, ...cur.slice(at)]
 }
 
 // --- Quotes and clips: replies live in `threads`, never in the channel list. ---
@@ -1009,7 +1014,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       // Others' normal messages count as unread, and others' call lines (yours and other system lines never do).
       const counts = read && countsAsUnread(m, s.me?.id)
       const { [c]: _h, ...hidden } = s.hidden
-      return {
+      const next: AppState = {
         ...s,
         // A detached window shows the past: the message waits for the latest to be reloaded (no gap),
         // and is noted so paging forward doesn't stop short of it.
@@ -1028,6 +1033,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
             }
           : s.reads,
       }
+      // A chat that isn't open keeps only what leaving it would: its newest page or two, plus unread.
+      return s.shown !== undefined && c !== s.shown && next.messages !== s.messages ? boundUnseen(next, c) : next
     }
     case 'MessageUpdated': {
       if (e.d.message.thread_root_id) return replyUpdated(s, e.d.message)
@@ -1211,7 +1218,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     }
     case 'Typing': {
       const { channel_id: c, user_id: u } = e.d
-      return { ...s, typing: { ...s.typing, [c]: { ...(s.typing[c] ?? {}), [u]: now + TYPING_TTL_MS } } }
+      // Indicators that ran out in this chat go now (nothing else removes one whose author never sent).
+      const live = Object.fromEntries(Object.entries(s.typing[c] ?? {}).filter(([, until]) => until > now))
+      return { ...s, typing: { ...s.typing, [c]: { ...live, [u]: now + TYPING_TTL_MS } } }
     }
     case 'VoiceJoined': {
       const { channel_id: c, user_id: u, flags } = e.d
@@ -1517,6 +1526,11 @@ export function setPendingStatus(s: AppState, channel: string, nonce: string, st
   return { ...s, pending: { ...s.pending, [channel]: (s.pending[channel] ?? []).map((p) => (p.nonce === nonce ? { ...p, status } : p)) } }
 }
 
+/** Set the channel whose messages view is open (null: none): every other chat's live messages are bounded. */
+export function setShownChannel(s: AppState, channel: string | null): AppState {
+  return s.shown === channel ? s : { ...s, shown: channel }
+}
+
 /** Messages kept for a channel when you leave it: its two newest pages. */
 export const KEEP_ON_LEAVE = 100
 
@@ -1535,9 +1549,13 @@ export function trimHistory(s: AppState, channel: string, keep = KEEP_ON_LEAVE):
       ? 0
       : list.findIndex((m) => m.id > read.last_read_message_id!)
   const cut = firstUnread >= 0 ? Math.min(list.length - keep, firstUnread) : list.length - keep
-  if (cut <= 0) return s
+  return cut <= 0 ? s : cutHistory(s, channel, cut)
+}
+
+/** `channel` without its oldest `cut` messages: older ones become fetchable again on scroll-up. */
+function cutHistory(s: AppState, channel: string, cut: number): AppState {
   const h = s.history[channel]
-  const kept = list.slice(cut)
+  const kept = s.messages[channel].slice(cut)
   const roots = new Set(kept.map((m) => m.id))
   if (s.openRoot) roots.add(s.openRoot.id)
   return {
@@ -1547,6 +1565,19 @@ export function trimHistory(s: AppState, channel: string, keep = KEEP_ON_LEAVE):
     // they only guard the reply counts of loaded quotes
     goneReplies: Object.fromEntries(Object.entries(s.goneReplies).filter(([, g]) => g.channel !== channel || roots.has(g.root))),
   }
+}
+
+/** Most messages a chat that isn't open keeps, unread or not. Past this its oldest unread go too: opening it then
+ *  starts from a list that doesn't reach its read point, as it does after every Ready. */
+export const UNSEEN_CAP = 500
+
+/** `channel` cut to what leaving it keeps (`trimHistory`), and never past `UNSEEN_CAP`: for live messages arriving in
+ *  a chat that isn't open. */
+export function boundUnseen(s: AppState, channel: string): AppState {
+  const t = trimHistory(s, channel)
+  const list = t.messages[channel]
+  if (!list || list.length <= UNSEEN_CAP || detached(t, channel)) return t
+  return cutHistory(t, channel, list.length - UNSEEN_CAP)
 }
 
 /** Add an older page fetched with `before` = the channel's oldest message at the time. Dropped if

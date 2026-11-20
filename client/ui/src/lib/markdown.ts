@@ -127,8 +127,14 @@ const rendered = new Map<string, string>()
 // cache hit must not pay for again. Same bound and LRU order as `rendered`.
 const emojiRefs = new Map<string, string[]>()
 // A mentionable-name list -> a short number for the cache key: a server's whole member list would
-// otherwise be copied into every entry. The same names (any array) get the same number.
+// otherwise be copied into every entry. The same names (any array) get the same number, while they're among the
+// NAMES_IDS_MAX lists used last (each member join or rename makes a new list): numbers are never reused, so an entry
+// rendered under a dropped list can't be served for another, and simply ages out of `rendered`.
+export const NAMES_IDS_MAX = 64
 const namesIds = new Map<string, number>()
+let nextNamesId = 0
+/** How many name lists have numbers now (tests). */
+export const namesIdsSize = () => namesIds.size
 const namesKeys = new WeakMap<string[], number>()
 
 /** One version of a message's text: its id and edit time, plus the text's length and a hash of it,
@@ -152,7 +158,10 @@ export function renderMessage(
   if (names === undefined) {
     const joined = mentionNames.join('\u0000')
     names = namesIds.get(joined)
-    if (names === undefined) namesIds.set(joined, (names = namesIds.size))
+    if (names === undefined) names = nextNamesId++
+    namesIds.delete(joined) // re-insert: Map order is the LRU order
+    namesIds.set(joined, names)
+    if (namesIds.size > NAMES_IDS_MAX) namesIds.delete(namesIds.keys().next().value!)
     namesKeys.set(mentionNames, names)
   }
   const v = versionKey(m)

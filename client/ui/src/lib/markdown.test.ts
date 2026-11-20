@@ -2,7 +2,7 @@
 import DOMPurify from 'dompurify'
 import { Marked } from 'marked'
 import { describe, expect, it, vi } from 'vitest'
-import { RENDER_CACHE_MAX, renderMarkdown, renderMessage, sanitize, typingThrottle } from './markdown'
+import { NAMES_IDS_MAX, namesIdsSize, RENDER_CACHE_MAX, renderMarkdown, renderMessage, sanitize, typingThrottle } from './markdown'
 import type { CustomEmoji } from './protocol/CustomEmoji'
 
 const XSS = [
@@ -87,6 +87,16 @@ describe('renderMessage (cached)', () => {
     renderMessage(msg('01A', 'hi **@sam**'), ['sam']) // equal names, new array: still cached
     expect(spy).toHaveBeenCalledTimes(1)
     spy.mockRestore()
+  })
+
+  it('keeps numbers for a bounded set of name lists, and a dropped list never reads another list\'s HTML', () => {
+    const first = ['kim']
+    expect(renderMessage(msg('01N', '@kim'), first)).toContain('class="mention"')
+    for (let i = 0; i < NAMES_IDS_MAX * 3; i++) renderMessage(msg('01N', '@kim'), [`jo${i}`])
+    expect(namesIdsSize()).toBeLessThanOrEqual(NAMES_IDS_MAX)
+    expect(renderMessage(msg('01N', '@kim'), first)).toContain('class="mention"') // its array still has its number
+    expect(renderMessage(msg('01N', '@kim'), ['kim'])).toContain('class="mention"') // the list again, as a new array
+    expect(renderMessage(msg('01N', '@kim'), ['jo0'])).not.toContain('class="mention"')
   })
 
   it('an edit or different mentionable names render again', () => {
