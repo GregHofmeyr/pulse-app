@@ -16,7 +16,13 @@
 {$PULSE_DOMAIN} {
 	# LiveKit posts its webhooks over loopback; nobody on the internet needs this path.
 	respond /livekit/webhook* 404
-	reverse_proxy 127.0.0.1:7890
+	reverse_proxy 127.0.0.1:7890 {
+		# A deploy restarts the server (#272): for the second or so it isn't listening, a request (an API call, a
+		# gateway reconnect) waits here and is dialled again every 250 ms, instead of failing with a 502. Only a
+		# failed dial is retried for any method (the request never reached the server); 15 s covers a slow start.
+		lb_try_duration 15s
+		lb_try_interval 250ms
+	}
 }
 
 voice.{$PULSE_DOMAIN} {

@@ -93,22 +93,22 @@ opt-level = 3
 [profile.dev.package.libwebp-sys2]
 opt-level = 3
 
-# Release builds (installer, server image). Fat LTO + one codegen unit: smaller code
-# (tract/ndarray generics are otherwise duplicated across 16 units) for about 3x the build time.
-# Measured with strip: Linux binary -33 MB, Windows -2.8 MB; speed was not measured. strip also
+# Release builds (installer, server image). Thin LTO + 16 codegen units (#213): measured on the Windows release
+# run against fat LTO + 1 unit, the warm build went 20m41s -> 12m19s for an exe 8.4% larger and an installer
+# only 0.4% larger. Fat LTO is the fallback if size ever matters more than release turnaround. strip also
 # drops symbol names from native backtraces; nothing reads them today (crash reports carry the
 # panic message and file:line, which survive it). Panics still unwind: a panicking tokio task
 # (gateway, outbox, voice) must not take the whole app down.
 [profile.release]
-lto = "fat"
-codegen-units = 1
+lto = "thin"
+codegen-units = 16
 strip = true
 
-# The Windows client tests in CI (.github/workflows/windows-client-tests.yml, #253): release without the fat-LTO link
-# and the single codegen unit, which took ~16 of the job's ~19 min compiling for tests that run in ~10 s. Still a
+# The Windows client tests in CI (.github/workflows/windows-client-tests.yml, #253): release with no LTO at
+# all (the old fat-LTO link took ~16 of the job's ~19 min compiling for tests that run in ~10 s). Still a
 # release profile: debug_assertions stay off, so the release-only paths (updater::tests::enabled_in_windows_release,
 # the windows_subsystem attribute, no PULSE_DEV_FFMPEG_DIR) are what gets compiled and tested. The installer is built
-# with `release` and keeps fat LTO.
+# with `release` (thin LTO).
 [profile.release-test]
 inherits = "release"
 lto = false
