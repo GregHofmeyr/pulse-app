@@ -4,6 +4,7 @@
 
 <script lang="ts">
   import { actionBarFocus } from '../lib/focus'
+  import { markEdit } from '../lib/openEdits'
   import { blockedReplyText } from '../lib/blocks'
   import Icon from './Icon.svelte'
   import DeleteButton from './DeleteButton.svelte'
@@ -307,6 +308,12 @@
   const time = $derived(new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
 
   let editBox: EmojiBox | undefined = $state()
+  // #460: an open edit with changes holds an update's idle install back (that text lives only in this box)
+  const editKey = Symbol('edit')
+  $effect(() => {
+    markEdit(editKey, editing && draft.trim() !== shownCaption(message).trim())
+    return () => markEdit(editKey, false)
+  })
   function startEdit() {
     draft = shownCaption(message)
     editError = ''

@@ -84,9 +84,11 @@ pub fn check(dir: &Path, current: &Version, now: u64) -> Option<Failure> {
     }
     let fresh = a.failed_at.is_none();
     let failed_at = *a.failed_at.get_or_insert(now);
-    let backoff_until = failed_at + INSTALL_BACKOFF.as_secs();
-    if now >= backoff_until {
-        // long enough: the next found update installs as usual again
+    let backoff_until = failed_at.saturating_add(INSTALL_BACKOFF.as_secs());
+    // long enough: the next found update installs as usual again. A failure dated further ahead than the back-off
+    // itself (the clock was ahead when it was noted, then put right) is over too: it would otherwise stretch the
+    // back-off by however far the clock was off.
+    if now >= backoff_until || failed_at > now.saturating_add(INSTALL_BACKOFF.as_secs()) {
         clear(dir);
         return None;
     }
@@ -101,6 +103,60 @@ pub fn check(dir: &Path, current: &Version, now: u64) -> Option<Failure> {
         fresh,
         backoff_until,
     })
+}
+
+/// After an install that failed while running, the first wait before installing that version by itself again; each
+/// further failure of the same version doubles it, up to [`INSTALL_BACKOFF`].
+pub const RETRY_FIRST: Duration = Duration::from_secs(3600);
+
+/// How long to wait after the `count`-th failed install of one version in a row (1 h, 2 h, 4 h, … capped at
+/// [`INSTALL_BACKOFF`]).
+pub fn retry_after(count: u32) -> Duration {
+    let doublings = count.saturating_sub(1).min(16);
+    RETRY_FIRST
+        .saturating_mul(1 << doublings)
+        .min(INSTALL_BACKOFF)
+}
+
+/// An install that failed while running (in memory, this run only): the idle install leaves that version alone for a
+/// while ([`retry_after`]), and for good after a bad signature (until another version is offered). "Restart to update"
+/// still tries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunFailure {
+    pub version: String,
+    /// Failed installs of this version in a row.
+    pub count: u32,
+    /// No installing it by itself until then (unix seconds); `None`: not this version at all (a bad signature).
+    pub until: Option<u64>,
+}
+
+impl RunFailure {
+    /// After `prev`, installing `version` failed at `now` (`signature`: its signature didn't check out).
+    pub fn after(
+        prev: Option<&RunFailure>,
+        version: &str,
+        signature: bool,
+        now: u64,
+    ) -> RunFailure {
+        let count = match prev {
+            Some(p) if p.version == version => p.count.saturating_add(1),
+            _ => 1,
+        };
+        RunFailure {
+            version: version.into(),
+            count,
+            until: (!signature).then(|| now.saturating_add(retry_after(count).as_secs())),
+        }
+    }
+
+    /// Whether the idle install leaves `version` alone at `now`. Another version is never held back; a wait further
+    /// ahead than [`INSTALL_BACKOFF`] (the clock went back) is over.
+    pub fn blocks(&self, version: &str, now: u64) -> bool {
+        self.version == version
+            && self
+                .until
+                .is_none_or(|u| now < u && u <= now.saturating_add(INSTALL_BACKOFF.as_secs()))
+    }
 }
 
 /// The plugin's leftovers in `temp`: `{app}-{X.Y.Z}-updater-*` dirs holding nothing but `{app}-{X.Y.Z}-installer.exe`
@@ -204,6 +260,70 @@ mod tests {
         // and after the back-off it's forgotten
         assert_eq!(check(dir.path(), &v("0.2.17"), f.backoff_until), None);
         assert!(!dir.path().join(FILE).exists());
+    }
+
+    #[test]
+    fn a_failure_dated_in_the_future_doesnt_stretch_the_back_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let day = INSTALL_BACKOFF.as_secs();
+        let now = 10 * day;
+        // noted while the clock was a week ahead
+        let a = Attempt {
+            from: "0.2.17".into(),
+            to: "0.2.18".into(),
+            at: now + 7 * day,
+            failed_at: Some(now + 7 * day),
+        };
+        write(dir.path(), &a).unwrap();
+        assert_eq!(check(dir.path(), &v("0.2.17"), now), None);
+        assert!(!dir.path().join(FILE).exists());
+        // a little ahead (within the back-off) still backs off, until its own end
+        let a = Attempt {
+            failed_at: Some(now + 60),
+            ..a
+        };
+        write(dir.path(), &a).unwrap();
+        let f = check(dir.path(), &v("0.2.17"), now).expect("backing off");
+        assert_eq!(f.backoff_until, now + 60 + day);
+    }
+
+    #[test]
+    fn run_failures_back_off_doubling_up_to_a_day() {
+        let hours: Vec<u64> = (1..=7).map(|n| retry_after(n).as_secs() / 3600).collect();
+        assert_eq!(hours, [1, 2, 4, 8, 16, 24, 24]);
+        assert_eq!(retry_after(0), RETRY_FIRST);
+        assert_eq!(retry_after(u32::MAX), INSTALL_BACKOFF);
+
+        let f1 = RunFailure::after(None, "0.2.19", false, 1000);
+        assert_eq!((f1.count, f1.until), (1, Some(1000 + 3600)));
+        assert!(f1.blocks("0.2.19", 1000));
+        assert!(f1.blocks("0.2.19", 1000 + 3599));
+        assert!(!f1.blocks("0.2.19", 1000 + 3600), "the wait is over");
+        assert!(
+            !f1.blocks("0.2.20", 1000),
+            "a newer version isn't held back"
+        );
+
+        let f2 = RunFailure::after(Some(&f1), "0.2.19", false, 5000);
+        assert_eq!((f2.count, f2.until), (2, Some(5000 + 7200)));
+        // another version starts over
+        let other = RunFailure::after(Some(&f2), "0.2.20", false, 6000);
+        assert_eq!((other.count, other.until), (1, Some(6000 + 3600)));
+    }
+
+    #[test]
+    fn a_bad_signature_holds_that_version_back_until_another_is_offered() {
+        let f = RunFailure::after(None, "0.2.19", true, 1000);
+        assert_eq!(f.until, None);
+        assert!(f.blocks("0.2.19", 1000 + 10 * INSTALL_BACKOFF.as_secs()));
+        assert!(!f.blocks("0.2.20", 1000));
+    }
+
+    #[test]
+    fn a_run_failure_wait_beyond_a_day_is_over() {
+        // noted with the clock far ahead, then put right
+        let f = RunFailure::after(None, "0.2.19", false, 100 * INSTALL_BACKOFF.as_secs());
+        assert!(!f.blocks("0.2.19", 1000));
     }
 
     #[test]

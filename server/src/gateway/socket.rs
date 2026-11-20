@@ -377,7 +377,8 @@ async fn run(
             return close(socket, 1011, "internal error").await;
         }
     };
-    if rescue {
+    // Only with a Windows update published: with nothing to install, the forced update screen would lock it out.
+    if rescue && crate::app_versions::windows_update_published(&s.cfg.updates_dir).await {
         // After the session check, so a signed-out app gets 4001 and the login screen first; signed in, its forced
         // update screen asks for the manifest with this session. It stops reconnecting on 4005.
         tracing::info!(user = %me, "gateway: an app from before 0.2.17; asking it to update");

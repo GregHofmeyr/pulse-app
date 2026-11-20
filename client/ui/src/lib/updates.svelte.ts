@@ -3,6 +3,7 @@
 // download's progress. A failed install leaves Pulse exactly as it was, with the reason in `error`.
 import { listen } from '@tauri-apps/api/event'
 import { api, errorText, type UpdateOffer, type UpdateProgress } from './tauri'
+import type { Pending } from './state'
 import { voice } from './voice.svelte'
 import { windowFocus } from './windowFocus.svelte'
 
@@ -66,6 +67,13 @@ export function idleInstallDue(v: { offer: boolean; installing: boolean; quietMs
   return v.offer && !v.installing && !v.blocked && v.quietMs >= IDLE_INSTALL_MS
 }
 
+/** Whether unsent messages hold the idle install back: one still sending does (a restart would cut it), and so does
+ *  one with files (they aren't kept across a restart). A failed text message doesn't: it's saved and comes back
+ *  failed after the restart (lib/unsent.ts), so it can't hold every update back for as long as it sits there. */
+export function pendingBlocks(pending: Record<string, Pending[]>): boolean {
+  return Object.values(pending).some((list) => list.some((p) => p.status !== 'failed' || (p.files?.length ?? 0) > 0))
+}
+
 /** Install an update found while running once Pulse has been left alone [`IDLE_INSTALL_MS`] (#460). `blocked`: whether
  *  something a restart would cut is going on (a call, going live, a clip or message still sending, unsent text). The
  *  core checks the call again and refuses after a failed install; a refusal waits another full quiet spell. */
@@ -77,10 +85,15 @@ export function startIdleInstall(blocked: () => boolean): () => void {
   const events = ['pointerdown', 'pointermove', 'keydown', 'wheel'] as const
   for (const e of events) window.addEventListener(e, active, { passive: true, capture: true })
   let wasFocused = windowFocus.focused
+  let lastTick = Date.now()
   const timer = setInterval(() => {
     // coming back to the window counts as being there, even before any input
     if (windowFocus.focused && !wasFocused) active()
     wasFocused = windowFocus.focused
+    // a tick far later than due: the computer slept. Waking it is someone being there, not ten quiet minutes
+    const now = Date.now()
+    if (now - lastTick > 2 * IDLE_POLL_MS) active()
+    lastTick = now
     const due = idleInstallDue({ offer: !!updates.offer, installing: updates.installing, quietMs: Date.now() - lastActive, blocked: blocked() })
     if (!due) return
     active() // a refusal or a failure waits another full quiet spell

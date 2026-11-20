@@ -24,6 +24,25 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.19',
+  version: '0.2.19',
+  date: '20 November 2026',
+  new: [],
+  fixes: [
+    'Updates: if an update doesn\'t install while Pulse is left alone, it waits a while before trying again instead of downloading it every few minutes',
+    'Updates: waking your computer from sleep no longer counts as having left Pulse alone, so an update doesn\'t start the moment you\'re back',
+    'Updates: if an update doesn\'t install, your clips carry on as before without a restart',
+    'Very old versions of Pulse are only asked to update when there\'s an update for them to install',
+  ],
+  qol: [
+    'Updates never install by themselves while you\'re playing a game or something is full screen, or over a message edit you haven\'t saved',
+    'A message that failed to send no longer holds updates back (it\'s still there after the update)',
+  ],
+  message: 'Update fixes 🔧',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.18',
   version: '0.2.18',
   date: '20 November 2026',
@@ -41,31 +60,4 @@ export const patchNotes: PatchNotes = {
     'Old update installers no longer pile up in your temporary files',
   ],
   message: 'Smoother updates 🔄',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.17',
-  version: '0.2.17',
-  date: '20 November 2026',
-  new: [
-    'Favourite stickers: star a sticker in the GIF picker or in chat, and find it again under Favourite stickers, a list of its own beside your favourite GIFs',
-    'Going live survives a short network drop: your stream shows Reconnecting and carries on by itself, with no need to pick the screen again',
-  ],
-  fixes: [
-    'The opened server card from an invite pack is sharp again (its text and icon were slightly blurry), and "✦ MYTHICAL PULL ✦" is easier to read in every theme',
-    'You can\'t schedule a message in a DM with someone you\'ve blocked any more (it used to wait until its time, then fail)',
-    'Voice: when your connection drops for a moment and comes back, nobody else hears you leave and rejoin',
-    'A stream whose streamer is still connected but sending nothing now ends after a minute, instead of staying live on a black screen',
-    'Updates: a slow update check at launch no longer gets dropped (the update is offered once it\'s found), a failed check tries again within minutes instead of half an hour, and a dropped download tries again by itself',
-    'With animations turned off (Windows "Animation effects"), a server invite still arrives as a sealed pack: click it, press Enter or give it a short drag and the card is just there, with no animation',
-  ],
-  qol: [
-    'In a full profile\'s Name Archive, click who made a change to see their profile, or right-click them for their menu',
-    'A watch party opened in a window moves on with the party to its next video, and closes when you leave the party',
-    'Making a poll anonymous in a DM or a small group now warns that people can still work out a vote from the counts changing',
-    'Linux: you show as Idle after 30 minutes away on Hyprland, sway and other wlroots desktops too',
-    'In a call, the title bar says "Update ready" when a new version is waiting: it applies when you restart Pulse, never mid-call, and "Restart to update" comes back when the call ends',
-  ],
-  message: 'Polish 🧽',
 }
