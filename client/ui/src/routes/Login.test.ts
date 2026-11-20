@@ -179,4 +179,28 @@ describe('Login', () => {
       expect(inviteLinks.code).toBeNull()
     })
   })
+
+  it('signed out, says an update is waiting when the server publishes a newer version (#460)', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'update_signed_out' ? { version: '9.9.9' } : undefined))
+    cmp = mount(Login, { target: document.body, props: { onAuthed } })
+    await settle(); flushSync()
+    expect(calls('update_signed_out')).toHaveLength(1)
+    expect((calls('update_signed_out')[0][1] as { server: string }).server).toBeTruthy()
+    expect(text()).toContain('An update is available. Sign in to get it.')
+  })
+
+  it('says nothing about updates when nothing newer is published, or the ask fails', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'update_signed_out' ? null : undefined))
+    cmp = mount(Login, { target: document.body, props: { onAuthed } })
+    await settle(); flushSync()
+    expect(text()).not.toContain('An update is available')
+    unmount(cmp)
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'update_signed_out') throw new Error('offline')
+      return undefined
+    })
+    cmp = mount(Login, { target: document.body, props: { onAuthed } })
+    await settle(); flushSync()
+    expect(text()).not.toContain('An update is available')
+  })
 })

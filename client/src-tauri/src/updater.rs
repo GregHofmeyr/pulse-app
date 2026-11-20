@@ -11,6 +11,12 @@
 //! - Release Windows builds only ([`updates_enabled`]). A failed check or install logs why and leaves Pulse as it is.
 //! - The token only ever goes to the server it belongs to: the endpoint is that server, and a download URL on any
 //!   other origin is refused ([`same_origin`]) before anything is fetched.
+//! - The manifest is fetched here ([`fetch_manifest`]) so its status is seen: 200 → the plugin takes it
+//!   (`restore_update`, which still checks the installer's signature); 204/404 → nothing newer; 401 → signed out
+//!   there (the login screen asks `/updates/version` instead: [`update_signed_out`]); anything else → an error, so
+//!   the check retries and an earlier offer stays.
+//! - Found while running, an update installs by itself once Pulse has been left alone a while (the page decides:
+//!   [`update_install_idle`]); a failed install is detected at the next launch ([`crate::update_attempt`]).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -22,7 +28,7 @@ use tokio::sync::watch;
 use url::Url;
 
 /// How long the page waits at launch for the check that started in `setup`.
-pub const LAUNCH_WAIT: Duration = Duration::from_secs(4);
+pub const LAUNCH_WAIT: Duration = Duration::from_secs(2);
 /// How long one background check (the manifest request: at launch, after login, periodic) may take. The page never
 /// waits for it longer than [`LAUNCH_WAIT`], so a slow connection still gets its answer, just later (#536). Never the
 /// updater's own `.timeout()`: that bounds the installer download too.
@@ -37,6 +43,16 @@ pub const RECHECK_EVERY: Duration = Duration::from_secs(30 * 60);
 pub const UPDATE_EVENT: &str = "pulse://update";
 /// Download progress: [`Progress`].
 pub const PROGRESS_EVENT: &str = "pulse://update-progress";
+
+/// This build's platform, sent beside the version (`X-Pulse-Platform`): the server never asks a platform without an
+/// updater to update.
+pub const PLATFORM: &str = if cfg!(windows) {
+    "windows"
+} else if cfg!(target_os = "macos") {
+    "macos"
+} else {
+    "linux"
+};
 
 /// Release Windows builds update; Linux, debug builds and `PULSE_NO_UPDATE=1` never ask.
 pub fn updates_enabled() -> bool {
@@ -73,6 +89,111 @@ pub fn same_origin(server: &Url, download: &Url) -> bool {
         && server.host_str().is_some()
         && server.host_str() == download.host_str()
         && server.port_or_known_default() == download.port_or_known_default()
+}
+
+/// How the server answered a manifest request, by its status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestAnswer {
+    /// 2xx with a body: the manifest.
+    Manifest,
+    /// 204 or 404: nothing published (or nothing newer).
+    NoUpdate,
+    /// 401: not signed in there any more.
+    SignedOut,
+    /// Anything else (5xx during a deploy, 429, …): a failed check, retried, and an earlier offer stays.
+    Error,
+}
+
+pub fn manifest_answer(status: u16) -> ManifestAnswer {
+    match status {
+        204 | 404 => ManifestAnswer::NoUpdate,
+        401 => ManifestAnswer::SignedOut,
+        200..=299 => ManifestAnswer::Manifest,
+        _ => ManifestAnswer::Error,
+    }
+}
+
+/// What [`fetch_manifest`] got.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Fetched {
+    Manifest(serde_json::Value),
+    NoUpdate,
+    SignedOut,
+}
+
+/// `GET <server>/updates/latest.json` with the session's token, this app's version and platform. A network error,
+/// a timeout or an unexpected status is `Err` (see [`ManifestAnswer`]).
+pub async fn fetch_manifest(
+    server: &Url,
+    token: &str,
+    version: &str,
+    timeout: Duration,
+) -> Result<Fetched, String> {
+    let endpoint = server
+        .join("updates/latest.json")
+        .map_err(|e| format!("bad server address: {e}"))?;
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|e| format!("updater setup: {e}"))?;
+    let res = client
+        .get(endpoint)
+        .bearer_auth(token)
+        .header("X-Pulse-Version", version)
+        .header("X-Pulse-Platform", PLATFORM)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("the update check failed: {}", short_error(&e, timeout)))?;
+    let status = res.status().as_u16();
+    match manifest_answer(status) {
+        ManifestAnswer::NoUpdate => Ok(Fetched::NoUpdate),
+        ManifestAnswer::SignedOut => Ok(Fetched::SignedOut),
+        ManifestAnswer::Error => Err(format!(
+            "the update check failed: the server answered {status}"
+        )),
+        ManifestAnswer::Manifest => res
+            .json()
+            .await
+            .map(Fetched::Manifest)
+            .map_err(|e| format!("the update check failed: {}", short_error(&e, timeout))),
+    }
+}
+
+/// A request error in a few words (a timeout says how long it waited).
+fn short_error(e: &reqwest::Error, timeout: Duration) -> String {
+    if e.is_timeout() {
+        format!("timed out after {} s", timeout.as_secs())
+    } else {
+        e.to_string()
+    }
+}
+
+/// `GET <server>/updates/version`, no session (#460): the published version, `None` when nothing is published.
+pub async fn latest_version(server: &Url, timeout: Duration) -> Result<Option<String>, String> {
+    let url = server
+        .join("updates/version")
+        .map_err(|e| format!("bad server address: {e}"))?;
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|e| format!("updater setup: {e}"))?;
+    let res = client
+        .get(url)
+        .header("X-Pulse-Version", env!("CARGO_PKG_VERSION"))
+        .header("X-Pulse-Platform", PLATFORM)
+        .send()
+        .await
+        .map_err(|e| format!("the version check failed: {}", short_error(&e, timeout)))?;
+    match res.status().as_u16() {
+        204 | 404 => Ok(None),
+        200 => res
+            .json::<pulse_protocol::rest::LatestVersion>()
+            .await
+            .map(|v| Some(v.version))
+            .map_err(|e| format!("the version check failed: {e}")),
+        s => Err(format!("the version check failed: the server answered {s}")),
+    }
 }
 
 /// "Restart to update" while in a call (or streaming, which needs one): refused.
@@ -232,10 +353,21 @@ pub struct Updates {
     /// Around the installer taking over and the process ending (Windows): crash marker, log.
     #[cfg_attr(not(windows), allow(dead_code))]
     handover: Arc<Handover>,
+    /// The profile's data dir: where an install attempt is noted ([`crate::update_attempt`]).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    dir: std::path::PathBuf,
+    /// The last install failed (found at this launch): no installing by itself for a while, "Couldn't update" shows.
+    failure: Mutex<Option<crate::update_attempt::Failure>>,
+    /// The server the stored login belongs to, read at launch: the "Couldn't update" download link's, while signed out.
+    stored_server: Mutex<Option<String>>,
 }
 
 impl Updates {
-    pub fn new(handover: Arc<Handover>) -> Self {
+    pub fn new(
+        handover: Arc<Handover>,
+        dir: std::path::PathBuf,
+        failure: Option<crate::update_attempt::Failure>,
+    ) -> Self {
         Self {
             launch: LaunchHandoff::default(),
             #[cfg(windows)]
@@ -244,7 +376,20 @@ impl Updates {
             retrying: AtomicBool::new(false),
             checked_login: Mutex::new(None),
             handover,
+            dir,
+            failure: Mutex::new(failure),
+            stored_server: Mutex::new(None),
         }
+    }
+
+    /// The last install failed not long ago: install only when asked ("Restart to update"), never by itself.
+    pub fn backing_off(&self) -> bool {
+        let now = crate::reports::unix_now();
+        self.failure
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|f| now < f.backoff_until)
     }
 
     /// The first check for the login holding `token`: true once per login (the launch check with the stored login
@@ -301,7 +446,9 @@ impl Updates {
     }
 }
 
-/// One check against `server`: `Ok(None)` = nothing newer (or no manifest, or not signed in there any more).
+/// One check against `server`: `Ok(None)` = nothing newer (or no manifest, or not signed in there any more). The
+/// manifest is fetched here so a server error is an error ([`fetch_manifest`]); the plugin then takes it as if it had
+/// fetched it, and checks the installer's signature as always.
 #[cfg(windows)]
 async fn check_server<R: tauri::Runtime>(
     app: &AppHandle<R>,
@@ -312,15 +459,30 @@ async fn check_server<R: tauri::Runtime>(
 ) -> Result<Option<tauri_plugin_updater::Update>, String> {
     use tauri_plugin_updater::UpdaterExt;
     let base = Url::parse(server).map_err(|e| format!("bad server address: {e}"))?;
+    let version = app.package_info().version.to_string();
+    let manifest = match fetch_manifest(&base, token, &version, timeout).await? {
+        Fetched::Manifest(m) => m,
+        Fetched::NoUpdate => {
+            tracing::info!("update: the server offers no update");
+            return Ok(None);
+        }
+        Fetched::SignedOut => {
+            tracing::info!(
+                "update: signed out on the server; the login screen asks for the version only"
+            );
+            return Ok(None);
+        }
+    };
     let endpoint = base
         .join("updates/latest.json")
         .map_err(|e| format!("bad server address: {e}"))?;
     let updater = app
         .updater_builder()
         .endpoints(vec![endpoint])
+        // the installer download goes with the same headers
         .and_then(|b| b.header("Authorization", format!("Bearer {token}")))
-        // the server logs it with each check (#460); the updater's own User-Agent names only the plugin
-        .and_then(|b| b.header("X-Pulse-Version", app.package_info().version.to_string()))
+        .and_then(|b| b.header("X-Pulse-Version", version.clone()))
+        .and_then(|b| b.header("X-Pulse-Platform", PLATFORM))
         .map_err(|e| format!("updater setup: {e}"))?
         .version_comparator(|current, release| should_offer(&current, &release.version))
         // A download that stalls fails (and Pulse carries on) instead of leaving "Updating Pulse…" up for good; a
@@ -329,21 +491,10 @@ async fn check_server<R: tauri::Runtime>(
         .on_before_exit(move || handover.before_exit())
         .build()
         .map_err(|e| format!("updater setup: {e}"))?;
-    let found = match tokio::time::timeout(timeout, updater.check()).await {
-        Err(_) => {
-            return Err(format!(
-                "the update check timed out after {} s",
-                timeout.as_secs()
-            ));
-        }
-        // a non-2xx answer (401: signed out there, 404: nothing published) ends as "release not found"
-        Ok(Err(tauri_plugin_updater::Error::ReleaseNotFound)) => {
-            tracing::info!("update: the server offers no update");
-            return Ok(None);
-        }
-        Ok(Err(e)) => return Err(format!("the update check failed: {e}")),
-        Ok(Ok(found)) => found,
-    };
+    // the plugin's own parsing, target choice and version comparison; the signature is checked on download/install
+    let found = updater
+        .restore_update(manifest)
+        .map_err(|e| format!("the update manifest was refused: {e}"))?;
     match found {
         Some(u) if !same_origin(&base, &u.download_url) => Err(format!(
             "refusing an update from another host ({})",
@@ -361,18 +512,19 @@ fn current_session(app: &AppHandle) -> Option<(String, String)> {
 }
 
 /// At startup (from `setup`): check against the stored session, so the page usually has the answer by the time it
-/// asks. Signed out = nothing to ask.
-pub fn start_launch_check(app: &AppHandle, store: crate::session::Store) {
+/// asks. Signed out = nothing to ask. `stored`: the stored login, read once in `setup` for this and the gateway.
+pub fn start_launch_check(
+    app: &AppHandle,
+    stored: tokio::sync::oneshot::Receiver<Option<(String, String)>>,
+) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let updates = app.state::<Updates>();
         let mut failed = false;
+        let started = std::time::Instant::now();
+        let stored = stored.await.ok().flatten();
+        *updates.stored_server.lock().unwrap() = stored.as_ref().map(|(s, _)| s.clone());
         let offer = if updates_enabled() {
-            // keychain reads block: not on the runtime's threads
-            let stored = tauri::async_runtime::spawn_blocking(move || store.load())
-                .await
-                .ok()
-                .flatten();
             match stored {
                 None => {
                     tracing::info!("update: signed out at launch; the first login checks");
@@ -396,6 +548,13 @@ pub fn start_launch_check(app: &AppHandle, store: crate::session::Store) {
         } else {
             None
         };
+        crate::startup::mark("launch_check_done");
+        tracing::info!(
+            took_ms = started.elapsed().as_millis() as u64,
+            found = offer.is_some(),
+            failed,
+            "update: launch check finished"
+        );
         if let Some(late) = updates.launch.publish(offer) {
             // #536: the page stopped waiting and started this version; offer it as "Restart to update"
             tracing::info!(version = %late.version, "update: the launch check finished after the page stopped waiting; offering it while running");
@@ -516,8 +675,20 @@ pub fn spawn_periodic(app: &AppHandle) {
 
 /// What the launch check found (waits at most [`LAUNCH_WAIT`] for it); `None` = start normally.
 #[tauri::command]
-pub async fn update_launch(updates: tauri::State<'_, Updates>) -> Result<Option<Offer>, String> {
+pub async fn update_launch(
+    app: AppHandle,
+    updates: tauri::State<'_, Updates>,
+) -> Result<Option<Offer>, String> {
     let offer = updates.launch.page_wait(LAUNCH_WAIT).await;
+    crate::startup::mark("launch_wait_done");
+    if let Some(o) = &offer
+        && updates.backing_off()
+    {
+        // #460: the last install failed; don't download it again at every launch. "Restart to update" still can.
+        tracing::info!(version = %o.version, "update: the last install failed; offering it instead of installing at launch");
+        let _ = app.emit(UPDATE_EVENT, Some(o));
+        return Ok(None);
+    }
     match &offer {
         Some(o) => tracing::info!(version = %o.version, "update: installing at launch"),
         None if updates_enabled() => tracing::info!("update: starting this version"),
@@ -559,15 +730,151 @@ pub async fn update_check(app: AppHandle) -> Result<Option<Offer>, String> {
         .inspect_err(|e| tracing::warn!(error = %e, "update: check failed"))
 }
 
+/// Signed out (or the session expired), on the login screen: is a newer version published on `server`? Asks
+/// `/updates/version` (no session); the update itself needs a sign-in. `None`: nothing newer, or this build doesn't
+/// update itself. A failed ask is `None` too (the login screen just doesn't say anything).
+#[tauri::command]
+pub async fn update_signed_out(server: String) -> Result<Option<Offer>, String> {
+    if !updates_enabled() {
+        return Ok(None);
+    }
+    let Ok(server) = crate::api::check_server_url(&server) else {
+        return Ok(None);
+    };
+    let Ok(base) = Url::parse(&server) else {
+        return Ok(None);
+    };
+    let current = Version::parse(env!("CARGO_PKG_VERSION")).map_err(|e| e.to_string())?;
+    match latest_version(&base, MANUAL_CHECK_TIMEOUT).await {
+        Ok(Some(v)) => match Version::parse(&v) {
+            Ok(latest) if should_offer(&current, &latest) => {
+                tracing::info!(version = %v, "update: one is published; signing in gets it");
+                Ok(Some(Offer { version: v }))
+            }
+            _ => Ok(None),
+        },
+        Ok(None) => Ok(None),
+        Err(e) => {
+            tracing::info!(error = %e, "update: couldn't ask for the published version");
+            Ok(None)
+        }
+    }
+}
+
+/// The last install failed (found at this launch, #460): what "Couldn't update" says.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailedUpdate {
+    pub version: String,
+    /// Where to download it by hand: the server's public Windows download.
+    pub download_url: Option<String>,
+}
+
+/// The public installer download on `server`.
+pub fn download_url(server: &str) -> Option<String> {
+    Url::parse(server)
+        .ok()?
+        .join("download/windows")
+        .ok()
+        .map(|u| u.to_string())
+}
+
+/// What "Couldn't update" shows, once per launch that found the last install failed (`None` after the first ask, or
+/// when nothing failed).
+#[tauri::command]
+pub fn update_failed(app: AppHandle) -> Option<FailedUpdate> {
+    let updates = app.state::<Updates>();
+    let f = updates.failure.lock().unwrap().clone()?;
+    if !f.fresh {
+        return None;
+    }
+    let server = current_session(&app)
+        .map(|(s, _)| s)
+        .or_else(|| updates.stored_server.lock().unwrap().clone());
+    Some(FailedUpdate {
+        version: f.attempt.to,
+        download_url: server.as_deref().and_then(download_url),
+    })
+}
+
+/// After sign-in (beside last session's crash report): a fresh failed install is reported as a crash would be, only
+/// with "Send crash reports automatically" on, once.
+pub async fn report_failed_install(app: AppHandle, api: crate::api::Api, token: String) {
+    let Some(updates) = app.try_state::<Updates>() else {
+        return;
+    };
+    let attempt = {
+        let mut failure = updates.failure.lock().unwrap();
+        match failure.as_mut() {
+            Some(f) if f.fresh => {
+                if !app
+                    .state::<crate::reports::settings::Store>()
+                    .auto_send_crashes()
+                {
+                    tracing::info!(
+                        "update: not reporting the failed install (automatic reports are off)"
+                    );
+                    return;
+                }
+                f.fresh = false; // one report, even if it fails to send
+                f.attempt.clone()
+            }
+            _ => return,
+        }
+    };
+    let dir = app.state::<crate::reports::LogDir>().0.clone();
+    // file I/O: not on an async worker
+    let log = tokio::task::spawn_blocking(move || {
+        crate::reports::tail::log_tail(&dir, crate::reports::TAIL_BYTES)
+    })
+    .await
+    .unwrap_or_default();
+    let mut meta = crate::reports::meta(&app, api.base()).await;
+    meta["update_failed"] =
+        serde_json::json!({ "from": attempt.from, "to": attempt.to, "at": attempt.at });
+    let req = pulse_protocol::rest::CreateReportRequest {
+        kind: pulse_protocol::rest::ReportKind::Bug,
+        text: format!(
+            "Automatic report: the update to {} didn't install; Pulse is still on {}.",
+            attempt.to,
+            env!("CARGO_PKG_VERSION")
+        ),
+        meta,
+        log,
+    };
+    match api.create_report(&token, &req).await {
+        Ok(r) => tracing::info!(id = %r.id, "update: the failed install was reported"),
+        Err(e) => tracing::warn!(error = %e, "update: couldn't report the failed install"),
+    }
+}
+
 /// Download (with [`PROGRESS_EVENT`]s) and install the update a check found. On Windows the installer takes over and
 /// the process ends here. `restart`: asked for from the title bar, refused during a call.
 #[tauri::command]
 pub async fn update_install(app: AppHandle, restart: bool) -> Result<(), String> {
+    install(&app, restart, "asked").await
+}
+
+/// The page saw Pulse left alone long enough with an update waiting (#460): install it, unless something's going on
+/// the core can see (a call, a clip still uploading) or the last install failed not long ago.
+#[tauri::command]
+pub async fn update_install_idle(app: AppHandle) -> Result<(), String> {
+    if app.state::<Updates>().backing_off() {
+        return Err("the last update didn't install; not trying again by itself yet".into());
+    }
+    if app.state::<crate::commands::Core>().clips_busy() {
+        tracing::info!("update: not installing while idle, a clip is uploading");
+        return Err("a clip is still uploading".into());
+    }
+    install(&app, true, "idle").await
+}
+
+async fn install(app: &AppHandle, restart: bool, why: &'static str) -> Result<(), String> {
     if restart {
         let voice = app.state::<crate::voice::VoiceManager>();
         let in_call = voice.current_channel().await.is_some() || voice.rejoining().is_some();
         may_restart(in_call)
-            .inspect_err(|_| tracing::info!("update: restart refused, in a call"))
+            .inspect_err(|_| tracing::info!(why, "update: restart refused, in a call"))
             .map_err(|e| e.to_string())?;
     }
     #[cfg(windows)]
@@ -579,24 +886,29 @@ pub async fn update_install(app: AppHandle, restart: bool) -> Result<(), String>
         if updates.installing.swap(true, Ordering::SeqCst) {
             return Err("already updating".into());
         }
-        tracing::info!(version = %update.version, restart, "update: downloading");
-        let result = download_and_install(&app, &update).await;
+        tracing::info!(version = %update.version, restart, why, "update: downloading");
+        let result = download_and_install(app, &update, &updates.dir).await;
         if result.is_err() {
             // the installer didn't start after all: crash marker and log back, if they were already handed over
             updates.handover.install_failed();
+            crate::update_attempt::clear(&updates.dir);
         }
         updates.installing.store(false, Ordering::SeqCst);
         result.inspect_err(|e| tracing::warn!(error = %e, version = %update.version, "update: install failed; staying on this version"))
     }
     // Only the Windows app updates itself (its checks never offer anything elsewhere).
     #[cfg(not(windows))]
-    Err("there's no update to install".into())
+    {
+        let _ = why;
+        Err("there's no update to install".into())
+    }
 }
 
 #[cfg(windows)]
 async fn download_and_install(
     app: &AppHandle,
     update: &tauri_plugin_updater::Update,
+    dir: &std::path::Path,
 ) -> Result<(), String> {
     let mut attempt = 0;
     let bytes = loop {
@@ -638,6 +950,13 @@ async fn download_and_install(
     tracing::info!(version = %update.version, "update: installing; Pulse will close and reopen");
     // The installer's exit skips RunEvent::Exit: wind down now, so no ffmpeg holds the files it replaces.
     crate::wind_down(app).await;
+    // #460: the next launch checks it got here (Pulse ends at the handover, so a failed install is otherwise silent)
+    crate::update_attempt::record(
+        dir,
+        env!("CARGO_PKG_VERSION"),
+        &update.version,
+        crate::reports::unix_now(),
+    );
     update
         .install(bytes)
         .map_err(|e| format!("the install failed: {e}"))
@@ -890,7 +1209,7 @@ mod tests {
     /// #233: one check per login: the launch check's login doesn't ask again at its first Ready, unless it failed.
     #[test]
     fn one_check_per_login() {
-        let updates = Updates::new(Arc::new(counting_handover().0));
+        let updates = Updates::new(Arc::new(counting_handover().0), Default::default(), None);
         assert!(updates.claim_login("t1"), "the launch check asks");
         assert!(!updates.claim_login("t1"), "its first Ready doesn't");
         assert!(updates.claim_login("t2"), "another login does");
@@ -956,6 +1275,158 @@ mod tests {
         assert!(req.starts_with("get /updates/latest.json "), "{req}");
         assert!(req.contains("authorization: bearer tok-401"), "{req}");
         assert_eq!(exits.load(Ordering::SeqCst), 0);
+    }
+
+    /// One HTTP answer from a loopback stub; gives back the request it got (lower case).
+    async fn stub(answer: &'static str) -> (Url, tokio::task::JoinHandle<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut req = Vec::new();
+            let mut buf = [0u8; 4096];
+            while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = sock.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&buf[..n]);
+            }
+            sock.write_all(answer.as_bytes()).await.unwrap();
+            String::from_utf8_lossy(&req).to_lowercase()
+        });
+        (u(&format!("http://{addr}/")), task)
+    }
+
+    #[test]
+    fn manifest_status_mapping() {
+        use ManifestAnswer::*;
+        assert_eq!(manifest_answer(200), Manifest);
+        assert_eq!(manifest_answer(204), NoUpdate);
+        assert_eq!(manifest_answer(404), NoUpdate);
+        assert_eq!(manifest_answer(401), SignedOut);
+        for s in [500, 502, 503, 429, 400, 403, 301] {
+            assert_eq!(manifest_answer(s), Error, "{s}");
+        }
+    }
+
+    /// #460: the manifest request carries the token, version and platform, and a server error is an error (retried,
+    /// an earlier offer kept), never "no update".
+    #[tokio::test]
+    async fn fetch_manifest_tells_errors_from_no_update() {
+        let body = r#"{"version":"9.9.9","platforms":{}}"#;
+        let ok: &'static str = Box::leak(
+            format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .into_boxed_str(),
+        );
+        let (server, req) = stub(ok).await;
+        let got = fetch_manifest(&server, "tok-1", "0.2.18", CHECK_TIMEOUT).await;
+        assert_eq!(
+            got,
+            Ok(Fetched::Manifest(serde_json::from_str(body).unwrap()))
+        );
+        let req = req.await.unwrap();
+        assert!(req.starts_with("get /updates/latest.json "), "{req}");
+        assert!(req.contains("authorization: bearer tok-1"), "{req}");
+        assert!(req.contains("x-pulse-version: 0.2.18"), "{req}");
+        assert!(
+            req.contains(&format!("x-pulse-platform: {PLATFORM}")),
+            "{req}"
+        );
+
+        for (answer, want) in [
+            (
+                "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                Ok(Fetched::NoUpdate),
+            ),
+            (
+                "HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n",
+                Ok(Fetched::NoUpdate),
+            ),
+            (
+                "HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                Ok(Fetched::SignedOut),
+            ),
+        ] {
+            let (server, _req) = stub(answer).await;
+            assert_eq!(
+                fetch_manifest(&server, "t", "0.2.18", CHECK_TIMEOUT).await,
+                want,
+                "{answer}"
+            );
+        }
+        let (server, _req) = stub(
+            "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+        )
+        .await;
+        let e = fetch_manifest(&server, "t", "0.2.18", CHECK_TIMEOUT)
+            .await
+            .unwrap_err();
+        assert!(e.contains("503"), "{e}");
+        // nobody there
+        let gone = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            u(&format!("http://{}/", l.local_addr().unwrap()))
+        };
+        assert!(
+            fetch_manifest(&gone, "t", "0.2.18", CHECK_TIMEOUT)
+                .await
+                .is_err()
+        );
+    }
+
+    /// The signed-out check (#460): the version only, no token sent.
+    #[tokio::test]
+    async fn latest_version_needs_no_token() {
+        let (server, req) = stub(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 20\r\nconnection: close\r\n\r\n{\"version\":\"0.2.19\"}",
+        )
+        .await;
+        assert_eq!(
+            latest_version(&server, CHECK_TIMEOUT).await,
+            Ok(Some("0.2.19".into()))
+        );
+        let req = req.await.unwrap();
+        assert!(req.starts_with("get /updates/version "), "{req}");
+        assert!(!req.contains("authorization"), "{req}");
+        let (server, _) = stub("HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n").await;
+        assert_eq!(latest_version(&server, CHECK_TIMEOUT).await, Ok(None));
+        let (server, _) =
+            stub("HTTP/1.1 500 Oops\r\ncontent-length: 0\r\nconnection: close\r\n\r\n").await;
+        assert!(latest_version(&server, CHECK_TIMEOUT).await.is_err());
+    }
+
+    #[test]
+    fn download_link_is_the_public_windows_download() {
+        assert_eq!(
+            download_url("https://example.invalid").as_deref(),
+            Some("https://example.invalid/download/windows")
+        );
+        assert_eq!(download_url("not a url"), None);
+    }
+
+    /// #460: after a failed install, nothing installs by itself until the back-off ends.
+    #[test]
+    fn a_failed_install_backs_off() {
+        let now = crate::reports::unix_now();
+        let failure = |until| crate::update_attempt::Failure {
+            attempt: crate::update_attempt::Attempt {
+                from: "0.2.18".into(),
+                to: "0.2.19".into(),
+                at: now - 10,
+                failed_at: Some(now),
+            },
+            fresh: true,
+            backoff_until: until,
+        };
+        let h = || Arc::new(counting_handover().0);
+        assert!(!Updates::new(h(), Default::default(), None).backing_off());
+        assert!(Updates::new(h(), Default::default(), Some(failure(now + 60))).backing_off());
+        assert!(!Updates::new(h(), Default::default(), Some(failure(now - 1))).backing_off());
     }
 
     #[cfg(not(windows))]

@@ -12,6 +12,10 @@
   }
   // Files queued per channel (#57), kept the same way.
   const fileDrafts = new Map<string, StagedFile[]>()
+  /** Unsent text or queued files in any message box (#460: an update never installs by itself over them). */
+  export function hasUnsentDrafts(): boolean {
+    return fileDrafts.size > 0 || [...drafts.values()].some((t) => t.trim() !== '')
+  }
 </script>
 
 <script lang="ts">

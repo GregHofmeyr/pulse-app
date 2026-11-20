@@ -236,3 +236,38 @@ describe('App: an update at launch (#82)', () => {
     expect(h.calls.indexOf('update_launch')).toBeLessThan(h.calls.indexOf('restore_session'))
   })
 })
+
+describe('App: boot and failed updates (#460)', () => {
+  it('the boot screen is branded while the session restores', async () => {
+    let finish: (v: unknown) => void = () => {}
+    h.respond['restore_session'] = () => new Promise((r) => (finish = r))
+    app.state = emptyState()
+    cmp = mount(App, { target: document.body })
+    await vi.waitFor(() => expect(h.calls).toContain('restore_session'))
+    const boot = document.querySelector('.boot')
+    expect(boot).not.toBeNull()
+    expect(boot!.getAttribute('aria-busy')).toBe('true')
+    expect(boot!.querySelector('.boot-mark svg')).not.toBeNull()
+    expect(boot!.textContent).toContain('Pulse')
+    finish({ status: 'logged_out' })
+    await vi.waitFor(() => expect(document.querySelector('.boot')).toBeNull())
+  })
+
+  it("a failed install says Couldn't update, with the download link, until dismissed", async () => {
+    h.respond['update_failed'] = async () => ({ version: '9.9.9', downloadUrl: 'https://example.invalid/download/windows' })
+    await start({ status: 'logged_out' })
+    await vi.waitFor(() => expect(text()).toContain("Couldn't update to 9.9.9"))
+    const link = document.querySelector<HTMLAnchorElement>('.update-failed a')!
+    expect(link.href).toBe('https://example.invalid/download/windows')
+    expect(link.target).toBe('_blank')
+    ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Dismiss')!.click()
+    flushSync()
+    expect(text()).not.toContain("Couldn't update")
+  })
+
+  it('nothing failed, nothing said', async () => {
+    await start({ status: 'logged_out' })
+    expect(h.calls).toContain('update_failed')
+    expect(document.querySelector('.update-failed')).toBeNull()
+  })
+})

@@ -442,6 +442,13 @@ async fn session(
                 "CARGO_PKG_VERSION"
             )),
         );
+        // and its platform (0.2.18): the server never asks a platform without an updater to update
+        req.headers_mut().insert(
+            "X-Pulse-Platform",
+            tokio_tungstenite::tungstenite::http::HeaderValue::from_static(
+                crate::updater::PLATFORM,
+            ),
+        );
         req
     };
     let mut ws =

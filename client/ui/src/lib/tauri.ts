@@ -199,6 +199,8 @@ export type GifResult = { id: string; title: string; url: string; width: number;
 export type GifPage = { gifs: GifResult[]; next: number | null }
 
 export type UpdateOffer = { version: string }
+/** The last install didn't finish (#460): "Couldn't update", with where to download it by hand. */
+export type FailedUpdate = { version: string; downloadUrl: string | null }
 /** What Settings shows about updates (#460): this app's version, whether it updates itself (release Windows builds), and
  *  whether its updates come from a package manager instead (Linux). */
 export type UpdateInfo = { version: string; enabled: boolean; packageManager: boolean }
@@ -558,7 +560,7 @@ export const api = {
     invoke<CustomEmoji>('create_emoji', { serverId, name, mediaHash }),
   renameEmoji: (id: string, name: string) => invoke<CustomEmoji>('rename_emoji', { id, name }),
   deleteEmoji: (id: string) => invoke<void>('delete_emoji', { id }),
-  /** App updates (#82): what the check that started with the app found (it waits up to 4 s for it); null = none. */
+  /** App updates (#82): what the check that started with the app found (it waits up to 2 s for it); null = none. */
   updateLaunch: () => invoke<UpdateOffer | null>('update_launch'),
   /** A fresh check against the signed-in server now; null = no newer version (or signed out). */
   updateCheck: () => invoke<UpdateOffer | null>('update_check'),
@@ -567,6 +569,13 @@ export const api = {
   /** Download and install the offer: Pulse closes and reopens on the new version. `restart` = asked for from the
    *  title bar, which the core refuses during a call. Rejects with why, and Pulse carries on as it was. */
   updateInstall: (restart: boolean) => invoke<void>('update_install', { restart }),
+  /** Install the offer because Pulse was left alone with one waiting (#460). The core refuses during a call, while a
+   *  clip uploads, or for a while after an install that failed. */
+  updateInstallIdle: () => invoke<void>('update_install_idle'),
+  /** Signed out: is a newer version published on `server` (#460)? Asks for the version only; null = no, or unknown. */
+  updateSignedOut: (server: string) => invoke<UpdateOffer | null>('update_signed_out', { server }),
+  /** The last install didn't finish (#460), once per launch that found it; null = nothing to say. */
+  updateFailed: () => invoke<FailedUpdate | null>('update_failed'),
   /** Where Strong (low delay)'s model is (#77). */
   modelStatus: () => invoke<ModelStatus>('model_status'),
   /** Download it from the signed-in server (`pulse://model` events on the way); the status it ended in. */

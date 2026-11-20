@@ -29,6 +29,7 @@ pub mod sounds;
 pub mod startup;
 pub mod stream;
 pub mod throttle;
+pub mod update_attempt;
 pub mod updater;
 pub mod video;
 pub mod voice;
@@ -145,12 +146,16 @@ pub fn run() {
             app.manage(invite_links::Pending::default());
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
-                // the installed app answers `pulse://` for this user; a dev build leaves the registration alone
+                // the installed app answers `pulse://` for this user; a dev build leaves the registration alone. A few
+                // registry writes, but off the startup path: a link clicked before they land opened this exe anyway
                 #[cfg(windows)]
-                if !cfg!(debug_assertions)
-                    && let Err(e) = app.deep_link().register_all()
-                {
-                    tracing::warn!(error = %e, "couldn't register pulse:// links");
+                if !cfg!(debug_assertions) {
+                    let h = app.handle().clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if let Err(e) = h.deep_link().register_all() {
+                            tracing::warn!(error = %e, "couldn't register pulse:// links");
+                        }
+                    });
                 }
                 let h = app.handle().clone();
                 app.deep_link().on_open_url(move |e| {
@@ -328,6 +333,12 @@ pub fn run() {
             // Windows the installer ends the process: first clear the crash marker (an update isn't a crash) and
             // flush the log. If the installer doesn't start after all, Pulse carries on: both come back (#233).
             let (h, h2) = (app.handle().clone(), app.handle().clone());
+            // #460: did the last install (if any) work? A failed one backs off installing by itself for a while
+            let failed_update = update_attempt::check(
+                &dir,
+                &app.package_info().version,
+                reports::unix_now(),
+            );
             app.manage(updater::Updates::new(std::sync::Arc::new(updater::Handover::new(
                 move || {
                     tracing::info!("update: handing over to the installer");
@@ -347,15 +358,33 @@ pub fn run() {
                     }
                     tracing::warn!("update: the installer didn't start; carrying on with this version");
                 },
-            ))));
-            updater::start_launch_check(app.handle(), session::Store::new(dir.clone(), profile.as_deref()));
+            )), dir.clone(), failed_update));
+            // The stored login is read once (keychain reads block: not on the UI thread) and goes to both the launch
+            // update check and the gateway: a stored login connects now, while the webview boots, so Ready no longer
+            // waits for the UI and a separate /me round trip.
+            let (stored_tx, stored_rx) = tokio::sync::oneshot::channel();
+            updater::start_launch_check(app.handle(), stored_rx);
             updater::spawn_periodic(app.handle());
-            // A stored login connects now, while the webview boots: Ready no longer waits for
-            // the UI and a separate /me round trip. (Keychain reads block: not on the UI thread.)
             let h = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
-                h.state::<commands::Core>().start_stored(&h, false);
+                let core = h.state::<commands::Core>();
+                let stored = core.read_stored();
+                let _ = stored_tx.send(stored.clone());
+                core.start_preloaded(&h, stored);
             });
+            // The updater's leftover installers in %TEMP% (#460), once any installer that just ran is done with its own
+            #[cfg(windows)]
+            {
+                let name = app.package_info().name.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                        update_attempt::delete_stale_installers(&std::env::temp_dir(), &name)
+                    })
+                    .await;
+                });
+            }
+            startup::mark("setup_done");
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -702,6 +731,9 @@ pub fn run() {
             updater::update_check,
             updater::update_info,
             updater::update_install,
+            updater::update_install_idle,
+            updater::update_signed_out,
+            updater::update_failed,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Pulse")

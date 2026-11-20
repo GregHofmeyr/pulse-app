@@ -431,6 +431,19 @@ impl Core {
         ))
     }
 
+    /// A clip is being prepared, uploaded or posted (#460: no installing an update by itself then).
+    pub(crate) fn clips_busy(&self) -> bool {
+        use crate::clips::jobs::Stage;
+        self.clip_jobs.borrow().as_ref().is_some_and(|j| {
+            j.list().iter().any(|c| {
+                matches!(
+                    c.stage,
+                    Stage::Preparing | Stage::Uploading | Stage::Posting
+                )
+            })
+        })
+    }
+
     /// This session's clip jobs, waiting for them to load (on the first Ready). The error is the
     /// reason to show: signed out, or not connected yet.
     async fn clip_jobs(&self) -> Result<ClipJobs, String> {
@@ -474,6 +487,12 @@ impl Core {
         self.begin(api.clone(), token.clone(), me);
         let (tx, rx) = mpsc::unbounded_channel();
         tauri::async_runtime::spawn(crate::reports::crash::send_pending(
+            app.clone(),
+            api.clone(),
+            token.clone(),
+        ));
+        // a failed update found at launch (#460), reported like a crash
+        tauri::async_runtime::spawn(crate::updater::report_failed_install(
             app.clone(),
             api.clone(),
             token.clone(),
@@ -593,12 +612,34 @@ impl Core {
         Some(server)
     }
 
+    /// [`Self::start_stored`] at launch, with the stored login `setup` already read (one keychain read for this and
+    /// the launch update check).
+    pub(crate) fn start_preloaded(&self, app: &AppHandle, stored: Option<(String, String)>) {
+        let _one = self.starting.lock().unwrap();
+        if self.inner.lock().unwrap().is_some() {
+            return;
+        }
+        if let Some((api, token)) = self.checked_stored(stored) {
+            self.activate(app, api, token, None, false);
+        }
+    }
+
+    /// The stored login, read once (keychain reads block).
+    pub(crate) fn read_stored(&self) -> Option<(String, String)> {
+        self.store.load()
+    }
+
     /// The stored session to restore, if there is one. Its server address goes through the same
     /// check as a login's and is used as checked (normalised). An address the check refuses (a
     /// hand-edited store, or one saved by an older version) can't be restored: the stored session
     /// is cleared, as for a dead token, and startup shows the login screen.
     fn load_stored(&self) -> Option<(Api, String)> {
-        let (stored, token) = self.store.load()?;
+        self.checked_stored(self.store.load())
+    }
+
+    /// [`Self::load_stored`] for a stored login already read.
+    fn checked_stored(&self, stored: Option<(String, String)>) -> Option<(Api, String)> {
+        let (stored, token) = stored?;
         let server = match check_server_url(&stored) {
             Ok(s) => s,
             Err(e) => {

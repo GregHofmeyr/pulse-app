@@ -20,7 +20,11 @@
   import Updating from './routes/Updating.svelte'
   import DownloadAnnouncer from './components/DownloadAnnouncer.svelte'
   import { screenFor } from './lib/screen'
-  import { installUpdate, startUpdateListening, updates } from './lib/updates.svelte'
+  import { installUpdate, restartBlocked, startIdleInstall, startUpdateListening, updates } from './lib/updates.svelte'
+  import UpdateFailed from './components/UpdateFailed.svelte'
+  import { hasUnsentDrafts } from './components/Composer.svelte'
+  import { stream } from './lib/stream/stream.svelte'
+  import type { FailedUpdate } from './lib/tauri'
   import { startMediaActivity } from './lib/activityPrefs.svelte'
   import { startGameActivity } from './lib/gamePrefs.svelte'
   import { tellClipDrop } from './lib/clipDropPrefs.svelte'
@@ -34,6 +38,19 @@
   const screen = $derived(screenFor({ booting, signedIn: !!user, conn: app.state.conn, restoreRefused }))
 
   onMount(() => installTooltips())
+  // #460: an update found while running installs by itself once Pulse is left alone, never over anything going on
+  onMount(() =>
+    startIdleInstall(
+      () =>
+        restartBlocked() ||
+        stream.live !== null ||
+        hasUnsentDrafts() ||
+        Object.values(app.state.pending).some((list) => list.length > 0) ||
+        Object.values(app.state.clipJobs).some((j) => j.stage === 'preparing' || j.stage === 'uploading' || j.stage === 'posting'),
+    ),
+  )
+  // #460: the last install didn't finish: say so, with a download link (once)
+  let failedUpdate = $state<FailedUpdate | null>(null)
   onMount(watchWindowFocus)
 
   // While the window is unfocused (app.css `.unfocused`) nothing animates in the background, on any screen.
@@ -89,6 +106,7 @@
           // logged by installUpdate; carry on as this version
         }
       }
+      api.updateFailed().then((f) => (failedUpdate = f ?? null), () => {})
       try {
         const r = await api.restoreSession()
         user = r.status === 'ready' ? r.user : null
@@ -137,7 +155,13 @@
 </script>
 
 {#if screen === 'boot'}
-  <div class="boot" aria-busy="true"></div>
+  <!-- the app's own background and mark while the core restores the session (the window shows before the page) -->
+  <div class="boot" aria-busy="true" aria-label="Starting Pulse" data-tauri-drag-region>
+    <span class="boot-mark" aria-hidden="true">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" /></svg>
+    </span>
+    <span class="boot-name">Pulse</span>
+  </div>
 {:else if screen === 'update'}
   <UpdateRequired />
 {:else if screen === 'waiting'}
@@ -150,11 +174,22 @@
 {:else}
   <Login notice={bootError} onAuthed={(u) => { bootError = ''; restoreRefused = false; user = u }} />
 {/if}
+{#if failedUpdate && !updates.installing}<UpdateFailed failed={failedUpdate} onClose={() => (failedUpdate = null)} />{/if}
 <!-- #82: over everything, so a failed install leaves the screen beneath exactly as it was -->
 {#if updates.installing}<Updating />{/if}
 <!-- #205: downloads starting and finishing, for screen readers -->
 <DownloadAnnouncer />
 
 <style>
-  .boot { height: 100%; background: var(--bg-0); }
+  .boot { height: 100%; background: var(--bg-0); display: grid; place-content: center; justify-items: center; gap: 14px; }
+  /* fades in only if startup takes a moment; then breathes gently (opacity only), still under reduced motion */
+  .boot-mark, .boot-name { animation: boot-in var(--dur-slow) var(--ease) var(--dur-fast) both; }
+  .boot-mark { width: 56px; height: 56px; border-radius: var(--radius-xl); background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
+  .boot-mark svg { animation: boot-breathe calc(var(--dur-slow) * 4) var(--ease) infinite alternate; }
+  .boot-name { font-size: 15px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
+  @keyframes boot-in { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+  @keyframes boot-breathe { from { opacity: 1; } to { opacity: .55; } }
+  @media (prefers-reduced-motion: reduce) {
+    .boot-mark, .boot-name, .boot-mark svg { animation: none; }
+  }
 </style>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import PasswordInput from '../components/PasswordInput.svelte'
   import { api, errorText } from '../lib/tauri'
   import { defaultServer } from '../lib/config'
@@ -10,6 +11,20 @@
 
   let mode = $state<'login' | 'register'>('login')
   let serverUrl = $state(defaultServer(import.meta.env))
+  // #460: signed out, a newer Pulse can't be downloaded (that needs a session), but the server says which is published
+  let updateWaiting = $state(false)
+  onMount(() => {
+    let gone = false
+    api.updateSignedOut(serverUrl).then(
+      (offer) => {
+        if (!gone) updateWaiting = !!offer
+      },
+      () => {},
+    )
+    return () => {
+      gone = true
+    }
+  })
   let inviteCode = $state('')
   // hidden from people (#476): left empty by anyone who can see the form
   let website = $state('')
@@ -96,6 +111,7 @@
       <h1>{step === 'code' ? 'Two-factor authentication' : mode === 'login' ? 'Welcome back' : 'Join Pulse'}</h1>
     </div>
     {#if notice}<p class="notice">{notice}</p>{/if}
+    {#if updateWaiting && step !== 'code'}<p class="update-hint" role="status">An update is available. Sign in to get it.</p>{/if}
 
     {#if step === 'code'}
       <label>Code
@@ -149,6 +165,7 @@
   .link:hover { color: var(--text); }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .notice { margin: 0; color: var(--warn-text); font-size: 13px; }
+  .update-hint { margin: 0; color: var(--accent-text); font-size: 13px; }
   .report { background: none; border: 0; color: var(--warn-text); font-size: 13px; opacity: .8; }
   .report:hover { opacity: 1; }
 </style>

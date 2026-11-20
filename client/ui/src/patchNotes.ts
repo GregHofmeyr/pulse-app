@@ -24,6 +24,27 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.18',
+  version: '0.2.18',
+  date: '20 November 2026',
+  new: [
+    'Updates install by themselves: when one is waiting and you\'ve left Pulse alone for 10 minutes, it updates and reopens. Never during a call, a stream, an upload or a message you haven\'t sent',
+    'Signed out, the login screen says when an update is available (signing in gets it)',
+  ],
+  fixes: [
+    'Updates: a server hiccup during an update check no longer hides an update that was already found, and the check tries again',
+    'Updates: if an update doesn\'t install, Pulse says so with a link to download it, and stops downloading it again at every launch',
+    'Very old versions of Pulse are now asked to update when they connect, so nobody gets stuck on one',
+  ],
+  qol: [
+    'Pulse starts faster: it waits less for the update check, and shows its logo instead of a blank window while it gets going',
+    'Old update installers no longer pile up in your temporary files',
+  ],
+  message: 'Smoother updates 🔄',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.17',
   version: '0.2.17',
   date: '20 November 2026',
@@ -47,31 +68,4 @@ export const patchNotes: PatchNotes = {
     'In a call, the title bar says "Update ready" when a new version is waiting: it applies when you restart Pulse, never mid-call, and "Restart to update" comes back when the call ends',
   ],
   message: 'Polish 🧽',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.16',
-  version: '0.2.16',
-  date: '19 November 2026',
-  new: [
-    'Servers are now private: you only see servers you\'re in, and you join with an invite',
-    'Server icons: anyone in a server can give it a picture, shown on the server bar, invites and everywhere else it appears',
-    'Server settings › Overview: the server\'s icon, banner and name in one place, shown together the way its invites show them',
-    'My status here: right-click a server to be Online, Do Not Disturb or Invisible in that server only. Its members see it there, everyone sees your usual status everywhere else, and a dot on the server marks it',
-    'Server invites arrive as a sealed card pack in the server\'s colours: drag across the top to tear it open and pull a mythical server card (once opened, it stays open)',
-    'Block someone from their right-click menu or Settings › Privacy: their DMs, calls, invites, pings and sounds stop reaching you, and they see you offline. Pick whether their messages show as a \'Blocked message\' line or vanish completely',
-  ],
-  fixes: [
-    'The Invite dialog keeps one link while it\'s open: changing the button text, expiry or uses no longer swaps the link (or breaks Copy)',
-  ],
-  qol: [
-    'Rename a server in place, from the name at the top of its channel list or from right-click on its icon',
-    'Settings › About: which version you\'re on, the server you\'re connected to, Check for updates, and this version\'s patch notes',
-    'Right-click a channel › Move to category; Move up and Move down are gone, since dragging reorders',
-    'Anyone in a server can change its icon, banner and name, not just its owner',
-    'Your profile, online status and what you\'re up to reach only people you share a server, a DM or a group with',
-    'A DM with someone you\'ve blocked says so where you\'d type, and Hide completely leaves their reactions out of the counts',
-  ],
-  message: 'Your servers, your people 🔒',
 }
