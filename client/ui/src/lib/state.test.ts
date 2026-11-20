@@ -355,6 +355,80 @@ describe('trimming keeps unread messages', () => {
   })
 })
 
+it('typing indicators that ran out are dropped when someone else starts typing there', () => {
+  let s = applyReady(emptyState(), ready())
+  s = applyEvent(s, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U2' } }, 0)
+  s = applyEvent(s, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U3' } }, 1000)
+  expect(Object.keys(s.typing['C1']).sort()).toEqual(['U2', 'U3'])
+  s = applyEvent(s, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U4' } }, 6500) // U2's (until 6000) ran out
+  expect(Object.keys(s.typing['C1']).sort()).toEqual(['U3', 'U4'])
+})
+
+describe('live messages in chats that are not open', () => {
+  const id = (n: number) => `M${String(n).padStart(4, '0')}`
+  const created = (n: number, channel = 'C1') => ({ t: 'MessageCreated', d: { message: msg(id(n), channel), nonce: null } }) as const
+  const readAt = (point: string | null) =>
+    ({ t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: point, mentions: null, unread: null } }) as const
+  const twoChats = () => applyReady(emptyState(), ready({ channels: [ch('C1'), ch('C2')] }))
+
+  it('a chat never opened stays bounded however long the session runs', async () => {
+    const { setShownChannel, KEEP_ON_LEAVE } = await import('./state')
+    // 2000 messages come in a chat you don't open, each read on another device before the next
+    let s = setShownChannel(twoChats(), 'C2')
+    for (let n = 1; n <= 2000; n++) s = applyEvent(applyEvent(s, readAt(id(n - 1)), 0), created(n), 0)
+    expect(s.messages['C1']).toHaveLength(KEEP_ON_LEAVE)
+    expect(s.reads['C1'].unread).toBe(1)
+    expect(s.messages['C1'].at(-1)!.id).toBe(id(2000))
+  })
+
+  it('unread ones are kept like a trim keeps them, up to UNSEEN_CAP, and the counts are untouched', async () => {
+    const { setShownChannel, UNSEEN_CAP } = await import('./state')
+    let s = applyEvent(setShownChannel(twoChats(), 'C2'), readAt(id(0)), 0)
+    for (let n = 1; n <= 300; n++) s = applyEvent(s, created(n), 0)
+    expect(s.messages['C1']).toHaveLength(300) // all unread: the NEW line needs them
+    expect(s.reads['C1'].unread).toBe(300)
+    for (let n = 301; n <= 2000; n++) s = applyEvent(s, created(n), 0)
+    expect(s.messages['C1']).toHaveLength(UNSEEN_CAP)
+    expect(s.messages['C1'][0].id).toBe(id(2000 - UNSEEN_CAP + 1))
+    expect(s.reads['C1'].unread).toBe(2000)
+  })
+
+  it('the open chat (and every chat while none is known to be open) keeps everything', async () => {
+    const { setShownChannel } = await import('./state')
+    let open = applyEvent(setShownChannel(twoChats(), 'C1'), readAt(id(0)), 0)
+    let unknown = applyEvent(twoChats(), readAt(id(0)), 0)
+    for (let n = 1; n <= 700; n++) {
+      open = applyEvent(open, readAt(id(n - 1)), 0)
+      open = applyEvent(open, created(n), 0)
+      unknown = applyEvent(applyEvent(unknown, readAt(id(n - 1)), 0), created(n), 0)
+    }
+    expect(open.messages['C1']).toHaveLength(700)
+    expect(unknown.messages['C1']).toHaveLength(700)
+  })
+
+  it('opening it afterwards loads its latest page as before', async () => {
+    const { setShownChannel } = await import('./state')
+    let s = setShownChannel(twoChats(), 'C2')
+    for (let n = 1; n <= 400; n++) s = applyEvent(applyEvent(s, readAt(id(n - 1)), 0), created(n), 0)
+    s = setShownChannel(s, 'C1')
+    const page = Array.from({ length: 50 }, (_, i) => msg(id(351 + i)))
+    s = mergeLatest(s, 'C1', page)
+    const ids = s.messages['C1'].map((m) => m.id)
+    expect(ids).toEqual([...ids].sort())
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids.at(-1)).toBe(id(400))
+    // live messages only (never paged in): the latest page takes their place, as it would have unbounded
+    expect(ids).toEqual(page.map((m) => m.id))
+    expect(s.history['C1']).toEqual({ loaded: true, start: false, end: true })
+  })
+
+  it('a message arriving out of order still lands in its place', () => {
+    let s = twoChats()
+    for (const n of [1, 3, 2]) s = applyEvent(s, created(n), 0)
+    expect(s.messages['C1'].map((m) => m.id)).toEqual([id(1), id(2), id(3)])
+  })
+})
+
 describe('streams', () => {
   const info = (user_id: string, over: Partial<StreamInfo> = {}, channel_id = 'V1'): StreamInfo => ({
     channel_id, user_id,

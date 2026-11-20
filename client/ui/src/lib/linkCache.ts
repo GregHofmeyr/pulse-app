@@ -21,9 +21,23 @@ export function linkUntil(link: SignedLink, askedAt: number): number {
   return Number.isFinite(at) ? at - RENEW_MARGIN_MS : askedAt
 }
 
-/** A cache of links by key. `get` hands out a stored link with time left, or joins or starts a fetch. */
-export function linkCache() {
+/** Most links a cache keeps; the least recently handed out go first. */
+export const LINK_CACHE_MAX = 1000
+
+/** A cache of links by key. `get` hands out a stored link with time left, or joins or starts a fetch. Run-out links
+ * are dropped as they're met, and at most `max` are kept (a session left open for days meets many files). */
+export function linkCache(max = LINK_CACHE_MAX) {
   const links = new Map<string, { url: string; until: number }>()
+  /** Store a link, newest in LRU order (Map order), dropping run-out ones from the old end and then any over `max`. */
+  function store(key: string, url: string, until: number) {
+    links.delete(key)
+    links.set(key, { url, until })
+    const now = Date.now()
+    for (const [k, v] of links) {
+      if (links.size <= max && v.until > now) break
+      links.delete(k)
+    }
+  }
   const pending = new Map<string, Promise<string>>()
   let era = 0 // bumped by forget, so a fetch from before a sign-out stores nothing
 
@@ -33,7 +47,11 @@ export function linkCache() {
     get(key: string, fetch: () => Promise<SignedLink>, opts: { fresh?: boolean } = {}): Promise<string> {
       if (!opts.fresh) {
         const have = links.get(key)
-        if (have && Date.now() < have.until) return Promise.resolve(have.url)
+        if (have && Date.now() < have.until) {
+          links.delete(key) // re-insert: Map order is the LRU order
+          links.set(key, have)
+          return Promise.resolve(have.url)
+        }
         const inFlight = pending.get(key)
         if (inFlight) return inFlight
       }
@@ -43,7 +61,7 @@ export function linkCache() {
       const p = fetch().then(
         (link) => {
           if (mine === era) {
-            links.set(key, { url: link.url, until: linkUntil(link, askedAt) })
+            store(key, link.url, linkUntil(link, askedAt))
             if (pending.get(key) === p) pending.delete(key)
           }
           return link.url
@@ -58,7 +76,7 @@ export function linkCache() {
     },
     /** Store a link fetched alongside another (a message's other files). */
     put(key: string, link: SignedLink, askedAt: number, since = era) {
-      if (since === era) links.set(key, { url: link.url, until: linkUntil(link, askedAt) })
+      if (since === era) store(key, link.url, linkUntil(link, askedAt))
     },
     /** For `put`: the sign-in a fetch started under. */
     era: () => era,
