@@ -272,7 +272,7 @@ pub(crate) async fn undo(
         OR message_id IN (SELECT message_id FROM qoty_winners)
         OR message_id IN (SELECT m.id FROM messages m JOIN channels c ON c.id = m.channel_id
                           WHERE c.deleted_at IS NOT NULL AND c.deleted_at <= ?2))";
-    let due = crate::servers::channels::due(chrono::Utc::now());
+    let due = crate::servers::channels::due(jiff::Timestamp::now());
     // Votes go with their option (foreign key cascade), but not by luck: say so.
     for table in ["qoty_votes", "qoty_options"] {
         sqlx::query(sqlx::AssertSqlSafe(format!(

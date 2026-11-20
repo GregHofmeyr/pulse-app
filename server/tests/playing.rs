@@ -194,10 +194,8 @@ async fn a_steam_game_reaches_everyone_with_its_art_beside_listening() {
     let got = next_playing(&mut sam_ws, a).await.expect("playing");
     assert_eq!(got.name, "Space Game", "cleaned");
     assert_eq!(got.steam_app_id, Some(STEAM_APP_FULL));
-    let started = chrono::DateTime::parse_from_rfc3339(got.started_at.as_deref().unwrap()).unwrap();
-    let ago = chrono::Utc::now()
-        .signed_duration_since(started)
-        .num_seconds();
+    let started = pulse_server::times::parse(got.started_at.as_deref().unwrap()).unwrap();
+    let ago = jiff::Timestamp::now().duration_since(started).as_secs();
     assert!((115..=135).contains(&ago), "started about 120 s ago: {ago}");
     let art = got.art.clone().expect("art from the Steam CDN");
     let (hero, header, logo) = (

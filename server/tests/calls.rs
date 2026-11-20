@@ -182,10 +182,8 @@ async fn ringing_reaches_members_only() {
     let got = rings(&sam);
     assert_eq!(got.len(), 1, "{sam:?}");
     assert_eq!((got[0].caller_id, got[0].channel_id), (p.alex.0, dm.id));
-    let expires = chrono::DateTime::parse_from_rfc3339(&got[0].expires_at).unwrap();
-    let left = expires
-        .signed_duration_since(chrono::Utc::now())
-        .num_seconds();
+    let expires = pulse_server::times::parse(&got[0].expires_at).unwrap();
+    let left = expires.duration_since(jiff::Timestamp::now()).as_secs();
     assert!((25..=30).contains(&left), "rings for 30 s, {left} left");
     assert!(sam.iter().any(|e| matches!(e, Event::CallStarted { .. })));
     let alex = drain(&mut a).await;
@@ -563,7 +561,7 @@ fn live_participant(user: UserId, sid: &str) -> livekit_protocol::ParticipantInf
         identity: user.to_string(),
         sid: sid.into(),
         state: livekit_protocol::participant_info::State::Active as i32,
-        joined_at: chrono::Utc::now().timestamp(),
+        joined_at: jiff::Timestamp::now().as_second(),
         ..Default::default()
     }
 }

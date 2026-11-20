@@ -136,11 +136,7 @@ pub const TEST_DECOY: &str = "/i/test-decoy";
 
 /// Where `test_config` pins the quote badges' clock: 12:00 South African time, far from the small
 /// hours, so no quote test earns 3 am Thoughts by accident whenever it runs (#127).
-pub const QUOTE_CLOCK_DAY: chrono::DateTime<chrono::Utc> =
-    match chrono::DateTime::from_timestamp(1_767_261_600, 0) {
-        Some(t) => t, // 2026-01-01T10:00:00Z
-        None => panic!("a valid time"),
-    };
+pub const QUOTE_CLOCK_DAY: jiff::Timestamp = jiff::Timestamp::constant(1_767_261_600, 0); // 2026-01-01T10:00:00Z
 
 pub async fn spawn() -> TestApp {
     spawn_with(test_config()).await

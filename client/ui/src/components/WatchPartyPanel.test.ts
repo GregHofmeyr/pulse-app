@@ -13,6 +13,7 @@ vi.mock('@tauri-apps/api/event', () => ({
   },
 }))
 
+import { reactiveProps } from '../lib/testProps.svelte'
 import WatchPartyPanel from './WatchPartyPanel.svelte'
 import { app, startListening } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
@@ -54,6 +55,7 @@ beforeEach(() => {
   app.state = applyReady(emptyState(), ready)
   watchPrefs.on = true
   invoke.mockClear()
+  invoke.mockImplementation(async (cmd: string) => (cmd === 'embed_origin' ? ORIGIN : undefined))
 })
 afterEach(() => {
   while (mounted.length) unmount(mounted.pop()!)
@@ -230,6 +232,56 @@ describe('the watch party panel (#384)', () => {
     expect(host.querySelector('iframe')).toBeNull()
     btn(host, 'Open in a window')!.click()
     expect(invoke.mock.calls.some(([c]) => c === 'open_embed_window')).toBe(true)
+  })
+
+  it('the window follows the party to its next video, and closes when you leave (#409)', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'embed_origin' ? ORIGIN : cmd === 'close_embed_window' ? true : undefined))
+    const props = reactiveProps({ party: party({ viewers: ['U2', 'U1'] }), serverId: 'S1', inCall: true })
+    const host = document.createElement('div')
+    document.body.append(host)
+    mounted.push(mount(WatchPartyPanel, { target: host, props }))
+    await settle()
+    const f = host.querySelector('iframe')!
+    window.dispatchEvent(new MessageEvent('message', { data: { pulse: 'party', state: 'error', code: 153 }, origin: ORIGIN, source: f.contentWindow }))
+    flushSync()
+    btn(host, 'Open in a window')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('open_embed_window', { provider: 'youtube', id: 'dQw4w9WgXcQ', start: null, owner: 'party:V1' })
+    // play, pause and seeks don't touch it
+    props.party = { ...props.party, playing: false, position_ms: 30_000, set_at_ms: Date.now() }
+    await settle()
+    expect(invoke.mock.calls.filter(([c]) => c === 'close_embed_window')).toHaveLength(0)
+    // the next video: closed and opened on that one
+    props.party = { ...props.party, video_id: 'aaaaaaaaaaa', position_ms: 0, playing: true, set_at_ms: Date.now() }
+    await settle()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('close_embed_window', { owner: 'party:V1' })
+    expect(invoke).toHaveBeenLastCalledWith('open_embed_window', { provider: 'youtube', id: 'aaaaaaaaaaa', start: null, owner: 'party:V1' })
+    // leaving the party closes it
+    invoke.mockClear()
+    props.party = { ...props.party, viewers: ['U2'] }
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('close_embed_window', { owner: 'party:V1' })
+  })
+
+  it('a window closed by hand stays closed when the party moves on (#409)', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'embed_origin' ? ORIGIN : cmd === 'close_embed_window' ? false : undefined))
+    const props = reactiveProps({ party: party({ viewers: ['U2', 'U1'] }), serverId: 'S1', inCall: true })
+    const host = document.createElement('div')
+    document.body.append(host)
+    mounted.push(mount(WatchPartyPanel, { target: host, props }))
+    await settle()
+    const f = host.querySelector('iframe')!
+    window.dispatchEvent(new MessageEvent('message', { data: { pulse: 'party', state: 'error', code: 153 }, origin: ORIGIN, source: f.contentWindow }))
+    flushSync()
+    btn(host, 'Open in a window')!.click()
+    await settle()
+    invoke.mockClear()
+    props.party = { ...props.party, video_id: 'aaaaaaaaaaa', position_ms: 0, set_at_ms: Date.now() }
+    await settle()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('close_embed_window', { owner: 'party:V1' })
+    expect(invoke.mock.calls.some(([c]) => c === 'open_embed_window')).toBe(false)
   })
 
   it('the queue pill opens every queued video, not just the first few (#409, #464)', async () => {

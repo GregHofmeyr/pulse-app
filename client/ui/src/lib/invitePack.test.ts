@@ -2,9 +2,9 @@
 // The invite card pack (#511), the pure part: who gets it sealed, how a drag across the top tears it (either way,
 // springing back if let go early, ripping at TEAR_AT), and remembering on this device that it was opened.
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BAND_PX, NO_TEAR, TEAR_AT, markOpened, press, progressOf, startStage, stretch, wasOpened } from './invitePack'
+import { BAND_PX, NO_TEAR, SHORT_DRAG_AT, TEAR_AT, markOpened, openingStage, press, progressOf, ripAt, startStage, stretch, wasOpened } from './invitePack'
 
-const base = { mine: false, valid: true, reducedMotion: false, opened: false }
+const base = { mine: false, valid: true, opened: false }
 
 describe('invite pack', () => {
   afterEach(() => {
@@ -12,7 +12,7 @@ describe('invite pack', () => {
     vi.restoreAllMocks()
   })
 
-  it('arrives sealed only for someone it is for, still valid, never opened, with motion', () => {
+  it('arrives sealed only for someone it is for, still valid, never opened', () => {
     expect(startStage(base)).toBe('sealed')
     // its sender sees their card open
     expect(startStage({ ...base, mine: true })).toBe('open')
@@ -20,8 +20,18 @@ describe('invite pack', () => {
     expect(startStage({ ...base, valid: false })).toBe('open')
     // opened on this device before
     expect(startStage({ ...base, opened: true })).toBe('open')
-    // less motion: just open
-    expect(startStage({ ...base, reducedMotion: true })).toBe('open')
+  })
+
+  // #538: Windows "Animation effects" off skipped the pack altogether; now it's sealed, and opens at once
+  it('with reduced motion: a short drag opens it, straight to open (no ripping stage)', () => {
+    expect(openingStage(false)).toBe('ripping')
+    expect(openingStage(true)).toBe('open')
+    expect(ripAt(false)).toBe(TEAR_AT)
+    expect(ripAt(true)).toBe(SHORT_DRAG_AT)
+    const t = press(0.4, 20)!
+    expect(stretch(t, 0.4 + SHORT_DRAG_AT, ripAt(true)).rip).toBe(true)
+    expect(stretch(t, 0.4 + SHORT_DRAG_AT - 0.05, ripAt(true)).rip).toBe(false)
+    expect(stretch(t, 0.4 + SHORT_DRAG_AT, ripAt(false)).rip).toBe(false)
   })
 
   it('a tear starts only on the top band, and stretches either way', () => {

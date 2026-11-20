@@ -1389,11 +1389,21 @@ mod liveness {
         assert!(queued(&mut rx).is_empty(), "no end, no second update");
     }
 
+    /// A participant as LiveKit lists it; a `#v` publishes its screen share, as a streamer's does (#523).
     fn participant(identity: String, state: lkp::participant_info::State) -> lkp::ParticipantInfo {
+        let tracks = if identity.ends_with("#v") {
+            vec![lkp::TrackInfo {
+                source: lkp::TrackSource::ScreenShare as i32,
+                ..Default::default()
+            }]
+        } else {
+            vec![]
+        };
         lkp::ParticipantInfo {
             identity,
             sid: "PA_x".into(),
             state: state as i32,
+            tracks,
             ..Default::default()
         }
     }
@@ -1502,6 +1512,32 @@ mod liveness {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         format!("http://{addr}")
+    }
+
+    /// #523: a streamer's `#v` that LiveKit lists with no screen share published (a republish after a blip that
+    /// never landed) is as missing as one that's gone: the stream ends after the grace, not live on a black tile.
+    #[tokio::test]
+    async fn a_video_connection_sharing_nothing_ends_the_stream_after_the_grace() {
+        let app = spawn().await;
+        let (l, (a_id, a), (b_id, b), _rx) = pair(&app).await;
+        for tok in [&a, &b] {
+            assert_eq!(go_live(&app, tok, l.id, settings()).await.status(), 200);
+        }
+        let active = lkp::participant_info::State::Active;
+        let mut alex = participant(v(a_id), active);
+        alex.tracks.clear();
+        let live = SharedRooms::default();
+        live.lock().unwrap().push((
+            format!("{}~s", l.id),
+            vec![alex, participant(v(b_id), active)],
+        ));
+        let s = state_with(&app, fake_livekit_shared(live).await);
+        let rooms = LiveKitRooms::new(&s.cfg);
+        let t0 = Instant::now();
+        assert_eq!(counts(&check(&s, &rooms, t0, GRACE).await), (0, 0));
+        assert_eq!(counts(&check(&s, &rooms, t0 + GRACE, GRACE).await), (1, 0));
+        assert!(app.streams.get(l.id, a_id).is_none());
+        assert!(app.streams.get(l.id, b_id).is_some(), "sam shares: kept");
     }
 
     #[tokio::test]

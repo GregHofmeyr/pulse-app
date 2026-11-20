@@ -1375,11 +1375,11 @@ impl Api {
         .await
     }
 
-    /// Your favourite GIFs (#58), newest first.
+    /// Your favourite GIFs (#58) and favourite stickers (#498), newest first, each sticker marked.
     pub async fn gif_favourites(&self, token: &str) -> Result<Vec<Gif>, ApiError> {
         Self::parse(
             self.http
-                .get(format!("{}/gifs/favourites", self.base))
+                .get(format!("{}/gifs/favourites?with_stickers=true", self.base))
                 .bearer_auth(token)
                 .send()
                 .await,
@@ -1387,7 +1387,7 @@ impl Api {
         .await
     }
 
-    /// Star a GIF (#58); starring one already starred changes nothing.
+    /// Star a GIF (#58), or a sticker (#498); starring one already starred changes nothing.
     pub async fn add_gif_favourite(&self, token: &str, gif: &Gif) -> Result<(), ApiError> {
         Self::ok_empty(
             self.http
@@ -1400,7 +1400,7 @@ impl Api {
         .await
     }
 
-    /// Unstar a GIF (#58); unstarring one that isn't starred changes nothing.
+    /// Unstar a GIF (#58) or a sticker; unstarring one that isn't starred changes nothing.
     pub async fn remove_gif_favourite(&self, token: &str, id: &str) -> Result<(), ApiError> {
         let mut url = reqwest::Url::parse(&format!("{}/gifs/favourites", self.base))
             .map_err(|e| ApiError::Rejected(e.to_string()))?;

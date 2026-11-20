@@ -12,9 +12,9 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::get;
-use chrono::{DateTime, TimeDelta, Utc};
 use common::*;
 use futures::{SinkExt, StreamExt};
+use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::gateway::{ClientFrame, ServerFrame};
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId};
 use pulse_protocol::rest::{
@@ -69,18 +69,18 @@ async fn fake_jolpica() -> (FakeJolpica, String) {
     (fake, base)
 }
 
-fn date_time(t: DateTime<Utc>) -> Value {
-    json!({"date": t.format("%Y-%m-%d").to_string(), "time": t.format("%H:%M:%SZ").to_string()})
+fn date_time(t: Timestamp) -> Value {
+    json!({"date": t.strftime("%Y-%m-%d").to_string(), "time": t.strftime("%H:%M:%SZ").to_string()})
 }
 
 /// A race on the calendar with lights out at `race`: practice two days before, qualifying the day before.
-fn race(round: u16, name: &str, race: DateTime<Utc>) -> Value {
+fn race(round: u16, name: &str, race: Timestamp) -> Value {
     let mut r = json!({
         "season": "2030", "round": round.to_string(), "raceName": name,
         "Circuit": {"circuitId": "c", "circuitName": format!("{name} Circuit"),
                     "Location": {"lat": "0", "long": "0", "locality": "Port Town", "country": "UK"}},
-        "FirstPractice": date_time(race - TimeDelta::days(2)),
-        "Qualifying": date_time(race - TimeDelta::days(1)),
+        "FirstPractice": date_time(race - pulse_server::times::days(2)),
+        "Qualifying": date_time(race - pulse_server::times::days(1)),
     });
     let d = date_time(race);
     r["date"] = d["date"].clone();
@@ -162,10 +162,11 @@ fn sprint_results(round: u16, order: &[&str]) -> Value {
 }
 
 /// A sprint weekend's race (#403): sprint qualifying and the sprint the day before qualifying.
-fn sprint_race(round: u16, name: &str, at: DateTime<Utc>) -> Value {
+fn sprint_race(round: u16, name: &str, at: Timestamp) -> Value {
     let mut r = race(round, name, at);
-    r["SprintQualifying"] = date_time(at - TimeDelta::days(2) + TimeDelta::hours(4));
-    r["Sprint"] = date_time(at - TimeDelta::days(1) - TimeDelta::hours(4));
+    r["SprintQualifying"] =
+        date_time(at - pulse_server::times::days(2) + SignedDuration::from_hours(4));
+    r["Sprint"] = date_time(at - pulse_server::times::days(1) - SignedDuration::from_hours(4));
     r
 }
 
@@ -282,10 +283,10 @@ async fn nothing_is_fetched_or_posted_without_an_f1_channel() {
         schedule(vec![race(
             1,
             "Harbour Grand Prix",
-            Utc::now() + TimeDelta::hours(3),
+            Timestamp::now() + SignedDuration::from_hours(3),
         )]),
     );
-    assert_eq!(tick(&app.state(), Utc::now()).await.unwrap(), 0);
+    assert_eq!(tick(&app.state(), Timestamp::now()).await.unwrap(), 0);
     let st: F1Status = get_json(&app, &alex, &format!("/servers/{server}/f1")).await;
     assert_eq!(
         st,
@@ -303,7 +304,7 @@ async fn nothing_is_fetched_or_posted_without_an_f1_channel() {
 #[tokio::test]
 async fn only_the_owner_picks_one_of_the_server_s_text_channels() {
     let (app, fake, [alex, sam, _, jo], server, g) = setup().await;
-    let lights_out = Utc::now() + TimeDelta::days(5);
+    let lights_out = Timestamp::now() + pulse_server::times::days(5);
     fake.set(
         "current.json",
         schedule(vec![race(1, "Harbour Grand Prix", lights_out)]),
@@ -361,11 +362,15 @@ async fn only_the_owner_picks_one_of_the_server_s_text_channels() {
 async fn a_race_weekend_from_the_card_to_the_scores() {
     let (app, fake, [alex, sam, kim, jo], server, g) = setup().await;
     let s = app.state();
-    let lights_out = Utc::now() + TimeDelta::hours(3);
+    let lights_out = Timestamp::now() + SignedDuration::from_hours(3);
     fake.set(
         "current.json",
         schedule(vec![
-            race(1, "Desert Grand Prix", Utc::now() - TimeDelta::days(7)),
+            race(
+                1,
+                "Desert Grand Prix",
+                Timestamp::now() - pulse_server::times::days(7),
+            ),
             race(2, "Harbour Grand Prix", lights_out),
         ]),
     );
@@ -380,8 +385,8 @@ async fn a_race_weekend_from_the_card_to_the_scores() {
     );
 
     // the weekend card, once
-    assert_eq!(tick(&s, Utc::now()).await.unwrap(), 1);
-    assert_eq!(tick(&s, Utc::now()).await.unwrap(), 0);
+    assert_eq!(tick(&s, Timestamp::now()).await.unwrap(), 1);
+    assert_eq!(tick(&s, Timestamp::now()).await.unwrap(), 0);
     let lines = f1_lines(&app, &sam, g.id).await;
     assert_eq!(lines.len(), 1);
     let card = &lines[0];
@@ -467,11 +472,15 @@ async fn a_race_weekend_from_the_card_to_the_scores() {
 
     // lights out in an hour, naming the card
     assert_eq!(
-        tick(&s, lights_out - TimeDelta::minutes(30)).await.unwrap(),
+        tick(&s, lights_out - SignedDuration::from_mins(30))
+            .await
+            .unwrap(),
         1
     );
     assert_eq!(
-        tick(&s, lights_out - TimeDelta::minutes(29)).await.unwrap(),
+        tick(&s, lights_out - SignedDuration::from_mins(29))
+            .await
+            .unwrap(),
         0
     );
     let lines = f1_lines(&app, &sam, g.id).await;
@@ -487,9 +496,11 @@ async fn a_race_weekend_from_the_card_to_the_scores() {
     // sam has read the chat (the inbox lists mentions in chats you have a read point in)
     send(&app, &sam, g.id, "come on racer_a").await;
     // during the race nothing is asked; after it, the results are polled until they're in
-    tick(&s, lights_out + TimeDelta::minutes(30)).await.unwrap();
+    tick(&s, lights_out + SignedDuration::from_mins(30))
+        .await
+        .unwrap();
     assert_eq!(fake.asked("2030/2/"), 0);
-    let after = lights_out + TimeDelta::hours(2);
+    let after = lights_out + SignedDuration::from_hours(2);
     assert_eq!(tick(&s, after).await.unwrap(), 0);
     assert_eq!(fake.asked("2030/2/results.json"), 1, "not in yet");
     fake.set(
@@ -499,13 +510,25 @@ async fn a_race_weekend_from_the_card_to_the_scores() {
     fake.set("2030/2/driverStandings.json", standings(2));
     fake.set("2030/2/constructorStandings.json", constructor_standings(2));
     assert_eq!(
-        tick(&s, after + TimeDelta::minutes(1)).await.unwrap(),
+        tick(&s, after + SignedDuration::from_mins(1))
+            .await
+            .unwrap(),
         0,
         "cached for a few minutes"
     );
     assert_eq!(fake.asked("2030/2/results.json"), 1);
-    assert_eq!(tick(&s, after + TimeDelta::minutes(6)).await.unwrap(), 1);
-    assert_eq!(tick(&s, after + TimeDelta::minutes(20)).await.unwrap(), 0);
+    assert_eq!(
+        tick(&s, after + SignedDuration::from_mins(6))
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        tick(&s, after + SignedDuration::from_mins(20))
+            .await
+            .unwrap(),
+        0
+    );
     assert_eq!(
         fake.asked("2030/2/results.json"),
         2,
@@ -597,7 +620,7 @@ async fn a_race_weekend_from_the_card_to_the_scores() {
 #[tokio::test]
 async fn predictions_close_at_lights_out() {
     let (app, fake, [alex, sam, ..], server, g) = setup().await;
-    let lights_out = Utc::now() - TimeDelta::minutes(1);
+    let lights_out = Timestamp::now() - SignedDuration::from_mins(1);
     fake.set(
         "current.json",
         schedule(vec![race(1, "Desert Grand Prix", lights_out)]),
@@ -612,7 +635,7 @@ async fn predictions_close_at_lights_out() {
     pick_channel(&app, &alex, server, Some(g.id)).await;
     // the card went out earlier in the weekend (the first race: the season's entry list to pick from)
     assert_eq!(
-        tick(&app.state(), lights_out - TimeDelta::hours(5))
+        tick(&app.state(), lights_out - SignedDuration::from_hours(5))
             .await
             .unwrap(),
         1
@@ -637,7 +660,7 @@ async fn predictions_close_at_lights_out() {
 async fn the_results_wait_a_while_for_the_standings_then_go_without() {
     let (app, fake, [alex, sam, ..], server, g) = setup().await;
     let s = app.state();
-    let lights_out = Utc::now() - TimeDelta::days(1);
+    let lights_out = Timestamp::now() - pulse_server::times::days(1);
     fake.set(
         "current.json",
         schedule(vec![race(1, "Desert Grand Prix", lights_out)]),
@@ -647,10 +670,16 @@ async fn the_results_wait_a_while_for_the_standings_then_go_without() {
         results(1, &["racer_a", "rider_b", "speed_c"]),
     );
     pick_channel(&app, &alex, server, Some(g.id)).await;
-    let t0 = lights_out + TimeDelta::hours(2);
+    let t0 = lights_out + SignedDuration::from_hours(2);
     assert_eq!(tick(&s, t0).await.unwrap(), 0, "no standings yet");
-    assert_eq!(tick(&s, t0 + TimeDelta::minutes(30)).await.unwrap(), 0);
-    assert_eq!(tick(&s, t0 + TimeDelta::minutes(61)).await.unwrap(), 1);
+    assert_eq!(
+        tick(&s, t0 + SignedDuration::from_mins(30)).await.unwrap(),
+        0
+    );
+    assert_eq!(
+        tick(&s, t0 + SignedDuration::from_mins(61)).await.unwrap(),
+        1
+    );
     let lines = f1_lines(&app, &sam, g.id).await;
     assert_eq!(
         lines.len(),
@@ -668,25 +697,32 @@ async fn the_results_wait_a_while_for_the_standings_then_go_without() {
 async fn a_sprint_weekend_posts_the_sprint_results_once() {
     let (app, fake, [alex, sam, ..], server, g) = setup().await;
     let s = app.state();
-    let lights_out = Utc::now() + TimeDelta::days(1) + TimeDelta::hours(10);
-    let sprint_at = lights_out - TimeDelta::days(1) - TimeDelta::hours(4);
+    let lights_out =
+        Timestamp::now() + pulse_server::times::days(1) + SignedDuration::from_hours(10);
+    let sprint_at = lights_out - pulse_server::times::days(1) - SignedDuration::from_hours(4);
     fake.set(
         "current.json",
         schedule(vec![sprint_race(1, "Harbour Grand Prix", lights_out)]),
     );
     pick_channel(&app, &alex, server, Some(g.id)).await;
     // before the sprint is over nothing is asked
-    tick(&s, sprint_at + TimeDelta::minutes(20)).await.unwrap();
+    tick(&s, sprint_at + SignedDuration::from_mins(20))
+        .await
+        .unwrap();
     assert_eq!(fake.asked("2030/1/sprint.json"), 0);
-    let after = sprint_at + TimeDelta::minutes(50);
+    let after = sprint_at + SignedDuration::from_mins(50);
     tick(&s, after).await.unwrap();
     assert_eq!(fake.asked("2030/1/sprint.json"), 1, "not in yet");
     fake.set(
         "2030/1/sprint.json",
         sprint_results(1, &["rider_b", "racer_a", "speed_c"]),
     );
-    tick(&s, after + TimeDelta::minutes(6)).await.unwrap();
-    tick(&s, after + TimeDelta::minutes(30)).await.unwrap();
+    tick(&s, after + SignedDuration::from_mins(6))
+        .await
+        .unwrap();
+    tick(&s, after + SignedDuration::from_mins(30))
+        .await
+        .unwrap();
     assert_eq!(fake.asked("2030/1/sprint.json"), 2, "never again once in");
     let lines = f1_lines(&app, &sam, g.id).await;
     let sprints: Vec<&Message> = lines
@@ -715,8 +751,9 @@ async fn the_owner_can_close_predictions_at_qualifying() {
     let (app, fake, [alex, sam, ..], server, g) = setup().await;
     let s = app.state();
     // qualifying (the day before lights out) is an hour away
-    let lights_out = Utc::now() + TimeDelta::days(1) + TimeDelta::hours(1);
-    let qualifying = lights_out - TimeDelta::days(1);
+    let lights_out =
+        Timestamp::now() + pulse_server::times::days(1) + SignedDuration::from_hours(1);
+    let qualifying = lights_out - pulse_server::times::days(1);
     fake.set(
         "current.json",
         schedule(vec![race(1, "Desert Grand Prix", lights_out)]),
@@ -762,14 +799,14 @@ async fn the_owner_can_close_predictions_at_qualifying() {
     let st: F1Status = get_json(&app, &sam, &format!("/servers/{server}/f1")).await;
     assert_eq!(st.picks_close, F1PicksClose::Qualifying);
 
-    assert_eq!(tick(&s, Utc::now()).await.unwrap(), 1);
+    assert_eq!(tick(&s, Timestamp::now()).await.unwrap(), 1);
     let lines = f1_lines(&app, &sam, g.id).await;
     let Some(F1Card::Weekend(w)) = lines[0].f1.as_deref() else {
         panic!()
     };
-    let close = DateTime::parse_from_rfc3339(w.picks_close_at.as_deref().unwrap()).unwrap();
+    let close = pulse_server::times::parse(w.picks_close_at.as_deref().unwrap()).unwrap();
     assert!(
-        (close.with_timezone(&Utc) - qualifying).num_seconds().abs() <= 1,
+        close.duration_since(qualifying).as_secs().abs() <= 1,
         "the card says picks close at qualifying"
     );
     let picks = json!(["racer_a", "rider_b", "speed_c"]);
@@ -788,7 +825,7 @@ async fn the_owner_can_close_predictions_at_qualifying() {
         .await
         .unwrap();
     let mut v: Value = serde_json::from_str(&payload).unwrap();
-    let started = Utc::now() - TimeDelta::minutes(5);
+    let started = Timestamp::now() - SignedDuration::from_mins(5);
     v["weekend"]["sessions"]
         .as_array_mut()
         .unwrap()
@@ -823,7 +860,7 @@ async fn the_owner_can_close_predictions_at_qualifying() {
 #[tokio::test]
 async fn an_archived_channel_takes_no_predictions_and_cant_be_picked() {
     let (app, fake, [alex, sam, ..], server, g) = setup().await;
-    let lights_out = Utc::now() + TimeDelta::days(2);
+    let lights_out = Timestamp::now() + pulse_server::times::days(2);
     fake.set(
         "current.json",
         schedule(vec![race(1, "Desert Grand Prix", lights_out)]),
@@ -837,7 +874,7 @@ async fn an_archived_channel_takes_no_predictions_and_cant_be_picked() {
     );
     pick_channel(&app, &alex, server, Some(g.id)).await;
     assert_eq!(
-        tick(&app.state(), lights_out - TimeDelta::hours(5))
+        tick(&app.state(), lights_out - SignedDuration::from_hours(5))
             .await
             .unwrap(),
         1

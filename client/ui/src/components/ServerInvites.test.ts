@@ -341,23 +341,74 @@ describe('the invite card', () => {
     expect(card.dataset.stage).toBe('open')
   })
 
-  it('the pack: a dead invite skips it, and with reduced motion it is simply open', async () => {
+  it('the pack: a dead invite skips it', async () => {
     let card = await show(() => preview({ state: 'expired' }))
     expect(card.dataset.stage).toBe('open')
     expect(card.classList.contains('dead')).toBe(true)
     expect(document.querySelector('.rarity')).toBeNull()
-    unmount(cmp!)
-    cmp = undefined
-    document.body.innerHTML = ''
-    forgetInvitePreviews()
-    vi.stubGlobal('matchMedia', fakeMatchMedia(true).matchMedia)
-    try {
+  })
+
+  // #538: Windows "Animation effects" off used to skip the pack; now it arrives sealed, still, and opens at once
+  describe('with reduced motion', () => {
+    beforeEach(() => vi.stubGlobal('matchMedia', fakeMatchMedia(true).matchMedia))
+    afterEach(() => vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia))
+    const fresh = () => {
+      unmount(cmp!)
+      cmp = undefined
+      document.body.innerHTML = ''
+      forgetInvitePreviews()
+    }
+
+    it('it arrives sealed; a click opens it at once, with no rip, burst or rise, and it stays open', async () => {
+      let card = await show(() => preview())
+      expect(card.dataset.stage).toBe('sealed')
+      const pack = document.querySelector<HTMLElement>('.pack')!
+      expect(pack.getAttribute('aria-label')).toContain('Click or press Enter')
+      expect(card.querySelector('.hint')!.textContent).toBe('Click to open it')
+      pack.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
+      flushSync()
+      expect(card.dataset.stage).toBe('open')
+      expect(card.classList.contains('opening')).toBe(false)
+      expect(card.querySelector('.burst')).toBeNull()
+      expect(document.querySelector('.pack')).toBeNull()
+      expect(button()!.disabled).toBe(false)
+      expect(localStorage.getItem(`pulse.invitePack.${CODE}`)).toBe('1')
+      fresh()
       card = await show(() => preview())
       expect(card.dataset.stage).toBe('open')
+    })
+
+    it('Enter opens it at once', async () => {
+      const card = await show(() => preview())
+      document.querySelector<HTMLElement>('.pack')!.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }))
+      flushSync()
+      expect(card.dataset.stage).toBe('open')
+      expect(card.querySelector('.burst')).toBeNull()
+    })
+
+    it('a short drag across the top opens it at once', async () => {
+      const card = await show(() => preview())
+      const pack = document.querySelector<HTMLElement>('.pack')!
+      pack.getBoundingClientRect = () => ({ left: 0, top: 0, width: 260, height: 400, right: 260, bottom: 400, x: 0, y: 0, toJSON: () => ({}) })
+      const at = (type: string, x: number) => pack.dispatchEvent(Object.assign(new MouseEvent(type, { bubbles: true, clientX: x, clientY: 20 }), { pointerId: 1 }))
+      at('pointerdown', 100)
+      flushSync()
+      expect(card.dataset.stage).toBe('sealed')
+      at('pointermove', 150) // about 19% of the width
+      flushSync()
+      expect(card.dataset.stage).toBe('open')
+      expect(card.querySelector('.burst')).toBeNull()
+    })
+
+    it('its sender still sees it open, and a dead invite is still the greyed card', async () => {
+      let card = await show(() => preview({ inviter_id: 'U1', inviter_name: 'alex' }))
+      expect(card.dataset.stage).toBe('open')
       expect(document.querySelector('.pack')).toBeNull()
-    } finally {
-      vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
-    }
+      fresh()
+      card = await show(() => preview({ state: 'used_up' }))
+      expect(card.dataset.stage).toBe('open')
+      expect(card.classList.contains('dead')).toBe(true)
+    })
   })
 
   it('without join text: Join <server>', async () => {

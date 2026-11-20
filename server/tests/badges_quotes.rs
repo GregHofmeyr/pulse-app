@@ -279,7 +279,7 @@ async fn qoty_win_counts_and_reopen_takes_it_back() {
     .execute(&w.app.db)
     .await
     .unwrap();
-    let year = chrono::Datelike::year(&chrono::Utc::now());
+    let year = pulse_server::times::utc_date(jiff::Timestamp::now()).year();
     let r = post_json(
         &w.app,
         &w.alex.1,
@@ -410,11 +410,10 @@ async fn a_linked_typed_name_counts_as_its_member_when_posted() {
 /// earns 3 am Thoughts; quoting yourself then doesn't.
 #[tokio::test]
 async fn three_am_thoughts_for_being_quoted_in_the_small_hours() {
-    use chrono::{DateTime, Utc};
     use pulse_server::badges::{engine, hooks};
     let w = world().await;
     let kim = w.member("kim").await;
-    let at = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+    let at = |s: &str| pulse_server::times::parse(s).unwrap();
     let quoted = |poster: UserId, speakers: Vec<UserId>, when: &'static str| {
         let app = &w.app;
         async move {
@@ -461,14 +460,11 @@ async fn three_am_thoughts_for_being_quoted_in_the_small_hours() {
 /// Thoughts whatever the hour CI runs; with the clock pinned to the small hours, one does.
 #[tokio::test]
 async fn posting_a_quote_reads_the_pinned_quote_clock() {
-    use chrono::{DateTime, Utc};
     let w = world().await;
     w.alex_quotes(&[w.sam.0]).await;
     assert_eq!(stat_of(&w.app, w.sam.0, stat::THREE_AM_QUOTE).await, 0);
 
-    let night = DateTime::parse_from_rfc3339("2026-11-03T01:10:00Z")
-        .unwrap()
-        .with_timezone(&Utc);
+    let night = pulse_server::times::parse("2026-11-03T01:10:00Z").unwrap();
     let w = world_with(pulse_server::config::Config {
         quote_clock: Some(night),
         ..test_config()

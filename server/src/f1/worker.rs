@@ -17,7 +17,7 @@
 
 use std::time::Duration;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
@@ -327,14 +327,12 @@ async fn still_members(
     Ok(out)
 }
 
-fn t(at: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(at)
-        .ok()
-        .map(|t| t.with_timezone(&Utc))
+fn t(at: &str) -> Option<Timestamp> {
+    crate::times::parse(at).ok()
 }
 
 /// Post everything due at `now`. Returns how many lines went out.
-pub async fn tick(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
+pub async fn tick(s: &AppState, now: Timestamp) -> AppResult<usize> {
     let targets = targets(s).await?;
     if targets.is_empty() {
         return Ok(0);
@@ -346,7 +344,9 @@ pub async fn tick(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
             continue;
         };
         // the weekend card
-        if now >= jolpica::weekend_start(w) - TimeDelta::hours(CARD_LEAD_HOURS) && now < race_at {
+        if now >= jolpica::weekend_start(w) - SignedDuration::from_hours(CARD_LEAD_HOURS)
+            && now < race_at
+        {
             let mut waiting = vec![];
             for &tg in &targets {
                 if !posted(s, tg, w, Post::Weekend).await? {
@@ -380,7 +380,9 @@ pub async fn tick(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
             }
         }
         // lights out in an hour
-        if now >= race_at - TimeDelta::minutes(f1_limits::LIGHTS_OUT_MINUTES) && now < race_at {
+        if now >= race_at - SignedDuration::from_mins(f1_limits::LIGHTS_OUT_MINUTES)
+            && now < race_at
+        {
             for &tg in &targets {
                 if posted(s, tg, w, Post::LightsOut).await? {
                     continue;
@@ -404,8 +406,8 @@ pub async fn tick(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
         }
         // a sprint's results (#403), around the sprint's end only
         if let Some(sprint_at) = jolpica::sprint_start(w)
-            && now >= sprint_at + TimeDelta::minutes(jolpica::SPRINT_AFTER_MINUTES)
-            && now < sprint_at + TimeDelta::hours(jolpica::RESULTS_GIVE_UP_HOURS)
+            && now >= sprint_at + SignedDuration::from_mins(jolpica::SPRINT_AFTER_MINUTES)
+            && now < sprint_at + SignedDuration::from_hours(jolpica::RESULTS_GIVE_UP_HOURS)
         {
             let mut waiting = vec![];
             for &tg in &targets {
@@ -429,8 +431,8 @@ pub async fn tick(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
             }
         }
         // the results, around the race's end only
-        if now >= race_at + TimeDelta::minutes(jolpica::RESULTS_AFTER_MINUTES)
-            && now < race_at + TimeDelta::hours(jolpica::RESULTS_GIVE_UP_HOURS)
+        if now >= race_at + SignedDuration::from_mins(jolpica::RESULTS_AFTER_MINUTES)
+            && now < race_at + SignedDuration::from_hours(jolpica::RESULTS_GIVE_UP_HOURS)
         {
             let mut waiting = vec![];
             for &tg in &targets {
@@ -462,7 +464,7 @@ pub fn spawn(s: AppState) {
         every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             every.tick().await;
-            match tick(&s, Utc::now()).await {
+            match tick(&s, Timestamp::now()).await {
                 Ok(0) => {}
                 Ok(n) => tracing::debug!(n, "F1 lines posted"),
                 Err(e) => tracing::warn!(error = %e, "F1 tick failed"),

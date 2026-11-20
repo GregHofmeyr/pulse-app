@@ -4,8 +4,9 @@
   // a window, "PULSE · SERVER PACK", its name and who it's from. Holding and dragging across the top tears it (a
   // glowing zigzag follows, the strip lifts; let go early and it springs back); at TEAR_AT of the width it rips, the
   // strip flies off and a holo card rises out with a gold burst. Enter or Space opens it too. Its sender sees the card
-  // already open, a dead invite is the card greyed with why, and with reduced motion it's just open. Once opened it
-  // stays open on this device (lib/invitePack). The space is reserved up front, so nothing shifts.
+  // already open, and a dead invite is the card greyed with why. With reduced motion it arrives sealed too, held still,
+  // and a click, Enter or a short drag opens it at once: no flight, burst or rise, the card is just there (#538). Once
+  // opened it stays open on this device (lib/invitePack). The space is reserved up front, so nothing shifts.
   //
   // The card: "✦ MYTHICAL PULL ✦" (always: there are no tiers), the banner (or the server's colours), the ringed icon,
   // its name, who it's from with "N online · M members", and Join (the invite's own words), Open once you're in. What
@@ -19,7 +20,7 @@
   import { acceptInvite } from '../lib/inviteActions.svelte'
   import { cardView, countsLine, type CardState } from '../lib/serverInvites'
   import { avatarColors } from '../lib/avatar'
-  import { NO_TEAR, RIP_MS, markOpened, press, prefersReducedMotion, progressOf, startStage, stretch, wasOpened, type PackStage, type Tear } from '../lib/invitePack'
+  import { NO_TEAR, RIP_MS, markOpened, openingStage, press, prefersReducedMotion, progressOf, ripAt, startStage, stretch, wasOpened, type PackStage, type Tear } from '../lib/invitePack'
   import { PACK } from '../lib/packColors'
   import ServerChip from './ServerChip.svelte'
   import ServerBanner from './ServerBanner.svelte'
@@ -64,7 +65,7 @@
   const openedBefore = wasOpened(code)
   const reduced = prefersReducedMotion()
   /** How this card starts, once its preview is in. */
-  const start = $derived(preview && shown ? startStage({ mine, valid: shown === 'valid', reducedMotion: reduced, opened: openedBefore }) : null)
+  const start = $derived(preview && shown ? startStage({ mine, valid: shown === 'valid', opened: openedBefore }) : null)
   /** Opening it here: tearing done, then open. */
   let phase = $state<'idle' | 'ripping' | 'done'>('idle')
   const stage = $derived<PackStage | null>(start === 'sealed' ? (phase === 'ripping' ? 'ripping' : phase === 'done' ? 'open' : 'sealed') : start)
@@ -78,9 +79,14 @@
   function open() {
     if (stage !== 'sealed') return
     tear = NO_TEAR
+    markOpened(code)
+    if (openingStage(reduced) === 'open') {
+      // reduced motion (#538): the card is simply there, no rip, burst or rise
+      phase = 'done'
+      return
+    }
     phase = 'ripping'
     opening = true
-    markOpened(code)
     clearTimeout(timer)
     timer = setTimeout(() => (phase = 'done'), RIP_MS)
   }
@@ -98,16 +104,16 @@
   }
   function move(e: PointerEvent) {
     if (!tear.dragging || stage !== 'sealed') return
-    const r = stretch(tear, rel(e).x)
+    const r = stretch(tear, rel(e).x, ripAt(reduced))
     tear = r.tear
     if (r.rip) open()
   }
   function up() {
     if (stage === 'sealed') tear = NO_TEAR
   }
-  // a click with no pointer is Enter or Space on the pack
-  function keyOpen(e: MouseEvent) {
-    if (e.detail === 0) open()
+  // a click with no pointer is Enter or Space on the pack; with reduced motion any click opens it (#538)
+  function clickOpen(e: MouseEvent) {
+    if (e.detail === 0 || reduced) open()
   }
 
   // the zigzag the perforation and the tear follow: the seam's teeth (y 0↔8), 3px thick
@@ -115,7 +121,8 @@
   const ZIGZAG = `polygon(${[...XS.map((x, i) => `${x}% ${i % 2 ? 0 : 8}px`), ...XS.map((x, i) => `${x}% ${(i % 2 ? 0 : 8) + 3}px`).reverse()].join(', ')})`
   const SEAM_TEETH = `polygon(0 0, 100% 0, ${XS.map((x, i) => `${x}% ${i % 2 ? 50 : 58}px`).reverse().join(', ')})`
   const SEAM_FLAT = 'polygon(0 0, 100% 0, 99.2% 58px, 0.8% 58px)'
-  const lift = $derived(stage === 'sealed' ? progress : 0)
+  // with reduced motion the strip stays put while you drag (#538)
+  const lift = $derived(stage === 'sealed' && !reduced ? progress : 0)
 
   let joining = $state(false)
   let error = $state('')
@@ -140,8 +147,8 @@
 
 <section bind:this={root} class="zone" class:sealed={stage === 'sealed'} class:ripping={stage === 'ripping'} class:open={stage === 'open'} class:opening class:dead={view?.dead}
   aria-label={preview ? `Invite to ${preview.name}` : 'Server invite'} data-server-invite={code} data-state={shown ?? 'loading'} data-stage={stage ?? 'loading'}
-  style:--foil-a={colors[0]} style:--foil-b={colors[1]} style:--gold={PACK.gold} style:--gold-glow={PACK.goldGlow} style:--gold-glow-strong={PACK.goldGlowStrong}
-  style:--gold-halo={PACK.goldHalo} style:--gold-burst={PACK.goldBurst} style:--rose={PACK.rose} style:--rose-glow={PACK.roseGlow} style:--periwinkle={PACK.periwinkle}
+  style:--foil-a={colors[0]} style:--foil-b={colors[1]} style:--gold={PACK.gold} style:--gold-glow={PACK.goldGlow}
+  style:--gold-halo={PACK.goldHalo} style:--gold-burst={PACK.goldBurst} style:--rose={PACK.rose} style:--periwinkle={PACK.periwinkle}
   style:--mint={PACK.mint} style:--on-gold={PACK.onGold} style:--print={PACK.print} style:--print-soft={PACK.printSoft} style:--print-faint={PACK.printFaint}
   style:--light={PACK.light} style:--light-soft={PACK.lightSoft} style:--light-clear={PACK.lightClear} style:--sheen={PACK.sheen} style:--shine={PACK.shine}
   style:--crimp={PACK.crimp} style:--crimp-shade={PACK.crimpShade} style:--crimp-light={PACK.crimpLight} style:--crimp-dark={PACK.crimpDark} style:--perf={PACK.perf}
@@ -161,7 +168,7 @@
           {#if preview && !view.dead}<div class="rarity">✦ MYTHICAL PULL ✦</div>{/if}
           <div class="banner"><ServerBanner id={preview?.server_id ?? code} hash={preview?.banner_hash} still={preview?.banner_still} />
             <span class="ring">
-              {#if preview}<ServerChip id={preview.server_id} name={preview.name} iconHash={preview.icon_hash} size={84} radius="24px" />{:else}<span class="unknown">?</span>{/if}
+              {#if preview}<ServerChip id={preview.server_id} name={preview.name} iconHash={preview.icon_hash} size={94} radius="27px" />{:else}<span class="unknown">?</span>{/if}
             </span>
           </div>
           <div class="text">
@@ -183,8 +190,8 @@
 
     {#if preview && (stage === 'sealed' || stage === 'ripping')}
       <div class="float">
-        <button type="button" class="pack" class:dragging={tear.dragging} aria-label="Server pack from {from}: {preview.name}. Drag across the top, or press Enter, to open it."
-          onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} onclick={keyOpen}>
+        <button type="button" class="pack" class:dragging={tear.dragging} aria-label="Server pack from {from}: {preview.name}. {reduced ? 'Click or press Enter' : 'Drag across the top, or press Enter,'} to open it."
+          onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} onclick={clickOpen}>
           <span class="body">
             <span class="foil" style:background-position="0 -50px"></span>
             <span class="edges"></span>
@@ -213,7 +220,7 @@
           </span>
           <span class="spark" class:on={tear.dragging && stage === 'sealed'} style:left="{(tear.cursor * 100).toFixed(1)}%"></span>
         </button>
-        <span class="hint">Drag across the top to tear it open</span>
+        <span class="hint">{reduced ? 'Click to open it' : 'Drag across the top to tear it open'}</span>
       </div>
     {/if}
   {/if}
@@ -225,26 +232,29 @@
   .loading { margin: 0; padding-top: 180px; text-align: center; font-size: 13px; color: var(--text-3); }
 
   /* --- the card --- */
-  .card { position: absolute; left: calc(50% - 110px); top: 40px; width: 220px; height: 330px; border-radius: 18px; z-index: 5;
-    transform: translateY(-14px) scale(1.12); box-shadow: 0 20px 50px var(--card-drop), 0 0 40px var(--gold-halo); }
-  .sealed .card { z-index: 1; opacity: 0; transform: translateY(40px) scale(.9); }
+  /* Laid out at the size it's seen at once open (#517), so it rests untransformed: no upscaled bitmap, no compositing
+     layer left on after the rise (the text and icon stay crisp). In the pack and as it rips it's scaled down instead. */
+  .card { position: absolute; left: calc(50% - 123px); top: 6px; width: 246px; height: 370px; border-radius: 20px; z-index: 5;
+    transform: none; box-shadow: 0 20px 50px var(--card-drop), 0 0 40px var(--gold-halo); }
+  .sealed .card { z-index: 1; opacity: 0; transform: translateY(54px) scale(.805); }
   .opening .card { transition: transform 700ms var(--ease), opacity 200ms ease; }
-  .ripping .card { z-index: 1; opacity: 1; transform: translateY(-90px) scale(.9); }
-  .holo { position: absolute; inset: 0; border-radius: 18px; padding: 3px; background: conic-gradient(from 200deg, var(--gold), var(--rose), var(--periwinkle), var(--mint), var(--gold)); }
-  .face { position: relative; width: 100%; height: 100%; box-sizing: border-box; border-radius: 15px; background: var(--bg-1); padding: 12px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
-  .rarity { font-family: var(--font-mono, monospace); font-size: 11px; font-weight: 700; letter-spacing: .18em; text-align: center; color: var(--gold); animation: pack-glowpulse 2s infinite; }
-  .banner { position: relative; height: 112px; flex-shrink: 0; border-radius: var(--radius-md); overflow: hidden; }
+  .ripping .card { z-index: 1; opacity: 1; transform: translateY(-76px) scale(.805); }
+  .holo { position: absolute; inset: 0; border-radius: 20px; padding: 3px; background: conic-gradient(from 200deg, var(--gold), var(--rose), var(--periwinkle), var(--mint), var(--gold)); }
+  .face { position: relative; width: 100%; height: 100%; box-sizing: border-box; border-radius: 17px; background: var(--bg-1); padding: 14px; display: flex; flex-direction: column; gap: 11px; overflow: hidden; }
+  /* a deeper gold per theme, heavier, with a quiet glow: it reads at 4.5:1 on the card (#517) */
+  .rarity { font-family: var(--font-mono, monospace); font-size: 12px; font-weight: 800; letter-spacing: .18em; text-align: center; color: var(--pack-gold-text); animation: pack-glowpulse 2s infinite; }
+  .banner { position: relative; height: 126px; flex-shrink: 0; border-radius: var(--radius-md); overflow: hidden; }
   /* the icon in the banner's middle, ringed in the card's surface and glowing gold: on top of the banner, not in it */
-  .ring { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; border-radius: 24px; box-shadow: 0 0 0 4px var(--bg-1), 0 0 24px var(--gold-glow); }
-  .unknown { width: 84px; height: 84px; border-radius: 24px; background: var(--bg-3); color: var(--text-3); display: grid; place-items: center; font-size: 30px; font-weight: 800; }
+  .ring { position: absolute; inset: 0; margin: auto; width: fit-content; height: fit-content; display: grid; border-radius: 27px; box-shadow: 0 0 0 4px var(--bg-1), 0 0 24px var(--gold-glow); }
+  .unknown { width: 94px; height: 94px; border-radius: 27px; background: var(--bg-3); color: var(--text-3); display: grid; place-items: center; font-size: 34px; font-weight: 800; }
   .text { text-align: center; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .name { font-size: 18px; font-weight: 800; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .meta { font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
-  .note { font-size: 12px; font-weight: 600; color: var(--text-2); }
-  .join { margin-top: auto; font: inherit; font-size: 14px; font-weight: 800; padding: 11px; border-radius: var(--radius-md); border: 0; background: var(--gold); color: var(--on-gold); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .name { font-size: 20px; font-weight: 800; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; }
+  .note { font-size: 13px; font-weight: 600; color: var(--text-2); }
+  .join { margin-top: auto; font: inherit; font-size: 16px; font-weight: 800; padding: 12px; border-radius: var(--radius-md); border: 0; background: var(--gold); color: var(--on-gold); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .join:disabled { opacity: .6; cursor: default; }
   .join.open-btn { background: var(--bg-3); color: var(--text); }
-  .err { margin: 0; color: var(--danger-text); font-size: 12px; text-align: center; }
+  .err { margin: 0; color: var(--danger-text); font-size: 13px; text-align: center; }
   .sweep { position: absolute; top: 0; bottom: 0; left: 0; width: 40%; background: linear-gradient(90deg, transparent, var(--shine), transparent); animation: pack-sweep 2.6s ease-in-out infinite 1s; pointer-events: none; }
   /* a dead invite: the card greyed, with why; no pull, no shine */
   .dead .card { box-shadow: none; }
@@ -307,11 +317,12 @@
 
   @keyframes pack-sweep { 0% { transform: translateX(-120%) skewX(-20deg); } 100% { transform: translateX(320%) skewX(-20deg); } }
   @keyframes pack-zipbg { 0% { background-position: -40% 0; } 60%, 100% { background-position: 140% 0; } }
-  @keyframes pack-glowpulse { 0%, 100% { text-shadow: 0 0 8px var(--gold-glow); } 50% { text-shadow: 0 0 18px var(--gold-glow-strong), 0 0 30px var(--rose-glow); } }
+  @keyframes pack-glowpulse { 0%, 100% { text-shadow: 0 0 4px var(--gold-halo); } 50% { text-shadow: 0 0 10px var(--gold-glow); } }
   @keyframes pack-burst { 0% { transform: scale(.2); opacity: 0; } 30% { opacity: 1; } 100% { transform: scale(1.7); opacity: 0; } }
   @keyframes pack-bob { 0%, 100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-4px) rotate(-.6deg); } }
   @keyframes pack-hintfade { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
   /* a paused window or a stream: it holds still */
   :global(.streaming) .zone *, :global(.unfocused) .zone * { animation-play-state: paused; }
-  @media (prefers-reduced-motion: reduce) { .zone *, .zone { animation: none !important; transition: none !important; } }
+  /* less motion (#538): the pack is held still (no bob, zip or sweep) and a click opens it, so it reads as one */
+  @media (prefers-reduced-motion: reduce) { .zone *, .zone { animation: none !important; transition: none !important; } .pack, .pack.dragging { cursor: pointer; } }
 </style>

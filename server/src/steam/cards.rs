@@ -16,7 +16,7 @@ use crate::messages::system;
 /// Unlocks shown on one card; the rest are "and N more".
 pub const SHOWN: usize = 5;
 /// How long a game's schema and rarity are trusted.
-pub const APP_CACHE_TTL: chrono::Duration = chrono::Duration::hours(24);
+pub const APP_CACHE_TTL: jiff::SignedDuration = jiff::SignedDuration::from_hours(24);
 
 /// A game's name, achievements and global rarity: from the cache when it's under a day old, else from Steam (two
 /// calls), else whatever the cache has, however old.
@@ -35,8 +35,8 @@ pub async fn app_info(s: &AppState, app: u32) -> (Schema, HashMap<String, f32>) 
         ))
     };
     let fresh = cached.as_ref().is_some_and(|(_, _, at)| {
-        chrono::DateTime::parse_from_rfc3339(at)
-            .is_ok_and(|t| chrono::Utc::now() - t.to_utc() < APP_CACHE_TTL)
+        crate::times::parse(at)
+            .is_ok_and(|t| jiff::Timestamp::now().duration_since(t) < APP_CACHE_TTL)
     });
     if fresh && let Some(hit) = cached.as_ref().and_then(parse) {
         return hit;
@@ -180,7 +180,8 @@ pub async fn announce(
         .and_then(|g| super::one_line(g, 120))
         .unwrap_or_else(|| format!("App {app}"));
     let at = |t: i64| {
-        chrono::DateTime::from_timestamp(t, 0)
+        jiff::Timestamp::from_second(t)
+            .ok()
             .map(crate::db::stamp)
             .unwrap_or_else(now)
     };

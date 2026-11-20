@@ -368,7 +368,7 @@ async fn a_restart_picks_it_back_up_with_whoever_is_still_in_the_call() {
     // a restart: memory is empty, and LiveKit hands back only sam (alex dropped while it was down)
     let voice = pulse_server::voice::VoiceState::default();
     voice.join(w.lounge.id, w.sam.0, "PA_sam");
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = jiff::Timestamp::now().as_millisecond();
     let n = pulse_server::watch::restore(&w.app.db, &w.app.hub, &voice, now)
         .await
         .unwrap();
@@ -445,7 +445,7 @@ async fn a_pause_sticks_for_everyone_and_play_resumes_where_it_paused() {
     assert_eq!(changed(&mut alex_rx).await, p);
     // and it stays paused: nothing re-announces it playing, and its time stands still
     quiet(&mut w.rx).await;
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = jiff::Timestamp::now().as_millisecond();
     let held = w.app.voice.watch.of(w.lounge.id).unwrap();
     assert!(!held.playing);
     assert_eq!(

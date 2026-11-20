@@ -196,7 +196,7 @@ pub async fn poll_one(s: &AppState, user: UserId, account: u32) -> AppResult<boo
     if let Some(n) = newest {
         set_last(s, user, account, n).await?;
     }
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     let announce_from = new.len().saturating_sub(MAX_NEW);
     let cat = assets::catalog(s).await;
     for (i, h) in new.into_iter().enumerate() {
@@ -221,7 +221,8 @@ async fn set_last(s: &AppState, user: UserId, account: u32, id: u64) -> sqlx::Re
 }
 
 fn started_at(h: &HistoryEntry) -> String {
-    chrono::DateTime::from_timestamp(h.start_time, 0)
+    jiff::Timestamp::from_second(h.start_time)
+        .ok()
         .map(crate::db::stamp)
         .unwrap_or_else(crate::db::now)
 }

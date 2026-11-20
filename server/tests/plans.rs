@@ -9,9 +9,9 @@ use std::time::Duration;
 use axum::Router;
 use axum::extract::{RawQuery, State};
 use axum::routing::get;
-use chrono::{TimeDelta, Utc};
 use common::*;
 use futures::{SinkExt, StreamExt};
+use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::gateway::{ClientFrame, ServerFrame};
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{Channel, Message, MessageKind, Plan, PlanForecast};
@@ -77,17 +77,17 @@ async fn join(app: &TestApp, token: &str, server: ServerId) {
     assert!(r.status().is_success());
 }
 
-fn at(from_now: TimeDelta) -> String {
-    (Utc::now() + from_now).to_rfc3339()
+fn at(from_now: SignedDuration) -> String {
+    pulse_server::times::rfc3339(Timestamp::now() + from_now)
 }
 
 /// A day about two months ahead at 18:30 in UTC+2 (16:30 UTC): (as posted, as stored, as the fallback text says it).
 fn later_day() -> (String, String, String) {
-    let day = (Utc::now() + TimeDelta::days(60)).date_naive();
+    let day = pulse_server::times::utc_date(Timestamp::now() + pulse_server::times::days(60));
     (
         format!("{day}T18:30:00+02:00"),
         format!("{day}T16:30:00.000Z"),
-        format!("{} 16:30 UTC", day.format("%a %-d %b %Y,")),
+        format!("{} 16:30 UTC", day.strftime("%a %-d %b %Y,")),
     )
 }
 
@@ -203,12 +203,12 @@ async fn a_plan_is_a_message_with_its_text_for_older_clients() {
 async fn posting_checks_the_plan_and_the_chat() {
     let (app, [alex, _, _, jo], _, g) = setup().await;
     for b in [
-        body("", &at(TimeDelta::days(1))),
-        body(&"t".repeat(101), &at(TimeDelta::days(1))),
+        body("", &at(pulse_server::times::days(1))),
+        body(&"t".repeat(101), &at(pulse_server::times::days(1))),
         body("ok", "tomorrow"),
-        body("ok", &at(-TimeDelta::hours(1))),
-        body("ok", &at(TimeDelta::days(800))),
-        json!({"title": "ok", "starts_at": at(TimeDelta::days(1)), "note": "n".repeat(501)}),
+        body("ok", &at(-SignedDuration::from_hours(1))),
+        body("ok", &at(pulse_server::times::days(800))),
+        json!({"title": "ok", "starts_at": at(pulse_server::times::days(1)), "note": "n".repeat(501)}),
     ] {
         assert_eq!(
             create(&app, &alex, g.id, b.clone()).await.status(),
@@ -217,9 +217,14 @@ async fn posting_checks_the_plan_and_the_chat() {
         );
     }
     assert_eq!(
-        create(&app, &jo, g.id, body("ok", &at(TimeDelta::days(1))))
-            .await
-            .status(),
+        create(
+            &app,
+            &jo,
+            g.id,
+            body("ok", &at(pulse_server::times::days(1)))
+        )
+        .await
+        .status(),
         404 // #80: a server you aren't in is hidden
     );
     // not in a quotes channel
@@ -232,9 +237,14 @@ async fn posting_checks_the_plan_and_the_chat() {
     .await;
     let q: Channel = r.json().await.unwrap();
     assert_eq!(
-        create(&app, &alex, q.id, body("ok", &at(TimeDelta::days(1))))
-            .await
-            .status(),
+        create(
+            &app,
+            &alex,
+            q.id,
+            body("ok", &at(pulse_server::times::days(1)))
+        )
+        .await
+        .status(),
         400
     );
 }
@@ -246,7 +256,7 @@ async fn answers_change_live_and_each_person_has_one() {
         &app,
         &alex,
         g.id,
-        body("Games night", &at(TimeDelta::days(2))),
+        body("Games night", &at(pulse_server::times::days(2))),
     )
     .await;
     let mut ws = hello(&app, &alex).await;
@@ -286,9 +296,14 @@ async fn answers_change_live_and_each_person_has_one() {
 #[tokio::test]
 async fn only_its_creator_edits_or_cancels_and_a_cancelled_plan_takes_no_answers() {
     let (app, [alex, sam, ..], _, g) = setup().await;
-    let m = create_ok(&app, &alex, g.id, body("Braai", &at(TimeDelta::days(2)))).await;
-    let edit =
-        json!({"title": "Braai (moved)", "starts_at": at(TimeDelta::days(3)), "place": "kim's"});
+    let m = create_ok(
+        &app,
+        &alex,
+        g.id,
+        body("Braai", &at(pulse_server::times::days(2))),
+    )
+    .await;
+    let edit = json!({"title": "Braai (moved)", "starts_at": at(pulse_server::times::days(3)), "place": "kim's"});
     let path = format!("/messages/{}/plan", m.id);
     assert_eq!(
         put_json(&app, &sam, &path, edit.clone()).await.status(),
@@ -329,7 +344,7 @@ async fn only_its_creator_edits_or_cancels_and_a_cancelled_plan_takes_no_answers
         post_json(&app, &alex, &cancel, json!({})).await.status(),
         409
     );
-    let again = json!({"title": "x", "starts_at": at(TimeDelta::days(3))});
+    let again = json!({"title": "x", "starts_at": at(pulse_server::times::days(3))});
     assert_eq!(put_json(&app, &alex, &path, again).await.status(), 409);
 }
 
@@ -338,7 +353,13 @@ async fn going_and_maybe_people_are_reminded_an_hour_before_once() {
     let (app, [alex, sam, kim, jo], [_, sam_id, kim_id, jo_id], g) = setup().await;
     // jo joins and answers, then is no longer in the server: not reminded
     join(&app, &jo, g.server_id.unwrap()).await;
-    let m = create_ok(&app, &alex, g.id, body("Braai", &at(TimeDelta::hours(3)))).await;
+    let m = create_ok(
+        &app,
+        &alex,
+        g.id,
+        body("Braai", &at(SignedDuration::from_hours(3))),
+    )
+    .await;
     rsvp_ok(&app, &sam, m.id, json!("going")).await;
     rsvp_ok(&app, &kim, m.id, json!("maybe")).await;
     rsvp_ok(&app, &jo, m.id, json!("going")).await;
@@ -355,13 +376,13 @@ async fn going_and_maybe_people_are_reminded_an_hour_before_once() {
     let s = app.state();
     // not yet due
     assert_eq!(
-        pulse_server::plans::remind_due(&s, Utc::now())
+        pulse_server::plans::remind_due(&s, Timestamp::now())
             .await
             .unwrap(),
         0
     );
     let mut ws = hello(&app, &sam).await;
-    let later = Utc::now() + TimeDelta::hours(2) + TimeDelta::minutes(1);
+    let later = Timestamp::now() + SignedDuration::from_hours(2) + SignedDuration::from_mins(1);
     assert_eq!(pulse_server::plans::remind_due(&s, later).await.unwrap(), 1);
     // a second sweep (or a restart's boot sweep) finds it done: the database says so
     assert_eq!(pulse_server::plans::remind_due(&s, later).await.unwrap(), 0);
@@ -397,7 +418,13 @@ async fn going_and_maybe_people_are_reminded_an_hour_before_once() {
 async fn a_cancelled_plan_is_never_reminded_and_a_new_time_sets_it_up_again() {
     let (app, [alex, sam, ..], _, g) = setup().await;
     let s = app.state();
-    let cancelled = create_ok(&app, &alex, g.id, body("Off", &at(TimeDelta::hours(3)))).await;
+    let cancelled = create_ok(
+        &app,
+        &alex,
+        g.id,
+        body("Off", &at(SignedDuration::from_hours(3))),
+    )
+    .await;
     rsvp_ok(&app, &sam, cancelled.id, json!("going")).await;
     post_json(
         &app,
@@ -407,21 +434,27 @@ async fn a_cancelled_plan_is_never_reminded_and_a_new_time_sets_it_up_again() {
     )
     .await;
 
-    let moved = create_ok(&app, &alex, g.id, body("Moved", &at(TimeDelta::hours(3)))).await;
+    let moved = create_ok(
+        &app,
+        &alex,
+        g.id,
+        body("Moved", &at(SignedDuration::from_hours(3))),
+    )
+    .await;
     rsvp_ok(&app, &sam, moved.id, json!("going")).await;
-    let soon = Utc::now() + TimeDelta::hours(2) + TimeDelta::minutes(1);
+    let soon = Timestamp::now() + SignedDuration::from_hours(2) + SignedDuration::from_mins(1);
     assert_eq!(pulse_server::plans::remind_due(&s, soon).await.unwrap(), 1);
     // moved to tomorrow: reminded again before the new time
     let r = put_json(
         &app,
         &alex,
         &format!("/messages/{}/plan", moved.id),
-        body("Moved", &at(TimeDelta::days(1))),
+        body("Moved", &at(pulse_server::times::days(1))),
     )
     .await;
     assert_eq!(r.status(), 200);
     assert_eq!(pulse_server::plans::remind_due(&s, soon).await.unwrap(), 0);
-    let tomorrow = Utc::now() + TimeDelta::hours(23) + TimeDelta::minutes(1);
+    let tomorrow = Timestamp::now() + SignedDuration::from_hours(23) + SignedDuration::from_mins(1);
     assert_eq!(
         pulse_server::plans::remind_due(&s, tomorrow).await.unwrap(),
         1
@@ -439,12 +472,12 @@ async fn a_cancelled_plan_is_never_reminded_and_a_new_time_sets_it_up_again() {
         &app,
         &alex,
         g.id,
-        body("Now-ish", &at(TimeDelta::minutes(30))),
+        body("Now-ish", &at(SignedDuration::from_mins(30))),
     )
     .await;
     rsvp_ok(&app, &sam, close.id, json!("going")).await;
     assert_eq!(
-        pulse_server::plans::remind_due(&s, Utc::now())
+        pulse_server::plans::remind_due(&s, Timestamp::now())
             .await
             .unwrap(),
         0
@@ -454,7 +487,13 @@ async fn a_cancelled_plan_is_never_reminded_and_a_new_time_sets_it_up_again() {
 #[tokio::test]
 async fn a_deleted_plan_goes_with_its_message() {
     let (app, [alex, sam, ..], _, g) = setup().await;
-    let m = create_ok(&app, &alex, g.id, body("Braai", &at(TimeDelta::hours(3)))).await;
+    let m = create_ok(
+        &app,
+        &alex,
+        g.id,
+        body("Braai", &at(SignedDuration::from_hours(3))),
+    )
+    .await;
     rsvp_ok(&app, &sam, m.id, json!("going")).await;
     let r = app
         .http
@@ -473,7 +512,7 @@ async fn a_deleted_plan_goes_with_its_message() {
     assert_eq!(left, 0);
     let s = app.state();
     assert_eq!(
-        pulse_server::plans::remind_due(&s, Utc::now() + TimeDelta::hours(3))
+        pulse_server::plans::remind_due(&s, Timestamp::now() + SignedDuration::from_hours(3))
             .await
             .unwrap(),
         0
@@ -515,7 +554,13 @@ async fn the_calendar_file_is_one_utc_event() {
     assert!(ics.contains("\r\nDTSTAMP:"));
     // a plan in a DM: only its members get the file
     let dm = create_dm(&app, &alex, &[sam_id]).await;
-    let m = create_ok(&app, &sam, dm.id, body("Coffee", &at(TimeDelta::days(1)))).await;
+    let m = create_ok(
+        &app,
+        &sam,
+        dm.id,
+        body("Coffee", &at(pulse_server::times::days(1))),
+    )
+    .await;
     let r = app
         .http
         .get(app.url(&format!("/messages/{}/plan/ics", m.id)))
@@ -587,7 +632,13 @@ async fn an_end_time_is_kept_shown_and_given_to_calendars() {
 #[tokio::test]
 async fn people_who_turned_plan_reminders_off_are_not_pinged() {
     let (app, [alex, sam, kim, _], [_, sam_id, kim_id, _], g) = setup().await;
-    let m = create_ok(&app, &alex, g.id, body("Braai", &at(TimeDelta::hours(3)))).await;
+    let m = create_ok(
+        &app,
+        &alex,
+        g.id,
+        body("Braai", &at(SignedDuration::from_hours(3))),
+    )
+    .await;
     rsvp_ok(&app, &sam, m.id, json!("going")).await;
     rsvp_ok(&app, &kim, m.id, json!("going")).await;
     // kim turns it off: her own sessions hear it, and her next Ready says so
@@ -610,14 +661,20 @@ async fn people_who_turned_plan_reminders_off_are_not_pinged() {
     );
 
     let s = app.state();
-    let later = Utc::now() + TimeDelta::hours(2) + TimeDelta::minutes(1);
+    let later = Timestamp::now() + SignedDuration::from_hours(2) + SignedDuration::from_mins(1);
     assert_eq!(pulse_server::plans::remind_due(&s, later).await.unwrap(), 1);
     let lines = reminders(&app, &alex, g.id).await;
     assert_eq!(lines[0].mentions, vec![sam_id]);
 
     // with everyone off, the plan is marked done quietly: no line at all
     put_json(&app, &sam, "/me/plan-reminders", json!({"on": false})).await;
-    let m = create_ok(&app, &alex, g.id, body("Darts", &at(TimeDelta::hours(3)))).await;
+    let m = create_ok(
+        &app,
+        &alex,
+        g.id,
+        body("Darts", &at(SignedDuration::from_hours(3))),
+    )
+    .await;
     rsvp_ok(&app, &sam, m.id, json!("going")).await;
     assert_eq!(pulse_server::plans::remind_due(&s, later).await.unwrap(), 0);
     assert_eq!(reminders(&app, &alex, g.id).await.len(), 1);
@@ -676,9 +733,9 @@ async fn fake_meteo() -> (FakeMeteo, String) {
                 && q.contains("hourly=temperature_2m"),
             "{q}"
         );
-        let today = (Utc::now() + TimeDelta::hours(2)).date_naive();
+        let today = pulse_server::times::utc_date(Timestamp::now() + SignedDuration::from_hours(2));
         let days: Vec<String> = (0..16)
-            .map(|i| (today + TimeDelta::days(i)).to_string())
+            .map(|i| (today + pulse_server::times::days(i)).to_string())
             .collect();
         let hours: Vec<String> = days
             .iter()
@@ -725,7 +782,7 @@ async fn the_forecast_comes_through_the_server_and_is_cached() {
         &app,
         &alex,
         g.id,
-        json!({"title": "Braai", "starts_at": at(TimeDelta::days(3)), "place": "Cape Town"}),
+        json!({"title": "Braai", "starts_at": at(pulse_server::times::days(3)), "place": "Cape Town"}),
     )
     .await;
     let f = forecast(sam.clone(), m.id).await.unwrap();
@@ -733,10 +790,9 @@ async fn the_forecast_comes_through_the_server_and_is_cached() {
     assert_eq!((f.code, f.rain_chance), (61, Some(70)));
     assert!((f.temp_max - 24.5).abs() < 0.01);
     // the fake's hourly temperature is the local hour: the plan's start there (UTC+2)
-    let starts =
-        chrono::DateTime::parse_from_rfc3339(&m.plan.as_deref().unwrap().starts_at).unwrap();
-    let local_hour = (starts + TimeDelta::hours(2))
-        .format("%H")
+    let starts = pulse_server::times::parse(&m.plan.as_deref().unwrap().starts_at).unwrap();
+    let local_hour = (starts + SignedDuration::from_hours(2))
+        .strftime("%H")
         .to_string()
         .parse::<f32>()
         .unwrap();
@@ -747,7 +803,7 @@ async fn the_forecast_comes_through_the_server_and_is_cached() {
         &app,
         &alex,
         g.id,
-        json!({"title": "Again", "starts_at": at(TimeDelta::days(5)), "place": " cape town "}),
+        json!({"title": "Again", "starts_at": at(pulse_server::times::days(5)), "place": " cape town "}),
     )
     .await;
     assert!(forecast(sam.clone(), m2.id).await.is_some());
@@ -759,7 +815,7 @@ async fn the_forecast_comes_through_the_server_and_is_cached() {
         &app,
         &alex,
         g.id,
-        json!({"title": "?", "starts_at": at(TimeDelta::days(3)), "place": "Nowhereville"}),
+        json!({"title": "?", "starts_at": at(pulse_server::times::days(3)), "place": "Nowhereville"}),
     )
     .await;
     assert_eq!(forecast(sam.clone(), nowhere.id).await, None);
@@ -770,11 +826,17 @@ async fn the_forecast_comes_through_the_server_and_is_cached() {
         &app,
         &alex,
         g.id,
-        json!({"title": "Far", "starts_at": at(TimeDelta::days(40)), "place": "Cape Town"}),
+        json!({"title": "Far", "starts_at": at(pulse_server::times::days(40)), "place": "Cape Town"}),
     )
     .await;
     assert_eq!(forecast(sam.clone(), far.id).await, None);
-    let bare = create_ok(&app, &alex, g.id, body("Bare", &at(TimeDelta::days(1)))).await;
+    let bare = create_ok(
+        &app,
+        &alex,
+        g.id,
+        body("Bare", &at(pulse_server::times::days(1))),
+    )
+    .await;
     assert_eq!(forecast(sam.clone(), bare.id).await, None);
     assert_eq!(meteo.geocode.load(Ordering::SeqCst), 2);
     assert_eq!(meteo.forecast.load(Ordering::SeqCst), 1);
@@ -788,7 +850,7 @@ async fn no_forecast_when_open_meteo_is_down() {
         &app,
         &alex,
         g.id,
-        json!({"title": "Braai", "starts_at": at(TimeDelta::days(3)), "place": "Cape Town"}),
+        json!({"title": "Braai", "starts_at": at(pulse_server::times::days(3)), "place": "Cape Town"}),
     )
     .await;
     let f: Option<PlanForecast> =
@@ -816,7 +878,7 @@ async fn only_south_african_places_whose_name_matches_get_a_forecast() {
                 app,
                 &alex,
                 g.id,
-                json!({"title": "Braai", "starts_at": at(TimeDelta::days(3)), "place": place}),
+                json!({"title": "Braai", "starts_at": at(pulse_server::times::days(3)), "place": place}),
             )
             .await;
             get_json::<Option<PlanForecast>>(

@@ -75,17 +75,25 @@ pub fn installer_name_ok(name: &str) -> bool {
 
 async fn fetch(
     State(s): State<AppState>,
-    AuthUser(_): AuthUser,
+    AuthUser(me): AuthUser,
     Path(file): Path<String>,
     req: Request,
 ) -> AppResult<Response> {
     if file == "latest.json" {
+        use crate::app_versions::{CheckResult, header_version, manifest_version, record_check};
+        // who asked on which version, and what they were told, outlasts the log (#534)
+        let version = header_version(req.headers());
         let path = s.cfg.updates_dir.join("latest.json");
         let bytes = match tokio::fs::read(&path).await {
             Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(AppError::NotFound),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                record_check(&s.db, me, version.as_deref(), CheckResult::NoManifest).await;
+                return Err(AppError::NotFound);
+            }
             Err(e) => return Err(anyhow::anyhow!("read {}: {e}", path.display()).into()),
         };
+        let result = CheckResult::of(version.as_deref(), manifest_version(&bytes).as_deref());
+        record_check(&s.db, me, version.as_deref(), result).await;
         return Ok((
             [
                 (header::CONTENT_TYPE, "application/json"),

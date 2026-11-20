@@ -72,7 +72,8 @@ async fn sams_poll(w: &World) -> MessageId {
 }
 
 async fn sams_plan(w: &World) -> MessageId {
-    let starts = (chrono::Utc::now() + chrono::TimeDelta::days(3)).to_rfc3339();
+    let starts =
+        pulse_server::times::rfc3339(jiff::Timestamp::now() + pulse_server::times::days(3));
     let r = post_json(
         &w.app,
         &w.sam.1,
@@ -154,7 +155,8 @@ async fn a_removed_member_cant_edit_or_cancel_their_plan() {
     let w = world().await;
     let plan = sams_plan(&w).await;
     remove_sam(&w).await;
-    let starts = (chrono::Utc::now() + chrono::TimeDelta::days(4)).to_rfc3339();
+    let starts =
+        pulse_server::times::rfc3339(jiff::Timestamp::now() + pulse_server::times::days(4));
     let r = put_json(
         &w.app,
         &w.sam.1,
@@ -237,7 +239,8 @@ async fn no_reminders_in_a_server_you_left() {
     let w = world().await;
     let m = send(&w.app, &w.alex.1, w.general.id, "remember me").await;
     leave_sam(&w).await;
-    let at = (chrono::Utc::now() + chrono::TimeDelta::minutes(30)).to_rfc3339();
+    let at =
+        pulse_server::times::rfc3339(jiff::Timestamp::now() + jiff::SignedDuration::from_mins(30));
     let r = post_json(
         &w.app,
         &w.sam.1,

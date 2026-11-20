@@ -15,7 +15,7 @@ use std::collections::VecDeque;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::rest::{
     F1ConstructorRow, F1Driver, F1FastestLap, F1ResultRow, F1ResultsCard, F1Session, F1SessionKind,
     F1SprintCard, F1StandingRow, F1Weekend, f1_limits,
@@ -99,7 +99,7 @@ async fn call(cfg: &F1Config, path: &str) -> Option<String> {
 #[derive(Clone, Copy, Debug)]
 pub struct Freshness {
     /// Asked again once it's this old...
-    pub ttl: TimeDelta,
+    pub ttl: SignedDuration,
     /// ...unless it has rows and this is set: then it's kept for good.
     pub final_when_filled: bool,
 }
@@ -121,7 +121,7 @@ async fn get(
     path: &str,
     fresh: Freshness,
     filled: fn(&str) -> bool,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> AppResult<Option<Cached>> {
     let read = || async {
         sqlx::query_as::<_, (String, String, Option<String>)>(
@@ -354,8 +354,8 @@ fn at(date: &str, time: Option<&str>) -> Option<String> {
     } else {
         format!("{t}Z")
     };
-    let parsed = DateTime::parse_from_rfc3339(&format!("{date}T{t}")).ok()?;
-    Some(stamp(parsed.with_timezone(&Utc)))
+    let parsed = crate::times::parse(&format!("{date}T{t}")).ok()?;
+    Some(stamp(parsed))
 }
 
 fn driver(d: &Driver, team: Option<&str>) -> F1Driver {
@@ -598,10 +598,10 @@ pub fn parse_drivers(body: &str) -> Vec<F1Driver> {
 pub async fn schedule(
     db: &SqlitePool,
     cfg: &F1Config,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> AppResult<Vec<F1Weekend>> {
     let fresh = Freshness {
-        ttl: TimeDelta::hours(SCHEDULE_TTL_HOURS),
+        ttl: SignedDuration::from_hours(SCHEDULE_TTL_HOURS),
         final_when_filled: false,
     };
     let c = get(
@@ -618,17 +618,17 @@ pub async fn schedule(
 }
 
 /// The next race weekend whose lights out is still to come.
-pub fn next_weekend(schedule: &[F1Weekend], now: DateTime<Utc>) -> Option<&F1Weekend> {
+pub fn next_weekend(schedule: &[F1Weekend], now: Timestamp) -> Option<&F1Weekend> {
     let at = stamp(now);
     schedule.iter().find(|w| w.race_at > at)
 }
 
 /// How long the results can go unasked, `since_race` after lights out: often at first, then less.
-pub fn results_poll(since_race: TimeDelta) -> TimeDelta {
-    if since_race < TimeDelta::hours(6) {
-        TimeDelta::minutes(5)
+pub fn results_poll(since_race: SignedDuration) -> SignedDuration {
+    if since_race < SignedDuration::from_hours(6) {
+        SignedDuration::from_mins(5)
     } else {
-        TimeDelta::minutes(30)
+        SignedDuration::from_mins(30)
     }
 }
 
@@ -637,11 +637,11 @@ async fn results(
     db: &SqlitePool,
     cfg: &F1Config,
     w: &F1Weekend,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> AppResult<Option<(Cached, Vec<F1ResultRow>, Option<F1FastestLap>)>> {
     let race_at = race_time(w);
     let fresh = Freshness {
-        ttl: results_poll(now - race_at),
+        ttl: results_poll(now.duration_since(race_at)),
         final_when_filled: true,
     };
     let key = format!("results:{}:{}", w.season, w.round);
@@ -662,13 +662,13 @@ pub async fn results_card(
     db: &SqlitePool,
     cfg: &F1Config,
     w: &F1Weekend,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> AppResult<Option<(F1ResultsCard, Vec<String>)>> {
     let Some((c, rows, fastest_lap)) = results(db, cfg, w, now).await? else {
         return Ok(None);
     };
     let fresh = Freshness {
-        ttl: results_poll(now - race_time(w)),
+        ttl: results_poll(now.duration_since(race_time(w))),
         final_when_filled: true,
     };
     let key = format!("standings:{}:{}", w.season, w.round);
@@ -695,10 +695,10 @@ pub async fn results_card(
         let since = c
             .filled_at
             .as_deref()
-            .and_then(|f| DateTime::parse_from_rfc3339(f).ok())
-            .map(|f| now - f.with_timezone(&Utc))
+            .and_then(|f| crate::times::parse(f).ok())
+            .map(|f| now.duration_since(f))
             .unwrap_or_default();
-        if since < TimeDelta::minutes(STANDINGS_GRACE_MINUTES) {
+        if since < SignedDuration::from_mins(STANDINGS_GRACE_MINUTES) {
             return Ok(None);
         }
     }
@@ -721,12 +721,11 @@ pub async fn results_card(
 }
 
 /// When a weekend's sprint starts, if it has one.
-pub fn sprint_start(w: &F1Weekend) -> Option<DateTime<Utc>> {
+pub fn sprint_start(w: &F1Weekend) -> Option<Timestamp> {
     w.sessions
         .iter()
         .find(|s| s.kind == F1SessionKind::Sprint)
-        .and_then(|s| DateTime::parse_from_rfc3339(&s.starts_at).ok())
-        .map(|t| t.with_timezone(&Utc))
+        .and_then(|s| crate::times::parse(&s.starts_at).ok())
 }
 
 /// The sprint's results card for a round (#403), once they're in: `None` until then. Asked for like the race's
@@ -735,13 +734,13 @@ pub async fn sprint_card(
     db: &SqlitePool,
     cfg: &F1Config,
     w: &F1Weekend,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> AppResult<Option<F1SprintCard>> {
     let Some(start) = sprint_start(w) else {
         return Ok(None);
     };
     let fresh = Freshness {
-        ttl: results_poll(now - start),
+        ttl: results_poll(now.duration_since(start)),
         final_when_filled: true,
     };
     let key = format!("sprint:{}:{}", w.season, w.round);
@@ -768,12 +767,12 @@ pub async fn field(
     db: &SqlitePool,
     cfg: &F1Config,
     w: &F1Weekend,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> AppResult<Vec<F1Driver>> {
     if w.round > 1 {
         let prev = w.round - 1;
         let fresh = Freshness {
-            ttl: TimeDelta::minutes(30),
+            ttl: SignedDuration::from_mins(30),
             final_when_filled: true,
         };
         let key = format!("results:{}:{prev}", w.season);
@@ -788,7 +787,7 @@ pub async fn field(
         }
     }
     let fresh = Freshness {
-        ttl: TimeDelta::hours(ENTRY_LIST_TTL_HOURS),
+        ttl: SignedDuration::from_hours(ENTRY_LIST_TTL_HOURS),
         final_when_filled: false,
     };
     let key = format!("drivers:{}", w.season);
@@ -800,28 +799,24 @@ pub async fn field(
 }
 
 /// Lights out, read back.
-pub fn race_time(w: &F1Weekend) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(&w.race_at)
-        .map(|t| t.with_timezone(&Utc))
-        .unwrap_or(DateTime::<Utc>::MIN_UTC)
+pub fn race_time(w: &F1Weekend) -> Timestamp {
+    crate::times::parse(&w.race_at).unwrap_or(Timestamp::MIN)
 }
 
 /// The weekend's first session.
-pub fn weekend_start(w: &F1Weekend) -> DateTime<Utc> {
+pub fn weekend_start(w: &F1Weekend) -> Timestamp {
     w.sessions
         .first()
-        .and_then(|s| DateTime::parse_from_rfc3339(&s.starts_at).ok())
-        .map(|t| t.with_timezone(&Utc))
+        .and_then(|s| crate::times::parse(&s.starts_at).ok())
         .unwrap_or_else(|| race_time(w))
 }
 
 /// When qualifying starts (lights out when there's none on the calendar).
-pub fn qualifying_start(w: &F1Weekend) -> DateTime<Utc> {
+pub fn qualifying_start(w: &F1Weekend) -> Timestamp {
     w.sessions
         .iter()
         .find(|s| s.kind == F1SessionKind::Qualifying)
-        .and_then(|s| DateTime::parse_from_rfc3339(&s.starts_at).ok())
-        .map(|t| t.with_timezone(&Utc))
+        .and_then(|s| crate::times::parse(&s.starts_at).ok())
         .unwrap_or_else(|| race_time(w))
 }
 
@@ -878,7 +873,7 @@ mod tests {
     #[test]
     fn the_next_weekend_is_the_next_lights_out() {
         let w = parse_schedule(SCHEDULE);
-        let t = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+        let t = |s: &str| crate::times::parse(s).unwrap();
         assert_eq!(
             next_weekend(&w, t("2030-03-01T00:00:00Z")).unwrap().round,
             1
@@ -1013,8 +1008,14 @@ mod tests {
 
     #[test]
     fn the_results_are_asked_for_often_at_first_then_less() {
-        assert_eq!(results_poll(TimeDelta::minutes(100)), TimeDelta::minutes(5));
-        assert_eq!(results_poll(TimeDelta::hours(7)), TimeDelta::minutes(30));
+        assert_eq!(
+            results_poll(SignedDuration::from_mins(100)),
+            SignedDuration::from_mins(5)
+        );
+        assert_eq!(
+            results_poll(SignedDuration::from_hours(7)),
+            SignedDuration::from_mins(30)
+        );
     }
 
     #[test]

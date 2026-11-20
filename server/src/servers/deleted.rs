@@ -26,7 +26,7 @@ use crate::servers::purge::{BATCH as PURGE_BATCH, Purging};
 
 /// Deleted at or before this, a server is due to be purged and can no longer be restored (as a
 /// channel is: the same 7 days).
-fn due(now: chrono::DateTime<chrono::Utc>) -> String {
+fn due(now: jiff::Timestamp) -> String {
     crate::servers::channels::due(now)
 }
 
@@ -154,7 +154,7 @@ pub async fn list(
     .bind(me.to_string())
     .fetch_all(&s.db)
     .await?;
-    let due = due(chrono::Utc::now());
+    let due = due(jiff::Timestamp::now());
     let mut out = Vec::with_capacity(rows.len());
     for (id, name, icon, owner, banner, banner_still, icon_still, deleted_at) in rows {
         out.push(DeletedServer {
@@ -185,7 +185,7 @@ pub async fn restore(
         "SELECT created_by FROM servers WHERE id = ? AND deleted_at IS NOT NULL AND deleted_at > ?",
     )
     .bind(id.to_string())
-    .bind(due(chrono::Utc::now()))
+    .bind(due(jiff::Timestamp::now()))
     .fetch_optional(&mut *tx)
     .await?;
     if owner.ok_or(AppError::NotFound)? != me.to_string() {
@@ -362,14 +362,14 @@ async fn republish_own_state(s: &AppState, server: ServerId) -> AppResult<()> {
 /// Purge every server deleted [`RECENTLY_DELETED_DAYS`] or more before `now`. Returns how many went.
 ///
 /// [`RECENTLY_DELETED_DAYS`]: crate::servers::channels::RECENTLY_DELETED_DAYS
-pub async fn purge_expired(s: &AppState, now: chrono::DateTime<chrono::Utc>) -> AppResult<u32> {
+pub async fn purge_expired(s: &AppState, now: jiff::Timestamp) -> AppResult<u32> {
     purge_expired_batched(s, now, PURGE_BATCH).await
 }
 
 /// [`purge_expired`] deleting at most `batch` messages per transaction.
 pub async fn purge_expired_batched(
     s: &AppState,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jiff::Timestamp,
     batch: i64,
 ) -> AppResult<u32> {
     let due = due(now);
@@ -480,7 +480,7 @@ const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 pub fn spawn_sweeper(s: AppState) {
     tokio::spawn(async move {
         loop {
-            match purge_expired(&s, chrono::Utc::now()).await {
+            match purge_expired(&s, jiff::Timestamp::now()).await {
                 Ok(n) if n > 0 => tracing::info!(servers = n, "deleted servers purged"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = ?e, "deleted server sweep failed"),

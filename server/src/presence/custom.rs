@@ -16,7 +16,7 @@ pub const RECENT: i64 = 5;
 
 /// The longest custom status timer the server takes: "this week" is at most 7 days off, with a day to spare for
 /// time zones.
-pub const MAX_CUSTOM: chrono::Duration = chrono::Duration::days(8);
+pub const MAX_CUSTOM: jiff::SignedDuration = crate::times::days(8);
 
 /// Characters that can reorder or disguise text around them: the bidi embeddings, overrides and isolates, and the
 /// directional marks.

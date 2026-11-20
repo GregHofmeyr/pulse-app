@@ -40,7 +40,7 @@ pub struct Config {
     pub embeds: EmbedConfig,
     /// Launch day (South African), for Early Adopter: everyone who joined in the week from it.
     /// `None` (`PULSE_LAUNCH_DATE` unset) = nobody gets it yet.
-    pub launch_date: Option<chrono::NaiveDate>,
+    pub launch_date: Option<jiff::civil::Date>,
     /// How long a call rings and how long an empty call waits before it ends (#50).
     pub calls: CallTimings,
     /// How long a Spotify share stays on a voice stage at most (#234; `stage::SHARE_TTL`).
@@ -53,7 +53,7 @@ pub struct Config {
     /// The time the quote badges take a new quote as posted at (#127, 3 am Thoughts); `None` = the
     /// real clock. Only tests set it: `test_config` pins midday, so a quote test run in the small
     /// hours never earns the badge by accident, and the 3 am tests pin night themselves.
-    pub quote_clock: Option<chrono::DateTime<chrono::Utc>>,
+    pub quote_clock: Option<jiff::Timestamp>,
     /// Steam linking and achievements (#379).
     pub steam: SteamConfig,
     /// Deadlock stats from deadlock-api.com (#390).
@@ -456,6 +456,10 @@ fn clip_store(get: impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<Cli
 pub struct CallTimings {
     pub ring: Duration,
     pub grace: Duration,
+    /// How long a voice connection that dropped off the network stays in its call (#281): back in
+    /// time, nobody hears a leave or a join; not back, the leave goes out then. Leaving on purpose
+    /// isn't held.
+    pub reconnect: Duration,
 }
 
 impl Default for CallTimings {
@@ -463,6 +467,7 @@ impl Default for CallTimings {
         Self {
             ring: Duration::from_secs(30),
             grace: Duration::from_secs(30),
+            reconnect: Duration::from_secs(10),
         }
     }
 }
@@ -582,10 +587,10 @@ fn decoy(raw: Option<&str>) -> String {
     }
 }
 
-fn launch_date(raw: Option<&str>) -> anyhow::Result<Option<chrono::NaiveDate>> {
+fn launch_date(raw: Option<&str>) -> anyhow::Result<Option<jiff::civil::Date>> {
     match raw {
         None | Some("") => Ok(None),
-        Some(v) => chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d")
+        Some(v) => jiff::civil::Date::strptime("%Y-%m-%d", v)
             .map(Some)
             .context("PULSE_LAUNCH_DATE must be a date, YYYY-MM-DD"),
     }
@@ -692,7 +697,7 @@ mod tests {
         assert!(launch_date(Some("")).unwrap().is_none());
         assert_eq!(
             launch_date(Some("2026-12-01")).unwrap(),
-            chrono::NaiveDate::from_ymd_opt(2026, 12, 1)
+            Some(jiff::civil::date(2026, 12, 1))
         );
         for bad in ["01/12/2026", "2026-13-01", "soon"] {
             let msg = format!("{:#}", launch_date(Some(bad)).unwrap_err());

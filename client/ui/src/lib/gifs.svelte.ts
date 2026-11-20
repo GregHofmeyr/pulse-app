@@ -1,4 +1,5 @@
-// Your favourite GIFs (#58), kept on the server so they follow you across devices. Fetched when the GIF picker
+// Your favourite GIFs (#58) and favourite stickers (#498: their own list, each marked `sticker`), in one list kept
+// on the server so they follow you across devices. Fetched when the GIF picker
 // opens or a GIF in chat first offers its star; a star or unstar shows at once and is undone if the server refuses.
 // A fetch that started before a star or unstar is dropped (it would undo it on screen), and one GIF's changes go to
 // the server one at a time, in order (a quick star and unstar can't land the other way round).
@@ -44,6 +45,13 @@ export function loadGifFavs(me: string, fresh = false): Promise<void> {
 }
 
 export const isGifFav = (id: string): boolean => gifFavs.list.some((g) => g.id === id)
+/** Favourite GIFs, newest first (the picker's Favourites). */
+export const favGifs = (): Gif[] => gifFavs.list.filter((g) => !g.sticker)
+/** Favourite stickers, newest first (#498: the picker's Favourite stickers). */
+export const favStickers = (): Gif[] => gifFavs.list.filter((g) => g.sticker)
+/** A star's label: which list it adds to or removes from. */
+export const favLabel = (starred: boolean, sticker: boolean): string =>
+  `${starred ? 'Remove from' : 'Add to'} favourite ${sticker ? 'stickers' : 'GIFs'}`
 
 /** Star or unstar `gif`: shown at once; if the server refuses, that GIF alone goes back and the error is rethrown. */
 export async function toggleGifFav(gif: Gif): Promise<void> {

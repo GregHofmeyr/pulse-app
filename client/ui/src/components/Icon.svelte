@@ -59,6 +59,8 @@
     trending: 'M3 17l6-6 4 4 8-8M15 7h6v6',
     // a square sticker with its bottom-right corner peeling up: GIPHY stickers in the GIF picker (#293)
     sticker: 'M14 21H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v7zM14 21v-3a4 4 0 0 1 4-4h3',
+    // the sticker with a star on it: favourite stickers (#498)
+    stickerStar: 'M14 21H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v7zM14 21v-3a4 4 0 0 1 4-4h3M10.5 6.5L11.7 8.9L14.3 9.3L12.4 11.1L12.8 13.7L10.5 12.5L8.2 13.7L8.6 11.1L6.7 9.3L9.3 8.9z',
     // a beetle: round body with a centre seam, head, antennae, three legs a side (Report a bug)
     bug: 'M8 10a4 4 0 0 1 8 0v4a4 4 0 0 1-8 0zM12 10v8M9.5 6.5 8 4M14.5 6.5 16 4M8 11H4M8 15H4.5M16 11h4M16 15h3.5M8.5 18 6 20M15.5 18 18 20',
     // a scroll with lines of text: what's new in this release (Patch notes, #207)

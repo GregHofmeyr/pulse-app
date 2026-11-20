@@ -569,7 +569,7 @@ async fn purging_a_channel_deletes_its_attachments() {
 async fn age(app: &TestApp, hours: i64) {
     sqlx::query("UPDATE attachments SET created_at = ?")
         .bind(pulse_server::db::stamp(
-            chrono::Utc::now() - chrono::Duration::hours(hours),
+            jiff::Timestamp::now() - jiff::SignedDuration::from_hours(hours),
         ))
         .execute(&app.db)
         .await
@@ -584,12 +584,12 @@ async fn sweep_removes_unattached_uploads_after_24h() {
     let kept = upload(app, t, ch, "b.txt", "text/plain", b"y").await;
     send_ok(app, t, ch, "", &[kept]).await;
     age(app, 23).await;
-    let r = pulse_server::attachments::sweep::run(&app.state(), chrono::Utc::now())
+    let r = pulse_server::attachments::sweep::run(&app.state(), jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(r.pending, 0);
     age(app, 26).await;
-    let r = pulse_server::attachments::sweep::run(&app.state(), chrono::Utc::now())
+    let r = pulse_server::attachments::sweep::run(&app.state(), jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(r.pending, 1);
@@ -617,13 +617,13 @@ async fn sweep_retries_a_failed_delete() {
         .await
         .unwrap();
     assert_eq!(r.status(), 204, "the delete lands even with storage down");
-    let r = pulse_server::attachments::sweep::run(&app.state(), chrono::Utc::now())
+    let r = pulse_server::attachments::sweep::run(&app.state(), jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(r.deleted, 0);
     assert_eq!(keys(app, m.id).await.len(), 1, "kept for the next run");
     s3(app).set_down(false);
-    let r = pulse_server::attachments::sweep::run(&app.state(), chrono::Utc::now())
+    let r = pulse_server::attachments::sweep::run(&app.state(), jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(r.deleted, 1);
@@ -702,7 +702,7 @@ async fn purging_a_deleted_server_deletes_its_files() {
     assert_eq!(s3(app).keys().len(), 2);
     let purged = pulse_server::servers::deleted::purge_expired_batched(
         &app.state(),
-        chrono::Utc::now() + chrono::Duration::days(30),
+        jiff::Timestamp::now() + pulse_server::times::days(30),
         100,
     )
     .await
@@ -736,7 +736,7 @@ async fn purged_rows_dont_count_toward_open_uploads() {
         start(app, t, ch, "b.txt", "text/plain", 1).await;
     }
     // the sweep takes the orphan at once, whatever its age
-    let r = pulse_server::attachments::sweep::run(&app.state(), chrono::Utc::now())
+    let r = pulse_server::attachments::sweep::run(&app.state(), jiff::Timestamp::now())
         .await
         .unwrap();
     assert_eq!(r.pending, 1);

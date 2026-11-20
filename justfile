@@ -205,7 +205,7 @@ publish-models:
 smoke:
     ./deploy/smoke.sh pulsechat.co.za
 
-# write, read and delete one small object in the clips bucket from the live server (run after filling the CLIPS_R2_* settings)
+# check the clips bucket refuses over-long bodies (whole objects and multipart parts), then write, read and delete one small object, from the live server (run after filling the CLIPS_R2_* settings)
 clips-check:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server clips-check'
 
@@ -216,6 +216,10 @@ storage:
 # each server's clip storage and the estimated monthly cost (all servers together; never shown in the app)
 clips-storage:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server clip-storage'
+
+# who's on which app version: each person's version, last update check (and what it was told) and last seen (#534)
+versions:
+    ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server versions'
 
 # a single-use invite on the live server (valid 24 h)
 invite-prod:

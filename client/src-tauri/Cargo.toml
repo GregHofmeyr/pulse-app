@@ -113,6 +113,10 @@ webkit2gtk = "2.0"
 # single-instance plugin already brings. Pure Rust, no libdbus. Called directly rather than through
 # notify-rust, whose every notification opens its own connection (see notify/linux.rs).
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+# Idle on wlroots/Hyprland/sway (#374, idle/linux.rs): the Wayland `ext-idle-notify-v1` protocol over our own
+# connection to the compositor. wayland-client's default backend is pure Rust (no libwayland at build or run time).
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", default-features = false, features = ["client", "staging"] }
 
 [target.'cfg(windows)'.dependencies]
 # 0.18's `realtime` raises cpal's own WASAPI threads via MMCSS (0.15 never did: thread id passed as a handle).

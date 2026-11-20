@@ -6,16 +6,16 @@
 //! zero-length point that calendar apps draw as a sliver or not at all, so a plan shows as an hour's block, as a new
 //! event does when it's added in a calendar app.
 
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::ids::MessageId;
 use pulse_protocol::rest::{Plan, plan_limits};
 
-fn parse(t: &str) -> Option<DateTime<Utc>> {
-    Some(DateTime::parse_from_rfc3339(t).ok()?.with_timezone(&Utc))
+fn parse(t: &str) -> Option<Timestamp> {
+    crate::times::parse(t).ok()
 }
 
-fn ical(t: DateTime<Utc>) -> String {
-    t.format("%Y%m%dT%H%M%SZ").to_string()
+fn ical(t: Timestamp) -> String {
+    t.strftime("%Y%m%dT%H%M%SZ").to_string()
 }
 
 /// A stored time (RFC 3339) in iCalendar's UTC form, `20261120T163000Z`.
@@ -65,7 +65,7 @@ pub fn fold(line: &str) -> String {
 }
 
 /// The calendar file for plan `id`, stamped `now`. `host` names the server in the UID (`<id>@<host>`).
-pub fn calendar(id: MessageId, plan: &Plan, host: &str, now: DateTime<Utc>) -> String {
+pub fn calendar(id: MessageId, plan: &Plan, host: &str, now: Timestamp) -> String {
     let mut lines: Vec<String> = vec![
         "BEGIN:VCALENDAR".into(),
         "VERSION:2.0".into(),
@@ -74,7 +74,7 @@ pub fn calendar(id: MessageId, plan: &Plan, host: &str, now: DateTime<Utc>) -> S
         "METHOD:PUBLISH".into(),
         "BEGIN:VEVENT".into(),
         format!("UID:{id}@{host}"),
-        format!("DTSTAMP:{}", now.format("%Y%m%dT%H%M%SZ")),
+        format!("DTSTAMP:{}", now.strftime("%Y%m%dT%H%M%SZ")),
     ];
     if let Some(start) = parse(&plan.starts_at) {
         lines.push(format!("DTSTART:{}", ical(start)));
@@ -83,7 +83,7 @@ pub fn calendar(id: MessageId, plan: &Plan, host: &str, now: DateTime<Utc>) -> S
             .as_deref()
             .and_then(parse)
             .filter(|e| *e > start)
-            .unwrap_or(start + TimeDelta::minutes(plan_limits::DEFAULT_MINUTES));
+            .unwrap_or(start + SignedDuration::from_mins(plan_limits::DEFAULT_MINUTES));
         lines.push(format!("DTEND:{}", ical(end)));
     }
     lines.push(format!("SUMMARY:{}", escape(&plan.title)));
@@ -169,9 +169,7 @@ mod tests {
     #[test]
     fn the_calendar_has_one_event_in_utc_with_a_stable_uid() {
         let id = MessageId::new();
-        let now = DateTime::parse_from_rfc3339("2026-11-16T10:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
+        let now = crate::times::parse("2026-11-16T10:00:00Z").unwrap();
         let ics = calendar(id, &plan(), "pulse.test", now);
         assert!(ics.starts_with("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:"));
         assert!(ics.ends_with("END:VEVENT\r\nEND:VCALENDAR\r\n"));

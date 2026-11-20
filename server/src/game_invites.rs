@@ -33,7 +33,7 @@ use crate::db::{begin_write, now};
 use crate::error::{AppError, AppResult};
 
 /// How long after startup an invite the restart ended can open again, when its sender reports the same game.
-pub const RESTART_GRACE: chrono::Duration = chrono::Duration::minutes(10);
+pub const RESTART_GRACE: jiff::SignedDuration = jiff::SignedDuration::from_mins(10);
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -209,7 +209,7 @@ pub(crate) async fn on_delete(tx: &mut SqliteConnection, id: MessageId) -> AppRe
 /// At boot nobody is playing anything (it lives in memory): every invite still open ends, for [`RESTART_GRACE`] only
 /// ([`reopen_after_restart`]).
 pub async fn end_all_on_startup(db: &SqlitePool) -> sqlx::Result<u64> {
-    let grace = crate::db::stamp(chrono::Utc::now() + RESTART_GRACE);
+    let grace = crate::db::stamp(jiff::Timestamp::now() + RESTART_GRACE);
     Ok(sqlx::query(
         "UPDATE game_invites SET ended_at = ?, join_info = NULL, restart_grace_until = ? WHERE ended_at IS NULL",
     )

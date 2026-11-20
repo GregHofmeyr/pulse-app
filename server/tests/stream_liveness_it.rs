@@ -1,7 +1,7 @@
 //! The stream liveness check against the dev LiveKit (`just voice-it`; `just voice-it-alt` moves
-//! it): a streamer's `#v` connection that LiveKit has keeps the stream, and once the client dies
-//! (its connection dropped without a goodbye) and LiveKit closes the empty room, the stream ends
-//! after the grace. The check's own rules are covered against a fake RoomService in streams.rs;
+//! it): a streamer's `#v` connection that LiveKit lists but that publishes no screen share counts
+//! as missing (#523) and ends the stream after the grace, and once the client dies (its connection
+//! dropped without a goodbye) LiveKit closes the empty room, which must read as nobody there. The check's own rules are covered against a fake RoomService in streams.rs;
 //! this pins the real API's answers.
 
 mod common;
@@ -20,9 +20,9 @@ const DEV_KEY: &str = "devkey";
 const DEV_SECRET: &str = "pulse-dev-secret-0123456789abcdefghij";
 const GRACE: Duration = Duration::from_secs(60);
 
-/// Wait (up to `limit`) until LiveKit does (or doesn't) list `identity` in `room`.
+/// Wait (up to `limit`) until LiveKit's own participant list does (or doesn't) have `identity` in `room`.
 async fn until_listed(
-    rooms: &LiveKitRooms,
+    admin: &RoomClient,
     room: &str,
     identity: &str,
     listed: bool,
@@ -30,11 +30,12 @@ async fn until_listed(
 ) {
     let start = Instant::now();
     loop {
-        let now = rooms
-            .connected(room)
+        let now = admin
+            .list_participants(room)
             .await
-            .expect("dev LiveKit up? (just voice-it)");
-        if now.contains(identity) == listed {
+            .map(|ps| ps.iter().any(|p| p.identity == identity))
+            .unwrap_or(false);
+        if now == listed {
             println!("{identity} listed={listed} after {:?}", start.elapsed());
             return;
         }
@@ -49,7 +50,7 @@ async fn until_listed(
 
 #[tokio::test]
 #[ignore]
-async fn a_stream_lives_while_livekit_has_its_video_connection_and_ends_after_the_client_dies() {
+async fn a_video_connection_sharing_nothing_ends_the_stream_and_a_closed_room_lists_nobody() {
     let port = std::env::var("PULSE_DEV_LIVEKIT_PORT").unwrap_or_else(|_| "7880".into());
     let mut cfg = test_config();
     cfg.livekit_api_url = format!("http://127.0.0.1:{port}");
@@ -84,7 +85,10 @@ async fn a_stream_lives_while_livekit_has_its_video_connection_and_ends_after_th
         .await
         .expect("dev LiveKit up? (just voice-it)");
     let rooms = LiveKitRooms::new(&app.cfg);
-    until_listed(&rooms, &room, &identity, true, Duration::from_secs(10)).await;
+    let admin = RoomClient::with_api_key(&app.cfg.livekit_api_url, DEV_KEY, DEV_SECRET);
+    until_listed(&admin, &room, &identity, true, Duration::from_secs(10)).await;
+    // listed by LiveKit, but sharing nothing: not a live stream's video connection (#523)
+    assert!(!rooms.connected(&room).await.unwrap().contains(&identity));
 
     let live = post_json(
         &app,
@@ -96,21 +100,22 @@ async fn a_stream_lives_while_livekit_has_its_video_connection_and_ends_after_th
     assert_eq!(live.status(), 200);
     let s = app.state();
     let t0 = Instant::now();
-    for n in 0..3 {
-        let c = check(&s, &rooms, t0 + GRACE * n, GRACE).await;
-        assert_eq!(
-            (c.ended, c.answered, c.unknown),
-            (0, vec![lounge.id], vec![])
-        );
-    }
+    let c = check(&s, &rooms, t0, GRACE).await;
+    assert_eq!(
+        (c.ended, c.answered, c.unknown),
+        (0, vec![lounge.id], vec![]),
+        "the first miss only starts the clock"
+    );
     assert!(app.streams.get(lounge.id, a_id).is_some());
+    let c = check(&s, &rooms, t0 + GRACE, GRACE).await;
+    assert_eq!((c.ended, c.unknown.len()), (1, 0), "{c:?}");
+    assert!(app.streams.get(lounge.id, a_id).is_none());
 
     // the client dies: the connection drops with no leave
     drop(ws);
-    until_listed(&rooms, &room, &identity, false, Duration::from_secs(60)).await;
+    until_listed(&admin, &room, &identity, false, Duration::from_secs(60)).await;
     // and LiveKit closes the now-empty room (after its departure timeout): a room it doesn't
     // have must read as nobody there, not as an error
-    let admin = RoomClient::with_api_key(&app.cfg.livekit_api_url, DEV_KEY, DEV_SECRET);
     let start = Instant::now();
     while admin
         .list_rooms(vec![room.clone()])
@@ -130,10 +135,4 @@ async fn a_stream_lives_while_livekit_has_its_video_connection_and_ends_after_th
     // changes this needs a look at liveness.rs and voice/restore.rs)
     assert!(admin.list_participants(&room).await.unwrap().is_empty());
     assert!(rooms.connected(&room).await.unwrap().is_empty());
-    let t1 = t0 + GRACE * 3;
-    let c = check(&s, &rooms, t1, GRACE).await;
-    assert_eq!((c.ended, c.unknown.len()), (0, 0), "{c:?}");
-    let c = check(&s, &rooms, t1 + GRACE, GRACE).await;
-    assert_eq!((c.ended, c.unknown.len()), (1, 0), "{c:?}");
-    assert!(app.streams.get(lounge.id, a_id).is_none());
 }

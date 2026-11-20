@@ -2,7 +2,7 @@
 //! their own: bookkeeping never fails the join, leave or delete that caused it (errors are
 //! logged). Only server voice channels have rows, so DM and group calls never get here.
 
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::ids::{ChannelId, ServerId, UserId};
 use sqlx::SqliteConnection;
 
@@ -20,13 +20,7 @@ const GHOST_UNDER: i64 = 5;
 const RECONNECT_WITHIN: i64 = 10;
 
 /// `user` opened voice session `session` (committed) at `at` in a channel of `server`.
-pub async fn opened(
-    s: &AppState,
-    server: ServerId,
-    user: UserId,
-    session: &str,
-    at: DateTime<Utc>,
-) {
+pub async fn opened(s: &AppState, server: ServerId, user: UserId, session: &str, at: Timestamp) {
     let r = async {
         let mut tx = begin_write(&s.db).await?;
         let early_bird = joined(&mut tx, server, user, session, at).await?;
@@ -74,7 +68,7 @@ pub async fn joined(
     server: ServerId,
     user: UserId,
     session: &str,
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> AppResult<Option<UserId>> {
     let day_start = stamp(sast_day_start(at));
     let carried_over: Option<i64> = sqlx::query_scalar(
@@ -146,7 +140,7 @@ pub async fn left(
     if covers_3am(&together) {
         stats::add(conn, user, stat::NIGHT_OWL, 1).await?;
     }
-    if (mine.1 - mine.0).num_seconds() < GHOST_UNDER {
+    if mine.1.duration_since(mine.0).as_secs() < GHOST_UNDER {
         let rejoined: Option<i64> = sqlx::query_scalar(
             "SELECT 1 FROM voice_sessions
              WHERE user_id = ? AND channel_id = ? AND joined_at < ? AND (left_at IS NULL OR left_at >= ?)
@@ -155,7 +149,7 @@ pub async fn left(
         .bind(user.to_string())
         .bind(channel.to_string())
         .bind(joined)
-        .bind(stamp(mine.0 - Duration::seconds(RECONNECT_WITHIN)))
+        .bind(stamp(mine.0 - SignedDuration::from_secs(RECONNECT_WITHIN)))
         .fetch_optional(&mut *conn)
         .await?;
         if rejoined.is_none() {

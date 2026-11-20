@@ -23,7 +23,7 @@ const HIGHVELD: u32 = 20;
 const LAKESIDE: u32 = 30;
 
 fn now() -> i64 {
-    chrono::Utc::now().timestamp()
+    jiff::Timestamp::now().as_second()
 }
 
 /// A kick-off `ago` seconds back, but never before today (UTC), so the day's schedule read includes it.
@@ -207,7 +207,9 @@ async fn team_lists_are_read_once_a_week_and_follows_come_from_them() {
     assert_eq!(fake.calls("football/teams"), 1, "cached");
     let q = fake.last_query("football/teams");
     assert_eq!(q.get("league").map(String::as_str), Some("288"));
-    let season = pulse_server::sports::season_for(chrono::Utc::now().date_naive()).to_string();
+    let season =
+        pulse_server::sports::season_for(pulse_server::times::utc_date(jiff::Timestamp::now()))
+            .to_string();
     assert_eq!(q.get("season"), Some(&season));
     // rugby's flat team shape, from the rugby host
     let urc = teams(&app, &sam, "urc").await;
@@ -527,10 +529,8 @@ async fn rugby_is_read_by_the_day_and_shows_the_score() {
     tick(app).await;
     // the season's games once, then the day's for the live read
     assert_eq!(fake.calls("rugby/games"), 2);
-    let day = chrono::DateTime::from_timestamp(kickoff, 0)
-        .unwrap()
-        .date_naive()
-        .to_string();
+    let day =
+        pulse_server::times::utc_date(jiff::Timestamp::from_second(kickoff).unwrap()).to_string();
     assert_eq!(fake.last_query("rugby/games").get("date"), Some(&day));
     let got = cards(app, &w.alex, w.general).await;
     assert_eq!(got.len(), 1);

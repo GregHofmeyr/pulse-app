@@ -953,7 +953,13 @@ describe('the emoji/animation freeze while live', () => {
     ['Stop', (l) => l.streamApi.stop()],
     ['the capture ending (Stop sharing, the window closed)', (l) => l.track.end()],
     ['the server ending it', (l) => l.streamApi.onStreamEnded('c1', 'me', 'timed_out')],
-    ['LiveKit giving up on the connection', (l) => l.room.lose()],
+    ['LiveKit giving up on the connection and no reconnect in time', (l) => {
+      Object.assign(l.RESUME, { firstMs: 1, maxMs: 1, windowMs: 5 })
+      fake.connect = async () => {
+        throw new Error('offline')
+      }
+      l.room.lose()
+    }],
     ['leaving voice', (l) => l.streamApi.onVoiceChanged(null)],
     ['moving to another voice channel', (l) => l.streamApi.onVoiceChanged('c2')],
     ['the server not taking it back after a restart', (l) => {
@@ -1291,14 +1297,48 @@ describe('one stream connection: sharing here or a ghost watch elsewhere, never 
 })
 
 describe('the stream connection lost for good', () => {
-  it('ends our share, says so, and tells the server', async () => {
-    const { stream, room } = await goneLive()
+  it('republishes our share on a new connection, keeping the capture (#343)', async () => {
+    const { stream, room, track } = await goneLive()
+    const next = fakeRoom()
+    fake.connect = async () => next
     room.lose()
-    await until(() => stream.live === null, 'the share to end')
+    expect(stream.live?.reconnecting).toBe(true)
+    await until(() => next.publish.mock.calls.length > 0, 'the share to go out again')
+    await until(() => stream.live?.reconnecting === false, 'the reconnect to finish')
+    expect(next.publish).toHaveBeenCalledWith(track, 720, 60)
+    expect(track.stop).not.toHaveBeenCalled()
+    expect(stream.live).not.toBeNull()
+    expect(stream.notice).toBe('')
+    expect(calls('stream_stop')).toEqual([])
+    expect(calls('stream_log').some((a) => String(a?.line).includes('room_lost'))).toBe(true)
+    expect(calls('stream_log').some((a) => String(a?.line).includes('live_resumed'))).toBe(true)
+  })
+
+  it('out of time to reconnect, ends our share, says so, and tells the server', async () => {
+    const { stream, room, RESUME } = await goneLive()
+    Object.assign(RESUME, { firstMs: 1, maxMs: 2, windowMs: 30 })
+    fake.connect = async () => {
+      throw new Error('offline')
+    }
+    room.lose()
+    await until(() => stream.live === null, 'the share to end', 5_000)
     expect(stream.notice).toMatch(/connection was lost/)
     expect(calls('stream_stop')).toEqual([{ channelId: 'c1' }])
-    expect(stream.room).toBeNull()
-    expect(calls('stream_log').some((a) => String(a?.line).includes('room_lost'))).toBe(true)
+    expect(fake.args.length).toBeGreaterThan(2) // tried again, with backoff
+  })
+
+  it('stop while reconnecting calls it off and stops the capture', async () => {
+    const { stream, streamApi, room, track } = await goneLive()
+    const connecting = deferred<ReturnType<typeof fakeRoom>>()
+    const next = fakeRoom()
+    fake.connect = () => connecting.p
+    room.lose()
+    await settle()
+    await streamApi.stop()
+    connecting.resolve(next)
+    await until(() => track.stop.mock.calls.length > 0, 'the capture to stop')
+    expect(next.publish).not.toHaveBeenCalled()
+    expect(stream.live).toBeNull()
   })
 
   it('ends the watches on it', async () => {

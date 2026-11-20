@@ -23,6 +23,9 @@ enum Cmd {
     /// and what's on disk (thumbnails, sounds, emoji, avatars, …), with the estimated monthly cost
     /// (needs only PULSE_DB_URL)
     Storage,
+    /// Print who's on which app version: each person's version, last update check (and what it was told) and last
+    /// seen (#534) (needs only PULSE_DB_URL; reads PULSE_UPDATES_DIR for the published version)
+    Versions,
     /// Print a fresh single-use invite code (bootstraps the first account)
     CreateInvite,
     /// Write a consistent snapshot of the database to PATH (must not exist yet)
@@ -103,6 +106,7 @@ async fn main() -> anyhow::Result<()> {
         Cmd::ClipsCheck => clips_check().await,
         Cmd::ClipStorage => clip_storage().await,
         Cmd::Storage => storage().await,
+        Cmd::Versions => versions().await,
         Cmd::Serve => pulse_server::serve(cfg()?).await,
         Cmd::CreateInvite => {
             let cfg = cfg()?;
@@ -263,6 +267,24 @@ async fn storage() -> anyhow::Result<()> {
     println!(
         "{}",
         pulse_server::attachments::storage::format_report(&usage)
+    );
+    Ok(())
+}
+
+/// `versions` reads only the database, opened read-only, and the published manifest's version if there is one.
+async fn versions() -> anyhow::Result<()> {
+    let url = std::env::var("PULSE_DB_URL").unwrap_or_else(|_| "sqlite://pulse.db".into());
+    let db = pulse_server::db::connect_read_only(&url)
+        .await
+        .map_err(|e| anyhow::anyhow!("couldn't open the database {url}: {e}"))?;
+    let dir = std::env::var("PULSE_UPDATES_DIR").unwrap_or_else(|_| "/data/updates".into());
+    let latest = std::fs::read(std::path::Path::new(&dir).join("latest.json"))
+        .ok()
+        .and_then(|b| pulse_server::app_versions::manifest_version(&b));
+    let rows = pulse_server::app_versions::list(&db).await?;
+    println!(
+        "{}",
+        pulse_server::app_versions::format_report(&rows, latest.as_deref())
     );
     Ok(())
 }

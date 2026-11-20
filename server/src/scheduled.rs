@@ -21,7 +21,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, ScheduledId, UserId};
 use pulse_protocol::rest::{
@@ -84,14 +84,13 @@ fn from_row(r: Row) -> AppResult<ScheduledMessage> {
 /// A time as asked for (RFC 3339, any offset) and checked at `now`: not over (a minute's grace for a slow form: it
 /// then goes on the next sweep) and at most [`schedule_limits::MAX_DAYS_AHEAD`] away. Stored as UTC. Reminders (#300)
 /// take times the same way.
-pub fn future_time(raw: &str, now: DateTime<Utc>) -> AppResult<String> {
-    let t = DateTime::parse_from_rfc3339(raw.trim())
-        .map_err(|_| AppError::BadRequest("that isn't a date and time".into()))?
-        .with_timezone(&Utc);
-    if t < now - TimeDelta::minutes(1) {
+pub fn future_time(raw: &str, now: Timestamp) -> AppResult<String> {
+    let t = crate::times::parse(raw.trim())
+        .map_err(|_| AppError::BadRequest("that isn't a date and time".into()))?;
+    if t < now - SignedDuration::from_mins(1) {
         return Err(AppError::BadRequest("that time has already passed".into()));
     }
-    if t > now + TimeDelta::days(schedule_limits::MAX_DAYS_AHEAD) {
+    if t > now + crate::times::days(schedule_limits::MAX_DAYS_AHEAD) {
         return Err(AppError::BadRequest("that's more than a year away".into()));
     }
     Ok(stamp(t))
@@ -128,7 +127,9 @@ async fn list(
 }
 
 /// The chat `me` may schedule a message in: one they could send in now (a DM or group they're in, a server chat
-/// of a server they're in), not a quotes or clips channel. Checked again when it's posted.
+/// of a server they're in), not a quotes or clips channel, not a DM with someone they've blocked (#474; #412).
+/// Checked again when it's posted: blocking them before then fails it, and one to someone who has blocked `me` is
+/// posted withheld from them, as any send is (never a refusal that would tell `me`).
 async fn postable(s: &AppState, me: UserId, id: ChannelId) -> AppResult<()> {
     let ch = channel_for(&s.db, me, id).await?;
     if matches!(ch.kind, ChannelKind::Quotes | ChannelKind::Clips)
@@ -142,6 +143,14 @@ async fn postable(s: &AppState, me: UserId, id: ChannelId) -> AppResult<()> {
         && !is_server_member(&s.db, server, me).await?
     {
         return Err(AppError::Forbidden);
+    }
+    let mut conn = s.db.acquire().await?;
+    if let Some(other) = crate::messages::routes::dm_other(&mut conn, &ch, me).await?
+        && crate::blocks::has_blocked(&mut *conn, me, other).await?
+    {
+        return Err(AppError::ForbiddenMsg(
+            "You've blocked them. Unblock them to schedule a message.".into(),
+        ));
     }
     Ok(())
 }
@@ -203,7 +212,7 @@ async fn create(
         return Err(AppError::TooManyRequests(None));
     }
     let content = clean(&req.content)?;
-    let send_at = future_time(&req.send_at, Utc::now())?;
+    let send_at = future_time(&req.send_at, Timestamp::now())?;
     postable(&s, me, channel).await?;
     check_reply(&s, channel, req.reply_to_id).await?;
     let made = ScheduledMessage {
@@ -259,7 +268,7 @@ async fn edit(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
-    let at = Utc::now();
+    let at = Timestamp::now();
     let content = req.content.as_deref().map(clean).transpose()?;
     let send_at = req
         .send_at
@@ -408,7 +417,7 @@ async fn post_one(s: &AppState, me: UserId, row: &ScheduledMessage) -> AppResult
 
 /// Post every scheduled message due at `now` (up to [`SWEEP_BATCH`]), oldest time first. Returns how many were
 /// posted; failed ones are marked as such and counted out.
-pub async fn send_due(s: &AppState, now: DateTime<Utc>) -> AppResult<usize> {
+pub async fn send_due(s: &AppState, now: Timestamp) -> AppResult<usize> {
     let due: Vec<(String, String)> = sqlx::query_as(
         "SELECT id, author_id FROM scheduled_messages WHERE failed_at IS NULL AND send_at <= ?
          ORDER BY send_at, id LIMIT ?",
@@ -449,7 +458,7 @@ pub fn spawn_sweeper(s: AppState) {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
-            match send_due(&s, Utc::now()).await {
+            match send_due(&s, Timestamp::now()).await {
                 Ok(0) => {}
                 Ok(n) => tracing::debug!(n, "scheduled messages posted"),
                 Err(e) => tracing::warn!(error = %e, "scheduled message sweep failed"),
@@ -462,10 +471,8 @@ pub fn spawn_sweeper(s: AppState) {
 mod tests {
     use super::*;
 
-    fn at() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-11-16T10:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc)
+    fn at() -> Timestamp {
+        crate::times::parse("2026-11-16T10:00:00Z").unwrap()
     }
 
     #[test]

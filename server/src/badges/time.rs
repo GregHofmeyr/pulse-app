@@ -1,15 +1,13 @@
 //! Pure time helpers for the voice badges. South African time is a fixed UTC+2 (no daylight
 //! saving), so it is a constant offset rather than a time zone database.
 
-use chrono::{DateTime, Duration, FixedOffset, Utc};
+use jiff::tz::Offset;
+use jiff::{SignedDuration, Timestamp};
 
 use crate::error::{AppError, AppResult};
 
 /// South African Standard Time.
-pub const SAST: FixedOffset = match FixedOffset::east_opt(2 * 3600) {
-    Some(o) => o,
-    None => panic!("a valid offset"),
-};
+pub const SAST: Offset = Offset::constant(2);
 
 const DAY: i64 = 24 * 3600;
 
@@ -24,40 +22,38 @@ pub const SMALL_HOURS_FROM: i64 = 2;
 pub const SMALL_HOURS_UNTIL: i64 = 5;
 
 /// A stored time (see [`crate::db::stamp`]).
-pub fn parse(t: &str) -> AppResult<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(t)
-        .map(|t| t.with_timezone(&Utc))
-        .map_err(|e| AppError::Internal(e.into()))
+pub fn parse(t: &str) -> AppResult<Timestamp> {
+    crate::times::parse(t).map_err(|e| AppError::Internal(e.into()))
 }
 
 /// The South African day `t` falls on, as days since the epoch.
-pub fn sast_day(t: DateTime<Utc>) -> i64 {
-    unix_sast_day(t.timestamp())
+pub fn sast_day(t: Timestamp) -> i64 {
+    unix_sast_day(t.as_second())
 }
 
 fn unix_sast_day(unix: i64) -> i64 {
-    (unix + i64::from(SAST.local_minus_utc())).div_euclid(DAY)
+    (unix + i64::from(SAST.seconds())).div_euclid(DAY)
 }
 
 /// When the South African day `t` falls on began.
-pub fn sast_day_start(t: DateTime<Utc>) -> DateTime<Utc> {
-    let start = sast_day(t) * DAY - i64::from(SAST.local_minus_utc());
-    DateTime::from_timestamp(start, 0).expect("in range")
+pub fn sast_day_start(t: Timestamp) -> Timestamp {
+    let start = sast_day(t) * DAY - i64::from(SAST.seconds());
+    Timestamp::from_second(start).expect("in range")
 }
 
 /// The parts of `mine` when someone else was there too: the union of `others` clipped to `mine`,
 /// merged and in order.
 pub fn accompanied(
-    mine: (DateTime<Utc>, DateTime<Utc>),
-    others: &[(DateTime<Utc>, DateTime<Utc>)],
-) -> Vec<(DateTime<Utc>, DateTime<Utc>)> {
+    mine: (Timestamp, Timestamp),
+    others: &[(Timestamp, Timestamp)],
+) -> Vec<(Timestamp, Timestamp)> {
     let mut clipped: Vec<_> = others
         .iter()
         .map(|&(a, b)| (a.max(mine.0), b.min(mine.1)))
         .filter(|(a, b)| a < b)
         .collect();
     clipped.sort();
-    let mut out: Vec<(DateTime<Utc>, DateTime<Utc>)> = Vec::new();
+    let mut out: Vec<(Timestamp, Timestamp)> = Vec::new();
     for (a, b) in clipped {
         match out.last_mut() {
             Some(last) if a <= last.1 => last.1 = last.1.max(b),
@@ -68,17 +64,20 @@ pub fn accompanied(
 }
 
 /// Whole seconds covered by `intervals` (which don't overlap).
-pub fn seconds(intervals: &[(DateTime<Utc>, DateTime<Utc>)]) -> i64 {
-    intervals.iter().map(|(a, b)| (*b - *a).num_seconds()).sum()
+pub fn seconds(intervals: &[(Timestamp, Timestamp)]) -> i64 {
+    intervals
+        .iter()
+        .map(|(a, b)| b.duration_since(*a).as_secs())
+        .sum()
 }
 
 /// Whether one of `intervals` (start inclusive, end exclusive) holds 03:00 South African time.
-pub fn covers_3am(intervals: &[(DateTime<Utc>, DateTime<Utc>)]) -> bool {
+pub fn covers_3am(intervals: &[(Timestamp, Timestamp)]) -> bool {
     intervals.iter().any(|&(a, b)| {
         // the first 03:00 SAST at or after `a`
-        let three = sast_day_start(a) + Duration::hours(3);
+        let three = sast_day_start(a) + SignedDuration::from_hours(3);
         let three = if three < a {
-            three + Duration::days(1)
+            three + crate::times::days(1)
         } else {
             three
         };
@@ -88,8 +87,8 @@ pub fn covers_3am(intervals: &[(DateTime<Utc>, DateTime<Utc>)]) -> bool {
 
 /// Whether `t` is in the small hours: from [`SMALL_HOURS_FROM`] up to (not including)
 /// [`SMALL_HOURS_UNTIL`] South African time.
-pub fn in_small_hours(t: DateTime<Utc>) -> bool {
-    let hour = (t - sast_day_start(t)).num_hours();
+pub fn in_small_hours(t: Timestamp) -> bool {
+    let hour = t.duration_since(sast_day_start(t)).as_hours();
     (SMALL_HOURS_FROM..SMALL_HOURS_UNTIL).contains(&hour)
 }
 
@@ -104,8 +103,8 @@ pub fn doos_counts(now_unix: i64, last_at: i64, day: i64, day_count: i64) -> boo
 mod tests {
     use super::*;
 
-    fn t(s: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    fn t(s: &str) -> Timestamp {
+        crate::times::parse(s).unwrap()
     }
 
     #[test]
@@ -193,7 +192,7 @@ mod tests {
 
     #[test]
     fn doos_gap_and_daily_cap() {
-        let now = t("2026-11-03T10:00:00Z").timestamp();
+        let now = t("2026-11-03T10:00:00Z").as_second();
         let today = sast_day(t("2026-11-03T10:00:00Z"));
         // never counted before
         assert!(doos_counts(now, 0, 0, 0));
@@ -204,7 +203,7 @@ mod tests {
         assert!(doos_counts(now, now - 600, today, 4));
         assert!(!doos_counts(now, now - 600, today, 5));
         // the next South African day starts again
-        let tomorrow = t("2026-11-03T22:00:00Z").timestamp();
+        let tomorrow = t("2026-11-03T22:00:00Z").as_second();
         assert!(doos_counts(tomorrow, now, today, 5));
     }
 }

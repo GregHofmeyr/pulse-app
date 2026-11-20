@@ -46,7 +46,7 @@ pub fn router() -> Router<AppState> {
 /// Clips `me` started in the last rolling hour: top-level messages in clips channels (deleted
 /// ones included, since deleting removes the clip row) plus open tickets.
 async fn started_this_hour(c: &mut sqlx::SqliteConnection, me: UserId) -> AppResult<i64> {
-    let since = stamp(chrono::Utc::now() - chrono::Duration::hours(1));
+    let since = stamp(jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1));
     let posted: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM messages m JOIN channels c ON c.id = m.channel_id
          WHERE m.author_id = ? AND c.kind = 'clips' AND m.thread_root_id IS NULL
@@ -249,7 +249,8 @@ async fn confirm(
     };
     // The sweeper only touches tickets past the TTL plus a grace period, so refusing expired
     // tickets here keeps confirm and the sweeper from ever racing over one.
-    if created < stamp(chrono::Utc::now() - chrono::Duration::hours(TICKET_TTL_HOURS)) {
+    if created < stamp(jiff::Timestamp::now() - jiff::SignedDuration::from_hours(TICKET_TTL_HOURS))
+    {
         return Err(AppError::Conflict("That upload expired. Try again.".into()));
     }
     let channel: ChannelId = channel

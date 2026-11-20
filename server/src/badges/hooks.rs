@@ -2,7 +2,7 @@
 //! more than one `stats::add`. Callers only call these for server channels (never DMs or groups)
 //! and pass the users returned here to [`super::engine::after`] once they have committed.
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use pulse_protocol::ids::{MessageId, UserId};
 use sqlx::SqliteConnection;
 
@@ -136,7 +136,7 @@ pub async fn quoted(
     conn: &mut SqliteConnection,
     poster: UserId,
     speakers: &[UserId],
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> AppResult<Vec<UserId>> {
     let small_hours = in_small_hours(at);
     let mut check = vec![poster];

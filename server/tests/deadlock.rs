@@ -22,7 +22,7 @@ const SAM: u32 = 2;
 const KIM: u32 = 3;
 
 fn now() -> i64 {
-    chrono::Utc::now().timestamp()
+    jiff::Timestamp::now().as_second()
 }
 
 async fn setup_with(tweak: impl FnOnce(&mut Config)) -> (TestApp, FakeDeadlock) {
@@ -44,7 +44,7 @@ async fn link(app: &TestApp, user: UserId, steam_id: &str) {
     )
     .bind(user.to_string())
     .bind(steam_id)
-    .bind(chrono::Utc::now().to_rfc3339())
+    .bind(pulse_server::times::rfc3339(jiff::Timestamp::now()))
     .execute(&app.db)
     .await
     .unwrap();
@@ -425,14 +425,14 @@ async fn ranks_show_on_the_member_list_and_movers_post_weekly() {
     fake.set_rank(ALEX, 85);
     fake.set_rank(SAM, 72);
     pulse_server::deadlock::ranks::refresh(&s).await.unwrap();
-    pulse_server::deadlock::ranks::movers_at(&s, t0 + chrono::Duration::days(3))
+    pulse_server::deadlock::ranks::movers_at(&s, t0 + pulse_server::times::days(3))
         .await
         .unwrap();
     assert!(
         cards(app, &w.alex.1, w.general).await.is_empty(),
         "not Monday yet"
     );
-    pulse_server::deadlock::ranks::movers_at(&s, t0 + chrono::Duration::days(7))
+    pulse_server::deadlock::ranks::movers_at(&s, t0 + pulse_server::times::days(7))
         .await
         .unwrap();
     let all = cards(app, &w.alex.1, w.general).await;
@@ -450,7 +450,7 @@ async fn ranks_show_on_the_member_list_and_movers_post_weekly() {
             .contains("alex Oracle 3 → Oracle 5")
     );
     // nobody moved the next week: nothing posts
-    pulse_server::deadlock::ranks::movers_at(&s, t0 + chrono::Duration::days(14))
+    pulse_server::deadlock::ranks::movers_at(&s, t0 + pulse_server::times::days(14))
         .await
         .unwrap();
     assert_eq!(cards(app, &w.alex.1, w.general).await.len(), 1);
@@ -544,7 +544,7 @@ async fn patch_notes_post_once_after_a_quiet_first_look() {
         cards(app, &w.alex.1, w.general).await.is_empty(),
         "the first look only remembers"
     );
-    let fresh = chrono::Utc::now().to_rfc3339();
+    let fresh = pulse_server::times::rfc3339(jiff::Timestamp::now());
     fake.add_patch(
         "Minor Update - 11-04-2026",
         "https://news.example/1",
@@ -552,7 +552,8 @@ async fn patch_notes_post_once_after_a_quiet_first_look() {
         "<p>- Haze: more smoke.</p><p>- Infernus: hotter.</p>",
     );
     // the same update from the forum, under another title
-    let later = (chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
+    let later =
+        pulse_server::times::rfc3339(jiff::Timestamp::now() + jiff::SignedDuration::from_mins(5));
     fake.add_patch(
         "11-04-2026",
         "https://forum.example/2",
@@ -605,7 +606,7 @@ async fn steam_news_stands_in_when_the_patches_feed_fails() {
     fake.add_patch(
         "Gameplay Update",
         "https://news.example/g",
-        &chrono::Utc::now().to_rfc3339(),
+        &pulse_server::times::rfc3339(jiff::Timestamp::now()),
         "Haze.",
     );
     pulse_server::deadlock::patches::tick(&s).await.unwrap();
@@ -828,7 +829,7 @@ async fn hiding_your_games_from_a_member_keeps_your_deadlock_out_of_their_server
         .unwrap();
     fake.set_rank(ALEX, 85);
     pulse_server::deadlock::ranks::refresh(&s).await.unwrap();
-    pulse_server::deadlock::ranks::movers_at(&s, t0 + chrono::Duration::days(7))
+    pulse_server::deadlock::ranks::movers_at(&s, t0 + pulse_server::times::days(7))
         .await
         .unwrap();
     assert!(
@@ -889,8 +890,6 @@ async fn a_friends_line_added_later_drops_the_line_of_someone_who_now_hides_thei
 }
 
 /// A Tuesday morning: three days on is Friday (no movers yet), seven days on is past the next Monday's slot.
-fn tuesday() -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::parse_from_rfc3339("2026-11-17T10:00:00Z")
-        .unwrap()
-        .to_utc()
+fn tuesday() -> jiff::Timestamp {
+    pulse_server::times::parse("2026-11-17T10:00:00Z").unwrap()
 }

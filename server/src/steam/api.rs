@@ -126,7 +126,7 @@ impl Budget {
     }
 
     pub fn take(&self) -> bool {
-        self.take_on(chrono::Utc::now().timestamp().div_euclid(86_400))
+        self.take_on(jiff::Timestamp::now().as_second().div_euclid(86_400))
     }
 
     /// Calls made today.

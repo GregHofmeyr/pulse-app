@@ -220,6 +220,63 @@ async fn favourites_are_capped() {
 }
 
 #[tokio::test]
+async fn sticker_favourites_are_their_own_list_with_their_own_cap() {
+    let app = spawn().await;
+    let (alex, t) = register(&app, "alex").await;
+    let sticker = |id: &str| json!({ "id": id, "title": "Wave Sticker", "width": 200, "height": 200, "sticker": true });
+    for body in [gif("gif111"), sticker("stk111"), sticker("stk222")] {
+        let r = call(&app, Method::POST, &t, "/gifs/favourites", Some(body)).await;
+        assert_eq!(r.status(), 204);
+    }
+    // plain: GIFs only, as older apps expect
+    let plain: Vec<Gif> = get_json(&app, &t, "/gifs/favourites").await;
+    assert_eq!(
+        plain.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),
+        ["gif111"]
+    );
+    assert!(!plain[0].sticker);
+    // with stickers: both, newest first, each marked
+    let all: Vec<Gif> = get_json(&app, &t, "/gifs/favourites?with_stickers=true").await;
+    assert_eq!(
+        all.iter()
+            .map(|g| (g.id.as_str(), g.sticker))
+            .collect::<Vec<_>>(),
+        [("stk222", true), ("stk111", true), ("gif111", false)]
+    );
+    let r = call(&app, Method::DELETE, &t, "/gifs/favourites/stk111", None).await;
+    assert_eq!(r.status(), 204);
+    let all: Vec<Gif> = get_json(&app, &t, "/gifs/favourites?with_stickers=true").await;
+    assert_eq!(
+        all.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),
+        ["stk222", "gif111"]
+    );
+
+    // a full GIF list leaves room for stickers, and the other way round
+    for i in 0..gif_limits::FAVOURITES_PER_PERSON {
+        sqlx::query(
+            "INSERT INTO gif_favourites (user_id, gif_id, title, width, height, created_at) VALUES (?, ?, '', 1, 1, ?)",
+        )
+        .bind(alex.to_string())
+        .bind(format!("g{i}"))
+        .bind(format!("2026-01-01T00:00:{:02}.000Z", i % 60))
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let r = call(&app, Method::POST, &t, "/gifs/favourites", Some(gif("one"))).await;
+    assert_eq!(r.status(), 400);
+    let r = call(
+        &app,
+        Method::POST,
+        &t,
+        "/gifs/favourites",
+        Some(sticker("stk333")),
+    )
+    .await;
+    assert_eq!(r.status(), 204);
+}
+
+#[tokio::test]
 async fn a_picked_gif_is_stored_on_its_message() {
     let app = spawn().await;
     let (_, t) = register(&app, "alex").await;

@@ -8,6 +8,7 @@
 //! be seen from outside its frame.
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use pulse_protocol::rest::EmbedProvider;
@@ -134,8 +135,13 @@ fn window_look(provider: EmbedProvider) -> (&'static str, f64, f64) {
 /// environment per data directory with the same options, and one is enough.
 pub struct WebviewData(pub PathBuf);
 
+/// Who opened the pop-out showing now (#409): a watch party's `party:<channel>`, so the party can move it on to its
+/// next video or close it when you leave, without touching a window something else opened since. `None`: a preview's.
+#[derive(Default)]
+pub struct WindowOwner(pub Mutex<Option<String>>);
+
 /// Opens the pop-out for a preview (`start`: a YouTube start time, seconds), replacing any open one (one at a time; closing a window ends
-/// its playback).
+/// its playback). `owner` tags it (see [`WindowOwner`]); a preview's has none.
 ///
 /// The window shows a remote page and gets no IPC: no capability lists it, and Tauri 2.12 refuses
 /// every command from a non-local origin unless a `remote` capability grants it (tauri 2.12.2,
@@ -147,9 +153,11 @@ pub struct WebviewData(pub PathBuf);
 pub async fn open_embed_window(
     app: AppHandle,
     data: State<'_, WebviewData>,
+    owner_of: State<'_, WindowOwner>,
     provider: EmbedProvider,
     id: String,
     start: Option<u32>,
+    owner: Option<String>,
 ) -> Result<(), String> {
     let url = popout_url(provider, &id, start).ok_or("This preview doesn't open in a window.")?;
     let url: tauri::Url = url.parse().map_err(|e| format!("{e}"))?;
@@ -175,13 +183,46 @@ pub async fn open_embed_window(
         .on_new_window(|u, _| crate::links::new_window(u))
         .build()
         .map_err(|e| e.to_string())?;
+    *owner_of.0.lock().unwrap_or_else(|e| e.into_inner()) = owner;
     Ok(())
+}
+
+/// Closes the pop-out if `owner` opened it and it's still open (#409); whether it did. A window closed by hand, or
+/// replaced by another preview's, is left alone (`false`).
+#[tauri::command]
+pub async fn close_embed_window(
+    app: AppHandle,
+    owner_of: State<'_, WindowOwner>,
+    owner: String,
+) -> Result<bool, String> {
+    let mine = owns(
+        &owner_of.0.lock().unwrap_or_else(|e| e.into_inner()),
+        &owner,
+    );
+    let Some(w) = app.get_webview_window(LABEL).filter(|_| mine) else {
+        return Ok(false);
+    };
+    w.destroy().map_err(|e| e.to_string())?;
+    *owner_of.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    Ok(true)
+}
+
+/// Whether the pop-out's recorded owner is `owner`.
+fn owns(current: &Option<String>, owner: &str) -> bool {
+    current.as_deref() == Some(owner)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use EmbedProvider::*;
+
+    #[test]
+    fn only_its_owner_closes_the_pop_out() {
+        assert!(owns(&Some("party:C1".into()), "party:C1"));
+        assert!(!owns(&Some("party:C1".into()), "party:C2"));
+        assert!(!owns(&None, "party:C1"));
+    }
 
     #[test]
     fn embed_origin_only_for_production() {

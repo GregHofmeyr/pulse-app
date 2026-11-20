@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use chrono::{DateTime, NaiveTime, Utc};
+use jiff::Timestamp;
 use pulse_protocol::ids::UserId;
 
 use super::catalogue::stat;
@@ -19,16 +19,13 @@ const WEEK_DAYS: i64 = 7;
 
 /// Once the launch day (00:00 South African time) has come, give Early Adopter to everyone who
 /// joined before the week from it ended. Returns the users newly given it.
-pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<Vec<UserId>> {
+pub async fn run(s: &AppState, now: Timestamp) -> AppResult<Vec<UserId>> {
     let Some(day) = s.cfg.launch_date else {
         return Ok(Vec::new());
     };
-    let start = day
-        .and_time(NaiveTime::MIN)
-        .and_local_timezone(SAST)
-        .single()
-        .expect("a fixed offset is never ambiguous")
-        .with_timezone(&Utc);
+    let start = SAST
+        .to_timestamp(day.to_datetime(jiff::civil::Time::midnight()))
+        .expect("a launch date is in range");
     if now < start {
         return Ok(Vec::new());
     }
@@ -36,7 +33,7 @@ pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<Vec<UserId>> {
         "SELECT id FROM users WHERE created_at < ?
          AND id NOT IN (SELECT user_id FROM badge_stats WHERE key = ? AND value >= 1)",
     )
-    .bind(stamp(start + chrono::Duration::days(WEEK_DAYS)))
+    .bind(stamp(start + crate::times::days(WEEK_DAYS)))
     .bind(stat::EARLY_ADOPTER)
     .fetch_all(&s.db)
     .await?;
@@ -61,7 +58,7 @@ pub fn spawn(s: AppState) {
     }
     tokio::spawn(async move {
         loop {
-            match run(&s, Utc::now()).await {
+            match run(&s, Timestamp::now()).await {
                 Ok(r) if !r.is_empty() => tracing::info!(users = r.len(), "early adopter sweep"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = ?e, "early adopter sweep failed"),

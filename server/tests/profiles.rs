@@ -194,7 +194,7 @@ async fn migration_0010_adds_defaults_and_drops_images() {
 }
 
 fn ago(secs: i64) -> String {
-    pulse_server::db::stamp(chrono::Utc::now() - chrono::Duration::seconds(secs))
+    pulse_server::db::stamp(jiff::Timestamp::now() - jiff::SignedDuration::from_secs(secs))
 }
 
 async fn profile_of(app: &TestApp, token: &str, id: pulse_protocol::ids::UserId) -> Profile {

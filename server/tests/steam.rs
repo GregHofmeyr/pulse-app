@@ -31,7 +31,7 @@ const RACER: u32 = 4_000_002;
 const LONG_AGO: i64 = 1_000_000_000;
 
 fn now() -> i64 {
-    chrono::Utc::now().timestamp()
+    jiff::Timestamp::now().as_second()
 }
 
 async fn setup_with(tweak: impl FnOnce(&mut Config)) -> (TestApp, FakeSteam) {

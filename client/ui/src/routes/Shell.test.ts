@@ -49,7 +49,7 @@ import { ui } from '../lib/store.svelte'
 import { editProfile, openCardSettings, profileUi } from '../lib/profileCard.svelte'
 import { reloadPatchNotesSeen } from '../lib/patchNotesSeen.svelte'
 import { patchNotes, previousPatchNotes } from '../patchNotes'
-import { startUpdateListening, updates } from '../lib/updates.svelte'
+import { startUpdateListening, updates, UPDATE_READY_TIP } from '../lib/updates.svelte'
 
 let cmp: ReturnType<typeof mount> | undefined
 let offs: (() => void)[] = []
@@ -331,7 +331,7 @@ describe('account menu', () => {
       cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
       flushSync()
     }
-    const button = () => [...document.querySelectorAll<HTMLButtonElement>('header > button')].find((b) => b.textContent?.trim() === 'Restart to update')
+    const button = () => document.querySelector<HTMLButtonElement>('header > button.win.update') ?? undefined
     const offered = () => {
       handlers.get('pulse://update')!({ payload: { version: '0.2.1' } })
       flushSync()
@@ -355,7 +355,7 @@ describe('account menu', () => {
       voice.stage = { stage: 'reconnecting', attempt: 2 }
       flushSync()
       expect(button()!.getAttribute('aria-disabled')).toBe('true')
-      expect(button()!.getAttribute('data-tip')).toBe('Finish your call first')
+      expect(button()!.getAttribute('data-tip')).toBe(UPDATE_READY_TIP)
       voice.stage = { stage: 'disconnected', attempt: null }
       voice.joining = 'c2'
       flushSync()
@@ -399,23 +399,29 @@ describe('account menu', () => {
       expect(b.getAttribute('aria-disabled')).not.toBe('true')
     })
 
-    it('in a call the button is disabled, with the tooltip, and a click does nothing; leaving the call enables it', async () => {
+    // #536: someone who lives in calls still sees that an update is waiting, and that it never restarts mid-call
+    it('in a call it says Update ready (applies when you restart), and a click does nothing; leaving the call brings back Restart to update', async () => {
       await open()
       offered()
       voice.channelId = 'c1'
       flushSync()
       const b = button()!
+      expect(b.textContent?.trim()).toBe('Update ready')
       expect(b.getAttribute('aria-disabled')).toBe('true')
       expect(b.hasAttribute('disabled')).toBe(false) // hoverable, so the tooltip shows
-      expect(b.getAttribute('data-tip')).toBe('Finish your call first')
+      expect(b.getAttribute('data-tip')).toBe(UPDATE_READY_TIP)
+      expect(UPDATE_READY_TIP).toContain('applies when you restart')
       b.click()
       flushSync()
       expect(invoke).not.toHaveBeenCalledWith('update_install', expect.anything())
       expect(document.querySelector('.updating')).toBeNull()
+      expect(invoke).toHaveBeenCalledWith('ui_log', expect.objectContaining({ line: 'update: title bar shows Update ready (in a call)' }))
       voice.channelId = null
       flushSync()
+      expect(button()!.textContent?.trim()).toBe('Restart to update')
       expect(button()!.getAttribute('aria-disabled')).not.toBe('true')
       expect(button()!.hasAttribute('data-tip')).toBe(false)
+      expect(invoke).toHaveBeenCalledWith('ui_log', expect.objectContaining({ line: 'update: title bar shows Restart to update' }))
     })
 
     it('click installs with restart; a failure goes back to the shell with the button still there, and is logged', async () => {

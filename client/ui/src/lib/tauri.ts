@@ -449,9 +449,12 @@ export const api = {
   /** Our embed page's origin, only when signed in to the server the app's CSP allows framing; else null. */
   embedOrigin: () => invoke<string | null>('embed_origin'),
   /** Instagram plays in a capability-free pop-out window (one at a time). */
-  /** `start`: a YouTube start time in seconds. */
-  openEmbedWindow: (provider: EmbedProvider, id: string, start: number | null = null) =>
-    invoke<void>('open_embed_window', { provider, id, start }),
+  /** `start`: a YouTube start time in seconds. `owner` (a watch party's `party:<channel>`, #409) tags the window so
+   *  only its opener closes it. */
+  openEmbedWindow: (provider: EmbedProvider, id: string, start: number | null = null, owner?: string) =>
+    invoke<void>('open_embed_window', owner ? { provider, id, start, owner } : { provider, id, start }),
+  /** Closes the pop-out if `owner` opened it and it's still open; whether it did (#409). */
+  closeEmbedWindow: (owner: string) => invoke<boolean>('close_embed_window', { owner }),
   sendTyping: (channelId: string) => invoke<void>('send_typing', { channelId }),
   /** The raw file goes as the request body (a JSON number array would be slow at 2 MB). */
   uploadEmojiMedia: (bytes: Uint8Array) => invoke<MediaInfo>('upload_emoji_media', bytes),
@@ -609,7 +612,7 @@ export const api = {
     invoke<void>('send_reply', { channelId, rootId, content, replyToId, nonce, gif }),
   /** GIFs (#58): a page of GIPHY results (`query` blank: trending) from `offset`; null when GIFs aren't set up on this server. */
   gifFeed: (query: string, offset = 0, stickers = false) => invoke<GifPage | null>('gif_feed', { query, offset, stickers }),
-  /** Your favourite GIFs, newest first. */
+  /** Your favourite GIFs and stickers (#498, each marked `sticker`), newest first. */
   gifFavourites: () => invoke<Gif[]>('gif_favourites'),
   setGifFavourite: (gif: Gif, on: boolean) => invoke<void>('set_gif_favourite', { gif, on }),
   markRepliesSeen: (rootId: string, messageId: string) => invoke<void>('mark_replies_seen', { rootId, messageId }),

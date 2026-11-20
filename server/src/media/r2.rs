@@ -332,7 +332,9 @@ impl R2 {
         }
     }
 
-    /// The `clips-check` probe: PUT, HEAD, GET and DELETE one small object through signed URLs.
+    /// The `clips-check` probe: PUT, HEAD, GET and DELETE one small object through signed URLs, checking that the
+    /// store refuses a body longer than the signed length, first for a whole object and at the end for a multipart
+    /// part (#298).
     /// `Err` names the failing step and its HTTP status.
     pub async fn probe(&self) -> Result<(), String> {
         const BODY: &[u8] = b"pulse clips-chk\n";
@@ -352,7 +354,7 @@ impl R2 {
             .send()
             .await
             .map_err(|e| step("length check", e))?;
-        if let Err(e) = length_check(over.status()) {
+        if let Err(e) = length_check("length check", over.status()) {
             let _ = self.delete(&key).await;
             return Err(e);
         }
@@ -416,20 +418,47 @@ impl R2 {
         if !del.status().is_success() {
             return Err(status("DELETE", del.status()));
         }
-        Ok(())
+        // last, once the round trip has shown the credentials work: a refusal here is about parts, not access
+        self.part_length_probe(ttl).await
+    }
+
+    /// The `clips-check` part length step (#298): a multipart part URL signed for N bytes must be refused a longer
+    /// body, as a whole object's is, or a big temporary send could store more than it was allowed. Under `temp/`, and
+    /// the upload is always aborted, so nothing is left behind (a bucket lifecycle rule would catch it if it were).
+    async fn part_length_probe(&self, ttl: Duration) -> Result<(), String> {
+        const NAME: &str = "part length check";
+        const BODY: &[u8] = b"pulse part-chk\n";
+        let key = format!("temp/check-{:016x}.bin", rand::random::<u64>());
+        let upload = self
+            .create_multipart(&key, "application/octet-stream")
+            .await
+            .map_err(|e| format!("{NAME} failed: couldn't start a multipart upload ({e})"))?;
+        let (url, _) = self.part_url(&key, &upload, 1, BODY.len() as u64, ttl);
+        let over = self
+            .http
+            .put(url)
+            .body([BODY, b"!"].concat())
+            .send()
+            .await
+            .map_err(|e| format!("{NAME} failed: {}", quiet(e)));
+        let abort = self.abort_multipart(&key, &upload).await;
+        length_check(NAME, over?.status())?;
+        abort.map_err(|e| format!("{NAME} failed: couldn't abort the upload ({e})"))
     }
 }
 
-/// The `clips-check` length step: a store that answers 2xx to a body longer than the signed
+/// A `clips-check` length step (`name`): a store that answers 2xx to a body longer than the signed
 /// length doesn't enforce the cap. Only a 4xx is a refusal; a 5xx (an outage) or anything else
 /// proves nothing.
-fn length_check(status: reqwest::StatusCode) -> Result<(), String> {
+fn length_check(name: &str, status: reqwest::StatusCode) -> Result<(), String> {
     if status.is_success() {
-        Err("length check failed: the store accepted a body longer than the signed length".into())
+        Err(format!(
+            "{name} failed: the store accepted a body longer than the signed length"
+        ))
     } else if status.is_client_error() {
         Ok(())
     } else {
-        Err(format!("length check failed: HTTP {status}"))
+        Err(format!("{name} failed: HTTP {status}"))
     }
 }
 
@@ -439,17 +468,17 @@ fn expires_at(signed: &Url, ttl: Duration) -> String {
     let date = signed
         .query_pairs()
         .find(|(k, _)| k == "X-Amz-Date")
-        .and_then(|(_, v)| chrono::NaiveDateTime::parse_from_str(&v, "%Y%m%dT%H%M%SZ").ok())
-        .map(|d| d.and_utc())
-        .unwrap_or_else(chrono::Utc::now);
-    (date + ttl).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        .and_then(|(_, v)| jiff::civil::DateTime::strptime("%Y%m%dT%H%M%SZ", &*v).ok())
+        .and_then(|d| jiff::tz::Offset::UTC.to_timestamp(d).ok())
+        .unwrap_or_else(jiff::Timestamp::now);
+    crate::db::stamp(date + ttl)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testing::fake_s3::{FAKE_BUCKET, FAKE_KEY_ID, FAKE_SECRET, FakeS3, FakeStore};
-    use reqwest::StatusCode;
+    use reqwest::{Method, StatusCode};
 
     const TTL: Duration = Duration::from_secs(3600);
 
@@ -650,7 +679,7 @@ mod tests {
             .await
             .unwrap();
         // The fake's clock runs a minute ahead of the signer.
-        fake.set_now(Some(chrono::Utc::now().timestamp() + 60));
+        fake.set_now(Some(jiff::Timestamp::now().as_second() + 60));
         assert_eq!(r2.head("clips/cc.mp4").await.unwrap(), Some(2));
         r2.delete("clips/cc.mp4").await.unwrap();
         assert!(fake.object("clips/cc.mp4").is_none());
@@ -670,23 +699,44 @@ mod tests {
                     .1
                     .to_string()
             };
-            let signed = chrono::NaiveDateTime::parse_from_str(&q("X-Amz-Date"), "%Y%m%dT%H%M%SZ")
-                .unwrap()
-                .and_utc();
+            let signed = jiff::tz::Offset::UTC
+                .to_timestamp(
+                    jiff::civil::DateTime::strptime("%Y%m%dT%H%M%SZ", q("X-Amz-Date")).unwrap(),
+                )
+                .unwrap();
             let secs: i64 = q("X-Amz-Expires").parse().unwrap();
-            let want = (signed + chrono::Duration::seconds(secs))
-                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            let want = crate::db::stamp(signed + jiff::SignedDuration::from_secs(secs));
             assert_eq!(exp, want);
             assert!(exp.ends_with(".000Z"), "{exp}");
         }
     }
 
+    /// The probe passes against a store that refuses long bodies (the fake does, for objects and parts) and leaves
+    /// nothing behind: no object, no open multipart upload (#298's part step aborts its own).
+    #[tokio::test]
+    async fn the_probe_passes_and_leaves_nothing_behind() {
+        let (fake, r2) = setup().await;
+        r2.probe().await.unwrap();
+        assert_eq!(fake.keys(), Vec::<String>::new());
+        assert_eq!(fake.open_uploads(), 0);
+        // the part step ran: its upload was started and aborted (the over-long part itself was refused)
+        let part_step: Vec<Method> = fake
+            .requests()
+            .into_iter()
+            .filter(|(_, key)| key.starts_with("temp/check-"))
+            .map(|(m, _)| m)
+            .collect();
+        assert_eq!(part_step, [Method::POST, Method::DELETE]);
+    }
+
     #[test]
     fn a_store_that_accepts_a_long_body_fails_the_length_check() {
-        let e = length_check(StatusCode::OK).unwrap_err();
+        let e = length_check("length check", StatusCode::OK).unwrap_err();
         assert!(e.starts_with("length check failed"), "{e}");
-        assert!(length_check(StatusCode::FORBIDDEN).is_ok());
-        assert!(length_check(StatusCode::BAD_REQUEST).is_ok());
+        assert!(length_check("length check", StatusCode::FORBIDDEN).is_ok());
+        assert!(length_check("length check", StatusCode::BAD_REQUEST).is_ok());
+        let e = length_check("part length check", StatusCode::OK).unwrap_err();
+        assert!(e.starts_with("part length check failed"), "{e}");
     }
 
     #[test]
@@ -695,11 +745,11 @@ mod tests {
             StatusCode::INTERNAL_SERVER_ERROR,
             StatusCode::SERVICE_UNAVAILABLE,
         ] {
-            let e = length_check(code).unwrap_err();
+            let e = length_check("length check", code).unwrap_err();
             assert_eq!(e, format!("length check failed: HTTP {code}"));
         }
         // a redirect proves nothing either
-        assert!(length_check(StatusCode::TEMPORARY_REDIRECT).is_err());
+        assert!(length_check("length check", StatusCode::TEMPORARY_REDIRECT).is_err());
     }
 
     async fn put_part(r2: &R2, key: &str, upload: &str, part: u16, bytes: Vec<u8>) {

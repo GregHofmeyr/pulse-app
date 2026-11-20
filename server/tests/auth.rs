@@ -262,8 +262,7 @@ async fn members_can_create_invites() {
 async fn invites_expire_after_24_hours() {
     let app = spawn().await;
     let age = |hours: i64| {
-        (chrono::Utc::now() - chrono::TimeDelta::hours(hours))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        pulse_server::db::stamp(jiff::Timestamp::now() - jiff::SignedDuration::from_hours(hours))
     };
     let try_register = |code: String, name: &'static str| {
         app.http

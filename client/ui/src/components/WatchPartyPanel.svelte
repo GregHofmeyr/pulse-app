@@ -257,11 +257,37 @@
     void run(() => enqueueLink(party.channel_id, text))
   }
 
+  // ---- the window, when the player won't play inside Pulse (#88) ----
+  // It follows the party (#409): when the party moves on to another video the window opens that one (at the party's
+  // time), and leaving the party, or its ending, closes it. Play, pause and seeking are the provider's own there. A
+  // window closed by hand, or replaced by a preview's, is left alone (the core only closes the one this party opened).
+  const owner = $derived(`party:${party.channel_id}`)
+  /** The video the window opened from here shows (`source:id`), or null: none. */
+  let windowed: string | null = null
+  const videoKey = $derived(`${source}:${videoId}`)
   function openInWindow() {
     const e = embedOf({ source, id: party.video_id })
     const start = source === 'youtube' ? Math.floor(seconds) || null : null
-    void api.openEmbedWindow(e.provider, e.id, start).catch((err) => (error = errorText(err)))
+    const key = videoKey
+    api.openEmbedWindow(e.provider, e.id, start, owner).then(() => (windowed = key), (err) => (error = errorText(err)))
   }
+  $effect(() => {
+    const key = videoKey
+    untrack(() => {
+      if (!windowed || windowed === key) return
+      windowed = null
+      void api.closeEmbedWindow(owner).then((was) => { if (was && open) openInWindow() }, () => {})
+    })
+  })
+  $effect(() => {
+    if (!open) return
+    const o = owner
+    return () => {
+      if (!windowed) return
+      windowed = null
+      void api.closeEmbedWindow(o).catch(() => {})
+    }
+  })
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -300,7 +326,7 @@
       <div class="note">
         {provider} won’t play inside Pulse on this device.
         <button type="button" class="btn btn-secondary sm" onclick={openInWindow}>Open in a window</button>
-        <small>It won’t stay in sync there.</small>
+        <small>It moves on with the party there, but play, pause and seeking are yours.</small>
       </div>
     {:else}
       <div class="player" bind:this={wrap}>
