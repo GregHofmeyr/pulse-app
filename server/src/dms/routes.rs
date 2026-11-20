@@ -270,12 +270,14 @@ async fn add_members(
             .fetch_optional(&s.db)
             .await?;
         if hit.is_none() {
-            return Err(AppError::BadRequest("unknown user".into()));
+            return Err(AppError::BadRequest(crate::blocks::UNKNOWN_USER.into()));
         }
     }
     // Write first, then count, under the write lock: two adds racing past the check above
     // can't overfill the group.
     let mut tx = crate::db::begin_write(&s.db).await?;
+    // not anyone who has blocked you (#474); dropping `tx` rolls back
+    crate::blocks::may_group_with(&mut tx, me, new.iter().copied()).await?;
     crate::servers::routes::check_group_cap(&mut tx, &new).await?; // dropping `tx` rolls back
     for u in &new {
         sqlx::query("INSERT INTO channel_members (channel_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)")

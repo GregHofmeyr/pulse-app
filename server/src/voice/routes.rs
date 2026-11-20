@@ -41,7 +41,7 @@ async fn token(
             "text and quotes channels have no voice".into(),
         ));
     }
-    if !may_join(&s.db, me, &ch).await? {
+    if !may_join_now(&s, me, &ch).await? {
         return Err(AppError::Forbidden);
     }
     // A random grant id, mapped to this session server-side only: the join webhook checks it
@@ -90,6 +90,8 @@ async fn token(
 /// Who may be in a channel's call: members only for DMs and groups, and server members for a
 /// server's voice channels (same rule as posting). Checked when a token is issued and again on
 /// every LiveKit join (`revoke::admit`), so a token stops working once access is lost.
+///
+/// A 1:1 DM with someone you've blocked (#474) has no call for you, as it has no messages: unblock them first.
 pub async fn may_join(db: &SqlitePool, user: UserId, ch: &Channel) -> AppResult<bool> {
     if ch.kind.is_server_chat() {
         return Ok(false);
@@ -97,8 +99,43 @@ pub async fn may_join(db: &SqlitePool, user: UserId, ch: &Channel) -> AppResult<
     if ch.kind.is_private() && !is_channel_member(db, user, ch.id).await? {
         return Ok(false);
     }
+    if dm_blocked(db, user, ch).await?.0 {
+        return Ok(false);
+    }
     match ch.server_id {
         Some(server) => crate::servers::routes::is_server_member(db, server, user).await,
+        None => Ok(true),
+    }
+}
+
+/// In a 1:1 DM (#474), for `user`: whether they've blocked the other member, and the other member when that person
+/// has blocked them. `(false, None)` anywhere else.
+async fn dm_blocked(
+    db: &SqlitePool,
+    user: UserId,
+    ch: &Channel,
+) -> AppResult<(bool, Option<UserId>)> {
+    if ch.kind != pulse_protocol::rest::ChannelKind::Dm {
+        return Ok((false, None));
+    }
+    let mut conn = db.acquire().await?;
+    let Some(other) = crate::messages::routes::dm_other(&mut conn, ch, user).await? else {
+        return Ok((false, None)); // notes to self
+    };
+    let mine = crate::blocks::has_blocked(&mut *conn, user, other).await?;
+    let theirs = crate::blocks::has_blocked(&mut *conn, other, user).await?;
+    Ok((mine, theirs.then_some(other)))
+}
+
+/// [`may_join`], and not into a 1:1 DM's call while the other member, who has blocked `user`, is in it (#474). The
+/// blocked person can still start a call there, which just rings out (the blocker is never rung, and can't join a
+/// call with someone they've blocked); this covers a blocker who was already in the call when they blocked.
+pub async fn may_join_now(s: &AppState, user: UserId, ch: &Channel) -> AppResult<bool> {
+    if !may_join(&s.db, user, ch).await? {
+        return Ok(false);
+    }
+    match dm_blocked(&s.db, user, ch).await?.1 {
+        Some(blocker) => Ok(!s.voice.members(ch.id).contains(&blocker)),
         None => Ok(true),
     }
 }

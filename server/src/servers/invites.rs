@@ -1151,6 +1151,11 @@ async fn accept_in(
     if state == InviteState::Revoked {
         return Ok(Outcome::Refused(AppError::NotFound, Some(Failure::Revoked)));
     }
+    // An invite works only while its maker is in the server: theirs are revoked when they leave or are removed
+    // ([`revoke_made_in`]); this covers any made before that.
+    if !member_in(tx, server, row.maker()?).await? {
+        return Ok(Outcome::Refused(AppError::NotFound, Some(Failure::Revoked)));
+    }
     if member_in(tx, server, me).await? {
         return Ok(Outcome::Refused(
             AppError::ConflictCode("already_member", "You're already in this server.".into()),
@@ -1213,7 +1218,8 @@ pub fn code_of(raw: &str) -> String {
     }
 }
 
-/// The server a sign-up with `code` would join (#80): a server owner's link that works right now (not revoked,
+/// The server a sign-up with `code` would join (#80): a server owner's link (made by whoever owns it now: a hand-over
+/// clears `signup_ok` on its links, [`clear_signup_in`], and this covers any from before) that works right now (not revoked,
 /// expired or used up, not for one person) into a live server; `None` for anything else.
 pub(crate) async fn signup_server_in(
     tx: &mut SqliteConnection,
@@ -1223,7 +1229,8 @@ pub(crate) async fn signup_server_in(
         return Ok(None);
     }
     let server: Option<String> = sqlx::query_scalar(
-        "SELECT i.server_id FROM server_invites i JOIN servers sv ON sv.id = i.server_id AND sv.deleted_at IS NULL
+        "SELECT i.server_id FROM server_invites i
+           JOIN servers sv ON sv.id = i.server_id AND sv.deleted_at IS NULL AND sv.created_by = i.created_by
          WHERE i.code = ?1 AND i.signup_ok = 1 AND i.for_user IS NULL AND i.revoked_at IS NULL
            AND (i.expires_at IS NULL OR i.expires_at > ?2) AND (i.max_uses IS NULL OR i.uses < i.max_uses)",
     )
@@ -1278,6 +1285,43 @@ pub(crate) async fn announce_signup(
         Ok(None) => {}
         Err(e) => tracing::error!(error = ?e, "couldn't read back a sign-up's invite"),
     }
+}
+
+/// Revoke every open invite `user` made for `server` (they left it or were removed), in that transaction. True when
+/// any was.
+pub(crate) async fn revoke_made_in(
+    tx: &mut SqliteConnection,
+    server: ServerId,
+    user: UserId,
+) -> AppResult<bool> {
+    Ok(sqlx::query(
+        "UPDATE server_invites SET revoked_at = ? WHERE server_id = ? AND created_by = ? AND revoked_at IS NULL",
+    )
+    .bind(now())
+    .bind(server.to_string())
+    .bind(user.to_string())
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        > 0)
+}
+
+/// `server` changed hands: its links stop making accounts (only the owner's may, and the old owner's are now a
+/// member's). In the hand-over's transaction. True when any changed.
+pub(crate) async fn clear_signup_in(
+    tx: &mut SqliteConnection,
+    server: ServerId,
+) -> AppResult<bool> {
+    Ok(
+        sqlx::query(
+            "UPDATE server_invites SET signup_ok = 0 WHERE server_id = ? AND signup_ok = 1",
+        )
+        .bind(server.to_string())
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            > 0,
+    )
 }
 
 /// Revoke `server`'s open direct invites to `user` (a ban), in the ban's transaction. Returns their makers.

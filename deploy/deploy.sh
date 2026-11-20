@@ -108,6 +108,27 @@ prune_old_images() {
   docker image prune -f >/dev/null 2>&1 || true
 }
 
+# save_logs DIR [KEEP]: before a deploy recreates the containers (which drops their logs), write pulse-server's and
+# caddy's logs to DIR/<UTC time>.log.gz and keep the newest KEEP dumps (default 10). Never stops the deploy: a
+# failure only warns on stderr.
+save_logs() {
+  local dir=$1 keep=${2:-10} file old
+  if ! mkdir -p "$dir"; then
+    echo "WARNING: couldn't create $dir; this deploy's logs aren't kept" >&2
+    return 0
+  fi
+  file=$dir/$(date -u +%Y%m%dT%H%M%SZ).log.gz
+  if ! docker compose logs --no-color --timestamps pulse-server caddy 2>/dev/null | gzip >"$file"; then
+    echo "WARNING: couldn't save the logs to $file" >&2
+  fi
+  # newest first by name (the names are UTC times); drop all but the newest KEEP
+  old=$(find "$dir" -maxdepth 1 -name '*.log.gz' -printf '%f\n' | sort -r | tail -n +"$((keep + 1))")
+  while IFS= read -r f; do
+    [ -z "$f" ] || rm -f -- "${dir:?}/$f"
+  done <<<"$old"
+  return 0
+}
+
 # is_digest VALUE: a canonical sha256 digest (it lands in .env and a docker reference, so nothing else gets through)
 is_digest() { [[ $1 =~ ^sha256:[0-9a-f]{64}$ ]]; }
 
@@ -202,6 +223,8 @@ echo "pinned: $image"
 if [ -n "$(docker compose ps -q caddy 2>/dev/null)" ]; then
   reload_caddy
 fi
+# recreating the containers drops their logs: keep them first
+save_logs /srv/pulse/logs
 docker compose up -d --remove-orphans
 reload_caddy
 for _ in $(seq 1 30); do

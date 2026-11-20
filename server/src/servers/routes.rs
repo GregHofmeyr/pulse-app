@@ -893,7 +893,7 @@ async fn create_dm(
             .fetch_optional(&s.db)
             .await?;
         if hit.is_none() {
-            return Err(AppError::BadRequest("unknown user".into()));
+            return Err(AppError::BadRequest(crate::blocks::UNKNOWN_USER.into()));
         }
     }
 
@@ -937,6 +937,8 @@ async fn create_dm(
         ChannelKind::Group
     };
     if kind == ChannelKind::Group {
+        // not with anyone who has blocked you (#474); dropping `tx` rolls back
+        crate::blocks::may_group_with(&mut tx, me, others.iter().copied()).await?;
         let everyone: Vec<UserId> = std::iter::once(me).chain(others.iter().copied()).collect();
         check_group_cap(&mut tx, &everyone).await?; // dropping `tx` rolls back
     }
