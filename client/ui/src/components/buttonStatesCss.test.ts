@@ -79,7 +79,8 @@ describe('dialog footer buttons', () => {
   it('the voice settings primary looks disabled when it is', () => {
     const s = scoped('VoiceSettings.svelte')
     expect(probe(`<div><button data-probe class="btn btn-lg btn-primary ${s}" disabled></button></div>`).opacity).toBe('0.5')
-    expect(source('VoiceSettings.svelte')).toContain('<button class="btn btn-lg btn-primary" onclick={toggleTest}>')
+    // disabled in a call: the mic test would open the call's devices twice
+    expect(source('VoiceSettings.svelte')).toContain('<button class="btn btn-lg btn-primary" onclick={toggleTest} disabled={inCall && !testing}>')
   })
 
   it('a button that is only aria-disabled (so its tooltip still shows) looks disabled too', () => {
