@@ -285,3 +285,68 @@ describe('VoiceSettings on Linux', () => {
     invoke.mockImplementation(async () => undefined)
   })
 })
+
+describe('VoiceSettings mic test during a call', () => {
+  beforeEach(() => {
+    invoke.mockClear()
+    invoke.mockImplementation(async () => undefined)
+    voice.channelId = null
+    voice.joining = null
+  })
+  const button = () => [...document.querySelectorAll<HTMLButtonElement>('.check button')][0]
+  const hint = () => document.querySelector('[data-mic-test-hint]')?.textContent
+  const settle = async () => {
+    for (let i = 0; i < 3; i++) await Promise.resolve()
+    flushSync()
+  }
+
+  it('in a call the test is off, with a hint to leave the call first', () => {
+    voice.channelId = 'c1'
+    const c = mount(VoiceSettings, { target: document.body })
+    try {
+      flushSync()
+      expect(button().disabled).toBe(true)
+      expect(hint()).toBe('Leave the call to test your mic.')
+      button().click()
+      expect(invoke.mock.calls.some(([cmd]) => cmd === 'start_mic_test')).toBe(false)
+    } finally {
+      unmount(c)
+      document.body.innerHTML = ''
+      voice.channelId = null
+    }
+  })
+
+  it('while joining too', () => {
+    voice.joining = 'c1'
+    const c = mount(VoiceSettings, { target: document.body })
+    try {
+      flushSync()
+      expect(button().disabled).toBe(true)
+    } finally {
+      unmount(c)
+      document.body.innerHTML = ''
+      voice.joining = null
+    }
+  })
+
+  it('out of a call it runs; joining a call ends it (the core stops it) and the button comes back', async () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    try {
+      flushSync()
+      expect(button().disabled).toBe(false)
+      expect(hint()).toBe('Hear your mic the way others will.')
+      button().click()
+      await settle()
+      expect(invoke.mock.calls.some(([cmd]) => cmd === 'start_mic_test')).toBe(true)
+      expect(button().textContent).toBe('Stop')
+      voice.channelId = 'c1'
+      flushSync()
+      expect(button().textContent).toBe("Let's check")
+      expect(button().disabled).toBe(true)
+    } finally {
+      unmount(c)
+      document.body.innerHTML = ''
+      voice.channelId = null
+    }
+  })
+})

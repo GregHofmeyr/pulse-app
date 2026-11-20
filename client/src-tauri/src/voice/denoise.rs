@@ -38,6 +38,12 @@ pub trait Denoiser {
         false
     }
 
+    /// It failed by not answering in time (a worker starved for a moment: a game loading, the model paged out), not
+    /// by crashing: worth trying again later, unlike a crash.
+    fn stalled(&self) -> bool {
+        false
+    }
+
     /// How many 10 ms blocks `decision_level` runs ahead of the cleaned audio `process` returns.
     /// The gate decides on that level, so the engine's own delay becomes the gate's pre-roll.
     fn gate_lead_blocks(&self) -> usize {
