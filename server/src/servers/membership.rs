@@ -146,8 +146,13 @@ async fn transfer(
         .bind(me.to_string())
         .execute(&mut *tx)
         .await?;
+    // links that made accounts did so as the owner's: not any more
+    let signup_cleared = crate::servers::invites::clear_signup_in(&mut tx, id).await?;
     tx.commit().await?;
     tracing::info!(server = %id, from = %me, to = %to, "server handed over");
+    if signup_cleared {
+        crate::servers::invites::invites_changed(&s, id, [me]).await;
+    }
     s.hub
         .publish(
             &s.db,
@@ -239,6 +244,8 @@ pub(crate) async fn take_out(
     // Their LiveKit grants for its rooms go with the membership (a join with one is refused anyway); the participants
     // still carrying one are removed below, whatever identity they connected under, as a logout does (#418).
     let grants = crate::auth::session::drop_server_grants(&mut tx, user, server).await?;
+    // the invites they made for it stop working with their membership
+    let invites_revoked = crate::servers::invites::revoke_made_in(&mut tx, server, user).await?;
     tx.commit().await?;
     tracing::info!(server = %server, user = %user, by = ?by, "left server");
     if let Some(message) = line {
@@ -278,6 +285,9 @@ pub(crate) async fn take_out(
     drop(order);
     if status_changed {
         crate::presence::custom::announce_own(s, user).await;
+    }
+    if invites_revoked {
+        crate::servers::invites::invites_changed(s, server, [user]).await;
     }
     // they no longer share this server: presence both ways (#80)
     crate::servers::routes::resync_presence(s, server, Some(user)).await;

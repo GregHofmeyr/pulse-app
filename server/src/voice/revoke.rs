@@ -127,7 +127,7 @@ async fn may_be_in(s: &AppState, room: &str, identity: &str) -> anyhow::Result<b
     let Some(ch) = load_channel(&s.db, channel).await? else {
         return Ok(false);
     };
-    if !crate::voice::routes::may_join(&s.db, user, &ch).await? {
+    if !crate::voice::routes::may_join_now(s, user, &ch).await? {
         return Ok(false);
     }
     if !stream || s.voice.members(channel).contains(&user) {

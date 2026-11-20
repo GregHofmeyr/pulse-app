@@ -271,12 +271,16 @@ async fn urls(
         return Err(AppError::TooManyRequests(None));
     }
     let r2 = storage(&s)?;
-    let channel: String =
-        sqlx::query_scalar("SELECT channel_id FROM messages WHERE id = ? AND deleted_at IS NULL")
-            .bind(id.to_string())
-            .fetch_optional(&s.db)
-            .await?
-            .ok_or(AppError::NotFound)?;
+    // a DM withheld from `me` (#474) isn't there for them
+    let channel: String = sqlx::query_scalar(
+        "SELECT channel_id FROM messages WHERE id = ? AND deleted_at IS NULL
+           AND (withheld_from IS NULL OR withheld_from != ?)",
+    )
+    .bind(id.to_string())
+    .bind(me.to_string())
+    .fetch_optional(&s.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
     let ch = channel_for(&s.db, me, channel.parse().map_err(anyhow::Error::from)?).await?;
     if let Some(server) = ch.server_id
         && !is_server_member(&s.db, server, me).await?
