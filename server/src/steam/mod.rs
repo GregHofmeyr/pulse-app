@@ -51,6 +51,8 @@ struct Inner {
     no_stats: Mutex<HashMap<(UserId, u32), Instant>>,
     /// One backfill at a time, server-wide.
     backfill: tokio::sync::Mutex<()>,
+    /// One Steam hours round at a time: a slow round (Steam answering slowly) is still going when the next is due.
+    hours: tokio::sync::Mutex<()>,
     /// Held while a Join round checks a link still shares Join and shows what it found, and while Settings switches
     /// Join off or unlinks and clears it (#381): so a Join read before the switch went off never comes back after.
     join_gate: tokio::sync::Mutex<()>,
@@ -68,6 +70,7 @@ impl Steam {
                 backoff: Mutex::default(),
                 no_stats: Mutex::default(),
                 backfill: tokio::sync::Mutex::new(()),
+                hours: tokio::sync::Mutex::new(()),
                 join_gate: tokio::sync::Mutex::new(()),
             }),
         }
