@@ -301,6 +301,10 @@ town's weather (#451). Change it and `just deploy`; places already looked up kee
 - After a deploy: `just smoke`, `just clips-check`, `just logs`, and check the migration number
   (`SELECT max(version) FROM _sqlx_migrations`) and `PRAGMA integrity_check` on the live database (read-only).
 - `just logs` (or `just logs caddy` / `just logs livekit`) follows the live logs.
+- **Logs from before a deploy.** Recreating the containers drops their logs, so `deploy.sh` first writes pulse-server's
+  and Caddy's (`docker compose logs --no-color --timestamps`) to `/srv/pulse/logs/<UTC time>.log.gz`, keeping the
+  newest 10 dumps. Read one with `ssh pulse@pulse 'zcat /srv/pulse/logs/<name>.log.gz' | less`. Failing to save them
+  only warns; the deploy goes on.
 - After changing `livekit.yaml`: `just deploy`, then `ssh pulse@pulse 'cd /srv/pulse && docker compose restart livekit'`.
   (A changed `LIVEKIT_NODE_IP` needs no restart: `just deploy` recreates LiveKit with it.)
   The codec list needs a LiveKit restart to apply; `just deploy` copies the file but does not restart LiveKit.

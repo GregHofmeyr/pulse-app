@@ -311,6 +311,31 @@ describe('mentionablesFor', () => {
   })
 })
 
+describe('mention lists across events', () => {
+  const base = { ...s, people: { U1: { user: me, online: true }, U2: { user: sam, online: false } }, dmMembers: { D1: ['U1', 'U2'] } } as unknown as typeof s
+
+  it('are the same lists while nothing they are made from changes', () => {
+    const a = mentionablesFor(base, 'C1')
+    const pills = pillNamesFor(base, 'C1')
+    const later = { ...base, typing: { C1: { U2: 1 } } } // an unrelated event replaced the state
+    expect(mentionablesFor(later, 'C1')).toBe(a)
+    expect(pillNamesFor(later, 'C1')).toBe(pills)
+    expect(pills).toEqual(['sam', 'alex'])
+  })
+
+  it('follow a nickname, a private nickname or a new person', () => {
+    const a = mentionablesFor(base, 'C1')
+    const renamed = { ...base, members: { ...base.members, S1: base.members['S1'].map((m) => (m.user.id === 'U2' ? { ...m, nickname: 'Top Dog' } : m)) } }
+    expect(mentionablesFor(renamed, 'C1')).not.toBe(a)
+    expect(mentionablesFor(renamed, 'C1')[0].name).toBe('Top Dog')
+    const nick = { ...base, privateNicks: { U2: 'Sammy' } }
+    expect(mentionablesFor(nick, 'D1')[0].name).toBe('Sammy')
+    const kim = { id: 'U3', username: 'kim', display_name: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    const joined = { ...base, people: { ...base.people, U3: { user: kim, online: true } } } as unknown as typeof s
+    expect(pillNamesFor(joined, 'C1')).toEqual(['sam', 'kim', 'alex'])
+  })
+})
+
 describe('nameOfIn', () => {
   it('names a user by the server, and no author as Pulse', () => {
     const nameOf = nameOfIn(() => s, 'S1')

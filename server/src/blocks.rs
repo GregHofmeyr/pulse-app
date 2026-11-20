@@ -17,6 +17,10 @@
 //! - **Nothing of theirs reopens a DM you closed**: their calls, polls, plans, spins, pins and game invites there are
 //!   withheld like a message ([`dm_post`], [`withhold_line`]), and reopen it only for them ([`reopen`]).
 //! - **Reactions say who reacted**, so your client leaves the people you hide out of the counts.
+//! - **They can't put you in a group** (a new one, or an add to theirs: [`may_group_with`]); groups from before stay.
+//! - **No shared DM call**: you can't call or join them in your DM (as you can't message them), and they can't join a
+//!   call you're in there; blocking them mid-call takes them out of it (`voice::routes::may_join_now`).
+//! - **Their edits in your DM never reach you**: an edit withholds the message from you, as a send would.
 //!
 //! You can't message someone you've blocked (unblock them first).
 
@@ -96,6 +100,25 @@ pub async fn blocked_by(db: &SqlitePool, target: UserId) -> anyhow::Result<HashS
         .await?;
     Ok(ids.iter().map(|i| i.parse()).collect::<Result<_, _>>()?)
 }
+
+/// Before `me` puts `people` in a group with them (a new group, or an add, #474): refused when any of them has blocked
+/// `me`, with the same answer as for someone who isn't there, so it doesn't tell them they're blocked. Groups made
+/// before the block stay (the blocker's client hides them there).
+pub async fn may_group_with(
+    tx: &mut sqlx::SqliteConnection,
+    me: UserId,
+    people: impl IntoIterator<Item = UserId>,
+) -> AppResult<()> {
+    for u in people {
+        if u != me && has_blocked(&mut *tx, u, me).await? {
+            return Err(AppError::BadRequest(UNKNOWN_USER.into()));
+        }
+    }
+    Ok(())
+}
+
+/// The answer for a person who can't be put in a conversation: the same whether they don't exist or have blocked you.
+pub const UNKNOWN_USER: &str = "unknown user";
 
 /// SQL true when the user in column `author` is someone `viewer` (a column or placeholder) has blocked: their mentions
 /// of the viewer aren't pings (#474). Both are pasted in as they are, so they are `'static` SQL, never request data.
@@ -244,7 +267,36 @@ async fn set(
     .await?;
     tx.commit().await?;
     tracing::info!(new = has == 0, "block set");
+    if has == 0 {
+        end_shared_call(&s, me, target).await?;
+    }
     Ok(Json(announce(&s, me, target).await?))
+}
+
+/// `me` just blocked `target`: if they're both in their 1:1 DM's call, `target` is taken out of it (out of its voice
+/// room and its stream room, in the background), as they couldn't join it now (`voice::routes::may_join_now`). A call
+/// `target` is in alone (one that rings out for them) is left alone, so nothing tells them.
+async fn end_shared_call(s: &AppState, me: UserId, target: UserId) -> AppResult<()> {
+    let Some(dm) = crate::servers::routes::existing_dm(&s.db, me, target).await? else {
+        return Ok(());
+    };
+    let dm: pulse_protocol::ids::ChannelId = dm.parse().map_err(anyhow::Error::from)?;
+    let room = s.voice.members(dm);
+    if !(room.contains(&me) && room.contains(&target)) {
+        return Ok(());
+    }
+    let Some(ch) = crate::access::load_channel(&s.db, dm).await? else {
+        return Ok(());
+    };
+    tracing::info!(channel = %dm, "taking a blocked person out of a DM call");
+    let s = s.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::voice::routes::left_call(&s, &ch, target, "", false).await {
+            tracing::error!(error = ?e, channel = %dm, "couldn't take a blocked person out of a DM call");
+        }
+        crate::voice::revoke::remove_from_call(&s, dm, &[target]).await;
+    });
+    Ok(())
 }
 
 /// `DELETE /me/blocks/{id}`: unblock them. Answers with your whole list. What they sent while blocked stays withheld.

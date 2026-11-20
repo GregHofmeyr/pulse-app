@@ -70,7 +70,7 @@
   import BadgeToast from '../components/BadgeToast.svelte'
   import GroupIconCrop from '../components/GroupIconCrop.svelte'
   import { badgeStore, logoClick } from '../lib/badges.svelte'
-  import { applyEvent, dropClipJob, setClipJob, trimHistory } from '../lib/state'
+  import { applyEvent, dropClipJob, setClipJob, setShownChannel, trimHistory } from '../lib/state'
   import { conversationName, homeBadge, inVoice, isNotes, notesId, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { baseName, displayName, isMember, liveIn } from '../lib/selectors'
   import { CONN_PILL_DELAY_MS, isRefusal } from '../lib/conn'
@@ -296,14 +296,19 @@
   $effect(() => {
     ui.openChannelId = activeChannel?.kind === 'voice' || convoFull ? (chatOnScreen ? activeChannelId : null) : activeChannelId
   })
-  // Leaving a channel trims it to its newest messages (scrolling up there fetches older ones again).
+  // Leaving a channel trims it to its newest messages (scrolling up there fetches older ones again), and the state
+  // learns which chat is open: live messages for every other one stay as trimmed (`setShownChannel`).
   // Done when the next channel opens, not in a teardown: a teardown on the shell going away (sign-out)
   // is handed the state from before the reset, and writing that back restores the old session.
   let shown: string | null = null
   $effect(() => {
     const left = shown
     shown = activeChannelId
-    if (left && left !== shown) untrack(() => (app.state = trimHistory(app.state, left)))
+    const open = shown
+    untrack(() => {
+      const next = setShownChannel(app.state, open)
+      app.state = left && left !== open ? trimHistory(next, left) : next
+    })
   })
   const home = $derived(homeBadge(app.state, nowIso))
   /** Where the call you're in lives (#220): its server's id, 'home' for a DM or group call, or null. */

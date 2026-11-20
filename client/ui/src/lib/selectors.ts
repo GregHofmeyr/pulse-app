@@ -2,6 +2,7 @@
 import type { Channel } from './protocol/Channel'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { User } from './protocol/User'
+import type { Member } from './protocol/Member'
 import type { AppState } from './state'
 import type { Message } from './protocol/Message'
 import type { Mentionable } from './mentions'
@@ -32,7 +33,22 @@ export function baseName(u: Pick<User, 'username' | 'display_name'>): string {
 /** The server nickname someone has in `serverId`, if they're in it and have one. */
 export function serverNick(s: AppState, serverId: string | null, userId: string): string | null {
   if (!serverId) return null
-  return (s.members[serverId] ?? []).find((x) => x.user.id === userId)?.nickname ?? null
+  const list = s.members[serverId]
+  return list ? (memberIndex(list).get(userId)?.nickname ?? null) : null
+}
+
+// A server's members by user id, per member list: the state replaces a list whenever it changes, so an index made
+// for one stays right for as long as that list is held (and goes with it).
+const memberIndexes = new WeakMap<Member[], Map<string, Member>>()
+function memberIndex(list: Member[]): Map<string, Member> {
+  let index = memberIndexes.get(list)
+  if (!index) {
+    index = new Map()
+    // the first entry for a person wins, as `find` would pick it
+    for (const m of list) if (!index.has(m.user.id)) index.set(m.user.id, m)
+    memberIndexes.set(list, index)
+  }
+  return index
 }
 
 /** A server channel as the UI writes it: "#general", but a voice channel bare ("Lounge", #230). */
@@ -172,17 +188,33 @@ export function serverPeople(s: AppState, serverId: string): Mentionable[] {
 export function mentionablesFor(s: AppState, channelId: string): Mentionable[] {
   const ch = s.channels[channelId]
   const serverId = ch?.server_id ?? null
+  // Everything the list is made from (each person is in `people`, so their name never needs another lookup). Most
+  // events change none of it, so the last list made for the channel is handed out again: the state is replaced on
+  // every event, and a server's whole member list would otherwise be rebuilt each time.
+  const deps = [ch, s.dmMembers[channelId], s.people, s.me, serverId === null ? undefined : s.members[serverId], s.privateNicks]
+  const memo = mentionableMemo.get(channelId)
+  if (memo && memo.deps.every((d, i) => d === deps[i])) return memo.list
   const ids = ch?.server_id === null ? (s.dmMembers[channelId] ?? []) : Object.keys(s.people)
-  return ids
+  const list = ids
     .filter((id) => id !== s.me?.id && s.people[id])
     .map((id) => ({ id, name: displayName(s, serverId, id), username: s.people[id].user.username, alts: namesOf(s, serverId, id) }))
+  if (mentionableMemo.size >= MENTIONABLE_MEMO_MAX && !memo) mentionableMemo.clear() // a few open chats' worth
+  mentionableMemo.set(channelId, { deps, list, pills: null })
+  return list
 }
+
+// The last mentionables (and pill names) made per channel, with what they were made from.
+const MENTIONABLE_MEMO_MAX = 32
+const mentionableMemo = new Map<string, { deps: unknown[]; list: Mentionable[]; pills: string[] | null }>()
 
 /** The usernames a message's `@name` pills are made for in a channel: everyone mentionable there, and
  *  you (a mention of you shows your name too, #47; you're only left out of the autocomplete). */
 export function pillNamesFor(s: AppState, channelId: string): string[] {
-  const names = mentionablesFor(s, channelId).map((p) => p.username)
-  return s.me ? [...names, s.me.username] : names
+  const people = mentionablesFor(s, channelId)
+  const memo = mentionableMemo.get(channelId)!
+  if (memo.pills) return memo.pills
+  const names = people.map((p) => p.username)
+  return (memo.pills = s.me ? [...names, s.me.username] : names)
 }
 
 /** A name lookup for one server's views (`state` reads the current state); no author is "Pulse". */

@@ -427,9 +427,13 @@ pub async fn send_due(s: &AppState, now: Timestamp) -> AppResult<usize> {
     .fetch_all(&s.db)
     .await?;
     let mut sent = 0;
-    for (id, author) in due {
-        let id: ScheduledId = id.parse().map_err(anyhow::Error::from)?;
-        let author: UserId = author.parse().map_err(anyhow::Error::from)?;
+    for (raw_id, raw_author) in due {
+        // one bad row is skipped (and logged), never the end of the sweep for every row behind it
+        let (Ok(id), Ok(author)) = (raw_id.parse::<ScheduledId>(), raw_author.parse::<UserId>())
+        else {
+            tracing::error!(id = %raw_id, "a scheduled message's row doesn't parse; skipped");
+            continue;
+        };
         // deleted (or sent now) since the look: nothing to do
         let Ok(row) = mine(&s.db, author, id).await else {
             continue;
