@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Self-test for publish-update.sh (`just deploy-check` and CI run it). Needs bash, jq, minisign and sha256sum. gh and
+# Self-test for publish-update.sh (`just deploy-check` and CI run it). Needs bash, git, jq, minisign and sha256sum. gh and
 # curl are stubbed and the "server" is a temp dir (PUBLISH_UPDATE_DIR), so nothing touches the network or a real
 # server. The Tauri signature case also needs client/ui/node_modules (skipped with a note without it).
 # `check && pass … || fail …` throughout: pass only echoes, so it never falls through to fail.
@@ -127,11 +127,11 @@ fi
 # --- the fake server and the stubs
 srv="$tmp/srv"
 mkdir -p "$tmp/bin" "$tmp/artifact"
-# gh run view → $FAKE_RUN; gh run download → copies $FAKE_ARTIFACT (and logs it)
+# gh api repos/…/actions/runs/ID → $FAKE_RUN; gh run download → copies $FAKE_ARTIFACT (and logs it)
 cat >"$tmp/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 case "$1 $2" in
-  "run view") printf '%s\n' "$FAKE_RUN" ;;
+  api*) printf '%s\n' "$FAKE_RUN" ;;
   "run download")
     echo download >>"$LOG"
     while [ $# -gt 0 ]; do case "$1" in -D) dest=$2; shift ;; esac; shift; done
@@ -150,7 +150,37 @@ chmod +x "$tmp/bin/gh" "$tmp/bin/curl"
 mkdir -p "$tmp/tmpdirs"
 export LOG="$tmp/log" FAKE_ARTIFACT="$tmp/artifact" PATH="$tmp/bin:$PATH" PUBLISH_UPDATE_DIR="$srv" TMPDIR="$tmp/tmpdirs"
 export PUBLISH_UPDATE_PUBKEY="$pub_a"
-good_run='{"workflowName":"release-windows","conclusion":"success","headBranch":"main"}'
+# a scratch "GitHub": a bare origin whose main has two commits, a feature commit off main, and tags on both; the
+# script checks runs against a clone of it (PUBLISH_UPDATE_REPO)
+git_q() { git -c user.name=t -c user.email=t@example.invalid -c init.defaultBranch=main -c advice.detachedHead=false "$@" >>"$tmp/git.log" 2>&1 || fail "scratch repo: git $*: $(tail -n 3 "$tmp/git.log")"; }
+git_q init --bare "$tmp/origin.git"
+git_q clone "$tmp/origin.git" "$tmp/work"
+git_q -C "$tmp/work" commit --allow-empty -m one
+git_q -C "$tmp/work" commit --allow-empty -m two
+main_sha=$(git -C "$tmp/work" rev-parse HEAD)
+git_q -C "$tmp/work" tag -a v0.2.2 -m v0.2.2
+git_q -C "$tmp/work" tag v0.2.2-light
+git_q -C "$tmp/work" checkout -b feature
+git_q -C "$tmp/work" commit --allow-empty -m feature
+feature_sha=$(git -C "$tmp/work" rev-parse HEAD)
+git_q -C "$tmp/work" tag v9.9.9
+git_q -C "$tmp/work" push origin main feature --tags
+git_q clone "$tmp/origin.git" "$tmp/repo"
+# a commit pushed after the clone: the script's own fetch has to find it
+git_q -C "$tmp/work" checkout main
+git_q -C "$tmp/work" commit --allow-empty -m three
+new_main_sha=$(git -C "$tmp/work" rev-parse HEAD)
+git_q -C "$tmp/work" push origin main
+export PUBLISH_UPDATE_REPO="$tmp/repo"
+# run [FIELD=VALUE…]: GitHub's actions/runs fields for a good main run, with those fields changed
+run() {
+  local j k
+  j=$(jq -cn --arg s "$main_sha" '{name: "release-windows", path: ".github/workflows/release-windows.yml",
+    event: "workflow_dispatch", conclusion: "success", head_branch: "main", head_sha: $s}')
+  for k in "$@"; do j=$(jq -c --arg k "${k%%=*}" --arg v "${k#*=}" '.[$k] = $v' <<<"$j"); done
+  echo "$j"
+}
+good_run=$(run)
 
 # artifact VERSION [SIGNED]: the CI download for VERSION, signed with key a for version SIGNED (default VERSION, as
 # `tauri build` binds it; '-' = a signature that binds none)
@@ -219,21 +249,39 @@ serve 0.9.0 0.9.1 0.10.0
 prune >/dev/null 2>&1
 [ "$(files)" = "Pulse_0.10.0_x64-setup.exe Pulse_0.9.1_x64-setup.exe latest.json " ] && pass "prune sorts by version" || fail "prune by version: $(files)"
 
-# --- wrong_run_refused: refused before anything is downloaded
-for run in '{"workflowName":"ci","conclusion":"success","headBranch":"main"}' \
-  '{"workflowName":"release-windows","conclusion":"failure","headBranch":"main"}' \
-  '{"workflowName":"release-windows","conclusion":"success","headBranch":"some-branch"}'; do
-  export FAKE_RUN=$run
+# --- wrong_run_refused: refused (with the reason) before anything is downloaded
+check_refused() {
+  local why=$1 want=$2
+  export FAKE_RUN=$3
   serve 0.2.1
   artifact 0.2.2
   : >"$LOG"
-  [ "$(publish)" = refused ] && pass "wrong_run_refused: $run" || fail "accepted run $run"
-  grep -q download "$LOG" && fail "downloaded a wrong run: $run" || pass "no download for $run"
+  if [ "$(publish)" = refused ] && grep -q -- "$want" "$tmp/out"; then pass "wrong_run_refused: $why"; else fail "wrong_run_refused: $why: $(cat "$tmp/out")"; fi
+  grep -q download "$LOG" && fail "downloaded a wrong run: $why" || pass "no download for $why"
+}
+check_refused "another workflow" "isn't the release-windows workflow" "$(run name=ci path=.github/workflows/ci.yml)"
+check_refused "release-windows' name on another file" "isn't the release-windows workflow" "$(run path=.github/workflows/evil.yml)"
+check_refused "a failed run" "didn't succeed" "$(run conclusion=failure)"
+check_refused "another branch" "isn't from main or a v\* tag" "$(run head_branch=some-branch)"
+check_refused "a pull_request event" "not a push or workflow_dispatch" "$(run event=pull_request)"
+check_refused "a schedule event" "not a push or workflow_dispatch" "$(run event=schedule)"
+check_refused "no head_sha" "has no commit sha" "$(run head_sha=)"
+check_refused "main run on a feature commit" "isn't on origin/main" "$(run head_sha="$feature_sha")"
+check_refused "a commit origin doesn't have" "isn't in origin's history" "$(run head_sha=0123456789abcdef0123456789abcdef01234567)"
+check_refused "tag pushed on a feature commit" "isn't on origin/main" "$(run event=push head_branch=v9.9.9 head_sha="$feature_sha")"
+check_refused "a branch named like a tag" "isn't a tag on origin" "$(run event=push head_branch=v1.2 head_sha="$main_sha")"
+check_refused "a tag run that built another commit" "tag v0.2.2 points at" "$(run event=push head_branch=v0.2.2 head_sha="$new_main_sha")"
+for run_json in "$(run event=push head_branch=v0.2.2)" "$(run event=push head_branch=v0.2.2-light)" "$(run head_branch=v0.2.2)"; do
+  export FAKE_RUN=$run_json
+  serve 0.2.1
+  artifact 0.2.2
+  [ "$(publish)" = ok ] && pass "a v* tag on main publishes: $run_json" || fail "tag run: $(cat "$tmp/out")"
 done
-export FAKE_RUN='{"workflowName":"release-windows","conclusion":"success","headBranch":"v0.2.2"}'
+FAKE_RUN=$(run head_sha="$new_main_sha")
+export FAKE_RUN
 serve 0.2.1
 artifact 0.2.2
-[ "$(publish)" = ok ] && pass "a v* tag run publishes" || fail "tag run: $(cat "$tmp/out")"
+[ "$(publish)" = ok ] && pass "a main commit newer than the local clone publishes (the script fetches)" || fail "new main commit: $(cat "$tmp/out")"
 export FAKE_RUN=$good_run
 for id in abc "4242;ls" ""; do
   if (publish_main "$id") >/dev/null 2>&1; then fail "accepted run id '$id'"; else pass "refuses run id '$id'"; fi

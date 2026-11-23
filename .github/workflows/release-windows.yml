@@ -56,7 +56,8 @@ jobs:
       # Signs the installer for the app updater (#82): createUpdaterArtifacts + the pubkey in tauri.conf.json make the
       # build write Pulse_<version>_x64-setup.exe.sig beside the installer. Without the secrets the build fails: there
       # are no unsigned releases (deploy/README.md, "Releasing an app update").
-      - run: node ../ui/node_modules/@tauri-apps/cli/tauri.js build
+      # `-- --locked` goes to cargo: the build uses Cargo.lock as cargo-deny checked it, or fails.
+      - run: node ../ui/node_modules/@tauri-apps/cli/tauri.js build -- --locked
         working-directory: client/src-tauri
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

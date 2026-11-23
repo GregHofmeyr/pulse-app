@@ -78,4 +78,4 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # What the client test binary builds of the server: its lib with `testing`, in the tests' release-test profile
       # (debug_assertions off). The server's own tests and binary never run on Windows.
-      - run: cargo check --profile release-test -p pulse-server --features testing --lib
+      - run: cargo check --locked --profile release-test -p pulse-server --features testing --lib
