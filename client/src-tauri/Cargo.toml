@@ -155,6 +155,11 @@ windows = { version = "0.62", features = [
     "Foundation_Collections",
     # "Playing" (#380, games/win.rs): Steam's RunningAppID and SteamPath under HKCU.
     "Win32_System_Registry",
+    # network changes and resume from sleep (netwatch/windows.rs, #355): IP Helper notifications, the power callback.
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_System_Power",
 ] }
 # WebView2 memory target (webview_memory.rs). Keep these on the versions tauri/wry use (see
 # Cargo.lock), or the COM types don't match (E0308).
