@@ -499,6 +499,19 @@ export function setF1Predictions(s: AppState, channel: string, id: string, predi
   return prev?.id === id ? { ...shown, latest: { ...shown.latest, [channel]: put(prev) } } : shown
 }
 
+/** The copy of `id` held in `list`, if any. A live message is almost always newer than everything held: then there's
+ *  none, without a scan. */
+function heldCopy(list: Message[] | undefined, id: string): Message | undefined {
+  if (!list?.length || list[list.length - 1].id < id) return undefined
+  return list.findLast((x) => x.id === id)
+}
+
+/** `r` without `key`. */
+function withoutKey<T>(r: Record<string, T>, key: string): Record<string, T> {
+  const { [key]: _gone, ...rest } = r
+  return rest
+}
+
 function upsertMessage(list: Message[] | undefined, m: Message): Message[] {
   const cur = list ?? []
   // ULIDs sort by time, so a live message is almost always newer than everything held: append it.
@@ -715,7 +728,8 @@ function withoutDeadReplies(s: AppState, channel: string): AppState {
 
 /** A loaded message of `channel`: in its list, or a reply in a loaded thread. */
 export function findMessage(s: AppState, channel: string, id: string): Message | undefined {
-  const m = s.messages[channel]?.find((x) => x.id === id)
+  // Ids are unique in a list; most events are about recent messages, so it's searched from the newest end.
+  const m = s.messages[channel]?.findLast((x) => x.id === id)
   if (m) return m
   for (const list of Object.values(s.threads)) {
     const r = list.find((x) => x.id === id && x.channel_id === channel)
@@ -727,7 +741,13 @@ export function findMessage(s: AppState, channel: string, id: string): Message |
 /** Change a loaded message of `channel` (list or thread); the state is returned as is when it isn't loaded. */
 export function mapMessage(s: AppState, channel: string, id: string, f: (m: Message) => Message): AppState {
   const list = s.messages[channel]
-  if (list?.some((x) => x.id === id)) return mapOpenRoot({ ...s, messages: { ...s.messages, [channel]: list.map((x) => (x.id === id ? f(x) : x)) } }, id, f)
+  const at = list ? list.findLastIndex((x) => x.id === id) : -1
+  if (at >= 0) {
+    // ids are unique in a list: only that one is copied over
+    const next = list!.slice()
+    next[at] = f(list![at])
+    return mapOpenRoot({ ...s, messages: { ...s.messages, [channel]: next } }, id, f)
+  }
   for (const [root, replies] of Object.entries(s.threads)) {
     if (replies.some((x) => x.id === id && x.channel_id === channel)) {
       return { ...s, threads: { ...s.threads, [root]: replies.map((x) => (x.id === id ? f(x) : x)) } }
@@ -1013,14 +1033,14 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const read = s.reads[c] ?? (tracksUnread(s, c) ? { channel_id: c, last_read_message_id: null, unread: 0, mentions: 0 } : undefined)
       // Others' normal messages count as unread, and others' call lines (yours and other system lines never do).
       const counts = read && countsAsUnread(m, s.me?.id)
-      const { [c]: _h, ...hidden } = s.hidden
+      const hidden = c in s.hidden ? withoutKey(s.hidden, c) : s.hidden
       const next: AppState = {
         ...s,
         // A detached window shows the past: the message waits for the latest to be reloaded (no gap),
         // and is noted so paging forward doesn't stop short of it.
         // A clip joins the channel's feeds, not its text history.
         clipFeeds: feeds.clipFeeds,
-        messages: m.clip || detached(s, c) ? s.messages : { ...s.messages, [c]: upsertMessage(s.messages[c], withHeldPoll(withMyQuoteState(m, undefined, s.me?.id), s.messages[c]?.find((x) => x.id === m.id))) },
+        messages: m.clip || detached(s, c) ? s.messages : { ...s.messages, [c]: upsertMessage(s.messages[c], withHeldPoll(withMyQuoteState(m, undefined, s.me?.id), heldCopy(s.messages[c], m.id))) },
         history: m.clip ? s.history : detached(s, c) ? { ...s.history, [c]: withMissed(s.history[c], m.id) } : s.history,
         pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
         typing: withoutTyping(s, c, m.author_id),
@@ -1219,7 +1239,13 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'Typing': {
       const { channel_id: c, user_id: u } = e.d
       // Indicators that ran out in this chat go now (nothing else removes one whose author never sent).
-      const live = Object.fromEntries(Object.entries(s.typing[c] ?? {}).filter(([, until]) => until > now))
+      const held = s.typing[c] ?? {}
+      let live = held
+      for (const k in held) {
+        if (held[k] > now) continue
+        live = Object.fromEntries(Object.entries(held).filter(([, until]) => until > now))
+        break
+      }
       return { ...s, typing: { ...s.typing, [c]: { ...live, [u]: now + TYPING_TTL_MS } } }
     }
     case 'VoiceJoined': {
@@ -1556,15 +1582,24 @@ export function trimHistory(s: AppState, channel: string, keep = KEEP_ON_LEAVE):
 function cutHistory(s: AppState, channel: string, cut: number): AppState {
   const h = s.history[channel]
   const kept = s.messages[channel].slice(cut)
-  const roots = new Set(kept.map((m) => m.id))
-  if (s.openRoot) roots.add(s.openRoot.id)
   return {
     ...s,
     messages: { ...s.messages, [channel]: kept },
-    history: h ? { ...s.history, [channel]: { ...h, start: false } } : s.history,
+    history: h && h.start !== false ? { ...s.history, [channel]: { ...h, start: false } } : s.history,
     // they only guard the reply counts of loaded quotes
-    goneReplies: Object.fromEntries(Object.entries(s.goneReplies).filter(([, g]) => g.channel !== channel || roots.has(g.root))),
+    goneReplies: goneOfLoaded(s.goneReplies, channel, kept, s.openRoot),
   }
+}
+
+/** `gone` keeping, of `channel`'s, only those whose quote is in `kept` or is the open panel's; the same object when
+ *  nothing goes. */
+function goneOfLoaded(gone: AppState['goneReplies'], channel: string, kept: Message[], openRoot: Message | null): AppState['goneReplies'] {
+  const mine = Object.entries(gone).filter(([, g]) => g.channel === channel)
+  if (!mine.length) return gone
+  const roots = new Set(kept.map((m) => m.id))
+  if (openRoot) roots.add(openRoot.id)
+  if (mine.every(([, g]) => roots.has(g.root))) return gone
+  return Object.fromEntries(Object.entries(gone).filter(([, g]) => g.channel !== channel || roots.has(g.root)))
 }
 
 /** Most messages a chat that isn't open keeps, unread or not. Past this its oldest unread go too: opening it then
