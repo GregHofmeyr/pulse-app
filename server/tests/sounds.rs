@@ -702,10 +702,14 @@ async fn frequent_ranks_by_plays_and_skips_servers_you_left() {
     assert_eq!(ready.frequent_sounds, vec![s.id.clone()]);
 }
 
+/// A burst of 10 plays, then the 11th is refused. The bucket barely refills (one token per ~3
+/// hours), so the 11 plays can take as long as the machine needs: at the old 10/s refill, plays
+/// slower than 100ms apart (a busy CI runner) earned a token back and the 11th went through. The
+/// refill itself is covered by `a_mash_goes_through_but_a_script_hits_the_ceiling`.
 #[tokio::test]
 async fn eleventh_play_in_a_second_is_429() {
     let mut cfg = test_config();
-    cfg.limits.sound_play_user = pulse_server::limits::Rate::new(10, 10.0);
+    cfg.limits.sound_play_user = pulse_server::limits::Rate::new(10, 0.0001);
     let app = spawn_with(cfg).await;
     let (alex_id, alex) = register(&app, "alex").await;
     let srv = create_server(&app, &alex, "Main").await;
