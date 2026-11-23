@@ -86,8 +86,9 @@
     }
   }
 
-  const toggles: { key: 'auto_gain'; label: string; help: string }[] = [
+  const toggles: { key: 'auto_gain' | 'even_out_voices'; label: string; help: string }[] = [
     { key: 'auto_gain', label: 'Automatic gain control', help: 'Evens out your volume. Leave off if you use input gain.' },
+    { key: 'even_out_voices', label: 'Even out voice volumes', help: "Brings quiet and loud people closer to the same volume. Each person's own volume still applies on top." },
   ]
   // what Auto decided for the output open now (#172)
   const echoLine = $derived(echoDecision(voice.echo, cfg.echo_mode))

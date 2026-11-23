@@ -114,6 +114,11 @@ describe('peerCallSound', () => {
 })
 
 describe('migrateAudioConfig', () => {
+  it('even out voice volumes (#355): on for settings saved before it, kept when turned off', () => {
+    expect(defaultAudioConfig.even_out_voices).toBe(true)
+    expect(migrateAudioConfig({ sensitivity: 0.05 }).even_out_voices).toBe(true)
+    expect(migrateAudioConfig({ even_out_voices: false }).even_out_voices).toBe(false)
+  })
   it('maps the old noise toggle off to level off', () => {
     const c = migrateAudioConfig({ noise_suppress: false, sensitivity: 0.05 })
     expect(c.noise_suppression).toBe('off')

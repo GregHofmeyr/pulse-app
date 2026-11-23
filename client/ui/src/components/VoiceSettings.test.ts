@@ -216,6 +216,30 @@ describe('VoiceSettings helper text (#163)', () => {
   })
 })
 
+describe('VoiceSettings even out voice volumes (#355)', () => {
+  beforeEach(() => {
+    invoke.mockClear()
+    localStorage.clear()
+  })
+
+  it('on by default; turning it off applies and saves it', async () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    flushSync()
+    const sw = () => document.querySelector<HTMLButtonElement>('button.switch[aria-label="Even out voice volumes"]')!
+    expect(sw().getAttribute('aria-pressed')).toBe('true')
+    expect(document.body.textContent).toContain("Each person's own volume still applies on top")
+    sw().click()
+    flushSync()
+    await Promise.resolve()
+    expect(sw().getAttribute('aria-pressed')).toBe('false')
+    const applied = invoke.mock.calls.filter(([cmd]) => cmd === 'set_audio_config').at(-1)?.[1]
+    expect(JSON.stringify(applied)).toContain('"even_out_voices":false')
+    expect(localStorage.getItem('pulse.audio')).toContain('"even_out_voices":false')
+    unmount(c)
+    document.body.innerHTML = ''
+  })
+})
+
 describe('VoiceSettings sounds', () => {
   it('renders the Sounds section', () => {
     const c = mount(VoiceSettings, { target: document.body })

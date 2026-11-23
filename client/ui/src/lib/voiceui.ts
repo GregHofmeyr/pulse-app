@@ -309,10 +309,12 @@ export type AudioConfig = {
   noise_suppression: NsLevel
   auto_sensitivity: boolean
   auto_gain: boolean
+  /** #355 (3): level each remote voice towards one loudness (the core's leveller); on by default. */
+  even_out_voices: boolean
 }
 export const defaultAudioConfig: AudioConfig = {
   input: null, output: null, input_gain_pct: 100, sensitivity: 0.02, echo_mode: 'auto',
-  noise_suppression: 'strong', auto_sensitivity: true, auto_gain: false,
+  noise_suppression: 'strong', auto_sensitivity: true, auto_gain: false, even_out_voices: true,
 }
 /** Settings saved before levels existed carried `noise_suppress: boolean`; before #76, `echo_cancel: boolean` (off by
  *  hand stays Off, the old default on becomes Auto). */

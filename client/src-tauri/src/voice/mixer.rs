@@ -203,6 +203,7 @@ pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
         gains: Mutex::new(HashMap::new()),
         kind_gains: Mutex::new(HashMap::new()),
         generation: AtomicU64::new(0),
+        level_voices: AtomicBool::new(true),
         cap,
         pushed: AtomicU64::new(0),
         underrun: underrun.clone(),
@@ -242,6 +243,9 @@ pub struct MixerInput {
     kind_gains: Mutex<HashMap<SourceKind, f32>>,
     /// Bumped by `clear` (under the sources lock): pushes for an older room are dropped.
     generation: AtomicU64,
+    /// "Even out voice volumes" (#355 (3)): read by each voice track's receive task, which levels
+    /// its samples before pushing them (`leveller`). On unless the settings say otherwise.
+    level_voices: AtomicBool,
     cap: usize,
     /// Total samples ever pushed (diagnostics: intake must track real time, see FINDINGS).
     pushed: AtomicU64,
@@ -274,6 +278,16 @@ impl MixerInput {
     /// Which room's sources the mixer holds now: bumped by every `clear`.
     pub fn generation(&self) -> u64 {
         self.generation.load(Relaxed)
+    }
+
+    /// Turn receive-side voice levelling on or off (#355 (3)); takes effect at the next frame.
+    pub fn set_level_voices(&self, on: bool) {
+        self.level_voices.store(on, Relaxed);
+    }
+
+    /// Whether voices are levelled before they're pushed.
+    pub fn level_voices(&self) -> bool {
+        self.level_voices.load(Relaxed)
     }
 
     /// Start playing a track (before its receive task starts: earlier pushes are dropped).

@@ -44,6 +44,9 @@ pub struct AudioConfig {
     #[serde(default = "default_true")]
     pub auto_sensitivity: bool,
     pub auto_gain: bool,
+    /// "Even out voice volumes" (#355 (3)): level each remote voice towards one loudness.
+    #[serde(default = "default_true")]
+    pub even_out_voices: bool,
     /// Pre-2026-10 on/off noise toggle: only read, to migrate old settings (see `normalized`).
     #[serde(default, skip_serializing)]
     pub noise_suppress: Option<bool>,
@@ -81,6 +84,7 @@ impl Default for AudioConfig {
             noise_suppression: NsLevel::default(),
             auto_sensitivity: true,
             auto_gain: false,
+            even_out_voices: true,
             noise_suppress: None,
             echo_cancel: None,
         }
@@ -391,6 +395,7 @@ impl Shared {
         peer_buffer_ms: u32,
     ) -> Arc<Self> {
         let (mix_in, mixer) = super::mixer::mixer(INTERNAL_RATE, peer_buffer_ms);
+        mix_in.set_level_voices(cfg.even_out_voices);
         let playout_on = controls.lock().unwrap().playout_on();
         Arc::new(Self {
             controls,

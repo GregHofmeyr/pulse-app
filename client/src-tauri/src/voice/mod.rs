@@ -6,6 +6,7 @@ pub mod denoise;
 pub mod devices;
 pub mod echo;
 pub mod gate;
+pub mod leveller;
 pub mod linkstats;
 pub mod meter;
 pub mod micsilence;
@@ -695,6 +696,7 @@ impl Pipeline {
     async fn adopt(&self, cfg: &AudioConfig) -> Result<(), VoiceError> {
         let changed = Sides::changed(&self.cfg.lock().unwrap(), cfg);
         self.shared.apply_config(cfg);
+        self.shared.mix_in.set_level_voices(cfg.even_out_voices);
         *self.cfg.lock().unwrap() = cfg.clone();
         if changed.any() && self.real {
             let targets = (cfg.input.clone(), cfg.output.clone());
@@ -1931,6 +1933,12 @@ impl VoiceManager {
                                 let stream =
                                     NativeAudioStream::new(t.rtc_track(), INTERNAL_RATE as i32, 1);
                                 let mut heard = false;
+                                // #355 (3): voices are levelled here, before the mixer's ring;
+                                // stream audio passes as it is. Both live as long as the task.
+                                let mut leveller = leveller::Leveller::new();
+                                let mut levelled = Vec::<i16>::with_capacity(
+                                    2 * INTERNAL_RATE as usize / 100,
+                                );
                                 let on_frame = |f: livekit::webrtc::audio_frame::AudioFrame| {
                                     // WebRTC hands over (silent) frames before any packet arrives:
                                     // the first one with sound is when they're really audible
@@ -1945,7 +1953,14 @@ impl VoiceManager {
                                             "voice: first sound"
                                         );
                                     }
-                                    m.push_in(mix_gen, &src, &f.data);
+                                    if kind == SourceKind::Voice {
+                                        levelled.clear();
+                                        levelled.extend_from_slice(&f.data);
+                                        leveller.process(&mut levelled, m.level_voices());
+                                        m.push_in(mix_gen, &src, &levelled);
+                                    } else {
+                                        m.push_in(mix_gen, &src, &f.data);
+                                    }
                                 };
                                 // #216: a track WebRTC stops (or never starts) handing frames to
                                 let on_flow = |flow| match flow {
