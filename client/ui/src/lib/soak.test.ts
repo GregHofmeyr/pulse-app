@@ -4,8 +4,9 @@
 //
 // What AppState holds, and what bounds it (checked by `checkBounds` below):
 //   messages[c]         a chat that isn't open: `boundUnseen` (newest KEEP_ON_LEAVE plus unread, never past UNSEEN_CAP).
-//                       The open chat: what it held when opened, plus what is posted or paged in while it stays open;
-//                       leaving it trims it (`trimHistory`). A chat left open for days is the one gap (#561).
+//                       The open chat (#561): while its view is at the latest, `boundShown` (past SHOWN_TRIM_AT, down
+//                       to SHOWN_KEEP plus unread); while you're scrolled up (or something holds it), what it held then
+//                       plus what is posted or paged in until you're back down. Leaving it trims it (`trimHistory`).
 //   history, reads, typing, pending, hidden, latest, pins, clipViews, clipFacets, calls, voice, streams, stageShares,
 //   watchParties, dmMembers   one entry per channel (dropped with the channel); `latest` per DM/group.
 //   typing[c]           one entry per person typing in it; a Typing event drops the ones that ran out; Ready clears all.
@@ -27,7 +28,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyEvent, applyReady, emptyState, setShownChannel, trimHistory, addHistory, markHistory, mergeLatest, addOlder, addPending,
-  setPoll, holdThread, addReplies, closeThread, openFeed, loadFeedPage, UNSEEN_CAP, CLIP_PAGE, PAGE, type AppState,
+  setPoll, holdThread, addReplies, closeThread, openFeed, loadFeedPage, setShownAtLatest, UNSEEN_CAP, SHOWN_TRIM_AT, CLIP_PAGE, PAGE,
+  type AppState,
 } from './state'
 import { feedKey } from './clips'
 import type { Event } from './protocol/Event'
@@ -133,7 +135,9 @@ describe('long-session soak', () => {
 
     // What has happened since the last Ready (the bounds of what Ready clears) and since the open chat was opened.
     let sinceReady = { mentionReplies: 0, replyDeletes: 0, threadsSeen: 0, feedsOpened: 0, clipsPosted: 0, feedPages: 0 }
+    // ...and since you last scrolled up in it (while at the latest, it's trimmed instead)
     let shownSince = { posted: 0, paged: 0, held: 0 }
+    let atLatest = true
     let openThread = null as { root: Message; channel: string } | null
     let maxHeld = 0
     let events = 0
@@ -153,6 +157,9 @@ describe('long-session soak', () => {
         s = mergeLatest(s, c, recent(c, PAGE))
       }
       shownSince = { posted: 0, paged: 0, held: s.messages[c]?.length ?? 0 }
+      // the view opens at the latest
+      atLatest = true
+      s = setShownAtLatest(s, c, true)
       const newest = (posted[c] ?? []).at(-1)
       if (newest && ch.kind !== 'clips') {
         apply({ t: 'ReadStateUpdated', d: { user_id: ME.id, channel_id: c, last_read_message_id: newest.id, unread: 0, mentions: 0 } })
@@ -235,14 +242,26 @@ describe('long-session soak', () => {
           const d = pick(w.dms).id
           apply({ t: 'ConversationVisibility', d: { channel_id: d, hidden: chance(0.5) } } as Event)
         } else if (r < 0.97 && s.shown && s.history[s.shown]?.loaded) {
-          // scrolling up in the open chat
-          const held = s.messages[s.shown] ?? []
-          const all = posted[s.shown] ?? []
-          const at = held.length ? all.findIndex((m) => m.id === held[0].id) : -1
-          if (at > 0) {
-            const page = all.slice(Math.max(0, at - PAGE), at)
-            s = addOlder(s, s.shown, held[0].id, page)
-            shownSince.paged += page.length
+          const shown = s.shown
+          if (!atLatest && chance(0.3)) {
+            // back down to the latest in the open chat (#561): it's trimmed if it grew past SHOWN_TRIM_AT
+            atLatest = true
+            s = setShownAtLatest(s, shown, true)
+          } else {
+            // scrolling up in the open chat
+            if (atLatest) {
+              atLatest = false
+              s = setShownAtLatest(s, shown, false)
+              shownSince = { posted: 0, paged: 0, held: s.messages[shown]?.length ?? 0 }
+            }
+            const held = s.messages[shown] ?? []
+            const all = posted[shown] ?? []
+            const at = held.length ? all.findIndex((m) => m.id === held[0].id) : -1
+            if (at > 0) {
+              const page = all.slice(Math.max(0, at - PAGE), at)
+              s = addOlder(s, shown, held[0].id, page)
+              shownSince.paged += page.length
+            }
           }
         } else if (r < 0.975) {
           // a quote's replies panel, opened and later closed
@@ -276,7 +295,7 @@ describe('long-session soak', () => {
       let held = 0
       for (const [c, list] of Object.entries(s.messages)) {
         held += list.length
-        const cap = c === s.shown ? shownSince.held + shownSince.posted + shownSince.paged : UNSEEN_CAP
+        const cap = c !== s.shown ? UNSEEN_CAP : atLatest ? SHOWN_TRIM_AT : shownSince.held + shownSince.posted + shownSince.paged
         expect(list.length, `${when}: messages in ${c}`).toBeLessThanOrEqual(cap)
         for (const m of list) {
           expect(m.reactions.length).toBeLessThanOrEqual(EMOJI.length)
@@ -332,10 +351,81 @@ describe('long-session soak', () => {
     // The busy channels went far past what a chat that isn't open keeps.
     for (const c of busy) expect(posted[c].length).toBeGreaterThan(2 * UNSEEN_CAP)
     // The busy channels hold no more than a chat that isn't open keeps, however much was posted in them.
-    for (const c of busy) if (c !== s.shown) expect(s.messages[c].length).toBeLessThanOrEqual(UNSEEN_CAP)
+    for (const c of busy) if (c !== s.shown || atLatest) expect(s.messages[c].length).toBeLessThanOrEqual(UNSEEN_CAP)
     const total = Object.values(posted).flat().length
     console.log(`soak: ${events} events, ${total} messages posted, most held at once by day: ${heldByDay.join(', ')}`)
     expect(Math.max(...heldByDay)).toBeLessThanOrEqual(CHANNELS * UNSEEN_CAP)
+  })
+})
+
+describe('the open chat left open for days (#561)', () => {
+  it('stays bounded while at the latest, grows only while scrolled up, and pages back in without gaps', () => {
+    const rand = prng(561)
+    const chance = (p: number) => rand() < p
+    const w = world(1, 2, 10, 0)
+    const others = w.users.slice(1)
+    const c = w.channels[0].id
+    const posted: Message[] = []
+    let s = setShownChannel(applyReady(emptyState(), readyOf(w)), c)
+    let atLatest = true
+    let focused = true
+    let since = { held: 0, posted: 0, paged: 0 }
+    let trims = 0
+    const read = () => {
+      const newest = posted.at(-1)
+      if (newest) s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: ME.id, channel_id: c, last_read_message_id: newest.id, unread: 0, mentions: 0 } }, 0)
+    }
+    const load = () => {
+      s = mergeLatest(s, c, posted.slice(-PAGE))
+      atLatest = true
+      s = setShownAtLatest(s, c, true)
+    }
+    load()
+    for (let hour = 0; hour < 72; hour++) {
+      if (hour > 0 && hour % 5 === 0) {
+        s = applyReady(s, readyOf(w))
+        load()
+      }
+      focused = hour % 24 >= 8 // away from the window overnight: unread piles up
+      for (let m = 0; m < 60; m++) {
+        // a busy channel: a few messages a minute
+        for (let i = 0; i < 1 + Math.floor(rand() * 4); i++) {
+          const msg = message(nextId(), c, others[Math.floor(rand() * others.length)].id)
+          posted.push(msg)
+          const before = s.messages[c]?.length ?? 0
+          s = applyEvent(s, { t: 'MessageCreated', d: { message: msg, nonce: null } }, 0)
+          if ((s.messages[c]?.length ?? 0) < before) trims++
+          if (!atLatest) since.posted++
+          if (focused && atLatest) read()
+        }
+        // now and then you scroll up through history, page by page, and later come back down
+        if (focused && atLatest && chance(0.01)) {
+          atLatest = false
+          s = setShownAtLatest(s, c, false)
+          since = { held: s.messages[c].length, posted: 0, paged: 0 }
+        } else if (!atLatest && chance(0.3)) {
+          const held = s.messages[c]
+          const at = posted.findIndex((x) => x.id === held[0].id)
+          if (at > 0) {
+            const page = posted.slice(Math.max(0, at - PAGE), at).reverse()
+            s = addOlder(s, c, held[0].id, page)
+            since.paged += page.length
+          }
+          if (chance(0.15)) {
+            atLatest = true
+            s = setShownAtLatest(s, c, true)
+            if (focused) read()
+          }
+        }
+      }
+      const list = s.messages[c]
+      expect(list.length, `hour ${hour}`).toBeLessThanOrEqual(atLatest ? SHOWN_TRIM_AT : since.held + since.posted + since.paged)
+      // what's held is one run of the channel's messages, up to the newest: no gap, no duplicate
+      const from = posted.findIndex((x) => x.id === list[0].id)
+      expect(list.map((x) => x.id), `hour ${hour}`).toEqual(posted.slice(from).map((x) => x.id))
+    }
+    expect(posted.length).toBeGreaterThan(10 * SHOWN_TRIM_AT)
+    expect(trims).toBeGreaterThan(10)
   })
 })
 
