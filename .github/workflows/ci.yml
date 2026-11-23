@@ -130,10 +130,10 @@ jobs:
       - name: Placeholder UI dist (tauri::generate_context! needs the folder)
         run: mkdir -p client/ui/dist
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       # nextest (#255): every test binary's tests at once instead of one binary after another, each test in its own
       # process. No doctests in the workspace (nextest doesn't run them); nothing shares state between tests.
-      - run: cargo nextest run --workspace --no-fail-fast
+      - run: cargo nextest run --locked --workspace --no-fail-fast
       # The export against a real ffmpeg (the #[ignore] clips_it); the distro build has x264 for the CPU path.
       # `--workspace` resolves the same features as the run above, so its build is reused (`-p pulse-client`
       # alone resolved fewer and rebuilt libwebrtc, livekit and both crates, #255).
@@ -142,7 +142,7 @@ jobs:
           PULSE_DEV_FFMPEG_DIR: /usr/bin
         run: |
           sudo apt-get install -y --no-install-recommends ffmpeg
-          cargo nextest run --workspace --test clips_it --run-ignored only --no-fail-fast
+          cargo nextest run --locked --workspace --test clips_it --run-ignored only --no-fail-fast
       - run: just types-check
 
   ui:
