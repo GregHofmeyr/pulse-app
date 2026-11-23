@@ -1774,6 +1774,9 @@ pub async fn join_voice(
     let (api, token) = core.current()?;
     tracing::info!(%channel_id, input = ?config.input, output = ?config.output, gain = config.input_gain_pct, ?bitrate, "join_voice");
     voice.set_channel_bitrate(channel_id, bitrate).await;
+    // a mic test still running would hold the devices the call is about to open (the page drops its Stop button)
+    // (closing its devices waits for their threads)
+    tokio::task::block_in_place(|| app.state::<crate::voice::mictest::MicTest>().stop());
     // a switch leaves the last channel's stream room (and ends our stream audio there)
     stream_audio.leave().await;
     let r = voice
@@ -1961,9 +1964,14 @@ pub async fn list_audio_devices() -> Result<AudioDevices, String> {
 #[tauri::command]
 pub async fn start_mic_test(
     app: AppHandle,
+    voice: State<'_, VoiceManager>,
     mic: State<'_, crate::voice::mictest::MicTest>,
     config: AudioConfig,
 ) -> Result<(), VoiceError> {
+    // a second set of streams on the call's devices fights the call for them (the page disables the button too)
+    if voice.busy_with_devices() {
+        return Err(VoiceError::InCall);
+    }
     let handle = app.clone();
     // opening devices can block for seconds (a Bluetooth headset): let the runtime move other
     // work off this worker meanwhile

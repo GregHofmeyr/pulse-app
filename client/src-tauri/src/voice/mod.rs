@@ -65,6 +65,9 @@ pub enum VoiceError {
     Cancelled,
     #[error("timed out {0}")]
     Timeout(&'static str),
+    /// The mic test was asked for during a call (or a join): it would open the same devices a second time.
+    #[error("Leave the call to test your mic")]
+    InCall,
 }
 
 /// How often to check whether the devices should follow the system default (or a returning one).
@@ -386,7 +389,11 @@ async fn report_publish<R: CloseRoom>(
                 if first {
                     connected_stage();
                 }
-                (w.events)(VoiceEvent::Mic { live, error: None });
+                (w.events)(VoiceEvent::Mic {
+                    live,
+                    error: None,
+                    retrying: false,
+                });
             }
             return AfterPublish::Done;
         }
@@ -426,6 +433,7 @@ async fn report_publish<R: CloseRoom>(
     (w.events)(VoiceEvent::Mic {
         live: false,
         error: Some(format!("Couldn't send your mic: {e}")),
+        retrying: true,
     });
     AfterPublish::Retry
 }
@@ -627,6 +635,9 @@ struct Pipeline {
     tasks: Vec<JoinHandle<()>>,
     /// A device stall was reported and hasn't recovered (the next room shows it again).
     stalled: Arc<AtomicBool>,
+    /// The mic processor's thread: finished while the pipeline is alive = it crashed past its restarts (the
+    /// watchdog says so, and the next join builds a fresh pipeline).
+    processor: Arc<std::thread::JoinHandle<()>>,
 }
 
 impl Drop for Pipeline {
@@ -649,7 +660,8 @@ impl Pipeline {
     ) -> Result<Self, VoiceError> {
         let shared = Shared::new(cfg, controls, PEER_BUFFER_MS);
         // devices → processor (denoise, gate) → the room's mic sink, once there is one
-        let (raw_tx, _processor) = processor::spawn(shared.clone());
+        let (raw_tx, processor) = processor::spawn(shared.clone());
+        let processor = Arc::new(processor);
         let io = match mode {
             AudioMode::Real => start_audio(cfg, shared.clone(), raw_tx.clone()).await?,
             AudioMode::Null(rate) => AudioIo::start_null(rate, shared.clone(), raw_tx.clone()),
@@ -677,7 +689,7 @@ impl Pipeline {
         let stalled = Arc::new(AtomicBool::new(false));
         if real {
             let watch = (shared.clone(), reopener.clone(), stalled.clone());
-            tasks.push(spawn_watchdog(watch, events));
+            tasks.push(spawn_watchdog(watch, processor.clone(), events));
             tasks.push(spawn_follow(reopener.clone()));
         }
         Ok(Self {
@@ -689,6 +701,7 @@ impl Pipeline {
             alive,
             tasks,
             stalled,
+            processor,
         })
     }
 
@@ -711,6 +724,7 @@ impl Pipeline {
         self.alive.load(Ordering::SeqCst)
             && self.real == matches!(mode, AudioMode::Real)
             && self.io.lock().unwrap().is_some()
+            && !self.processor.is_finished()
     }
 }
 
@@ -748,10 +762,15 @@ async fn keep_if_usable(kept: Option<Arc<Pipeline>>, mode: AudioMode) -> Option<
     None
 }
 
+/// What the No mic chip says once the mic processor has crashed past its restarts.
+const PROCESSOR_DOWN: &str =
+    "Your mic stopped working after repeated errors. Leave and rejoin the call to get it back";
+
 /// Reopen stalled devices (and say so if that doesn't help). Lives as long as the pipeline.
 /// `stalled`: set while a reported stall lasts.
 fn spawn_watchdog(
     (shared, reopener, stalled): (Arc<Shared>, Arc<Reopener>, Arc<AtomicBool>),
+    processor: Arc<std::thread::JoinHandle<()>>,
     events: EventSink,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -762,10 +781,24 @@ fn spawn_watchdog(
         let mut stall = devices::StallPolicy::default();
         let (mut gap_retry, mut notice) =
             (devices::GapRetry::default(), devices::GapNotice::default());
+        let mut processor_down = false;
         loop {
             tick.tick().await;
             if !reopener.alive.load(Ordering::SeqCst) {
                 break;
+            }
+            // the mic processor crashed past its restarts: nothing reaches the room any more. Say so (the No mic
+            // chip); leaving or switching channels builds a fresh pipeline (`usable_for`).
+            if !processor_down && processor.is_finished() {
+                processor_down = true;
+                tracing::error!(
+                    "voice: the mic processor is gone; the mic is off until you rejoin"
+                );
+                events(VoiceEvent::Mic {
+                    live: false,
+                    error: Some(PROCESSOR_DOWN.into()),
+                    retrying: false,
+                });
             }
             let now = Instant::now();
             // a side that isn't open (#351) has no callbacks: tried again on its own clock, never
@@ -930,6 +963,9 @@ pub enum VoiceEvent {
     Mic {
         live: bool,
         error: Option<String>,
+        /// The core is still trying to get the mic back by itself (a failed publish, #351); false once
+        /// nothing will (the mic processor gave up: only a rejoin helps), and when there's no error.
+        retrying: bool,
     },
 }
 
@@ -949,7 +985,7 @@ pub(crate) fn echo_update(shared: &Shared) -> Option<VoiceEvent> {
 /// mid-call starts from the last 100 ms, not an average over the call so far.
 fn meter_update(shared: &Shared) -> Option<VoiceEvent> {
     let (mic, speaker) = shared.take_levels();
-    let shown = shared.controls.lock().unwrap().meters_shown();
+    let shown = devices::relock(&shared.controls).meters_shown();
     shown.then(|| VoiceEvent::Levels {
         mic,
         speaker,
@@ -2152,13 +2188,13 @@ impl VoiceManager {
                     if let Some(e) = echo_update(&shared) {
                         events(e);
                     }
-                    if let Some(silent) = shared.mic_silence.lock().unwrap().take_change() {
+                    if let Some(silent) = devices::relock(&shared.mic_silence).take_change() {
                         events(VoiceEvent::MicSilent { silent });
                     }
-                    if shared.muted_talk.lock().unwrap().take_fired() {
+                    if devices::relock(&shared.muted_talk).take_fired() {
                         events(VoiceEvent::MutedTalk);
                     }
-                    if shared.muted_cue.lock().unwrap().take_fired() {
+                    if devices::relock(&shared.muted_cue).take_fired() {
                         events(VoiceEvent::MutedCue);
                     }
                     // Ring = actually audible: received levels per peer + what we really send.
@@ -2224,6 +2260,12 @@ impl VoiceManager {
             self.emit_state(None, Connection::Disconnected);
         }
         true
+    }
+
+    /// In a call or joining one: the devices are (or are about to be) the call's. The mic test must not open them
+    /// a second time (a Bluetooth headset can't be open twice; a second Strong doubles the CPU).
+    pub fn busy_with_devices(&self) -> bool {
+        self.in_voice() || self.pending_join.lock().unwrap().is_some()
     }
 
     /// Whether we're in a voice channel right now (no lock waits: safe from any thread).
@@ -3000,7 +3042,7 @@ mod tests {
             ..Default::default()
         };
         let shared = Shared::new(&cfg, Default::default(), PEER_BUFFER_MS);
-        let (raw_tx, _processor) = processor::spawn(shared.clone());
+        let (raw_tx, processor) = processor::spawn(shared.clone());
         let (io, alive) = (Arc::new(Mutex::new(None)), Arc::new(AtomicBool::new(true)));
         let cfg = Arc::new(Mutex::new(cfg));
         let reopener = Arc::new(Reopener {
@@ -3023,6 +3065,7 @@ mod tests {
             alive,
             tasks: Vec::new(),
             stalled: Default::default(),
+            processor: Arc::new(processor),
         };
         (Arc::new(p), raw_tx)
     }
@@ -3409,10 +3452,11 @@ mod tests {
         let e = VoiceEvent::Mic {
             live: false,
             error: Some("Couldn't send your mic".into()),
+            retrying: true,
         };
         assert_eq!(
             serde_json::to_value(&e).unwrap(),
-            serde_json::json!({"kind":"mic","live":false,"error":"Couldn't send your mic"})
+            serde_json::json!({"kind":"mic","live":false,"error":"Couldn't send your mic","retrying":true})
         );
     }
 
@@ -3499,7 +3543,8 @@ mod tests {
                     },
                     VoiceEvent::Mic {
                         live: true,
-                        error: None
+                        error: None,
+                        ..
                     }
                 ]
             ),
@@ -3522,7 +3567,8 @@ mod tests {
                     },
                     VoiceEvent::Mic {
                         live: false,
-                        error: None
+                        error: None,
+                        ..
                     }
                 ]
             ),
@@ -3562,7 +3608,7 @@ mod tests {
                 &seen[..],
                 [
                     VoiceEvent::Stage { stage: JoinStage::Connected, attempt: None },
-                    VoiceEvent::Mic { live: false, error: Some(e) },
+                    VoiceEvent::Mic { live: false, error: Some(e), retrying: true },
                 ] if e == "Couldn't send your mic: timed out"
             ),
             "{seen:?}"
@@ -3640,7 +3686,8 @@ mod tests {
                 seen.last(),
                 Some(VoiceEvent::Mic {
                     live: true,
-                    error: None
+                    error: None,
+                    ..
                 })
             ),
             "{seen:?}"
@@ -3719,7 +3766,8 @@ mod tests {
                     },
                     VoiceEvent::Mic {
                         live: false,
-                        error: Some(_)
+                        error: Some(_),
+                        ..
                     },
                 ]
             ),

@@ -12,6 +12,12 @@
   let inputs = $state<{ name: string; is_default: boolean }[]>([])
   let outputs = $state<{ name: string; is_default: boolean }[]>([])
   let testing = $state(false)
+  // In a call (or joining one) the devices are the call's: a test would open them twice (the core refuses it too).
+  const inCall = $derived(!!voice.channelId || !!voice.joining)
+  // joining stops a running test (core-side): the button goes back to "Let's check"
+  $effect(() => {
+    if (inCall && testing) testing = false
+  })
   const SENS_MAX = 0.2
   // how long the mic has been completely silent (drives the "no sound" hint)
   let lastSound = Date.now()
@@ -170,8 +176,8 @@
 </div>
 
 <div class="check">
-  <button class="btn btn-lg btn-primary" onclick={toggleTest}>{testing ? 'Stop' : "Let's check"}</button>
-  <small>{testing ? 'You should hear yourself after a moment. Headphones recommended.' : 'Hear your mic the way others will.'}</small>
+  <button class="btn btn-lg btn-primary" onclick={toggleTest} disabled={inCall && !testing}>{testing ? 'Stop' : "Let's check"}</button>
+  <small data-mic-test-hint>{testing ? 'You should hear yourself after a moment. Headphones recommended.' : inCall ? 'Leave the call to test your mic.' : 'Hear your mic the way others will.'}</small>
 </div>
 {#if testing && silentFor > 3000}
   <p class="warn" role="status">No sound from your mic. Check it isn't muted, or pick a different input in your system sound settings. Some Bluetooth headsets need a different headset codec.</p>

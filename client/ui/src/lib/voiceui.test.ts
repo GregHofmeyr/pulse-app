@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readdirSync } from 'node:fs'
 import {
-  soundFor, volumeLabel, clampVolume, migrateAudioConfig, defaultAudioConfig, playSound,
+  noMicTip, soundFor, volumeLabel, clampVolume, migrateAudioConfig, defaultAudioConfig, playSound,
   SOUND_NAMES, SOUND_SETS, SOUND_LABELS, PREVIEW, PREVIEW_GAP_MS, defaultSoundPrefs,
   normalizeSoundPrefs, loadSoundPrefs, saveSoundPrefs, previewSet, stopPreview,
   playSoundAt, playRingingAt, previewRingtone, RINGTONES,
@@ -433,5 +433,14 @@ describe('modelLine (#77)', () => {
     expect(modelLine({ state: 'downloading', downloaded: 12_582_912, total: null })).toBe('Downloading… 12 MB')
     expect(modelLine({ state: 'failed', error: "couldn't reach the server" })).toBe("Couldn't download it: couldn't reach the server")
     expect(modelLine({ state: 'ready' })).toBeNull()
+  })
+})
+
+describe('noMicTip', () => {
+  it('a failed send says Pulse keeps trying; one it gave up on does not', () => {
+    expect(noMicTip(null, "Couldn't send your mic: timed out")).toBe("Couldn't send your mic: timed out. You can still listen while Pulse keeps trying.")
+    expect(noMicTip(null, 'Your mic stopped working after repeated errors. Leave and rejoin the call to get it back', false))
+      .toBe('Your mic stopped working after repeated errors. Leave and rejoin the call to get it back. You can still listen.')
+    expect(noMicTip(null, null, false)).toBeNull()
   })
 })

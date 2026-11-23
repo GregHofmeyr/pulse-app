@@ -167,6 +167,8 @@ enum Cmd {
     Add {
         id: String,
         ring: rtrb::Consumer<i16>,
+        /// The peer's working queue, sized here on the network side: the callback never allocates it.
+        queue: VecDeque<i16>,
         filled: Arc<AtomicUsize>,
         gain: f32,
     },
@@ -185,6 +187,45 @@ enum Cmd {
         stop: Option<Arc<AtomicBool>>,
     },
     Clear,
+}
+
+/// A sound that waited longer than this for the speakers (none open, listen-only #351, or a long output stall) is
+/// dropped rather than played late: when the speakers come back, old sounds mustn't all start at once.
+const CLIP_STALE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Commands queued for the speakers past which the network side compacts them ([`compact`]): with speakers open the
+/// queue is emptied every few ms and never gets near this; with none open it would otherwise grow for the whole call.
+const COMPACT_AT: usize = 64;
+
+/// Shrink commands the speakers haven't taken yet to what still matters, keeping their order: nothing before the
+/// last `Clear` (it drops every peer and clip anyway), no stale clip ([`CLIP_STALE`]) and at most [`MAX_CLIPS`]
+/// clips (the newest), and per track only its last `Add` or `Remove` and any `Gain` after it (an earlier one is
+/// overridden: an `Add` starts the track afresh, a `Remove` ends it). Runs on the network side, so what it drops
+/// (rings, queues, sounds) is freed there.
+fn compact(cmds: &mut Vec<Cmd>) {
+    if let Some(last_clear) = cmds.iter().rposition(|c| matches!(c, Cmd::Clear)) {
+        cmds.drain(..last_clear);
+    }
+    let mut ended: std::collections::HashSet<String> = std::collections::HashSet::new(); // a later Add/Remove
+    let mut gained: std::collections::HashSet<String> = std::collections::HashSet::new(); // a later Gain
+    let mut clips = 0;
+    let mut keep = vec![true; cmds.len()];
+    for (i, c) in cmds.iter().enumerate().rev() {
+        keep[i] = match c {
+            Cmd::Clear => true,
+            Cmd::Clip { queued, .. } => {
+                clips += 1;
+                clips <= MAX_CLIPS && queued.elapsed() <= CLIP_STALE
+            }
+            Cmd::Gain { id, .. } => !ended.contains(id) && gained.insert(id.clone()),
+            Cmd::Add { id, .. } | Cmd::Remove { id } => ended.insert(id.clone()),
+        };
+    }
+    let mut i = 0;
+    cmds.retain(|_| {
+        i += 1;
+        keep[i - 1]
+    });
 }
 
 /// Most clips playing at once. Enforced in `intake` (extra ones are dropped there), so the
@@ -341,6 +382,18 @@ pub(crate) struct SourceIn {
 }
 
 impl MixerInput {
+    /// The commands on their way to the speakers, compacted first if they've piled up ([`COMPACT_AT`]).
+    fn queue(&self) -> std::sync::MutexGuard<'_, Vec<Cmd>> {
+        let mut cmds = self
+            .cmds
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cmds.len() >= COMPACT_AT {
+            compact(&mut cmds);
+        }
+        cmds
+    }
+
     /// Which room's sources the mixer holds now: bumped by every `clear`.
     pub fn generation(&self) -> u64 {
         self.generation.load(Relaxed)
@@ -374,9 +427,11 @@ impl MixerInput {
         // twice the cap: a burst while the speakers reopen is trimmed on their side
         let (tx, rx) = rtrb::RingBuffer::new(2 * self.cap);
         let filled = Arc::new(AtomicUsize::new(0));
-        self.cmds.lock().unwrap().push(Cmd::Add {
+        self.queue().push(Cmd::Add {
             id: source.to_string(),
             ring: rx,
+            // what the speakers work on (trims, drift steps): allocated here, not in the callback
+            queue: VecDeque::with_capacity(3 * self.cap),
             filled: filled.clone(),
             gain: effective,
         });
@@ -437,7 +492,7 @@ impl MixerInput {
             .insert((owner.to_string(), kind), gain);
         let effective = self.effective(gain, kind);
         // still under the sources lock: commands reach the speakers in the order sources changed
-        let mut cmds = self.cmds.lock().unwrap();
+        let mut cmds = self.queue();
         for (id, s) in sources.iter_mut() {
             if s.owner == owner && s.kind == kind {
                 s.gain = gain;
@@ -454,7 +509,7 @@ impl MixerInput {
     pub fn set_kind_gain(&self, kind: SourceKind, gain: f32) {
         let sources = self.sources.lock().unwrap();
         self.kind_gains.lock().unwrap().insert(kind, gain);
-        let mut cmds = self.cmds.lock().unwrap();
+        let mut cmds = self.queue();
         for (id, s) in sources.iter().filter(|(_, s)| s.kind == kind) {
             cmds.push(Cmd::Gain {
                 id: id.clone(),
@@ -489,7 +544,7 @@ impl MixerInput {
             return;
         }
         if sources.remove(source).is_some() {
-            self.cmds.lock().unwrap().push(Cmd::Remove {
+            self.queue().push(Cmd::Remove {
                 id: source.to_string(),
             });
         }
@@ -501,7 +556,7 @@ impl MixerInput {
         if generation != self.generation.load(Relaxed) {
             return;
         }
-        let mut cmds = self.cmds.lock().unwrap();
+        let mut cmds = self.queue();
         sources.retain(|id, s| {
             let keep = s.owner != owner;
             if !keep {
@@ -542,7 +597,7 @@ impl MixerInput {
         if samples.finished(0) {
             return; // nothing to hear
         }
-        self.cmds.lock().unwrap().push(Cmd::Clip {
+        self.queue().push(Cmd::Clip {
             samples,
             gain,
             queued: std::time::Instant::now(),
@@ -577,7 +632,7 @@ impl MixerInput {
         let mut sources = self.sources.lock().unwrap();
         self.generation.fetch_add(1, Relaxed);
         sources.clear();
-        self.cmds.lock().unwrap().push(Cmd::Clear);
+        self.queue().push(Cmd::Clear);
         drop(sources);
         self.reap();
     }
@@ -666,6 +721,14 @@ pub struct Mixer {
     graveyard: rtrb::Producer<Dead>,
 }
 
+/// Write one mono sample to an output frame: front left and right only (channels 0 and 1); on a surround layout
+/// (5.1, 7.1: Sonar, virtual surround) the centre, LFE and rear channels stay silent.
+pub(crate) fn fill_front(frame: &mut [f32], v: f32) {
+    let front = frame.len().min(2);
+    frame[..front].fill(v);
+    frame[front..].fill(0.0);
+}
+
 /// Hand a finished clip or removed peer back to the network side to free (see [`GRAVEYARD`]);
 /// freed here only when that queue is full. A free function: the callers hold borrows of other
 /// `Mixer` fields.
@@ -718,18 +781,25 @@ impl Mixer {
     /// Apply the network side's changes (only if they're not being written right now: never
     /// wait) and move what arrived from the rings into the working queues.
     fn intake(&mut self) {
-        if let Ok(mut cmds) = self.cmds.try_lock() {
+        let cmds = match self.cmds.try_lock() {
+            Ok(cmds) => Some(cmds),
+            // a panic on the network side mid-push: the queue is plain commands, carry on with it
+            Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        };
+        if let Some(mut cmds) = cmds {
             for c in cmds.drain(..) {
                 match c {
                     Cmd::Add {
                         id,
                         ring,
+                        queue,
                         filled,
                         gain,
                     } => {
                         let p = Peer {
                             ring,
-                            queue: VecDeque::with_capacity(3 * self.cap),
+                            queue,
                             filled,
                             low: usize::MAX,
                             gain,
@@ -768,8 +838,12 @@ impl Mixer {
                             gain,
                             stop,
                         };
-                        if self.clips.len() < MAX_CLIPS {
-                            let waited = queued.elapsed().as_micros();
+                        let waited = queued.elapsed();
+                        if waited > CLIP_STALE {
+                            // waited for the speakers too long (none open, a long stall): not played late
+                            bury(&mut self.graveyard, Dead::Clip(clip));
+                        } else if self.clips.len() < MAX_CLIPS {
+                            let waited = waited.as_micros();
                             self.clip_start_us
                                 .store(u64::try_from(waited).unwrap_or(u64::MAX - 1), Relaxed);
                             self.clips.push(clip);
@@ -862,7 +936,7 @@ impl Mixer {
                     c.pos += 1;
                 }
             }
-            frame.fill(soft_limit(acc * master));
+            fill_front(frame, soft_limit(acc * master));
         }
         // Not dropped here: when the decode cache has evicted it (or it was a preview, never
         // cached), this is the sound's last clone, and freeing ~1 MB in the callback can glitch.
@@ -2090,5 +2164,109 @@ mod tests {
         let per_window = input.take_adjusted_samples() / (35 * 4);
         assert!(per_window < 10, "{per_window} adjusted per window");
         assert_eq!(input.take_underrun_samples(), 0, "ran dry after start-up");
+    }
+
+    fn stale_clip() -> Cmd {
+        Cmd::Clip {
+            samples: vec![0.5f32; 480].into(),
+            gain: 1.0,
+            queued: std::time::Instant::now() - CLIP_STALE - std::time::Duration::from_millis(10),
+            stop: None,
+        }
+    }
+
+    /// Review 4: a sound that waited over a second for the speakers (none open) isn't played when they come back.
+    #[test]
+    fn a_clip_that_waited_too_long_for_the_speakers_is_dropped() {
+        let (input, mut m) = mixer(48_000, 200);
+        input.cmds.lock().unwrap().push(stale_clip());
+        input.play_clip(vec![0.25; 480].into(), 1.0);
+        let mut out = vec![0.0; 1];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(
+            (out[0] - 0.25).abs() < 1e-6,
+            "only the fresh one plays: {}",
+            out[0]
+        );
+        assert_eq!(input.reap(), 1, "the stale one went back to be freed");
+    }
+
+    /// Review 4: with no speakers open the command list doesn't grow for the whole call.
+    #[test]
+    fn commands_stay_bounded_while_no_speakers_pull() {
+        let (input, _m) = mixer(48_000, 200);
+        let g = input.generation();
+        for i in 0..500 {
+            input.add_source(g, "a", "alex", Voice);
+            input.set_gain("alex", Voice, (i % 100) as f32 / 100.0);
+            input.remove_source(g, "a");
+            input.play_clip(vec![0.1; 10].into(), 1.0);
+        }
+        let n = input.cmds.lock().unwrap().len();
+        assert!(n <= COMPACT_AT + MAX_CLIPS + 4, "{n} commands queued");
+    }
+
+    #[test]
+    fn compact_keeps_what_still_matters_in_order() {
+        let (input, _m) = mixer(48_000, 200);
+        let g = input.generation();
+        input.add_source(g, "old", "kim", Voice);
+        input.clear();
+        let g = input.generation();
+        input.add_source(g, "a", "alex", Voice);
+        input.set_gain("alex", Voice, 0.5);
+        input.set_gain("alex", Voice, 0.7);
+        input.add_source(g, "b", "sam", Voice);
+        input.remove_source(g, "b");
+        input.cmds.lock().unwrap().push(stale_clip());
+        input.play_clip(vec![0.1; 10].into(), 1.0);
+        let mut cmds = std::mem::take(&mut *input.cmds.lock().unwrap());
+        compact(&mut cmds);
+        let kinds: Vec<String> = cmds
+            .iter()
+            .map(|c| match c {
+                Cmd::Clear => "clear".into(),
+                Cmd::Add { id, .. } => format!("add {id}"),
+                Cmd::Gain { id, gain } => format!("gain {id} {gain}"),
+                Cmd::Remove { id } => format!("remove {id}"),
+                Cmd::Clip { .. } => "clip".into(),
+            })
+            .collect();
+        assert_eq!(kinds, ["clear", "add a", "gain a 0.7", "remove b", "clip"]);
+    }
+
+    /// Review 5: the peer's working queue comes with the `Add`, sized on the network side.
+    #[test]
+    fn a_new_source_brings_its_queue_with_it() {
+        let (input, _m) = mixer(48_000, 200);
+        input.add_source(input.generation(), "a", "alex", Voice);
+        let cmds = input.cmds.lock().unwrap();
+        match &cmds[0] {
+            Cmd::Add { queue, .. } => assert!(queue.capacity() >= 3 * input.cap),
+            _ => panic!("expected an Add"),
+        }
+    }
+
+    /// Review 7: on a surround layout voice goes to the front pair only.
+    #[test]
+    fn surround_output_gets_voice_on_the_front_pair_only() {
+        let (_input, mut m) = mixer(48_000, 200);
+        m.clips.push(Clip {
+            samples: vec![0.5f32; 4].into(),
+            pos: 0,
+            gain: 1.0,
+            stop: None,
+        });
+        let mut out = vec![9.0f32; 12]; // two 5.1 frames
+        m.mix_into(&mut out, 6, 1.0);
+        let v = soft_limit(0.5);
+        assert_eq!(&out[..6], &[v, v, 0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(&out[6..], &[v, v, 0.0, 0.0, 0.0, 0.0]);
+        let mut stereo = [0.0f32; 2];
+        fill_front(&mut stereo, 0.3);
+        assert_eq!(stereo, [0.3, 0.3]);
+        let mut mono = [0.0f32; 1];
+        fill_front(&mut mono, 0.3);
+        assert_eq!(mono, [0.3]);
     }
 }

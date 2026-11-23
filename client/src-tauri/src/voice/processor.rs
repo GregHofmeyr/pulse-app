@@ -10,7 +10,7 @@ use livekit::webrtc::audio_source::native::NativeAudioSource;
 
 use super::backlog::GapFill;
 use super::denoise::{DeepFilter, Denoiser, FRAME, NsLevel, make_fast};
-use super::devices::{INTERNAL_RATE, NsStatus, Shared};
+use super::devices::{INTERNAL_RATE, NsStatus, ProcCfg, Shared, relock};
 use super::gate::{PREROLL_BLOCKS, VoiceGate};
 use super::micsilence;
 use super::mixer::soft_limit;
@@ -214,6 +214,11 @@ impl MicChain {
         self.denoiser.failed()
     }
 
+    /// The engine failed by not answering in time (see [`Denoiser::stalled`]), not by crashing.
+    pub fn denoiser_stalled(&self) -> bool {
+        self.denoiser.stalled()
+    }
+
     pub fn configure(&mut self, auto: bool, threshold: f32, gain: f32) {
         self.gate.configure(auto, threshold);
         self.gain = gain;
@@ -394,6 +399,8 @@ const LL_STOPPED: &str = "Strong (low delay) stopped working, using Strong";
 const STRONG_UNAVAILABLE: &str = "Strong unavailable, using Standard";
 const STRONG_TOO_HEAVY: &str = "Strong was too heavy for this PC, using Standard";
 const STRONG_STOPPED: &str = "Strong stopped working, using Standard";
+const LL_STALLED: &str = "Strong (low delay) stalled, using Strong for now";
+const STRONG_STALLED: &str = "Strong stalled, using Standard for now";
 
 /// Noise suppression's engine: what the user picked, what can run, and the model loads in between. The fallback
 /// chain is Strong (low delay) → Strong → Standard: a missing, damaged, failed or too-heavy low-delay model gives
@@ -564,9 +571,27 @@ impl NsControl {
     }
 
     /// Replace an engine that stopped working: low delay → Strong, Strong → Standard. True if it replaced one.
-    pub fn recover(&mut self, chain: &mut MicChain, shared: &Shared) -> bool {
+    ///
+    /// A worker that only stopped answering in time (a game loading, the model paged out, a resume from sleep) is
+    /// treated like an overload: the step down is temporary, and after a calm spell the level is tried again with a
+    /// fresh worker ([`Self::tick`]). Only a crashed one is given up on for the call.
+    pub fn recover(&mut self, chain: &mut MicChain, shared: &Shared, now: Instant) -> bool {
         if !chain.denoiser_failed() {
             return false;
+        }
+        if chain.denoiser_stalled() {
+            self.recovery.stepped_down(now);
+            self.busy.reset();
+            if chain.level() == NsLevel::StrongLowDelay {
+                tracing::warn!(
+                    "noise suppression: Strong (low delay) stalled, using Strong for now"
+                );
+                self.fall_back_to_strong(LL_STALLED, chain, shared);
+            } else {
+                tracing::warn!("noise suppression: Strong stalled, using Standard for now");
+                self.fall_back_to_standard(STRONG_STALLED, chain, shared);
+            }
+            return true;
         }
         self.recovery.cancel();
         if chain.level() == NsLevel::StrongLowDelay {
@@ -581,6 +606,21 @@ impl NsControl {
 }
 
 impl NsControl {
+    /// The wanted level was picked again while a fallback runs (Settings, choosing it once more): try it again now
+    /// rather than wait for the calm spell, or for good after a failure. The backoff is kept: a level that proves
+    /// too heavy again waits longer before the next automatic try. True if it tried.
+    pub fn retry(&mut self, chain: &mut MicChain, shared: &Shared) -> bool {
+        let wanted = self.switcher.wanted();
+        if self.switcher.target() == wanted {
+            return false;
+        }
+        tracing::info!(level = ?wanted, "noise suppression: picked again, trying it again");
+        self.recovery.cancel();
+        self.busy.reset();
+        self.aim(wanted, chain, shared);
+        true
+    }
+
     /// A block took `took` at `now`, whatever ran: while a step up is pending, a busy stretch restarts the calm.
     pub fn block_time(&mut self, took: Duration, now: Instant) {
         if self.recovery.pending() && self.busy.record(took) {
@@ -640,8 +680,11 @@ const STRONG_WEDGED: Duration = Duration::from_millis(100);
 pub struct StrongWorker {
     tx: std_mpsc::Sender<Vec<f32>>,
     rx: std_mpsc::Receiver<(Vec<f32>, Option<f32>, Option<f32>)>,
-    /// The worker thread is gone (it panicked or was killed): audio passes through until replaced.
+    /// The worker thread is gone (it panicked or was killed) or stopped answering: audio passes through until
+    /// replaced.
     dead: bool,
+    /// It went dead by not answering within [`STRONG_WEDGED`] (it may only have been starved for a moment).
+    stalled: bool,
     /// The worker's last decision level (see `Denoiser::decision_level`).
     level: Option<f32>,
     /// The model's `gate_lead_blocks` (Strong: 2, low delay: 0).
@@ -668,6 +711,7 @@ impl Denoiser for StrongWorker {
                         wait_ms = STRONG_WEDGED.as_millis() as u64,
                         "noise suppression: the Strong worker stopped answering; passing audio through"
                     );
+                    self.stalled = true;
                 }
                 self.dead = true;
                 self.level = None;
@@ -678,6 +722,10 @@ impl Denoiser for StrongWorker {
 
     fn failed(&self) -> bool {
         self.dead
+    }
+
+    fn stalled(&self) -> bool {
+        self.stalled
     }
 
     fn gate_lead_blocks(&self) -> usize {
@@ -725,6 +773,7 @@ pub fn start_strong(
                     tx: in_tx,
                     rx: out_rx,
                     dead: false,
+                    stalled: false,
                     level: None,
                     lead: df.gate_lead_blocks(),
                 };
@@ -795,12 +844,7 @@ const GAP_CHECK: Duration = Duration::from_millis(10);
 /// is dropped, and the gap clock restarts so a new room doesn't get a burst of "missed" silence.
 fn deliver(shared: &Shared, gap: &mut GapFill, frame: &[i16]) {
     let now = Instant::now();
-    let sent = shared
-        .mic_sink
-        .lock()
-        .unwrap()
-        .as_mut()
-        .map(|s| s.send(frame));
+    let sent = relock(&shared.mic_sink).as_mut().map(|s| s.send(frame));
     match sent {
         Some(false) => {
             shared
@@ -816,7 +860,7 @@ fn deliver(shared: &Shared, gap: &mut GapFill, frame: &[i16]) {
 /// continuous with silent frames, or listeners' jitter buffers grow to cover the hole.
 fn fill_gap(shared: &Shared, gap: &mut GapFill, silence: &[i16]) {
     let now = Instant::now();
-    let mut sink = shared.mic_sink.lock().unwrap();
+    let mut sink = relock(&shared.mic_sink);
     let Some(s) = sink.as_mut() else {
         gap.sent(now);
         return;
@@ -835,26 +879,70 @@ fn fill_gap(shared: &Shared, gap: &mut GapFill, silence: &[i16]) {
 }
 
 /// Start the mic processor. It runs until every returned sender is dropped; its frames go to
-/// `shared`'s mic sink (set per room).
+/// `shared`'s mic sink (set per room). The thread ends early only if it crashed more than
+/// [`PROCESSOR_RESTARTS`] times: the pipeline's watchdog watches the handle for that.
 pub fn spawn(shared: Arc<Shared>) -> (RawTx, std::thread::JoinHandle<()>) {
     let (tx, rx) = std_mpsc::channel::<RawBlock>();
     let h = std::thread::Builder::new()
         .name("pulse-mic".into())
         .spawn(move || {
             let _rt = super::rtprio::promote("pulse-mic");
-            run(shared, rx)
+            supervise(&shared, &rx, run);
         })
         .expect("spawn mic processor");
     (tx, h)
+}
+
+/// How many times a crashed mic processor starts again (fresh state, same input) before it's given up on.
+pub const PROCESSOR_RESTARTS: u32 = 3;
+
+/// Run `body` on `rx`; a panic in it (a model, the APM, a sink) starts it again with fresh state instead of leaving
+/// the mic silent for the rest of the call, up to [`PROCESSOR_RESTARTS`] times. Locks it held are taken
+/// poison-tolerantly ([`relock`]), so the restart (and the speakers) carry on. Returns whether it gave up; otherwise
+/// `body` returned (the devices closed for good).
+fn supervise<F>(shared: &Arc<Shared>, rx: &std_mpsc::Receiver<RawBlock>, body: F) -> bool
+where
+    F: Fn(Arc<Shared>, &std_mpsc::Receiver<RawBlock>),
+{
+    let mut crashes = 0;
+    loop {
+        let run =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(shared.clone(), rx)));
+        if run.is_ok() {
+            return false;
+        }
+        crashes += 1;
+        if crashes > PROCESSOR_RESTARTS {
+            tracing::error!(
+                crashes,
+                "voice: the mic processor keeps crashing; giving up on the mic"
+            );
+            return true;
+        }
+        tracing::error!(
+            crashes,
+            "voice: the mic processor crashed; starting it again"
+        );
+    }
+}
+
+/// Settings were applied with the same noise suppression level and nothing else the processor uses changed: the
+/// level was picked again (or only a device or echo setting changed), which retries a level that has fallen back.
+/// A gain or sensitivity change alone doesn't.
+fn picked_again(last: &ProcCfg, now: &ProcCfg) -> bool {
+    now.level == last.level
+        && now.auto == last.auto
+        && now.threshold == last.threshold
+        && now.gain == last.gain
 }
 
 fn to_i16(v: f32) -> i16 {
     (v * 32767.0).round().clamp(-32768.0, 32767.0) as i16
 }
 
-fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
-    let cfg = shared.proc_cfg.lock().unwrap().clone();
-    let mut version = cfg.version;
+fn run(shared: Arc<Shared>, rx: &std_mpsc::Receiver<RawBlock>) {
+    let cfg = relock(&shared.proc_cfg).clone();
+    let mut last = cfg.clone();
     // Standard runs until a DeepFilterNet model has loaded (`chain.level()` is always what really runs).
     let mut chain = MicChain::new(NsLevel::Off, cfg.auto, cfg.threshold, cfg.gain);
     let mut ns = NsControl::new(cfg.level, shared.low_delay_model());
@@ -887,14 +975,16 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
         shared.mic_queue.record(queue.len() as u32 * 10);
 
         // live config
-        let cfg = shared.proc_cfg.lock().unwrap().clone();
-        if cfg.version != version {
-            version = cfg.version;
+        let cfg = relock(&shared.proc_cfg).clone();
+        if cfg.version != last.version {
             chain.configure(cfg.auto, cfg.threshold, cfg.gain);
             if cfg.level != ns.switcher().wanted() {
                 ns.choose(cfg.level, &mut chain, &shared);
                 overload.reset();
+            } else if picked_again(&last, &cfg) && ns.retry(&mut chain, &shared) {
+                overload.reset();
             }
+            last = cfg;
         }
         // the low-delay model finished downloading; a finished model load; back up after a calm spell (#354)
         ns.check_models(&chain, &shared);
@@ -930,11 +1020,7 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
                 *d = to_i16(*v);
             }
             let apm_started = Instant::now();
-            let r = shared
-                .apm
-                .lock()
-                .unwrap()
-                .process_stream(&mut i16buf, INTERNAL_RATE as i32, 1);
+            let r = relock(&shared.apm).process_stream(&mut i16buf, INTERNAL_RATE as i32, 1);
             shared.stats.apm.record(apm_started.elapsed());
             shared.warn_apm_once(r, "capture");
             for (d, v) in block.iter_mut().zip(&i16buf) {
@@ -945,7 +1031,7 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
             let echo_free_rms = mutedtalk::rms(&block);
 
             let (mic_open, denoise, muted_talk, muted_cue) = {
-                let c = shared.controls.lock().unwrap();
+                let c = relock(&shared.controls);
                 (
                     c.mic_open(),
                     c.denoise_needed(),
@@ -953,22 +1039,11 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
                     c.cues_muted_talk(),
                 )
             };
-            shared
-                .mic_silence
-                .lock()
-                .unwrap()
-                .block(raw_peak, mic_open, Instant::now());
-            shared
-                .muted_talk
-                .lock()
-                .unwrap()
+            relock(&shared.mic_silence).block(raw_peak, mic_open, Instant::now());
+            relock(&shared.muted_talk)
                 // your own mute only: server-muted time is never "talking while muted" (#140)
                 .block(echo_free_rms, muted_talk, Instant::now());
-            shared
-                .muted_cue
-                .lock()
-                .unwrap()
-                .block(echo_free_rms, muted_cue, Instant::now());
+            relock(&shared.muted_cue).block(echo_free_rms, muted_cue, Instant::now());
             if !denoise {
                 // Muted, no meter on screen: skip the denoiser (Strong is most of a call's CPU).
                 // APM above keeps running, so echo cancellation is still converged on unmute.
@@ -999,7 +1074,7 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
                 ns.overloaded(&mut chain, &shared, t);
                 overload.reset();
             }
-            if ns.recover(&mut chain, &shared) {
+            if ns.recover(&mut chain, &shared, Instant::now()) {
                 overload.reset();
             }
             shared.add_mic_level(out.level, out.sent);
@@ -1707,12 +1782,14 @@ mod tests {
             tx,
             rx,
             dead: false,
+            stalled: false,
             level: None,
             lead: 2,
         };
         let mut b = vec![0.3f32; FRAME];
         w.process(&mut b);
         assert!(w.failed());
+        assert!(!w.stalled(), "a gone worker is a crash, not a stall");
         assert_eq!(b, vec![0.3f32; FRAME], "audio passes through untouched");
     }
 
@@ -1726,6 +1803,7 @@ mod tests {
             tx,
             rx,
             dead: false,
+            stalled: false,
             level: Some(0.5),
             lead: 2,
         };
@@ -1738,6 +1816,10 @@ mod tests {
             "{waited:?}"
         );
         assert!(w.failed());
+        assert!(
+            w.stalled(),
+            "a timeout is a stall, worth trying again later"
+        );
         assert_eq!(w.decision_level(), None);
         assert_eq!(b, vec![0.3f32; FRAME], "audio passes through untouched");
         // from then on it passes straight through, no waiting
@@ -1757,6 +1839,7 @@ mod tests {
             tx,
             rx,
             dead: false,
+            stalled: false,
             level: Some(0.5), // loud speech, just before it died
             lead: 2,
         };
@@ -2122,7 +2205,7 @@ mod tests {
         // the standard engine then stops working too: recovered, and nothing pending
         c.set_denoiser(NsLevel::Standard, Box::new(Dead));
         ns.switcher.fall_back(NsLevel::Standard, STRONG_TOO_HEAVY);
-        assert!(ns.recover(&mut c, &sh));
+        assert!(ns.recover(&mut c, &sh, Instant::now()));
         assert!(!ns.tick(t0 + 600 * MIN, &mut c, &sh));
     }
 
@@ -2133,11 +2216,14 @@ mod tests {
         let mut c = off_chain();
         ns.switcher.request(NsLevel::StrongLowDelay);
         c.set_denoiser(NsLevel::StrongLowDelay, Box::new(Dead));
-        assert!(ns.recover(&mut c, &sh));
+        assert!(ns.recover(&mut c, &sh, Instant::now()));
         assert_eq!(status(&sh), (NsLevel::Standard, Some(LL_STOPPED.into())));
         settle(&mut ns, &mut c, &sh);
         assert_eq!(c.level(), NsLevel::Strong);
-        assert!(!ns.recover(&mut c, &sh), "Strong is healthy");
+        assert!(
+            !ns.recover(&mut c, &sh, Instant::now()),
+            "Strong is healthy"
+        );
     }
 
     /// Changing level while low delay loads: that load is dropped, not installed.
@@ -2169,5 +2255,187 @@ mod tests {
         assert_eq!(c.level(), NsLevel::StrongLowDelay);
         settle(&mut ns, &mut c, &sh);
         assert_eq!(c.level(), NsLevel::Strong);
+    }
+
+    struct Stalled;
+    impl Denoiser for Stalled {
+        fn process(&mut self, _block: &mut [f32]) -> Option<f32> {
+            None
+        }
+        fn failed(&self) -> bool {
+            true
+        }
+        fn stalled(&self) -> bool {
+            true
+        }
+    }
+
+    /// Review 1: a brief Strong stall steps down like an overload, not for good: after a calm spell Strong is tried
+    /// again, on a fresh worker.
+    #[test]
+    fn a_strong_stall_steps_down_for_now_and_back_up_after_a_calm_spell() {
+        let sh = shared_with(AudioConfig::default());
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        let mut c = off_chain();
+        let t0 = Instant::now();
+        ns.switcher.request(NsLevel::Strong);
+        c.set_denoiser(NsLevel::Strong, Box::new(Stalled));
+        assert!(ns.recover(&mut c, &sh, t0));
+        assert_eq!(c.level(), NsLevel::Standard);
+        assert_eq!(
+            status(&sh),
+            (NsLevel::Standard, Some(STRONG_STALLED.into()))
+        );
+        assert!(ns.recovery.pending(), "a step up is pending");
+        assert!(!ns.recover(&mut c, &sh, t0), "Standard is healthy");
+
+        assert!(!ns.tick(t0 + 4 * MIN, &mut c, &sh));
+        assert!(ns.tick(t0 + 5 * MIN, &mut c, &sh), "steps back up");
+        assert_eq!(ns.switcher().target(), NsLevel::Strong);
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong, "a fresh Strong worker runs");
+        assert!(!c.denoiser_failed());
+        assert_eq!(status(&sh).1, None, "the note goes");
+    }
+
+    /// A low-delay stall: Strong for now (a fresh worker), and low delay again after the calm spell.
+    #[test]
+    fn a_low_delay_stall_falls_back_to_strong_for_now() {
+        let sh = shared_with(AudioConfig::default());
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        let mut c = off_chain();
+        let t0 = Instant::now();
+        ns.switcher.request(NsLevel::StrongLowDelay);
+        c.set_denoiser(NsLevel::StrongLowDelay, Box::new(Stalled));
+        assert!(ns.recover(&mut c, &sh, t0));
+        assert_eq!(status(&sh), (NsLevel::Standard, Some(LL_STALLED.into())));
+        assert!(ns.recovery.pending());
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong);
+    }
+
+    /// A crash (not a stall) is still given up on for the call: nothing pending.
+    #[test]
+    fn a_crashed_strong_is_not_retried_by_itself() {
+        let sh = shared_with(AudioConfig::default());
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        let mut c = off_chain();
+        let t0 = Instant::now();
+        ns.switcher.request(NsLevel::Strong);
+        c.set_denoiser(NsLevel::Strong, Box::new(Dead));
+        assert!(ns.recover(&mut c, &sh, t0));
+        assert_eq!(
+            status(&sh),
+            (NsLevel::Standard, Some(STRONG_STOPPED.into()))
+        );
+        assert!(!ns.recovery.pending());
+        assert!(!ns.tick(t0 + 600 * MIN, &mut c, &sh));
+    }
+
+    /// Review 1: picking Strong again in Settings while it has fallen back tries it now (it used to do nothing, since
+    /// Strong was still the wanted level).
+    #[test]
+    fn picking_the_wanted_level_again_retries_it() {
+        let sh = shared_with(AudioConfig::default());
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        let mut c = off_chain();
+        assert!(!ns.retry(&mut c, &sh), "nothing has fallen back");
+        ns.switcher.request(NsLevel::Strong);
+        c.set_denoiser(NsLevel::Strong, Box::new(Dead));
+        assert!(ns.recover(&mut c, &sh, Instant::now()));
+        sh.take_ns_status_change();
+        assert!(ns.retry(&mut c, &sh));
+        assert_eq!(ns.switcher().target(), NsLevel::Strong);
+        assert_eq!(ns.switcher().note(), None);
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong);
+        assert!(!ns.retry(&mut c, &sh), "Strong runs: nothing to retry");
+    }
+
+    /// A retry after a too-heavy step down keeps the backoff: proving too heavy again waits twice as long.
+    #[test]
+    fn a_retry_keeps_the_backoff() {
+        let sh = shared_with(AudioConfig::default());
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        let mut c = off_chain();
+        let t0 = Instant::now();
+        ns.switcher.request(NsLevel::Strong);
+        c.set_denoiser(NsLevel::Strong, Box::new(Halve));
+        ns.overloaded(&mut c, &sh, t0);
+        assert!(ns.retry(&mut c, &sh));
+        assert!(!ns.recovery.pending(), "the pending step up is spent");
+        c.set_denoiser(NsLevel::Strong, Box::new(Halve));
+        ns.overloaded(&mut c, &sh, t0);
+        assert!(!ns.tick(t0 + 9 * MIN, &mut c, &sh));
+        assert!(ns.tick(t0 + 10 * MIN, &mut c, &sh));
+    }
+
+    fn proc_cfg(level: NsLevel, gain: f32, version: u64) -> ProcCfg {
+        ProcCfg {
+            level,
+            auto: true,
+            threshold: 0.02,
+            gain,
+            version,
+        }
+    }
+
+    #[test]
+    fn the_same_settings_again_count_as_picking_the_level_again_but_a_gain_change_does_not() {
+        let last = proc_cfg(NsLevel::Strong, 1.0, 1);
+        assert!(picked_again(&last, &proc_cfg(NsLevel::Strong, 1.0, 2)));
+        assert!(!picked_again(&last, &proc_cfg(NsLevel::Strong, 1.5, 2)));
+        assert!(!picked_again(&last, &proc_cfg(NsLevel::Standard, 1.0, 2)));
+    }
+
+    /// Review 3: a panic in the processor starts it again on the same input (the mic carries on), up to a limit.
+    #[test]
+    fn a_crashing_processor_restarts_then_gives_up() {
+        let shared = off();
+        let (tx, rx) = std_mpsc::channel::<RawBlock>();
+        let runs = std::cell::Cell::new(0u32);
+        // crashes twice, then runs until its input closes
+        drop(tx);
+        let gave_up = supervise(&shared, &rx, |_, rx| {
+            runs.set(runs.get() + 1);
+            if runs.get() <= 2 {
+                panic!("test: processor crash");
+            }
+            while rx.recv().is_ok() {}
+        });
+        assert!(!gave_up);
+        assert_eq!(runs.get(), 3);
+
+        runs.set(0);
+        let gave_up = supervise(&shared, &rx, |_, _| {
+            runs.set(runs.get() + 1);
+            panic!("test: processor crash");
+        });
+        assert!(gave_up);
+        assert_eq!(runs.get(), PROCESSOR_RESTARTS + 1);
+    }
+
+    /// Review 3: a panic while holding a lock the speakers and the next processor run take doesn't poison them.
+    #[test]
+    fn a_crash_holding_the_echo_lock_does_not_take_the_next_run_down() {
+        let shared = off();
+        let seen = collecting(&shared);
+        let (tx, rx) = std_mpsc::channel::<RawBlock>();
+        let poison = shared.clone();
+        let _ = std::thread::spawn(move || {
+            let _held = poison.apm.lock().unwrap();
+            let _echo = poison.mic_silence.lock().unwrap();
+            panic!("test: crash holding the processor's locks");
+        })
+        .join();
+        assert!(shared.apm.is_poisoned());
+        let h = std::thread::spawn(move || run(shared, &rx));
+        for _ in 0..5 {
+            tx.send((48_000, vec![0.01; FRAME], Instant::now()))
+                .unwrap();
+        }
+        assert!(wait_frames(&seen, 5) >= 5, "frames still go out");
+        drop(tx);
+        h.join().expect("the processor ran on");
     }
 }

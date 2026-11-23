@@ -36,7 +36,7 @@
   // #352: why the last call ended by itself; "X disconnected you" already says it when that's why
   const ended = $derived(voice.ended && !kicked && !voice.channelId && !voice.joining ? voice.ended : null)
   // #351: in the call without a working mic or speakers
-  const micTip = $derived(voice.channelId ? noMicTip(voice.deviceGaps.input, voice.micError) : null)
+  const micTip = $derived(voice.channelId ? noMicTip(voice.deviceGaps.input, voice.micError, voice.micRetrying) : null)
   const soundTip = $derived(voice.channelId ? noSoundTip(voice.deviceGaps.output) : null)
   let open = $state(false)
   let trigger = $state<HTMLButtonElement>()
