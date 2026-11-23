@@ -87,7 +87,8 @@ log = "0.4"
 # paused-clock tests (`#[tokio::test(start_paused = true)]`)
 tokio = { workspace = true, features = ["test-util"] }
 pulse-server = { path = "../../server", features = ["testing"] }
-# tests/voice_it.rs asks LiveKit itself who is in a room (the server's version)
+# tests/voice_it.rs asks LiveKit itself who is in a room. Stays on 0.9.1 (livekit-protocol 0.8) to match the
+# vendored livekit 0.9.7, whose ParticipantPermission server_mute_it.rs builds; the server is on 0.11. Move with livekit.
 livekit-api = { version = "0.9.1", default-features = false, features = ["access-token", "services"] }
 # tests compute the codes a phone would show (same version/features as the server)
 totp-rs = { version = "6", default-features = false, features = ["std"] }
