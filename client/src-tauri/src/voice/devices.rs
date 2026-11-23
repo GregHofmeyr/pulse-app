@@ -91,13 +91,6 @@ impl Default for AudioConfig {
     }
 }
 
-/// Played audio (mono i16 at the output device rate) on its way to the echo canceller.
-#[derive(Default)]
-struct EchoRef {
-    rate: u32,
-    samples: std::collections::VecDeque<i16>,
-}
-
 /// What the mic processor should run; `version` bumps on every change.
 #[derive(Clone, Debug)]
 pub struct ProcCfg {
@@ -378,7 +371,9 @@ pub struct Shared {
     /// What the mic processor should run (it polls `version`).
     pub proc_cfg: Mutex<ProcCfg>,
     /// What the speakers played, waiting for the processor to feed the echo canceller.
-    echo_ref: Mutex<EchoRef>,
+    echo_ref: super::rings::EchoTap,
+    /// The processor's buffer for draining `echo_ref` (reused, not allocated per block).
+    echo_buf: Mutex<Vec<i16>>,
     ns_status: Mutex<(Option<NsStatus>, bool)>, // (current, changed since last take)
     /// Whether the last processed block was sent (the gate indicator in Settings).
     pub gate_open: std::sync::atomic::AtomicBool,
@@ -454,7 +449,8 @@ impl Shared {
             mic_silence: Mutex::default(),
             muted_talk: Mutex::default(),
             muted_cue: Mutex::default(),
-            echo_ref: Mutex::new(EchoRef::default()),
+            echo_ref: Default::default(),
+            echo_buf: Mutex::new(Vec::with_capacity(9_600)),
             gate_open: Default::default(),
             watchdog: Watchdog::new(Instant::now()),
             apm_warned: Default::default(),
@@ -518,8 +514,8 @@ impl Shared {
         for v in downmix(data, channels) {
             pending.push(v);
             if pending.len() == chunk {
-                let block = std::mem::replace(pending, Vec::with_capacity(chunk));
-                let _ = raw_tx.send((rate, block, Instant::now()));
+                // lock- and allocation-free: a recycled buffer takes the full one's place (#353)
+                raw_tx.hand_over(rate, pending, Instant::now());
             }
         }
     }
@@ -578,35 +574,27 @@ impl Shared {
                 self.mix_busy.fetch_add(1, Ordering::Relaxed);
             }
         }
-        // Hand what we played to the echo canceller via a queue the mic processor drains: never
-        // take the APM lock here (this callback is real-time; the processor can hold it for ms).
-        // The meter is cosmetic: skip it rather than wait for the levels task.
+        // Hand what we played to the echo canceller via a lock-free ring the mic processor drains
+        // (#353): never take the APM lock, or wait on the processor, here (this callback is
+        // real-time; the processor can hold its locks for ms). The meter is cosmetic: skip it
+        // rather than wait for the levels task.
         let mut meter = self.spk_meter.try_lock().ok();
-        let mut echo = relock(&self.echo_ref);
-        if echo.rate != rate {
-            echo.rate = rate;
-            echo.samples.clear();
-        }
+        let mut echo = self.echo_ref.writer(rate);
         for v in front_mono(out, channels) {
             if let Some(m) = meter.as_mut() {
                 m.add(v);
             }
-            echo.samples.push_back(to_i16(v));
+            if let Some(e) = echo.as_mut() {
+                e.push(to_i16(v));
+            }
         }
-        let cap = (rate / 5) as usize; // 200 ms: bounded even if nothing drains it
-        let excess = echo.samples.len().saturating_sub(cap);
-        echo.samples.drain(..excess);
     }
 
     /// Feed the echo canceller everything played since the last call (whole 10 ms chunks). Called
     /// by the mic processor before each capture block, so render and capture stay in order.
     pub(crate) fn feed_echo_reference(&self) {
-        let (rate, mut played) = {
-            let mut echo = relock(&self.echo_ref);
-            let chunk = (echo.rate / 100).max(1) as usize;
-            let whole = echo.samples.len() / chunk * chunk;
-            (echo.rate, echo.samples.drain(..whole).collect::<Vec<i16>>())
-        };
+        let mut played = relock(&self.echo_buf);
+        let rate = self.echo_ref.drain_into(&mut played);
         if played.is_empty() {
             return;
         }
@@ -862,7 +850,7 @@ fn open_half(
             let (rate, ch) = (cfg.sample_rate(), cfg.channels() as usize);
             let decides = shared.clone();
             let stream = if input {
-                let mut pending: Vec<f32> = Vec::new();
+                let mut pending: Vec<f32> = Vec::with_capacity((rate / 100) as usize);
                 build_input(&dev, &cfg, move |d: &[f32], latency| {
                     if let Some(l) = latency {
                         shared.stats.in_latency_ms.record(l.as_millis() as u64);
@@ -1541,7 +1529,8 @@ impl AudioIo {
                 tick.tick().await;
                 sh.watchdog.input_tick(Instant::now());
                 sh.on_output(&mut out, 1, rate, &mut mixbuf, &mut playout);
-                let _ = tx.send((rate, vec![0f32; chunk], Instant::now()));
+                let mut block = vec![0f32; chunk];
+                tx.hand_over(rate, &mut block, Instant::now());
             }
         });
         Self {
@@ -1717,7 +1706,7 @@ mod tests {
         s.on_output(&mut out, 1, 48_000, &mut Vec::new(), &mut playout);
         s.feed_echo_reference();
         assert_eq!(
-            s.echo_ref.lock().unwrap().samples.len(),
+            s.echo_ref.queued(),
             240,
             "2 chunks fed, 5 ms waits for more"
         );
@@ -1726,8 +1715,10 @@ mod tests {
     #[test]
     fn echo_reference_queue_is_capped_at_200ms() {
         let s = Shared::new(&AudioConfig::default(), Default::default(), 200);
-        play(&s, 1000); // nothing drains it (processor stopped)
-        assert_eq!(s.echo_ref.lock().unwrap().samples.len(), 9600);
+        play(&s, 400); // nothing drains it (processor stopped)
+        let mut out = Vec::new();
+        s.echo_ref.drain_into(&mut out);
+        assert_eq!(out.len(), 9600);
     }
 
     #[test]
@@ -2537,7 +2528,7 @@ mod tests {
     #[test]
     fn close_waits_until_the_streams_are_really_gone() {
         let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
+        let (raw_tx, _raw_rx) = super::super::rings::raw_queue();
         let shared = Shared::new(&AudioConfig::default(), Default::default(), 200);
         let io = AudioIo::slow_to_close(shared, raw_tx, Duration::from_millis(200), gone.clone());
         io.close();
@@ -2566,7 +2557,7 @@ mod tests {
     /// open on their own and the mic's side says why it's missing.
     #[test]
     fn a_start_without_a_mic_keeps_the_speakers() {
-        let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
+        let (raw_tx, _raw_rx) = super::super::rings::raw_queue();
         let shared = Shared::new(&AudioConfig::default(), Default::default(), 200);
         let io = AudioIo::from_halves(
             Err(anyhow!("audio input: no input device")),
@@ -2591,7 +2582,7 @@ mod tests {
     /// #351: and the mirror image: speakers that won't open still join with the mic.
     #[test]
     fn a_start_without_speakers_keeps_the_mic() {
-        let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
+        let (raw_tx, _raw_rx) = super::super::rings::raw_queue();
         let shared = Shared::new(&AudioConfig::default(), Default::default(), 200);
         let io = AudioIo::from_halves(
             Ok(opened_half("Headset mic")),
@@ -2608,7 +2599,7 @@ mod tests {
     /// Test audio (no devices at all) is never "missing" anything.
     #[tokio::test]
     async fn null_audio_has_no_gaps() {
-        let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
+        let (raw_tx, _raw_rx) = super::super::rings::raw_queue();
         let shared = Shared::new(&AudioConfig::default(), Default::default(), 200);
         let io = AudioIo::start_null(48_000, shared, raw_tx);
         assert_eq!(io.gaps(), DeviceGaps::default());

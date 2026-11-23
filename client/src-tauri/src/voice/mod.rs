@@ -20,6 +20,7 @@ pub mod playout;
 pub mod processor;
 pub mod rejoin;
 pub mod resampler;
+pub mod rings;
 pub mod rtprio;
 pub mod rx;
 pub mod speaking;
@@ -4445,7 +4446,7 @@ mod tests {
     fn idle_reopener() -> Arc<Reopener> {
         let cfg = AudioConfig::default();
         let shared = Shared::new(&cfg, Default::default(), PEER_BUFFER_MS);
-        let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
+        let (raw_tx, _raw_rx) = rings::raw_queue();
         Arc::new(Reopener {
             cfg: Arc::new(Mutex::new(cfg)),
             io: Arc::new(Mutex::new(None)),

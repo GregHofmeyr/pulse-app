@@ -303,20 +303,23 @@ impl MicChain {
     }
 }
 
-/// (device rate, 10 ms of mono samples, when the device handed it over).
-pub type RawBlock = (u32, Vec<f32>, Instant);
-pub type RawTx = std_mpsc::Sender<RawBlock>;
+pub use super::rings::{RawBlock, RawRx, RawTx};
 
 /// Audio that has waited longer than this is dropped so latency never grows. Measured by age, not
 /// count: a device with big buffers hands over many blocks at once, which isn't lag.
 const MAX_LAG: Duration = Duration::from_millis(60);
 
-pub fn trim_backlog(q: &mut VecDeque<RawBlock>, now: Instant) -> usize {
+/// Drops the stale blocks (each handed to `gone`, so its buffer can go back to the mic callback).
+pub fn trim_backlog(
+    q: &mut VecDeque<RawBlock>,
+    now: Instant,
+    mut gone: impl FnMut(RawBlock),
+) -> usize {
     let stale = q
         .iter()
         .take_while(|(_, _, at)| now.saturating_duration_since(*at) > MAX_LAG)
         .count();
-    q.drain(..stale);
+    q.drain(..stale).for_each(&mut gone);
     stale
 }
 
@@ -882,12 +885,12 @@ fn fill_gap(shared: &Shared, gap: &mut GapFill, silence: &[i16]) {
 /// `shared`'s mic sink (set per room). The thread ends early only if it crashed more than
 /// [`PROCESSOR_RESTARTS`] times: the pipeline's watchdog watches the handle for that.
 pub fn spawn(shared: Arc<Shared>) -> (RawTx, std::thread::JoinHandle<()>) {
-    let (tx, rx) = std_mpsc::channel::<RawBlock>();
+    let (tx, mut rx) = super::rings::raw_queue();
     let h = std::thread::Builder::new()
         .name("pulse-mic".into())
         .spawn(move || {
             let _rt = super::rtprio::promote("pulse-mic");
-            supervise(&shared, &rx, run);
+            supervise(&shared, &mut rx, run);
         })
         .expect("spawn mic processor");
     (tx, h)
@@ -900,14 +903,15 @@ pub const PROCESSOR_RESTARTS: u32 = 3;
 /// the mic silent for the rest of the call, up to [`PROCESSOR_RESTARTS`] times. Locks it held are taken
 /// poison-tolerantly ([`relock`]), so the restart (and the speakers) carry on. Returns whether it gave up; otherwise
 /// `body` returned (the devices closed for good).
-fn supervise<F>(shared: &Arc<Shared>, rx: &std_mpsc::Receiver<RawBlock>, body: F) -> bool
+fn supervise<F>(shared: &Arc<Shared>, rx: &mut RawRx, body: F) -> bool
 where
-    F: Fn(Arc<Shared>, &std_mpsc::Receiver<RawBlock>),
+    F: Fn(Arc<Shared>, &mut RawRx),
 {
     let mut crashes = 0;
     loop {
-        let run =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(shared.clone(), rx)));
+        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            body(shared.clone(), &mut *rx)
+        }));
         if run.is_ok() {
             return false;
         }
@@ -940,7 +944,7 @@ fn to_i16(v: f32) -> i16 {
     (v * 32767.0).round().clamp(-32768.0, 32767.0) as i16
 }
 
-fn run(shared: Arc<Shared>, rx: &std_mpsc::Receiver<RawBlock>) {
+fn run(shared: Arc<Shared>, rx: &mut RawRx) {
     let cfg = relock(&shared.proc_cfg).clone();
     let mut last = cfg.clone();
     // Standard runs until a DeepFilterNet model has loaded (`chain.level()` is always what really runs).
@@ -965,12 +969,16 @@ fn run(shared: Arc<Shared>, rx: &std_mpsc::Receiver<RawBlock>) {
             Err(std_mpsc::RecvTimeoutError::Disconnected) => return, // devices closed for good
         };
         queue.push_back(first);
-        queue.extend(rx.try_iter());
-        let late = trim_backlog(&mut queue, Instant::now());
+        while let Some(b) = rx.try_recv() {
+            queue.push_back(b);
+        }
+        let late = trim_backlog(&mut queue, Instant::now(), |(_, b, _)| rx.recycle(b));
+        // blocks the mic callback couldn't hand over (ring full while we were stuck) are lost audio too
+        let lost = late as u64 + rx.take_dropped();
         shared
             .stats
             .lag_drops
-            .fetch_add(late as u64, std::sync::atomic::Ordering::Relaxed);
+            .fetch_add(lost, std::sync::atomic::Ordering::Relaxed);
         // blocks waiting × 10 = ms behind (`on_input` hands over 10 ms blocks at any device rate)
         shared.mic_queue.record(queue.len() as u32 * 10);
 
@@ -1007,6 +1015,7 @@ fn run(shared: Arc<Shared>, rx: &std_mpsc::Receiver<RawBlock>) {
                     rs.push(&samples, &mut pending);
                 }
             }
+            rx.recycle(samples);
         }
 
         while pending.len() >= FRAME {
@@ -1879,7 +1888,9 @@ mod tests {
             .into_iter()
             .map(|ms| (48_000, vec![0.0; 480], at(ms)))
             .collect();
-        assert_eq!(trim_backlog(&mut q, now), 3);
+        let mut back = 0;
+        assert_eq!(trim_backlog(&mut q, now, |_| back += 1), 3);
+        assert_eq!(back, 3, "each stale buffer is handed back");
         assert_eq!(q.len(), 3, "keeps everything within 60 ms");
     }
 
@@ -2392,22 +2403,22 @@ mod tests {
     #[test]
     fn a_crashing_processor_restarts_then_gives_up() {
         let shared = off();
-        let (tx, rx) = std_mpsc::channel::<RawBlock>();
+        let (tx, mut rx) = crate::voice::rings::raw_queue();
         let runs = std::cell::Cell::new(0u32);
         // crashes twice, then runs until its input closes
         drop(tx);
-        let gave_up = supervise(&shared, &rx, |_, rx| {
+        let gave_up = supervise(&shared, &mut rx, |_, rx| {
             runs.set(runs.get() + 1);
             if runs.get() <= 2 {
                 panic!("test: processor crash");
             }
-            while rx.recv().is_ok() {}
+            while rx.recv_timeout(Duration::from_secs(5)).is_ok() {}
         });
         assert!(!gave_up);
         assert_eq!(runs.get(), 3);
 
         runs.set(0);
-        let gave_up = supervise(&shared, &rx, |_, _| {
+        let gave_up = supervise(&shared, &mut rx, |_, _| {
             runs.set(runs.get() + 1);
             panic!("test: processor crash");
         });
@@ -2420,7 +2431,7 @@ mod tests {
     fn a_crash_holding_the_echo_lock_does_not_take_the_next_run_down() {
         let shared = off();
         let seen = collecting(&shared);
-        let (tx, rx) = std_mpsc::channel::<RawBlock>();
+        let (tx, mut rx) = crate::voice::rings::raw_queue();
         let poison = shared.clone();
         let _ = std::thread::spawn(move || {
             let _held = poison.apm.lock().unwrap();
@@ -2429,7 +2440,7 @@ mod tests {
         })
         .join();
         assert!(shared.apm.is_poisoned());
-        let h = std::thread::spawn(move || run(shared, &rx));
+        let h = std::thread::spawn(move || run(shared, &mut rx));
         for _ in 0..5 {
             tx.send((48_000, vec![0.01; FRAME], Instant::now()))
                 .unwrap();

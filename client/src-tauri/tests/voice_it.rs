@@ -456,7 +456,7 @@ async fn reopening_one_side_leaves_the_other_alone() {
     use pulse_client::voice::devices::{AudioIo, Shared, Sides};
     let cfg = AudioConfig::default();
     let shared = Shared::new(&cfg, Default::default(), 200);
-    let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
+    let (raw_tx, _raw_rx) = pulse_client::voice::rings::raw_queue();
     let mut io = AudioIo::start(&cfg, shared, raw_tx);
     assert_eq!(io.gaps(), Default::default(), "both sides open");
     let (mic, spk) = io.generations();
