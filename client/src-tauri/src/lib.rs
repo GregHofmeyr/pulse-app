@@ -331,9 +331,14 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 h.state::<voice::VoiceManager>().run_rejoins().await
             });
-            // #355: a call reconnects or rejoins at once when the network changes or the machine wakes
+            // #355: a call reconnects or rejoins at once when the network changes or the machine wakes. The gateway
+            // is probed too: a socket on the old path is found dead within seconds (not at the next heartbeat's
+            // deadline, ~20 s), and a reconnect waiting out its backoff tries at once.
             let h = app.handle().clone();
-            netwatch::spawn(move |_change| h.state::<voice::VoiceManager>().network_changed());
+            netwatch::spawn(move |_change| {
+                h.state::<voice::VoiceManager>().network_changed();
+                h.state::<commands::Core>().probe_gateway();
+            });
             // App updates (#82): the launch check starts now, so the page usually has the answer when it asks. On
             // Windows the installer ends the process: first clear the crash marker (an update isn't a crash) and
             // flush the log. If the installer doesn't start after all, Pulse carries on: both come back (#233).
