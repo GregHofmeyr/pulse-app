@@ -169,7 +169,7 @@ describe('VoiceSettings echo cancellation (#76)', () => {
     const radios = () => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Echo cancellation"] [role=radio]')]
     expect(radios().map((r) => r.textContent)).toEqual(['Auto', 'On', 'Off'])
     expect(radios().map((r) => r.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false'])
-    expect(document.body.textContent).toContain('Auto turns it off on headphones and headsets')
+    expect(document.body.textContent).toContain('Auto keeps it on for every output, headsets included')
     // no on/off switch for it any more
     expect(document.querySelector('button.switch[aria-label="Echo cancellation"]')).toBeNull()
     radios()[2].click()
@@ -183,15 +183,17 @@ describe('VoiceSettings echo cancellation (#76)', () => {
     document.body.innerHTML = ''
   })
 
-  it('under Auto, what Auto decided for the output, from the core (#172)', () => {
+  it('under Auto, a line only if the core reports it off (#172, #354)', () => {
     voice.echo = { mode: 'auto', running: false, output: 'headphones' }
     const c = mount(VoiceSettings, { target: document.body })
     flushSync()
     const line = () => document.querySelector('[data-echo-decision]')?.textContent?.trim() ?? null
-    expect(line()).toBe('Off for now: your output is headphones or a headset. Speakers in a headphone jack? Choose On')
-    voice.echo = { mode: 'auto', running: true, output: 'unknown' }
+    expect(line()).toBe('Off for now. Hearing echo complaints? Choose On')
+    voice.echo = { mode: 'auto', running: true, output: 'headphones' }
     flushSync()
-    expect(line()).toBe("On: your output doesn't say it's headphones")
+    expect(line(), 'on, as Auto always is now: the help text says it').toBeNull()
+    voice.echo = { mode: 'auto', running: false, output: 'headphones' }
+    flushSync()
     const radios = () => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Echo cancellation"] [role=radio]')]
     radios()[1].click()
     flushSync()
@@ -211,6 +213,30 @@ describe('VoiceSettings helper text (#163)', () => {
       expect(text).not.toContain(gone)
     for (const kept of ['INPUT GAIN', 'INPUT SENSITIVITY', 'NOISE SUPPRESSION', 'Automatically determine sensitivity']) expect(text).toContain(kept)
     expect(document.querySelector('[role=radiogroup][aria-label="Noise suppression"]')).not.toBeNull()
+    unmount(c)
+    document.body.innerHTML = ''
+  })
+})
+
+describe('VoiceSettings even out voice volumes (#355)', () => {
+  beforeEach(() => {
+    invoke.mockClear()
+    localStorage.clear()
+  })
+
+  it('on by default; turning it off applies and saves it', async () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    flushSync()
+    const sw = () => document.querySelector<HTMLButtonElement>('button.switch[aria-label="Even out voice volumes"]')!
+    expect(sw().getAttribute('aria-pressed')).toBe('true')
+    expect(document.body.textContent).toContain("Each person's own volume still applies on top")
+    sw().click()
+    flushSync()
+    await Promise.resolve()
+    expect(sw().getAttribute('aria-pressed')).toBe('false')
+    const applied = invoke.mock.calls.filter(([cmd]) => cmd === 'set_audio_config').at(-1)?.[1]
+    expect(JSON.stringify(applied)).toContain('"even_out_voices":false')
+    expect(localStorage.getItem('pulse.audio')).toContain('"even_out_voices":false')
     unmount(c)
     document.body.innerHTML = ''
   })

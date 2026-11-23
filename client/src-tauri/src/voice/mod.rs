@@ -6,12 +6,14 @@ pub mod denoise;
 pub mod devices;
 pub mod echo;
 pub mod gate;
+pub mod leveller;
 pub mod linkstats;
 pub mod meter;
 pub mod micsilence;
 pub mod mictest;
 pub mod mixer;
 pub mod mutedtalk;
+pub mod netreact;
 pub mod netstats;
 pub mod playout;
 pub mod processor;
@@ -694,6 +696,7 @@ impl Pipeline {
     async fn adopt(&self, cfg: &AudioConfig) -> Result<(), VoiceError> {
         let changed = Sides::changed(&self.cfg.lock().unwrap(), cfg);
         self.shared.apply_config(cfg);
+        self.shared.mix_in.set_level_voices(cfg.even_out_voices);
         *self.cfg.lock().unwrap() = cfg.clone();
         if changed.any() && self.real {
             let targets = (cfg.input.clone(), cfg.output.clone());
@@ -1100,6 +1103,10 @@ pub struct VoiceManager {
     /// How long LiveKit may stay "reconnecting" before we rejoin ourselves (a field so tests can
     /// shorten it).
     reconnect_give_up: Duration,
+    /// Bumped on every real network change (netwatch, #355): each call and the rejoin loop watch it.
+    net: tokio::sync::watch::Sender<u64>,
+    /// Network-change rejoins/reconnects at most once per `netreact::MIN_GAP`, across calls.
+    net_limit: Arc<netreact::Limiter>,
     /// Audio pipelines built so far (a switch reuses the one it has).
     built: AtomicU64,
     /// Link figures for the status panel (reported only while it is open).
@@ -1153,6 +1160,8 @@ impl VoiceManager {
             publish_retries: Default::default(),
             rejoin_unit: Duration::from_secs(1),
             reconnect_give_up: rejoin::RECONNECT_GIVE_UP,
+            net: tokio::sync::watch::Sender::new(0),
+            net_limit: Default::default(),
             built: Default::default(),
             link: Default::default(),
             connecting: Mutex::new(None),
@@ -1430,7 +1439,12 @@ impl VoiceManager {
         for attempt in 0..rejoin::MAX_ATTEMPTS {
             let wait = rejoin::delay(attempt, rand::random::<f64>())
                 .mul_f64(self.rejoin_unit.as_secs_f64());
-            tokio::time::sleep(wait).await;
+            // the network coming back (or moving) is worth an attempt now, not after the backoff (#355)
+            let mut net = self.net.subscribe();
+            tokio::select! {
+                _ = tokio::time::sleep(wait) => {}
+                Ok(()) = net.changed() => tracing::info!(attempt, "voice: network changed; rejoining now"),
+            }
             let args = self.last_join.lock().unwrap().clone();
             let Some(a) = args.filter(|_| self.epoch.load(Ordering::SeqCst) == epoch) else {
                 return Rejoined::Superseded;
@@ -1462,6 +1476,12 @@ impl VoiceManager {
             }
         }
         Rejoined::GaveUp(EndReason::ConnectionLost)
+    }
+
+    /// The network changed for real (netwatch, #355): a call reconnects or rejoins at once
+    /// (`netreact::decide`) and a rejoin waiting out its backoff tries now.
+    pub fn network_changed(&self) {
+        self.net.send_modify(|n| *n = n.wrapping_add(1));
     }
 
     /// Rejoin attempts so far (diagnostics).
@@ -1777,6 +1797,12 @@ impl VoiceManager {
             let (controls, io, alive) = (self.controls.clone(), io.clone(), alive.clone());
             let (shared, pipeline_alive) = (shared.clone(), pipeline_alive.clone());
             let mut give_up = rejoin::GiveUpTimer::new(self.reconnect_give_up);
+            // #355: network changes, and a reconnect we asked for that must come back in time
+            let (mut net, net_limit) = (self.net.subscribe(), self.net_limit.clone());
+            let mut net_grace = rejoin::GiveUpTimer::new(netreact::RECONNECT_GRACE);
+            // #217: tracks whose frames stopped, reported by their receive tasks
+            let (stall_tx, mut stall_rx) = mpsc::unbounded_channel::<RemoteTrackPublication>();
+            let mut resubscribes = netreact::Resubscribes::default();
             // for publishing the mic again once a server mute is undone (#140)
             let (mic_room, mic_track, mic_out) = (room.clone(), track.clone(), mic_out.clone());
             let mic_kbps = kbps.clone();
@@ -1822,6 +1848,57 @@ impl VoiceManager {
                             lost(true, Some(EndReason::ConnectionLost));
                             break;
                         }
+                        Ok(()) = net.changed() => {
+                            let state = mic_room.connection_state();
+                            let action = netreact::decide(state, &net_limit, tokio::time::Instant::now());
+                            tracing::warn!(?state, ?action, "voice: network changed");
+                            match action {
+                                netreact::NetAction::Ignore => {}
+                                netreact::NetAction::Rejoin => {
+                                    lost(true, Some(EndReason::ConnectionLost));
+                                    break;
+                                }
+                                netreact::NetAction::Reconnect => {
+                                    net_grace.arm();
+                                    let room = mic_room.clone();
+                                    side.spawn(async move {
+                                        // a resume: new signal connection, ICE restart on the new path
+                                        if let Err(e) = room.simulate_scenario(livekit::SimulateScenario::SignalReconnect).await {
+                                            tracing::warn!(error = %e, "voice: couldn't start a reconnect");
+                                        }
+                                    });
+                                }
+                            }
+                            continue;
+                        }
+                        _ = net_grace.fired() => {
+                            net_grace.disarm();
+                            if mic_room.connection_state() == ConnectionState::Connected {
+                                continue;
+                            }
+                            tracing::warn!(
+                                after_s = netreact::RECONNECT_GRACE.as_secs(),
+                                "voice: not back after the network change; rejoining"
+                            );
+                            net_limit.mark(tokio::time::Instant::now());
+                            lost(true, Some(EndReason::ConnectionLost));
+                            break;
+                        }
+                        Some(publication) = stall_rx.recv() => {
+                            let track = publication.sid().to_string();
+                            let connected = mic_room.connection_state() == ConnectionState::Connected;
+                            if !publication.is_muted()
+                                && resubscribes.allow(&track, connected, tokio::time::Instant::now())
+                            {
+                                tracing::warn!(%track, "voice: resubscribing a stalled track (#217)");
+                                side.spawn(async move {
+                                    publication.set_subscribed(false);
+                                    tokio::time::sleep(Duration::from_millis(500)).await;
+                                    publication.set_subscribed(true);
+                                });
+                            }
+                            continue;
+                        }
                     };
                     match ev {
                         RoomEvent::TrackSubscribed {
@@ -1844,6 +1921,7 @@ impl VoiceManager {
                             mix_in.add_source(mix_gen, &source, &owner, kind);
                             let (m, src, peer) = (mix_in.clone(), source.clone(), owner.clone());
                             let subscribed = Instant::now();
+                            let (stall_tx, stalled_pub) = (stall_tx.clone(), publication.clone());
                             tracing::info!(
                                 peer = %owner,
                                 track = %source,
@@ -1855,6 +1933,12 @@ impl VoiceManager {
                                 let stream =
                                     NativeAudioStream::new(t.rtc_track(), INTERNAL_RATE as i32, 1);
                                 let mut heard = false;
+                                // #355 (3): voices are levelled here, before the mixer's ring;
+                                // stream audio passes as it is. Both live as long as the task.
+                                let mut leveller = leveller::Leveller::new();
+                                let mut levelled = Vec::<i16>::with_capacity(
+                                    2 * INTERNAL_RATE as usize / 100,
+                                );
                                 let on_frame = |f: livekit::webrtc::audio_frame::AudioFrame| {
                                     // WebRTC hands over (silent) frames before any packet arrives:
                                     // the first one with sound is when they're really audible
@@ -1869,19 +1953,30 @@ impl VoiceManager {
                                             "voice: first sound"
                                         );
                                     }
-                                    m.push_in(mix_gen, &src, &f.data);
+                                    if kind == SourceKind::Voice {
+                                        levelled.clear();
+                                        levelled.extend_from_slice(&f.data);
+                                        leveller.process(&mut levelled, m.level_voices());
+                                        m.push_in(mix_gen, &src, &levelled);
+                                    } else {
+                                        m.push_in(mix_gen, &src, &f.data);
+                                    }
                                 };
                                 // #216: a track WebRTC stops (or never starts) handing frames to
                                 let on_flow = |flow| match flow {
-                                    rx::Flow::Stalled { frames } => tracing::warn!(
-                                        %peer,
-                                        track = %src,
-                                        ?kind,
-                                        frames,
-                                        since_subscribed_ms =
-                                            subscribed.elapsed().as_millis() as u64,
-                                        "voice: no audio frames from a subscribed track"
-                                    ),
+                                    rx::Flow::Stalled { frames } => {
+                                        tracing::warn!(
+                                            %peer,
+                                            track = %src,
+                                            ?kind,
+                                            frames,
+                                            since_subscribed_ms =
+                                                subscribed.elapsed().as_millis() as u64,
+                                            "voice: no audio frames from a subscribed track"
+                                        );
+                                        // the room loop decides on a resubscribe (#217)
+                                        let _ = stall_tx.send(stalled_pub.clone());
+                                    }
                                     rx::Flow::Resumed { after } => tracing::info!(
                                         %peer,
                                         track = %src,
@@ -1992,6 +2087,7 @@ impl VoiceManager {
                         RoomEvent::Reconnected => {
                             tracing::info!("voice: reconnected");
                             give_up.disarm();
+                            net_grace.disarm();
                             events(state(Connection::Connected, Some(channel), None))
                         }
                         RoomEvent::Disconnected { reason } => {
@@ -4160,6 +4256,30 @@ mod tests {
             Some(&(None, Connection::Disconnected))
         );
         assert_eq!(last_end_reason(&seen), Some(EndReason::ConnectionLost));
+    }
+
+    /// #355: a rejoin waiting out its backoff tries at once when the network changes.
+    #[tokio::test]
+    async fn a_network_change_cuts_the_rejoin_backoff_short() {
+        let app = testing::spawn_with(unreachable_livekit()).await;
+        let (token, api, lounge) = alex_and_a_voice_channel(&app).await;
+        let (mut vm, _) = collecting_manager();
+        vm.rejoin_unit = Duration::from_secs(60); // the first attempt would wait about a minute
+        let vm = Arc::new(vm);
+        let runner = {
+            let vm = vm.clone();
+            tokio::spawn(async move { vm.run_rejoins().await })
+        };
+        vm.simulate_drop(&api, &token, lounge).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while vm.rejoins() == 0 {
+                vm.network_changed();
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the network change didn't start an attempt");
+        runner.abort();
     }
 
     /// A4: the user's Leave wins over a rejoin in progress, at once and for good.

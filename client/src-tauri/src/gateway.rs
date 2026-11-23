@@ -12,11 +12,14 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 use tokio::time::Instant;
 
-use crate::backoff::reconnect_delay;
+use crate::backoff::{After, reconnect_delay};
 
 const HEARTBEAT: Duration = Duration::from_secs(15);
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// A write that can't get into the socket for this long means the link is gone (a dead peer with a
+/// full send buffer would otherwise park the session, and every deadline in it, until TCP gives up).
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 /// Backstop: no frame at all for this long = dead, whatever the ack bookkeeping says.
 const DEAD_AFTER: Duration = Duration::from_secs(75);
 /// Least time a heartbeat gets for its ack; a slow link gets 3× its measured round trip.
@@ -36,6 +39,9 @@ pub struct Tuning {
     pub ack_min: Duration,
     pub probe_ack: Duration,
     pub healthy_after: Duration,
+    /// Where each backoff wait's jitter (0..=1) comes from: random in production; tests pin it so
+    /// a wait's length is known.
+    pub jitter: fn() -> f64,
 }
 
 /// Frames sent right after every Ready: state the server keeps only in memory (our mute/deafen),
@@ -51,6 +57,7 @@ impl Default for Tuning {
             ack_min: ACK_MIN,
             probe_ack: PROBE_ACK,
             healthy_after: HEALTHY_AFTER,
+            jitter: rand::random::<f64>,
         }
     }
 }
@@ -266,6 +273,21 @@ enum Went {
     Brief,
     /// Was up for a while: the first retry is immediate.
     Healthy,
+    /// The server closed with 1012 (restarting) or 1001 (going away): every client hears that at
+    /// once, so the first retry is spread out at random.
+    Restart,
+}
+
+impl Went {
+    /// What the next retry schedule starts from (`None`: keep counting from the last Ready).
+    fn after(self) -> Option<After> {
+        match self {
+            Went::Failed => None,
+            Went::Brief => Some(After::Cold),
+            Went::Healthy => Some(After::Healthy),
+            Went::Restart => Some(After::Restart),
+        }
+    }
 }
 
 impl GatewayHandle {
@@ -340,8 +362,8 @@ impl GatewayHandle {
         let (cmd, mut cmd_rx) = mpsc::unbounded_channel();
         tokio::spawn(async move {
             let url = ws_url(&base_url);
-            // attempts since the last session that reached Ready; whether that one was healthy
-            let (mut n, mut after_healthy) = (0u32, false);
+            // attempts since the last session that reached Ready; how that one ended
+            let (mut n, mut after) = (0u32, After::Cold);
             let _ = tx.send(GatewayUpdate::Connection(ConnState::Connecting));
             loop {
                 let (went, refusal) =
@@ -358,12 +380,11 @@ impl GatewayHandle {
                         End::Retry(went) => (went, None),
                         End::Refused(r) => (Went::Failed, Some(r)),
                     };
-                if went != Went::Failed {
+                if let Some(a) = went.after() {
                     n = 0;
-                    after_healthy = went == Went::Healthy;
+                    after = a;
                 }
-                let delay = reconnect_delay(n, after_healthy, rand::random::<f64>())
-                    .mul_f64(t.unit.as_secs_f64());
+                let delay = reconnect_delay(n, after, (t.jitter)()).mul_f64(t.unit.as_secs_f64());
                 let state = match refusal {
                     None => ConnState::Reconnecting,
                     Some(Refusal::TooManyDevices) => ConnState::TooManyDevices,
@@ -468,7 +489,7 @@ async fn session(
         client_version: pulse_protocol::PROTOCOL_VERSION,
     })
     .expect("serialize");
-    if ws.send(Ws::text(hello)).await.is_err() {
+    if !send_within(&mut ws, hello).await {
         return End::Retry(Went::Failed);
     }
 
@@ -485,7 +506,7 @@ async fn session(
             // what the server only keeps in memory (our mute/deafen): say it again on every Ready
             for f in after_ready() {
                 let f = serde_json::to_string(&f).expect("serialize");
-                if ws.send(Ws::text(f)).await.is_err() {
+                if !send_within(&mut ws, f).await {
                     return End::Retry(Went::Brief);
                 }
             }
@@ -528,22 +549,24 @@ async fn session(
                     Frame::Server(ServerFrame::HeartbeatAck) => {}
                     Frame::Closed(Some(CloseCode::Library(4001))) => return End::LoggedOut,
                     Frame::Closed(Some(CloseCode::Library(4005))) => return End::UpdateRequired,
+                    // a deploy: everyone is told at once, so don't all come back at once
+                    Frame::Closed(Some(CloseCode::Restart | CloseCode::Away)) => return End::Retry(Went::Restart),
                     Frame::Closed(_) => return lost(),
                 }
             }
             c = cmd_rx.recv() => match c {
-                None | Some(Cmd::Stop) => { let _ = ws.close(None).await; return End::Stop }
+                None | Some(Cmd::Stop) => { let _ = tokio::time::timeout(SEND_TIMEOUT, ws.close(None)).await; return End::Stop }
                 Some(Cmd::Probe) => {
-                    if ws.send(Ws::text(heartbeat.clone())).await.is_err() { return lost() }
+                    if !send_within(&mut ws, heartbeat.clone()).await { return lost() }
                     live.sent(Instant::now(), live.probe_wait(t.probe_ack));
                 }
                 Some(Cmd::Send(f)) => {
                     let f = serde_json::to_string(&f).expect("serialize");
-                    if ws.send(Ws::text(f)).await.is_err() { return lost() }
+                    if !send_within(&mut ws, f).await { return lost() }
                 }
             },
             _ = beat.tick() => {
-                if ws.send(Ws::text(heartbeat.clone())).await.is_err() { return lost() }
+                if !send_within(&mut ws, heartbeat.clone()).await { return lost() }
                 live.sent(Instant::now(), live.ack_wait());
             }
             _ = tokio::time::sleep_until(deadline) => return lost(),
@@ -564,6 +587,14 @@ enum Frame {
 
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Writes one text frame; false if it failed or couldn't get out within [`SEND_TIMEOUT`].
+async fn send_within(ws: &mut Socket, text: String) -> bool {
+    matches!(
+        tokio::time::timeout(SEND_TIMEOUT, ws.send(Ws::text(text))).await,
+        Ok(Ok(()))
+    )
+}
 
 async fn next_frame(ws: &mut Socket) -> Frame {
     loop {
@@ -881,6 +912,16 @@ mod tests {
         })
         .await;
         assert_eq!(saw, Ok(true), "dead connection not detected");
+    }
+
+    /// A deploy's 1012 (or 1001) restarts the schedule with a random 0–3 s first wait; a healthy
+    /// session's other drops retry at once; a brief one backs off; a failed attempt keeps counting.
+    #[test]
+    fn how_a_session_ended_picks_the_next_schedule() {
+        assert_eq!(Went::Restart.after(), Some(After::Restart));
+        assert_eq!(Went::Healthy.after(), Some(After::Healthy));
+        assert_eq!(Went::Brief.after(), Some(After::Cold));
+        assert_eq!(Went::Failed.after(), None);
     }
 
     #[tokio::test]
@@ -1227,6 +1268,7 @@ mod tests {
             ack_min: Duration::from_millis(200),
             probe_ack: Duration::from_millis(200),
             healthy_after: Duration::from_secs(10),
+            jitter: rand::random::<f64>,
         }
     }
 
@@ -1321,7 +1363,7 @@ mod tests {
         };
         let _gw = GatewayHandle::spawn_tuning(format!("http://{}", app.addr), token, tx, t);
         next_ready(&mut rx).await;
-        app.hub.close_all(1012);
+        app.hub.close_all(1011); // a drop, not a restart (1012 spreads its retries)
         loop {
             if let GatewayUpdate::Connection(ConnState::Reconnecting) = next(&mut rx).await {
                 break;
@@ -1336,10 +1378,41 @@ mod tests {
         );
     }
 
+    /// A deploy closes everyone with 1012 at the same instant: even a healthy session's first
+    /// retry waits its random share of the 0–3 s spread (pinned to the top of it here: 3 × 200 ms)
+    /// instead of landing on the new process together with every other client.
+    #[tokio::test]
+    async fn a_restart_close_spreads_the_first_retry() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let t = Tuning {
+            unit: Duration::from_millis(200),
+            healthy_after: Duration::ZERO, // healthy: without the spread it would retry at once
+            jitter: || 1.0,
+            ..Tuning::default()
+        };
+        let _gw = GatewayHandle::spawn_tuning(format!("http://{}", app.addr), token, tx, t);
+        next_ready(&mut rx).await;
+        app.hub.close_all(1012);
+        loop {
+            if let GatewayUpdate::Connection(ConnState::Reconnecting) = next(&mut rx).await {
+                break;
+            }
+        }
+        let lost = std::time::Instant::now();
+        next_ready(&mut rx).await;
+        assert!(
+            lost.elapsed() >= Duration::from_millis(500),
+            "a restart was retried at once ({:?})",
+            lost.elapsed()
+        );
+    }
+
     /// Resume from sleep: the network isn't back yet, so the first tries fail and the backoff
     /// grows. When the network returns, the `online` / focus probe reconnects at once instead of
-    /// waiting the backoff out. The schedule is stretched (×10: 8-12 s, then 16-24 s) so "at once"
-    /// and "waited it out" stay far apart even on a loaded machine; the first wait is probed
+    /// waiting the backoff out. The schedule is stretched and pinned (×10: 10 s, then 20 s) so "at
+    /// once" and "waited it out" stay far apart even on a loaded machine; the first wait is probed
     /// through as well, so the test needn't sit it out.
     #[tokio::test]
     async fn a_probe_cuts_a_grown_backoff_short() {
@@ -1355,11 +1428,12 @@ mod tests {
             tx,
             Tuning {
                 unit: Duration::from_secs(10),
+                jitter: || 1.0,
                 ..Tuning::default()
             },
         );
         // two failed tries (the second one probed out of the first wait): now waiting out the
-        // grown, 16-24 s step
+        // grown, 20 s step
         let mut failures = 0;
         while failures < 2 {
             if let GatewayUpdate::Connection(ConnState::Reconnecting) = next(&mut rx).await {
@@ -1395,7 +1469,8 @@ mod tests {
             "t".into(),
             tx,
             Tuning {
-                unit: Duration::from_secs(10), // waits of 8 s and more: far beyond this test
+                unit: Duration::from_secs(10), // waits of 10 s and more: far beyond this test
+                jitter: || 1.0,
                 ..Tuning::default()
             },
         );
@@ -1428,12 +1503,13 @@ mod tests {
             token,
             tx,
             Tuning {
-                unit: Duration::from_secs(1), // first step 0.8-1.2 s
+                unit: Duration::from_secs(1), // first step pinned to its full 1 s
+                jitter: || 1.0,
                 ..quick(Duration::from_secs(60))
             },
         );
         next_ready(&mut rx).await;
-        app.hub.close_all(1012); // well within healthy_after (10 s)
+        app.hub.close_all(1011); // well within healthy_after (10 s)
         while !matches!(
             next(&mut rx).await,
             GatewayUpdate::Connection(ConnState::Reconnecting)

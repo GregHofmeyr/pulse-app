@@ -873,7 +873,7 @@
         <button bind:this={meButton} type="button" class="who-btn" aria-label={badgeStore.unseen > 0 ? 'Your profile (new badges)' : 'Your profile'} data-tip="Your profile"
           aria-haspopup="dialog" aria-expanded={myCardOpen} onclick={(e) => openCard(me.id, null, e.currentTarget)}>
           <span class="me-avatar"><Avatar id={me.id} name={baseName(me)} size={34} presence={presenceOf(app.state, me.id, clock.nowIso)} />{#if badgeStore.unseen > 0}<span class="new-dot" aria-hidden="true"></span>{/if}</span>
-          <span class="who"><Name userId={me.id} serverId={null} text={baseName(me)} interactive={false} surface="side" /><small>{app.state.conn === 'connected' ? presenceOf(app.state, me.id, clock.nowIso).label : 'Offline'}</small></span>
+          <span class="who"><Name userId={me.id} serverId={null} text={baseName(me)} interactive={false} surface="side" /><small>{connDown && connShown ? 'Offline' : presenceOf(app.state, me.id, clock.nowIso).label}</small></span>
         </button>
         {#if voice.channelId}
           {@const tips = myServerTips()}

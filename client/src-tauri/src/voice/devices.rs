@@ -35,7 +35,7 @@ pub struct AudioConfig {
     pub input_gain_pct: u16,
     /// Manual mode: RMS threshold below which the mic is gated (0 = always open).
     pub sensitivity: f32,
-    /// Echo cancellation: Auto (off on headphones, #76), On or Off.
+    /// Echo cancellation: Auto (on for every output since #354), On or Off.
     #[serde(default)]
     pub echo_mode: EchoMode,
     #[serde(default)]
@@ -44,6 +44,9 @@ pub struct AudioConfig {
     #[serde(default = "default_true")]
     pub auto_sensitivity: bool,
     pub auto_gain: bool,
+    /// "Even out voice volumes" (#355 (3)): level each remote voice towards one loudness.
+    #[serde(default = "default_true")]
+    pub even_out_voices: bool,
     /// Pre-2026-10 on/off noise toggle: only read, to migrate old settings (see `normalized`).
     #[serde(default, skip_serializing)]
     pub noise_suppress: Option<bool>,
@@ -81,6 +84,7 @@ impl Default for AudioConfig {
             noise_suppression: NsLevel::default(),
             auto_sensitivity: true,
             auto_gain: false,
+            even_out_voices: true,
             noise_suppress: None,
             echo_cancel: None,
         }
@@ -391,6 +395,7 @@ impl Shared {
         peer_buffer_ms: u32,
     ) -> Arc<Self> {
         let (mix_in, mixer) = super::mixer::mixer(INTERNAL_RATE, peer_buffer_ms);
+        mix_in.set_level_voices(cfg.even_out_voices);
         let playout_on = controls.lock().unwrap().playout_on();
         Arc::new(Self {
             controls,
@@ -647,7 +652,7 @@ impl Shared {
         self.rebuild_apm(&mut a);
     }
 
-    /// The output device just opened (`device`, and what the system says it is): Auto follows it.
+    /// The output device just opened (`device`, and what the system says it is): logged and reported; Auto no longer acts on it (#354).
     pub fn set_output(&self, device: &str, output: Output) {
         let mut a = self.apm_cfg.lock().unwrap();
         a.output = output;
@@ -1723,18 +1728,22 @@ mod tests {
         assert_eq!(AudioConfig::default().echo_mode, EchoMode::Auto);
     }
 
+    /// #354: Auto stays on through every output, headphones included; only Off turns it off.
     #[test]
-    fn auto_echo_follows_the_output_device_and_re_decides_on_a_switch() {
+    fn auto_echo_stays_on_whatever_the_output_device_says() {
         let s = Shared::new(&AudioConfig::default(), Default::default(), 200);
         assert!(s.echo_running(), "no output yet: on");
         s.set_output("Headset", Output::Headphones);
-        assert!(!s.echo_running());
+        assert!(
+            s.echo_running(),
+            "a headphone jack says this with speakers in it"
+        );
         s.set_output("Speakers", Output::Other);
         assert!(s.echo_running());
         s.set_output("Something", Output::Unknown);
-        assert!(s.echo_running(), "unknown leaves it on");
+        assert!(s.echo_running());
         s.set_output("Headset", Output::Headphones);
-        // On and Off override the device; back to Auto follows it again
+        // On and Off override the device; back to Auto is on again
         let mut cfg = AudioConfig {
             echo_mode: EchoMode::On,
             ..AudioConfig::default()
@@ -1768,7 +1777,8 @@ mod tests {
         s.set_output("Headset", Output::Headphones);
         assert_eq!(
             s.take_echo_status_change(),
-            Some(st(false, Output::Headphones))
+            Some(st(true, Output::Headphones)),
+            "#354: still on, but the page hears what the output says"
         );
         s.set_output("Other headset", Output::Headphones);
         assert_eq!(

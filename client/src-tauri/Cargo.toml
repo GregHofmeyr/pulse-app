@@ -87,7 +87,8 @@ log = "0.4"
 # paused-clock tests (`#[tokio::test(start_paused = true)]`)
 tokio = { workspace = true, features = ["test-util"] }
 pulse-server = { path = "../../server", features = ["testing"] }
-# tests/voice_it.rs asks LiveKit itself who is in a room (the server's version)
+# tests/voice_it.rs asks LiveKit itself who is in a room. Stays on 0.9.1 (livekit-protocol 0.8) to match the
+# vendored livekit 0.9.7, whose ParticipantPermission server_mute_it.rs builds; the server is on 0.11. Move with livekit.
 livekit-api = { version = "0.9.1", default-features = false, features = ["access-token", "services"] }
 # tests compute the codes a phone would show (same version/features as the server)
 totp-rs = { version = "6", default-features = false, features = ["std"] }
@@ -155,6 +156,11 @@ windows = { version = "0.62", features = [
     "Foundation_Collections",
     # "Playing" (#380, games/win.rs): Steam's RunningAppID and SteamPath under HKCU.
     "Win32_System_Registry",
+    # network changes and resume from sleep (netwatch/windows.rs, #355): IP Helper notifications, the power callback.
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_System_Power",
 ] }
 # WebView2 memory target (webview_memory.rs). Keep these on the versions tauri/wry use (see
 # Cargo.lock), or the COM types don't match (E0308).
