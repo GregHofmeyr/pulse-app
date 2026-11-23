@@ -971,6 +971,88 @@ mod tests {
         }
     }
 
+    const MS: usize = 48;
+
+    #[test]
+    fn the_cushion_grows_at_once_when_something_ran_dry() {
+        let mut c = Cushion::new(48_000);
+        assert_eq!(c.target(), TARGET_MS * MS);
+        c.ran_dry();
+        c.ran_dry(); // twice in one window still counts once
+        c.end_window();
+        assert_eq!(c.target(), (TARGET_MS + CUSHION_GROW_MS) * MS);
+        for _ in 0..20 {
+            c.ran_dry();
+            c.end_window();
+        }
+        assert_eq!(c.target(), CUSHION_CEIL_MS * MS, "capped");
+    }
+
+    #[test]
+    fn the_cushion_shrinks_slowly_to_its_floor_while_nothing_runs_dry() {
+        let mut c = Cushion::new(48_000);
+        for _ in 0..CUSHION_SHRINK_AFTER - 1 {
+            c.end_window();
+        }
+        assert_eq!(c.target(), TARGET_MS * MS, "not before 30 s clean");
+        c.end_window();
+        assert_eq!(c.target(), (TARGET_MS - 1) * MS, "1 ms back");
+        for _ in 0..CUSHION_SHRINK_AFTER * 100 {
+            c.end_window();
+        }
+        assert_eq!(c.target(), CUSHION_FLOOR_MS * MS, "never below the floor");
+    }
+
+    #[test]
+    fn running_dry_again_makes_the_next_shrink_wait_longer() {
+        let mut c = Cushion::new(48_000);
+        c.ran_dry();
+        c.end_window(); // 15 ms, backoff 2
+        let grown = c.target();
+        for _ in 0..CUSHION_SHRINK_AFTER * 2 - 1 {
+            c.end_window();
+        }
+        assert_eq!(c.target(), grown, "waits twice as long after an underrun");
+        c.end_window();
+        assert_eq!(c.target(), grown - MS);
+    }
+
+    /// The start-up fill (first pull before a cushion exists) is not a reason to grow.
+    #[test]
+    fn start_up_doesnt_grow_the_cushion() {
+        let (input, mut m) = mixer_with(48_000, 200, &["a"]);
+        input.push("a", &[1; 240]);
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0); // runs dry at once
+        steady(&input, &mut m, 1000);
+        assert_eq!(m.cushion.target(), TARGET_MS * MS);
+    }
+
+    /// A machine whose receive timer fires in bursts (two 10 ms frames every 20 ms, as a 15.6 ms
+    /// Windows timer can): the cushion grows until the bursts fit, then nothing runs dry.
+    #[test]
+    fn a_bursty_sender_grows_the_cushion_until_it_stops_running_dry() {
+        let (input, mut m) = mixer_with(48_000, 200, &["a"]);
+        let mut out = vec![0.0; 480];
+        let mut burst = |input: &MixerInput, m: &mut Mixer, secs: usize| {
+            for k in 0..secs * 100 {
+                if k % 2 == 0 {
+                    input.push("a", &[1000; 960]);
+                }
+                m.mix_into(&mut out, 1, 1.0);
+            }
+        };
+        // a cushion pushed down to the floor first (a long steady spell)
+        m.cushion.target = CUSHION_FLOOR_MS * MS;
+        steady(&input, &mut m, 1000);
+        burst(&input, &mut m, 1);
+        burst(&input, &mut m, 5);
+        input.take_underrun_samples();
+        burst(&input, &mut m, 20);
+        assert_eq!(input.take_underrun_samples(), 0, "ran dry after adapting");
+        assert!(m.cushion.target() <= 20 * MS, "grew only as far as needed");
+    }
+
     #[test]
     fn a_standing_backlog_drains_to_the_target() {
         // e.g. the output was reopened while audio kept arriving: the queue sits at the cap
@@ -2008,87 +2090,5 @@ mod tests {
         let per_window = input.take_adjusted_samples() / (35 * 4);
         assert!(per_window < 10, "{per_window} adjusted per window");
         assert_eq!(input.take_underrun_samples(), 0, "ran dry after start-up");
-    }
-
-    const MS: usize = 48;
-
-    #[test]
-    fn the_cushion_grows_at_once_when_something_ran_dry() {
-        let mut c = Cushion::new(48_000);
-        assert_eq!(c.target(), TARGET_MS * MS);
-        c.ran_dry();
-        c.ran_dry(); // twice in one window still counts once
-        c.end_window();
-        assert_eq!(c.target(), (TARGET_MS + CUSHION_GROW_MS) * MS);
-        for _ in 0..20 {
-            c.ran_dry();
-            c.end_window();
-        }
-        assert_eq!(c.target(), CUSHION_CEIL_MS * MS, "capped");
-    }
-
-    #[test]
-    fn the_cushion_shrinks_slowly_to_its_floor_while_nothing_runs_dry() {
-        let mut c = Cushion::new(48_000);
-        for _ in 0..CUSHION_SHRINK_AFTER - 1 {
-            c.end_window();
-        }
-        assert_eq!(c.target(), TARGET_MS * MS, "not before 30 s clean");
-        c.end_window();
-        assert_eq!(c.target(), (TARGET_MS - 1) * MS, "1 ms back");
-        for _ in 0..CUSHION_SHRINK_AFTER * 100 {
-            c.end_window();
-        }
-        assert_eq!(c.target(), CUSHION_FLOOR_MS * MS, "never below the floor");
-    }
-
-    #[test]
-    fn running_dry_again_makes_the_next_shrink_wait_longer() {
-        let mut c = Cushion::new(48_000);
-        c.ran_dry();
-        c.end_window(); // 15 ms, backoff 2
-        let grown = c.target();
-        for _ in 0..CUSHION_SHRINK_AFTER * 2 - 1 {
-            c.end_window();
-        }
-        assert_eq!(c.target(), grown, "waits twice as long after an underrun");
-        c.end_window();
-        assert_eq!(c.target(), grown - MS);
-    }
-
-    /// The start-up fill (first pull before a cushion exists) is not a reason to grow.
-    #[test]
-    fn start_up_doesnt_grow_the_cushion() {
-        let (input, mut m) = mixer_with(48_000, 200, &["a"]);
-        input.push("a", &[1; 240]);
-        let mut out = vec![0.0; 480];
-        m.mix_into(&mut out, 1, 1.0); // runs dry at once
-        steady(&input, &mut m, 1000);
-        assert_eq!(m.cushion.target(), TARGET_MS * MS);
-    }
-
-    /// A machine whose receive timer fires in bursts (two 10 ms frames every 20 ms, as a 15.6 ms
-    /// Windows timer can): the cushion grows until the bursts fit, then nothing runs dry.
-    #[test]
-    fn a_bursty_sender_grows_the_cushion_until_it_stops_running_dry() {
-        let (input, mut m) = mixer_with(48_000, 200, &["a"]);
-        let mut out = vec![0.0; 480];
-        let mut burst = |input: &MixerInput, m: &mut Mixer, secs: usize| {
-            for k in 0..secs * 100 {
-                if k % 2 == 0 {
-                    input.push("a", &[1000; 960]);
-                }
-                m.mix_into(&mut out, 1, 1.0);
-            }
-        };
-        // a cushion pushed down to the floor first (a long steady spell)
-        m.cushion.target = CUSHION_FLOOR_MS * MS;
-        steady(&input, &mut m, 1000);
-        burst(&input, &mut m, 1);
-        burst(&input, &mut m, 5);
-        input.take_underrun_samples();
-        burst(&input, &mut m, 20);
-        assert_eq!(input.take_underrun_samples(), 0, "ran dry after adapting");
-        assert!(m.cushion.target() <= 20 * MS, "grew only as far as needed");
     }
 }
