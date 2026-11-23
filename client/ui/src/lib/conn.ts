@@ -1,7 +1,8 @@
 import type { ConnState } from './state'
 
-/** How long the connection is down before the top bar says so: a quick reconnect doesn't flash it. */
-export const CONN_PILL_DELAY_MS = 600
+/** How long the connection is down before the top bar says so: a quick reconnect (a blip, a Wi-Fi switch, a
+ *  probe that found the old socket dead) usually lands its Ready within this, so it doesn't flash. */
+export const CONN_PILL_DELAY_MS = 1500
 
 /** The server turned this connection away (and we're still retrying). */
 export function isRefusal(c: ConnState): boolean {

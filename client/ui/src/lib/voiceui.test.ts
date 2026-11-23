@@ -56,10 +56,11 @@ describe('serverVoiceSound (#147)', () => {
 })
 
 describe('echoDecision (#172)', () => {
-  it('under Auto, says what it decided and why', () => {
-    expect(echoDecision({ mode: 'auto', running: false, output: 'headphones' }, 'auto')).toBe('Off for now: your output is headphones or a headset. Speakers in a headphone jack? Choose On')
-    expect(echoDecision({ mode: 'auto', running: true, output: 'other' }, 'auto')).toBe("On: your output isn't headphones or a headset")
-    expect(echoDecision({ mode: 'auto', running: true, output: 'unknown' }, 'auto')).toBe("On: your output doesn't say it's headphones")
+  it('under Auto, nothing to say while it runs, whatever the output says (#354)', () => {
+    for (const output of ['headphones', 'other', 'unknown'] as const) expect(echoDecision({ mode: 'auto', running: true, output }, 'auto')).toBeNull()
+  })
+  it('under Auto, a line if the core ever reports it off', () => {
+    expect(echoDecision({ mode: 'auto', running: false, output: 'headphones' }, 'auto')).toBe('Off for now. Hearing echo complaints? Choose On')
   })
   it('nothing for On or Off, before the core has said, or while the core still runs the old choice', () => {
     expect(echoDecision({ mode: 'on', running: true, output: 'headphones' }, 'on')).toBeNull()
@@ -114,6 +115,11 @@ describe('peerCallSound', () => {
 })
 
 describe('migrateAudioConfig', () => {
+  it('even out voice volumes (#355): on for settings saved before it, kept when turned off', () => {
+    expect(defaultAudioConfig.even_out_voices).toBe(true)
+    expect(migrateAudioConfig({ sensitivity: 0.05 }).even_out_voices).toBe(true)
+    expect(migrateAudioConfig({ even_out_voices: false }).even_out_voices).toBe(false)
+  })
   it('maps the old noise toggle off to level off', () => {
     const c = migrateAudioConfig({ noise_suppress: false, sensitivity: 0.05 })
     expect(c.noise_suppression).toBe('off')

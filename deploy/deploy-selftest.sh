@@ -405,6 +405,33 @@ else
 fi
 unset -f docker
 
+# save_logs writes a gzipped dump of the compose logs and keeps only the newest KEEP; a failing docker doesn't stop it
+# shellcheck disable=SC2329 # invoked by save_logs
+docker() { echo "2026-01-01T00:00:00Z pulse-server log line"; }
+mkdir -p "$tmp/logs"
+for t in 20260101T000001Z 20260101T000002Z 20260101T000003Z; do : >"$tmp/logs/$t.log.gz"; done
+: >"$tmp/logs/keep-me.txt"
+rc=0; save_logs "$tmp/logs" 3 2>"$tmp/err" || rc=$?
+n=$(find "$tmp/logs" -name '*.log.gz' | wc -l)
+newest=$(find "$tmp/logs" -name '*.log.gz' -printf '%f\n' | sort -r | head -n1)
+if [ "$rc" = 0 ] && [ "$n" = 3 ] && [ ! -e "$tmp/logs/20260101T000001Z.log.gz" ] && [ -e "$tmp/logs/keep-me.txt" ] &&
+  [ "$(gzip -dc "$tmp/logs/$newest")" = "2026-01-01T00:00:00Z pulse-server log line" ]; then
+  echo "ok   save_logs keeps the newest dumps, with the logs in them"
+else
+  echo "FAIL save_logs: rc=$rc, $n dumps, newest '$newest', stderr '$(cat "$tmp/err")'"
+  failed=1
+fi
+# shellcheck disable=SC2329 # invoked by save_logs
+docker() { return 1; }
+rc=0; save_logs "$tmp/logs" 3 2>"$tmp/err" || rc=$?
+if [ "$rc" = 0 ]; then
+  echo "ok   save_logs never stops the deploy"
+else
+  echo "FAIL save_logs returned $rc with docker failing"
+  failed=1
+fi
+unset -f docker
+
 # --- image provenance: deploy.sh TAG DIGEST|--unverified, deploy/verify-image.sh, and the justfile's deploy recipes ---
 d64=sha256:$(printf 'a%.0s' {1..64})
 other64=sha256:$(printf 'b%.0s' {1..64})

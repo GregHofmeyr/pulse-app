@@ -334,11 +334,21 @@ async fn ask_forecast(cfg: &PlansConfig, spot: &Spot) -> Option<String> {
     Some(body)
 }
 
+/// The largest offset from UTC a place has (with room to spare), in seconds.
+const MAX_OFFSET_SECS: i64 = 18 * 3600;
+
 /// The day a plan starting at `starts_at` falls on at the spot (whose offset from UTC the forecast gives), out of
 /// the forecast, with the temperature in the hour it starts when the forecast has it; `None` when that day isn't in
 /// it.
 pub fn pick(answer: &ForecastAnswer, spot: &Spot, starts_at: Timestamp) -> Option<PlanForecast> {
-    let local = starts_at + SignedDuration::from_secs(answer.utc_offset_seconds);
+    // The offset is the forecast service's: kept to a real one (within ±18 h, as time zones are), and added
+    // checked, so a strange answer can't panic the request.
+    let offset = answer
+        .utc_offset_seconds
+        .clamp(-MAX_OFFSET_SECS, MAX_OFFSET_SECS);
+    let local = starts_at
+        .checked_add(SignedDuration::from_secs(offset))
+        .ok()?;
     let date = local.strftime("%Y-%m-%d").to_string();
     let hour = local.strftime("%Y-%m-%dT%H:00").to_string();
     let temp_at_start = answer.hourly.as_ref().and_then(|h| {
@@ -423,6 +433,26 @@ mod tests {
         assert_eq!(pick(&answer, &spot, t("2026-11-25T10:00:00Z")), None);
         // cached before #399: no hourly, so no temperature at the start
         assert_eq!(f.temp_at_start, None);
+    }
+
+    #[test]
+    fn a_strange_offset_from_the_forecast_never_panics() {
+        let spot = Spot {
+            name: "Cape Town, South Africa".into(),
+            latitude: -33.92,
+            longitude: 18.42,
+        };
+        for offset in [i64::MAX, i64::MIN, 10_000_000_000] {
+            let answer: ForecastAnswer = serde_json::from_str(&format!(
+                r#"{{"utc_offset_seconds":{offset},"daily":{{"time":["2026-11-20"],
+                    "weather_code":[0],"temperature_2m_max":[30.0],"temperature_2m_min":[15.0]}}}}"#
+            ))
+            .unwrap();
+            // clamped to ±18 h: a day near it, or none, but an answer
+            let _ = pick(&answer, &spot, t("2026-11-20T12:00:00Z"));
+            let _ = pick(&answer, &spot, Timestamp::MAX);
+            let _ = pick(&answer, &spot, Timestamp::MIN);
+        }
     }
 
     #[test]

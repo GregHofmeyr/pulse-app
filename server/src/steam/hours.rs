@@ -22,6 +22,10 @@ pub async fn tick(s: &AppState) {
     if !s.steam.api().has_key() {
         return;
     }
+    let Ok(_one) = s.steam.inner.hours.try_lock() else {
+        tracing::debug!("Steam hours round still running; skipped");
+        return;
+    };
     let rows: Vec<(String, String)> =
         match sqlx::query_as("SELECT user_id, steam_id FROM steam_links WHERE share_hours = 1")
             .fetch_all(&s.db)

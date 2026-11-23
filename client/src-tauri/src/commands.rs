@@ -405,6 +405,17 @@ impl Core {
         tokio::join!(jobs_done, editor_done);
     }
 
+    /// An update's install failed after winding down (#460), which ran [`Self::stop_clips`]: load
+    /// the signed-in session's clip jobs again, as its Ready did (a job that was running comes
+    /// back failed, as after a restart). Nothing when they're still there or nobody is signed in.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub(crate) async fn resume_clips(&self, app: &AppHandle) {
+        let Ok((_, token)) = self.current() else {
+            return;
+        };
+        self.start_clip_jobs(app, &token).await;
+    }
+
     /// `<clips scope>/jobs` of this session's account, once known.
     fn clip_jobs_dir(&self, s: &Session) -> Option<std::path::PathBuf> {
         if self.clips_root.as_os_str().is_empty() {
@@ -3315,7 +3326,11 @@ pub(crate) async fn save_reporting(
         );
     };
     match download::save_watched(req, dest, on_progress, run.flag()).await {
-        Ok(()) => Ok(true),
+        Ok(()) => {
+            // every save from the network (clip, image, plan, attachment) is marked as downloaded
+            crate::saved_files::mark_downloaded(dest).await;
+            Ok(true)
+        }
         Err(DownloadError::Cancelled) => Ok(false),
         Err(e) => Err(e),
     }

@@ -112,12 +112,18 @@ pub async fn authenticate(db: &SqlitePool, token: &str) -> anyhow::Result<Option
         return Ok(None);
     }
     if crate::times::parse(&last_used)? + SLIDE_EVERY < now {
-        sqlx::query("UPDATE sessions SET last_used_at = ?, expires_at = ? WHERE token_hash = ?")
-            .bind(ts(now))
-            .bind(ts(now + crate::times::days(LIFETIME_DAYS)))
-            .bind(&h)
-            .execute(db)
-            .await?;
+        // Best effort: the session is valid either way, and a busy database (or any failed write) mustn't fail the
+        // request. The next use past SLIDE_EVERY tries again.
+        if let Err(e) =
+            sqlx::query("UPDATE sessions SET last_used_at = ?, expires_at = ? WHERE token_hash = ?")
+                .bind(ts(now))
+                .bind(ts(now + crate::times::days(LIFETIME_DAYS)))
+                .bind(&h)
+                .execute(db)
+                .await
+        {
+            tracing::warn!(error = %e, "couldn't slide a session's expiry; it still counts");
+        }
     }
     Ok(Some(user_id.parse()?))
 }

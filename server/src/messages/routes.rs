@@ -921,6 +921,13 @@ async fn edit(
     if changed == 0 {
         return Err(AppError::NotFound);
     }
+    // An edit in a 1:1 DM by someone the other member has blocked (#474) never reaches them: the message is withheld
+    // from them from now on, like one sent while blocked (gone from their history; this update, and any after it,
+    // never reaches them). It looks edited to its author, as a withheld send looks sent.
+    if let Some(other) = dm_other(&mut tx, &ch, me).await? {
+        let from = crate::blocks::withhold_for(&mut *tx, me, other).await?;
+        crate::blocks::withhold_line(&mut tx, id, from).await?;
+    }
     // Previews of links edited away go with the same write.
     crate::embeds::on_edit(&mut tx, id, &msg.content).await?;
     tx.commit().await?;

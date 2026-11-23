@@ -59,10 +59,13 @@ async fn visible(
     me: UserId,
     id: MessageId,
 ) -> AppResult<(ChannelId, Option<UserId>)> {
+    // a DM withheld from `me` (#474) isn't there for them
     let row: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT channel_id, author_id FROM messages WHERE id = ? AND deleted_at IS NULL",
+        "SELECT channel_id, author_id FROM messages WHERE id = ? AND deleted_at IS NULL
+           AND (withheld_from IS NULL OR withheld_from != ?)",
     )
     .bind(id.to_string())
+    .bind(me.to_string())
     .fetch_optional(&s.db)
     .await?;
     let (channel, author) = row.ok_or(AppError::NotFound)?;

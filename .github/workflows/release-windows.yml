@@ -19,6 +19,9 @@ env:
 jobs:
   build:
     runs-on: windows-latest
+    # The updater signing key lives in the `release` environment, which only main and v* tags may use: a run from
+    # any other branch can't read it (supply-chain review, 2026-11-20).
+    environment: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Exact version and components come from rust-toolchain.toml (rustup >= 1.28 installs what the file names).
@@ -53,7 +56,8 @@ jobs:
       # Signs the installer for the app updater (#82): createUpdaterArtifacts + the pubkey in tauri.conf.json make the
       # build write Pulse_<version>_x64-setup.exe.sig beside the installer. Without the secrets the build fails: there
       # are no unsigned releases (deploy/README.md, "Releasing an app update").
-      - run: node ../ui/node_modules/@tauri-apps/cli/tauri.js build
+      # `-- --locked` goes to cargo: the build uses Cargo.lock as cargo-deny checked it, or fails.
+      - run: node ../ui/node_modules/@tauri-apps/cli/tauri.js build -- --locked
         working-directory: client/src-tauri
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

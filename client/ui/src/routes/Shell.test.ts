@@ -181,7 +181,7 @@ describe('Shell', () => {
   it('a quick reconnect doesn\'t flash the pill: it shows once the connection has been down a moment', () => {
     vi.useFakeTimers()
     try {
-      app.state = { ...emptyState(), conn: 'connected' }
+      app.state = { ...emptyState(), me: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, conn: 'connected' }
       cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
       flushSync()
       app.state = { ...app.state, conn: 'connecting' }
@@ -189,6 +189,8 @@ describe('Shell', () => {
       expect(document.querySelector('.conn')).toBeNull()
       vi.advanceTimersByTime(CONN_PILL_DELAY_MS - 100)
       flushSync()
+      // nor does your own status line flip to Offline for a blip
+      expect(document.querySelector('.who small')!.textContent).not.toBe('Offline')
       // back before the delay: it never showed
       app.state = { ...app.state, conn: 'connected' }
       flushSync()
@@ -201,6 +203,7 @@ describe('Shell', () => {
       vi.advanceTimersByTime(CONN_PILL_DELAY_MS)
       flushSync()
       expect(document.querySelector('.conn')!.textContent).toBe('Connecting…')
+      expect(document.querySelector('.who small')!.textContent).toBe('Offline')
       app.state = { ...app.state, conn: 'connected' }
       flushSync()
       expect(document.querySelector('.conn')).toBeNull()

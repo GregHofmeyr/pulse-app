@@ -20,13 +20,14 @@
   import Updating from './routes/Updating.svelte'
   import DownloadAnnouncer from './components/DownloadAnnouncer.svelte'
   import { screenFor } from './lib/screen'
-  import { installUpdate, restartBlocked, startIdleInstall, startUpdateListening, updates } from './lib/updates.svelte'
+  import { installUpdate, pendingBlocks, restartBlocked, startIdleInstall, startUpdateListening, updates } from './lib/updates.svelte'
+  import { hasUnsavedEdits } from './lib/openEdits'
   import UpdateFailed from './components/UpdateFailed.svelte'
   import { hasUnsentDrafts } from './components/Composer.svelte'
   import { stream } from './lib/stream/stream.svelte'
   import type { FailedUpdate } from './lib/tauri'
   import { startMediaActivity } from './lib/activityPrefs.svelte'
-  import { startGameActivity } from './lib/gamePrefs.svelte'
+  import { gameActivity, startGameActivity } from './lib/gamePrefs.svelte'
   import { tellClipDrop } from './lib/clipDropPrefs.svelte'
   import { startSteamListening } from './lib/steam.svelte'
 
@@ -45,7 +46,9 @@
         restartBlocked() ||
         stream.live !== null ||
         hasUnsentDrafts() ||
-        Object.values(app.state.pending).some((list) => list.length > 0) ||
+        hasUnsavedEdits() ||
+        pendingBlocks(app.state.pending) ||
+        !!gameActivity.playing ||
         Object.values(app.state.clipJobs).some((j) => j.stage === 'preparing' || j.stage === 'uploading' || j.stage === 'posting'),
     ),
   )

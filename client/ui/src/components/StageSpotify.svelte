@@ -18,6 +18,7 @@
   import { app, clock } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import type { StageShare } from '../lib/protocol/StageShare'
+  import { safeHref } from '../lib/safeHref'
 
   let { share, serverId, inCall, place }: {
     share: StageShare
@@ -198,7 +199,7 @@
 {/snippet}
 
 {#snippet openLink()}
-  <a class="btn {card.jam ? 'btn-primary' : 'btn-secondary'} sp-open" href={share.embed.url} target="_blank" rel="noopener noreferrer">{card.action}</a>
+  <a class="btn {card.jam ? 'btn-primary' : 'btn-secondary'} sp-open" href={safeHref(share.embed.url)} target="_blank" rel="noopener noreferrer">{card.action}</a>
 {/snippet}
 
 {#snippet stopBtn()}

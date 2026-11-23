@@ -195,13 +195,12 @@ export function serverVoiceSound(c: Flags, next: { muted: boolean; deafened: boo
 
 export type EchoReport = { mode: EchoMode; running: boolean; output: 'headphones' | 'other' | 'unknown' }
 
-/** The line under echo cancellation's Auto (#172): what Auto decided for the output open now, from the core. Off
- * trusts the device's word that it's headphones, which a headphone jack says whatever is plugged in (#354): the
- * line says how to turn it on for speakers there. */
+/** The line under echo cancellation's Auto (#172), from the core. Auto runs it for every output since #354 (a
+ * headphone jack, a virtual device or a mislabelled headset all say "headphones"), and the help text already says
+ * so: a line only if the core ever reports it off under Auto. */
 export function echoDecision(e: EchoReport | null, chosen: EchoMode): string | null {
-  if (chosen !== 'auto' || !e || e.mode !== 'auto') return null
-  if (!e.running) return 'Off for now: your output is headphones or a headset. Speakers in a headphone jack? Choose On'
-  return e.output === 'other' ? "On: your output isn't headphones or a headset" : "On: your output doesn't say it's headphones"
+  if (chosen !== 'auto' || !e || e.mode !== 'auto' || e.running) return null
+  return 'Off for now. Hearing echo complaints? Choose On'
 }
 
 type VoiceSnap = { channelId: string | null; connection: string; controls: Flags }
@@ -298,7 +297,7 @@ function save(key: string, value: unknown) {
   }
 }
 
-/** Echo cancellation (#76): Auto turns it off when the output is headphones or a headset (the core decides, per device). */
+/** Echo cancellation (#76): Auto keeps it on for every output, headsets included (#354: the form factor lies). */
 export type EchoMode = 'auto' | 'on' | 'off'
 export type AudioConfig = {
   input: string | null
@@ -309,10 +308,12 @@ export type AudioConfig = {
   noise_suppression: NsLevel
   auto_sensitivity: boolean
   auto_gain: boolean
+  /** #355 (3): level each remote voice towards one loudness (the core's leveller); on by default. */
+  even_out_voices: boolean
 }
 export const defaultAudioConfig: AudioConfig = {
   input: null, output: null, input_gain_pct: 100, sensitivity: 0.02, echo_mode: 'auto',
-  noise_suppression: 'strong', auto_sensitivity: true, auto_gain: false,
+  noise_suppression: 'strong', auto_sensitivity: true, auto_gain: false, even_out_voices: true,
 }
 /** Settings saved before levels existed carried `noise_suppress: boolean`; before #76, `echo_cancel: boolean` (off by
  *  hand stays Off, the old default on becomes Auto). */

@@ -16,7 +16,10 @@
 //!   there (the login screen asks `/updates/version` instead: [`update_signed_out`]); anything else → an error, so
 //!   the check retries and an earlier offer stays.
 //! - Found while running, an update installs by itself once Pulse has been left alone a while (the page decides:
-//!   [`update_install_idle`]); a failed install is detected at the next launch ([`crate::update_attempt`]).
+//!   [`update_install_idle`]: never over a game or a full-screen app); a failed install is detected at the next launch
+//!   ([`crate::update_attempt`]). One that fails while running keeps the idle install off that version for 1 h,
+//!   doubling to a day (for good after a bad signature, until another version is offered); a failure after winding
+//!   down brings the clip jobs back.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -358,6 +361,8 @@ pub struct Updates {
     dir: std::path::PathBuf,
     /// The last install failed (found at this launch): no installing by itself for a while, "Couldn't update" shows.
     failure: Mutex<Option<crate::update_attempt::Failure>>,
+    /// An install that failed while running: the idle install backs off from that version ([`Self::idle_backing_off`]).
+    run_failure: Mutex<Option<crate::update_attempt::RunFailure>>,
     /// The server the stored login belongs to, read at launch: the "Couldn't update" download link's, while signed out.
     stored_server: Mutex<Option<String>>,
 }
@@ -378,6 +383,7 @@ impl Updates {
             handover,
             dir,
             failure: Mutex::new(failure),
+            run_failure: Mutex::new(None),
             stored_server: Mutex::new(None),
         }
     }
@@ -390,6 +396,34 @@ impl Updates {
             .unwrap()
             .as_ref()
             .is_some_and(|f| now < f.backoff_until)
+    }
+
+    /// Installing `version` failed while running (`signature`: its signature didn't check out): the idle install
+    /// leaves it alone for a while, doubling with each failure (for good after a bad signature).
+    #[cfg_attr(not(any(windows, test)), allow(dead_code))]
+    fn note_install_failed(&self, version: &str, signature: bool, now: u64) {
+        let mut slot = self.run_failure.lock().unwrap();
+        let next = crate::update_attempt::RunFailure::after(slot.as_ref(), version, signature, now);
+        tracing::info!(version, count = next.count, until = ?next.until, "update: not installing this version by itself for a while");
+        *slot = Some(next);
+    }
+
+    /// Whether the idle install leaves `version` alone at `now`: the last launch found an install failed
+    /// ([`Self::backing_off`]), or installing it failed while running. "Restart to update" still tries.
+    #[cfg_attr(not(any(windows, test)), allow(dead_code))]
+    fn idle_backing_off(&self, version: &str, now: u64) -> bool {
+        now < self
+            .failure
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map_or(0, |f| f.backoff_until)
+            || self
+                .run_failure
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|f| f.blocks(version, now))
     }
 
     /// The first check for the login holding `token`: true once per login (the launch check with the stored login
@@ -866,7 +900,43 @@ pub async fn update_install_idle(app: AppHandle) -> Result<(), String> {
         tracing::info!("update: not installing while idle, a clip is uploading");
         return Err("a clip is still uploading".into());
     }
+    // never pop the installer up over a game (Game activity sees it) or anything full screen in front
+    if app
+        .try_state::<crate::games::GameActivity>()
+        .is_some_and(|g| g.playing())
+    {
+        tracing::info!("update: not installing while idle, a game is running");
+        return Err("a game is running".into());
+    }
+    if foreground_fullscreen() {
+        tracing::info!("update: not installing while idle, something is full screen");
+        return Err("something is full screen".into());
+    }
     install(&app, true, "idle").await
+}
+
+/// Something full screen is in front (a game, a video, a presentation): Windows' own "don't disturb" read, the one
+/// it holds its notifications back for. Never anywhere else.
+fn foreground_fullscreen() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Shell::{
+            QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
+            SHQueryUserNotificationState,
+        };
+        // SAFETY: no arguments; it only reads the shell's state.
+        match unsafe { SHQueryUserNotificationState() } {
+            Ok(s) => [
+                QUNS_BUSY,
+                QUNS_RUNNING_D3D_FULL_SCREEN,
+                QUNS_PRESENTATION_MODE,
+            ]
+            .contains(&s),
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(windows))]
+    false
 }
 
 async fn install(app: &AppHandle, restart: bool, why: &'static str) -> Result<(), String> {
@@ -883,18 +953,28 @@ async fn install(app: &AppHandle, restart: bool, why: &'static str) -> Result<()
         let Some(update) = updates.found.lock().unwrap().clone() else {
             return Err("there's no update to install".into());
         };
+        // a failed install backs off by itself (#460); asked for, it still tries
+        if why == "idle" && updates.idle_backing_off(&update.version, crate::reports::unix_now()) {
+            tracing::info!(version = %update.version, "update: not installing while idle, it failed not long ago");
+            return Err("the last update didn't install; not trying again by itself yet".into());
+        }
         if updates.installing.swap(true, Ordering::SeqCst) {
             return Err("already updating".into());
         }
         tracing::info!(version = %update.version, restart, why, "update: downloading");
         let result = download_and_install(app, &update, &updates.dir).await;
-        if result.is_err() {
+        if let Err(e) = &result {
             // the installer didn't start after all: crash marker and log back, if they were already handed over
             updates.handover.install_failed();
             crate::update_attempt::clear(&updates.dir);
+            updates.note_install_failed(&update.version, e.signature, crate::reports::unix_now());
+            // winding down stopped the clip jobs: back as they were (nothing happens if it never got that far)
+            app.state::<crate::commands::Core>().resume_clips(app).await;
         }
         updates.installing.store(false, Ordering::SeqCst);
-        result.inspect_err(|e| tracing::warn!(error = %e, version = %update.version, "update: install failed; staying on this version"))
+        result
+            .map_err(|e| e.message)
+            .inspect_err(|e| tracing::warn!(error = %e, version = %update.version, "update: install failed; staying on this version"))
     }
     // Only the Windows app updates itself (its checks never offer anything elsewhere).
     #[cfg(not(windows))]
@@ -904,12 +984,29 @@ async fn install(app: &AppHandle, restart: bool, why: &'static str) -> Result<()
     }
 }
 
+/// Why an install failed, and whether it was the installer's signature (no point trying that version again).
+#[cfg(windows)]
+struct InstallError {
+    message: String,
+    signature: bool,
+}
+
+#[cfg(windows)]
+impl From<String> for InstallError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            signature: false,
+        }
+    }
+}
+
 #[cfg(windows)]
 async fn download_and_install(
     app: &AppHandle,
     update: &tauri_plugin_updater::Update,
     dir: &std::path::Path,
-) -> Result<(), String> {
+) -> Result<(), InstallError> {
     let mut attempt = 0;
     let bytes = loop {
         attempt += 1;
@@ -940,7 +1037,16 @@ async fn download_and_install(
                         | tauri_plugin_updater::Error::Io(_)
                 );
                 let Some(wait) = download_retry_delay(attempt, transient) else {
-                    return Err(format!("the download failed: {e}"));
+                    let signature = matches!(
+                        e,
+                        tauri_plugin_updater::Error::Minisign(_)
+                            | tauri_plugin_updater::Error::SignatureUtf8(_)
+                            | tauri_plugin_updater::Error::Base64(_)
+                    );
+                    return Err(InstallError {
+                        message: format!("the download failed: {e}"),
+                        signature,
+                    });
                 };
                 tracing::warn!(error = %e, attempt, wait_s = wait.as_secs(), "update: download failed; trying again");
                 tokio::time::sleep(wait).await;
@@ -959,7 +1065,7 @@ async fn download_and_install(
     );
     update
         .install(bytes)
-        .map_err(|e| format!("the install failed: {e}"))
+        .map_err(|e| format!("the install failed: {e}").into())
 }
 
 #[cfg(test)]
@@ -1427,6 +1533,57 @@ mod tests {
         assert!(!Updates::new(h(), Default::default(), None).backing_off());
         assert!(Updates::new(h(), Default::default(), Some(failure(now + 60))).backing_off());
         assert!(!Updates::new(h(), Default::default(), Some(failure(now - 1))).backing_off());
+    }
+
+    /// #460: an install that fails while running keeps the idle install off that version for a while (1 h, doubling),
+    /// for good after a bad signature, and never holds back a newer one.
+    #[test]
+    fn a_failed_running_install_backs_off_the_idle_install() {
+        let updates = Updates::new(Arc::new(counting_handover().0), Default::default(), None);
+        let now = 1_000_000;
+        assert!(!updates.idle_backing_off("0.2.19", now));
+        updates.note_install_failed("0.2.19", false, now);
+        assert!(updates.idle_backing_off("0.2.19", now + 3599));
+        assert!(!updates.idle_backing_off("0.2.19", now + 3600));
+        assert!(
+            !updates.idle_backing_off("0.2.20", now),
+            "a newer version installs"
+        );
+        updates.note_install_failed("0.2.19", false, now + 3600);
+        assert!(updates.idle_backing_off("0.2.19", now + 3600 + 7199));
+        assert!(!updates.idle_backing_off("0.2.19", now + 3600 + 7200));
+        updates.note_install_failed("0.2.19", true, now + 20_000);
+        assert!(updates.idle_backing_off("0.2.19", now + 30 * 24 * 3600));
+        assert!(!updates.idle_backing_off("0.2.20", now + 20_000));
+    }
+
+    /// A failure found at launch holds the idle install back too, whatever the version.
+    #[test]
+    fn a_launch_found_failure_backs_off_the_idle_install() {
+        let now = 1_000_000;
+        let failure = crate::update_attempt::Failure {
+            attempt: crate::update_attempt::Attempt {
+                from: "0.2.18".into(),
+                to: "0.2.19".into(),
+                at: now - 10,
+                failed_at: Some(now),
+            },
+            fresh: false,
+            backoff_until: now + 60,
+        };
+        let updates = Updates::new(
+            Arc::new(counting_handover().0),
+            Default::default(),
+            Some(failure),
+        );
+        assert!(updates.idle_backing_off("0.2.20", now));
+        assert!(!updates.idle_backing_off("0.2.20", now + 60));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn not_full_screen_off_windows() {
+        assert!(!foreground_fullscreen());
     }
 
     #[cfg(not(windows))]

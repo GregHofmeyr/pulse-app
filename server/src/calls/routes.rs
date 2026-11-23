@@ -29,7 +29,16 @@ async fn start(
             "calls are for DMs and groups; join a server voice channel instead".into(),
         ));
     }
-    if !crate::voice::routes::may_join(&s.db, me, &ch).await? {
+    // a DM with someone you've blocked (#474): no call, as no message, until you unblock them
+    let other = crate::messages::routes::dm_other(&mut *s.db.acquire().await?, &ch, me).await?;
+    if let Some(other) = other
+        && crate::blocks::has_blocked(&s.db, me, other).await?
+    {
+        return Err(AppError::ForbiddenMsg(
+            "You've blocked them. Unblock them to call.".into(),
+        ));
+    }
+    if !crate::voice::routes::may_join_now(&s, me, &ch).await? {
         return Err(AppError::NotFound);
     }
     // Notes to self (#308): a DM with nobody else in it has nobody to call.

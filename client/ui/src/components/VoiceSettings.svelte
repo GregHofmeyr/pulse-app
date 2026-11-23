@@ -92,8 +92,9 @@
     }
   }
 
-  const toggles: { key: 'auto_gain'; label: string; help: string }[] = [
+  const toggles: { key: 'auto_gain' | 'even_out_voices'; label: string; help: string }[] = [
     { key: 'auto_gain', label: 'Automatic gain control', help: 'Evens out your volume. Leave off if you use input gain.' },
+    { key: 'even_out_voices', label: 'Even out voice volumes', help: "Brings quiet and loud people closer to the same volume. Each person's own volume still applies on top." },
   ]
   // what Auto decided for the output open now (#172)
   const echoLine = $derived(echoDecision(voice.echo, cfg.echo_mode))
@@ -170,7 +171,7 @@
 
 <div class="settings-field"><span class="settings-label">ECHO CANCELLATION</span>
   <Segmented label="Echo cancellation" options={echoModes} value={cfg.echo_mode} onchange={(v) => { cfg.echo_mode = v; apply() }} />
-  <small>Stops your speakers leaking back into your mic. Auto turns it off on headphones and headsets.</small>
+  <small>Stops your speakers leaking back into your mic. Auto keeps it on for every output, headsets included. Choose Off if headphones make your voice choppy.</small>
   {#if echoLine}<small data-echo-decision role="status">{echoLine}</small>{/if}
 </div>
 

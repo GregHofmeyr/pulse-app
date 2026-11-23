@@ -350,60 +350,103 @@ pub(crate) async fn mark_all_seen(s: &AppState, me: UserId) -> AppResult<bool> {
 /// Send every reminder due at `now` (up to [`SWEEP_BATCH`]): each lands in its person's inbox and their devices hear
 /// it. One whose message they can no longer see goes quietly. Due ones older than the inbox's days go too. Returns
 /// how many were sent.
+///
+/// Each row stands alone: one that fails is logged and counted (`failures`), and the sweep goes on to the next. One
+/// that has failed [`MAX_FAILURES`] times is parked (skipped from then on), so it can't sit at the head of the queue
+/// failing every sweep; parked ones go with the fired ones after the inbox's days.
 pub async fn remind_due(s: &AppState, now: Timestamp) -> AppResult<usize> {
     let at = stamp(now);
-    sqlx::query("DELETE FROM message_reminders WHERE fired_at IS NOT NULL AND fired_at < ?")
-        .bind(stamp(now - crate::times::days(crate::inbox::DAYS)))
-        .execute(&s.db)
-        .await?;
+    sqlx::query(
+        "DELETE FROM message_reminders WHERE (fired_at IS NOT NULL AND fired_at < ?1)
+           OR (fired_at IS NULL AND failures >= ?2 AND remind_at < ?1)",
+    )
+    .bind(stamp(now - crate::times::days(crate::inbox::DAYS)))
+    .bind(MAX_FAILURES)
+    .execute(&s.db)
+    .await?;
     let due: Vec<(String, String)> = sqlx::query_as(
-        "SELECT id, user_id FROM message_reminders WHERE fired_at IS NULL AND remind_at <= ?
+        "SELECT id, user_id FROM message_reminders WHERE fired_at IS NULL AND remind_at <= ? AND failures < ?
          ORDER BY remind_at, id LIMIT ?",
     )
     .bind(&at)
+    .bind(MAX_FAILURES)
     .bind(SWEEP_BATCH)
     .fetch_all(&s.db)
     .await?;
     let mut sent = 0;
     for (id, user) in due {
-        let id: ReminderId = id.parse().map_err(anyhow::Error::from)?;
-        let user: UserId = user.parse().map_err(anyhow::Error::from)?;
-        let order = s.hub.in_order().await;
-        let mut tx = begin_write(&s.db).await?;
-        // With one of their devices connected they hear it now; with none it's missed until one claims it (#412).
-        let live = s.hub.connections_for(user) > 0;
-        let changed = sqlx::query(
-            "UPDATE message_reminders SET fired_at = ?1, alerted_at = CASE WHEN ?2 THEN ?1 END
-             WHERE id = ?3 AND fired_at IS NULL",
-        )
-        .bind(&at)
-        .bind(live)
-        .bind(id.to_string())
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        if changed == 0 {
-            continue;
+        match remind_one(s, &id, &user, &at).await {
+            Ok(true) => sent += 1,
+            Ok(false) => {}
+            Err(e) => failed(s, &id, &e).await,
         }
-        let Some(r) = one(&mut *tx, user, id).await? else {
-            // its message is gone from them: nothing to remind them of
-            sqlx::query("DELETE FROM message_reminders WHERE id = ?")
-                .bind(id.to_string())
-                .execute(&mut *tx)
-                .await?;
-            tx.commit().await?;
-            s.hub
-                .publish(&s.db, Event::ReminderRemoved { user_id: user, id })
-                .await;
-            continue;
-        };
-        tx.commit().await?;
-        publish_saved(s, user, r).await;
-        drop(order);
-        recount(s, user).await;
-        sent += 1;
     }
     Ok(sent)
+}
+
+/// A due reminder that failed this many times is parked: the sweep skips it.
+pub const MAX_FAILURES: i64 = 5;
+
+/// Count a failed send of reminder `id` (best effort: a failure to count is only logged).
+async fn failed(s: &AppState, id: &str, e: &AppError) {
+    let count: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
+        "UPDATE message_reminders SET failures = failures + 1 WHERE id = ? AND fired_at IS NULL RETURNING failures",
+    )
+    .bind(id)
+    .fetch_optional(&s.db)
+    .await;
+    match count {
+        Ok(Some(n)) if n >= MAX_FAILURES => {
+            tracing::error!(error = ?e, id, failures = n, "a reminder keeps failing to send; parked")
+        }
+        Ok(n) => {
+            tracing::warn!(error = ?e, id, failures = ?n, "a reminder failed to send; trying again later")
+        }
+        Err(count_err) => {
+            tracing::warn!(error = ?e, %count_err, id, "a reminder failed to send, and its failure wasn't counted")
+        }
+    }
+}
+
+/// Send one due reminder (`id`, for `user`). True when it was sent; false when there was nothing to send (someone
+/// else sent it, or its message is gone from them).
+async fn remind_one(s: &AppState, id: &str, user: &str, at: &str) -> AppResult<bool> {
+    let id: ReminderId = id.parse().map_err(anyhow::Error::from)?;
+    let user: UserId = user.parse().map_err(anyhow::Error::from)?;
+    let order = s.hub.in_order().await;
+    let mut tx = begin_write(&s.db).await?;
+    // With one of their devices connected they hear it now; with none it's missed until one claims it (#412).
+    let live = s.hub.connections_for(user) > 0;
+    let changed = sqlx::query(
+        "UPDATE message_reminders SET fired_at = ?1, alerted_at = CASE WHEN ?2 THEN ?1 END
+         WHERE id = ?3 AND fired_at IS NULL",
+    )
+    .bind(at)
+    .bind(live)
+    .bind(id.to_string())
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        return Ok(false);
+    }
+    let Some(r) = one(&mut *tx, user, id).await? else {
+        // its message is gone from them: nothing to remind them of
+        sqlx::query("DELETE FROM message_reminders WHERE id = ?")
+            .bind(id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        s.hub
+            .publish(&s.db, Event::ReminderRemoved { user_id: user, id })
+            .await;
+        return Ok(false);
+    };
+    tx.commit().await?;
+    publish_saved(s, user, r).await;
+    drop(order);
+    recount(s, user).await;
+    Ok(true)
 }
 
 /// Send due reminders every [`SWEEP_EVERY`] (the first tick runs at once: the boot sweep). Call after binding the

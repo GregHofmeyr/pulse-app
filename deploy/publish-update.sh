@@ -2,7 +2,8 @@
 # Publishes a Windows build as the app update everyone gets (#82): `just publish-update RUN_ID`, run on the deploying
 # machine after `just deploy` (the server's /updates route must be live) and a green release-windows run.
 #
-#   1. the run must be release-windows, successful, on main or a v* tag;
+#   1. the run must be release-windows (by name and workflow file), successful, started by a push or workflow_dispatch,
+#      from main or a v* tag, and its commit must be on origin/main (a tag must point at that commit);
 #   2. its pulse-windows-installer artifact must hold exactly one Pulse_X.Y.Z_x64-setup.exe and its .sig, and the
 #      signature must verify (minisign) against the public key in client/src-tauri/tauri.conf.json; a version the
 #      signature binds must be X.Y.Z, and one is required when the app requires it (requireSignedVersion, #232);
@@ -12,7 +13,7 @@
 #      names a missing file; then everything but this installer and the one before it is deleted;
 #   5. checks: the server's copy hashes the same, the manifest parses, and the route answers 401 without a session.
 # Nothing is uploaded unless 1-3 and the route check pass, and the download is deleted whatever happens. Needs gh
-# (logged in), jq, minisign, curl, ssh, scp.
+# (logged in), git (with origin = GitHub), jq, minisign, curl, ssh, scp.
 #
 # PUBLISH_UPDATE_DIR=DIR (the self-test) uses DIR as the server's updates dir instead of ssh/scp.
 set -euo pipefail
@@ -171,15 +172,66 @@ route_code() {
   curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://$PULSE_DOMAIN/updates/latest.json" || true
 }
 
+# repo: the git checkout whose origin/main a run's commit must be on (the self-test points it at a scratch clone)
+repo() {
+  if [ -n "${PUBLISH_UPDATE_DIR:-}" ] && [ -n "${PUBLISH_UPDATE_REPO:-}" ]; then
+    echo "$PUBLISH_UPDATE_REPO"
+  else
+    echo "$here/.."
+  fi
+}
+
+# run_field JSON KEY: one field of check_run's run info ('' when missing)
+run_field() { jq -r --arg k "$2" '.[$k] // empty' <<<"$1"; }
+
+# remote_tag_commit TAG: the commit origin's TAG points at (peeled, so an annotated tag gives its commit), else ''
+remote_tag_commit() {
+  local out
+  out=$(git -C "$(repo)" ls-remote origin "refs/tags/$1" "refs/tags/$1^{}") || return 1
+  # the peeled line (annotated tags) sorts after the plain one, so the last line is the commit
+  tail -n 1 <<<"$out" | cut -f1
+}
+
+# check_run RUN_ID JSON: the run (GitHub's actions/runs fields) must be a successful release-windows run, started by
+# a push or by hand, from main or a v* tag, and the commit it built must be on origin/main (for a tag: the tag must
+# point at that commit). A branch merely named like a tag, or a tag pushed on a feature commit, is refused.
+check_run() {
+  local id=$1 info=$2 name path event conclusion ref sha tagged repo
+  repo=$(repo)
+  name=$(run_field "$info" name)
+  path=$(run_field "$info" path)
+  event=$(run_field "$info" event)
+  conclusion=$(run_field "$info" conclusion)
+  ref=$(run_field "$info" head_branch)
+  sha=$(run_field "$info" head_sha)
+  [ "$name" = release-windows ] && [ "$path" = .github/workflows/release-windows.yml ] ||
+    refuse "run $id isn't the release-windows workflow (name '$name', path '$path')"
+  [ "$event" = workflow_dispatch ] || [ "$event" = push ] ||
+    refuse "run $id was started by '$event', not a push or workflow_dispatch"
+  [ "$conclusion" = success ] || refuse "run $id didn't succeed (conclusion '$conclusion')"
+  [[ $ref =~ ^(main|v[0-9][0-9A-Za-z.-]*)$ ]] || refuse "run $id isn't from main or a v* tag (ref '$ref')"
+  [[ $sha =~ ^[0-9a-f]{40}$ ]] || refuse "run $id has no commit sha (head_sha '$sha')"
+
+  git -C "$repo" fetch -q origin ||
+    refuse "couldn't git fetch origin, so run $id's commit can't be checked against main"
+  if [ "$ref" != main ]; then
+    tagged=$(remote_tag_commit "$ref") || refuse "couldn't list origin's tags"
+    [ -n "$tagged" ] || refuse "run $id's ref '$ref' isn't a tag on origin (a branch named like a tag?)"
+    [ "$tagged" = "$sha" ] || refuse "tag $ref points at $tagged on origin, but run $id built $sha"
+  fi
+  git -C "$repo" cat-file -e "$sha^{commit}" 2>/dev/null ||
+    refuse "run $id's commit $sha isn't in origin's history after a fetch, so it isn't on main"
+  git -C "$repo" merge-base --is-ancestor "$sha" origin/main ||
+    refuse "run $id built $sha, which isn't on origin/main (a tag or dispatch on an unmerged commit?)"
+}
+
 publish_main() {
   local run_id=${1:-} info dl exe sig version served name pubkey signed local_sha remote_sha code
   [[ $run_id =~ ^[0-9]+$ ]] || refuse "a run id is digits (gh run list -w release-windows), got '$run_id'"
 
-  info=$(gh run view "$run_id" --repo "$gh_repo" --json workflowName,conclusion,headBranch) ||
-    refuse "couldn't look up run $run_id"
-  [ "$(jq -r .workflowName <<<"$info")" = release-windows ] || refuse "run $run_id isn't release-windows: $info"
-  [ "$(jq -r .conclusion <<<"$info")" = success ] || refuse "run $run_id didn't succeed: $info"
-  [[ $(jq -r .headBranch <<<"$info") =~ ^(main|v[0-9][0-9A-Za-z.-]*)$ ]] || refuse "run $run_id isn't from main or a v* tag: $info"
+  info=$(gh api "repos/$gh_repo/actions/runs/$run_id" \
+    --jq '{name, path, event, conclusion, head_branch, head_sha}') || refuse "couldn't look up run $run_id"
+  check_run "$run_id" "$info"
 
   code=$(route_code)
   [ "$code" = 401 ] || refuse "https://$PULSE_DOMAIN/updates/latest.json answers $code without a session, not 401: deploy the server first"

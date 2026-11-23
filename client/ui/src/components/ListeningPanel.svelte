@@ -11,6 +11,7 @@
   import { app } from '../lib/store.svelte'
   import { voice } from '../lib/voice.svelte'
   import type { Listening } from '../lib/protocol/Listening'
+  import { safeHref } from '../lib/safeHref'
 
   let { listening }: { listening: Listening } = $props()
   const art = $derived(artUrl(listening))
@@ -49,7 +50,7 @@
     </div>
   </div>
   {#if link}<div class="actions">
-    <a class="open" href={link.href} target="_blank" rel="noopener noreferrer">{link.label}</a>
+    <a class="open" href={safeHref(link.href)} target="_blank" rel="noopener noreferrer">{link.label}</a>
     {#if onStage}
       <span class="open on-stage" aria-disabled="true">On the stage</span>
     {:else if canShare}

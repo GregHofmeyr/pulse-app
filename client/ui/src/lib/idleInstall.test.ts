@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
-import { IDLE_INSTALL_MS, IDLE_POLL_MS, idleInstallDue, startIdleInstall, updates } from './updates.svelte'
+import { IDLE_INSTALL_MS, IDLE_POLL_MS, idleInstallDue, pendingBlocks, startIdleInstall, updates } from './updates.svelte'
+import { hasUnsavedEdits, markEdit } from './openEdits'
+import type { Pending } from './state'
 import { windowFocus } from './windowFocus.svelte'
 
 const installs = () => invoke.mock.calls.filter((c) => c[0] === 'update_install_idle').length
@@ -77,9 +79,54 @@ describe('idle install (#460)', () => {
     expect(installs()).toBe(2)
   })
 
+  it('waking from sleep counts as someone being there, not a quiet spell', async () => {
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS)
+    // the computer sleeps for two hours: no timer runs meanwhile, the clock moves on
+    vi.setSystemTime(Date.now() + 2 * 3600_000)
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS)
+    expect(installs()).toBe(0)
+    await vi.advanceTimersByTimeAsync(IDLE_INSTALL_MS - IDLE_POLL_MS)
+    expect(installs()).toBe(0)
+    // a full quiet spell after waking does install
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS)
+    expect(installs()).toBe(1)
+  })
+
+  it('a late tick within two polls is not taken for a sleep', async () => {
+    await vi.advanceTimersByTimeAsync(IDLE_INSTALL_MS - IDLE_POLL_MS)
+    vi.setSystemTime(Date.now() + IDLE_POLL_MS / 2) // a busy main thread, not a sleep
+    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS)
+    expect(installs()).toBe(1)
+  })
+
   it('nothing to install, nothing happens', async () => {
     updates.offer = null
     await vi.advanceTimersByTimeAsync(IDLE_INSTALL_MS * 2)
     expect(installs()).toBe(0)
+  })
+})
+
+describe('what holds the idle install back (#460)', () => {
+  const p = (status: Pending['status'], files = false): Pending => ({
+    nonce: 'n', content: 'hi', reply_to_id: null, thread_root_id: null, status, created_at: '',
+    ...(files ? { files: [{ id: 'f', name: 'a.png', size: 1, kind: 'image', preview: null }] as Pending['files'] } : {}),
+  })
+  it('a message still sending, or a failed one with files; never a failed text message (it survives a restart)', () => {
+    expect(pendingBlocks({})).toBe(false)
+    expect(pendingBlocks({ C1: [] })).toBe(false)
+    expect(pendingBlocks({ C1: [p('failed')] })).toBe(false)
+    expect(pendingBlocks({ C1: [p('failed'), p('pending')] })).toBe(true)
+    expect(pendingBlocks({ C1: [p('failed', true)] })).toBe(true)
+  })
+  it('an open message edit with changes', () => {
+    const a = Symbol('a')
+    const b = Symbol('b')
+    expect(hasUnsavedEdits()).toBe(false)
+    markEdit(a, true)
+    markEdit(b, true)
+    markEdit(a, false)
+    expect(hasUnsavedEdits()).toBe(true)
+    markEdit(b, false)
+    expect(hasUnsavedEdits()).toBe(false)
   })
 })

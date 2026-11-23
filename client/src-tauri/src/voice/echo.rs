@@ -1,11 +1,16 @@
-//! Echo cancellation: Auto / On / Off (#76, noise-suppression design §9). Auto, the default,
-//! turns it off when the output is headphones or a headset (nothing from the speakers can reach
-//! the mic, and the canceller only costs CPU and can chop speech), and on otherwise, including when
-//! the device doesn't say what it is. Switching the output device re-evaluates.
+//! Echo cancellation: Auto / On / Off (#76, noise-suppression design §9).
 //!
-//! What the output is comes from the system: on Windows the endpoint's form factor
-//! (`PKEY_AudioEndpoint_FormFactor`, read by cpal into the device description); on Linux the sound
-//! server's `device.form_factor` property of the sink, when it has one.
+//! Auto, the default, keeps it on whatever the output is (#354). It used to turn it off when the
+//! output said it was headphones or a headset, but that word can't be trusted: a headphone jack
+//! says "headphones" whatever is plugged in (speakers too), and virtual devices (Sonar,
+//! Voicemeeter) and some USB/Bluetooth headsets mislabel themselves, so everyone else heard
+//! themselves echo. AEC3 copes with headsets on its own (it sees no echo path and backs off), so
+//! leaving it on costs a little CPU and nothing else. Off stays for anyone who wants it gone.
+//!
+//! What the output is still comes from the system (on Windows the endpoint's form factor,
+//! `PKEY_AudioEndpoint_FormFactor`, read by cpal into the device description; on Linux the sound
+//! server's `device.form_factor` property of the sink, when it has one): it's logged and shown on
+//! the settings page, but no longer decides anything.
 
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +27,7 @@ pub enum EchoMode {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Output {
-    /// Headphones or a headset: nothing it plays reaches the mic.
+    /// The system says headphones or a headset (not always true: #354).
     Headphones,
     /// Speakers, a monitor, line out and the like.
     Other,
@@ -31,13 +36,12 @@ pub enum Output {
     Unknown,
 }
 
-/// Whether echo cancellation runs.
-pub fn echo_on(mode: EchoMode, output: Output) -> bool {
+/// Whether echo cancellation runs. Auto is on for every output, headphones included (#354: the
+/// form factor lies too often to turn it off on its word).
+pub fn echo_on(mode: EchoMode, _output: Output) -> bool {
     match mode {
-        EchoMode::On => true,
+        EchoMode::On | EchoMode::Auto => true,
         EchoMode::Off => false,
-        // unknown keeps it on: leave things as they were
-        EchoMode::Auto => output != Output::Headphones,
     }
 }
 
@@ -122,14 +126,13 @@ mod linux {
 mod tests {
     use super::*;
 
+    /// #354: a headphone jack, a virtual device or a mislabelled headset all say "headphones";
+    /// Auto keeps the canceller on regardless.
     #[test]
-    fn auto_is_off_on_headphones_and_on_otherwise() {
-        assert!(!echo_on(EchoMode::Auto, Output::Headphones));
-        assert!(echo_on(EchoMode::Auto, Output::Other));
-        assert!(
-            echo_on(EchoMode::Auto, Output::Unknown),
-            "unknown leaves it as it was"
-        );
+    fn auto_is_on_whatever_the_output_says() {
+        for o in [Output::Headphones, Output::Other, Output::Unknown] {
+            assert!(echo_on(EchoMode::Auto, o), "{o:?}");
+        }
     }
 
     #[test]

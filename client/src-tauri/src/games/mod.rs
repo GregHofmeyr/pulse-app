@@ -201,6 +201,12 @@ impl GameActivity {
         }
     }
 
+    /// A game is running now, as far as Pulse looks (game activity on, where there's a source). An update never
+    /// installs by itself then (#460).
+    pub fn playing(&self) -> bool {
+        self.lock().current.is_some()
+    }
+
     fn spawn(&self, src: Box<dyn Source>, epoch: u64) -> tauri::async_runtime::JoinHandle<()> {
         let (inner, send, notify, every) = (
             self.inner.clone(),
@@ -451,9 +457,11 @@ mod tests {
         assert_eq!((*made.lock().unwrap(), g.detecting()), (0, false));
         assert!(frames.lock().unwrap().is_empty());
         assert!(g.after_ready().is_none());
+        assert!(!g.playing());
 
         g.set(GameSettings::default());
         wait_for(&frames, 1).await;
+        assert!(g.playing(), "#460: an update waits for the game");
         let first = playing(&frames.lock().unwrap()[0]).unwrap();
         assert_eq!(
             (first.name.as_str(), first.steam_app_id),
@@ -478,6 +486,7 @@ mod tests {
         *id.lock().unwrap() = Some(0);
         wait_for(&frames, 3).await;
         assert_eq!(playing(&frames.lock().unwrap()[2]), None);
+        assert!(!g.playing());
         *id.lock().unwrap() = Some(570);
         wait_for(&frames, 4).await;
 
@@ -487,6 +496,7 @@ mod tests {
             ..GameSettings::default()
         });
         assert!(!g.detecting());
+        assert!(!g.playing());
         assert_eq!(playing(&frames.lock().unwrap()[4]), None);
         let n = frames.lock().unwrap().len();
         tokio::time::sleep(Duration::from_millis(60)).await;

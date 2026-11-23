@@ -301,6 +301,10 @@ town's weather (#451). Change it and `just deploy`; places already looked up kee
 - After a deploy: `just smoke`, `just clips-check`, `just logs`, and check the migration number
   (`SELECT max(version) FROM _sqlx_migrations`) and `PRAGMA integrity_check` on the live database (read-only).
 - `just logs` (or `just logs caddy` / `just logs livekit`) follows the live logs.
+- **Logs from before a deploy.** Recreating the containers drops their logs, so `deploy.sh` first writes pulse-server's
+  and Caddy's (`docker compose logs --no-color --timestamps`) to `/srv/pulse/logs/<UTC time>.log.gz`, keeping the
+  newest 10 dumps. Read one with `ssh pulse@pulse 'zcat /srv/pulse/logs/<name>.log.gz' | less`. Failing to save them
+  only warns; the deploy goes on.
 - After changing `livekit.yaml`: `just deploy`, then `ssh pulse@pulse 'cd /srv/pulse && docker compose restart livekit'`.
   (A changed `LIVEKIT_NODE_IP` needs no restart: `just deploy` recreates LiveKit with it.)
   The codec list needs a LiveKit restart to apply; `just deploy` copies the file but does not restart LiveKit.
@@ -323,7 +327,8 @@ container's `/data/updates`, outside the media backups).
    signs the installer with the updater key (`TAURI_SIGNING_PRIVATE_KEY` and `_PASSWORD` repo secrets); the
    `pulse-windows-installer` artifact carries `Pulse_0.2.N_x64-setup.exe` and its `.sig`.
 4. `just publish-update <run-id>` (`gh run list -w release-windows` shows the id). It refuses, before uploading
-   anything, a run that isn't a green release-windows on `main` or a `v*` tag, a signature that doesn't verify against
+   anything, a run that isn't a green release-windows (pushed tag or dispatch) whose commit is on `origin/main` (a `v*`
+   tag must point at that commit; it runs `git fetch origin`), a signature that doesn't verify against
    the public key in `tauri.conf.json` (needs `minisign`) or that binds another version than the installer's, or none
    (the app has `requireSignedVersion` on, #232), a version that isn't newer than the one served, a served
    `latest.json` it can't read (#233), and a server whose route isn't live. Then it uploads the installer, writes
@@ -394,7 +399,8 @@ Only one backup runs at a time: a deploy's backup waits (up to 10 minutes) for a
 killed backup left behind (power loss mid-run) are removed by the next one, plaintext snapshots included.
 
 Restoring for real: `just restore daily/pulse-<time>.db.age`. The restored database needs the `PULSE_TOTP_KEY` it was
-written under (same server: already in `.env`; new server: section 12; otherwise see "Lost key"). The server stops for
+written under (same server: already in `.env`; new server: section 12, or section 13 if the old one died; otherwise
+see "Lost key"). The server stops for
 a few seconds; the old database is kept next to it as `data/pulse.db.pre-restore-<time>`.
 
 Restoring the media (the database restore doesn't touch it; do this after a lost or rebuilt server, or to roll
@@ -482,3 +488,52 @@ access through your Tailscale identity, and the backup key in NordPass.
    `.env` has its own `LIVEKIT_NODE_IP`, set in section 6.
 5. Delete the old VM and remove it from Tailscale, then rename the new machine to `pulse` (admin console →
    Machines → ⋯ → Edit machine name) so `pulse@pulse` and the recipes reach it again.
+
+## 13. The server died
+
+Section 12 needs the old server running. When it's gone (the VM deleted, the disk lost, the account closed), rebuild
+from the backups in R2 and the password manager. Have NordPass open: the backup age key, `PULSE_TOTP_KEY` and the full
+`.env` are all in it.
+
+1. **Tailscale first:** admin console → Machines → remove the dead `pulse`. Otherwise the new VM is named `pulse-1`
+   and `pulse@pulse` (and every recipe) reaches nothing.
+2. Section 4 on a new VM (`just provision`, approve it in Tailscale, disable key expiry, close public SSH). Check
+   `ssh ubuntu@pulse hostname` prints `pulse`.
+3. Refill `/srv/pulse/.env` (`just edit-env`). setup.sh made it from `env.example`; set each line from where the table
+   says. Names only here; the values live in NordPass and on the new VM.
+
+   | Variable | Where it comes from |
+   | --- | --- |
+   | `PULSE_DOMAIN`, `PULSE_TAG`, `GIPHY_RATING` | `env.example` defaults; keep them |
+   | `PULSE_UID`, `PULSE_GID`, `LIVEKIT_SECRET` | setup.sh generated them; keep them |
+   | `PULSE_IMAGE` | leave blank; `just deploy` writes it |
+   | `PULSE_TOTP_KEY` | NordPass: **replace** the one setup.sh generated (it must match the database, "Lost key") |
+   | `ACME_EMAIL` | your personal address |
+   | `LIVEKIT_NODE_IP` | the new VM's public IPv4 (section 6 step 2) |
+   | `AGE_RECIPIENT` | the `# public key: age1…` line of the backup key in NordPass |
+   | `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | NordPass (or a new backups token, section 8 step 2) |
+   | `BACKUP_PING_URL` | NordPass / healthchecks.io (optional) |
+   | `CLIPS_R2_BUCKET`, `CLIPS_R2_ACCESS_KEY_ID`, `CLIPS_R2_SECRET_ACCESS_KEY` | NordPass (or a new clips token, section 9 step 2) |
+   | `PULSE_LAUNCH_DATE`, `PULSE_INVITE_DECOY`, `PULSE_UPDATE_RESCUE`, `PULSE_PLANS_COUNTRY` | NordPass copy of the old `.env` (empty is the default) |
+   | `GIPHY_API_KEY`, `PULSE_STEAM_API_KEY`, `PULSE_DEADLOCK_API_KEY`, `PULSE_API_SPORTS_KEY` | NordPass (optional; or new keys from each site, section 6) |
+
+   The R2 values have to be in before step 5: the restore fetches the backups through the server.
+4. DNS: point both Cloudflare A records (`@`, `voice`) at the new IP, still grey cloud (section 5).
+5. **Write down the newest backup names now**, before anything runs on the new server:
+   `ssh pulse@pulse /srv/pulse/backup.sh latest` and `ssh pulse@pulse /srv/pulse/backup.sh latest-media`. Once the
+   server is up, a second deploy or the 03:00 timer backs up its new, empty database, and that becomes the newest.
+   `just restore-drill <db name>` checks the database backup here (`integrity ok: N users, …`).
+6. `just deploy` → `healthy: …` (on an empty database). Then restore the names from step 5:
+   `just restore daily/pulse-<time>.db.age`, then `just restore-media-drill <media name>` and
+   `just restore-media daily/pulse-media-<time>.tgz.age`. Clips and chat files need nothing: they live in their own
+   bucket (section 9).
+7. Re-publish what the app downloads, since the updates directory was on the dead disk:
+   `just publish-update <run-id>` with the newest green release-windows run (`gh run list -w release-windows`). CI
+   keeps its artifact for about 90 days; once it has expired, rebuild from the release tag
+   (`gh workflow run release-windows.yml --ref v0.2.N`) and publish that run. Then `just publish-models`.
+8. Checks: `curl -s https://pulsechat.co.za/health` says `ok`, `just smoke` (every line `ok`), `just clips-check`, sign
+   in with the app and join a call, then `just backup-now` followed by `just restore-drill`, so the new server's own
+   backups are proven too. The uptime monitor (section 10) turns green by itself.
+
+Rehearse steps 2-8 on a throwaway VM now and then (pointing the recipes at it as in section 12, and skipping DNS):
+the first time through this shouldn't be the real one.
