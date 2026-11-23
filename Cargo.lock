@@ -3656,7 +3656,7 @@ dependencies = [
  "livekit-common",
  "livekit-data-stream",
  "livekit-datatrack",
- "livekit-protocol",
+ "livekit-protocol 0.8.2",
  "livekit-rpc",
  "livekit-signaling",
  "log",
@@ -3675,12 +3675,37 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d23c1fcba4837f75f9e3596c60527dac6f0eec2f660118ef65c5b0da0488bbeb"
 dependencies = [
+ "chrono",
+ "http",
+ "livekit-protocol 0.8.2",
+ "livekit-region",
+ "livekit-token 0.3.1",
+ "log",
+ "pbjson-types",
+ "progenitor-client",
+ "prost 0.14.4",
+ "rand 0.9.5",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "livekit-api"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ddeff67bdf0847650e19afb76dfa7deda8c8281f2cabfa2b1b00b30ea8074f3"
+dependencies = [
  "base64 0.21.7",
  "chrono",
  "http",
- "livekit-protocol",
+ "livekit-protocol 0.9.0",
  "livekit-region",
- "livekit-token",
+ "livekit-token 0.5.0",
  "log",
  "pbjson-types",
  "progenitor-client",
@@ -3701,7 +3726,7 @@ version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "728a0e2cc2991a3392e2a1c9321b92f3f49d35f02ffc3e071ec75ea66fa9a5bc"
 dependencies = [
- "livekit-protocol",
+ "livekit-protocol 0.8.2",
 ]
 
 [[package]]
@@ -3717,7 +3742,7 @@ dependencies = [
  "from_variants",
  "futures-util",
  "livekit-common",
- "livekit-protocol",
+ "livekit-protocol 0.8.2",
  "log",
  "parking_lot",
  "prost 0.14.4",
@@ -3738,7 +3763,7 @@ dependencies = [
  "from_variants",
  "futures-core",
  "indexmap 2.14.2",
- "livekit-protocol",
+ "livekit-protocol 0.8.2",
  "log",
  "rand 0.9.5",
  "thiserror 2.0.21",
@@ -3779,6 +3804,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "livekit-protocol"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fb2dcd698010d85521b104daed2696c0247f6f2bd4f762af4004aaab78b56f6"
+dependencies = [
+ "pbjson",
+ "pbjson-types",
+ "prost 0.14.4",
+ "serde",
+]
+
+[[package]]
 name = "livekit-region"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3795,7 +3832,7 @@ checksum = "71d9d843d1354aafb39c4f9fd3481adcebbcde730f9b8ce247fde4b5330a7a5c"
 dependencies = [
  "livekit-common",
  "livekit-data-stream",
- "livekit-protocol",
+ "livekit-protocol 0.8.2",
  "log",
  "parking_lot",
  "semver",
@@ -3816,7 +3853,7 @@ dependencies = [
  "http",
  "livekit-common",
  "livekit-net",
- "livekit-protocol",
+ "livekit-protocol 0.8.2",
  "livekit-region",
  "log",
  "os_info",
@@ -3836,7 +3873,22 @@ checksum = "ce13289c46aab01eb50e29ca98544c703101b02a0d0a4caae416a441ee631c9b"
 dependencies = [
  "hmac 0.12.1",
  "jsonwebtoken",
- "livekit-protocol",
+ "livekit-protocol 0.8.2",
+ "serde",
+ "sha2 0.10.9",
+ "signature",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "livekit-token"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2bbb6d6f66b63e1345aedc4dd994c7fff551b51fd9be0fe29c97288f6a1a980"
+dependencies = [
+ "hmac 0.12.1",
+ "jsonwebtoken",
+ "livekit-protocol 0.9.0",
  "serde",
  "sha2 0.10.9",
  "signature",
@@ -5287,8 +5339,8 @@ dependencies = [
  "keyring",
  "libc",
  "livekit",
- "livekit-api",
- "livekit-protocol",
+ "livekit-api 0.9.1",
+ "livekit-protocol 0.8.2",
  "livekit-signaling",
  "log",
  "ndarray 0.15.6",
@@ -5366,8 +5418,8 @@ dependencies = [
  "hmac 0.13.0",
  "image",
  "jiff",
- "livekit-api",
- "livekit-protocol",
+ "livekit-api 0.11.0",
+ "livekit-protocol 0.9.0",
  "prost 0.14.4",
  "pulse-protocol",
  "pulse-server",

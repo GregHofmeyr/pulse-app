@@ -165,7 +165,7 @@
 
 <div class="settings-field"><span class="settings-label">ECHO CANCELLATION</span>
   <Segmented label="Echo cancellation" options={echoModes} value={cfg.echo_mode} onchange={(v) => { cfg.echo_mode = v; apply() }} />
-  <small>Stops your speakers leaking back into your mic. Auto turns it off on headphones and headsets.</small>
+  <small>Stops your speakers leaking back into your mic. Auto keeps it on for every output, headsets included. Choose Off if headphones make your voice choppy.</small>
   {#if echoLine}<small data-echo-decision role="status">{echoLine}</small>{/if}
 </div>
 
