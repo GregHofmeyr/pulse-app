@@ -44,7 +44,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 rusty-s3 = "0.11.0"
 tempfile = { version = "3", optional = true }
 livekit-api = { version = "0.9.1", default-features = false, features = ["access-token", "webhooks", "services"] }
-livekit-protocol = "0.8.2"
+livekit-protocol = "0.9.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 # Static: libwebp is built from source, so the runtime image needs no libwebp packages.
 webp-animation = { version = "0.10", features = ["static"] }
@@ -72,6 +72,6 @@ reqwest = { version = "0.12", default-features = false, features = ["json"] }
 jiff = { version = "0.2", default-features = false, features = ["std"] }
 tempfile = "3"
 prost = "0.14"
-livekit-protocol = "0.8.2"
+livekit-protocol = "0.9.0"
 # tests/livekit_ice.rs reads deploy/livekit.yaml and docker/livekit.yaml
 yaml-rust2 = { version = "0.13", default-features = false }
