@@ -453,7 +453,7 @@ mod win {
 
     fn sessions() -> Result<Vec<(u32, f32)>, wasapi::WasapiError> {
         let device =
-            wasapi::DeviceEnumerator::new()?.get_default_device(&wasapi::Direction::Render)?;
+            wasapi::DeviceEnumerator::new()?.get_default_device(wasapi::Direction::Render)?;
         let list = device
             .get_iaudiosessionmanager()?
             .get_audiosessionenumerator()?;

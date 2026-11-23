@@ -233,13 +233,14 @@ fn wasapi_capture(
         .map_err(|e| format!("{e:?}"))?;
     let mut client = wasapi::AudioClient::new_application_loopback_client(pid, include)
         .map_err(|e| format!("activate: {e}"))?;
-    let fmt = wasapi::WaveFormat::new(16, 16, &wasapi::SampleType::Int, 48_000, 2, None);
+    let fmt = wasapi::WaveFormat::new(16, 16, wasapi::SampleType::Int, 48_000, 2, None);
     let mode = wasapi::StreamMode::EventsShared {
         autoconvert: true,
         buffer_duration_hns: 200_000,
     };
+    // session `None`: the process's default audio session, which is what wasapi 0.26 always used
     client
-        .initialize_client(&fmt, &wasapi::Direction::Capture, &mode)
+        .initialize_client(&fmt, wasapi::Direction::Capture, mode, None)
         .map_err(|e| format!("init: {e}"))?;
     let ev = client
         .set_get_eventhandle()
