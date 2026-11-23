@@ -1,6 +1,8 @@
 //! Voice gate: decides when the mic is "on". Automatic mode opens on speech (model probability with
 //! hysteresis) that is also clearly above the room's noise floor; manual mode on an RMS threshold.
 //! Both hold 450 ms, fade out over 100 ms, and keep 20 ms of pre-roll so first syllables survive.
+//! The pre-roll is only for the opening edge: once open, the gate catches up in the first quiet
+//! moment (a pause between words) and then passes audio straight through, with no delay.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -20,6 +22,8 @@ const FADE_BLOCKS: f32 = 10.0;
 /// Pre-roll in front of the audio the gate opens on: 20 ms, so first syllables survive. Part or all
 /// of it can come from the denoiser's own delay.
 pub const PREROLL_BLOCKS: usize = 2;
+/// With a manual threshold of 0 (always open) only this quiet counts as a pause to catch up in.
+const QUIET_DB: f32 = -50.0;
 
 pub struct VoiceGate {
     auto: bool,
@@ -30,7 +34,16 @@ pub struct VoiceGate {
     open_until: Option<Instant>,
     /// Gain applied at the start of the next emitted block (fades towards 0 when closed).
     gain: f32,
-    delay: VecDeque<Vec<f32>>,
+    /// The last `preroll` input blocks, oldest first: what an opening edge releases.
+    history: VecDeque<Vec<f32>>,
+    /// How many blocks behind the input the output runs now: the full pre-roll while closed,
+    /// down to 0 once an open gate has caught up.
+    lag: usize,
+    /// Scratch for the block going out (no allocation per block).
+    out: Vec<f32>,
+    /// Blocks since the gate last opened from silence: no catching up until the pre-roll and
+    /// the block that opened it have gone out (the pre-roll is what an opening is for).
+    since_open: usize,
 }
 
 fn db(x: f32) -> f32 {
@@ -46,7 +59,10 @@ impl VoiceGate {
             floor_db: None,
             open_until: None,
             gain: 0.0,
-            delay: (0..PREROLL_BLOCKS).map(|_| vec![0.0; FRAME]).collect(),
+            history: (0..PREROLL_BLOCKS).map(|_| vec![0.0; FRAME]).collect(),
+            lag: PREROLL_BLOCKS,
+            out: vec![0.0; FRAME],
+            since_open: 0,
         }
     }
 
@@ -65,7 +81,27 @@ impl VoiceGate {
         self.open_until = None;
         self.gain = 0.0;
         self.speech = false;
-        self.delay.iter_mut().for_each(|b| b.fill(0.0));
+        self.history.iter_mut().for_each(|b| b.fill(0.0));
+        self.lag = self.history.len();
+        self.since_open = 0;
+    }
+
+    /// Blocks of delay the gate adds right now (0 while open and caught up).
+    pub fn lag_blocks(&self) -> usize {
+        self.lag
+    }
+
+    /// Quiet enough to skip without anyone hearing it: well under what would open the gate.
+    fn quiet(&self, b: &[f32]) -> bool {
+        let level = rms(b);
+        if self.auto {
+            let floor = self.floor_db.unwrap_or(FLOOR_MIN_DB);
+            db(level) <= floor + FLOOR_MARGIN_DB
+        } else if self.threshold > 0.0 {
+            db(level) <= db(self.threshold) - FLOOR_MARGIN_DB
+        } else {
+            db(level) <= QUIET_DB // always open: only near-silence
+        }
     }
 
     fn qualifies(&mut self, level: f32, prob: Option<f32>) -> bool {
@@ -96,16 +132,35 @@ impl VoiceGate {
 
     /// How many blocks of delay the gate itself adds (the rest of the pre-roll is the denoiser's).
     pub fn set_preroll(&mut self, blocks: usize) {
-        while self.delay.len() > blocks {
-            self.delay.pop_front();
+        if self.history.len() == blocks {
+            return;
         }
-        while self.delay.len() < blocks {
-            self.delay.push_front(vec![0.0; FRAME]);
+        while self.history.len() > blocks {
+            self.history.pop_front();
+        }
+        while self.history.len() < blocks {
+            self.history.push_front(vec![0.0; FRAME]);
+        }
+        self.lag = self.lag.min(blocks);
+    }
+
+    /// The block from `ago` blocks back (0 = `block` itself).
+    fn back<'a>(&'a self, block: &'a [f32], ago: usize) -> &'a [f32] {
+        if ago == 0 {
+            block
+        } else {
+            &self.history[self.history.len() - ago]
         }
     }
 
-    /// Gate one block in place (input in, the block from `preroll` blocks ago out), deciding on
+    /// Gate one block in place (input in, the block from `lag_blocks()` ago out), deciding on
     /// `level`: the newest audio's, which may run ahead of `block`. Returns whether audio is sent.
+    ///
+    /// Closed, the output runs the full pre-roll behind, so an opening edge releases the audio
+    /// just before it. Open, every quiet moment (both the block that would play and the next one
+    /// under the opening level, and no speech) catches up one block: the quiet one is skipped,
+    /// crossfaded into the next. Then audio passes straight through. Fully closed again (faded to
+    /// 0), the output falls back the full pre-roll behind, unheard.
     pub fn process(
         &mut self,
         block: &mut [f32],
@@ -117,8 +172,35 @@ impl VoiceGate {
             self.open_until = Some(now + HOLD);
         }
         let open = self.open_until.is_some_and(|t| now < t);
-        self.delay.push_back(block.to_vec());
-        let out = self.delay.pop_front().expect("pre-roll buffer");
+        if !open && self.gain == 0.0 {
+            self.lag = self.history.len(); // silent: re-arm the pre-roll for the next opening
+            self.since_open = 0;
+        }
+        let mut out = std::mem::take(&mut self.out);
+        out.resize(block.len(), 0.0); // FRAME in practice: no allocation
+        let catch_up = open
+            && self.lag > 0
+            && self.since_open > self.history.len()
+            && !(self.auto && self.speech)
+            && self.quiet(self.back(block, self.lag))
+            && self.quiet(self.back(block, self.lag - 1));
+        if catch_up {
+            let (skip, next) = (self.back(block, self.lag), self.back(block, self.lag - 1));
+            let n = out.len() as f32;
+            for (i, o) in out.iter_mut().enumerate() {
+                let t = i as f32 / n;
+                *o = skip[i] * (1.0 - t) + next[i] * t;
+            }
+            self.lag -= 1;
+        } else {
+            out.copy_from_slice(self.back(block, self.lag));
+        }
+        // the newest block joins the history (its oldest buffer reused: nothing allocated)
+        if let Some(mut oldest) = self.history.pop_front() {
+            oldest.resize(block.len(), 0.0);
+            oldest.copy_from_slice(block);
+            self.history.push_back(oldest);
+        }
         let start = self.gain;
         let end = if open {
             1.0
@@ -129,9 +211,17 @@ impl VoiceGate {
         for (i, (o, v)) in block.iter_mut().zip(&out).enumerate() {
             *o = v * (start + (end - start) * i as f32 / n);
         }
+        self.out = out;
+        if open {
+            self.since_open += 1;
+        }
         self.gain = end;
         start > 0.0 || end > 0.0
     }
+}
+
+fn rms(b: &[f32]) -> f32 {
+    (b.iter().map(|v| v * v).sum::<f32>() / b.len().max(1) as f32).sqrt()
 }
 
 #[cfg(test)]
@@ -266,5 +356,101 @@ mod tests {
             out.iter().all(|b| rms(b) == 0.0),
             "floor should have risen to the room"
         );
+    }
+
+    /// Blocks numbered by their amplitude, so the output says which input block it was.
+    fn marked(k: u64) -> Vec<f32> {
+        vec![0.1 + k as f32 * 0.001; FRAME]
+    }
+
+    #[test]
+    fn continuous_speech_keeps_every_sample_behind_the_preroll() {
+        let t0 = Instant::now();
+        let mut g = VoiceGate::new(false, 0.05);
+        for k in 0..50u64 {
+            let mut b = marked(k);
+            let level = rms(&b);
+            g.process(&mut b, level, None, t0 + Duration::from_millis(k * 10));
+            if k > PREROLL_BLOCKS as u64 {
+                // fully open: block k - 2 comes out whole (nothing skipped mid-speech)
+                assert!((b[0] - marked(k - 2)[0]).abs() < 1e-6, "block {k}");
+            }
+        }
+        assert_eq!(g.lag_blocks(), PREROLL_BLOCKS);
+    }
+
+    #[test]
+    fn once_open_a_pause_catches_up_and_then_audio_passes_straight_through() {
+        let (t0, mut k) = (Instant::now(), 0u64);
+        let mut g = VoiceGate::new(false, 0.05);
+        feed(&mut g, t0, &mut k, 10, 0.0, None);
+        feed(&mut g, t0, &mut k, 5, 0.1, None); // opens: 20 ms behind
+        assert_eq!(g.lag_blocks(), PREROLL_BLOCKS);
+        feed(&mut g, t0, &mut k, 4, 0.0, None); // a pause between words, inside the hold
+        assert_eq!(g.lag_blocks(), 0, "caught up in the pause");
+        for _ in 0..5 {
+            let mut b = marked(k);
+            let want = b.clone();
+            let level = rms(&b);
+            assert!(g.process(&mut b, level, None, t0 + Duration::from_millis(k * 10)));
+            assert_eq!(b, want, "block {k}: straight through, no delay");
+            k += 1;
+        }
+    }
+
+    #[test]
+    fn catching_up_crossfades_instead_of_jumping() {
+        let (t0, mut k) = (Instant::now(), 0u64);
+        let mut g = VoiceGate::new(false, 0.05);
+        feed(&mut g, t0, &mut k, 10, 0.0, None);
+        feed(&mut g, t0, &mut k, 5, 0.1, None);
+        let out = feed(&mut g, t0, &mut k, 4, 0.01, None); // quiet tail, still open
+        let step = out
+            .concat()
+            .windows(2)
+            .map(|w| (w[1].abs() - w[0].abs()).abs())
+            .fold(0.0f32, f32::max);
+        assert!(step < 0.1, "a jump of {step}");
+    }
+
+    #[test]
+    fn closing_rearms_the_preroll_for_the_next_onset() {
+        let (t0, mut k) = (Instant::now(), 0u64);
+        let mut g = VoiceGate::new(false, 0.05);
+        feed(&mut g, t0, &mut k, 10, 0.0, None);
+        feed(&mut g, t0, &mut k, 5, 0.1, None);
+        feed(&mut g, t0, &mut k, 4, 0.0, None);
+        assert_eq!(g.lag_blocks(), 0);
+        feed(&mut g, t0, &mut k, 70, 0.0, None); // past the hold and the fade
+        assert_eq!(g.lag_blocks(), PREROLL_BLOCKS, "re-armed while silent");
+        let mut onset = feed(&mut g, t0, &mut k, 2, 0.03, None); // soft first syllable
+        onset.extend(feed(&mut g, t0, &mut k, 3, 0.1, None));
+        assert!(
+            rms(&onset[3]) > 0.02 && rms(&onset[4]) > 0.02,
+            "the soft onset is sent again"
+        );
+    }
+
+    #[test]
+    fn auto_does_not_catch_up_while_the_model_hears_speech() {
+        let (t0, mut k) = (Instant::now(), 0u64);
+        let mut g = VoiceGate::new(true, 0.02);
+        feed(&mut g, t0, &mut k, 100, 0.001, Some(0.0));
+        feed(&mut g, t0, &mut k, 5, 0.1, Some(0.9));
+        feed(&mut g, t0, &mut k, 3, 0.001, Some(0.9)); // a soft stretch the model calls speech
+        assert_eq!(g.lag_blocks(), PREROLL_BLOCKS, "speech is never skipped");
+        feed(&mut g, t0, &mut k, 3, 0.001, Some(0.1)); // a real pause
+        assert_eq!(g.lag_blocks(), 0);
+    }
+
+    #[test]
+    fn mute_reset_rearms_the_preroll() {
+        let (t0, mut k) = (Instant::now(), 0u64);
+        let mut g = VoiceGate::new(false, 0.05);
+        feed(&mut g, t0, &mut k, 5, 0.1, None);
+        feed(&mut g, t0, &mut k, 4, 0.0, None);
+        assert_eq!(g.lag_blocks(), 0);
+        g.reset();
+        assert_eq!(g.lag_blocks(), PREROLL_BLOCKS);
     }
 }

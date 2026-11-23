@@ -5,6 +5,7 @@
 <script lang="ts">
   import { actionBarFocus } from '../lib/focus'
   import { markEdit } from '../lib/openEdits'
+  import { trimHold } from '../lib/trimHold'
   import { blockedReplyText } from '../lib/blocks'
   import Icon from './Icon.svelte'
   import DeleteButton from './DeleteButton.svelte'
@@ -313,6 +314,13 @@
   $effect(() => {
     markEdit(editKey, editing && draft.trim() !== shownCaption(message).trim())
     return () => markEdit(editKey, false)
+  })
+  // #561: while it's being edited, or a menu or picker is open on it, its chat's list isn't trimmed
+  const hold = trimHold()
+  const holdKey = Symbol('trimHold')
+  $effect(() => {
+    hold(holdKey, editing || picking || !!msgMenu || !!pollEdit || !!planEdit || !!remindCustom || !!forwardAt || !!historyAt)
+    return () => hold(holdKey, false)
   })
   function startEdit() {
     draft = shownCaption(message)

@@ -6,10 +6,13 @@ use std::fmt;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
-/// Smallest and largest value since the last take.
+/// Smallest and largest value since the last take, and (on its own, slower clock) the mean
+/// since the last `take_mean` (the minute latency breakdown).
 pub struct MinMax {
     min: AtomicU64,
     max: AtomicU64,
+    sum: AtomicU64,
+    n: AtomicU64,
 }
 
 impl Default for MinMax {
@@ -17,6 +20,8 @@ impl Default for MinMax {
         Self {
             min: AtomicU64::new(u64::MAX),
             max: AtomicU64::new(0),
+            sum: AtomicU64::new(0),
+            n: AtomicU64::new(0),
         }
     }
 }
@@ -25,6 +30,14 @@ impl MinMax {
     pub fn record(&self, v: u64) {
         self.min.fetch_min(v, Relaxed);
         self.max.fetch_max(v, Relaxed);
+        self.sum.fetch_add(v, Relaxed);
+        self.n.fetch_add(1, Relaxed);
+    }
+
+    /// Mean since the last call; restarts. Independent of `take`.
+    pub fn take_mean(&self) -> Option<f64> {
+        let (sum, n) = (self.sum.swap(0, Relaxed), self.n.swap(0, Relaxed));
+        (n > 0).then(|| sum as f64 / n as f64)
     }
 
     fn take(&self) -> Option<(u64, u64)> {
@@ -77,6 +90,8 @@ pub struct Pipeline {
     gate_passed: AtomicU64,
     /// The receive queue (fullest peer), in ms, sampled every 100 ms.
     recv_ms: Mutex<Vec<u32>>,
+    /// Stage-by-stage delay for the minute `voice: latency` line.
+    pub latency: super::latency::Budget,
 }
 
 /// Block energies are f32 sums of squares; stored as integers so the audio side stays lock-free.
@@ -110,7 +125,18 @@ impl Pipeline {
         }
     }
 
+    /// The minute's latency breakdown (device buffering from the callback timestamps, plus the
+    /// processor queue measured by the caller); restarts.
+    pub fn take_latency(&self, processor_queue_ms: Option<f64>) -> super::latency::Breakdown {
+        self.latency.take(
+            self.in_latency_ms.take_mean(),
+            processor_queue_ms,
+            self.out_latency_ms.take_mean(),
+        )
+    }
+
     pub fn sample_recv_queue(&self, ms: u32) {
+        self.latency.recv_queue_ms(ms as f64);
         self.recv_ms
             .lock()
             .unwrap_or_else(|e| e.into_inner())
