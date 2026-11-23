@@ -134,7 +134,8 @@ export type VoiceEvent =
   /** The devices that aren't open, and why (#351): no mic = listen-only, no speakers = nothing plays. */
   | ({ kind: 'device_gaps' } & DeviceGaps)
   | { kind: 'mic_silent'; silent: boolean }
-  | { kind: 'mic'; live: boolean; error: string | null }
+  /** `retrying`: the core keeps trying to get the mic back by itself (false once only a rejoin helps). */
+  | { kind: 'mic'; live: boolean; error: string | null; retrying?: boolean }
   /** You've been talking into a muted mic (reported for The Doos badge). */
   | { kind: 'muted_talk' }
   /** You're talking into your own muted mic: play the "you're muted" double ding (#252). The core paces it (every
@@ -155,10 +156,11 @@ export const END_TEXT: Record<EndReason, string> = {
 /** Why each side isn't open (null = it is), from the core (#351). */
 export type DeviceGaps = { input: string | null; output: string | null }
 
-/** The No mic chip's tooltip (#351): a mic that didn't open, or one that couldn't be sent to the call; null = no chip. */
-export function noMicTip(gap: string | null, sendError: string | null): string | null {
+/** The No mic chip's tooltip (#351): a mic that didn't open, or one that couldn't be sent to the call; null = no chip.
+ *  `retrying`: Pulse is still trying to get the mic back; false once it has given up (only a rejoin helps). */
+export function noMicTip(gap: string | null, sendError: string | null, retrying = true): string | null {
   if (gap) return `Your mic didn't open (${gap}). You can still listen, and your mic switches on by itself once it's available.`
-  if (sendError) return `${sendError}. You can still listen while Pulse keeps trying.`
+  if (sendError) return retrying ? `${sendError}. You can still listen while Pulse keeps trying.` : `${sendError}. You can still listen.`
   return null
 }
 

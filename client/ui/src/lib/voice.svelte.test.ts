@@ -112,7 +112,7 @@ describe('the end reason', () => {
 })
 
 describe('the mic event', () => {
-  const mic = (live: boolean, error: string | null) => h.handlers['voice://event']({ payload: { kind: 'mic', live, error } })
+  const mic = (live: boolean, error: string | null, retrying = true) => h.handlers['voice://event']({ payload: { kind: 'mic', live, error, retrying } })
   beforeEach(async () => {
     Object.assign(voice, { channelId: 'V1', error: '', stage: { stage: 'starting_audio', attempt: null } })
     await startVoiceListening()
@@ -123,6 +123,13 @@ describe('the mic event', () => {
     mic(false, 'Microphone unavailable')
     expect(voice.micError).toBe('Microphone unavailable')
     expect(voice.stage.stage).toBe('connected')
+  })
+
+  it('a mic the core gave up on is not described as still trying', () => {
+    mic(false, 'Your mic stopped working', false)
+    expect(voice.micRetrying).toBe(false)
+    mic(false, "Couldn't send your mic", true)
+    expect(voice.micRetrying).toBe(true)
   })
 
   it('a mic that went live clears its error and leaves other errors alone', () => {

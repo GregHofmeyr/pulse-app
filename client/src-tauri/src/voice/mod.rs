@@ -388,7 +388,11 @@ async fn report_publish<R: CloseRoom>(
                 if first {
                     connected_stage();
                 }
-                (w.events)(VoiceEvent::Mic { live, error: None });
+                (w.events)(VoiceEvent::Mic {
+                    live,
+                    error: None,
+                    retrying: false,
+                });
             }
             return AfterPublish::Done;
         }
@@ -428,6 +432,7 @@ async fn report_publish<R: CloseRoom>(
     (w.events)(VoiceEvent::Mic {
         live: false,
         error: Some(format!("Couldn't send your mic: {e}")),
+        retrying: true,
     });
     AfterPublish::Retry
 }
@@ -791,6 +796,7 @@ fn spawn_watchdog(
                 events(VoiceEvent::Mic {
                     live: false,
                     error: Some(PROCESSOR_DOWN.into()),
+                    retrying: false,
                 });
             }
             let now = Instant::now();
@@ -956,6 +962,9 @@ pub enum VoiceEvent {
     Mic {
         live: bool,
         error: Option<String>,
+        /// The core is still trying to get the mic back by itself (a failed publish, #351); false once
+        /// nothing will (the mic processor gave up: only a rejoin helps), and when there's no error.
+        retrying: bool,
     },
 }
 
@@ -3426,10 +3435,11 @@ mod tests {
         let e = VoiceEvent::Mic {
             live: false,
             error: Some("Couldn't send your mic".into()),
+            retrying: true,
         };
         assert_eq!(
             serde_json::to_value(&e).unwrap(),
-            serde_json::json!({"kind":"mic","live":false,"error":"Couldn't send your mic"})
+            serde_json::json!({"kind":"mic","live":false,"error":"Couldn't send your mic","retrying":true})
         );
     }
 
@@ -3516,7 +3526,8 @@ mod tests {
                     },
                     VoiceEvent::Mic {
                         live: true,
-                        error: None
+                        error: None,
+                        ..
                     }
                 ]
             ),
@@ -3539,7 +3550,8 @@ mod tests {
                     },
                     VoiceEvent::Mic {
                         live: false,
-                        error: None
+                        error: None,
+                        ..
                     }
                 ]
             ),
@@ -3579,7 +3591,7 @@ mod tests {
                 &seen[..],
                 [
                     VoiceEvent::Stage { stage: JoinStage::Connected, attempt: None },
-                    VoiceEvent::Mic { live: false, error: Some(e) },
+                    VoiceEvent::Mic { live: false, error: Some(e), retrying: true },
                 ] if e == "Couldn't send your mic: timed out"
             ),
             "{seen:?}"
@@ -3657,7 +3669,8 @@ mod tests {
                 seen.last(),
                 Some(VoiceEvent::Mic {
                     live: true,
-                    error: None
+                    error: None,
+                    ..
                 })
             ),
             "{seen:?}"
@@ -3736,7 +3749,8 @@ mod tests {
                     },
                     VoiceEvent::Mic {
                         live: false,
-                        error: Some(_)
+                        error: Some(_),
+                        ..
                     },
                 ]
             ),

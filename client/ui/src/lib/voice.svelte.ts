@@ -34,6 +34,8 @@ export const voice = $state({
   deviceGaps: { input: null, output: null } as DeviceGaps,
   /** Why the mic couldn't be sent to the call (#351): listen-only while the core tries again. */
   micError: null as string | null,
+  /** Whether the core is still trying to send the mic (false once it gave up: only a rejoin helps). */
+  micRetrying: true,
   error: '',
   /** Join progress, folded from the core's stage and state events. */
   stage: { stage: 'disconnected', attempt: null } as StageState,
@@ -227,6 +229,7 @@ export async function startVoiceListening() {
         if (!e.channel_id) voice.micSilent = false
         if (!e.channel_id) voice.deviceGaps = { input: null, output: null }
         if (!e.channel_id) voice.micError = null
+        if (!e.channel_id) voice.micRetrying = true
         // ended by itself (#352): kept for the notice (a leave of your own has no reason)
         if (!e.channel_id && e.reason) {
           const where = prev.channelId ?? voice.ended?.channelId
@@ -269,6 +272,7 @@ export async function startVoiceListening() {
       case 'mic':
         // a failure keeps the call listen-only (#351): the No mic chip says why until the mic goes out
         voice.micError = e.error
+        voice.micRetrying = e.retrying ?? true
         break
       case 'muted_talk':
         // The Doos (#49): the server counts it, rate-limited; nothing to show here
