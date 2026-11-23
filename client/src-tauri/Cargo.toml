@@ -162,7 +162,7 @@ webview2-com = "0.39"
 windows-core = "0.62"
 # Stream audio: WASAPI process loopback (stream/loopback.rs). 0.26.0 depends on windows/windows-core
 # ^0.62.2, the versions in Cargo.lock.
-wasapi = "0.26"
+wasapi = "0.27"
 # App updates (updater.rs, #82), driven from Rust only (no webview permission is granted); only the Windows app
 # updates itself. 2.14.1 needs tauri ^2.12 (the lockfile's 2.12.2). Without the default `zip` (macOS/Linux bundles)
 # and `system-proxy`. TLS through Windows' own (native-tls = SChannel): its `rustls-tls` turns on reqwest 0.13's
