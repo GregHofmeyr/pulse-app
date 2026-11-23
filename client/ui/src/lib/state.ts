@@ -87,6 +87,10 @@ export type AppState = {
    *  any other channel are kept to what leaving it keeps (`trimHistory`), so a channel never opened in a session that
    *  runs for days doesn't hold every message ever posted there. Absent (unknown): nothing is trimmed. */
   shown?: string | null
+  /** The open chat (`shown`) while its view says it may be trimmed (`setShownAtLatest`, #561): scrolled to the latest,
+   *  with nothing held above (no reply, edit, replies panel, jump or flash). Only then are its oldest messages cut past
+   *  `SHOWN_TRIM_AT`, down to `SHOWN_KEEP`; scrolled up it grows until you come back down. Absent: never trimmed. */
+  trimmable?: string
   /** Which channels have had their latest page fetched (cleared on every Ready so we backfill,
    * except a detached window's). `end`: the list reaches the latest message (false for a window
    * into the past, from a jump). `missed`: live messages a detached list didn't take in (oldest
@@ -1054,7 +1058,10 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
           : s.reads,
       }
       // A chat that isn't open keeps only what leaving it would: its newest page or two, plus unread.
-      return s.shown !== undefined && c !== s.shown && next.messages !== s.messages ? boundUnseen(next, c) : next
+      if (next.messages === s.messages) return next
+      if (s.shown !== undefined && c !== s.shown) return boundUnseen(next, c)
+      // The open chat, while you're at its latest: its oldest go once it's far past what a screen shows (#561).
+      return c === s.trimmable ? boundShown(next, c) : next
     }
     case 'MessageUpdated': {
       if (e.d.message.thread_root_id) return replyUpdated(s, e.d.message)
@@ -1554,7 +1561,69 @@ export function setPendingStatus(s: AppState, channel: string, nonce: string, st
 
 /** Set the channel whose messages view is open (null: none): every other chat's live messages are bounded. */
 export function setShownChannel(s: AppState, channel: string | null): AppState {
-  return s.shown === channel ? s : { ...s, shown: channel }
+  if (s.shown === channel) return s
+  // the chat that was open no longer says where its view is
+  return s.trimmable !== undefined && s.trimmable !== channel ? { ...s, shown: channel, trimmable: undefined } : { ...s, shown: channel }
+}
+
+/** The open chat trims (#561) once it holds more than this many messages, while its view is at the latest. */
+export const SHOWN_TRIM_AT = 600
+/** ...down to this many: a gap of 200 between, so a trim comes once per 200 new messages, not on every one. */
+export const SHOWN_KEEP = 400
+
+/** Whether the open chat's view lets its oldest messages go (#561): at the latest (scrolled to the bottom of a list
+ *  that reaches the present), and nothing it shows or holds points at a message up there: no reply being written, no
+ *  quote being edited, no replies panel, no jump under way or message flashed from one, no "back to where you were",
+ *  no message being edited or with its menu open (`holds`). Pure: the view passes what it knows. */
+export function canTrimShown(v: {
+  atBottom: boolean
+  detached: boolean
+  replying: boolean
+  editingQuote: boolean
+  repliesOpen: boolean
+  jumping: boolean
+  flashing: boolean
+  backTo: boolean
+  holds: number
+}): boolean {
+  return v.atBottom && !v.detached && !v.replying && !v.editingQuote && !v.repliesOpen && !v.jumping && !v.flashing && !v.backTo && v.holds === 0
+}
+
+/** How many of the open chat's oldest messages to cut (#561), given its length and its first unread message's index
+ *  (-1: none unread). Nothing until it's past `SHOWN_TRIM_AT`; then down to `SHOWN_KEEP`, but unread messages stay (the
+ *  NEW line needs them) unless they alone are past `SHOWN_TRIM_AT`, when it's down to `SHOWN_KEEP` anyway (as a chat
+ *  that isn't open drops its oldest unread past `UNSEEN_CAP`). */
+export function shownCut(length: number, firstUnread: number): number {
+  if (length <= SHOWN_TRIM_AT) return 0
+  const cut = length - SHOWN_KEEP
+  if (firstUnread < 0 || firstUnread >= cut || length - firstUnread > SHOWN_TRIM_AT) return cut
+  return firstUnread
+}
+
+/** The open chat's view is at the latest with nothing held above (`at`, from `canTrimShown`), or isn't: it is trimmed
+ *  now if it's past `SHOWN_TRIM_AT` (coming back down after paging up through history), and on each new message while
+ *  it stays so. Only for the chat that's open (`shown`); unknown open chat: nothing changes. */
+export function setShownAtLatest(s: AppState, channel: string, at: boolean): AppState {
+  if (!at) return s.trimmable === channel ? { ...s, trimmable: undefined } : s
+  if (channel !== s.shown) return s
+  return boundShown(s.trimmable === channel ? s : { ...s, trimmable: channel }, channel)
+}
+
+/** The open chat cut by `shownCut` (older ones become fetchable again on scroll-up, as after leaving it). */
+function boundShown(s: AppState, channel: string): AppState {
+  const list = s.messages[channel]
+  if (!list || list.length <= SHOWN_TRIM_AT || detached(s, channel)) return s
+  const cut = shownCut(list.length, firstUnreadAt(s, channel, list))
+  return cut > 0 ? cutHistory(s, channel, cut) : s
+}
+
+/** The index of `channel`'s first unread message in `list`: 0 with a read state but no read point (all unread), -1 with
+ *  no read state or none unread. */
+function firstUnreadAt(s: AppState, channel: string, list: Message[]): number {
+  const read = s.reads[channel]
+  if (!read) return -1
+  const last = read.last_read_message_id
+  return last === null ? 0 : list.findIndex((m) => m.id > last)
 }
 
 /** Messages kept for a channel when you leave it: its two newest pages. */
@@ -1568,12 +1637,7 @@ export function trimHistory(s: AppState, channel: string, keep = KEEP_ON_LEAVE):
   if (!list || list.length <= keep || detached(s, channel)) return s
   // Never drop unread messages: the NEW line needs them (and an older server's ReadStateUpdated
   // carries no counts, so they're recounted from what's loaded). A channel with a read state but no read point is all unread: keep it whole.
-  const read = s.reads[channel]
-  const firstUnread = !read
-    ? -1
-    : read.last_read_message_id === null
-      ? 0
-      : list.findIndex((m) => m.id > read.last_read_message_id!)
+  const firstUnread = firstUnreadAt(s, channel, list)
   const cut = firstUnread >= 0 ? Math.min(list.length - keep, firstUnread) : list.length - keep
   return cut <= 0 ? s : cutHistory(s, channel, cut)
 }

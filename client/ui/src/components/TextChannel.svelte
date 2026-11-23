@@ -1,5 +1,7 @@
 <script lang="ts">
   import { flushSync, onMount, tick, untrack } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
+  import { provideTrimHold } from '../lib/trimHold'
   import Icon from './Icon.svelte'
   import { blockedCountText, isBlocked, listRows } from '../lib/blocks'
   import PersonMenu from './PersonMenu.svelte'
@@ -34,7 +36,7 @@
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { conversationName, firstUnreadIndex, isMuted, isNotes, reanchor, shouldMarkRead } from '../lib/conversations'
-  import { addOlder, appendNewer, mergeLatest, openAtUnread, reachLatest, landed, resumeAfter, resumePoint, unreadWindowPoint, CHAT_START, pendingMessage, removePending } from '../lib/state'
+  import { addOlder, appendNewer, mergeLatest, openAtUnread, reachLatest, landed, resumeAfter, resumePoint, unreadWindowPoint, CHAT_START, pendingMessage, removePending, canTrimShown, setShownAtLatest } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
   import { pinSync, refreshPins } from '../lib/pinSync.svelte'
   import { pinsTitle, takesPins } from '../lib/pins'
@@ -546,10 +548,12 @@
   let flashTimer: ReturnType<typeof setTimeout> | undefined
   let noticeTimer: ReturnType<typeof setTimeout> | undefined
   let jumpNotice = $state('')
+  let flashing = $state(false)
   function clearFlash() {
     clearTimeout(flashTimer)
     flashEl?.classList.remove('jump-flash', 'still')
     flashEl = null
+    flashing = false
   }
   function flash(id: string) {
     const el = list?.querySelector(`[data-message-id="${id}"]`)
@@ -560,6 +564,7 @@
     if (motion.reducedMotion) el.classList.add('still')
     el.scrollIntoView({ block: 'center' })
     flashEl = el
+    flashing = true
     flashTimer = setTimeout(clearFlash, FLASH_MS)
   }
   $effect(() => {
@@ -693,6 +698,26 @@
     }, {}),
   )
   let leaderboardOpen = $state(false)
+
+  // --- the open chat stays bounded while it stays open (#561): at the latest, with nothing on screen or held pointing
+  // up the list, the state may cut its oldest messages far above the view (`setShownAtLatest`); scrolled up, or while
+  // a reply, edit, panel, jump or flash holds it, it's left whole until you're back down. Scrolling up after a trim
+  // pages older ones back in as in any trimmed chat (`maybeLoadOlder`). ---
+  const holds = new SvelteSet<symbol>()
+  provideTrimHold((key, on) => void (on ? holds.add(key) : holds.delete(key)))
+  const atLatest = $derived(
+    canTrimShown({
+      atBottom, detached, replying: !!replyTo, editingQuote: !!editingQuote, repliesOpen: !!repliesOpen,
+      jumping: ui.jump?.channelId === channelId, flashing, backTo: !!backTo, holds: holds.size,
+    }),
+  )
+  // (said again once the shell has marked this chat the open one: its effect may run after this one)
+  const isShown = $derived(app.state.shown === channelId)
+  $effect(() => {
+    const c = channelId
+    const at = atLatest && isShown
+    untrack(() => (app.state = setShownAtLatest(app.state, c, at)))
+  })
   const qotyLive = $derived(!!serverId && !!liveQoty(app.state, serverId, Date.parse(clock.nowIso)))
   function openLeaderboardEntry(m: Message) {
     leaderboardOpen = false

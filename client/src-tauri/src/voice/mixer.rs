@@ -51,7 +51,19 @@ pub fn soft_limit(x: f32) -> f32 {
 /// Each peer's queue is steered so its lowest point (just after the speakers pull) sits here:
 /// margin for the sender's 10 ms timer jitter. It then averages about this plus one 10 ms frame
 /// (~20 ms) instead of settling wherever start-up left it (anything up to 55 ms before).
+/// Where the cushion starts; it then adapts ([`Cushion`]).
 pub const TARGET_MS: usize = 10;
+/// The cushion never goes below this: half a frame of margin on a machine whose timers keep time.
+const CUSHION_FLOOR_MS: usize = 5;
+/// …nor above this: a machine whose clocks are that bursty is better served by an occasional gap.
+const CUSHION_CEIL_MS: usize = 40;
+/// A window in which a settled peer ran dry adds this.
+const CUSHION_GROW_MS: usize = 5;
+/// Clean windows (250 ms each: 30 s) before the cushion gives back 1 ms; doubled after every
+/// window that ran dry, up to `CUSHION_MAX_BACKOFF` times, so a machine that sits on the edge
+/// is retested less and less often rather than clicking every half minute.
+const CUSHION_SHRINK_AFTER: u32 = 120;
+const CUSHION_MAX_BACKOFF: u32 = 8;
 /// How often each peer's fill is judged and its correction budget renewed.
 const WINDOW_MS: usize = 250;
 /// Most samples dropped or repeated per window: 0.5 % of what plays, inaudible on speech.
@@ -66,6 +78,60 @@ const CUT_ABOVE_MS: usize = 80;
 /// A sample this quiet (1 % of full scale, near a zero crossing) is where one is dropped or
 /// repeated: the step can't be heard.
 const QUIET: u16 = 328;
+
+/// The receive queue's lowest-fill target, shared by every peer: what it covers is our own two
+/// clocks (WebRTC's 10 ms receive pull and the device callback), the same for everyone. It grows
+/// at once when a settled peer runs dry and shrinks slowly while nothing does, so a steady
+/// machine drifts down towards `CUSHION_FLOOR_MS` and a bursty one keeps what it needs. Plain
+/// integers, no allocation: it runs in the audio callback.
+struct Cushion {
+    samples_per_ms: usize,
+    target: usize,
+    /// A settled peer ran dry this window.
+    ran_dry: bool,
+    /// Clean windows since the last change.
+    clean: u32,
+    /// Current multiplier on `CUSHION_SHRINK_AFTER`.
+    backoff: u32,
+}
+
+impl Cushion {
+    fn new(rate: usize) -> Self {
+        let samples_per_ms = (rate / 1000).max(1);
+        Self {
+            samples_per_ms,
+            target: TARGET_MS * samples_per_ms,
+            ran_dry: false,
+            clean: 0,
+            backoff: 1,
+        }
+    }
+
+    /// Lowest fill wanted (samples).
+    fn target(&self) -> usize {
+        self.target
+    }
+
+    fn ran_dry(&mut self) {
+        self.ran_dry = true;
+    }
+
+    /// End of a window: grow if anyone ran dry in it, otherwise count towards a shrink.
+    fn end_window(&mut self) {
+        let ms = self.samples_per_ms;
+        if std::mem::take(&mut self.ran_dry) {
+            self.target = (self.target + CUSHION_GROW_MS * ms).min(CUSHION_CEIL_MS * ms);
+            self.clean = 0;
+            self.backoff = (self.backoff * 2).min(CUSHION_MAX_BACKOFF);
+            return;
+        }
+        self.clean += 1;
+        if self.clean >= CUSHION_SHRINK_AFTER * self.backoff {
+            self.clean = 0;
+            self.target = self.target.saturating_sub(ms).max(CUSHION_FLOOR_MS * ms);
+        }
+    }
+}
 
 /// Drop the oldest `n` samples, crossfading what would have played into what plays instead
 /// (a hard cut clicks).
@@ -255,7 +321,7 @@ pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
         cap,
         peers: HashMap::with_capacity(PEERS), // no growth in the callback for a normal call
         clips: Vec::with_capacity(MAX_CLIPS), // intake refuses more, so never grows in the callback
-        target: rate * TARGET_MS / 1000,
+        cushion: Cushion::new(rate),
         min_pull: rate / 100,
         pulls: [0; 2],
         window: rate * WINDOW_MS / 1000,
@@ -633,9 +699,9 @@ pub struct Mixer {
     cap: usize,
     peers: HashMap<String, Peer>,
     clips: Vec<Clip>,
-    /// Lowest fill wanted (samples). A dry peer refills to this plus one pull before playing on
-    /// (`refill`): a big device pull must not run it dry again half-way (two gaps for one).
-    target: usize,
+    /// Lowest fill wanted (adaptive). A dry peer refills to its target plus one pull before playing
+    /// on (`refill`): a big device pull must not run it dry again half-way (two gaps for one).
+    cushion: Cushion,
     /// The least pull `refill` assumes: one 10 ms frame.
     min_pull: usize,
     /// Largest pull (frames) this window and the last: "recent", so a smaller device later
@@ -706,6 +772,9 @@ struct Peer {
     rebuffering: bool,
     /// Registered on subscribe but nothing arrived yet: silent, and not an underrun.
     waiting: bool,
+    /// Judged at least once while playing: running dry from here on is the cushion's business
+    /// (the start-up fill isn't).
+    settled: bool,
 }
 
 impl Mixer {
@@ -738,6 +807,7 @@ impl Mixer {
                             held: false,
                             rebuffering: false,
                             waiting: true,
+                            settled: false,
                         };
                         // re-adding an id starts it empty: the old one goes back to be freed
                         if let Some((old_id, old)) = self.peers.remove_entry(&id) {
@@ -813,7 +883,7 @@ impl Mixer {
 
     /// What a dry peer refills to before playing on: the target plus the largest recent pull.
     fn refill(&self) -> usize {
-        self.target + self.pulls[0].max(self.pulls[1]).max(self.min_pull)
+        self.cushion.target() + self.pulls[0].max(self.pulls[1]).max(self.min_pull)
     }
 
     /// Fill interleaved `out` (`channels` per frame), one sample per peer per frame.
@@ -826,7 +896,7 @@ impl Mixer {
         let frames = out.len() / channels.max(1);
         self.pulls[0] = self.pulls[0].max(frames);
         let refill = self.refill();
-        let (mut underrun, mut adjusted) = (0u64, 0u64);
+        let (mut underrun, mut adjusted, mut ran_dry) = (0u64, 0u64, false);
         for p in self.peers.values_mut() {
             if p.rebuffering && p.queue.len() >= refill {
                 p.rebuffering = false;
@@ -854,6 +924,7 @@ impl Mixer {
                         // ran dry: refill before playing on (one gap, not a dribble of clicks)
                         underrun += 1;
                         p.rebuffering = true;
+                        ran_dry |= p.settled;
                     }
                 }
             }
@@ -879,12 +950,21 @@ impl Mixer {
         if self.pulled >= self.window {
             self.pulled = 0;
             self.pulls = [0, self.pulls[0]];
+            if ran_dry {
+                self.cushion.ran_dry(); // counted in the window it happened in
+                ran_dry = false;
+            }
+            self.cushion.end_window();
+            let target = self.cushion.target();
             for p in self.peers.values_mut() {
-                p.judge(self.target, self.budget, self.deadband, self.cut_above);
+                p.judge(target, self.budget, self.deadband, self.cut_above);
             }
         }
         for p in self.peers.values() {
             p.filled.store(p.queue.len() + p.ring.slots(), Relaxed);
+        }
+        if ran_dry {
+            self.cushion.ran_dry();
         }
         self.underrun.fetch_add(underrun, Relaxed);
         self.adjusted.fetch_add(adjusted, Relaxed);
@@ -897,6 +977,7 @@ impl Peer {
     /// End of a window: set this window's correction from how low the queue got (samples).
     fn judge(&mut self, target: usize, budget: usize, deadband: usize, cut_above: usize) {
         if self.low != usize::MAX && !self.rebuffering {
+            self.settled = true;
             let over = self.low as i64 - target as i64;
             if over > cut_above as i64 {
                 skip(&mut self.queue, over as usize);
@@ -962,6 +1043,88 @@ mod tests {
             input.push("a", &[100; 480]);
             m.mix_into(&mut out, 1, 1.0);
         }
+    }
+
+    const MS: usize = 48;
+
+    #[test]
+    fn the_cushion_grows_at_once_when_something_ran_dry() {
+        let mut c = Cushion::new(48_000);
+        assert_eq!(c.target(), TARGET_MS * MS);
+        c.ran_dry();
+        c.ran_dry(); // twice in one window still counts once
+        c.end_window();
+        assert_eq!(c.target(), (TARGET_MS + CUSHION_GROW_MS) * MS);
+        for _ in 0..20 {
+            c.ran_dry();
+            c.end_window();
+        }
+        assert_eq!(c.target(), CUSHION_CEIL_MS * MS, "capped");
+    }
+
+    #[test]
+    fn the_cushion_shrinks_slowly_to_its_floor_while_nothing_runs_dry() {
+        let mut c = Cushion::new(48_000);
+        for _ in 0..CUSHION_SHRINK_AFTER - 1 {
+            c.end_window();
+        }
+        assert_eq!(c.target(), TARGET_MS * MS, "not before 30 s clean");
+        c.end_window();
+        assert_eq!(c.target(), (TARGET_MS - 1) * MS, "1 ms back");
+        for _ in 0..CUSHION_SHRINK_AFTER * 100 {
+            c.end_window();
+        }
+        assert_eq!(c.target(), CUSHION_FLOOR_MS * MS, "never below the floor");
+    }
+
+    #[test]
+    fn running_dry_again_makes_the_next_shrink_wait_longer() {
+        let mut c = Cushion::new(48_000);
+        c.ran_dry();
+        c.end_window(); // 15 ms, backoff 2
+        let grown = c.target();
+        for _ in 0..CUSHION_SHRINK_AFTER * 2 - 1 {
+            c.end_window();
+        }
+        assert_eq!(c.target(), grown, "waits twice as long after an underrun");
+        c.end_window();
+        assert_eq!(c.target(), grown - MS);
+    }
+
+    /// The start-up fill (first pull before a cushion exists) is not a reason to grow.
+    #[test]
+    fn start_up_doesnt_grow_the_cushion() {
+        let (input, mut m) = mixer_with(48_000, 200, &["a"]);
+        input.push("a", &[1; 240]);
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0); // runs dry at once
+        steady(&input, &mut m, 1000);
+        assert_eq!(m.cushion.target(), TARGET_MS * MS);
+    }
+
+    /// A machine whose receive timer fires in bursts (two 10 ms frames every 20 ms, as a 15.6 ms
+    /// Windows timer can): the cushion grows until the bursts fit, then nothing runs dry.
+    #[test]
+    fn a_bursty_sender_grows_the_cushion_until_it_stops_running_dry() {
+        let (input, mut m) = mixer_with(48_000, 200, &["a"]);
+        let mut out = vec![0.0; 480];
+        let mut burst = |input: &MixerInput, m: &mut Mixer, secs: usize| {
+            for k in 0..secs * 100 {
+                if k % 2 == 0 {
+                    input.push("a", &[1000; 960]);
+                }
+                m.mix_into(&mut out, 1, 1.0);
+            }
+        };
+        // a cushion pushed down to the floor first (a long steady spell)
+        m.cushion.target = CUSHION_FLOOR_MS * MS;
+        steady(&input, &mut m, 1000);
+        burst(&input, &mut m, 1);
+        burst(&input, &mut m, 5);
+        input.take_underrun_samples();
+        burst(&input, &mut m, 20);
+        assert_eq!(input.take_underrun_samples(), 0, "ran dry after adapting");
+        assert!(m.cushion.target() <= 20 * MS, "grew only as far as needed");
     }
 
     #[test]

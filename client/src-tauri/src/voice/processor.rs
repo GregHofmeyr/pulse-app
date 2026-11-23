@@ -190,6 +190,21 @@ impl MicChain {
         self.level
     }
 
+    /// Blocks the running denoiser delays the audio by (Standard 1, Strong 3, low delay 1).
+    pub fn denoise_delay_blocks(&self) -> usize {
+        match self.level {
+            NsLevel::Off => 0,
+            NsLevel::Standard => 1,
+            // DeepFilterNet: its lookahead plus one block of overlap-add
+            NsLevel::Strong | NsLevel::StrongLowDelay => self.denoiser.gate_lead_blocks() + 1,
+        }
+    }
+
+    /// Blocks of pre-roll the gate is holding the audio back by right now (0 once open and caught up).
+    pub fn gate_lag_blocks(&self) -> usize {
+        self.gate.lag_blocks()
+    }
+
     pub fn set_denoiser(&mut self, level: NsLevel, d: Box<dyn Denoiser>) {
         self.level = level;
         self.denoiser = d;
@@ -1045,6 +1060,12 @@ fn run(shared: Arc<Shared>, rx: &std_mpsc::Receiver<RawBlock>) {
             let t = Instant::now();
             let out = chain.process(&mut block, mic_open, t);
             shared.stats.chain.record(t.elapsed());
+            if out.sent {
+                shared
+                    .stats
+                    .latency
+                    .mic_block(chain.denoise_delay_blocks(), chain.gate_lag_blocks());
+            }
             shared
                 .stats
                 .record_mic_block(out.ns_in, out.ns_out, out.judged, out.sent);

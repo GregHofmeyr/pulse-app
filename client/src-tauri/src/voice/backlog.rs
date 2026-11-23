@@ -1,17 +1,29 @@
 //! How much audio is waiting in one of our own queues: the part of the delay WebRTC's stats can't see.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 #[derive(Default)]
 pub struct QueueGauge {
     now_ms: AtomicU32,
     worst_ms: AtomicU32,
+    /// Sum and count since the last `take_mean` (the minute latency breakdown).
+    sum_ms: AtomicU64,
+    n: AtomicU64,
 }
 
 impl QueueGauge {
     pub fn record(&self, ms: u32) {
         self.now_ms.store(ms, Ordering::Relaxed);
         self.worst_ms.fetch_max(ms, Ordering::Relaxed);
+        self.sum_ms.fetch_add(ms as u64, Ordering::Relaxed);
+        self.n.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Mean since the last call; restarts. Independent of `take_worst`.
+    pub fn take_mean(&self) -> Option<f64> {
+        let sum = self.sum_ms.swap(0, Ordering::Relaxed);
+        let n = self.n.swap(0, Ordering::Relaxed);
+        (n > 0).then(|| sum as f64 / n as f64)
     }
 
     pub fn current(&self) -> u32 {

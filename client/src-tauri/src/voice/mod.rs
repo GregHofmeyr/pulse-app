@@ -6,6 +6,7 @@ pub mod denoise;
 pub mod devices;
 pub mod echo;
 pub mod gate;
+pub mod latency;
 pub mod leveller;
 pub mod linkstats;
 pub mod meter;
@@ -1765,11 +1766,17 @@ impl VoiceManager {
             let shared = shared.clone();
             let (events, link) = (self.events.clone(), self.link.clone());
             tasks.push(tokio::spawn(async move {
+                // the first latency minute is this call's, not whatever the devices did before it
+                let _ = (
+                    shared.stats.take_latency(None),
+                    shared.mic_queue.take_mean(),
+                );
                 // per-task counters, shared into each tick's future (never held across an await)
                 let state = Arc::new(Mutex::new((
                     netstats::Totals::default(),
                     None::<String>,
                     linkstats::LossWindow::default(),
+                    tokio::time::Instant::now(), // the last `voice: latency` line
                 )));
                 linkstats::run_ticks(link.clone(), |tick| {
                     let (room, shared, events, link, state) = (
@@ -1788,7 +1795,8 @@ impl VoiceManager {
                             }
                         };
                         let now = tokio::time::Instant::now();
-                        let (totals, last_codec, loss) = &mut *state.lock().unwrap();
+                        let (totals, last_codec, loss, latency_logged) =
+                            &mut *state.lock().unwrap();
                         let sample = linkstats::sample(&s.publisher_stats, loss, now);
                         if let Some(rtt) = sample.rtt_ms {
                             link.history.lock().unwrap().push(now, rtt);
@@ -1816,6 +1824,15 @@ impl VoiceManager {
                         let mix_busy = shared.take_mix_busy();
                         let ours = shared.stats.take(underrun * 1000 / INTERNAL_RATE as u64);
                         tracing::info!(%line, send_ms, adjust, mix_busy, %ours, "voice: path");
+                        // where the delay is, stage by stage, once a minute
+                        shared.stats.latency.link(line.buffer_ms, line.rtt_ms);
+                        if now.duration_since(*latency_logged) >= latency::LOG_EVERY {
+                            *latency_logged = now;
+                            // the gauge counts the block just handed over, which hasn't waited
+                            let queue = shared.mic_queue.take_mean().map(|ms| (ms - 10.0).max(0.0));
+                            let breakdown = shared.stats.take_latency(queue);
+                            tracing::debug!(%breakdown, "voice: latency");
+                        }
                     }
                 })
                 .await;
