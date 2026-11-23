@@ -68,7 +68,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = { version = "2", default-features = false }
 base64 = "0.22"
 # The 2FA setup QR code, drawn by the UI from a module matrix (the otpauth URI itself never leaves Rust).
-qrcode = { version = "0.14", default-features = false }
+qrcode = { version = "0.15", default-features = false }
 # Avatars in desktop notifications (notify/avatar.rs): the cached WebP avatar as a small PNG, which
 # Windows toasts and every Linux notification service can show. Pure Rust (image-webp, png).
 image = { version = "0.25", default-features = false, features = ["png", "webp", "jpeg", "gif", "bmp"] }
