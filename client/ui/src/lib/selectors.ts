@@ -191,7 +191,8 @@ export function mentionablesFor(s: AppState, channelId: string): Mentionable[] {
   // Everything the list is made from (each person is in `people`, so their name never needs another lookup). Most
   // events change none of it, so the last list made for the channel is handed out again: the state is replaced on
   // every event, and a server's whole member list would otherwise be rebuilt each time.
-  const deps = [ch, s.dmMembers[channelId], s.people, s.me, serverId === null ? undefined : s.members[serverId], s.privateNicks]
+  // Of `people`, only who is in it and their user objects (a presence change keeps both, so it keeps the list).
+  const deps = [ch, s.dmMembers[channelId], peopleUsers(s.people), s.me, serverId === null ? undefined : s.members[serverId], s.privateNicks]
   const memo = mentionableMemo.get(channelId)
   if (memo && memo.deps.every((d, i) => d === deps[i])) return memo.list
   const ids = ch?.server_id === null ? (s.dmMembers[channelId] ?? []) : Object.keys(s.people)
@@ -202,6 +203,17 @@ export function mentionablesFor(s: AppState, channelId: string): Mentionable[] {
   mentionableMemo.set(channelId, { deps, list, pills: null })
   return list
 }
+
+/** The user objects of `people`, in its order: the same array as last time while those are unchanged, so a presence or
+ *  activity change (which keeps each person's `user`) doesn't count as a change to who can be mentioned. */
+function peopleUsers(people: AppState['people']): User[] {
+  if (people === usersOf.people) return usersOf.users
+  const users = Object.values(people).map((p) => p.user)
+  usersOf.people = people
+  usersOf.users = stableList(usersOf.users, users)
+  return usersOf.users
+}
+const usersOf: { people: AppState['people'] | null; users: User[] } = { people: null, users: [] }
 
 // The last mentionables (and pill names) made per channel, with what they were made from.
 const MENTIONABLE_MEMO_MAX = 32

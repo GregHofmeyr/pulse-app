@@ -334,6 +334,16 @@ describe('mention lists across events', () => {
     const joined = { ...base, people: { ...base.people, U3: { user: kim, online: true } } } as unknown as typeof s
     expect(pillNamesFor(joined, 'C1')).toEqual(['sam', 'kim', 'alex'])
   })
+
+  it('are the same lists across a presence change, and follow a rename or someone leaving', () => {
+    const a = mentionablesFor(base, 'C1')
+    const away = { ...base, people: { ...base.people, U2: { ...base.people['U2'], online: true, status: 'idle' } } } as unknown as typeof s
+    expect(mentionablesFor(away, 'C1')).toBe(a)
+    const renamed = { ...away, people: { ...away.people, U2: { ...away.people['U2'], user: { ...sam, display_name: 'Sam the Man' } } } } as unknown as typeof s
+    expect(mentionablesFor(renamed, 'C1')[0].alts).toContain('Sam the Man')
+    const gone = { ...renamed, people: { U1: renamed.people['U1'] } } as unknown as typeof s
+    expect(mentionablesFor(gone, 'C1')).toEqual([])
+  })
 })
 
 describe('nameOfIn', () => {
