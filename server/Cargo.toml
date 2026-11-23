@@ -43,7 +43,7 @@ base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusty-s3 = "0.11.0"
 tempfile = { version = "3", optional = true }
-livekit-api = { version = "0.9.1", default-features = false, features = ["access-token", "webhooks", "services"] }
+livekit-api = { version = "0.11.0", default-features = false, features = ["access-token", "webhooks", "services"] }
 livekit-protocol = "0.8.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 # Static: libwebp is built from source, so the runtime image needs no libwebp packages.
@@ -59,7 +59,7 @@ hmac = { version = "0.13", optional = true }
 rustix = { version = "1", features = ["fs"] }
 
 [dev-dependencies]
-livekit-api = { version = "0.9.1", default-features = false, features = ["access-token"] }
+livekit-api = { version = "0.11.0", default-features = false, features = ["access-token"] }
 base64 = "0.22"
 sha2 = "0.11"
 tokio-tungstenite = "0.29"
