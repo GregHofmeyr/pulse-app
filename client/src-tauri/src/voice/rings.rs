@@ -11,7 +11,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, TryLockError};
 use std::thread::Thread;
 use std::time::{Duration, Instant};
 
@@ -58,6 +58,10 @@ struct RawShared {
 impl Drop for RawShared {
     /// The last sender is gone: wake the processor so it sees that now, not at its next timeout.
     fn drop(&mut self) {
+        // Close the queue before waking: `drop` runs before the fields are dropped, so the producer would still be
+        // alive, and the processor could wake, see the queue open, and sleep on to its timeout (#596).
+        let side = self.side.get_mut().unwrap_or_else(PoisonError::into_inner);
+        side.blocks = rtrb::RingBuffer::new(0).0;
         self.link.wake();
     }
 }
