@@ -1,8 +1,16 @@
 //! Clients older than protocol 5 and builds channels (#616). A version-4 client's `ChannelKind` has no catch-all, so a
 //! builds channel anywhere in a frame it reads (a Ready, a server it joins, a channel event) fails the whole frame. Such
-//! a client is never told a builds channel exists, nor anything that happens in one: its Ready and snapshots leave them
-//! out, the hub skips it for events in one, and REST channel lists answer a request without
-//! [`pulse_protocol::PROTOCOL_HEADER`] (every older client) as they would have before builds.
+//! a client is kept away from builds channels:
+//! - its Ready and the server snapshots it gets leave them out (with their read points and places in its own orders);
+//! - the hub skips it for every event about one, its own included (`audience::route`: messages, comments, reactions,
+//!   read points, thread seen points, inbox items, bookmarks and reminders of builds), and sends it a copy of its own
+//!   channel order without them;
+//! - REST answers to a request without [`pulse_protocol::PROTOCOL_HEADER`] 5 (every older client) leave them out: a
+//!   server's channels, Recently deleted, the inbox and its Threads, search, bookmarks and reminders; a layout save
+//!   needn't name them.
+//!
+//! Left as they are, since nothing in them breaks an older client: a server layout's placements (a channel it doesn't
+//! hold is skipped) and the inbox's unread count (it may count a comment it won't list).
 
 use std::collections::HashSet;
 
@@ -10,6 +18,7 @@ use axum::http::HeaderMap;
 use pulse_protocol::gateway::{Event, Ready, ServerFrame, ServerSnapshot};
 use pulse_protocol::ids::ChannelId;
 use pulse_protocol::rest::{Channel, ChannelKind};
+use sqlx::SqlitePool;
 
 /// The first protocol version that reads builds channels.
 pub const BUILDS_SINCE: u32 = 5;
@@ -94,4 +103,78 @@ pub fn for_old_client(frame: &ServerFrame) -> Option<Option<ServerFrame>> {
         }
         _ => None,
     }
+}
+
+/// The channel an event for one person is about, when it is about one in a way a builds channel would matter.
+pub fn own_event_channel(event: &Event) -> Option<ChannelId> {
+    match event {
+        Event::ReadStateUpdated { channel_id, .. } | Event::ThreadSeen { channel_id, .. } => {
+            Some(*channel_id)
+        }
+        Event::InboxItemAdded { item, .. } => Some(item.message.channel_id),
+        Event::BookmarkSaved { bookmark, .. } => bookmark.message.as_ref().map(|m| m.channel_id),
+        Event::ReminderSaved { reminder, .. } => Some(reminder.channel_id),
+        other => other.channel_id(),
+    }
+}
+
+/// Whether `id` is a builds channel (deleted or not).
+pub async fn is_builds(db: &SqlitePool, id: ChannelId) -> anyhow::Result<bool> {
+    let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM channels WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_optional(db)
+        .await?;
+    Ok(kind.as_deref() == Some("builds"))
+}
+
+/// Which of `ids` are builds channels.
+pub async fn builds_among(
+    db: &SqlitePool,
+    ids: impl IntoIterator<Item = ChannelId>,
+) -> anyhow::Result<HashSet<ChannelId>> {
+    let ids: HashSet<ChannelId> = ids.into_iter().collect();
+    if ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let mut q =
+        sqlx::QueryBuilder::new("SELECT id FROM channels WHERE kind = 'builds' AND id IN (");
+    let mut list = q.separated(", ");
+    for id in &ids {
+        list.push_bind(id.to_string());
+    }
+    q.push(")");
+    let rows: Vec<String> = q.build_query_scalar().fetch_all(db).await?;
+    Ok(rows.into_iter().filter_map(|r| r.parse().ok()).collect())
+}
+
+/// What an older client gets instead of `event`, when that is a copy without builds channels: its own channel order
+/// with them taken out (`None`: the event as it is, or nothing, as the hub decides).
+pub async fn old_copy(db: &SqlitePool, event: &Event) -> anyhow::Result<Option<Event>> {
+    let Event::ChannelOrderChanged {
+        user_id,
+        server_id,
+        order: Some(order),
+    } = event
+    else {
+        return Ok(None);
+    };
+    let named = order
+        .uncategorised
+        .iter()
+        .chain(order.categories.iter().flat_map(|c| &c.channels))
+        .copied();
+    let gone = builds_among(db, named).await?;
+    if gone.is_empty() {
+        return Ok(None);
+    }
+    let mut order = order.clone();
+    order.uncategorised.retain(|c| !gone.contains(c));
+    for cat in &mut order.categories {
+        cat.channels.retain(|c| !gone.contains(c));
+    }
+    Ok(Some(Event::ChannelOrderChanged {
+        user_id: *user_id,
+        server_id: *server_id,
+        order: Some(order),
+    }))
 }

@@ -474,9 +474,19 @@ async fn an_author_who_left_still_deletes_their_build() {
     let w = world().await;
     let m = w.build(&w.sam.1, json!({ "title": "Sam's" })).await;
     let other = w.build(&w.sam.1, json!({ "title": "Sam's other" })).await;
-    let r = post_json(&w.app, &w.sam.1, &format!("/servers/{}/leave", w.server), json!({})).await;
+    let r = post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/servers/{}/leave", w.server),
+        json!({}),
+    )
+    .await;
     assert!(r.status().is_success(), "leave: {}", r.status());
-    assert_eq!(w.archive(&w.sam.1, other.id, true).await.status(), 403, "archiving is for members");
+    assert_eq!(
+        w.archive(&w.sam.1, other.id, true).await.status(),
+        403,
+        "archiving is for members"
+    );
     assert_eq!(w.delete(&w.sam.1, m.id).await.status(), 204);
     assert_eq!(w.list("").await, vec![other.id]);
 }

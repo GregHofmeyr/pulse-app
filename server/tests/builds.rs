@@ -1492,11 +1492,21 @@ async fn search_never_shows_another_servers_builds() {
 #[tokio::test]
 async fn an_edit_racing_the_link_fetch_keeps_the_link_title_searchable() {
     let w = world().await;
-    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "link_url": "https://example.com/p" })).await;
+    let m = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "link_url": "https://example.com/p" }),
+    )
+    .await;
     let state = w.app.state();
     // hold publishing order, as a fetch writing its result does
     let order = state.hub.in_order().await;
-    let (app_url, token, id) = (w.app.url(&format!("/builds/{}", m.id)), w.alex.1.clone(), m.id);
+    let (app_url, token, id) = (
+        w.app.url(&format!("/builds/{}", m.id)),
+        w.alex.1.clone(),
+        m.id,
+    );
     let http = w.app.http.clone();
     let edit = tokio::spawn(async move {
         http.put(app_url)
@@ -1522,6 +1532,192 @@ async fn an_edit_racing_the_link_fetch_keeps_the_link_title_searchable() {
         .await
         .unwrap();
     assert_eq!(content, "Mine\nWynncraft archer planner");
-    let got: Vec<_> = list(&w.app, &w.sam.1, w.ch.id, "?q=wynncraft").await.into_iter().map(|m| m.id).collect();
+    let got: Vec<_> = list(&w.app, &w.sam.1, w.ch.id, "?q=wynncraft")
+        .await
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
     assert_eq!(got, vec![id]);
+}
+
+// ---- A version-4 client hears nothing of a builds channel, even what's its own (#616) ----
+
+fn names(e: &Event, id: pulse_protocol::ids::ChannelId) -> bool {
+    serde_json::to_string(e).unwrap().contains(&id.to_string())
+}
+
+#[tokio::test]
+async fn a_version_4_client_gets_none_of_its_own_events_about_builds() {
+    let w = world().await;
+    let text = general(&w.app, &w.alex.1, w.server).await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
+    let (mut old, _) = hello_as(&w.app, &w.sam.1, OLD).await;
+    let mut new = hello(&w.app, &w.sam.1).await;
+
+    // sam's comment, then alex's mention of sam: an inbox item for sam
+    let c = post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/channels/{}/messages", w.ch.id),
+        json!({ "content": "nice", "thread_root_id": m.id }),
+    )
+    .await;
+    assert_eq!(c.status(), 200);
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/messages", w.ch.id),
+        json!({ "content": "thanks @sam", "thread_root_id": m.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    wait_for(&mut new, "InboxItemAdded", |e| match e {
+        Event::InboxItemAdded { .. } => Some(()),
+        _ => None,
+    })
+    .await;
+    // sam reads the channel and the thread, bookmarks the build and sets a reminder on it
+    let r = post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/channels/{}/read", w.ch.id),
+        json!({ "message_id": m.id }),
+    )
+    .await;
+    assert!(r.status().is_success(), "read {}", r.status());
+    let thread: Vec<Message> =
+        get_json(&w.app, &w.sam.1, &format!("/messages/{}/replies", m.id)).await;
+    let last = thread.iter().map(|m| m.id).max().unwrap();
+    let r = post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/messages/{}/replies/seen", m.id),
+        json!({ "message_id": last }),
+    )
+    .await;
+    assert!(r.status().is_success(), "seen {}", r.status());
+    let r = post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/messages/{}/bookmark", m.id),
+        json!({}),
+    )
+    .await;
+    assert!(r.status().is_success(), "bookmark {}", r.status());
+    let later = pulse_server::times::rfc3339(jiff::Timestamp::now() + pulse_server::times::days(1));
+    let r = post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/messages/{}/reminders", m.id),
+        json!({ "remind_at": later }),
+    )
+    .await;
+    assert!(r.status().is_success(), "reminder {}", r.status());
+    // and puts the builds channel first in their own order
+    let r = w
+        .app
+        .http
+        .put(w.app.url(&format!("/me/channel-orders/{}", w.server)))
+        .bearer_auth(&w.sam.1)
+        .json(&json!({ "uncategorised": [w.ch.id, text.id], "categories": [] }))
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "order {}", r.status());
+
+    send(&w.app, &w.alex.1, text.id, "after").await;
+    let got_new = events_until(&mut new, "after").await;
+    for want in [
+        "ReadStateUpdated",
+        "ThreadSeen",
+        "BookmarkSaved",
+        "ReminderSaved",
+        "ChannelOrderChanged",
+    ] {
+        assert!(
+            got_new
+                .iter()
+                .any(|e| serde_json::to_string(e).unwrap().contains(want) && names(e, w.ch.id)),
+            "a current client gets its {want}"
+        );
+    }
+    let got_old = events_until(&mut old, "after").await;
+    let leaked: Vec<_> = got_old.iter().filter(|e| names(e, w.ch.id)).collect();
+    assert!(leaked.is_empty(), "{leaked:?}");
+    assert!(
+        got_old.iter().any(|e| matches!(e, Event::ChannelOrderChanged { order: Some(o), .. } if o.uncategorised.contains(&text.id))),
+        "its order still arrives, without the builds channel"
+    );
+}
+
+#[tokio::test]
+async fn rest_lists_leave_builds_out_for_older_clients() {
+    let w = world().await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
+    post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/channels/{}/messages", w.ch.id),
+        json!({ "content": "raven rules", "thread_root_id": m.id }),
+    )
+    .await;
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/messages", w.ch.id),
+        json!({ "content": "raven @sam", "thread_root_id": m.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/messages/{}/bookmark", m.id),
+        json!({}),
+    )
+    .await;
+    let later = pulse_server::times::rfc3339(jiff::Timestamp::now() + pulse_server::times::days(1));
+    post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/messages/{}/reminders", m.id),
+        json!({ "remind_at": later }),
+    )
+    .await;
+    let id = w.ch.id.to_string();
+    for path in [
+        "/inbox",
+        "/inbox/threads",
+        "/search?q=raven",
+        "/bookmarks",
+        "/reminders",
+        &format!("/servers/{}/search?q=raven", w.server),
+    ] {
+        let new = channels_get(
+            &w.app,
+            &w.sam.1,
+            path,
+            Some(pulse_protocol::PROTOCOL_VERSION),
+        )
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+        assert!(
+            new.contains(&id) || new.contains(&m.id.to_string()),
+            "{path} has it for a current client: {new}"
+        );
+        let old = channels_get(&w.app, &w.sam.1, path, None)
+            .send()
+            .await
+            .unwrap();
+        assert!(old.status().is_success(), "{path}");
+        let old = old.text().await.unwrap();
+        assert!(
+            !old.contains(&id) && !old.contains(&m.id.to_string()),
+            "{path} for an older client: {old}"
+        );
+    }
 }

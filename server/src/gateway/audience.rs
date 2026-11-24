@@ -28,20 +28,41 @@ impl Audience {
 }
 
 pub async fn audience_for(db: &SqlitePool, event: &Event) -> anyhow::Result<Audience> {
-    Ok(route(db, event).await?.0)
+    Ok(route(db, event).await?.audience)
 }
 
-/// [`audience_for`], and the oldest protocol version that may be sent the event: an event in a builds channel (#616)
-/// never reaches a client older than [`crate::builds::compat::BUILDS_SINCE`] (0: any version).
-pub async fn route(db: &SqlitePool, event: &Event) -> anyhow::Result<(Audience, u32)> {
+/// Who gets an event, and which clients may (#616).
+pub struct Routed {
+    pub audience: Audience,
+    /// The oldest protocol version that may be sent the event: anything about a builds channel never reaches a client
+    /// older than [`crate::builds::compat::BUILDS_SINCE`] (0: any version).
+    pub since: u32,
+    /// What a client older than [`crate::builds::compat::BUILDS_SINCE`] gets instead, when it gets a copy without the
+    /// builds channels (the event itself then goes only to newer clients).
+    pub old: Option<Event>,
+}
+
+/// [`audience_for`], with which clients may get it ([`Routed`]).
+pub async fn route(db: &SqlitePool, event: &Event) -> anyhow::Result<Routed> {
     let mut since = 0;
     let audience = audience_in(db, event, &mut since).await?;
-    Ok((audience, since))
+    let old = crate::builds::compat::old_copy(db, event).await?;
+    Ok(Routed {
+        audience,
+        since,
+        old,
+    })
 }
 
 async fn audience_in(db: &SqlitePool, event: &Event, since: &mut u32) -> anyhow::Result<Audience> {
-    // Per-user events (read points, mutes, closing, removal) reach that user's own sessions only.
+    // Per-user events (read points, mutes, closing, removal) reach that user's own sessions only. One about a builds
+    // channel (its read point, a comment's inbox item, a bookmark of a build) never reaches an older client.
     if let Some(owner) = event.only_for() {
+        if let Some(ch) = crate::builds::compat::own_event_channel(event)
+            && crate::builds::compat::is_builds(db, ch).await?
+        {
+            *since = crate::builds::compat::BUILDS_SINCE;
+        }
         return Ok(Audience::Users([owner].into_iter().collect()));
     }
     // What someone listens to (#275) or plays (#380) is told per viewer by `Hub::sync_presence`, never to an

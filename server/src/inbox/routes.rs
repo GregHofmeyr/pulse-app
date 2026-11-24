@@ -70,8 +70,9 @@ async fn page(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
     Query(q): Query<PageQuery>,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<Json<InboxPage>> {
-    let items = list(
+    let mut items = list(
         &s.db,
         me,
         Filter {
@@ -85,6 +86,13 @@ async fn page(
         },
     )
     .await?;
+    if !crate::builds::compat::speaks_builds(crate::builds::compat::rest_version(&headers)) {
+        // an older client can't open a builds channel (#616)
+        let builds =
+            crate::builds::compat::builds_among(&s.db, items.iter().map(|i| i.message.channel_id))
+                .await?;
+        items.retain(|i| !builds.contains(&i.message.channel_id));
+    }
     Ok(Json(InboxPage {
         items,
         unread: unread(&s.db, me).await?,
@@ -95,8 +103,28 @@ async fn page(
 async fn threads(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<Json<InboxThreads>> {
-    Ok(Json(super::threads::list(&s.db, me).await?))
+    let mut list = super::threads::list(&s.db, me).await?;
+    if !crate::builds::compat::speaks_builds(crate::builds::compat::rest_version(&headers)) {
+        // an older client can't open a builds channel (#616): no build's thread, nor builds among what it watches
+        let builds =
+            crate::builds::compat::builds_among(&s.db, list.threads.iter().map(|t| t.channel_id))
+                .await?;
+        list.threads.retain(|t| !builds.contains(&t.channel_id));
+        let mut roots = std::collections::HashSet::new();
+        for id in &list.watching {
+            let hit: Option<i64> = sqlx::query_scalar("SELECT 1 FROM builds WHERE message_id = ?")
+                .bind(id.to_string())
+                .fetch_optional(&s.db)
+                .await?;
+            if hit.is_some() {
+                roots.insert(*id);
+            }
+        }
+        list.watching.retain(|id| !roots.contains(id));
+    }
+    Ok(Json(list))
 }
 
 async fn count(State(s): State<AppState>, AuthUser(me): AuthUser) -> AppResult<Json<InboxUnread>> {

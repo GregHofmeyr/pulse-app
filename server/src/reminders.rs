@@ -146,8 +146,16 @@ async fn one<'e>(
 async fn list(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<Json<Vec<MessageReminder>>> {
-    Ok(Json(list_for(&s.db, me).await?))
+    let mut list = list_for(&s.db, me).await?;
+    if !crate::builds::compat::speaks_builds(crate::builds::compat::rest_version(&headers)) {
+        // an older client can't open a builds channel (#616)
+        let builds =
+            crate::builds::compat::builds_among(&s.db, list.iter().map(|r| r.channel_id)).await?;
+        list.retain(|r| !builds.contains(&r.channel_id));
+    }
+    Ok(Json(list))
 }
 
 async fn publish_saved(s: &AppState, me: UserId, reminder: MessageReminder) {
