@@ -14,11 +14,10 @@ use tokio::time::Instant;
 
 use crate::backoff::{After, reconnect_delay};
 
-/// The protocol version this client's Hello claims. It stays below the protocol crate's
-/// [`pulse_protocol::PROTOCOL_VERSION`] until this client can show what that version brings: 4 until the builds views
-/// ship (#616, #617), so the server never sends it a builds channel. Raised to 5 with them, together with the
-/// `X-Pulse-Protocol` header on REST requests.
-pub const CLIENT_PROTOCOL: u32 = 4;
+/// The protocol version this client claims, in its Hello and in the `X-Pulse-Protocol` header on every REST request
+/// (`Api::new`). It stays below the protocol crate's [`pulse_protocol::PROTOCOL_VERSION`] until this client can show
+/// what a version brings: 5 since the builds views (#617), so the server sends it builds channels.
+pub const CLIENT_PROTOCOL: u32 = 5;
 // never newer than the protocol this build was made with
 const _: () = assert!(CLIENT_PROTOCOL <= pulse_protocol::PROTOCOL_VERSION);
 
@@ -788,11 +787,11 @@ mod tests {
         states
     }
 
-    /// This client claims protocol 4 until it has the builds views (#616, #617): a server sends a version-5 client
-    /// builds channels, which this build can't show. Phase 2 raises it (and sends `X-Pulse-Protocol`) with them.
+    /// This client has the builds views (#617), so it claims protocol 5: a server sends it builds channels. Its REST
+    /// requests say the same (`X-Pulse-Protocol`, `api::tests::every_request_says_its_protocol`).
     #[test]
-    fn the_client_speaks_protocol_4_until_its_builds_views_ship() {
-        assert_eq!(CLIENT_PROTOCOL, 4);
+    fn the_client_speaks_protocol_5_now_its_builds_views_ship() {
+        assert_eq!(CLIENT_PROTOCOL, 5);
     }
 
     /// 4006 (over the per-user connection cap) is retried with backoff, never a logout.

@@ -339,12 +339,12 @@ pub struct Api {
 
 impl Api {
     pub fn new(base: &str) -> Self {
-        // every request says which protocol it speaks: without it the server answers as it would an older client
-        // (no builds channels in channel lists, #617)
+        // every request says which protocol it speaks, the same as the gateway's Hello: without it the server answers
+        // as it would an older client (no builds channels in channel lists, #617)
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             pulse_protocol::PROTOCOL_HEADER,
-            reqwest::header::HeaderValue::from(pulse_protocol::PROTOCOL_VERSION),
+            reqwest::header::HeaderValue::from(crate::gateway::CLIENT_PROTOCOL),
         );
         let http = reqwest::Client::builder()
             .default_headers(headers)
@@ -4484,11 +4484,13 @@ mod tests {
             .await
             .unwrap();
         let head = rx.await.unwrap();
+        // the same version as the gateway's Hello
         let want = format!(
             "{}: {}\r\n",
             pulse_protocol::PROTOCOL_HEADER,
-            pulse_protocol::PROTOCOL_VERSION
+            crate::gateway::CLIENT_PROTOCOL
         );
+        assert_eq!(crate::gateway::CLIENT_PROTOCOL, 5);
         assert!(head.contains(&want), "{head}");
     }
 
