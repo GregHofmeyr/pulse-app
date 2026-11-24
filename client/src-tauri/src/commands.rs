@@ -1993,6 +1993,85 @@ pub async fn stop_mic_test(
     Ok(())
 }
 
+/// Where a mic sample went (#583): both WAVs, their folder, and how many seconds were recorded.
+#[derive(serde::Serialize)]
+pub struct MicSampleSaved {
+    pub raw: String,
+    pub sent: String,
+    pub folder: String,
+    pub seconds: f32,
+}
+
+/// "Record a mic sample" (#583): ~15 s of the mic, raw (before APM) and sent (after the gate), as two 48 kHz mono
+/// 16-bit WAVs in the log folder, replacing the last pair. Needs the mic running: in a call or in the mic test (both
+/// feed the same recorder). Returns once the recording is full (or the mic stopped part way).
+#[tauri::command]
+pub async fn record_mic_sample(
+    core: State<'_, Core>,
+    log_dir: State<'_, crate::reports::LogDir>,
+) -> Result<MicSampleSaved, String> {
+    use crate::voice::devices::INTERNAL_RATE;
+    use crate::voice::micsample::{self, RECORDER, SAMPLES, SECONDS};
+    use std::time::{Duration, Instant};
+    if !RECORDER.start(SAMPLES) {
+        return Err("A mic sample is already being recorded.".into());
+    }
+    let started = Instant::now();
+    let deadline = Duration::from_secs(SECONDS as u64 + 5);
+    let (mut last, mut last_change) = (0, started);
+    loop {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if RECORDER.full() {
+            break;
+        }
+        let n = RECORDER.recorded();
+        if n != last {
+            (last, last_change) = (n, Instant::now());
+        }
+        // nothing for a while: the mic isn't running (or stopped part way: keep what came)
+        if last_change.elapsed() > Duration::from_millis(1500) || started.elapsed() > deadline {
+            break;
+        }
+    }
+    let takes = RECORDER.finish().unwrap_or(micsample::Takes {
+        raw: Vec::new(),
+        sent: Vec::new(),
+    });
+    let seconds = takes.raw.len() as f32 / INTERNAL_RATE as f32;
+    if seconds < 1.0 {
+        return Err("No audio from your mic. Join a call or start \"Let's check\" first.".into());
+    }
+    let dir = log_dir.0.clone();
+    let (raw_peak, sent_peak) = (
+        micsample::peak_dbfs(&takes.raw),
+        micsample::peak_dbfs(&takes.sent),
+    );
+    let (raw, sent) = tauri::async_runtime::spawn_blocking(move || micsample::save(&dir, &takes))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| {
+            tracing::warn!("voice: couldn't save the mic sample: {e}");
+            format!("Couldn't save the mic sample: {e}")
+        })?;
+    RECORDER.saved_at(crate::reports::unix_now());
+    tracing::info!(
+        seconds = format!("{seconds:.1}"),
+        raw_peak_dbfs = format!("{raw_peak:.1}"),
+        sent_peak_dbfs = format!("{sent_peak:.1}"),
+        folder = %crate::logging::redact_home(&log_dir.0),
+        "voice: mic sample saved"
+    );
+    // "Show in folder" may reveal them
+    core.downloads.saved(raw.clone());
+    core.downloads.saved(sent.clone());
+    Ok(MicSampleSaved {
+        raw: raw.display().to_string(),
+        sent: sent.display().to_string(),
+        folder: log_dir.0.display().to_string(),
+        seconds,
+    })
+}
+
 /// A voice meter appeared in (`on`) or left the UI: in a call, levels are sent only while one shows.
 #[tauri::command]
 pub fn watch_voice_meters(voice: State<'_, VoiceManager>, on: bool) {

@@ -97,8 +97,16 @@ impl MicTest {
         queue.take_worst();
         let levels = tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_millis(100));
+            // the call's 5 s `voice: mic` line, here too: a mic can be diagnosed without a call (#583)
+            shared.mic_levels.take();
+            let mut ticks = 0u32;
             loop {
                 tick.tick().await;
+                ticks += 1;
+                if ticks.is_multiple_of(50) {
+                    let levels = shared.mic_levels.take();
+                    tracing::info!(%levels, "voice: mic");
+                }
                 let queued = shared.mix_in.max_buffered();
                 queue.record((queued * 1000 / INTERNAL_RATE as usize) as u32);
                 let (mic, speaker) = shared.take_levels();

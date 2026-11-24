@@ -13,6 +13,7 @@ use super::denoise::{DeepFilter, Denoiser, FRAME, NsLevel, make_fast};
 use super::devices::{INTERNAL_RATE, NsStatus, ProcCfg, Shared, relock};
 use super::gate::{PREROLL_BLOCKS, VoiceGate};
 use super::limiter::Limiter;
+use super::micsample::RECORDER;
 use super::micsilence;
 use super::mutedtalk;
 use super::resampler::StreamResampler;
@@ -152,6 +153,11 @@ pub struct BlockOut {
     pub judged: bool,
     /// RMS of the block as it came in (before cleaning and gain): with `level`, what suppression removed.
     pub in_level: f32,
+    /// Peak after the denoiser, before gain (the `voice: mic` line, #583).
+    pub ns_peak: f32,
+    /// Samples the limiter turned down (its gain below 1), and its lowest gain in the block.
+    pub limited: u32,
+    pub limiter_min_gain: f32,
 }
 
 fn rms(b: &[f32]) -> f32 {
@@ -250,6 +256,9 @@ impl MicChain {
             ns_out: 0.0,
             judged: false,
             in_level,
+            ns_peak: 0.0,
+            limited: 0,
+            limiter_min_gain: 1.0,
         }
     }
 
@@ -268,8 +277,14 @@ impl MicChain {
         let prob = self.denoiser.process(block);
         let ns_out = energy(block);
         let newest = self.denoiser.decision_level().unwrap_or(in_level) * self.gain;
+        let (mut ns_peak, mut limited, mut min_gain) = (0.0f32, 0u32, 1.0f32);
         for v in block.iter_mut() {
+            ns_peak = ns_peak.max(v.abs());
             *v = self.limiter.process(*v * self.gain);
+            // the gain the limiter applied to this sample: below 1 = it turned the voice down
+            let g = self.limiter.gain();
+            limited += u32::from(g < 1.0);
+            min_gain = min_gain.min(g);
         }
         let level = rms(block);
         if !mic_open {
@@ -282,6 +297,9 @@ impl MicChain {
                 ns_out,
                 judged: false,
                 in_level,
+                ns_peak,
+                limited,
+                limiter_min_gain: min_gain,
             };
         }
         // Auto decides on the newest audio, not the cleaned block (which lags it): the engine's
@@ -302,6 +320,9 @@ impl MicChain {
             ns_out,
             judged: true,
             in_level,
+            ns_peak,
+            limited,
+            limiter_min_gain: min_gain,
         }
     }
 }
@@ -960,6 +981,8 @@ fn run(shared: Arc<Shared>, rx: &mut RawRx) {
     let mut pending: Vec<f32> = Vec::with_capacity(2 * FRAME);
     let mut queue: VecDeque<RawBlock> = VecDeque::new();
     let mut i16buf = vec![0i16; FRAME];
+    // the raw block kept for a mic sample's raw tap (APM works on `block` in place); allocated once
+    let mut raw_copy: Vec<f32> = Vec::with_capacity(FRAME);
     let (mut gap, silence) = (GapFill::new(Instant::now()), vec![0i16; FRAME]);
 
     loop {
@@ -1025,6 +1048,11 @@ fn run(shared: Arc<Shared>, rx: &mut RawRx) {
             let mut block: Vec<f32> = pending.drain(..FRAME).collect();
             // raw, before any processing: AGC would lift a near-silent mic
             let raw_peak = micsilence::peak(&block);
+            let recording = RECORDER.armed();
+            if recording {
+                raw_copy.clear();
+                raw_copy.extend_from_slice(&block);
+            }
             // render before capture: what the speakers played up to now is the echo reference
             shared.feed_echo_reference();
             // WebRTC APM (HPF, AEC, AGC) works on i16
@@ -1066,6 +1094,9 @@ fn run(shared: Arc<Shared>, rx: &mut RawRx) {
                     .record_mic_block(out.ns_in, out.ns_out, out.judged, out.sent);
                 shared.add_mic_level(out.level, out.sent);
                 i16buf.fill(0);
+                if recording {
+                    RECORDER.tap(&raw_copy, &i16buf);
+                }
                 deliver(&shared, &mut gap, &i16buf);
                 continue;
             }
@@ -1092,6 +1123,19 @@ fn run(shared: Arc<Shared>, rx: &mut RawRx) {
             shared.add_mic_level(out.level, out.sent);
             for (d, v) in i16buf.iter_mut().zip(block.iter()) {
                 *d = to_i16(*v);
+            }
+            if out.judged {
+                shared.mic_levels.record_chain(
+                    out.ns_peak,
+                    out.ns_out,
+                    block.len(),
+                    out.limited,
+                    out.limiter_min_gain,
+                );
+                shared.mic_levels.record_out(&i16buf);
+            }
+            if recording {
+                RECORDER.tap(&raw_copy, &i16buf);
             }
             deliver(&shared, &mut gap, &i16buf);
         }
@@ -1155,6 +1199,53 @@ mod tests {
         assert!(out.judged);
         let out = c.process(&mut vec![0.2f32; FRAME], false, Instant::now());
         assert!(!out.judged, "muted: the gate didn't judge it");
+    }
+
+    /// #583: each block reports its peak after the denoiser and how much the limiter turned it down.
+    #[test]
+    fn block_out_reports_the_denoised_peak_and_limiter_engagement() {
+        let mut c = MicChain::new(NsLevel::Off, false, 0.0, 4.0);
+        c.set_denoiser(NsLevel::Standard, Box::new(Halve));
+        // after Halve 0.05, ×4 = 0.2: under the ceiling, the limiter stays at unity
+        let out = c.process(&mut vec![0.1f32; FRAME], true, Instant::now());
+        assert_eq!((out.limited, out.limiter_min_gain), (0, 1.0));
+        let mut b = vec![0.1f32; FRAME];
+        b[..48].fill(0.6); // after Halve 0.3, ×4 = 1.2: over the −1 dBFS ceiling
+        let out = c.process(&mut b, true, Instant::now());
+        assert!((out.ns_peak - 0.3).abs() < 1e-6, "{}", out.ns_peak);
+        assert_eq!(
+            out.limited as usize, FRAME,
+            "turned down from the peak on, held for the rest of the block"
+        );
+        assert!(out.limiter_min_gain < 0.9, "{}", out.limiter_min_gain);
+        assert!(b.iter().all(|v| v.abs() <= super::super::limiter::CEILING));
+    }
+
+    /// #583 end to end: the processor feeds the `voice: mic` line's chain and output figures.
+    #[test]
+    fn processor_feeds_the_mic_levels() {
+        let shared = shared_with(AudioConfig {
+            noise_suppression: NsLevel::Off,
+            auto_sensitivity: false,
+            sensitivity: 0.0, // manual, threshold 0 = always open
+            ..Default::default()
+        });
+        let seen = collecting(&shared);
+        let (raw_tx, _h) = spawn(shared.clone());
+        let tone: Vec<f32> = (0..480).map(|i| 0.1 * (i as f32 * 0.0576).sin()).collect();
+        for _ in 0..10 {
+            raw_tx.send((48_000, tone.clone(), Instant::now())).unwrap();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(wait_frames(&seen, 10) >= 10);
+        let s = shared.mic_levels.take();
+        assert!(s.ns.is_some() && s.out_peak.is_some(), "{s:?}");
+        assert_eq!(
+            s.limited_pct,
+            Some(0.0),
+            "a −20 dBFS tone at unity gain never reaches the limiter"
+        );
+        assert_eq!(s.limiter_max_db, Some(0.0));
     }
 
     /// R4 end to end: the processor feeds the path-line counters.

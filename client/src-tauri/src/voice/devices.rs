@@ -386,6 +386,8 @@ pub struct Shared {
     sent_meter: Mutex<Meter>,
     /// Counters for the `voice: path` line (atomics: safe in the audio callbacks).
     pub stats: super::stats::Pipeline,
+    /// Levels and clipping stage by stage, for the `voice: mic` line (#583; atomics: safe in the audio callbacks).
+    pub mic_levels: super::miclevels::MicLevels,
     /// Where the processor's frames go: the current room's mic track (`None` between rooms).
     pub(crate) mic_sink: Mutex<Option<Box<dyn super::processor::FrameSink>>>,
     /// Mic audio waiting to be processed (ms), worst per stats window: the send-side delay we own.
@@ -458,6 +460,7 @@ impl Shared {
             spk_meter: Mutex::new(Meter::default()),
             sent_meter: Mutex::new(Meter::default()),
             stats: Default::default(),
+            mic_levels: Default::default(),
             mic_sink: Mutex::new(None),
             mic_queue: Default::default(),
             low_delay_model: Mutex::new(crate::models::low_delay_store()),
@@ -510,6 +513,8 @@ impl Shared {
         self.stats
             .in_frames
             .record((data.len() / channels.max(1)) as u64);
+        // peaks, clipping and L/R correlation of what the device sent, before the downmix
+        self.mic_levels.record_input(data, channels);
         let chunk = (rate / 100) as usize;
         for v in downmix(data, channels) {
             pending.push(v);
