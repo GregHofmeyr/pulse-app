@@ -8,6 +8,7 @@ pub mod echo;
 pub mod gate;
 pub mod latency;
 pub mod leveller;
+pub mod limiter;
 pub mod linkstats;
 pub mod meter;
 pub mod micsilence;

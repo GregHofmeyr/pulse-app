@@ -638,6 +638,15 @@ impl Shared {
     }
 
     pub fn apply_config(&self, cfg: &AudioConfig) {
+        // A level or gain change was invisible in the logs, so a report couldn't say what the mic ran at (#586).
+        tracing::info!(
+            ns = ?cfg.noise_suppression,
+            gain_pct = cfg.input_gain_pct,
+            auto_gain = cfg.auto_gain,
+            auto_sensitivity = cfg.auto_sensitivity,
+            sensitivity = cfg.sensitivity,
+            "voice: mic settings"
+        );
         {
             let mut p = relock(&self.proc_cfg);
             *p = ProcCfg {

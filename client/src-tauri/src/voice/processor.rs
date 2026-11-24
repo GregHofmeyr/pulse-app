@@ -12,8 +12,8 @@ use super::backlog::GapFill;
 use super::denoise::{DeepFilter, Denoiser, FRAME, NsLevel, make_fast};
 use super::devices::{INTERNAL_RATE, NsStatus, ProcCfg, Shared, relock};
 use super::gate::{PREROLL_BLOCKS, VoiceGate};
+use super::limiter::Limiter;
 use super::micsilence;
-use super::mixer::soft_limit;
 use super::mutedtalk;
 use super::resampler::StreamResampler;
 use crate::models::{LoadError, ModelStore};
@@ -163,12 +163,14 @@ fn rms(b: &[f32]) -> f32 {
 /// leak out as a blip on unmute). DeepFilterNet looks back df_order + lookahead = 7 hops; 8 covers it.
 const PRIME_BLOCKS: usize = 8;
 
-/// One block's journey after APM: denoise → gain (soft-limited) → gate → mute.
+/// One block's journey after APM: denoise → gain (peak-limited) → gate → mute.
 pub struct MicChain {
     level: NsLevel,
     denoiser: Box<dyn Denoiser>,
     gate: VoiceGate,
     gain: f32,
+    /// Keeps the gained-up voice under −1 dBFS without the tanh's distortion (#586).
+    limiter: Limiter,
     /// The latest blocks seen while idle, oldest first (at most PRIME_BLOCKS).
     recent: VecDeque<Vec<f32>>,
     idle: bool,
@@ -181,6 +183,7 @@ impl MicChain {
             denoiser: make_fast(level),
             gate: VoiceGate::new(auto, threshold),
             gain,
+            limiter: Limiter::new(INTERNAL_RATE),
             recent: VecDeque::with_capacity(PRIME_BLOCKS),
             idle: false,
         }
@@ -266,7 +269,7 @@ impl MicChain {
         let ns_out = energy(block);
         let newest = self.denoiser.decision_level().unwrap_or(in_level) * self.gain;
         for v in block.iter_mut() {
-            *v = soft_limit(*v * self.gain);
+            *v = self.limiter.process(*v * self.gain);
         }
         let level = rms(block);
         if !mic_open {
