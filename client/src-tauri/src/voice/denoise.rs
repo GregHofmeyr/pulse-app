@@ -128,6 +128,62 @@ pub struct DeepFilter {
     vad: Rnnoise,
     noisy: ndarray::Array2<f32>,
     enh: ndarray::Array2<f32>,
+    dither: Dither,
+}
+
+/// How hard DeepFilterNet may cut, in dB (libDF's default, 100, means no limit). Mics that are already cleaned
+/// (a virtual mic with its own suppression, a quiet room) have no noise left for it to remove, and unlimited it
+/// starts carving the voice itself. 24 dB still takes a fan or keyboard well under the voice; the gate handles the
+/// gaps between words (#586).
+pub const DF_ATTEN_LIM_DB: f32 = 24.0;
+
+/// DeepFilterNet's runtime settings (#586). The model's local-SNR estimate lives in [-15, 35] dB (`lsnr_min` /
+/// `lsnr_max` in both models' config.ini), and libDF picks a stage per 10 ms frame from it with no hysteresis:
+/// below `min_db_thresh` a zero mask, above `max_db_erb_thresh` the raw input, above `max_db_df_thresh` the ERB mask
+/// only, otherwise ERB + deep filter. Clean speech sits right on the default 20/30 dB edges, so its frames flipped
+/// between processed and raw timbre (heard as watery, patchy grain). At -15/35/35 no frame can cross those edges:
+/// every frame gets the full ERB + deep-filter path (the deep filter is what rebuilds a low voice's harmonics), and
+/// noise-only frames get the model's own mask, bounded by the attenuation limit, rather than a hard zero. Costs the
+/// two decoders on every frame (they were skipped on clean frames before). The post-filter stays off: it deepens
+/// attenuation in low-SNR bins, the opposite of what an already-cleaned mic needs.
+fn runtime_params() -> df::tract::RuntimeParams {
+    df::tract::RuntimeParams::default_with_ch(1)
+        .with_atten_lim(DF_ATTEN_LIM_DB)
+        .with_thresholds(-15.0, 35.0, 35.0)
+        .with_post_filter(0.0)
+}
+
+/// About -66 dBFS RMS of triangular (TPDF) noise, added to DeepFilterNet's input only (#586). libDF treats a frame
+/// whose mean square is below 1e-7 (-70 dBFS) as silence, and after 5 of them returns zeros *before* its analysis,
+/// so its STFT overlap and deep-filter history freeze on the end of the last phrase. A pre-gated mic (one with its
+/// own noise gate) hands it exactly that between phrases, and the next phrase's first frames came out garbled. With
+/// this floor every frame's mean square is about 2.5e-7, so libDF stays on its normal path; the model treats it as
+/// the noise it is (and the attenuation limit puts what's left near -90 dBFS, under the gate that closes on it).
+const DITHER_AMP: f32 = 1.228e-3; // each uniform in [-A/2, A/2]: TPDF RMS = A / sqrt(6) ≈ 5.0e-4 = -66 dBFS
+
+/// A tiny xorshift PRNG: deterministic, allocation-free, cheap enough for every sample.
+struct Dither(u32);
+
+impl Dither {
+    fn new() -> Self {
+        Self(0x9E37_79B9)
+    }
+
+    /// Uniform in [-0.5, 0.5).
+    #[inline]
+    fn uniform(&mut self) -> f32 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.0 = x;
+        (x >> 8) as f32 * (1.0 / 16_777_216.0) - 0.5
+    }
+
+    #[inline]
+    fn next(&mut self) -> f32 {
+        (self.uniform() + self.uniform()) * DITHER_AMP
+    }
 }
 
 impl DeepFilter {
@@ -144,7 +200,7 @@ impl DeepFilter {
 
     fn load(params: impl FnOnce() -> anyhow::Result<df::tract::DfParams>) -> anyhow::Result<Self> {
         let df = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            df::tract::DfTract::new(params()?, &df::tract::RuntimeParams::default_with_ch(1))
+            df::tract::DfTract::new(params()?, &runtime_params())
         }))
         .map_err(|_| anyhow!("DeepFilterNet panicked while loading its model"))?
         .context("loading DeepFilterNet")?;
@@ -158,6 +214,7 @@ impl DeepFilter {
             vad: Rnnoise::new(),
             noisy: ndarray::Array2::zeros((1, FRAME)),
             enh: ndarray::Array2::zeros((1, FRAME)),
+            dither: Dither::new(),
         })
     }
 }
@@ -169,7 +226,7 @@ impl Denoiser for DeepFilter {
             .row_mut(0)
             .iter_mut()
             .zip(block.iter())
-            .for_each(|(d, s)| *d = *s);
+            .for_each(|(d, s)| *d = *s + self.dither.next());
         // On a model error, send the block uncleaned rather than silence.
         if self
             .df
@@ -423,6 +480,49 @@ mod tests {
     fn low_delay_delay_matches_what_the_gate_assumes() {
         assert_eq!(lag_blocks(&mut low_delay()), 1, "Strong (low delay): 10 ms");
         assert_eq!(low_delay().gate_lead_blocks(), 0);
+    }
+
+    /// Every frame of the dither alone sits above libDF's 1e-7 mean-square silence mark (with margin), so a
+    /// pre-gated mic's digital silence never sends DeepFilterNet down its skip path (#586).
+    #[test]
+    fn dither_keeps_every_frame_above_libdfs_silence_mark() {
+        let mut d = Dither::new();
+        for _ in 0..2_000 {
+            let ms = (0..FRAME).map(|_| d.next().powi(2)).sum::<f32>() / FRAME as f32;
+            assert!((1.8e-7..3.5e-7).contains(&ms), "frame mean square {ms:e}");
+        }
+    }
+
+    /// Digital silence in: on the skip path libDF would hand back exact zeros. With the dither it runs (its output
+    /// isn't all zeros) yet what comes out stays far below anything audible, before the gate even closes on it.
+    #[test]
+    fn deep_filter_runs_through_silence_without_leaking_the_dither() {
+        for (name, mut d) in [
+            ("strong", DeepFilter::new().unwrap()),
+            ("strong_low_delay", low_delay()),
+        ] {
+            let (out, _) = run(&mut d, &vec![0.0; 48_000 * 3]);
+            assert!(out.iter().any(|v| *v != 0.0), "{name}: took the skip path");
+            assert!(
+                level_db(&out) < -80.0,
+                "{name}: dither leaks at {:.1} dB",
+                level_db(&out)
+            );
+        }
+    }
+
+    /// The attenuation limit holds: steady noise is cut, but not past DF_ATTEN_LIM_DB (unlimited, it went deeper).
+    #[test]
+    fn deep_filter_cut_is_bounded_by_the_attenuation_limit() {
+        let input = noise(48_000 * 3, 0.05);
+        for (name, mut d) in [
+            ("strong", DeepFilter::new().unwrap()),
+            ("strong_low_delay", low_delay()),
+        ] {
+            let (out, _) = run(&mut d, &input);
+            let cut = level_db(&input) - level_db(&out);
+            assert!(cut <= DF_ATTEN_LIM_DB + 1.0, "{name}: cut {cut:.1} dB");
+        }
     }
 
     #[test]

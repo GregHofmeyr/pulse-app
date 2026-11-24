@@ -1,6 +1,6 @@
 //! Mic levels and clipping, stage by stage, for the 5 s `voice: mic` line (#583): what the device hands over (peak per
 //! channel, L/R correlation, samples at full scale), what the denoiser leaves, how often the gain drives the soft
-//! limiter past its knee, and the peak of what is sent. A crackly mic can then be pinned to the stage that adds it.
+//! limiter (`limiter.rs`) turns the voice down and by how much, and the peak of what is sent. A crackly mic can then be pinned to the stage that adds it.
 //!
 //! The audio side only does per-block arithmetic into atomics: no locks, no allocation (the input half runs in the
 //! device callback).
@@ -83,8 +83,10 @@ pub struct MicLevels {
     ns_peak: Peak,
     ns_energy: AtomicU64,
     ns_samples: AtomicU64,
-    /// After gain: samples past the soft limiter's knee, of how many. Mic-open blocks only.
+    /// After gain: samples the limiter turned down (its gain below 1), of how many, and its deepest cut as
+    /// `1 − gain` (kept as a peak). Mic-open blocks only.
     limited: AtomicU64,
+    cut: Peak,
     gained: AtomicU64,
     /// What went out (after the gate). Mic-open blocks only.
     out_peak: Peak,
@@ -108,7 +110,15 @@ impl MicLevels {
     }
 
     /// Processor half: one mic-open 10 ms block's figures from the chain (see `processor::BlockOut`).
-    pub fn record_chain(&self, ns_peak: f32, ns_energy: f32, samples: usize, limited: u32) {
+    pub fn record_chain(
+        &self,
+        ns_peak: f32,
+        ns_energy: f32,
+        samples: usize,
+        limited: u32,
+        limiter_min_gain: f32,
+    ) {
+        self.cut.record(1.0 - limiter_min_gain);
         self.ns_peak.record(ns_peak);
         self.ns_energy
             .fetch_add((ns_energy as f64 * SCALE) as u64, Relaxed);
@@ -138,6 +148,7 @@ impl MicLevels {
         );
         let (limited, gained) = (self.limited.swap(0, Relaxed), self.gained.swap(0, Relaxed));
         let ns_peak = self.ns_peak.take();
+        let cut = self.cut.take();
         let out_peak = self.out_peak.take();
         let [l, r] = [self.in_peak[0].take(), self.in_peak[1].take()];
         MicSummary {
@@ -151,6 +162,10 @@ impl MicLevels {
                 (ns_peak, rms as f32)
             }),
             limited_pct: (gained > 0).then(|| limited as f64 * 100.0 / gained as f64),
+            limiter_max_db: (gained > 0).then(|| {
+                let db = dbfs((1.0 - cut).max(0.0));
+                if db == 0.0 { 0.0 } else { db } // no −0.0
+            }),
             out_peak: (gained > 0).then_some(out_peak),
         }
     }
@@ -169,8 +184,10 @@ pub struct MicSummary {
     pub corr: Option<f64>,
     /// (peak, RMS) after the denoiser, linear; mic-open time only.
     pub ns: Option<(f32, f32)>,
-    /// Share of samples the soft limiter bent (above its knee) after gain.
+    /// Share of samples the limiter turned down (its gain below 1) after gain.
     pub limited_pct: Option<f64>,
+    /// The limiter's deepest gain reduction, dB (0 = never engaged, negative = turned down).
+    pub limiter_max_db: Option<f64>,
     /// Peak of what was sent, linear.
     pub out_peak: Option<f32>,
 }
@@ -204,9 +221,9 @@ impl fmt::Display for MicSummary {
             Some((pk, rms)) => write!(f, " ns pk {} rms {}dBFS", db(pk), db(rms))?,
             None => write!(f, " ns -")?,
         }
-        match self.limited_pct {
-            Some(p) => write!(f, " limit {p:.1}%")?,
-            None => write!(f, " limit -")?,
+        match (self.limited_pct, self.limiter_max_db) {
+            (Some(p), Some(db)) => write!(f, " limit {p:.1}% max {db:.1}dB")?,
+            _ => write!(f, " limit -")?,
         }
         match self.out_peak {
             Some(p) => write!(f, " out pk {}dBFS", db(p)),
@@ -260,15 +277,15 @@ mod tests {
     fn a_window_summarises_every_stage_then_starts_over() {
         let m = MicLevels::default();
         m.record_input(&[0.5, -0.25, 1.0], 1);
-        // 480 samples after NS at RMS 0.1 (Σx² = 4.8), peak 0.2, 48 of them past the knee after gain
-        m.record_chain(0.2, 4.8, 480, 48);
+        // 480 samples after NS at RMS 0.1 (Σx² = 4.8), peak 0.2; the limiter turned 48 down, at most to half (−6 dB)
+        m.record_chain(0.2, 4.8, 480, 48, 0.5);
         m.record_out(&[0, 16384, -32768]);
         let s = m.take();
         assert_eq!(s.in_clipped, 1);
         assert_eq!(s.limited_pct, Some(10.0));
         assert_eq!(
             s.to_string(),
-            "in pk 0.0dBFS clip 1 ns pk -14.0 rms -20.0dBFS limit 10.0% out pk 0.0dBFS"
+            "in pk 0.0dBFS clip 1 ns pk -14.0 rms -20.0dBFS limit 10.0% max -6.0dB out pk 0.0dBFS"
         );
         let next = m.take();
         assert_eq!(next.to_string(), "in - clip 0 ns - limit - out -");
@@ -278,11 +295,11 @@ mod tests {
     fn a_multichannel_device_says_so_and_silence_reads_as_the_floor() {
         let m = MicLevels::default();
         m.record_input(&[0.0; 12], 6);
-        m.record_chain(0.0, 0.0, 480, 0);
+        m.record_chain(0.0, 0.0, 480, 0, 1.0);
         m.record_out(&[0; 480]);
         assert_eq!(
             m.take().to_string(),
-            "in 6ch pk L -96.0 R -96.0dBFS corr - clip 0 ns pk -96.0 rms -96.0dBFS limit 0.0% out pk -96.0dBFS"
+            "in 6ch pk L -96.0 R -96.0dBFS corr - clip 0 ns pk -96.0 rms -96.0dBFS limit 0.0% max 0.0dB out pk -96.0dBFS"
         );
     }
 }

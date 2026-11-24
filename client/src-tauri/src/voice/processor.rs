@@ -12,9 +12,9 @@ use super::backlog::GapFill;
 use super::denoise::{DeepFilter, Denoiser, FRAME, NsLevel, make_fast};
 use super::devices::{INTERNAL_RATE, NsStatus, ProcCfg, Shared, relock};
 use super::gate::{PREROLL_BLOCKS, VoiceGate};
+use super::limiter::Limiter;
 use super::micsample::RECORDER;
 use super::micsilence;
-use super::mixer::{KNEE, soft_limit};
 use super::mutedtalk;
 use super::resampler::StreamResampler;
 use crate::models::{LoadError, ModelStore};
@@ -155,8 +155,9 @@ pub struct BlockOut {
     pub in_level: f32,
     /// Peak after the denoiser, before gain (the `voice: mic` line, #583).
     pub ns_peak: f32,
-    /// Samples the gain drove past the soft limiter's knee.
+    /// Samples the limiter turned down (its gain below 1), and its lowest gain in the block.
     pub limited: u32,
+    pub limiter_min_gain: f32,
 }
 
 fn rms(b: &[f32]) -> f32 {
@@ -168,12 +169,14 @@ fn rms(b: &[f32]) -> f32 {
 /// leak out as a blip on unmute). DeepFilterNet looks back df_order + lookahead = 7 hops; 8 covers it.
 const PRIME_BLOCKS: usize = 8;
 
-/// One block's journey after APM: denoise → gain (soft-limited) → gate → mute.
+/// One block's journey after APM: denoise → gain (peak-limited) → gate → mute.
 pub struct MicChain {
     level: NsLevel,
     denoiser: Box<dyn Denoiser>,
     gate: VoiceGate,
     gain: f32,
+    /// Keeps the gained-up voice under −1 dBFS without the tanh's distortion (#586).
+    limiter: Limiter,
     /// The latest blocks seen while idle, oldest first (at most PRIME_BLOCKS).
     recent: VecDeque<Vec<f32>>,
     idle: bool,
@@ -186,6 +189,7 @@ impl MicChain {
             denoiser: make_fast(level),
             gate: VoiceGate::new(auto, threshold),
             gain,
+            limiter: Limiter::new(INTERNAL_RATE),
             recent: VecDeque::with_capacity(PRIME_BLOCKS),
             idle: false,
         }
@@ -254,6 +258,7 @@ impl MicChain {
             in_level,
             ns_peak: 0.0,
             limited: 0,
+            limiter_min_gain: 1.0,
         }
     }
 
@@ -272,12 +277,14 @@ impl MicChain {
         let prob = self.denoiser.process(block);
         let ns_out = energy(block);
         let newest = self.denoiser.decision_level().unwrap_or(in_level) * self.gain;
-        let (mut ns_peak, mut limited) = (0.0f32, 0u32);
+        let (mut ns_peak, mut limited, mut min_gain) = (0.0f32, 0u32, 1.0f32);
         for v in block.iter_mut() {
             ns_peak = ns_peak.max(v.abs());
-            let gained = *v * self.gain;
-            limited += u32::from(gained.abs() > KNEE);
-            *v = soft_limit(gained);
+            *v = self.limiter.process(*v * self.gain);
+            // the gain the limiter applied to this sample: below 1 = it turned the voice down
+            let g = self.limiter.gain();
+            limited += u32::from(g < 1.0);
+            min_gain = min_gain.min(g);
         }
         let level = rms(block);
         if !mic_open {
@@ -292,6 +299,7 @@ impl MicChain {
                 in_level,
                 ns_peak,
                 limited,
+                limiter_min_gain: min_gain,
             };
         }
         // Auto decides on the newest audio, not the cleaned block (which lags it): the engine's
@@ -314,6 +322,7 @@ impl MicChain {
             in_level,
             ns_peak,
             limited,
+            limiter_min_gain: min_gain,
         }
     }
 }
@@ -1116,9 +1125,13 @@ fn run(shared: Arc<Shared>, rx: &mut RawRx) {
                 *d = to_i16(*v);
             }
             if out.judged {
-                shared
-                    .mic_levels
-                    .record_chain(out.ns_peak, out.ns_out, block.len(), out.limited);
+                shared.mic_levels.record_chain(
+                    out.ns_peak,
+                    out.ns_out,
+                    block.len(),
+                    out.limited,
+                    out.limiter_min_gain,
+                );
                 shared.mic_levels.record_out(&i16buf);
             }
             if recording {
@@ -1188,17 +1201,24 @@ mod tests {
         assert!(!out.judged, "muted: the gate didn't judge it");
     }
 
-    /// #583: each block reports its peak after the denoiser and how many samples the gain pushed past the knee.
+    /// #583: each block reports its peak after the denoiser and how much the limiter turned it down.
     #[test]
     fn block_out_reports_the_denoised_peak_and_limiter_engagement() {
         let mut c = MicChain::new(NsLevel::Off, false, 0.0, 4.0);
         c.set_denoiser(NsLevel::Standard, Box::new(Halve));
+        // after Halve 0.05, ×4 = 0.2: under the ceiling, the limiter stays at unity
+        let out = c.process(&mut vec![0.1f32; FRAME], true, Instant::now());
+        assert_eq!((out.limited, out.limiter_min_gain), (0, 1.0));
         let mut b = vec![0.1f32; FRAME];
-        b[..48].fill(0.6); // after Halve 0.3, ×4 = 1.2: past the knee
+        b[..48].fill(0.6); // after Halve 0.3, ×4 = 1.2: over the −1 dBFS ceiling
         let out = c.process(&mut b, true, Instant::now());
         assert!((out.ns_peak - 0.3).abs() < 1e-6, "{}", out.ns_peak);
-        assert_eq!(out.limited, 48, "0.05 × 4 = 0.2 stays under the knee");
-        assert!(b.iter().all(|v| v.abs() <= 1.0));
+        assert_eq!(
+            out.limited as usize, FRAME,
+            "turned down from the peak on, held for the rest of the block"
+        );
+        assert!(out.limiter_min_gain < 0.9, "{}", out.limiter_min_gain);
+        assert!(b.iter().all(|v| v.abs() <= super::super::limiter::CEILING));
     }
 
     /// #583 end to end: the processor feeds the `voice: mic` line's chain and output figures.
@@ -1223,8 +1243,9 @@ mod tests {
         assert_eq!(
             s.limited_pct,
             Some(0.0),
-            "a −20 dBFS tone at unity gain never reaches the knee"
+            "a −20 dBFS tone at unity gain never reaches the limiter"
         );
+        assert_eq!(s.limiter_max_db, Some(0.0));
     }
 
     /// R4 end to end: the processor feeds the path-line counters.
