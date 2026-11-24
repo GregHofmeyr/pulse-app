@@ -19,6 +19,8 @@ use crate::backoff::{After, reconnect_delay};
 /// ship (#616, #617), so the server never sends it a builds channel. Raised to 5 with them, together with the
 /// `X-Pulse-Protocol` header on REST requests.
 pub const CLIENT_PROTOCOL: u32 = 4;
+// never newer than the protocol this build was made with
+const _: () = assert!(CLIENT_PROTOCOL <= pulse_protocol::PROTOCOL_VERSION);
 
 const HEARTBEAT: Duration = Duration::from_secs(15);
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -791,7 +793,6 @@ mod tests {
     #[test]
     fn the_client_speaks_protocol_4_until_its_builds_views_ship() {
         assert_eq!(CLIENT_PROTOCOL, 4);
-        assert!(CLIENT_PROTOCOL <= pulse_protocol::PROTOCOL_VERSION);
     }
 
     /// 4006 (over the per-user connection cap) is retried with backoff, never a logout.
