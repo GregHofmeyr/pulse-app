@@ -316,10 +316,15 @@ pub fn init(dir: &Path) -> anyhow::Result<WorkerGuard> {
     let filter = build_filter(std::env::var("PULSE_LOG").ok().as_deref());
     // try_init: tests / a second call must not panic on an already-set global subscriber (whose writer is the
     // same switch, so a second call's file is the one written to)
+    // + the WARN/ERROR tally a bug report summarises (#605): behind the same filter, so it counts what the file has
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
     let _ = tracing_subscriber::fmt()
         .with_writer(FileWriter)
         .with_ansi(false)
         .with_env_filter(filter)
+        .finish()
+        .with(crate::reports::tally::WarnTally)
         .try_init();
 
     install_panic_hook(dir.to_path_buf());

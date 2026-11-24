@@ -1,8 +1,11 @@
 //! Bug and crash reports: gather diagnostics, send them, or save them to a file to pass on by hand.
 
 pub mod crash;
+pub mod diag;
 pub mod settings;
+pub mod system;
 pub mod tail;
+pub mod tally;
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -137,12 +140,38 @@ pub fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// Everything a report carries besides the text and log.
-pub async fn meta(app: &AppHandle, server: &str) -> serde_json::Value {
+/// How long a report waits for the system's device list (enumeration can hang on a flapping Bluetooth device).
+const DEVICE_LIST_WAIT: Duration = Duration::from_secs(2);
+
+/// Everything a report carries besides the text and log. `ui`: what the page knows (stream state); none for a
+/// crash report or an older page.
+pub async fn meta(app: &AppHandle, server: &str, ui: Option<diag::ReportUi>) -> serde_json::Value {
     let commit = option_env!("PULSE_COMMIT")
         .map(|c| &c[..c.len().min(7)])
         .unwrap_or("dev");
-    serde_json::json!({
+    let voice = app.state::<VoiceManager>();
+    // #605: gathered side by side (the CPU sample takes a quarter second; the device list can be slow)
+    let (view, system, defaults, route) = tokio::join!(
+        voice.report_view(),
+        system::gather(),
+        tokio::time::timeout(
+            DEVICE_LIST_WAIT,
+            tokio::task::spawn_blocking(crate::voice::devices::default_device_names),
+        ),
+        tokio::task::spawn_blocking(crate::netwatch::Route::now),
+    );
+    let (default_input, default_output) = match defaults {
+        Ok(Ok(d)) => d,
+        _ => (None, None),
+    };
+    let devices = diag::AudioDevices {
+        input: view.input.clone(),
+        output: view.output.clone(),
+        default_input,
+        default_output,
+    };
+    let network = diag::network(route.unwrap_or_default(), voice.rejoins());
+    let mut meta = serde_json::json!({
         "app_version": env!("CARGO_PKG_VERSION"),
         "commit": commit,
         "os": os_info::get().to_string(),
@@ -151,7 +180,15 @@ pub async fn meta(app: &AppHandle, server: &str) -> serde_json::Value {
         "voice": app.state::<VoiceManager>().diagnostics().await,
         // a mic sample saved this session (#583): the WAVs stay in the log folder, ask for them
         "mic_sample": crate::voice::micsample::RECORDER.report_meta(),
-    })
+        "voice_settings": diag::voice_report(&view),
+        "audio_devices": devices,
+        "streams": ui.and_then(|u| u.stream),
+        "system": system,
+        "network": network,
+        "warnings": tally::warnings(),
+    });
+    diag::fit(&mut meta, diag::META_BUDGET);
+    meta
 }
 
 /// Where "Save report" writes: Downloads, else Desktop, else the log dir.
@@ -187,12 +224,16 @@ async fn read_tail(app: &AppHandle) -> String {
 }
 
 #[tauri::command]
-pub async fn submit_report(app: AppHandle, text: String) -> Result<String, ApiError> {
+pub async fn submit_report(
+    app: AppHandle,
+    text: String,
+    ui: Option<diag::ReportUi>,
+) -> Result<String, ApiError> {
     let (api, token) = app.state::<Core>().current()?;
     let req = CreateReportRequest {
         kind: ReportKind::Bug,
         text,
-        meta: meta(&app, api.base()).await,
+        meta: meta(&app, api.base(), ui).await,
         log: read_tail(&app).await,
     };
     let r = match send_with_retry(|| api.create_report(&token, &req), Duration::from_secs(2)).await
@@ -238,6 +279,7 @@ pub async fn save_report(
     app: AppHandle,
     text: String,
     server_url: Option<String>,
+    ui: Option<diag::ReportUi>,
 ) -> Result<String, String> {
     let server = match server_url {
         Some(s) => s,
@@ -247,7 +289,7 @@ pub async fn save_report(
             .map(|(a, _)| a.base().to_string())
             .unwrap_or_default(),
     };
-    let meta = meta(&app, &server).await;
+    let meta = meta(&app, &server, ui).await;
     let log = read_tail(&app).await;
     let path = write_new(
         &save_dir(&app),

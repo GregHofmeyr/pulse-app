@@ -17,6 +17,7 @@ import type { UpdateProfileRequest } from './protocol/UpdateProfileRequest'
 import type { NameArchivePage } from './protocol/NameArchivePage'
 import type { BadgeCatalogue } from './protocol/BadgeCatalogue'
 import type { CropRect } from './crop'
+import type { ReportUi } from './report'
 import type { Server } from './protocol/Server'
 import type { Channel } from './protocol/Channel'
 import type { Category } from './protocol/Category'
@@ -591,11 +592,12 @@ export const api = {
   removeReaction: (messageId: string, emoji: string) => invoke<void>('remove_reaction', { messageId, emoji }),
   listReactors: (messageId: string, emoji: string) => invoke<string[]>('list_reactors', { messageId, emoji }),
   /** Returns the report's short id. */
-  submitReport: (text: string) => invoke<string>('submit_report', { text }),
+  submitReport: (text: string, ui?: ReportUi) => invoke<string>('submit_report', ui ? { text, ui } : { text }),
   /** An idea (#218): only the text, no log or diagnostics. Returns its short id. */
   submitIdea: (text: string) => invoke<string>('submit_idea', { text }),
   /** Writes a .txt to Downloads; returns its path. `serverUrl` when not signed in. */
-  saveReport: (text: string, serverUrl: string | null) => invoke<string>('save_report', { text, serverUrl }),
+  saveReport: (text: string, serverUrl: string | null, ui?: ReportUi) =>
+    invoke<string>('save_report', ui ? { text, serverUrl, ui } : { text, serverUrl }),
   /** "Send" on last session's held crash report; returns its short id. Fails (and keeps it) if not sent. */
   sendHeldReport: () => invoke<string>('send_held_report'),
   /** "Don't send": deletes the held crash report. */

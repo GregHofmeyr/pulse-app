@@ -3,7 +3,8 @@
   import Segmented from './Segmented.svelte'
   import { modal } from '../lib/actions'
   import { api } from '../lib/tauri'
-  import { saveFlow, submitFlow, type ReportState } from '../lib/report'
+  import { reportUi, saveFlow, submitFlow, type ReportState } from '../lib/report'
+  import { liveMediaTrack, stream } from '../lib/stream/stream.svelte'
 
   /** `saveOnly`: not signed in (login screen) — the report can only be saved to a file. */
   let { onClose, saveOnly = false, serverUrl = null }: { onClose: () => void; saveOnly?: boolean; serverUrl?: string | null } = $props()
@@ -27,18 +28,29 @@
     if (st.step === 'failed') st = { step: 'edit', message: '' }
   }
 
+  // #605: the stream state goes with a bug report (live resolution/fps/source kind, how many watched)
+  function ui() {
+    let surface: string | undefined
+    try {
+      surface = (liveMediaTrack()?.getSettings() as { displaySurface?: string } | undefined)?.displaySurface
+    } catch {
+      surface = undefined
+    }
+    return reportUi(stream.live, stream.watching, surface)
+  }
+
   async function send(e: SubmitEvent) {
     e.preventDefault()
     if (saveOnly) return save()
     st = idea
       ? await submitFlow(text, { submit: api.submitIdea, onStep: (s) => (st = s), noun: 'Idea' })
-      : await submitFlow(text, { submit: api.submitReport, onStep: (s) => (st = s) })
+      : await submitFlow(text, { submit: (t) => api.submitReport(t, ui()), onStep: (s) => (st = s) })
     if (st.step === 'sent') setTimeout(onClose, 1500)
   }
 
   async function save() {
     st = { step: 'saving', message: '' }
-    st = await saveFlow(text, { save: (t) => api.saveReport(t, serverUrl) })
+    st = await saveFlow(text, { save: (t) => api.saveReport(t, serverUrl, ui()) })
   }
 </script>
 

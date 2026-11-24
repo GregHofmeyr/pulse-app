@@ -181,6 +181,7 @@ pub fn run() {
             }
             app.manage(report_settings);
             app.manage(reports::LogDir(log_dir.clone()));
+            reports::system::mark_started(); // a report's uptime (#605)
             match logging::init(&log_dir) {
                 Ok(guard) => {
                     app.manage(LogGuard(std::sync::Mutex::new(Some(guard))));
@@ -335,7 +336,8 @@ pub fn run() {
             // is probed too: a socket on the old path is found dead within seconds (not at the next heartbeat's
             // deadline, ~20 s), and a reconnect waiting out its backoff tries at once.
             let h = app.handle().clone();
-            netwatch::spawn(move |_change| {
+            netwatch::spawn(move |change| {
+                reports::tally::network_change(change.resumed);
                 h.state::<voice::VoiceManager>().network_changed();
                 h.state::<commands::Core>().probe_gateway();
             });

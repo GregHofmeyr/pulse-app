@@ -1100,6 +1100,30 @@ enum Rejoined {
     GaveUp(EndReason),
 }
 
+/// What [`VoiceManager::report_view`] read (fields `None` where it couldn't say).
+#[derive(Debug, Clone, Default)]
+pub struct ReportView {
+    /// `in_call`, `not_in_call` or `busy` (the session lock was held too long to wait for).
+    pub state: &'static str,
+    pub cfg: Option<AudioConfig>,
+    pub ns: Option<devices::NsStatus>,
+    pub echo: Option<devices::EchoStatus>,
+    /// The channel's bitrate setting (0 = Default) and the mic's resulting cap.
+    pub mic_kbps: Option<u32>,
+    pub mic_max_bps: Option<u64>,
+    pub input: Option<devices::OpenedFormat>,
+    pub output: Option<devices::OpenedFormat>,
+}
+
+impl ReportView {
+    fn state(state: &'static str) -> Self {
+        Self {
+            state,
+            ..Default::default()
+        }
+    }
+}
+
 pub struct VoiceManager {
     /// Serialises join/leave: two fast clicks can't leave a ghost connection behind.
     op: tokio::sync::Mutex<()>,
@@ -2306,6 +2330,44 @@ impl VoiceManager {
         })
     }
 
+    /// For bug reports (#605): the settings a call runs with, what its noise suppression and echo
+    /// cancellation actually do, its mic bitrate and the formats its devices opened. Read only, and
+    /// like [`Self::diagnostics`] it never waits on a stuck session or device reopen.
+    pub async fn report_view(&self) -> ReportView {
+        let Ok(s) = tokio::time::timeout(DIAGNOSTICS_WAIT, self.session.lock()).await else {
+            return ReportView::state("busy");
+        };
+        let Some(s) = s.as_ref().filter(|s| s.alive.load(Ordering::SeqCst)) else {
+            // between rejoin attempts the call's settings are still the ones it will rejoin with
+            let cfg = self
+                .last_join
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|j| j.cfg.clone());
+            return ReportView {
+                cfg,
+                ..ReportView::state("not_in_call")
+            };
+        };
+        let kbps = self.bitrate_of(s.channel).load(Ordering::Relaxed);
+        // a device reopen holds this lock while it opens: say nothing rather than wait
+        let (input, output) = match s.pipeline.io.try_lock() {
+            Ok(io) => io.as_ref().map(AudioIo::formats).unwrap_or_default(),
+            Err(_) => (None, None),
+        };
+        ReportView {
+            state: "in_call",
+            cfg: Some(s.pipeline.cfg.lock().unwrap().clone()),
+            ns: s.pipeline.shared.ns_status(),
+            echo: Some(s.pipeline.shared.echo_status()),
+            mic_kbps: Some(kbps),
+            mic_max_bps: Some(mic_bps(kbps)),
+            input,
+            output,
+        }
+    }
+
     /// The live session's channel (a session LiveKit already dropped doesn't count).
     pub async fn current_channel(&self) -> Option<ChannelId> {
         self.session
@@ -3432,6 +3494,19 @@ mod tests {
             .await
             .expect("diagnostics waited on the lock");
         assert_eq!(d["state"], "busy");
+    }
+
+    #[tokio::test]
+    async fn the_report_view_doesnt_wait_either_and_is_empty_out_of_a_call() {
+        let vm = VoiceManager::new(Arc::new(|_| {}));
+        let v = vm.report_view().await;
+        assert_eq!(v.state, "not_in_call");
+        assert!(v.cfg.is_none() && v.input.is_none() && v.mic_kbps.is_none());
+        let _held = vm.session.lock().await;
+        let v = tokio::time::timeout(Duration::from_secs(3), vm.report_view())
+            .await
+            .expect("the report view waited on the lock");
+        assert_eq!(v.state, "busy");
     }
 
     /// #352: "disconnected" carries why the call ended (null for a leave of our own).

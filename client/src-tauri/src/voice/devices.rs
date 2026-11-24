@@ -626,6 +626,16 @@ impl Shared {
         }
     }
 
+    /// The suppression running now, if the processor has said (bug reports, #605).
+    pub fn ns_status(&self) -> Option<NsStatus> {
+        relock(&self.ns_status).0.clone()
+    }
+
+    /// What echo cancellation decided last (bug reports, #605).
+    pub fn echo_status(&self) -> EchoStatus {
+        relock(&self.apm_cfg).status.0
+    }
+
     pub fn take_ns_status_change(&self) -> Option<NsStatus> {
         let mut st = relock(&self.ns_status);
         if !st.1 {
@@ -831,6 +841,9 @@ impl<R> Drop for Parked<R> {
 struct HalfInfo {
     rate: u32,
     name: String,
+    /// What it opened with besides the rate, for bug reports (#605).
+    channels: u16,
+    format: String,
     /// Which open this is (diagnostics: a side that wasn't reopened keeps its number).
     generation: u64,
 }
@@ -893,10 +906,28 @@ fn open_half(
                 decides.set_output(&name, super::echo::output_of(&dev));
             }
             let generation = OPENS.fetch_add(1, Ordering::Relaxed) + 1;
-            Ok((stream, HalfInfo { rate, name, generation }))
+            Ok((
+                stream,
+                HalfInfo {
+                    rate,
+                    name,
+                    channels: ch as u16,
+                    format: format!("{:?}", cfg.sample_format()).to_lowercase(),
+                    generation,
+                },
+            ))
         },
     )
     .map_err(|e| anyhow!("audio {side}: {e}"))
+}
+
+/// A device as it opened, for bug reports (#605): its name and the format it runs at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OpenedFormat {
+    pub device: String,
+    pub rate: u32,
+    pub channels: u16,
+    pub sample_format: String,
 }
 
 /// The devices actually opened (names as the system reports them).
@@ -1579,6 +1610,8 @@ impl AudioIo {
                 HalfInfo {
                     rate: 48_000,
                     name: "test".into(),
+                    channels: 1,
+                    format: "f32".into(),
                     generation: 0,
                 },
             ))
@@ -1592,6 +1625,19 @@ impl AudioIo {
             shared,
             raw_tx,
         }
+    }
+
+    /// The formats the open sides opened with (input, output; `None` for a side that isn't open).
+    pub fn formats(&self) -> (Option<OpenedFormat>, Option<OpenedFormat>) {
+        let f = |h: &Option<Half>| {
+            h.as_ref().map(|h| OpenedFormat {
+                device: h.value.name.clone(),
+                rate: h.value.rate,
+                channels: h.value.channels,
+                sample_format: h.value.format.clone(),
+            })
+        };
+        (f(&self.input), f(&self.output))
     }
 
     /// The devices open now ("" for a side that isn't).
@@ -2560,6 +2606,8 @@ mod tests {
                 HalfInfo {
                     rate: 48_000,
                     name,
+                    channels: 2,
+                    format: "f32".into(),
                     generation: 0,
                 },
             ))
@@ -2605,6 +2653,19 @@ mod tests {
             raw_tx,
         );
         assert_eq!(io.opened().input, "Headset mic");
+        // what a bug report shows (#605): the open side's format, nothing for the missing one
+        assert_eq!(
+            io.formats(),
+            (
+                Some(OpenedFormat {
+                    device: "Headset mic".into(),
+                    rate: 48_000,
+                    channels: 2,
+                    sample_format: "f32".into(),
+                }),
+                None
+            )
+        );
         let gaps = io.gaps();
         assert_eq!(gaps.input, None);
         assert_eq!(gaps.output.as_deref(), Some("device in use"));

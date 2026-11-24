@@ -377,7 +377,7 @@ pub fn outcome<T>(r: &Result<T, ApiError>) -> Outcome {
 
 /// The request for last session's report: its kind, crash details and log, with this session's meta.
 async fn request(app: &AppHandle, server: &str, p: PendingFile) -> CreateReportRequest {
-    let mut meta = super::meta(app, server).await;
+    let mut meta = super::meta(app, server, None).await;
     meta["crash"] = p.crash.clone().unwrap_or(serde_json::Value::Null);
     CreateReportRequest {
         kind: p.kind,

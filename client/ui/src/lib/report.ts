@@ -1,5 +1,34 @@
 import { errorText } from './tauri'
 
+/** What the page knows that Rust doesn't, sent with a bug report (#605). Only these fields: never a window title. */
+export type ReportUi = {
+  stream: {
+    live: { height: number; fps: number; audio: boolean; sound: string | null; source: string | null; reconnecting: boolean } | null
+    watching: number
+    watching_ghost: number
+  }
+}
+
+type LiveLike = { res: number; fps: number; audio: boolean; sound?: string; reconnecting?: boolean }
+
+/** `surface`: the capture track's `displaySurface` (monitor / window / browser), if it says. */
+export function reportUi(live: LiveLike | null, watching: { ghost?: boolean }[], surface: string | null | undefined): ReportUi {
+  return {
+    stream: {
+      live: live && {
+        height: live.res,
+        fps: live.fps,
+        audio: live.audio,
+        sound: live.audio ? (live.sound ?? 'app') : null,
+        source: surface ?? null,
+        reconnecting: !!live.reconnecting,
+      },
+      watching: watching.length,
+      watching_ghost: watching.filter((w) => w.ghost).length,
+    },
+  }
+}
+
 export type ReportStep = 'edit' | 'sending' | 'sent' | 'failed' | 'saving' | 'saved'
 export type ReportState = { step: ReportStep; message: string }
 

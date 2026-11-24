@@ -51,7 +51,11 @@ describe('Report a bug / Suggest an idea (#218)', () => {
     show()
     type('voice cut out')
     await send()
-    expect(invoke).toHaveBeenCalledWith('submit_report', { text: 'voice cut out' })
+    // with the page's stream state (#605): nothing live or watched here
+    expect(invoke).toHaveBeenCalledWith('submit_report', {
+      text: 'voice cut out',
+      ui: { stream: { live: null, watching: 0, watching_ghost: 0 } },
+    })
     expect(dialog().textContent).toContain('Thanks! Report #TVWXYZ sent.')
   })
 

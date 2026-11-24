@@ -264,6 +264,18 @@ enum Refusal {
     RateLimited,
 }
 
+/// Why the gateway is reconnecting, as a bug report lists it (#605).
+fn reconnect_reason(went: Went, refusal: Option<Refusal>) -> &'static str {
+    match (refusal, went) {
+        (Some(Refusal::TooManyDevices), _) => "refused_too_many_devices",
+        (Some(Refusal::RateLimited), _) => "refused_rate_limited",
+        (None, Went::Failed) => "never_ready",
+        (None, Went::Brief) => "dropped_soon_after_ready",
+        (None, Went::Healthy) => "dropped",
+        (None, Went::Restart) => "server_restart",
+    }
+}
+
 /// How far a session that's to be retried got.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Went {
@@ -393,6 +405,7 @@ impl GatewayHandle {
                         ConnState::RateLimited(delay.as_secs_f64().ceil().max(1.0) as u64)
                     }
                 };
+                crate::reports::tally::gateway_reconnect(reconnect_reason(went, refusal));
                 let _ = tx.send(GatewayUpdate::Connection(state));
                 n = n.saturating_add(1);
                 // Wait out the backoff, unless probed, or stopped.
@@ -1564,5 +1577,20 @@ mod tests {
         l.sent(t0, l.ack_wait());
         l.heard(t0 + Duration::from_secs(2), true); // a 2 s round trip
         assert_eq!(l.probe_wait(probe), Duration::from_secs(6));
+    }
+}
+
+#[cfg(test)]
+mod reconnect_reason_tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_names_itself_over_how_far_it_got() {
+        assert_eq!(
+            reconnect_reason(Went::Failed, Some(Refusal::RateLimited)),
+            "refused_rate_limited"
+        );
+        assert_eq!(reconnect_reason(Went::Restart, None), "server_restart");
+        assert_eq!(reconnect_reason(Went::Healthy, None), "dropped");
     }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { saveFlow, submitFlow } from './report'
+import { reportUi, saveFlow, submitFlow } from './report'
 
 describe('report flow', () => {
   it('sent: thanks with the short id', async () => {
@@ -33,5 +33,22 @@ describe('report flow', () => {
   it('save failure is reported, not swallowed', async () => {
     const s = await saveFlow('x', { save: async () => { throw 'permission denied' } })
     expect(s).toEqual({ step: 'failed', message: "Couldn't save the report: permission denied" })
+  })
+
+  it('the stream state for a report (#605): sizes and kinds only, never the window title', () => {
+    const live = { channelId: 'c1', res: 1080, fps: 60, audio: true, sound: 'everything', label: 'Secret window', reconnecting: false }
+    const ui = reportUi(live, [{ ghost: false }, { ghost: true }], 'window')
+    expect(ui).toEqual({
+      stream: {
+        live: { height: 1080, fps: 60, audio: true, sound: 'everything', source: 'window', reconnecting: false },
+        watching: 2,
+        watching_ghost: 1,
+      },
+    })
+    expect(JSON.stringify(ui)).not.toContain('Secret')
+    expect(reportUi({ res: 720, fps: 30, audio: false }, [], undefined).stream.live).toEqual({
+      height: 720, fps: 30, audio: false, sound: null, source: null, reconnecting: false,
+    })
+    expect(reportUi(null, [], null)).toEqual({ stream: { live: null, watching: 0, watching_ghost: 0 } })
   })
 })

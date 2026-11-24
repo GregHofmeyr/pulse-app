@@ -863,7 +863,7 @@ pub async fn report_failed_install(app: AppHandle, api: crate::api::Api, token: 
     })
     .await
     .unwrap_or_default();
-    let mut meta = crate::reports::meta(&app, api.base()).await;
+    let mut meta = crate::reports::meta(&app, api.base(), None).await;
     meta["update_failed"] =
         serde_json::json!({ "from": attempt.from, "to": attempt.to, "at": attempt.at });
     let req = pulse_protocol::rest::CreateReportRequest {
