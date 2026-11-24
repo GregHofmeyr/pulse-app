@@ -61,6 +61,7 @@ second app window behind an IPC gate.
 | 4 Quick access | 20–22 | 2, 3 |
 | 5 Pop-out window | 23–25 | 3 |
 
+Phases 2 and 3 should go out in the same client release (phase 2 alone browses a channel nobody can add to yet).
 Parallel: inside phase 1, Tasks 3, 5, 6 and 7 can run side by side after Task 2. Phase 3's Tasks 14 (ThreadChat
 extract), 16 (video) and 17 (core uploads) can run alongside phase 2. Phases 4 and 5 can run in parallel once phase 3
 merges. Each phase is its own PR to `main`.
@@ -174,7 +175,8 @@ screenshot." Game must be `clips::games::in_server`. `quick_drop = game_id.is_no
   - `a_build_with_game_and_notes_is_not_a_quick_drop`.
   - `build_inputs_are_checked`: 121-char title, 4001-char notes, 11 screenshots, `ftp://` link, 2049-char link, a game
     from another server, a PDF attachment → each 400; empty body → 400 "A build needs a title, a link or a screenshot."
-  - `non_members_cant_add_or_see_builds`: kim (not in the server) → create 403, `GET /builds/{id}` 404, list 404.
+  - `non_members_cant_add_or_see_builds`: kim (not in the server) → create, `GET /builds/{id}` and list are each
+    refused with the status `access::channel_for` gives a non-member on the clips routes (assert that same code).
   - `lists_builds_newest_first_by_game_without_archived`: three builds (two games), list → newest first; `?game=` filters.
   - `a_build_counts_as_unread_for_others`: sam's read state for the channel shows 1 unread after alex's build.
 - [ ] **Step 2:** `cargo test -p pulse-server --test builds` → FAIL (404 on the route).
@@ -254,7 +256,7 @@ deleted with their own route".
 **Interfaces:**
 - Produces routes:
   - `PUT /builds/{id}/archived` (`SetBuildArchivedRequest` → `Message`): author or owner; sets/clears
-    `archived_at`/`archived_by`; `MessageUpdated`. Allowed in an archived channel? No: `require_open`.
+    `archived_at`/`archived_by`; `MessageUpdated`. Refused in an archived channel (`require_open`).
   - `POST /channels/{id}/builds/archive` (`BulkArchiveRequest` → `BulkArchiveResult`): matches live, unarchived builds
     with `m.created_at < before` and, when given, `game_id`; for a non-owner only their own. `dry_run` lists them
     (newest first, at most 500; more → 400 "Narrow it down: over 500 builds match."); otherwise one UPDATE in one
@@ -391,7 +393,7 @@ deleted with their own route".
   boolean` (default true the first time), `setPanelOpen(channelId, open)` — localStorage key `pulse.builds`, every
   access in try/catch.
 - Header: selected game's name or "All games", count, search box (debounced 250 ms → feed with `q`), `Segmented`
-  Gallery/List, "+ Add build" (inert until Task 18), panel toggle rightmost.
+  Gallery/List, panel toggle rightmost. "+ Add build" isn't rendered until Task 18 adds it (nothing inert ships).
 - Card: thumb (`buildThumb`), "▶ video" tag when it has a link, game caption (small caps), title, two lines of notes,
   "who · when · N comments"; `QUICK DROP` / `ARCHIVED` badges; archived greyed. Row: thumb, caption, title, meta, notes
   snippet. Infinite scroll loads the next page by `before` (page 30).
@@ -507,10 +509,11 @@ page's media area; leaving the page calls `stop`. Anything else is a link card (
 **Interfaces:**
 - Produces:
   - `pub async fn upload_staged(&self, api: &Api, token: &str, stager: &Stager, channel: ChannelId, nonce: &str, staged: &[String], on_progress: impl Fn(Progress) + Send + Sync + 'static) -> Result<Vec<AttachmentId>, SendError>` on `Sender`
-  - commands `create_build(channel_id, body: NewBuild, staged: Vec<String>, nonce: String) -> Message` and
-    `update_build(message_id, channel_id, body: EditBuild, staged: Vec<String>) -> Message` where the body's
-    `attachments` lists kept ids and `staged:<id>` placeholders; the core uploads, substitutes ids in order, then calls
-    the REST route. TS: `createBuild`, `updateBuild`.
+  - commands `create_build(channel_id, body: CreateBuildRequest, staged: Vec<String>) -> Message` (the core uploads
+    `staged` in order under `body.nonce`, appends their ids to `body.attachments`, then posts) and
+    `update_build(message_id, channel_id, body: UpdateBuildRequest, order: Vec<String>) -> Message` (`order` items are
+    `id:<attachment id>` for kept files or `staged:<staged id>` for new ones; the core uploads the staged ones and
+    writes `body.attachments` in that order). TS: `createBuild`, `updateBuild`.
 
 - [ ] **Step 1: Failing tests:** `create_build_uploads_then_posts_in_order`, `update_build_keeps_ids_and_fills_placeholders`,
   `a_retried_create_reuses_uploaded_files` (same nonce), and the existing `attachments::send` tests stay green.
@@ -547,7 +550,8 @@ form (Task 19) prefilled instead of saving.
 - Modify: `components/BuildActions.svelte` (Edit opens it), `components/BuildPage.svelte`
 - Test: `components/BuildForm.test.ts`
 
-Fields: Title (required, counter at 120), Game (`GamePicker` with its "Add 'X'" path, which calls `api.addGame`),
+Fields: Title (required, counter at 120), Game (`GamePicker` with a new optional `addLabel` prop, so this form
+reads "+ Use 'X' as a new game" (§4.3) while clips keep "Add 'X'"; it calls `api.addGame`),
 Build link, Screenshots (drop, paste, pick via `api.pickAttachmentFiles`/`stageAttachmentBytes`; drag to reorder; ×
 to remove; at most 10, the 11th says "Up to 10 screenshots."), Notes. A `paste` capture on the form root takes any
 image into Screenshots even while focus is in Notes, and leaves text pastes alone. "Mark as sorted" appears on a quick
