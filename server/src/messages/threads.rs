@@ -25,18 +25,30 @@ pub fn router() -> Router<AppState> {
         .route("/messages/{id}/replies/seen", post(seen))
 }
 
-/// Is `root` a live quote or clip in `channel`?
+/// The SQL condition that the message aliased `$alias` is a thread root: a quote, a clip or a build (#616). A literal,
+/// so consts can be built with it (`concat!`).
+macro_rules! thread_root {
+    ($alias:literal) => {
+        concat!(
+            "(EXISTS (SELECT 1 FROM quotes WHERE message_id = ", $alias, ".id)",
+            " OR EXISTS (SELECT 1 FROM clips WHERE message_id = ", $alias, ".id)",
+            " OR EXISTS (SELECT 1 FROM builds WHERE message_id = ", $alias, ".id))"
+        )
+    };
+}
+pub(crate) use thread_root;
+
+/// Is `root` a live quote, clip or build in `channel`?
 pub(crate) async fn is_live_root(
     db: impl sqlx::SqliteExecutor<'_>,
     root: MessageId,
     channel: ChannelId,
 ) -> AppResult<bool> {
-    Ok(sqlx::query_scalar::<_, i64>(
+    Ok(sqlx::query_scalar::<_, i64>(concat!(
         "SELECT 1 FROM messages m
-         WHERE m.id = ? AND m.channel_id = ? AND m.deleted_at IS NULL
-           AND (EXISTS (SELECT 1 FROM quotes WHERE message_id = m.id)
-                OR EXISTS (SELECT 1 FROM clips WHERE message_id = m.id))",
-    )
+         WHERE m.id = ? AND m.channel_id = ? AND m.deleted_at IS NULL AND ",
+        thread_root!("m")
+    ))
     .bind(root.to_string())
     .bind(channel.to_string())
     .fetch_optional(db)
@@ -44,14 +56,13 @@ pub(crate) async fn is_live_root(
     .is_some())
 }
 
-/// The channel of a live quote or clip the caller may see, else 404.
+/// The channel of a live quote, clip or build the caller may see, else 404.
 async fn visible_root(db: &SqlitePool, me: UserId, root: MessageId) -> AppResult<Channel> {
-    let channel: String = sqlx::query_scalar(
+    let channel: String = sqlx::query_scalar(concat!(
         "SELECT m.channel_id FROM messages m
-         WHERE m.id = ? AND m.deleted_at IS NULL
-           AND (EXISTS (SELECT 1 FROM quotes WHERE message_id = m.id)
-                OR EXISTS (SELECT 1 FROM clips WHERE message_id = m.id))",
-    )
+         WHERE m.id = ? AND m.deleted_at IS NULL AND ",
+        thread_root!("m")
+    ))
     .bind(root.to_string())
     .fetch_optional(db)
     .await?

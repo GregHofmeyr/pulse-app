@@ -3,6 +3,7 @@
 //! its comments are thread replies. The message's `content` is the build as plain text ([`render_content`]), so the
 //! search index finds a build by its title, game, link title or notes with no triggers of its own.
 
+pub mod archive;
 pub mod compat;
 pub mod routes;
 pub mod unfurl;

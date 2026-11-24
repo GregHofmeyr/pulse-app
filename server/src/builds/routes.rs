@@ -24,7 +24,11 @@ use crate::messages::routes::load;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/channels/{id}/builds", post(create).get(list))
-        .route("/builds/{message_id}", get(get_one).put(edit))
+        .route(
+            "/builds/{message_id}",
+            get(get_one).put(edit).delete(super::archive::remove),
+        )
+        .merge(super::archive::router())
 }
 
 pub(crate) fn bad(msg: &str) -> AppError {
