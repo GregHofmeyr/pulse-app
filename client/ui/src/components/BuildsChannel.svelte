@@ -9,6 +9,8 @@
   import { buildFacetsOf, buildFeedFailed, buildFeedKey, buildFilter, loadBuildPage, openBuildFeed, setBuildFacets, type BuildFeed, type BuildFilter } from '../lib/builds'
   import { panelOpen, setPanelOpen, setView, viewOf, type BuildView } from '../lib/buildPrefs'
   import { nameOfIn } from '../lib/selectors'
+  import { tracksUnread } from '../lib/state'
+  import { windowFocus } from '../lib/windowFocus.svelte'
   import { app, onAppEvent } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
 
@@ -136,6 +138,29 @@
   $effect(() => {
     if (!atEnd || !feed || feed.loading || feed.start || failedKey === key) return
     untrack(() => void fetchPage(true))
+  })
+
+  // --- read: once the newest build is on screen with the window focused (the whole channel's live feed only) ---
+  let newestOnScreen = $state(false)
+  $effect(() => {
+    void view
+    const id = items[0]?.id
+    newestOnScreen = false
+    if (!id || !scroller || typeof IntersectionObserver === 'undefined') return
+    const el = scroller.querySelector(`[data-build-id="${id}"]`)
+    if (!el) return
+    const io = new IntersectionObserver((es) => { for (const e of es) newestOnScreen = e.isIntersecting }, { root: scroller })
+    io.observe(el)
+    return () => io.disconnect()
+  })
+  $effect(() => {
+    const newest = items[0]?.id
+    const read = app.state.reads[channelId]?.last_read_message_id ?? null
+    const whole = !filter.game && !filter.q
+    if (!newest || !newestOnScreen || !windowFocus.focused || !whole || (read !== null && newest <= read)) return
+    if (!untrack(() => tracksUnread(app.state, channelId))) return
+    const t = setTimeout(() => void api.markRead(channelId, newest).catch(() => {}), 300)
+    return () => clearTimeout(t)
   })
 
   const empty = $derived(!!feed?.start && items.length === 0)

@@ -14,6 +14,7 @@ import BuildsChannel from './BuildsChannel.svelte'
 import { app } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
+import { windowFocus } from '../lib/windowFocus.svelte'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready = () =>
@@ -147,6 +148,24 @@ describe('BuildsChannel: gallery and list', () => {
     expect(calls('list_builds')[1][1]).toMatchObject({ before: id(11) })
     expect(order()).toHaveLength(40)
     expect(order().at(-1)).toBe(id(1))
+  })
+
+  it('marks read when the newest build is on screen and the window is focused', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    pages = [[build('M004'), build('M003')]]
+    cmp = mount(BuildsChannel, { target: document.body, props: { channelId: 'B1', serverId: 'S1' } })
+    flushSync()
+    await vi.advanceTimersByTimeAsync(0)
+    flushSync()
+    windowFocus.focused = false
+    FakeIntersectionObserver.set(document.querySelector('[data-build-id="M004"]')!, true)
+    flushSync()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(calls('mark_read')).toHaveLength(0) // not focused
+    windowFocus.focused = true
+    flushSync()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(calls('mark_read').map((c) => c[1])).toEqual([{ channelId: 'B1', messageId: 'M004' }])
   })
 
   it('an empty channel says how to add one', async () => {
