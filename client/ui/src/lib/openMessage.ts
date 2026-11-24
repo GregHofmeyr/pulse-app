@@ -16,6 +16,11 @@ export function openMessage(m: Message, root: Message | null = null): boolean {
   const ch = app.state.channels[m.channel_id]
   if (!ch) return false
   const mine = ++seq
+  // A build or a comment on one (#617): its channel opens (the build page comes with #618).
+  if (ch.kind === 'builds') {
+    ui.goTo = ch.id
+    return true
+  }
   if (ch.kind === 'clips') {
     ui.goTo = ch.id
     const rootId = m.thread_root_id

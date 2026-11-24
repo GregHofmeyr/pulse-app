@@ -1331,7 +1331,10 @@ describe('signing out with a channel open', () => {
       { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },
       { id: 'V1', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 1 },
       { id: 'K1', server_id: 'S1', kind: 'clips', name: 'clips', position: 2 },
+      { id: 'B1', server_id: 'S1', kind: 'builds', name: 'raven-builds', position: 3 },
     ],
+    // a server with categories: an older one's kind sections never held builds channels
+    layouts: [{ server_id: 'S1', revision: 1, categories: [], channels: [] }],
     members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
     dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [], live_notify: [],
   }
@@ -1340,7 +1343,19 @@ describe('signing out with a channel open', () => {
     flushSync()
   }
 
-  it.each(['general', 'Lounge', 'clips'])('the %s view lets go without reading the vanished channel', async (name) => {
+  it('a builds channel opens the builds view', async () => {
+    app.state = applyReady(emptyState(), ready)
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Main'))!.click()
+    flushSync()
+    open('raven-builds')
+    await tick()
+    expect(document.querySelector('[data-testid="builds-channel"]')).not.toBeNull()
+    expect(document.querySelector('.composer')).toBeNull()
+  })
+
+  it.each(['general', 'Lounge', 'clips', 'raven-builds'])('the %s view lets go without reading the vanished channel', async (name) => {
     app.state = applyReady(emptyState(), ready)
     cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
     flushSync()

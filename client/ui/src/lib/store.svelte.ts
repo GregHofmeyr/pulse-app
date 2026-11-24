@@ -188,7 +188,7 @@ export function handleNotificationClick(c: { channelId: string; threadId: string
   if (!ch || !app.state.me) return
   // jump.ts imports this store, so it's fetched when needed
   const messageId = c.messageId
-  if (messageId && !c.threadId && ch.kind !== 'clips') return void import('./jump').then((j) => j.jumpTo(c.channelId, messageId))
+  if (messageId && !c.threadId && ch.kind !== 'clips' && ch.kind !== 'builds') return void import('./jump').then((j) => j.jumpTo(c.channelId, messageId))
   ui.goTo = c.channelId
   if (c.threadId && ch.kind === 'quotes') ui.openReplies = { channelId: c.channelId, rootId: c.threadId }
 }

@@ -298,7 +298,7 @@ export const api = {
   listServers: () => invoke<Server[]>('list_servers'),
   createServer: (name: string) => invoke<Server>('create_server', { name }),
   /** In `categoryId` (#54) at its bottom; without one, at the bottom of the uncategorised area. */
-  createChannel: (serverId: string, kind: 'text' | 'quotes' | 'clips' | 'voice', name: string, categoryId?: string | null) =>
+  createChannel: (serverId: string, kind: 'text' | 'quotes' | 'clips' | 'builds' | 'voice', name: string, categoryId?: string | null) =>
     invoke<Channel>('create_channel', categoryId ? { serverId, kind, name, categoryId } : { serverId, kind, name }),
   /** Categories (#54): everyone in the server hears LayoutChanged for each of these. */
   createCategory: (serverId: string, name: string) => invoke<Category>('create_category', { serverId, name }),

@@ -545,6 +545,7 @@ describe('ChannelList by categories', () => {
     ['Text', 'text', 'Hall Of Fame', 'hall-of-fame'],
     ['Quotes', 'quotes', 'Best Lines', 'best-lines'],
     ['Clips', 'clips', 'Best Plays', 'best-plays'],
+    ['Builds', 'builds', 'Raven Builds', 'raven-builds'],
     ['Voice', 'voice', 'Raid Room', 'Raid Room'],
   ])('+ creates a %s channel inside its category', async (label, kind, typed, name) => {
     const onSelect = vi.fn()
@@ -554,8 +555,8 @@ describe('ChannelList by categories', () => {
     flushSync()
     const picker = document.querySelector<HTMLElement>('[role=radiogroup][aria-label="Channel kind"]')!
     const radios = [...picker.querySelectorAll<HTMLButtonElement>('[role=radio]')]
-    expect(radios.map((r) => r.getAttribute('aria-label'))).toEqual(['Text', 'Quotes', 'Clips', 'Voice'])
-    expect(radios.map((r) => r.dataset.tip)).toEqual(['Text', 'Quotes', 'Clips', 'Voice'])
+    expect(radios.map((r) => r.getAttribute('aria-label'))).toEqual(['Text', 'Quotes', 'Clips', 'Builds', 'Voice'])
+    expect(radios.map((r) => r.dataset.tip)).toEqual(['Text', 'Quotes', 'Clips', 'Builds', 'Voice'])
     expect(radios.find((r) => r.getAttribute('aria-checked') === 'true')?.getAttribute('aria-label')).toBe('Text')
     radios.find((r) => r.getAttribute('aria-label') === label)!.click()
     flushSync()

@@ -253,8 +253,11 @@ export function applyReady(s: AppState, r: Ready): AppState {
   return next
 }
 
+/** A channel of a kind this client doesn't know (a kind added after it, #617) is never shown anywhere. */
+const knownKind = (c: Channel) => c.kind !== 'unknown'
+
 function readyState(s: AppState, r: Ready): AppState {
-  const channels = Object.fromEntries(r.channels.map((c) => [c.id, c]))
+  const channels = Object.fromEntries(r.channels.filter(knownKind).map((c) => [c.id, c]))
   // Keep history we've already paged in, for channels that still exist.
   const messages = Object.fromEntries(Object.entries(s.messages).filter(([id]) => id in channels))
   // A detached window (a jump into the past) stays as it is: it pages forward to the latest from its
@@ -459,7 +462,7 @@ export function tracksUnread(s: AppState, channel: string): boolean {
   const ch = s.channels[channel]
   if (!ch || !s.me) return false
   if (ch.server_id === null) return true
-  return (ch.kind === 'text' || ch.kind === 'quotes' || ch.kind === 'clips') && (s.members[ch.server_id] ?? []).some((m) => m.user.id === s.me!.id)
+  return (ch.kind === 'text' || ch.kind === 'quotes' || ch.kind === 'clips' || ch.kind === 'builds') && (s.members[ch.server_id] ?? []).some((m) => m.user.id === s.me!.id)
 }
 
 /** An edit event's reaction list is unreliable (`me` is always false), so reactions are kept as-is:
@@ -987,7 +990,7 @@ function serverRestored(s: AppState, snap: ServerSnapshot): AppState {
   return {
     ...s,
     servers,
-    channels: { ...s.channels, ...Object.fromEntries(snap.channels.map((c) => [c.id, c])) },
+    channels: { ...s.channels, ...Object.fromEntries(snap.channels.filter(knownKind).map((c) => [c.id, c])) },
     members: { ...s.members, [id]: snap.members },
     layouts: { ...s.layouts, [id]: { revision: snap.layout.revision, categories: snap.layout.categories } },
     customEmoji: { ...s.customEmoji, ...Object.fromEntries(snap.custom_emoji.map((c) => [c.id, c])) },
@@ -1215,6 +1218,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     // Back from Recently deleted: its history loads when it's opened; our counts and mutes in it
     // follow as ReadStateUpdated and MutesChanged.
     case 'ChannelRestored':
+      if (!knownKind(e.d.channel)) return s
       return { ...s, channels: { ...s.channels, [e.d.channel.id]: e.d.channel } }
     case 'ServerCreated':
       // yours only (#80): a server from before the lockdown tells everyone
@@ -1350,6 +1354,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'GroupMembersChanged':
       return { ...s, dmMembers: { ...s.dmMembers, [e.d.channel_id]: e.d.user_ids } }
     case 'ChannelUpdated': {
+      if (!knownKind(e.d.channel)) return s.channels[e.d.channel.id] ? dropChannel(s, e.d.channel.id) : s
       // Where a channel sits is the layout's (#54): a rename that crosses a move must not move it back.
       const held = s.channels[e.d.channel.id]
       const c = held ? placed(e.d.channel, held.category_id, held.position) : e.d.channel

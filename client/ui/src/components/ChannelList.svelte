@@ -59,16 +59,16 @@
     onVoiceSettings: () => void
   } = $props()
 
-  type Kind = 'text' | 'quotes' | 'clips' | 'voice'
-  const ICON: Record<string, IconName> = { text: 'hash', quotes: 'quote', clips: 'film', voice: 'speaker' }
+  type Kind = 'text' | 'quotes' | 'clips' | 'builds' | 'voice'
+  const ICON: Record<string, IconName> = { text: 'hash', quotes: 'quote', clips: 'film', builds: 'hammer', voice: 'speaker' }
   /** The kind picker in a category's new-channel field. */
   const KINDS: { kind: Kind; label: string }[] = [
-    { kind: 'text', label: 'Text' }, { kind: 'quotes', label: 'Quotes' }, { kind: 'clips', label: 'Clips' }, { kind: 'voice', label: 'Voice' },
+    { kind: 'text', label: 'Text' }, { kind: 'quotes', label: 'Quotes' }, { kind: 'clips', label: 'Clips' }, { kind: 'builds', label: 'Builds' }, { kind: 'voice', label: 'Voice' },
   ]
-  const PLACEHOLDER: Record<Kind, string> = { text: 'new-channel', quotes: 'new-quotes', clips: 'new-clips', voice: 'Channel name' }
+  const PLACEHOLDER: Record<Kind, string> = { text: 'new-channel', quotes: 'new-quotes', clips: 'new-clips', builds: 'new-builds', voice: 'Channel name' }
   /** An older server's kind sections: each + makes its own kind. */
   const LEGACY_ADD: Record<Kind, { icon: IconName; label: string }> = {
-    text: { icon: 'plus', label: 'text' }, quotes: { icon: 'quote', label: 'quotes' }, clips: { icon: 'film', label: 'clips' }, voice: { icon: 'plus', label: 'voice' },
+    text: { icon: 'plus', label: 'text' }, quotes: { icon: 'quote', label: 'quotes' }, clips: { icon: 'film', label: 'clips' }, builds: { icon: 'hammer', label: 'builds' }, voice: { icon: 'plus', label: 'voice' },
   }
 
   const self = $derived(selfVoice())

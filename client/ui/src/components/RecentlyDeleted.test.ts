@@ -58,6 +58,13 @@ describe('RecentlyDeleted', () => {
     expect(rows[1]).toContain('Deleted by alex')
   })
 
+  it('names a builds channel and leaves out a kind it does not know', async () => {
+    await show([gone('B1', 'raven-builds', 'builds'), gone('X1', 'later', 'unknown')])
+    const rows = [...document.querySelectorAll('li')].map((li) => li.textContent ?? '')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toContain('Builds')
+  })
+
   it('says when there is nothing in it', async () => {
     await show([])
     expect(document.body.textContent).toContain('No deleted channels')

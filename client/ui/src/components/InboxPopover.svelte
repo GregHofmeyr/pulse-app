@@ -95,7 +95,8 @@
     userId ? displayName(app.state, app.state.channels[t.channel_id]?.server_id ?? null, userId) : 'Someone'
   const newLabel = (t: InboxThread) => `${t.new_replies} new repl${t.new_replies === 1 ? 'y' : 'ies'}`
   const threadRoot = (t: InboxThread) => {
-    const kind = app.state.channels[t.channel_id]?.kind === 'clips' ? 'clip' : 'quote'
+    const k = app.state.channels[t.channel_id]?.kind
+    const kind = k === 'clips' ? 'clip' : k === 'builds' ? 'build' : 'quote'
     if (t.root.deleted || !t.root.content.trim()) return kind
     return `${kind}: ${oneLine(t.root.content)}`
   }

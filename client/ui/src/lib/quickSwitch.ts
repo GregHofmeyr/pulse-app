@@ -8,7 +8,7 @@ import { matchActions, type QuickAction } from './quickActions'
 import type { SearchHit } from './protocol/SearchHit'
 import type { ChannelKind } from './protocol/ChannelKind'
 
-export type PlaceKind = 'server' | 'text' | 'voice' | 'quotes' | 'clips' | 'dm' | 'group'
+export type PlaceKind = 'server' | 'text' | 'voice' | 'quotes' | 'clips' | 'builds' | 'dm' | 'group'
 
 /** Somewhere the switcher can take you. `key` is `s:<server id>` or `c:<channel id>` (what recents remember). */
 export interface Place {
@@ -68,10 +68,10 @@ export function globalSwitch(s: { open: boolean; wasFocused: boolean; blocked: b
 // ---- places ----
 
 const lower = (xs: (string | null | undefined)[]) => [...new Set(xs.filter((x): x is string => !!x).map((x) => x.toLowerCase()))]
-const CHANNEL_KINDS: PlaceKind[] = ['text', 'voice', 'quotes', 'clips']
-/** The server channel kinds the switcher lists (builds channels, #616, join with their views, #617). */
+const CHANNEL_KINDS: PlaceKind[] = ['text', 'voice', 'quotes', 'clips', 'builds']
+/** The server channel kinds the switcher lists (never a kind this client doesn't know). */
 const isChannelPlace = (k: ChannelKind): k is ChannelKind & PlaceKind => (CHANNEL_KINDS as string[]).includes(k)
-const KIND_ORDER: Record<PlaceKind, number> = { server: 0, text: 1, voice: 2, quotes: 3, clips: 4, dm: 5, group: 6 }
+const KIND_ORDER: Record<PlaceKind, number> = { server: 0, text: 1, voice: 2, quotes: 3, clips: 4, builds: 5, dm: 6, group: 7 }
 
 /** Everything the switcher can take you to: servers, their channels (text, voice, quotes, clips), and your DMs and
  *  groups (not the ones you closed: they're out of your list too). */

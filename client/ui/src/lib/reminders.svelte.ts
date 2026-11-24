@@ -62,7 +62,9 @@ export function reminderAuthor(r: MessageReminder): string {
 export async function openMessageAt(channelId: string, messageId: string, threadRootId: string | null): Promise<void> {
   const ch = app.state.channels[channelId]
   if (!ch) return void (ui.notice = 'That channel was deleted.')
-  if (!threadRootId && ch.kind !== 'clips') return jumpTo(channelId, messageId)
+  if (!threadRootId && ch.kind !== 'clips' && ch.kind !== 'builds') return jumpTo(channelId, messageId)
+  // a build or its comment (#617): its channel (the build page comes with #618)
+  if (ch.kind === 'builds') return void (ui.goTo = channelId)
   if (threadRootId && ch.kind === 'quotes') {
     ui.goTo = channelId
     ui.openReplies = { channelId, rootId: threadRootId }

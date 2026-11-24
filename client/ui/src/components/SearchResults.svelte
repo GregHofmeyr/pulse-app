@@ -39,7 +39,8 @@
   }
   function label(h: SearchHit): string | null {
     if (!h.message.thread_root_id) return null
-    return app.state.channels[h.message.channel_id]?.kind === 'clips' ? 'reply in clip' : 'reply in quote'
+    const k = app.state.channels[h.message.channel_id]?.kind
+    return k === 'clips' ? 'reply in clip' : k === 'builds' ? 'comment on build' : 'reply in quote'
   }
   const author = (h: SearchHit) => (h.message.author_id ? displayName(app.state, serverId, h.message.author_id) : 'Pulse')
 

@@ -136,3 +136,23 @@ describe('build helpers', () => {
     expect(buildThumb(build('M1'))).toEqual({ kind: 'none' })
   })
 })
+
+describe('a channel kind this client does not know', () => {
+  const later = { id: 'X1', server_id: 'S1', kind: 'unknown' as const, name: 'later', position: 9 }
+  const ready = { me: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, servers: [{ id: 'S1', name: 'Main', icon_hash: null }], channels: [{ id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }, later], members: [{ server_id: 'S1', members: [{ user: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, nickname: null }] }], dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [], live_notify: [] } as unknown as Ready
+
+  it('is left out of a Ready', () => {
+    const s = applyReady(emptyState(), ready)
+    expect(Object.keys(s.channels)).toEqual(['T1'])
+  })
+
+  it('is never added by an event, and one that becomes unknown goes', () => {
+    let s = emptyState()
+    s = applyEvent(s, { t: 'ChannelCreated', d: { channel: later } } as never, 0)
+    expect(s.channels['X1']).toBeUndefined()
+    s = applyEvent(s, { t: 'ChannelCreated', d: { channel: { ...later, kind: 'text' } } } as never, 0)
+    expect(s.channels['X1']).toBeDefined()
+    s = applyEvent(s, { t: 'ChannelUpdated', d: { channel: later } } as never, 0)
+    expect(s.channels['X1']).toBeUndefined()
+  })
+})

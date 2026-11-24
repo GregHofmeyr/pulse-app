@@ -13,6 +13,7 @@
   import VoicePanel from '../components/VoicePanel.svelte'
   import TextChannel from '../components/TextChannel.svelte'
   import ClipsChannel from '../components/ClipsChannel.svelte'
+  import BuildsChannel from '../components/BuildsChannel.svelte'
   import Settings, { type Section } from '../components/Settings.svelte'
   import FullProfile from '../components/FullProfile.svelte'
   import NicknameDialog from '../components/NicknameDialog.svelte'
@@ -911,6 +912,8 @@
         <VoicePanel channelId={activeChannelId} serverId={activeServerId} onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />
       {:else if activeChannel?.kind === 'clips' && activeServerId && activeChannelId}
         {#key activeChannelId}<ClipsChannel channelId={activeChannelId} serverId={activeServerId} />{/key}
+      {:else if activeChannel?.kind === 'builds' && activeServerId && activeChannelId}
+        {#key activeChannelId}<BuildsChannel channelId={activeChannelId} serverId={activeServerId} />{/key}
       {:else if convoFull && activeChannelId}
         {#key activeChannelId + '/' + convoFull}<FullView channelId={activeChannelId} streamer={convoFull} serverId={null} onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />{/key}
       {:else if convoOwn && activeChannelId && app.state.me}

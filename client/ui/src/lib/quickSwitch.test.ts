@@ -106,6 +106,12 @@ describe('placesFrom', () => {
     expect(by('c:x1')).toBeUndefined()
     expect(by('c:d2')).toBeUndefined()
   })
+  it('the switcher lists builds channels', () => {
+    const s = state()
+    const p = placesFrom({ ...s, channels: { ...s.channels, b1: ch('b1', 'builds', 'raven-builds', 's1'), u1: ch('u1', 'unknown' as never, 'later', 's1') } })
+    expect(p.find((x) => x.key === 'c:b1')).toMatchObject({ kind: 'builds', name: 'raven-builds', context: 'Game Night' })
+    expect(p.find((x) => x.key === 'c:u1')).toBeUndefined()
+  })
   it('names a DM as you see the other person, and finds it by any of their names', () => {
     const dm = placesFrom(state()).find((x) => x.key === 'c:d1')!
     expect(dm).toMatchObject({ kind: 'dm', name: 'Ace' })

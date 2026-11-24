@@ -28,13 +28,15 @@
     error = ''
     let stale = false
     api.listDeletedChannels(id).then(
-      (list) => { if (!stale) items = list },
+      (list) => { if (!stale) items = known(list) },
       (e) => { if (!stale) error = errorText(e) },
     )
     return () => { stale = true }
   })
 
-  const KIND: Record<string, string> = { text: 'Text', voice: 'Voice', quotes: 'Quotes', clips: 'Clips' }
+  const KIND: Record<string, string> = { text: 'Text', voice: 'Voice', quotes: 'Quotes', clips: 'Clips', builds: 'Builds' }
+  /** A kind this client doesn't know (one added after it) isn't listed. */
+  const known = (list: DeletedChannel[]) => list.filter((d) => d.channel.kind !== 'unknown')
   const label = (c: Channel) => (c.kind === 'voice' ? (c.name ?? '') : `#${c.name}`)
   const when = (iso: string) => new Date(iso).toLocaleDateString()
   function left(d: DeletedChannel): string {
@@ -59,7 +61,7 @@
       const why = errorText(e)
       // a refusal may mean someone else restored or purged it since the list loaded: the list says
       const list = await api.listDeletedChannels(server.id).catch(() => null)
-      if (list) items = list
+      if (list) items = known(list)
       if (list && !list.some((x) => x.channel.id === d.channel.id)) {
         confirming = null
         note = app.state.channels[d.channel.id] ? `${label(d.channel)} is already back.` : `${label(d.channel)} was already deleted for good.`
