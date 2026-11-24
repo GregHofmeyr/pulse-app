@@ -32,15 +32,22 @@ pub fn router() -> Router<AppState> {
 }
 
 /// A live build `me` may see, with its channel, and whether `me` may archive or delete it (its author, or the
-/// server's owner). 404 for anyone who can't see it.
+/// server's owner). 404 for anyone who can't see it. The author's own build stays theirs after they leave the server
+/// (#418, as `own_message`): they can still delete it; changing it (archiving) is for members, checked by the caller.
 async fn build_for(s: &AppState, me: UserId, id: MessageId) -> AppResult<(Message, Channel, bool)> {
     let (channel, _) = super::build_channel(&s.db, id).await?;
-    let ch = channel_for(&s.db, me, channel).await?;
     let msg = load(&s.db, Some(me), id).await?.ok_or(AppError::NotFound)?;
     if msg.build.is_none() || msg.deleted {
         return Err(AppError::NotFound);
     }
-    let allowed = msg.author_id == Some(me) || owns(s, &ch, me).await?;
+    if msg.author_id == Some(me) {
+        let ch = crate::access::load_channel(&s.db, channel)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        return Ok((msg, ch, true));
+    }
+    let ch = channel_for(&s.db, me, channel).await?;
+    let allowed = owns(s, &ch, me).await?;
     Ok((msg, ch, allowed))
 }
 
@@ -65,6 +72,8 @@ async fn set_archived(
     if !allowed {
         return Err(AppError::Forbidden);
     }
+    // left the server: their build is no longer theirs to change (deleting it stays allowed)
+    crate::access::require_member_of(&s.db, me, &ch).await?;
     crate::access::require_open(&ch)?;
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;

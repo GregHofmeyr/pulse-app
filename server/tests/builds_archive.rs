@@ -466,3 +466,17 @@ async fn facets_count_games_and_respect_archived() {
         .unwrap();
     assert_eq!(r.status(), 404);
 }
+
+/// Your own build is yours to delete after you leave the server, as any message of yours is (#418); archiving it is
+/// for members.
+#[tokio::test]
+async fn an_author_who_left_still_deletes_their_build() {
+    let w = world().await;
+    let m = w.build(&w.sam.1, json!({ "title": "Sam's" })).await;
+    let other = w.build(&w.sam.1, json!({ "title": "Sam's other" })).await;
+    let r = post_json(&w.app, &w.sam.1, &format!("/servers/{}/leave", w.server), json!({})).await;
+    assert!(r.status().is_success(), "leave: {}", r.status());
+    assert_eq!(w.archive(&w.sam.1, other.id, true).await.status(), 403, "archiving is for members");
+    assert_eq!(w.delete(&w.sam.1, m.id).await.status(), 204);
+    assert_eq!(w.list("").await, vec![other.id]);
+}
