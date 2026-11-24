@@ -568,9 +568,15 @@ async fn list_channels(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
     Path(id): Path<ServerId>,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<Json<Vec<Channel>>> {
     visible_to(&s.db, id, me).await?;
-    Ok(Json(server_channels(&s.db, id).await?))
+    let mut channels = server_channels(&s.db, id).await?;
+    if !crate::builds::compat::speaks_builds(crate::builds::compat::rest_version(&headers)) {
+        // an older client can't read a builds channel (#616)
+        crate::builds::compat::strip_channels(&mut channels);
+    }
+    Ok(Json(channels))
 }
 
 /// The server channels that count toward [`caps::CHANNELS_PER_SERVER`]: the live ones. A channel

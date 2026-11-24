@@ -419,7 +419,7 @@ async fn run(
             return close(socket, 1011, "internal error").await;
         }
     }
-    let ready = match ready_for(&s.db, &s.voice, &s.streams, &s.hub, me, Some(conn)).await {
+    let mut ready = match ready_for(&s.db, &s.voice, &s.streams, &s.hub, me, Some(conn)).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = ?e, "build_ready failed");
@@ -427,6 +427,10 @@ async fn run(
             return;
         }
     };
+    if !crate::builds::compat::speaks_builds(client_version) {
+        // a client from before builds channels can't read one (#616)
+        crate::builds::compat::strip_ready(&mut ready);
+    }
     if !send(&mut socket, &ServerFrame::Ready(ready)).await {
         disconnected(&s, conn, me, &since).await;
         return;

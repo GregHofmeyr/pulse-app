@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ServerId, UserId};
+use pulse_protocol::rest::ChannelKind;
 use sqlx::SqlitePool;
 
 use crate::access::load_channel;
@@ -27,6 +28,18 @@ impl Audience {
 }
 
 pub async fn audience_for(db: &SqlitePool, event: &Event) -> anyhow::Result<Audience> {
+    Ok(route(db, event).await?.0)
+}
+
+/// [`audience_for`], and the oldest protocol version that may be sent the event: an event in a builds channel (#616)
+/// never reaches a client older than [`crate::builds::compat::BUILDS_SINCE`] (0: any version).
+pub async fn route(db: &SqlitePool, event: &Event) -> anyhow::Result<(Audience, u32)> {
+    let mut since = 0;
+    let audience = audience_in(db, event, &mut since).await?;
+    Ok((audience, since))
+}
+
+async fn audience_in(db: &SqlitePool, event: &Event, since: &mut u32) -> anyhow::Result<Audience> {
     // Per-user events (read points, mutes, closing, removal) reach that user's own sessions only.
     if let Some(owner) = event.only_for() {
         return Ok(Audience::Users([owner].into_iter().collect()));
@@ -63,6 +76,9 @@ pub async fn audience_for(db: &SqlitePool, event: &Event) -> anyhow::Result<Audi
         // Unknown channel: fail closed.
         return Ok(Audience::Users(HashSet::new()));
     };
+    if channel.kind == ChannelKind::Builds {
+        *since = crate::builds::compat::BUILDS_SINCE;
+    }
     if let Some(server) = channel.server_id {
         // a server channel: its server's members (#80)
         return Ok(Audience::Users(server_members(db, server).await?));
@@ -81,7 +97,7 @@ pub async fn audience_for(db: &SqlitePool, event: &Event) -> anyhow::Result<Audi
         .map(|m| m.parse())
         .collect::<Result<_, _>>()?;
     // A 1:1 DM with someone you've blocked (#474): what they send and do there never reaches you.
-    if channel.kind == pulse_protocol::rest::ChannelKind::Dm {
+    if channel.kind == ChannelKind::Dm {
         for u in crate::blocks::dm_drop(db, event, &members).await? {
             members.remove(&u);
         }

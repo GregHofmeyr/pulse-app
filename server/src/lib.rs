@@ -8,6 +8,7 @@ pub mod badges;
 pub mod blocks;
 pub mod bookmarks;
 pub mod calls;
+pub mod builds;
 pub mod clips;
 pub mod config;
 pub mod db;

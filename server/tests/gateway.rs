@@ -85,6 +85,7 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         thread_root_id: None,
         quote: None,
         clip: None,
+        build: None,
         embeds: vec![],
         call: None,
         wheel: None,

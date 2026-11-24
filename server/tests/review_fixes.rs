@@ -167,6 +167,7 @@ async fn silent_client_times_out_despite_outbound_traffic() {
                 thread_root_id: None,
                 quote: None,
                 clip: None,
+                build: None,
                 embeds: vec![],
                 call: None,
                 wheel: None,

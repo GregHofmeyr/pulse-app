@@ -23,7 +23,7 @@ use pulse_protocol::rest::{Listening, Person, Playing, ServerPresence, SteamJoin
 use sqlx::SqlitePool;
 use tokio::sync::{mpsc, oneshot};
 
-use super::audience::{Audience, audience_for};
+use super::audience::{Audience, route};
 use crate::presence::{PresenceView, load_all, load_subject, view_for};
 
 /// What a connection was last told of someone's presence: their view, and inside which servers it differs (#154).
@@ -629,8 +629,8 @@ impl Hub {
     pub async fn publish_all(&self, db: &SqlitePool, events: Vec<Event>) {
         let mut out = Vec::with_capacity(events.len());
         for event in events {
-            match audience_for(db, &event).await {
-                Ok(a) => {
+            match route(db, &event).await {
+                Ok((a, since)) => {
                     // a member's `User` reaches the people they've blocked emptied (#508)
                     let views = match crate::blocks::member_views(db, &event).await {
                         Ok(v) => v,
@@ -639,17 +639,17 @@ impl Hub {
                             continue;
                         }
                     };
-                    out.push((a, event, views))
+                    out.push((a, since, event, views))
                 }
                 Err(e) => tracing::error!(error = ?e, "audience_for failed; event dropped"),
             }
         }
-        let jobs = crate::inbox::follow_ups(self, out.iter().map(|(_, e, _)| e));
+        let jobs = crate::inbox::follow_ups(self, out.iter().map(|(_, _, e, _)| e));
         {
             let mut conns = self.inner.conns.lock().unwrap();
             let mut dropped = false;
-            for (audience, event, views) in out {
-                dropped |= deliver_views(&mut conns, &audience, event, views);
+            for (audience, since, event, views) in out {
+                dropped |= deliver_views(&mut conns, &audience, since, event, views);
             }
             if dropped {
                 self.prune_inbox(&conns);
@@ -741,7 +741,7 @@ impl Hub {
     /// Like [`Hub::publish`], but only to the members of `only` who are also in the event's
     /// audience, so a narrower list (people in a call) can never widen who may see it.
     pub async fn publish_to(&self, db: &SqlitePool, event: Event, only: &HashSet<UserId>) {
-        let audience = match audience_for(db, &event).await {
+        let (audience, since) = match route(db, &event).await {
             Ok(a) => a,
             Err(e) => {
                 tracing::error!(error = ?e, "audience_for failed; event dropped");
@@ -763,7 +763,7 @@ impl Hub {
             }
         };
         let mut conns = self.inner.conns.lock().unwrap();
-        if deliver_views(&mut conns, &allowed, event, views) {
+        if deliver_views(&mut conns, &allowed, since, event, views) {
             self.prune_inbox(&conns);
         }
     }
@@ -1073,33 +1073,46 @@ fn send_each(conns: &mut HashMap<ConnId, Conn>, frames: &HashMap<ConnId, ServerF
 fn deliver(
     conns: &mut HashMap<ConnId, Conn>,
     audience: &super::audience::Audience,
+    since: u32,
     frame: &ServerFrame,
 ) -> bool {
-    deliver_where(conns, |c| audience.includes(c.user), frame)
+    deliver_where(
+        conns,
+        |c| audience.includes(c.user) && c.client_version >= since,
+        frame,
+    )
 }
 
-/// Queue `event` for every connection in `audience`, the people in `views` getting their own copy instead (#508,
-/// [`crate::blocks::member_views`]); drop connections that can't keep up (true when any was).
+/// Queue `event` for every connection in `audience` whose client speaks protocol `since` or later, the people in
+/// `views` getting their own copy instead (#508, [`crate::blocks::member_views`]); drop connections that can't keep up
+/// (true when any was).
 fn deliver_views(
     conns: &mut HashMap<ConnId, Conn>,
     audience: &super::audience::Audience,
+    since: u32,
     event: Event,
     views: Vec<(UserId, Event)>,
 ) -> bool {
     if views.is_empty() {
-        return deliver(conns, audience, &ServerFrame::Event(event));
+        return deliver(conns, audience, since, &ServerFrame::Event(event));
     }
     let mut dropped = false;
     let others: HashSet<UserId> = views.iter().map(|(u, _)| *u).collect();
     for (viewer, copy) in views {
         if audience.includes(viewer) {
-            dropped |= deliver_where(conns, |c| c.user == viewer, &ServerFrame::Event(copy));
+            dropped |= deliver_where(
+                conns,
+                |c| c.user == viewer && c.client_version >= since,
+                &ServerFrame::Event(copy),
+            );
         }
     }
     dropped
         | deliver_where(
             conns,
-            |c| audience.includes(c.user) && !others.contains(&c.user),
+            |c| {
+                audience.includes(c.user) && !others.contains(&c.user) && c.client_version >= since
+            },
             &ServerFrame::Event(event),
         )
 }
@@ -1112,6 +1125,8 @@ fn deliver_where(
 ) -> bool {
     let before = conns.len();
     let joined = matches!(frame, ServerFrame::Event(Event::ServerJoined { .. }));
+    // what a client too old for builds channels gets instead (#616), worked out once
+    let mut old: Option<Option<Option<ServerFrame>>> = None;
     conns.retain(|id, c| {
         if !to(c) {
             return true;
@@ -1121,6 +1136,15 @@ fn deliver_where(
             c.kick(CLOSE_RESYNC);
             return false;
         }
+        let frame = if crate::builds::compat::speaks_builds(c.client_version) {
+            frame
+        } else {
+            match old.get_or_insert_with(|| crate::builds::compat::for_old_client(frame)) {
+                None => frame,
+                Some(Some(copy)) => &*copy,
+                Some(None) => return true,
+            }
+        };
         match c.tx.try_send(frame.clone()) {
             Ok(()) => true,
             Err(mpsc::error::TrySendError::Full(_)) => {
