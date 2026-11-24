@@ -27,6 +27,8 @@ pub struct VoiceSettings {
     pub output_kind: Option<Output>,
     /// "Even out voice volumes".
     pub even_out_voices: bool,
+    /// "Voice clarity EQ" (#590).
+    pub clarity_eq: bool,
     /// Push-to-talk doesn't exist yet: the mic sends on voice activity.
     pub transmit: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,6 +74,7 @@ pub fn voice_report(v: &ReportView) -> VoiceReport {
         echo_cancellation_running: v.echo.map(|e| e.running),
         output_kind: v.echo.map(|e| e.output),
         even_out_voices: c.even_out_voices,
+        clarity_eq: c.voice_clarity_eq,
         transmit: "voice_activity",
         mic_bitrate: v.mic_kbps.zip(v.mic_max_bps).map(|(k, max)| MicBitrate {
             channel_kbps: (k != 0).then_some(k),
@@ -87,10 +90,27 @@ pub fn voice_report(v: &ReportView) -> VoiceReport {
 /// The devices a call opened (with their formats) and the system's defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AudioDevices {
-    pub input: Option<OpenedFormat>,
+    pub input: Option<InputFormat>,
     pub output: Option<OpenedFormat>,
     pub default_input: Option<String>,
     pub default_output: Option<String>,
+}
+
+/// The opened mic, and what already processes it before Pulse (#588: Sonar, NVIDIA Broadcast, ...), if known.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InputFormat {
+    #[serde(flatten)]
+    pub format: OpenedFormat,
+    pub processed_by: Option<&'static str>,
+}
+
+impl From<OpenedFormat> for InputFormat {
+    fn from(format: OpenedFormat) -> Self {
+        Self {
+            processed_by: crate::voice::virtualmic::processed_by(&format.device),
+            format,
+        }
+    }
 }
 
 /// What the page knows and Rust doesn't, sent with a report: typed, so nothing else rides along.
@@ -246,6 +266,7 @@ mod tests {
                     "echo_cancellation_running": true,
                     "output_kind": "headphones",
                     "even_out_voices": true,
+                    "clarity_eq": true,
                     "transmit": "voice_activity",
                     "mic_bitrate": { "channel_kbps": null, "max_bps": 64000 },
                 }
@@ -284,10 +305,23 @@ mod tests {
     }
 
     #[test]
+    fn a_pre_processed_mic_is_named() {
+        let i = InputFormat::from(OpenedFormat {
+            device: "Microphone (SteelSeries Sonar - Microphone)".into(),
+            rate: 48_000,
+            channels: 2,
+            sample_format: "f32".into(),
+        });
+        let v = serde_json::to_value(&i).unwrap();
+        assert_eq!(v["processed_by"], "SteelSeries Sonar");
+        assert_eq!(v["rate"], 48000);
+    }
+
+    #[test]
     fn devices_shape() {
         let view = in_call();
         let d = AudioDevices {
-            input: view.input.clone(),
+            input: view.input.clone().map(InputFormat::from),
             output: None,
             default_input: Some("Headset Mic".into()),
             default_output: None,
@@ -295,7 +329,8 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&d).unwrap(),
             serde_json::json!({
-                "input": { "device": "Headset Mic", "rate": 48000, "channels": 1, "sample_format": "f32" },
+                "input": { "device": "Headset Mic", "rate": 48000, "channels": 1, "sample_format": "f32",
+                           "processed_by": null },
                 "output": null,
                 "default_input": "Headset Mic",
                 "default_output": null,

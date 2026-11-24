@@ -168,7 +168,7 @@ pub async fn meta(app: &AppHandle, server: &str, ui: Option<diag::ReportUi>) -> 
         _ => (None, None),
     };
     let devices = diag::AudioDevices {
-        input: view.input.clone(),
+        input: view.input.clone().map(diag::InputFormat::from),
         output: view.output.clone(),
         default_input,
         default_output,
