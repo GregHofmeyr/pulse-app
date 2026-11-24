@@ -30,9 +30,15 @@ pub fn router() -> Router<AppState> {
 macro_rules! thread_root {
     ($alias:literal) => {
         concat!(
-            "(EXISTS (SELECT 1 FROM quotes WHERE message_id = ", $alias, ".id)",
-            " OR EXISTS (SELECT 1 FROM clips WHERE message_id = ", $alias, ".id)",
-            " OR EXISTS (SELECT 1 FROM builds WHERE message_id = ", $alias, ".id))"
+            "(EXISTS (SELECT 1 FROM quotes WHERE message_id = ",
+            $alias,
+            ".id)",
+            " OR EXISTS (SELECT 1 FROM clips WHERE message_id = ",
+            $alias,
+            ".id)",
+            " OR EXISTS (SELECT 1 FROM builds WHERE message_id = ",
+            $alias,
+            ".id))"
         )
     };
 }

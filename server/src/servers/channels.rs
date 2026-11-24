@@ -479,7 +479,8 @@ pub async fn list_deleted(
 ) -> AppResult<Json<Vec<DeletedChannel>>> {
     crate::servers::routes::require_member(&s.db, server, me).await?;
     // an older client can't read a builds channel (#616)
-    let builds = crate::builds::compat::speaks_builds(crate::builds::compat::rest_version(&headers));
+    let builds =
+        crate::builds::compat::speaks_builds(crate::builds::compat::rest_version(&headers));
     let mut db = s.db.acquire().await?;
     let owner = owner_of(&mut db, server).await? == me;
     let rows: Vec<DeletedRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(

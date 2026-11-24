@@ -367,7 +367,10 @@ async fn target(s: &AppState, me: UserId, id: ChannelId) -> AppResult<Channel> {
     {
         return Err(AppError::Forbidden);
     }
-    if matches!(ch.kind, ChannelKind::Quotes | ChannelKind::Clips | ChannelKind::Builds) {
+    if matches!(
+        ch.kind,
+        ChannelKind::Quotes | ChannelKind::Clips | ChannelKind::Builds
+    ) {
         return Err(AppError::BadRequest(
             "messages can't be forwarded to a quotes, clips or builds channel".into(),
         ));

@@ -54,9 +54,14 @@ pub(crate) struct BuildRow {
 }
 
 impl BuildRow {
-    fn into_build(self, thread: Option<crate::messages::threads::ThreadSummary>) -> AppResult<Build> {
+    fn into_build(
+        self,
+        thread: Option<crate::messages::threads::ThreadSummary>,
+    ) -> AppResult<Build> {
         let parse_game = |g: Option<String>| -> AppResult<Option<GameId>> {
-            Ok(g.map(|g| g.parse()).transpose().map_err(anyhow::Error::from)?)
+            Ok(g.map(|g| g.parse())
+                .transpose()
+                .map_err(anyhow::Error::from)?)
         };
         let thumb = match (self.link_thumb, self.width, self.height) {
             (Some(hash), Some(w), Some(h)) => Some(EmbedThumb {
@@ -275,8 +280,14 @@ mod tests {
 
     #[test]
     fn a_links_title_is_its_host_and_path() {
-        assert_eq!(link_title("https://youtu.be/abc12345678"), "youtu.be/abc12345678");
-        assert_eq!(link_title("https://www.example.com/planner/?a=1"), "example.com/planner");
+        assert_eq!(
+            link_title("https://youtu.be/abc12345678"),
+            "youtu.be/abc12345678"
+        );
+        assert_eq!(
+            link_title("https://www.example.com/planner/?a=1"),
+            "example.com/planner"
+        );
     }
 
     #[test]

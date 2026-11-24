@@ -84,10 +84,14 @@ async fn set_archived(
     q.bind(id.to_string()).execute(&mut *tx).await?;
     tx.commit().await?;
     if let Some(message) = load(&s.db, None, id).await? {
-        s.hub.publish(&s.db, Event::MessageUpdated { message }).await;
+        s.hub
+            .publish(&s.db, Event::MessageUpdated { message })
+            .await;
     }
     drop(_order);
-    Ok(Json(load(&s.db, Some(me), id).await?.ok_or(AppError::NotFound)?))
+    Ok(Json(
+        load(&s.db, Some(me), id).await?.ok_or(AppError::NotFound)?,
+    ))
 }
 
 /// `POST /channels/{id}/builds/archive`: archive every live, unarchived build saved before `before` (of one game, or
@@ -149,7 +153,10 @@ async fn bulk(
         .collect::<AppResult<Vec<_>>>()?;
     if req.dry_run || builds.is_empty() {
         tx.rollback().await?;
-        return Ok(Json(BulkArchiveResult { builds, archived: 0 }));
+        return Ok(Json(BulkArchiveResult {
+            builds,
+            archived: 0,
+        }));
     }
     crate::access::open_in(&mut tx, id).await?;
     let at = now();

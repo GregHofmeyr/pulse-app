@@ -305,8 +305,14 @@ async fn a_comment_on_a_build_reaches_its_author_and_earlier_commenters() {
     assert!(has(&f.threads(&f.alex).await), "the author sees it");
     comment(&f, &f.kim, ch, build.id, "agreed").await;
     assert!(has(&f.threads(&f.alex).await));
-    assert!(has(&f.threads(&f.sam).await), "an earlier commenter sees the next one");
-    assert!(!has(&f.threads(&f.jo).await), "someone who never took part doesn't");
+    assert!(
+        has(&f.threads(&f.sam).await),
+        "an earlier commenter sees the next one"
+    );
+    assert!(
+        !has(&f.threads(&f.jo).await),
+        "someone who never took part doesn't"
+    );
 }
 
 #[tokio::test]
@@ -335,7 +341,9 @@ async fn comments_dont_mark_the_builds_channel_unread() {
         .fetch_one(&f.app.db)
         .await
         .unwrap();
-    let states = pulse_server::reads::states_for(&f.app.db, jo.parse().unwrap()).await.unwrap();
+    let states = pulse_server::reads::states_for(&f.app.db, jo.parse().unwrap())
+        .await
+        .unwrap();
     let st = states.iter().find(|s| s.channel_id == ch).unwrap();
     assert_eq!(st.unread, 0);
 }

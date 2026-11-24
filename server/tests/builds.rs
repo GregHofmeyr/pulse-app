@@ -14,7 +14,9 @@ use sqlx::sqlite::SqliteConnectOptions;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
 async fn hello(app: &TestApp, token: &str) -> Socket {
-    hello_as(app, token, pulse_protocol::PROTOCOL_VERSION).await.0
+    hello_as(app, token, pulse_protocol::PROTOCOL_VERSION)
+        .await
+        .0
 }
 
 /// A gateway connection whose Hello says `version`, and the Ready it got.
@@ -140,18 +142,26 @@ async fn polls_plans_wheels_and_forwards_are_refused_in_a_builds_channel() {
     let text = general(&app, &alex, s.id).await;
     let hi = send(&app, &alex, text.id, "hi").await;
 
-    let later = pulse_server::times::rfc3339(
-        jiff::Timestamp::now() + pulse_server::times::days(30),
-    );
+    let later =
+        pulse_server::times::rfc3339(jiff::Timestamp::now() + pulse_server::times::days(30));
     let posts = [
-        ("polls", json!({ "question": "Which?", "options": ["a", "b"], "ends_in": "day" })),
+        (
+            "polls",
+            json!({ "question": "Which?", "options": ["a", "b"], "ends_in": "day" }),
+        ),
         ("plans", json!({ "title": "Raid", "starts_at": later })),
         ("wheel-spins", json!({ "options": ["a", "b"] })),
         ("scheduled", json!({ "content": "later", "send_at": later })),
     ];
     for (path, body) in posts {
         // the same request is fine in a text channel: the refusal is the builds channel's
-        let r = post_json(&app, &alex, &format!("/channels/{}/{path}", text.id), body.clone()).await;
+        let r = post_json(
+            &app,
+            &alex,
+            &format!("/channels/{}/{path}", text.id),
+            body.clone(),
+        )
+        .await;
         assert!(r.status().is_success(), "{path} in text: {}", r.status());
         let r = post_json(&app, &alex, &format!("/channels/{}/{path}", ch.id), body).await;
         assert_eq!(r.status(), 400, "{path}");
@@ -199,7 +209,12 @@ async fn channel_rows(pool: &sqlx::SqlitePool) -> Vec<String> {
     .unwrap()
 }
 
-async fn migrator_upto(version: i64) -> (sqlx::migrate::Migrator, Cow<'static, [sqlx::migrate::Migration]>) {
+async fn migrator_upto(
+    version: i64,
+) -> (
+    sqlx::migrate::Migrator,
+    Cow<'static, [sqlx::migrate::Migration]>,
+) {
     let mut migrator = sqlx::migrate::Migrator::new(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
     )
@@ -207,7 +222,12 @@ async fn migrator_upto(version: i64) -> (sqlx::migrate::Migrator, Cow<'static, [
     .unwrap();
     let all = migrator.migrations.clone();
     assert!(all.iter().any(|m| m.version == 82), "0082 exists");
-    migrator.migrations = Cow::Owned(all.iter().filter(|m| m.version <= version).cloned().collect());
+    migrator.migrations = Cow::Owned(
+        all.iter()
+            .filter(|m| m.version <= version)
+            .cloned()
+            .collect(),
+    );
     (migrator, all)
 }
 
@@ -252,7 +272,7 @@ async fn migration_0082_keeps_every_channel_row() {
         format!("INSERT INTO channel_members (channel_id, user_id, added_at) VALUES ('C5', 'U1', '{ts}')"),
         format!("INSERT INTO channel_members (channel_id, user_id, added_at) VALUES ('C5', 'U2', '{ts}')"),
         format!("INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES ('M1', 'C1', 'U1', 'hi', '{ts}')"),
-        format!("INSERT INTO read_states (user_id, channel_id, last_read_message_id) VALUES ('U1', 'C1', 'M1')"),
+        "INSERT INTO read_states (user_id, channel_id, last_read_message_id) VALUES ('U1', 'C1', 'M1')".to_string(),
     ] {
         sqlx::query(sqlx::AssertSqlSafe(&*q))
             .execute(&pool)
@@ -265,13 +285,25 @@ async fn migration_0082_keeps_every_channel_row() {
     let pool = pulse_server::db::connect(&format!("sqlite://{}", path.display()))
         .await
         .unwrap();
-    assert_eq!(channel_rows(&pool).await, before, "every column of every row");
-    for index in ["channels_server", "channels_deleted", "channels_category", "builds_browse", "builds_game"] {
-        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?")
-            .bind(index)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    assert_eq!(
+        channel_rows(&pool).await,
+        before,
+        "every column of every row"
+    );
+    for index in [
+        "channels_server",
+        "channels_deleted",
+        "channels_category",
+        "builds_browse",
+        "builds_game",
+    ] {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+        )
+        .bind(index)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(n, 1, "{index}");
     }
     let broken: Vec<(String, i64, String, i64)> = sqlx::query_as("PRAGMA foreign_key_check")
@@ -299,10 +331,11 @@ async fn migration_0082_keeps_every_channel_row() {
         .execute(&pool)
         .await
         .unwrap();
-    let cat: Option<String> = sqlx::query_scalar("SELECT category_id FROM channels WHERE id = 'C2'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let cat: Option<String> =
+        sqlx::query_scalar("SELECT category_id FROM channels WHERE id = 'C2'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(cat, None, "ON DELETE SET NULL still works");
 }
 
@@ -319,17 +352,29 @@ async fn migration_0082_refuses_to_run_with_foreign_keys_on() {
     migrator.run(&mut conn).await.unwrap();
     let ts = "2026-10-01T00:00:00.000Z";
     for q in [
-        format!("INSERT INTO users (id, username, password_hash, created_at) VALUES ('U', 'alex', 'x', '{ts}')"),
-        format!("INSERT INTO servers (id, name, created_by, created_at) VALUES ('S', 'Main', 'U', '{ts}')"),
-        format!("INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('C', 'S', 'text', 'general', 0, '{ts}')"),
+        format!(
+            "INSERT INTO users (id, username, password_hash, created_at) VALUES ('U', 'alex', 'x', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO servers (id, name, created_by, created_at) VALUES ('S', 'Main', 'U', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('C', 'S', 'text', 'general', 0, '{ts}')"
+        ),
     ] {
-        sqlx::query(sqlx::AssertSqlSafe(&*q)).execute(&mut conn).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(&*q))
+            .execute(&mut conn)
+            .await
+            .unwrap();
     }
     conn.close().await.unwrap();
     let mut conn = opts.foreign_keys(true).connect().await.unwrap();
     migrator.migrations = all;
     let err = migrator.run(&mut conn).await.unwrap_err().to_string();
-    assert!(err.contains("CHECK constraint failed"), "refused by the guard: {err}");
+    assert!(
+        err.contains("CHECK constraint failed"),
+        "refused by the guard: {err}"
+    );
     let v: i64 = sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
         .fetch_one(&mut conn)
         .await
@@ -363,7 +408,12 @@ async fn events_until(ws: &mut Socket, sentinel: &str) -> Vec<Event> {
     }
 }
 
-fn channels_get(app: &TestApp, token: &str, path: &str, version: Option<u32>) -> reqwest::RequestBuilder {
+fn channels_get(
+    app: &TestApp,
+    token: &str,
+    path: &str,
+    version: Option<u32>,
+) -> reqwest::RequestBuilder {
     let r = app.http.get(app.url(path)).bearer_auth(token);
     match version {
         Some(v) => r.header(pulse_protocol::PROTOCOL_HEADER, v.to_string()),
@@ -379,9 +429,18 @@ async fn a_version_4_ready_leaves_builds_channels_out() {
     let ch = create_builds(&app, &alex, s.id).await;
 
     let (_, old) = hello_as(&app, &alex, OLD).await;
-    assert!(old.channels.iter().all(|c| c.id != ch.id), "no builds channel");
-    assert!(old.read_states.iter().all(|r| r.channel_id != ch.id), "nor its read point");
-    assert!(old.channels.iter().any(|c| c.kind == ChannelKind::Text), "the rest is there");
+    assert!(
+        old.channels.iter().all(|c| c.id != ch.id),
+        "no builds channel"
+    );
+    assert!(
+        old.read_states.iter().all(|r| r.channel_id != ch.id),
+        "nor its read point"
+    );
+    assert!(
+        old.channels.iter().any(|c| c.kind == ChannelKind::Text),
+        "the rest is there"
+    );
     // what a version-4 client reads it as: no kind it can't parse
     assert!(!serde_json::to_string(&old).unwrap().contains("\"builds\""));
 
@@ -404,15 +463,23 @@ async fn a_version_4_client_hears_nothing_of_a_builds_channel() {
     send(&app, &alex, text.id, "after").await;
     let got_new = events_until(&mut new, "after").await;
     assert!(
-        got_new.iter().any(|e| matches!(e, Event::ChannelCreated { channel } if channel.id == ch.id)),
+        got_new
+            .iter()
+            .any(|e| matches!(e, Event::ChannelCreated { channel } if channel.id == ch.id)),
         "a new client hears of it"
     );
     let got_old = events_until(&mut old, "after").await;
     assert!(
-        !got_old.iter().any(|e| matches!(e, Event::ChannelCreated { .. })),
+        !got_old
+            .iter()
+            .any(|e| matches!(e, Event::ChannelCreated { .. })),
         "{got_old:?}"
     );
-    assert!(!got_old.iter().any(|e| serde_json::to_string(e).unwrap().contains("\"builds\"")));
+    assert!(
+        !got_old
+            .iter()
+            .any(|e| serde_json::to_string(e).unwrap().contains("\"builds\""))
+    );
 }
 
 #[tokio::test]
@@ -430,8 +497,19 @@ async fn a_version_4_join_leaves_builds_channels_out() {
     })
     .await;
     assert!(snapshot.channels.iter().all(|c| c.id != ch.id));
-    assert!(snapshot.layout.channels.iter().all(|p| p.channel_id != ch.id));
-    assert!(snapshot.channels.iter().any(|c| c.kind == ChannelKind::Text));
+    assert!(
+        snapshot
+            .layout
+            .channels
+            .iter()
+            .all(|p| p.channel_id != ch.id)
+    );
+    assert!(
+        snapshot
+            .channels
+            .iter()
+            .any(|c| c.kind == ChannelKind::Text)
+    );
 }
 
 #[tokio::test]
@@ -450,13 +528,14 @@ async fn rest_channel_lists_leave_builds_out_for_older_clients() {
         .await
         .unwrap();
     assert!(old.iter().all(|c| c.id != ch.id));
-    let new: Vec<Channel> = channels_get(&app, &alex, &path, Some(pulse_protocol::PROTOCOL_VERSION))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let new: Vec<Channel> =
+        channels_get(&app, &alex, &path, Some(pulse_protocol::PROTOCOL_VERSION))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
     assert!(new.iter().any(|c| c.id == ch.id));
 
     // and in Recently deleted
@@ -477,14 +556,18 @@ async fn rest_channel_lists_leave_builds_out_for_older_clients() {
         .await
         .unwrap();
     assert!(old.is_empty(), "{old:?}");
-    let new: Vec<pulse_protocol::rest::DeletedChannel> =
-        channels_get(&app, &alex, &deleted, Some(pulse_protocol::PROTOCOL_VERSION))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+    let new: Vec<pulse_protocol::rest::DeletedChannel> = channels_get(
+        &app,
+        &alex,
+        &deleted,
+        Some(pulse_protocol::PROTOCOL_VERSION),
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
     assert_eq!(new.len(), 1);
 }
 
@@ -524,15 +607,19 @@ async fn an_older_clients_layout_save_needn_t_name_builds_channels() {
             None => r,
         }
     };
-    let r = save(Some(pulse_protocol::PROTOCOL_VERSION)).send().await.unwrap();
+    let r = save(Some(pulse_protocol::PROTOCOL_VERSION))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 409, "a current client names every channel");
     let r = save(None).send().await.unwrap();
     assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
-    let still: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE id = ? AND deleted_at IS NULL")
-        .bind(ch.id.to_string())
-        .fetch_one(&app.db)
-        .await
-        .unwrap();
+    let still: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE id = ? AND deleted_at IS NULL")
+            .bind(ch.id.to_string())
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
     assert_eq!(still, 1);
 }
 
@@ -574,7 +661,11 @@ async fn upload(
     up.id
 }
 
-async fn shot(app: &TestApp, token: &str, channel: pulse_protocol::ids::ChannelId) -> pulse_protocol::ids::AttachmentId {
+async fn shot(
+    app: &TestApp,
+    token: &str,
+    channel: pulse_protocol::ids::ChannelId,
+) -> pulse_protocol::ids::AttachmentId {
     upload(app, token, channel, "shot.webp", "image/webp", &webp(64)).await
 }
 
@@ -598,13 +689,29 @@ async fn build_ok(
     r.json().await.unwrap()
 }
 
-async fn add_game(app: &TestApp, token: &str, server: ServerId, name: &str) -> pulse_protocol::rest::Game {
-    let r = post_json(app, token, &format!("/servers/{server}/games"), json!({ "name": name })).await;
+async fn add_game(
+    app: &TestApp,
+    token: &str,
+    server: ServerId,
+    name: &str,
+) -> pulse_protocol::rest::Game {
+    let r = post_json(
+        app,
+        token,
+        &format!("/servers/{server}/games"),
+        json!({ "name": name }),
+    )
+    .await;
     assert!(r.status().is_success(), "add game {}", r.status());
     r.json().await.unwrap()
 }
 
-async fn list(app: &TestApp, token: &str, channel: pulse_protocol::ids::ChannelId, query: &str) -> Vec<Message> {
+async fn list(
+    app: &TestApp,
+    token: &str,
+    channel: pulse_protocol::ids::ChannelId,
+    query: &str,
+) -> Vec<Message> {
     get_json(app, token, &format!("/channels/{channel}/builds{query}")).await
 }
 
@@ -629,14 +736,26 @@ async fn world() -> World {
     let s = create_server(&app, &alex.1, "Main").await;
     assert_eq!(join_server(&app, &sam.1, s.id).await.status(), 200);
     let ch = create_builds(&app, &alex.1, s.id).await;
-    World { app, alex, sam, server: s.id, ch }
+    World {
+        app,
+        alex,
+        sam,
+        server: s.id,
+        ch,
+    }
 }
 
 #[tokio::test]
 async fn creates_a_build_with_a_title_only() {
     let w = world().await;
     let mut ws = hello(&w.app, &w.sam.1).await;
-    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "  Raven crit " })).await;
+    let m = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "title": "  Raven crit " }),
+    )
+    .await;
     let b = m.build.as_ref().unwrap();
     assert_eq!(b.title, "Raven crit");
     assert!(b.quick_drop && !b.title_auto);
@@ -657,7 +776,13 @@ async fn creates_a_build_with_a_title_only() {
 #[tokio::test]
 async fn creates_a_build_from_a_link_only() {
     let w = world().await;
-    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "link_url": "https://youtu.be/abc12345678" })).await;
+    let m = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "link_url": "https://youtu.be/abc12345678" }),
+    )
+    .await;
     let b = m.build.unwrap();
     assert_eq!(b.title, "youtu.be/abc12345678");
     assert!(b.title_auto && b.quick_drop);
@@ -690,9 +815,18 @@ async fn a_build_with_game_and_notes_is_not_a_quick_drop() {
     assert!(!b.quick_drop && !b.game_guessed);
     assert_eq!(b.game_id, Some(g.id));
     assert_eq!(b.notes.as_deref(), Some("- crit rate\n- **reload**"));
-    assert_eq!(m.content, "Raven crit\nThe First Descendant\n- crit rate\n- **reload**");
+    assert_eq!(
+        m.content,
+        "Raven crit\nThe First Descendant\n- crit rate\n- **reload**"
+    );
     // a game alone ends it too
-    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Bunny", "game_id": g.id })).await;
+    let m = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "title": "Bunny", "game_id": g.id }),
+    )
+    .await;
     assert!(!m.build.unwrap().quick_drop);
 }
 
@@ -709,7 +843,15 @@ async fn build_inputs_are_checked() {
         }
         v
     };
-    let pdf = upload(&w.app, &w.alex.1, w.ch.id, "a.pdf", "application/pdf", b"%PDF-1.4 hello").await;
+    let pdf = upload(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        "a.pdf",
+        "application/pdf",
+        b"%PDF-1.4 hello",
+    )
+    .await;
     for body in [
         json!({ "title": long(121) }),
         json!({ "title": "ok", "notes": long(4001) }),
@@ -724,7 +866,10 @@ async fn build_inputs_are_checked() {
     }
     let r = post_build(&w.app, &w.alex.1, w.ch.id, json!({ "title": "   " })).await;
     assert_eq!(r.status(), 400);
-    assert_eq!(message_of(r).await, "A build needs a title, a link or a screenshot.");
+    assert_eq!(
+        message_of(r).await,
+        "A build needs a title, a link or a screenshot."
+    );
     let r = post_build(&w.app, &w.alex.1, w.ch.id, json!({})).await;
     assert_eq!(r.status(), 400);
     // a builds route on another kind of channel
@@ -760,8 +905,18 @@ async fn non_members_cant_add_or_see_builds() {
         .status();
     let r = post_build(&w.app, &kim, w.ch.id, json!({ "title": "mine" })).await;
     assert_eq!(r.status(), outsider, "create");
-    for path in [format!("/builds/{}", m.id), format!("/channels/{}/builds", w.ch.id)] {
-        let r = w.app.http.get(w.app.url(&path)).bearer_auth(&kim).send().await.unwrap();
+    for path in [
+        format!("/builds/{}", m.id),
+        format!("/channels/{}/builds", w.ch.id),
+    ] {
+        let r = w
+            .app
+            .http
+            .get(w.app.url(&path))
+            .bearer_auth(&kim)
+            .send()
+            .await
+            .unwrap();
         assert_eq!(r.status(), outsider, "{path}");
     }
 }
@@ -771,18 +926,45 @@ async fn lists_builds_newest_first_by_game_without_archived() {
     let w = world().await;
     let tfd = add_game(&w.app, &w.alex.1, w.server, "The First Descendant").await;
     let wf = add_game(&w.app, &w.alex.1, w.server, "Warframe").await;
-    let a = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "A", "game_id": tfd.id })).await;
-    let b = build_ok(&w.app, &w.sam.1, w.ch.id, json!({ "title": "B", "game_id": wf.id })).await;
-    let c = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "C", "game_id": tfd.id })).await;
+    let a = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "title": "A", "game_id": tfd.id }),
+    )
+    .await;
+    let b = build_ok(
+        &w.app,
+        &w.sam.1,
+        w.ch.id,
+        json!({ "title": "B", "game_id": wf.id }),
+    )
+    .await;
+    let c = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "title": "C", "game_id": tfd.id }),
+    )
+    .await;
     // a comment is no build, and isn't listed
     let ids = |v: Vec<Message>| v.into_iter().map(|m| m.id).collect::<Vec<_>>();
-    assert_eq!(ids(list(&w.app, &w.sam.1, w.ch.id, "").await), vec![c.id, b.id, a.id]);
+    assert_eq!(
+        ids(list(&w.app, &w.sam.1, w.ch.id, "").await),
+        vec![c.id, b.id, a.id]
+    );
     assert_eq!(
         ids(list(&w.app, &w.sam.1, w.ch.id, &format!("?game={}", tfd.id)).await),
         vec![c.id, a.id]
     );
     assert_eq!(
-        ids(list(&w.app, &w.sam.1, w.ch.id, &format!("?before={}&limit=1", c.id)).await),
+        ids(list(
+            &w.app,
+            &w.sam.1,
+            w.ch.id,
+            &format!("?before={}&limit=1", c.id)
+        )
+        .await),
         vec![b.id]
     );
     // archived ones stay out unless asked
@@ -792,7 +974,10 @@ async fn lists_builds_newest_first_by_game_without_archived() {
         .execute(&w.app.db)
         .await
         .unwrap();
-    assert_eq!(ids(list(&w.app, &w.sam.1, w.ch.id, "").await), vec![c.id, a.id]);
+    assert_eq!(
+        ids(list(&w.app, &w.sam.1, w.ch.id, "").await),
+        vec![c.id, a.id]
+    );
     assert_eq!(
         ids(list(&w.app, &w.sam.1, w.ch.id, "?archived=true").await),
         vec![c.id, b.id, a.id]
@@ -804,10 +989,18 @@ async fn a_build_counts_as_unread_for_others() {
     let w = world().await;
     build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
     let (_, ready) = hello_as(&w.app, &w.sam.1, pulse_protocol::PROTOCOL_VERSION).await;
-    let st = ready.read_states.iter().find(|r| r.channel_id == w.ch.id).unwrap();
+    let st = ready
+        .read_states
+        .iter()
+        .find(|r| r.channel_id == w.ch.id)
+        .unwrap();
     assert_eq!(st.unread, 1);
     let (_, ready) = hello_as(&w.app, &w.alex.1, pulse_protocol::PROTOCOL_VERSION).await;
-    let st = ready.read_states.iter().find(|r| r.channel_id == w.ch.id).unwrap();
+    let st = ready
+        .read_states
+        .iter()
+        .find(|r| r.channel_id == w.ch.id)
+        .unwrap();
     assert_eq!(st.unread, 0, "the author has read their own");
 }
 
@@ -832,7 +1025,8 @@ async fn a_version_4_client_hears_no_build() {
     let got = events_until(&mut old, "after").await;
     let id = w.ch.id.to_string();
     assert!(
-        !got.iter().any(|e| serde_json::to_string(e).unwrap().contains(&id)),
+        !got.iter()
+            .any(|e| serde_json::to_string(e).unwrap().contains(&id)),
         "{got:?}"
     );
 }
@@ -856,7 +1050,12 @@ async fn a_build_isnt_forwarded() {
 
 // ---- Edit by the author (Task 4) ----
 
-async fn put_build(app: &TestApp, token: &str, id: pulse_protocol::ids::MessageId, body: serde_json::Value) -> reqwest::Response {
+async fn put_build(
+    app: &TestApp,
+    token: &str,
+    id: pulse_protocol::ids::MessageId,
+    body: serde_json::Value,
+) -> reqwest::Response {
     app.http
         .put(app.url(&format!("/builds/{id}")))
         .bearer_auth(token)
@@ -866,7 +1065,12 @@ async fn put_build(app: &TestApp, token: &str, id: pulse_protocol::ids::MessageI
         .unwrap()
 }
 
-async fn edit_ok(app: &TestApp, token: &str, id: pulse_protocol::ids::MessageId, body: serde_json::Value) -> Message {
+async fn edit_ok(
+    app: &TestApp,
+    token: &str,
+    id: pulse_protocol::ids::MessageId,
+    body: serde_json::Value,
+) -> Message {
     let r = put_build(app, token, id, body).await;
     assert_eq!(r.status(), 200, "edit build");
     r.json().await.unwrap()
@@ -879,7 +1083,13 @@ async fn only_the_author_edits_a_build() {
     let r = put_build(&w.app, &w.sam.1, m.id, json!({ "title": "Mine now" })).await;
     assert_eq!(r.status(), 403, "someone else's build, as any message");
     let mut ws = hello(&w.app, &w.sam.1).await;
-    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Raven crit v2", "notes": "swap the module" })).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Raven crit v2", "notes": "swap the module" }),
+    )
+    .await;
     let b = e.build.as_ref().unwrap();
     assert_eq!(b.title, "Raven crit v2");
     assert!(b.updated_at.is_some());
@@ -903,7 +1113,11 @@ async fn an_edit_keeps_the_builds_place_in_the_list() {
     let b = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "B" })).await;
     let c = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "C" })).await;
     edit_ok(&w.app, &w.alex.1, a.id, json!({ "title": "A2" })).await;
-    let ids: Vec<_> = list(&w.app, &w.alex.1, w.ch.id, "").await.into_iter().map(|m| m.id).collect();
+    let ids: Vec<_> = list(&w.app, &w.alex.1, w.ch.id, "")
+        .await
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
     assert_eq!(ids, vec![c.id, b.id, a.id]);
 }
 
@@ -912,7 +1126,13 @@ async fn edit_reorders_adds_and_removes_screenshots() {
     let w = world().await;
     let a = shot(&w.app, &w.alex.1, w.ch.id).await;
     let b = shot(&w.app, &w.alex.1, w.ch.id).await;
-    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Shots", "attachments": [a, b] })).await;
+    let m = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "title": "Shots", "attachments": [a, b] }),
+    )
+    .await;
     let key: String = sqlx::query_scalar("SELECT key FROM attachments WHERE id = ?")
         .bind(a.to_string())
         .fetch_one(&w.app.db)
@@ -921,7 +1141,13 @@ async fn edit_reorders_adds_and_removes_screenshots() {
     let object = pulse_server::attachments::object_key(&key, false);
     assert!(w.app.s3.as_ref().unwrap().object(&object).is_some());
     let c = shot(&w.app, &w.alex.1, w.ch.id).await;
-    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Shots", "attachments": [b, c] })).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Shots", "attachments": [b, c] }),
+    )
+    .await;
     let order: Vec<_> = e.attachments.iter().map(|x| x.id).collect();
     assert_eq!(order, vec![b, c]);
     let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = ?")
@@ -930,12 +1156,27 @@ async fn edit_reorders_adds_and_removes_screenshots() {
         .await
         .unwrap();
     assert_eq!(rows, 0, "a's row is gone");
-    assert!(w.app.s3.as_ref().unwrap().object(&object).is_none(), "and its object");
+    assert!(
+        w.app.s3.as_ref().unwrap().object(&object).is_none(),
+        "and its object"
+    );
     // someone else's file, or one from another message, isn't taken
     let theirs = shot(&w.app, &w.sam.1, w.ch.id).await;
-    let r = put_build(&w.app, &w.alex.1, m.id, json!({ "title": "Shots", "attachments": [b, theirs] })).await;
+    let r = put_build(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Shots", "attachments": [b, theirs] }),
+    )
+    .await;
     assert_eq!(r.status(), 404);
-    let r = put_build(&w.app, &w.alex.1, m.id, json!({ "title": "Shots", "attachments": [b, b] })).await;
+    let r = put_build(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Shots", "attachments": [b, b] }),
+    )
+    .await;
     assert_eq!(r.status(), 400);
 }
 
@@ -945,18 +1186,39 @@ async fn quick_drop_ends_with_a_game_notes_or_mark_sorted_and_never_returns() {
     let g = add_game(&w.app, &w.alex.1, w.server, "Warframe").await;
     let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Quick" })).await;
     let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Quick v2" })).await;
-    assert!(e.build.unwrap().quick_drop, "a new title alone is no detail");
-    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Quick", "notes": "details" })).await;
+    assert!(
+        e.build.unwrap().quick_drop,
+        "a new title alone is no detail"
+    );
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Quick", "notes": "details" }),
+    )
+    .await;
     assert!(!e.build.unwrap().quick_drop);
     let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Quick" })).await;
     assert!(!e.build.unwrap().quick_drop, "and it never comes back");
 
     let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Gamed" })).await;
-    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Gamed", "game_id": g.id })).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Gamed", "game_id": g.id }),
+    )
+    .await;
     assert!(!e.build.unwrap().quick_drop);
 
     let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Sorted" })).await;
-    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Sorted", "mark_sorted": true })).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Sorted", "mark_sorted": true }),
+    )
+    .await;
     assert!(!e.build.unwrap().quick_drop);
 }
 
@@ -971,11 +1233,23 @@ async fn clearing_a_guessed_game_sticks() {
         .execute(&w.app.db)
         .await
         .unwrap();
-    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Saryn", "game_id": null })).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Saryn", "game_id": null }),
+    )
+    .await;
     let b = e.build.unwrap();
     assert_eq!((b.game_id, b.game_guessed), (None, false));
     // and picking it is no guess
-    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Saryn", "game_id": g.id })).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Saryn", "game_id": g.id }),
+    )
+    .await;
     let b = e.build.unwrap();
     assert_eq!((b.game_id, b.game_guessed), (Some(g.id), false));
 }
@@ -983,16 +1257,39 @@ async fn clearing_a_guessed_game_sticks() {
 #[tokio::test]
 async fn a_changed_link_drops_what_was_fetched_of_the_old_one() {
     let w = world().await;
-    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "link_url": "https://example.com/old" })).await;
-    sqlx::query("UPDATE builds SET link_title = 'Old page', link_provider = 'generic' WHERE message_id = ?")
-        .bind(m.id.to_string())
-        .execute(&w.app.db)
-        .await
-        .unwrap();
+    let m = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "link_url": "https://example.com/old" }),
+    )
+    .await;
+    sqlx::query(
+        "UPDATE builds SET link_title = 'Old page', link_provider = 'generic' WHERE message_id = ?",
+    )
+    .bind(m.id.to_string())
+    .execute(&w.app.db)
+    .await
+    .unwrap();
     // the same link keeps it
-    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Mine", "link_url": "https://example.com/old" })).await;
-    assert_eq!(e.build.unwrap().link.unwrap().title.as_deref(), Some("Old page"));
-    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Mine", "link_url": "https://example.com/new" })).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Mine", "link_url": "https://example.com/old" }),
+    )
+    .await;
+    assert_eq!(
+        e.build.unwrap().link.unwrap().title.as_deref(),
+        Some("Old page")
+    );
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Mine", "link_url": "https://example.com/new" }),
+    )
+    .await;
     let l = e.build.as_ref().unwrap().link.clone().unwrap();
     assert_eq!((l.url.as_str(), l.title), ("https://example.com/new", None));
     let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Mine" })).await;
@@ -1018,7 +1315,10 @@ async fn builds_refuse_the_message_edit_and_delete_routes() {
         .await
         .unwrap();
     assert_eq!(r.status(), 400);
-    assert_eq!(message_of(r).await, "builds are edited with their own route");
+    assert_eq!(
+        message_of(r).await,
+        "builds are edited with their own route"
+    );
     let r = w
         .app
         .http
@@ -1028,7 +1328,10 @@ async fn builds_refuse_the_message_edit_and_delete_routes() {
         .await
         .unwrap();
     assert_eq!(r.status(), 400);
-    assert_eq!(message_of(r).await, "builds are deleted with their own route");
+    assert_eq!(
+        message_of(r).await,
+        "builds are deleted with their own route"
+    );
 }
 
 // ---- Search (Task 6) ----
@@ -1042,22 +1345,51 @@ async fn channel_search_finds_title_notes_game_and_link_title() {
     let w = world().await;
     let g = add_game(&w.app, &w.alex.1, w.server, "Borderlands").await;
     let t = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
-    let n = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Moxxi", "notes": "slag every corrosive target" })).await;
-    let gm = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Zane", "game_id": g.id })).await;
-    let l = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "link_url": "https://example.com/p" })).await;
+    let n = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "title": "Moxxi", "notes": "slag every corrosive target" }),
+    )
+    .await;
+    let gm = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "title": "Zane", "game_id": g.id }),
+    )
+    .await;
+    let l = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "link_url": "https://example.com/p" }),
+    )
+    .await;
     // as the link's fetched page fills it in
     sqlx::query("UPDATE builds SET link_title = 'Wynncraft archer planner' WHERE message_id = ?")
         .bind(l.id.to_string())
         .execute(&w.app.db)
         .await
         .unwrap();
-    sqlx::query("UPDATE messages SET content = 'example.com/p\nWynncraft archer planner' WHERE id = ?")
-        .bind(l.id.to_string())
-        .execute(&w.app.db)
-        .await
-        .unwrap();
-    for (q, want) in [("raven", t.id), ("corrosive", n.id), ("borderlands", gm.id), ("wynncraft", l.id)] {
-        let got: Vec<_> = list(&w.app, &w.sam.1, w.ch.id, &format!("?q={q}")).await.into_iter().map(|m| m.id).collect();
+    sqlx::query(
+        "UPDATE messages SET content = 'example.com/p\nWynncraft archer planner' WHERE id = ?",
+    )
+    .bind(l.id.to_string())
+    .execute(&w.app.db)
+    .await
+    .unwrap();
+    for (q, want) in [
+        ("raven", t.id),
+        ("corrosive", n.id),
+        ("borderlands", gm.id),
+        ("wynncraft", l.id),
+    ] {
+        let got: Vec<_> = list(&w.app, &w.sam.1, w.ch.id, &format!("?q={q}"))
+            .await
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
         assert_eq!(got, vec![want], "{q}");
     }
     // a comment that says it isn't a build that does
@@ -1068,7 +1400,11 @@ async fn channel_search_finds_title_notes_game_and_link_title() {
         json!({ "content": "raven raven raven", "thread_root_id": n.id }),
     )
     .await;
-    let got: Vec<_> = list(&w.app, &w.sam.1, w.ch.id, "?q=raven").await.into_iter().map(|m| m.id).collect();
+    let got: Vec<_> = list(&w.app, &w.sam.1, w.ch.id, "?q=raven")
+        .await
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
     assert_eq!(got, vec![t.id]);
 }
 
@@ -1084,7 +1420,11 @@ async fn search_everywhere_lists_current_before_archived() {
         .execute(&w.app.db)
         .await
         .unwrap();
-    let got: Vec<_> = search_all(&w.app, &w.sam.1, "?q=raven").await.into_iter().map(|m| m.id).collect();
+    let got: Vec<_> = search_all(&w.app, &w.sam.1, "?q=raven")
+        .await
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
     assert_eq!(got, vec![a.id, old.id, b.id]);
     let got = search_all(&w.app, &w.sam.1, "?q=raven&limit=1").await;
     assert_eq!(got.len(), 1);
@@ -1097,8 +1437,20 @@ async fn search_everywhere_filters_by_game_key_across_servers() {
     let other = create_server(&w.app, &w.sam.1, "Other").await;
     let ch2 = create_builds(&w.app, &w.sam.1, other.id).await;
     let g2 = add_game(&w.app, &w.sam.1, other.id, "the  first descendant").await;
-    let a = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Bunny", "game_id": g1.id })).await;
-    let b = build_ok(&w.app, &w.sam.1, ch2.id, json!({ "title": "Gley", "game_id": g2.id })).await;
+    let a = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "title": "Bunny", "game_id": g1.id }),
+    )
+    .await;
+    let b = build_ok(
+        &w.app,
+        &w.sam.1,
+        ch2.id,
+        json!({ "title": "Gley", "game_id": g2.id }),
+    )
+    .await;
     build_ok(&w.app, &w.sam.1, ch2.id, json!({ "title": "No game" })).await;
     let mut got: Vec<_> = search_all(&w.app, &w.sam.1, "?game=the%20first%20descendant")
         .await

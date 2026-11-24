@@ -1110,9 +1110,7 @@ fn deliver_views(
     dropped
         | deliver_where(
             conns,
-            |c| {
-                audience.includes(c.user) && !others.contains(&c.user) && c.client_version >= since
-            },
+            |c| audience.includes(c.user) && !others.contains(&c.user) && c.client_version >= since,
             &ServerFrame::Event(event),
         )
 }

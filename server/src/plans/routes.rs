@@ -78,7 +78,10 @@ fn is_cancelled() -> AppError {
 /// server chat only for the server's members), and not a quotes or clips channel. As polls (#157).
 async fn plan_channel(s: &AppState, me: UserId, id: ChannelId) -> AppResult<Channel> {
     let ch = channel_for(&s.db, me, id).await?;
-    if matches!(ch.kind, ChannelKind::Quotes | ChannelKind::Clips | ChannelKind::Builds) {
+    if matches!(
+        ch.kind,
+        ChannelKind::Quotes | ChannelKind::Clips | ChannelKind::Builds
+    ) {
         return Err(AppError::BadRequest(
             "plans go in text and voice chats, DMs and groups".into(),
         ));

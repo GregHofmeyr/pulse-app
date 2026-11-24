@@ -48,7 +48,13 @@ async fn world() -> World {
 
 impl World {
     async fn build(&self, token: &str, body: serde_json::Value) -> Message {
-        let r = post_json(&self.app, token, &format!("/channels/{}/builds", self.ch), body).await;
+        let r = post_json(
+            &self.app,
+            token,
+            &format!("/channels/{}/builds", self.ch),
+            body,
+        )
+        .await;
         assert_eq!(r.status(), 200);
         r.json().await.unwrap()
     }
@@ -78,7 +84,13 @@ impl World {
     }
 
     async fn bulk(&self, token: &str, body: serde_json::Value) -> reqwest::Response {
-        post_json(&self.app, token, &format!("/channels/{}/builds/archive", self.ch), body).await
+        post_json(
+            &self.app,
+            token,
+            &format!("/channels/{}/builds/archive", self.ch),
+            body,
+        )
+        .await
     }
 
     async fn delete(&self, token: &str, id: MessageId) -> reqwest::Response {
@@ -92,7 +104,12 @@ impl World {
     }
 
     async fn list(&self, query: &str) -> Vec<MessageId> {
-        let v: Vec<Message> = get_json(&self.app, &self.alex.1, &format!("/channels/{}/builds{query}", self.ch)).await;
+        let v: Vec<Message> = get_json(
+            &self.app,
+            &self.alex.1,
+            &format!("/channels/{}/builds{query}", self.ch),
+        )
+        .await;
         v.into_iter().map(|m| m.id).collect()
     }
 
@@ -159,9 +176,17 @@ fn cutoff(days_ago: i64) -> String {
 async fn only_the_author_or_owner_archives() {
     let w = world().await;
     let m = w.build(&w.sam.1, json!({ "title": "Sam's" })).await;
-    assert_eq!(w.archive(&w.kim, m.id, true).await.status(), 404, "an outsider");
+    assert_eq!(
+        w.archive(&w.kim, m.id, true).await.status(),
+        404,
+        "an outsider"
+    );
     let alex_build = w.build(&w.alex.1, json!({ "title": "Alex's" })).await;
-    assert_eq!(w.archive(&w.sam.1, alex_build.id, true).await.status(), 403, "someone else's");
+    assert_eq!(
+        w.archive(&w.sam.1, alex_build.id, true).await.status(),
+        403,
+        "someone else's"
+    );
 
     let mut ws = hello(&w.app, &w.alex.1).await;
     let r = w.archive(&w.sam.1, m.id, true).await;
@@ -183,7 +208,15 @@ async fn only_the_author_or_owner_archives() {
     // the owner archives anyone's
     let r = w.archive(&w.alex.1, m.id, true).await;
     assert_eq!(r.status(), 200);
-    assert_eq!(r.json::<Message>().await.unwrap().build.unwrap().archived_by, Some(w.alex.0));
+    assert_eq!(
+        r.json::<Message>()
+            .await
+            .unwrap()
+            .build
+            .unwrap()
+            .archived_by,
+        Some(w.alex.0)
+    );
 }
 
 #[tokio::test]
@@ -203,7 +236,9 @@ async fn commenting_on_an_archived_build_works() {
     let w = world().await;
     let m = w.build(&w.alex.1, json!({ "title": "Old" })).await;
     assert_eq!(w.archive(&w.alex.1, m.id, true).await.status(), 200);
-    let r = w.comment(&w.sam.1, m.id, "still works after the patch").await;
+    let r = w
+        .comment(&w.sam.1, m.id, "still works after the patch")
+        .await;
     assert_eq!(r.status(), 200);
     let one: Message = get_json(&w.app, &w.sam.1, &format!("/builds/{}", m.id)).await;
     assert_eq!(one.build.unwrap().reply_count, 1);
@@ -214,10 +249,21 @@ async fn bulk_archive_by_game_with_a_cutoff() {
     let w = world().await;
     let tfd = w.game("The First Descendant").await;
     let wf = w.game("Warframe").await;
-    let old1 = w.build(&w.alex.1, json!({ "title": "Old 1", "game_id": tfd.id })).await;
-    let old2 = w.build(&w.sam.1, json!({ "title": "Old 2", "game_id": tfd.id })).await;
-    let fresh = w.build(&w.alex.1, json!({ "title": "Fresh", "game_id": tfd.id })).await;
-    let other = w.build(&w.alex.1, json!({ "title": "Other game", "game_id": wf.id })).await;
+    let old1 = w
+        .build(&w.alex.1, json!({ "title": "Old 1", "game_id": tfd.id }))
+        .await;
+    let old2 = w
+        .build(&w.sam.1, json!({ "title": "Old 2", "game_id": tfd.id }))
+        .await;
+    let fresh = w
+        .build(&w.alex.1, json!({ "title": "Fresh", "game_id": tfd.id }))
+        .await;
+    let other = w
+        .build(
+            &w.alex.1,
+            json!({ "title": "Other game", "game_id": wf.id }),
+        )
+        .await;
     for id in [old1.id, old2.id, other.id] {
         w.age(id, 60).await;
     }
@@ -237,7 +283,11 @@ async fn bulk_archive_by_game_with_a_cutoff() {
     assert_eq!(done.archived, 2);
     assert_eq!(w.list("").await, vec![other.id, fresh.id]);
     let (got, by) = wait_for(&mut ws, "BuildsArchived", |e| match e {
-        Event::BuildsArchived { message_ids, archived_by, .. } => Some((message_ids, archived_by)),
+        Event::BuildsArchived {
+            message_ids,
+            archived_by,
+            ..
+        } => Some((message_ids, archived_by)),
         _ => None,
     })
     .await;
@@ -255,7 +305,9 @@ async fn bulk_archive_by_game_with_a_cutoff() {
 async fn bulk_archive_for_all_games_only_touches_allowed_builds() {
     let w = world().await;
     let g = w.game("Warframe").await;
-    let sams = w.build(&w.sam.1, json!({ "title": "Sam's", "game_id": g.id })).await;
+    let sams = w
+        .build(&w.sam.1, json!({ "title": "Sam's", "game_id": g.id }))
+        .await;
     let alexs = w.build(&w.alex.1, json!({ "title": "Alex's" })).await;
     for id in [sams.id, alexs.id] {
         w.age(id, 100).await;
@@ -263,7 +315,10 @@ async fn bulk_archive_for_all_games_only_touches_allowed_builds() {
     let body = |dry| json!({ "before": cutoff(90), "dry_run": dry });
     let r = w.bulk(&w.sam.1, body(true)).await;
     let dry: BulkArchiveResult = r.json().await.unwrap();
-    assert_eq!(dry.builds.iter().map(|b| b.message_id).collect::<Vec<_>>(), vec![sams.id]);
+    assert_eq!(
+        dry.builds.iter().map(|b| b.message_id).collect::<Vec<_>>(),
+        vec![sams.id]
+    );
     let done: BulkArchiveResult = w.bulk(&w.sam.1, body(false)).await.json().await.unwrap();
     assert_eq!(done.archived, 1);
     assert_eq!(w.list("").await, vec![alexs.id], "alex's is untouched");
@@ -299,14 +354,24 @@ async fn owner_deletes_any_build_with_its_screenshots_and_comments() {
         .send()
         .await
         .unwrap();
-    let m = w.build(&w.sam.1, json!({ "title": "Sam's", "attachments": [up.id] })).await;
+    let m = w
+        .build(
+            &w.sam.1,
+            json!({ "title": "Sam's", "attachments": [up.id] }),
+        )
+        .await;
     let key: String = sqlx::query_scalar("SELECT key FROM attachments WHERE id = ?")
         .bind(up.id.to_string())
         .fetch_one(&w.app.db)
         .await
         .unwrap();
     let object = pulse_server::attachments::object_key(&key, false);
-    let c: Message = w.comment(&w.alex.1, m.id, "nice").await.json().await.unwrap();
+    let c: Message = w
+        .comment(&w.alex.1, m.id, "nice")
+        .await
+        .json()
+        .await
+        .unwrap();
 
     let (_, jo) = register(&w.app, "jo").await;
     assert_eq!(join_server(&w.app, &jo, w.server).await.status(), 200);
@@ -331,14 +396,22 @@ async fn owner_deletes_any_build_with_its_screenshots_and_comments() {
         .await
         .unwrap();
     assert_eq!(rows, 0);
-    let comment_live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE id = ? AND deleted_at IS NULL")
-        .bind(c.id.to_string())
-        .fetch_one(&w.app.db)
-        .await
-        .unwrap();
+    let comment_live: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE id = ? AND deleted_at IS NULL")
+            .bind(c.id.to_string())
+            .fetch_one(&w.app.db)
+            .await
+            .unwrap();
     assert_eq!(comment_live, 0);
     assert!(w.app.s3.as_ref().unwrap().object(&object).is_none());
-    let r = w.app.http.get(w.app.url(&format!("/builds/{}", m.id))).bearer_auth(&w.sam.1).send().await.unwrap();
+    let r = w
+        .app
+        .http
+        .get(w.app.url(&format!("/builds/{}", m.id)))
+        .bearer_auth(&w.sam.1)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 404);
     assert!(w.list("?archived=true").await.is_empty());
 }
@@ -356,17 +429,30 @@ async fn facets_count_games_and_respect_archived() {
     let w = world().await;
     let tfd = w.game("The First Descendant").await;
     let wf = w.game("Warframe").await;
-    w.build(&w.alex.1, json!({ "title": "A", "game_id": tfd.id })).await;
-    let b = w.build(&w.alex.1, json!({ "title": "B", "game_id": tfd.id })).await;
-    w.build(&w.alex.1, json!({ "title": "C", "game_id": wf.id })).await;
+    w.build(&w.alex.1, json!({ "title": "A", "game_id": tfd.id }))
+        .await;
+    let b = w
+        .build(&w.alex.1, json!({ "title": "B", "game_id": tfd.id }))
+        .await;
+    w.build(&w.alex.1, json!({ "title": "C", "game_id": wf.id }))
+        .await;
     w.build(&w.alex.1, json!({ "title": "No game" })).await;
     assert_eq!(w.archive(&w.alex.1, b.id, true).await.status(), 200);
-    let f: BuildFacets = get_json(&w.app, &w.sam.1, &format!("/channels/{}/builds/facets", w.ch)).await;
+    let f: BuildFacets = get_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/channels/{}/builds/facets", w.ch),
+    )
+    .await;
     assert_eq!(f.total, 3);
     let counts: Vec<_> = f.games.iter().map(|g| (g.game_id, g.count)).collect();
     assert_eq!(counts, vec![(tfd.id, 1), (wf.id, 1)]);
-    let f: BuildFacets =
-        get_json(&w.app, &w.sam.1, &format!("/channels/{}/builds/facets?archived=true", w.ch)).await;
+    let f: BuildFacets = get_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/channels/{}/builds/facets?archived=true", w.ch),
+    )
+    .await;
     assert_eq!(f.total, 4);
     let counts: Vec<_> = f.games.iter().map(|g| (g.game_id, g.count)).collect();
     assert_eq!(counts, vec![(tfd.id, 2), (wf.id, 1)]);

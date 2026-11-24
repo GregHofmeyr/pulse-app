@@ -253,6 +253,37 @@ const MATRIX: &[Read] = &[
         Denied,
     ),
     get("GET /clips/{message_id}/url", "/clips/{clip}/url", Denied),
+    // its builds (#616)
+    get_marked(
+        "GET /channels/{id}/builds",
+        "/channels/{builds}/builds",
+        "{build}",
+        Denied,
+    ),
+    get(
+        "GET /channels/{id}/builds/facets",
+        "/channels/{builds}/builds/facets",
+        Denied,
+    ),
+    get_marked(
+        "GET /builds/{message_id}",
+        "/builds/{build}",
+        "{build}",
+        Denied,
+    ),
+    get_marked(
+        "GET /builds/search",
+        "/builds/search?q=raven",
+        "{build}",
+        Denied,
+    ),
+    // a dry run lists what it would archive
+    write(
+        "POST /channels/{id}/builds/archive",
+        "/channels/{builds}/builds/archive",
+        r#"{"before": "{tomorrow}", "dry_run": true}"#,
+        Denied,
+    ),
     // ways in to its calls and streams
     write(
         "POST /voice/{id}/token",
@@ -402,6 +433,10 @@ const WRITES: &[&str] = &[
     "DELETE /clip-uploads/{id}",
     "POST /clip-uploads/{id}/confirm",
     "PUT /clips/{message_id}",
+    "POST /channels/{id}/builds",
+    "DELETE /builds/{message_id}",
+    "PUT /builds/{message_id}",
+    "PUT /builds/{message_id}/archived",
     "POST /dms",
     "DELETE /emoji/{id}",
     "PATCH /emoji/{id}",
@@ -759,6 +794,19 @@ async fn world() -> World {
             .await
             .unwrap_or_else(|e| panic!("{q}: {e}"));
     }
+    // a build (#616)
+    let builds = channel(&app, &alex, server, "builds").await;
+    let build: Message = ok_json(
+        post_json(
+            &app,
+            &alex,
+            &format!("/channels/{}/builds", builds.id),
+            json!({ "title": "Raven crit" }),
+        )
+        .await,
+        "build",
+    )
+    .await;
     // notes to self, to forward into
     let mut notes = HashMap::new();
     for t in [&sam, &jo] {
@@ -781,6 +829,8 @@ async fn world() -> World {
         ("{once}", once.id.to_string()),
         ("{quote}", quote.id.to_string()),
         ("{clip}", clip.to_string()),
+        ("{builds}", builds.id.to_string()),
+        ("{build}", build.id.to_string()),
         ("{alex}", alex_id.to_string()),
         ("{sam}", sam_id.to_string()),
         ("{tomorrow}", tomorrow),

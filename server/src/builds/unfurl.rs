@@ -31,14 +31,25 @@ pub fn spawn_fill(s: &AppState, message_id: MessageId, author: UserId, link: Str
 
 /// What [`spawn_fill`] runs: fetch, then write what came back while the build is live and its link is still `link`.
 /// The fetched title replaces only a title made for the author (`title_auto`); a guessed game only fills an empty one.
-pub async fn fill(s: &AppState, message_id: MessageId, author: UserId, link: String) -> AppResult<()> {
+pub async fn fill(
+    s: &AppState,
+    message_id: MessageId,
+    author: UserId,
+    link: String,
+) -> AppResult<()> {
     let Some(_in_flight) = s.embeds.claim(author) else {
         tracing::debug!(%message_id, "too many unfurls in flight; no build link preview");
         return Ok(());
     };
     let Some(got) = s
         .embeds
-        .unfurl(&s.db, &s.cfg.media_dir, author, &s.limits.link_thumb_user, &link)
+        .unfurl(
+            &s.db,
+            &s.cfg.media_dir,
+            author,
+            &s.limits.link_thumb_user,
+            &link,
+        )
         .await
     else {
         // unreachable, refused or nothing there: the link stays the title
@@ -116,13 +127,20 @@ pub async fn fill(s: &AppState, message_id: MessageId, author: UserId, link: Str
     .execute(&mut *tx)
     .await?;
     let game_name: Option<String> = match &game {
-        Some(g) => sqlx::query_scalar("SELECT name FROM games WHERE id = ?")
-            .bind(g)
-            .fetch_optional(&mut *tx)
-            .await?,
+        Some(g) => {
+            sqlx::query_scalar("SELECT name FROM games WHERE id = ?")
+                .bind(g)
+                .fetch_optional(&mut *tx)
+                .await?
+        }
         None => None,
     };
-    let content = render_content(&title, game_name.as_deref(), got.title.as_deref(), notes.as_deref());
+    let content = render_content(
+        &title,
+        game_name.as_deref(),
+        got.title.as_deref(),
+        notes.as_deref(),
+    );
     sqlx::query("UPDATE messages SET content = ? WHERE id = ?")
         .bind(&content)
         .bind(message_id.to_string())
@@ -130,7 +148,9 @@ pub async fn fill(s: &AppState, message_id: MessageId, author: UserId, link: Str
         .await?;
     tx.commit().await?;
     if let Some(message) = crate::messages::routes::load(&s.db, None, message_id).await? {
-        s.hub.publish(&s.db, Event::MessageUpdated { message }).await;
+        s.hub
+            .publish(&s.db, Event::MessageUpdated { message })
+            .await;
     }
     Ok(())
 }

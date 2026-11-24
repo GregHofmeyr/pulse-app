@@ -64,7 +64,13 @@ async fn setup(auto: bool) -> Env {
 
 impl Env {
     async fn build(&self, body: serde_json::Value) -> Message {
-        let r = post_json(&self.app, &self.token, &format!("/channels/{}/builds", self.ch), body).await;
+        let r = post_json(
+            &self.app,
+            &self.token,
+            &format!("/channels/{}/builds", self.ch),
+            body,
+        )
+        .await;
         assert_eq!(r.status(), 200);
         r.json().await.unwrap()
     }
@@ -91,7 +97,10 @@ impl Env {
     }
 
     fn titled(&self, title: &str) -> String {
-        self.fake.url("site.test", &format!("/titled/{}", title.replace(' ', "%20")))
+        self.fake.url(
+            "site.test",
+            &format!("/titled/{}", title.replace(' ', "%20")),
+        )
     }
 }
 
@@ -127,7 +136,10 @@ async fn a_youtube_link_fills_title_thumb_and_provider() {
     assert_eq!(l.provider_id.as_deref(), Some(YOUTUBE_ID));
     assert_eq!(l.title.as_deref(), Some("A video with a <b>tag</b>"));
     assert!(l.thumb.is_some());
-    assert_eq!(updated.content, "A video with a <b>tag</b>\nA video with a <b>tag</b>");
+    assert_eq!(
+        updated.content,
+        "A video with a <b>tag</b>\nA video with a <b>tag</b>"
+    );
 }
 
 #[tokio::test]
@@ -145,7 +157,9 @@ async fn the_game_is_guessed_from_the_link_title() {
     assert!(b.quick_drop, "a guess isn't a detail the author added");
     // a game the author picked is never replaced
     let picked = env.game("Deadlock").await;
-    let m = env.build(json!({ "link_url": link, "game_id": picked.id })).await;
+    let m = env
+        .build(json!({ "link_url": link, "game_id": picked.id }))
+        .await;
     env.fill(m.id, &link).await;
     let b = env.get(m.id).await.build.unwrap();
     assert_eq!((b.game_id, b.game_guessed), (Some(picked.id), false));
@@ -170,7 +184,8 @@ async fn unfurl_never_overwrites_a_title_the_author_typed() {
     let m = env.build(json!({ "link_url": link })).await;
     let state = env.app.state();
     let (id, alex, l) = (m.id, env.alex, link.clone());
-    let fetch = tokio::spawn(async move { pulse_server::builds::unfurl::fill(&state, id, alex, l).await });
+    let fetch =
+        tokio::spawn(async move { pulse_server::builds::unfurl::fill(&state, id, alex, l).await });
     // the fetch is in flight when alex names it
     for _ in 0..100 {
         if env.fake.requests().iter().any(|r| r.starts_with("/held")) {
@@ -192,7 +207,11 @@ async fn unfurl_never_overwrites_a_title_the_author_typed() {
     fetch.await.unwrap().unwrap();
     let b = env.get(m.id).await.build.unwrap();
     assert_eq!(b.title, "Mine");
-    assert_eq!(b.link.unwrap().title.as_deref(), Some("A page & more"), "the page is still filled in");
+    assert_eq!(
+        b.link.unwrap().title.as_deref(),
+        Some("A page & more"),
+        "the page is still filled in"
+    );
 }
 
 #[tokio::test]
@@ -213,7 +232,15 @@ async fn a_builds_link_thumb_survives_media_cleanup() {
     let link = env.titled("Bunny");
     let m = env.build(json!({ "link_url": link })).await;
     env.fill(m.id, &link).await;
-    let thumb = env.get(m.id).await.build.unwrap().link.unwrap().thumb.unwrap();
+    let thumb = env
+        .get(m.id)
+        .await
+        .build
+        .unwrap()
+        .link
+        .unwrap()
+        .thumb
+        .unwrap();
     // old enough for the cleanup to take, were nothing holding it
     sqlx::query("UPDATE media SET created_at = '2020-01-01T00:00:00.000Z' WHERE hash = ?")
         .bind(&thumb.hash)

@@ -2,10 +2,10 @@
 
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
-use pulse_protocol::rest::UpdateBuildRequest;
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, GameId, MessageId, UserId};
+use pulse_protocol::rest::UpdateBuildRequest;
 use pulse_protocol::rest::{AttachmentKind, Channel, ChannelKind, CreateBuildRequest, Message};
 use serde::Deserialize;
 
@@ -97,8 +97,13 @@ async fn create(
     crate::access::require_open(&ch)?;
     nonce::check(req.nonce.as_deref())?;
     // A retry of a create that already landed gets the same build back (its files belong to it now).
-    if let Some(existing) =
-        nonce::existing(&mut *s.db.acquire().await?, me, channel, req.nonce.as_deref()).await?
+    if let Some(existing) = nonce::existing(
+        &mut *s.db.acquire().await?,
+        me,
+        channel,
+        req.nonce.as_deref(),
+    )
+    .await?
     {
         return replay(&s, me, existing).await;
     }
@@ -275,7 +280,8 @@ async fn list(
         qb.push(" AND b.archived_at IS NULL");
     }
     if let Some(before) = q.before {
-        qb.push(" AND b.message_id < ").push_bind(before.to_string());
+        qb.push(" AND b.message_id < ")
+            .push_bind(before.to_string());
     }
     if let Some(game) = q.game {
         qb.push(" AND b.game_id = ").push_bind(game.to_string());
@@ -283,7 +289,8 @@ async fn list(
     if let Some(fts) = words(q.q.as_deref()) {
         push_match(&mut qb, fts);
     }
-    qb.push(" ORDER BY b.message_id DESC LIMIT ").push_bind(limit);
+    qb.push(" ORDER BY b.message_id DESC LIMIT ")
+        .push_bind(limit);
     let rows: Vec<crate::messages::routes::Row> = qb.build_query_as().fetch_all(&s.db).await?;
     Ok(Json(
         crate::messages::routes::fill(&s.db, Some(me), rows).await?,
@@ -385,7 +392,9 @@ async fn edit(
     tx.commit().await?;
     // Events carry nobody's comment seen point; the answer carries mine.
     if let Some(message) = load(&s.db, None, id).await? {
-        s.hub.publish(&s.db, Event::MessageUpdated { message }).await;
+        s.hub
+            .publish(&s.db, Event::MessageUpdated { message })
+            .await;
     }
     drop(_order);
     crate::attachments::remove_objects(&s, gone).await;

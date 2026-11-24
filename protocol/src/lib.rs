@@ -310,8 +310,8 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
 /// client's copy can't drift from the server's (`just types-check` fails on a stale one).
 pub fn limits_ts() -> String {
     use rest::{
-        bookmark_limits as b, build_limits as u, dm_layout_limits as d, plan_limits as p, poll_limits as o,
-        schedule_limits as s, wheel_limits as w,
+        bookmark_limits as b, build_limits as u, dm_layout_limits as d, plan_limits as p,
+        poll_limits as o, schedule_limits as s, wheel_limits as w,
     };
     let names = serde_json::to_string(&d::RESERVED_NAMES).expect("strings serialise");
     let modules: [(&str, Vec<(&str, String)>); 7] = [
