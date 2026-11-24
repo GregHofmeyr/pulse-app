@@ -285,6 +285,24 @@ async fn builds_fx() -> (Fx, ChannelId, Message) {
     (f, builds.id, build)
 }
 
+/// The Threads list as a current client asks for it (builds channels are left out for an older one, #616).
+async fn threads_now(f: &Fx, token: &str) -> InboxThreads {
+    f.app
+        .http
+        .get(f.app.url("/inbox/threads"))
+        .bearer_auth(token)
+        .header(
+            pulse_protocol::PROTOCOL_HEADER,
+            pulse_protocol::PROTOCOL_VERSION.to_string(),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
 async fn comment(f: &Fx, token: &str, channel: ChannelId, root: MessageId, text: &str) -> Message {
     let r = post_json(
         &f.app,
@@ -302,15 +320,15 @@ async fn a_comment_on_a_build_reaches_its_author_and_earlier_commenters() {
     let (f, ch, build) = builds_fx().await;
     let has = |t: &InboxThreads| t.threads.iter().any(|th| th.root.message_id == build.id);
     comment(&f, &f.sam, ch, build.id, "try the other module").await;
-    assert!(has(&f.threads(&f.alex).await), "the author sees it");
+    assert!(has(&threads_now(&f, &f.alex).await), "the author sees it");
     comment(&f, &f.kim, ch, build.id, "agreed").await;
-    assert!(has(&f.threads(&f.alex).await));
+    assert!(has(&threads_now(&f, &f.alex).await));
     assert!(
-        has(&f.threads(&f.sam).await),
+        has(&threads_now(&f, &f.sam).await),
         "an earlier commenter sees the next one"
     );
     assert!(
-        !has(&f.threads(&f.jo).await),
+        !has(&threads_now(&f, &f.jo).await),
         "someone who never took part doesn't"
     );
 }
@@ -319,7 +337,7 @@ async fn a_comment_on_a_build_reaches_its_author_and_earlier_commenters() {
 async fn your_own_comment_doesnt_notify_you() {
     let (f, ch, build) = builds_fx().await;
     comment(&f, &f.sam, ch, build.id, "mine").await;
-    let t = f.threads(&f.sam).await;
+    let t = threads_now(&f, &f.sam).await;
     assert!(t.watching.contains(&build.id), "sam takes part now");
     assert!(!t.threads.iter().any(|th| th.root.message_id == build.id));
 }

@@ -85,7 +85,6 @@ pub(crate) async fn server_live_in(tx: &mut sqlx::SqliteConnection, id: ServerId
     hit.map(|_| ()).ok_or(AppError::NotFound)
 }
 
-/// Whether `user` is in `server`. Nobody is in a deleted server (#184).
 /// Whether `me` owns `server` (made it): the owner-only actions check this (#616: archiving, restoring and deleting
 /// anyone's build).
 pub(crate) async fn is_owner_in(
@@ -100,6 +99,7 @@ pub(crate) async fn is_owner_in(
     Ok(owner.as_deref() == Some(me.to_string().as_str()))
 }
 
+/// Whether `user` is in `server`. Nobody is in a deleted server (#184).
 pub async fn is_server_member(db: &SqlitePool, server: ServerId, user: UserId) -> AppResult<bool> {
     let hit: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM server_members m JOIN servers s ON s.id = m.server_id AND s.deleted_at IS NULL

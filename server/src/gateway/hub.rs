@@ -14,6 +14,7 @@
 //!    client checks an arriving item against what it already knows.
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -505,6 +506,12 @@ impl Hub {
     /// Send inbox event `event` to its owner's connections that have had their Ready count, if `slot` (held by
     /// the caller) is still theirs: after a disconnect and reconnect it isn't, and the new Ready supersedes it.
     pub(crate) fn send_inbox(&self, slot: &InboxSlot, event: Event) {
+        self.send_inbox_since(slot, event, 0)
+    }
+
+    /// [`Hub::send_inbox`] to the devices whose client speaks protocol `since` or later (#616: an inbox item in a
+    /// builds channel never reaches an older client).
+    pub(crate) fn send_inbox_since(&self, slot: &InboxSlot, event: Event, since: u32) {
         let Some(owner) = event.only_for() else {
             return;
         };
@@ -521,7 +528,7 @@ impl Hub {
         }
         if deliver_where(
             &mut conns,
-            |c| c.user == owner && c.inbox,
+            |c| c.user == owner && c.inbox && c.client_version >= since,
             &ServerFrame::Event(event),
         ) {
             self.prune_inbox(&conns);
@@ -634,7 +641,7 @@ impl Hub {
         let mut out = Vec::with_capacity(events.len());
         for event in events {
             match route(db, &event).await {
-                Ok((a, since)) => {
+                Ok(routed) => {
                     // a member's `User` reaches the people they've blocked emptied (#508)
                     let views = match crate::blocks::member_views(db, &event).await {
                         Ok(v) => v,
@@ -643,17 +650,17 @@ impl Hub {
                             continue;
                         }
                     };
-                    out.push((a, since, event, views))
+                    out.push((routed, event, views))
                 }
                 Err(e) => tracing::error!(error = ?e, "audience_for failed; event dropped"),
             }
         }
-        let jobs = crate::inbox::follow_ups(self, out.iter().map(|(_, _, e, _)| e));
+        let jobs = crate::inbox::follow_ups(self, out.iter().map(|(_, e, _)| e));
         {
             let mut conns = self.inner.conns.lock().unwrap();
             let mut dropped = false;
-            for (audience, since, event, views) in out {
-                dropped |= deliver_views(&mut conns, &audience, since, event, views);
+            for (routed, event, views) in out {
+                dropped |= deliver_routed(&mut conns, routed, event, views);
             }
             if dropped {
                 self.prune_inbox(&conns);
@@ -745,17 +752,17 @@ impl Hub {
     /// Like [`Hub::publish`], but only to the members of `only` who are also in the event's
     /// audience, so a narrower list (people in a call) can never widen who may see it.
     pub async fn publish_to(&self, db: &SqlitePool, event: Event, only: &HashSet<UserId>) {
-        let (audience, since) = match route(db, &event).await {
+        let mut routed = match route(db, &event).await {
             Ok(a) => a,
             Err(e) => {
                 tracing::error!(error = ?e, "audience_for failed; event dropped");
                 return;
             }
         };
-        let allowed = Audience::Users(
+        routed.audience = Audience::Users(
             only.iter()
                 .copied()
-                .filter(|u| audience.includes(*u))
+                .filter(|u| routed.audience.includes(*u))
                 .collect(),
         );
         // a member's `User` reaches the people they've blocked emptied (#508)
@@ -767,7 +774,7 @@ impl Hub {
             }
         };
         let mut conns = self.inner.conns.lock().unwrap();
-        if deliver_views(&mut conns, &allowed, since, event, views) {
+        if deliver_routed(&mut conns, routed, event, views) {
             self.prune_inbox(&conns);
         }
     }
@@ -1077,28 +1084,57 @@ fn send_each(conns: &mut HashMap<ConnId, Conn>, frames: &HashMap<ConnId, ServerF
 fn deliver(
     conns: &mut HashMap<ConnId, Conn>,
     audience: &super::audience::Audience,
-    since: u32,
+    versions: &Range<u32>,
     frame: &ServerFrame,
 ) -> bool {
     deliver_where(
         conns,
-        |c| audience.includes(c.user) && c.client_version >= since,
+        |c| audience.includes(c.user) && versions.contains(&c.client_version),
         frame,
     )
 }
 
-/// Queue `event` for every connection in `audience` whose client speaks protocol `since` or later, the people in
+/// Deliver a routed event (`audience::route`): to the clients new enough for it, and its copy without builds channels
+/// to the older ones when it has one (#616).
+fn deliver_routed(
+    conns: &mut HashMap<ConnId, Conn>,
+    routed: super::audience::Routed,
+    event: Event,
+    views: Vec<(UserId, Event)>,
+) -> bool {
+    let builds = crate::builds::compat::BUILDS_SINCE;
+    match routed.old {
+        Some(old) => {
+            deliver_views(
+                conns,
+                &routed.audience,
+                &(routed.since.max(builds)..u32::MAX),
+                event,
+                views,
+            ) | deliver_views(conns, &routed.audience, &(0..builds), old, vec![])
+        }
+        None => deliver_views(
+            conns,
+            &routed.audience,
+            &(routed.since..u32::MAX),
+            event,
+            views,
+        ),
+    }
+}
+
+/// Queue `event` for every connection in `audience` whose client speaks a protocol in `versions`, the people in
 /// `views` getting their own copy instead (#508, [`crate::blocks::member_views`]); drop connections that can't keep up
 /// (true when any was).
 fn deliver_views(
     conns: &mut HashMap<ConnId, Conn>,
     audience: &super::audience::Audience,
-    since: u32,
+    versions: &Range<u32>,
     event: Event,
     views: Vec<(UserId, Event)>,
 ) -> bool {
     if views.is_empty() {
-        return deliver(conns, audience, since, &ServerFrame::Event(event));
+        return deliver(conns, audience, versions, &ServerFrame::Event(event));
     }
     let mut dropped = false;
     let others: HashSet<UserId> = views.iter().map(|(u, _)| *u).collect();
@@ -1106,7 +1142,7 @@ fn deliver_views(
         if audience.includes(viewer) {
             dropped |= deliver_where(
                 conns,
-                |c| c.user == viewer && c.client_version >= since,
+                |c| c.user == viewer && versions.contains(&c.client_version),
                 &ServerFrame::Event(copy),
             );
         }
@@ -1114,7 +1150,11 @@ fn deliver_views(
     dropped
         | deliver_where(
             conns,
-            |c| audience.includes(c.user) && !others.contains(&c.user) && c.client_version >= since,
+            |c| {
+                audience.includes(c.user)
+                    && !others.contains(&c.user)
+                    && versions.contains(&c.client_version)
+            },
             &ServerFrame::Event(event),
         )
 }
