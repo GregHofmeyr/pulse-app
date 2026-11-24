@@ -47,7 +47,7 @@
     <div class="settings-field"><span class="settings-label">BITRATE</span>
       <Select label="Bitrate" bind:value options={bitrateChoices} onchange={save} />
     </div>
-    <p class="hint">Higher sounds better, music especially, but uses more data for everyone in the call.</p>
+    <p class="hint">Higher keeps more detail in voices, but uses more data for everyone in the call.</p>
     {#if error}<p class="err" role="alert">{error}</p>{/if}
     <div class="actions">
       <button type="button" class="btn btn-lg btn-primary" onclick={onClose}>Done</button>

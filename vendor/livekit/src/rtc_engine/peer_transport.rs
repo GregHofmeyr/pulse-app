@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::{
+    collections::HashSet,
     fmt::{Debug, Formatter},
     sync::{
         atomic::{AtomicU32, Ordering},
@@ -47,6 +48,10 @@ struct TransportInner {
     // hint is written once per peer connection; see `compute_start_bitrate_kbps`.
     start_bitrate_applied: bool,
     pending_initial_offer: Option<SessionDescription>,
+    // Pulse patch: ids of the local audio tracks fed by a 1-channel source. Their send
+    // m-sections are offered without `stereo=1`, so libwebrtc builds a mono Opus encoder in
+    // its voice (`kVoip`) mode for them; see `munge_stereo_for_audio`.
+    mono_audio_tracks: HashSet<String>,
 }
 
 pub struct PeerTransport {
@@ -88,6 +93,7 @@ impl PeerTransport {
                 connection_setup_time: None,
                 start_bitrate_applied: false,
                 pending_initial_offer: None,
+                mono_audio_tracks: HashSet::new(),
             })),
             connected_generation: AtomicU32::new(0),
             disconnect_generation: AtomicU32::new(0),
@@ -263,6 +269,12 @@ impl PeerTransport {
         inner.max_send_bitrate_is_screen_share = is_screen_share;
     }
 
+    /// Pulse patch: marks the local audio track `track_id` as mono (its source has one
+    /// channel), so the offers that follow carry no `stereo=1` on its send m-section.
+    pub async fn set_audio_track_mono(&self, track_id: String) {
+        self.inner.lock().await.mono_audio_tracks.insert(track_id);
+    }
+
     /// Maximum x-google-start-bitrate (kbps).
     /// 1 Mbps is a reasonable ceiling that prevents BWE from starting too aggressively.
     const MAX_START_BITRATE_KBPS: u32 = 1000;
@@ -386,7 +398,14 @@ impl PeerTransport {
     /// As per the doc: "In single peer connection mode, the receiver sends the offer,
     /// hence does not know if the sender will send stereo. Therefore, stereo=1 is not set
     /// in the offer. Always set stereo=1 in the offer - This method works."
-    fn munge_stereo_for_audio(sdp: &str) -> String {
+    ///
+    /// Pulse patch: except on the send m-section of a track in `mono_tracks` (found by its
+    /// `a=msid:<stream> <track id>` line). The SFU's answer to a track's first offer echoes the
+    /// offer's `stereo=1` (before it has matched the m-section to the track), and libwebrtc
+    /// builds a stereo Opus encoder in general-audio (`kAudio`) mode for any send codec with
+    /// it; without it a 1-channel source gets a mono encoder in voice (`kVoip`) mode.
+    /// Receive m-sections and stereo sources keep `stereo=1` as before.
+    fn munge_stereo_for_audio(sdp: &str, mono_tracks: &HashSet<String>) -> String {
         // Detect what line ending the original SDP uses
         let uses_crlf = sdp.contains("\r\n");
         let eol = if uses_crlf { "\r\n" } else { "\n" };
@@ -414,20 +433,41 @@ impl PeerTransport {
             return sdp.to_string();
         }
 
+        // Which m-sections (by index; 0 is the session part) send a mono track
+        let mut mono_sections: HashSet<usize> = HashSet::new();
+        let mut section = 0usize;
+        for line in &lines {
+            let l = line.trim();
+            if l.starts_with("m=") {
+                section += 1;
+            } else if let Some(msid) = l.strip_prefix("a=msid:") {
+                let track_id = msid.split_whitespace().nth(1).unwrap_or("");
+                if mono_tracks.contains(track_id) {
+                    mono_sections.insert(section);
+                }
+            }
+        }
+
         // Rewrite fmtp lines to add stereo=1 if not present
         let mut out: Vec<String> = Vec::with_capacity(lines.len());
+        let mut section = 0usize;
         for line in lines {
+            if line.trim().starts_with("m=") {
+                section += 1;
+            }
             let mut rewritten = line.to_string();
 
-            for pt in &opus_pts {
-                let prefix = format!("a=fmtp:{pt} ");
-                if rewritten.starts_with(&prefix) {
-                    // Check if stereo= already exists
-                    if !rewritten.contains("stereo=") {
-                        // Append stereo=1
-                        rewritten.push_str(";stereo=1");
+            if !mono_sections.contains(&section) {
+                for pt in &opus_pts {
+                    let prefix = format!("a=fmtp:{pt} ");
+                    if rewritten.starts_with(&prefix) {
+                        // Check if stereo= already exists
+                        if !rewritten.contains("stereo=") {
+                            // Append stereo=1
+                            rewritten.push_str(";stereo=1");
+                        }
+                        break;
                     }
-                    break;
                 }
             }
 
@@ -599,7 +639,7 @@ impl PeerTransport {
             }
 
             // Apply stereo munging for single PC mode
-            let stereo_munged = Self::munge_stereo_for_audio(&sdp);
+            let stereo_munged = Self::munge_stereo_for_audio(&sdp, &inner.mono_audio_tracks);
             if stereo_munged != sdp {
                 match SessionDescription::parse(&stereo_munged, offer.sdp_type()) {
                     Ok(parsed) => {
@@ -680,7 +720,7 @@ impl PeerTransport {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{collections::HashSet, time::Duration};
 
     use super::PeerTransport;
 
@@ -1188,10 +1228,48 @@ a=rtpmap:111 opus/48000/2\n\
 a=rtpmap:0 PCMU/8000\n\
 a=fmtp:111 minptime=10;useinbandfec=1\n\
 a=fmtp:0 foo=bar\n";
-        let out = PeerTransport::munge_stereo_for_audio(sdp);
+        let out = PeerTransport::munge_stereo_for_audio(sdp, &HashSet::new());
         assert!(out.contains("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\n"));
         assert!(out.contains("a=fmtp:0 foo=bar\n"));
         assert_eq!(out.matches("stereo=1").count(), 1);
+    }
+
+    /// Pulse patch: a mono track's send m-section gets no stereo=1; a stereo track's send
+    /// section and the receive sections still do.
+    #[test]
+    fn stereo_is_left_off_a_mono_tracks_send_section() {
+        let sdp = "v=0\r\n\
+o=- 0 0 IN IP4 127.0.0.1\r\n\
+s=-\r\n\
+t=0 0\r\n\
+m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+a=mid:0\r\n\
+a=sendonly\r\n\
+a=msid:- mic-track\r\n\
+a=rtpmap:111 opus/48000/2\r\n\
+a=fmtp:111 minptime=10;useinbandfec=1\r\n\
+m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+a=mid:1\r\n\
+a=sendonly\r\n\
+a=msid:- game-track\r\n\
+a=rtpmap:111 opus/48000/2\r\n\
+a=fmtp:111 minptime=10;useinbandfec=1\r\n\
+m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+a=mid:2\r\n\
+a=recvonly\r\n\
+a=rtpmap:111 opus/48000/2\r\n\
+a=fmtp:111 minptime=10;useinbandfec=1\r\n";
+        let mono: HashSet<String> = ["mic-track".to_string()].into_iter().collect();
+        let out = PeerTransport::munge_stereo_for_audio(sdp, &mono);
+        let sections: Vec<&str> = out.split("m=audio").collect();
+        assert_eq!(sections.len(), 4);
+        assert!(sections[1].contains("a=fmtp:111 minptime=10;useinbandfec=1\r\n"));
+        assert!(!sections[1].contains("stereo="));
+        assert!(sections[2].contains("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n"));
+        assert!(sections[3].contains("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n"));
+        // with no mono tracks, every section gets it, as upstream does
+        let all = PeerTransport::munge_stereo_for_audio(sdp, &HashSet::new());
+        assert_eq!(all.matches(";stereo=1").count(), 3);
     }
 
     #[test]
@@ -1203,7 +1281,7 @@ t=0 0\n\
 m=audio 9 UDP/TLS/RTP/SAVPF 111\n\
 a=rtpmap:111 opus/48000/2\n\
 a=fmtp:111 minptime=10;stereo=1\n";
-        let out = PeerTransport::munge_stereo_for_audio(sdp);
+        let out = PeerTransport::munge_stereo_for_audio(sdp, &HashSet::new());
         assert_eq!(out.matches("stereo=1").count(), 1);
     }
 }
