@@ -11,6 +11,7 @@ vi.mock('../lib/stream/room', () => ({ StreamRoom: { connect: async () => null, 
 import LiveCard from './LiveCard.svelte'
 import { stream } from '../lib/stream/stream.svelte'
 import type { SoundStatus } from '../lib/stream/sound'
+import { reloadSelfPreview } from '../lib/stream/selfTile.svelte'
 
 const live = (audio = true) => ({ channelId: 'V1', res: 720 as const, fps: 60 as const, audio, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true, sound: 'app' as const })
 const status = (s: Partial<SoundStatus>): SoundStatus => ({ tier: 'app', app: 'Firefox', heard: false, ms: 1000, ...s })
@@ -89,5 +90,37 @@ describe('LiveCard sound', () => {
     stream.sound = status({ ms: 30_000, tier: 'everything', app: null })
     flushSync()
     expect(note()).toBeNull()
+  })
+})
+
+// In a DM or group call's band the card stays: hiding takes only the video (the grid's tile goes whole, #603).
+describe('LiveCard hide preview in the call band', () => {
+  beforeEach(() => {
+    globalThis.MediaStream ??= class {} as never
+    invoke.mockReset()
+    invoke.mockResolvedValue(undefined)
+    document.body.innerHTML = ''
+    localStorage.clear()
+    reloadSelfPreview()
+  })
+  afterEach(() => {
+    if (c) unmount(c)
+    c = null
+    stream.live = null
+  })
+
+  it('hides_only_the_video_and_keeps_the_card', () => {
+    stream.live = live(false)
+    open()
+    const hide = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Hide preview')!
+    hide.click()
+    flushSync()
+    expect(document.querySelector('.card')).not.toBeNull()
+    expect(document.querySelector('video')).toBeNull()
+    expect(stream.live).not.toBeNull()
+    expect(invoke.mock.calls.some(([cmd]) => cmd === 'stream_stop')).toBe(false)
+    ;[...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Show preview')!.click()
+    flushSync()
+    expect(document.querySelector('video')).not.toBeNull()
   })
 })

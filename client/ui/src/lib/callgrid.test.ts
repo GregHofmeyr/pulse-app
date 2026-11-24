@@ -45,6 +45,12 @@ describe('my own live state', () => {
     const t = gridTiles({ roster: [sam], streams: {}, meId: 'alex', showEveryone: false, myLive: true })
     expect(label(t)).toEqual(['stream alex'])
   })
+  it('a_hidden_own_tile_is_left_out_and_others_stay', () => {
+    const listed = gridTiles({ roster: [alex, sam], streams: { alex: info('alex'), sam: info('sam') }, meId: 'alex', showEveryone: true, myLive: true, hideMine: true })
+    expect(label(listed)).toEqual(['user alex', 'user sam', 'stream sam'])
+    const early = gridTiles({ roster: [sam], streams: {}, meId: 'alex', showEveryone: false, myLive: true, hideMine: true })
+    expect(label(early)).toEqual([])
+  })
 })
 
 describe('nobodyStreaming', () => {

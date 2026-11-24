@@ -4,10 +4,10 @@ import type { RosterEntry } from './selectors'
 
 export type Tile = { kind: 'user'; entry: RosterEntry } | { kind: 'stream'; streamer: string; mine: boolean }
 
-/** `myLive`: you are live here by your own state, which shows before the server's list does. Each stream tile follows its streamer's user tile; a stream whose streamer isn't listed goes last. `showEveryone: false` keeps the stream tiles only. */
-export function gridTiles(a: { roster: RosterEntry[]; streams: Record<string, StreamInfo>; meId: string; showEveryone: boolean; myLive?: boolean }): Tile[] {
+/** `myLive`: you are live here by your own state, which shows before the server's list does. Each stream tile follows its streamer's user tile; a stream whose streamer isn't listed goes last. `showEveryone: false` keeps the stream tiles only. `hideMine`: you've hidden your own stream's tile (#603), so it's left out. */
+export function gridTiles(a: { roster: RosterEntry[]; streams: Record<string, StreamInfo>; meId: string; showEveryone: boolean; myLive?: boolean; hideMine?: boolean }): Tile[] {
   const stream = (streamer: string): Tile => ({ kind: 'stream', streamer, mine: streamer === a.meId })
-  const live = (id: string) => !!a.streams[id] || (!!a.myLive && id === a.meId)
+  const live = (id: string) => !(a.hideMine && id === a.meId) && (!!a.streams[id] || (!!a.myLive && id === a.meId))
   const tiles: Tile[] = []
   const placed = new Set<string>()
   for (const entry of a.roster) {
@@ -18,7 +18,7 @@ export function gridTiles(a: { roster: RosterEntry[]; streams: Record<string, St
     }
   }
   const rest = a.myLive && !a.streams[a.meId] ? [...Object.keys(a.streams), a.meId] : Object.keys(a.streams)
-  for (const streamer of rest) if (!placed.has(streamer)) tiles.push(stream(streamer))
+  for (const streamer of rest) if (!placed.has(streamer) && live(streamer)) tiles.push(stream(streamer))
   return tiles
 }
 

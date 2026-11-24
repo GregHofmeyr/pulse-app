@@ -2,7 +2,7 @@
   import StreamDiagOverlay from './StreamDiagOverlay.svelte'
   import { app } from '../lib/store.svelte'
   import { liveIn, displayName } from '../lib/selectors'
-  import { loadHidePreview, saveHidePreview } from '../lib/stream/prefs'
+  import { selfPreview, setSelfPreviewHidden } from '../lib/stream/selfTile.svelte'
   import { liveMediaTrack, stream, streamApi } from '../lib/stream/stream.svelte'
   import { ghostCount } from '../lib/stream/viewer'
   import { LAST_RESORT_TIP, showNoSoundYet, soundLabel } from '../lib/stream/sound'
@@ -18,7 +18,8 @@
   const ghosts = $derived(ghostCount(mine?.ghosts))
   const sound = $derived(live ? soundLabel(live.audio, stream.sound) : '')
   const noSoundYet = $derived(!!live?.audio && showNoSoundYet(stream.sound))
-  let hidden = $state(loadHidePreview())
+  // in the grid (`tile`) hiding takes the whole tile away, so a tile only ever shows with its preview (#603)
+  const hidden = $derived(!tile && selfPreview.hidden)
   let video = $state<HTMLVideoElement>()
 
   $effect(() => {
@@ -32,10 +33,7 @@
     }
   })
 
-  const toggleHidden = () => {
-    hidden = !hidden
-    saveHidePreview(hidden)
-  }
+  const toggleHidden = () => setSelfPreviewHidden(!hidden)
 </script>
 
 {#if live}
@@ -46,7 +44,7 @@
       {#if live.reconnecting}<span class="pill" role="status" data-tip="The connection dropped: your share goes out again as soon as it's back">Reconnecting…</span>{/if}
       <span class="meta">{live.res}p{live.fps}{#if sound}{' · '}<span data-tip={stream.sound?.tier === 'lastResort' && live.audio ? LAST_RESORT_TIP : undefined}>{sound}</span>{/if}</span>
       <span class="spacer"></span>
-      <button type="button" class="btn btn-secondary ghost" onclick={toggleHidden}>{hidden ? 'Show preview' : 'Hide preview'}</button>
+      <button type="button" class="btn btn-secondary ghost" data-tip={tile ? 'Take your stream off your grid. It keeps going for everyone watching' : undefined} onclick={toggleHidden}>{hidden ? 'Show preview' : 'Hide preview'}</button>
     </div>
     {#if !hidden}
       <div class="preview">
