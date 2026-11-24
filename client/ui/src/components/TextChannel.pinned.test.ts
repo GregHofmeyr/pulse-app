@@ -20,6 +20,7 @@ const msg = (n: number): Message => ({
 })
 const ROW = 100
 const LIST = 1000
+const JUMP_GROWS = 11
 const grown = new Map<string, number>()
 const tops = new WeakMap<Element, number>()
 const isList = (el: Element) => el.classList.contains('list')
@@ -59,7 +60,8 @@ describe('TextChannel: stays at the bottom as messages grow', () => {
       disconnect() { this.o.els.clear(); observers.delete(this.o) }
     })
     fake(Element.prototype, 'scrollHeight', { get(this: Element) { return isList(this) ? rows(this).reduce((s, r) => s + rowHeight(r), 0) : 0 } })
-    fake(Element.prototype, 'clientHeight', { get(this: Element) { return isList(this) ? LIST : 0 } })
+    // the Jump button overlaps the list's bottom by more than its height, so the list is a little taller while it shows
+    fake(Element.prototype, 'clientHeight', { get(this: Element) { return isList(this) ? LIST + (document.querySelector('.jump') ? JUMP_GROWS : 0) : 0 } })
     fake(Element.prototype, 'scrollTop', {
       get(this: Element) { return tops.get(this) ?? 0 },
       set(this: Element, v: number) { tops.set(this, Math.max(0, Math.min(v, this.scrollHeight - this.clientHeight))) },
@@ -170,5 +172,60 @@ describe('TextChannel: stays at the bottom as messages grow', () => {
     grown.set('M0020', 240)
     frame()
     expect(list().scrollTop).toBe(bottom())
+  })
+
+  // #613: scrolling up snapped back to the bottom. A smooth wheel moves the view a few px a frame; in a browser the
+  // view's own reaction to leaving the bottom (state, the Jump button) is drawn between the scroll listeners and before
+  // the resize observers, so this frame flushes there. The observers run only when a size changed, as in a browser.
+  let sizes = ''
+  function smoothFrame() {
+    if (list().scrollTop !== lastTop) list().dispatchEvent(new Event('scroll'))
+    lastTop = list().scrollTop
+    flushSync()
+    const now = `${list().clientHeight}/${list().scrollHeight}`
+    if (now !== sizes) for (const o of [...observers]) if (o.els.size) o.cb([], o.self)
+    sizes = now
+  }
+  async function scrollUpSmoothly(px: number) {
+    sizes = `${list().clientHeight}/${list().scrollHeight}`
+    for (let up = 0; up < px; up += 8) {
+      list().scrollTop -= 8
+      smoothFrame()
+      await tick()
+      flushSync()
+    }
+  }
+
+  it('scrolling up past the threshold is not pulled back down by a state change (leaving the bottom is one)', async () => {
+    await show()
+    const start = bottom()
+    await scrollUpSmoothly(80)
+    expect(list().scrollTop).toBe(start - 80)
+    // anything else that lands meanwhile (typing, presence): still where the user put it
+    app.state = { ...app.state }
+    flushSync()
+    await tick()
+    flushSync()
+    expect(list().scrollTop).toBe(start - 80)
+  })
+
+  it('with unread below, the Jump button showing as you leave the bottom does not pull you back', async () => {
+    app.state = { ...app.state, reads: { ...app.state.reads, C1: { channel_id: 'C1', last_read_message_id: 'M0015', unread: 5, mentions: 0 } } }
+    await show()
+    const start = bottom()
+    await scrollUpSmoothly(80)
+    expect(document.querySelector('.jump')).not.toBeNull()
+    expect(list().scrollTop).toBe(start - 80)
+  })
+
+  it('a new message from someone else while scrolled up a little leaves the view where it is', async () => {
+    await show()
+    await scrollUpSmoothly(80)
+    const at = list().scrollTop
+    app.state = loadLatest(app.state, 'C1', Array.from({ length: 21 }, (_, i) => msg(i + 1)))
+    flushSync()
+    await tick()
+    smoothFrame()
+    expect(list().scrollTop).toBe(at)
   })
 })

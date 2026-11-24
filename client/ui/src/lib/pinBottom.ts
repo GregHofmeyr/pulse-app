@@ -9,24 +9,36 @@
  * added below). A scroll event is dispatched before resize observers run in a frame, so a jump made in the same task
  * as some growth is seen first. The scroll event of its own move back to the bottom comes a frame later, maybe after
  * more growth, so that one is passed over rather than measured. Without ResizeObserver it does nothing.
+ *
+ * Scrolling up never pins (#613, `followsBottom`): what the view does as it leaves the bottom (a Jump button showing
+ * makes the list taller) can bring the bottom back within the threshold, and re-pinning on that pulled the view down
+ * again, a frame at a time, so a chat couldn't be scrolled up. `onScroll` hands the caller the same answer, measured
+ * once per scroll event, so the view's "at the bottom" and this never disagree.
  */
-export function pinToBottom(list: HTMLElement, opts: { on: () => boolean; threshold?: number }) {
+export function pinToBottom(list: HTMLElement, opts: { on: () => boolean; threshold?: number; onScroll?: (pinned: boolean) => void }) {
   const threshold = opts.threshold ?? 40
   // A fresh list opens at the bottom (and nothing is read now: no synchronous layout on a channel switch, #173).
   let pinned = true
   let ownTop: number | null = null
+  let lastTop: number | null = null
+  const below = () => list.scrollHeight - list.scrollTop - list.clientHeight
   const mark = () => {
     ownTop = null
-    pinned = list.scrollHeight - list.scrollTop - list.clientHeight < threshold
+    lastTop = list.scrollTop
+    pinned = below() < threshold
   }
   const onScroll = () => {
-    if (ownTop !== null && list.scrollTop === ownTop) return void (ownTop = null) // our own move's echo
-    mark()
+    const top = list.scrollTop
+    if (ownTop !== null && top === ownTop) ownTop = null // our own move's echo: still pinned
+    else pinned = followsBottom(pinned, lastTop === null ? null : top - lastTop, below(), threshold)
+    lastTop = top
+    opts.onScroll?.(pinned)
   }
   list.addEventListener('scroll', onScroll, { passive: true })
-  if (typeof ResizeObserver !== 'function') return { mark, destroy: () => list.removeEventListener('scroll', onScroll) }
+  const pinnedNow = () => pinned
+  if (typeof ResizeObserver !== 'function') return { mark, pinned: pinnedNow, destroy: () => list.removeEventListener('scroll', onScroll) }
   const ro = new ResizeObserver(() => {
-    if (!pinned || !opts.on() || list.scrollHeight - list.scrollTop - list.clientHeight <= 0) return
+    if (!pinned || !opts.on() || below() <= 0) return
     list.scrollTop = list.scrollHeight
     ownTop = list.scrollTop
   })
@@ -42,10 +54,25 @@ export function pinToBottom(list: HTMLElement, opts: { on: () => boolean; thresh
   return {
     /** Measures now whether the view is at the bottom: call it after adding below the view on purpose. */
     mark,
+    /** Whether the view follows the bottom (as of the last scroll event, or `mark`). */
+    pinned: pinnedNow,
     destroy() {
       list.removeEventListener('scroll', onScroll)
       ro.disconnect()
       mo.disconnect()
     },
   }
+}
+
+/** Whether a scrolled list follows its bottom after a scroll event (#613): `was` the answer before, `moved` how far the
+ *  view moved since the last one (null: the first), `below` how far it is from the bottom now. At the very bottom it
+ *  does (the list may have got shorter under it). Moving up it never starts to: it stays only if it was and is still
+ *  within `threshold`, whatever a layout change did to `below` meanwhile. Moving down it does once within `threshold`.
+ *  Not moving, as it was. */
+export function followsBottom(was: boolean, moved: number | null, below: number, threshold: number): boolean {
+  if (below <= 1) return true // sub-pixel slack: scrollTop is fractional at a display scale
+  if (moved === null) return below < threshold
+  if (moved < 0) return was && below < threshold
+  if (moved > 0) return below < threshold
+  return was
 }

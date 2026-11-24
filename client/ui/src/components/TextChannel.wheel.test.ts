@@ -203,6 +203,7 @@ describe('your spin comes into view', () => {
     Object.defineProperty(list, 'scrollHeight', { configurable: true, get: () => 2000 })
     Object.defineProperty(list, 'clientHeight', { configurable: true, get: () => 500 })
     list.scrollTop = 0
+    list.dispatchEvent(new Event('scroll')) // as a browser fires for the move
     scrolls = []
     return list
   }

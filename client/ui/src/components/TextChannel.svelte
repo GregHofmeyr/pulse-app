@@ -234,15 +234,19 @@
     if (panel && untrack(takeChatFocus)) focusOnClick()
   })
 
-  // stick to the bottom when new messages arrive and we were already near it
+  // stick to the bottom when new messages arrive and we were already at it. Only on a count changing (the filtered
+  // `pending` is a new array on every state change: typing, presence, leaving the bottom itself, #613), and only if the
+  // view follows the bottom (`atBottom`, from the last scroll event), not by a fresh measure: scrolled up a little is
+  // scrolled up.
+  const pendingCount = $derived(pending.length)
+  const quietCount = $derived(quiet.length)
   $effect(() => {
     void messages.length
-    void pending.length
-    void quiet.length
+    void pendingCount
+    void quietCount
     // A detached window's bottom isn't the latest, and a page added below one stays below the view.
-    if (!list || loadingNewer || untrack(() => detached)) return
-    const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 120
-    if (nearBottom) tick().then(() => list?.scrollTo({ top: list.scrollHeight })) // gone if we unmounted meanwhile
+    if (!list || loadingNewer || untrack(() => detached || !atBottom)) return
+    tick().then(() => list?.scrollTo({ top: list.scrollHeight })) // gone if we unmounted meanwhile
   })
 
   // ...and stay there as messages grow after they're drawn (#292): a link's card unfurling later, images loading,
@@ -251,7 +255,7 @@
   let pin: ReturnType<typeof pinToBottom> | undefined
   $effect(() => {
     if (!list) return
-    const p = (pin = pinToBottom(list, { on: () => !detached && !loadingNewer }))
+    const p = (pin = pinToBottom(list, { on: () => !detached && !loadingNewer, onScroll }))
     return () => p.destroy()
   })
 
@@ -428,9 +432,11 @@
       if (markTimer) clearTimeout(markTimer)
     }
   })
-  function onScroll() {
+  /** Each scroll event, with whether the view follows the bottom (pinToBottom's answer, #613: one measure, so a
+   *  layout change as the view leaves the bottom can't flip it back). */
+  function onScroll(pinned: boolean) {
     const below = list.scrollHeight - list.scrollTop - list.clientHeight
-    atBottom = below < 40
+    atBottom = pinned
     farUp = below > list.clientHeight
     void maybeLoadOlder()
     if (atBottom) void maybeLoadNewer()
@@ -935,7 +941,7 @@
   <!-- the F1 countdown (#386), only in the server's F1 channel -->
   {#if serverId && !isPrivate}<F1Banner {serverId} {channelId} {nameOf} />{/if}
   <!-- tabindex -1: a place to put the focus back when nothing better is left (not a tab stop) -->
-  <div class="list" tabindex="-1" bind:this={list} onscroll={onScroll}>
+  <div class="list" tabindex="-1" bind:this={list}>
     {#if reachedStart && !from}<div class="start">
       {#if notes}This is the start of your notes. Only you can see them: jot things down, keep links and files.
       {:else if channel?.kind === 'dm'}This is the start of your conversation with {title}.
