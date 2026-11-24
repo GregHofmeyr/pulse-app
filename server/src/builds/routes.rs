@@ -74,6 +74,21 @@ pub(crate) async fn claim_shots(
     if ids.is_empty() {
         return Ok(vec![]);
     }
+    // A screenshot is kept with its build: never a file that expires or vanishes once seen.
+    let mut q = sqlx::QueryBuilder::new("SELECT COUNT(*) FROM attachments WHERE user_id = ");
+    q.push_bind(me.to_string())
+        .push(" AND (expires_at IS NOT NULL OR view_once = 1) AND id IN (");
+    let mut list = q.separated(", ");
+    for id in ids {
+        list.push_bind(id.to_string());
+    }
+    q.push(")");
+    let fleeting: i64 = q.build_query_scalar().fetch_one(&s.db).await?;
+    if fleeting > 0 {
+        return Err(bad(
+            "Screenshots are kept with the build: not a temporary or view-once file.",
+        ));
+    }
     let claimed = crate::attachments::claim(s, me, channel, ids).await?;
     if claimed.iter().any(|a| a.kind != AttachmentKind::Image) {
         return Err(bad("Screenshots must be images."));

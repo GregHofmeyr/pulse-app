@@ -411,22 +411,10 @@ pub async fn bind(
 ) -> AppResult<()> {
     let now = jiff::Timestamp::now();
     for (position, id) in ids.iter().enumerate() {
-        let times: Option<(Option<String>, String)> =
-            sqlx::query_as("SELECT expires_at, created_at FROM attachments WHERE id = ?")
-                .bind(id.to_string())
-                .fetch_optional(&mut *tx)
-                .await?;
-        if let Some((Some(expires), created)) = times {
-            let parse = |t: &str| crate::times::parse(t).map_err(anyhow::Error::from);
-            let moved = crate::db::stamp(now + (parse(&expires)? - parse(&created)?));
-            sqlx::query("UPDATE attachments SET expires_at = ? WHERE id = ?")
-                .bind(&moved)
-                .bind(id.to_string())
-                .execute(&mut *tx)
-                .await?;
-            if let Some(a) = atts.get_mut(position) {
-                a.expires_at = Some(moved);
-            }
+        if let Some(moved) = move_expiry(tx, *id, now).await?
+            && let Some(a) = atts.get_mut(position)
+        {
+            a.expires_at = Some(moved);
         }
         let done = sqlx::query(
             "UPDATE attachments SET message_id = ?, position = ?
@@ -446,6 +434,31 @@ pub async fn bind(
     Ok(())
 }
 
+/// A temporary file being tied to a message counts its days from `now`: its expiry moves by how long it waited. The
+/// new expiry, for a temporary file.
+async fn move_expiry(
+    tx: &mut SqliteConnection,
+    id: AttachmentId,
+    now: jiff::Timestamp,
+) -> AppResult<Option<String>> {
+    let times: Option<(Option<String>, String)> =
+        sqlx::query_as("SELECT expires_at, created_at FROM attachments WHERE id = ?")
+            .bind(id.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((Some(expires), created)) = times else {
+        return Ok(None);
+    };
+    let parse = |t: &str| crate::times::parse(t).map_err(anyhow::Error::from);
+    let moved = crate::db::stamp(now + (parse(&expires)? - parse(&created)?));
+    sqlx::query("UPDATE attachments SET expires_at = ? WHERE id = ?")
+        .bind(&moved)
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    Ok(Some(moved))
+}
+
 /// Inside an edit's transaction (a build's screenshots, #616): `message`'s files become `ordered`, in that order.
 /// `new` (claimed beforehand, all in `ordered`) are tied to it; the ones it had that aren't in `ordered` are let go:
 /// untied from it and its channel, so the sweep takes any [`remove_objects`] can't, and returned for that after the
@@ -457,8 +470,11 @@ pub async fn set_message_files(
     ordered: &[AttachmentId],
     new: &[AttachmentId],
 ) -> AppResult<Vec<Stored>> {
+    let now = jiff::Timestamp::now();
     for (position, id) in ordered.iter().enumerate() {
         let done = if new.contains(id) {
+            // as `bind`: a temporary file's days count from now
+            move_expiry(tx, *id, now).await?;
             sqlx::query(
                 "UPDATE attachments SET message_id = ?, position = ?
                  WHERE id = ? AND user_id = ? AND message_id IS NULL",

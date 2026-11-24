@@ -1721,3 +1721,103 @@ async fn rest_lists_leave_builds_out_for_older_clients() {
         );
     }
 }
+
+/// A screenshot is kept with its build: a temporary file (it would expire) or a view-once one (it would vanish once
+/// seen) isn't one, at a create or an edit.
+#[tokio::test]
+async fn temporary_and_view_once_files_arent_screenshots() {
+    let w = world().await;
+    let start = |extra: serde_json::Value| {
+        let app = &w.app;
+        let token = w.alex.1.clone();
+        let ch = w.ch.id;
+        async move {
+            let bytes = webp(64);
+            let mut body =
+                json!({ "name": "s.webp", "size": bytes.len(), "content_type": "image/webp" });
+            for (k, v) in extra.as_object().unwrap() {
+                body[k] = v.clone();
+            }
+            let r = post_json(app, &token, &format!("/channels/{ch}/attachments"), body).await;
+            assert_eq!(r.status(), 200, "start");
+            let up: pulse_protocol::rest::AttachmentUpload = r.json().await.unwrap();
+            reqwest::Client::new()
+                .put(up.url.clone().unwrap())
+                .header("content-type", &up.content_type)
+                .body(bytes)
+                .send()
+                .await
+                .unwrap();
+            up.id
+        }
+    };
+    // a temporary file (only big ones are, uploaded in parts: marked so here)
+    let temp = start(json!({})).await;
+    sqlx::query("UPDATE attachments SET expires_at = ? WHERE id = ?")
+        .bind(pulse_server::times::rfc3339(
+            jiff::Timestamp::now() + pulse_server::times::days(1),
+        ))
+        .bind(temp.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    let once = start(json!({ "view_once": true })).await;
+    for a in [temp, once] {
+        let r = post_build(
+            &w.app,
+            &w.alex.1,
+            w.ch.id,
+            json!({ "title": "x", "attachments": [a] }),
+        )
+        .await;
+        assert_eq!(r.status(), 400);
+        assert_eq!(
+            message_of(r).await,
+            "Screenshots are kept with the build: not a temporary or view-once file."
+        );
+    }
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "x" })).await;
+    let r = put_build(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "x", "attachments": [temp] }),
+    )
+    .await;
+    assert_eq!(r.status(), 400);
+}
+
+/// A temporary file tied to a message by an edit counts its days from then, as one tied by a send does
+/// (`attachments::bind`).
+#[tokio::test]
+async fn files_set_by_an_edit_count_their_days_from_then() {
+    let w = world().await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "x" })).await;
+    let a = shot(&w.app, &w.alex.1, w.ch.id).await;
+    let hour_ago =
+        pulse_server::db::stamp(jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1));
+    let day_after = pulse_server::db::stamp(
+        jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1) + pulse_server::times::days(1),
+    );
+    sqlx::query("UPDATE attachments SET created_at = ?, expires_at = ? WHERE id = ?")
+        .bind(&hour_ago)
+        .bind(&day_after)
+        .bind(a.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    let mut tx = w.app.db.begin().await.unwrap();
+    pulse_server::attachments::set_message_files(&mut tx, w.alex.0, m.id, &[a], &[a])
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let expires: String = sqlx::query_scalar("SELECT expires_at FROM attachments WHERE id = ?")
+        .bind(a.to_string())
+        .fetch_one(&w.app.db)
+        .await
+        .unwrap();
+    assert!(
+        expires > day_after,
+        "moved by the hour it waited: {expires} vs {day_after}"
+    );
+}
