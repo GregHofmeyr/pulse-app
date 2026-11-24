@@ -24,6 +24,7 @@ use crate::messages::routes::load;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/channels/{id}/builds", post(create).get(list))
+        .route("/builds/search", get(search))
         .route(
             "/builds/{message_id}",
             get(get_one).put(edit).delete(super::archive::remove),
@@ -231,6 +232,23 @@ struct ListQuery {
     game: Option<GameId>,
     #[serde(default)]
     archived: bool,
+    /// Words to find in a build's title, game, link title or notes.
+    q: Option<String>,
+}
+
+/// The search index's query for `q`'s words (`None`: no words, nothing to narrow by).
+fn words(q: Option<&str>) -> Option<String> {
+    crate::search::text::fts_query(&crate::search::text::terms(q?))
+}
+
+/// Narrows `qb` (over `builds b`) to builds whose message matches `fts` in the search index.
+fn push_match(qb: &mut sqlx::QueryBuilder<sqlx::Sqlite>, fts: String) {
+    qb.push(
+        " AND b.message_id IN (SELECT d.message_id FROM search_docs d
+           WHERE d.doc IN (SELECT rowid FROM message_search WHERE message_search MATCH ",
+    )
+    .push_bind(fts)
+    .push("))");
 }
 
 /// `GET /channels/{id}/builds`: a page of a builds channel's live builds, newest first by when they were saved (an
@@ -261,6 +279,9 @@ async fn list(
     }
     if let Some(game) = q.game {
         qb.push(" AND b.game_id = ").push_bind(game.to_string());
+    }
+    if let Some(fts) = words(q.q.as_deref()) {
+        push_match(&mut qb, fts);
     }
     qb.push(" ORDER BY b.message_id DESC LIMIT ").push_bind(limit);
     let rows: Vec<crate::messages::routes::Row> = qb.build_query_as().fetch_all(&s.db).await?;
@@ -373,4 +394,66 @@ async fn edit(
     }
     let msg = load(&s.db, Some(me), id).await?.ok_or(AppError::NotFound)?;
     Ok(Json(msg))
+}
+
+/// The most builds one search answers.
+pub const SEARCH_MAX: u32 = 20;
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: Option<String>,
+    /// A game's normalised name (`games.name_key`): one name across servers.
+    game: Option<String>,
+    limit: Option<u32>,
+}
+
+/// `GET /builds/search`: builds in every builds channel the caller can read whose title, game, link title or notes
+/// have the words, of one game (by name, across servers) when asked: current ones first, then archived ones, each
+/// newest first. Neither words nor a game: nothing.
+async fn search(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Query(q): Query<SearchQuery>,
+) -> AppResult<Json<Vec<Message>>> {
+    if !s.limits.search_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    let fts = words(q.q.as_deref());
+    let game = q
+        .game
+        .as_deref()
+        .map(crate::quotes::name_key)
+        .filter(|g| !g.is_empty());
+    if fts.is_none() && game.is_none() {
+        return Ok(Json(vec![]));
+    }
+    let limit = q.limit.unwrap_or(SEARCH_MAX).clamp(1, SEARCH_MAX);
+    let cols = crate::messages::routes::COLS
+        .split(", ")
+        .map(|c| format!("m.{c}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    // the channels `me` can read: builds channels of the live servers they're in
+    let mut qb = sqlx::QueryBuilder::new(format!(
+        "SELECT {cols} FROM builds b
+         JOIN messages m ON m.id = b.message_id AND m.deleted_at IS NULL
+         JOIN channels c ON c.id = b.channel_id AND c.deleted_at IS NULL AND c.kind = 'builds'
+         WHERE c.server_id NOT IN {} AND c.server_id IN (SELECT server_id FROM server_members WHERE user_id = ",
+        crate::access::DELETED_SERVERS
+    ));
+    qb.push_bind(me.to_string()).push(")");
+    if let Some(game) = game {
+        qb.push(" AND b.game_id IN (SELECT id FROM games WHERE name_key = ")
+            .push_bind(game)
+            .push(")");
+    }
+    if let Some(fts) = fts {
+        push_match(&mut qb, fts);
+    }
+    qb.push(" ORDER BY b.archived_at IS NOT NULL, b.message_id DESC LIMIT ")
+        .push_bind(limit);
+    let rows: Vec<crate::messages::routes::Row> = qb.build_query_as().fetch_all(&s.db).await?;
+    Ok(Json(
+        crate::messages::routes::fill(&s.db, Some(me), rows).await?,
+    ))
 }

@@ -1030,3 +1030,107 @@ async fn builds_refuse_the_message_edit_and_delete_routes() {
     assert_eq!(r.status(), 400);
     assert_eq!(message_of(r).await, "builds are deleted with their own route");
 }
+
+// ---- Search (Task 6) ----
+
+async fn search_all(app: &TestApp, token: &str, query: &str) -> Vec<Message> {
+    get_json(app, token, &format!("/builds/search{query}")).await
+}
+
+#[tokio::test]
+async fn channel_search_finds_title_notes_game_and_link_title() {
+    let w = world().await;
+    let g = add_game(&w.app, &w.alex.1, w.server, "Borderlands").await;
+    let t = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
+    let n = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Moxxi", "notes": "slag every corrosive target" })).await;
+    let gm = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Zane", "game_id": g.id })).await;
+    let l = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "link_url": "https://example.com/p" })).await;
+    // as the link's fetched page fills it in
+    sqlx::query("UPDATE builds SET link_title = 'Wynncraft archer planner' WHERE message_id = ?")
+        .bind(l.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE messages SET content = 'example.com/p\nWynncraft archer planner' WHERE id = ?")
+        .bind(l.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    for (q, want) in [("raven", t.id), ("corrosive", n.id), ("borderlands", gm.id), ("wynncraft", l.id)] {
+        let got: Vec<_> = list(&w.app, &w.sam.1, w.ch.id, &format!("?q={q}")).await.into_iter().map(|m| m.id).collect();
+        assert_eq!(got, vec![want], "{q}");
+    }
+    // a comment that says it isn't a build that does
+    post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/channels/{}/messages", w.ch.id),
+        json!({ "content": "raven raven raven", "thread_root_id": n.id }),
+    )
+    .await;
+    let got: Vec<_> = list(&w.app, &w.sam.1, w.ch.id, "?q=raven").await.into_iter().map(|m| m.id).collect();
+    assert_eq!(got, vec![t.id]);
+}
+
+#[tokio::test]
+async fn search_everywhere_lists_current_before_archived() {
+    let w = world().await;
+    let old = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven old" })).await;
+    let a = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven one" })).await;
+    let b = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven two" })).await;
+    sqlx::query("UPDATE builds SET archived_at = '2026-01-01T00:00:00.000Z', archived_by = ? WHERE message_id = ?")
+        .bind(w.alex.0.to_string())
+        .bind(b.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    let got: Vec<_> = search_all(&w.app, &w.sam.1, "?q=raven").await.into_iter().map(|m| m.id).collect();
+    assert_eq!(got, vec![a.id, old.id, b.id]);
+    let got = search_all(&w.app, &w.sam.1, "?q=raven&limit=1").await;
+    assert_eq!(got.len(), 1);
+}
+
+#[tokio::test]
+async fn search_everywhere_filters_by_game_key_across_servers() {
+    let w = world().await;
+    let g1 = add_game(&w.app, &w.alex.1, w.server, "The First Descendant").await;
+    let other = create_server(&w.app, &w.sam.1, "Other").await;
+    let ch2 = create_builds(&w.app, &w.sam.1, other.id).await;
+    let g2 = add_game(&w.app, &w.sam.1, other.id, "the  first descendant").await;
+    let a = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Bunny", "game_id": g1.id })).await;
+    let b = build_ok(&w.app, &w.sam.1, ch2.id, json!({ "title": "Gley", "game_id": g2.id })).await;
+    build_ok(&w.app, &w.sam.1, ch2.id, json!({ "title": "No game" })).await;
+    let mut got: Vec<_> = search_all(&w.app, &w.sam.1, "?game=the%20first%20descendant")
+        .await
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
+    got.sort();
+    let mut want = vec![a.id, b.id];
+    want.sort();
+    assert_eq!(got, want);
+    let got: Vec<_> = search_all(&w.app, &w.sam.1, "?game=the%20first%20descendant&q=gley")
+        .await
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
+    assert_eq!(got, vec![b.id]);
+}
+
+#[tokio::test]
+async fn search_never_shows_another_servers_builds() {
+    let w = world().await;
+    build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
+    let (_, kim) = register(&w.app, "kim").await;
+    assert!(search_all(&w.app, &kim, "?q=raven").await.is_empty());
+    // nor a channel's to someone outside it
+    let r = w
+        .app
+        .http
+        .get(w.app.url(&format!("/channels/{}/builds?q=raven", w.ch.id)))
+        .bearer_auth(&kim)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+}
