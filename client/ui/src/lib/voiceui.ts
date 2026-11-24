@@ -312,10 +312,13 @@ export type AudioConfig = {
   auto_gain: boolean
   /** #355 (3): level each remote voice towards one loudness (the core's leveller); on by default. */
   even_out_voices: boolean
+  /** #590: the mic's tone stage after noise suppression (low-cut, low-mid trim, presence); on by default. */
+  voice_clarity_eq: boolean
 }
 export const defaultAudioConfig: AudioConfig = {
   input: null, output: null, input_gain_pct: 100, sensitivity: 0.02, echo_mode: 'auto',
   noise_suppression: 'strong', auto_sensitivity: true, auto_gain: false, even_out_voices: true,
+  voice_clarity_eq: true,
 }
 /** Settings saved before levels existed carried `noise_suppress: boolean`; before #76, `echo_cancel: boolean` (off by
  *  hand stays Off, the old default on becomes Auto). */
@@ -328,6 +331,19 @@ export function migrateAudioConfig(raw: Record<string, unknown>): AudioConfig {
   if (raw.echo_mode === undefined && echo_cancel === false) c.echo_mode = 'off'
   return c
 }
+/** An audio device as the core lists it. `processed_by` (inputs only, #588): a virtual mic that already runs its own
+ *  noise suppression (SteelSeries Sonar, NVIDIA Broadcast, Krisp…), named for the person. */
+export type AudioDevice = { name: string; is_default: boolean; processed_by?: string }
+
+/** #588: the one-line hint under noise suppression when the mic in use already cleans up its sound and Strong would
+ *  suppress on top of that. Only a suggestion: the level is never changed for them. */
+export function processedMicHint(inputs: AudioDevice[], input: string | null, level: NsLevel): string | null {
+  if (level !== 'strong' && level !== 'strong_low_delay') return null
+  const dev = input === null ? inputs.find((d) => d.is_default) : inputs.find((d) => d.name === input)
+  if (!dev?.processed_by) return null
+  return `Your mic already cleans up its sound (${dev.processed_by}). Standard noise suppression may sound more natural.`
+}
+
 export const loadAudioConfig = () => migrateAudioConfig(load<Record<string, unknown>>('pulse.audio', {}))
 export const saveAudioConfig = (c: AudioConfig) => save('pulse.audio', c)
 

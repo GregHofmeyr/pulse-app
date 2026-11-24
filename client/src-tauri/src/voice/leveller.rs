@@ -60,9 +60,10 @@ const SHELF: [f64; 5] = [
 ];
 const HIGH_PASS: [f64; 5] = [1.0, -2.0, 1.0, -1.990_047_454_833_98, 0.990_072_250_366_21];
 
-/// One biquad, direct form I (f64 state: the high-pass's poles sit very close to 1).
+/// One biquad, direct form I (f64 state: the high-pass's poles sit very close to 1). Also the mic's tone stage
+/// (`tone`, #590).
 #[derive(Clone, Copy, Default)]
-struct Biquad {
+pub(super) struct Biquad {
     x1: f64,
     x2: f64,
     y1: f64,
@@ -70,13 +71,31 @@ struct Biquad {
 }
 
 impl Biquad {
-    fn run(&mut self, c: &[f64; 5], x: f64) -> f64 {
+    /// One sample through coefficients `c` = (b0, b1, b2, a1, a2), normalised so a0 = 1.
+    pub(super) fn run(&mut self, c: &[f64; 5], x: f64) -> f64 {
         let y = c[0] * x + c[1] * self.x1 + c[2] * self.x2 - c[3] * self.y1 - c[4] * self.y2;
         self.x2 = self.x1;
         self.x1 = x;
         self.y2 = self.y1;
         self.y1 = y;
         y
+    }
+
+    /// Zero state that has decayed to nothing, so a filter left ringing into silence never reaches denormals (slow on
+    /// x86). Far below anything audible (an i16 step is 3e-5).
+    /// The state (x1, x2, y1, y2), for tests.
+    #[cfg(test)]
+    pub(super) fn state(&self) -> [f64; 4] {
+        [self.x1, self.x2, self.y1, self.y2]
+    }
+
+    pub(super) fn flush_tiny(&mut self) {
+        const TINY: f64 = 1e-20;
+        for v in [&mut self.x1, &mut self.x2, &mut self.y1, &mut self.y2] {
+            if v.abs() < TINY {
+                *v = 0.0;
+            }
+        }
     }
 }
 
