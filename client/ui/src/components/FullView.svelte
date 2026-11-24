@@ -322,7 +322,7 @@
   .side-chat:global(.leaving) { position: absolute; top: 0; right: 0; bottom: 0; z-index: 1; pointer-events: none; }
   .stage { position: relative; flex: 1; min-height: 0; }
   .host { position: absolute; inset: 0; }
-  .unfocus { position: absolute; inset: 0; cursor: zoom-out; }
+  .unfocus { position: absolute; inset: 0; cursor: default; }
   .screen .unfocus { cursor: default; }
   .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .5); color: #fff; font-size: 18px; font-weight: 600; pointer-events: none; }

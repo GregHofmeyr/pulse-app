@@ -102,7 +102,7 @@
   .meta { color: var(--text-3); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .note { font-size: 13px; color: var(--text-2); }
   .preview { position: relative; }
-  .open { cursor: zoom-in; border-radius: var(--radius-md); }
+  .open { cursor: default; border-radius: var(--radius-md); }
   .open:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .tile .open { position: absolute; inset: 0; border-radius: 0; }
   .tile .open:focus-visible { outline-offset: -2px; }

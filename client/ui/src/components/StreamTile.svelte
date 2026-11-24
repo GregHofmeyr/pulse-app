@@ -138,7 +138,7 @@
   .who { font-weight: 600; }
   .reason { margin: 0; font-size: 12px; color: var(--text-2); text-align: center; padding: 0 12px; }
   .watching { background: #000; }
-  .host { position: absolute; inset: 0; cursor: zoom-in; }
+  .host { position: absolute; inset: 0; cursor: default; }
   .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .5); color: #fff; font-size: 16px; font-weight: 600; pointer-events: none; }
   .name-tag { position: absolute; left: 10px; bottom: 8px; padding: 2px 8px; border-radius: var(--radius-xs); background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; transition: opacity var(--dur-fast) var(--ease); }
