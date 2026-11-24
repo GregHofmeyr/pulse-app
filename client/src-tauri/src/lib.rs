@@ -3,6 +3,7 @@ pub mod api;
 pub mod attachments;
 pub mod backoff;
 pub mod bindmatch;
+pub mod builds;
 pub mod clips;
 pub mod commands;
 pub mod embed_window;
@@ -697,6 +698,13 @@ pub fn run() {
             commands::set_fullscreen,
             commands::list_clips,
             commands::clip_facets,
+            builds::list_builds,
+            builds::get_build,
+            builds::build_facets,
+            builds::set_build_archived,
+            builds::bulk_archive_builds,
+            builds::delete_build,
+            builds::search_builds,
             commands::set_clip_view,
             commands::clip_storage,
             commands::clip_support,

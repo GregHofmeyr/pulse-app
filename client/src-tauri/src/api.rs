@@ -334,12 +334,20 @@ fn friendly_wrong_code<T>(r: Result<T, ApiError>) -> Result<T, ApiError> {
 #[derive(Clone)]
 pub struct Api {
     base: String,
-    http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
 }
 
 impl Api {
     pub fn new(base: &str) -> Self {
+        // every request says which protocol it speaks: without it the server answers as it would an older client
+        // (no builds channels in channel lists, #617)
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            pulse_protocol::PROTOCOL_HEADER,
+            reqwest::header::HeaderValue::from(pulse_protocol::PROTOCOL_VERSION),
+        );
         let http = reqwest::Client::builder()
+            .default_headers(headers)
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(15))
             .pool_idle_timeout(POOL_IDLE)
@@ -3612,14 +3620,16 @@ impl Api {
         Self::checked(resp).await
     }
 
-    async fn clip_parse<T: DeserializeOwned>(
+    pub(crate) async fn clip_parse<T: DeserializeOwned>(
         r: Result<reqwest::Response, reqwest::Error>,
     ) -> Result<T, ApiError> {
         Self::read_json(Self::clip_checked(r).await?).await
     }
 
     /// For clip endpoints that answer 204.
-    async fn clip_ok_empty(r: Result<reqwest::Response, reqwest::Error>) -> Result<(), ApiError> {
+    pub(crate) async fn clip_ok_empty(
+        r: Result<reqwest::Response, reqwest::Error>,
+    ) -> Result<(), ApiError> {
         Self::clip_checked(r).await.map(|_| ())
     }
 
@@ -4373,7 +4383,7 @@ impl Api {
     /// `base/seg/seg…`, each segment percent-encoded on its own (an emoji or id can't add a `/`).
     /// A `.` or `..` segment is refused: the URL parser would drop it (or the one before it) and
     /// send the request somewhere else.
-    fn url(&self, segments: &[&str]) -> Result<reqwest::Url, ApiError> {
+    pub(crate) fn url(&self, segments: &[&str]) -> Result<reqwest::Url, ApiError> {
         if segments.iter().any(|s| matches!(*s, "." | "..")) {
             return Err(ApiError::Rejected("that name can't be used here".into()));
         }
@@ -4450,6 +4460,36 @@ mod tests {
             }
         });
         (base, conns)
+    }
+
+    /// Every request says which protocol this client speaks: without it the server answers as it would an older
+    /// client and leaves builds channels out of channel lists (#617).
+    #[tokio::test]
+    async fn every_request_says_its_protocol() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut buf = vec![0u8; 8192];
+            let n = s.read(&mut buf).await.unwrap();
+            let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_lowercase());
+            let _ = s
+                .write_all(b"HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n")
+                .await;
+        });
+        Api::new(&format!("http://{addr}"))
+            .logout("t")
+            .await
+            .unwrap();
+        let head = rx.await.unwrap();
+        let want = format!(
+            "{}: {}\r\n",
+            pulse_protocol::PROTOCOL_HEADER,
+            pulse_protocol::PROTOCOL_VERSION
+        );
+        assert!(head.contains(&want), "{head}");
     }
 
     #[tokio::test]

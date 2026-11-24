@@ -20,6 +20,9 @@ import type { CropRect } from './crop'
 import type { ReportUi } from './report'
 import type { Server } from './protocol/Server'
 import type { Channel } from './protocol/Channel'
+import type { BuildFacets } from './protocol/BuildFacets'
+import type { BulkArchiveRequest } from './protocol/BulkArchiveRequest'
+import type { BulkArchiveResult } from './protocol/BulkArchiveResult'
 import type { Category } from './protocol/Category'
 import type { SaveLayoutRequest } from './protocol/SaveLayoutRequest'
 import type { CreatePlanRequest } from './protocol/CreatePlanRequest'
@@ -654,6 +657,29 @@ export const api = {
     invoke<Message[]>('list_clips', { channelId, before: before ?? null, game: game ?? null, author: author ?? null }),
   clipFacets: (channelId: string) => invoke<ClipFacets>('clip_facets', { channelId }),
   setClipView: (channelId: string, view: ClipView) => invoke<void>('set_clip_view', { channelId, view }),
+  /** A page of a builds channel's builds (30), newest first by when saved; `before` pages back (#617). */
+  listBuilds: (
+    channelId: string,
+    f: { game?: string; archived?: boolean; q?: string } = {},
+    before?: string,
+  ) =>
+    invoke<Message[]>('list_builds', {
+      channelId,
+      game: f.game ?? null,
+      archived: f.archived ?? false,
+      q: f.q ?? null,
+      before: before ?? null,
+    }),
+  getBuild: (messageId: string) => invoke<Message>('get_build', { messageId }),
+  buildFacets: (channelId: string, archived = false) => invoke<BuildFacets>('build_facets', { channelId, archived }),
+  setBuildArchived: (messageId: string, archived: boolean) =>
+    invoke<Message>('set_build_archived', { messageId, archived }),
+  /** `dry_run` lists what it would archive without archiving. */
+  bulkArchiveBuilds: (channelId: string, body: BulkArchiveRequest) =>
+    invoke<BulkArchiveResult>('bulk_archive_builds', { channelId, body }),
+  deleteBuild: (messageId: string) => invoke<void>('delete_build', { messageId }),
+  /** Builds across every builds channel you can read; `game` is a game's normalised name. */
+  searchBuilds: (q: string, game?: string) => invoke<Message[]>('search_builds', { q, game: game ?? null }),
   clipStorage: (serverId: string) => invoke<ClipStorage>('clip_storage', { serverId }),
   /** Whether this install can send clips (Windows, ffmpeg bundled); `reason` says why not. */
   clipSupport: () => invoke<ClipSupport>('clip_support'),

@@ -113,3 +113,14 @@ describe('profile pictures', () => {
     expect(invoke).toHaveBeenCalledWith('update_profile', { request })
   })
 })
+
+describe('builds', () => {
+  it('listBuilds sends every filter, absent ones as null', async () => {
+    await api.listBuilds('C1', { game: 'G1', archived: true, q: 'raven' }, 'M9')
+    await api.listBuilds('C1')
+    expect(invoke.mock.calls).toEqual([
+      ['list_builds', { channelId: 'C1', game: 'G1', archived: true, q: 'raven', before: 'M9' }],
+      ['list_builds', { channelId: 'C1', game: null, archived: false, q: null, before: null }],
+    ])
+  })
+})
