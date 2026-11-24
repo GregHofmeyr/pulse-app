@@ -1808,7 +1808,7 @@ impl VoiceManager {
                         if !tick.log {
                             return;
                         }
-                        // which codec our mic is sent with (stereo? FEC/DTX?), once per change
+                        // which codec our mic is sent with (mono: no stereo=1; FEC/DTX?), once per change
                         if let Some(c) = netstats::send_codec(&s.publisher_stats)
                             && last_codec.as_ref() != Some(&c)
                         {
@@ -2560,19 +2560,23 @@ async fn follow_permission(room: &Room, track: LocalAudioTrack, mic: &MicOut, kb
 }
 
 /// The mic's bitrate when its channel sets none (Default, #75). The SDK's own default is 48 kbps;
-/// Discord defaults to 64 kbps.
+/// Discord defaults to 64 kbps. The mic is mono Opus in voice mode (#587), so all of it goes to one
+/// channel: fullband speech, and RED's copy makes it ~120 on the wire.
 pub const DEFAULT_MIC_BPS: u64 = 64_000;
-/// Opus' ceiling (libwebrtc's `kOpusMaxBitrateBps`).
-pub const MAX_MIC_BPS: u64 = 510_000;
+/// The most a channel's bitrate gives the mic (#587). Mono Opus is transparent for speech well
+/// below this; more only costs everyone's data (RED doubles it). A channel set to 192 or 256 kbps
+/// (presets from when the mic was stereo) sends this.
+pub const MAX_MIC_BPS: u64 = 128_000;
 
 /// The mic's cap for a channel bitrate in kbps (0 = Default). Never below Default, never past
-/// Opus' ceiling, whatever a server sends.
+/// [`MAX_MIC_BPS`], whatever a server sends.
 pub fn mic_bps(kbps: u32) -> u64 {
     (u64::from(kbps) * 1000).clamp(DEFAULT_MIC_BPS, MAX_MIC_BPS)
 }
 
 /// How the mic is sent, at its channel's bitrate (`kbps`, 0 = Default, #75).
-/// DTX makes silence ~free and RED (redundant audio) hides packet loss.
+/// DTX makes silence ~free and RED (redundant audio) hides packet loss. Mono comes from the
+/// track's 1-channel source (vendor/livekit offers no `stereo=1` for it, #587), not from here.
 /// Also used by tests/neteq_probe.rs, so the probe sends exactly like the app.
 pub fn mic_publish_options(kbps: u32) -> TrackPublishOptions {
     TrackPublishOptions {
@@ -3865,14 +3869,24 @@ mod tests {
     /// A channel's bitrate (#75) is the mic's cap; everything else about the mic stays.
     #[test]
     fn a_channel_bitrate_is_the_mics_cap() {
-        let o = mic_publish_options(256);
-        assert_eq!(o.audio_encoding.map(|e| e.max_bitrate), Some(256_000));
+        let o = mic_publish_options(96);
+        assert_eq!(o.audio_encoding.map(|e| e.max_bitrate), Some(96_000));
         assert!(o.dtx && o.red);
-        // Default (0) is today's 64 kbps; whatever a server sends stays inside 64..=510
+        // Default (0) is 64 kbps; whatever a server sends stays inside 64..=128 (mono voice, #587)
         assert_eq!(mic_bps(0), 64_000);
         assert_eq!(mic_bps(32), 64_000);
-        assert_eq!(mic_bps(510), 510_000);
-        assert_eq!(mic_bps(9_999), 510_000);
+        assert_eq!(mic_bps(128), 128_000);
+    }
+
+    /// Channels set to 192 or 256 kbps when the mic was stereo send mono voice's top (#587).
+    #[test]
+    fn the_old_stereo_presets_send_mono_voices_top() {
+        assert_eq!(mic_bps(192), 128_000);
+        assert_eq!(mic_bps(256), 128_000);
+        assert_eq!(mic_bps(510), 128_000);
+        assert_eq!(mic_bps(u32::MAX), 128_000);
+        let o = mic_publish_options(256);
+        assert_eq!(o.audio_encoding.map(|e| e.max_bitrate), Some(128_000));
     }
 
     /// Outside a call the bitrate is only kept, for the next join there (and rejoins) to read.

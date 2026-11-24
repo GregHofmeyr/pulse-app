@@ -204,10 +204,19 @@ pub fn summarize(
     (out, totals)
 }
 
-/// Our mic's codec as WebRTC negotiated it: "audio/opus ch2 minptime=10;useinbandfec=1;…".
+/// Our mic's codec as WebRTC negotiated it: "audio/opus ch2 minptime=10;useinbandfec=1;…". The
+/// rtpmap always says 2 channels for Opus (RFC 7587); a mono encoder (voice mode, #587) shows as
+/// no `stereo=1` in the fmtp. The codec is the one our audio outbound-rtp stream uses: the stats
+/// also list the codecs we receive with, which keep `stereo=1`.
 pub fn send_codec(publisher: &[RtcStats]) -> Option<String> {
+    let codec_id = publisher.iter().find_map(|s| match s {
+        RtcStats::OutboundRtp(o) if o.stream.kind == "audio" && !o.stream.codec_id.is_empty() => {
+            Some(o.stream.codec_id.as_str())
+        }
+        _ => None,
+    })?;
     publisher.iter().find_map(|s| match s {
-        RtcStats::Codec(c) if c.codec.mime_type.starts_with("audio/") => Some(format!(
+        RtcStats::Codec(c) if c.rtc.id == codec_id => Some(format!(
             "{} ch{} {}",
             c.codec.mime_type, c.codec.channels, c.codec.sdp_fmtp_line
         )),
@@ -289,16 +298,44 @@ mod tests {
         assert_eq!(s.buffer_ms.map(f64::round), Some(500.0));
     }
 
-    #[test]
-    fn the_send_codec_says_mono_or_stereo() {
+    fn codec(id: &str, fmtp: &str) -> RtcStats {
         let mut c = livekit::webrtc::stats::CodecStats::default();
+        c.rtc.id = id.into();
         c.codec.mime_type = "audio/opus".into();
         c.codec.channels = 2;
-        c.codec.sdp_fmtp_line = "stereo=1;useinbandfec=1".into();
+        c.codec.sdp_fmtp_line = fmtp.into();
+        RtcStats::Codec(c)
+    }
+
+    fn audio_out_with(codec_id: &str) -> RtcStats {
+        let mut o = livekit::webrtc::stats::OutboundRtpStats::default();
+        o.stream.kind = "audio".into();
+        o.stream.codec_id = codec_id.into();
+        RtcStats::OutboundRtp(o)
+    }
+
+    #[test]
+    fn the_send_codec_says_mono_or_stereo() {
+        // a receive codec (stereo=1) listed first doesn't pass for ours (mono, #587)
+        let stats = [
+            codec("CIT01_111_stereo", "minptime=10;stereo=1;useinbandfec=1"),
+            codec("CIT01_111_mono", "minptime=10;useinbandfec=1"),
+            audio_out_with("CIT01_111_mono"),
+        ];
         assert_eq!(
-            send_codec(&[RtcStats::Codec(c)]).as_deref(),
+            send_codec(&stats).as_deref(),
+            Some("audio/opus ch2 minptime=10;useinbandfec=1")
+        );
+        let stereo = [
+            codec("CIT01_111_stereo", "stereo=1;useinbandfec=1"),
+            audio_out_with("CIT01_111_stereo"),
+        ];
+        assert_eq!(
+            send_codec(&stereo).as_deref(),
             Some("audio/opus ch2 stereo=1;useinbandfec=1")
         );
+        // nothing sent yet: no codec of ours
+        assert_eq!(send_codec(&[codec("CIT01_111_stereo", "stereo=1")]), None);
         assert_eq!(send_codec(&[]), None);
     }
 

@@ -475,33 +475,33 @@ describe('a voice channel’s settings (#75)', () => {
     expect(menu()).toBeNull()
     expect(dialog()?.textContent).toContain('Lounge')
     expect(trigger().textContent?.trim()).toBe('Default (64 kbps)')
-    expect(dialog()?.textContent).toContain('Higher sounds better, music especially, but uses more data for everyone in the call.')
+    expect(dialog()?.textContent).toContain('Higher keeps more detail in voices, but uses more data for everyone in the call.')
   })
 
   it('offers_default_and_the_presets_and_a_pick_saves_it', async () => {
-    invoke.mockResolvedValue({ ...channels[3], bitrate: 256 })
+    invoke.mockResolvedValue({ ...channels[3], bitrate: 128 })
     rightClick('Lounge')
     item('Channel settings…')!.click()
     flushSync()
     trigger().click()
     flushSync()
     expect([...dialog()!.querySelectorAll('[role=option]')].map((o) => o.textContent?.trim())).toEqual([
-      'Default (64 kbps)', '96 kbps', '128 kbps', '192 kbps', '256 kbps (max)',
+      'Default (64 kbps)', '96 kbps', '128 kbps (max)',
     ])
-    option('256 kbps (max)').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+    option('128 kbps (max)').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
     flushSync()
-    expect(invoke).toHaveBeenCalledWith('set_channel_bitrate', { channelId: 'V1', bitrate: 256 })
-    expect(trigger().textContent?.trim()).toBe('256 kbps (max)')
+    expect(invoke).toHaveBeenCalledWith('set_channel_bitrate', { channelId: 'V1', bitrate: 128 })
+    expect(trigger().textContent?.trim()).toBe('128 kbps (max)')
     await tick()
   })
 
   it('back_to_default_sends_null_and_a_failure_puts_it_back', async () => {
     render({ ...unread })
-    app.state = { ...app.state, channels: { ...app.state.channels, V1: { ...app.state.channels.V1, bitrate: 128 } } }
+    app.state = { ...app.state, channels: { ...app.state.channels, V1: { ...app.state.channels.V1, bitrate: 96 } } }
     rightClick('Lounge')
     item('Channel settings…')!.click()
     flushSync()
-    expect(trigger().textContent?.trim()).toBe('128 kbps')
+    expect(trigger().textContent?.trim()).toBe('96 kbps')
     invoke.mockRejectedValueOnce('Too many requests')
     trigger().click()
     flushSync()
@@ -512,16 +512,26 @@ describe('a voice channel’s settings (#75)', () => {
     await tick()
     flushSync()
     expect(dialog()?.querySelector('[role=alert]')?.textContent).toBeTruthy()
-    expect(trigger().textContent?.trim()).toBe('128 kbps')
+    expect(trigger().textContent?.trim()).toBe('96 kbps')
   })
 
   it('someone_elses_change_shows_while_it_is_open', () => {
     rightClick('Lounge')
     item('Channel settings…')!.click()
     flushSync()
-    app.state = { ...app.state, channels: { ...app.state.channels, V1: { ...app.state.channels.V1, bitrate: 192 } } }
+    app.state = { ...app.state, channels: { ...app.state.channels, V1: { ...app.state.channels.V1, bitrate: 96 } } }
     flushSync()
-    expect(trigger().textContent?.trim()).toBe('192 kbps')
+    expect(trigger().textContent?.trim()).toBe('96 kbps')
+  })
+
+  // #587: 192 and 256 date from the stereo mic; the mono mic sends 128 for them, so that's what shows
+  it('a_channel_at_an_old_stereo_preset_shows_the_max', () => {
+    render({ ...unread })
+    app.state = { ...app.state, channels: { ...app.state.channels, V1: { ...app.state.channels.V1, bitrate: 256 } } }
+    rightClick('Lounge')
+    item('Channel settings…')!.click()
+    flushSync()
+    expect(trigger().textContent?.trim()).toBe('128 kbps (max)')
   })
 
   it('closes_when_the_channel_is_deleted_meanwhile', () => {

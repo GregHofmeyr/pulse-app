@@ -668,9 +668,10 @@ pub struct Channel {
     pub archived_at: Option<String>,
 }
 
-/// The bitrates a voice channel may set (#75), in kbps, above Default's 64. 256 is as much as the
-/// mic, published as the app publishes it, really sends (measured in
-/// client/src-tauri/tests/voice_bitrate_it.rs: 384 and 510 send ~260).
+/// The bitrates a voice channel may set (#75), in kbps, above Default's 64. The app offers 96 and
+/// 128: the mic is mono Opus in voice mode (#587) and sends at most 128 (`MAX_MIC_BPS` in
+/// client/src-tauri/src/voice/mod.rs). 192 and 256 date from the stereo mic and stay accepted, so
+/// older clients can still save them and channels holding them stay valid; the app sends 128 for them.
 pub const CHANNEL_BITRATES_KBPS: [u32; 4] = [96, 128, 192, 256];
 
 /// `PUT /channels/{id}/bitrate`: a voice channel's bitrate (#75), one of
