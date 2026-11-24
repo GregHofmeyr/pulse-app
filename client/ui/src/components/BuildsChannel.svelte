@@ -5,8 +5,9 @@
   import BuildCard from './BuildCard.svelte'
   import BuildRow from './BuildRow.svelte'
   import BuildsHeader from './BuildsHeader.svelte'
+  import BuildsPanel from './BuildsPanel.svelte'
   import { buildFacetsOf, buildFeedFailed, buildFeedKey, buildFilter, loadBuildPage, openBuildFeed, setBuildFacets, type BuildFeed, type BuildFilter } from '../lib/builds'
-  import { setView, viewOf, type BuildView } from '../lib/buildPrefs'
+  import { panelOpen, setPanelOpen, setView, viewOf, type BuildView } from '../lib/buildPrefs'
   import { nameOfIn } from '../lib/selectors'
   import { app, onAppEvent } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
@@ -29,6 +30,12 @@
   const count = $derived(
     filter.q ? (feed?.start ? items.length : null) : facets ? (game ? (facets.games.find((g) => g.game_id === game)?.count ?? 0) : facets.total) : null,
   )
+
+  let panel = $state(untrack(() => panelOpen(channelId)))
+  function togglePanel() {
+    panel = !panel
+    setPanelOpen(channelId, panel)
+  }
 
   function pickView(v: BuildView) {
     view = v
@@ -136,7 +143,7 @@
 </script>
 
 <div class="chan" data-testid="builds-channel">
-  <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} />
+  <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} {panel} onPanel={togglePanel} />
   <div class="body">
     <div class="feed" class:list={view === 'list'} bind:this={scroller}>
       {#if view === 'gallery'}
@@ -156,6 +163,9 @@
         <p class="error" role="alert">{error} <button type="button" class="link-btn" onclick={() => (failedKey = null)}>Try again</button></p>
       {/if}
     </div>
+    {#if panel}
+      <BuildsPanel {channelId} {serverId} {facets} {game} onGame={(g) => (game = g)} {archived} onArchived={(on) => (archived = on)} />
+    {/if}
   </div>
 </div>
 
