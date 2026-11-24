@@ -17,18 +17,21 @@ use super::{cutoff, snippets};
 use crate::db::now;
 use crate::error::AppResult;
 use crate::messages::routes::{COLS, Row, fill};
+use crate::messages::threads::thread_root;
 
 /// The most threads listed, and watched.
 pub const MAX_THREADS: i64 = 50;
 pub const MAX_WATCHING: i64 = 500;
 
-/// The live quotes and clips `me` is part of, in chats they can see (a server's only while they're in it) and haven't
+/// The live quotes, clips and builds (#616) `me` is part of, in chats they can see (a server's only while they're in it) and haven't
 /// muted. Binds: me, me, now.
-const WATCHED: &str = "SELECT r.id AS root_id, r.channel_id AS channel_id, COALESCE(r.author_id = ?1, 0) AS started
+const WATCHED: &str = concat!(
+    "SELECT r.id AS root_id, r.channel_id AS channel_id, COALESCE(r.author_id = ?1, 0) AS started
     FROM messages r JOIN channels c ON c.id = r.channel_id
     WHERE r.deleted_at IS NULL
-      AND (EXISTS (SELECT 1 FROM quotes q WHERE q.message_id = r.id)
-           OR EXISTS (SELECT 1 FROM clips k WHERE k.message_id = r.id))
+      AND ",
+    thread_root!("r"),
+    "
       AND (r.author_id = ?1 OR r.id IN (SELECT thread_root_id FROM messages
                                         WHERE author_id = ?1 AND thread_root_id IS NOT NULL AND deleted_at IS NULL))
       AND c.deleted_at IS NULL
@@ -42,7 +45,8 @@ const WATCHED: &str = "SELECT r.id AS root_id, r.channel_id AS channel_id, COALE
             WHERE np.user_id = ?1 AND np.muted = 1
               AND (np.muted_until IS NULL OR np.muted_until > ?2)
               AND (np.target_kind = 'channel' AND np.target_id = c.id
-                   OR np.target_kind = 'server' AND np.target_id = c.server_id))";
+                   OR np.target_kind = 'server' AND np.target_id = c.server_id))"
+);
 
 /// How many of `me`'s threads have new replies (at most [`MAX_THREADS`], among the [`MAX_WATCHING`] newest they're
 /// part of): what [`list`] lists, counted, for the inbox's unread count (#419). A subquery for [`super::unread`], with

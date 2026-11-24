@@ -256,3 +256,86 @@ async fn threads_with_new_replies_count_in_the_inbox_and_their_people_hear_it() 
     }
     assert_eq!(last, Some(0));
 }
+
+/// alex, sam, kim and jo in one server with a builds channel; alex saved a build (#616).
+async fn builds_fx() -> (Fx, ChannelId, Message) {
+    let f = fx().await;
+    let server_id: String = sqlx::query_scalar("SELECT server_id FROM channels WHERE id = ?")
+        .bind(f.quotes.to_string())
+        .fetch_one(&f.app.db)
+        .await
+        .unwrap();
+    let r = post_json(
+        &f.app,
+        &f.alex,
+        &format!("/servers/{server_id}/channels"),
+        json!({ "kind": "builds", "name": "builds" }),
+    )
+    .await;
+    let builds: Channel = r.json().await.unwrap();
+    let r = post_json(
+        &f.app,
+        &f.alex,
+        &format!("/channels/{}/builds", builds.id),
+        json!({ "title": "Raven crit" }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let build: Message = r.json().await.unwrap();
+    (f, builds.id, build)
+}
+
+async fn comment(f: &Fx, token: &str, channel: ChannelId, root: MessageId, text: &str) -> Message {
+    let r = post_json(
+        &f.app,
+        token,
+        &format!("/channels/{channel}/messages"),
+        json!({ "content": text, "thread_root_id": root }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn a_comment_on_a_build_reaches_its_author_and_earlier_commenters() {
+    let (f, ch, build) = builds_fx().await;
+    let has = |t: &InboxThreads| t.threads.iter().any(|th| th.root.message_id == build.id);
+    comment(&f, &f.sam, ch, build.id, "try the other module").await;
+    assert!(has(&f.threads(&f.alex).await), "the author sees it");
+    comment(&f, &f.kim, ch, build.id, "agreed").await;
+    assert!(has(&f.threads(&f.alex).await));
+    assert!(has(&f.threads(&f.sam).await), "an earlier commenter sees the next one");
+    assert!(!has(&f.threads(&f.jo).await), "someone who never took part doesn't");
+}
+
+#[tokio::test]
+async fn your_own_comment_doesnt_notify_you() {
+    let (f, ch, build) = builds_fx().await;
+    comment(&f, &f.sam, ch, build.id, "mine").await;
+    let t = f.threads(&f.sam).await;
+    assert!(t.watching.contains(&build.id), "sam takes part now");
+    assert!(!t.threads.iter().any(|th| th.root.message_id == build.id));
+}
+
+#[tokio::test]
+async fn comments_dont_mark_the_builds_channel_unread() {
+    let (f, ch, build) = builds_fx().await;
+    // jo has read the channel up to the build
+    let r = post_json(
+        &f.app,
+        &f.jo,
+        &format!("/channels/{ch}/read"),
+        json!({ "message_id": build.id }),
+    )
+    .await;
+    assert!(r.status().is_success(), "{}", r.status());
+    comment(&f, &f.sam, ch, build.id, "a comment").await;
+    let jo: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'jo'")
+        .fetch_one(&f.app.db)
+        .await
+        .unwrap();
+    let states = pulse_server::reads::states_for(&f.app.db, jo.parse().unwrap()).await.unwrap();
+    let st = states.iter().find(|s| s.channel_id == ch).unwrap();
+    assert_eq!(st.unread, 0);
+}
