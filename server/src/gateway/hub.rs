@@ -86,7 +86,7 @@ struct Conn {
     inbox: bool,
     /// This device says it has had no input for a while (#53, `ClientFrame::Idle`).
     idle: bool,
-    /// The protocol version its Hello said ([`Hub::set_client_version`]; this build's until then).
+    /// The protocol version its Hello said ([`Hub::try_register_as`]).
     client_version: u32,
 }
 
@@ -293,6 +293,18 @@ impl Hub {
         token_hash: String,
         max: usize,
     ) -> Option<Registration> {
+        self.try_register_as(user, token_hash, max, pulse_protocol::PROTOCOL_VERSION)
+    }
+
+    /// [`Hub::try_register`] for a client that speaks protocol `client_version` (its Hello's): every frame from the
+    /// moment it's in the hub is chosen for that version (#616: a version-4 client never gets a builds channel).
+    pub fn try_register_as(
+        &self,
+        user: UserId,
+        token_hash: String,
+        max: usize,
+        client_version: u32,
+    ) -> Option<Registration> {
         let mut conns = self.inner.conns.lock().unwrap();
         if conns.values().filter(|c| c.user == user).count() >= max {
             return None;
@@ -309,19 +321,11 @@ impl Hub {
                 kick: Some(ktx),
                 inbox: false,
                 idle: false,
-                client_version: pulse_protocol::PROTOCOL_VERSION,
+                client_version,
             },
         );
         self.inner.open.lock().unwrap().insert(id, user);
         Some(Registration { id, rx, kick: krx })
-    }
-
-    /// The protocol version `id`'s client speaks, from its Hello: a client too old for an event is reconnected
-    /// rather than sent it ([`CLOSE_RESYNC`]).
-    pub fn set_client_version(&self, id: ConnId, version: u32) {
-        if let Some(c) = self.inner.conns.lock().unwrap().get_mut(&id) {
-            c.client_version = version;
-        }
     }
 
     /// Remove a connection; returns (user, whether it was their last connection). `None` if the
@@ -1169,6 +1173,38 @@ async fn run_inbox(db: SqlitePool, hub: Hub, jobs: Vec<crate::inbox::Job>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A connection is registered with the version its Hello said (#616): no frame reaches it as a newer client's,
+    /// not even one published before its Ready is built.
+    #[test]
+    fn a_connection_speaks_its_version_from_the_moment_it_registers() {
+        use pulse_protocol::ids::{ChannelId, ServerId};
+        use pulse_protocol::rest::{Channel, ChannelKind};
+        let hub = Hub::default();
+        let alex = UserId::new();
+        let mut old = hub.try_register_as(alex, String::new(), 8, 4).unwrap();
+        let mut new = hub
+            .try_register_as(alex, String::new(), 8, pulse_protocol::PROTOCOL_VERSION)
+            .unwrap();
+        let channel = Channel {
+            id: ChannelId::new(),
+            server_id: Some(ServerId::new()),
+            kind: ChannelKind::Builds,
+            name: Some("builds".into()),
+            position: 0,
+            category_id: None,
+            icon_hash: None,
+            icon_still: None,
+            bitrate: None,
+            archived_at: None,
+        };
+        let frame = ServerFrame::Event(Event::ChannelCreated { channel });
+        let mut conns = hub.inner.conns.lock().unwrap();
+        deliver_where(&mut conns, |c| c.user == alex, &frame);
+        drop(conns);
+        assert!(new.rx.try_recv().is_ok(), "a current client hears of it");
+        assert!(old.rx.try_recv().is_err(), "a version-4 client never does");
+    }
 
     #[test]
     fn try_register_caps_connections_per_user_even_under_a_race() {

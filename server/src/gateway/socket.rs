@@ -388,14 +388,15 @@ async fn run(
     }
     // Register before building Ready so no event between the snapshot and the stream is lost.
     // Over the per-user cap: refuse this one, never kick an existing connection.
-    let Some(reg) = s
-        .hub
-        .try_register(me, token_hash.clone(), s.limits.gateway_per_user)
-    else {
+    let Some(reg) = s.hub.try_register_as(
+        me,
+        token_hash.clone(),
+        s.limits.gateway_per_user,
+        client_version,
+    ) else {
         return close(socket, CLOSE_TOO_MANY_CONNECTIONS, "too many connections").await;
     };
     let (conn, mut rx, mut kick) = (reg.id, reg.rx, reg.kick);
-    s.hub.set_client_version(conn, client_version);
     let since = now(); // in the hub from here: see `disconnected`
     // A logout / logout-others may have landed between authenticate and try_register: its kick
     // ran before this socket was in the hub. Every revoke commits the DELETE and only then
