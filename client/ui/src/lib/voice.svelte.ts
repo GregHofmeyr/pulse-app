@@ -8,7 +8,7 @@ import { displayName, type SelfVoice } from './selectors'
 import { app, onAppEvent, onAppReady } from './store.svelte'
 import { api } from './tauri'
 import { pushCallMixQuietly } from './mixer.svelte'
-import { loadAudioConfig, loadLocalMutes, loadVolumes, peerCallSound, playSound, saveLocalMutes, saveVolumes, serverVoiceSound, transitionSounds, type AudioConfig, type Connection, type DeviceGaps, type EchoReport, type EndReason, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
+import { loadAudioConfig, loadLocalMutes, loadVolumes, peerCallSound, playSound, saveLocalMutes, saveVolumes, serverVoiceSound, transitionSounds, type AudioConfig, type AudioDevice, type Connection, type DeviceGaps, type EchoReport, type EndReason, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
 import { isJoining, reduceStage, type StageState } from './voicestage'
 import { holdOwnCue, ownJoin, peerJoin } from './joinSounds'
 import { joinSounds, playJoin } from './joinSounds.svelte'
@@ -394,7 +394,7 @@ export const voiceApi = {
     await invoke('set_peer_volume', { userId, percent: on || isBlocked(app.state, userId) ? 0 : (voice.volumes[userId] ?? 100) })
   },
   setAudioConfig: (config: AudioConfig) => invoke('set_audio_config', { config }),
-  listDevices: () => invoke<{ inputs: { name: string; is_default: boolean }[]; outputs: { name: string; is_default: boolean }[] }>('list_audio_devices'),
+  listDevices: () => invoke<{ inputs: AudioDevice[]; outputs: AudioDevice[] }>('list_audio_devices'),
   startMicTest: (config: AudioConfig) => invoke('start_mic_test', { config }),
   stopMicTest: () => invoke('stop_mic_test'),
   /** ~15 s of the mic, raw and as sent, saved as two WAVs in the log folder (#583). Resolves when saved. */

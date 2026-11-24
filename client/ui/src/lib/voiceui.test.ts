@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readdirSync } from 'node:fs'
 import {
-  noMicTip, soundFor, volumeLabel, clampVolume, migrateAudioConfig, defaultAudioConfig, playSound,
+  noMicTip, processedMicHint, type AudioDevice, soundFor, volumeLabel, clampVolume, migrateAudioConfig, defaultAudioConfig, playSound,
   SOUND_NAMES, SOUND_SETS, SOUND_LABELS, PREVIEW, PREVIEW_GAP_MS, defaultSoundPrefs,
   normalizeSoundPrefs, loadSoundPrefs, saveSoundPrefs, previewSet, stopPreview,
   playSoundAt, playRingingAt, previewRingtone, RINGTONES,
@@ -114,7 +114,33 @@ describe('peerCallSound', () => {
   })
 })
 
+describe('processedMicHint (#588)', () => {
+  const inputs: AudioDevice[] = [
+    { name: 'Mic (Realtek)', is_default: true },
+    { name: 'Microphone (NVIDIA Broadcast)', is_default: false, processed_by: 'NVIDIA Broadcast' },
+  ]
+  it('only for a processed mic under Strong (either model)', () => {
+    const want = 'Your mic already cleans up its sound (NVIDIA Broadcast). Standard noise suppression may sound more natural.'
+    expect(processedMicHint(inputs, 'Microphone (NVIDIA Broadcast)', 'strong')).toBe(want)
+    expect(processedMicHint(inputs, 'Microphone (NVIDIA Broadcast)', 'strong_low_delay')).toBe(want)
+    expect(processedMicHint(inputs, 'Microphone (NVIDIA Broadcast)', 'standard')).toBeNull()
+    expect(processedMicHint(inputs, 'Microphone (NVIDIA Broadcast)', 'off')).toBeNull()
+    expect(processedMicHint(inputs, 'Mic (Realtek)', 'strong')).toBeNull()
+  })
+  it('System default means the default device', () => {
+    expect(processedMicHint(inputs, null, 'strong')).toBeNull()
+    const sonarDefault = [{ name: 'Sonar Mic', is_default: true, processed_by: 'SteelSeries Sonar' }]
+    expect(processedMicHint(sonarDefault, null, 'strong')).toContain('(SteelSeries Sonar)')
+    expect(processedMicHint([], null, 'strong')).toBeNull()
+  })
+})
+
 describe('migrateAudioConfig', () => {
+  it('voice clarity EQ (#590): on for settings saved before it, kept when turned off', () => {
+    expect(defaultAudioConfig.voice_clarity_eq).toBe(true)
+    expect(migrateAudioConfig({ sensitivity: 0.05 }).voice_clarity_eq).toBe(true)
+    expect(migrateAudioConfig({ voice_clarity_eq: false }).voice_clarity_eq).toBe(false)
+  })
   it('even out voice volumes (#355): on for settings saved before it, kept when turned off', () => {
     expect(defaultAudioConfig.even_out_voices).toBe(true)
     expect(migrateAudioConfig({ sensitivity: 0.05 }).even_out_voices).toBe(true)

@@ -29,6 +29,8 @@ pub mod rx;
 pub mod speaking;
 pub mod stats;
 pub mod tokens;
+pub mod tone;
+pub mod virtualmic;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};

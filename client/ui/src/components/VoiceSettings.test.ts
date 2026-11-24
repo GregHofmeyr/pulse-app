@@ -242,6 +242,68 @@ describe('VoiceSettings even out voice volumes (#355)', () => {
   })
 })
 
+describe('VoiceSettings voice clarity EQ (#590)', () => {
+  beforeEach(() => {
+    invoke.mockClear()
+    localStorage.clear()
+  })
+
+  it('on by default; turning it off applies and saves it', async () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    flushSync()
+    const sw = () => document.querySelector<HTMLButtonElement>('button.switch[aria-label="Voice clarity EQ"]')!
+    expect(sw().getAttribute('aria-pressed')).toBe('true')
+    sw().click()
+    flushSync()
+    await Promise.resolve()
+    expect(sw().getAttribute('aria-pressed')).toBe('false')
+    const applied = invoke.mock.calls.filter(([cmd]) => cmd === 'set_audio_config').at(-1)?.[1]
+    expect(JSON.stringify(applied)).toContain('"voice_clarity_eq":false')
+    expect(localStorage.getItem('pulse.audio')).toContain('"voice_clarity_eq":false')
+    unmount(c)
+    document.body.innerHTML = ''
+  })
+})
+
+describe('VoiceSettings pre-processed mic hint (#588)', () => {
+  beforeEach(() => {
+    invoke.mockClear()
+    localStorage.clear()
+  })
+  const settle = async () => {
+    for (let i = 0; i < 3; i++) await Promise.resolve()
+    flushSync()
+  }
+  const hint = () => document.querySelector('[data-processed-mic-hint]')
+
+  it('shows under Strong for a Sonar default mic, goes away on Standard, and never changes the level', async () => {
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'list_audio_devices'
+        ? {
+            inputs: [
+              { name: 'Microphone (Realtek Audio)', is_default: false },
+              { name: 'Microphone (SteelSeries Sonar - Microphone)', is_default: true, processed_by: 'SteelSeries Sonar' },
+            ],
+            outputs: [],
+          }
+        : undefined,
+    )
+    const c = mount(VoiceSettings, { target: document.body })
+    await settle()
+    expect(hint()?.textContent).toBe(
+      'Your mic already cleans up its sound (SteelSeries Sonar). Standard noise suppression may sound more natural.',
+    )
+    expect(invoke.mock.calls.some(([cmd]) => cmd === 'set_audio_config')).toBe(false)
+    const radios = [...document.querySelectorAll<HTMLElement>('[role=radiogroup][aria-label="Noise suppression"] [role=radio]')]
+    radios.find((r) => r.textContent === 'Standard')!.click()
+    await settle()
+    expect(hint()).toBeNull()
+    unmount(c)
+    document.body.innerHTML = ''
+    invoke.mockImplementation(async () => undefined)
+  })
+})
+
 describe('VoiceSettings sounds', () => {
   it('renders the Sounds section', () => {
     const c = mount(VoiceSettings, { target: document.body })

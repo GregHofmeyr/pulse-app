@@ -7,11 +7,11 @@
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { api } from '../lib/tauri'
   import { downloadModel, listenModel, lowDelayModel, refreshModel } from '../lib/models.svelte'
-  import { echoDecision, loadAudioConfig, modelLine, saveAudioConfig, type AudioConfig, type EchoMode, type NsLevel } from '../lib/voiceui'
+  import { echoDecision, loadAudioConfig, modelLine, processedMicHint, saveAudioConfig, type AudioConfig, type AudioDevice, type EchoMode, type NsLevel } from '../lib/voiceui'
 
   let cfg = $state<AudioConfig>(loadAudioConfig())
-  let inputs = $state<{ name: string; is_default: boolean }[]>([])
-  let outputs = $state<{ name: string; is_default: boolean }[]>([])
+  let inputs = $state<AudioDevice[]>([])
+  let outputs = $state<AudioDevice[]>([])
   let testing = $state(false)
   // In a call (or joining one) the devices are the call's: a test would open them twice (the core refuses it too).
   const inCall = $derived(!!voice.channelId || !!voice.joining)
@@ -109,7 +109,8 @@
     }
   }
 
-  const toggles: { key: 'auto_gain' | 'even_out_voices'; label: string; help: string }[] = [
+  const toggles: { key: 'voice_clarity_eq' | 'auto_gain' | 'even_out_voices'; label: string; help: string }[] = [
+    { key: 'voice_clarity_eq', label: 'Voice clarity EQ', help: 'Cuts rumble and boominess from your mic and adds a little clarity to your voice.' },
     { key: 'auto_gain', label: 'Automatic gain control', help: 'Evens out your volume. Leave off if you use input gain.' },
     { key: 'even_out_voices', label: 'Even out voice volumes', help: "Brings quiet and loud people closer to the same volume. Each person's own volume still applies on top." },
   ]
@@ -133,6 +134,8 @@
     if (v === 'strong_low_delay') void downloadModel()
   }
   const modelText = $derived(modelLine(lowDelayModel.status))
+  // a virtual mic that already suppresses noise, under Strong (#588)
+  const processedHint = $derived(processedMicHint(inputs, cfg.input, cfg.noise_suppression))
 </script>
 
 <section class="settings-pane">
@@ -183,6 +186,7 @@
       </div>
     {/if}
   {/if}
+  {#if processedHint}<small data-processed-mic-hint role="status">{processedHint}</small>{/if}
   {#if voice.ns.note}<p class="warn" role="status">{voice.ns.note}</p>{/if}
 </div>
 

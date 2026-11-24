@@ -17,6 +17,7 @@ use super::micsample::RECORDER;
 use super::micsilence;
 use super::mutedtalk;
 use super::resampler::StreamResampler;
+use super::tone::ToneStage;
 use crate::models::{LoadError, ModelStore};
 
 const OVERLOAD_WINDOW: usize = 300; // 3 s of 10 ms blocks
@@ -153,7 +154,7 @@ pub struct BlockOut {
     pub judged: bool,
     /// RMS of the block as it came in (before cleaning and gain): with `level`, what suppression removed.
     pub in_level: f32,
-    /// Peak after the denoiser, before gain (the `voice: mic` line, #583).
+    /// Peak after the denoiser and the tone stage, before gain (the `voice: mic` line, #583).
     pub ns_peak: f32,
     /// Samples the limiter turned down (its gain below 1), and its lowest gain in the block.
     pub limited: u32,
@@ -169,11 +170,13 @@ fn rms(b: &[f32]) -> f32 {
 /// leak out as a blip on unmute). DeepFilterNet looks back df_order + lookahead = 7 hops; 8 covers it.
 const PRIME_BLOCKS: usize = 8;
 
-/// One block's journey after APM: denoise → gain (peak-limited) → gate → mute.
+/// One block's journey after APM: denoise → tone → gain (peak-limited) → gate → mute.
 pub struct MicChain {
     level: NsLevel,
     denoiser: Box<dyn Denoiser>,
     gate: VoiceGate,
+    /// "Voice clarity EQ" (#590): low-cut, low-mid trim, presence. Starts off; `run` sets it from the settings.
+    tone: ToneStage,
     gain: f32,
     /// Keeps the gained-up voice under −1 dBFS without the tanh's distortion (#586).
     limiter: Limiter,
@@ -188,6 +191,7 @@ impl MicChain {
             level,
             denoiser: make_fast(level),
             gate: VoiceGate::new(auto, threshold),
+            tone: ToneStage::new(INTERNAL_RATE, false),
             gain,
             limiter: Limiter::new(INTERNAL_RATE),
             recent: VecDeque::with_capacity(PRIME_BLOCKS),
@@ -233,6 +237,11 @@ impl MicChain {
         self.gain = gain;
     }
 
+    /// The tone stage (#590) on or off.
+    pub fn set_tone(&mut self, on: bool) {
+        self.tone.set_on(on);
+    }
+
     /// Muted with no meter on screen: send silence (as a muted `process` does) without running the
     /// denoiser, and remember the block for waking up. Like a muted block, nothing is judged and
     /// nothing counts toward the path line's suppression figure.
@@ -276,6 +285,8 @@ impl MicChain {
         let in_level = (ns_in / block.len().max(1) as f32).sqrt();
         let prob = self.denoiser.process(block);
         let ns_out = energy(block);
+        // shaped before the gain, so rumble and plosives don't set the limiter's peak (#590)
+        self.tone.process(block);
         let newest = self.denoiser.decision_level().unwrap_or(in_level) * self.gain;
         let (mut ns_peak, mut limited, mut min_gain) = (0.0f32, 0u32, 1.0f32);
         for v in block.iter_mut() {
@@ -962,6 +973,7 @@ fn picked_again(last: &ProcCfg, now: &ProcCfg) -> bool {
         && now.auto == last.auto
         && now.threshold == last.threshold
         && now.gain == last.gain
+        && now.tone == last.tone
 }
 
 fn to_i16(v: f32) -> i16 {
@@ -973,6 +985,7 @@ fn run(shared: Arc<Shared>, rx: &mut RawRx) {
     let mut last = cfg.clone();
     // Standard runs until a DeepFilterNet model has loaded (`chain.level()` is always what really runs).
     let mut chain = MicChain::new(NsLevel::Off, cfg.auto, cfg.threshold, cfg.gain);
+    chain.set_tone(cfg.tone);
     let mut ns = NsControl::new(cfg.level, shared.low_delay_model());
     ns.choose(cfg.level, &mut chain, &shared);
 
@@ -1012,6 +1025,7 @@ fn run(shared: Arc<Shared>, rx: &mut RawRx) {
         let cfg = relock(&shared.proc_cfg).clone();
         if cfg.version != last.version {
             chain.configure(cfg.auto, cfg.threshold, cfg.gain);
+            chain.set_tone(cfg.tone);
             if cfg.level != ns.switcher().wanted() {
                 ns.choose(cfg.level, &mut chain, &shared);
                 overload.reset();
@@ -1219,6 +1233,56 @@ mod tests {
         );
         assert!(out.limiter_min_gain < 0.9, "{}", out.limiter_min_gain);
         assert!(b.iter().all(|v| v.abs() <= super::super::limiter::CEILING));
+    }
+
+    /// #590: the tone stage runs after the denoiser and before the gain, so low rumble no longer reaches the limiter.
+    /// (Off it's a bit-for-bit bypass: `tone`'s own tests.)
+    #[test]
+    fn the_tone_stage_cuts_rumble_before_the_limiter() {
+        // 30 Hz rumble at 0.3, ×4 = 1.2: without the stage the limiter has to pull it down
+        let rumble = |k: usize| -> Vec<f32> {
+            (0..FRAME)
+                .map(|i| {
+                    0.3 * (std::f32::consts::TAU * 30.0 * (k * FRAME + i) as f32 / 48_000.0).sin()
+                })
+                .collect()
+        };
+        let t0 = Instant::now();
+        let mut on = MicChain::new(NsLevel::Off, false, 0.0, 4.0);
+        on.set_tone(true);
+        let mut off = MicChain::new(NsLevel::Off, false, 0.0, 4.0);
+        let (mut limited_on, mut limited_off) = (0, 0);
+        for k in 0..100 {
+            let (mut a, mut b) = (rumble(k), rumble(k));
+            let (oa, ob) = (on.process(&mut a, true, t0), off.process(&mut b, true, t0));
+            if k >= 50 {
+                limited_on += oa.limited;
+                limited_off += ob.limited;
+            }
+        }
+        assert!(
+            limited_off > 0,
+            "rumble drives the limiter without the stage"
+        );
+        assert_eq!(limited_on, 0, "the high-pass took it out first");
+    }
+
+    #[test]
+    fn the_clarity_eq_is_on_by_default_and_follows_the_settings() {
+        use super::super::devices::AudioConfig;
+        assert!(AudioConfig::default().voice_clarity_eq);
+        let old: AudioConfig = serde_json::from_str(
+            r#"{"input":null,"output":null,"input_gain_pct":100,"sensitivity":0.02,"auto_gain":false}"#,
+        )
+        .unwrap();
+        assert!(old.voice_clarity_eq, "saved before the setting: on");
+        let s = Shared::new(&AudioConfig::default(), Default::default(), 200);
+        assert!(relock(&s.proc_cfg).tone);
+        s.apply_config(&AudioConfig {
+            voice_clarity_eq: false,
+            ..AudioConfig::default()
+        });
+        assert!(!relock(&s.proc_cfg).tone);
     }
 
     /// #583 end to end: the processor feeds the `voice: mic` line's chain and output figures.
@@ -2481,6 +2545,7 @@ mod tests {
             auto: true,
             threshold: 0.02,
             gain,
+            tone: true,
             version,
         }
     }
@@ -2491,6 +2556,14 @@ mod tests {
         assert!(picked_again(&last, &proc_cfg(NsLevel::Strong, 1.0, 2)));
         assert!(!picked_again(&last, &proc_cfg(NsLevel::Strong, 1.5, 2)));
         assert!(!picked_again(&last, &proc_cfg(NsLevel::Standard, 1.0, 2)));
+        let eq_off = ProcCfg {
+            tone: false,
+            ..proc_cfg(NsLevel::Strong, 1.0, 2)
+        };
+        assert!(
+            !picked_again(&last, &eq_off),
+            "a clarity EQ change alone doesn't retry the level"
+        );
     }
 
     /// Review 3: a panic in the processor starts it again on the same input (the mic carries on), up to a limit.
