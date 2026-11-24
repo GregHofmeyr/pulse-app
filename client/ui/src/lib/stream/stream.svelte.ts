@@ -16,7 +16,8 @@ import type { Fps, Res } from './encodings'
 import { loadAudioMuted, loadGoLive, loadStreamVolumes, saveAudioMuted, saveGoLive, saveStreamVolumes, type GoLive } from './prefs'
 import { StreamRoom } from './room'
 import { motion } from '../animate.svelte'
-import { admit, followAlert, layerFor, liveEndSound, liveQuiet, toastFor, voiceOnlyStreamer, type Quality, type View } from './viewer'
+import { admit, followAlert, layerFor, liveEndSound, liveQuiet, toastFor, voiceOnlyStreamer, type Layer, type Quality, type View } from './viewer'
+import { observeFit } from './fit'
 import { removeToast, showToast } from './viewer.svelte'
 import { liveNotice, liveWhere } from '../notify'
 import { notifyPrefs } from '../notifyPrefs.svelte'
@@ -156,6 +157,8 @@ let stopOutDiag: (() => void) | null = null
 let inDiag: { key: string; stop: () => void } | null = null
 /** One `<video>` per watch, owned here so it moves between hosts without restarting. */
 const videos = new Map<string, HTMLVideoElement>()
+/** Per watch: the layer its `<video>` needs as a preview, from its size on screen (#582), and the observer's stop. */
+const fits = new Map<string, { layer: Layer; stop: () => void }>()
 /** Watches whose video is up (`room.watch` resolved) → their time to the first frame, in ms. */
 const up = new Map<string, number>()
 /** Per watch: a later watch of the same stream, or its end, supersedes the calls in flight. */
@@ -482,7 +485,7 @@ function syncInDiag() {
 
 /** Asks the room for the layer `w`'s view and quality call for. */
 function applyLayer(w: Watching) {
-  stream.room?.setLayer(w.streamer, layerFor(w.view, w.quality))
+  stream.room?.setLayer(w.streamer, layerFor(w.view, w.quality, fits.get(streamKey(w.channelId, w.streamer))?.layer))
 }
 
 /**
@@ -499,6 +502,8 @@ async function endWatch(channelId: string, streamer: string, announce: boolean) 
   stream.room?.unwatch(streamer)
   const el = videos.get(k)
   videos.delete(k)
+  fits.get(k)?.stop()
+  fits.delete(k)
   if (el) {
     el.srcObject = null
     el.remove()
@@ -580,6 +585,17 @@ async function watch(channelId: string, streamer: string): Promise<void> {
   el.playsInline = true
   el.muted = true // stream audio plays from the Rust `#a` side
   videos.set(k, el)
+  fits.get(k)?.stop()
+  const fit = { layer: 'low' as Layer, stop: () => {} }
+  fits.set(k, fit)
+  // a preview asks for a bigger layer as soon as it's bigger on screen than the one it has, and a smaller one a moment
+  // after it shrinks; full view and Data saver don't follow it (layerFor)
+  fit.stop = observeFit(el, (layer) => {
+    if (fits.get(k) !== fit) return
+    fit.layer = layer
+    const w = findWatch(channelId, streamer)
+    if (w?.view === 'preview' && up.has(k)) applyLayer(w)
+  })
   const entry: Watching = { channelId, streamer, quality: 'auto', view: 'preview', ...(ghost ? { ghost } : {}) }
   const { list, dropped } = admit<Watching>(stream.watching, entry, MAX_WATCHED)
   // the cap: the oldest watches stop first (their calls in flight back out)

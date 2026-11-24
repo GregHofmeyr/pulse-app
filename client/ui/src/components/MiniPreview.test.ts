@@ -306,15 +306,17 @@ describe('mini-preview', () => {
       const mini = q('.mini-preview')!
       const v = (n: string) => mini.style.getPropertyValue(n)
       expect([v('--area-top'), v('--area-left'), v('--area-right'), v('--area-bottom')]).toEqual(['52px', '280px', '256px', '8px'])
-      expect(observers).toHaveLength(1)
-      expect(observers[0].observed).toEqual([mini.parentElement])
+      // the store's own on the watch's <video> (its size picks the layer, #582) aside
+      const area = observers.filter((o) => !o.observed.some((el) => el instanceof HTMLVideoElement))
+      expect(area).toHaveLength(1)
+      expect(area[0].observed).toEqual([mini.parentElement])
       rect = { left: 8, top: 52, right: 1272, bottom: 792 } // full view hid the side panels
-      observers[0].cb()
+      area[0].cb()
       flushSync()
       expect([v('--area-left'), v('--area-right')]).toEqual(['8px', '8px'])
       unmount(cmp!)
       cmp = undefined
-      expect(observers[0].disconnect).toHaveBeenCalled()
+      expect(area[0].disconnect).toHaveBeenCalled()
     } finally {
       vi.unstubAllGlobals()
     }

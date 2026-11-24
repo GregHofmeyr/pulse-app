@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { encodingFor, LOW_LAYER, resolutionsFor, type Fps, type Res } from './encodings'
+import { encodingFor, LOW_LAYER, MID_LAYER, resolutionsFor, simulcastLayersFor, type Fps, type Res } from './encodings'
 
 describe('encodingFor', () => {
   it('matches the spec table and tunes games for motion', () => {
@@ -22,6 +22,29 @@ describe('encodingFor', () => {
   })
   it('has the always-on low layer', () => {
     expect(LOW_LAYER).toEqual({ width: 640, height: 360, maxBitrate: 500_000, maxFramerate: 30 })
+  })
+})
+
+describe('simulcastLayersFor', () => {
+  // previews pick the layer that fits their size on screen (#582): 1080p and up adds 720p between low and top
+  it('a_720p_share_sends_low_under_its_top_layer_only', () => {
+    expect(simulcastLayersFor(720, 30)).toEqual([LOW_LAYER])
+    expect(simulcastLayersFor(720, 60)).toEqual([LOW_LAYER])
+  })
+  it('1080p_and_1440p_shares_add_a_720p_middle_layer', () => {
+    for (const res of [1080, 1440] as Res[]) {
+      expect(simulcastLayersFor(res, 30)).toEqual([LOW_LAYER, MID_LAYER])
+      expect(simulcastLayersFor(res, 60)).toEqual([LOW_LAYER, MID_LAYER])
+    }
+    expect(MID_LAYER).toEqual({ width: 1280, height: 720, maxBitrate: 1_500_000, maxFramerate: 30 })
+  })
+  it('a_15_fps_share_spends_less_on_its_middle_layer', () => {
+    expect(simulcastLayersFor(1080, 15)[1]).toEqual({ ...MID_LAYER, maxBitrate: 1_000_000 })
+  })
+  it('every_layer_stays_under_the_top_layers_bitrate', () => {
+    for (const res of [720, 1080, 1440] as Res[])
+      for (const fps of [15, 30, 60] as Fps[])
+        for (const l of simulcastLayersFor(res, fps)) expect(l.maxBitrate).toBeLessThan(encodingFor(res, fps).maxBitrate)
   })
 })
 

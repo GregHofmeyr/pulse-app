@@ -139,7 +139,7 @@ strip = false
 # webrtc-sys-build is upstream's again (0.3.21 is on zip 9; the lockfile keeps zip at 9.0.5 or
 # later, past GHSA-m665-v7pm-7grj).
 #
-# vendor/livekit is livekit 0.9.7 as published, with two changes. First, `RoomSession::close`
+# vendor/livekit is livekit 0.9.7 as published, with three changes. First, `RoomSession::close`
 # (src/room/mod.rs) lets go of the remote participants and their publications as if they had all
 # left. Each remote publication's mute handlers hold the participant that holds the publication, and
 # the engine, so a Room closed while others were still in it kept its engine, PeerConnections and
@@ -150,7 +150,18 @@ strip = false
 # `LocalAudioTrack::transceiver` (src/room/track/local_audio_track.rs) is `pub` instead of
 # `pub(crate)`, so a voice channel's bitrate (#75) can change a published mic's RTP sender parameters
 # in place rather than republishing it (client/src-tauri/tests/voice_bitrate_it.rs). Still
-# `pub(crate)` in 0.10.0: re-apply it there, or drop it if upstream exposes the sender. Its
+# `pub(crate)` in 0.10.0: re-apply it there, or drop it if upstream exposes the sender. Third, in
+# single peer connection mode upstream adds `stereo=1` to every Opus fmtp line of every offer, the
+# send m-sections included. The SFU's answer to a track's first offer echoes it (it hasn't matched
+# the m-section to the track yet), so every audio track started as a stereo Opus encoder in
+# general-audio mode (libwebrtc uses the voice mode only for mono), the mic included. The patch leaves it
+# off the send m-section of a track whose native source has 1 channel (src/rtc_engine/
+# peer_transport.rs `munge_stereo_for_audio`, registered in rtc_session.rs `create_sender`), so the
+# mic is mono voice Opus. A 2-channel track's AddTrackRequest carries TF_STEREO (src/room/
+# participant/local_participant.rs), because the server's later answers keep `stereo=1` only for
+# tracks marked so, which kept stream audio stereo only until its first renegotiation (#587;
+# client/src-tauri/tests/voice_bitrate_it.rs `the_mic_is_mono_and_stream_audio_stereo`). Re-apply
+# both with any upgrade unless upstream scopes the munge per track and marks stereo tracks. Its
 # Cargo.toml also allows warnings, which a path crate's aren't capped like a crates.io one's.
 [patch.crates-io]
 webrtc-sys = { path = "vendor/webrtc-sys" }

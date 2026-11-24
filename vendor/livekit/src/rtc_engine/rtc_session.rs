@@ -2003,6 +2003,18 @@ impl SessionInner {
             self.publisher_pc.set_max_send_bitrate_bps(ultimate_bps, is_screen_share).await;
         }
 
+        // Pulse patch: a track fed 1-channel frames is offered as mono (no `stereo=1` on its
+        // send m-section), so its Opus encoder is mono and in voice mode. See
+        // `PeerTransport::munge_stereo_for_audio`.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let LocalTrack::Audio(audio) = &track {
+            if let RtcAudioSource::Native(source) = audio.rtc_source() {
+                if source.num_channels() == 1 {
+                    self.publisher_pc.set_audio_track_mono(track.rtc_track().id()).await;
+                }
+            }
+        }
+
         let init = RtpTransceiverInit {
             direction: RtpTransceiverDirection::SendOnly,
             stream_ids: Default::default(),

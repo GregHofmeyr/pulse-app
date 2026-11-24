@@ -110,6 +110,42 @@ describe('StreamRoom.pick', () => {
     expect(opts.video.frameRate).toEqual({ ideal: 60 })
     expect(opts.video.resizeMode).toBe('crop-and-scale')
   })
+
+  // Chromium raises the picked window over Pulse unless told not to, before Go Live is pressed (#581)
+  it('opens_the_picker_with_a_controller_that_keeps_focus_on_pulse', async () => {
+    const behaviours: string[] = []
+    class FakeController {
+      setFocusBehavior(b: string) {
+        behaviours.push(b)
+      }
+    }
+    vi.stubGlobal('CaptureController', FakeController)
+    try {
+      screenCalls.length = 0
+      await StreamRoom.pick()
+      const opts = screenCalls[0] as { controller: unknown }
+      expect(opts.controller).toBeInstanceOf(FakeController)
+      expect(behaviours).toEqual(['no-focus-change'])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('still_picks_where_the_engine_has_no_capture_controller_or_refuses_the_early_focus_setting', async () => {
+    screenCalls.length = 0
+    await StreamRoom.pick()
+    expect((screenCalls[0] as { controller: unknown }).controller).toBeUndefined()
+    vi.stubGlobal('CaptureController', class {
+      setFocusBehavior() {
+        throw new DOMException('too early', 'InvalidStateError')
+      }
+    })
+    try {
+      await expect(StreamRoom.pick()).resolves.toMatchObject({ height: 1440 })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })
 
 describe('StreamRoom watching', () => {

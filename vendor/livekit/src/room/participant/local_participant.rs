@@ -398,6 +398,16 @@ impl LocalParticipant {
             req.audio_features.push(proto::AudioTrackFeature::TfPreconnectBuffer as i32);
         }
 
+        // Pulse patch: tell the server a 2-channel track is stereo. Its publisher answers keep
+        // `stereo=1` only for tracks marked so, once it has matched the m-section to the track:
+        // without this a stereo track turned mono at its first renegotiation.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let LocalTrack::Audio(audio) = &track {
+            if audio.rtc_source().num_channels() == 2 {
+                req.audio_features.push(proto::AudioTrackFeature::TfStereo as i32);
+            }
+        }
+
         req.packet_trailer_features =
             options.frame_metadata_features.to_proto().into_iter().map(|f| f as i32).collect();
 

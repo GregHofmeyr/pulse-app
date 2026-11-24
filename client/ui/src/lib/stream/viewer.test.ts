@@ -81,10 +81,13 @@ describe('toast stack', () => {
 })
 
 describe('watch list', () => {
-  it('preview_is_always_low_full_follows_quality', () => {
+  it('preview_takes_the_layer_that_fits_full_follows_quality', () => {
     expect(layerFor('preview', 'auto')).toBe('low')
-    expect(layerFor('preview', 'saver')).toBe('low')
+    expect(layerFor('preview', 'auto', 'medium')).toBe('medium')
+    expect(layerFor('preview', 'auto', 'high')).toBe('high')
+    expect(layerFor('preview', 'saver', 'high')).toBe('low')
     expect(layerFor('full', 'auto')).toBe('high')
+    expect(layerFor('full', 'auto', 'low')).toBe('high')
     expect(layerFor('full', 'saver')).toBe('low')
   })
   it('admit_drops_the_oldest_at_the_cap', () => {
