@@ -371,6 +371,7 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
            AND hash NOT IN (SELECT icon_hash FROM servers WHERE icon_hash IS NOT NULL)
            AND hash NOT IN (SELECT icon_hash FROM channels WHERE icon_hash IS NOT NULL)
            AND hash NOT IN (SELECT thumb_hash FROM link_embeds WHERE thumb_hash IS NOT NULL)
+           AND hash NOT IN (SELECT link_thumb FROM builds WHERE link_thumb IS NOT NULL)
            AND hash NOT IN (SELECT media_hash FROM badge_art)
            AND hash NOT IN (SELECT hash FROM steam_card_media)
            AND hash NOT IN (SELECT hash FROM deadlock_media)
@@ -393,7 +394,9 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
                                                   WHERE icon_hash IS NOT NULL)
                                    OR p.hash IN (SELECT icon_hash FROM channels
                                                   WHERE icon_hash IS NOT NULL)
-                                   OR p.hash IN (SELECT media_hash FROM badge_art)))
+                                   OR p.hash IN (SELECT media_hash FROM badge_art)
+                                   OR p.hash IN (SELECT link_thumb FROM builds
+                                                  WHERE link_thumb IS NOT NULL)))
          RETURNING hash",
     )
     .bind(&cutoff)

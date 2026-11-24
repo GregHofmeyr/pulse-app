@@ -8,7 +8,8 @@
 //!   answers a video of `@_` or `@kim` with its real, bare shape (no title, author or
 //!   thumbnail: `embeds/fixtures/tiktok_oembed.json`, #90).
 //! - `http://site.test:<port>/page`: an OpenGraph page with a relative `og:image`; `/bare` has no
-//!   metadata; `/held` answers like `/page` once [`FakeProvider::release`] is called.
+//!   metadata; `/held` answers like `/page` once [`FakeProvider::release`] is called; `/titled/<title>` is a page
+//!   whose `og:title` is `<title>` (#616).
 //! - `http://www.twitch.tv:<port>/<user>/clip/<slug>`: a clip page's OpenGraph.
 //! - `http://www.tiktok.com:<port>/t/<code>/`: a short link redirecting to [`TIKTOK_URL`].
 //! - `http://spotify.link:<port>/<code>`: a short link redirecting to [`SPOTIFY_JAM_URL`]; `/Page<…>` answers
@@ -95,6 +96,7 @@ impl FakeProvider {
                 get(|| async { html("<html><head></head><body>hello</body></html>".into()) }),
             )
             .route("/held", get(held))
+            .route("/titled/{title}", get(titled))
             .route("/{user}/clip/{slug}", get(clip))
             // TikTok's short links end in a slash.
             .route(
@@ -186,6 +188,18 @@ fn og_page() -> Response {
         </head><body><p>Body</p></body></html>"#
             .into(),
     )
+}
+
+async fn titled(Path(title): Path<String>) -> Response {
+    let esc = title
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
+    html(format!(
+        r#"<!doctype html><html><head><meta property="og:title" content="{esc}">
+        <meta property="og:image" content="/thumb.png"></head><body></body></html>"#
+    ))
 }
 
 async fn held(State(s): State<Shared>) -> Response {

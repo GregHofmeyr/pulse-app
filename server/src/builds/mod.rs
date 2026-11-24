@@ -5,6 +5,7 @@
 
 pub mod compat;
 pub mod routes;
+pub mod unfurl;
 
 use std::collections::HashMap;
 

@@ -186,6 +186,10 @@ async fn create(
             .await;
     }
     drop(_order);
+    // the link's page fills in its title, thumbnail and game afterwards
+    if let Some(link) = link {
+        super::unfurl::spawn_fill(&s, id, me, link);
+    }
     let msg = load(&s.db, Some(me), id).await?.ok_or(AppError::NotFound)?;
     Ok(Json(msg))
 }
