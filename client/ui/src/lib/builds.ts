@@ -180,3 +180,15 @@ export function buildsOnEvent(s: AppState, e: Event): AppState {
       return s
   }
 }
+
+/** A build's game, by name in its server's registry (null with no game, or one not arrived yet). */
+export function buildGameName(s: AppState, serverId: string, m: Message): string | null {
+  const id = m.build?.game_id
+  return id ? ((s.games[serverId] ?? []).find((g) => g.id === id)?.name ?? null) : null
+}
+
+/** "1 comment", "3 comments"; nothing with none. */
+export function commentCount(m: Message): string | null {
+  const n = m.build?.reply_count ?? 0
+  return n === 0 ? null : n === 1 ? '1 comment' : `${n} comments`
+}
