@@ -23,7 +23,7 @@ import { app } from '../lib/store.svelte'
 import { applyEvent, applyReady, emptyState } from '../lib/state'
 import { voice } from '../lib/voice.svelte'
 import { stream, streamApi } from '../lib/stream/stream.svelte'
-import { callView } from '../lib/stream/viewer.svelte'
+import { callView, openFull, openOwnFull } from '../lib/stream/viewer.svelte'
 import { diag, diagUi } from '../lib/stream/diag.svelte'
 import { testQoty } from '../lib/testReady'
 import { mediaUrl } from '../lib/emoji'
@@ -88,6 +88,7 @@ afterEach(async () => {
   if (cmp) unmount(cmp)
   cmp = undefined
   callView.full = null
+  callView.own = null
   callView.goTo = null
   callView.joinThenWatch = null
   await streamApi.unwatchAll()
@@ -860,5 +861,129 @@ describe('Spotify on the stage (#234)', () => {
     callView.full = null
     await settle()
     expect(q('.pill')).not.toBeNull()
+  })
+})
+
+describe('your own stream in full view (#609)', () => {
+  const goLive = () => {
+    app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1' } } }, 0)
+    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true }
+  }
+  const fullscreenCalls = () => invoke.mock.calls.filter((c) => c[0] === 'set_fullscreen').map((c) => (c[1] as { on: boolean }).on)
+  const esc = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+  const ownFull = () => q('.full-view')
+
+  it('the_full_view_button_on_your_tile_opens_your_capture_in_full_view', async () => {
+    goLive()
+    mountPanel()
+    const open = q('[data-stream="U1"] [data-own-full]')!
+    expect(open.getAttribute('aria-label')).toBe('Open your stream in full view')
+    open.click()
+    await settle()
+    expect(callView.own).toBe('V1')
+    const view = ownFull()!
+    expect(view.querySelector('.name')!.textContent).toBe('Your stream')
+    // the local capture, not a watch: no quality, volume or Stop watching
+    expect(view.querySelector('video[aria-label="Your stream"]')).not.toBeNull()
+    expect(button('Stop watching')).toBeUndefined()
+    expect(view.querySelector('input[aria-label="Stream volume"]')).toBeNull()
+    expect(button('Full screen')).toBeDefined()
+    // the grid is gone meanwhile; the stream itself is untouched
+    expect(q('[data-stream="U1"]')).toBeNull()
+    expect(stream.live?.channelId).toBe('V1')
+    expect(invoke.mock.calls.some(([c]) => c === 'stream_stop' || c === 'stream_watch')).toBe(false)
+  })
+
+  it('the_preview_itself_opens_it_by_click_or_keyboard', async () => {
+    goLive()
+    mountPanel()
+    const preview = q('[data-stream="U1"] .open')!
+    expect(preview.getAttribute('role')).toBe('button')
+    expect(preview.tabIndex).toBe(0)
+    preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await settle()
+    expect(ownFull()).not.toBeNull()
+    button('Back')!.click()
+    await settle()
+    expect(ownFull()).toBeNull()
+    q('[data-stream="U1"] .open')!.click()
+    await settle()
+    expect(ownFull()).not.toBeNull()
+  })
+
+  it('back_and_esc_close_it_and_focus_returns_to_your_tile', async () => {
+    goLive()
+    mountPanel()
+    openOwnFull('V1')
+    await settle()
+    button('Back')!.click()
+    await settle()
+    expect(callView.own).toBeNull()
+    expect(q('[data-stream="U1"]')).not.toBeNull()
+    expect(document.activeElement).toBe(q('[data-stream="U1"] [data-own-full]'))
+    openOwnFull('V1')
+    await settle()
+    esc()
+    await settle()
+    expect(callView.own).toBeNull()
+    expect(ownFull()).toBeNull()
+  })
+
+  it('full_screen_and_esc_leave_full_screen_first_then_the_view', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'set_fullscreen' ? false : cmd === 'list_messages' ? [] : undefined))
+    goLive()
+    mountPanel()
+    openOwnFull('V1')
+    await settle()
+    button('Full screen')!.click()
+    await settle()
+    expect(ownFull()!.classList.contains('screen')).toBe(true)
+    expect(fullscreenCalls()).toEqual([true])
+    esc()
+    await settle()
+    expect(ownFull()).not.toBeNull()
+    expect(ownFull()!.classList.contains('screen')).toBe(false)
+    expect(fullscreenCalls()).toEqual([true, false])
+    esc()
+    await settle()
+    expect(ownFull()).toBeNull()
+  })
+
+  it('opening_someone_elses_full_view_replaces_yours_and_back', async () => {
+    goLive()
+    mountPanel()
+    await streamApi.watch('V1', 'U2')
+    openFull({ channelId: 'V1', streamer: 'U2' })
+    await settle()
+    expect(button('Stop watching')).toBeDefined()
+    openOwnFull('V1')
+    await settle()
+    // one full view: sam's went back to a preview, and is still watched
+    expect(callView.full).toBeNull()
+    expect(stream.watching.find((w) => w.streamer === 'U2')?.view).toBe('preview')
+    expect(q('.full-view .name')!.textContent).toBe('Your stream')
+    openFull({ channelId: 'V1', streamer: 'U2' })
+    await settle()
+    expect(callView.own).toBeNull()
+    expect(q('.full-view .name')!.textContent).toBe('sam')
+  })
+
+  it('your_stream_ending_closes_it', async () => {
+    goLive()
+    mountPanel()
+    openOwnFull('V1')
+    await settle()
+    expect(ownFull()).not.toBeNull()
+    stream.live = null
+    await settle()
+    expect(ownFull()).toBeNull()
+  })
+
+  it('a_hidden_preview_offers_no_full_view', async () => {
+    goLive()
+    mountPanel()
+    button('Hide preview')!.click()
+    await settle()
+    expect(q('[data-own-full]')).toBeNull()
   })
 })

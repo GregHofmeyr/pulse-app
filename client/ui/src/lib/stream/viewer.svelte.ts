@@ -12,6 +12,8 @@ export type { WatchKey } from './viewer'
 export const callView = $state({
   /** The watch in full view. Kept while you're elsewhere, so the mini-preview takes you back to it. */
   full: null as WatchKey | null,
+  /** The channel whose own stream (yours) is in full view (#609), in place of a watch: one or the other. */
+  own: null as string | null,
   /** A channel the shell should show next (it clears this once it has). */
   goTo: null as string | null,
   /** A Join & watch whose join hasn't connected yet: the shell watches once it has. */
@@ -46,8 +48,21 @@ export function openFull(k: WatchKey) {
   const prev = callView.full
   // one stream in full view: the one there before goes back to a preview
   if (prev && (prev.channelId !== k.channelId || prev.streamer !== k.streamer)) streamApi.setView(prev.channelId, prev.streamer, 'preview')
+  callView.own = null
   callView.full = { channelId: k.channelId, streamer: k.streamer }
   streamApi.setView(k.channelId, k.streamer, 'full')
+}
+
+/** Your own stream in `channelId` in full view (#609), to check what you're sending: the watch in full view (if any)
+ *  goes back to a preview. */
+export function openOwnFull(channelId: string) {
+  closeFull()
+  callView.own = channelId
+}
+
+/** Back from your own stream's full view. */
+export function closeOwnFull() {
+  callView.own = null
 }
 
 /** Back to the grid: the stream keeps playing as a preview. */

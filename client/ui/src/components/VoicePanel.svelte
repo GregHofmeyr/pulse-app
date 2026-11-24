@@ -70,7 +70,7 @@
     void tick().then(() => {
       const at = document.activeElement
       if (at && at !== document.body) return
-      const to = now ? document.querySelector<HTMLElement>('[data-show-my-stream]') : document.querySelector<HTMLElement>(`[data-stream="${CSS.escape(meId)}"] .card button`)
+      const to = now ? document.querySelector<HTMLElement>('[data-show-my-stream]') : document.querySelector<HTMLElement>(`[data-stream="${CSS.escape(meId)}"] [data-hide-preview]`)
       to?.focus()
     })
   })
@@ -179,17 +179,21 @@
     return f && f.channelId === channelId && findWatch(f.channelId, f.streamer) ? f.streamer : null
   })
 
+  /** Your own stream in full view (#609), while you're live here. */
+  const ownFull = $derived(!fullStreamer && myLive && callView.own === channelId)
+
   // Leaving full view unmounts whatever had keyboard focus there: hand it to that stream's grid tile.
   let wasFull: string | null = null
   $effect(() => {
-    const now = fullStreamer
+    const now = fullStreamer ?? (ownFull ? meId : null)
     const left = wasFull
     wasFull = now
     if (!left || now) return
     void tick().then(() => {
       const at = document.activeElement
       if (at && at !== document.body) return // something else already has it
-      document.querySelector<HTMLElement>(`[data-stream="${CSS.escape(left)}"] .host`)?.focus()
+      const tile = `[data-stream="${CSS.escape(left)}"]`
+      document.querySelector<HTMLElement>(`${tile} .host, ${tile} [data-own-full]`)?.focus()
     })
   })
 
@@ -249,7 +253,7 @@
     {/if}
     <!-- its chat (#226): the panel on the right (beside a stream in full view, the strip there, #63); a click opens it
          with the message box focused (#202) -->
-    <button type="button" id={CHAT_TOGGLE_ID} class="icon-btn chat" aria-pressed={voiceChat.open} aria-controls={fullStreamer ? STRIP_ID : PANEL_ID.right} aria-label="Chat{badge?.label ?? ''}" data-tip={voiceChat.open ? 'Hide chat' : 'Show chat'} onclick={() => toggleVoiceChat(true)}>
+    <button type="button" id={CHAT_TOGGLE_ID} class="icon-btn chat" aria-pressed={voiceChat.open} aria-controls={fullStreamer || ownFull ? STRIP_ID : PANEL_ID.right} aria-label="Chat{badge?.label ?? ''}" data-tip={voiceChat.open ? 'Hide chat' : 'Show chat'} onclick={() => toggleVoiceChat(true)}>
       <Icon name="message" size={18} />
       {#if badge?.mentions}<span class="pill chat-pill">{badge.mentions}</span>{:else if badge?.unread}<span class="chat-dot"></span>{/if}
     </button>
@@ -261,6 +265,8 @@
 
   {#if fullStreamer}
     {#key fullStreamer}<FullView {channelId} streamer={fullStreamer} {serverId} {onMessage} {onVoiceSettings} />{/key}
+  {:else if ownFull}
+    <FullView {channelId} streamer={meId} {serverId} {onMessage} {onVoiceSettings} mine />
   {:else}
     <!-- a stream in full view keeps the room: the share stays hidden for you until you leave it, then comes back as it was -->
     {#if share}<StageSpotify {share} {serverId} {inCall} place="top" />{/if}
