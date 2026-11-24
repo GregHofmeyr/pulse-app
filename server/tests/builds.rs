@@ -8,7 +8,7 @@ use common::*;
 use futures::SinkExt;
 use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
 use pulse_protocol::ids::ServerId;
-use pulse_protocol::rest::{Channel, ChannelKind};
+use pulse_protocol::rest::{Channel, ChannelKind, Message};
 use serde_json::json;
 use sqlx::sqlite::SqliteConnectOptions;
 use tokio_tungstenite::tungstenite::Message as Ws;
@@ -534,4 +534,322 @@ async fn an_older_clients_layout_save_needn_t_name_builds_channels() {
         .await
         .unwrap();
     assert_eq!(still, 1);
+}
+
+// ---- Create, get and list (Task 2) ----
+
+/// The smallest WebP header the signature check looks at, padded out.
+fn webp(len: usize) -> Vec<u8> {
+    let mut b = b"RIFF\0\0\0\0WEBPVP8 ".to_vec();
+    b.resize(len.max(16), 7);
+    b
+}
+
+/// Start an upload in `channel` and PUT `bytes` to it, as the client does.
+async fn upload(
+    app: &TestApp,
+    token: &str,
+    channel: pulse_protocol::ids::ChannelId,
+    name: &str,
+    content_type: &str,
+    bytes: &[u8],
+) -> pulse_protocol::ids::AttachmentId {
+    let r = post_json(
+        app,
+        token,
+        &format!("/channels/{channel}/attachments"),
+        json!({ "name": name, "size": bytes.len(), "content_type": content_type }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "start {name}");
+    let up: pulse_protocol::rest::AttachmentUpload = r.json().await.unwrap();
+    let r = reqwest::Client::new()
+        .put(up.url.clone().unwrap())
+        .header("content-type", &up.content_type)
+        .body(bytes.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "PUT {}", r.status());
+    up.id
+}
+
+async fn shot(app: &TestApp, token: &str, channel: pulse_protocol::ids::ChannelId) -> pulse_protocol::ids::AttachmentId {
+    upload(app, token, channel, "shot.webp", "image/webp", &webp(64)).await
+}
+
+async fn post_build(
+    app: &TestApp,
+    token: &str,
+    channel: pulse_protocol::ids::ChannelId,
+    body: serde_json::Value,
+) -> reqwest::Response {
+    post_json(app, token, &format!("/channels/{channel}/builds"), body).await
+}
+
+async fn build_ok(
+    app: &TestApp,
+    token: &str,
+    channel: pulse_protocol::ids::ChannelId,
+    body: serde_json::Value,
+) -> Message {
+    let r = post_build(app, token, channel, body).await;
+    assert_eq!(r.status(), 200, "create build");
+    r.json().await.unwrap()
+}
+
+async fn add_game(app: &TestApp, token: &str, server: ServerId, name: &str) -> pulse_protocol::rest::Game {
+    let r = post_json(app, token, &format!("/servers/{server}/games"), json!({ "name": name })).await;
+    assert!(r.status().is_success(), "add game {}", r.status());
+    r.json().await.unwrap()
+}
+
+async fn list(app: &TestApp, token: &str, channel: pulse_protocol::ids::ChannelId, query: &str) -> Vec<Message> {
+    get_json(app, token, &format!("/channels/{channel}/builds{query}")).await
+}
+
+async fn message_of(r: reqwest::Response) -> String {
+    let v: serde_json::Value = r.json().await.unwrap();
+    v["message"].as_str().unwrap_or_default().to_string()
+}
+
+/// A server with alex (its owner) and sam in it, and a builds channel.
+struct World {
+    app: TestApp,
+    alex: (pulse_protocol::ids::UserId, String),
+    sam: (pulse_protocol::ids::UserId, String),
+    server: ServerId,
+    ch: Channel,
+}
+
+async fn world() -> World {
+    let app = spawn().await;
+    let alex = register(&app, "alex").await;
+    let sam = register(&app, "sam").await;
+    let s = create_server(&app, &alex.1, "Main").await;
+    assert_eq!(join_server(&app, &sam.1, s.id).await.status(), 200);
+    let ch = create_builds(&app, &alex.1, s.id).await;
+    World { app, alex, sam, server: s.id, ch }
+}
+
+#[tokio::test]
+async fn creates_a_build_with_a_title_only() {
+    let w = world().await;
+    let mut ws = hello(&w.app, &w.sam.1).await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "  Raven crit " })).await;
+    let b = m.build.as_ref().unwrap();
+    assert_eq!(b.title, "Raven crit");
+    assert!(b.quick_drop && !b.title_auto);
+    assert_eq!(m.content, "Raven crit");
+    assert_eq!(m.author_id, Some(w.alex.0));
+    let got = wait_for(&mut ws, "MessageCreated", |e| match e {
+        Event::MessageCreated { message, .. } => Some(message),
+        _ => None,
+    })
+    .await;
+    assert_eq!(got.id, m.id);
+    assert_eq!(got.build.unwrap().title, "Raven crit");
+    // and it reads back the same
+    let back: Message = get_json(&w.app, &w.sam.1, &format!("/builds/{}", m.id)).await;
+    assert_eq!(back.build.unwrap().title, "Raven crit");
+}
+
+#[tokio::test]
+async fn creates_a_build_from_a_link_only() {
+    let w = world().await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "link_url": "https://youtu.be/abc12345678" })).await;
+    let b = m.build.unwrap();
+    assert_eq!(b.title, "youtu.be/abc12345678");
+    assert!(b.title_auto && b.quick_drop);
+    assert_eq!(b.link.unwrap().url, "https://youtu.be/abc12345678");
+}
+
+#[tokio::test]
+async fn creates_a_build_from_an_image_only() {
+    let w = world().await;
+    let a = shot(&w.app, &w.alex.1, w.ch.id).await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "attachments": [a] })).await;
+    assert_eq!(m.build.as_ref().unwrap().title, "Untitled build");
+    assert!(m.build.unwrap().title_auto);
+    assert_eq!(m.attachments.len(), 1);
+    assert_eq!(m.attachments[0].id, a);
+}
+
+#[tokio::test]
+async fn a_build_with_game_and_notes_is_not_a_quick_drop() {
+    let w = world().await;
+    let g = add_game(&w.app, &w.alex.1, w.server, "The First Descendant").await;
+    let m = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "title": "Raven crit", "game_id": g.id, "notes": "- crit rate\n- **reload**" }),
+    )
+    .await;
+    let b = m.build.unwrap();
+    assert!(!b.quick_drop && !b.game_guessed);
+    assert_eq!(b.game_id, Some(g.id));
+    assert_eq!(b.notes.as_deref(), Some("- crit rate\n- **reload**"));
+    assert_eq!(m.content, "Raven crit\nThe First Descendant\n- crit rate\n- **reload**");
+    // a game alone ends it too
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Bunny", "game_id": g.id })).await;
+    assert!(!m.build.unwrap().quick_drop);
+}
+
+#[tokio::test]
+async fn build_inputs_are_checked() {
+    let w = world().await;
+    let other = create_server(&w.app, &w.sam.1, "Other").await;
+    let elsewhere = add_game(&w.app, &w.sam.1, other.id, "Warframe").await;
+    let long = |n: usize| "x".repeat(n);
+    let shots: Vec<_> = {
+        let mut v = vec![];
+        for _ in 0..11 {
+            v.push(shot(&w.app, &w.alex.1, w.ch.id).await);
+        }
+        v
+    };
+    let pdf = upload(&w.app, &w.alex.1, w.ch.id, "a.pdf", "application/pdf", b"%PDF-1.4 hello").await;
+    for body in [
+        json!({ "title": long(121) }),
+        json!({ "title": "ok", "notes": long(4001) }),
+        json!({ "title": "ok", "attachments": shots }),
+        json!({ "link_url": "ftp://example.com/x" }),
+        json!({ "link_url": format!("https://example.com/{}", long(2030)) }),
+        json!({ "title": "ok", "game_id": elsewhere.id }),
+        json!({ "title": "ok", "attachments": [pdf] }),
+    ] {
+        let r = post_build(&w.app, &w.alex.1, w.ch.id, body.clone()).await;
+        assert_eq!(r.status(), 400, "{body}");
+    }
+    let r = post_build(&w.app, &w.alex.1, w.ch.id, json!({ "title": "   " })).await;
+    assert_eq!(r.status(), 400);
+    assert_eq!(message_of(r).await, "A build needs a title, a link or a screenshot.");
+    let r = post_build(&w.app, &w.alex.1, w.ch.id, json!({})).await;
+    assert_eq!(r.status(), 400);
+    // a builds route on another kind of channel
+    let text = general(&w.app, &w.alex.1, w.server).await;
+    let r = post_build(&w.app, &w.alex.1, text.id, json!({ "title": "ok" })).await;
+    assert_eq!(r.status(), 400);
+}
+
+#[tokio::test]
+async fn non_members_cant_add_or_see_builds() {
+    let w = world().await;
+    let (_, kim) = register(&w.app, "kim").await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
+    // what the clips routes answer someone outside the server
+    let clips = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/servers/{}/channels", w.server),
+        json!({ "kind": "clips", "name": "clips" }),
+    )
+    .await
+    .json::<Channel>()
+    .await
+    .unwrap();
+    let outsider = w
+        .app
+        .http
+        .get(w.app.url(&format!("/channels/{}/clips", clips.id)))
+        .bearer_auth(&kim)
+        .send()
+        .await
+        .unwrap()
+        .status();
+    let r = post_build(&w.app, &kim, w.ch.id, json!({ "title": "mine" })).await;
+    assert_eq!(r.status(), outsider, "create");
+    for path in [format!("/builds/{}", m.id), format!("/channels/{}/builds", w.ch.id)] {
+        let r = w.app.http.get(w.app.url(&path)).bearer_auth(&kim).send().await.unwrap();
+        assert_eq!(r.status(), outsider, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn lists_builds_newest_first_by_game_without_archived() {
+    let w = world().await;
+    let tfd = add_game(&w.app, &w.alex.1, w.server, "The First Descendant").await;
+    let wf = add_game(&w.app, &w.alex.1, w.server, "Warframe").await;
+    let a = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "A", "game_id": tfd.id })).await;
+    let b = build_ok(&w.app, &w.sam.1, w.ch.id, json!({ "title": "B", "game_id": wf.id })).await;
+    let c = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "C", "game_id": tfd.id })).await;
+    // a comment is no build, and isn't listed
+    let ids = |v: Vec<Message>| v.into_iter().map(|m| m.id).collect::<Vec<_>>();
+    assert_eq!(ids(list(&w.app, &w.sam.1, w.ch.id, "").await), vec![c.id, b.id, a.id]);
+    assert_eq!(
+        ids(list(&w.app, &w.sam.1, w.ch.id, &format!("?game={}", tfd.id)).await),
+        vec![c.id, a.id]
+    );
+    assert_eq!(
+        ids(list(&w.app, &w.sam.1, w.ch.id, &format!("?before={}&limit=1", c.id)).await),
+        vec![b.id]
+    );
+    // archived ones stay out unless asked
+    sqlx::query("UPDATE builds SET archived_at = '2026-01-01T00:00:00.000Z', archived_by = ? WHERE message_id = ?")
+        .bind(w.alex.0.to_string())
+        .bind(b.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    assert_eq!(ids(list(&w.app, &w.sam.1, w.ch.id, "").await), vec![c.id, a.id]);
+    assert_eq!(
+        ids(list(&w.app, &w.sam.1, w.ch.id, "?archived=true").await),
+        vec![c.id, b.id, a.id]
+    );
+}
+
+#[tokio::test]
+async fn a_build_counts_as_unread_for_others() {
+    let w = world().await;
+    build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
+    let (_, ready) = hello_as(&w.app, &w.sam.1, pulse_protocol::PROTOCOL_VERSION).await;
+    let st = ready.read_states.iter().find(|r| r.channel_id == w.ch.id).unwrap();
+    assert_eq!(st.unread, 1);
+    let (_, ready) = hello_as(&w.app, &w.alex.1, pulse_protocol::PROTOCOL_VERSION).await;
+    let st = ready.read_states.iter().find(|r| r.channel_id == w.ch.id).unwrap();
+    assert_eq!(st.unread, 0, "the author has read their own");
+}
+
+#[tokio::test]
+async fn a_retried_create_gets_the_same_build() {
+    let w = world().await;
+    let body = json!({ "title": "Raven crit", "nonce": "n-1" });
+    let a = build_ok(&w.app, &w.alex.1, w.ch.id, body.clone()).await;
+    let b = build_ok(&w.app, &w.alex.1, w.ch.id, body).await;
+    assert_eq!(a.id, b.id);
+    assert_eq!(list(&w.app, &w.alex.1, w.ch.id, "").await.len(), 1);
+}
+
+/// A version-4 client hears nothing of a build, nor its comments' channel (#616).
+#[tokio::test]
+async fn a_version_4_client_hears_no_build() {
+    let w = world().await;
+    let text = general(&w.app, &w.alex.1, w.server).await;
+    let (mut old, _) = hello_as(&w.app, &w.sam.1, OLD).await;
+    build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
+    send(&w.app, &w.alex.1, text.id, "after").await;
+    let got = events_until(&mut old, "after").await;
+    let id = w.ch.id.to_string();
+    assert!(
+        !got.iter().any(|e| serde_json::to_string(e).unwrap().contains(&id)),
+        "{got:?}"
+    );
+}
+
+/// A forward names its original's kind of chat, which a version-4 client can't read: nothing leaves a builds channel
+/// by forward yet (#616).
+#[tokio::test]
+async fn a_build_isnt_forwarded() {
+    let w = world().await;
+    let text = general(&w.app, &w.alex.1, w.server).await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/messages/{}/forward", m.id),
+        json!({ "channel_id": text.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 400);
 }

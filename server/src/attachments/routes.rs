@@ -55,7 +55,8 @@ async fn start(
     // (only its people see it); a server channel needs membership.
     match ch.kind {
         ChannelKind::Dm | ChannelKind::Group => {}
-        ChannelKind::Text | ChannelKind::Voice => match ch.server_id {
+        // a builds channel's files are its builds' screenshots (#616)
+        ChannelKind::Text | ChannelKind::Voice | ChannelKind::Builds => match ch.server_id {
             Some(server) if is_server_member(&s.db, server, me).await? => {}
             _ => return Err(AppError::Forbidden),
         },

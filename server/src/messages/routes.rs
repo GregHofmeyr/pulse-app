@@ -198,6 +198,7 @@ pub(crate) async fn load(
     let mut one = [m];
     crate::quotes::attach(db, me, &mut one).await?;
     crate::clips::attach(db, me, &mut one).await?;
+    crate::builds::attach(db, me, &mut one).await?;
     crate::embeds::attach(db, &mut one).await?;
     crate::pins::attach(db, &mut one).await?;
     crate::polls::attach(db, me, &mut one).await?;
@@ -274,6 +275,7 @@ pub(crate) async fn fill(
     }
     crate::quotes::attach(db, me, &mut page).await?;
     crate::clips::attach(db, me, &mut page).await?;
+    crate::builds::attach(db, me, &mut page).await?;
     crate::embeds::attach(db, &mut page).await?;
     crate::pins::attach(db, &mut page).await?;
     crate::polls::attach(db, me, &mut page).await?;

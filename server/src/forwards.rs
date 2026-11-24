@@ -398,6 +398,13 @@ async fn forward(
     {
         return Err(AppError::NotFound);
     }
+    // A forward names the kind of chat its original was in, and a client from before builds channels (#616) can't read
+    // that kind: nothing from a builds channel is forwarded until every client can.
+    if src_ch.kind == ChannelKind::Builds {
+        return Err(AppError::BadRequest(
+            "builds and their comments can't be forwarded yet".into(),
+        ));
+    }
     let stored = match &src.forwarded {
         // a forward's original, as it was forwarded
         Some(f) if f.unavailable => {
@@ -424,6 +431,7 @@ async fn forward(
             let special = src.kind != MessageKind::Normal
                 || src.quote.is_some()
                 || src.clip.is_some()
+                || src.build.is_some()
                 || src.poll.is_some()
                 || src.plan.is_some();
             if special {

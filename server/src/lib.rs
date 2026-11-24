@@ -115,6 +115,7 @@ pub fn router(state: AppState) -> Router {
         .merge(sounds::routes::router())
         .merge(clips::games::router())
         .merge(clips::routes::router())
+        .merge(builds::routes::router())
         .merge(attachments::routes::router())
         .merge(attachments::view_once::router())
         .merge(profiles::routes::router())
