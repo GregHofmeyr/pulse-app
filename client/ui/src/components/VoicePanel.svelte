@@ -24,6 +24,7 @@
   import { goLiveUi, pickSource } from '../lib/stream/golive.svelte'
   import { isWindows } from '../lib/stream/platform'
   import { findWatch, stream } from '../lib/stream/stream.svelte'
+  import { selfPreview, setSelfPreviewHidden } from '../lib/stream/selfTile.svelte'
   import { callView, openFull } from '../lib/stream/viewer.svelte'
   import { PANEL_ID } from '../lib/stream/fullPanels'
   import { CHAT_TOGGLE_ID, STRIP_ID, toggleVoiceChat, voiceChat } from '../lib/voiceChat.svelte'
@@ -56,7 +57,23 @@
   })
   let menu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
   const myLive = $derived(stream.live?.channelId === channelId)
-  const tiles = $derived(gridTiles({ roster, streams: liveIn(app.state, channelId), meId, showEveryone, myLive }))
+  // your own stream's tile, hidden for you (#603): the stream goes on, the controls get a button that brings it back
+  const mineHidden = $derived(myLive && selfPreview.hidden)
+  const tiles = $derived(gridTiles({ roster, streams: liveIn(app.state, channelId), meId, showEveryone, myLive, hideMine: mineHidden }))
+  // the control you used goes with the change: hiding hands focus to the restore button, restoring to the tile's toggle
+  let wasHidden = untrack(() => mineHidden)
+  $effect(() => {
+    const now = mineHidden
+    const changed = now !== wasHidden
+    wasHidden = now
+    if (!changed) return
+    void tick().then(() => {
+      const at = document.activeElement
+      if (at && at !== document.body) return
+      const to = now ? document.querySelector<HTMLElement>('[data-show-my-stream]') : document.querySelector<HTMLElement>(`[data-stream="${CSS.escape(meId)}"] .card button`)
+      to?.focus()
+    })
+  })
 
   const tileKey = (t: (typeof tiles)[number]) => (t.kind === 'user' ? `u:${t.entry.userId}` : `s:${t.streamer}`)
 
@@ -250,7 +267,9 @@
     {#if party}<WatchPartyPanel {party} {serverId} {inCall} />{/if}
     <div class="stage-area">
     <div class="grid-wrap" bind:this={stageEl}>
-      {#if nobodyStreaming(tiles, showEveryone)}
+      {#if mineHidden && (!tiles.length || nobodyStreaming(tiles, showEveryone))}
+        <p class="empty">Your stream is hidden from your view — <button type="button" class="link-btn" onclick={() => setSelfPreviewHidden(false)}>show it</button></p>
+      {:else if nobodyStreaming(tiles, showEveryone)}
         <p class="empty">Nobody's streaming — <button type="button" class="link-btn" onclick={() => setShowEveryone(true)}>show everyone</button></p>
       {:else if !tiles.length}
         <p class="empty">Nobody's here yet.</p>
@@ -293,6 +312,12 @@
         {#if canGoLive}
           <!-- aria-disabled, not disabled: a disabled button swallows the hover that shows the tooltip -->
           <button class="golive" class:off={!windows} aria-disabled={!windows} data-tip={windows ? undefined : "Streaming from Linux isn't supported yet"} onclick={() => pickSource(channelId)}>Go Live</button>
+        {/if}
+        {#if mineHidden}
+          <!-- small and always here while you're live with your tile hidden; it only changes your own view -->
+          <button type="button" class="ctl show-mine" data-show-my-stream aria-label="Show my stream" data-tip="Show my stream" onclick={() => setSelfPreviewHidden(false)}>
+            <Icon name="eye" size={20} />
+          </button>
         {/if}
         <button class="leave" aria-label="Leave voice" onclick={() => voiceApi.leave()}><Icon name="hangup" size={22} /></button>
       </div>
@@ -357,6 +382,9 @@
   .ctl { width: 48px; height: 48px; border: 0; border-radius: 14px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
   .ctl:hover { background: var(--bg-4); }
   .ctl.open { background: var(--bg-4); }
+  /* the quiet one: it only brings your own hidden stream tile back (#603) */
+  .ctl.show-mine { color: var(--text-2); }
+  .ctl.show-mine:hover { color: var(--text); }
   .ctl.on { background: var(--danger); color: var(--on-danger); }
   /* server muted / deafened (#140): filled, with a ring, whatever your own toggle says */
   .ctl.server { background: var(--danger); color: var(--on-danger); box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--danger); }

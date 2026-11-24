@@ -47,6 +47,9 @@ pub struct AudioConfig {
     /// "Even out voice volumes" (#355 (3)): level each remote voice towards one loudness.
     #[serde(default = "default_true")]
     pub even_out_voices: bool,
+    /// "Voice clarity EQ" (#590): the mic's tone stage (`tone`) after noise suppression.
+    #[serde(default = "default_true")]
+    pub voice_clarity_eq: bool,
     /// Pre-2026-10 on/off noise toggle: only read, to migrate old settings (see `normalized`).
     #[serde(default, skip_serializing)]
     pub noise_suppress: Option<bool>,
@@ -85,6 +88,7 @@ impl Default for AudioConfig {
             auto_sensitivity: true,
             auto_gain: false,
             even_out_voices: true,
+            voice_clarity_eq: true,
             noise_suppress: None,
             echo_cancel: None,
         }
@@ -98,6 +102,8 @@ pub struct ProcCfg {
     pub auto: bool,
     pub threshold: f32,
     pub gain: f32,
+    /// The tone stage (#590) on.
+    pub tone: bool,
     pub version: u64,
 }
 
@@ -123,6 +129,10 @@ pub fn input_gain(pct: u16) -> f32 {
 pub struct DeviceInfo {
     pub name: String,
     pub is_default: bool,
+    /// An input that already cleans up its own sound, and what does it (#588): Voice settings suggests Standard
+    /// over Strong for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub processed_by: Option<&'static str>,
 }
 
 /// FINDINGS rule 2: a device that stops calling back (BT profile switch, unplug) must be noticed.
@@ -321,6 +331,7 @@ fn stream_config(dev: &cpal::Device, cfg: &cpal::SupportedStreamConfig) -> cpal:
 fn list(
     names: Option<impl Iterator<Item = cpal::Device>>,
     default: Option<String>,
+    inputs: bool,
 ) -> Vec<DeviceInfo> {
     names
         .map(|it| {
@@ -328,6 +339,9 @@ fn list(
                 .filter_map(|d| device_name(&d))
                 .map(|name| DeviceInfo {
                     is_default: Some(&name) == default.as_ref(),
+                    processed_by: inputs
+                        .then(|| super::virtualmic::processed_by(&name))
+                        .flatten(),
                     name,
                 })
                 .collect()
@@ -340,6 +354,7 @@ pub fn list_inputs() -> Vec<DeviceInfo> {
     list(
         host.input_devices().ok(),
         host.default_input_device().and_then(|d| device_name(&d)),
+        true,
     )
 }
 
@@ -348,6 +363,7 @@ pub fn list_outputs() -> Vec<DeviceInfo> {
     list(
         host.output_devices().ok(),
         host.default_output_device().and_then(|d| device_name(&d)),
+        false,
     )
 }
 
@@ -445,6 +461,7 @@ impl Shared {
                 auto: cfg.auto_sensitivity,
                 threshold: cfg.sensitivity,
                 gain: input_gain(cfg.input_gain_pct),
+                tone: cfg.voice_clarity_eq,
                 version: 0,
             }),
             ns_status: Mutex::new((None, false)),
@@ -660,6 +677,7 @@ impl Shared {
             auto_gain = cfg.auto_gain,
             auto_sensitivity = cfg.auto_sensitivity,
             sensitivity = cfg.sensitivity,
+            clarity_eq = cfg.voice_clarity_eq,
             "voice: mic settings"
         );
         {
@@ -669,6 +687,7 @@ impl Shared {
                 auto: cfg.auto_sensitivity,
                 threshold: cfg.sensitivity,
                 gain: input_gain(cfg.input_gain_pct),
+                tone: cfg.voice_clarity_eq,
                 version: p.version + 1,
             };
         }
@@ -901,6 +920,10 @@ fn open_half(
             stream.play()?;
             let name = device_name(&dev).unwrap_or_default();
             tracing::info!(device = %name, rate, ch, fmt = ?cfg.sample_format(), "audio {side} opened");
+            if input && let Some(by) = super::virtualmic::processed_by(&name) {
+                // once per open (#588): a report then says the mic was already cleaned before Pulse's suppression
+                tracing::info!(device = %name, processed_by = by, "voice: mic already processes its sound");
+            }
             if !input && !cancelled.load(Ordering::SeqCst) {
                 // Auto echo cancellation follows the output (#76): every open, so a switch re-decides
                 decides.set_output(&name, super::echo::output_of(&dev));

@@ -32,6 +32,7 @@ import { motion } from '../lib/animate.svelte'
 import { stageLayout, tileScale } from '../lib/stagelayout'
 import { reloadVoiceChat, takeChatFocus, voiceChat } from '../lib/voiceChat.svelte'
 import { reloadStageView } from '../lib/stageShareView.svelte'
+import { reloadSelfPreview, selfPreview } from '../lib/stream/selfTile.svelte'
 import type { StageShare } from '../lib/protocol/StageShare'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -66,6 +67,7 @@ beforeEach(() => {
   invoke.mockReset()
   invoke.mockResolvedValue(undefined)
   localStorage.clear()
+  reloadSelfPreview()
   voice.localMutes = {}
   voice.volumes = {}
   vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Windows NT 10.0)')
@@ -253,6 +255,106 @@ describe('stream tiles', () => {
     expect(tile.textContent).not.toContain('Watch')
     expect(tile.classList.contains('own')).toBe(true)
     expect(tile.querySelector('.card.tile')).not.toBeNull()
+  })
+
+  describe('hiding your own tile (#603)', () => {
+    const goLive = () => {
+      app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1' } } }, 0)
+      stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true }
+    }
+    const stopCalls = () => invoke.mock.calls.filter(([c]) => c === 'stream_stop')
+
+    it('hide_preview_removes_the_whole_tile_and_the_stream_keeps_going', async () => {
+      goLive()
+      mountPanel()
+      expect(button('Show my stream')).toBeUndefined()
+      const tilesBefore = document.querySelectorAll('.slot').length
+      button('Hide preview')!.click()
+      await settle()
+      expect(q('[data-stream="U1"]')).toBeNull()
+      expect(document.querySelectorAll('.slot').length).toBe(tilesBefore - 1)
+      expect(q('[data-stream="U1"] video')).toBeNull()
+      // the stream itself: still live, nothing stopped or re-announced
+      expect(stream.live?.channelId).toBe('V1')
+      expect(stopCalls()).toEqual([])
+      expect(invoke.mock.calls.some(([c]) => c === 'stream_go_live')).toBe(false)
+      // the restore control: labelled, focusable, and handed the focus the hide button had
+      const restore = button('Show my stream')!
+      expect(restore.tagName).toBe('BUTTON')
+      expect(restore.tabIndex).toBe(0)
+      expect(document.activeElement).toBe(restore)
+    })
+
+    it('show_my_stream_brings_the_tile_back', async () => {
+      goLive()
+      mountPanel()
+      button('Hide preview')!.click()
+      await settle()
+      button('Show my stream')!.click()
+      await settle()
+      const tile = q('[data-stream="U1"]')!
+      expect(tile).not.toBeNull()
+      expect(tile.querySelector('video')).not.toBeNull()
+      expect(button('Show my stream')).toBeUndefined()
+      expect(stream.live?.channelId).toBe('V1')
+      expect(stopCalls()).toEqual([])
+    })
+
+    it('other_tiles_are_unaffected', async () => {
+      goLive()
+      mountPanel()
+      button('Hide preview')!.click()
+      await settle()
+      const sams = q('[data-stream="U2"]')!
+      expect(sams).not.toBeNull()
+      expect(button(WATCH)).toBeDefined()
+      expect(sams.classList.contains('own')).toBe(false)
+      // the people stay: your own user tile and sam's
+      expect(q('[data-user="U1"]')).not.toBeNull()
+      expect(q('[data-user="U2"]')).not.toBeNull()
+      // and sam's tile still watches on a click, as before
+      sams.click()
+      await settle()
+      expect(q('[data-stream="U2"].watching')).not.toBeNull()
+    })
+
+    it('the_choice_is_remembered_on_this_device', async () => {
+      goLive()
+      mountPanel()
+      button('Hide preview')!.click()
+      await settle()
+      expect(localStorage.getItem('pulse.stream.hidepreview')).toContain('true')
+      unmount(cmp!)
+      reloadSelfPreview()
+      expect(selfPreview.hidden).toBe(true)
+      mountPanel()
+      expect(q('[data-stream="U1"]')).toBeNull()
+      expect(button('Show my stream')).toBeDefined()
+    })
+
+    it('with_only_streams_shown_the_empty_grid_says_your_stream_is_hidden', async () => {
+      localStorage.setItem('pulse.callgrid.everyone.U1', JSON.stringify({ on: false }))
+      app.state = applyEvent(app.state, { t: 'StreamEnded', d: { channel_id: 'V1', user_id: 'U2', reason: 'stopped' } }, 0)
+      goLive()
+      mountPanel()
+      button('Hide preview')!.click()
+      await settle()
+      const empty = q('.empty')!
+      expect(empty.textContent).toContain('Your stream is hidden')
+      expect(empty.textContent).not.toContain('Nobody')
+      button('show it')!.click()
+      await settle()
+      expect(q('[data-stream="U1"]')).not.toBeNull()
+    })
+
+    it('live_from_another_device_is_never_hidden', () => {
+      localStorage.setItem('pulse.stream.hidepreview', JSON.stringify({ on: true }))
+      reloadSelfPreview()
+      app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1' } } }, 0)
+      mountPanel()
+      expect(q('[data-stream="U1"]')!.textContent).toContain("You're live from another device")
+      expect(button('Show my stream')).toBeUndefined()
+    })
   })
 
   it('own_stream_from_another_device_shows_the_note', () => {
