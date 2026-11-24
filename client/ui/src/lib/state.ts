@@ -13,6 +13,8 @@ import type { Channel } from './protocol/Channel'
 import type { Gif } from './protocol/Gif'
 import type { ServerLayout } from './protocol/ServerLayout'
 import type { ClipFacets } from './protocol/ClipFacets'
+import type { BuildFacets } from './protocol/BuildFacets'
+import { buildsOnEvent, type BuildFeed } from './builds'
 import type { ClipView } from './protocol/ClipView'
 import type { CustomEmoji } from './protocol/CustomEmoji'
 import type { Sound } from './protocol/Sound'
@@ -181,6 +183,10 @@ export type AppState = {
    * the text channel's `messages`/`history`; a clip's replies still live in `threads`. */
   clipFeeds: Record<string, ClipFeed>
   clipFacets: Record<string, ClipFacets> // channelId -> filter chips
+  /** A builds channel's feeds by `buildFeedKey` (#617; cleared on every Ready, like `clipFeeds`). */
+  buildFeeds: Record<string, BuildFeed>
+  /** A builds channel's per-game counts, with and without archived builds (`buildFacetsOf`). */
+  buildFacets: Record<string, BuildFacets>
   clipJobs: Record<string, ClipJob> // job id -> clip being sent (a cancelled one is removed; a posted one stays a moment)
   /** serverId -> its categories in order and the layout revision they're from (#54). A server missing here is an
    *  older one without categories: its list shows the four kind sections. Where channels sit is on the channels. */
@@ -221,7 +227,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], myServerStatuses: [], blocks: [], invitesRev: {}, bansRev: {}, inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], myServerStatuses: [], blocks: [], invitesRev: {}, bansRev: {}, inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, buildFeeds: {}, buildFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -334,6 +340,8 @@ function readyState(s: AppState, r: Ready): AppState {
     clipViews: Object.fromEntries(r.clip_views.map((v) => [v.channel_id, v.view])),
     clipFeeds: {},
     clipFacets: {},
+    buildFeeds: {},
+    buildFacets: {},
     // absent from older servers: no categories (the list shows the four kind sections)
     layouts: Object.fromEntries((r.layouts ?? []).map((l) => [l.server_id, { revision: l.revision, categories: l.categories }])),
     pins: {},
@@ -531,15 +539,16 @@ function upsertMessage(list: Message[] | undefined, m: Message): Message[] {
 
 type Thread = { reply_count: number; last_reply_id: string | null; replies_seen: string | null }
 
-/** The reply counters of a message that has a thread (a quote or a clip). */
+/** The reply counters of a message that has a thread (a quote, a clip or a build). */
 export function threadOf(m: Message): Thread | null {
-  return m.quote ?? m.clip
+  return m.quote ?? m.clip ?? m.build ?? null
 }
 
 /** `m` with its thread counters changed by `f` (as is when it has none). */
 export function withThread(m: Message, f: (t: Thread) => Thread): Message {
   if (m.quote) return { ...m, quote: { ...m.quote, ...f(m.quote) } }
   if (m.clip) return { ...m, clip: { ...m.clip, ...f(m.clip) } }
+  if (m.build) return { ...m, build: { ...m.build, ...f(m.build) } }
   return m
 }
 
@@ -550,21 +559,28 @@ function withGame(games: Record<string, Game[]>, g: Game): Record<string, Game[]
 
 const newestFirst = (a: Message, b: Message) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
 
-/** Change a clip in every feed that holds it (feeds without it are untouched). */
-function mapFeedItems(s: AppState, channel: string, id: string, f: (m: Message) => Message): AppState {
-  let feeds = s.clipFeeds
-  for (const [k, feed] of Object.entries(s.clipFeeds)) {
+/** `feeds` with the message changed in every feed that holds it (the same object when none does). */
+function mapHeld<F extends { channelId: string; items: Message[] }>(feeds: Record<string, F>, channel: string, id: string, f: (m: Message) => Message): Record<string, F> {
+  let next = feeds
+  for (const [k, feed] of Object.entries(feeds)) {
     if (feed.channelId !== channel || !feed.items.some((m) => m.id === id)) continue
-    feeds = { ...feeds, [k]: { ...feed, items: feed.items.map((m) => (m.id === id ? f(m) : m)) } }
+    next = { ...next, [k]: { ...feed, items: feed.items.map((m) => (m.id === id ? f(m) : m)) } }
   }
-  return feeds === s.clipFeeds ? s : { ...s, clipFeeds: feeds }
+  return next
 }
 
-/** The loaded copy of a message in its channel list or (for a clip) a feed. */
+/** Change a clip or a build in every feed that holds it (feeds without it are untouched). */
+function mapFeedItems(s: AppState, channel: string, id: string, f: (m: Message) => Message): AppState {
+  const clipFeeds = mapHeld(s.clipFeeds, channel, id, f)
+  const buildFeeds = mapHeld(s.buildFeeds, channel, id, f)
+  return clipFeeds === s.clipFeeds && buildFeeds === s.buildFeeds ? s : { ...s, clipFeeds, buildFeeds }
+}
+
+/** The loaded copy of a message in its channel list or (for a clip or a build) a feed. */
 function loadedRoot(s: AppState, channel: string, id: string): Message | undefined {
   const m = s.messages[channel]?.find((x) => x.id === id)
   if (m) return m
-  for (const feed of Object.values(s.clipFeeds)) {
+  for (const feed of [...Object.values(s.clipFeeds), ...Object.values(s.buildFeeds)]) {
     const f = feed.channelId === channel ? feed.items.find((x) => x.id === id) : undefined
     if (f) return f
   }
@@ -1012,6 +1028,8 @@ function dropChannel(s: AppState, c: string): AppState {
     clipViews: drop(s.clipViews),
     clipFacets: drop(s.clipFacets),
     clipFeeds: Object.fromEntries(Object.entries(s.clipFeeds).filter(([, f]) => f.channelId !== c)),
+    buildFeeds: Object.fromEntries(Object.entries(s.buildFeeds).filter(([, f]) => f.channelId !== c)),
+    buildFacets: Object.fromEntries(Object.entries(s.buildFacets).filter(([k]) => !k.startsWith(`${c}|`))),
     pins: drop(s.pins),
     stageShares: drop(s.stageShares),
     watchParties: drop(s.watchParties),
@@ -1031,7 +1049,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       if (e.d.message.thread_root_id) return replyCreated(s, e.d.message, e.d.nonce)
       const { message: m, nonce } = e.d
       const c = m.channel_id
-      const feeds = m.clip ? clipCreated(s, m) : s
+      const feeds = m.clip ? clipCreated(s, m) : m.build ? buildsOnEvent(s, e) : s
       // Conversations/servers you're in but have no read point for yet (created or joined since
       // Ready) start at zero, so their first messages count right away.
       const read = s.reads[c] ?? (tracksUnread(s, c) ? { channel_id: c, last_read_message_id: null, unread: 0, mentions: 0 } : undefined)
@@ -1044,8 +1062,10 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         // and is noted so paging forward doesn't stop short of it.
         // A clip joins the channel's feeds, not its text history.
         clipFeeds: feeds.clipFeeds,
-        messages: m.clip || detached(s, c) ? s.messages : { ...s.messages, [c]: upsertMessage(s.messages[c], withHeldPoll(withMyQuoteState(m, undefined, s.me?.id), heldCopy(s.messages[c], m.id))) },
-        history: m.clip ? s.history : detached(s, c) ? { ...s.history, [c]: withMissed(s.history[c], m.id) } : s.history,
+        // A build joins its channel's build feeds the same way.
+        buildFeeds: feeds.buildFeeds,
+        messages: m.clip || m.build || detached(s, c) ? s.messages : { ...s.messages, [c]: upsertMessage(s.messages[c], withHeldPoll(withMyQuoteState(m, undefined, s.me?.id), heldCopy(s.messages[c], m.id))) },
+        history: m.clip || m.build ? s.history : detached(s, c) ? { ...s.history, [c]: withMissed(s.history[c], m.id) } : s.history,
         pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
         typing: withoutTyping(s, c, m.author_id),
         latest: s.channels[c]?.server_id === null ? { ...s.latest, [c]: m } : s.latest,
@@ -1079,6 +1099,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const listed = (list: PinnedMessage[]) => list.map((x) => (x.message.id === m.id ? { ...x, message: { ...m, pin: x.pin } } : x))
       const q = mapPins(mapOpenRoot(mapQotyMessages(s, m.id, follow), m.id, follow), c, listed)
       if (m.clip) return clipUpdated(q, m)
+      if (m.build) return buildsOnEvent(q, { t: 'MessageUpdated', d: { message: m } })
       // History never loaded, or a detached window that doesn't hold it (adding it would leave a gap).
       if (!s.messages[c] || (detached(s, c) && !s.messages[c].some((x) => x.id === m.id))) return latest === s.latest ? q : { ...q, latest }
       return { ...q, latest, messages: { ...s.messages, [c]: upsertEdited(s.messages[c], withMyQuoteState(m, s.messages[c].find((x) => x.id === m.id), s.me?.id)) } }
@@ -1112,6 +1133,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         openRoot: s.openRoot && s.openRoot.channel_id === c ? gone(s.openRoot) : s.openRoot,
         messages: s.messages[c] ? { ...s.messages, [c]: s.messages[c].map(gone) } : s.messages,
         clipFeeds: dropFromFeeds(s.clipFeeds, c, id),
+        buildFeeds: buildsOnEvent(s, e).buildFeeds,
         // a deleted message's pin goes with it (the server's MessageUnpinned follows)
         pins: s.pins[c] ? { ...s.pins, [c]: s.pins[c].filter((p) => p.message.id !== id) } : s.pins,
         latest: s.latest[c] ? { ...s.latest, [c]: gone(s.latest[c]) } : s.latest,
@@ -1127,9 +1149,13 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, games: withGame(s.games, e.d.game) }
     case 'ClipViewChanged':
       return { ...s, clipViews: { ...s.clipViews, [e.d.channel_id]: e.d.view } }
-    // Builds channels (#616) arrive with the builds views (#617); nothing holds their feeds yet.
-    case 'BuildsArchived':
-      return s
+    // A bulk archive (#617): each listed build greys in feeds that show archived ones and leaves the rest; an open
+    // build page's copy follows.
+    case 'BuildsArchived': {
+      const { message_ids: ids, archived_at, archived_by } = e.d
+      const open = s.openRoot && ids.includes(s.openRoot.id) && s.openRoot.build ? { ...s.openRoot, build: { ...s.openRoot.build, archived_at, archived_by } } : s.openRoot
+      return buildsOnEvent(open === s.openRoot ? s : { ...s, openRoot: open }, e)
+    }
     // Toasts and the [NEW] count live outside the reducer.
     case 'BadgeEarned':
       return s
