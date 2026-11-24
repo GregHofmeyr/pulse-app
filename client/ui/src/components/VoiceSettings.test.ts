@@ -376,3 +376,80 @@ describe('VoiceSettings mic test during a call', () => {
     }
   })
 })
+
+describe('VoiceSettings record a mic sample (#583)', () => {
+  beforeEach(() => {
+    invoke.mockClear()
+    voice.channelId = null
+    voice.joining = null
+  })
+  const button = () => document.querySelector<HTMLButtonElement>('.sample button')!
+  const hint = () => document.querySelector('[data-mic-sample-hint]')?.textContent
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    flushSync()
+  }
+
+  it('needs the mic running: off outside a call and the test, with a hint', () => {
+    invoke.mockImplementation(async () => undefined)
+    const c = mount(VoiceSettings, { target: document.body })
+    try {
+      flushSync()
+      expect(button().disabled).toBe(true)
+      expect(hint()).toContain('Join a call')
+    } finally {
+      unmount(c)
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('in a call it records, then shows where both files went and can show the folder', async () => {
+    let finish: (v: unknown) => void = () => {}
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'record_mic_sample') return new Promise((resolve) => (finish = resolve))
+      return undefined
+    })
+    voice.channelId = 'c1'
+    const c = mount(VoiceSettings, { target: document.body })
+    try {
+      flushSync()
+      expect(button().disabled).toBe(false)
+      button().click()
+      await settle()
+      expect(button().textContent).toBe('Recording…')
+      expect(button().disabled).toBe(true)
+      finish({ raw: '/logs/mic-sample-raw.wav', sent: '/logs/mic-sample-sent.wav', folder: '/logs', seconds: 15 })
+      await settle()
+      const saved = document.querySelector('[data-mic-sample-saved]')!
+      expect(saved.textContent).toContain('/logs')
+      expect(saved.textContent).toContain('mic-sample-sent.wav')
+      saved.querySelector('button')!.click()
+      await settle()
+      expect(invoke).toHaveBeenCalledWith('reveal_path', { path: '/logs/mic-sample-raw.wav' })
+    } finally {
+      unmount(c)
+      document.body.innerHTML = ''
+      voice.channelId = null
+    }
+  })
+
+  it('a failure says why', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'record_mic_sample') throw 'No audio from your mic.'
+      return undefined
+    })
+    voice.channelId = 'c1'
+    const c = mount(VoiceSettings, { target: document.body })
+    try {
+      flushSync()
+      button().click()
+      await settle()
+      expect(document.querySelector('[role=alert]')?.textContent).toBe('No audio from your mic.')
+      expect(button().textContent).toBe('Record a mic sample')
+    } finally {
+      unmount(c)
+      document.body.innerHTML = ''
+      voice.channelId = null
+    }
+  })
+})

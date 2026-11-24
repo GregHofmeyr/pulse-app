@@ -149,6 +149,8 @@ pub async fn meta(app: &AppHandle, server: &str) -> serde_json::Value {
         "server": server,
         "gateway": format!("{:?}", app.state::<Core>().conn()),
         "voice": app.state::<VoiceManager>().diagnostics().await,
+        // a mic sample saved this session (#583): the WAVs stay in the log folder, ask for them
+        "mic_sample": crate::voice::micsample::RECORDER.report_meta(),
     })
 }
 

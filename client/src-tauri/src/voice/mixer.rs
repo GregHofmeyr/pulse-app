@@ -35,7 +35,8 @@ pub fn combined_gain(pcts: &[u16]) -> f32 {
         .min(max_gain())
 }
 
-const KNEE: f32 = 0.8;
+/// Where [`soft_limit`] starts bending (the mic path line counts samples past it, #583).
+pub const KNEE: f32 = 0.8;
 
 /// Identity up to the knee, then a smooth tanh curve towards ±1.0. Boosted voices get louder without
 /// the harsh hard-clip distortion the spike had.

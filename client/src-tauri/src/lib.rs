@@ -496,6 +496,7 @@ pub fn run() {
             commands::list_audio_devices,
             commands::start_mic_test,
             commands::stop_mic_test,
+            commands::record_mic_sample,
             commands::watch_voice_meters,
             commands::watch_voice_link,
             commands::play_sound,

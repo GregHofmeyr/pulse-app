@@ -5,6 +5,7 @@
   import SoundSettings from './SoundSettings.svelte'
   import VolumeMixer from './VolumeMixer.svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
+  import { api } from '../lib/tauri'
   import { downloadModel, listenModel, lowDelayModel, refreshModel } from '../lib/models.svelte'
   import { echoDecision, loadAudioConfig, modelLine, saveAudioConfig, type AudioConfig, type EchoMode, type NsLevel } from '../lib/voiceui'
 
@@ -89,6 +90,22 @@
       testing = !testing
     } catch (e) {
       error = typeof e === 'string' ? e : 'Mic test failed'
+    }
+  }
+
+  // "Record a mic sample" (#583): needs the mic running, in a call or in the test
+  let recording = $state(false)
+  let sample = $state<{ raw: string; folder: string; seconds: number } | null>(null)
+  async function recordSample() {
+    error = ''
+    sample = null
+    recording = true
+    try {
+      sample = await voiceApi.recordMicSample()
+    } catch (e) {
+      error = typeof e === 'string' ? e : 'Could not record a mic sample'
+    } finally {
+      recording = false
     }
   }
 
@@ -179,6 +196,16 @@
   <button class="btn btn-lg btn-primary" onclick={toggleTest} disabled={inCall && !testing}>{testing ? 'Stop' : "Let's check"}</button>
   <small data-mic-test-hint>{testing ? 'You should hear yourself after a moment. Headphones recommended.' : inCall ? 'Leave the call to test your mic.' : 'Hear your mic the way others will.'}</small>
 </div>
+<div class="sample">
+  <button class="btn btn-secondary" onclick={() => void recordSample()} disabled={recording || (!inCall && !testing)}>{recording ? 'Recording…' : 'Record a mic sample'}</button>
+  <small data-mic-sample-hint>{recording ? 'Speak normally for 15 seconds.' : inCall || testing ? 'Saves 15 seconds of your mic, before and after processing, for a bug report.' : 'Join a call or start “Let\'s check” first.'}</small>
+</div>
+{#if sample}
+  <div class="sample" data-mic-sample-saved role="status">
+    <small>Saved {sample.seconds.toFixed(0)} s to <code>{sample.folder}</code> (mic-sample-raw.wav and mic-sample-sent.wav). Attach both to your bug report.</small>
+    <button class="btn btn-secondary" onclick={() => sample && void api.revealPath(sample.raw).catch(() => {})}>Show in folder</button>
+  </div>
+{/if}
 {#if testing && silentFor > 3000}
   <p class="warn" role="status">No sound from your mic. Check it isn't muted, or pick a different input in your system sound settings. Some Bluetooth headsets need a different headset codec.</p>
 {/if}
@@ -219,5 +246,7 @@
   .row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
   .row > div { flex: 1; display: flex; flex-direction: column; gap: 2px; }
   .row.auto { padding: 0; border: 0; }
+  .sample { display: flex; align-items: center; gap: 12px; margin-top: -8px; }
+  .sample code { word-break: break-all; }
   .model { display: flex; align-items: center; gap: 12px; }
 </style>

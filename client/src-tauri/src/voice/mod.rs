@@ -10,6 +10,8 @@ pub mod latency;
 pub mod leveller;
 pub mod linkstats;
 pub mod meter;
+pub mod miclevels;
+pub mod micsample;
 pub mod micsilence;
 pub mod mictest;
 pub mod mixer;
@@ -1825,6 +1827,9 @@ impl VoiceManager {
                         let mix_busy = shared.take_mix_busy();
                         let ours = shared.stats.take(underrun * 1000 / INTERNAL_RATE as u64);
                         tracing::info!(%line, send_ms, adjust, mix_busy, %ours, "voice: path");
+                        // levels and clipping stage by stage: where a crackly mic gets damaged (#583)
+                        let levels = shared.mic_levels.take();
+                        tracing::info!(%levels, "voice: mic");
                         // where the delay is, stage by stage, once a minute
                         shared.stats.latency.link(line.buffer_ms, line.rtt_ms);
                         if now.duration_since(*latency_logged) >= latency::LOG_EVERY {

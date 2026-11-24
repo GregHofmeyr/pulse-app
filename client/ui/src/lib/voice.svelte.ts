@@ -397,6 +397,8 @@ export const voiceApi = {
   listDevices: () => invoke<{ inputs: { name: string; is_default: boolean }[]; outputs: { name: string; is_default: boolean }[] }>('list_audio_devices'),
   startMicTest: (config: AudioConfig) => invoke('start_mic_test', { config }),
   stopMicTest: () => invoke('stop_mic_test'),
+  /** ~15 s of the mic, raw and as sent, saved as two WAVs in the log folder (#583). Resolves when saved. */
+  recordMicSample: () => invoke<{ raw: string; sent: string; folder: string; seconds: number }>('record_mic_sample'),
   /** Link stats tick every second only while the connection panel is open and the window focused. */
   async watchLink(on: boolean) {
     try {
