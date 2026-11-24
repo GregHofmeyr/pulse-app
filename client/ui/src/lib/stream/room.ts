@@ -15,10 +15,11 @@ import {
 } from 'livekit-client'
 import { streamCmd } from '../tauri'
 import { diag } from './diag.svelte'
-import { encodingFor, LOW_LAYER, type Fps, type Res } from './encodings'
+import { encodingFor, simulcastLayersFor, type Fps, type Res } from './encodings'
 import { withDeadline } from './frames'
 import { installRtxTime } from './sdp'
 import { windowHandle } from './sound'
+import type { Layer } from './viewer'
 
 export const STREAM_UNAVAILABLE = "Streaming isn't available on this server"
 const DEADLINE_MS = 15_000
@@ -37,8 +38,9 @@ type Watched = {
   layer: Layer
 }
 
-type Layer = 'low' | 'high'
-const videoQuality = (layer: Layer) => (layer === 'high' ? VideoQuality.HIGH : VideoQuality.LOW)
+const QUALITY: Record<Layer, VideoQuality> = { low: VideoQuality.LOW, medium: VideoQuality.MEDIUM, high: VideoQuality.HIGH }
+// a two-layer share (720p, or an older client) sends q and h: its top is the medium, which high and medium both get
+const videoQuality = (layer: Layer) => QUALITY[layer]
 
 /** A publication from stream-room participant `identity` with `source` is `streamer`'s screen share. */
 export function isScreenOf(identity: string, source: Track.Source, streamer: string): boolean {
@@ -200,7 +202,7 @@ export class StreamRoom {
       videoCodec: 'h264',
       simulcast: true,
       screenShareEncoding: { maxBitrate: e.maxBitrate, maxFramerate: e.maxFramerate },
-      screenShareSimulcastLayers: [new VideoPreset(LOW_LAYER.width, LOW_LAYER.height, LOW_LAYER.maxBitrate, LOW_LAYER.maxFramerate)],
+      screenShareSimulcastLayers: simulcastLayersFor(res, fps).map((l) => new VideoPreset(l.width, l.height, l.maxBitrate, l.maxFramerate)),
       degradationPreference: e.degradation,
     })
     this.published = track

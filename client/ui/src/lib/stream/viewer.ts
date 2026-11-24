@@ -85,9 +85,14 @@ export type View = 'preview' | 'full'
 /** The viewer's pick: Auto asks for the full layer in full view, Data saver never does. */
 export type Quality = 'auto' | 'saver'
 
-/** Previews always take the low layer; full view takes the high one unless the viewer saves data. */
-export function layerFor(view: View, quality: Quality): 'low' | 'high' {
-  return view === 'full' && quality === 'auto' ? 'high' : 'low'
+/** A simulcast layer a watch asks for: 640 x 360, 720p (where the share sends it), or the share's own resolution. */
+export type Layer = 'low' | 'medium' | 'high'
+
+/** Data saver always takes the low layer. Under Auto, full view takes the high one and a preview the one that fits
+ *  its size on screen (`fit`, see fit.ts: #582). */
+export function layerFor(view: View, quality: Quality, fit: Layer = 'low'): Layer {
+  if (quality === 'saver') return 'low'
+  return view === 'full' ? 'high' : fit
 }
 
 /** Adds `next` to `list`; past `max`, the oldest entries go first. */

@@ -25,7 +25,8 @@
   /** The mouse click that ends a drag is not a click on the preview (cleared once that click has had its turn). */
   let dragged = false
 
-  // A preview takes the low layer, even when you left from full view (which comes back on return).
+  // A preview takes the layer that fits its size on screen (#582), even when you left from full view (which comes back
+  // on return).
   $effect(() => {
     untrack(() => streamApi.setView(channelId, streamer, 'preview'))
   })

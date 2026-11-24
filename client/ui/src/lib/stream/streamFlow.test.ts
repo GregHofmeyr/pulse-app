@@ -503,8 +503,47 @@ describe('the watch list', () => {
     expect(room.setLayer).toHaveBeenLastCalledWith('other', 'low')
     streamApi.setView('c1', 'other', 'preview')
     streamApi.setQuality('c1', 'other', 'auto')
-    expect(room.setLayer).toHaveBeenLastCalledWith('other', 'low') // previews stay low
+    expect(room.setLayer).toHaveBeenLastCalledWith('other', 'low') // a preview with no size on screen stays low
     expect(findWatch('c1', 'other')).toMatchObject({ quality: 'auto', view: 'preview' })
+  })
+
+  // a preview asks for the layer its size on screen needs (#582): up at once, down after a moment, never past Data saver
+  it('a_preview_follows_its_size_on_screen_in_device_pixels', async () => {
+    const resized: ((e: unknown[]) => void)[] = []
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(cb: (e: unknown[]) => void) {
+        resized.push(cb)
+      }
+      observe() {}
+      disconnect() {}
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const { streamApi, room } = await watching()
+      const size = (w: number, h: number) => resized.at(-1)!([{ contentRect: { width: w, height: h }, devicePixelContentBoxSize: [{ inlineSize: w, blockSize: h }] }])
+      room.setLayer.mockClear()
+      size(960, 540)
+      expect(room.setLayer).toHaveBeenLastCalledWith('other', 'medium')
+      size(1920, 1080)
+      expect(room.setLayer).toHaveBeenLastCalledWith('other', 'high')
+      streamApi.setQuality('c1', 'other', 'saver')
+      expect(room.setLayer).toHaveBeenLastCalledWith('other', 'low')
+      streamApi.setQuality('c1', 'other', 'auto')
+      expect(room.setLayer).toHaveBeenLastCalledWith('other', 'high')
+      size(480, 270)
+      expect(room.setLayer).toHaveBeenLastCalledWith('other', 'high') // not yet
+      vi.advanceTimersByTime(2_000)
+      expect(room.setLayer).toHaveBeenLastCalledWith('other', 'low')
+      // full view takes the top layer whatever the box
+      streamApi.setView('c1', 'other', 'full')
+      expect(room.setLayer).toHaveBeenLastCalledWith('other', 'high')
+      room.setLayer.mockClear()
+      size(960, 540) // its size changing in full view asks for nothing
+      expect(room.setLayer).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('the_watch_owns_one_video_element_until_it_ends', async () => {
