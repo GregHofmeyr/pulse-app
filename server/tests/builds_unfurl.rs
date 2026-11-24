@@ -178,12 +178,16 @@ async fn unfurl_never_overwrites_a_title_the_author_typed() {
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    // as the author's edit writes it (`PUT /builds/{id}`, Task 4)
-    sqlx::query("UPDATE builds SET title = 'Mine', title_auto = 0 WHERE message_id = ?")
-        .bind(m.id.to_string())
-        .execute(&env.app.db)
+    let r = env
+        .app
+        .http
+        .put(env.app.url(&format!("/builds/{}", m.id)))
+        .bearer_auth(&env.token)
+        .json(&json!({ "title": "Mine", "link_url": link }))
+        .send()
         .await
         .unwrap();
+    assert_eq!(r.status(), 200);
     env.fake.release();
     fetch.await.unwrap().unwrap();
     let b = env.get(m.id).await.build.unwrap();

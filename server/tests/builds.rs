@@ -853,3 +853,180 @@ async fn a_build_isnt_forwarded() {
     .await;
     assert_eq!(r.status(), 400);
 }
+
+// ---- Edit by the author (Task 4) ----
+
+async fn put_build(app: &TestApp, token: &str, id: pulse_protocol::ids::MessageId, body: serde_json::Value) -> reqwest::Response {
+    app.http
+        .put(app.url(&format!("/builds/{id}")))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn edit_ok(app: &TestApp, token: &str, id: pulse_protocol::ids::MessageId, body: serde_json::Value) -> Message {
+    let r = put_build(app, token, id, body).await;
+    assert_eq!(r.status(), 200, "edit build");
+    r.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn only_the_author_edits_a_build() {
+    let w = world().await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
+    let r = put_build(&w.app, &w.sam.1, m.id, json!({ "title": "Mine now" })).await;
+    assert_eq!(r.status(), 403, "someone else's build, as any message");
+    let mut ws = hello(&w.app, &w.sam.1).await;
+    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Raven crit v2", "notes": "swap the module" })).await;
+    let b = e.build.as_ref().unwrap();
+    assert_eq!(b.title, "Raven crit v2");
+    assert!(b.updated_at.is_some());
+    assert_eq!(e.content, "Raven crit v2\nswap the module");
+    let got = wait_for(&mut ws, "MessageUpdated", |e| match e {
+        Event::MessageUpdated { message } if message.id == m.id => Some(message),
+        _ => None,
+    })
+    .await;
+    assert_eq!(got.build.unwrap().title, "Raven crit v2");
+    // an outsider doesn't learn it exists
+    let (_, kim) = register(&w.app, "kim").await;
+    let r = put_build(&w.app, &kim, m.id, json!({ "title": "x" })).await;
+    assert_eq!(r.status(), 404);
+}
+
+#[tokio::test]
+async fn an_edit_keeps_the_builds_place_in_the_list() {
+    let w = world().await;
+    let a = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "A" })).await;
+    let b = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "B" })).await;
+    let c = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "C" })).await;
+    edit_ok(&w.app, &w.alex.1, a.id, json!({ "title": "A2" })).await;
+    let ids: Vec<_> = list(&w.app, &w.alex.1, w.ch.id, "").await.into_iter().map(|m| m.id).collect();
+    assert_eq!(ids, vec![c.id, b.id, a.id]);
+}
+
+#[tokio::test]
+async fn edit_reorders_adds_and_removes_screenshots() {
+    let w = world().await;
+    let a = shot(&w.app, &w.alex.1, w.ch.id).await;
+    let b = shot(&w.app, &w.alex.1, w.ch.id).await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Shots", "attachments": [a, b] })).await;
+    let key: String = sqlx::query_scalar("SELECT key FROM attachments WHERE id = ?")
+        .bind(a.to_string())
+        .fetch_one(&w.app.db)
+        .await
+        .unwrap();
+    let object = pulse_server::attachments::object_key(&key, false);
+    assert!(w.app.s3.as_ref().unwrap().object(&object).is_some());
+    let c = shot(&w.app, &w.alex.1, w.ch.id).await;
+    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Shots", "attachments": [b, c] })).await;
+    let order: Vec<_> = e.attachments.iter().map(|x| x.id).collect();
+    assert_eq!(order, vec![b, c]);
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = ?")
+        .bind(a.to_string())
+        .fetch_one(&w.app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "a's row is gone");
+    assert!(w.app.s3.as_ref().unwrap().object(&object).is_none(), "and its object");
+    // someone else's file, or one from another message, isn't taken
+    let theirs = shot(&w.app, &w.sam.1, w.ch.id).await;
+    let r = put_build(&w.app, &w.alex.1, m.id, json!({ "title": "Shots", "attachments": [b, theirs] })).await;
+    assert_eq!(r.status(), 404);
+    let r = put_build(&w.app, &w.alex.1, m.id, json!({ "title": "Shots", "attachments": [b, b] })).await;
+    assert_eq!(r.status(), 400);
+}
+
+#[tokio::test]
+async fn quick_drop_ends_with_a_game_notes_or_mark_sorted_and_never_returns() {
+    let w = world().await;
+    let g = add_game(&w.app, &w.alex.1, w.server, "Warframe").await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Quick" })).await;
+    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Quick v2" })).await;
+    assert!(e.build.unwrap().quick_drop, "a new title alone is no detail");
+    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Quick", "notes": "details" })).await;
+    assert!(!e.build.unwrap().quick_drop);
+    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Quick" })).await;
+    assert!(!e.build.unwrap().quick_drop, "and it never comes back");
+
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Gamed" })).await;
+    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Gamed", "game_id": g.id })).await;
+    assert!(!e.build.unwrap().quick_drop);
+
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Sorted" })).await;
+    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Sorted", "mark_sorted": true })).await;
+    assert!(!e.build.unwrap().quick_drop);
+}
+
+#[tokio::test]
+async fn clearing_a_guessed_game_sticks() {
+    let w = world().await;
+    let g = add_game(&w.app, &w.alex.1, w.server, "Warframe").await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Saryn" })).await;
+    sqlx::query("UPDATE builds SET game_id = ?, game_guessed = 1 WHERE message_id = ?")
+        .bind(g.id.to_string())
+        .bind(m.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Saryn", "game_id": null })).await;
+    let b = e.build.unwrap();
+    assert_eq!((b.game_id, b.game_guessed), (None, false));
+    // and picking it is no guess
+    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Saryn", "game_id": g.id })).await;
+    let b = e.build.unwrap();
+    assert_eq!((b.game_id, b.game_guessed), (Some(g.id), false));
+}
+
+#[tokio::test]
+async fn a_changed_link_drops_what_was_fetched_of_the_old_one() {
+    let w = world().await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "link_url": "https://example.com/old" })).await;
+    sqlx::query("UPDATE builds SET link_title = 'Old page', link_provider = 'generic' WHERE message_id = ?")
+        .bind(m.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    // the same link keeps it
+    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Mine", "link_url": "https://example.com/old" })).await;
+    assert_eq!(e.build.unwrap().link.unwrap().title.as_deref(), Some("Old page"));
+    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Mine", "link_url": "https://example.com/new" })).await;
+    let l = e.build.as_ref().unwrap().link.clone().unwrap();
+    assert_eq!((l.url.as_str(), l.title), ("https://example.com/new", None));
+    let e = edit_ok(&w.app, &w.alex.1, m.id, json!({ "title": "Mine" })).await;
+    assert!(e.build.unwrap().link.is_none());
+    // the edit's checks are the create's
+    let r = put_build(&w.app, &w.alex.1, m.id, json!({ "title": "" })).await;
+    assert_eq!(r.status(), 400);
+    let r = put_build(&w.app, &w.alex.1, m.id, json!({ "title": "x".repeat(121) })).await;
+    assert_eq!(r.status(), 400);
+}
+
+#[tokio::test]
+async fn builds_refuse_the_message_edit_and_delete_routes() {
+    let w = world().await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
+    let r = w
+        .app
+        .http
+        .patch(w.app.url(&format!("/messages/{}", m.id)))
+        .bearer_auth(&w.alex.1)
+        .json(&json!({ "content": "hijack" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400);
+    assert_eq!(message_of(r).await, "builds are edited with their own route");
+    let r = w
+        .app
+        .http
+        .delete(w.app.url(&format!("/messages/{}", m.id)))
+        .bearer_auth(&w.alex.1)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400);
+    assert_eq!(message_of(r).await, "builds are deleted with their own route");
+}

@@ -446,6 +446,65 @@ pub async fn bind(
     Ok(())
 }
 
+/// Inside an edit's transaction (a build's screenshots, #616): `message`'s files become `ordered`, in that order.
+/// `new` (claimed beforehand, all in `ordered`) are tied to it; the ones it had that aren't in `ordered` are let go:
+/// untied from it and its channel, so the sweep takes any [`remove_objects`] can't, and returned for that after the
+/// commit. A file in `ordered` that is neither new nor already the message's is a 404 and the edit rolls back.
+pub async fn set_message_files(
+    tx: &mut SqliteConnection,
+    me: UserId,
+    message: MessageId,
+    ordered: &[AttachmentId],
+    new: &[AttachmentId],
+) -> AppResult<Vec<Stored>> {
+    for (position, id) in ordered.iter().enumerate() {
+        let done = if new.contains(id) {
+            sqlx::query(
+                "UPDATE attachments SET message_id = ?, position = ?
+                 WHERE id = ? AND user_id = ? AND message_id IS NULL",
+            )
+            .bind(message.to_string())
+            .bind(position as i64)
+            .bind(id.to_string())
+            .bind(me.to_string())
+            .execute(&mut *tx)
+            .await?
+        } else {
+            sqlx::query("UPDATE attachments SET position = ? WHERE id = ? AND message_id = ?")
+                .bind(position as i64)
+                .bind(id.to_string())
+                .bind(message.to_string())
+                .execute(&mut *tx)
+                .await?
+        }
+        .rows_affected();
+        if done == 0 {
+            return Err(AppError::NotFound);
+        }
+    }
+    let had: Vec<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT id, key, expires_at FROM attachments WHERE message_id = ?")
+            .bind(message.to_string())
+            .fetch_all(&mut *tx)
+            .await?;
+    let keep: std::collections::HashSet<String> = ordered.iter().map(|i| i.to_string()).collect();
+    let mut gone = vec![];
+    for (id, key, expires) in had {
+        if keep.contains(&id) {
+            continue;
+        }
+        sqlx::query("UPDATE attachments SET message_id = NULL, channel_id = NULL WHERE id = ?")
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+        gone.push(Stored {
+            key,
+            temp: expires.is_some(),
+        });
+    }
+    Ok(gone)
+}
+
 /// The objects of one message's files (for deleting the message).
 pub async fn stored_of_message(
     c: &mut SqliteConnection,

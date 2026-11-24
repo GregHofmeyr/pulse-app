@@ -850,6 +850,12 @@ async fn edit(
             "quotes can't be edited like messages".into(),
         ));
     }
+    // A build (#616) is edited as a build (`PUT /builds/{id}`): its text is made from its fields.
+    if msg.build.is_some() {
+        return Err(AppError::BadRequest(
+            "builds are edited with their own route".into(),
+        ));
+    }
     // A poll's text is the poll for older clients (#157); a poll isn't edited after posting.
     if msg.poll.is_some() {
         return Err(AppError::BadRequest("polls can't be edited".into()));
@@ -970,6 +976,12 @@ async fn remove(
     // No `access::require_open`: your own message can be deleted even in an archived channel (#418), the one change
     // allowed there.
     let (msg, ch) = own_message(&s.db, me, id).await?;
+    // A build (#616) goes with its screenshots and comments (`DELETE /builds/{id}`).
+    if msg.build.is_some() {
+        return Err(AppError::BadRequest(
+            "builds are deleted with their own route".into(),
+        ));
+    }
     let is_quote = msg.quote.is_some();
     let is_clip = msg.clip.is_some();
     // Every delete changes counts others publish as absolutes (mark_read's unread, a mention

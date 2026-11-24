@@ -2,6 +2,7 @@
 
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
+use pulse_protocol::rest::UpdateBuildRequest;
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, GameId, MessageId, UserId};
@@ -23,7 +24,7 @@ use crate::messages::routes::load;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/channels/{id}/builds", post(create).get(list))
-        .route("/builds/{message_id}", get(get_one))
+        .route("/builds/{message_id}", get(get_one).put(edit))
 }
 
 pub(crate) fn bad(msg: &str) -> AppError {
@@ -262,4 +263,110 @@ async fn list(
     Ok(Json(
         crate::messages::routes::fill(&s.db, Some(me), rows).await?,
     ))
+}
+
+/// `PUT /builds/{id}`: the author's edit, replacing every field (same checks as a create). The title is the author's
+/// from now on; a game sent is a game picked (no longer "guessed"); a quick drop ends with a game, notes or
+/// `mark_sorted`, and never comes back. A new link drops what was fetched of the old one and is fetched in turn. The
+/// build keeps its place in the list.
+async fn edit(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<MessageId>,
+    Json(req): Json<UpdateBuildRequest>,
+) -> AppResult<Json<Message>> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    crate::media::writes_ok(&s.cfg)?;
+    let (msg, ch) = crate::messages::routes::own_message(&s.db, me, id).await?;
+    let Some(build) = msg.build.as_deref() else {
+        return Err(AppError::NotFound);
+    };
+    crate::access::require_member_of(&s.db, me, &ch).await?;
+    crate::access::require_open(&ch)?;
+    let title = clean_title(Some(&req.title))?.ok_or_else(|| bad("A build needs a title."))?;
+    let link = req.link_url.as_deref().map(clean_link).transpose()?;
+    let notes = clean_notes(req.notes.as_deref())?;
+    let game = checked_game(&s, &ch, req.game_id).await?;
+    let mut seen = std::collections::HashSet::new();
+    if !req.attachments.iter().all(|a| seen.insert(*a)) {
+        return Err(bad("A screenshot is listed twice."));
+    }
+    let had: std::collections::HashSet<_> = msg.attachments.iter().map(|a| a.id).collect();
+    let new: Vec<_> = req
+        .attachments
+        .iter()
+        .copied()
+        .filter(|a| !had.contains(a))
+        .collect();
+    if req.attachments.len() > MAX_SCREENSHOTS {
+        return Err(bad("Up to 10 screenshots."));
+    }
+    claim_shots(&s, me, ch.id, &new).await?;
+    let quick_drop = build.quick_drop && game.is_none() && notes.is_none() && !req.mark_sorted;
+    let old_link = build.link.as_ref().map(|l| l.url.as_str());
+    let link_changed = link.as_deref() != old_link;
+    let kept_link_title = if link_changed {
+        None
+    } else {
+        build.link.as_ref().and_then(|l| l.title.clone())
+    };
+    let content = render_content(
+        &title,
+        game_name(&s.db, game).await?.as_deref(),
+        kept_link_title.as_deref(),
+        notes.as_deref(),
+    );
+
+    let _order = s.hub.in_order().await;
+    let mut tx = begin_write(&s.db).await?;
+    crate::access::channel_live_in(&mut tx, ch.id).await?;
+    crate::access::open_in(&mut tx, ch.id).await?;
+    crate::access::member_of_in(&mut tx, me, ch.id).await?;
+    let changed = sqlx::query(
+        "UPDATE messages SET content = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
+    )
+    .bind(&content)
+    .bind(id.to_string())
+    .bind(me.to_string())
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        return Err(AppError::NotFound);
+    }
+    sqlx::query(
+        "UPDATE builds SET title = ?1, title_auto = 0, game_id = ?2, game_guessed = 0, notes = ?3, quick_drop = ?4,
+                           updated_at = ?5, link_url = ?6,
+                           link_title = CASE WHEN ?7 THEN NULL ELSE link_title END,
+                           link_thumb = CASE WHEN ?7 THEN NULL ELSE link_thumb END,
+                           link_provider = CASE WHEN ?7 THEN NULL ELSE link_provider END,
+                           link_provider_id = CASE WHEN ?7 THEN NULL ELSE link_provider_id END
+         WHERE message_id = ?8",
+    )
+    .bind(&title)
+    .bind(game.map(|g| g.to_string()))
+    .bind(&notes)
+    .bind(quick_drop)
+    .bind(now())
+    .bind(&link)
+    .bind(link_changed)
+    .bind(id.to_string())
+    .execute(&mut *tx)
+    .await?;
+    let gone =
+        crate::attachments::set_message_files(&mut tx, me, id, &req.attachments, &new).await?;
+    tx.commit().await?;
+    // Events carry nobody's comment seen point; the answer carries mine.
+    if let Some(message) = load(&s.db, None, id).await? {
+        s.hub.publish(&s.db, Event::MessageUpdated { message }).await;
+    }
+    drop(_order);
+    crate::attachments::remove_objects(&s, gone).await;
+    if link_changed && let Some(link) = link {
+        super::unfurl::spawn_fill(&s, id, me, link);
+    }
+    let msg = load(&s.db, Some(me), id).await?.ok_or(AppError::NotFound)?;
+    Ok(Json(msg))
 }
