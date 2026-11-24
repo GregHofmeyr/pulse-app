@@ -52,13 +52,26 @@ struct RawSide {
 
 struct RawShared {
     side: Mutex<RawSide>,
-    link: Arc<Link>,
+    /// Declared after `side` on purpose: fields drop in order, so the producer is already abandoned when this wakes
+    /// the processor. Waking from `RawShared::drop` itself ran before the fields dropped, and a processor that woke
+    /// in that gap saw the producer still alive and slept to its timeout.
+    link: WakeOnDrop,
 }
 
-impl Drop for RawShared {
-    /// The last sender is gone: wake the processor so it sees that now, not at its next timeout.
+/// The sending side's handle on the [`Link`]: the last sender going wakes the processor so it sees that now, not at
+/// its next timeout.
+struct WakeOnDrop(Arc<Link>);
+
+impl std::ops::Deref for WakeOnDrop {
+    type Target = Link;
+    fn deref(&self) -> &Link {
+        &self.0
+    }
+}
+
+impl Drop for WakeOnDrop {
     fn drop(&mut self) {
-        self.link.wake();
+        self.0.wake();
     }
 }
 
@@ -85,7 +98,7 @@ pub fn raw_queue() -> (RawTx, RawRx) {
             blocks: blocks_tx,
             spares: spares_rx,
         }),
-        link: link.clone(),
+        link: WakeOnDrop(link.clone()),
     }));
     let rx = RawRx {
         blocks: blocks_rx,
