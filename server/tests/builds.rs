@@ -1486,3 +1486,42 @@ async fn search_never_shows_another_servers_builds() {
         .unwrap();
     assert_eq!(r.status(), 404);
 }
+
+/// The link's fetched title lands while an edit is on its way: the edit's search text keeps it (it's read in the
+/// edit's own write, not before).
+#[tokio::test]
+async fn an_edit_racing_the_link_fetch_keeps_the_link_title_searchable() {
+    let w = world().await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "link_url": "https://example.com/p" })).await;
+    let state = w.app.state();
+    // hold publishing order, as a fetch writing its result does
+    let order = state.hub.in_order().await;
+    let (app_url, token, id) = (w.app.url(&format!("/builds/{}", m.id)), w.alex.1.clone(), m.id);
+    let http = w.app.http.clone();
+    let edit = tokio::spawn(async move {
+        http.put(app_url)
+            .bearer_auth(token)
+            .json(&json!({ "title": "Mine", "link_url": "https://example.com/p" }))
+            .send()
+            .await
+            .unwrap()
+            .status()
+    });
+    // the edit has read the build and waits for its turn; the fetch's result lands meanwhile
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    sqlx::query("UPDATE builds SET link_title = 'Wynncraft archer planner' WHERE message_id = ?")
+        .bind(id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    drop(order);
+    assert_eq!(edit.await.unwrap(), 200);
+    let content: String = sqlx::query_scalar("SELECT content FROM messages WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_one(&w.app.db)
+        .await
+        .unwrap();
+    assert_eq!(content, "Mine\nWynncraft archer planner");
+    let got: Vec<_> = list(&w.app, &w.sam.1, w.ch.id, "?q=wynncraft").await.into_iter().map(|m| m.id).collect();
+    assert_eq!(got, vec![id]);
+}

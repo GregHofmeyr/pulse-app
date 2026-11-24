@@ -336,20 +336,10 @@ async fn edit(
         return Err(bad("Up to 10 screenshots."));
     }
     claim_shots(&s, me, ch.id, &new).await?;
-    let quick_drop = build.quick_drop && game.is_none() && notes.is_none() && !req.mark_sorted;
     let old_link = build.link.as_ref().map(|l| l.url.as_str());
     let link_changed = link.as_deref() != old_link;
-    let kept_link_title = if link_changed {
-        None
-    } else {
-        build.link.as_ref().and_then(|l| l.title.clone())
-    };
-    let content = render_content(
-        &title,
-        game_name(&s.db, game).await?.as_deref(),
-        kept_link_title.as_deref(),
-        notes.as_deref(),
-    );
+    // still a quick drop only if it was one (read in the write: it never comes back)
+    let still_quick = game.is_none() && notes.is_none() && !req.mark_sorted;
 
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
@@ -357,9 +347,22 @@ async fn edit(
     crate::access::open_in(&mut tx, ch.id).await?;
     crate::access::member_of_in(&mut tx, me, ch.id).await?;
     let changed = sqlx::query(
-        "UPDATE messages SET content = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
+        "UPDATE builds SET title = ?1, title_auto = 0, game_id = ?2, game_guessed = 0, notes = ?3,
+                           quick_drop = quick_drop AND ?4, updated_at = ?5, link_url = ?6,
+                           link_title = CASE WHEN ?7 THEN NULL ELSE link_title END,
+                           link_thumb = CASE WHEN ?7 THEN NULL ELSE link_thumb END,
+                           link_provider = CASE WHEN ?7 THEN NULL ELSE link_provider END,
+                           link_provider_id = CASE WHEN ?7 THEN NULL ELSE link_provider_id END
+         WHERE message_id = ?8 AND EXISTS (SELECT 1 FROM messages m
+                                          WHERE m.id = ?8 AND m.author_id = ?9 AND m.deleted_at IS NULL)",
     )
-    .bind(&content)
+    .bind(&title)
+    .bind(game.map(|g| g.to_string()))
+    .bind(&notes)
+    .bind(still_quick)
+    .bind(now())
+    .bind(&link)
+    .bind(link_changed)
     .bind(id.to_string())
     .bind(me.to_string())
     .execute(&mut *tx)
@@ -368,25 +371,25 @@ async fn edit(
     if changed == 0 {
         return Err(AppError::NotFound);
     }
-    sqlx::query(
-        "UPDATE builds SET title = ?1, title_auto = 0, game_id = ?2, game_guessed = 0, notes = ?3, quick_drop = ?4,
-                           updated_at = ?5, link_url = ?6,
-                           link_title = CASE WHEN ?7 THEN NULL ELSE link_title END,
-                           link_thumb = CASE WHEN ?7 THEN NULL ELSE link_thumb END,
-                           link_provider = CASE WHEN ?7 THEN NULL ELSE link_provider END,
-                           link_provider_id = CASE WHEN ?7 THEN NULL ELSE link_provider_id END
-         WHERE message_id = ?8",
+    // The search text from the row as it now stands: a link title fetched while this edit was on its way is kept.
+    let (link_title, game_name): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT b.link_title, g.name FROM builds b LEFT JOIN games g ON g.id = b.game_id
+         WHERE b.message_id = ?",
     )
-    .bind(&title)
-    .bind(game.map(|g| g.to_string()))
-    .bind(&notes)
-    .bind(quick_drop)
-    .bind(now())
-    .bind(&link)
-    .bind(link_changed)
     .bind(id.to_string())
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await?;
+    let content = render_content(
+        &title,
+        game_name.as_deref(),
+        link_title.as_deref(),
+        notes.as_deref(),
+    );
+    sqlx::query("UPDATE messages SET content = ? WHERE id = ?")
+        .bind(&content)
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
     let gone =
         crate::attachments::set_message_files(&mut tx, me, id, &req.attachments, &new).await?;
     tx.commit().await?;
