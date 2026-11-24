@@ -19,19 +19,23 @@
   import { callRoster, displayName, liveIn } from '../lib/selectors'
   import { selfVoice } from '../lib/voice.svelte'
   import { volumeLabel } from '../lib/voiceui'
-  import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
+  import { findWatch, liveMediaTrack, stream, streamApi } from '../lib/stream/stream.svelte'
   import { hostVideo } from '../lib/stream/videoHost'
-  import { callView, closeFull } from '../lib/stream/viewer.svelte'
+  import { callView, closeFull, closeOwnFull } from '../lib/stream/viewer.svelte'
   import { getFullPanels, PANEL_ID, PANEL_TOGGLE_ID } from '../lib/stream/fullPanels'
   import { watchWindowFocus, windowFocus } from '../lib/windowFocus.svelte'
 
   // The parent keys this on the stream, so the props never change for one instance.
-  let { channelId, streamer, serverId, onMessage, onVoiceSettings }: {
+  // `mine` (#609): your own stream (`streamer` is you), larger or full screen, to check what you're sending (overlays,
+  // the right window): the local capture, as your tile shows it. No watch behind it, so no quality, volume or Stop
+  // watching.
+  let { channelId, streamer, serverId, onMessage, onVoiceSettings, mine = false }: {
     channelId: string
     streamer: string
     serverId: string | null
     onMessage: (userId: string) => void
     onVoiceSettings: () => void
+    mine?: boolean
   } = $props()
 
   /** The shell's side panels (hidden while this is on screen): a toggle for each in the bar's top corners. */
@@ -39,7 +43,7 @@
 
   const watch = $derived(findWatch(channelId, streamer))
   const name = $derived(displayName(app.state, serverId, streamer))
-  const reconnecting = $derived(liveIn(app.state, channelId)[streamer]?.status === 'reconnecting')
+  const reconnecting = $derived(mine ? !!stream.live?.reconnecting : liveIn(app.state, channelId)[streamer]?.status === 'reconnecting')
   const roster = $derived(callRoster(app.state, serverId, channelId, selfVoice()))
   const volume = $derived(stream.volumes[streamer] ?? 100)
   let quality = $state<string | null>(untrack(() => findWatch(channelId, streamer)?.quality ?? 'auto'))
@@ -48,8 +52,21 @@
   // mini-preview. Leaving sets the preview again: Back (`closeFull`) or the mini-preview, not a teardown
   // here (state read in a teardown is the old value).
   $effect(() => {
-    untrack(() => streamApi.setView(channelId, streamer, 'full'))
+    if (!mine) untrack(() => streamApi.setView(channelId, streamer, 'full'))
   })
+
+  // Your own stream (#609): the capture itself, as your tile's preview shows it.
+  let localVideo = $state<HTMLVideoElement>()
+  $effect(() => {
+    const v = localVideo
+    if (!v) return
+    const t = liveMediaTrack()
+    v.srcObject = t ? new MediaStream([t]) : null
+    return () => {
+      v.srcObject = null
+    }
+  })
+
   // on screen: the shell hides its side panels for it (and shows them again when this goes)
   $effect(() => {
     untrack(() => callView.fullViews++)
@@ -126,6 +143,8 @@
     void streamApi.unwatch(channelId, streamer)
     closeFull()
   }
+  /** Back to the grid (or the conversation). */
+  const back = () => (mine ? closeOwnFull() : closeFull())
 
   /** Esc goes back to the grid, unless it's meant for a text field, or something open over this view. */
   const TYPING = 'textarea, select, [contenteditable="true"], [contenteditable="plaintext-only"], [role="menu"], [role="listbox"], input:not([type="range"], [type="checkbox"], [type="radio"], [type="button"])'
@@ -140,7 +159,7 @@
       setScreen(false)
       return
     }
-    closeFull()
+    back()
   }
   let menu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
 
@@ -171,7 +190,7 @@
     // checked again at the click: an activation noticed after the press still counts
     // not in full screen: a stray click there would throw you out of it and the view at once
     if (!p?.armed || screenOn || justActivated() || e.detail > 1 || Math.hypot(e.clientX - p.x, e.clientY - p.y) > DRAG_PX) return
-    closeFull()
+    back()
   }
   let stage = $state<HTMLElement>()
   /** Right-click on the stream: the streamer's menu, as on their grid tile. */
@@ -193,10 +212,11 @@
     <!-- between the corner toggles; when the panels leave too little room it wraps, the toggles stay put -->
     <div class="controls">
       <div class="lead">
-        <button type="button" class="btn btn-quiet back" onclick={closeFull}><Icon name="chevronLeft" size={16} /> Back</button>
-        <strong class="name">{name}</strong>
+        <button type="button" class="btn btn-quiet back" onclick={back}><Icon name="chevronLeft" size={16} /> Back</button>
+        <strong class="name">{mine ? 'Your stream' : name}</strong>
       </div>
       <div class="trail">
+        {#if !mine}
         <div class="ctl">
           <span>Quality</span>
           <Select bind:value={quality} label="Quality" options={[{ value: 'auto', label: 'Auto' }, { value: 'saver', label: 'Data saver' }]}
@@ -206,6 +226,7 @@
           Volume <strong>{volumeLabel(volume)}</strong>
           <input type="range" min="0" max="200" step="5" value={volume} aria-label="Stream volume" oninput={(e) => streamApi.setStreamVolume(streamer, +e.currentTarget.value)} />
         </label>
+        {/if}
         <div class="tools">
           <!-- the channel's chat beside the stream (#63); a click opens it with the message box focused (#202) -->
           <button type="button" id={STRIP_TOGGLE_ID} class="tool chat" aria-pressed={voiceChat.open} aria-controls={STRIP_ID} aria-label="Chat{badge?.label ?? ''}"
@@ -216,7 +237,7 @@
           <button type="button" class="tool" aria-label={screen ? 'Exit full screen' : 'Full screen'} data-tip={screen ? 'Exit full screen' : 'Full screen'}
             onclick={() => setScreen(!screen)}><Icon name="fullscreen" size={18} /></button>
         </div>
-        <button type="button" class="btn btn-danger stop" onclick={stop}>Stop watching</button>
+        {#if !mine}<button type="button" class="btn btn-danger stop" onclick={stop}>Stop watching</button>{/if}
       </div>
     </div>
     {#if panels?.hasRight && !screen}
@@ -229,11 +250,13 @@
   <div class="watch">
   <!-- focusable from script only: the stream's menu hands focus back here when it closes -->
   <div class="stage" bind:this={stage} tabindex="-1">
-    {#if watch}<div class="host" {@attach hostVideo(channelId, streamer)}></div>{/if}
+    {#if mine}
+      <div class="host"><video bind:this={localVideo} muted autoplay playsinline aria-label="Your stream"></video></div>
+    {:else if watch}<div class="host" {@attach hostVideo(channelId, streamer)}></div>{/if}
     <!-- the focused stream itself: a mouse shortcut back to every tile (Back and Esc are the keyboard's) -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="unfocus" onpointerdown={pressStream} onclick={clickStream} oncontextmenu={streamMenu}></div>
-    <StreamDiagOverlay kind="in" />
+    <StreamDiagOverlay kind={mine ? 'out' : 'in'} />
     {#if reconnecting}<div class="overlay" role="status">Reconnecting…</div>{/if}
   </div>
   <div class="strip">

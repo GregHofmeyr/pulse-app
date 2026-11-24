@@ -189,7 +189,7 @@
   const fullShown = $derived(callView.fullViews > 0)
   let hadFull = false
   $effect(() => {
-    const has = !!callView.full
+    const has = !!callView.full || !!callView.own
     untrack(() => {
       if (has && !hadFull) {
         panels.left = false
@@ -446,6 +446,11 @@
     const convo = activeChannel?.kind === 'dm' || activeChannel?.kind === 'group'
     return convo && f && f.channelId === activeChannelId && findWatch(f.channelId, f.streamer) ? f.streamer : null
   })
+  /** Your own stream in a DM or group call in full view (#609), in place of the conversation. */
+  const convoOwn = $derived(
+    !convoFull && (activeChannel?.kind === 'dm' || activeChannel?.kind === 'group') && !!activeChannelId &&
+      callView.own === activeChannelId && stream.live?.channelId === activeChannelId,
+  )
   // Resizable side columns (#160). What the right column holds sets its default; a column that isn't showing (full
   // view, the narrow-window search hand-off, Home with nothing on the right) has no handle and takes no room. Saved
   // widths are fitted to the body's width, so a shrinking window narrows them (lib/columns.ts).
@@ -457,7 +462,7 @@
   })
   // A stream in full view (#63) shows the open chat as a strip beside it (FullView: it stays in full screen), so the
   // column doesn't hold it meanwhile; the members list is there instead.
-  const chatInStrip = $derived((chatOpen && fullShown) || (!!convoFull && voiceChat.open))
+  const chatInStrip = $derived((chatOpen && fullShown) || ((!!convoFull || convoOwn) && voiceChat.open))
   const rightKind = $derived<keyof typeof RIGHT_DEFAULT | null>(
     searchShown ? 'search' : chatOpen && !chatInStrip ? 'chat' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
   const showLeft = $derived(!hideLeft)
@@ -579,6 +584,11 @@
   $effect(() => {
     const f = callView.full
     if (f && !findWatch(f.channelId, f.streamer)) callView.full = null
+  })
+  // Your own stream ended (or moved): nothing of yours to show in full view (#609).
+  $effect(() => {
+    const own = callView.own
+    if (own && stream.live?.channelId !== own) callView.own = null
   })
 
   // Join & watch: watch once the join has connected in that channel. A failed join, a join elsewhere
@@ -903,6 +913,8 @@
         {#key activeChannelId}<ClipsChannel channelId={activeChannelId} serverId={activeServerId} />{/key}
       {:else if convoFull && activeChannelId}
         {#key activeChannelId + '/' + convoFull}<FullView channelId={activeChannelId} streamer={convoFull} serverId={null} onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />{/key}
+      {:else if convoOwn && activeChannelId && app.state.me}
+        {#key activeChannelId}<FullView channelId={activeChannelId} streamer={app.state.me.id} serverId={null} onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} mine />{/key}
       {:else if activeChannel && activeChannelId}
         {#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId}
           onAddPeople={() => activeChannelId && (picker = { mode: 'add', channelId: activeChannelId })}

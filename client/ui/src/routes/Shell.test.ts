@@ -39,7 +39,7 @@ import { CONN_PILL_DELAY_MS } from '../lib/conn'
 import { startVoiceListening, voice } from '../lib/voice.svelte'
 import { stream, streamApi } from '../lib/stream/stream.svelte'
 import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
-import { callView, joinAndWatch, openFull, showToast, watchStream } from '../lib/stream/viewer.svelte'
+import { callView, joinAndWatch, openFull, openOwnFull, showToast, watchStream } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 import Waiting from './Waiting.svelte'
 import { reloadColumns } from '../lib/columns.svelte'
@@ -66,6 +66,7 @@ afterEach(async () => {
   offs.forEach((off) => off())
   offs = []
   callView.full = null
+  callView.own = null
   callView.goTo = null
   callView.joinThenWatch = null
   await streamApi.unwatchAll()
@@ -919,6 +920,31 @@ describe('watching from anywhere', () => {
     expect(q('.mini-preview')).toBeNull()
     expect(document.querySelectorAll('video').length).toBe(0)
     expect(stream.watching).toEqual([])
+  })
+
+  it('your_own_full_view_hides_the_side_panels_and_goes_when_your_stream_ends', async () => {
+    // #609: your own stream, larger: the same full view (side panels hidden, a toggle for each), and nothing watched
+    emit('pulse://event', { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1' } } })
+    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true }
+    goTo('V1')
+    await settle()
+    openOwnFull('V1')
+    await settle()
+    expect(q('.full-view .name')!.textContent).toBe('Your stream')
+    expect(q('aside.side')!.hidden).toBe(true)
+    expect(toggle('Channels')).not.toBeNull()
+    expect(invoke.mock.calls.some(([c]) => c === 'stream_watch')).toBe(false)
+    // elsewhere and back: still in full view, and no mini-preview of your own stream
+    goTo('T1')
+    await settle()
+    expect(q('.mini-preview')).toBeNull()
+    goTo('V1')
+    await settle()
+    expect(q('.full-view .name')!.textContent).toBe('Your stream')
+    stream.live = null
+    await settle()
+    expect(callView.own).toBeNull()
+    expect(q('.full-view')).toBeNull()
   })
 
   it('toast_watch_opens_the_call_view_in_full_view', async () => {

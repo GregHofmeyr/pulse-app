@@ -267,6 +267,22 @@ describe('streams in the call (#51)', () => {
     expect(document.querySelector('section[aria-label="You\'re live"]')).toBeNull()
   })
 
+  // #609: the band's live card opens your own stream in full view (the shell shows it in place of the conversation)
+  it('you live here: Full view on your live card opens your own stream larger', () => {
+    onWindows(true)
+    globalThis.MediaStream ??= class {} as never
+    live([info('G1', 'U1')])
+    stream.live = { channelId: 'G1', res: 1080, fps: 60, audio: true, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: false, sound: 'app' } as never
+    show(CallBand, { channelId: 'G1' })
+    button('Open your stream in full view')!.click()
+    flushSync()
+    expect(callView.own).toBe('G1')
+    expect(cmds('stream_watch')).toHaveLength(0)
+    callView.own = null
+    stream.live = null
+    flushSync()
+  })
+
   it('live in another call: no live card in this one', () => {
     onWindows(true)
     live([info('G1', 'U2')])

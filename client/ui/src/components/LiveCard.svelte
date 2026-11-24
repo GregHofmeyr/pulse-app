@@ -5,6 +5,7 @@
   import { selfPreview, setSelfPreviewHidden } from '../lib/stream/selfTile.svelte'
   import { liveMediaTrack, stream, streamApi } from '../lib/stream/stream.svelte'
   import { ghostCount } from '../lib/stream/viewer'
+  import { openOwnFull } from '../lib/stream/viewer.svelte'
   import { LAST_RESORT_TIP, showNoSoundYet, soundLabel } from '../lib/stream/sound'
 
   /** `tile`: fills a 16:9 grid tile, the preview behind a compact overlay of the controls. */
@@ -34,6 +35,13 @@
   })
 
   const toggleHidden = () => setSelfPreviewHidden(!hidden)
+  // your own stream larger or full screen (#609), as anyone's: the button, or the preview itself (Enter or Space)
+  const openFull = () => openOwnFull(channelId)
+  function previewKey(e: KeyboardEvent) {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    e.preventDefault()
+    openFull()
+  }
 </script>
 
 {#if live}
@@ -44,11 +52,15 @@
       {#if live.reconnecting}<span class="pill" role="status" data-tip="The connection dropped: your share goes out again as soon as it's back">Reconnecting…</span>{/if}
       <span class="meta">{live.res}p{live.fps}{#if sound}{' · '}<span data-tip={stream.sound?.tier === 'lastResort' && live.audio ? LAST_RESORT_TIP : undefined}>{sound}</span>{/if}</span>
       <span class="spacer"></span>
-      <button type="button" class="btn btn-secondary ghost" data-tip={tile ? 'Take your stream off your grid. It keeps going for everyone watching' : undefined} onclick={toggleHidden}>{hidden ? 'Show preview' : 'Hide preview'}</button>
+      {#if !hidden}<button type="button" class="btn btn-secondary ghost" data-own-full aria-label="Open your stream in full view" data-tip="Check what you're sending, larger or full screen" onclick={openFull}>Full view</button>{/if}
+      <button type="button" class="btn btn-secondary ghost" data-hide-preview data-tip={tile ? 'Take your stream off your grid. It keeps going for everyone watching' : undefined} onclick={toggleHidden}>{hidden ? 'Show preview' : 'Hide preview'}</button>
     </div>
     {#if !hidden}
       <div class="preview">
-        <video bind:this={video} muted autoplay playsinline></video>
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="open" role="button" tabindex="0" aria-label="Open your stream in full view" onclick={(e) => { if (e.detail <= 1) openFull() }} onkeydown={previewKey}>
+          <video bind:this={video} muted autoplay playsinline></video>
+        </div>
         <StreamDiagOverlay kind="out" />
       </div>
     {/if}
@@ -90,6 +102,10 @@
   .meta { color: var(--text-3); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .note { font-size: 13px; color: var(--text-2); }
   .preview { position: relative; }
+  .open { cursor: zoom-in; border-radius: var(--radius-md); }
+  .open:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .tile .open { position: absolute; inset: 0; border-radius: 0; }
+  .tile .open:focus-visible { outline-offset: -2px; }
   video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: var(--radius-md); object-fit: contain; }
   .viewers { margin: 0; font-size: 13px; color: var(--text-2); }
   .allow { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); }
