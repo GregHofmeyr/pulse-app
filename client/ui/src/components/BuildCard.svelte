@@ -48,7 +48,7 @@
   button.open { cursor: pointer; }
   .media { position: relative; aspect-ratio: 16 / 9; }
   .tag, .badge { padding: 1px 7px; border-radius: var(--radius-xs); font-size: 10px; font-weight: 700; letter-spacing: .04em; pointer-events: none; }
-  .tag { position: absolute; right: 8px; bottom: 8px; background: rgba(0, 0, 0, .75); color: #fff; letter-spacing: 0; font-weight: 600; font-size: 11px; }
+  .tag { position: absolute; right: 8px; bottom: 8px; background: var(--scrim-strong); color: var(--tooltip-text); letter-spacing: 0; font-weight: 600; font-size: 11px; }
   .badges { position: absolute; left: 8px; top: 8px; display: flex; gap: 4px; }
   .badge { background: var(--bg-1); color: var(--text-2); border: 1px solid var(--bg-4); }
   .info { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }

@@ -42,7 +42,7 @@
   button.open { cursor: pointer; }
   button.open:hover { background: var(--bg-2); }
   .media { position: relative; width: 96px; aspect-ratio: 16 / 9; border-radius: var(--radius-sm); overflow: hidden; }
-  .tag { position: absolute; right: 4px; bottom: 4px; padding: 0 5px; border-radius: var(--radius-xs); background: rgba(0, 0, 0, .75); color: #fff; font-size: 10px; }
+  .tag { position: absolute; right: 4px; bottom: 4px; padding: 0 5px; border-radius: var(--radius-xs); background: var(--scrim-strong); color: var(--tooltip-text); font-size: 10px; }
   .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .caption { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .guessed { text-transform: none; letter-spacing: 0; font-weight: 400; font-style: italic; }
