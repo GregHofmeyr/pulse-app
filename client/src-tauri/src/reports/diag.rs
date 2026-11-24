@@ -141,21 +141,29 @@ pub enum SourceKind {
     Unknown,
 }
 
-/// What netwatch can say without an address: whether there's a route out over each family.
+/// What netwatch can say without an address: whether there's a route out over each family, the path's masked shape
+/// (label, interface kind, VPN, address shapes) and this session's changes and reconnects.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Network {
     pub ipv4_route: bool,
     pub ipv6_route: bool,
+    #[serde(flatten)]
+    pub path: crate::netwatch::path::PathInfo,
     #[serde(flatten)]
     pub events: super::tally::NetSummary,
     /// Voice rejoins this session (LiveKit gave up and we joined again).
     pub voice_rejoins: u32,
 }
 
-pub fn network(route: crate::netwatch::Route, voice_rejoins: u32) -> Network {
+pub fn network(
+    route: crate::netwatch::Route,
+    path: crate::netwatch::path::PathInfo,
+    voice_rejoins: u32,
+) -> Network {
     Network {
         ipv4_route: route.v4.is_some(),
         ipv6_route: route.v6.is_some(),
+        path,
         events: super::tally::net(),
         voice_rejoins,
     }
@@ -339,8 +347,18 @@ mod tests {
             v4: Some(std::net::Ipv4Addr::new(192, 168, 1, 23)),
             v6: None,
         };
-        let v = serde_json::to_value(network(route, 2)).unwrap();
+        let path = crate::netwatch::path::PathInfo {
+            network: Some("network a3f9".into()),
+            kind: Some(crate::netwatch::path::Kind::Wifi),
+            vpn_active: false,
+            ipv4: Some(crate::netwatch::path::V4Shape::Private),
+            ipv6: None,
+        };
+        let v = serde_json::to_value(network(route, path, 2)).unwrap();
         assert_eq!(v["ipv4_route"], true);
+        assert_eq!(v["network"], "network a3f9");
+        assert_eq!(v["kind"], "wifi");
+        assert_eq!(v["ipv4"], "private");
         assert_eq!(v["ipv6_route"], false);
         assert_eq!(v["voice_rejoins"], 2);
         assert!(v["gateway_reconnects"].is_number());

@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
 mod linux;
+pub mod path;
 #[cfg(windows)]
 mod windows;
 

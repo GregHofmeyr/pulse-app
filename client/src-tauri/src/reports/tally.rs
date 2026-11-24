@@ -161,16 +161,27 @@ impl Visit for Message {
 pub struct NetEvents {
     changes: u32,
     resumes: u32,
-    last_change: Option<Instant>,
     gateway_reconnects: u32,
-    /// (when, why), newest last.
-    recent: VecDeque<(Instant, &'static str)>,
+    /// (when, why, on which network), newest last.
+    recent: VecDeque<(Instant, &'static str, Option<String>)>,
+    /// (when, resumed, the network after it), newest last.
+    recent_changes: VecDeque<(Instant, bool, Option<String>)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Reconnect {
     pub ago_s: u64,
     pub reason: &'static str,
+    /// The masked network label it happened on (`network xxxx`), if known.
+    pub network: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NetChange {
+    pub ago_s: u64,
+    pub resumed: bool,
+    /// The masked network label after the change: a different one from the last means it moved networks.
+    pub network: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -178,27 +189,36 @@ pub struct NetSummary {
     /// Real network changes netwatch saw this session (a route that moved, or a resume from sleep).
     pub changes: u32,
     pub resumes: u32,
-    pub last_change_ago_s: Option<u64>,
+    /// The last few, newest last.
+    pub recent_changes: Vec<NetChange>,
     pub gateway_reconnects: u32,
     /// The last few, newest last.
     pub recent_gateway_reconnects: Vec<Reconnect>,
 }
 
 impl NetEvents {
-    pub fn network_change(&mut self, resumed: bool, now: Instant) {
+    pub fn network_change(&mut self, resumed: bool, network: Option<String>, now: Instant) {
         self.changes = self.changes.saturating_add(1);
         if resumed {
             self.resumes = self.resumes.saturating_add(1);
         }
-        self.last_change = Some(now);
+        if self.recent_changes.len() == RECONNECTS_KEPT {
+            self.recent_changes.pop_front();
+        }
+        self.recent_changes.push_back((now, resumed, network));
     }
 
-    pub fn gateway_reconnect(&mut self, reason: &'static str, now: Instant) {
+    pub fn gateway_reconnect(
+        &mut self,
+        reason: &'static str,
+        network: Option<String>,
+        now: Instant,
+    ) {
         self.gateway_reconnects = self.gateway_reconnects.saturating_add(1);
         if self.recent.len() == RECONNECTS_KEPT {
             self.recent.pop_front();
         }
-        self.recent.push_back((now, reason));
+        self.recent.push_back((now, reason, network));
     }
 
     pub fn summary(&self, now: Instant) -> NetSummary {
@@ -206,14 +226,23 @@ impl NetEvents {
         NetSummary {
             changes: self.changes,
             resumes: self.resumes,
-            last_change_ago_s: self.last_change.map(ago),
+            recent_changes: self
+                .recent_changes
+                .iter()
+                .map(|(t, resumed, network)| NetChange {
+                    ago_s: ago(*t),
+                    resumed: *resumed,
+                    network: network.clone(),
+                })
+                .collect(),
             gateway_reconnects: self.gateway_reconnects,
             recent_gateway_reconnects: self
                 .recent
                 .iter()
-                .map(|(t, reason)| Reconnect {
+                .map(|(t, reason, network)| Reconnect {
                     ago_s: ago(*t),
                     reason,
+                    network: network.clone(),
                 })
                 .collect(),
         }
@@ -227,14 +256,16 @@ fn with_net<T>(f: impl FnOnce(&mut NetEvents) -> T) -> T {
     f(g.get_or_insert_with(NetEvents::default))
 }
 
-/// netwatch saw a real change (`resumed`: the machine woke from sleep in it).
-pub fn network_change(resumed: bool) {
-    with_net(|n| n.network_change(resumed, Instant::now()));
+/// netwatch saw a real change (`resumed`: the machine woke from sleep in it); `network`: the masked label after it.
+pub fn network_change(resumed: bool, network: Option<String>) {
+    with_net(|n| n.network_change(resumed, network, Instant::now()));
 }
 
-/// The gateway is about to reconnect, and why (a fixed word: no addresses or server text).
+/// The gateway is about to reconnect, and why (a fixed word: no addresses or server text). Tagged with the masked
+/// label of the network netwatch last saw.
 pub fn gateway_reconnect(reason: &'static str) {
-    with_net(|n| n.gateway_reconnect(reason, Instant::now()));
+    let network = crate::netwatch::path::current_network();
+    with_net(|n| n.gateway_reconnect(reason, network, Instant::now()));
 }
 
 pub fn net() -> NetSummary {
@@ -320,23 +351,36 @@ mod tests {
     fn network_events_keep_the_last_few_reconnects() {
         let t0 = Instant::now();
         let mut n = NetEvents::default();
-        n.network_change(false, t0);
-        n.network_change(true, t0 + Duration::from_secs(5));
+        n.network_change(false, Some("network a3f9".into()), t0);
+        n.network_change(
+            true,
+            Some("network 07c2".into()),
+            t0 + Duration::from_secs(5),
+        );
         for i in 0..RECONNECTS_KEPT + 2 {
             let reason = if i == RECONNECTS_KEPT + 1 {
                 "server_restart"
             } else {
                 "dropped"
             };
-            n.gateway_reconnect(reason, t0 + Duration::from_secs(i as u64));
+            n.gateway_reconnect(
+                reason,
+                Some("network 07c2".into()),
+                t0 + Duration::from_secs(i as u64),
+            );
         }
         let s = n.summary(t0 + Duration::from_secs(60));
         assert_eq!((s.changes, s.resumes), (2, 1));
-        assert_eq!(s.last_change_ago_s, Some(55));
+        assert_eq!(s.recent_changes.len(), 2);
+        assert_eq!(s.recent_changes[1].ago_s, 55);
+        assert!(s.recent_changes[1].resumed);
+        assert_eq!(s.recent_changes[0].network.as_deref(), Some("network a3f9"));
+        assert_eq!(s.recent_changes[1].network.as_deref(), Some("network 07c2"));
         assert_eq!(s.gateway_reconnects, (RECONNECTS_KEPT + 2) as u32);
         assert_eq!(s.recent_gateway_reconnects.len(), RECONNECTS_KEPT);
         let last = s.recent_gateway_reconnects.last().unwrap();
         assert_eq!(last.reason, "server_restart");
+        assert_eq!(last.network.as_deref(), Some("network 07c2"));
         assert_eq!(last.ago_s, 60 - (RECONNECTS_KEPT as u64 + 1));
     }
 }

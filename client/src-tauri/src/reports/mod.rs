@@ -158,7 +158,10 @@ pub async fn meta(app: &AppHandle, server: &str, ui: Option<diag::ReportUi>) -> 
             DEVICE_LIST_WAIT,
             tokio::task::spawn_blocking(crate::voice::devices::default_device_names),
         ),
-        tokio::task::spawn_blocking(crate::netwatch::Route::now),
+        tokio::task::spawn_blocking(|| {
+            let r = crate::netwatch::Route::now();
+            (r, crate::netwatch::path::now(&r))
+        }),
     );
     let (default_input, default_output) = match defaults {
         Ok(Ok(d)) => d,
@@ -170,7 +173,8 @@ pub async fn meta(app: &AppHandle, server: &str, ui: Option<diag::ReportUi>) -> 
         default_input,
         default_output,
     };
-    let network = diag::network(route.unwrap_or_default(), voice.rejoins());
+    let (route, path) = route.unwrap_or_default();
+    let network = diag::network(route, path, voice.rejoins());
     let mut meta = serde_json::json!({
         "app_version": env!("CARGO_PKG_VERSION"),
         "commit": commit,
