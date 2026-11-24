@@ -53,6 +53,26 @@ const CAPTURE_VIDEO: MediaTrackConstraints & { resizeMode: 'none' | 'crop-and-sc
 // createScreenTracks lives on LocalParticipant but needs no connection: an unconnected Room's is enough.
 let pickerRoom: Room | null = null
 
+type FocusController = { setFocusBehavior(b: 'focus-captured-surface' | 'no-focus-change'): void }
+
+/**
+ * A CaptureController that leaves the focus where it is (#581). Chromium's picker (WebView2's on Windows) otherwise
+ * brings the picked window or tab to the front the moment it's chosen ("conditional focus" defaults to focusing it),
+ * which buries Pulse under it before Go Live has been pressed. Set before the picker opens, so no race with the pick's
+ * resolution; undefined where the engine has no CaptureController (the picker then behaves as it always did).
+ */
+export function noFocusController(): unknown {
+  const Ctor = (globalThis as { CaptureController?: new () => FocusController }).CaptureController
+  if (!Ctor) return undefined
+  const c = new Ctor()
+  try {
+    c.setFocusBehavior('no-focus-change')
+  } catch {
+    // an engine that won't take it this early: the picker behaves as it always did
+  }
+  return c
+}
+
 export class StreamRoom {
   private published: LocalVideoTrack | null = null
   private readonly watched = new Map<string, Watched>()
@@ -141,6 +161,7 @@ export class StreamRoom {
       tracks = await pickerRoom.localParticipant.createScreenTracks({
         audio: false,
         selfBrowserSurface: 'exclude',
+        controller: noFocusController(),
         resolution: { width: 0, height: 0 },
         video: CAPTURE_VIDEO as unknown as true, // livekit-client types only `displaySurface`
       })
