@@ -249,7 +249,7 @@ async fn delete(
 /// the server's members), and not a quotes or clips channel.
 async fn spin_channel(s: &AppState, me: UserId, id: ChannelId) -> AppResult<Channel> {
     let ch = channel_for(&s.db, me, id).await?;
-    if matches!(ch.kind, ChannelKind::Quotes | ChannelKind::Clips) {
+    if matches!(ch.kind, ChannelKind::Quotes | ChannelKind::Clips | ChannelKind::Builds) {
         return Err(AppError::BadRequest(
             "wheels spin in text and voice chats, DMs and groups".into(),
         ));

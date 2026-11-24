@@ -591,6 +591,13 @@ pub enum ChannelKind {
     Quotes,
     /// A server channel for video clips: posts are clips, replies live in threads.
     Clips,
+    /// A server channel for character builds (#616): posts are builds, comments live in threads. Protocol 5 on: a
+    /// version-4 client is never sent one.
+    Builds,
+    /// A kind this build doesn't know (one added after it). Never sent or stored by this server; a client keeps such a
+    /// channel out of sight instead of failing to read everything around it.
+    #[serde(other)]
+    Unknown,
 }
 
 impl ChannelKind {
@@ -602,6 +609,8 @@ impl ChannelKind {
             Self::Group => "group",
             Self::Quotes => "quotes",
             Self::Clips => "clips",
+            Self::Builds => "builds",
+            Self::Unknown => "unknown",
         }
     }
 
@@ -613,6 +622,7 @@ impl ChannelKind {
             "group" => Self::Group,
             "quotes" => Self::Quotes,
             "clips" => Self::Clips,
+            "builds" => Self::Builds,
             _ => return None,
         })
     }
@@ -622,10 +632,10 @@ impl ChannelKind {
         matches!(self, Self::Dm | Self::Group)
     }
 
-    /// Server kinds that hold nothing but messages (no call): text, quotes and clips. A voice
+    /// Server kinds that hold nothing but messages (no call): text, quotes, clips and builds. A voice
     /// channel isn't one, though it has a chat too ([`Self::has_chat`]).
     pub fn is_server_chat(self) -> bool {
-        matches!(self, Self::Text | Self::Quotes | Self::Clips)
+        matches!(self, Self::Text | Self::Quotes | Self::Clips | Self::Builds)
     }
 
     /// Server kinds with a chat its members may read and post in: the message-only kinds, and a
@@ -1034,6 +1044,10 @@ pub struct Message {
     /// Set when this message is a clip.
     #[serde(default)]
     pub clip: Option<Clip>,
+    /// Set when this message is a build (#616); its screenshots are `attachments`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub build: Option<Box<Build>>,
     /// Previews of the links in the content, in the order they appear (the server adds them
     /// after the send; the sender can hide them).
     #[serde(default)]
@@ -3177,6 +3191,134 @@ pub struct GameCount {
 pub struct AuthorCount {
     pub user_id: UserId,
     pub count: u32,
+}
+
+/// Limits on a build (#616), checked by the server and shown by the client.
+pub mod build_limits {
+    /// Characters in the title, after trimming (at least 1).
+    pub const TITLE_CHARS: usize = 120;
+    /// Characters in the notes (a message's limit).
+    pub const NOTES_CHARS: usize = 4000;
+    pub const MAX_SCREENSHOTS: usize = 10;
+    /// Characters in the link (`http` or `https` only).
+    pub const LINK_CHARS: usize = 2048;
+}
+
+/// A build (#616): one message of a builds channel. Its author and saved time are the message's; its screenshots are
+/// the message's `attachments`, in order; comments are thread replies (`thread_root_id`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Build {
+    /// 1 to 120 characters.
+    pub title: String,
+    /// The title was made for the author (from the link, or "Untitled build"), so the link's fetched page title may
+    /// still replace it. Cleared once the author sets one, or the fetched title lands.
+    pub title_auto: bool,
+    pub game_id: Option<GameId>,
+    /// The game was guessed from the link's title, not picked.
+    pub game_guessed: bool,
+    pub link: Option<BuildLink>,
+    pub notes: Option<String>,
+    /// Saved with no details yet (no game picked, no notes), until the author adds some or marks it sorted.
+    pub quick_drop: bool,
+    /// When the author last edited it (the list never reorders for it).
+    pub updated_at: Option<String>,
+    /// Archived: hidden from the list by default, still openable, searchable and commentable.
+    pub archived_at: Option<String>,
+    pub archived_by: Option<UserId>,
+    pub reply_count: u32,
+    /// The newest comment.
+    pub last_reply_id: Option<MessageId>,
+    /// Per caller: the newest comment you have seen (gateway events carry `None`).
+    pub replies_seen: Option<MessageId>,
+}
+
+/// A build's link, with what the server fetched of its page (absent until it lands, or when it couldn't be fetched).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct BuildLink {
+    pub url: String,
+    pub title: Option<String>,
+    pub thumb: Option<EmbedThumb>,
+    /// `Generic` until fetched; `Youtube` (with `provider_id`) plays in the app.
+    pub provider: EmbedProvider,
+    pub provider_id: Option<String>,
+}
+
+/// `POST /channels/{id}/builds`: a new build. Only a title, a link or a screenshot is needed.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct CreateBuildRequest {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub game_id: Option<GameId>,
+    #[serde(default)]
+    pub link_url: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// Uploaded screenshots (images only), in order; at most 10.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentId>,
+    #[serde(default)]
+    pub nonce: Option<String>,
+}
+
+/// `PUT /builds/{message_id}`: the author's edit, replacing every field.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct UpdateBuildRequest {
+    pub title: String,
+    #[serde(default)]
+    pub game_id: Option<GameId>,
+    #[serde(default)]
+    pub link_url: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// The screenshots in their new order: ids it already has (kept) and new uploads. Any it had that aren't listed
+    /// are removed.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentId>,
+    /// End its quick drop with no game or notes ("Mark as sorted").
+    #[serde(default)]
+    pub mark_sorted: bool,
+}
+
+/// `PUT /builds/{message_id}/archived`: archive or restore one build.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct SetBuildArchivedRequest {
+    pub archived: bool,
+}
+
+/// `POST /channels/{id}/builds/archive`: archive every live, unarchived build saved before `before` (of one game, or
+/// all), of those the caller may archive. `dry_run` only lists them.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct BulkArchiveRequest {
+    #[serde(default)]
+    pub game_id: Option<GameId>,
+    /// An RFC 3339 time.
+    pub before: String,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// What a bulk archive matched (newest first) and, unless a dry run, how many it archived.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct BulkArchiveResult {
+    pub builds: Vec<BuildBrief>,
+    pub archived: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct BuildBrief {
+    pub message_id: MessageId,
+    pub title: String,
+    pub game_id: Option<GameId>,
+    pub created_at: String,
+}
+
+/// `GET /channels/{id}/builds/facets`: a builds channel's build counts per game (`total` counts those with no game
+/// too).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct BuildFacets {
+    pub total: u32,
+    pub games: Vec<GameCount>,
 }
 
 /// How much clip storage a server uses.

@@ -1127,6 +1127,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, games: withGame(s.games, e.d.game) }
     case 'ClipViewChanged':
       return { ...s, clipViews: { ...s.clipViews, [e.d.channel_id]: e.d.view } }
+    // Builds channels (#616) arrive with the builds views (#617); nothing holds their feeds yet.
+    case 'BuildsArchived':
+      return s
     // Toasts and the [NEW] count live outside the reducer.
     case 'BadgeEarned':
       return s

@@ -788,6 +788,14 @@ pub enum Event {
     GameAdded {
         game: Game,
     },
+    /// A bulk archive in a builds channel (#616): these builds were archived, at once, by one person (the channel's
+    /// audience; never to a version-4 client).
+    BuildsArchived {
+        channel_id: ChannelId,
+        message_ids: Vec<MessageId>,
+        archived_at: String,
+        archived_by: UserId,
+    },
     /// Only to the user's own sessions: they chose a view of a clips channel.
     ClipViewChanged {
         user_id: UserId,
@@ -981,6 +989,7 @@ impl Event {
             | Self::QuoteAwardChanged { channel_id, .. }
             | Self::ThreadSeen { channel_id, .. }
             | Self::ClipViewChanged { channel_id, .. }
+            | Self::BuildsArchived { channel_id, .. }
             | Self::SoundPlayed { channel_id, .. }
             | Self::VoiceDisconnected { channel_id, .. }
             | Self::CallEnded { channel_id, .. }
@@ -1485,6 +1494,26 @@ mod tests {
         assert_eq!(ChannelKind::parse("clips"), Some(ChannelKind::Clips));
         assert_eq!(ChannelKind::Clips.as_str(), "clips");
         assert!(ChannelKind::Clips.is_server_chat() && !ChannelKind::Clips.is_private());
+    }
+
+    #[test]
+    fn builds_is_a_server_chat_kind() {
+        use crate::rest::ChannelKind;
+        assert_eq!(ChannelKind::parse("builds"), Some(ChannelKind::Builds));
+        assert_eq!(ChannelKind::Builds.as_str(), "builds");
+        assert!(ChannelKind::Builds.is_server_chat() && ChannelKind::Builds.has_chat());
+        assert!(!ChannelKind::Builds.is_private());
+    }
+
+    /// A kind added after this build reads as `Unknown` (#616) instead of failing the whole frame, and is never one
+    /// a request may name.
+    #[test]
+    fn an_unknown_channel_kind_reads_as_unknown() {
+        use crate::rest::ChannelKind;
+        let k: ChannelKind = serde_json::from_str(r#""forum""#).unwrap();
+        assert_eq!(k, ChannelKind::Unknown);
+        assert_eq!(ChannelKind::parse("unknown"), None);
+        assert!(!ChannelKind::Unknown.has_chat() && !ChannelKind::Unknown.is_private());
     }
 
     /// A pre-clips server's `Ready` and `Message` still parse.

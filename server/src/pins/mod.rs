@@ -37,7 +37,8 @@ pub fn line_noun(kind: ChannelKind) -> Option<&'static str> {
             Some("message")
         }
         ChannelKind::Quotes => Some("quote"),
-        ChannelKind::Clips => None,
+        // a builds channel shows only its builds, as a clips channel its clips
+        ChannelKind::Clips | ChannelKind::Builds | ChannelKind::Unknown => None,
     }
 }
 

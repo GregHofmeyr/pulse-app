@@ -330,6 +330,7 @@ async fn confirm(
             replies_seen: None,
         }),
         qoty_card: None,
+        build: None,
         pin: None,
         pin_line: None,
         poll: None,

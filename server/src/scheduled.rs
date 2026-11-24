@@ -132,7 +132,7 @@ async fn list(
 /// posted withheld from them, as any send is (never a refusal that would tell `me`).
 async fn postable(s: &AppState, me: UserId, id: ChannelId) -> AppResult<()> {
     let ch = channel_for(&s.db, me, id).await?;
-    if matches!(ch.kind, ChannelKind::Quotes | ChannelKind::Clips)
+    if matches!(ch.kind, ChannelKind::Quotes | ChannelKind::Clips | ChannelKind::Builds)
         || !(ch.kind.has_chat() || ch.kind.is_private())
     {
         return Err(AppError::BadRequest(

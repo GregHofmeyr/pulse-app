@@ -6,6 +6,7 @@ import { conversationName } from './conversations'
 import { displayName, namesOf } from './selectors'
 import { matchActions, type QuickAction } from './quickActions'
 import type { SearchHit } from './protocol/SearchHit'
+import type { ChannelKind } from './protocol/ChannelKind'
 
 export type PlaceKind = 'server' | 'text' | 'voice' | 'quotes' | 'clips' | 'dm' | 'group'
 
@@ -68,6 +69,8 @@ export function globalSwitch(s: { open: boolean; wasFocused: boolean; blocked: b
 
 const lower = (xs: (string | null | undefined)[]) => [...new Set(xs.filter((x): x is string => !!x).map((x) => x.toLowerCase()))]
 const CHANNEL_KINDS: PlaceKind[] = ['text', 'voice', 'quotes', 'clips']
+/** The server channel kinds the switcher lists (builds channels, #616, join with their views, #617). */
+const isChannelPlace = (k: ChannelKind): k is ChannelKind & PlaceKind => (CHANNEL_KINDS as string[]).includes(k)
 const KIND_ORDER: Record<PlaceKind, number> = { server: 0, text: 1, voice: 2, quotes: 3, clips: 4, dm: 5, group: 6 }
 
 /** Everything the switcher can take you to: servers, their channels (text, voice, quotes, clips), and your DMs and
@@ -80,7 +83,7 @@ export function placesFrom(s: AppState): Place[] {
   for (const ch of Object.values(s.channels)) {
     if (ch.server_id) {
       const sn = serverName.get(ch.server_id)
-      if (sn === undefined || !CHANNEL_KINDS.includes(ch.kind)) continue
+      if (sn === undefined || !isChannelPlace(ch.kind)) continue
       const name = ch.name ?? ''
       out.push({ key: `c:${ch.id}`, kind: ch.kind, id: ch.id, name, serverId: ch.server_id, context: sn, keys: lower([name]) })
     } else if ((ch.kind === 'dm' || ch.kind === 'group') && !s.hidden[ch.id]) {

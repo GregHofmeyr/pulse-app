@@ -424,7 +424,7 @@ pub(crate) async fn add_member_in(
         return Ok(Joined { added, qoty: None });
     }
     let chat: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM channels WHERE server_id = ? AND kind IN ('text', 'quotes', 'clips', 'voice')",
+        "SELECT id FROM channels WHERE server_id = ? AND kind IN ('text', 'quotes', 'clips', 'builds', 'voice')",
     )
     .bind(id.to_string())
     .fetch_all(&mut *tx)
@@ -601,9 +601,9 @@ async fn create_channel(
     if !is_server_member(&s.db, id, me).await? {
         return Err(AppError::Forbidden);
     }
-    if req.kind.is_private() {
+    if req.kind.is_private() || req.kind == ChannelKind::Unknown {
         return Err(AppError::BadRequest(
-            "server channels are text, voice or quotes".into(),
+            "server channels are text, voice, quotes, clips or builds".into(),
         ));
     }
     let name = clean_name(&req.name)?;

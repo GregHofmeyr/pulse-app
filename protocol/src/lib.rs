@@ -154,6 +154,15 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::GameCount::export_all(&cfg)?;
     rest::AuthorCount::export_all(&cfg)?;
     rest::ClipStorage::export_all(&cfg)?;
+    rest::Build::export_all(&cfg)?;
+    rest::BuildLink::export_all(&cfg)?;
+    rest::CreateBuildRequest::export_all(&cfg)?;
+    rest::UpdateBuildRequest::export_all(&cfg)?;
+    rest::SetBuildArchivedRequest::export_all(&cfg)?;
+    rest::BulkArchiveRequest::export_all(&cfg)?;
+    rest::BulkArchiveResult::export_all(&cfg)?;
+    rest::BuildBrief::export_all(&cfg)?;
+    rest::BuildFacets::export_all(&cfg)?;
     rest::NameStyle::export_all(&cfg)?;
     rest::CardProfile::export_all(&cfg)?;
     rest::ProfileStats::export_all(&cfg)?;
@@ -301,17 +310,26 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
 /// client's copy can't drift from the server's (`just types-check` fails on a stale one).
 pub fn limits_ts() -> String {
     use rest::{
-        bookmark_limits as b, dm_layout_limits as d, plan_limits as p, poll_limits as o,
+        bookmark_limits as b, build_limits as u, dm_layout_limits as d, plan_limits as p, poll_limits as o,
         schedule_limits as s, wheel_limits as w,
     };
     let names = serde_json::to_string(&d::RESERVED_NAMES).expect("strings serialise");
-    let modules: [(&str, Vec<(&str, String)>); 6] = [
+    let modules: [(&str, Vec<(&str, String)>); 7] = [
         (
             "bookmark_limits",
             vec![
                 ("MAX_BOOKMARKS", b::MAX_BOOKMARKS.to_string()),
                 ("NOTE_MAX_CHARS", b::NOTE_MAX_CHARS.to_string()),
                 ("SNIPPET_CHARS", b::SNIPPET_CHARS.to_string()),
+            ],
+        ),
+        (
+            "build_limits",
+            vec![
+                ("TITLE_CHARS", u::TITLE_CHARS.to_string()),
+                ("NOTES_CHARS", u::NOTES_CHARS.to_string()),
+                ("MAX_SCREENSHOTS", u::MAX_SCREENSHOTS.to_string()),
+                ("LINK_CHARS", u::LINK_CHARS.to_string()),
             ],
         ),
         (
@@ -384,4 +402,11 @@ pub fn limits_ts() -> String {
 ///
 /// 4: private servers (#80). A server you join arrives whole in `ServerJoined`; a version-3 client, which skips that
 /// event, is reconnected instead so its next Ready brings the server.
-pub const PROTOCOL_VERSION: u32 = 4;
+///
+/// 5: builds channels (#616); a version-4 client can't parse `ChannelKind::Builds`, so the server never sends it one,
+/// nor anything that happens in one.
+pub const PROTOCOL_VERSION: u32 = 5;
+
+/// The REST header a client sends with its [`PROTOCOL_VERSION`] (5 on). A request without it is from an older client,
+/// and is answered as one would be (no builds channels in its channel lists).
+pub const PROTOCOL_HEADER: &str = "x-pulse-protocol";

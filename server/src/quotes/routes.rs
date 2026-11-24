@@ -592,6 +592,7 @@ fn purged_winner(id: &str) -> AppResult<Message> {
         quote: None,
         qoty_card: None,
         clip: None,
+        build: None,
         embeds: vec![],
         embeds_hidden: false,
         call: None,

@@ -219,6 +219,7 @@ fn skeleton(f: &Stored) -> Message {
         quote: None,
         qoty_card: None,
         clip: None,
+        build: None,
         embeds: vec![],
         embeds_hidden: false,
         call: None,
@@ -366,9 +367,9 @@ async fn target(s: &AppState, me: UserId, id: ChannelId) -> AppResult<Channel> {
     {
         return Err(AppError::Forbidden);
     }
-    if matches!(ch.kind, ChannelKind::Quotes | ChannelKind::Clips) {
+    if matches!(ch.kind, ChannelKind::Quotes | ChannelKind::Clips | ChannelKind::Builds) {
         return Err(AppError::BadRequest(
-            "messages can't be forwarded to a quotes or clips channel".into(),
+            "messages can't be forwarded to a quotes, clips or builds channel".into(),
         ));
     }
     Ok(ch)

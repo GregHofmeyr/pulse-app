@@ -90,6 +90,7 @@ fn from_row(r: Row) -> AppResult<Message> {
         thread_root_id: thread_root_id.as_deref().map(parse).transpose()?,
         quote: None,
         clip: None,
+        build: None,
         embeds: vec![],
         embeds_hidden: false,
         call: match &system_payload {
@@ -417,6 +418,10 @@ pub(crate) async fn send_as(
         ));
     } else if ch.kind == ChannelKind::Clips {
         return Err(AppError::BadRequest("only clips can be posted here".into()));
+    } else if ch.kind == ChannelKind::Builds {
+        return Err(AppError::BadRequest(
+            "only builds can be posted here".into(),
+        ));
     }
     nonce::check(req.nonce.as_deref())?;
     // With files (#57) the text is a caption and may be empty: older clients then read the
@@ -627,6 +632,7 @@ pub(crate) async fn deliver(
         thread_root_id,
         quote: None,
         clip: None,
+        build: None,
         embeds: vec![],
         call: None,
         wheel: None,
@@ -1139,6 +1145,7 @@ mod tests {
             thread_root_id: None,
             quote: None,
             clip: None,
+            build: None,
             embeds: vec![],
             call: None,
             wheel: None,

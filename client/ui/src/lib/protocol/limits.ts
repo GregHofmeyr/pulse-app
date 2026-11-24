@@ -6,6 +6,13 @@ export const bookmark_limits = {
   SNIPPET_CHARS: 300,
 } as const
 
+export const build_limits = {
+  TITLE_CHARS: 120,
+  NOTES_CHARS: 4000,
+  MAX_SCREENSHOTS: 10,
+  LINK_CHARS: 2048,
+} as const
+
 export const dm_layout_limits = {
   NAME_CHARS: 32,
   MAX_CATEGORIES: 30,

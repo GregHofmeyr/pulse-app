@@ -59,6 +59,7 @@ pub async fn insert(
         thread_root_id: None,
         quote: None,
         clip: None,
+        build: None,
         embeds: vec![],
         embeds_hidden: false,
         call: call_line(&stored),
