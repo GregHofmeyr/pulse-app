@@ -127,7 +127,7 @@
   </div>
   <div class="grid" role="grid" aria-labelledby="{uid}-month">
     <div class="row" role="row">
-      {#each WEEKDAYS as [short, full] (short)}<span class="wd" role="columnheader" title={full}><abbr title={full}>{short}</abbr></span>{/each}
+      {#each WEEKDAYS as [short, full] (short)}<span class="wd" role="columnheader" aria-label={full}>{short}</span>{/each}
     </div>
     {#each weeks as week (week[0])}
       <div class="row" role="row">
@@ -149,7 +149,6 @@
   .grid { display: flex; flex-direction: column; gap: 2px; }
   .row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
   .wd { height: 24px; display: grid; place-items: center; font-size: 11px; font-weight: 600; color: var(--text-3); }
-  .wd abbr { text-decoration: none; }
   .day { height: 30px; min-width: 0; padding: 0; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; }
   .day.out { color: var(--text-3); }
   .day:hover:not(:disabled) { background: var(--bg-4); color: var(--text); }
