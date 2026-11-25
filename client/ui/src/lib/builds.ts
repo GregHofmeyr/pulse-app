@@ -105,11 +105,14 @@ export function setBuildFacets(s: AppState, channelId: string, archived: boolean
   return { ...s, buildFacets: { ...s.buildFacets, [facetsKey(channelId, archived)]: f } }
 }
 
-/** `m` as an event carries it, with what only the held copy knows: your seen point, your reactions and its pin. */
+/** `m` as an event carries it, with what only the held copy knows: your seen point, your star, your reactions and its
+ *  pin. */
 function withHeld(m: Message, old: Message): Message {
   const { pin: _p, ...rest } = m
   const next: Message = { ...rest, reactions: old.reactions, ...(old.pin ? { pin: old.pin } : {}) }
-  return m.build ? { ...next, build: { ...m.build, replies_seen: old.build?.replies_seen ?? m.build.replies_seen } } : next
+  return m.build
+    ? { ...next, build: { ...m.build, replies_seen: old.build?.replies_seen ?? m.build.replies_seen, favourite: old.build?.favourite ?? m.build.favourite } }
+    : next
 }
 
 /** Every feed of `channel` through `f` (the same state when nothing changed). */
@@ -165,6 +168,19 @@ function archived(s: AppState, channel: string, ids: string[], at: string, by: s
   })
 }
 
+/** Your star on these builds (#617), in every feed of the channel. */
+function starred(s: AppState, channel: string, ids: string[], favourite: boolean): AppState {
+  const listed = new Set(ids)
+  return mapFeeds(s, channel, (feed) =>
+    feed.items.some((m) => listed.has(m.id))
+      ? { ...feed, items: feed.items.map((m) => (listed.has(m.id) && m.build ? { ...m, build: { ...m.build, favourite } } : m)) }
+      : feed,
+  )
+}
+
+/** Whether you starred a build (absent: from an older server, not starred). */
+export const isFavourite = (m: Message): boolean => !!m.build?.favourite
+
 /** A channel's counts thrown away, both with and without archived builds, so the next look fetches them fresh (after
  * any change to its builds, whether its view is open or not). */
 export function dropBuildFacets(s: AppState, channelId: string): AppState {
@@ -186,6 +202,9 @@ export function buildsOnEvent(s: AppState, e: Event): AppState {
       return e.d.thread_root_id ? s : dropBuildFacets(deleted(s, e.d.channel_id, e.d.message_id), e.d.channel_id)
     case 'BuildsArchived':
       return dropBuildFacets(archived(s, e.d.channel_id, e.d.message_ids, e.d.archived_at, e.d.archived_by), e.d.channel_id)
+    // a star changes no counts
+    case 'BuildFavouriteChanged':
+      return starred(s, e.d.channel_id, e.d.message_ids, e.d.favourite)
     default:
       return s
   }

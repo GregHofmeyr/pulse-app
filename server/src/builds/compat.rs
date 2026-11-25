@@ -89,7 +89,7 @@ pub fn for_old_client(frame: &ServerFrame) -> Option<Option<ServerFrame>> {
         {
             Some(None)
         }
-        Event::BuildsArchived { .. } => Some(None),
+        Event::BuildsArchived { .. } | Event::BuildFavouriteChanged { .. } => Some(None),
         Event::ServerJoined { snapshot, .. } | Event::ServerRestored { snapshot }
             if snapshot.channels.iter().any(|c| hidden(c.kind)) =>
         {

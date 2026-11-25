@@ -30,6 +30,7 @@ pub fn router() -> Router<AppState> {
             get(get_one).put(edit).delete(super::archive::remove),
         )
         .merge(super::archive::router())
+        .merge(super::favourites::router())
 }
 
 pub(crate) fn bad(msg: &str) -> AppError {

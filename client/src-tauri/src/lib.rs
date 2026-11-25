@@ -422,6 +422,8 @@ macro_rules! app_commands {
             builds::bulk_archive_builds,
             builds::archive_many_builds,
             builds::delete_many_builds,
+            builds::set_build_favourite,
+            builds::favourite_many_builds,
             builds::delete_build,
             builds::search_builds,
             builds::create_build,

@@ -41,4 +41,9 @@ last_reply_id: MessageId | null,
 /**
  * Per caller: the newest comment you have seen (gateway events carry `None`).
  */
-replies_seen: MessageId | null, };
+replies_seen: MessageId | null, 
+/**
+ * Per caller: you starred it (#617; favourites are each person's own). Gateway events carry `false`; absent from
+ * older servers (optional in TypeScript: absent reads as not starred).
+ */
+favourite?: boolean, };

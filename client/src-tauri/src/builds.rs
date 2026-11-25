@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use pulse_protocol::ids::{AttachmentId, ChannelId, GameId, MessageId};
 use pulse_protocol::rest::{
     ArchiveBuildsRequest, BuildFacets, BuildsBatchResult, BulkArchiveRequest, BulkArchiveResult,
-    CreateBuildRequest, DeleteBuildsRequest, Message, SetBuildArchivedRequest, UpdateBuildRequest,
+    CreateBuildRequest, DeleteBuildsRequest, FavouriteBuildsRequest, Message,
+    SetBuildArchivedRequest, UpdateBuildRequest,
 };
 use tauri::{AppHandle, Emitter, State};
 
@@ -175,6 +176,40 @@ impl Api {
         Self::clip_parse(
             self.http
                 .post(self.url(&["channels", &channel.to_string(), "builds", "delete-many"])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Stars (or unstars) a build for the caller (#617: favourites are each person's own).
+    pub async fn set_build_favourite(
+        &self,
+        token: &str,
+        id: MessageId,
+        favourite: bool,
+    ) -> Result<(), ApiError> {
+        let url = self.url(&["builds", &id.to_string(), "favourite"])?;
+        let req = if favourite {
+            self.http.put(url)
+        } else {
+            self.http.delete(url)
+        };
+        Self::clip_ok_empty(req.bearer_auth(token).send().await).await
+    }
+
+    /// Stars (or unstars) up to 100 of a channel's builds for the caller.
+    pub async fn favourite_many_builds(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &FavouriteBuildsRequest,
+    ) -> Result<BuildsBatchResult, ApiError> {
+        Self::clip_parse(
+            self.http
+                .post(self.url(&["channels", &channel.to_string(), "builds", "favourite-many"])?)
                 .bearer_auth(token)
                 .json(body)
                 .send()
@@ -548,6 +583,34 @@ pub async fn delete_many_builds(
 }
 
 #[tauri::command]
+pub async fn set_build_favourite(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    favourite: bool,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_build_favourite(&token, message_id, favourite).await,
+    )
+}
+
+#[tauri::command]
+pub async fn favourite_many_builds(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    body: FavouriteBuildsRequest,
+) -> Result<BuildsBatchResult, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.favourite_many_builds(&token, channel_id, &body).await,
+    )
+}
+
+#[tauri::command]
 pub async fn delete_build(
     app: AppHandle,
     core: State<'_, Core>,
@@ -738,6 +801,45 @@ mod tests {
             req.starts_with(&format!("POST /channels/{ch}/builds/delete-many ")),
             "{req}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_star_is_a_put_and_unstarring_a_delete() {
+        let (api, seen) = capture("").await;
+        let id = MessageId::new();
+        api.set_build_favourite("t", id, true).await.unwrap();
+        api.set_build_favourite("t", id, false).await.unwrap();
+        let seen = seen.lock().unwrap().clone();
+        assert!(
+            seen[0].starts_with(&format!("PUT /builds/{id}/favourite ")),
+            "{}",
+            seen[0]
+        );
+        assert!(
+            seen[1].starts_with(&format!("DELETE /builds/{id}/favourite ")),
+            "{}",
+            seen[1]
+        );
+    }
+
+    #[tokio::test]
+    async fn favourite_many_posts_its_ids() {
+        let (api, seen) = capture(r#"{"done":1,"skipped":0}"#).await;
+        let (ch, a) = (ChannelId::new(), MessageId::new());
+        let body = FavouriteBuildsRequest {
+            message_ids: vec![a],
+            favourite: true,
+        };
+        let got = api.favourite_many_builds("t", ch, &body).await.unwrap();
+        assert_eq!(got.done, 1);
+        let req = first(&seen);
+        assert!(
+            req.starts_with(&format!("POST /channels/{ch}/builds/favourite-many ")),
+            "{req}"
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(req.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(json["favourite"], true);
     }
 
     #[tokio::test]

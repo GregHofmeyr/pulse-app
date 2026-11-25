@@ -687,6 +687,10 @@ export const api = {
     invoke<BuildsBatchResult>('archive_many_builds', { channelId, body: { message_ids: messageIds, archived } }),
   deleteManyBuilds: (channelId: string, messageIds: string[]) =>
     invoke<BuildsBatchResult>('delete_many_builds', { channelId, body: { message_ids: messageIds } }),
+  /** Your own star on a build (favourites are personal); `BuildFavouriteChanged` updates every copy. */
+  setBuildFavourite: (messageId: string, favourite: boolean) => invoke<void>('set_build_favourite', { messageId, favourite }),
+  favouriteManyBuilds: (channelId: string, messageIds: string[], favourite: boolean) =>
+    invoke<BuildsBatchResult>('favourite_many_builds', { channelId, body: { message_ids: messageIds, favourite } }),
   // the build pop-out (#620). The main window opens, updates and closes it; the pop-out itself may call only the last three
   openBuildWindow: (snapshot: BuildSnapshot, onTop: boolean) => invoke<void>('open_build_window', { snapshot, onTop }),
   updateBuildWindow: (snapshot: BuildSnapshot) => invoke<void>('update_build_window', { snapshot }),

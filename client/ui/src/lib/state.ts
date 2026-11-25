@@ -1164,6 +1164,12 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const open = s.openRoot && ids.includes(s.openRoot.id) && s.openRoot.build ? { ...s.openRoot, build: { ...s.openRoot.build, archived_at, archived_by } } : s.openRoot
       return buildsOnEvent(open === s.openRoot ? s : { ...s, openRoot: open }, e)
     }
+    // Your star on builds (#617): their copies in the feeds, and an open build page's.
+    case 'BuildFavouriteChanged': {
+      const { message_ids: ids, favourite } = e.d
+      const open = s.openRoot && ids.includes(s.openRoot.id) && s.openRoot.build ? { ...s.openRoot, build: { ...s.openRoot.build, favourite } } : s.openRoot
+      return buildsOnEvent(open === s.openRoot ? s : { ...s, openRoot: open }, e)
+    }
     // Toasts and the [NEW] count live outside the reducer.
     case 'BadgeEarned':
       return s

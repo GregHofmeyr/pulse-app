@@ -83,6 +83,24 @@ describe('build feeds', () => {
     expect(all.map((m) => [m.id, m.build?.archived_by ?? null])).toEqual([['M3', null], ['M2', 'U9'], ['M1', 'U9']])
   })
 
+  it('BuildFavouriteChanged stars or unstars your copies in every feed of the channel (#617)', () => {
+    let s = withFeeds([build('M3'), build('M2'), build('M1')])
+    s = applyEvent(s, { t: 'BuildFavouriteChanged', d: { user_id: 'U1', channel_id: 'B1', message_ids: ['M1', 'M3'], favourite: true } }, 0)
+    const stars = (k: string) => s.buildFeeds[k].items.map((m) => [m.id, !!m.build?.favourite])
+    expect(stars(buildFeedKey('B1', {}))).toEqual([['M3', true], ['M2', false], ['M1', true]])
+    expect(stars(buildFeedKey('B1', { archived: true }))).toEqual([['M3', true], ['M2', false], ['M1', true]])
+    s = applyEvent(s, { t: 'BuildFavouriteChanged', d: { user_id: 'U1', channel_id: 'B1', message_ids: ['M3'], favourite: false } }, 0)
+    expect(stars(buildFeedKey('B1', {}))).toEqual([['M3', false], ['M2', false], ['M1', true]])
+  })
+
+  it("an edit's event (which carries no one's star) keeps yours", () => {
+    let s = withFeeds([build('M1')])
+    s = applyEvent(s, { t: 'BuildFavouriteChanged', d: { user_id: 'U1', channel_id: 'B1', message_ids: ['M1'], favourite: true } }, 0)
+    s = applyEvent(s, updated(build('M1', { title: 'Raven v2' })), 0)
+    const m = s.buildFeeds[buildFeedKey('B1', {})].items[0]
+    expect([m.build?.title, m.build?.favourite]).toEqual(['Raven v2', true])
+  })
+
   it('a deleted build leaves every feed', () => {
     let s = withFeeds([build('M2'), build('M1')])
     s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'B1', message_id: 'M2', author_id: 'U2', mentions: [], thread_root_id: null } } as never, 0)

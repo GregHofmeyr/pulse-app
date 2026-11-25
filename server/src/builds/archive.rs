@@ -277,7 +277,7 @@ async fn delete_in(
 }
 
 /// The ids of a batch: at most [`BATCH_MAX`], each once.
-fn batch_ids(ids: Vec<MessageId>) -> AppResult<Vec<MessageId>> {
+pub(super) fn batch_ids(ids: Vec<MessageId>) -> AppResult<Vec<MessageId>> {
     if ids.len() > BATCH_MAX {
         return Err(bad("Up to 100 builds at a time."));
     }
@@ -286,14 +286,14 @@ fn batch_ids(ids: Vec<MessageId>) -> AppResult<Vec<MessageId>> {
 }
 
 /// One live build of a batch's channel: its id, its author, and whether it's archived.
-struct Held {
-    id: MessageId,
-    author: Option<UserId>,
-    archived: bool,
+pub(super) struct Held {
+    pub id: MessageId,
+    pub author: Option<UserId>,
+    pub archived: bool,
 }
 
 /// The live builds of `channel` among `ids` (a build of another channel, or a deleted one, isn't among them).
-async fn builds_in(
+pub(super) async fn builds_in(
     c: &mut SqliteConnection,
     channel: ChannelId,
     ids: &[MessageId],

@@ -132,4 +132,13 @@ describe('builds', () => {
       ['delete_many_builds', { channelId: 'C1', body: { message_ids: ['M3'] } }],
     ])
   })
+
+  it('setBuildFavourite and favouriteManyBuilds star builds for you', async () => {
+    await api.setBuildFavourite('M1', true)
+    await api.favouriteManyBuilds('C1', ['M1', 'M2'], false)
+    expect(invoke.mock.calls).toEqual([
+      ['set_build_favourite', { messageId: 'M1', favourite: true }],
+      ['favourite_many_builds', { channelId: 'C1', body: { message_ids: ['M1', 'M2'], favourite: false } }],
+    ])
+  })
 })
