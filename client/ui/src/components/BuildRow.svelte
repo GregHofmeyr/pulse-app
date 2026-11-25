@@ -77,6 +77,8 @@
     onOpen?.(message)
   }
   /** A Shift+click selects builds, not the page's text. */
+  // selecting, the star is part of the build: a click selects it, never stars it
+  const starClick = (e: MouseEvent) => (selecting && onSelect ? onSelect(message, e.shiftKey) : onFavourite?.(message))
   const down = (e: MouseEvent) => { if (e.shiftKey && onSelect) e.preventDefault() }
   function menu(e: MouseEvent) {
     if (!onMenu || !opener) return
@@ -107,7 +109,7 @@
   </svelte:element>
   {#if onFavourite}
     <button type="button" class="star" class:on={fav} aria-label={fav ? 'Remove from favourites' : 'Favourite'} aria-pressed={fav}
-      data-tip={fav ? 'Remove from favourites' : 'Favourite'} onclick={() => onFavourite(message)}><Icon name="star" size={14} /></button>
+      data-tip={fav ? 'Remove from favourites' : 'Favourite'} onclick={starClick}><Icon name="star" size={14} /></button>
   {/if}
   {#if peeking && el}
     <BuildPeek {message} {serverId} anchor={el} id={peekId} focus={byKey} onClose={closePeek} {onOpen} onEnter={hover.stay} onLeave={hover.leave} />

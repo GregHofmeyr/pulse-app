@@ -14,7 +14,7 @@
   import BuildRow from './BuildRow.svelte'
   import BuildsHeader from './BuildsHeader.svelte'
   import BuildsPanel from './BuildsPanel.svelte'
-  import { buildFacetsOf, buildFeedFailed, dropBuildFeed, buildFeedKey, buildFilter, loadBuildPage, openBuildFeed, setBuildFacets, type BuildFeed, type BuildFilter } from '../lib/builds'
+  import { buildFacetsOf, buildFeedFailed, dropBuildFeed, buildFeedKey, buildFilter, loadBuildPage, openBuildFeed, refreshedBuild, setBuildFacets, settleBuild, unsureBuilds, type BuildFeed, type BuildFilter } from '../lib/builds'
   import { barActions as shownActions, bulkPartial, bulkPlan, bulkSummary, runChunks, rangeSelected, toggleSelected, type BulkAction, type BuildMenuItem, type SelectBarAction } from '../lib/buildSelect'
   import { buildRights, isFavourite } from '../lib/builds'
   import { menuPoint } from '../lib/participantMenu'
@@ -38,6 +38,11 @@
   const key = $derived(buildFeedKey(channelId, filter))
   const feed = $derived(app.state.buildFeeds[key])
   const items = $derived(feed?.items ?? [])
+  // The Favourites section's own feed (#617): your starred builds of the filter in view, all of them (paged through
+  // to the end), not only the ones on the browse feed's loaded pages.
+  const favFilter = $derived<BuildFilter>(buildFilter({ ...filter, favourite: true }))
+  const favKey = $derived(buildFeedKey(channelId, favFilter))
+  const favFeed = $derived(app.state.buildFeeds[favKey])
   let view = $state<BuildView>(untrack(() => viewOf(channelId)))
   const nameOf = $derived(nameOfIn(() => app.state, serverId))
 
@@ -111,6 +116,12 @@
         : e.t === 'MessageDeleted' ? e.d.channel_id === channelId && !e.d.thread_root_id
         : e.t === 'BuildsArchived' ? e.d.channel_id === channelId
         : false
+      // a star changes no counts; a search's Favourites are fetched again (its words can't be matched here)
+      if (e.t === 'BuildFavouriteChanged' && e.d.channel_id === channelId && filter.q) {
+        clearTimeout(searchTimer)
+        searchTimer = setTimeout(() => { if (filter.q) refetch() }, FACETS_DEBOUNCE_MS)
+        return
+      }
       if (!ours) return
       // a fetch already under way may predate the change: its answer is ignored and the counts asked for a second later
       facetsSeq++
@@ -132,9 +143,9 @@
   const epochs = new Map<string, number>()
   const unfetched = (f: BuildFeed | undefined) => !f || (!f.items.length && !f.start && !f.loading)
 
-  async function fetchPage(older: boolean): Promise<boolean> {
-    const k = key
-    const f = filter
+  async function fetchPage(older: boolean, fav = false): Promise<boolean> {
+    const k = fav ? favKey : key
+    const f = fav ? favFilter : filter
     const held = app.state.buildFeeds[k]
     if (held?.loading) return false
     if (older && (!held || held.start || !held.items.length)) return false
@@ -156,29 +167,54 @@
       return false
     }
   }
-  /** Throws the current feed away and fetches it fresh. */
+  /** Throws the current feeds (the browse feed and its Favourites) away and fetches them fresh. */
   function refetch() {
-    const k = key
-    if (!(k in app.state.buildFeeds)) return
-    epochs.set(k, (epochs.get(k) ?? 0) + 1)
-    app.state = dropBuildFeed(app.state, k)
+    for (const k of [key, favKey]) {
+      if (!(k in app.state.buildFeeds)) continue
+      epochs.set(k, (epochs.get(k) ?? 0) + 1)
+      app.state = dropBuildFeed(app.state, k)
+    }
   }
 
   // A search's feed is thrown away once its words change or the channel closes: one per query would pile up, and
   // events never keep it current (coming back to the same words fetches them again).
   $effect(() => {
-    const k = key
+    const ks = [key, favKey]
     if (!filter.q) return
     return () =>
       untrack(() => {
-        epochs.set(k, (epochs.get(k) ?? 0) + 1)
-        app.state = dropBuildFeed(app.state, k)
+        for (const k of ks) {
+          epochs.set(k, (epochs.get(k) ?? 0) + 1)
+          app.state = dropBuildFeed(app.state, k)
+        }
       })
   })
 
   $effect(() => {
     if (!unfetched(feed) || failedKey === key) return
     untrack(() => void fetchPage(false))
+  })
+  // the Favourites feed: its first page, then every older one in turn (it's shown whole)
+  $effect(() => {
+    const f = favFeed
+    if (failedKey === favKey || f?.loading) return
+    if (unfetched(f)) return untrack(() => void fetchPage(false, true))
+    if (f && !f.start && f.items.length) untrack(() => void fetchPage(true, true))
+  })
+  // Builds an event left without your star or seen point (a restore no copy of yours was held for, a star from
+  // another session): fetched as yours, once each.
+  const fetching = new Set<string>()
+  $effect(() => {
+    const ids = unsureBuilds(app.state, channelId).filter((id) => !fetching.has(id))
+    untrack(() => {
+      for (const id of ids) {
+        fetching.add(id)
+        api.getBuild(id).then(
+          (m) => { app.state = m ? refreshedBuild(app.state, m) : settleBuild(app.state, channelId, id) },
+          () => { app.state = settleBuild(app.state, channelId, id) },
+        ).finally(() => fetching.delete(id))
+      }
+    })
   })
 
   let scroller: HTMLDivElement | undefined = $state()
@@ -321,10 +357,12 @@
   function toggleFavourite(m: Message, on = !isFavourite(m)) {
     api.setBuildFavourite(m.id, on).catch(report(on ? 'add that build to your favourites' : 'remove that build from your favourites'))
   }
-  // Favourites first (#617): your starred builds of the feed in view (so its game, Show archived and words), in their own
-  // section at the top, then the rest; never both.
-  const favs = $derived(items.filter(isFavourite))
-  const rest = $derived(favs.length ? items.filter((m) => !isFavourite(m)) : items)
+  // Favourites first (#617): your starred builds of the filter in view (so its game, Show archived and words), from their
+  // own feed, in their own section at the top; then the browse feed's others. Never both: a build in the section is
+  // left out of the rest (one starred but not in the section yet stays in the rest until it is).
+  const favs = $derived((favFeed?.items ?? []).filter(isFavourite))
+  const favIds = $derived(new Set(favs.map((m) => m.id)))
+  const rest = $derived(favs.length ? items.filter((m) => !favIds.has(m.id)) : items)
   /** The builds in the order shown (a Shift+click's range runs along it). */
   const shown = $derived(favs.length ? [...favs, ...rest] : items)
 
@@ -333,7 +371,16 @@
   let picked = $state<string[]>([])
   /** Where a Shift+click's range starts: the build last clicked. */
   let anchor: string | null = null
-  const selected = $derived(items.filter((m) => picked.includes(m.id)))
+  const selected = $derived(shown.filter((m) => picked.includes(m.id)))
+  // A build that leaves the view (archived, deleted, filtered out) leaves the selection, so it isn't still selected
+  // if it comes back.
+  $effect(() => {
+    const here = new Set(shown.map((m) => m.id))
+    untrack(() => {
+      if (picked.some((id) => !here.has(id))) picked = picked.filter((id) => here.has(id))
+      if (anchor !== null && !here.has(anchor)) anchor = null
+    })
+  })
   function startSelecting(m: Message) {
     selecting = true
     picked = [m.id]
@@ -425,7 +472,10 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="browse" tabindex="-1" onpaste={browsePaste} onkeydown={browseKey}>
       <div class="head">
-        <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} {panel} onPanel={togglePanel} onAdd={() => openQuick()} />
+        <!-- under the selection bar: out of Tab's reach while it's up -->
+        <div class="head-under" inert={selecting}>
+          <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} {panel} onPanel={togglePanel} onAdd={() => openQuick()} />
+        </div>
         {#if selecting}
           <BuildsSelectBar count={selected.length} {notYours} actions={barActions} {busy} onClear={() => { picked = []; anchor = null }} onCancel={stopSelecting} />
         {/if}
@@ -450,7 +500,7 @@
             <div class="section" data-section="rest">{@render list(rest)}</div>
           {/if}
           <div class="sentinel" bind:this={sentinel}></div>
-          {#if failedKey === key}
+          {#if failedKey === key || failedKey === favKey}
             <p class="error" role="alert">{error} <button type="button" class="link-btn" onclick={() => (failedKey = null)}>Try again</button></p>
           {/if}
         </div>

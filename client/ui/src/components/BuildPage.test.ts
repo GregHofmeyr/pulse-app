@@ -75,7 +75,8 @@ const comment = (id: string, author: string, content: string): Message => ({
 
 let cmp: ReturnType<typeof mount> | undefined
 const settle = () => new Promise((r) => setTimeout(r, 0))
-const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
+/** The calls of `cmd` (for `list_builds`, the browse feed's, not the Favourites section's own). */
+const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd && !(cmd === 'list_builds' && (c[1] as { favourite?: boolean })?.favourite))
 let replies: Message[] = []
 let pages: Message[][] = []
 let fetched: Message | null = null
@@ -83,7 +84,8 @@ let fetched: Message | null = null
 function answer(cmd: string, args?: unknown): unknown {
   if (cmd === 'attachment_urls') return Array.from({ length: 12 }, (_, i) => ({ id: `A${i}`, url: `https://files/${i}.webp`, expires_at: '2099-01-01T00:00:00Z' }))
   if (cmd === 'list_replies') return (args as { before: string | null }).before ? [] : replies
-  if (cmd === 'list_builds') return pages.shift() ?? []
+  // the Favourites section's own feed: none starred
+  if (cmd === 'list_builds') return (args as { favourite?: boolean } | undefined)?.favourite ? [] : (pages.shift() ?? [])
   if (cmd === 'build_facets') return { total: 3, games: [{ game_id: 'G1', count: 3 }] }
   if (cmd === 'get_build') return fetched
   return undefined

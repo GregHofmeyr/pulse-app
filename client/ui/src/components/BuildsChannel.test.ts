@@ -42,19 +42,28 @@ const range = (from: number, to: number) => Array.from({ length: from - to + 1 }
 
 /** What `list_builds` answers, by its arguments (default: the next of `pages`). */
 let answer: (args: Record<string, unknown>) => Message[] = () => pages.shift() ?? []
+/** What the Favourites section's own feed (`favourite: true`) answers (default: none). */
+let favAnswer: (args: Record<string, unknown>) => Message[] = () => []
+const list = (args: unknown) => {
+  const a = args as Record<string, unknown>
+  return a.favourite ? favAnswer(a) : answer(a)
+}
 let pages: Message[][] = []
 let cmp: ReturnType<typeof mount> | undefined
 const settle = () => new Promise((r) => setTimeout(r, 0))
-const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
+/** The calls of `cmd` (for `list_builds`, the browse feed's: the Favourites feed's are `favCalls`). */
+const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd && !(cmd === 'list_builds' && (c[1] as { favourite?: boolean })?.favourite))
+const favCalls = () => invoke.mock.calls.filter((c) => c[0] === 'list_builds' && (c[1] as { favourite?: boolean })?.favourite)
 const order = () => [...document.querySelectorAll<HTMLElement>('[data-build-id]')].map((e) => e.dataset.buildId)
 
 beforeEach(() => {
   invoke.mockReset()
   pages = []
   answer = () => pages.shift() ?? []
+  favAnswer = () => []
   try { localStorage.clear() } catch { /* none */ }
   invoke.mockImplementation(async (cmd: string, args?: unknown) => {
-    if (cmd === 'list_builds') return answer(args as Record<string, unknown>)
+    if (cmd === 'list_builds') return list(args)
     if (cmd === 'build_facets') return { total: 0, games: [] }
     if (cmd === 'list_replies') return []
     return undefined
@@ -159,14 +168,17 @@ describe('BuildsChannel: gallery and list', () => {
     await search('raven')
     expect(Object.keys(app.state.buildFeeds)).toContain(buildFeedKey('B1', { q: 'raven' }))
     await search('bunny')
-    expect(Object.keys(app.state.buildFeeds).sort()).toEqual([buildFeedKey('B1', {}), buildFeedKey('B1', { q: 'bunny' })].sort())
+    // (each with its Favourites feed)
+    expect(Object.keys(app.state.buildFeeds).sort()).toEqual(
+      [buildFeedKey('B1', {}), buildFeedKey('B1', { favourite: true }), buildFeedKey('B1', { q: 'bunny' }), buildFeedKey('B1', { q: 'bunny', favourite: true })].sort(),
+    )
     // back to the same words: fetched again, not the copy cached before
     await search('raven')
     expect(calls('list_builds').filter((c) => (c[1] as { q: string | null }).q === 'raven')).toHaveLength(2)
     unmount(cmp!)
     cmp = undefined
     // the whole channel's feed stays (it follows events); the search's goes
-    expect(Object.keys(app.state.buildFeeds)).toEqual([buildFeedKey('B1', {})])
+    expect(Object.keys(app.state.buildFeeds).sort()).toEqual([buildFeedKey('B1', {}), buildFeedKey('B1', { favourite: true })].sort())
   })
 
   it('scrolling to the end loads older builds', async () => {
@@ -436,7 +448,7 @@ describe('BuildsChannel: multi-select', () => {
   it('Archive sends the builds you may change in one batch and says how many were skipped', async () => {
     pages = [four()]
     invoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_builds') return answer(args as Record<string, unknown>)
+      if (cmd === 'list_builds') return list(args)
       if (cmd === 'build_facets') return { total: 0, games: [] }
       if (cmd === 'archive_many_builds') return { done: 2, skipped: 0 }
       return undefined
@@ -457,7 +469,7 @@ describe('BuildsChannel: multi-select', () => {
   it('Restore shows only with an archived build selected, and restores', async () => {
     pages = [[mine('M002', { archived_at: '2026-10-05T00:00:00.000Z', archived_by: 'U1' }), mine('M001')]]
     invoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_builds') return answer(args as Record<string, unknown>)
+      if (cmd === 'list_builds') return list(args)
       if (cmd === 'archive_many_builds') return { done: 1, skipped: 0 }
       return cmd === 'build_facets' ? { total: 0, games: [] } : undefined
     })
@@ -474,7 +486,7 @@ describe('BuildsChannel: multi-select', () => {
   it('Delete asks with the count first, then deletes in one batch', async () => {
     pages = [four()]
     invoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_builds') return answer(args as Record<string, unknown>)
+      if (cmd === 'list_builds') return list(args)
       if (cmd === 'delete_many_builds') return { done: 2, skipped: 1 }
       return cmd === 'build_facets' ? { total: 0, games: [] } : undefined
     })
@@ -514,6 +526,88 @@ describe('BuildsChannel: multi-select', () => {
     app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'B1', message_id: 'M003', author_id: 'U1', mentions: [], thread_root_id: null } }, Date.now())
     flushSync()
     expect(status()).toBe('0 selected')
+  })
+
+  it('a build that leaves the view leaves the selection: back again, it is not still selected', async () => {
+    pages = [four()]
+    await show()
+    click('M004', true)
+    click('M003')
+    app.state = applyEvent(app.state, { t: 'BuildsArchived', d: { channel_id: 'B1', message_ids: ['M004'], archived_at: '2026-10-06T00:00:00.000Z', archived_by: 'U1' } }, Date.now())
+    flushSync()
+    app.state = applyEvent(app.state, { t: 'MessageUpdated', d: { message: mine('M004') } }, Date.now())
+    flushSync()
+    await settle()
+    flushSync()
+    expect(card('M004')).not.toBeNull()
+    expect(checked()).toEqual(['M003'])
+    expect(status()).toBe('1 selected')
+  })
+
+  it('while selecting, Tab skips the header under the bar (inert), and is back after', async () => {
+    pages = [four()]
+    await show()
+    // (set as the property or the attribute)
+    const inert = (el: HTMLElement | null) => {
+      for (let e = el; e; e = e.parentElement) if (e.hasAttribute('inert') || (e as HTMLElement & { inert?: boolean }).inert === true) return true
+      return false
+    }
+    const head = () => document.querySelector<HTMLElement>('.builds-head')!
+    expect(inert(head())).toBe(false)
+    click('M004', true)
+    expect(inert(head())).toBe(true)
+    // the bar itself isn't
+    expect(inert(bar())).toBe(false)
+    barButton('Cancel')!.click()
+    flushSync()
+    expect(inert(head())).toBe(false)
+  })
+
+  it("while selecting, a click on a build's star selects it rather than starring it", async () => {
+    pages = [four()]
+    await show()
+    click('M004', true)
+    for (const v of ['Gallery', 'List']) {
+      ;[...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="View"] [role=radio]')].find((b) => b.textContent === v)!.click()
+      flushSync()
+      card('M002').querySelector<HTMLButtonElement>('.star')!.click()
+      flushSync()
+      expect(checked()).toContain('M002')
+      card('M002').querySelector<HTMLButtonElement>('.star')!.click()
+      flushSync()
+      expect(checked()).not.toContain('M002')
+    }
+    await settle()
+    expect(calls('set_build_favourite')).toHaveLength(0)
+  })
+
+  it('narrow, the actions past the first and Clear move into a "More" menu', async () => {
+    pages = [[mine('M002', { archived_at: '2026-10-05T00:00:00.000Z', archived_by: 'U1' }), mine('M001', { favourite: true })]]
+    await show()
+    click('M002', true)
+    click('M001')
+    const more = barButton('More actions')!
+    expect(more.getAttribute('aria-haspopup')).toBe('menu')
+    more.click()
+    flushSync()
+    const items = [...document.querySelectorAll<HTMLElement>('.select-more [role=menuitem]')].map((b) => b.textContent?.trim())
+    expect(items).toEqual(['Favourite', 'Unfavourite', 'Archive', 'Restore', 'Delete', 'Clear'])
+    // Escape closes the menu and keeps selecting
+    document.querySelector<HTMLElement>('.select-more [role=menuitem]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.querySelector('.select-more')).toBeNull()
+    expect(bar()).not.toBeNull()
+    // Clear from it
+    more.click()
+    flushSync()
+    ;[...document.querySelectorAll<HTMLElement>('.select-more [role=menuitem]')].find((b) => b.textContent?.trim() === 'Clear')!.click()
+    flushSync()
+    expect(status()).toBe('0 selected')
+    // the CSS: wide, More is hidden; narrow, the extra actions and Clear go and More shows; narrowest, every action
+    const css = readFileSync(resolve(__dirname, 'BuildsSelectBar.svelte'), 'utf8').split('<style>')[1]
+    expect(css).toMatch(/\.more \{[^}]*display: none/)
+    expect(css).toMatch(/@container \(max-width: [34]\d\dpx\) \{[^}]*\.extra, \.clear \{ display: none; \}[^}]*\.more \{ display: (inline-)?(flex|grid|block)/)
+    expect(css).toMatch(/@container \(max-width: 2\d\dpx\) \{[^}]*\.act \{ display: none; \}/)
   })
 
   it('the bar sits over the header (no jump), uses colour tokens only and announces the count', () => {
@@ -595,7 +689,7 @@ describe('BuildsChannel: favourites', () => {
   it('Favourite in the selection bar stars every selected build, anyone\'s, in one batch', async () => {
     pages = [[build('M003'), build('M002', {}, { author_id: 'U1' }), fav('M001')]]
     invoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_builds') return answer(args as Record<string, unknown>)
+      if (cmd === 'list_builds') return list(args)
       if (cmd === 'favourite_many_builds') return { done: 2, skipped: 0 }
       return cmd === 'build_facets' ? { total: 0, games: [] } : undefined
     })
@@ -618,6 +712,7 @@ describe('BuildsChannel: favourites', () => {
 
   it('favourites sit in their own section at the top, then a separator, then the rest (never twice), in both views', async () => {
     pages = [[build('M004'), fav('M003'), build('M002'), fav('M001')]]
+    favAnswer = () => [fav('M003'), fav('M001')]
     await show()
     for (const v of ['Gallery', 'List']) {
       pickView(v)
@@ -644,6 +739,7 @@ describe('BuildsChannel: favourites', () => {
   // the sections split the feed of the filter in view (game, Show archived, words), so they follow it
   it('the section follows Show archived (and any filter: it splits the feed in view)', async () => {
     answer = (a) => (a.archived ? [fav('M004', { archived_at: '2026-10-05T00:00:00.000Z', archived_by: 'U2' }), build('M002')] : [build('M002')])
+    favAnswer = (a) => (a.archived ? [fav('M004', { archived_at: '2026-10-05T00:00:00.000Z', archived_by: 'U2' })] : [])
     await show()
     // no favourites among the live builds: no section
     expect(document.querySelector('[data-section="favourites"]')).toBeNull()
@@ -653,6 +749,73 @@ describe('BuildsChannel: favourites', () => {
     await settle()
     flushSync()
     expect(sections()).toEqual({ favs: ['M004'], rest: ['M002'] })
+  })
+
+  it('the Favourites section loads from its own feed: a starred build on no loaded page still shows, never twice', async () => {
+    const page = Array.from({ length: 30 }, (_, i) => build(id(200 - i)))
+    page[3] = fav(id(197))
+    pages = [page]
+    favAnswer = () => [fav(id(197)), fav('M005')]
+    await show()
+    expect(favCalls()[0][1]).toEqual({ channelId: 'B1', game: null, archived: false, favourite: true, q: null, before: null })
+    const { favs, rest } = sections()
+    expect(favs).toEqual([id(197), 'M005'])
+    expect(rest).toHaveLength(29)
+    expect(rest).not.toContain(id(197))
+  })
+
+  it('the Favourites feed follows the filter in view: game, Show archived and words', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    favAnswer = (a) => (a.q === 'raven' ? [fav('M002', { title: 'Raven' })] : [])
+    answer = () => [build('M003')]
+    cmp = mount(BuildsChannel, { target: document.body, props: { channelId: 'B1', serverId: 'S1' } })
+    flushSync()
+    await vi.advanceTimersByTimeAsync(0)
+    const input = document.querySelector<HTMLInputElement>('.builds-head input[type=search]')!
+    input.value = 'raven'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await vi.advanceTimersByTimeAsync(1000)
+    flushSync()
+    expect(favCalls().at(-1)![1]).toMatchObject({ q: 'raven', favourite: true })
+    expect(sections().favs).toEqual(['M002'])
+  })
+
+  it('a build starred in another session, on no page here, is fetched and joins the section', async () => {
+    pages = [[build('M009')]]
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_builds') return list(args)
+      if (cmd === 'get_build') return fav('M001')
+      return cmd === 'build_facets' ? { total: 0, games: [] } : undefined
+    })
+    await show()
+    app.state = applyEvent(app.state, { t: 'BuildFavouriteChanged', d: { user_id: 'U1', channel_id: 'B1', message_ids: ['M001'], favourite: true } }, Date.now())
+    flushSync()
+    await settle()
+    flushSync()
+    expect(calls('get_build')).toEqual([['get_build', { messageId: 'M001' }]])
+    expect(sections()).toEqual({ favs: ['M001'], rest: ['M009'] })
+  })
+
+  it('a starred build archived out of the view and restored comes back starred (fetched as yours when no copy is held)', async () => {
+    pages = [[fav('M002'), build('M001')]]
+    favAnswer = () => [fav('M002')]
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_builds') return list(args)
+      if (cmd === 'get_build') return fav('M002')
+      return cmd === 'build_facets' ? { total: 0, games: [] } : undefined
+    })
+    await show()
+    expect(sections()).toEqual({ favs: ['M002'], rest: ['M001'] })
+    app.state = applyEvent(app.state, { t: 'BuildsArchived', d: { channel_id: 'B1', message_ids: ['M002'], archived_at: '2026-10-06T00:00:00.000Z', archived_by: 'U2' } }, Date.now())
+    flushSync()
+    expect(sections()).toEqual({ favs: [], rest: ['M001'] })
+    // the restore's event carries no one's star
+    app.state = applyEvent(app.state, { t: 'MessageUpdated', d: { message: build('M002') } }, Date.now())
+    flushSync()
+    await settle()
+    flushSync()
+    expect(calls('get_build')).toEqual([['get_build', { messageId: 'M002' }]])
+    expect(sections()).toEqual({ favs: ['M002'], rest: ['M001'] })
   })
 
   it('the section head and separator fit at any width, in tokens (CSS)', () => {
