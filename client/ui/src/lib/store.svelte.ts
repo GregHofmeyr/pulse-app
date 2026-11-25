@@ -452,6 +452,14 @@ export async function startListening(): Promise<UnlistenFn> {
   }
 }
 
+/** Called on every sign-out reset, after the state is cleared: modules holding the last account's things (the pinned
+ *  build, #619) let them go. Registered like [onAppReady] (this store can't import them). */
+const resetHooks = new Set<() => void>()
+export function onAppReset(hook: () => void): () => void {
+  resetHooks.add(hook)
+  return () => void resetHooks.delete(hook)
+}
+
 export function resetState() {
   restoredFor = null // the next Ready restores again
   notifications.clear() // signed out: nothing more about the last account's messages
@@ -473,4 +481,5 @@ export function resetState() {
   // a held crash report belongs to the session (and server) it was offered in: the next sign-in
   // asks again if the core still has it for that server
   ui.heldReport = null
+  for (const hook of resetHooks) hook()
 }

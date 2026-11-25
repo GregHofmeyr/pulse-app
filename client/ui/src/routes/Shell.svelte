@@ -84,7 +84,7 @@
   // The quick switcher (#309)
   import QuickSwitcher from '../components/QuickSwitcher.svelte'
   import PinnedBuild from '../components/PinnedBuild.svelte'
-  import { pinnedBuild } from '../lib/pinnedBuild.svelte'
+  import { pinShown } from '../lib/pinnedBuild.svelte'
   import { openMessage } from '../lib/openMessage'
   import type { Message } from '../lib/protocol/Message'
   import { globalSwitch, SAME_PRESS_MS, loadRecents, pushRecent, saveRecents, switcherKey, type Place } from '../lib/quickSwitch'
@@ -228,7 +228,7 @@
     get left() { return panels.left },
     get right() { return panels.right },
     get leftName() { return leftName },
-    get hasRight() { return !!(search.open || pinnedBuild.key || activeServerId || activeChannel?.kind === 'group') },
+    get hasRight() { return !!(search.open || pinShown() || activeServerId || activeChannel?.kind === 'group') },
     get rightName() { return rightKind === 'chat' ? 'Chat' : rightKind === 'build' ? 'Pinned build' : 'Members' },
     toggle: (side) => (panels[side] = !panels[side]),
   })
@@ -471,7 +471,7 @@
   // A pinned build (#619) takes the members list's place from any view (a DM too), below search results and an open
   // voice chat.
   const rightKind = $derived<keyof typeof RIGHT_DEFAULT | null>(
-    searchShown ? 'search' : chatOpen && !chatInStrip ? 'chat' : pinnedBuild.key ? 'build' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
+    searchShown ? 'search' : chatOpen && !chatInStrip ? 'chat' : pinShown() ? 'build' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
   const showLeft = $derived(!hideLeft)
   const showRight = $derived(!hideRight && rightKind !== null)
   const chatOnScreen = $derived((showRight && rightKind === 'chat') || chatInStrip)

@@ -1706,12 +1706,12 @@ describe('pin to side (#619)', () => {
     flushSync()
     expect(document.querySelectorAll('aside.pinned-build')).toHaveLength(1)
     expect(q('aside.pinned-build .title')?.textContent).toBe('Build M002')
-    expect(JSON.parse(localStorage.getItem('pulse.pinnedBuild')!)).toMatchObject({ channelId: 'B1', messageId: 'M002' })
+    expect(JSON.parse(localStorage.getItem('pulse.pinnedBuild.U1')!)).toEqual({ channelId: 'B1', messageId: 'M002' })
   })
 
   it('the pin survives a restart', async () => {
     const { handleReady } = await import('../lib/store.svelte')
-    localStorage.setItem('pulse.pinnedBuild', JSON.stringify({ userId: 'U1', channelId: 'B1', messageId: 'M007' }))
+    localStorage.setItem('pulse.pinnedBuild.U1', JSON.stringify({ channelId: 'B1', messageId: 'M007' }))
     await mountShell()
     handleReady(testReady(channels))
     await settle()
@@ -1719,9 +1719,39 @@ describe('pin to side (#619)', () => {
     expect(q('.right-panel aside.pinned-build .title')?.textContent).toBe('Build M007')
   })
 
+  // #636 review: signing out lets the pin go, so the next account never sees it, even before its Ready
+  it('a pin never shows for the next account after a sign-out', async () => {
+    const { resetState } = await import('../lib/store.svelte')
+    await mountShell()
+    pins.pinBuild('B1', 'M001', build('M001'))
+    flushSync()
+    expect(q('aside.pinned-build')).not.toBeNull()
+    unmount(cmp!)
+    cmp = undefined
+    document.body.innerHTML = ''
+    resetState()
+    const sam = { ...testMe, id: 'U2', username: 'sam', display_name: 'sam' }
+    app.state = applyReady(emptyState(), testReady(channels, { me: sam }))
+    cmp = mount(Shell, { target: document.body, props: { user: sam, onLogout: () => {} } })
+    flushSync()
+    expect(q('aside.pinned-build')).toBeNull()
+    expect(pins.pinnedBuild.key).toBeNull()
+    // alex's saved pin is untouched
+    expect(JSON.parse(localStorage.getItem('pulse.pinnedBuild.U1')!)).toEqual({ channelId: 'B1', messageId: 'M001' })
+  })
+
+  it('a pin held for another account is not shown', async () => {
+    await mountShell()
+    pins.pinBuild('B1', 'M001', build('M001'))
+    flushSync()
+    app.state = { ...app.state, me: { ...testMe, id: 'U2' } }
+    flushSync()
+    expect(q('aside.pinned-build')).toBeNull()
+  })
+
   it('another account does not get your pin', async () => {
     const { handleReady } = await import('../lib/store.svelte')
-    localStorage.setItem('pulse.pinnedBuild', JSON.stringify({ userId: 'U9', channelId: 'B1', messageId: 'M007' }))
+    localStorage.setItem('pulse.pinnedBuild.U9', JSON.stringify({ channelId: 'B1', messageId: 'M007' }))
     await mountShell()
     handleReady(testReady(channels))
     await settle()
