@@ -661,16 +661,18 @@ export const api = {
     invoke<Message[]>('list_clips', { channelId, before: before ?? null, game: game ?? null, author: author ?? null }),
   clipFacets: (channelId: string) => invoke<ClipFacets>('clip_facets', { channelId }),
   setClipView: (channelId: string, view: ClipView) => invoke<void>('set_clip_view', { channelId, view }),
-  /** A page of a builds channel's builds (30), newest first by when saved; `before` pages back (#617). */
+  /** A page of a builds channel's builds (30), newest first by when saved; `before` pages back; `favourite`: only your
+   *  starred ones (#617). */
   listBuilds: (
     channelId: string,
-    f: { game?: string; archived?: boolean; q?: string } = {},
+    f: { game?: string; archived?: boolean; q?: string; favourite?: boolean } = {},
     before?: string,
   ) =>
     invoke<Message[]>('list_builds', {
       channelId,
       game: f.game ?? null,
       archived: f.archived ?? false,
+      favourite: f.favourite ?? false,
       q: f.q ?? null,
       before: before ?? null,
     }),

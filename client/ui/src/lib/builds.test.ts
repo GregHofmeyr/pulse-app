@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFeedKey, buildThumb, isArchived, isQuickDrop, loadBuildPage, matchesBuildFilter, openBuildFeed, buildFeedFailed, setBuildFacets, buildFacetsOf } from './builds'
+import { buildFeedKey, buildThumb, refreshedBuild, unsureBuilds, isArchived, isQuickDrop, loadBuildPage, matchesBuildFilter, openBuildFeed, buildFeedFailed, setBuildFacets, buildFacetsOf } from './builds'
 import { applyEvent, applyReady, emptyState, type AppState } from './state'
 import type { Message } from './protocol/Message'
 import type { Build } from './protocol/Build'
@@ -99,6 +99,86 @@ describe('build feeds', () => {
     s = applyEvent(s, updated(build('M1', { title: 'Raven v2' })), 0)
     const m = s.buildFeeds[buildFeedKey('B1', {})].items[0]
     expect([m.build?.title, m.build?.favourite]).toEqual(['Raven v2', true])
+  })
+
+  it('a favourites feed (#617) has its own key and holds only your starred builds', () => {
+    expect(buildFeedKey('B1', { favourite: true })).not.toBe(buildFeedKey('B1', {}))
+    expect(buildFeedKey('B1', { favourite: false })).toBe(buildFeedKey('B1', {}))
+    expect(matchesBuildFilter(build('M1'), { favourite: true })).toBe(false)
+    expect(matchesBuildFilter(build('M1', { favourite: true }), { favourite: true })).toBe(true)
+    expect(matchesBuildFilter(build('M1', { favourite: true, archived_at: 'x' }), { favourite: true })).toBe(false)
+  })
+
+  it('starring joins a favourites feed from a held copy; unstarring leaves it', () => {
+    const fav = buildFeedKey('B1', { favourite: true })
+    let s = withFeeds([build('M3'), build('M2'), build('M1')])
+    s = loadBuildPage(openBuildFeed(s, 'B1', { favourite: true }), fav, [])
+    s = applyEvent(s, { t: 'BuildFavouriteChanged', d: { user_id: 'U1', channel_id: 'B1', message_ids: ['M1', 'M3'], favourite: true } }, 0)
+    expect(ids(s, fav)).toEqual(['M3', 'M1'])
+    expect(s.buildFeeds[fav].items.every((m) => m.build?.favourite)).toBe(true)
+    // a game's favourites feed takes only its game's
+    s = applyEvent(s, { t: 'BuildFavouriteChanged', d: { user_id: 'U1', channel_id: 'B1', message_ids: ['M3'], favourite: false } }, 0)
+    expect(ids(s, fav)).toEqual(['M1'])
+    expect(ids(s, buildFeedKey('B1', {}))).toEqual(['M3', 'M2', 'M1'])
+  })
+
+  it('a starred build archived out of the feeds and restored comes back starred (a held copy)', () => {
+    const fav = buildFeedKey('B1', { favourite: true })
+    let s = withFeeds([build('M2'), build('M1', { favourite: true })])
+    s = loadBuildPage(openBuildFeed(s, 'B1', { favourite: true }), fav, [build('M1', { favourite: true })])
+    s = applyEvent(s, { t: 'BuildsArchived', d: { channel_id: 'B1', message_ids: ['M1'], archived_at: '2026-10-09T00:00:00.000Z', archived_by: 'U2' } }, 0)
+    expect(ids(s, buildFeedKey('B1', {}))).toEqual(['M2'])
+    expect(ids(s, fav)).toEqual([])
+    // the archived feed still holds it, starred: the restore's event (no one's star) takes it from there
+    s = applyEvent(s, updated(build('M1')), 0)
+    const live = s.buildFeeds[buildFeedKey('B1', {})].items
+    expect(live.map((m) => [m.id, !!m.build?.favourite])).toEqual([['M2', false], ['M1', true]])
+    expect(ids(s, fav)).toEqual(['M1'])
+    expect(unsureBuilds(s, 'B1')).toEqual([])
+  })
+
+  it('restored with no held copy anywhere: marked to be fetched as yours, then put right', () => {
+    const fav = buildFeedKey('B1', { favourite: true })
+    let s = emptyState()
+    for (const f of [{}, { favourite: true }]) s = loadBuildPage(openBuildFeed(s, 'B1', f), buildFeedKey('B1', f), [build('M2'), build('M1', { favourite: true })].filter((m) => matchesBuildFilter(m, f)))
+    s = applyEvent(s, { t: 'BuildsArchived', d: { channel_id: 'B1', message_ids: ['M1'], archived_at: '2026-10-09T00:00:00.000Z', archived_by: 'U2' } }, 0)
+    s = applyEvent(s, updated(build('M1', { replies_seen: null })), 0)
+    expect(unsureBuilds(s, 'B1')).toEqual(['M1'])
+    // GET /builds/M1: your copy
+    s = refreshedBuild(s, build('M1', { favourite: true, replies_seen: 'R4' }))
+    expect(unsureBuilds(s, 'B1')).toEqual([])
+    const m1 = s.buildFeeds[buildFeedKey('B1', {})].items.find((m) => m.id === 'M1')
+    expect([m1?.build?.favourite, m1?.build?.replies_seen]).toEqual([true, 'R4'])
+    expect(ids(s, fav)).toEqual(['M1'])
+  })
+
+  it('a restore takes your star from the open build page when no feed holds it', () => {
+    let s = loadBuildPage(openBuildFeed(emptyState(), 'B1', {}), buildFeedKey('B1', {}), [build('M2')])
+    s = { ...s, openRoot: build('M1', { favourite: true, replies_seen: 'R2', archived_at: 'x' }) }
+    s = applyEvent(s, updated(build('M1')), 0)
+    const m1 = s.buildFeeds[buildFeedKey('B1', {})].items.find((m) => m.id === 'M1')
+    expect([m1?.build?.favourite, m1?.build?.replies_seen]).toEqual([true, 'R2'])
+    // the page's own copy keeps them too (state.ts's MessageUpdated → mapOpenRoot)
+    expect([s.openRoot?.build?.favourite, s.openRoot?.build?.replies_seen]).toEqual([true, 'R2'])
+    expect(unsureBuilds(s, 'B1')).toEqual([])
+  })
+
+  it('a build starred elsewhere that no feed holds is marked to be fetched, then joins the Favourites feed', () => {
+    const fav = buildFeedKey('B1', { favourite: true })
+    let s = loadBuildPage(openBuildFeed(emptyState(), 'B1', { favourite: true }), fav, [])
+    s = loadBuildPage(openBuildFeed(s, 'B1', {}), buildFeedKey('B1', {}), [build('M9')])
+    s = applyEvent(s, { t: 'BuildFavouriteChanged', d: { user_id: 'U1', channel_id: 'B1', message_ids: ['M1'], favourite: true } }, 0)
+    expect(unsureBuilds(s, 'B1')).toEqual(['M1'])
+    s = refreshedBuild(s, build('M1', { favourite: true }))
+    expect(ids(s, fav)).toEqual(['M1'])
+    expect(unsureBuilds(s, 'B1')).toEqual([])
+    // another game's: fetched, but stays out of a game's Favourites feed
+    const g = buildFeedKey('B1', { favourite: true, game: 'G1' })
+    s = loadBuildPage(openBuildFeed(s, 'B1', { favourite: true, game: 'G1' }), g, [])
+    s = applyEvent(s, { t: 'BuildFavouriteChanged', d: { user_id: 'U1', channel_id: 'B1', message_ids: ['M2'], favourite: true } }, 0)
+    s = refreshedBuild(s, build('M2', { favourite: true, game_id: 'G2' }))
+    expect(ids(s, g)).toEqual([])
+    expect(ids(s, fav)).toEqual(['M2', 'M1'])
   })
 
   it('a deleted build leaves every feed', () => {

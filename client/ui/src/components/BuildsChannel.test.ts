@@ -80,7 +80,7 @@ describe('BuildsChannel: gallery and list', () => {
   it('shows builds newest first as cards', async () => {
     pages = [[build('M003'), build('M002', { game_id: null }), build('M001')]]
     await show()
-    expect(calls('list_builds')[0][1]).toEqual({ channelId: 'B1', game: null, archived: false, q: null, before: null })
+    expect(calls('list_builds')[0][1]).toEqual({ channelId: 'B1', game: null, archived: false, favourite: false, q: null, before: null })
     expect(order()).toEqual(['M003', 'M002', 'M001'])
     const card = document.querySelector<HTMLElement>('.build-card[data-build-id="M003"]')!
     expect(card.querySelector('.caption')?.textContent?.trim()).toBe('The First Descendant')
@@ -490,8 +490,8 @@ describe('BuildsChannel: multi-select', () => {
     await settle()
     expect(calls('delete_many_builds')[0][1]).toEqual({ channelId: 'B1', body: { message_ids: ['M004', 'M003'] } })
     const { ui } = await import('../lib/store.svelte')
-    // the server skipped one (gone meanwhile): said too
-    expect(ui.notice).toBe("Deleted 2 builds. 1 skipped: they aren't yours to change.")
+    // the server skipped one (gone or changed meanwhile): said apart from any not yours
+    expect(ui.notice).toBe('Deleted 2 builds. 1 skipped: gone or changed meanwhile.')
   })
 
   it('an action none of the selection allows is disabled', async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BULK_ACTIONS, barKeys, batchChunks, bulkPlan, bulkSummary, buildMenuItems, rangeSelected, toggleSelected } from './buildSelect'
+import { BULK_ACTIONS, barKeys, batchChunks, bulkPartial, bulkPlan, bulkSummary, runChunks, buildMenuItems, rangeSelected, toggleSelected } from './buildSelect'
 import { applyReady, emptyState } from './state'
 import { testReady } from './testReady'
 import type { Message } from './protocol/Message'
@@ -63,9 +63,33 @@ describe('batches', () => {
     expect(batchChunks(ids).map((c) => c.length)).toEqual([100, 100, 30])
     expect(batchChunks([])).toEqual([])
   })
-  it('says what was done and how many were skipped', () => {
-    expect(bulkSummary(action('archive'), 1, 0)).toBe('Archived 1 build.')
-    expect(bulkSummary(action('delete'), 3, 2)).toBe("Deleted 3 builds. 2 skipped: they aren't yours to change.")
-    expect(bulkSummary(action('favourite'), 2, 1)).toBe('Added 2 builds to your favourites. 1 skipped: gone meanwhile.')
+  it('says what was done, and why any were skipped: not yours (counted here) apart from gone or changed (the server)', () => {
+    expect(bulkSummary(action('archive'), 1, 0, 0)).toBe('Archived 1 build.')
+    expect(bulkSummary(action('delete'), 3, 2, 0)).toBe("Deleted 3 builds. 2 skipped: they aren't yours to change.")
+    expect(bulkSummary(action('delete'), 3, 0, 1)).toBe('Deleted 3 builds. 1 skipped: gone or changed meanwhile.')
+    expect(bulkSummary(action('archive'), 3, 2, 1)).toBe("Archived 3 builds. 2 skipped: they aren't yours to change. 1 skipped: gone or changed meanwhile.")
+    expect(bulkSummary(action('favourite'), 2, 0, 1)).toBe('Added 2 builds to your favourites. 1 skipped: gone or changed meanwhile.')
+  })
+
+  it('runs the chunks in turn; a later one failing keeps what the earlier did and names the rest', async () => {
+    const ids = Array.from({ length: 230 }, (_, i) => `M${i}`)
+    const sent: number[] = []
+    const ok = await runChunks(ids, async (c) => { sent.push(c.length); return { done: c.length - 1, skipped: 1 } })
+    expect(ok).toEqual({ done: 227, skipped: 3, failed: null })
+    expect(sent).toEqual([100, 100, 30])
+    let n = 0
+    const boom = new Error('offline')
+    const part = await runChunks(ids, async (c) => { if (n++ === 1) throw boom; return { done: c.length, skipped: 0 } })
+    expect(part.done).toBe(100)
+    expect(part.failed?.error).toBe(boom)
+    expect(part.failed?.rest).toEqual(ids.slice(100))
+    // the first failing: nothing done, all of it left
+    const none = await runChunks(ids, async () => { throw boom })
+    expect([none.done, none.failed?.rest.length]).toEqual([0, 230])
+  })
+
+  it('a partial failure says what was done before it', () => {
+    expect(bulkPartial(action('archive'), 100, 'offline')).toBe("Archived 100 builds; couldn't do the rest: offline")
+    expect(bulkPartial(action('favourite'), 1, 'offline')).toBe("Added 1 build to your favourites; couldn't do the rest: offline")
   })
 })

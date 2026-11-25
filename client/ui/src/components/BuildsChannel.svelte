@@ -15,7 +15,7 @@
   import BuildsHeader from './BuildsHeader.svelte'
   import BuildsPanel from './BuildsPanel.svelte'
   import { buildFacetsOf, buildFeedFailed, dropBuildFeed, buildFeedKey, buildFilter, loadBuildPage, openBuildFeed, setBuildFacets, type BuildFeed, type BuildFilter } from '../lib/builds'
-  import { barActions as shownActions, batchChunks, bulkPlan, bulkSummary, rangeSelected, toggleSelected, type BulkAction, type BuildMenuItem, type SelectBarAction } from '../lib/buildSelect'
+  import { barActions as shownActions, bulkPartial, bulkPlan, bulkSummary, runChunks, rangeSelected, toggleSelected, type BulkAction, type BuildMenuItem, type SelectBarAction } from '../lib/buildSelect'
   import { buildRights, isFavourite } from '../lib/builds'
   import { menuPoint } from '../lib/participantMenu'
   import type { BuildsBatchResult } from '../lib/protocol/BuildsBatchResult'
@@ -372,14 +372,19 @@
   }
   const ICON: Record<BulkAction['key'], SelectBarAction['icon']> = { favourite: 'star', unfavourite: 'star', archive: 'inbox', restore: 'inbox', delete: 'trash' }
   let busy = $state(false)
-  async function runBulk(a: BulkAction, ids: string[], skipped: number) {
-    let done = 0
-    for (const chunk of batchChunks(ids)) {
-      const r = await RUN[a.key](chunk)
-      done += r.done
-      skipped += r.skipped
+  /** Sends `ids` in batches of 100. All done: says what was done and what was skipped, and why (`notYours` counted
+   *  here, the rest by the server). A batch after the first failing: says what the earlier ones did, and leaves the
+   *  builds not done selected. The first failing throws (nothing was done). */
+  async function runBulk(a: BulkAction, ids: string[], notYours: number) {
+    const r = await runChunks(ids, RUN[a.key])
+    if (r.failed && r.done === 0 && r.failed.rest.length === ids.length) throw r.failed.error
+    if (r.failed) {
+      ui.notice = bulkPartial(a, r.done, errorText(r.failed.error))
+      const rest = new Set(r.failed.rest)
+      picked = picked.filter((id) => rest.has(id))
+      return
     }
-    ui.notice = bulkSummary(a, done, skipped)
+    ui.notice = bulkSummary(a, r.done, notYours, r.skipped)
     stopSelecting()
   }
   function bulk(a: BulkAction) {

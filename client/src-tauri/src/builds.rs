@@ -19,13 +19,16 @@ use crate::commands::Core;
 
 impl Api {
     /// A page of a builds channel's builds (30), newest first by when they were saved; `before` pages back. Archived
-    /// ones only with `archived`; `game` narrows to one game, `q` to builds with those words.
+    /// ones only with `archived`; `game` narrows to one game, `favourite` to your starred ones, `q` to builds with those
+    /// words.
+    #[allow(clippy::too_many_arguments)]
     pub async fn list_builds(
         &self,
         token: &str,
         channel: ChannelId,
         game: Option<GameId>,
         archived: bool,
+        favourite: bool,
         q: Option<&str>,
         before: Option<MessageId>,
     ) -> Result<Vec<Message>, ApiError> {
@@ -38,6 +41,9 @@ impl Api {
         }
         if archived {
             req = req.query(&[("archived", "true")]);
+        }
+        if favourite {
+            req = req.query(&[("favourite", "true")]);
         }
         if let Some(q) = q.map(str::trim).filter(|q| !q.is_empty()) {
             req = req.query(&[("q", q)]);
@@ -487,21 +493,33 @@ pub async fn cancel_build_save(core: State<'_, Core>, nonce: String) -> Result<(
     Ok(())
 }
 
+/// `favourite` (only your starred builds) may be absent: not starred-only.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn list_builds(
     app: AppHandle,
     core: State<'_, Core>,
     channel_id: ChannelId,
     game: Option<GameId>,
     archived: bool,
+    favourite: Option<bool>,
     q: Option<String>,
     before: Option<MessageId>,
 ) -> Result<Vec<Message>, ApiError> {
     let (api, token) = core.current()?;
+    let favourite = favourite.unwrap_or(false);
     core.check(
         &app,
-        api.list_builds(&token, channel_id, game, archived, q.as_deref(), before)
-            .await,
+        api.list_builds(
+            &token,
+            channel_id,
+            game,
+            archived,
+            favourite,
+            q.as_deref(),
+            before,
+        )
+        .await,
     )
 }
 
@@ -703,7 +721,15 @@ mod tests {
         let (api, seen) = capture("[]").await;
         let (ch, game, before) = (ChannelId::new(), GameId::new(), MessageId::new());
         let got = api
-            .list_builds("t", ch, Some(game), true, Some("raven build"), Some(before))
+            .list_builds(
+                "t",
+                ch,
+                Some(game),
+                true,
+                true,
+                Some("raven build"),
+                Some(before),
+            )
             .await
             .unwrap();
         assert!(got.is_empty());
@@ -716,6 +742,7 @@ mod tests {
         assert!(line.contains(&format!("game={game}")), "{line}");
         assert!(line.contains("archived=true"), "{line}");
         assert!(line.contains("q=raven+build"), "{line}");
+        assert!(line.contains("favourite=true"), "{line}");
         assert!(line.contains(&format!("before={before}")), "{line}");
     }
 
@@ -723,7 +750,7 @@ mod tests {
     async fn list_builds_without_filters_sends_none() {
         let (api, seen) = capture("[]").await;
         let ch = ChannelId::new();
-        api.list_builds("t", ch, None, false, None, None)
+        api.list_builds("t", ch, None, false, false, None, None)
             .await
             .unwrap();
         let req = first(&seen);
