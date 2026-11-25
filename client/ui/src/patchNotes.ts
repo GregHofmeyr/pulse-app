@@ -42,7 +42,8 @@ export const patchNotes: PatchNotes = {
     'Open your own stream in full view or full screen, like anyone else\'s',
   ],
   fixes: [
-    'Voice: loud moments go through a proper limiter instead of crunchy clipping',
+    'Voice: loud moments go through a proper limiter instead of crunchy clipping, on your mic and on the voices you hear',
+    'Voice: when someone\'s audio briefly drops out, it fades instead of clicking, and deep voices keep more of their warmth',
     'Voice: noise suppression no longer garbles your first words after a silence',
     'Voice: your mic is sent as mono at a sensible bitrate, for clearer speech',
     'Voice: when your network changes, Pulse rejoins the call straight away, and voices that stalled come back by themselves',
