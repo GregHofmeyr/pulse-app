@@ -785,6 +785,8 @@
   --dur-exit: 100ms;
   --ease: cubic-bezier(.2, .8, .2, 1);
   --ease-exit: cubic-bezier(.4, 0, 1, 1);
+  /* An entrance that lands with a small bounce: it runs a little past its end and settles back (.slide-in). */
+  --ease-overshoot: cubic-bezier(.34, 1.4, .64, 1);
   /* Where a menu or popover grows from: each placement sets its own (a cursor menu its top-left, a drop-down its
      top edge, an upward list its bottom edge). */
   --pop-origin: center;
@@ -955,10 +957,14 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
    scroll. The scale runs on the same layer. */
 @keyframes pop-in { from { opacity: 0; transform: scale(.96); } }
 @keyframes fade-in { from { opacity: 0; } }
+/* A bar that opens in the flow (quick add, #618) slides down a few px and fades in, landing with a slight bounce. Its
+   space is taken at once (only transform and opacity animate), so nothing below it moves during the entrance. */
+@keyframes slide-in { from { opacity: 0; transform: translateY(-8px); } }
 /* --pop-origin: where it grows from (#173). A cursor menu sets `top left` (or the corner nearest the cursor once
    flipped), a drop-down `top`, a list that opens upward `bottom`; centred is the default (dialogs). */
 .pop-in { animation: pop-in var(--dur) var(--ease); will-change: opacity; transform-origin: var(--pop-origin); }
 .fade-in { animation: fade-in var(--dur) var(--ease); will-change: opacity; }
+.slide-in { animation: slide-in var(--dur-slow) var(--ease-overshoot); will-change: opacity; }
 /* WebKitGTK (the Linux app, lib/engine.ts): the same fade without the scale (#103). With the layer declared above, a
    fade is only a new opacity on it; the scale is a transform animation, which WebKit composites and overlap-tests
    on its own terms from its first frame to its last, the one change left at the entrance's two ends that a busy
@@ -967,9 +973,12 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
 /* Off, not paused: the pause above would hold them on their first, invisible frame (a stream
    toast arrives while you're in a game). Not one that has finished (.entered, lib/entrances.ts): switched back on, it
    would replay, and focus coming back (a native colour picker's window closing) faded Settings in again. */
-.streaming .pop-in:not(.entered), .streaming .fade-in:not(.entered), .unfocused .pop-in:not(.entered), .unfocused .fade-in:not(.entered) { animation: none !important; }
+.streaming .pop-in:not(.entered), .streaming .fade-in:not(.entered), .unfocused .pop-in:not(.entered), .unfocused .fade-in:not(.entered),
+.streaming .slide-in:not(.entered), .unfocused .slide-in:not(.entered) { animation: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .pop-in, .fade-in { animation: none !important; }
+  /* no movement, but still a fade: it overrides the global .01ms (later, same specificity) */
+  .slide-in { animation: fade-in var(--dur) var(--ease) !important; }
 }
 
 /* The call you're in (#220), seen from anywhere: a brand-accent ring round its place's picture (a server's chip, the
