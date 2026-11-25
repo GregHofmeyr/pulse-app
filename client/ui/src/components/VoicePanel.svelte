@@ -28,6 +28,7 @@
   import { callView, openFull } from '../lib/stream/viewer.svelte'
   import { PANEL_ID } from '../lib/stream/fullPanels'
   import { CHAT_TOGGLE_ID, STRIP_ID, toggleVoiceChat, voiceChat } from '../lib/voiceChat.svelte'
+  import { isRightViewHidden } from '../lib/rightViews.svelte'
   import SpotifyIcon from './SpotifyIcon.svelte'
   import StageShareBox from './StageShareBox.svelte'
   import StageSpotify from './StageSpotify.svelte'
@@ -44,8 +45,10 @@
   } = $props()
 
   const channel = $derived(app.state.channels[channelId])
-  // the chat's unreads and mentions, as on its row's chat icon, while the panel is closed (#230)
-  const badge = $derived(channel && !voiceChat.open ? chatBadge(app.state, channel, clock.nowIso) : null)
+  // whether the chat is on screen: open, and not hidden behind another right-panel tab (#638)
+  const chatShown = $derived(voiceChat.open && !isRightViewHidden('chat'))
+  // the chat's unreads and mentions, as on its row's chat icon, while it isn't on screen (#230)
+  const badge = $derived(channel && !chatShown ? chatBadge(app.state, channel, clock.nowIso) : null)
   const inHere = $derived(voice.channelId === channelId)
   const tips = $derived(myServerTips())
   const meId = $derived(app.state.me?.id ?? '')
@@ -253,7 +256,7 @@
     {/if}
     <!-- its chat (#226): the panel on the right (beside a stream in full view, the strip there, #63); a click opens it
          with the message box focused (#202) -->
-    <button type="button" id={CHAT_TOGGLE_ID} class="icon-btn chat" aria-pressed={voiceChat.open} aria-controls={fullStreamer || ownFull ? STRIP_ID : PANEL_ID.right} aria-label="Chat{badge?.label ?? ''}" data-tip={voiceChat.open ? 'Hide chat' : 'Show chat'} onclick={() => toggleVoiceChat(true)}>
+    <button type="button" id={CHAT_TOGGLE_ID} class="icon-btn chat" aria-pressed={chatShown} aria-controls={fullStreamer || ownFull ? STRIP_ID : PANEL_ID.right} aria-label="Chat{badge?.label ?? ''}" data-tip={chatShown ? 'Hide chat' : 'Show chat'} onclick={() => toggleVoiceChat(true)}>
       <Icon name="message" size={18} />
       {#if badge?.mentions}<span class="pill chat-pill">{badge.mentions}</span>{:else if badge?.unread}<span class="chat-dot"></span>{/if}
     </button>

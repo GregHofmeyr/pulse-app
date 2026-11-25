@@ -5,8 +5,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, GameId, MessageId, UserId};
-use pulse_protocol::rest::UpdateBuildRequest;
 use pulse_protocol::rest::{AttachmentKind, Channel, ChannelKind, CreateBuildRequest, Message};
+use pulse_protocol::rest::{BuildGameEdit, UpdateBuildRequest};
 use serde::Deserialize;
 
 use super::{
@@ -313,8 +313,9 @@ async fn list(
 }
 
 /// `PUT /builds/{id}`: the author's edit, replacing every field (same checks as a create). The title is the author's
-/// from now on; a game sent is a game picked (no longer "guessed"); a quick drop ends with a game, notes or
-/// `mark_sorted`, and never comes back. A new link drops what was fetched of the old one and is fetched in turn. The
+/// from now on. The game: `game: "unchanged"` leaves it as it is (a guess stays a guess), `{"set": id}` picks or keeps
+/// one (no longer "guessed"), `"clear"` drops it; without `game` (an older client) `game_id` is a pick, or none clears
+/// it. A quick drop ends with an explicit game, notes or `mark_sorted`, and never comes back. A new link drops what was fetched of the old one and is fetched in turn. The
 /// build keeps its place in the list.
 async fn edit(
     State(s): State<AppState>,
@@ -335,7 +336,13 @@ async fn edit(
     let title = clean_title(Some(&req.title))?.ok_or_else(|| bad("A build needs a title."))?;
     let link = req.link_url.as_deref().map(clean_link).transpose()?;
     let notes = clean_notes(req.notes.as_deref())?;
-    let game = checked_game(&s, &ch, req.game_id).await?;
+    // `None`: leave the game (and whether it was guessed) as it is
+    let game = match req.game {
+        Some(BuildGameEdit::Unchanged) => None,
+        Some(BuildGameEdit::Set(g)) => Some(checked_game(&s, &ch, Some(g)).await?),
+        Some(BuildGameEdit::Clear) => Some(None),
+        None => Some(checked_game(&s, &ch, req.game_id).await?),
+    };
     let mut seen = std::collections::HashSet::new();
     if !req.attachments.iter().all(|a| seen.insert(*a)) {
         return Err(bad("A screenshot is listed twice."));
@@ -353,8 +360,8 @@ async fn edit(
     claim_shots(&s, me, ch.id, &new).await?;
     let old_link = build.link.as_ref().map(|l| l.url.as_str());
     let link_changed = link.as_deref() != old_link;
-    // still a quick drop only if it was one (read in the write: it never comes back)
-    let still_quick = game.is_none() && notes.is_none() && !req.mark_sorted;
+    // still a quick drop only if it was one (read in the write: it never comes back); a game left as it is ends none
+    let still_quick = game.is_none_or(|g| g.is_none()) && notes.is_none() && !req.mark_sorted;
 
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
@@ -362,7 +369,9 @@ async fn edit(
     crate::access::open_in(&mut tx, ch.id).await?;
     crate::access::member_of_in(&mut tx, me, ch.id).await?;
     let changed = sqlx::query(
-        "UPDATE builds SET title = ?1, title_auto = 0, game_id = ?2, game_guessed = 0, notes = ?3,
+        "UPDATE builds SET title = ?1, title_auto = 0,
+                           game_id = CASE WHEN ?10 THEN game_id ELSE ?2 END,
+                           game_guessed = CASE WHEN ?10 THEN game_guessed ELSE 0 END, notes = ?3,
                            quick_drop = quick_drop AND ?4, updated_at = ?5, link_url = ?6,
                            link_title = CASE WHEN ?7 THEN NULL ELSE link_title END,
                            link_thumb = CASE WHEN ?7 THEN NULL ELSE link_thumb END,
@@ -372,7 +381,7 @@ async fn edit(
                                           WHERE m.id = ?8 AND m.author_id = ?9 AND m.deleted_at IS NULL)",
     )
     .bind(&title)
-    .bind(game.map(|g| g.to_string()))
+    .bind(game.flatten().map(|g| g.to_string()))
     .bind(&notes)
     .bind(still_quick)
     .bind(now())
@@ -380,6 +389,7 @@ async fn edit(
     .bind(link_changed)
     .bind(id.to_string())
     .bind(me.to_string())
+    .bind(game.is_none())
     .execute(&mut *tx)
     .await?
     .rows_affected();

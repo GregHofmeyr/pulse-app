@@ -1558,7 +1558,8 @@ describe('voice channel chat (#226)', () => {
     expect(q('aside.voice-chat')).toBeNull()
   })
 
-  it('it keeps its own width, apart from the members list, and stays open for the next stage', async () => {
+  // #638: beside the members list it's a tab, at the tabs' shared width (the larger default: the chat's)
+  it('with the members list it takes the tabs\' width, apart from the members list alone, and stays open for the next stage', async () => {
     show()
     q('.chat-btn')!.click()
     flushSync()
@@ -1566,7 +1567,7 @@ describe('voice channel chat (#226)', () => {
     expect(h.getAttribute('aria-valuenow')).toBe('360')
     h.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
     flushSync()
-    expect(JSON.parse(localStorage.getItem('pulse.columns')!)).toEqual({ left: null, right: null, chat: 376, strip: null })
+    expect(JSON.parse(localStorage.getItem('pulse.columns')!)).toEqual({ left: null, right: null, chat: null, strip: null, tabs: 376 })
     expect(q('.right-panel')!.style.getPropertyValue('--right-w')).toBe('376px')
     // a text channel shows the members list at its own width
     q('.row[data-channel="T1"]')!.click()
@@ -1880,5 +1881,153 @@ describe('right panel switcher (#638)', () => {
     await settle()
     expect(q('.right-panel aside.members')).not.toBeNull()
     expect(q('.right-panel [role=tablist]')).toBeNull()
+  })
+})
+
+// #638 review: the views behind the shown tab stay where they are, and the focus never falls to the page
+describe('right panel switcher, hidden views (#638)', () => {
+  const q = (sel: string) => document.querySelector<HTMLElement>(sel)
+  const tabs = () => [...document.querySelectorAll<HTMLButtonElement>('.right-panel [role=tab]')]
+  const tab = (label: string) => tabs().find((t) => t.dataset.tip === label)!
+  const build = (id: string) => ({
+    id, channel_id: 'B1', author_id: 'U2', kind: 'normal' as const, content: '', reply_to_id: null, created_at: '2026-10-01T10:00:00.000Z',
+    edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, embeds: [], clip: null,
+    build: { title: `Build ${id}`, title_auto: false, game_id: null, game_guessed: false, link: null, notes: null, quick_drop: false, updated_at: null, archived_at: null, archived_by: null, reply_count: 0, last_reply_id: null, replies_seen: null },
+  })
+  const channels = [
+    { id: 'T1', server_id: 'S1', kind: 'text' as const, name: 'general', position: 0 },
+    { id: 'V1', server_id: 'S1', kind: 'voice' as const, name: 'Lounge', position: 1 },
+    { id: 'B1', server_id: 'S1', kind: 'builds' as const, name: 'raven-builds', position: 2 },
+  ]
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await tick()
+    await new Promise((r) => setTimeout(r, 0))
+    flushSync()
+  }
+  let pins: typeof import('../lib/pinnedBuild.svelte')
+  const mountShell = async () => {
+    cmp = mount(Shell, { target: document.body, props: { user: testMe, onLogout: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Main'))!.click()
+    await settle()
+  }
+  beforeEach(async () => {
+    localStorage.clear()
+    reloadVoiceChat()
+    reloadColumns()
+    pins = await import('../lib/pinnedBuild.svelte')
+    pins.forgetPinnedBuild()
+    ;(await import('../lib/rightViews.svelte')).forgetRightViews()
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'search_messages' ? { hits: [], total: 0, next_cursor: null } : cmd === 'list_messages' ? [] : undefined))
+    app.state = applyReady(emptyState(), testReady(channels))
+  })
+  afterEach(async () => {
+    pins.forgetPinnedBuild()
+    ;(await import('../lib/search.svelte')).closeSearch()
+    ;(await import('../lib/voiceChat.svelte')).setVoiceChat(false)
+  })
+
+  it("the stage's chat toggle brings a chat hidden behind another tab forward; its badges follow what's on screen", async () => {
+    const { voiceChat, setVoiceChat } = await import('../lib/voiceChat.svelte')
+    await mountShell()
+    q('.row[data-channel="V1"]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    await settle()
+    setVoiceChat(true)
+    await settle()
+    const toggle = () => q('#voice-chat-toggle')!
+    expect(toggle().getAttribute('aria-pressed')).toBe('true')
+    pins.pinBuild('B1', 'M001', build('M001'))
+    await settle()
+    expect(q('.right-panel aside.voice-chat')).toBeNull()
+    app.state = { ...app.state, reads: { ...app.state.reads, V1: { channel_id: 'V1', unread: 3, mentions: 0, last_read_message_id: null } } }
+    await settle()
+    expect(toggle().getAttribute('aria-pressed')).toBe('false')
+    expect(toggle().dataset.tip).toBe('Show chat')
+    expect(toggle().querySelector('.chat-dot')).not.toBeNull()
+    expect(tab('Chat').querySelector('.tab-dot')).not.toBeNull()
+    expect(tab('Chat').getAttribute('aria-label')).toBe('Chat, unread messages')
+    toggle().click()
+    await settle()
+    expect(voiceChat.open, 'brought forward, not closed').toBe(true)
+    expect(q('.right-panel aside.voice-chat')).not.toBeNull()
+    expect(toggle().getAttribute('aria-pressed')).toBe('true')
+    expect(toggle().dataset.tip).toBe('Hide chat')
+    expect(toggle().querySelector('.chat-dot')).toBeNull()
+    expect(tab('Chat').querySelector('.tab-dot')).toBeNull()
+  })
+
+  it('Esc in the search box leaves results hidden behind another tab and clears the text', async () => {
+    const { runSearch, search } = await import('../lib/search.svelte')
+    await mountShell()
+    pins.pinBuild('B1', 'M001', build('M001'))
+    await runSearch({ kind: 'server', serverId: 'S1' }, 'raven', [])
+    await settle()
+    tab('Pinned build').click()
+    await settle()
+    const box = q('[role="combobox"][aria-label^="Search"]') ?? q('.search-box [contenteditable], .search-box input')!
+    box.focus()
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await settle()
+    expect(search.open, 'kept behind its tab').toBe(true)
+  })
+
+  it('a focused tab that goes hands the focus to the tab now chosen, or to the panel when the tabs go', async () => {
+    const { runSearch, closeSearch } = await import('../lib/search.svelte')
+    await mountShell()
+    pins.pinBuild('B1', 'M001', build('M001'))
+    await runSearch({ kind: 'server', serverId: 'S1' }, 'raven', [])
+    await settle()
+    tab('Search results').focus()
+    closeSearch()
+    await settle()
+    expect(document.activeElement).toBe(tab('Pinned build'))
+    pins.unpinBuild()
+    await settle()
+    expect(document.activeElement).toBe(q('#right-view'))
+  })
+
+  it('choices survive a restart, per account', async () => {
+    const views = await import('../lib/rightViews.svelte')
+    const { handleReady } = await import('../lib/store.svelte')
+    await mountShell()
+    handleReady(testReady(channels))
+    pins.pinBuild('B1', 'M001', build('M001'))
+    await settle()
+    tab('Members').click()
+    await settle()
+    expect(JSON.parse(localStorage.getItem('pulse.rightViews.U1')!)).toEqual({ 's:S1': ['build', 'members'] })
+    // as after a restart: nothing in memory, the account's choices read back on Ready
+    views.forgetRightViews()
+    handleReady(testReady(channels))
+    await settle()
+    expect(q('.right-panel aside.members')).not.toBeNull()
+  })
+
+  it('while tabs show, the column keeps one shared width', async () => {
+    const { setColumn, columns } = await import('../lib/columns.svelte')
+    const { runSearch } = await import('../lib/search.svelte')
+    await mountShell()
+    const width = () => q('.right-panel')!.style.getPropertyValue('--right-w')
+    setColumn('right', 250)
+    await settle()
+    expect(width()).toBe('250px') // one view: its own width
+    pins.pinBuild('B1', 'M001', build('M001'))
+    await runSearch({ kind: 'server', serverId: 'S1' }, 'raven', [])
+    await settle()
+    // tabs: the largest default of the views there (search 340) until resized
+    const shared = width()
+    tab('Pinned build').click()
+    await settle()
+    expect(width()).toBe(shared)
+    tab('Members').click()
+    await settle()
+    expect(width()).toBe(shared)
+    // resizing now sets the shared width only
+    const handle = document.querySelector<HTMLElement>('[role=separator][aria-label^="Resize the"]:not([aria-label="Resize the channel list"])')!
+    handle.focus()
+    handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+    await settle()
+    expect(columns.tabs).not.toBeNull()
+    expect(columns.right).toBe(250)
   })
 })

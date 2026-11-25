@@ -72,7 +72,7 @@
   import GroupIconCrop from '../components/GroupIconCrop.svelte'
   import { badgeStore, logoClick } from '../lib/badges.svelte'
   import { applyEvent, dropClipJob, setClipJob, setShownChannel, trimHistory } from '../lib/state'
-  import { conversationName, homeBadge, inVoice, isNotes, notesId, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
+  import { chatBadge, conversationName, homeBadge, inVoice, isNotes, notesId, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { baseName, displayName, isMember, liveIn } from '../lib/selectors'
   import { CONN_PILL_DELAY_MS, isRefusal } from '../lib/conn'
   import { avatarColor, initial } from '../lib/avatar'
@@ -85,7 +85,7 @@
   import QuickSwitcher from '../components/QuickSwitcher.svelte'
   import PinnedBuild from '../components/PinnedBuild.svelte'
   import { pinShown } from '../lib/pinnedBuild.svelte'
-  import { chooseRightView, settleRightViews, shownRightView } from '../lib/rightViews.svelte'
+  import { chooseRightView, rightHidden, settleRightViews, shownRightView } from '../lib/rightViews.svelte'
   import RightViewTabs, { type RightViewTab } from '../components/RightViewTabs.svelte'
   import { openMessage } from '../lib/openMessage'
   import type { Message } from '../lib/protocol/Message'
@@ -476,7 +476,14 @@
             : !activeServerId && activeChannel?.kind === 'group' && !!activeChannelId))
   $effect.pre(() => settleRightViews(rightPlace, rightAvailable))
   const rightKind = $derived(shownRightView(rightPlace, rightAvailable, RIGHT_RANK) as RightKind | null)
-  const rightTabs = $derived<RightViewTab[]>(rightAvailable.length > 1 ? rightAvailable.map((k) => ({ id: k, ...RIGHT_VIEW[k] })) : [])
+  // the chat's tab carries its unreads while another tab shows (the stage's toggle does too)
+  const chatTabBadge = $derived.by(() => {
+    if (rightKind === 'chat' || !activeChannel || !rightAvailable.includes('chat')) return null
+    const b = chatBadge(app.state, activeChannel, nowIso)
+    return b.mentions || b.unread ? { label: b.label } : null
+  })
+  const rightTabs = $derived<RightViewTab[]>(rightAvailable.length > 1 ? rightAvailable.map((k) => ({ id: k, ...RIGHT_VIEW[k], badge: k === 'chat' ? chatTabBadge : null })) : [])
+  const tabbed = $derived(rightTabs.length > 1)
   // the results show while they're the right column's view (#638: a voice channel's chat or another view picked in
   // the switcher keeps them open behind it, #230)
   const searchShown = $derived(rightKind === 'search')
@@ -496,7 +503,16 @@
   const showLeft = $derived(!hideLeft)
   const showRight = $derived(!hideRight && rightKind !== null)
   const chatOnScreen = $derived((showRight && rightKind === 'chat') || chatInStrip)
-  const rightColumn = $derived(rightKind === 'chat' ? 'chat' : 'right')
+  // the views there but not on screen, for their own controls (the stage's chat toggle, Esc in the search box)
+  $effect(() => {
+    const hidden = rightAvailable.filter((k) => !(showRight && k === rightKind))
+    untrack(() => {
+      if (hidden.join() !== rightHidden.views.join()) rightHidden.views = hidden
+    })
+  })
+  // While the switcher shows, one shared width (its own, saved as `tabs`), so changing tabs never moves the column;
+  // a single view keeps its own, as before.
+  const rightColumn = $derived(tabbed ? 'tabs' : rightKind === 'chat' ? 'chat' : 'right')
   const rightSaved = $derived(columns[rightColumn])
   // A click's ask for the chat's message box counts only while the chat can show: one made while it can't (search
   // results in its place, full view) mustn't take the focus whenever it next appears.
@@ -511,10 +527,23 @@
     ro.observe(bodyEl)
     return () => ro.disconnect()
   })
-  const rightMin = $derived(RIGHT_MIN[rightKind ?? 'members'])
-  const fitted = $derived(fitColumns({ saved: { left: columns.left, right: rightSaved }, body: bodyWidth, left: showLeft, right: showRight, rightDefault: RIGHT_DEFAULT[rightKind ?? 'members'], rightMin }))
+  const rightMin = $derived(tabbed ? Math.max(...rightAvailable.map((k) => RIGHT_MIN[k])) : RIGHT_MIN[rightKind ?? 'members'])
+  const rightDefault = $derived(tabbed ? Math.max(...rightAvailable.map((k) => RIGHT_DEFAULT[k])) : RIGHT_DEFAULT[rightKind ?? 'members'])
+  const fitted = $derived(fitColumns({ saved: { left: columns.left, right: rightSaved }, body: bodyWidth, left: showLeft, right: showRight, rightDefault, rightMin }))
   const rightLabel = $derived(rightKind === 'search' ? 'Resize the search results' : rightKind === 'chat' ? 'Resize the chat' : rightKind === 'build' ? 'Resize the pinned build' : 'Resize the members list')
   const RIGHT_VIEW_ID = 'right-view'
+  // A focused tab that goes (its view closed) or the whole row going (one view left) would drop the focus to the
+  // page: before the update it's handed to the tab now chosen, or to the panel.
+  $effect.pre(() => {
+    const kind = rightKind
+    const withTabs = tabbed
+    untrack(() => {
+      const at = document.activeElement
+      if (!(at instanceof HTMLElement) || !at.closest('.right-tabs')) return
+      if (withTabs && at.id === `right-tab-${kind}`) return
+      void tick().then(() => document.getElementById(withTabs && kind ? `right-tab-${kind}` : RIGHT_VIEW_ID)?.focus())
+    })
+  })
   /** The chat's close button: the panel goes, and the focus it had goes to the stage's toggle. */
   function closeChat() {
     const at = document.activeElement
@@ -969,7 +998,7 @@
     {/if}
     <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap. A saved
          width reaches the list as --right-w; unsaved, each list keeps its own default. -->
-    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={rightSaved === null ? null : `${fitted.right}px`}>{#if rightKind}{#if rightTabs.length > 1}<RightViewTabs views={rightTabs} current={rightKind} width={fitted.right} panelId={RIGHT_VIEW_ID} onPick={(id) => chooseRightView(rightPlace, id)} />{/if}<div class="right-view" id={RIGHT_VIEW_ID} role={rightTabs.length > 1 ? 'tabpanel' : undefined} aria-labelledby={rightTabs.length > 1 ? `right-tab-${rightKind}` : undefined}>{#if rightKind === 'search'}<SearchResults />{:else if rightKind === 'chat' && activeChannelId}<aside class="voice-chat fade-in" aria-label="Chat" onanimationend={(e) => e.currentTarget.classList.remove('fade-in')} out:exitFade onoutrostart={(e) => e.currentTarget.classList.add('leaving')}>{#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId} panel={{ onClose: closeChat, shown: chatOnScreen }} />{/key}</aside>{:else if rightKind === 'build'}<PinnedBuild />{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} onMessage={messageUser} />{/if}</div>{/if}</div>
+    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={rightSaved === null && !tabbed ? null : `${fitted.right}px`}>{#if rightKind}{#if rightTabs.length > 1}<RightViewTabs views={rightTabs} current={rightKind} width={fitted.right} panelId={RIGHT_VIEW_ID} onPick={(id) => chooseRightView(rightPlace, id)} />{/if}<div class="right-view" id={RIGHT_VIEW_ID} tabindex="-1" role={rightTabs.length > 1 ? 'tabpanel' : undefined} aria-labelledby={rightTabs.length > 1 ? `right-tab-${rightKind}` : undefined}>{#if rightKind === 'search'}<SearchResults />{:else if rightKind === 'chat' && activeChannelId}<aside class="voice-chat fade-in" aria-label="Chat" onanimationend={(e) => e.currentTarget.classList.remove('fade-in')} out:exitFade onoutrostart={(e) => e.currentTarget.classList.add('leaving')}>{#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId} panel={{ onClose: closeChat, shown: chatOnScreen }} />{/key}</aside>{:else if rightKind === 'build'}<PinnedBuild />{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} onMessage={messageUser} />{/if}</div>{/if}</div>
   </div>
 </div>
 <StreamToast />
@@ -1092,7 +1121,7 @@
   /* a real box (aria-controls points at it; a display:contents one leaves the accessibility tree) */
   /* the switcher (#638) over the view; the view sets the column's width (the switcher's row adds none) */
   .right-panel { position: relative; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; min-height: 0; }
-  .right-view { position: relative; flex: 1; display: flex; min-height: 0; }
+  .right-view { position: relative; flex: 1; display: flex; min-height: 0; outline: none; }
   .right-panel[hidden], .right-panel:empty { display: none; }
   /* a voice channel's chat (#226): a right column like the search results, holding the channel view; it fades in
      (.fade-in, dropped once done so its will-change doesn't hold a layer: not under reduced motion, while streaming or

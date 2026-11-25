@@ -9,10 +9,10 @@
   import { attachmentLink } from '../lib/attachmentLinks'
   import { modal } from '../lib/actions'
   import { buildShots } from '../lib/builds'
-  import { app } from '../lib/store.svelte'
   import { TITLE_MAX, type QuickPrefill } from '../lib/buildPaste'
   import { api, errorText, type StagedFile } from '../lib/tauri'
   import type { Attachment } from '../lib/protocol/Attachment'
+  import type { BuildGameEdit } from '../lib/protocol/BuildGameEdit'
   import type { Message } from '../lib/protocol/Message'
 
   let { channelId, serverId, build = null, prefill = null, onClose, onSaved = () => {} }: {
@@ -38,10 +38,10 @@
   const start = untrack(() => prefill)
   const b = editing?.build ?? null
   let title = $state(b?.title ?? start?.title ?? '')
-  // A guessed game (from the link's title) isn't the person's choice until they keep it: the box starts empty, the
-  // guess shows beside it, and saving without keeping it clears it.
-  let guess = $state<string | null>(b?.game_guessed ? b.game_id : null)
-  let game = $state<string | null>(b?.game_guessed ? null : (b?.game_id ?? null))
+  // A guessed game (from the link's title) shows in the box, marked as guessed, until the person keeps it, picks
+  // another or clears it; saved untouched, it's sent as "unchanged" and stays a guess (and a quick drop stays one).
+  let game = $state<string | null>(b?.game_id ?? null)
+  let guessed = $state(!!b?.game_guessed && !!b?.game_id)
   let link = $state(b?.link?.url ?? start?.link ?? '')
   let notes = $state(b?.notes ?? '')
   let sorted = $state(false)
@@ -58,8 +58,7 @@
 
   const titleLen = $derived([...title.trim()].length)
   const canSave = $derived(titleLen > 0 && titleLen <= TITLE_MAX && !busy)
-  const guessName = $derived(guess ? ((app.state.games[serverId] ?? []).find((g) => g.id === guess)?.name ?? null) : null)
-  const offerSorted = $derived(!!b?.quick_drop && !game && !notes.trim())
+  const offerSorted = $derived(!!b?.quick_drop && (!game || guessed) && !notes.trim())
 
   // kept screenshots' links, for their thumbnails
   $effect(() => {
@@ -162,6 +161,9 @@
     }
   }
 
+  // an edit's game: an untouched guess is left as it is; anything else is the person's pick (or none)
+  const gameEdit = (): BuildGameEdit => (guessed ? 'unchanged' : game ? { set: game } : 'clear')
+
   async function save() {
     if (!canSave) return
     busy = true
@@ -169,7 +171,7 @@
     const fields = { title: title.trim(), game_id: game, link_url: link.trim() || null, notes: notes.trim() || null, attachments: [] as string[] }
     try {
       const m = editing
-        ? await api.updateBuild(editing.id, channelId, { ...fields, mark_sorted: offerSorted && sorted }, shots.map((s) => s.key))
+        ? await api.updateBuild(editing.id, channelId, { ...fields, game: gameEdit(), mark_sorted: offerSorted && sorted }, shots.map((s) => s.key))
         : await api.createBuild(channelId, { ...fields, nonce }, shots.map((s) => (s.kind === 'staged' ? s.file.id : '')).filter(Boolean))
       onSaved(m)
       onClose()
@@ -207,10 +209,10 @@
     </label>
     <div class="field">
       <span class="label">Game</span>
-      <GamePicker {serverId} value={game} onChange={(id) => { game = id; if (id) guess = null }} addLabel={(n) => `+ Use '${n}' as a new game`} />
-      {#if guessName && !game}
-        <p class="guess">{guessName} <span class="hint">· guessed from the link, cleared on save unless kept</span>
-          <button type="button" class="btn btn-quiet keep" onclick={() => { game = guess; guess = null }}>Keep</button></p>
+      <GamePicker {serverId} value={game} onChange={(id) => { game = id; guessed = false }} addLabel={(n) => `+ Use '${n}' as a new game`} />
+      {#if guessed}
+        <p class="guess"><span class="hint">Game guessed from the link</span>
+          <button type="button" class="btn btn-quiet keep" onclick={() => (guessed = false)}>Keep</button></p>
       {/if}
     </div>
     <label class="field">
