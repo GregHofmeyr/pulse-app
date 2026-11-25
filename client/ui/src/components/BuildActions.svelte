@@ -68,6 +68,13 @@
     await tick()
     keep?.focus()
   }
+  function askKey(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || busy) return
+    e.preventDefault()
+    e.stopPropagation()
+    asking = false
+    opener?.focus()
+  }
   const remove = () => run(() => api.deleteBuild(message.id), () => {
     asking = false
     onDeleted()
@@ -96,7 +103,8 @@
       </div>
     {/if}
     {#if asking}
-      <div class="ask menu-surface pop-in" role="alertdialog" aria-label="Delete build" use:clickOutside={() => { if (!busy) asking = false }}>
+      <div class="ask menu-surface pop-in" role="alertdialog" aria-label="Delete build" tabindex="-1"
+        use:clickOutside={() => { if (!busy) asking = false }} onkeydown={askKey}>
         <p>Delete this build? Its screenshots and comments go too.</p>
         <button bind:this={keep} type="button" class="btn btn-secondary" disabled={busy} onclick={() => (asking = false)}>Cancel</button>
         <button type="button" class="btn btn-danger" disabled={busy} onclick={() => void remove()}>Delete</button>

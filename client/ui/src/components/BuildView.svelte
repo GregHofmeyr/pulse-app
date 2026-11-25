@@ -59,7 +59,7 @@
         <div class="tiles" class:one={tiles.length === 1}>
           {#each tiles as s, i (s.id)}
             <svelte:element this={onImage ? 'button' : 'div'} type={onImage ? 'button' : undefined} class="tile" role={onImage ? undefined : 'presentation'}
-              aria-label={onImage ? `Open screenshot ${i + 1}` : undefined} onclick={onImage ? () => onImage(i) : undefined}
+              aria-label={onImage ? `Open screenshot ${i + 1}${i === MAX_TILES - 1 && more > 0 ? `, and ${more} more` : ''}` : undefined} onclick={onImage ? () => onImage(i) : undefined}
               style:aspect-ratio={s.w && s.h ? `${s.w} / ${s.h}` : undefined}>
               {#if s.url}<img src={s.url} alt="" loading="lazy" decoding="async" draggable="false" />{/if}
               {#if i === MAX_TILES - 1 && more > 0}<span class="more">+{more}</span>{/if}

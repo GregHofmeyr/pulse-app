@@ -231,7 +231,7 @@
   })
   let scrollBack = 0
   function openPage(m: Message) {
-    scrollBack = scroller?.scrollTop ?? 0
+    if (!open) scrollBack = scroller?.scrollTop ?? 0 // a build opened from a build page keeps the browse view's
     open = m
   }
   async function closePage() {

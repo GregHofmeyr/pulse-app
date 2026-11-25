@@ -707,6 +707,7 @@ pub fn run() {
             builds::search_builds,
             builds::create_build,
             builds::update_build,
+            builds::cancel_build_save,
             commands::set_clip_view,
             commands::clip_storage,
             commands::clip_support,

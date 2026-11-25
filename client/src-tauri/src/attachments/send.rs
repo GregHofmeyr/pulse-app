@@ -98,6 +98,22 @@ impl Job {
         !self.cancel.is_cancelled()
     }
 
+    /// Drop every stored upload (cancelled on the server), so the next try uploads them all again.
+    async fn forget_stored(&self, api: &Api, token: &str) {
+        let forgotten: Vec<AttachmentId> = self
+            .stored
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .drain()
+            .map(|(_, id)| id)
+            .collect();
+        for id in forgotten {
+            // Best effort: the sweep removes whatever is left.
+            let _ = api.cancel_attachment(token, id).await;
+            self.closed(id);
+        }
+    }
+
     /// An upload this run let go of itself (cancelled on the server).
     fn closed(&self, id: AttachmentId) {
         self.opened
@@ -189,7 +205,8 @@ impl Jobs {
 
     /// Upload a send's files (in order) under `nonce`, keeping what each try stored so a retry with the same nonce
     /// uploads only the rest (#618: a build's screenshots go up this way before the build is posted). The staged files
-    /// stay staged until `finish`. A second call while one is going is refused (`AlreadySending`).
+    /// stay staged until `finish`. A second call while this one's files are still going up is refused
+    /// (`AlreadySending`); the guard is let go once they're up, so it doesn't cover the caller's post that follows.
     #[allow(clippy::too_many_arguments)]
     pub async fn upload_staged(
         &self,
@@ -223,6 +240,20 @@ impl Jobs {
             on_progress,
         )
         .await
+    }
+
+    /// The post after `upload_staged` was refused (`Rejected`/`Told`: an upload missing or wrong, as `run` treats it):
+    /// its stored uploads are dropped on the server and the next try uploads them all again.
+    pub async fn forget_stored(&self, api: &Api, token: &str, nonce: &str) {
+        let job = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(nonce)
+            .cloned();
+        if let Some(job) = job {
+            job.forget_stored(api, token).await;
+        }
     }
 
     /// What `upload_staged` uploaded was used: forget the send and its staged files.
@@ -432,18 +463,7 @@ impl Jobs {
                 Err(e) => {
                     // The server found an upload missing or wrong: upload them all again next time.
                     if matches!(e, ApiError::Rejected(_) | ApiError::Told { .. }) {
-                        let forgotten: Vec<AttachmentId> = job
-                            .stored
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .drain()
-                            .map(|(_, id)| id)
-                            .collect();
-                        for id in forgotten {
-                            // Best effort: the sweep removes whatever is left.
-                            let _ = api.cancel_attachment(token, id).await;
-                            job.closed(id);
-                        }
+                        job.forget_stored(api, token).await;
                     }
                     return Err(e.into());
                 }

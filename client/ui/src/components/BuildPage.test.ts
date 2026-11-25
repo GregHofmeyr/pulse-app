@@ -117,6 +117,7 @@ describe('BuildPage', () => {
     expect(document.querySelector('.build-view .notes strong')?.textContent).toBe('Max crit')
     expect(document.querySelectorAll('.build-view .tile')).toHaveLength(4)
     expect(document.querySelector('.build-view .more')?.textContent?.trim()).toBe('+2')
+    expect(document.querySelectorAll('.build-view .tile')[3].getAttribute('aria-label')).toBe('Open screenshot 4, and 2 more')
   })
 
   it('a screenshot opens the image viewer', async () => {
@@ -181,6 +182,19 @@ describe('BuildPage', () => {
     expect(calls('delete_build')[0][1]).toEqual({ messageId: 'M001' })
   })
 
+  it('Escape on the delete question closes it and puts the focus back on Actions', async () => {
+    await page(build('M001', {}, { author_id: 'U1' }))
+    await openActions()
+    ;[...document.querySelectorAll<HTMLElement>('.build-actions [role=menuitem]')].find((e) => e.textContent?.trim() === 'Delete')!.click()
+    await flush()
+    const ask = document.querySelector<HTMLElement>('.build-actions [role=alertdialog]')!
+    ask.querySelector<HTMLButtonElement>('button')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.querySelector('.build-actions [role=alertdialog]')).toBeNull()
+    expect(document.activeElement).toBe(document.querySelector('.build-actions button[aria-haspopup=menu]'))
+    expect(calls('delete_build')).toHaveLength(0)
+  })
+
   it("the author's comments are tagged author", async () => {
     replies = [comment('R0002', 'U3', 'nice one'), comment('R0001', 'U2', 'thanks')]
     await page(build('M001'))
@@ -231,6 +245,21 @@ describe('BuildsChannel: the build page', () => {
     expect(document.querySelector<HTMLElement>('.feed')!.scrollTop).toBe(320)
     // no refetch: the same feed came back
     expect(calls('list_builds')).toHaveLength(2)
+  })
+
+  it('a second build opened from the page still goes Back to the scroll the browse view had', async () => {
+    pages = [[build('M003'), build('M002'), build('M001')]]
+    fetched = build('M009', { title: 'Raven bunny' })
+    await channel()
+    document.querySelector<HTMLElement>('.feed')!.scrollTop = 320
+    document.querySelector<HTMLButtonElement>('[data-build-id="M001"] button.open')!.click()
+    await flush()
+    ui.openBuild = { channelId: 'B1', messageId: 'M009' }
+    await flush()
+    expect(document.querySelector('.build-view h1')?.textContent?.trim()).toBe('Raven bunny')
+    document.querySelector<HTMLButtonElement>('.build-page .back')!.click()
+    await flush()
+    expect(document.querySelector<HTMLElement>('.feed')!.scrollTop).toBe(320)
   })
 
   it('a build deleted while its page is open says so, and stays gone', async () => {
