@@ -2,7 +2,7 @@
   // A build's link in its page's media area (#618, spec §4.2). A YouTube video plays in place through the same player
   // path as a link preview (LinkEmbed: our embed page, its sandbox, the one-player-at-a-time `player`); leaving the page
   // stops it. Its controls sit on the player's top-right as a video player's do (#618 testing): Enlarge (fills the
-  // media area) and, while playing, Close player, shown on hover and whenever Tab reaches them. Under it, the video's
+  // media area; only where there's room to fill, `canEnlarge`) and, while playing, Close player, shown on hover and whenever Tab reaches them. Under it, the video's
   // title (plain, ellipsised) and a small "Open on YouTube" button. Anything else (a build planner, another site's
   // video) is a card that opens in the browser.
   import { onDestroy } from 'svelte'
@@ -14,12 +14,14 @@
   import { api, errorText } from '../lib/tauri'
   import type { BuildLink } from '../lib/protocol/BuildLink'
 
-  let { link, messageId, enlarged = $bindable(false), onError = () => {} }: {
+  let { link, messageId, enlarged = $bindable(false), canEnlarge = false, onError = () => {} }: {
     link: BuildLink
     /** The build's id (the player's key, with the link). */
     messageId: string
     /** Fills the media area. */
     enlarged?: boolean
+    /** There is room to fill (the page's wide layout): Enlarge is offered, and applies, only then. */
+    canEnlarge?: boolean
     onError?: (text: string) => void
   } = $props()
 
@@ -78,7 +80,7 @@
 </script>
 
 {#if video}
-  <div class="build-video" class:enlarged>
+  <div class="build-video" class:enlarged={enlarged && canEnlarge}>
     <div class="screen">
       {#if active}
         <iframe bind:this={frameEl} src={playerSrc(origin.origin!, e)} title={`${provider}: ${title}`} sandbox={sandboxFor(e)}
@@ -95,8 +97,10 @@
         {#if active}
           <button type="button" class="icon-btn icon-btn-sm icon-btn-overlay stop" aria-label="Close player" data-tip="Close player" onclick={() => stop(key)}><Icon name="x" size={14} /></button>
         {/if}
-        <button type="button" class="icon-btn icon-btn-sm icon-btn-overlay enlarge" aria-label="Enlarge video" aria-pressed={enlarged} data-tip={enlarged ? 'Shrink' : 'Enlarge'}
-          onclick={() => (enlarged = !enlarged)}><Icon name={enlarged ? 'min' : 'expand'} size={14} /></button>
+        {#if canEnlarge}
+          <button type="button" class="icon-btn icon-btn-sm icon-btn-overlay enlarge" aria-label="Enlarge video" aria-pressed={enlarged} data-tip="Enlarge video"
+            onclick={() => (enlarged = !enlarged)}><Icon name={enlarged ? 'min' : 'expand'} size={14} /></button>
+        {/if}
       </div>
     </div>
     <div class="under">

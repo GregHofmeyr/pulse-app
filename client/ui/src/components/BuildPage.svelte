@@ -110,11 +110,11 @@
   {:else}
     <div class="body" class:stack bind:this={body}>
       <div class="main">
-        <BuildView {layout} videoEnlarged={enlarged} title={b.title} gameName={buildGameName(app.state, serverId, message)} guessed={b.game_guessed} authorName={nameOf(message.author_id)}
+        <BuildView {layout} videoEnlarged={enlarged && layout === 'wide' && !!b.link} title={b.title} gameName={buildGameName(app.state, serverId, message)} guessed={b.game_guessed} authorName={nameOf(message.author_id)}
           savedAt={relativeTime(message.created_at, now)} updatedAt={b.updated_at ? relativeTime(b.updated_at, now) : null} notes={b.notes}
           {screenshots} link={b.link} archived={isArchived(message)} quickDrop={isQuickDrop(message)} onImage={(i) => (viewing = i)}>
           {#snippet video()}
-            <BuildVideo link={b.link!} messageId={message.id} bind:enlarged onError={(t) => (error = t)} />
+            <BuildVideo link={b.link!} messageId={message.id} bind:enlarged canEnlarge={layout === 'wide'} onError={(t) => (error = t)} />
           {/snippet}
         </BuildView>
         {#if error}<p class="error" role="alert">{error}</p>{/if}

@@ -111,8 +111,14 @@
         <button type="button" class="btn btn-danger" disabled={busy} onclick={() => void remove()}>Delete</button>
       </div>
     {/if}
-    <!-- over the page, not in the row: the top row never grows (#618 testing); the question shows its own -->
-    {#if error && !asking}<p class="err menu-surface" role="alert" use:clickOutside={() => (error = '')}>{error}</p>{/if}
+    <!-- over the page, not in the row: the top row never grows (#618 testing); the question shows its own. Escape
+         (clickOutside's), a click away or its close button dismisses it (#645 review) -->
+    {#if error && !asking}
+      <div class="err menu-surface" role="alert" use:clickOutside={() => (error = '')}>
+        <span class="err-text">{error}</span>
+        <button type="button" class="icon-btn icon-btn-xs" aria-label="Dismiss error" data-tip="Dismiss" onclick={() => (error = '')}><Icon name="x" size={12} /></button>
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -122,5 +128,7 @@
   .ask { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: 260px; padding: 10px; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
   .ask p { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--text); }
   .ask p.ask-err { color: var(--danger-text); font-size: 12px; overflow-wrap: anywhere; }
-  .err { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: max-content; max-width: 260px; margin: 0; padding: 8px 10px; box-sizing: border-box; color: var(--danger-text); font-size: 12px; overflow-wrap: anywhere; }
+  .err { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); display: flex; flex-direction: row; align-items: flex-start; gap: 6px; width: max-content; max-width: 260px; margin: 0; padding: 4px 4px 4px 10px; box-sizing: border-box; }
+  .err-text { flex: 1; min-width: 0; color: var(--danger-text); font-size: 12px; line-height: 18px; padding: 3px 0; overflow-wrap: anywhere; }
+  .err .icon-btn { flex-shrink: 0; }
 </style>

@@ -56,7 +56,7 @@
     {/if}
   </header>
   {#if (video && link) || tiles.length}
-    <div class="media" class:wide={layout === 'wide'} class:enlarged={videoEnlarged} class:solo={!(video && link)}>
+    <div class="media" class:wide={layout === 'wide'} class:enlarged={videoEnlarged} class:solo={!(video && link)} class:no-tiles={!tiles.length}>
       {#if video && link}<div class="video">{@render video()}</div>{/if}
       {#if tiles.length}
         <div class="tiles" class:one={tiles.length === 1}>
@@ -82,11 +82,12 @@
   .build-view { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
   .build-view.archived .media, .build-view.archived .notes { opacity: .7; }
   header { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-  /* the caption line: the caption wraps, the meta gives way first and ellipsises (#618 testing) */
-  .top { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+  /* the caption line: the caption wraps; the meta sits at its right when it fits, else on its own line (right-aligned),
+     and ellipsises only when that line is too narrow (#618 testing, #645 review: never squeezed to nothing) */
+  .top { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px; row-gap: 2px; min-width: 0; }
   .caption { flex: 0 1 auto; min-width: 0; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); overflow-wrap: anywhere; }
   h1 { margin: 0; font-size: 22px; font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
-  .meta { flex: 0 100 auto; min-width: 0; margin-left: auto; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta { flex: 0 1 auto; min-width: 0; margin-left: auto; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
   .badge { padding: 1px 7px; border-radius: var(--radius-xs); border: 1px solid var(--bg-4); color: var(--text-2); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
   .media { display: flex; flex-direction: column; gap: 8px; }
@@ -96,6 +97,8 @@
   .media.wide .tiles.one { grid-template-columns: minmax(0, 1fr); }
   .media.wide .tile { max-height: none; }
   .media.wide.solo .tiles { grid-column: 1 / -1; }
+  /* a video with no screenshots: one column as wide as the player gets (before enlarged, which still takes the row) */
+  .media.wide.no-tiles { grid-template-columns: minmax(0, 640px); }
   /* enlarged: the video takes the row, the screenshots a strip under it */
   .media.wide.enlarged { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .media.wide.enlarged .video { grid-column: 1 / -1; }

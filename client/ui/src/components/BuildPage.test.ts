@@ -421,6 +421,51 @@ describe('BuildPage: layout', () => {
     expect(bar.querySelector('.comments-toggle')).not.toBeNull()
   })
 
+  // #645 review: on the stacked layout Enlarge has nothing to fill, so it isn't offered and an earlier one doesn't apply
+  it('Enlarge is offered only on the wide layout', async () => {
+    localStorage.setItem('pulse.buildComments', 'hidden')
+    await page(build('M001', { link: yt }, { attachments: [1, 2].map(shot) }))
+    resize(500)
+    expect(layout()).toBe('stacked')
+    expect(document.querySelector('.build-video .enlarge')).toBeNull()
+    resize(1200)
+    document.querySelector<HTMLButtonElement>('.build-video .corner .enlarge')!.click()
+    flushSync()
+    expect(document.querySelector('.build-view .media.enlarged')).not.toBeNull()
+    resize(500)
+    expect(document.querySelector('.build-view .media.enlarged')).toBeNull()
+    expect(document.querySelector('.build-video.enlarged')).toBeNull()
+    expect(document.querySelector('.build-video .enlarge')).toBeNull()
+  })
+
+  // #645 review: a video with no screenshots takes the row's one column, not half of it
+  it('a video with no screenshots gets the whole wide row', async () => {
+    localStorage.setItem('pulse.buildComments', 'hidden')
+    await page(build('M001', { link: yt }))
+    resize(1200)
+    expect(document.querySelector('.build-view .media.wide')!.classList.contains('no-tiles')).toBe(true)
+  })
+
+  // #645 review: the Actions error over the page is dismissed from the keyboard too
+  it('an Actions error closes on Escape or its close button', async () => {
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => { if (cmd === 'set_build_archived') throw 'no can do'; return answer(cmd, args) })
+    const fail = async () => {
+      await openActions()
+      ;[...document.querySelectorAll<HTMLElement>('.build-actions [role=menuitem]')].find((e) => e.textContent?.trim() === 'Archive')!.click()
+      await flush()
+      return document.querySelector<HTMLElement>('.build-actions .err[role=alert]')
+    }
+    await page(build('M001', {}, { author_id: 'U1' }))
+    expect((await fail())?.textContent).toContain('no can do')
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.querySelector('.build-actions .err')).toBeNull()
+    const close = (await fail())!.querySelector<HTMLButtonElement>('button[aria-label="Dismiss error"]')!
+    close.click()
+    flushSync()
+    expect(document.querySelector('.build-actions .err')).toBeNull()
+  })
+
   it('Enlarge on the wide layout gives the video the full row', async () => {
     await page(build('M001', { link: yt }, { attachments: [1, 2].map(shot) }))
     resize(1200)
@@ -451,6 +496,10 @@ describe('BuildPage: containment', () => {
   it('the meta line ellipsises on the caption line; the caption wraps', () => {
     const css = cssOf('BuildView.svelte')
     expect(rule(css, '\\.top\\.x')).toMatch(/display:\s*flex/)
+    // #645 review: the line wraps, so a meta that doesn't fit beside the caption takes its own line (and only
+    // ellipsises when that is too narrow), rather than being squeezed to nothing in the pinned panel and pop-out
+    expect(rule(css, '\\.top\\.x')).toMatch(/flex-wrap:\s*wrap/)
+    expect(rule(css, '\\.meta\\.x')).toMatch(/flex:\s*0 1 auto/)
     expect(rule(css, '\\.top\\.x')).toMatch(/min-width:\s*0/)
     const meta = rule(css, '\\.meta\\.x')
     for (const r of [/min-width:\s*0/, /white-space:\s*nowrap/, /overflow:\s*hidden/, /text-overflow:\s*ellipsis/, /margin-left:\s*auto/, /color:\s*var\(--text-3\)/]) expect(meta).toMatch(r)
@@ -462,6 +511,7 @@ describe('BuildPage: containment', () => {
     expect(rule(css, '\\.media\\.wide\\.x')).toMatch(/grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*360px\)\)/)
     expect(rule(css, '\\.media\\.wide\\.x \\.tiles:where\\(\\.x\\)')).toMatch(/grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/)
     expect(rule(css, '\\.media\\.wide\\.enlarged\\.x \\.video:where\\(\\.x\\)')).toMatch(/grid-column:\s*1 \/ -1/)
+    expect(rule(css, '\\.media\\.wide\\.no-tiles\\.x')).toMatch(/grid-template-columns:\s*minmax\(0,\s*640px\)/)
   })
 
   it("the player's controls show on hover and keyboard focus, and the link button ellipsises", () => {

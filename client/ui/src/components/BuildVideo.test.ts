@@ -17,8 +17,8 @@ const planner: BuildLink = { url: 'https://planner.example/raven/42', title: 'Ra
 
 let cmp: ReturnType<typeof mount> | undefined
 async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick(); flushSync() }
-async function show(link: BuildLink) {
-  cmp = mount(BuildVideo, { target: document.body, props: { link, messageId: 'M1' } })
+async function show(link: BuildLink, canEnlarge = true) {
+  cmp = mount(BuildVideo, { target: document.body, props: { link, messageId: 'M1', canEnlarge } })
   flushSync()
   await settle()
 }
@@ -62,6 +62,21 @@ describe('BuildVideo', () => {
     expect(document.querySelector('.build-video.enlarged')).not.toBeNull()
   })
 
+  // #645 review: its name and tip stay "Enlarge video" (aria-pressed says it's on); without room to fill it isn't shown
+  it('Enlarge keeps its name, and is only offered where it can enlarge', async () => {
+    await show(yt)
+    const enlarge = document.querySelector<HTMLButtonElement>('.build-video .enlarge')!
+    enlarge.click()
+    flushSync()
+    expect(enlarge.getAttribute('aria-label')).toBe('Enlarge video')
+    expect(enlarge.getAttribute('data-tip')).toBe('Enlarge video')
+    unmount(cmp!)
+    cmp = undefined
+    document.body.innerHTML = ''
+    await show(yt, false)
+    expect(document.querySelector('.build-video .enlarge')).toBeNull()
+  })
+
   // #618 testing: the raw link text read messy; a small button opens the video on YouTube instead
   it('opens on YouTube from a small button beside the player, not raw link text', async () => {
     await show(yt)
@@ -95,10 +110,10 @@ describe('BuildVideo', () => {
     expect(document.activeElement).toBe(enlarge)
     enlarge.click()
     flushSync()
-    // a toggle: its name stays, its pressed state and tooltip say which way it goes
+    // a toggle: its name and tooltip stay, its pressed state (and icon) say which way it goes (#645 review)
     expect(enlarge.getAttribute('aria-label')).toBe('Enlarge video')
     expect(enlarge.getAttribute('aria-pressed')).toBe('true')
-    expect(enlarge.getAttribute('data-tip')).toBe('Shrink')
+    expect(enlarge.getAttribute('data-tip')).toBe('Enlarge video')
     // nothing of it is left under the player
     expect(document.querySelector('.build-video .under .enlarge')).toBeNull()
   })
