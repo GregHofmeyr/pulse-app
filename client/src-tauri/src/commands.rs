@@ -699,6 +699,8 @@ impl Core {
         }
         // Signed out: nothing from this session may keep running or be sent under the next account.
         self.outbox.clear();
+        // the build pop-out (#620) shows nothing of a signed-out account
+        crate::build_window::signed_out(app);
         app.state::<VoiceManager>().forget_tokens();
         app.state::<crate::voice::mictest::MicTest>().stop();
         let app = app.clone();
@@ -822,8 +824,11 @@ async fn forward(
                     a.state::<Core>().start_clip_jobs(&a, &t).await;
                 });
                 let _ = app.emit("pulse://ready", &**r);
+                // the build pop-out's build may have gone while we were away (#620)
+                crate::build_window::recheck_after_ready(&app);
             }
             GatewayUpdate::Event(e) => {
+                crate::build_window::note_event(&app, e);
                 let _ = app.emit("pulse://event", e);
             }
             GatewayUpdate::Connection(state) => {

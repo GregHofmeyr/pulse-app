@@ -128,22 +128,22 @@ describe('BuildPage', () => {
     expect(document.querySelector('.viewer[role=dialog]')?.getAttribute('aria-label')).toBe('shot2.webp')
   })
 
-  it('the author sees Edit, Archive and Delete; sam only Pin to side; the owner Archive and Delete', async () => {
+  it('the author sees Edit, Archive and Delete; sam only Pin to side and Pop out; the owner Archive and Delete', async () => {
     // alex's own build
     await page(build('M001', {}, { author_id: 'U1' }))
     await openActions()
-    expect(actionItems()).toEqual(['Pin to side', 'Edit', 'Archive', 'Delete'])
+    expect(actionItems()).toEqual(['Pin to side', 'Pop out', 'Edit', 'Archive', 'Delete'])
     unmount(cmp!)
     // sam's build, alex neither its author nor the owner: only Pin to side (#619)
     await page(build('M001'))
     await openActions()
-    expect(actionItems()).toEqual(['Pin to side'])
+    expect(actionItems()).toEqual(['Pin to side', 'Pop out'])
     unmount(cmp!)
     // sam's build, alex the server's owner
     start('U1')
     await page(build('M001'))
     await openActions()
-    expect(actionItems()).toEqual(['Pin to side', 'Archive', 'Delete'])
+    expect(actionItems()).toEqual(['Pin to side', 'Pop out', 'Archive', 'Delete'])
   })
 
   // #619
@@ -155,17 +155,29 @@ describe('BuildPage', () => {
     expect(pinnedBuild.key).toEqual({ channelId: 'B1', messageId: 'M001' })
     expect(pinnedBuild.message?.id).toBe('M001')
     await openActions()
-    expect(actionItems()).toEqual(['Unpin'])
+    expect(actionItems()).toEqual(['Unpin', 'Pop out'])
     ;[...document.querySelectorAll<HTMLElement>('.build-actions [role=menuitem]')].find((e) => e.textContent?.trim() === 'Unpin')!.click()
     flushSync()
     expect(pinnedBuild.key).toBeNull()
+  })
+
+  // #620
+  it('Pop out sends the snapshot', async () => {
+    await page(build('M001'))
+    await openActions()
+    ;[...document.querySelectorAll<HTMLElement>('.build-actions [role=menuitem]')].find((e) => e.textContent?.trim() === 'Pop out')!.click()
+    await flush()
+    const open = invoke.mock.calls.filter(([c]) => c === 'open_build_window').map(([, a]) => a as { snapshot: { message_id: string; title: string }; onTop: boolean })
+    expect(open).toHaveLength(1)
+    expect(open[0].onTop).toBe(true)
+    expect(open[0].snapshot).toMatchObject({ message_id: 'M001', title: 'Build M001', author_name: 'sam' })
   })
 
   it('an archived build says so and offers Restore', async () => {
     await page(build('M001', { archived_at: '2026-10-05T00:00:00Z', archived_by: 'U1' }, { author_id: 'U1' }))
     expect(document.querySelector('.build-view .badge')?.textContent).toBe('ARCHIVED')
     await openActions()
-    expect(actionItems()).toEqual(['Pin to side', 'Edit', 'Restore', 'Delete'])
+    expect(actionItems()).toEqual(['Pin to side', 'Pop out', 'Edit', 'Restore', 'Delete'])
     ;[...document.querySelectorAll<HTMLElement>('.build-actions [role=menuitem]')].find((e) => e.textContent?.trim() === 'Restore')!.click()
     await flush()
     expect(calls('set_build_archived')[0][1]).toEqual({ messageId: 'M001', archived: false })

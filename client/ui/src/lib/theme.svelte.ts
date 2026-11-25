@@ -3,6 +3,7 @@
 // the app window its background colour, so a restart on Light doesn't flash dark.
 import { invoke } from '@tauri-apps/api/core'
 import { parseHex } from './color'
+import { windowKind } from './windowKind'
 import { type CardLook } from './cardTheme'
 import { DEFAULT_NAME_LEVEL, DEFAULT_THEME, DEFAULT_TINT, deriveAccent, NAME_LEVELS, surfacesFor, themeByKey, THEMES, TINTS, type NameLevel, type Surfaces, type ThemeKey, type TintKey } from './themes'
 
@@ -98,7 +99,8 @@ export function applyTheme(root: HTMLElement = document.documentElement): void {
     for (const k of ACCENT_TOKENS) root.style.removeProperty(k)
   }
   const bg = currentSurfaces().bg0
-  if (bg !== sentBg && typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+  // the main window's own background (#620: the build pop-out may not set it)
+  if (bg !== sentBg && typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window && windowKind(location) === 'main') {
     sentBg = bg
     invoke('set_window_background', { color: bg }).catch(() => {
       sentBg = null

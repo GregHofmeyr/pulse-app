@@ -175,6 +175,34 @@ to it.**
   the user's IP address and what was opened, and may set cookies. The window shares the main window's webview
   profile, so those cookies are kept there; signing out of Pulse clears the webview's caches, not its cookies.
 
+**Build pop-out: only when the user picks Pop out on a build (#620).**
+- **What it is.** A second Pulse window (label `build`) on the app's own page (`index.html?window=build`) showing one
+  build read-only: its title, game, author, times, screenshots, notes and link. Never its comments. One at a time: a
+  new one replaces it. It is always on top unless the user turns that off in it.
+- **What it can call.** Tauri lets every window on the app's origin call every app command, so a gate in front of the
+  command handler (`client/src-tauri/src/ipc_gate.rs`) decides by window label. The pop-out may call exactly three:
+  `build_window_snapshot` (the build the main window handed over), `build_window_image_urls` (fresh links to that
+  build's screenshots; any other build id is refused, and only that build's screenshots come back) and
+  `set_build_window_on_top`. Everything else is refused, including commands added later: the gate allows nothing
+  it doesn't name, and a test checks it against every registered command. Any window label other than `main` and
+  `build` (the link-preview pop-out included) may call no app command at all.
+- **No capability.** No capability file names it, so it can't use any plugin command, events included. That is
+  deliberate: Tauri hands every event the core emits (`emit_to` a window as well) to an any-target listener in any
+  window, so a pop-out that could listen could read the whole gateway feed. It asks the core for a newer snapshot
+  every 2 seconds instead.
+- **No credentials.** The session token stays in the Rust core; the window's address carries only `window=build`.
+  It shares the main window's webview profile (the same origin's settings in local storage, which hold no
+  credentials) so it gets the same theme.
+- **When it closes.** Signing out closes it, including a sign-out that lands while a Pop out is still opening its
+  window (that open is refused, or its window destroyed). The build being deleted or the user losing access closes
+  it too. The main window's page watches for that, and the Rust core checks as well, so a reloaded page or a missed
+  event can't leave it open: on a delete in the gateway feed, on a 403 or 404 when the pop-out asks for its
+  screenshots, and on a fresh fetch of the build after each reconnect.
+- **Where it may go.** Only the app's own page (`tauri://localhost`, `http(s)://tauri.localhost`, and the dev server
+  in a dev build only). No `about:`, `file:`, `data:` or `javascript:` page. Links (the build's link card, links in its
+  notes) open in the default browser, as in the main window. Its video plays nowhere in it: the link card opens the
+  browser.
+
 ## 2. Network
 
 The client makes outbound connections only: to the Pulse server and its LiveKit SFU, to the server's file storage,
@@ -675,8 +703,12 @@ and the app frames it, so the player gets an HTTPS parent with a real origin.
     double-clicking it to maximise).
   - The page cannot emit events, use the app, path, image, menu or tray APIs, or open devtools. It reaches the Rust core
     only through the app's own commands.
-  - No file-system, shell, HTTP or opener plugins are included. There is one capability file and one window (`main`).
-  - A test (`client/src-tauri/tests/capabilities.rs`) fails if the list changes.
+  - No file-system, shell, HTTP or opener plugins are included. There is one capability file, for the `main` window
+    only. The two pop-outs (`embed`, a provider's page, and `build`, a build, section 1) get no capability.
+  - A test (`client/src-tauri/tests/capabilities.rs`) fails if the list changes, or if any file names a pop-out.
+- **App commands by window.** An IPC gate (`client/src-tauri/src/ipc_gate.rs`) runs before every app command: `main`
+  may call all of them, `build` only its three (section 1), any other label none. It fails closed, and a test checks it
+  against every registered command.
 - **DNS prefetch.** `index.html` sets `x-dns-prefetch-control: off`, so the webview does not resolve hostnames it has
   not been told to connect to.
 - **Where network access happens.**
