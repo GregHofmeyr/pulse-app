@@ -50,14 +50,16 @@ export function matchesBuildFilter(m: Message, f: BuildFilter): boolean {
 export const isQuickDrop = (m: Message): boolean => !!m.build?.quick_drop
 export const isArchived = (m: Message): boolean => !!m.build?.archived_at
 
-/** What a card shows as its picture: the first screenshot, else the link's thumbnail, else a plain tile. */
+/** What a build shows as its picture: its YouTube video's thumbnail, else the first screenshot, else another link's
+ *  preview image, else a plain tile. */
 export type BuildThumb = { kind: 'shot'; attachment: Attachment } | { kind: 'video'; thumb: EmbedThumb } | { kind: 'none' }
 
 export function buildThumb(m: Message): BuildThumb {
+  const link = m.build?.link
+  if (link?.provider === 'youtube' && link.thumb) return { kind: 'video', thumb: link.thumb }
   const shot = m.attachments?.find((a) => a.kind === 'image' && !a.expired)
   if (shot) return { kind: 'shot', attachment: shot }
-  const thumb = m.build?.link?.thumb
-  return thumb ? { kind: 'video', thumb } : { kind: 'none' }
+  return link?.thumb ? { kind: 'video', thumb: link.thumb } : { kind: 'none' }
 }
 
 const newestFirst = (a: Message, b: Message) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)

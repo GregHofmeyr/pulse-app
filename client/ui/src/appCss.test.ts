@@ -202,3 +202,32 @@ describe('the call-here mark', () => {
     expect(css).toMatch(/\.call-badge \{[^}]*background: var\(--accent\);[^}]*color: var\(--on-accent\)/)
   })
 })
+
+describe('the slide-in entrance (quick add, Builds #618)', () => {
+  const mediaRules = (cond: string) => [...sheet.cssRules].filter((r): r is CSSMediaRule => r instanceof CSSMediaRule && r.conditionText.includes(cond)).flatMap((m) => styleRules(m.cssRules))
+  it('slides down and fades in over --dur-slow with a slight overshoot, transform and opacity only', () => {
+    const s = rule('.slide-in')
+    expect(s.getPropertyValue('animation')).toBe('slide-in var(--dur-slow) var(--ease-overshoot)')
+    expect(s.getPropertyValue('will-change')).toBe('opacity')
+    // the overshoot: a bezier whose second control point passes 1
+    const [, y1, , y2] = /--ease-overshoot: cubic-bezier\(([^)]*)\)/.exec(readFileSync(resolve(__dirname, 'app.css'), 'utf8'))![1].split(',').map(Number)
+    expect(y1).toBeGreaterThan(1)
+    expect(y2).toBe(1)
+    const kf = [...sheet.cssRules].find((r): r is CSSKeyframesRule => r instanceof CSSKeyframesRule && r.name === 'slide-in')!
+    const from = kf.cssRules[0] as CSSKeyframeRule
+    expect([...from.style].sort()).toEqual(['opacity', 'transform'])
+    expect(from.style.getPropertyValue('transform')).toMatch(/^translateY\(-\d+px\)$/)
+  })
+
+  it('reduced motion: no movement, a fade only (long enough to see, past the global .01ms)', () => {
+    const r = mediaRules('prefers-reduced-motion').find((x) => x.selectorText.split(',').map((t) => t.trim()).includes('.slide-in'))!
+    expect(r.style.getPropertyValue('animation')).toBe('fade-in var(--dur) var(--ease)')
+    expect(r.style.getPropertyPriority('animation')).toBe('important')
+  })
+
+  it('off while streaming or unfocused, unless already entered (like pop-in and fade-in)', () => {
+    const off = styleRules(sheet.cssRules).find((x) => x.selectorText.includes('.streaming .pop-in:not(.entered)'))!
+    expect(off.selectorText).toContain('.streaming .slide-in:not(.entered)')
+    expect(off.selectorText).toContain('.unfocused .slide-in:not(.entered)')
+  })
+})

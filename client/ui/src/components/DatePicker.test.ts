@@ -47,6 +47,7 @@ describe('DatePicker', () => {
     expect(grid.getAttribute('aria-labelledby')).toBe(dialog().querySelector('.month')!.id)
     expect(heading()).toBe('November 2026')
     expect([...grid.querySelectorAll('[role=columnheader]')].map((h) => h.textContent)).toEqual(['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'])
+    expect(grid.querySelector('[role=columnheader]')!.getAttribute('aria-label')).toBe('Monday')
     expect(grid.querySelectorAll('[role=row]')).toHaveLength(7) // the header row and 6 weeks
     expect(grid.querySelectorAll('[role=gridcell]')).toHaveLength(42)
     expect(cell('2026-11-25').getAttribute('aria-current')).toBe('date')

@@ -21,6 +21,13 @@ describe('finished entrances', () => {
     expect([a, b, c].map((el) => el.classList.contains('entered'))).toEqual([true, true, false])
   })
 
+  it('the slide-in entrance (quick add) is marked too', () => {
+    off = markFinishedEntrances(document)
+    document.body.innerHTML = '<div class="slide-in" id="a"></div>'
+    end(document.getElementById('a')!, 'slide-in')
+    expect(document.getElementById('a')!.classList.contains('entered')).toBe(true)
+  })
+
   it('stops listening when asked', () => {
     markFinishedEntrances(document)()
     document.body.innerHTML = '<div class="pop-in" id="a"></div>'

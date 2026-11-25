@@ -106,7 +106,7 @@
       </span>
     </div>
     <div class="info">
-      {#if game}<span class="caption">{game}{#if b.game_guessed}<span class="guessed"> · guessed</span>{/if}</span>{/if}
+      {#if game}<span class="caption">{game}{#if b.game_guessed}<span class="auto-picked">{' · auto picked'}</span>{/if}</span>{/if}
       <span class="title">{b.title}</span>
       {#if b.notes}<span class="notes">{b.notes}</span>{/if}
       <span class="meta">{meta}</span>
@@ -135,7 +135,6 @@
   .badge { background: var(--bg-1); color: var(--text-2); border: 1px solid var(--bg-4); }
   .info { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .caption { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .guessed { text-transform: none; letter-spacing: 0; font-weight: 400; font-style: italic; }
   .title { font-size: 15px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .notes { font-size: 13px; color: var(--text-2); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
   .meta { margin-top: 4px; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

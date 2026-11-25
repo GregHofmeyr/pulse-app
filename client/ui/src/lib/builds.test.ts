@@ -165,12 +165,22 @@ describe('build helpers', () => {
     expect(isArchived(build('M1', { archived_at: '2026-10-09T00:00:00.000Z' }))).toBe(true)
   })
 
-  it('thumb prefers a screenshot then the video', () => {
+  it('thumb: the YouTube video first, then the first screenshot, then a plain tile', () => {
     const shot = { id: 'A1', name: 'a.png', content_type: 'image/png', kind: 'image', size: 1, width: 10, height: 10, duration_ms: null, expires_at: null, expired: false } as never
-    const link = { url: 'https://youtu.be/x', title: 'x', thumb: { hash: 'h', width: 16, height: 9 }, provider: 'youtube', provider_id: 'x' } as never
-    expect(buildThumb(build('M1', { link }, { attachments: [shot] }))).toEqual({ kind: 'shot', attachment: shot })
-    expect(buildThumb(build('M1', { link }))).toEqual({ kind: 'video', thumb: { hash: 'h', width: 16, height: 9 } })
-    expect(buildThumb(build('M1', { link: { ...(link as object), thumb: null } as never }))).toEqual({ kind: 'none' })
+    const shot2 = { ...(shot as object), id: 'A2' } as never
+    const gone = { ...(shot as object), id: 'A0', expired: true } as never
+    const thumb = { hash: 'h', width: 16, height: 9 }
+    const yt = { url: 'https://youtu.be/x', title: 'x', thumb, provider: 'youtube', provider_id: 'x' } as never
+    const page = { url: 'https://example.com/b', title: 'b', thumb, provider: 'generic', provider_id: null } as never
+    // a YouTube video wins over screenshots
+    expect(buildThumb(build('M1', { link: yt }, { attachments: [shot, shot2] }))).toEqual({ kind: 'video', thumb })
+    expect(buildThumb(build('M1', { link: yt }))).toEqual({ kind: 'video', thumb })
+    // a YouTube link without its thumbnail yet: the first (unexpired) screenshot
+    expect(buildThumb(build('M1', { link: { ...(yt as object), thumb: null } as never }, { attachments: [gone, shot, shot2] }))).toEqual({ kind: 'shot', attachment: shot })
+    // another site's preview image comes after screenshots, before the plain tile
+    expect(buildThumb(build('M1', { link: page }, { attachments: [shot] }))).toEqual({ kind: 'shot', attachment: shot })
+    expect(buildThumb(build('M1', { link: page }))).toEqual({ kind: 'video', thumb })
+    expect(buildThumb(build('M1', { link: { ...(yt as object), thumb: null } as never }))).toEqual({ kind: 'none' })
     expect(buildThumb(build('M1'))).toEqual({ kind: 'none' })
   })
 })

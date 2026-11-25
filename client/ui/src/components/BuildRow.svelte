@@ -95,7 +95,7 @@
     aria-controls={onOpen && peeking && !selecting ? peekId : undefined} onclick={onOpen ? click : undefined} onmousedown={down} onkeydown={keys} onkeyup={keyUp}>
     <div class="media"><BuildThumb {message} dim={isArchived(message)} />{#if selecting}<span class="check" class:on={selected} aria-hidden="true">{#if selected}<Icon name="check" size={12} />{/if}</span>{/if}{#if b.link}<span class="tag" aria-hidden="true">▶</span><span class="sr-only">video</span>{/if}</div>
     <div class="info">
-      {#if game}<span class="caption">{game}{#if b.game_guessed}<span class="guessed"> · guessed</span>{/if}</span>{/if}
+      {#if game}<span class="caption">{game}{#if b.game_guessed}<span class="auto-picked">{' · auto picked'}</span>{/if}</span>{/if}
       <span class="line">
         <span class="title">{b.title}</span>
         {#if isQuickDrop(message)}<span class="badge">QUICK DROP</span>{/if}
@@ -124,7 +124,6 @@
   .tag { position: absolute; right: 4px; bottom: 4px; padding: 0 5px; border-radius: var(--radius-xs); background: var(--scrim-strong); color: var(--tooltip-text); font-size: 10px; }
   .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .caption { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .guessed { text-transform: none; letter-spacing: 0; font-weight: 400; font-style: italic; }
   .line { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .title { font-size: 14px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .badge { flex-shrink: 0; padding: 1px 6px; border-radius: var(--radius-xs); border: 1px solid var(--bg-4); color: var(--text-2); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
