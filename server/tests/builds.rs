@@ -7,7 +7,7 @@ use std::time::Duration;
 use common::*;
 use futures::SinkExt;
 use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
-use pulse_protocol::ids::ServerId;
+use pulse_protocol::ids::{GameId, ServerId};
 use pulse_protocol::rest::{Channel, ChannelKind, Message};
 use serde_json::json;
 use sqlx::sqlite::SqliteConnectOptions;
@@ -1252,6 +1252,204 @@ async fn clearing_a_guessed_game_sticks() {
     .await;
     let b = e.build.unwrap();
     assert_eq!((b.game_id, b.game_guessed), (Some(g.id), false));
+}
+
+/// A quick drop whose game was guessed from its link (what the link fetch leaves).
+async fn guessed_drop(w: &World, title: &str, g: GameId) -> pulse_protocol::ids::MessageId {
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": title })).await;
+    sqlx::query("UPDATE builds SET game_id = ?, game_guessed = 1 WHERE message_id = ?")
+        .bind(g.to_string())
+        .bind(m.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    m.id
+}
+
+#[tokio::test]
+async fn an_edit_leaving_a_guessed_game_unchanged_keeps_the_guess_and_the_quick_drop() {
+    let w = world().await;
+    let g = add_game(&w.app, &w.alex.1, w.server, "Warframe").await;
+    let id = guessed_drop(&w, "Saryn", g.id).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        id,
+        json!({ "title": "Saryn v2", "game_id": null, "game": "unchanged" }),
+    )
+    .await;
+    let b = e.build.unwrap();
+    assert_eq!((b.game_id, b.game_guessed), (Some(g.id), true));
+    assert!(b.quick_drop, "a guess isn't a game the author picked");
+    assert_eq!(b.title, "Saryn v2");
+    // the game is still in the search text
+    assert!(e.content.contains("Warframe"), "{}", e.content);
+    // notes still end it, and the guess stays a guess
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        id,
+        json!({ "title": "Saryn", "notes": "details", "game": "unchanged" }),
+    )
+    .await;
+    let b = e.build.unwrap();
+    assert_eq!((b.game_id, b.game_guessed), (Some(g.id), true));
+    assert!(!b.quick_drop);
+    // and so does Mark as sorted
+    let id = guessed_drop(&w, "Mesa", g.id).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        id,
+        json!({ "title": "Mesa", "game": "unchanged", "mark_sorted": true }),
+    )
+    .await;
+    assert!(!e.build.unwrap().quick_drop);
+}
+
+#[tokio::test]
+async fn unchanged_keeps_a_picked_game_and_no_game_alike() {
+    let w = world().await;
+    let g = add_game(&w.app, &w.alex.1, w.server, "Warframe").await;
+    let m = build_ok(
+        &w.app,
+        &w.alex.1,
+        w.ch.id,
+        json!({ "title": "Picked", "game_id": g.id }),
+    )
+    .await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Picked", "game": "unchanged" }),
+    )
+    .await;
+    let b = e.build.unwrap();
+    assert_eq!(
+        (b.game_id, b.game_guessed, b.quick_drop),
+        (Some(g.id), false, false)
+    );
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "None" })).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "None", "game": "unchanged" }),
+    )
+    .await;
+    let b = e.build.unwrap();
+    assert_eq!(
+        (b.game_id, b.game_guessed, b.quick_drop),
+        (None, false, true)
+    );
+}
+
+#[tokio::test]
+async fn keeping_a_guessed_game_confirms_it() {
+    let w = world().await;
+    let g = add_game(&w.app, &w.alex.1, w.server, "Warframe").await;
+    let id = guessed_drop(&w, "Saryn", g.id).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        id,
+        json!({ "title": "Saryn", "game": { "set": g.id } }),
+    )
+    .await;
+    let b = e.build.unwrap();
+    assert_eq!((b.game_id, b.game_guessed), (Some(g.id), false));
+    assert!(!b.quick_drop, "a kept game is an explicit game");
+}
+
+#[tokio::test]
+async fn picking_another_game_over_a_guess_confirms_that_game() {
+    let w = world().await;
+    let g = add_game(&w.app, &w.alex.1, w.server, "Warframe").await;
+    let other = add_game(&w.app, &w.alex.1, w.server, "The First Descendant").await;
+    let id = guessed_drop(&w, "Saryn", g.id).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        id,
+        json!({ "title": "Saryn", "game_id": g.id, "game": { "set": other.id } }),
+    )
+    .await;
+    let b = e.build.unwrap();
+    assert_eq!(
+        (b.game_id, b.game_guessed),
+        (Some(other.id), false),
+        "`game` wins over `game_id`"
+    );
+    assert!(!b.quick_drop);
+    assert!(e.content.contains("The First Descendant"), "{}", e.content);
+}
+
+#[tokio::test]
+async fn clearing_a_guessed_game_with_the_game_field() {
+    let w = world().await;
+    let g = add_game(&w.app, &w.alex.1, w.server, "Warframe").await;
+    let id = guessed_drop(&w, "Saryn", g.id).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        id,
+        json!({ "title": "Saryn", "game_id": g.id, "game": "clear" }),
+    )
+    .await;
+    let b = e.build.unwrap();
+    assert_eq!((b.game_id, b.game_guessed), (None, false));
+    assert!(b.quick_drop, "no game and no notes: still a quick drop");
+}
+
+#[tokio::test]
+async fn a_game_set_by_the_game_field_is_checked_to_be_in_the_server() {
+    let w = world().await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Saryn" })).await;
+    let r = put_build(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Saryn", "game": { "set": GameId::new() } }),
+    )
+    .await;
+    assert_eq!(r.status(), 400);
+    let r = put_build(
+        &w.app,
+        &w.alex.1,
+        m.id,
+        json!({ "title": "Saryn", "game": "keep" }),
+    )
+    .await;
+    assert_eq!(r.status(), 422, "an unknown game edit is refused");
+}
+
+#[tokio::test]
+async fn an_old_style_edit_of_a_guessed_game_still_confirms_or_clears_it() {
+    let w = world().await;
+    let g = add_game(&w.app, &w.alex.1, w.server, "Warframe").await;
+    // no `game` field, game_id sent: a pick, as before
+    let id = guessed_drop(&w, "Saryn", g.id).await;
+    let e = edit_ok(
+        &w.app,
+        &w.alex.1,
+        id,
+        json!({ "title": "Saryn", "game_id": g.id }),
+    )
+    .await;
+    let b = e.build.unwrap();
+    assert_eq!(
+        (b.game_id, b.game_guessed, b.quick_drop),
+        (Some(g.id), false, false)
+    );
+    // no `game` field, no game_id: cleared, as before
+    let id = guessed_drop(&w, "Mesa", g.id).await;
+    let e = edit_ok(&w.app, &w.alex.1, id, json!({ "title": "Mesa" })).await;
+    let b = e.build.unwrap();
+    assert_eq!(
+        (b.game_id, b.game_guessed, b.quick_drop),
+        (None, false, true)
+    );
 }
 
 #[tokio::test]

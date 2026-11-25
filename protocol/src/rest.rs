@@ -3261,12 +3261,29 @@ pub struct CreateBuildRequest {
     pub nonce: Option<String>,
 }
 
+/// What a build edit does to its game (#618).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildGameEdit {
+    /// Leave it as it is: a guessed game stays a guess (and doesn't end a quick drop).
+    Unchanged,
+    /// The author picked this game, or kept the guess: no longer guessed.
+    Set(GameId),
+    /// No game.
+    Clear,
+}
+
 /// `PUT /builds/{message_id}`: the author's edit, replacing every field.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
 pub struct UpdateBuildRequest {
     pub title: String,
+    /// The game, when `game` is absent (an older client): a game sent is a game picked, none clears it.
     #[serde(default)]
     pub game_id: Option<GameId>,
+    /// What to do with the game; when present, `game_id` is ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub game: Option<BuildGameEdit>,
     #[serde(default)]
     pub link_url: Option<String>,
     #[serde(default)]
@@ -3816,6 +3833,38 @@ pub struct SearchResults {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A build edit's game (#618): absent in an older client's edit (and left out when serialised, so an older server
+    /// reads the body as before); `"unchanged"`, `{"set": id}` or `"clear"` otherwise.
+    #[test]
+    fn a_build_edits_game_is_optional_and_tagged() {
+        let old: UpdateBuildRequest =
+            serde_json::from_value(serde_json::json!({ "title": "Saryn", "game_id": null }))
+                .unwrap();
+        assert_eq!(old.game, None);
+        let body = serde_json::to_value(&old).unwrap();
+        assert!(body.get("game").is_none(), "{body}");
+
+        let g = GameId::new();
+        for (json, edit) in [
+            (serde_json::json!("unchanged"), BuildGameEdit::Unchanged),
+            (serde_json::json!("clear"), BuildGameEdit::Clear),
+            (serde_json::json!({ "set": g }), BuildGameEdit::Set(g)),
+        ] {
+            let r: UpdateBuildRequest = serde_json::from_value(
+                serde_json::json!({ "title": "Saryn", "game": json.clone() }),
+            )
+            .unwrap();
+            assert_eq!(r.game, Some(edit));
+            assert_eq!(serde_json::to_value(&r).unwrap()["game"], json);
+        }
+        assert!(
+            serde_json::from_value::<UpdateBuildRequest>(
+                serde_json::json!({ "title": "Saryn", "game": "keep" })
+            )
+            .is_err()
+        );
+    }
 
     /// The card glow (#156) next to 0.2.x: an older server's card (no `glow`) reads as glowing, a
     /// card with it still reads in an older client (serde skips the field it doesn't know), and an
