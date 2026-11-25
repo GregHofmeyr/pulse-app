@@ -306,7 +306,11 @@
       {/if}
       <div class="body">
         <div class="feed" class:list={view === 'list'} bind:this={scroller}>
-          {#if view === 'gallery'}
+          <!-- the empty state takes the grid's or the rows' place, never sits under an empty (padded) grid,
+               so it stays put when the view switches -->
+          {#if empty}
+            <p class="empty">{filtered ? 'No builds match.' : 'No builds yet. Save your first with + Add build: a title, a link, a screenshot or a few notes is enough.'}</p>
+          {:else if view === 'gallery'}
             <div class="grid">
               {#each items as m (m.id)}<BuildCard message={m} {serverId} {nameOf} onOpen={openPage} />{/each}
             </div>
@@ -316,9 +320,6 @@
             </div>
           {/if}
           <div class="sentinel" bind:this={sentinel}></div>
-          {#if empty}
-            <p class="empty">{filtered ? 'No builds match.' : 'No builds yet. Save your first with + Add build: a title, a link, a screenshot or a few notes is enough.'}</p>
-          {/if}
           {#if failedKey === key}
             <p class="error" role="alert">{error} <button type="button" class="link-btn" onclick={() => (failedKey = null)}>Try again</button></p>
           {/if}

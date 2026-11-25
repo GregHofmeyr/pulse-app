@@ -203,6 +203,29 @@ describe('BuildsChannel: gallery and list', () => {
     expect(document.querySelector('.empty')?.textContent).toContain('No builds yet')
     expect(document.querySelector('.empty')?.textContent).toContain('+ Add build')
   })
+
+  it('the empty state sits in the same place in gallery and list (no jump on switching)', async () => {
+    pages = [[]]
+    await show()
+    const radio = (l: string) => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="View"] [role=radio]')].find((b) => b.textContent === l)!
+    // what's laid out around the copy: its own classes, its parent's, and every sibling before it
+    // (an empty, padded grid above it in one view only is what pushed it down)
+    const layout = () => {
+      const e = document.querySelector<HTMLElement>('.empty')!
+      const before: string[] = []
+      for (let s = e.previousElementSibling; s; s = s.previousElementSibling) before.push(s.className)
+      return { self: e.className, parent: e.parentElement!.className.replace(/\blist\b/, '').trim(), before }
+    }
+    const gallery = layout()
+    radio('List').click()
+    flushSync()
+    expect(document.querySelector('.empty')?.textContent).toContain('No builds yet')
+    expect(layout()).toEqual(gallery)
+    expect(gallery.before).toEqual([])
+    radio('Gallery').click()
+    flushSync()
+    expect(layout()).toEqual(gallery)
+  })
 })
 
 describe('BuildsChannel: accessibility', () => {
