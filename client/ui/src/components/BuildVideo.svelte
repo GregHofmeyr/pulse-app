@@ -1,8 +1,10 @@
 <script lang="ts">
   // A build's link in its page's media area (#618, spec §4.2). A YouTube video plays in place through the same player
-  // path as a link preview (LinkEmbed: our embed page, its sandbox, the one-player-at-a-time `player`), with Enlarge to
-  // fill the media area; leaving the page stops it. Anything else (a build planner, another site's video) is a card
-  // that opens in the browser.
+  // path as a link preview (LinkEmbed: our embed page, its sandbox, the one-player-at-a-time `player`); leaving the page
+  // stops it. Its controls sit on the player's top-right as a video player's do (#618 testing): Enlarge (fills the
+  // media area) and, while playing, Close player, shown on hover and whenever Tab reaches them. Under it, the video's
+  // title (plain, ellipsised) and a small "Open on YouTube" button. Anything else (a build planner, another site's
+  // video) is a card that opens in the browser.
   import { onDestroy } from 'svelte'
   import Icon from './Icon.svelte'
   import { linkAsEmbed, playable, playerSrc, popsOut, providerLabel, sandboxFor, YOUTUBE_FRAMING_ERROR } from '../lib/embeds'
@@ -30,6 +32,7 @@
   const active = $derived(video && !pops && !!origin.origin && player.active === key)
   const thumbSrc = $derived(link.thumb && isMediaHash(link.thumb.hash) ? mediaUrl(link.thumb.hash) : null)
   const title = $derived(link.title ?? link.url)
+  const provider = $derived(providerLabel(e))
   const host = $derived.by(() => {
     try {
       return new URL(link.url).hostname.replace(/^www\./, '')
@@ -78,7 +81,7 @@
   <div class="build-video" class:enlarged>
     <div class="screen">
       {#if active}
-        <iframe bind:this={frameEl} src={playerSrc(origin.origin!, e)} title={`${providerLabel(e)}: ${title}`} sandbox={sandboxFor(e)}
+        <iframe bind:this={frameEl} src={playerSrc(origin.origin!, e)} title={`${provider}: ${title}`} sandbox={sandboxFor(e)}
           allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>
       {:else}
         {#if thumbSrc}<img src={thumbSrc} alt="" loading="lazy" />{:else}<div class="ph" aria-hidden="true"><Icon name="film" size={32} /></div>{/if}
@@ -88,15 +91,17 @@
           <a class="play" href={safeHref(link.url)} target="_blank" rel="noopener noreferrer" aria-label="Play {title} (opens in your browser)"><Icon name="play" size={22} /></a>
         {/if}
       {/if}
+      <div class="corner">
+        {#if active}
+          <button type="button" class="icon-btn icon-btn-sm icon-btn-overlay stop" aria-label="Close player" data-tip="Close player" onclick={() => stop(key)}><Icon name="x" size={14} /></button>
+        {/if}
+        <button type="button" class="icon-btn icon-btn-sm icon-btn-overlay enlarge" aria-label="Enlarge video" aria-pressed={enlarged} data-tip={enlarged ? 'Shrink' : 'Enlarge'}
+          onclick={() => (enlarged = !enlarged)}><Icon name={enlarged ? 'min' : 'expand'} size={14} /></button>
+      </div>
     </div>
     <div class="under">
-      <a class="title" href={safeHref(link.url)} target="_blank" rel="noopener noreferrer">{title}</a>
-      {#if active}
-        <button type="button" class="btn btn-quiet stop" onclick={() => stop(key)}><Icon name="x" size={14} />Close player</button>
-      {/if}
-      <button type="button" class="btn btn-quiet enlarge" aria-pressed={enlarged} onclick={() => (enlarged = !enlarged)}>
-        <Icon name={enlarged ? 'min' : 'expand'} size={14} />{enlarged ? 'Shrink' : 'Enlarge'}
-      </button>
+      {#if link.title}<span class="yt-title" data-tip={link.title}>{link.title}</span>{/if}
+      <a class="open-yt" href={safeHref(link.url)} target="_blank" rel="noopener noreferrer" aria-label="Open on {provider} (opens in your browser)">Open on {provider} <span aria-hidden="true">↗</span></a>
     </div>
   </div>
 {:else}
@@ -117,8 +122,14 @@
   .ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-3); }
   .play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 56px; height: 56px; border-radius: 50%; border: 0; display: flex; align-items: center; justify-content: center; background: var(--scrim-strong); color: var(--tooltip-text); cursor: pointer; }
   .play:hover { filter: brightness(1.15); }
-  .under { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .under .title { flex: 1; min-width: 0; font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* the player's own controls, top-right (#618 testing): shown on hover, when Tab reaches one, and always on touch */
+  .corner { position: absolute; z-index: 1; top: 8px; right: 8px; display: flex; gap: 4px; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+  .build-video:hover .corner, .corner:focus-within { opacity: 1; }
+  @media (hover: none) { .corner { opacity: 1; } }
+  .under { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 24px; }
+  .yt-title { flex: 1; min-width: 0; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .open-yt { flex-shrink: 0; margin-left: auto; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; box-sizing: border-box; border: 1px solid var(--bg-3); border-radius: var(--radius-xs); background: var(--bg-2); color: var(--text-2); font-size: 12px; font-weight: 600; white-space: nowrap; text-decoration: none; }
+  .open-yt:hover { background: var(--bg-3); color: var(--text); }
   .link-card { display: flex; align-items: center; gap: 12px; max-width: 520px; padding: 10px; border-radius: var(--radius-md); border: 1px solid var(--bg-3); background: var(--bg-2); color: inherit; text-decoration: none; }
   .link-card:hover { border-color: var(--bg-4); }
   .link-card .thumb { flex-shrink: 0; width: 96px; aspect-ratio: 16 / 9; border-radius: var(--radius-sm); overflow: hidden; background: var(--bg-3); display: flex; align-items: center; justify-content: center; color: var(--text-3); }

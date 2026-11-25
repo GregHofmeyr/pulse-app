@@ -40,3 +40,23 @@ export function panelOpen(channelId: string): boolean {
 export function setPanelOpen(channelId: string, open: boolean) {
   save(channelId, { panel: open })
 }
+
+// A build page's Comments column (#618 testing): shown until hidden, on this device for every builds channel alike.
+// Saved in `pulse.buildComments` as `shown` or `hidden`; anything else, or storage that throws, reads as shown.
+const COMMENTS_KEY = 'pulse.buildComments'
+
+export function commentsShown(): boolean {
+  try {
+    return localStorage.getItem(COMMENTS_KEY) !== 'hidden'
+  } catch {
+    return true
+  }
+}
+
+export function setCommentsShown(shown: boolean) {
+  try {
+    localStorage.setItem(COMMENTS_KEY, shown ? 'shown' : 'hidden')
+  } catch {
+    // not saved: this visit still shows it
+  }
+}

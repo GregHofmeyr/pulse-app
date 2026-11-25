@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushSync, mount, unmount } from 'svelte'
+import { compile } from 'svelte/compiler'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment } from '../lib/protocol/Attachment'
 import type { Build } from '../lib/protocol/Build'
@@ -10,6 +13,27 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args), convertFileSrc: (s: string) => s }))
 vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
 vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
+// jsdom has no layout: a stand-in ResizeObserver, fired by the test with the width the page's body would have
+const observers = new Set<{ cb: ResizeObserverCallback; els: Set<Element> }>()
+vi.stubGlobal('ResizeObserver', class {
+  o: { cb: ResizeObserverCallback; els: Set<Element> }
+  constructor(cb: ResizeObserverCallback) {
+    this.o = { cb, els: new Set() }
+    observers.add(this.o)
+  }
+  observe(el: Element) { this.o.els.add(el) }
+  unobserve(el: Element) { this.o.els.delete(el) }
+  disconnect() { this.o.els.clear(); observers.delete(this.o) }
+})
+/** The build page's body is now `width` wide. */
+function resize(width: number) {
+  const el = document.querySelector('.build-page .body')!
+  for (const o of observers) {
+    if (!o.els.has(el)) continue
+    o.cb([{ target: el, contentRect: { width, height: 800 } } as unknown as ResizeObserverEntry], {} as ResizeObserver)
+  }
+  flushSync()
+}
 
 import BuildPage from './BuildPage.svelte'
 import BuildsChannel from './BuildsChannel.svelte'
@@ -296,5 +320,165 @@ describe('BuildsChannel: the build page', () => {
     expect(calls('get_build')[0][1]).toEqual({ messageId: 'M009' })
     expect(document.querySelector('.build-view h1')?.textContent?.trim()).toBe('Raven bunny')
     expect(ui.openBuild).toBeNull()
+  })
+})
+
+// #618 testing feedback: the page's layout
+describe('BuildPage: layout', () => {
+  const yt = { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', title: 'Raven', thumb: null, provider: 'youtube' as const, provider_id: 'dQw4w9WgXcQ' }
+  const toggle = () => document.querySelector<HTMLButtonElement>('.build-page .bar button.comments-toggle')!
+  const layout = () => document.querySelector('.build-view')!.getAttribute('data-layout')
+  const comments = () => document.querySelector<HTMLElement>('.build-page .comments')!
+
+  it('Comments can be hidden and shown, and the page remembers it on this device', async () => {
+    await page(build('M001'))
+    expect(toggle().getAttribute('aria-expanded')).toBe('true')
+    expect(toggle().getAttribute('aria-controls')).toBe(comments().id)
+    expect(toggle().textContent).toContain('Comments')
+    expect(comments().hidden).toBe(false)
+    toggle().click()
+    flushSync()
+    expect(toggle().getAttribute('aria-expanded')).toBe('false')
+    expect(comments().hidden).toBe(true)
+    expect(localStorage.getItem('pulse.buildComments')).toBe('hidden')
+    // another build's page on this device opens with them hidden too
+    unmount(cmp!)
+    await page(build('M002'))
+    expect(toggle().getAttribute('aria-expanded')).toBe('false')
+    expect(comments().hidden).toBe(true)
+    toggle().click()
+    flushSync()
+    expect(comments().hidden).toBe(false)
+    expect(localStorage.getItem('pulse.buildComments')).toBe('shown')
+  })
+
+  it('hiding Comments keeps what was being typed (the thread stays mounted)', async () => {
+    await page(build('M001'))
+    const box = document.querySelector<HTMLTextAreaElement>('.comments textarea')
+    toggle().click()
+    flushSync()
+    expect(document.querySelector('.comments textarea')).toBe(box)
+  })
+
+  it('wide enough beside Comments: video left, screenshot grid right', async () => {
+    await page(build('M001', { link: yt }, { attachments: [1, 2, 3, 4].map(shot) }))
+    resize(1200)
+    expect(layout()).toBe('wide')
+    expect(document.querySelector('.build-page .body')!.classList.contains('stack')).toBe(false)
+    const media = document.querySelector('.build-view .media')!
+    expect(media.firstElementChild!.classList.contains('video')).toBe(true)
+    expect(media.lastElementChild!.classList.contains('tiles')).toBe(true)
+  })
+
+  it('narrow with Comments shown: stacked; hiding Comments brings the wide layout back', async () => {
+    await page(build('M001', { link: yt }, { attachments: [1, 2].map(shot) }))
+    resize(900)
+    expect(layout()).toBe('stacked')
+    toggle().click()
+    flushSync()
+    expect(layout()).toBe('wide')
+    toggle().click()
+    flushSync()
+    expect(layout()).toBe('stacked')
+  })
+
+  it('too narrow for a Comments column: Comments go under the build', async () => {
+    await page(build('M001'))
+    resize(600)
+    expect(document.querySelector('.build-page .body')!.classList.contains('stack')).toBe(true)
+    expect(layout()).toBe('stacked')
+    resize(1000)
+    expect(document.querySelector('.build-page .body')!.classList.contains('stack')).toBe(false)
+  })
+
+  it('never cramped: a narrow page stacks even with Comments hidden', async () => {
+    localStorage.setItem('pulse.buildComments', 'hidden')
+    await page(build('M001', { link: yt }, { attachments: [1, 2].map(shot) }))
+    resize(500)
+    expect(layout()).toBe('stacked')
+    resize(700)
+    expect(layout()).toBe('wide')
+  })
+
+  it('the meta line sits top right, on the caption line, muted and with its full text on hover', async () => {
+    await page(build('M001'))
+    const top = document.querySelector('.build-view .top')!
+    expect(top.querySelector('.caption')).not.toBeNull()
+    const meta = top.querySelector<HTMLElement>('.meta')!
+    expect(meta.previousElementSibling).toBe(top.querySelector('.caption'))
+    expect(meta.textContent).toMatch(/^sam · saved .+ · updated .+$/)
+    expect(meta.getAttribute('data-tip')).toBe(meta.textContent)
+    // above the title, not under it
+    expect(top.compareDocumentPosition(document.querySelector('.build-view h1')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('Actions sit in the top row with Back, above the Comments column', async () => {
+    await page(build('M001', {}, { author_id: 'U1' }))
+    const bar = document.querySelector('.build-page .bar')!
+    expect(bar.querySelector('.back')).not.toBeNull()
+    expect(bar.querySelector('.build-actions button[aria-haspopup=menu]')?.textContent?.trim()).toBe('Actions')
+    expect(document.querySelector('.build-view .build-actions')).toBeNull()
+    expect(bar.querySelector('.comments-toggle')).not.toBeNull()
+  })
+
+  it('Enlarge on the wide layout gives the video the full row', async () => {
+    await page(build('M001', { link: yt }, { attachments: [1, 2].map(shot) }))
+    resize(1200)
+    expect(document.querySelector('.build-view .media.enlarged')).toBeNull()
+    document.querySelector<HTMLButtonElement>('.build-video .corner .enlarge')!.click()
+    flushSync()
+    expect(document.querySelector('.build-view .media.enlarged')).not.toBeNull()
+  })
+})
+
+// Greg's UI rule: nothing spills out of its container or jumps at any width (jsdom doesn't lay out: the rules that keep it in)
+describe('BuildPage: containment', () => {
+  const cssOf = (file: string) => compile(readFileSync(resolve(__dirname, file), 'utf8'), { filename: file, css: 'external', cssHash: () => 'x' }).css!.code
+  const rule = (css: string, sel: string) => css.match(new RegExp(`(?:^|\\}|\\s)${sel}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+
+  it('the top row keeps Back, Actions and the toggle on one line inside the page', () => {
+    const css = cssOf('BuildPage.svelte')
+    expect(rule(css, '\\.bar\\.x')).toMatch(/min-width:\s*0/)
+    expect(rule(css, '\\.tools\\.x')).toMatch(/margin-left:\s*auto/)
+    expect(rule(css, '\\.tools\\.x')).toMatch(/flex-shrink:\s*0/)
+    expect(rule(css, '\\.main\\.x')).toMatch(/min-width:\s*0/)
+    expect(rule(css, '\\.main\\.x')).toMatch(/overflow-x:\s*hidden/)
+    expect(rule(css, '\\.comments\\[hidden\\]\\.x')).toMatch(/display:\s*none/)
+    // the layout is picked from the page's width, never the window's
+    expect(css).not.toMatch(/@media \((max|min)-width/)
+  })
+
+  it('the meta line ellipsises on the caption line; the caption wraps', () => {
+    const css = cssOf('BuildView.svelte')
+    expect(rule(css, '\\.top\\.x')).toMatch(/display:\s*flex/)
+    expect(rule(css, '\\.top\\.x')).toMatch(/min-width:\s*0/)
+    const meta = rule(css, '\\.meta\\.x')
+    for (const r of [/min-width:\s*0/, /white-space:\s*nowrap/, /overflow:\s*hidden/, /text-overflow:\s*ellipsis/, /margin-left:\s*auto/, /color:\s*var\(--text-3\)/]) expect(meta).toMatch(r)
+    expect(rule(css, '\\.caption\\.x')).toMatch(/overflow-wrap:\s*anywhere/)
+  })
+
+  it('the wide media row shrinks its two columns inside the page', () => {
+    const css = cssOf('BuildView.svelte')
+    expect(rule(css, '\\.media\\.wide\\.x')).toMatch(/grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*360px\)\)/)
+    expect(rule(css, '\\.media\\.wide\\.x \\.tiles:where\\(\\.x\\)')).toMatch(/grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/)
+    expect(rule(css, '\\.media\\.wide\\.enlarged\\.x \\.video:where\\(\\.x\\)')).toMatch(/grid-column:\s*1 \/ -1/)
+  })
+
+  it("the player's controls show on hover and keyboard focus, and the link button ellipsises", () => {
+    const css = cssOf('BuildVideo.svelte')
+    expect(css).toMatch(/\.corner\.x:focus-within/)
+    expect(css).toMatch(/\.build-video\.x:hover \.corner:where\(\.x\)/)
+    expect(css).toMatch(/@media \(hover: none\)/)
+    expect(rule(css, '\\.yt-title\\.x')).toMatch(/text-overflow:\s*ellipsis/)
+    expect(rule(css, '\\.yt-title\\.x')).toMatch(/min-width:\s*0/)
+    expect(rule(css, '\\.open-yt\\.x')).toMatch(/flex-shrink:\s*0/)
+    expect(rule(css, '\\.open-yt\\.x')).toMatch(/font-size:\s*12px/)
+  })
+
+  it('colour tokens only', () => {
+    for (const f of ['BuildPage.svelte', 'BuildView.svelte', 'BuildVideo.svelte', 'BuildActions.svelte']) {
+      const src = readFileSync(resolve(__dirname, f), 'utf8')
+      expect(src.slice(src.indexOf('<style>')).replace(/\/\*[\s\S]*?\*\//g, ''), f).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/)
+    }
   })
 })

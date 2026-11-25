@@ -62,6 +62,59 @@ describe('BuildVideo', () => {
     expect(document.querySelector('.build-video.enlarged')).not.toBeNull()
   })
 
+  // #618 testing: the raw link text read messy; a small button opens the video on YouTube instead
+  it('opens on YouTube from a small button beside the player, not raw link text', async () => {
+    await show(yt)
+    const open = document.querySelector<HTMLAnchorElement>('.build-video .under a.open-yt')!
+    expect(open.textContent?.replace(/\s+/g, ' ').trim()).toBe('Open on YouTube ↗')
+    expect(open.getAttribute('href')).toBe(yt.url)
+    expect(open.getAttribute('target')).toBe('_blank')
+    expect(open.getAttribute('aria-label')).toBe('Open on YouTube (opens in your browser)')
+    expect(open.querySelector('[aria-hidden=true]')?.textContent).toBe('↗')
+    // the play affordance stays the big one; the title is plain, ellipsised text with its full text on hover
+    expect(document.querySelector('.build-video .under a.title')).toBeNull()
+    const t = document.querySelector<HTMLElement>('.build-video .under .yt-title')!
+    expect(t.textContent).toBe('Raven bunny build')
+    expect(t.getAttribute('data-tip')).toBe('Raven bunny build')
+  })
+
+  it('a link with no title shows only the button, never the raw url', async () => {
+    await show({ ...yt, title: null })
+    expect(document.querySelector('.build-video .under .yt-title')).toBeNull()
+    expect(document.querySelector('.build-video')!.textContent).not.toContain('youtube.com')
+  })
+
+  // #618 testing: Enlarge lives on the player's top-right, as a video player's controls do, and Tab reaches it
+  it('enlarge is an icon button on the player, reachable by keyboard', async () => {
+    await show(yt)
+    const enlarge = document.querySelector<HTMLButtonElement>('.build-video .screen .corner button.enlarge')!
+    expect(enlarge.getAttribute('aria-label')).toBe('Enlarge video')
+    expect(enlarge.hasAttribute('tabindex')).toBe(false)
+    expect(enlarge.disabled).toBe(false)
+    enlarge.focus()
+    expect(document.activeElement).toBe(enlarge)
+    enlarge.click()
+    flushSync()
+    // a toggle: its name stays, its pressed state and tooltip say which way it goes
+    expect(enlarge.getAttribute('aria-label')).toBe('Enlarge video')
+    expect(enlarge.getAttribute('aria-pressed')).toBe('true')
+    expect(enlarge.getAttribute('data-tip')).toBe('Shrink')
+    // nothing of it is left under the player
+    expect(document.querySelector('.build-video .under .enlarge')).toBeNull()
+  })
+
+  it('while playing, Close player sits beside enlarge on the player', async () => {
+    await show(yt)
+    expect(document.querySelector('.build-video .corner .stop')).toBeNull()
+    document.querySelector<HTMLButtonElement>('.build-video .play')!.click()
+    await settle()
+    const close = document.querySelector<HTMLButtonElement>('.build-video .screen .corner button.stop')!
+    expect(close.getAttribute('aria-label')).toBe('Close player')
+    close.click()
+    await settle()
+    expect(document.querySelector('.build-video iframe')).toBeNull()
+  })
+
   it('leaving the page stops the player', async () => {
     await show(yt)
     document.querySelector<HTMLButtonElement>('.build-video .play')!.click()
