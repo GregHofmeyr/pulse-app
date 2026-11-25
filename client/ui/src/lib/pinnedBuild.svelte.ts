@@ -6,6 +6,7 @@
 // belongs to (`pinShown`).
 import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
+import { claimRightView } from './rightViews.svelte'
 import { isNotFound } from './soundboard'
 import { app, onAppEvent, onAppReady, onAppReset } from './store.svelte'
 import { api } from './tauri'
@@ -80,6 +81,7 @@ export function pinBuild(channelId: string, messageId: string, message?: Message
   pinnedBuild.message = message?.id === messageId ? message : null
   pinnedBuild.gone = false
   save(pinnedBuild.key)
+  claimRightView('build') // it takes the right column (#638)
   if (!pinnedBuild.message) void refreshPinnedBuild()
 }
 

@@ -1,6 +1,8 @@
 // A voice channel's chat panel (#226): open or closed on this device (its width is a column, lib/columns.svelte.ts),
 // and the focus a click asks for. The panel shows beside the voice stage, in the right column, while it's open.
 
+import { claimRightView } from './rightViews.svelte'
+
 const KEY = 'pulse.voiceChat'
 
 /** The stage's chat toggle: closing the panel from inside hands the focus back to it. */
@@ -34,6 +36,8 @@ function store() {
 
 /** Open or close the panel. `focus`: opened by a click, so its message box takes the focus. */
 export function setVoiceChat(open: boolean, focus = false): void {
+  // opening it (or asking for it again) takes the right column (#638)
+  if (open) claimRightView('chat')
   if (voiceChat.open !== open) {
     voiceChat.open = open
     store()

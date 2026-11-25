@@ -1,6 +1,7 @@
 // Message search: the last search run and its results (a snapshot: nothing updates them live), and
 // where a clicked result goes.
 import { openMessage } from './openMessage'
+import { claimRightView } from './rightViews.svelte'
 import { ui } from './store.svelte'
 import { api, errorText } from './tauri'
 import { toRequest, type Chip } from './searchQuery'
@@ -37,6 +38,8 @@ const scopeArgs = (s: SearchScope) => (s.kind === 'server' ? { serverId: s.serve
 export async function runSearch(scope: SearchScope, words: string, chips: Chip[]): Promise<void> {
   const mine = ++seq
   Object.assign(search, { open: true, behindChat: false, scope, words, chips, status: 'loading', hits: [], total: null, nextCursor: null, error: '', loadingMore: false })
+  // a new search takes the right column (#638), over whatever view was picked there
+  claimRightView('search')
   try {
     const r = await api.searchMessages(scopeArgs(scope), toRequest(words, chips))
     if (mine !== seq) return
