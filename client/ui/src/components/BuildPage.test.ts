@@ -14,6 +14,7 @@ vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 import BuildPage from './BuildPage.svelte'
 import BuildsChannel from './BuildsChannel.svelte'
 import { app, handleReady, resetState, ui } from '../lib/store.svelte'
+import { applyEvent } from '../lib/state'
 import { openMessage } from '../lib/openMessage'
 import { testMe, testReady } from '../lib/testReady'
 import { windowFocus } from '../lib/windowFocus.svelte'
@@ -212,6 +213,19 @@ describe('BuildsChannel: the build page', () => {
     expect(document.querySelector<HTMLElement>('.feed')!.scrollTop).toBe(320)
     // no refetch: the same feed came back
     expect(calls('list_builds')).toHaveLength(2)
+  })
+
+  it('a build deleted while its page is open says so, and stays gone', async () => {
+    pages = [[build('M002'), build('M001')]]
+    await channel()
+    document.querySelector<HTMLButtonElement>('[data-build-id="M001"] button.open')!.click()
+    await flush()
+    expect(document.querySelector('.build-view h1')?.textContent?.trim()).toBe('Build M001')
+    app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'B1', message_id: 'M001', author_id: 'U2', mentions: [], thread_root_id: null } }, Date.now())
+    await flush()
+    await flush()
+    expect(document.querySelector('.build-view')).toBeNull()
+    expect(document.querySelector('.build-page .gone')?.textContent).toBe('This build was deleted.')
   })
 
   it('an inbox comment on a build opens its page', async () => {

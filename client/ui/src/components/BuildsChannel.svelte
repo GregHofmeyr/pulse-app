@@ -181,6 +181,12 @@
     }
     return app.state.openRoot?.id === o.id ? app.state.openRoot : o
   })
+  // Deleted while open: keep the deleted copy, so the page says so (the held one is let go once its comments close,
+  // and the copy it was opened with would show the build again).
+  $effect(() => {
+    const r = app.state.openRoot
+    if (r?.deleted && open && r.id === open.id && !open.deleted) untrack(() => (open = r))
+  })
   let scrollBack = 0
   function openPage(m: Message) {
     scrollBack = scroller?.scrollTop ?? 0
@@ -251,7 +257,7 @@
     <BuildPage message={openNow} {serverId} onBack={() => void closePage()} />
   {:else}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="browse" onpaste={browsePaste}>
+    <div class="browse" tabindex="-1" onpaste={browsePaste}>
       <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} {panel} onPanel={togglePanel} onAdd={() => openQuick()} />
       {#if quick}
         <BuildQuickAdd bind:this={quickAdd} {channelId} {serverId} initial={quick.initial} onDetails={details} onClose={() => (quick = null)} />
@@ -289,7 +295,8 @@
 
 <style>
   .chan { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
-  .browse { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  /* focusable (-1) so a click on its blank space puts the focus here, where a paste is heard */
+  .browse { flex: 1; display: flex; flex-direction: column; min-height: 0; outline: none; }
   .body { flex: 1; display: flex; min-height: 0; }
   .feed { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; padding: 16px 18px 8px; align-items: start; }
