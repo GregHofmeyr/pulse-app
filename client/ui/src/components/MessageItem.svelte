@@ -93,6 +93,7 @@
     onRetry = () => {},
     onDiscard = () => {},
     onEditClosed = () => {},
+    authorTag = false,
   }: {
     message: Message
     /** The server the message is in (null in DMs and groups): names use its nicknames and role colours. */
@@ -114,6 +115,8 @@
     onDiscard?: () => void
     /** The edit box closed (saved or cancelled): its focus has nowhere to go, so the caller gives it some. */
     onEditClosed?: () => void
+    /** Tag the name "author" (a build's comments by whoever saved it, spec §4.1). */
+    authorTag?: boolean
   } = $props()
   const uid = $props.id()
 
@@ -449,7 +452,7 @@
         <span class="author" role="presentation" oncontextmenu={(e) => openAuthorMenu(e, e.currentTarget)} onkeydown={authorKey}><Avatar id={message.author_id ?? ''} {name} size={40} interactive={!!message.author_id} {serverId} hovered={() => rowHover} /></span>
       {/if}
       <div class="body">
-        {#if !grouped || replyTo}<div class="meta"><strong role="presentation" oncontextmenu={(e) => openAuthorMenu(e, e.currentTarget)} onkeydown={authorKey}>{#if message.author_id}<Name userId={message.author_id} {serverId} text={name} />{:else}{name}{/if}</strong><span class="time">{time}</span>{#if pin}<span class="pin-mark" data-tip={pinMark}><Icon name="pin" size={14} /></span>{/if}</div>{/if}
+        {#if !grouped || replyTo}<div class="meta"><strong role="presentation" oncontextmenu={(e) => openAuthorMenu(e, e.currentTarget)} onkeydown={authorKey}>{#if message.author_id}<Name userId={message.author_id} {serverId} text={name} />{:else}{name}{/if}</strong>{#if authorTag}<span class="author-tag">author</span>{/if}<span class="time">{time}</span>{#if pin}<span class="pin-mark" data-tip={pinMark}><Icon name="pin" size={14} /></span>{/if}</div>{/if}
         {#if message.deleted}
           <p class="deleted">message deleted</p>
         {:else if editing}
@@ -588,6 +591,7 @@
   .body { flex: 1; min-width: 0; }
   .meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
   .meta strong { font-size: 14.5px; }
+  .author-tag { font-size: 10.5px; font-variant: small-caps; letter-spacing: 0.04em; color: var(--text-3); }
   .time { font-size: 11px; color: var(--text-3); }
   .content { color: var(--text-body); line-height: 1.5; overflow-wrap: anywhere; }
   .content :global(p) { margin: 0; }
