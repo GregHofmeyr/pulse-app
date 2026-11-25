@@ -31,6 +31,8 @@ export const patchNotes: PatchNotes = {
     'Builds channels: a new kind of channel for saving game builds and loadouts. Browse them as a gallery or a list, filter by game in the right panel, show or hide archived builds, and archive old builds in bulk by date',
     'Add a build in seconds by pasting a link or an image, or use the full form for screenshots, notes and the game',
     'Every build has its own page with comments, and its video plays right inside Pulse',
+    'Star your favourite builds to keep them in your own Favourites row at the top (only you see your stars)',
+    'Right-click a build to open, edit, archive or delete it, or Shift+click to select several and archive, delete or favourite them in one go',
     'Pin a build to the side to keep it in view, take a quick peek without leaving where you are, find builds from Ctrl+K with "builds:", or pop one out into its own small window that stays on top',
     'The right panel has a switcher: when members, voice chat, search and a pinned build all want the space, flip between them without closing any',
     'Voice clarity EQ (in Voice settings): cuts rumble and boominess from your mic and adds a little clarity to your voice',
