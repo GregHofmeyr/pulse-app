@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 // Pin to side (#619): the pinned build in the right column, kept current, and gone when deleted or out of reach.
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushSync, mount, unmount } from 'svelte'
+import { compile } from 'svelte/compiler'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Build } from '../lib/protocol/Build'
 import type { Event } from '../lib/protocol/Event'
@@ -75,7 +78,7 @@ describe('PinnedBuild', () => {
     expect(ui.openBuild).toEqual({ channelId: 'B1', messageId: 'M001' })
     document.querySelector<HTMLButtonElement>('.pinned-build button[aria-label="Unpin"]')!.click()
     expect(pinnedBuild.key).toBeNull()
-    expect(localStorage.getItem('pulse.pinnedBuild')).toBeNull()
+    expect(localStorage.getItem('pulse.pinnedBuild.U1')).toBeNull()
   })
 
   it('an edit and an archive show at once', async () => {
@@ -90,12 +93,12 @@ describe('PinnedBuild', () => {
   // Review Focus 5
   it('a_pinned_build_that_is_deleted_unpins_with_a_note', async () => {
     pinBuild('B1', 'M001', build('M001'))
-    expect(localStorage.getItem('pulse.pinnedBuild')).not.toBeNull()
+    expect(localStorage.getItem('pulse.pinnedBuild.U1')).not.toBeNull()
     await show()
     event({ t: 'MessageDeleted', d: { channel_id: 'B1', message_id: 'M001', author_id: 'U2', mentions: [], thread_root_id: null } } as Event)
     expect(text()).toContain('This build is gone.')
     expect(document.querySelector('.pinned-build .build-view')).toBeNull()
-    expect(localStorage.getItem('pulse.pinnedBuild'), 'a restart does not bring it back').toBeNull()
+    expect(localStorage.getItem('pulse.pinnedBuild.U1'), 'a restart does not bring it back').toBeNull()
     document.querySelector<HTMLButtonElement>('.pinned-build button.dismiss')!.click()
     expect(pinnedBuild.key).toBeNull()
   })
@@ -118,5 +121,15 @@ describe('PinnedBuild', () => {
     handleReady(ready())
     await flush()
     expect(text()).toContain('This build is gone.')
+  })
+
+  // #636 review: it is a right column like the members list, its width the resize handle's
+  it('takes the right column width the handle sets', () => {
+    const src = readFileSync(resolve(__dirname, 'PinnedBuild.svelte'), 'utf8')
+    const css = compile(src, { filename: 'PinnedBuild.svelte', css: 'external', cssHash: () => 'x' }).css!.code
+    const rule = css.match(/\.pinned-build\.x\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(rule).toMatch(/width:\s*var\(--right-w,\s*320px\)/)
+    expect(rule).toMatch(/flex-shrink:\s*0/)
+    expect(rule).toMatch(/background:\s*var\(--bg-1\)/)
   })
 })
