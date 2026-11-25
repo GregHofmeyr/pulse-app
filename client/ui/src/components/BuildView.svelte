@@ -12,7 +12,7 @@
   let { title, gameName, guessed = false, authorName, savedAt, updatedAt, notes, screenshots, link, archived, quickDrop = false, onImage, video, layout = 'stacked', videoEnlarged = false }: {
     title: string
     gameName: string | null
-    /** The game was guessed from the link's title. */
+    /** The game was picked automatically from the link's title (shown "auto picked"). */
     guessed?: boolean
     authorName: string
     /** When it was saved and last updated, as shown ("2h ago"). */
@@ -44,7 +44,7 @@
 <article class="build-view" class:archived data-layout={layout}>
   <header>
     <div class="top">
-      <span class="caption">{caption}{#if gameName && guessed}<span class="guessed"> · guessed</span>{/if}</span>
+      <span class="caption">{caption}{#if gameName && guessed}<span class="auto-picked">{' · auto picked'}</span>{/if}</span>
       <span class="meta" data-tip={meta}>{meta}</span>
     </div>
     <h1>{title}</h1>
@@ -85,7 +85,6 @@
   /* the caption line: the caption wraps, the meta gives way first and ellipsises (#618 testing) */
   .top { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
   .caption { flex: 0 1 auto; min-width: 0; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); overflow-wrap: anywhere; }
-  .guessed { text-transform: none; letter-spacing: 0; font-weight: 400; font-style: italic; }
   h1 { margin: 0; font-size: 22px; font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
   .meta { flex: 0 100 auto; min-width: 0; margin-left: auto; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }

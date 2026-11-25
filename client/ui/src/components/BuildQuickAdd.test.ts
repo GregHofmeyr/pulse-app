@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Build } from '../lib/protocol/Build'
@@ -100,6 +102,37 @@ const addButton = () => [...document.querySelectorAll<HTMLButtonElement>('.build
 const body = () => (calls('create_build')[0][1] as { body: Record<string, unknown> }).body
 
 describe('BuildQuickAdd', () => {
+  it('opens with presence: the slide-in entrance, an accent field that says what goes in it, focused', async () => {
+    await channel()
+    addButton().click()
+    await flush()
+    const bar = document.querySelector<HTMLElement>('.quick-add')!
+    // the row slides inside the bar (its rise stays within the bar's padding); the bar itself doesn't move
+    expect(bar.querySelector('.row')!.classList.contains('slide-in')).toBe(true)
+    expect(bar.classList.contains('slide-in')).toBe(false)
+    const field = bar.querySelector<HTMLInputElement>('input.quick-input')!
+    expect(field.classList.contains('input')).toBe(true)
+    expect(field.getAttribute('aria-label')).toBe('Quick add a build')
+    expect(field.placeholder).toBe('Paste a link or an image, or type a title, then press Enter')
+    expect(document.activeElement).toBe(field)
+    // the + reads as the accent, the field's mark
+    expect(bar.querySelector('.row > .lead')).not.toBeNull()
+  })
+
+  it('its field styles: an accent tint and border, the accent ring when focused; no layout moves', () => {
+    const css = readFileSync(resolve(__dirname, 'BuildQuickAdd.svelte'), 'utf8').split('<style>')[1]
+    const rule = (sel: string) => css.match(new RegExp(`\\n\\s*${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? ''
+    expect(rule('.quick-input')).toMatch(/background: var\(--accent-faint\)/)
+    expect(rule('.quick-input')).toMatch(/border-color: var\(--accent-strong\)/)
+    expect(rule('.quick-input:focus')).toMatch(/border-color: var\(--focus-ring\)/)
+    expect(rule('.quick-input:focus')).toMatch(/outline: 2px solid var\(--focus-ring\)/)
+    expect(rule('.lead')).toMatch(/color: var\(--accent-text\)/)
+    // the slide's 8px rise (app.css slide-in) fits in the bar's top padding
+    expect(rule('.quick-add')).toMatch(/padding: 10px /)
+    // the same size focused or not: only colours change
+    for (const sel of ['.quick-input', '.quick-input:focus']) expect(rule(sel)).not.toMatch(/height|padding|border-width|margin/)
+  })
+
   it('pasting a link and Enter saves a quick drop', async () => {
     await channel()
     addButton().click()
@@ -162,7 +195,7 @@ describe('BuildQuickAdd', () => {
     app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: guessed, nonce: null } }, Date.now())
     await flush()
     expect(document.querySelector('.quick-add .saved .caption')?.textContent).toContain('The First Descendant')
-    expect(document.querySelector('.quick-add .saved .guessed')?.textContent).toContain('guessed')
+    expect(document.querySelector('.quick-add .saved .auto-picked')?.textContent).toBe(' · auto picked')
     document.querySelector<HTMLButtonElement>('.quick-add .saved .clear-game')!.click()
     await flush()
     expect(calls('update_build')[0][1]).toEqual({

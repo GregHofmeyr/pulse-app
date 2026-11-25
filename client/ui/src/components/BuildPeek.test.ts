@@ -15,6 +15,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import BuildCard from './BuildCard.svelte'
 import BuildRow from './BuildRow.svelte'
 import BuildPeek from './BuildPeek.svelte'
+import BuildView from './BuildView.svelte'
 import { PEEK_OPEN_DELAY } from '../lib/hoverIntent'
 import { forgetPinnedBuild, pinnedBuild } from '../lib/pinnedBuild.svelte'
 import { handleReady, resetState, ui } from '../lib/store.svelte'
@@ -209,5 +210,48 @@ describe('BuildPeek', () => {
     expect(rule('\\.actions\\.x')).toMatch(/max-width:\s*100%/)
     expect(rule('\\.actions\\.x \\.btn:where\\(\\.x\\)')).toMatch(/min-width:\s*0/)
     expect(rule('\\.label\\.x')).toMatch(/text-overflow:\s*ellipsis/)
+  })
+})
+
+describe('an automatically picked game says "auto picked" (not "guessed") everywhere', () => {
+  const tagged = (root: ParentNode) => {
+    const t = root.querySelector('.caption .auto-picked')
+    expect(t?.textContent).toBe(' · auto picked')
+    expect(root.querySelector('.caption')!.textContent).not.toMatch(/guess/i)
+  }
+  const guessed = build('M001', { game_guessed: true })
+
+  it('card, row and peek', () => {
+    cmp = mount(BuildCard, { target: document.body, props: { message: guessed, serverId: 'S1', nameOf: () => 'sam', onOpen: vi.fn() } })
+    flushSync()
+    tagged(document.querySelector('.build-card')!)
+    unmount(cmp)
+    cmp = mount(BuildRow, { target: document.body, props: { message: guessed, serverId: 'S1', nameOf: () => 'sam', onOpen: vi.fn() } })
+    flushSync()
+    tagged(document.querySelector('.build-row')!)
+    hover('.build-row', 'mouseenter')
+    wait(PEEK_OPEN_DELAY)
+    tagged(peek()!)
+  })
+
+  it('a game the person picked has no tag', () => {
+    cmp = mount(BuildCard, { target: document.body, props: { message: build('M001'), serverId: 'S1', nameOf: () => 'sam', onOpen: vi.fn() } })
+    flushSync()
+    expect(document.querySelector('.auto-picked')).toBeNull()
+  })
+
+  it('the page, pinned build and pop-out (BuildView)', () => {
+    cmp = mount(BuildView, { target: document.body, props: { title: 'Bunny', gameName: 'The First Descendant', guessed: true, authorName: 'sam', savedAt: '2h ago', updatedAt: null, notes: null, screenshots: [], link: null, archived: false } })
+    flushSync()
+    tagged(document.querySelector('.build-view')!)
+  })
+
+  it('one shared style in app.css, none left behind', () => {
+    const css = readFileSync(resolve(__dirname, '../app.css'), 'utf8')
+    expect(css).toMatch(/\.auto-picked \{[^}]*font-style: italic/)
+    for (const f of ['BuildCard', 'BuildRow', 'BuildPeek', 'BuildView', 'BuildQuickAdd', 'BuildForm']) {
+      const src = readFileSync(resolve(__dirname, `${f}.svelte`), 'utf8')
+      expect(src, f).not.toMatch(/\bguessed<|· guessed|Game guessed|class="guessed"|\.guessed \{/)
+    }
   })
 })
