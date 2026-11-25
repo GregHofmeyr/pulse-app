@@ -1,11 +1,12 @@
 <script lang="ts">
-  // A build page's Actions menu (#618): Edit for its author, Archive (or Restore) and Delete for its author or the
+  // A build page's Actions menu (#618): Pin to side (#619) for anyone, Edit for its author, Archive (or Restore) and Delete for its author or the
   // server's owner (spec §5.1; the server refuses anyone else anyway). Delete asks first. `items` adds the quick-access
   // entries (Pin to side #619, Pop out #620) above them; with nothing to offer the menu isn't drawn at all.
   import { tick } from 'svelte'
   import Icon from './Icon.svelte'
   import { clickOutside } from '../lib/actions'
   import { isArchived, type BuildActionItem } from '../lib/builds'
+  import { isPinned } from '../lib/pinnedBuild.svelte'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -14,7 +15,7 @@
     canEdit: boolean
     canArchive: boolean
     canDelete: boolean
-    /** Quick-access entries, in this order (none in phase 3). */
+    /** Quick-access entries, in this order. `pin` reads Unpin while this build is the pinned one (#619). */
     items: BuildActionItem[]
     onEdit?: () => void
     onItem?: (item: BuildActionItem) => void
@@ -34,6 +35,7 @@
   let busy = $state(false)
   let error = $state('')
   const archived = $derived(isArchived(message))
+  const pinned = $derived(isPinned(message.id))
   const any = $derived(items.length > 0 || canEdit || canArchive || canDelete)
 
   function closeMenu(e?: Event) {
@@ -80,7 +82,7 @@
       <div class="menu menu-surface pop-in" role="menu" tabindex="-1" use:clickOutside={closeMenu}
         onkeydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); closeMenu(e) } }}>
         {#each items as it (it)}
-          <button type="button" class="menu-item" role="menuitem" onclick={() => pick(() => onItem(it))}><Icon name={ITEM[it].icon} size={14} />{ITEM[it].label}</button>
+          <button type="button" class="menu-item" role="menuitem" onclick={() => pick(() => onItem(it))}><Icon name={ITEM[it].icon} size={14} />{it === 'pin' && pinned ? 'Unpin' : ITEM[it].label}</button>
         {/each}
         {#if canEdit}
           <button type="button" class="menu-item" role="menuitem" onclick={() => pick(onEdit)}><Icon name="pencil" size={14} />Edit</button>

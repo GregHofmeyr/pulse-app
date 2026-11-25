@@ -83,6 +83,8 @@
   import type { User } from '../lib/protocol/User'
   // The quick switcher (#309)
   import QuickSwitcher from '../components/QuickSwitcher.svelte'
+  import PinnedBuild from '../components/PinnedBuild.svelte'
+  import { pinnedBuild } from '../lib/pinnedBuild.svelte'
   import { globalSwitch, SAME_PRESS_MS, loadRecents, pushRecent, saveRecents, switcherKey, type Place } from '../lib/quickSwitch'
   import type { ActionContext } from '../lib/quickActions'
   import { memberServers } from '../lib/reactions'
@@ -224,8 +226,8 @@
     get left() { return panels.left },
     get right() { return panels.right },
     get leftName() { return leftName },
-    get hasRight() { return !!(search.open || activeServerId || activeChannel?.kind === 'group') },
-    get rightName() { return rightKind === 'chat' ? 'Chat' : 'Members' },
+    get hasRight() { return !!(search.open || pinnedBuild.key || activeServerId || activeChannel?.kind === 'group') },
+    get rightName() { return rightKind === 'chat' ? 'Chat' : rightKind === 'build' ? 'Pinned build' : 'Members' },
     toggle: (side) => (panels[side] = !panels[side]),
   })
   let serverMenuOpen = $state(false)
@@ -464,8 +466,10 @@
   // A stream in full view (#63) shows the open chat as a strip beside it (FullView: it stays in full screen), so the
   // column doesn't hold it meanwhile; the members list is there instead.
   const chatInStrip = $derived((chatOpen && fullShown) || ((!!convoFull || convoOwn) && voiceChat.open))
+  // A pinned build (#619) takes the members list's place from any view (a DM too), below search results and an open
+  // voice chat.
   const rightKind = $derived<keyof typeof RIGHT_DEFAULT | null>(
-    searchShown ? 'search' : chatOpen && !chatInStrip ? 'chat' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
+    searchShown ? 'search' : chatOpen && !chatInStrip ? 'chat' : pinnedBuild.key ? 'build' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
   const showLeft = $derived(!hideLeft)
   const showRight = $derived(!hideRight && rightKind !== null)
   const chatOnScreen = $derived((showRight && rightKind === 'chat') || chatInStrip)
@@ -486,7 +490,7 @@
   })
   const rightMin = $derived(RIGHT_MIN[rightKind ?? 'members'])
   const fitted = $derived(fitColumns({ saved: { left: columns.left, right: rightSaved }, body: bodyWidth, left: showLeft, right: showRight, rightDefault: RIGHT_DEFAULT[rightKind ?? 'members'], rightMin }))
-  const rightLabel = $derived(rightKind === 'search' ? 'Resize the search results' : rightKind === 'chat' ? 'Resize the chat' : 'Resize the members list')
+  const rightLabel = $derived(rightKind === 'search' ? 'Resize the search results' : rightKind === 'chat' ? 'Resize the chat' : rightKind === 'build' ? 'Resize the pinned build' : 'Resize the members list')
   /** The chat's close button: the panel goes, and the focus it had goes to the stage's toggle. */
   function closeChat() {
     const at = document.activeElement
@@ -936,7 +940,7 @@
     {/if}
     <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap. A saved
          width reaches the list as --right-w; unsaved, each list keeps its own default. -->
-    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={rightSaved === null ? null : `${fitted.right}px`}>{#if searchShown}<SearchResults />{:else if rightKind === 'chat' && activeChannelId}<aside class="voice-chat fade-in" aria-label="Chat" onanimationend={(e) => e.currentTarget.classList.remove('fade-in')} out:exitFade onoutrostart={(e) => e.currentTarget.classList.add('leaving')}>{#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId} panel={{ onClose: closeChat, shown: chatOnScreen }} />{/key}</aside>{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} onMessage={messageUser} />{/if}</div>
+    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={rightSaved === null ? null : `${fitted.right}px`}>{#if searchShown}<SearchResults />{:else if rightKind === 'chat' && activeChannelId}<aside class="voice-chat fade-in" aria-label="Chat" onanimationend={(e) => e.currentTarget.classList.remove('fade-in')} out:exitFade onoutrostart={(e) => e.currentTarget.classList.add('leaving')}>{#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId} panel={{ onClose: closeChat, shown: chatOnScreen }} />{/key}</aside>{:else if rightKind === 'build'}<PinnedBuild />{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} onMessage={messageUser} />{/if}</div>
   </div>
 </div>
 <StreamToast />

@@ -1619,3 +1619,126 @@ describe('the call you are in', () => {
     expect(document.querySelector('.call-here')).toBeNull()
   })
 })
+
+// #619: a pinned build takes the members list's place in the right column, from any view; search results and an open
+// voice chat still take the column while they show
+describe('pin to side (#619)', () => {
+  const q = (sel: string) => document.querySelector<HTMLElement>(sel)
+  const build = (id: string, title = `Build ${id}`) => ({
+    id, channel_id: 'B1', author_id: 'U2', kind: 'normal' as const, content: '', reply_to_id: null, created_at: '2026-10-01T10:00:00.000Z',
+    edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, embeds: [], clip: null,
+    build: { title, title_auto: false, game_id: null, game_guessed: false, link: null, notes: 'Max crit', quick_drop: false, updated_at: null, archived_at: null, archived_by: null, reply_count: 0, last_reply_id: null, replies_seen: null },
+  })
+  const channels = [
+    { id: 'T1', server_id: 'S1', kind: 'text' as const, name: 'general', position: 0 },
+    { id: 'V1', server_id: 'S1', kind: 'voice' as const, name: 'Lounge', position: 1 },
+    { id: 'B1', server_id: 'S1', kind: 'builds' as const, name: 'raven-builds', position: 2 },
+    { id: 'D1', server_id: null, kind: 'dm' as const, name: null, position: 0 },
+  ]
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await tick()
+    await new Promise((r) => setTimeout(r, 0))
+    flushSync()
+  }
+  const goTo = async (id: string) => {
+    ui.goTo = id
+    await settle()
+  }
+  let pins: typeof import('../lib/pinnedBuild.svelte')
+  const mountShell = async () => {
+    cmp = mount(Shell, { target: document.body, props: { user: testMe, onLogout: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Main'))!.click()
+    await settle()
+  }
+  beforeEach(async () => {
+    localStorage.clear()
+    reloadVoiceChat()
+    reloadColumns()
+    pins = await import('../lib/pinnedBuild.svelte')
+    pins.forgetPinnedBuild()
+    invoke.mockImplementation(async (cmd: string, a?: { messageId?: string }) =>
+      cmd === 'get_build' ? build(a!.messageId!) : cmd === 'list_messages' || cmd === 'list_builds' ? [] : undefined)
+    app.state = applyReady(emptyState(), testReady(channels))
+  })
+  afterEach(() => pins.forgetPinnedBuild())
+
+  it('pinning shows the build in the right column', async () => {
+    await mountShell()
+    expect(q('.right-panel aside.members')).not.toBeNull()
+    pins.pinBuild('B1', 'M001', build('M001'))
+    flushSync()
+    expect(q('.right-panel aside.pinned-build .title')?.textContent).toBe('Build M001')
+    expect(q('.right-panel aside.members')).toBeNull()
+    expect(document.querySelector('[role=separator][aria-label="Resize the pinned build"]')).not.toBeNull()
+    q('.right-panel button[aria-label="Unpin"]')!.click()
+    flushSync()
+    expect(q('.right-panel aside.members')).not.toBeNull()
+  })
+
+  it('it stays when moving to a DM and a voice channel', async () => {
+    await mountShell()
+    pins.pinBuild('B1', 'M001', build('M001'))
+    // the voice stage (a double-click on its row), its chat closed
+    q('.row[data-channel="V1"]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    await settle()
+    expect(q('.row[data-channel="V1"]')!.classList.contains('active')).toBe(true)
+    expect(q('.right-panel aside.pinned-build')).not.toBeNull()
+    // an open voice chat takes the column meanwhile, and gives it back when closed
+    const { setVoiceChat } = await import('../lib/voiceChat.svelte')
+    setVoiceChat(true)
+    await settle()
+    expect(q('.right-panel aside.voice-chat')).not.toBeNull()
+    expect(q('.right-panel aside.pinned-build')).toBeNull()
+    setVoiceChat(false)
+    await new Promise((r) => setTimeout(r, 150)) // the chat fades out
+    await settle()
+    expect(q('.right-panel aside.pinned-build')).not.toBeNull()
+    await goTo('D1')
+    expect(q('.right-panel')!.hidden).toBe(false)
+    expect(q('.right-panel aside.pinned-build')).not.toBeNull()
+  })
+
+  it('pinning another replaces it', async () => {
+    await mountShell()
+    pins.pinBuild('B1', 'M001', build('M001'))
+    pins.pinBuild('B1', 'M002', build('M002'))
+    flushSync()
+    expect(document.querySelectorAll('aside.pinned-build')).toHaveLength(1)
+    expect(q('aside.pinned-build .title')?.textContent).toBe('Build M002')
+    expect(JSON.parse(localStorage.getItem('pulse.pinnedBuild')!)).toMatchObject({ channelId: 'B1', messageId: 'M002' })
+  })
+
+  it('the pin survives a restart', async () => {
+    const { handleReady } = await import('../lib/store.svelte')
+    localStorage.setItem('pulse.pinnedBuild', JSON.stringify({ userId: 'U1', channelId: 'B1', messageId: 'M007' }))
+    await mountShell()
+    handleReady(testReady(channels))
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('get_build', { messageId: 'M007' })
+    expect(q('.right-panel aside.pinned-build .title')?.textContent).toBe('Build M007')
+  })
+
+  it('another account does not get your pin', async () => {
+    const { handleReady } = await import('../lib/store.svelte')
+    localStorage.setItem('pulse.pinnedBuild', JSON.stringify({ userId: 'U9', channelId: 'B1', messageId: 'M007' }))
+    await mountShell()
+    handleReady(testReady(channels))
+    await settle()
+    expect(q('.right-panel aside.pinned-build')).toBeNull()
+  })
+
+  it('search results still take the column while shown', async () => {
+    const { runSearch, closeSearch } = await import('../lib/search.svelte')
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'search_messages' ? { hits: [], total: 0, next_cursor: null } : cmd === 'list_messages' ? [] : undefined))
+    await mountShell()
+    pins.pinBuild('B1', 'M001', build('M001'))
+    await runSearch({ kind: 'server', serverId: 'S1' }, 'raven', [])
+    flushSync()
+    expect(q('.right-panel .search-results')).not.toBeNull()
+    expect(q('.right-panel aside.pinned-build')).toBeNull()
+    closeSearch()
+    await settle()
+    expect(q('.right-panel aside.pinned-build')).not.toBeNull()
+  })
+})

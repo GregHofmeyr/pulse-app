@@ -29,7 +29,7 @@ const fit = (over: Partial<FitInput>) => fitColumns({ saved: { left: null, right
 
 describe("the voice chat's own minimum (#230)", () => {
   it('the chat keeps its composer usable at 280px; the other right columns keep 180px', () => {
-    expect(RIGHT_MIN).toEqual({ members: 180, group: 180, search: 180, chat: 280 })
+    expect(RIGHT_MIN).toEqual({ members: 180, group: 180, search: 180, chat: 280, build: 180 })
     const chat = { rightDefault: RIGHT_DEFAULT.chat, rightMin: RIGHT_MIN.chat }
     expect(fit({ ...chat, saved: { left: null, right: 10 } }).right).toBe(280)
     // a shrinking window narrows it to its own minimum, not the members list's

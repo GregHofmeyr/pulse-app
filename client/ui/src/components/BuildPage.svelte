@@ -9,8 +9,9 @@
   import ImageViewer from './ImageViewer.svelte'
   import ThreadChat from './ThreadChat.svelte'
   import { attachmentLink } from '../lib/attachmentLinks'
-  import { buildGameName, buildRights, buildShots, isArchived, isQuickDrop, type BuildScreenshot } from '../lib/builds'
+  import { buildGameName, buildRights, buildShots, isArchived, isQuickDrop, type BuildActionItem, type BuildScreenshot } from '../lib/builds'
   import { relativeTime } from '../lib/conversations'
+  import { isPinned, pinBuild, unpinBuild } from '../lib/pinnedBuild.svelte'
   import { nameOfIn } from '../lib/selectors'
   import { app, clock } from '../lib/store.svelte'
   import { api } from '../lib/tauri'
@@ -42,6 +43,12 @@
   let viewing = $state<number | null>(null)
   let error = $state('')
   let editing = $state(false)
+  /** Pin to side (#619), or Unpin when it's the pinned one. Pop out (#620) joins here. */
+  function pinItem(it: BuildActionItem) {
+    if (it !== 'pin') return
+    if (isPinned(message.id)) unpinBuild()
+    else pinBuild(message.channel_id, message.id, message)
+  }
 </script>
 
 <div class="build-page" data-testid="build-page">
@@ -60,7 +67,7 @@
             <BuildVideo link={b.link!} messageId={message.id} onError={(t) => (error = t)} />
           {/snippet}
           {#snippet actions()}
-            <BuildActions {message} canEdit={rights.edit} canArchive={rights.archive} canDelete={rights.delete} items={[]} onEdit={() => (editing = true)} onDeleted={onBack} />
+            <BuildActions {message} canEdit={rights.edit} canArchive={rights.archive} canDelete={rights.delete} items={['pin']} onItem={pinItem} onEdit={() => (editing = true)} onDeleted={onBack} />
           {/snippet}
         </BuildView>
         {#if error}<p class="error" role="alert">{error}</p>{/if}

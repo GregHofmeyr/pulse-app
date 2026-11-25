@@ -10,11 +10,12 @@ export const COLUMNS = {
   right: { min: 180, max: 480 },
 } as const
 
-/** The right column's default width, by what it holds (`chat`: a voice channel's chat, #226). */
-export const RIGHT_DEFAULT = { members: 240, group: 220, search: 340, chat: 360 } as const
+/** The right column's default width, by what it holds (`chat`: a voice channel's chat, #226; `build`: a pinned build,
+ *  #619). */
+export const RIGHT_DEFAULT = { members: 240, group: 220, search: 340, chat: 360, build: 320 } as const
 
 /** The right column's least width, by what it holds: a voice channel's chat keeps its composer usable (#230). */
-export const RIGHT_MIN = { members: COLUMNS.right.min, group: COLUMNS.right.min, search: COLUMNS.right.min, chat: 280 } as const
+export const RIGHT_MIN = { members: COLUMNS.right.min, group: COLUMNS.right.min, search: COLUMNS.right.min, chat: 280, build: COLUMNS.right.min } as const
 
 /** The main area's least width. With the defaults it fits the smallest window (900px) with room to spare. */
 export const MAIN_MIN = 320
