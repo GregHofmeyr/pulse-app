@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 // Quick peek (#619, spec §4.4): resting on a card or row ~600 ms (or Space on it) shows its title and first lines of
 // notes with Open and Pin to side; leaving both, or Escape, closes it.
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushSync, mount, unmount } from 'svelte'
+import { compile } from 'svelte/compiler'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Build } from '../lib/protocol/Build'
 import type { Message } from '../lib/protocol/Message'
@@ -197,5 +200,14 @@ describe('BuildPeek', () => {
     window.dispatchEvent(new Event('resize'))
     flushSync()
     expect(peek()).toBeNull()
+  })
+
+  // #638: nothing spills out of the peek (jsdom doesn't lay out: the rules that keep it in)
+  it('its buttons shrink with an ellipsis rather than spill', () => {
+    const css = compile(readFileSync(resolve(__dirname, 'BuildPeek.svelte'), 'utf8'), { filename: 'BuildPeek.svelte', css: 'external', cssHash: () => 'x' }).css!.code
+    const rule = (sel: string) => css.match(new RegExp(`${sel}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+    expect(rule('\\.actions\\.x')).toMatch(/max-width:\s*100%/)
+    expect(rule('\\.actions\\.x \\.btn:where\\(\\.x\\)')).toMatch(/min-width:\s*0/)
+    expect(rule('\\.label\\.x')).toMatch(/text-overflow:\s*ellipsis/)
   })
 })

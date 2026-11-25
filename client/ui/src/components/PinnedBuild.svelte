@@ -67,6 +67,7 @@
 <style>
   .pinned-build { width: var(--right-w, 320px); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; background: var(--bg-1); border-radius: var(--radius); overflow: hidden; }
   .bar { flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--bg-3); color: var(--text-3); }
+  .bar .btn, .bar .icon-btn { flex-shrink: 0; }
   .title { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 18px; }
   /* a narrow column: a smaller title, and screenshots one under another */

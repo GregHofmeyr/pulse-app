@@ -132,4 +132,20 @@ describe('PinnedBuild', () => {
     expect(rule).toMatch(/flex-shrink:\s*0/)
     expect(rule).toMatch(/background:\s*var\(--bg-1\)/)
   })
+
+  // #638: nothing spills out of the column at its least width (jsdom doesn't lay out: the rules that keep it in)
+  it('its contents stay inside the column at any width', () => {
+    const cssOf = (file: string) => compile(readFileSync(resolve(__dirname, file), 'utf8'), { filename: file, css: 'external', cssHash: () => 'x' }).css!.code
+    const rule = (css: string, sel: string) => css.match(new RegExp(`${sel}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+    const pinned = cssOf('PinnedBuild.svelte')
+    expect(rule(pinned, '\\.title\\.x')).toMatch(/min-width:\s*0[\s\S]*text-overflow:\s*ellipsis/)
+    expect(rule(pinned, '\\.bar\\.x \\.btn:where\\(\\.x\\), \\.bar\\.x \\.icon-btn:where\\(\\.x\\)')).toMatch(/flex-shrink:\s*0/)
+    const view = cssOf('BuildView.svelte')
+    expect(rule(view, '\\.caption\\.x')).toMatch(/overflow-wrap:\s*anywhere/)
+    expect(rule(view, '\\.meta\\.x')).toMatch(/overflow-wrap:\s*anywhere/)
+    expect(rule(view, '\\.badges\\.x')).toMatch(/flex-wrap:\s*wrap/)
+    expect(rule(view, '\\.tiles\\.x')).toMatch(/minmax\(140px, 1fr\)|minmax\(min\(140px, 100%\), 1fr\)/)
+    expect(view).toMatch(/\.notes\.x pre[^{]*\{[^}]*white-space:\s*pre-wrap/)
+    expect(view).toMatch(/\.notes\.x img[^{]*\{[^}]*max-width:\s*100%/)
+  })
 })
