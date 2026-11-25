@@ -113,6 +113,26 @@ describe('build feeds', () => {
     expect(s.buildFacets).toEqual({})
   })
 
+  it('a build created, updated, deleted or bulk-archived drops both of its channel\'s counts', () => {
+    const counts = { total: 1, games: [{ game_id: 'G1', count: 1 }] }
+    const counted = () => setBuildFacets(setBuildFacets(setBuildFacets(withFeeds([build('M1')]), 'B1', false, counts), 'B1', true, counts), 'B2', false, counts)
+    const events = [
+      created(build('M2')),
+      updated(build('M1', { title: 'Raven bunny v2' })),
+      { t: 'MessageDeleted', d: { channel_id: 'B1', message_id: 'M1', author_id: 'U2', mentions: [], thread_root_id: null } },
+      { t: 'BuildsArchived', d: { channel_id: 'B1', message_ids: ['M1'], archived_at: '2026-10-09T00:00:00.000Z', archived_by: 'U2' } },
+    ]
+    for (const e of events) {
+      const s = applyEvent(counted(), e as never, 0)
+      expect([e.t, buildFacetsOf(s, 'B1', false), buildFacetsOf(s, 'B1', true)]).toEqual([e.t, undefined, undefined])
+      // another channel's counts stay
+      expect(buildFacetsOf(s, 'B2', false)?.total).toBe(1)
+    }
+    // a comment on a build doesn't change the counts
+    const s = applyEvent(counted(), created({ ...build('R1'), build: undefined, thread_root_id: 'M1', author_id: 'U3' }), 0)
+    expect(buildFacetsOf(s, 'B1', false)?.total).toBe(1)
+  })
+
   it('keys differ per filter, and an empty part is unset', () => {
     expect(buildFeedKey('B1', {})).toBe(buildFeedKey('B1', { game: '', q: '  ', archived: false }))
     expect(buildFeedKey('B1', { archived: true })).not.toBe(buildFeedKey('B1', {}))

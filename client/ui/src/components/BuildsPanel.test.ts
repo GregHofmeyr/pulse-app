@@ -8,12 +8,19 @@ import { FakeIntersectionObserver, fakeMatchMedia } from '../lib/testMotion'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args), convertFileSrc: (s: string) => s }))
+const listeners = new Map<string, (e: { payload: unknown }) => void>()
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: async (name: string, fn: (e: { payload: unknown }) => void) => {
+    listeners.set(name, fn)
+    return () => {}
+  },
+}))
 vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
 vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 
 import BuildsChannel from './BuildsChannel.svelte'
-import { app, ui } from '../lib/store.svelte'
-import { applyReady, emptyState } from '../lib/state'
+import { app, handleReady, startListening, ui } from '../lib/store.svelte'
+import { applyEvent, applyReady, emptyState } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
 import { chooseOption, selectLabels, selectTrigger, selectValue } from './selectHarness'
 
@@ -39,10 +46,13 @@ const build = (id: string, b: Partial<Build> = {}): Message => ({
 
 const live = [build('M003'), build('M002', { game_id: 'G2' }), build('M001')]
 const old = build('M000', { archived_at: '2026-10-05T00:00:00.000Z', archived_by: 'U1' })
-const facets: Record<string, BuildFacets> = {
-  false: { total: 3, games: [{ game_id: 'G1', count: 2 }, { game_id: 'G2', count: 1 }] },
-  true: { total: 4, games: [{ game_id: 'G1', count: 3 }, { game_id: 'G2', count: 1 }] },
-}
+const counts = (live: number, all: number): Record<string, BuildFacets> => ({
+  false: { total: live, games: [{ game_id: 'G1', count: live - 1 }, { game_id: 'G2', count: 1 }] },
+  true: { total: all, games: [{ game_id: 'G1', count: all - 1 }, { game_id: 'G2', count: 1 }] },
+})
+let facets = counts(3, 4)
+/** `build_facets` fails while this says so (by its `archived` argument). */
+let facetsFail: (archived: boolean) => boolean = () => false
 let bulk: (body: { game_id: string | null; before: string; dry_run: boolean }) => unknown = () => ({ builds: [], archived: 0 })
 
 let cmp: ReturnType<typeof mount> | undefined
@@ -58,11 +68,16 @@ beforeEach(() => {
   invoke.mockReset()
   try { localStorage.clear() } catch { /* none */ }
   bulk = () => ({ builds: [], archived: 0 })
+  facets = counts(3, 4)
+  facetsFail = () => false
   ui.notice = null
   invoke.mockImplementation(async (cmd: string, args?: unknown) => {
     const a = (args ?? {}) as Record<string, unknown>
     if (cmd === 'list_builds') return [...live, ...(a.archived ? [old] : [])].filter((m) => !a.game || m.build!.game_id === a.game)
-    if (cmd === 'build_facets') return facets[String(a.archived)]
+    if (cmd === 'build_facets') {
+      if (facetsFail(!!a.archived)) throw new Error('offline')
+      return facets[String(a.archived)]
+    }
     if (cmd === 'bulk_archive_builds') return bulk(a.body as never)
     return undefined
   })
@@ -191,6 +206,51 @@ describe('BuildsPanel', () => {
     expect(button('Archive matching builds…')).toBeDefined()
   })
 
+  it('clearing the picked day goes back to 30 days ago', async () => {
+    await show()
+    const day = panel()!.querySelector<HTMLInputElement>('input[type=date]')!
+    day.value = '2026-09-01'
+    day.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    expect(button('30 days ago')!.getAttribute('aria-pressed')).toBe('false')
+    day.value = ''
+    day.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    expect(button('30 days ago')!.getAttribute('aria-pressed')).toBe('true')
+    button('Archive matching builds…')!.click()
+    await settle()
+    flushSync()
+    const body = (calls('bulk_archive_builds')[0][1] as { body: { before: string } }).body
+    expect(Math.abs(Date.parse(body.before) - (Date.now() - 30 * DAY))).toBeLessThan(60_000)
+  })
+
+  it('the day picker stops at today, and a later day counts as now', async () => {
+    await show()
+    const day = panel()!.querySelector<HTMLInputElement>('input[type=date]')!
+    const now = new Date()
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    expect(day.max).toBe(today)
+    // typed past the picker's limit
+    day.value = '2999-01-01'
+    day.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    button('Archive matching builds…')!.click()
+    await settle()
+    flushSync()
+    const body = (calls('bulk_archive_builds')[0][1] as { body: { before: string } }).body
+    expect(Date.parse(body.before)).toBeLessThanOrEqual(Date.now())
+    expect(Date.now() - Date.parse(body.before)).toBeLessThan(60_000)
+  })
+
+  it('no matches is announced', async () => {
+    await show()
+    expect(document.querySelector('.bulk [role=status]')?.textContent?.trim() ?? '').toBe('')
+    button('Archive matching builds…')!.click()
+    await settle()
+    flushSync()
+    expect(document.querySelector('.bulk [role=status]')?.textContent?.trim()).toBe('No builds match. Try another game or an earlier day.')
+  })
+
   it('the panel collapses and stays collapsed', async () => {
     await show()
     const toggle = document.querySelector<HTMLButtonElement>('.builds-head button[aria-label="Hide games panel"]')!
@@ -205,5 +265,90 @@ describe('BuildsPanel', () => {
     document.querySelector<HTMLButtonElement>('.builds-head button[aria-label="Show games panel"]')!.click()
     flushSync()
     expect(panel()).not.toBeNull()
+  })
+})
+
+describe('BuildsChannel counts', () => {
+  const total = () => gameRow('All games').querySelector('.n')?.textContent
+  const added = (id: string) => ({ t: 'MessageCreated' as const, d: { message: build(id), nonce: null } })
+  const toggleArchived = async () => {
+    showArchived().click()
+    await settle()
+    flushSync()
+  }
+
+  it('coming back to a channel after a build was added elsewhere shows the new count', async () => {
+    await show()
+    expect(total()).toBe('3')
+    unmount(cmp!)
+    cmp = undefined
+    // a build lands while another channel is open
+    app.state = applyEvent(app.state, added('M004'), Date.now())
+    facets = counts(4, 5)
+    await show()
+    expect(total()).toBe('4')
+  })
+
+  it('after Show archived was on and off, a build change refetches the archived counts too', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      cmp = mount(BuildsChannel, { target: document.body, props: { channelId: 'B1', serverId: 'S1' } })
+      flushSync()
+      await vi.advanceTimersByTimeAsync(0)
+      flushSync()
+      const toggle = async () => {
+        showArchived().click()
+        flushSync()
+        await vi.advanceTimersByTimeAsync(0)
+        flushSync()
+      }
+      await toggle()
+      expect(total()).toBe('4')
+      await toggle()
+      expect(total()).toBe('3')
+      await startListening()
+      facets = counts(4, 5)
+      const asked = calls('build_facets').length
+      listeners.get('pulse://event')!({ payload: added('M004') })
+      flushSync()
+      // the counts held stay on screen until the fresh ones land, a second later
+      await vi.advanceTimersByTimeAsync(500)
+      flushSync()
+      expect(total()).toBe('3')
+      expect(calls('build_facets')).toHaveLength(asked)
+      await vi.advanceTimersByTimeAsync(500)
+      flushSync()
+      expect(total()).toBe('4')
+      await toggle()
+      expect(total()).toBe('5')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a failed count fetch does not stop the other variant loading', async () => {
+    facetsFail = (archived) => !archived
+    await show()
+    expect(total()).toBe('')
+    await toggleArchived()
+    expect(calls('build_facets').at(-1)![1]).toEqual({ channelId: 'B1', archived: true })
+    expect(total()).toBe('4')
+    // and back: the live counts are asked for again
+    facetsFail = () => false
+    await toggleArchived()
+    expect(total()).toBe('3')
+  })
+
+  it('a failed count fetch is tried again after a reconnect', async () => {
+    facetsFail = () => true
+    await show()
+    expect(total()).toBe('')
+    const asked = calls('build_facets').length
+    facetsFail = () => false
+    handleReady(ready())
+    await settle()
+    flushSync()
+    expect(calls('build_facets').length).toBeGreaterThan(asked)
+    expect(total()).toBe('3')
   })
 })

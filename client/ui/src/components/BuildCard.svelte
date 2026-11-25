@@ -1,6 +1,7 @@
 <script lang="ts">
   // One build in the gallery (#617): its picture, a "▶ video" tag when it has a link, the game as a caption, the title,
-  // two lines of notes and "who · when · N comments". Quick drops and archived builds say so; archived ones are greyed.
+  // two lines of notes and "who · when · N comments". Quick drops and archived builds say so; an archived one's picture
+  // is greyed.
   import BuildThumb from './BuildThumb.svelte'
   import { buildGameName, commentCount, isArchived, isQuickDrop } from '../lib/builds'
   import { relativeTime } from '../lib/conversations'
@@ -24,8 +25,8 @@
   <svelte:element this={onOpen ? 'button' : 'div'} type={onOpen ? 'button' : undefined} class="open" role={onOpen ? undefined : 'presentation'}
     onclick={onOpen ? () => onOpen(message) : undefined}>
     <div class="media">
-      <BuildThumb {message} />
-      {#if b.link}<span class="tag video">▶ video</span>{/if}
+      <BuildThumb {message} dim={isArchived(message)} />
+      {#if b.link}<span class="tag video"><span aria-hidden="true">▶</span> video</span>{/if}
       <span class="badges">
         {#if isQuickDrop(message)}<span class="badge">QUICK DROP</span>{/if}
         {#if isArchived(message)}<span class="badge">ARCHIVED</span>{/if}
@@ -43,7 +44,6 @@
 <style>
   .build-card { min-width: 0; border-radius: var(--radius-lg); background: var(--bg-2); border: 1px solid var(--bg-3); overflow: hidden; content-visibility: auto; contain-intrinsic-size: auto 280px; transition: border-color var(--dur) var(--ease); }
   .build-card:hover { border-color: var(--bg-4); }
-  .build-card.archived { opacity: .55; }
   .open { display: flex; flex-direction: column; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
   button.open { cursor: pointer; }
   .media { position: relative; aspect-ratio: 16 / 9; }

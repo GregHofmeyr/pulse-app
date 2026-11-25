@@ -1067,6 +1067,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         clipFeeds: feeds.clipFeeds,
         // A build joins its channel's build feeds the same way.
         buildFeeds: feeds.buildFeeds,
+        // and its channel's counts are fetched again
+        buildFacets: feeds.buildFacets,
         messages: m.clip || m.build || detached(s, c) ? s.messages : { ...s.messages, [c]: upsertMessage(s.messages[c], withHeldPoll(withMyQuoteState(m, undefined, s.me?.id), heldCopy(s.messages[c], m.id))) },
         history: m.clip || m.build ? s.history : detached(s, c) ? { ...s.history, [c]: withMissed(s.history[c], m.id) } : s.history,
         pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
@@ -1129,6 +1131,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       // Unsent replies to it can never post now (the thread is gone with it).
       const left = (s.pending[c] ?? []).filter((p) => p.thread_root_id !== id)
       const { [c]: _p, ...otherPending } = s.pending
+      // a deleted build leaves its feeds, and its channel's counts are fetched again
+      const builds = buildsOnEvent(s, e)
       return {
         ...s,
         history,
@@ -1136,7 +1140,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         openRoot: s.openRoot && s.openRoot.channel_id === c ? gone(s.openRoot) : s.openRoot,
         messages: s.messages[c] ? { ...s.messages, [c]: s.messages[c].map(gone) } : s.messages,
         clipFeeds: dropFromFeeds(s.clipFeeds, c, id),
-        buildFeeds: buildsOnEvent(s, e).buildFeeds,
+        buildFeeds: builds.buildFeeds,
+        buildFacets: builds.buildFacets,
         // a deleted message's pin goes with it (the server's MessageUnpinned follows)
         pins: s.pins[c] ? { ...s.pins, [c]: s.pins[c].filter((p) => p.message.id !== id) } : s.pins,
         latest: s.latest[c] ? { ...s.latest, [c]: gone(s.latest[c]) } : s.latest,

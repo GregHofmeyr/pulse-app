@@ -7,7 +7,11 @@
   import { api } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
-  let { message }: { message: Message } = $props()
+  let { message, dim = false }: {
+    message: Message
+    /** Greyed (an archived build): only the picture, so the text beside it keeps its contrast. */
+    dim?: boolean
+  } = $props()
 
   const thumb = $derived(buildThumb(message))
   let shotUrl = $state<string | null>(null)
@@ -29,7 +33,7 @@
   )
 </script>
 
-<div class="thumb">
+<div class="thumb" class:dim>
   {#if src && !broken}
     <img {src} alt="" loading="lazy" decoding="async" draggable="false" onerror={() => (broken = true)} />
   {:else}
@@ -39,6 +43,7 @@
 
 <style>
   .thumb { position: relative; width: 100%; height: 100%; background: var(--bg-3); overflow: hidden; }
+  .thumb.dim { opacity: .55; }
   img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .tile { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-3); }
 </style>

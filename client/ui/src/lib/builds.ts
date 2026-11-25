@@ -165,17 +165,27 @@ function archived(s: AppState, channel: string, ids: string[], at: string, by: s
   })
 }
 
-/** The build feeds after a gateway event (`applyEvent` calls it for builds and their deletes). */
+/** A channel's counts thrown away, both with and without archived builds, so the next look fetches them fresh (after
+ * any change to its builds, whether its view is open or not). */
+export function dropBuildFacets(s: AppState, channelId: string): AppState {
+  const a = facetsKey(channelId, false)
+  const b = facetsKey(channelId, true)
+  if (!(a in s.buildFacets) && !(b in s.buildFacets)) return s
+  const { [a]: _a, [b]: _b, ...rest } = s.buildFacets
+  return { ...s, buildFacets: rest }
+}
+
+/** The build feeds and counts after a gateway event (`applyEvent` calls it for builds and their deletes). */
 export function buildsOnEvent(s: AppState, e: Event): AppState {
   switch (e.t) {
     case 'MessageCreated':
-      return e.d.message.build && !e.d.message.thread_root_id ? created(s, e.d.message) : s
+      return e.d.message.build && !e.d.message.thread_root_id ? dropBuildFacets(created(s, e.d.message), e.d.message.channel_id) : s
     case 'MessageUpdated':
-      return e.d.message.build && !e.d.message.thread_root_id ? updated(s, e.d.message) : s
+      return e.d.message.build && !e.d.message.thread_root_id ? dropBuildFacets(updated(s, e.d.message), e.d.message.channel_id) : s
     case 'MessageDeleted':
-      return e.d.thread_root_id ? s : deleted(s, e.d.channel_id, e.d.message_id)
+      return e.d.thread_root_id ? s : dropBuildFacets(deleted(s, e.d.channel_id, e.d.message_id), e.d.channel_id)
     case 'BuildsArchived':
-      return archived(s, e.d.channel_id, e.d.message_ids, e.d.archived_at, e.d.archived_by)
+      return dropBuildFacets(archived(s, e.d.channel_id, e.d.message_ids, e.d.archived_at, e.d.archived_by), e.d.channel_id)
     default:
       return s
   }

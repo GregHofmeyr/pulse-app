@@ -1,11 +1,11 @@
 <script lang="ts">
-  // "Archive old builds" (#617): a game (or All games) and a "saved before" (a day, 30 days ago or 90 days ago), then
-  // "Archive matching builds…" asks the server which builds that is (a dry run, covering only builds you may archive),
-  // shows them, and archives them once you confirm. Archiving never deletes; each can be restored.
+  // "Archive old builds" (#617): a game (or All games) and a "saved before" (a day up to today, 30 days ago or 90 days
+  // ago), then "Archive matching builds…" asks the server which builds that is (a dry run, covering only builds you may
+  // archive), shows them, and archives them once you confirm. Archiving never deletes; each can be restored.
   import { untrack } from 'svelte'
   import Select from './Select.svelte'
   import { modal } from '../lib/actions'
-  import { ui } from '../lib/store.svelte'
+  import { clock, ui } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import type { BuildBrief } from '../lib/protocol/BuildBrief'
   import type { Game } from '../lib/protocol/Game'
@@ -27,12 +27,17 @@
   })
   let before = $state<Before>({ days: 30 })
   let day = $state('')
-  /** The time `before` stands for (the start of a picked day, in your time zone). */
+  /** The time `before` stands for (the start of a picked day, in your time zone; never later than now). */
   function beforeIso(b: Before): string | null {
     if ('days' in b) return new Date(Date.now() - b.days * DAY_MS).toISOString()
     const [y, m, d] = b.day.split('-').map(Number)
-    return y && m && d ? new Date(y, m - 1, d).toISOString() : null
+    return y && m && d ? new Date(Math.min(new Date(y, m - 1, d).getTime(), Date.now())).toISOString() : null
   }
+  /** Today in your time zone, as the date input writes a day: the latest it offers. */
+  const today = $derived.by(() => {
+    const t = new Date(clock.nowIso)
+    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
+  })
 
   let busy = $state(false)
   let error = $state('')
@@ -52,8 +57,9 @@
     before = { days }
     day = ''
   }
+  /** A picked day; clearing it goes back to the default, 30 days ago. */
   function pickDay() {
-    if (day) before = { day }
+    before = day ? { day } : { days: 30 }
   }
 
   async function ask() {
@@ -106,8 +112,9 @@
     <button type="button" class="toggle-chip" aria-pressed={'days' in before && before.days === 30} onclick={() => pickDays(30)}>30 days ago</button>
     <button type="button" class="toggle-chip" aria-pressed={'days' in before && before.days === 90} onclick={() => pickDays(90)}>90 days ago</button>
   </div>
-  <input class="input input-sm" type="date" aria-label="Saved before this day" bind:value={day} oninput={pickDay} />
+  <input class="input input-sm" type="date" aria-label="Saved before this day" max={today} bind:value={day} oninput={pickDay} />
   <button type="button" class="btn btn-secondary go" disabled={busy || none} onclick={ask}>{none ? 'No builds match' : 'Archive matching builds…'}</button>
+  <p class="sr-only" role="status">{none ? 'No builds match. Try another game or an earlier day.' : ''}</p>
   {#if error && !preview}<p class="err" role="alert">{error}</p>{/if}
 </section>
 
