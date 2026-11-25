@@ -440,6 +440,35 @@ describe('BuildPage: layout', () => {
     expect(document.querySelector('.build-video .enlarge')).toBeNull()
   })
 
+  // #618 testing: with Comments hidden the media row fills the page; beside Comments (and stacked) it keeps its sizes
+  it('wide with Comments hidden: the media row fills the page; beside Comments or stacked it does not', async () => {
+    await page(build('M001', { link: yt }, { attachments: [1, 2, 3, 4].map(shot) }))
+    const fill = () => document.querySelector('.build-view .media')!.classList.contains('fill')
+    const videoFill = () => document.querySelector('.build-video')!.classList.contains('fill')
+    resize(1200)
+    expect(layout()).toBe('wide')
+    expect(fill()).toBe(false)
+    expect(videoFill()).toBe(false)
+    toggle().click()
+    flushSync()
+    expect(layout()).toBe('wide')
+    expect(fill()).toBe(true)
+    expect(videoFill()).toBe(true)
+    // too narrow for the wide row even with Comments hidden: stacked, and the old rules
+    resize(500)
+    expect(layout()).toBe('stacked')
+    expect(fill()).toBe(false)
+    expect(videoFill()).toBe(false)
+    resize(1200)
+    expect(fill()).toBe(true)
+    // enlarged keeps filling (the video the row, the strip under it)
+    document.querySelector<HTMLButtonElement>('.build-video .corner .enlarge')!.click()
+    flushSync()
+    const media = document.querySelector('.build-view .media')!
+    expect(media.classList.contains('enlarged')).toBe(true)
+    expect(media.classList.contains('fill')).toBe(true)
+  })
+
   // #645 review: a video with no screenshots takes the row's one column, not half of it
   it('a video with no screenshots gets the whole wide row', async () => {
     localStorage.setItem('pulse.buildComments', 'hidden')
@@ -514,6 +543,32 @@ describe('BuildPage: containment', () => {
     expect(rule(css, '\\.media\\.wide\\.x \\.tiles:where\\(\\.x\\)')).toMatch(/grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/)
     expect(rule(css, '\\.media\\.wide\\.enlarged\\.x \\.video:where\\(\\.x\\)')).toMatch(/grid-column:\s*1 \/ -1/)
     expect(rule(css, '\\.media\\.wide\\.no-tiles\\.x')).toMatch(/grid-template-columns:\s*minmax\(0,\s*640px\)/)
+  })
+
+  // #618 testing: Comments hidden, the media row fills the page: video ~60%, the 2×2 grid ~40%, capped and left-aligned
+  it('the filling media row: fluid columns, fixed aspects and a width cap', () => {
+    const css = cssOf('BuildView.svelte')
+    const row = rule(css, '\\.media\\.wide\\.fill\\.x')
+    expect(row).toMatch(/grid-template-columns:\s*minmax\(0,\s*3fr\)\s+minmax\(0,\s*2fr\)/)
+    expect(row).toMatch(/max-width:\s*1400px/)
+    expect(row).toMatch(/width:\s*100%/)
+    expect(row).toMatch(/box-sizing:\s*border-box/)
+    // its tiles keep one aspect, cropped to it, never capped short
+    const tile = rule(css, '\\.media\\.wide\\.fill\\.x \\.tile:where\\(\\.x\\)')
+    expect(tile).toMatch(/aspect-ratio:\s*4 \/ 3/)
+    expect(tile).toMatch(/max-height:\s*none/)
+    expect(rule(css, '\\.tile\\.x img:where\\(\\.x\\)')).toMatch(/object-fit:\s*cover/)
+    // no screenshots: the video takes the row; no video: the screenshots an adapting grid across it
+    expect(rule(css, '\\.media\\.wide\\.fill\\.no-tiles\\.x')).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/)
+    expect(rule(css, '\\.media\\.wide\\.fill\\.solo\\.x \\.tiles:where\\(\\.x\\)')).toMatch(/grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(min\(320px,\s*100%\),\s*1fr\)\)/)
+    // enlarged: the video the row and the strip under it, as before
+    expect(rule(css, '\\.media\\.wide\\.fill\\.enlarged\\.x')).toMatch(/grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/)
+    expect(rule(css, '\\.media\\.wide\\.fill\\.enlarged\\.x \\.tile:where\\(\\.x\\)')).toMatch(/aspect-ratio:\s*16 \/ 9/)
+    // the player drops its 640px cap only when filling; it stays 16:9
+    const video = cssOf('BuildVideo.svelte')
+    expect(rule(video, '\\.build-video\\.x')).toMatch(/max-width:\s*640px/)
+    expect(rule(video, '\\.build-video\\.fill\\.x')).toMatch(/max-width:\s*none/)
+    expect(rule(video, '\\.screen\\.x')).toMatch(/aspect-ratio:\s*16 \/ 9/)
   })
 
   it("the player's controls show on hover and keyboard focus, and the link button ellipsises", () => {

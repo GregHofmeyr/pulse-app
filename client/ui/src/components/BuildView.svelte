@@ -9,7 +9,7 @@
   import type { BuildScreenshot as Screenshot } from '../lib/builds'
   import type { BuildLink } from '../lib/protocol/BuildLink'
 
-  let { title, gameName, guessed = false, authorName, savedAt, updatedAt, notes, screenshots, link, archived, quickDrop = false, onImage, video, layout = 'stacked', videoEnlarged = false }: {
+  let { title, gameName, guessed = false, authorName, savedAt, updatedAt, notes, screenshots, link, archived, quickDrop = false, onImage, video, layout = 'stacked', videoEnlarged = false, fill = false }: {
     title: string
     gameName: string | null
     /** The game was picked automatically from the link's title (shown "auto picked"). */
@@ -31,6 +31,8 @@
     layout?: 'wide' | 'stacked'
     /** The video is enlarged: on the wide layout it takes the whole row. */
     videoEnlarged?: boolean
+    /** The wide row fills the content width (the build page with Comments hidden), up to a cap; else its fixed sizes. */
+    fill?: boolean
   } = $props()
 
   const MAX_TILES = 4
@@ -56,7 +58,7 @@
     {/if}
   </header>
   {#if (video && link) || tiles.length}
-    <div class="media" class:wide={layout === 'wide'} class:enlarged={videoEnlarged} class:solo={!(video && link)} class:no-tiles={!tiles.length}>
+    <div class="media" class:wide={layout === 'wide'} class:enlarged={videoEnlarged} class:solo={!(video && link)} class:no-tiles={!tiles.length} class:fill={layout === 'wide' && fill}>
       {#if video && link}<div class="video">{@render video()}</div>{/if}
       {#if tiles.length}
         <div class="tiles" class:one={tiles.length === 1}>
@@ -103,6 +105,18 @@
   .media.wide.enlarged { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .media.wide.enlarged .video { grid-column: 1 / -1; }
   .media.wide.enlarged .tiles { grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  /* filling (the build page, Comments hidden, #618 testing): the row takes the content width up to 1400px, left-aligned;
+     the video ~60% and the 2×2 grid ~40%, growing together. 4:3 tiles bring the grid's height close to the 16:9 video's
+     at that split (16:10 would leave it at about two thirds of it). Before `enlarged`'s own fill rules below. */
+  .media.wide.fill { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); width: 100%; max-width: 1400px; box-sizing: border-box; }
+  .media.wide.fill .tile { aspect-ratio: 4 / 3; max-height: none; }
+  /* no screenshots: the video takes the row (still capped, still 16:9); no video: the screenshots an adapting grid */
+  .media.wide.fill.no-tiles { grid-template-columns: minmax(0, 1fr); }
+  .media.wide.fill.solo { grid-template-columns: minmax(0, 1fr); }
+  .media.wide.fill.solo .tiles { grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); }
+  /* enlarged: as before, the video the row and a 16:9 strip under it */
+  .media.wide.fill.enlarged { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .media.wide.fill.enlarged .tile { aspect-ratio: 16 / 9; }
   .video { min-width: 0; }
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(140px, 100%), 1fr)); gap: 8px; }
   .tiles.one { grid-template-columns: minmax(0, 480px); }
