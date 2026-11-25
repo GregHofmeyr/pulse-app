@@ -3315,6 +3315,29 @@ pub struct BulkArchiveRequest {
     pub dry_run: bool,
 }
 
+/// `POST /channels/{id}/builds/archive-many`: archive (or restore) these builds of the channel, at most 100. Each is
+/// done only if the caller may archive it (its author, or the server's owner); the rest are skipped.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ArchiveBuildsRequest {
+    pub message_ids: Vec<MessageId>,
+    pub archived: bool,
+}
+
+/// `POST /channels/{id}/builds/delete-many`: delete these builds of the channel for good, at most 100, each only if
+/// the caller may (its author, or the server's owner); the rest are skipped.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct DeleteBuildsRequest {
+    pub message_ids: Vec<MessageId>,
+}
+
+/// What a batch over a channel's builds did: `done` were changed (or already as asked), `skipped` weren't (not in the
+/// channel, gone, or not the caller's to change).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct BuildsBatchResult {
+    pub done: u32,
+    pub skipped: u32,
+}
+
 /// What a bulk archive matched (newest first) and, unless a dry run, how many it archived.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct BulkArchiveResult {

@@ -437,6 +437,8 @@ const WRITES: &[&str] = &[
     "DELETE /builds/{message_id}",
     "PUT /builds/{message_id}",
     "PUT /builds/{message_id}/archived",
+    "POST /channels/{id}/builds/archive-many",
+    "POST /channels/{id}/builds/delete-many",
     "POST /dms",
     "DELETE /emoji/{id}",
     "PATCH /emoji/{id}",

@@ -420,6 +420,8 @@ macro_rules! app_commands {
             builds::build_facets,
             builds::set_build_archived,
             builds::bulk_archive_builds,
+            builds::archive_many_builds,
+            builds::delete_many_builds,
             builds::delete_build,
             builds::search_builds,
             builds::create_build,

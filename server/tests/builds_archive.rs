@@ -7,7 +7,7 @@ use common::*;
 use futures::SinkExt;
 use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
-use pulse_protocol::rest::{BuildFacets, BulkArchiveResult, Channel, Message};
+use pulse_protocol::rest::{BuildFacets, BuildsBatchResult, BulkArchiveResult, Channel, Message};
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
@@ -93,6 +93,37 @@ impl World {
         .await
     }
 
+    async fn archive_many(
+        &self,
+        token: &str,
+        ch: ChannelId,
+        ids: &[MessageId],
+        archived: bool,
+    ) -> reqwest::Response {
+        post_json(
+            &self.app,
+            token,
+            &format!("/channels/{ch}/builds/archive-many"),
+            json!({ "message_ids": ids, "archived": archived }),
+        )
+        .await
+    }
+
+    async fn delete_many(
+        &self,
+        token: &str,
+        ch: ChannelId,
+        ids: &[MessageId],
+    ) -> reqwest::Response {
+        post_json(
+            &self.app,
+            token,
+            &format!("/channels/{ch}/builds/delete-many"),
+            json!({ "message_ids": ids }),
+        )
+        .await
+    }
+
     async fn delete(&self, token: &str, id: MessageId) -> reqwest::Response {
         self.app
             .http
@@ -136,12 +167,17 @@ impl World {
 }
 
 async fn hello(app: &TestApp, token: &str) -> Socket {
+    hello_as(app, token, pulse_protocol::PROTOCOL_VERSION).await
+}
+
+/// A gateway connection whose Hello says `version`.
+async fn hello_as(app: &TestApp, token: &str, version: u32) -> Socket {
     let (mut ws, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
         .await
         .unwrap();
     let f = serde_json::to_string(&ClientFrame::Hello {
         token: token.into(),
-        client_version: pulse_protocol::PROTOCOL_VERSION,
+        client_version: version,
     })
     .unwrap();
     ws.send(Ws::text(f)).await.unwrap();
@@ -489,4 +525,260 @@ async fn an_author_who_left_still_deletes_their_build() {
     );
     assert_eq!(w.delete(&w.sam.1, m.id).await.status(), 204);
     assert_eq!(w.list("").await, vec![other.id]);
+}
+
+async fn batch(r: reqwest::Response) -> BuildsBatchResult {
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
+
+fn sorted(mut v: Vec<MessageId>) -> Vec<MessageId> {
+    v.sort();
+    v
+}
+
+/// Archive-many (#617): each build by the single route's rule (its author, or the owner); the rest are skipped, one
+/// `BuildsArchived` names the ones it changed, and a restore sends each its `MessageUpdated`.
+#[tokio::test]
+async fn archive_many_does_only_the_builds_you_may() {
+    let w = world().await;
+    let a = w.build(&w.sam.1, json!({ "title": "Sam's A" })).await;
+    let b = w.build(&w.alex.1, json!({ "title": "Alex's" })).await;
+    let c = w.build(&w.sam.1, json!({ "title": "Sam's C" })).await;
+    let mut ws = hello(&w.app, &w.alex.1).await;
+    let got = batch(
+        w.archive_many(&w.sam.1, w.ch, &[a.id, b.id, c.id], true)
+            .await,
+    )
+    .await;
+    assert_eq!(
+        got,
+        BuildsBatchResult {
+            done: 2,
+            skipped: 1
+        }
+    );
+    assert_eq!(w.list("").await, vec![b.id], "alex's is untouched");
+    let (ids, by) = wait_for(&mut ws, "BuildsArchived", |e| match e {
+        Event::BuildsArchived {
+            message_ids,
+            archived_by,
+            ..
+        } => Some((message_ids, archived_by)),
+        _ => None,
+    })
+    .await;
+    assert_eq!((sorted(ids), by), (sorted(vec![a.id, c.id]), w.sam.0));
+
+    // the owner may archive all of them; the ones already archived count as done, the event names only the change
+    let got = batch(
+        w.archive_many(&w.alex.1, w.ch, &[a.id, b.id, c.id], true)
+            .await,
+    )
+    .await;
+    assert_eq!(
+        got,
+        BuildsBatchResult {
+            done: 3,
+            skipped: 0
+        }
+    );
+    let ids = wait_for(&mut ws, "BuildsArchived", |e| match e {
+        Event::BuildsArchived { message_ids, .. } => Some(message_ids),
+        _ => None,
+    })
+    .await;
+    assert_eq!(ids, vec![b.id]);
+    let one: Message = get_json(&w.app, &w.sam.1, &format!("/builds/{}", a.id)).await;
+    assert_eq!(
+        one.build.unwrap().archived_by,
+        Some(w.sam.0),
+        "who archived it first is kept"
+    );
+
+    // restoring: sam gets theirs back, not alex's
+    let got = batch(w.archive_many(&w.sam.1, w.ch, &[a.id, b.id], false).await).await;
+    assert_eq!(
+        got,
+        BuildsBatchResult {
+            done: 1,
+            skipped: 1
+        }
+    );
+    let back = wait_for(&mut ws, "MessageUpdated", |e| match e {
+        Event::MessageUpdated { message } => Some(message),
+        _ => None,
+    })
+    .await;
+    assert_eq!(back.id, a.id);
+    assert!(back.build.unwrap().archived_at.is_none());
+    assert_eq!(w.list("").await, vec![a.id]);
+    // an outsider can't
+    assert_eq!(
+        w.archive_many(&w.kim, w.ch, &[a.id], true).await.status(),
+        404
+    );
+}
+
+#[tokio::test]
+async fn delete_many_does_only_the_builds_you_may() {
+    let w = world().await;
+    let mine = w.build(&w.sam.1, json!({ "title": "Sam's" })).await;
+    let theirs = w.build(&w.alex.1, json!({ "title": "Alex's" })).await;
+    let c: Message = w
+        .comment(&w.alex.1, mine.id, "nice")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(w.delete_many(&w.kim, w.ch, &[mine.id]).await.status(), 404);
+    let mut ws = hello(&w.app, &w.alex.1).await;
+    let got = batch(w.delete_many(&w.sam.1, w.ch, &[mine.id, theirs.id]).await).await;
+    assert_eq!(
+        got,
+        BuildsBatchResult {
+            done: 1,
+            skipped: 1
+        }
+    );
+    let mut gone = vec![];
+    while gone.len() < 2 {
+        gone.push(
+            wait_for(&mut ws, "MessageDeleted", |e| match e {
+                Event::MessageDeleted { message_id, .. } => Some(message_id),
+                _ => None,
+            })
+            .await,
+        );
+    }
+    assert_eq!(
+        sorted(gone),
+        sorted(vec![mine.id, c.id]),
+        "the build and its comment"
+    );
+    assert_eq!(w.list("?archived=true").await, vec![theirs.id]);
+    // the owner deletes anyone's; one already gone is skipped
+    let got = batch(w.delete_many(&w.alex.1, w.ch, &[mine.id, theirs.id]).await).await;
+    assert_eq!(
+        got,
+        BuildsBatchResult {
+            done: 1,
+            skipped: 1
+        }
+    );
+    assert!(w.list("?archived=true").await.is_empty());
+}
+
+#[tokio::test]
+async fn batches_are_capped_at_100() {
+    let w = world().await;
+    let m = w.build(&w.alex.1, json!({ "title": "A" })).await;
+    let mut ids: Vec<MessageId> = (0..100).map(|_| MessageId::new()).collect();
+    ids[0] = m.id;
+    let got = batch(w.archive_many(&w.alex.1, w.ch, &ids, true).await).await;
+    assert_eq!(
+        got,
+        BuildsBatchResult {
+            done: 1,
+            skipped: 99
+        }
+    );
+    ids.push(MessageId::new());
+    assert_eq!(
+        w.archive_many(&w.alex.1, w.ch, &ids, true).await.status(),
+        400
+    );
+    assert_eq!(w.delete_many(&w.alex.1, w.ch, &ids).await.status(), 400);
+    assert_eq!(
+        w.list("?archived=true").await,
+        vec![m.id],
+        "nothing deleted"
+    );
+    // a repeated id is one build
+    let got = batch(w.delete_many(&w.alex.1, w.ch, &[m.id, m.id]).await).await;
+    assert_eq!(
+        got,
+        BuildsBatchResult {
+            done: 1,
+            skipped: 0
+        }
+    );
+}
+
+/// A batch on one channel never reaches a build of another: it's skipped.
+#[tokio::test]
+async fn builds_of_another_channel_are_skipped() {
+    let w = world().await;
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/servers/{}/channels", w.server),
+        json!({ "kind": "builds", "name": "more-builds" }),
+    )
+    .await;
+    let other: Channel = r.json().await.unwrap();
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/builds", other.id),
+        json!({ "title": "Elsewhere" }),
+    )
+    .await;
+    let x: Message = r.json().await.unwrap();
+    let got = batch(w.archive_many(&w.alex.1, w.ch, &[x.id], true).await).await;
+    assert_eq!(
+        got,
+        BuildsBatchResult {
+            done: 0,
+            skipped: 1
+        }
+    );
+    let got = batch(w.delete_many(&w.alex.1, w.ch, &[x.id]).await).await;
+    assert_eq!(
+        got,
+        BuildsBatchResult {
+            done: 0,
+            skipped: 1
+        }
+    );
+    let one: Message = get_json(&w.app, &w.alex.1, &format!("/builds/{}", x.id)).await;
+    assert!(one.build.unwrap().archived_at.is_none());
+    // and a plain chat channel isn't a builds channel
+    let text = general(&w.app, &w.alex.1, w.server).await;
+    assert_eq!(
+        w.archive_many(&w.alex.1, text.id, &[x.id], true)
+            .await
+            .status(),
+        400
+    );
+}
+
+/// A version-4 client hears nothing of a batch (#616): neither its `BuildsArchived` nor its `MessageDeleted`s.
+#[tokio::test]
+async fn a_version_4_client_hears_nothing_of_a_batch() {
+    let w = world().await;
+    let text = general(&w.app, &w.alex.1, w.server).await;
+    let a = w.build(&w.alex.1, json!({ "title": "A" })).await;
+    let b = w.build(&w.alex.1, json!({ "title": "B" })).await;
+    let mut old = hello_as(&w.app, &w.sam.1, 4).await;
+    batch(w.archive_many(&w.alex.1, w.ch, &[a.id], true).await).await;
+    batch(w.archive_many(&w.alex.1, w.ch, &[a.id], false).await).await;
+    batch(w.delete_many(&w.alex.1, w.ch, &[a.id, b.id]).await).await;
+    send(&w.app, &w.alex.1, text.id, "after").await;
+    let id = w.ch.to_string();
+    loop {
+        match next_frame_beating(&mut old, Duration::from_secs(3)).await {
+            Some(ServerFrame::Event(Event::MessageCreated { message, .. }))
+                if message.content == "after" =>
+            {
+                break;
+            }
+            Some(ServerFrame::Event(e)) => {
+                let s = serde_json::to_string(&e).unwrap();
+                assert!(!s.contains(&id) && !s.contains(&a.id.to_string()), "{s}");
+            }
+            Some(_) => continue,
+            None => panic!("expected the sentinel"),
+        }
+    }
 }

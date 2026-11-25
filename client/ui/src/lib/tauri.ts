@@ -26,6 +26,7 @@ import type { CreateBuildRequest } from './protocol/CreateBuildRequest'
 import type { UpdateBuildRequest } from './protocol/UpdateBuildRequest'
 import type { BulkArchiveRequest } from './protocol/BulkArchiveRequest'
 import type { BulkArchiveResult } from './protocol/BulkArchiveResult'
+import type { BuildsBatchResult } from './protocol/BuildsBatchResult'
 import type { Category } from './protocol/Category'
 import type { SaveLayoutRequest } from './protocol/SaveLayoutRequest'
 import type { CreatePlanRequest } from './protocol/CreatePlanRequest'
@@ -681,6 +682,11 @@ export const api = {
   bulkArchiveBuilds: (channelId: string, body: BulkArchiveRequest) =>
     invoke<BulkArchiveResult>('bulk_archive_builds', { channelId, body }),
   deleteBuild: (messageId: string) => invoke<void>('delete_build', { messageId }),
+  /** Multi-select (#617): up to 100 of a channel's builds at once; the ones you may not change come back as `skipped`. */
+  archiveManyBuilds: (channelId: string, messageIds: string[], archived: boolean) =>
+    invoke<BuildsBatchResult>('archive_many_builds', { channelId, body: { message_ids: messageIds, archived } }),
+  deleteManyBuilds: (channelId: string, messageIds: string[]) =>
+    invoke<BuildsBatchResult>('delete_many_builds', { channelId, body: { message_ids: messageIds } }),
   // the build pop-out (#620). The main window opens, updates and closes it; the pop-out itself may call only the last three
   openBuildWindow: (snapshot: BuildSnapshot, onTop: boolean) => invoke<void>('open_build_window', { snapshot, onTop }),
   updateBuildWindow: (snapshot: BuildSnapshot) => invoke<void>('update_build_window', { snapshot }),

@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use pulse_protocol::ids::{AttachmentId, ChannelId, GameId, MessageId};
 use pulse_protocol::rest::{
-    BuildFacets, BulkArchiveRequest, BulkArchiveResult, CreateBuildRequest, Message,
-    SetBuildArchivedRequest, UpdateBuildRequest,
+    ArchiveBuildsRequest, BuildFacets, BuildsBatchResult, BulkArchiveRequest, BulkArchiveResult,
+    CreateBuildRequest, DeleteBuildsRequest, Message, SetBuildArchivedRequest, UpdateBuildRequest,
 };
 use tauri::{AppHandle, Emitter, State};
 
@@ -138,6 +138,43 @@ impl Api {
         Self::clip_parse(
             self.http
                 .post(self.url(&["channels", &channel.to_string(), "builds", "archive"])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Archives (or restores) up to 100 of a channel's builds in one go; the ones the caller may not change are
+    /// skipped (multi-select).
+    pub async fn archive_many_builds(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &ArchiveBuildsRequest,
+    ) -> Result<BuildsBatchResult, ApiError> {
+        Self::clip_parse(
+            self.http
+                .post(self.url(&["channels", &channel.to_string(), "builds", "archive-many"])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Deletes up to 100 of a channel's builds in one go; the ones the caller may not delete are skipped.
+    pub async fn delete_many_builds(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &DeleteBuildsRequest,
+    ) -> Result<BuildsBatchResult, ApiError> {
+        Self::clip_parse(
+            self.http
+                .post(self.url(&["channels", &channel.to_string(), "builds", "delete-many"])?)
                 .bearer_auth(token)
                 .json(body)
                 .send()
@@ -483,6 +520,34 @@ pub async fn bulk_archive_builds(
 }
 
 #[tauri::command]
+pub async fn archive_many_builds(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    body: ArchiveBuildsRequest,
+) -> Result<BuildsBatchResult, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.archive_many_builds(&token, channel_id, &body).await,
+    )
+}
+
+#[tauri::command]
+pub async fn delete_many_builds(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    body: DeleteBuildsRequest,
+) -> Result<BuildsBatchResult, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.delete_many_builds(&token, channel_id, &body).await,
+    )
+}
+
+#[tauri::command]
 pub async fn delete_build(
     app: AppHandle,
     core: State<'_, Core>,
@@ -627,6 +692,52 @@ mod tests {
         assert_eq!(json["game_id"], game.to_string());
         assert_eq!(json["before"], "2026-10-25T00:00:00Z");
         assert_eq!(json["dry_run"], true);
+    }
+
+    #[tokio::test]
+    async fn archive_many_posts_its_ids() {
+        let (api, seen) = capture(r#"{"done":1,"skipped":1}"#).await;
+        let (ch, a, b) = (ChannelId::new(), MessageId::new(), MessageId::new());
+        let body = ArchiveBuildsRequest {
+            message_ids: vec![a, b],
+            archived: true,
+        };
+        let got = api.archive_many_builds("t", ch, &body).await.unwrap();
+        assert_eq!(
+            got,
+            BuildsBatchResult {
+                done: 1,
+                skipped: 1
+            }
+        );
+        let req = first(&seen);
+        assert!(
+            req.starts_with(&format!("POST /channels/{ch}/builds/archive-many ")),
+            "{req}"
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(req.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            json["message_ids"],
+            serde_json::json!([a.to_string(), b.to_string()])
+        );
+        assert_eq!(json["archived"], true);
+    }
+
+    #[tokio::test]
+    async fn delete_many_posts_its_ids() {
+        let (api, seen) = capture(r#"{"done":1,"skipped":0}"#).await;
+        let (ch, a) = (ChannelId::new(), MessageId::new());
+        let body = DeleteBuildsRequest {
+            message_ids: vec![a],
+        };
+        let got = api.delete_many_builds("t", ch, &body).await.unwrap();
+        assert_eq!(got.done, 1);
+        let req = first(&seen);
+        assert!(
+            req.starts_with(&format!("POST /channels/{ch}/builds/delete-many ")),
+            "{req}"
+        );
     }
 
     #[tokio::test]

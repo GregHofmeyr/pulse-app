@@ -123,4 +123,13 @@ describe('builds', () => {
       ['list_builds', { channelId: 'C1', game: null, archived: false, q: null, before: null }],
     ])
   })
+
+  it('archiveManyBuilds and deleteManyBuilds send the ids to the batch commands', async () => {
+    await api.archiveManyBuilds('C1', ['M1', 'M2'], true)
+    await api.deleteManyBuilds('C1', ['M3'])
+    expect(invoke.mock.calls).toEqual([
+      ['archive_many_builds', { channelId: 'C1', body: { message_ids: ['M1', 'M2'], archived: true } }],
+      ['delete_many_builds', { channelId: 'C1', body: { message_ids: ['M3'] } }],
+    ])
+  })
 })
