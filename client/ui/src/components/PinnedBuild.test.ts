@@ -142,7 +142,7 @@ describe('PinnedBuild', () => {
     expect(rule(pinned, '\\.bar\\.x \\.btn:where\\(\\.x\\), \\.bar\\.x \\.icon-btn:where\\(\\.x\\)')).toMatch(/flex-shrink:\s*0/)
     const view = cssOf('BuildView.svelte')
     expect(rule(view, '\\.caption\\.x')).toMatch(/overflow-wrap:\s*anywhere/)
-    expect(rule(view, '\\.meta\\.x')).toMatch(/overflow-wrap:\s*anywhere/)
+    expect(rule(view, '\\.meta\\.x')).toMatch(/min-width:\s*0[\s\S]*text-overflow:\s*ellipsis/)
     expect(rule(view, '\\.badges\\.x')).toMatch(/flex-wrap:\s*wrap/)
     expect(rule(view, '\\.tiles\\.x')).toMatch(/minmax\(140px, 1fr\)|minmax\(min\(140px, 100%\), 1fr\)/)
     expect(view).toMatch(/\.notes\.x pre[^{]*\{[^}]*white-space:\s*pre-wrap/)

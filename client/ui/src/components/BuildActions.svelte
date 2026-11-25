@@ -1,6 +1,6 @@
 <script lang="ts">
   // A build page's Actions menu (#618): Pin to side (#619) for anyone, Edit for its author, Archive (or Restore) and Delete for its author or the
-  // server's owner (spec §5.1; the server refuses anyone else anyway). Delete asks first. `items` adds the quick-access
+  // server's owner (spec §5.1; the server refuses anyone else anyway). Delete asks first. It sits in the build page's top row. `items` adds the quick-access
   // entries (Pin to side #619, Pop out #620) above them; with nothing to offer the menu isn't drawn at all.
   import { tick } from 'svelte'
   import Icon from './Icon.svelte'
@@ -106,18 +106,29 @@
       <div class="ask menu-surface pop-in" role="alertdialog" aria-label="Delete build" tabindex="-1"
         use:clickOutside={() => { if (!busy) asking = false }} onkeydown={askKey}>
         <p>Delete this build? Its screenshots and comments go too.</p>
+        {#if error}<p class="ask-err" role="alert">{error}</p>{/if}
         <button bind:this={keep} type="button" class="btn btn-secondary" disabled={busy} onclick={() => (asking = false)}>Cancel</button>
         <button type="button" class="btn btn-danger" disabled={busy} onclick={() => void remove()}>Delete</button>
       </div>
     {/if}
-    {#if error}<p class="err" role="alert">{error}</p>{/if}
+    <!-- over the page, not in the row: the top row never grows (#618 testing); the question shows its own. Escape
+         (clickOutside's), a click away or its close button dismisses it (#645 review) -->
+    {#if error && !asking}
+      <div class="err menu-surface" role="alert" use:clickOutside={() => (error = '')}>
+        <span class="err-text">{error}</span>
+        <button type="button" class="icon-btn icon-btn-xs" aria-label="Dismiss error" data-tip="Dismiss" onclick={() => (error = '')}><Icon name="x" size={12} /></button>
+      </div>
+    {/if}
   </div>
 {/if}
 
 <style>
-  .build-actions { position: relative; display: flex; flex-direction: column; align-items: flex-end; }
+  .build-actions { position: relative; display: flex; align-items: center; }
   .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 160px; outline: none; --pop-origin: top right; }
   .ask { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: 260px; padding: 10px; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
   .ask p { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--text); }
-  .err { margin: 4px 0 0; color: var(--danger-text); font-size: 12px; max-width: 260px; text-align: right; }
+  .ask p.ask-err { color: var(--danger-text); font-size: 12px; overflow-wrap: anywhere; }
+  .err { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); display: flex; flex-direction: row; align-items: flex-start; gap: 6px; width: max-content; max-width: 260px; margin: 0; padding: 4px 4px 4px 10px; box-sizing: border-box; }
+  .err-text { flex: 1; min-width: 0; color: var(--danger-text); font-size: 12px; line-height: 18px; padding: 3px 0; overflow-wrap: anywhere; }
+  .err .icon-btn { flex-shrink: 0; }
 </style>
