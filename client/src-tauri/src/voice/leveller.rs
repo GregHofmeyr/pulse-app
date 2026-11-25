@@ -13,10 +13,16 @@
 //! blocks feed a ~3 s loudness average (EBU's short-term window), and the gain moves towards
 //! `TARGET − loudness` (clamped to ±12 dB) with seconds-long time constants, only while speech is
 //! heard: in silence or steady noise it holds, so it never winds up on a quiet line and never
-//! boosts noise. A peak guard pulls a boost back within a block when someone suddenly shouts, and
-//! a soft limiter catches what slips through before the samples go back to i16; the mixer's own
-//! limiter still guards the sum of everyone.
+//! boosts noise. Each block's peak is looked at before its gain is applied (#589), so a boost is
+//! pulled back in the very block someone starts shouting, not the one after; a peak guard then keeps
+//! it back through the gaps between words, and an envelope limiter ([`Limiter`], as on the mic
+//! side) catches anything left before the samples go back to i16. The mixer's own limiter still
+//! guards the sum of everyone.
 
+#[cfg(test)]
+use super::limiter::CEILING;
+use super::limiter::Limiter;
+#[cfg(test)]
 use super::mixer::soft_limit;
 
 /// Where voices are steered to: about a well set-up mic, so most people barely move and only the
@@ -49,6 +55,9 @@ const BOOST_TAU_S: f32 = 3.0;
 const PEAK_CEILING: f32 = 0.89;
 /// ... and allowed back up at this rate once the peak has passed.
 const GUARD_RELEASE_DB_PER_S: f32 = 30.0;
+/// When a block arrives too hot for the gain in use, the gain comes down over at least this many
+/// samples (1 ms), never in one step (a click); the limiter covers any sample before it lands.
+const FAST_RAMP: usize = 48;
 
 /// BS.1770 K-weighting at 48 kHz: stage 1 high shelf, stage 2 high-pass (RLB). (b0, b1, b2, a1, a2)
 const SHELF: [f64; 5] = [
@@ -124,10 +133,16 @@ pub struct Leveller {
     gain_db: f32,
     /// The peak guard's ceiling on a boost (dB).
     guard_db: f32,
-    /// The gain applied to the current sample (linear), ramping by `step` per sample towards the
-    /// block's aim, so a gain change never clicks.
+    /// The gain the levelling and the guard want for this block (linear), set at each block's end.
+    aim: f32,
+    /// The gain applied to the current sample (linear), ramping by `step` per sample for `ramp`
+    /// more samples towards the block's target, so a gain change never clicks.
     gain: f32,
     step: f32,
+    ramp: usize,
+    target: f32,
+    /// The safety net after the gain: holds the output under −1 dBFS without bending the waveform.
+    limiter: Limiter,
 }
 
 impl Default for Leveller {
@@ -149,8 +164,12 @@ impl Leveller {
             speech_blocks: 0,
             gain_db: 0.0,
             guard_db: MAX_BOOST_DB,
+            aim: 1.0,
             gain: 1.0,
             step: 0.0,
+            ramp: 0,
+            target: 1.0,
+            limiter: Limiter::new(BLOCKS_PER_S as u32 * BLOCK as u32),
         }
     }
 
@@ -165,11 +184,44 @@ impl Leveller {
     pub fn process(&mut self, samples: &mut [i16], on: bool) {
         if !on {
             self.gain_db = 0.0;
+            self.aim = 1.0;
             self.gain = 1.0;
+            self.target = 1.0;
             self.step = 0.0;
+            self.ramp = 0;
+            self.limiter.reset();
             return;
         }
-        for s in samples {
+        // one stretch per measuring block (a whole block when frames are 10 ms, as they are)
+        let mut rest = samples;
+        while !rest.is_empty() {
+            let n = (BLOCK - self.filled).min(rest.len());
+            let (stretch, tail) = rest.split_at_mut(n);
+            self.process_stretch(stretch);
+            rest = tail;
+        }
+    }
+
+    /// Up to the end of one measuring block. Its peak is found first (the samples are all here: a
+    /// look-ahead for free), and the gain is capped so `peak × gain` stays under the ceiling.
+    fn process_stretch(&mut self, stretch: &mut [i16]) {
+        let level = |s: &i16| (*s as f32 / 32768.0).abs();
+        let peak = stretch.iter().map(level).fold(0.0f32, f32::max);
+        // it only ever takes a boost back: unboosted audio is as it arrived
+        let cap = (PEAK_CEILING / peak.max(1e-6)).max(1.0);
+        self.target = self.aim.min(cap);
+        self.ramp = if self.target < self.gain && peak * self.gain > PEAK_CEILING {
+            // too hot for the gain in use: down before the first sample that would overshoot
+            let hot = stretch
+                .iter()
+                .position(|s| level(s) * self.gain > PEAK_CEILING)
+                .unwrap_or(stretch.len());
+            hot.max(FAST_RAMP).min(stretch.len())
+        } else {
+            stretch.len()
+        };
+        self.step = (self.target - self.gain) / self.ramp as f32;
+        for s in stretch {
             let x = *s as f32 / 32768.0;
             let k = self
                 .high_pass
@@ -177,9 +229,15 @@ impl Leveller {
             self.energy += k * k;
             self.peak = self.peak.max(x.abs());
             self.filled += 1;
-            let y = soft_limit(x * self.gain);
-            self.gain += self.step;
-            *s = (y * 32767.0).round() as i16;
+            if self.ramp > 1 {
+                self.gain += self.step;
+                self.ramp -= 1;
+            } else {
+                self.gain = self.target;
+                self.ramp = 0;
+            }
+            let y = self.limiter.process(x * self.gain);
+            *s = (y * 32767.0).round().clamp(-32768.0, 32767.0) as i16;
             if self.filled == BLOCK {
                 self.end_block();
             }
@@ -214,16 +272,15 @@ impl Leveller {
                 self.gain_db += (want - self.gain_db) / (tau * BLOCKS_PER_S);
             }
         }
-        // The peak guard: never let a boost push this block's peak past the ceiling. It reacts a
-        // block late (the soft limiter covers that block), so it only relaxes while someone is
-        // audible: a gap between words keeps it, or every syllable after a shout would overshoot.
+        // The peak guard: keeps a boost pulled back after a loud block (each block's own peak is
+        // already capped as it plays), and only relaxes while someone is audible: a gap between
+        // words keeps it, or every syllable after a shout would be raised and pulled back again.
         if level > ABS_GATE_LUFS {
             let room = 20.0 * (PEAK_CEILING / peak.max(1e-6)).log10();
             self.guard_db = room.min(self.guard_db + GUARD_RELEASE_DB_PER_S / BLOCKS_PER_S);
         }
         // it only ever takes a boost back: unboosted audio is as it arrived
-        let aim = db_to_gain(self.gain_db.min(self.guard_db.max(0.0)));
-        self.step = (aim - self.gain) / BLOCK as f32;
+        self.aim = db_to_gain(self.gain_db.min(self.guard_db.max(0.0)));
     }
 }
 
@@ -427,9 +484,138 @@ mod tests {
         run(&mut b, &speech(0.02, 15.0), true);
         let xa = run(&mut a, &speech(0.6, 1.0), true);
         let xb = run(&mut b, &speech(0.6, 1.0), true);
+        let mut lim = Limiter::new(RATE as u32);
         for (p, q) in xa.iter().zip(&xb) {
-            let sum = soft_limit(*p as f32 / 32767.0 + *q as f32 / 32767.0);
-            assert!(sum.abs() <= 1.0);
+            let sum = lim.process(*p as f32 / 32767.0 + *q as f32 / 32767.0);
+            assert!(sum.abs() <= CEILING);
+        }
+    }
+
+    /// A deep voice: 90 Hz with harmonics at 180 and 270 Hz, scaled so its peak is `peak`; `from` in samples.
+    fn deep(peak: f32, from: usize, n: usize) -> Vec<f32> {
+        let raw = |i: usize| {
+            let t = i as f32 / RATE as f32;
+            let tau = std::f32::consts::TAU;
+            (tau * 90.0 * t).sin() + 0.5 * (tau * 180.0 * t).sin() + 0.33 * (tau * 270.0 * t).sin()
+        };
+        let top = (0..RATE).map(|i| raw(i).abs()).fold(0.0f32, f32::max);
+        (from..from + n).map(|i| peak * raw(i) / top).collect()
+    }
+
+    fn to_i16(x: &[f32]) -> Vec<i16> {
+        x.iter().map(|v| (v * 32767.0).round() as i16).collect()
+    }
+
+    /// Harmonics `hs` of 90 Hz in `x` (which must hold whole periods), as amplitudes.
+    fn harmonic(x: &[f32], h: f32) -> f32 {
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (i, v) in x.iter().enumerate() {
+            let ph = (std::f32::consts::TAU * h * 90.0 * i as f32 / RATE as f32) as f64;
+            re += *v as f64 * ph.cos();
+            im += *v as f64 * ph.sin();
+        }
+        ((re * re + im * im).sqrt() * 2.0 / x.len() as f64) as f32
+    }
+
+    /// Distortion added to the deep voice: harmonics it doesn't have (4..=15) over its fundamental, plus how far its
+    /// own 2nd and 3rd harmonics moved relative to the fundamental.
+    fn added_distortion(x: &[f32]) -> f32 {
+        let f = harmonic(x, 1.0);
+        let extra: f32 = (4..=15)
+            .map(|h| harmonic(x, h as f32).powi(2))
+            .sum::<f32>()
+            .sqrt();
+        extra / f + (harmonic(x, 2.0) / f - 0.5).abs() + (harmonic(x, 3.0) / f - 0.33).abs()
+    }
+
+    /// A leveller already raising this voice the full +12 dB (a quiet speaker heard for a while).
+    fn boosted() -> Leveller {
+        let mut lev = Leveller::new();
+        lev.gain_db = MAX_BOOST_DB;
+        lev.aim = db_to_gain(MAX_BOOST_DB);
+        lev.gain = lev.aim;
+        lev
+    }
+
+    /// #589: the case that crackled. A deep voice at −3 dBFS, raised +12 dB by the leveller and then +12 dB by a
+    /// 200% slider, through the mixer: it comes out under the ceiling and still the same shape (quieter, not
+    /// squarer). The tanh pair it replaces adds plenty.
+    #[test]
+    fn a_deep_voice_boosted_twice_comes_out_under_the_ceiling_and_clean() {
+        use super::super::mixer::{SourceKind, max_gain, mixer};
+        let peak_in = 10f32.powf(-3.0 / 20.0);
+        let mut lev = boosted();
+        let (input, mut m) = mixer(RATE as u32, 200);
+        input.add_source(input.generation(), "a", "alex", SourceKind::Voice);
+        input.set_gain("alex", SourceKind::Voice, max_gain());
+        let (mut levelled, mut played) = (Vec::new(), Vec::new());
+        let mut out = vec![0.0f32; 480];
+        for k in 0..150 {
+            let mut f = to_i16(&deep(peak_in, k * 480, 480));
+            lev.process(&mut f, true);
+            levelled.extend(f.iter().map(|s| *s as f32 / 32767.0));
+            input.push("a", &f);
+            // one frame queued ahead, so the queue sits at its target and the drift steering
+            // never repeats a sample (that would be a glitch of its own, not the limiter's)
+            if k > 0 {
+                m.mix_into(&mut out, 1, 1.0);
+                played.extend_from_slice(&out);
+            }
+        }
+        assert_eq!(input.take_adjusted_samples(), 0);
+        let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        // the i16 conversion may round up by one step
+        let one = 1.0 / 32767.0;
+        assert!(
+            peak(&levelled) <= CEILING + one,
+            "leveller peak {}",
+            peak(&levelled)
+        );
+        assert!(peak(&played) <= CEILING, "mixer peak {}", peak(&played));
+        // steady state: the last 0.5 s (45 whole periods of 90 Hz)
+        let tail = |x: &[f32]| x[x.len() - RATE / 2..].to_vec();
+        let input_d = added_distortion(&deep(peak_in, 0, RATE / 2));
+        let (lev_d, mix_d) = (
+            added_distortion(&tail(&levelled)),
+            added_distortion(&tail(&played)),
+        );
+        assert!(input_d < 0.01, "the test tone itself: {input_d}");
+        assert!(lev_d < 0.02, "leveller added {:.2}%", lev_d * 100.0);
+        assert!(mix_d < 0.02, "mixer added {:.2}%", mix_d * 100.0);
+        assert!(
+            peak(&tail(&played)) > 0.8 * CEILING,
+            "limited, not silenced"
+        );
+        // the old chain, for scale
+        let tanh: Vec<f32> = deep(peak_in, 0, RATE / 2)
+            .iter()
+            .map(|v| soft_limit(soft_limit(v * 4.0) * 4.0))
+            .collect();
+        assert!(added_distortion(&tanh) > 0.1, "{}", added_distortion(&tanh));
+    }
+
+    /// #589: someone quiet the leveller is raising suddenly gets loud. The block's peak is seen before its gain is
+    /// applied, so not even the first block overshoots (the old guard reacted a block late), wherever in a block
+    /// the burst starts.
+    #[test]
+    fn a_sudden_burst_after_quiet_never_overshoots_even_in_its_first_block() {
+        for offset in [0, 1, 200, 479] {
+            let mut lev = boosted();
+            let mut x = to_i16(&deep(0.02, 0, RATE));
+            let start = RATE + offset;
+            x.resize(start, 0);
+            x.extend(to_i16(&deep(0.8, start, RATE / 2)));
+            let out = run(&mut lev, &x, true);
+            for (i, s) in out.iter().enumerate() {
+                assert!(
+                    (s.unsigned_abs() as f32) <= CEILING * 32767.0 + 1.0,
+                    "offset {offset}: sample {i} = {s}"
+                );
+            }
+            // the burst's first block is turned down, not muted or bent out of shape
+            let first = &out[start..start + 480];
+            let p = first.iter().map(|s| s.unsigned_abs()).max().unwrap();
+            assert!(p as f32 > 0.5 * 32767.0, "offset {offset}: peak {p}");
         }
     }
 

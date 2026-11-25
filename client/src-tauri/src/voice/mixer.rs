@@ -4,6 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 
+use super::limiter::Limiter;
 use super::meter::Meter;
 
 /// Slider percent (0..=200) → linear gain. 100% = 0 dB; above maps linearly in dB up to +12 dB at 200%;
@@ -37,8 +38,14 @@ pub fn combined_gain(pcts: &[u16]) -> f32 {
 
 const KNEE: f32 = 0.8;
 
-/// Identity up to the knee, then a smooth tanh curve towards ±1.0. Boosted voices get louder without
-/// the harsh hard-clip distortion the spike had.
+/// A peer that runs dry fades its last sample to silence over this long (µs), and fades back in over
+/// `FADE_IN_US` when it resumes: a cut there would click twice per underrun.
+const FADE_OUT_US: usize = 2_500;
+const FADE_IN_US: usize = 3_000;
+
+/// Identity up to the knee, then a smooth tanh curve towards ±1.0. Only the soundboard's sounds still use it
+/// (`sounds.rs`); voices go through `limiter::Limiter` on both sides now (#586, #589), which turns a peak down
+/// instead of bending it.
 pub fn soft_limit(x: f32) -> f32 {
     let a = x.abs();
     if a <= KNEE {
@@ -329,6 +336,9 @@ pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
         deadband: rate * DEADBAND_MS / 1000,
         cut_above: rate * CUT_ABOVE_MS / 1000,
         pulled: 0,
+        fade_out: (rate * FADE_OUT_US / 1_000_000).max(1) as u32,
+        fade_in: (rate * FADE_IN_US / 1_000_000).max(1) as u32,
+        limiter: Limiter::new(sample_rate),
         underrun,
         adjusted,
         clip_start_us,
@@ -714,6 +724,12 @@ pub struct Mixer {
     cut_above: usize,
     /// Samples pulled since the last window was judged.
     pulled: usize,
+    /// Lengths (samples, at the mixer's rate) of a dry peer's fade-out and a resumed peer's fade-in.
+    fade_out: u32,
+    fade_in: u32,
+    /// The master bus's limiter (#589), at the rate the mixer runs at (the speakers' side of it). The output is
+    /// one mono value written to every channel, so one limiter covers them all.
+    limiter: Limiter,
     underrun: Arc<AtomicU64>,
     adjusted: Arc<AtomicU64>,
     clip_start_us: Arc<AtomicU64>,
@@ -770,6 +786,12 @@ struct Peer {
     held: bool,
     /// Ran dry: silent until the queue holds `Mixer::refill` again.
     rebuffering: bool,
+    /// The last sample played (before the peer's gain), faded to silence over `fade_out` samples when the peer
+    /// runs dry instead of cut; samples of that fade still to play.
+    last: f32,
+    fading_out: u32,
+    /// Samples of the fade-in still to play after resuming from a dry spell.
+    fading_in: u32,
     /// Registered on subscribe but nothing arrived yet: silent, and not an underrun.
     waiting: bool,
     /// Judged at least once while playing: running dry from here on is the cushion's business
@@ -806,6 +828,9 @@ impl Mixer {
                             adjust: 0,
                             held: false,
                             rebuffering: false,
+                            last: 0.0,
+                            fading_out: 0,
+                            fading_in: 0,
                             waiting: true,
                             settled: false,
                         };
@@ -897,9 +922,12 @@ impl Mixer {
         self.pulls[0] = self.pulls[0].max(frames);
         let refill = self.refill();
         let (mut underrun, mut adjusted, mut ran_dry) = (0u64, 0u64, false);
+        let (fade_out, fade_in) = (self.fade_out, self.fade_in);
         for p in self.peers.values_mut() {
             if p.rebuffering && p.queue.len() >= refill {
                 p.rebuffering = false;
+                p.fading_out = 0;
+                p.fading_in = self.fade_in; // back in from silence, not mid-waveform at once
             }
             if p.waiting && !p.queue.is_empty() {
                 p.waiting = false;
@@ -913,18 +941,29 @@ impl Mixer {
                 }
                 if p.rebuffering {
                     underrun += 1;
+                    acc += p.fade_step(fade_out);
                     continue;
                 }
                 match p.next() {
                     Some((s, adj)) => {
-                        acc += s as f32 / i16::MAX as f32 * p.gain;
+                        let mut v = s as f32 / i16::MAX as f32;
+                        if p.fading_in > 0 {
+                            v *= 1.0 - p.fading_in as f32 / fade_in as f32;
+                            p.fading_in -= 1;
+                        }
+                        p.last = v;
+                        acc += v * p.gain;
                         adjusted += adj as u64;
                     }
                     None => {
-                        // ran dry: refill before playing on (one gap, not a dribble of clicks)
+                        // ran dry: refill before playing on (one gap, not a dribble of clicks),
+                        // fading the last sample out rather than stepping to silence
                         underrun += 1;
                         p.rebuffering = true;
                         ran_dry |= p.settled;
+                        p.fading_in = 0;
+                        p.fading_out = fade_out;
+                        acc += p.fade_step(fade_out);
                     }
                 }
             }
@@ -936,7 +975,7 @@ impl Mixer {
                     c.pos += 1;
                 }
             }
-            fill_front(frame, soft_limit(acc * master));
+            fill_front(frame, self.limiter.process(acc * master));
         }
         // Not dropped here: when the decode cache has evicted it (or it was a preview, never
         // cached), this is the sound's last clone, and freeing ~1 MB in the callback can glitch.
@@ -974,6 +1013,15 @@ impl Mixer {
 /// Drift steering: each window the queue's lowest fill is judged against the target, and the
 /// difference is corrected one quiet sample at a time while it plays.
 impl Peer {
+    /// One sample of a dry peer's fade-out (gain applied): its last sample, linearly down to silence over `len`.
+    fn fade_step(&mut self, len: u32) -> f32 {
+        if self.fading_out == 0 {
+            return 0.0;
+        }
+        self.fading_out -= 1;
+        self.last * (self.fading_out as f32 / len as f32) * self.gain
+    }
+
     /// End of a window: set this window's correction from how low the queue got (samples).
     fn judge(&mut self, target: usize, budget: usize, deadband: usize, cut_above: usize) {
         if self.low != usize::MAX && !self.rebuffering {
@@ -1537,7 +1585,12 @@ mod tests {
         input.play_clip(vec![0.9; 10].into(), 1.0);
         input.play_clip(vec![0.9; 10].into(), 1.0);
         m.mix_into(&mut out, 1, 1.0);
-        assert!(out.iter().all(|v| *v > 0.9 && *v <= 1.0), "soft-limited");
+        // 1.8 is turned down to the master limiter's ceiling (#589)
+        let ceiling = crate::voice::limiter::CEILING;
+        assert!(
+            out.iter().all(|v| *v > 0.5 && *v <= ceiling),
+            "limited: {out:?}"
+        );
     }
 
     #[test]
@@ -1603,10 +1656,97 @@ mod tests {
     fn empty_peer_contributes_silence() {
         let (input, mut m) = mixer_with(48_000, 200, &["a"]);
         input.push("a", &[16384; 2]);
-        let mut out = [1.0f32; 4];
+        let mut out = [1.0f32; 400];
         m.mix_into(&mut out, 1, 1.0);
         assert!((out[0] - 0.5).abs() < 1e-3);
-        assert_eq!(&out[2..], &[0.0, 0.0]);
+        // ran dry: fades out from its last sample (no step), then silence
+        assert!(out[2] < 0.5 && out[2] > 0.49, "{}", out[2]);
+        assert!(out[2..].windows(2).all(|w| w[1] <= w[0]));
+        assert!(out[200..].iter().all(|v| *v == 0.0));
+    }
+
+    /// #589: the master bus is a real limiter now, not the tanh: many loud peers at the 200% slider still come
+    /// out under its ceiling, and never past full scale.
+    #[test]
+    fn many_loud_peers_at_200_percent_stay_under_the_ceiling() {
+        use crate::voice::limiter::CEILING;
+        let ids = ["a", "b", "c", "d", "e", "f", "g", "h"];
+        let (input, mut m) = mixer_with(48_000, 200, &ids);
+        for id in ids {
+            input.set_gain(id, Voice, max_gain());
+        }
+        let mut out = vec![0.0f32; 480 * 2];
+        let (mut t, mut loudest) = (0usize, 0.0f32);
+        for _ in 0..100 {
+            for (k, id) in ids.iter().enumerate() {
+                let f = 90.0 + 37.0 * k as f32;
+                let frame: Vec<i16> = (t..t + 480)
+                    .map(|i| {
+                        (0.9 * 32767.0 * (std::f32::consts::TAU * f * i as f32 / 48_000.0).sin())
+                            as i16
+                    })
+                    .collect();
+                input.push(id, &frame);
+            }
+            t += 480;
+            m.mix_into(&mut out, 2, 1.0);
+            for v in &out {
+                assert!(v.abs() <= CEILING, "{v}");
+                loudest = loudest.max(v.abs());
+            }
+        }
+        assert!(
+            loudest > 0.8 * CEILING,
+            "turned down, not silenced: {loudest}"
+        );
+    }
+
+    /// Finding 2: a peer running dry fades its last sample out (~2.5 ms) and fades back in (~3 ms) when it
+    /// resumes, instead of stepping to silence and back mid-waveform (two clicks per underrun).
+    #[test]
+    fn running_dry_and_resuming_fade_instead_of_clicking() {
+        let (input, mut m) = mixer_with(48_000, 200, &["a"]);
+        let tone = |from: usize, n: usize| -> Vec<i16> {
+            (from..from + n)
+                .map(|i| {
+                    (0.8 * 32767.0 * (std::f32::consts::TAU * 100.0 * i as f32 / 48_000.0).sin())
+                        as i16
+                })
+                .collect()
+        };
+        let mut played = Vec::new();
+        let mut out = vec![0.0f32; 480];
+        let mut t = 0;
+        // start a little off a zero crossing, so the cut would land mid-waveform
+        for _ in 0..10 {
+            input.push("a", &tone(t, 480));
+            t += 480;
+            m.mix_into(&mut out, 1, 1.0);
+            played.extend_from_slice(&out);
+        }
+        input.push("a", &tone(t, 130)); // a short frame: runs dry 130 samples into the next pull
+        t += 130;
+        for _ in 0..3 {
+            m.mix_into(&mut out, 1, 1.0);
+            played.extend_from_slice(&out);
+        }
+        assert!(input.take_underrun_samples() > 0, "ran dry");
+        for _ in 0..10 {
+            input.push("a", &tone(t, 480));
+            t += 480;
+            m.mix_into(&mut out, 1, 1.0);
+            played.extend_from_slice(&out);
+        }
+        // the tone's own steepest step is 0.8 × 2π × 100 / 48000 ≈ 0.0105
+        let worst = played
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(worst < 0.025, "a {worst} step: a click");
+        assert!(
+            played[played.len() - 480..].iter().any(|v| v.abs() > 0.7),
+            "back at full level after the fade-in"
+        );
     }
 
     #[test]
@@ -2259,7 +2399,7 @@ mod tests {
         });
         let mut out = vec![9.0f32; 12]; // two 5.1 frames
         m.mix_into(&mut out, 6, 1.0);
-        let v = soft_limit(0.5);
+        let v = 0.5; // under the master limiter's ceiling: untouched
         assert_eq!(&out[..6], &[v, v, 0.0, 0.0, 0.0, 0.0]);
         assert_eq!(&out[6..], &[v, v, 0.0, 0.0, 0.0, 0.0]);
         let mut stereo = [0.0f32; 2];
