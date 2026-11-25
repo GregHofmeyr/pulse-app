@@ -4,6 +4,7 @@
   import BuildView from './BuildView.svelte'
   import Icon from './Icon.svelte'
   import ImageViewer from './ImageViewer.svelte'
+  import Loading from './Loading.svelte'
   import { attachmentLink } from '../lib/attachmentLinks'
   import { buildGameName, buildShots, isArchived, isQuickDrop, type BuildScreenshot } from '../lib/builds'
   import { relativeTime } from '../lib/conversations'
@@ -41,7 +42,7 @@
     {#if message}
       <button type="button" class="open-page btn btn-quiet" onclick={() => message && openMessage(message)}>Open</button>
     {/if}
-    <button type="button" class="unpin icon-btn icon-btn-xs" aria-label="Unpin" title="Unpin" onclick={unpinBuild}><Icon name="x" size={14} /></button>
+    <button type="button" class="unpin icon-btn icon-btn-xs" aria-label="Unpin" data-tip="Unpin" onclick={unpinBuild}><Icon name="x" size={14} /></button>
   </div>
   {#if pinnedBuild.gone}
     <div class="gone">
@@ -55,7 +56,7 @@
         {screenshots} link={b.link} archived={isArchived(message)} quickDrop={isQuickDrop(message)} onImage={(i) => (viewing = i)} />
     </div>
   {:else}
-    <p class="loading">Loading…</p>
+    <div class="wait"><Loading /></div>
   {/if}
 </aside>
 
@@ -72,6 +73,6 @@
   .scroll :global(.build-view h1) { font-size: 17px; }
   .scroll :global(.build-view .tiles) { grid-template-columns: minmax(0, 1fr); }
   .gone { padding: 18px 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
-  .gone p, .loading { margin: 0; color: var(--text-3); font-size: 13px; }
-  .loading { padding: 18px 14px; }
+  .gone p { margin: 0; color: var(--text-3); font-size: 13px; }
+  .wait { padding: 6px 2px; }
 </style>
