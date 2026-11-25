@@ -206,6 +206,51 @@ describe('BuildsPanel', () => {
     expect(button('Archive matching builds…')).toBeDefined()
   })
 
+  it('clearing the picked day goes back to 30 days ago', async () => {
+    await show()
+    const day = panel()!.querySelector<HTMLInputElement>('input[type=date]')!
+    day.value = '2026-09-01'
+    day.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    expect(button('30 days ago')!.getAttribute('aria-pressed')).toBe('false')
+    day.value = ''
+    day.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    expect(button('30 days ago')!.getAttribute('aria-pressed')).toBe('true')
+    button('Archive matching builds…')!.click()
+    await settle()
+    flushSync()
+    const body = (calls('bulk_archive_builds')[0][1] as { body: { before: string } }).body
+    expect(Math.abs(Date.parse(body.before) - (Date.now() - 30 * DAY))).toBeLessThan(60_000)
+  })
+
+  it('the day picker stops at today, and a later day counts as now', async () => {
+    await show()
+    const day = panel()!.querySelector<HTMLInputElement>('input[type=date]')!
+    const now = new Date()
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    expect(day.max).toBe(today)
+    // typed past the picker's limit
+    day.value = '2999-01-01'
+    day.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    button('Archive matching builds…')!.click()
+    await settle()
+    flushSync()
+    const body = (calls('bulk_archive_builds')[0][1] as { body: { before: string } }).body
+    expect(Date.parse(body.before)).toBeLessThanOrEqual(Date.now())
+    expect(Date.now() - Date.parse(body.before)).toBeLessThan(60_000)
+  })
+
+  it('no matches is announced', async () => {
+    await show()
+    expect(document.querySelector('.bulk [role=status]')?.textContent?.trim() ?? '').toBe('')
+    button('Archive matching builds…')!.click()
+    await settle()
+    flushSync()
+    expect(document.querySelector('.bulk [role=status]')?.textContent?.trim()).toBe('No builds match. Try another game or an earlier day.')
+  })
+
   it('the panel collapses and stays collapsed', async () => {
     await show()
     const toggle = document.querySelector<HTMLButtonElement>('.builds-head button[aria-label="Hide games panel"]')!
