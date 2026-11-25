@@ -437,7 +437,7 @@
           {:else}
             {#if favs.length}
               <section class="section" data-section="favourites" aria-labelledby="builds-favs-{channelId}">
-                <h3 class="section-head" id="builds-favs-{channelId}"><Icon name="star" size={13} /><span class="section-name">Favourites</span></h3>
+                <h3 class="section-head" id="builds-favs-{channelId}"><Icon name="star" size={14} /><span class="section-name">Favourites</span></h3>
                 {@render list(favs)}
               </section>
               <div class="sep" role="separator"></div>
