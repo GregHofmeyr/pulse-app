@@ -1,11 +1,11 @@
 <script lang="ts">
-  // A build's right-click menu in the browse view (#617; or the menu key / Shift+F10 on its card or row): Open, Edit,
-  // Archive (or Restore), Delete… and Select. Edit, Archive and Delete as the build page's Actions menu allows
+  // A build's right-click menu in the browse view (#617; or the menu key / Shift+F10 on its card or row): Open,
+  // Favourite (or Unfavourite: your own star), Edit, Archive (or Restore), Delete… and Select. Edit, Archive and Delete as the build page's Actions menu allows
   // (`buildRights`); the list acts on the pick (Delete asks there first). Placed and driven as the channel menu is.
   import { onMount, untrack } from 'svelte'
   import Icon, { type IconName } from './Icon.svelte'
   import { clickOutside } from '../lib/actions'
-  import { buildRights, isArchived } from '../lib/builds'
+  import { buildRights, isArchived, isFavourite } from '../lib/builds'
   import { buildMenuItems, type BuildMenuItem } from '../lib/buildSelect'
   import { placeMenu } from '../lib/menuPlace'
   import { app } from '../lib/store.svelte'
@@ -24,13 +24,15 @@
 
   const ITEM: Record<BuildMenuItem, { label: string; icon: IconName }> = {
     open: { label: 'Open', icon: 'expand' },
+    favourite: { label: 'Favourite', icon: 'star' },
+    unfavourite: { label: 'Unfavourite', icon: 'star' },
     edit: { label: 'Edit', icon: 'pencil' },
     archive: { label: 'Archive', icon: 'inbox' },
     restore: { label: 'Restore', icon: 'inbox' },
     delete: { label: 'Delete…', icon: 'trash' },
     select: { label: 'Select', icon: 'check' },
   }
-  const list = $derived(buildMenuItems(buildRights(app.state, serverId, message), isArchived(message)))
+  const list = $derived(buildMenuItems(buildRights(app.state, serverId, message), isArchived(message), isFavourite(message)))
 
   let el = $state<HTMLElement>()
   let left = $state(untrack(() => x))

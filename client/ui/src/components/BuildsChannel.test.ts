@@ -275,9 +275,9 @@ describe('BuildsChannel: right-click menu', () => {
     pages = [[mine('M002'), build('M001')]]
     await show()
     rightClick(card('M002'))
-    expect(items()).toEqual(['Open', 'Edit', 'Archive', 'Delete…', 'Select'])
+    expect(items()).toEqual(['Open', 'Favourite', 'Edit', 'Archive', 'Delete…', 'Select'])
     rightClick(card('M001'))
-    expect(items()).toEqual(['Open', 'Select'])
+    expect(items()).toEqual(['Open', 'Favourite', 'Select'])
   })
 
   it("the server's owner gets Archive and Delete on anyone's, but not Edit", async () => {
@@ -285,7 +285,7 @@ describe('BuildsChannel: right-click menu', () => {
     pages = [[build('M001')]]
     await show()
     rightClick(card('M001'))
-    expect(items()).toEqual(['Open', 'Archive', 'Delete…', 'Select'])
+    expect(items()).toEqual(['Open', 'Favourite', 'Archive', 'Delete…', 'Select'])
   })
 
   it('opens from the keyboard (the menu key or Shift+F10) with the focus on its first item', async () => {
@@ -310,7 +310,7 @@ describe('BuildsChannel: right-click menu', () => {
     const row = document.querySelector<HTMLElement>('.build-row .open')!
     row.dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true, cancelable: true }))
     flushSync()
-    expect(items()).toEqual(['Open', 'Edit', 'Archive', 'Delete…', 'Select'])
+    expect(items()).toEqual(['Open', 'Favourite', 'Edit', 'Archive', 'Delete…', 'Select'])
   })
 
   it('Open opens the build page; Archive archives it', async () => {
@@ -525,5 +525,139 @@ describe('BuildsChannel: multi-select', () => {
       const style = src(f).split('<style>')[1] ?? ''
       expect(style).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/)
     }
+  })
+})
+
+describe('BuildsChannel: favourites', () => {
+  const fav = (n: string, b: Partial<Build> = {}, m: Partial<Message> = {}) => build(n, { favourite: true, ...b }, m)
+  const star = (n: string) => document.querySelector<HTMLButtonElement>(`[data-build-id="${n}"] .star`)!
+  const sections = () => {
+    const favs = [...document.querySelectorAll<HTMLElement>('[data-section="favourites"] [data-build-id]')].map((e) => e.dataset.buildId)
+    const rest = [...document.querySelectorAll<HTMLElement>('[data-section="rest"] [data-build-id]')].map((e) => e.dataset.buildId)
+    return { favs, rest }
+  }
+  const pickView = (l: string) => {
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="View"] [role=radio]')].find((b) => b.textContent === l)!.click()
+    flushSync()
+  }
+
+  it('every card and row has a star, named for what it does', async () => {
+    pages = [[build('M002'), fav('M001')]]
+    await show()
+    for (const v of ['Gallery', 'List']) {
+      pickView(v)
+      expect(star('M002').getAttribute('aria-label')).toBe('Favourite')
+      expect(star('M002').getAttribute('aria-pressed')).toBe('false')
+      expect(star('M001').getAttribute('aria-label')).toBe('Remove from favourites')
+      expect(star('M001').getAttribute('aria-pressed')).toBe('true')
+      // it's its own button, never inside the one that opens the build
+      expect(star('M002').closest('.open')).toBeNull()
+    }
+  })
+
+  it('shows on hover or focus, always when starred, and never moves anything (CSS)', () => {
+    const src = (p: string) => readFileSync(resolve(__dirname, p), 'utf8')
+    for (const f of ['BuildCard.svelte', 'BuildRow.svelte']) {
+      const css = src(f).split('<style>')[1]
+      expect(css).toMatch(/\.star \{[^}]*position: absolute;[^}]*opacity: 0/)
+      expect(css).toMatch(/:hover \.star|:focus-within \.star/)
+      expect(css).toMatch(/\.star\.on \{[^}]*opacity: 1/)
+      expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/)
+    }
+  })
+
+  it('the star stars and unstars it', async () => {
+    pages = [[build('M002'), fav('M001')]]
+    await show()
+    star('M002').click()
+    star('M001').click()
+    await settle()
+    expect(calls('set_build_favourite').map((c) => c[1])).toEqual([{ messageId: 'M002', favourite: true }, { messageId: 'M001', favourite: false }])
+    // the build page didn't open
+    expect(document.querySelectorAll('.build-card')).toHaveLength(2)
+  })
+
+  it('Favourite and Unfavourite in the right-click menu', async () => {
+    pages = [[build('M002'), fav('M001')]]
+    await show()
+    const menuItem = (n: string, l: string) => {
+      document.querySelector<HTMLElement>(`[data-build-id="${n}"]`)!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }))
+      flushSync()
+      return [...document.querySelectorAll<HTMLElement>('.build-menu [role=menuitem]')].find((b) => b.textContent?.trim() === l)
+    }
+    menuItem('M002', 'Favourite')!.click()
+    flushSync()
+    menuItem('M001', 'Unfavourite')!.click()
+    await settle()
+    expect(calls('set_build_favourite').map((c) => c[1])).toEqual([{ messageId: 'M002', favourite: true }, { messageId: 'M001', favourite: false }])
+  })
+
+  it('Favourite in the selection bar stars every selected build, anyone\'s, in one batch', async () => {
+    pages = [[build('M003'), build('M002', {}, { author_id: 'U1' }), fav('M001')]]
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_builds') return answer(args as Record<string, unknown>)
+      if (cmd === 'favourite_many_builds') return { done: 2, skipped: 0 }
+      return cmd === 'build_facets' ? { total: 0, games: [] } : undefined
+    })
+    await show()
+    const click = (n: string, shiftKey = false) => {
+      document.querySelector<HTMLElement>(`[data-build-id="${n}"] .open`)!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey }))
+      flushSync()
+    }
+    click('M003', true)
+    click('M002')
+    click('M001')
+    const btn = (l: string) => [...document.querySelectorAll<HTMLButtonElement>('[role=toolbar] button')].find((b) => b.getAttribute('aria-label') === l)
+    expect(btn('Unfavourite')).toBeDefined()
+    btn('Favourite')!.click()
+    await settle()
+    expect(calls('favourite_many_builds')[0][1]).toEqual({ channelId: 'B1', body: { message_ids: ['M003', 'M002'], favourite: true } })
+    const { ui } = await import('../lib/store.svelte')
+    expect(ui.notice).toBe('Added 2 builds to your favourites.')
+  })
+
+  it('favourites sit in their own section at the top, then a separator, then the rest (never twice), in both views', async () => {
+    pages = [[build('M004'), fav('M003'), build('M002'), fav('M001')]]
+    await show()
+    for (const v of ['Gallery', 'List']) {
+      pickView(v)
+      expect(sections()).toEqual({ favs: ['M003', 'M001'], rest: ['M004', 'M002'] })
+      const head = document.querySelector<HTMLElement>('[data-section="favourites"] .section-head')!
+      expect(head.textContent?.trim()).toBe('Favourites')
+      expect(document.querySelector('[data-section="favourites"] + [role=separator]')).not.toBeNull()
+    }
+  })
+
+  it('a star or unstar moves the build between the sections', async () => {
+    pages = [[build('M002'), build('M001')]]
+    await show()
+    expect(document.querySelector('[data-section="favourites"]')).toBeNull()
+    expect(document.querySelector('.feed .sep[role=separator]')).toBeNull()
+    app.state = applyEvent(app.state, { t: 'BuildFavouriteChanged', d: { user_id: 'U1', channel_id: 'B1', message_ids: ['M001'], favourite: true } }, Date.now())
+    flushSync()
+    expect(sections()).toEqual({ favs: ['M001'], rest: ['M002'] })
+    app.state = applyEvent(app.state, { t: 'BuildFavouriteChanged', d: { user_id: 'U1', channel_id: 'B1', message_ids: ['M001'], favourite: false } }, Date.now())
+    flushSync()
+    expect(document.querySelector('[data-section="favourites"]')).toBeNull()
+  })
+
+  // the sections split the feed of the filter in view (game, Show archived, words), so they follow it
+  it('the section follows Show archived (and any filter: it splits the feed in view)', async () => {
+    answer = (a) => (a.archived ? [fav('M004', { archived_at: '2026-10-05T00:00:00.000Z', archived_by: 'U2' }), build('M002')] : [build('M002')])
+    await show()
+    // no favourites among the live builds: no section
+    expect(document.querySelector('[data-section="favourites"]')).toBeNull()
+    const toggle = document.querySelector<HTMLElement>('[role=switch]')
+    toggle?.click()
+    flushSync()
+    await settle()
+    flushSync()
+    expect(sections()).toEqual({ favs: ['M004'], rest: ['M002'] })
+  })
+
+  it('the section head and separator fit at any width, in tokens (CSS)', () => {
+    const css = readFileSync(resolve(__dirname, 'BuildsChannel.svelte'), 'utf8').split('<style>')[1]
+    expect(css).toMatch(/\.section-head \{[^}]*white-space: nowrap;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis/)
+    expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/)
   })
 })

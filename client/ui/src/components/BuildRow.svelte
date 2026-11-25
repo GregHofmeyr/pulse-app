@@ -5,12 +5,12 @@
   import Icon from './Icon.svelte'
   import { isMenuKey } from '../lib/participantMenu'
   import { peekHover } from '../lib/hoverIntent'
-  import { buildGameName, commentCount, isArchived, isQuickDrop } from '../lib/builds'
+  import { buildGameName, commentCount, isArchived, isFavourite, isQuickDrop } from '../lib/builds'
   import { relativeTime } from '../lib/conversations'
   import { app, clock } from '../lib/store.svelte'
   import type { Message } from '../lib/protocol/Message'
 
-  let { message, serverId, nameOf, onOpen, selecting = false, selected = false, onSelect, onMenu }: {
+  let { message, serverId, nameOf, onOpen, selecting = false, selected = false, onSelect, onMenu, onFavourite }: {
     message: Message
     serverId: string
     nameOf: (userId: string | null) => string
@@ -22,7 +22,10 @@
     onSelect?: (m: Message, shift: boolean) => void
     /** Its right-click menu: a right-click, or the menu key / Shift+F10 on it. */
     onMenu?: (m: Message, e: MouseEvent | KeyboardEvent, opener: HTMLElement) => void
+    /** Its star (your own favourite, #617): shown on hover or focus, always once starred. */
+    onFavourite?: (m: Message) => void
   } = $props()
+  const fav = $derived(isFavourite(message))
 
   const b = $derived(message.build!)
   const game = $derived(buildGameName(app.state, serverId, message))
@@ -102,14 +105,18 @@
     </div>
     {#if b.notes}<span class="notes">{b.notes}</span>{/if}
   </svelte:element>
+  {#if onFavourite}
+    <button type="button" class="star" class:on={fav} aria-label={fav ? 'Remove from favourites' : 'Favourite'} aria-pressed={fav}
+      data-tip={fav ? 'Remove from favourites' : 'Favourite'} onclick={() => onFavourite(message)}><Icon name="star" size={14} /></button>
+  {/if}
   {#if peeking && el}
     <BuildPeek {message} {serverId} anchor={el} id={peekId} focus={byKey} onClose={closePeek} {onOpen} onEnter={hover.stay} onLeave={hover.leave} />
   {/if}
 </article>
 
 <style>
-  .build-row { border-bottom: 1px solid var(--bg-3); }
-  .open { display: grid; grid-template-columns: 96px minmax(0, 1fr) minmax(0, 1.2fr); align-items: center; gap: 14px; width: 100%; padding: 10px 18px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+  .build-row { position: relative; border-bottom: 1px solid var(--bg-3); }
+  .open { display: grid; grid-template-columns: 96px minmax(0, 1fr) minmax(0, 1.2fr); align-items: center; gap: 14px; width: 100%; padding: 10px 52px 10px 18px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
   button.open { cursor: pointer; }
   button.open:hover { background: var(--bg-2); }
   .build-row.selected .open { background: var(--accent-faint); }
@@ -128,6 +135,13 @@
     .media { width: 80px; }
     .notes { display: none; }
   }
+  /* the star: at the row's end, in room the row always keeps for it (so nothing moves), its own button beside the one
+     that opens the build; hidden (still focusable) until hovered or focused, always once starred */
+  .star { position: absolute; top: 50%; right: 14px; translate: 0 -50%; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); cursor: pointer; opacity: 0; transition: opacity var(--dur) var(--ease); }
+  .star:hover { background: var(--bg-3); color: var(--text); }
+  .build-row:hover .star, .build-row:focus-within .star, .star:focus-visible { opacity: 1; }
+  .star.on { opacity: 1; color: var(--first-gold); }
+  .star.on :global(svg) { fill: currentColor; }
   /* the check state while selecting: over the picture's corner, so nothing moves */
   .check { position: absolute; left: 4px; top: 4px; width: 20px; height: 20px; box-sizing: border-box; display: grid; place-items: center; border-radius: var(--radius-xs); border: 2px solid var(--text-2); background: var(--scrim-strong); color: var(--on-accent); pointer-events: none; }
   .check.on { border-color: var(--focus-ring); background: var(--accent); }

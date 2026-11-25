@@ -7,12 +7,12 @@
   import Icon from './Icon.svelte'
   import { isMenuKey } from '../lib/participantMenu'
   import { peekHover } from '../lib/hoverIntent'
-  import { buildGameName, commentCount, isArchived, isQuickDrop } from '../lib/builds'
+  import { buildGameName, commentCount, isArchived, isFavourite, isQuickDrop } from '../lib/builds'
   import { relativeTime } from '../lib/conversations'
   import { app, clock } from '../lib/store.svelte'
   import type { Message } from '../lib/protocol/Message'
 
-  let { message, serverId, nameOf, onOpen, selecting = false, selected = false, onSelect, onMenu }: {
+  let { message, serverId, nameOf, onOpen, selecting = false, selected = false, onSelect, onMenu, onFavourite }: {
     message: Message
     serverId: string
     nameOf: (userId: string | null) => string
@@ -25,7 +25,10 @@
     onSelect?: (m: Message, shift: boolean) => void
     /** Its right-click menu: a right-click, or the menu key / Shift+F10 on it. */
     onMenu?: (m: Message, e: MouseEvent | KeyboardEvent, opener: HTMLElement) => void
+    /** Its star (your own favourite, #617): shown on hover or focus, always once starred. */
+    onFavourite?: (m: Message) => void
   } = $props()
+  const fav = $derived(isFavourite(message))
 
   const b = $derived(message.build!)
   const game = $derived(buildGameName(app.state, serverId, message))
@@ -109,13 +112,17 @@
       <span class="meta">{meta}</span>
     </div>
   </svelte:element>
+  {#if onFavourite}
+    <button type="button" class="star" class:on={fav} aria-label={fav ? 'Remove from favourites' : 'Favourite'} aria-pressed={fav}
+      data-tip={fav ? 'Remove from favourites' : 'Favourite'} onclick={() => onFavourite(message)}><Icon name="star" size={14} /></button>
+  {/if}
   {#if peeking && el}
     <BuildPeek {message} {serverId} anchor={el} id={peekId} focus={byKey} onClose={closePeek} {onOpen} onEnter={hover.stay} onLeave={hover.leave} />
   {/if}
 </article>
 
 <style>
-  .build-card { min-width: 0; border-radius: var(--radius-lg); background: var(--bg-2); border: 1px solid var(--bg-3); overflow: hidden; content-visibility: auto; contain-intrinsic-size: auto 280px; transition: border-color var(--dur) var(--ease); }
+  .build-card { position: relative; min-width: 0; border-radius: var(--radius-lg); background: var(--bg-2); border: 1px solid var(--bg-3); overflow: hidden; content-visibility: auto; contain-intrinsic-size: auto 280px; transition: border-color var(--dur) var(--ease); }
   .build-card:hover { border-color: var(--bg-4); }
   /* selected: the border's colour and a ring outside it (no size change) */
   .build-card.selected { border-color: var(--focus-ring); box-shadow: 0 0 0 1px var(--focus-ring); }
@@ -132,7 +139,13 @@
   .title { font-size: 15px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .notes { font-size: 13px; color: var(--text-2); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
   .meta { margin-top: 4px; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* the star: over the picture's top-right corner, its own button beside the one that opens the build; hidden
+     (still focusable) until hovered or focused, always once starred; it never moves anything */
+  .star { position: absolute; top: 6px; right: 6px; z-index: 1; width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: var(--scrim-strong); color: var(--tooltip-text); cursor: pointer; opacity: 0; transition: opacity var(--dur) var(--ease); }
+  .build-card:hover .star, .build-card:focus-within .star, .star:focus-visible { opacity: 1; }
+  .star.on { opacity: 1; color: var(--first-gold); }
+  .star.on :global(svg) { fill: currentColor; }
   /* the check state while selecting: over the picture's corner, so nothing moves */
-  .check { position: absolute; right: 8px; top: 8px; width: 20px; height: 20px; box-sizing: border-box; display: grid; place-items: center; border-radius: var(--radius-xs); border: 2px solid var(--text-2); background: var(--scrim-strong); color: var(--on-accent); pointer-events: none; }
+  .check { position: absolute; left: 8px; bottom: 8px; width: 20px; height: 20px; box-sizing: border-box; display: grid; place-items: center; border-radius: var(--radius-xs); border: 2px solid var(--text-2); background: var(--scrim-strong); color: var(--on-accent); pointer-events: none; }
   .check.on { border-color: var(--focus-ring); background: var(--accent); }
 </style>

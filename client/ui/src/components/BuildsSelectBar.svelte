@@ -42,7 +42,7 @@
   .act:disabled { color: var(--text-3); cursor: default; }
   .clear { color: var(--text-3); padding: 0 8px; }
   /* narrow: the actions keep their icons (their names are their labels), the note goes */
-  @container (max-width: 520px) {
+  @container (max-width: 760px) {
     .label { display: none; }
     .act { padding: 0 9px; }
     .note { display: none; }

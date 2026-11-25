@@ -1,20 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { BULK_ACTIONS, batchChunks, bulkPlan, bulkSummary, buildMenuItems, rangeSelected, toggleSelected } from './buildSelect'
+import { BULK_ACTIONS, barKeys, batchChunks, bulkPlan, bulkSummary, buildMenuItems, rangeSelected, toggleSelected } from './buildSelect'
 import { applyReady, emptyState } from './state'
 import { testReady } from './testReady'
 import type { Message } from './protocol/Message'
 
-const msg = (id: string, author: string, archived = false): Message =>
-  ({ id, channel_id: 'B1', author_id: author, build: { title: id, archived_at: archived ? '2026-10-01T00:00:00Z' : null } }) as unknown as Message
+const msg = (id: string, author: string, archived = false, favourite = false): Message =>
+  ({ id, channel_id: 'B1', author_id: author, build: { title: id, archived_at: archived ? '2026-10-01T00:00:00Z' : null, favourite } }) as unknown as Message
 const state = (owner: string | null = null) =>
   applyReady(emptyState(), testReady([], { servers: [{ id: 'S1', name: 'Main', icon_hash: null, ...(owner ? { owner_id: owner } : {}) } as never] }))
 const action = (k: string) => BULK_ACTIONS.find((a) => a.key === k)!
 
 describe('buildMenuItems', () => {
-  it('offers Edit to the author, Archive and Delete to the author or owner, Open and Select to anyone', () => {
-    expect(buildMenuItems({ edit: true, archive: true, delete: true }, false)).toEqual(['open', 'edit', 'archive', 'delete', 'select'])
-    expect(buildMenuItems({ edit: false, archive: true, delete: true }, true)).toEqual(['open', 'restore', 'delete', 'select'])
-    expect(buildMenuItems({ edit: false, archive: false, delete: false }, false)).toEqual(['open', 'select'])
+  it('offers Edit to the author, Archive and Delete to the author or owner, Open, Favourite and Select to anyone', () => {
+    expect(buildMenuItems({ edit: true, archive: true, delete: true }, false, false)).toEqual(['open', 'favourite', 'edit', 'archive', 'delete', 'select'])
+    expect(buildMenuItems({ edit: false, archive: true, delete: true }, true, true)).toEqual(['open', 'unfavourite', 'restore', 'delete', 'select'])
+    expect(buildMenuItems({ edit: false, archive: false, delete: false }, false, false)).toEqual(['open', 'favourite', 'select'])
   })
 })
 
@@ -41,6 +41,17 @@ describe('bulkPlan', () => {
     expect(bulkPlan(s, 'S1', sel, action('restore'))).toEqual({ ids: ['c'], skipped: 0 })
     expect(bulkPlan(s, 'S1', sel, action('delete'))).toEqual({ ids: ['a', 'c'], skipped: 1 })
   })
+  it('a star is yours to give any build: nothing is skipped', () => {
+    const sel = [msg('a', 'U2'), msg('b', 'U2', false, true), msg('c', 'U1')]
+    expect(bulkPlan(state(), 'S1', sel, action('favourite'))).toEqual({ ids: ['a', 'c'], skipped: 0 })
+    expect(bulkPlan(state(), 'S1', sel, action('unfavourite'))).toEqual({ ids: ['b'], skipped: 0 })
+  })
+  it('the bar shows an action when it applies to a selected build, and the base ones with none selected', () => {
+    const keys = (sel: Message[]) => barKeys(sel)
+    expect(keys([])).toEqual(['favourite', 'archive', 'delete'])
+    expect(keys([msg('a', 'U1', true, true)])).toEqual(['unfavourite', 'restore', 'delete'])
+    expect(keys([msg('a', 'U1'), msg('b', 'U1', true, true)])).toEqual(['favourite', 'unfavourite', 'archive', 'restore', 'delete'])
+  })
   it("the server's owner may change everyone's", () => {
     expect(bulkPlan(state('U1'), 'S1', [msg('a', 'U1'), msg('b', 'U2')], action('delete'))).toEqual({ ids: ['a', 'b'], skipped: 0 })
   })
@@ -53,7 +64,8 @@ describe('batches', () => {
     expect(batchChunks([])).toEqual([])
   })
   it('says what was done and how many were skipped', () => {
-    expect(bulkSummary('Archived', 1, 0)).toBe('Archived 1 build.')
-    expect(bulkSummary('Deleted', 3, 2)).toBe("Deleted 3 builds. 2 skipped: they aren't yours to change.")
+    expect(bulkSummary(action('archive'), 1, 0)).toBe('Archived 1 build.')
+    expect(bulkSummary(action('delete'), 3, 2)).toBe("Deleted 3 builds. 2 skipped: they aren't yours to change.")
+    expect(bulkSummary(action('favourite'), 2, 1)).toBe('Added 2 builds to your favourites. 1 skipped: gone meanwhile.')
   })
 })

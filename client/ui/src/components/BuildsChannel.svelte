@@ -8,14 +8,15 @@
   import BuildMenu from './BuildMenu.svelte'
   import BuildsSelectBar from './BuildsSelectBar.svelte'
   import DeleteBuildsDialog from './DeleteBuildsDialog.svelte'
+  import Icon from './Icon.svelte'
   import BuildPage from './BuildPage.svelte'
   import BuildQuickAdd from './BuildQuickAdd.svelte'
   import BuildRow from './BuildRow.svelte'
   import BuildsHeader from './BuildsHeader.svelte'
   import BuildsPanel from './BuildsPanel.svelte'
   import { buildFacetsOf, buildFeedFailed, dropBuildFeed, buildFeedKey, buildFilter, loadBuildPage, openBuildFeed, setBuildFacets, type BuildFeed, type BuildFilter } from '../lib/builds'
-  import { BULK_ACTIONS, batchChunks, bulkPlan, bulkSummary, rangeSelected, toggleSelected, type BulkAction, type BuildMenuItem, type SelectBarAction } from '../lib/buildSelect'
-  import { buildRights, isArchived } from '../lib/builds'
+  import { barActions as shownActions, batchChunks, bulkPlan, bulkSummary, rangeSelected, toggleSelected, type BulkAction, type BuildMenuItem, type SelectBarAction } from '../lib/buildSelect'
+  import { buildRights, isFavourite } from '../lib/builds'
   import { menuPoint } from '../lib/participantMenu'
   import type { BuildsBatchResult } from '../lib/protocol/BuildsBatchResult'
   import { classifyPaste, type BuildPaste, type QuickPrefill } from '../lib/buildPaste'
@@ -311,9 +312,21 @@
     if (it === 'open') return openPage(m)
     if (it === 'edit') return void (editing = m)
     if (it === 'select') return startSelecting(m)
+    if (it === 'favourite' || it === 'unfavourite') return toggleFavourite(m, it === 'favourite')
     if (it === 'archive' || it === 'restore') return void api.setBuildArchived(m.id, it === 'archive').catch(report(`${it} that build`))
     asking = { count: 1, skipped: 0, go: () => api.deleteBuild(m.id) }
   }
+
+  /** Your own star (#617); the BuildFavouriteChanged that follows moves it between the sections. */
+  function toggleFavourite(m: Message, on = !isFavourite(m)) {
+    api.setBuildFavourite(m.id, on).catch(report(on ? 'add that build to your favourites' : 'remove that build from your favourites'))
+  }
+  // Favourites first (#617): your starred builds of the feed in view (so its game, Show archived and words), in their own
+  // section at the top, then the rest; never both.
+  const favs = $derived(items.filter(isFavourite))
+  const rest = $derived(favs.length ? items.filter((m) => !isFavourite(m)) : items)
+  /** The builds in the order shown (a Shift+click's range runs along it). */
+  const shown = $derived(favs.length ? [...favs, ...rest] : items)
 
   let selecting = $state(false)
   /** Selected build ids, in the order picked; only those still shown count. */
@@ -333,7 +346,7 @@
   }
   function select(m: Message, shift: boolean) {
     if (!selecting) return startSelecting(m)
-    picked = shift ? rangeSelected(picked, items.map((x) => x.id), anchor, m.id) : toggleSelected(picked, m.id)
+    picked = shift ? rangeSelected(picked, shown.map((x) => x.id), anchor, m.id) : toggleSelected(picked, m.id)
     anchor = m.id
   }
   // another filter, or the build page: selecting ends
@@ -351,11 +364,13 @@
   // The bar's actions. Mixed rights: an action applies to the selected builds you may change and skips the rest, saying
   // how many (the bar says "N not yours" beforehand); it's disabled when it applies to none you may change.
   const RUN: Record<BulkAction['key'], (ids: string[]) => Promise<BuildsBatchResult>> = {
+    favourite: (ids) => api.favouriteManyBuilds(channelId, ids, true),
+    unfavourite: (ids) => api.favouriteManyBuilds(channelId, ids, false),
     archive: (ids) => api.archiveManyBuilds(channelId, ids, true),
     restore: (ids) => api.archiveManyBuilds(channelId, ids, false),
     delete: (ids) => api.deleteManyBuilds(channelId, ids),
   }
-  const ICON: Record<BulkAction['key'], SelectBarAction['icon']> = { archive: 'inbox', restore: 'inbox', delete: 'trash' }
+  const ICON: Record<BulkAction['key'], SelectBarAction['icon']> = { favourite: 'star', unfavourite: 'star', archive: 'inbox', restore: 'inbox', delete: 'trash' }
   let busy = $state(false)
   async function runBulk(a: BulkAction, ids: string[], skipped: number) {
     let done = 0
@@ -364,7 +379,7 @@
       done += r.done
       skipped += r.skipped
     }
-    ui.notice = bulkSummary(a.done, done, skipped)
+    ui.notice = bulkSummary(a, done, skipped)
     stopSelecting()
   }
   function bulk(a: BulkAction) {
@@ -378,15 +393,25 @@
     runBulk(a, ids, skipped).catch(report(`${a.label.toLowerCase()} them`)).finally(() => (busy = false))
   }
   const barActions = $derived<SelectBarAction[]>(
-    BULK_ACTIONS.filter((a) => a.key !== 'restore' || selected.some(isArchived))
-      .filter((a) => a.key !== 'archive' || !selected.length || selected.some((m) => !isArchived(m)))
-      .map((a) => ({ key: a.key, label: a.label, icon: ICON[a.key], danger: a.confirm, disabled: bulkPlan(app.state, serverId, selected, a).ids.length === 0, run: () => bulk(a) })),
+    shownActions(selected).map((a) => ({ key: a.key, label: a.label, icon: ICON[a.key], danger: a.confirm, disabled: bulkPlan(app.state, serverId, selected, a).ids.length === 0, run: () => bulk(a) })),
   )
   const notYours = $derived(selected.filter((m) => { const r = buildRights(app.state, serverId, m); return !r.archive && !r.delete }).length)
 
   const empty = $derived(!!feed?.start && items.length === 0)
   const filtered = $derived(!!filter.game || !!filter.q)
 </script>
+
+{#snippet list(ms: Message[])}
+  {#if view === 'gallery'}
+    <div class="grid">
+      {#each ms as m (m.id)}<BuildCard message={m} {serverId} {nameOf} onOpen={openPage} {selecting} selected={picked.includes(m.id)} onSelect={select} onMenu={openMenu} onFavourite={toggleFavourite} />{/each}
+    </div>
+  {:else}
+    <div class="rows">
+      {#each ms as m (m.id)}<BuildRow message={m} {serverId} {nameOf} onOpen={openPage} {selecting} selected={picked.includes(m.id)} onSelect={select} onMenu={openMenu} onFavourite={toggleFavourite} />{/each}
+    </div>
+  {/if}
+{/snippet}
 
 <div class="chan" data-testid="builds-channel">
   {#if openNow}
@@ -409,14 +434,15 @@
                so it stays put when the view switches -->
           {#if empty}
             <p class="empty">{filtered ? 'No builds match.' : 'No builds yet. Save your first with + Add build: a title, a link, a screenshot or a few notes is enough.'}</p>
-          {:else if view === 'gallery'}
-            <div class="grid">
-              {#each items as m (m.id)}<BuildCard message={m} {serverId} {nameOf} onOpen={openPage} {selecting} selected={picked.includes(m.id)} onSelect={select} onMenu={openMenu} />{/each}
-            </div>
           {:else}
-            <div class="rows">
-              {#each items as m (m.id)}<BuildRow message={m} {serverId} {nameOf} onOpen={openPage} {selecting} selected={picked.includes(m.id)} onSelect={select} onMenu={openMenu} />{/each}
-            </div>
+            {#if favs.length}
+              <section class="section" data-section="favourites" aria-labelledby="builds-favs-{channelId}">
+                <h3 class="section-head" id="builds-favs-{channelId}"><Icon name="star" size={13} /><span class="section-name">Favourites</span></h3>
+                {@render list(favs)}
+              </section>
+              <div class="sep" role="separator"></div>
+            {/if}
+            <div class="section" data-section="rest">{@render list(rest)}</div>
           {/if}
           <div class="sentinel" bind:this={sentinel}></div>
           {#if failedKey === key}
@@ -454,6 +480,11 @@
   .feed { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; padding: 16px 18px 8px; align-items: start; }
   .rows { display: flex; flex-direction: column; }
+  /* the Favourites section's head and the line under it: one line that never spills */
+  .section-head { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; padding: 14px 18px 0; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .section-head :global(svg) { flex-shrink: 0; color: var(--first-gold); fill: currentColor; }
+  .section-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .sep { flex-shrink: 0; height: 1px; margin: 8px 18px; background: var(--bg-3); }
   .sentinel { height: 1px; flex-shrink: 0; }
   .empty { margin: 0; padding: 24px 18px; color: var(--text-3); font-size: 13px; }
   .error { margin: 8px 18px; color: var(--danger-text); font-size: 13px; }
