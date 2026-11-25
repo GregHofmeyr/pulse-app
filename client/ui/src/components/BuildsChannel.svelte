@@ -1,8 +1,10 @@
 <script lang="ts">
   // A builds channel (#617): the header, then the builds of the filter as a gallery of cards or a list of rows (both
-  // read one paged feed in `buildFeeds`, newest first; older pages load at the end).
-  import { untrack } from 'svelte'
+  // read one paged feed in `buildFeeds`, newest first; older pages load at the end). Opening a build shows its page in
+  // place of all that (#618); Back brings the browse view back as it was, filter and scroll.
+  import { tick, untrack } from 'svelte'
   import BuildCard from './BuildCard.svelte'
+  import BuildPage from './BuildPage.svelte'
   import BuildRow from './BuildRow.svelte'
   import BuildsHeader from './BuildsHeader.svelte'
   import BuildsPanel from './BuildsPanel.svelte'
@@ -11,8 +13,9 @@
   import { nameOfIn } from '../lib/selectors'
   import { tracksUnread } from '../lib/state'
   import { windowFocus } from '../lib/windowFocus.svelte'
-  import { app, onAppEvent } from '../lib/store.svelte'
+  import { app, onAppEvent, ui } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
+  import type { Message } from '../lib/protocol/Message'
 
   let { channelId, serverId }: { channelId: string; serverId: string } = $props()
 
@@ -163,35 +166,86 @@
     return () => clearTimeout(t)
   })
 
+  // --- the build page: kept on a feed's current copy, else the store's held one (ThreadChat holds it) ---
+  let open = $state<Message | null>(null)
+  const openNow = $derived.by(() => {
+    const o = open
+    if (!o) return null
+    for (const f of Object.values(app.state.buildFeeds)) {
+      if (f.channelId !== channelId) continue
+      const m = f.items.find((x) => x.id === o.id)
+      if (m) return m
+    }
+    return app.state.openRoot?.id === o.id ? app.state.openRoot : o
+  })
+  let scrollBack = 0
+  function openPage(m: Message) {
+    scrollBack = scroller?.scrollTop ?? 0
+    open = m
+  }
+  async function closePage() {
+    const id = open?.id
+    open = null
+    await tick()
+    if (scroller) scroller.scrollTop = scrollBack
+    scroller?.querySelector<HTMLElement>(`[data-build-id="${id}"] button.open`)?.focus({ preventScroll: true })
+  }
+  // Asked to open one of this channel's builds (an inbox item, a search result, a notification): the one held in a
+  // feed, else fetched.
+  let openSeq = 0
+  $effect(() => {
+    const r = ui.openBuild
+    if (!r || r.channelId !== channelId) return
+    untrack(() => {
+      ui.openBuild = null
+      const seq = ++openSeq
+      const held = Object.values(app.state.buildFeeds).flatMap((f) => (f.channelId === channelId ? f.items : [])).find((m) => m.id === r.messageId)
+      if (held) return openPage(held)
+      api.getBuild(r.messageId).then(
+        (m) => { if (seq === openSeq && m) openPage(m) },
+        (e) => { if (seq === openSeq) ui.notice = `Couldn't open that build: ${errorText(e)}` },
+      )
+    })
+  })
+  $effect(() => () => {
+    untrack(() => {
+      if (ui.openBuild?.channelId === channelId) ui.openBuild = null
+    })
+  })
+
   const empty = $derived(!!feed?.start && items.length === 0)
   const filtered = $derived(!!filter.game || !!filter.q)
 </script>
 
 <div class="chan" data-testid="builds-channel">
-  <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} {panel} onPanel={togglePanel} />
-  <div class="body">
-    <div class="feed" class:list={view === 'list'} bind:this={scroller}>
-      {#if view === 'gallery'}
-        <div class="grid">
-          {#each items as m (m.id)}<BuildCard message={m} {serverId} {nameOf} />{/each}
-        </div>
-      {:else}
-        <div class="rows">
-          {#each items as m (m.id)}<BuildRow message={m} {serverId} {nameOf} />{/each}
-        </div>
-      {/if}
-      <div class="sentinel" bind:this={sentinel}></div>
-      {#if empty}
-        <p class="empty">{filtered ? 'No builds match.' : 'No builds yet. Save your first with + Add build: a title, a link, a screenshot or a few notes is enough.'}</p>
-      {/if}
-      {#if failedKey === key}
-        <p class="error" role="alert">{error} <button type="button" class="link-btn" onclick={() => (failedKey = null)}>Try again</button></p>
+  {#if openNow}
+    <BuildPage message={openNow} {serverId} onBack={() => void closePage()} />
+  {:else}
+    <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} {panel} onPanel={togglePanel} />
+    <div class="body">
+      <div class="feed" class:list={view === 'list'} bind:this={scroller}>
+        {#if view === 'gallery'}
+          <div class="grid">
+            {#each items as m (m.id)}<BuildCard message={m} {serverId} {nameOf} onOpen={openPage} />{/each}
+          </div>
+        {:else}
+          <div class="rows">
+            {#each items as m (m.id)}<BuildRow message={m} {serverId} {nameOf} onOpen={openPage} />{/each}
+          </div>
+        {/if}
+        <div class="sentinel" bind:this={sentinel}></div>
+        {#if empty}
+          <p class="empty">{filtered ? 'No builds match.' : 'No builds yet. Save your first with + Add build: a title, a link, a screenshot or a few notes is enough.'}</p>
+        {/if}
+        {#if failedKey === key}
+          <p class="error" role="alert">{error} <button type="button" class="link-btn" onclick={() => (failedKey = null)}>Try again</button></p>
+        {/if}
+      </div>
+      {#if panel}
+        <BuildsPanel {channelId} {serverId} {facets} {game} onGame={(g) => (game = g)} {archived} onArchived={(on) => (archived = on)} />
       {/if}
     </div>
-    {#if panel}
-      <BuildsPanel {channelId} {serverId} {facets} {game} onGame={(g) => (game = g)} {archived} onArchived={(on) => (archived = on)} />
-    {/if}
-  </div>
+  {/if}
 </div>
 
 <style>

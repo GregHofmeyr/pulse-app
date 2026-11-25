@@ -15,7 +15,7 @@
   import type { Message } from '../lib/protocol/Message'
   import type { Gif } from '../lib/protocol/Gif'
 
-  let { root, serverId, placeholder, authorTag = null }: {
+  let { root, serverId, placeholder, authorTag = null, emptyText = 'No replies yet. Say something about it.' }: {
     /** The message the chat is about (kept current by the caller). */
     root: Message
     serverId: string
@@ -23,6 +23,8 @@
     placeholder: string
     /** The user whose replies are tagged "author" (a build's author); none when unset. */
     authorTag?: string | null
+    /** What it says with no replies yet. */
+    emptyText?: string
   } = $props()
 
   // One chat per message: the caller remounts it for another one.
@@ -179,7 +181,7 @@
 <div class="thread-chat">
   <div class="list" bind:this={list} onscroll={() => void maybeLoadOlder()}>
     {#if fetched && reachedStart && replies.length === 0 && pending.length === 0}
-      <p class="empty">No replies yet. Say something about it.</p>
+      <p class="empty">{emptyText}</p>
     {/if}
     {#each replies as m, i (m.id)}
       <MessageItem message={m} serverId={serverId || null} name={nameOf(m.author_id)} {nameOf} grouped={groupedWith(replies, i)}

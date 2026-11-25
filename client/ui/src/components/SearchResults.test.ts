@@ -39,6 +39,7 @@ beforeEach(() => {
       { id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },
       { id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 1 },
       { id: 'K1', server_id: 'S1', kind: 'clips', name: 'clips', position: 2 },
+      { id: 'B1', server_id: 'S1', kind: 'builds', name: 'builds', position: 3 },
     ],
     { members: [{ server_id: 'S1', members: [{ user: testMe, nickname: null }, { user: sam, nickname: null }] }] },
   ))
@@ -105,10 +106,12 @@ describe('SearchResults', () => {
         hit(msg('R1', 'Q1', { thread_root_id: 'Q9' })),
         hit(msg('R2', 'K1', { thread_root_id: 'V9' })),
         hit(msg('M3', 'C1')),
+        hit(msg('M4', 'B1')),
+        hit(msg('R5', 'B1', { thread_root_id: 'M4' })),
       ],
-      total: 3,
+      total: 5,
     })
-    expect(cards().map((c) => c.querySelector('.label')?.textContent ?? null)).toEqual(['reply in quote', 'reply in clip', null])
+    expect(cards().map((c) => c.querySelector('.label')?.textContent ?? null)).toEqual(['reply in quote', 'reply in clip', null, 'build', 'comment on build'])
   })
 
   it('no matches: says so, with the filters that were on', () => {

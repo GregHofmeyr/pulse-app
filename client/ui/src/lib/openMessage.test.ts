@@ -21,12 +21,15 @@ describe('openMessage in a builds channel', () => {
     app.state = { ...emptyState(), channels: { B1: { id: 'B1', server_id: 'S1', kind: 'builds', name: 'raven-builds', position: 0 } } }
   })
 
-  it('a build or a comment on one opens its channel, never a jump into a chat history', () => {
+  it('a build or a comment on one opens its page, never a jump into a chat history', () => {
     expect(openMessage(msg({}))).toBe(true)
     expect(ui.goTo).toBe('B1')
+    expect(ui.openBuild).toEqual({ channelId: 'B1', messageId: 'M1' })
     ui.goTo = null
+    ui.openBuild = null
     expect(openMessage(msg({ id: 'R1', thread_root_id: 'M1' }))).toBe(true)
     expect(ui.goTo).toBe('B1')
+    expect(ui.openBuild).toEqual({ channelId: 'B1', messageId: 'M1' })
     expect(ui.openReplies).toBeFalsy()
     expect(jumpTo).not.toHaveBeenCalled()
   })

@@ -71,6 +71,8 @@ export const ui = $state({
   /** A request to scroll this clip's channel feed to it and flash it (#120), as a message jump does (its clips
    *  channel's view does it and clears it; a clip it can't reach in the feed opens its panel instead). */
   jumpClip: null as { channelId: string; clip: Message } | null,
+  /** A request to open this build's page (#618; its builds channel's view does it and clears it). */
+  openBuild: null as { channelId: string; messageId: string } | null,
   /** A request to open the share editor on this file (an offered recording, #382; its clips channel's view does it
    *  and clears it). */
   shareClip: null as { channelId: string; path: string; at: number } | null,
@@ -190,6 +192,9 @@ export function handleNotificationClick(c: { channelId: string; threadId: string
   const messageId = c.messageId
   if (messageId && !c.threadId && ch.kind !== 'clips' && ch.kind !== 'builds') return void import('./jump').then((j) => j.jumpTo(c.channelId, messageId))
   ui.goTo = c.channelId
+  // a build, or a comment on one (#618): its page
+  const build = c.threadId ?? messageId
+  if (ch.kind === 'builds' && build) ui.openBuild = { channelId: c.channelId, messageId: build }
   if (c.threadId && ch.kind === 'quotes') ui.openReplies = { channelId: c.channelId, rootId: c.threadId }
 }
 
@@ -453,6 +458,7 @@ export function resetState() {
   ui.openReplies = null
   ui.openClip = null
   ui.jumpClip = null
+  ui.openBuild = null
   ui.shareClip = null
   ui.attachFiles = null
   forgetProfileLoads()

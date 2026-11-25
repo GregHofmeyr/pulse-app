@@ -38,8 +38,8 @@
     return media ? (media.still_hash ?? media.hash) : null
   }
   function label(h: SearchHit): string | null {
-    if (!h.message.thread_root_id) return null
     const k = app.state.channels[h.message.channel_id]?.kind
+    if (!h.message.thread_root_id) return k === 'builds' ? 'build' : null
     return k === 'clips' ? 'reply in clip' : k === 'builds' ? 'comment on build' : 'reply in quote'
   }
   const author = (h: SearchHit) => (h.message.author_id ? displayName(app.state, serverId, h.message.author_id) : 'Pulse')

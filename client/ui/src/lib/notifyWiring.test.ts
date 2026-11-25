@@ -20,6 +20,7 @@ const ready = (): Ready => ({
   channels: [
     { id: 'DM1', server_id: null, kind: 'dm', name: null, position: 0 },
     { id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 0 },
+    { id: 'B1', server_id: 'S1', kind: 'builds', name: 'builds', position: 1 },
   ],
   members: [{ server_id: 'S1', members: [{ user: user('ME', 'alex'), nickname: null }, { user: user('U1', 'sam'), nickname: null }] }],
   dm_members: [{ channel_id: 'DM1', user_ids: ['ME', 'U1'] }],
@@ -175,6 +176,16 @@ describe('a clicked notification', () => {
     handleNotificationClick({ channelId: 'Q1', threadId: 'R1' })
     expect(ui.goTo).toBe('Q1')
     expect(ui.openReplies).toEqual({ channelId: 'Q1', rootId: 'R1' })
+  })
+
+  it("a build's comment, or a new build, opens the build's page (#618)", () => {
+    handleNotificationClick({ channelId: 'B1', threadId: 'M9' })
+    expect(ui.goTo).toBe('B1')
+    expect(ui.openBuild).toEqual({ channelId: 'B1', messageId: 'M9' })
+    ui.openBuild = null
+    handleNotificationClick({ channelId: 'B1', threadId: null, messageId: 'M8' })
+    expect(ui.openBuild).toEqual({ channelId: 'B1', messageId: 'M8' })
+    expect(ui.openReplies).toBeNull()
   })
 
   it('a conversation that no longer exists (or after signing out): nothing to open', () => {

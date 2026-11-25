@@ -63,8 +63,12 @@ export async function openMessageAt(channelId: string, messageId: string, thread
   const ch = app.state.channels[channelId]
   if (!ch) return void (ui.notice = 'That channel was deleted.')
   if (!threadRootId && ch.kind !== 'clips' && ch.kind !== 'builds') return jumpTo(channelId, messageId)
-  // a build or its comment (#617): its channel (the build page comes with #618)
-  if (ch.kind === 'builds') return void (ui.goTo = channelId)
+  // a build or its comment: the build's page (#618)
+  if (ch.kind === 'builds') {
+    ui.goTo = channelId
+    ui.openBuild = { channelId, messageId: threadRootId ?? messageId }
+    return
+  }
   if (threadRootId && ch.kind === 'quotes') {
     ui.goTo = channelId
     ui.openReplies = { channelId, rootId: threadRootId }

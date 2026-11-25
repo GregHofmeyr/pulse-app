@@ -1,7 +1,7 @@
 // Where a message opens when it's picked from a list of them (a search result, an inbox item; #324). A clip is scrolled
 // to in its channel's feed and flashed (#120), as a message is in its history; a reply to a clip opens that clip's
 // panel (the reply lives in its thread). A reply in a quote opens that
-// quote's replies, as a notification click does. Anything else is jumped to in its channel's history.
+// quote's replies, as a notification click does. A build, or a comment on one, opens the build's page (#618). Anything else is jumped to in its channel's history.
 import { jumpTo } from './jump'
 import type { Message } from './protocol/Message'
 import { app, ui } from './store.svelte'
@@ -16,9 +16,10 @@ export function openMessage(m: Message, root: Message | null = null): boolean {
   const ch = app.state.channels[m.channel_id]
   if (!ch) return false
   const mine = ++seq
-  // A build or a comment on one (#617): its channel opens (the build page comes with #618).
+  // A build or a comment on one: its page, in its channel (#618).
   if (ch.kind === 'builds') {
     ui.goTo = ch.id
+    ui.openBuild = { channelId: ch.id, messageId: m.thread_root_id ?? m.id }
     return true
   }
   if (ch.kind === 'clips') {

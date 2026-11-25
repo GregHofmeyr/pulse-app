@@ -192,3 +192,23 @@ export function commentCount(m: Message): string | null {
   const n = m.build?.reply_count ?? 0
   return n === 0 ? null : n === 1 ? '1 comment' : `${n} comments`
 }
+
+/** A screenshot as the build page shows it: its link once signed (null until then) and its size. */
+export type BuildScreenshot = { id: string; url: string | null; w: number | null; h: number | null }
+
+/** A build's screenshots: its image files, in order (an expired one is left out). */
+export function buildShots(m: Message): Attachment[] {
+  return (m.attachments ?? []).filter((a) => a.kind === 'image' && !a.expired)
+}
+
+/** Whether you may edit, archive (or restore) and delete a build: its author all three, the server's owner the last two
+ *  (spec §5.1; the server checks again). */
+export function buildRights(s: AppState, serverId: string, m: Message): { edit: boolean; archive: boolean; delete: boolean } {
+  const me = s.me?.id
+  const author = !!me && m.author_id === me
+  const owner = !!me && s.servers.find((x) => x.id === serverId)?.owner_id === me
+  return { edit: author, archive: author || owner, delete: author || owner }
+}
+
+/** The build page's quick-access menu entries: Pin to side (#619) and Pop out (#620). */
+export type BuildActionItem = 'pin' | 'popout'
