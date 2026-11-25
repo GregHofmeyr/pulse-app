@@ -11,8 +11,9 @@
   import { nameOfIn } from '../lib/selectors'
   import { tracksUnread } from '../lib/state'
   import { windowFocus } from '../lib/windowFocus.svelte'
-  import { app, onAppEvent } from '../lib/store.svelte'
+  import { app, onAppEvent, onAppReady } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
+  import type { BuildFacets } from '../lib/protocol/BuildFacets'
 
   let { channelId, serverId }: { channelId: string; serverId: string } = $props()
 
@@ -28,7 +29,10 @@
 
   const games = $derived(app.state.games[serverId] ?? [])
   const title = $derived(game ? (games.find((g) => g.id === game)?.name ?? 'Game') : 'All games')
-  const facets = $derived(buildFacetsOf(app.state, channelId, archived))
+  const stored = $derived(buildFacetsOf(app.state, channelId, archived))
+  /** The counts last fetched here, with and without archived builds: shown while fresh ones are fetched. */
+  let held = $state<{ live?: BuildFacets; all?: BuildFacets }>({})
+  const facets = $derived(stored ?? (archived ? held.all : held.live))
   const count = $derived(
     filter.q ? (feed?.start ? items.length : null) : facets ? (game ? (facets.games.find((g) => g.game_id === game)?.count ?? 0) : facets.total) : null,
   )
@@ -44,42 +48,69 @@
     setView(channelId, v)
   }
 
-  // --- counts: loaded on open (and after a reconnect clears them), then a second after a build changes ---
+  // --- counts: fetched whenever they're missing: on open, when Show archived flips, after a reconnect, and a second
+  // after a build changes (any build event drops a channel's counts, open or not: `buildsOnEvent`). The last ones
+  // fetched stay on screen meanwhile. ---
   const FACETS_DEBOUNCE_MS = 1000
   let facetsSeq = 0
+  /** The fetch for the counts in view failed: not asked again until a build changes, the variant flips or a Ready. */
   let facetsFailed = $state(false)
+  /** Bumped by a build event so the counts are asked for again (also when they were already being fetched). */
+  let facetsTick = $state(0)
+  let facetsSoon = false
   async function loadFacets(withArchived: boolean) {
     const seq = ++facetsSeq
     try {
       const f = await api.buildFacets(channelId, withArchived)
       if (seq !== facetsSeq || !f) return
       facetsFailed = false
+      held = withArchived ? { ...held, all: f } : { ...held, live: f }
       app.state = setBuildFacets(app.state, channelId, withArchived, f)
     } catch {
-      if (seq === facetsSeq) facetsFailed = true // the counts stay as they were; the next build change asks again
+      if (seq === facetsSeq) facetsFailed = true // the counts stay as they were
     }
   }
   $effect(() => {
-    if (!facets && !facetsFailed) untrack(() => void loadFacets(archived))
+    void facetsTick
+    if (stored || facetsFailed) return
+    const a = archived
+    const soon = facetsSoon
+    facetsSoon = false
+    if (!soon) return untrack(() => void loadFacets(a))
+    const t = setTimeout(() => void loadFacets(a), FACETS_DEBOUNCE_MS)
+    return () => clearTimeout(t)
   })
-  let facetsTimer: ReturnType<typeof setTimeout> | undefined
+  function pickArchived(on: boolean) {
+    archived = on
+    facetsFailed = false
+  }
+  $effect(() =>
+    onAppReady(() => {
+      facetsFailed = false
+    }),
+  )
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
   $effect(() =>
     onAppEvent((e) => {
       const ours =
-        e.t === 'MessageCreated' || e.t === 'MessageUpdated' ? e.d.message.channel_id === channelId && !!e.d.message.build
+        e.t === 'MessageCreated' || e.t === 'MessageUpdated' ? e.d.message.channel_id === channelId && !!e.d.message.build && !e.d.message.thread_root_id
         : e.t === 'MessageDeleted' ? e.d.channel_id === channelId && !e.d.thread_root_id
         : e.t === 'BuildsArchived' ? e.d.channel_id === channelId
         : false
       if (!ours) return
-      clearTimeout(facetsTimer)
-      facetsTimer = setTimeout(() => {
-        void loadFacets(archived)
-        // a search's matches are fetched again, not guessed from the event
+      // a fetch already under way may predate the change: its answer is ignored and the counts asked for a second later
+      facetsSeq++
+      facetsSoon = true
+      facetsFailed = false
+      facetsTick++
+      // a search's matches are fetched again, not guessed from the event
+      clearTimeout(searchTimer)
+      searchTimer = setTimeout(() => {
         if (filter.q) refetch()
       }, FACETS_DEBOUNCE_MS)
     }),
   )
-  $effect(() => () => clearTimeout(facetsTimer))
+  $effect(() => () => clearTimeout(searchTimer))
 
   // --- paging: one fetch per feed at a time (its `loading` flag), so builds deleted meanwhile stay gone ---
   let failedKey = $state<string | null>(null)
@@ -189,7 +220,7 @@
       {/if}
     </div>
     {#if panel}
-      <BuildsPanel {channelId} {serverId} {facets} {game} onGame={(g) => (game = g)} {archived} onArchived={(on) => (archived = on)} />
+      <BuildsPanel {channelId} {serverId} {facets} {game} onGame={(g) => (game = g)} {archived} onArchived={pickArchived} />
     {/if}
   </div>
 </div>
