@@ -85,4 +85,15 @@ describe('the build pop-out from the main window', () => {
     await settle()
     expect(calls('close_build_window')).toEqual([{ messageId: 'M001' }])
   })
+
+  it('signing out forgets the popped-out build', async () => {
+    await popOutBuild(build('M001'))
+    resetState()
+    expect(poppedOut.messageId).toBeNull()
+    expect(poppedOut.channelId).toBeNull()
+    handleReady(ready())
+    event({ t: 'MessageUpdated', d: { message: build('M001', { title: 'Raven endgame' }) } })
+    await settle()
+    expect(calls('update_build_window'), "nothing of the last account's pop-out is sent on").toEqual([])
+  })
 })

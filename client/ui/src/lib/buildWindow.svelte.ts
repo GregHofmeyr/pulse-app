@@ -1,11 +1,13 @@
 // The build pop-out (#620, spec §4.4), from the main window's side. Pop out hands the core one build's snapshot and
 // opens the window (always on top to start); from then on this module, not the build page (which may be gone), sends
 // that build's edits and archive on, and closes the window when the build is deleted or out of reach (its channel
-// left the data: you left the server, it was deleted). Signing out closes it in the core.
+// left the data: you left the server, it was deleted). The core closes it too on a delete it sees and on a 403 or 404
+// for its screenshots, so a reload of this page or a delete while it was away can't leave it open. Signing out closes
+// it in the core and forgets it here.
 import { snapshotOf } from './buildSnapshot'
 import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
-import { app, onAppEvent, onAppReady } from './store.svelte'
+import { app, onAppEvent, onAppReady, onAppReset } from './store.svelte'
 import { api } from './tauri'
 
 /** The build in the pop-out (null: none, as far as this window knows). */
@@ -53,7 +55,7 @@ export function noteBuildWindowReady(): void {
   if (poppedOut.channelId && !app.state.channels[poppedOut.channelId]) close()
 }
 
-/** Tests: nothing popped out. */
+/** Nothing popped out (sign-out; tests). */
 export function forgetBuildWindow(): void {
   held = null
   poppedOut.messageId = null
@@ -62,3 +64,5 @@ export function forgetBuildWindow(): void {
 
 onAppReady(() => noteBuildWindowReady())
 onAppEvent(noteBuildWindowEvent)
+// signed out: nothing of the last account's pop-out is kept here (the core has closed the window)
+onAppReset(forgetBuildWindow)
