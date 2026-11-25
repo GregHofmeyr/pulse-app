@@ -9,6 +9,7 @@
   import { attachmentLink } from '../lib/attachmentLinks'
   import { modal } from '../lib/actions'
   import { buildShots } from '../lib/builds'
+  import { app } from '../lib/store.svelte'
   import { TITLE_MAX, type QuickPrefill } from '../lib/buildPaste'
   import { api, errorText, type StagedFile } from '../lib/tauri'
   import type { Attachment } from '../lib/protocol/Attachment'
@@ -37,7 +38,10 @@
   const start = untrack(() => prefill)
   const b = editing?.build ?? null
   let title = $state(b?.title ?? start?.title ?? '')
-  let game = $state<string | null>(b?.game_id ?? null)
+  // A guessed game (from the link's title) isn't the person's choice until they keep it: the box starts empty, the
+  // guess shows beside it, and saving without keeping it clears it.
+  let guess = $state<string | null>(b?.game_guessed ? b.game_id : null)
+  let game = $state<string | null>(b?.game_guessed ? null : (b?.game_id ?? null))
   let link = $state(b?.link?.url ?? start?.link ?? '')
   let notes = $state(b?.notes ?? '')
   let sorted = $state(false)
@@ -50,9 +54,11 @@
   let error = $state('')
   // one nonce per form: a retried save reuses the screenshots it already uploaded
   const nonce = crypto.randomUUID()
+  let failedSave = false
 
   const titleLen = $derived([...title.trim()].length)
   const canSave = $derived(titleLen > 0 && titleLen <= TITLE_MAX && !busy)
+  const guessName = $derived(guess ? ((app.state.games[serverId] ?? []).find((g) => g.id === guess)?.name ?? null) : null)
   const offerSorted = $derived(!!b?.quick_drop && !game && !notes.trim())
 
   // kept screenshots' links, for their thumbnails
@@ -169,13 +175,16 @@
       onClose()
     } catch (e) {
       error = errorText(e)
+      failedSave = true
     } finally {
       busy = false
     }
   }
   function cancel() {
     if (busy) return
-    // a new build's screenshots go back; an edit's new ones too
+    // a failed save's uploads are let go (an edit's go by the build's id, as the core keeps them); a new build's
+    // screenshots go back, and an edit's new ones too
+    if (failedSave) void api.cancelBuildSave(editing ? `build-edit:${editing.id}` : nonce).catch(() => {})
     for (const s of shots) if (s.kind === 'staged') void api.unstageAttachment(s.file.id).catch(() => {})
     onClose()
   }
@@ -198,7 +207,11 @@
     </label>
     <div class="field">
       <span class="label">Game</span>
-      <GamePicker {serverId} value={game} onChange={(id) => (game = id)} addLabel={(n) => `+ Use '${n}' as a new game`} />
+      <GamePicker {serverId} value={game} onChange={(id) => { game = id; if (id) guess = null }} addLabel={(n) => `+ Use '${n}' as a new game`} />
+      {#if guessName && !game}
+        <p class="guess">{guessName} <span class="hint">· guessed from the link, cleared on save unless kept</span>
+          <button type="button" class="btn btn-quiet keep" onclick={() => { game = guess; guess = null }}>Keep</button></p>
+      {/if}
     </div>
     <label class="field">
       <span class="label">Build link</span>
@@ -259,6 +272,7 @@
   .name { font-size: 11px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tools { display: flex; justify-content: flex-end; gap: 2px; }
   .shots-note { margin: 2px 0 0; font-size: 12px; color: var(--text-2); }
+  .guess { margin: 2px 0 0; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
   .sorted { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
   .err { margin: 0; color: var(--danger-text); font-size: 13px; }
 </style>

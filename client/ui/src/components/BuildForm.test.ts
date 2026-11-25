@@ -199,6 +199,59 @@ describe('BuildForm', () => {
     expect(document.querySelector('.build-form')).toBeNull()
   })
 
+  it('editing a build with a guessed game leaves the guess unconfirmed until it is kept', async () => {
+    const guessed = build({ quick_drop: true, game_id: 'G1', game_guessed: true, notes: null })
+    await form({ build: guessed })
+    expect(q<HTMLInputElement>('input[aria-label="Game"]').value).toBe('')
+    expect(q('.guess').textContent).toContain('The First Descendant')
+    expect(q('.guess').textContent).toContain('guessed')
+    // still a quick drop with only a guess: Mark as sorted is offered
+    expect(document.querySelector('.build-form input[name=sorted]')).not.toBeNull()
+    save().click()
+    await flush()
+    expect((calls('update_build')[0][1] as { body: { game_id: string | null; mark_sorted: boolean } }).body).toMatchObject({ game_id: null, mark_sorted: false })
+    unmount(cmp!)
+    invoke.mockClear()
+    // Keep confirms it
+    await form({ build: guessed })
+    q<HTMLButtonElement>('.guess button.keep').click()
+    flushSync()
+    expect(document.querySelector('.build-form .guess')).toBeNull()
+    expect(q<HTMLInputElement>('input[aria-label="Game"]').value).toBe('The First Descendant')
+    save().click()
+    await flush()
+    expect((calls('update_build')[0][1] as { body: { game_id: string | null } }).body.game_id).toBe('G1')
+  })
+
+  it('cancelling after a failed save gives up its uploads', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'stage_attachment_bytes') return staged('pasted.webp')
+      if (cmd === 'create_build' || cmd === 'update_build') throw 'can\'t reach the server'
+      return undefined
+    })
+    await form()
+    typeIn(q<HTMLInputElement>('input[aria-label="Title"]'), 'Raven')
+    paste(q('textarea[aria-label="Notes"]'), { files: [png()] })
+    await flush()
+    save().click()
+    await flush()
+    expect(q('.err').textContent).toContain('reach the server')
+    const nonce = (calls('create_build')[0][1] as { body: { nonce: string } }).body.nonce
+    ;[...document.querySelectorAll<HTMLButtonElement>('.build-form .foot button')].find((b) => b.textContent === 'Cancel')!.click()
+    await flush()
+    expect(calls('cancel_build_save').map((c) => c[1])).toEqual([{ nonce }])
+    expect(calls('unstage_attachment').map((c) => c[1])).toEqual([{ id: 'st1' }])
+    unmount(cmp!)
+    invoke.mockClear()
+    // an edit's save goes by the build's id
+    await form({ build: build() })
+    save().click()
+    await flush()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.build-form .foot button')].find((b) => b.textContent === 'Cancel')!.click()
+    await flush()
+    expect(calls('cancel_build_save').map((c) => c[1])).toEqual([{ nonce: 'build-edit:M001' }])
+  })
+
   it('Mark as sorted clears the quick drop badge', async () => {
     const drop = build({ quick_drop: true, game_id: null, notes: null })
     await form({ build: drop })

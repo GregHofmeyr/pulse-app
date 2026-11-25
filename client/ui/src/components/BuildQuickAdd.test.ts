@@ -105,6 +105,9 @@ describe('BuildQuickAdd', () => {
     addButton().click()
     await flush()
     expect(document.activeElement).toBe(field())
+    // one live region, there from the start, that says what happens
+    const live = document.querySelectorAll('.quick-add [aria-live]')
+    expect(live).toHaveLength(1)
     paste(field(), { text: LINK })
     // the field takes the pasted text as typed (the browser's own paste); here, as typed
     type(LINK)
@@ -118,6 +121,8 @@ describe('BuildQuickAdd', () => {
     expect(typeof body().nonce).toBe('string')
     // shown as saving until the build arrives
     expect(document.querySelector('.quick-add .saved.pending')).not.toBeNull()
+    expect(document.querySelectorAll('.quick-add [aria-live]')).toHaveLength(1)
+    expect(document.querySelector('.quick-add [aria-live]')).toBe(live[0])
     release()
     await flush()
     app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: created, nonce: null } }, Date.now())
@@ -213,6 +218,48 @@ describe('BuildQuickAdd', () => {
     expect(document.querySelector('.quick-add')).toBeNull()
     expect(document.querySelector<HTMLInputElement>('.build-form input[aria-label="Build link"]')?.value).toBe(LINK)
     expect(calls('create_build')).toHaveLength(0)
+  })
+
+  it('a failed save keeps its nonce for the retry, and closing gives it up', async () => {
+    let fail = true
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_builds') return []
+      if (cmd === 'build_facets') return { total: 0, games: [] }
+      if (cmd === 'stage_attachment_bytes') return staged
+      if (cmd === 'create_build') {
+        if (fail) throw 'can\'t reach the server'
+        return created
+      }
+      return undefined
+    })
+    await channel()
+    addButton().click()
+    await flush()
+    paste(field(), { files: [new File([new Uint8Array([137])], 'image.png', { type: 'image/png' })] })
+    await flush()
+    type('Raven crit')
+    enter()
+    await flush()
+    expect(document.querySelector('.quick-add .error')).not.toBeNull()
+    // put back as it was: the retry is the same save
+    expect(field().value).toBe('Raven crit')
+    enter()
+    await flush()
+    const nonces = () => calls('create_build').map((c) => (c[1] as { body: { nonce: string } }).body.nonce)
+    expect(nonces()).toHaveLength(2)
+    expect(nonces()[1]).toBe(nonces()[0])
+    // changed: a new save, and the old one's uploads are let go
+    type('Raven crit v2')
+    enter()
+    await flush()
+    expect(nonces()[2]).not.toBe(nonces()[0])
+    expect(calls('cancel_build_save').map((c) => c[1])).toEqual([{ nonce: nonces()[0] }])
+    // closing after it failed gives up that save too, and its screenshot
+    document.querySelector<HTMLButtonElement>('.quick-add button[aria-label="Close quick add"]')!.click()
+    await flush()
+    expect(calls('cancel_build_save').map((c) => c[1])).toEqual([{ nonce: nonces()[0] }, { nonce: nonces()[2] }])
+    expect(calls('unstage_attachment').map((c) => c[1])).toEqual([{ id: 'st1' }])
+    expect(document.querySelector('.quick-add')).toBeNull()
   })
 
   it('a paste in the search box stays in the search box', async () => {

@@ -688,6 +688,9 @@ export const api = {
    *  `staged:<staged id>` for new ones (the core uploads those and writes `body.attachments`). */
   updateBuild: (messageId: string, channelId: string, body: UpdateBuildRequest, order: string[]) =>
     invoke<Message>('update_build', { messageId, channelId, body, order }),
+  /** Give up a failed save (its form cancelled, quick add closed): what it uploaded is dropped. A new build's save goes
+   *  by its `body.nonce`, an edit's by `build-edit:<message id>`. Staged files are the caller's to unstage. */
+  cancelBuildSave: (nonce: string) => invoke<void>('cancel_build_save', { nonce }),
   /** Builds across every builds channel you can read; `game` is a game's normalised name. */
   searchBuilds: (q: string, game?: string) => invoke<Message[]>('search_builds', { q, game: game ?? null }),
   clipStorage: (serverId: string) => invoke<ClipStorage>('clip_storage', { serverId }),

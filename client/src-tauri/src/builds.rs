@@ -201,6 +201,60 @@ fn parse_order(order: &[String]) -> Result<Vec<Shot>, SendError> {
         .collect()
 }
 
+/// How many times a save's post is tried when it fails in a way worth retrying (as a message send's is).
+const POST_TRIES: u32 = 3;
+
+/// `post` tried up to `POST_TRIES` times while it fails retryably (`outbox::retryable`), waiting `wait(try)` between.
+/// The nonce makes a repeated create safe; an update just writes the same fields again.
+async fn with_retries<T, F, Fut>(mut post: F, wait: impl Fn(u32) -> Duration) -> Result<T, ApiError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, ApiError>>,
+{
+    let mut tries = 0;
+    loop {
+        tries += 1;
+        match post().await {
+            Err(e) if crate::outbox::retryable(&e) && tries < POST_TRIES => {
+                tokio::time::sleep(wait(tries)).await
+            }
+            r => return r,
+        }
+    }
+}
+
+/// A save's post, retried; refused (`Rejected`/`Told`), its uploads are dropped so the next try sends them again.
+async fn posted<F, Fut>(
+    jobs: &Jobs,
+    api: &Api,
+    token: &str,
+    nonce: &str,
+    post: F,
+) -> Result<Message, SendError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<Message, ApiError>>,
+{
+    match with_retries(post, |t| Duration::from_secs(t as u64)).await {
+        Ok(m) => Ok(m),
+        Err(e) => {
+            if matches!(e, ApiError::Rejected(_) | ApiError::Told { .. }) {
+                jobs.forget_stored(api, token, nonce).await;
+            }
+            Err(e.into())
+        }
+    }
+}
+
+/// A save given up (its form cancelled, or quick add closed after it failed): what it uploaded is dropped on the
+/// server and the send forgotten. The caller unstages its staged files.
+pub async fn release_build_save(jobs: &Jobs, api: &Api, token: &str, nonce: &str) {
+    for id in jobs.cancel(nonce) {
+        // Best effort: the server sweeps whatever is left.
+        let _ = api.cancel_attachment(token, id).await;
+    }
+}
+
 /// A new build: `staged` screenshots uploaded in order under its nonce (after any ids it already lists), then posted.
 /// A failed post keeps the uploads, so trying again with the same nonce uploads nothing twice.
 #[allow(clippy::too_many_arguments)]
@@ -223,7 +277,10 @@ pub async fn save_new_build(
         .upload_staged(api, token, stager, channel, &nonce, staged, on_progress)
         .await?;
     body.attachments.extend(ids);
-    let m = api.create_build(token, channel, &body).await?;
+    let m = posted(jobs, api, token, &nonce, || {
+        api.create_build(token, channel, &body)
+    })
+    .await?;
     jobs.finish(&nonce, staged, stager);
     Ok(m)
 }
@@ -263,7 +320,10 @@ pub async fn save_build_edit(
             Shot::Staged(_) => uploaded.next().expect("an id per staged file"),
         })
         .collect();
-    let m = api.update_build(token, message, &body).await?;
+    let m = posted(jobs, api, token, &nonce, || {
+        api.update_build(token, message, &body)
+    })
+    .await?;
     jobs.finish(&nonce, &staged, stager);
     Ok(m)
 }
@@ -342,6 +402,17 @@ pub async fn update_build(
     )
     .await
     .map_err(|e| told(&app, &core, e))
+}
+
+/// Give up a failed save: its uploads are dropped (`release_build_save`).
+#[tauri::command]
+pub async fn cancel_build_save(core: State<'_, Core>, nonce: String) -> Result<(), ApiError> {
+    if let Ok((api, token)) = core.current() {
+        release_build_save(&core.attachment_sends, &api, &token, &nonce).await;
+    } else {
+        core.attachment_sends.cancel(&nonce);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -785,7 +856,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_retried_create_reuses_uploaded_files() {
+    async fn a_refused_create_drops_its_uploads_and_the_retry_sends_them_again() {
         let l = live().await;
         let jobs = Jobs::default();
         let staged = vec![shot(&l, "first", 40), shot(&l, "second", 41)];
@@ -806,9 +877,12 @@ mod tests {
             |_| {},
         )
         .await;
-        assert!(err.is_err());
+        assert!(
+            matches!(err, Err(SendError::Api(ApiError::Rejected(_)))),
+            "{err:?}"
+        );
         assert_eq!(puts(&l), 2);
-        // the staged files are still there for the retry, which uploads nothing again
+        // the staged files are still there for the retry, which uploads them again (as a refused message send does)
         assert!(staged.iter().all(|id| l.stager.get(id).is_some()));
         let ok = CreateBuildRequest {
             title: Some("Raven bunny".into()),
@@ -828,6 +902,123 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(names(&m), ["first.webp", "second.webp"]);
+        assert_eq!(puts(&l), 4);
+    }
+
+    #[tokio::test]
+    async fn uploads_kept_for_a_retry_go_up_once() {
+        let l = live().await;
+        let jobs = Jobs::default();
+        let staged = vec![shot(&l, "first", 40)];
+        jobs.upload_staged(
+            &l.api,
+            &l.token,
+            &l.stager,
+            l.channel,
+            "n-1",
+            &staged,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        // the post failed in a way worth retrying (nothing dropped): the retry's save uploads nothing again
+        let ok = CreateBuildRequest {
+            title: Some("Raven bunny".into()),
+            nonce: Some("n-1".into()),
+            ..Default::default()
+        };
+        save_new_build(
+            &jobs,
+            &l.api,
+            &l.token,
+            &l.stager,
+            l.channel,
+            ok,
+            &staged,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(puts(&l), 1);
+    }
+
+    #[tokio::test]
+    async fn a_released_save_forgets_its_uploads() {
+        let l = live().await;
+        let jobs = Jobs::default();
+        let staged = vec![shot(&l, "first", 40)];
+        jobs.upload_staged(
+            &l.api,
+            &l.token,
+            &l.stager,
+            l.channel,
+            "n-1",
+            &staged,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        release_build_save(&jobs, &l.api, &l.token, "n-1").await;
+        // nothing of it is held any more: the same nonce starts over
+        assert!(jobs.cancel("n-1").is_empty());
+        jobs.upload_staged(
+            &l.api,
+            &l.token,
+            &l.stager,
+            l.channel,
+            "n-1",
+            &staged,
+            |_| {},
+        )
+        .await
+        .unwrap();
         assert_eq!(puts(&l), 2);
+    }
+
+    #[tokio::test]
+    async fn a_save_post_is_retried_while_it_fails_retryably() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let no_wait = |_| Duration::ZERO;
+        // a 502 twice, then it lands
+        let n = AtomicU32::new(0);
+        let r = with_retries(
+            || {
+                let i = n.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if i < 2 {
+                        Err(ApiError::Server("502".into()))
+                    } else {
+                        Ok(i)
+                    }
+                }
+            },
+            no_wait,
+        )
+        .await;
+        assert_eq!(r.unwrap(), 2);
+        // refused: not tried again
+        let n = AtomicU32::new(0);
+        let r: Result<(), _> = with_retries(
+            || {
+                n.fetch_add(1, Ordering::SeqCst);
+                async { Err(ApiError::Rejected("no".into())) }
+            },
+            no_wait,
+        )
+        .await;
+        assert!(matches!(r, Err(ApiError::Rejected(_))));
+        assert_eq!(n.load(Ordering::SeqCst), 1);
+        // down every time: given up after three tries
+        let n = AtomicU32::new(0);
+        let r: Result<(), _> = with_retries(
+            || {
+                n.fetch_add(1, Ordering::SeqCst);
+                async { Err(ApiError::Network("down".into())) }
+            },
+            no_wait,
+        )
+        .await;
+        assert!(r.is_err());
+        assert_eq!(n.load(Ordering::SeqCst), 3);
     }
 }
