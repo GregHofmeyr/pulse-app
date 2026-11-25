@@ -10,6 +10,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
+use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{AttachmentId, MessageId};
 use pulse_protocol::rest::{AttachmentUrl, BuildLink};
 use serde::{Deserialize, Serialize};
@@ -53,20 +54,40 @@ pub struct BuildWindow(Mutex<Inner>);
 #[derive(Default)]
 struct Inner {
     generation: u64,
+    /// Sign-outs so far: an open that started before one never shows (or keeps) its window.
+    signouts: u64,
     snapshot: Option<BuildSnapshot>,
 }
+
+/// Taken when an open starts, before it waits for the old window to go ([`BuildWindow::begin`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ticket(u64);
 
 impl BuildWindow {
     fn inner(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// A window opens on `snapshot` (replacing whatever was shown); its generation.
-    pub fn open(&self, snapshot: BuildSnapshot) -> u64 {
+    /// An open starts: what it checks against before showing anything.
+    pub fn begin(&self) -> Ticket {
+        Ticket(self.inner().signouts)
+    }
+
+    /// A window opens on `snapshot` (replacing whatever was shown); its generation. None when a sign-out came since
+    /// `ticket` (nothing is stored).
+    pub fn open(&self, ticket: Ticket, snapshot: BuildSnapshot) -> Option<u64> {
         let mut i = self.inner();
+        if i.signouts != ticket.0 {
+            return None;
+        }
         i.generation += 1;
         i.snapshot = Some(snapshot);
-        i.generation
+        Some(i.generation)
+    }
+
+    /// Whether a sign-out came since `ticket` (a window built for it must go).
+    pub fn signed_out_since(&self, ticket: Ticket) -> bool {
+        self.inner().signouts != ticket.0
     }
 
     /// A newer copy of the build on show; another build's is ignored (a different build page can't take the window
@@ -98,9 +119,16 @@ impl BuildWindow {
         }
     }
 
-    /// Nothing on show (sign-out).
+    /// Nothing on show (sign-out, or the build is gone).
     pub fn clear(&self) {
         self.inner().snapshot = None;
+    }
+
+    /// Signed out: nothing on show, and an open under way is refused ([`Self::open`], [`Self::signed_out_since`]).
+    pub fn sign_out(&self) {
+        let mut i = self.inner();
+        i.signouts += 1;
+        i.snapshot = None;
     }
 
     pub fn snapshot(&self) -> Option<BuildSnapshot> {
@@ -124,6 +152,66 @@ pub fn only_shots(urls: Vec<AttachmentUrl>, shots: &[AttachmentId]) -> Vec<Attac
     urls.into_iter().filter(|u| shots.contains(&u.id)).collect()
 }
 
+/// The build a gateway event says is gone (deleted), if any: a backstop for the main window's own closing, which a
+/// reload of its page or a delete while it was away would miss.
+pub fn gone_in(e: &Event) -> Option<MessageId> {
+    match e {
+        Event::MessageDeleted {
+            message_id,
+            thread_root_id: None,
+            ..
+        } => Some(*message_id),
+        Event::MessageUpdated { message }
+            if message.deleted && message.thread_root_id.is_none() =>
+        {
+            Some(message.id)
+        }
+        _ => None,
+    }
+}
+
+/// Whether the server's answer for the build's screenshots says it's gone or out of reach (403, 404).
+pub fn means_gone(e: &ApiError) -> bool {
+    match e {
+        ApiError::Forbidden(_) => true,
+        // a 404 comes back as the server's "not found"
+        ApiError::Rejected(m) => m.eq_ignore_ascii_case("not found"),
+        _ => false,
+    }
+}
+
+/// Whether a fresh fetch of the build on show (after each Ready: deletes while disconnected send no event) says it's
+/// gone: deleted, no longer a build, or refused as [`means_gone`].
+pub fn gone_after_recheck(r: &Result<pulse_protocol::rest::Message, ApiError>) -> bool {
+    match r {
+        Ok(m) => m.deleted || m.build.is_none(),
+        Err(e) => means_gone(e),
+    }
+}
+
+/// After each Ready (#620): the build on show is fetched again, and the pop-out closes if it's gone. A delete while
+/// disconnected sends no event, and the main window's page may have been reloaded since.
+pub fn recheck_after_ready(app: &AppHandle) {
+    let Some(id) = app
+        .try_state::<BuildWindow>()
+        .and_then(|w| w.snapshot())
+        .map(|s| s.message_id)
+    else {
+        return;
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let core = app.state::<Core>();
+        let Ok((api, token)) = core.current() else {
+            return;
+        };
+        let r = core.check(&app, api.get_build(&token, id).await);
+        if gone_after_recheck(&r) && app.state::<BuildWindow>().shows(id) {
+            close(&app);
+        }
+    });
+}
+
 const NOT_THIS_BUILD: &str = "That build isn't in this window.";
 
 /// Pop a build out (main window only), replacing a pop-out already open.
@@ -132,11 +220,15 @@ const NOT_THIS_BUILD: &str = "That build isn't in this window.";
 #[tauri::command]
 pub async fn open_build_window(
     app: AppHandle,
+    core: State<'_, Core>,
     data: State<'_, WebviewData>,
     win: State<'_, BuildWindow>,
     snapshot: BuildSnapshot,
     on_top: bool,
 ) -> Result<(), String> {
+    // before any wait: a sign-out from here on means this open shows nothing
+    let ticket = win.begin();
+    core.current().map_err(|e| e.to_string())?;
     if let Some(old) = app.get_webview_window(BUILD_LABEL) {
         old.destroy().map_err(|e| e.to_string())?;
         // The label is freed once the event loop has handled the destroy.
@@ -148,7 +240,7 @@ pub async fn open_build_window(
         }
     }
     let title = snapshot.title.clone();
-    let generation = win.open(snapshot);
+    let generation = win.open(ticket, snapshot).ok_or(SIGNED_OUT)?;
     let w = WebviewWindowBuilder::new(
         &app,
         BUILD_LABEL,
@@ -177,8 +269,16 @@ pub async fn open_build_window(
             h.state::<BuildWindow>().closed(generation);
         }
     });
+    // signed out while it was being built (the sign-out's close found no window yet): it goes now
+    if win.signed_out_since(ticket) {
+        let _ = w.destroy();
+        win.clear();
+        return Err(SIGNED_OUT.into());
+    }
     Ok(())
 }
+
+const SIGNED_OUT: &str = "Signed out.";
 
 /// A newer copy of the build on show (main window only): the pop-out picks it up on its next look. Another build's
 /// copy is ignored.
@@ -201,11 +301,32 @@ pub async fn close_build_window(
     Ok(true)
 }
 
-/// Close the pop-out, whatever it shows (sign-out).
+/// Signed out: the pop-out closes, whatever it shows, and an open under way is refused.
+pub fn signed_out(app: &AppHandle) {
+    if let Some(win) = app.try_state::<BuildWindow>() {
+        win.sign_out();
+    }
+    destroy(app);
+}
+
+/// Close the pop-out, whatever it shows.
 pub fn close(app: &AppHandle) {
     if let Some(win) = app.try_state::<BuildWindow>() {
         win.clear();
     }
+    destroy(app);
+}
+
+/// A gateway event (the core's backstop, #620): the build on show was deleted, so the pop-out closes, whatever the
+/// main window's page knows.
+pub fn note_event(app: &AppHandle, e: &Event) {
+    let Some(id) = gone_in(e) else { return };
+    if app.try_state::<BuildWindow>().is_some_and(|w| w.shows(id)) {
+        close(app);
+    }
+}
+
+fn destroy(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(BUILD_LABEL) {
         let _ = w.destroy();
     }
@@ -229,8 +350,16 @@ pub async fn build_window_image_urls(
 ) -> Result<Vec<AttachmentUrl>, ApiError> {
     let (id, shots) = win.image_target(message_id).map_err(ApiError::Forbidden)?;
     let (api, token) = core.current()?;
-    let urls = core.check(&app, api.attachment_urls(&token, id).await)?;
-    Ok(only_shots(urls, &shots))
+    match core.check(&app, api.attachment_urls(&token, id).await) {
+        Ok(urls) => Ok(only_shots(urls, &shots)),
+        Err(e) => {
+            // deleted, or out of reach (left the server): the pop-out closes, if it still shows that build
+            if means_gone(&e) && win.shows(id) {
+                close(&app);
+            }
+            Err(e)
+        }
+    }
 }
 
 /// The pop-out's always-on-top switch (pop-out only).
@@ -283,7 +412,7 @@ mod tests {
         let w = BuildWindow::default();
         let (a, shot) = (MessageId::new(), AttachmentId::new());
         assert!(w.image_target(a).is_err(), "no snapshot: nothing");
-        w.open(snap(a, "Frost mage", &[shot]));
+        w.open(w.begin(), snap(a, "Frost mage", &[shot]));
         assert_eq!(w.image_target(a), Ok((a, vec![shot])));
     }
 
@@ -291,7 +420,7 @@ mod tests {
     fn a_forged_build_id_is_refused() {
         let w = BuildWindow::default();
         let (a, forged) = (MessageId::new(), MessageId::new());
-        w.open(snap(a, "Frost mage", &[AttachmentId::new()]));
+        w.open(w.begin(), snap(a, "Frost mage", &[AttachmentId::new()]));
         assert_eq!(w.image_target(forged), Err(NOT_THIS_BUILD.to_string()));
     }
 
@@ -311,8 +440,8 @@ mod tests {
     fn a_new_snapshot_replaces_the_old() {
         let w = BuildWindow::default();
         let (a, b) = (MessageId::new(), MessageId::new());
-        let g1 = w.open(snap(a, "Frost mage", &[]));
-        let g2 = w.open(snap(b, "Bleed rogue", &[]));
+        let g1 = w.open(w.begin(), snap(a, "Frost mage", &[])).unwrap();
+        let g2 = w.open(w.begin(), snap(b, "Bleed rogue", &[])).unwrap();
         assert_ne!(g1, g2);
         assert_eq!(w.snapshot().unwrap().message_id, b);
         assert!(w.image_target(a).is_err(), "the old build is out of reach");
@@ -329,7 +458,7 @@ mod tests {
         let (a, b) = (MessageId::new(), MessageId::new());
         assert!(!w.update(snap(a, "Frost mage", &[])), "nothing open");
         assert!(w.snapshot().is_none());
-        w.open(snap(a, "Frost mage", &[]));
+        w.open(w.begin(), snap(a, "Frost mage", &[]));
         assert!(w.update(snap(a, "Frost mage v2", &[])));
         assert_eq!(w.snapshot().unwrap().title, "Frost mage v2");
         assert!(!w.update(snap(b, "Bleed rogue", &[])));
@@ -341,11 +470,116 @@ mod tests {
         let w = BuildWindow::default();
         let (a, b) = (MessageId::new(), MessageId::new());
         assert!(!w.shows(a));
-        w.open(snap(a, "Frost mage", &[]));
+        w.open(w.begin(), snap(a, "Frost mage", &[]));
         assert!(w.shows(a));
         assert!(!w.shows(b));
         w.clear();
         assert!(!w.shows(a));
         assert!(w.image_target(a).is_err(), "signed out: nothing");
+    }
+
+    #[test]
+    fn a_sign_out_while_opening_refuses_the_open() {
+        let w = BuildWindow::default();
+        let a = MessageId::new();
+        // the open starts, then waits for the old window to go; the sign-out lands meanwhile
+        let t = w.begin();
+        w.sign_out();
+        assert_eq!(w.open(t, snap(a, "Frost mage", &[])), None);
+        assert!(
+            w.snapshot().is_none(),
+            "the old account's build is never stored"
+        );
+        assert!(w.image_target(a).is_err());
+        // an open after the sign-out works
+        let t = w.begin();
+        assert!(w.open(t, snap(a, "Frost mage", &[])).is_some());
+    }
+
+    #[test]
+    fn a_sign_out_after_the_window_was_built_is_noticed() {
+        let w = BuildWindow::default();
+        let t = w.begin();
+        w.open(t, snap(MessageId::new(), "Frost mage", &[]))
+            .unwrap();
+        assert!(!w.signed_out_since(t));
+        w.sign_out();
+        assert!(w.signed_out_since(t), "the window it built must go");
+        assert!(w.snapshot().is_none());
+    }
+
+    fn deleted(id: MessageId, thread_root_id: Option<MessageId>) -> Event {
+        Event::MessageDeleted {
+            channel_id: pulse_protocol::ids::ChannelId::new(),
+            message_id: id,
+            author_id: None,
+            mentions: vec![],
+            thread_root_id,
+        }
+    }
+
+    #[test]
+    fn a_deleted_build_is_gone_in_the_gateway_event() {
+        let id = MessageId::new();
+        assert_eq!(gone_in(&deleted(id, None)), Some(id));
+        // a comment deleted under a build isn't the build
+        assert_eq!(gone_in(&deleted(id, Some(MessageId::new()))), None);
+        let msg: pulse_protocol::rest::Message = serde_json::from_value(serde_json::json!({
+            "id": id, "channel_id": pulse_protocol::ids::ChannelId::new(), "author_id": null, "kind": "normal",
+            "content": "", "reply_to_id": null, "created_at": "2026-11-25T10:00:00Z", "edited_at": null,
+            "deleted": true, "mentions": [], "reactions": [], "thread_root_id": null
+        }))
+        .unwrap();
+        assert_eq!(
+            gone_in(&Event::MessageUpdated {
+                message: msg.clone()
+            }),
+            Some(id)
+        );
+        let kept = pulse_protocol::rest::Message {
+            deleted: false,
+            ..msg.clone()
+        };
+        assert_eq!(gone_in(&Event::MessageUpdated { message: kept }), None);
+        let reply = pulse_protocol::rest::Message {
+            thread_root_id: Some(MessageId::new()),
+            ..msg
+        };
+        assert_eq!(gone_in(&Event::MessageUpdated { message: reply }), None);
+    }
+
+    #[test]
+    fn a_403_or_404_for_its_screenshots_means_the_build_is_gone() {
+        assert!(means_gone(&ApiError::Forbidden("forbidden".into())));
+        assert!(means_gone(&ApiError::Rejected("not found".into())));
+        assert!(means_gone(&ApiError::Rejected("Not found".into())));
+        assert!(!means_gone(&ApiError::Network("offline".into())));
+        assert!(!means_gone(&ApiError::Server("502".into())));
+        assert!(!means_gone(&ApiError::Unauthorized));
+        assert!(!means_gone(&ApiError::RateLimited));
+    }
+
+    #[test]
+    fn a_recheck_after_ready_finds_a_build_gone_meanwhile() {
+        let msg: pulse_protocol::rest::Message = serde_json::from_value(serde_json::json!({
+            "id": MessageId::new(), "channel_id": pulse_protocol::ids::ChannelId::new(), "author_id": null,
+            "kind": "normal", "content": "", "reply_to_id": null, "created_at": "2026-11-25T10:00:00Z",
+            "edited_at": null, "deleted": false, "mentions": [], "reactions": [], "thread_root_id": null
+        }))
+        .unwrap();
+        assert!(gone_after_recheck(&Ok(msg.clone())), "no longer a build");
+        assert!(gone_after_recheck(&Ok(pulse_protocol::rest::Message {
+            deleted: true,
+            ..msg.clone()
+        })));
+        assert!(gone_after_recheck(&Err(ApiError::Rejected(
+            "not found".into()
+        ))));
+        assert!(gone_after_recheck(&Err(ApiError::Forbidden(
+            "forbidden".into()
+        ))));
+        assert!(!gone_after_recheck(&Err(ApiError::Network(
+            "offline".into()
+        ))));
     }
 }

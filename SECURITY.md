@@ -192,8 +192,12 @@ to it.**
   every 2 seconds instead.
 - **No credentials.** The session token stays in the Rust core; the window's address carries only `window=build`.
   It shares the main window's webview profile (the same origin's settings in local storage, which hold no
-  credentials) so it gets the same theme. Signing out closes it, and so does the build being deleted or the user
-  losing access to it.
+  credentials) so it gets the same theme.
+- **When it closes.** Signing out closes it, including a sign-out that lands while a Pop out is still opening its
+  window (that open is refused, or its window destroyed). The build being deleted or the user losing access closes
+  it too. The main window's page watches for that, and the Rust core checks as well, so a reloaded page or a missed
+  event can't leave it open: on a delete in the gateway feed, on a 403 or 404 when the pop-out asks for its
+  screenshots, and on a fresh fetch of the build after each reconnect.
 - **Where it may go.** Only the app's own page (`tauri://localhost`, `http(s)://tauri.localhost`, and the dev server
   in a dev build only). No `about:`, `file:`, `data:` or `javascript:` page. Links (the build's link card, links in its
   notes) open in the default browser, as in the main window. Its video plays nowhere in it: the link card opens the
