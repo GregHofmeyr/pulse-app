@@ -84,7 +84,9 @@
   // The quick switcher (#309)
   import QuickSwitcher from '../components/QuickSwitcher.svelte'
   import PinnedBuild from '../components/PinnedBuild.svelte'
-  import { pinnedBuild } from '../lib/pinnedBuild.svelte'
+  import { pinShown } from '../lib/pinnedBuild.svelte'
+  import { chooseRightView, settleRightViews, shownRightView } from '../lib/rightViews.svelte'
+  import RightViewTabs, { type RightViewTab } from '../components/RightViewTabs.svelte'
   import { openMessage } from '../lib/openMessage'
   import type { Message } from '../lib/protocol/Message'
   import { globalSwitch, SAME_PRESS_MS, loadRecents, pushRecent, saveRecents, switcherKey, type Place } from '../lib/quickSwitch'
@@ -206,30 +208,15 @@
   const hideLeft = $derived(fullShown && !panels.left)
   // A narrow window shows one side panel: a replies panel opened from search hides the results meanwhile (#97).
   let narrowBody = $state(false)
-  // search results kept behind a voice channel's chat (#230) don't show meanwhile
-  const searchShown = $derived(search.open && !search.behindChat)
-  const searchAside = $derived(searchMakesRoom({ narrow: narrowBody, searchOpen: searchShown, threadOpen: !!ui.openThreadId }))
-  const hideRight = $derived((fullShown && !panels.right) || searchAside)
   let sidePanel = $state<HTMLElement>()
   let rightPanel = $state<HTMLElement>()
-  // Before a panel hides: a menu open in it closes (an unseen menu would take Esc first), and focus in
-  // it moves to the toggle that brings it back (or it would fall to the top of the page).
-  $effect.pre(() => {
-    const [left, right] = [hideLeft, hideRight]
-    untrack(() => {
-      if (left) serverMenuOpen = false
-      const at = document.activeElement
-      const to = left && sidePanel?.contains(at) ? 'left' : right && rightPanel?.contains(at) ? 'right' : null
-      if (to) void tick().then(() => document.getElementById(PANEL_TOGGLE_ID[to])?.focus())
-    })
-  })
   const leftName = $derived(activeServerId ? 'Channels' : 'Conversations')
   setFullPanels({
     get left() { return panels.left },
     get right() { return panels.right },
     get leftName() { return leftName },
-    get hasRight() { return !!(search.open || pinnedBuild.key || activeServerId || activeChannel?.kind === 'group') },
-    get rightName() { return rightKind === 'chat' ? 'Chat' : rightKind === 'build' ? 'Pinned build' : 'Members' },
+    get hasRight() { return rightAvailable.length > 0 },
+    get rightName() { return rightKind ? RIGHT_VIEW[rightKind].label : 'Members' },
     toggle: (side) => (panels[side] = !panels[side]),
   })
   let serverMenuOpen = $state(false)
@@ -468,10 +455,44 @@
   // A stream in full view (#63) shows the open chat as a strip beside it (FullView: it stays in full screen), so the
   // column doesn't hold it meanwhile; the members list is there instead.
   const chatInStrip = $derived((chatOpen && fullShown) || ((!!convoFull || convoOwn) && voiceChat.open))
-  // A pinned build (#619) takes the members list's place from any view (a DM too), below search results and an open
-  // voice chat.
-  const rightKind = $derived<keyof typeof RIGHT_DEFAULT | null>(
-    searchShown ? 'search' : chatOpen && !chatInStrip ? 'chat' : pinnedBuild.key ? 'build' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
+  // The right column's views (#638): every one that could fill it now; more than one shows a switcher at its top
+  // (lib/rightViews.svelte.ts: the last choice in this place, a view that just arrived, or the first by rank). A pinned
+  // build (#619) is there from any view, a DM too.
+  type RightKind = keyof typeof RIGHT_DEFAULT
+  const RIGHT_RANK: RightKind[] = ['search', 'chat', 'build', 'members', 'group']
+  const RIGHT_VIEW: Record<RightKind, { label: string; icon: RightViewTab['icon'] }> = {
+    search: { label: 'Search results', icon: 'search' },
+    chat: { label: 'Chat', icon: 'message' },
+    build: { label: 'Pinned build', icon: 'pin' },
+    members: { label: 'Members', icon: 'users' },
+    group: { label: 'Members', icon: 'users' },
+  }
+  const rightPlace = $derived(activeServerId ? `s:${activeServerId}` : activeChannelId ? `c:${activeChannelId}` : 'home')
+  const rightAvailable = $derived(RIGHT_RANK.filter((k) =>
+    k === 'search' ? search.open
+      : k === 'chat' ? chatOpen && !chatInStrip
+        : k === 'build' ? pinShown()
+          : k === 'members' ? !!activeServerId
+            : !activeServerId && activeChannel?.kind === 'group' && !!activeChannelId))
+  $effect.pre(() => settleRightViews(rightPlace, rightAvailable))
+  const rightKind = $derived(shownRightView(rightPlace, rightAvailable, RIGHT_RANK) as RightKind | null)
+  const rightTabs = $derived<RightViewTab[]>(rightAvailable.length > 1 ? rightAvailable.map((k) => ({ id: k, ...RIGHT_VIEW[k] })) : [])
+  // the results show while they're the right column's view (#638: a voice channel's chat or another view picked in
+  // the switcher keeps them open behind it, #230)
+  const searchShown = $derived(rightKind === 'search')
+  const searchAside = $derived(searchMakesRoom({ narrow: narrowBody, searchOpen: searchShown, threadOpen: !!ui.openThreadId }))
+  const hideRight = $derived((fullShown && !panels.right) || searchAside)
+  // Before a panel hides: a menu open in it closes (an unseen menu would take Esc first), and focus in
+  // it moves to the toggle that brings it back (or it would fall to the top of the page).
+  $effect.pre(() => {
+    const [left, right] = [hideLeft, hideRight]
+    untrack(() => {
+      if (left) serverMenuOpen = false
+      const at = document.activeElement
+      const to = left && sidePanel?.contains(at) ? 'left' : right && rightPanel?.contains(at) ? 'right' : null
+      if (to) void tick().then(() => document.getElementById(PANEL_TOGGLE_ID[to])?.focus())
+    })
+  })
   const showLeft = $derived(!hideLeft)
   const showRight = $derived(!hideRight && rightKind !== null)
   const chatOnScreen = $derived((showRight && rightKind === 'chat') || chatInStrip)
@@ -493,6 +514,7 @@
   const rightMin = $derived(RIGHT_MIN[rightKind ?? 'members'])
   const fitted = $derived(fitColumns({ saved: { left: columns.left, right: rightSaved }, body: bodyWidth, left: showLeft, right: showRight, rightDefault: RIGHT_DEFAULT[rightKind ?? 'members'], rightMin }))
   const rightLabel = $derived(rightKind === 'search' ? 'Resize the search results' : rightKind === 'chat' ? 'Resize the chat' : rightKind === 'build' ? 'Resize the pinned build' : 'Resize the members list')
+  const RIGHT_VIEW_ID = 'right-view'
   /** The chat's close button: the panel goes, and the focus it had goes to the stage's toggle. */
   function closeChat() {
     const at = document.activeElement
@@ -947,7 +969,7 @@
     {/if}
     <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap. A saved
          width reaches the list as --right-w; unsaved, each list keeps its own default. -->
-    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={rightSaved === null ? null : `${fitted.right}px`}>{#if searchShown}<SearchResults />{:else if rightKind === 'chat' && activeChannelId}<aside class="voice-chat fade-in" aria-label="Chat" onanimationend={(e) => e.currentTarget.classList.remove('fade-in')} out:exitFade onoutrostart={(e) => e.currentTarget.classList.add('leaving')}>{#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId} panel={{ onClose: closeChat, shown: chatOnScreen }} />{/key}</aside>{:else if rightKind === 'build'}<PinnedBuild />{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} onMessage={messageUser} />{/if}</div>
+    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={rightSaved === null ? null : `${fitted.right}px`}>{#if rightKind}{#if rightTabs.length > 1}<RightViewTabs views={rightTabs} current={rightKind} width={fitted.right} panelId={RIGHT_VIEW_ID} onPick={(id) => chooseRightView(rightPlace, id)} />{/if}<div class="right-view" id={RIGHT_VIEW_ID} role={rightTabs.length > 1 ? 'tabpanel' : undefined} aria-labelledby={rightTabs.length > 1 ? `right-tab-${rightKind}` : undefined}>{#if rightKind === 'search'}<SearchResults />{:else if rightKind === 'chat' && activeChannelId}<aside class="voice-chat fade-in" aria-label="Chat" onanimationend={(e) => e.currentTarget.classList.remove('fade-in')} out:exitFade onoutrostart={(e) => e.currentTarget.classList.add('leaving')}>{#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId} panel={{ onClose: closeChat, shown: chatOnScreen }} />{/key}</aside>{:else if rightKind === 'build'}<PinnedBuild />{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} onMessage={messageUser} />{/if}</div>{/if}</div>
   </div>
 </div>
 <StreamToast />
@@ -1068,7 +1090,9 @@
   /* hidden, not removed: what the panels hold (an open menu, a draft) survives full view */
   .side[hidden] { display: none; }
   /* a real box (aria-controls points at it; a display:contents one leaves the accessibility tree) */
-  .right-panel { position: relative; display: flex; flex-shrink: 0; min-height: 0; }
+  /* the switcher (#638) over the view; the view sets the column's width (the switcher's row adds none) */
+  .right-panel { position: relative; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; min-height: 0; }
+  .right-view { position: relative; flex: 1; display: flex; min-height: 0; }
   .right-panel[hidden], .right-panel:empty { display: none; }
   /* a voice channel's chat (#226): a right column like the search results, holding the channel view; it fades in
      (.fade-in, dropped once done so its will-change doesn't hold a layer: not under reduced motion, while streaming or

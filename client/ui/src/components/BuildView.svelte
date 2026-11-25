@@ -80,15 +80,15 @@
   .build-view.archived .media, .build-view.archived .notes { opacity: .7; }
   header { display: flex; align-items: flex-start; gap: 12px; }
   .heading { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-  .caption { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
+  .caption { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); overflow-wrap: anywhere; }
   .guessed { text-transform: none; letter-spacing: 0; font-weight: 400; font-style: italic; }
   h1 { margin: 0; font-size: 22px; font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
-  .meta { font-size: 13px; color: var(--text-3); }
-  .badges { display: flex; gap: 4px; margin-top: 4px; }
+  .meta { font-size: 13px; color: var(--text-3); overflow-wrap: anywhere; }
+  .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
   .badge { padding: 1px 7px; border-radius: var(--radius-xs); border: 1px solid var(--bg-4); color: var(--text-2); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
   .actions { flex-shrink: 0; }
   .media { display: flex; flex-direction: column; gap: 8px; }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(140px, 100%), 1fr)); gap: 8px; }
   .tiles.one { grid-template-columns: minmax(0, 480px); }
   .tile { position: relative; display: block; padding: 0; border: 0; border-radius: var(--radius-sm); overflow: hidden; background: var(--bg-3); aspect-ratio: 16 / 9; max-height: 320px; }
   button.tile { cursor: zoom-in; }
@@ -97,4 +97,7 @@
   .notes { font-size: 14px; line-height: 1.5; color: var(--text); overflow-wrap: anywhere; }
   .notes :global(p) { margin: 0 0 8px; }
   .notes :global(ul), .notes :global(ol) { margin: 0 0 8px; padding-left: 22px; }
+  /* nothing in the notes runs out of a narrow column (the pinned build, #638) */
+  .notes :global(pre) { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .notes :global(img) { max-width: 100%; height: auto; }
 </style>

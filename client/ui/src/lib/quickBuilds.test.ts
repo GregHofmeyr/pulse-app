@@ -12,6 +12,8 @@ const games = [
   game('G3', 'Warframe'),
   game('G4', 'The Division'),
   game('G5', 'Deadlock'),
+  game('G6', 'Destiny'),
+  game('G7', 'Destiny 2'),
 ]
 
 describe('parseBuildsQuery', () => {
@@ -38,6 +40,16 @@ describe('parseBuildsQuery', () => {
     expect(parseBuildsQuery('builds:war', games)).toEqual({ only: true, gameKey: 'warframe', text: '' })
   })
 
+  // #636 review
+  it('a full name wins over the longer names it starts', () => {
+    expect(parseBuildsQuery('builds: destiny hunter', games)).toEqual({ only: true, gameKey: 'destiny', text: 'hunter' })
+    expect(parseBuildsQuery('builds: destiny 2 hunter', games)).toEqual({ only: true, gameKey: 'destiny 2', text: 'hunter' })
+  })
+
+  it('initials match whole, never a start of them', () => {
+    expect(parseBuildsQuery('builds: tf raven', games)).toEqual({ only: true, gameKey: null, text: 'tf raven' })
+  })
+
   it('an ambiguous prefix is searched as text', () => {
     expect(parseBuildsQuery('builds: the raven', games)).toEqual({ only: true, gameKey: null, text: 'the raven' })
   })
@@ -50,6 +62,9 @@ describe('parseBuildsQuery', () => {
 describe('buildsQuery', () => {
   it('what to ask the search route, or null', () => {
     expect(buildsQuery({ only: false, gameKey: null, text: 'r' })).toBeNull()
+    // a plain query shares the search rate limit with messages: three characters before builds are asked (#636 review)
+    expect(buildsQuery({ only: false, gameKey: null, text: 'ra' })).toBeNull()
+    expect(buildsQuery({ only: true, gameKey: null, text: 'ra' })).toEqual({ q: 'ra', game: null })
     expect(buildsQuery({ only: false, gameKey: null, text: '!!' })).toBeNull()
     expect(buildsQuery({ only: true, gameKey: null, text: '' })).toBeNull()
     expect(buildsQuery({ only: true, gameKey: 'warframe', text: '' })).toEqual({ q: '', game: 'warframe' })

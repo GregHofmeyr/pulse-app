@@ -15,7 +15,7 @@
   import { app } from '../lib/store.svelte'
   import { avatarColor, initial } from '../lib/avatar'
   import { allActions, type ActionContext } from '../lib/quickActions'
-  import { buildResults, placesFrom, type Place, type ResultSection, type Row } from '../lib/quickSwitch'
+  import { buildResults, isBuildsOnly, placesFrom, type Place, type ResultSection, type Row } from '../lib/quickSwitch'
   import { messageQuery, messageSearcher, NO_MESSAGES, type MessageResults } from '../lib/quickMessages'
   import { lineWithHit, segments } from '../lib/highlight'
   import { hitShown } from '../lib/mentionStyles'
@@ -78,10 +78,10 @@
     limit: BUILDS_SHOWN,
   })
   const games = $derived(Object.values(app.state.games).flat())
-  $effect(() => {
-    const q = builds ? buildsQuery(parseBuildsQuery(raw, games)) : null
-    buildSearcher.set(q ? JSON.stringify(q) : null)
-  })
+  const buildsAsk = $derived(builds ? buildsQuery(parseBuildsQuery(raw, games)) : null)
+  $effect(() => buildSearcher.set(buildsAsk ? JSON.stringify(buildsAsk) : null))
+  /** `builds:` with nothing to search yet: a hint, not "Nothing matches". */
+  const bareBuilds = $derived(isBuildsOnly(raw) && !buildsAsk)
   onDestroy(() => buildSearcher.dispose())
   const buildRows = $derived<ResultSection[]>(
     foundBuilds.status === 'done' && foundBuilds.hits.length
@@ -175,6 +175,7 @@
       void choose(active, e.shiftKey)
     } else if (e.key === ' ' && navigated && flat[active]?.type === 'build') {
       e.preventDefault()
+      if (e.repeat) return
       const r = flat[active]
       peekId = peekId ? null : r.type === 'build' ? r.message.id : null
     } else if (e.key === 'Escape' && peekId) {
@@ -256,7 +257,7 @@
       <Icon name="search" size={18} />
       <!-- svelte-ignore a11y_autofocus -->
       <input bind:this={input} bind:value={raw} class="field" type="text" role="combobox" autofocus autocomplete="off" spellcheck="false"
-        aria-label="Jump to" aria-autocomplete="list" aria-expanded={flat.length > 0} aria-controls="qs-list"
+        aria-label="Jump to" aria-autocomplete="list" aria-expanded={flat.length > 0} aria-controls={peeked ? 'qs-list qs-peek' : 'qs-list'}
         aria-activedescendant={flat.length ? optId(active) : undefined}
         placeholder="Jump to a server, channel or person, > for actions, builds: for builds" onkeydown={keys} />
     </div>
@@ -301,10 +302,10 @@
       {#if messageNote}<p class="note" aria-hidden="true">{messageNote}</p>{/if}
     </div>
     {#if peeked}
-      <BuildPeek message={peeked} serverId={serverOf(peeked)} docked closeOnEscape={false} onClose={() => (peekId = null)} onOpen={(m) => void openPeeked(m)} />
+      <BuildPeek message={peeked} serverId={serverOf(peeked)} id="qs-peek" docked closeOnEscape={false} onClose={() => (peekId = null)} onOpen={(m) => void openPeeked(m)} />
     {/if}
     {#if flat.length === 0 && !messageNote}
-      <p class="empty">{typed ? `Nothing matches “${raw.trim()}”` : 'Type to jump anywhere. Start with > for actions.'}</p>
+      <p class="empty">{bareBuilds ? 'Type a game or words to find builds' : typed ? `Nothing matches “${raw.trim()}”` : 'Type to jump anywhere. Start with > for actions.'}</p>
     {/if}
     <p class="sr-only" role="status" aria-live="polite">{count}</p>
   </div>

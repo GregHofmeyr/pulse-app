@@ -433,6 +433,20 @@ describe('QuickSwitcher', () => {
       expect(row.querySelector('.ctx')!.textContent).toBe('The First Descendant · Game Night')
     })
 
+    it('a bare "builds:" says what to type', () => {
+      openWith({ search: vi.fn(async () => []), open: vi.fn() })
+      type('builds:')
+      expect(document.querySelector('.empty')!.textContent).toBe('Type a game or words to find builds')
+      expect(builds.search).not.toHaveBeenCalled()
+    })
+
+    it('a plain query of two characters never searches builds', async () => {
+      openWith({ search: vi.fn(async () => []), open: vi.fn() })
+      type('ra')
+      await answer()
+      expect(builds.search).not.toHaveBeenCalled()
+    })
+
     it('"builds:" hides places and actions', async () => {
       openWith({ search: vi.fn(async () => [build('m1', 'Setup build')]), open: vi.fn() })
       type('builds: set')
@@ -487,6 +501,12 @@ describe('QuickSwitcher', () => {
       expect(press(' ').defaultPrevented).toBe(true)
       const peek = document.querySelector<HTMLElement>('.build-peek')!
       expect(peek.querySelector('.title')!.textContent).toBe('Raven tank')
+      // the field drives it (#636 review), and keeps the focus
+      expect(field().getAttribute('aria-controls')!.split(' ')).toContain(peek.id)
+      expect(document.activeElement).toBe(field())
+      // a held Space doesn't flicker it
+      expect(press(' ', { repeat: true }).defaultPrevented).toBe(true)
+      expect(document.querySelector('.build-peek')).not.toBeNull()
       expect(peek.querySelector('.notes')!.textContent).toBe('Max crit\nbunny spam')
       // Escape closes the peek, not the switcher
       press('Escape')

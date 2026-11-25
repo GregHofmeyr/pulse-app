@@ -6,7 +6,7 @@ import type { Message } from './protocol/Message'
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
-import { forgetPinnedBuild, isPinned, pinBuild, pinnedBuild, unpinBuild } from './pinnedBuild.svelte'
+import { forgetPinnedBuild, isPinned, notePinnedBuildEvent, pinBuild, pinnedBuild, refreshPinnedBuild, unpinBuild } from './pinnedBuild.svelte'
 import { handleReady, resetState } from './store.svelte'
 import { testReady } from './testReady'
 
@@ -30,11 +30,11 @@ beforeEach(() => {
 describe('pinnedBuild', () => {
   it('saves the pin with its account, and unpinning clears it', () => {
     pinBuild('B1', 'M001', build('M001'))
-    expect(JSON.parse(localStorage.getItem('pulse.pinnedBuild')!)).toEqual({ userId: 'U1', channelId: 'B1', messageId: 'M001' })
+    expect(JSON.parse(localStorage.getItem('pulse.pinnedBuild.U1')!)).toEqual({ channelId: 'B1', messageId: 'M001' })
     expect(isPinned('M001')).toBe(true)
     expect(invoke).not.toHaveBeenCalled()
     unpinBuild()
-    expect(localStorage.getItem('pulse.pinnedBuild')).toBeNull()
+    expect(localStorage.getItem('pulse.pinnedBuild.U1')).toBeNull()
     expect(isPinned('M001')).toBe(false)
   })
 
@@ -50,18 +50,60 @@ describe('pinnedBuild', () => {
   })
 
   it('a damaged saved pin is ignored', () => {
-    localStorage.setItem('pulse.pinnedBuild', '{not json')
+    localStorage.setItem('pulse.pinnedBuild.U1', '{not json')
     forgetPinnedBuild()
     handleReady(testReady([B1]))
     expect(pinnedBuild.key).toBeNull()
   })
 
   it('a saved pin whose channel is no longer there is gone at once, without a fetch', () => {
-    localStorage.setItem('pulse.pinnedBuild', JSON.stringify({ userId: 'U1', channelId: 'B9', messageId: 'M001' }))
+    localStorage.setItem('pulse.pinnedBuild.U1', JSON.stringify({ channelId: 'B9', messageId: 'M001' }))
     forgetPinnedBuild()
     handleReady(testReady([B1]))
     expect(pinnedBuild.gone).toBe(true)
     expect(invoke).not.toHaveBeenCalledWith('get_build', expect.anything())
+    expect(localStorage.getItem('pulse.pinnedBuild.U1')).toBeNull()
+  })
+
+  // #636 review
+  it('each account keeps its own pin', () => {
+    pinBuild('B1', 'M001', build('M001'))
+    resetState()
+    handleReady(testReady([B1], { me: { ...testReady([]).me, id: 'U2', username: 'sam' } }))
+    expect(pinnedBuild.key).toBeNull()
+    pinBuild('B1', 'M002', build('M002'))
+    expect(JSON.parse(localStorage.getItem('pulse.pinnedBuild.U1')!)).toEqual({ channelId: 'B1', messageId: 'M001' })
+    expect(JSON.parse(localStorage.getItem('pulse.pinnedBuild.U2')!)).toEqual({ channelId: 'B1', messageId: 'M002' })
+  })
+
+  it("the old single saved pin moves to its account's key", () => {
+    localStorage.setItem('pulse.pinnedBuild', JSON.stringify({ userId: 'U1', channelId: 'B1', messageId: 'M005' }))
+    forgetPinnedBuild()
+    handleReady(testReady([B1]))
+    expect(pinnedBuild.key).toEqual({ channelId: 'B1', messageId: 'M005' })
     expect(localStorage.getItem('pulse.pinnedBuild')).toBeNull()
+    expect(JSON.parse(localStorage.getItem('pulse.pinnedBuild.U1')!)).toEqual({ channelId: 'B1', messageId: 'M005' })
+  })
+
+  it('a refetch answering after a live edit never puts the older copy back', async () => {
+    let answer: (m: Message) => void = () => {}
+    invoke.mockImplementation((cmd: string) => (cmd === 'get_build' ? new Promise((r) => (answer = r as (m: Message) => void)) : Promise.resolve(undefined)))
+    pinBuild('B1', 'M001', build('M001'))
+    void refreshPinnedBuild()
+    notePinnedBuildEvent({ t: 'MessageUpdated', d: { message: build('M001', 'Edited') } })
+    answer(build('M001', 'Stale'))
+    await settle()
+    expect(pinnedBuild.message?.build?.title).toBe('Edited')
+  })
+
+  it('a refetch answering after an archive never puts the older copy back', async () => {
+    let answer: (m: Message) => void = () => {}
+    invoke.mockImplementation((cmd: string) => (cmd === 'get_build' ? new Promise((r) => (answer = r as (m: Message) => void)) : Promise.resolve(undefined)))
+    pinBuild('B1', 'M001', build('M001'))
+    void refreshPinnedBuild()
+    notePinnedBuildEvent({ t: 'BuildsArchived', d: { channel_id: 'B1', message_ids: ['M001'], archived_at: '2026-10-05T00:00:00Z', archived_by: 'U2' } })
+    answer(build('M001'))
+    await settle()
+    expect(pinnedBuild.message?.build?.archived_at).toBe('2026-10-05T00:00:00Z')
   })
 })

@@ -1706,12 +1706,12 @@ describe('pin to side (#619)', () => {
     flushSync()
     expect(document.querySelectorAll('aside.pinned-build')).toHaveLength(1)
     expect(q('aside.pinned-build .title')?.textContent).toBe('Build M002')
-    expect(JSON.parse(localStorage.getItem('pulse.pinnedBuild')!)).toMatchObject({ channelId: 'B1', messageId: 'M002' })
+    expect(JSON.parse(localStorage.getItem('pulse.pinnedBuild.U1')!)).toEqual({ channelId: 'B1', messageId: 'M002' })
   })
 
   it('the pin survives a restart', async () => {
     const { handleReady } = await import('../lib/store.svelte')
-    localStorage.setItem('pulse.pinnedBuild', JSON.stringify({ userId: 'U1', channelId: 'B1', messageId: 'M007' }))
+    localStorage.setItem('pulse.pinnedBuild.U1', JSON.stringify({ channelId: 'B1', messageId: 'M007' }))
     await mountShell()
     handleReady(testReady(channels))
     await settle()
@@ -1719,9 +1719,39 @@ describe('pin to side (#619)', () => {
     expect(q('.right-panel aside.pinned-build .title')?.textContent).toBe('Build M007')
   })
 
+  // #636 review: signing out lets the pin go, so the next account never sees it, even before its Ready
+  it('a pin never shows for the next account after a sign-out', async () => {
+    const { resetState } = await import('../lib/store.svelte')
+    await mountShell()
+    pins.pinBuild('B1', 'M001', build('M001'))
+    flushSync()
+    expect(q('aside.pinned-build')).not.toBeNull()
+    unmount(cmp!)
+    cmp = undefined
+    document.body.innerHTML = ''
+    resetState()
+    const sam = { ...testMe, id: 'U2', username: 'sam', display_name: 'sam' }
+    app.state = applyReady(emptyState(), testReady(channels, { me: sam }))
+    cmp = mount(Shell, { target: document.body, props: { user: sam, onLogout: () => {} } })
+    flushSync()
+    expect(q('aside.pinned-build')).toBeNull()
+    expect(pins.pinnedBuild.key).toBeNull()
+    // alex's saved pin is untouched
+    expect(JSON.parse(localStorage.getItem('pulse.pinnedBuild.U1')!)).toEqual({ channelId: 'B1', messageId: 'M001' })
+  })
+
+  it('a pin held for another account is not shown', async () => {
+    await mountShell()
+    pins.pinBuild('B1', 'M001', build('M001'))
+    flushSync()
+    app.state = { ...app.state, me: { ...testMe, id: 'U2' } }
+    flushSync()
+    expect(q('aside.pinned-build')).toBeNull()
+  })
+
   it('another account does not get your pin', async () => {
     const { handleReady } = await import('../lib/store.svelte')
-    localStorage.setItem('pulse.pinnedBuild', JSON.stringify({ userId: 'U9', channelId: 'B1', messageId: 'M007' }))
+    localStorage.setItem('pulse.pinnedBuild.U9', JSON.stringify({ channelId: 'B1', messageId: 'M007' }))
     await mountShell()
     handleReady(testReady(channels))
     await settle()
@@ -1740,5 +1770,115 @@ describe('pin to side (#619)', () => {
     closeSearch()
     await settle()
     expect(q('.right-panel aside.pinned-build')).not.toBeNull()
+  })
+})
+
+// #638: a switcher at the top of the right panel whenever more than one view could fill it
+describe('right panel switcher (#638)', () => {
+  const q = (sel: string) => document.querySelector<HTMLElement>(sel)
+  const tabs = () => [...document.querySelectorAll<HTMLButtonElement>('.right-panel [role=tab]')]
+  const tab = (label: string) => tabs().find((t) => (t.getAttribute('aria-label') ?? t.textContent?.trim()) === label)!
+  const build = (id: string) => ({
+    id, channel_id: 'B1', author_id: 'U2', kind: 'normal' as const, content: '', reply_to_id: null, created_at: '2026-10-01T10:00:00.000Z',
+    edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, embeds: [], clip: null,
+    build: { title: `Build ${id}`, title_auto: false, game_id: null, game_guessed: false, link: null, notes: null, quick_drop: false, updated_at: null, archived_at: null, archived_by: null, reply_count: 0, last_reply_id: null, replies_seen: null },
+  })
+  const channels = [
+    { id: 'T1', server_id: 'S1', kind: 'text' as const, name: 'general', position: 0 },
+    { id: 'B1', server_id: 'S1', kind: 'builds' as const, name: 'raven-builds', position: 1 },
+  ]
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await tick()
+    await new Promise((r) => setTimeout(r, 0))
+    flushSync()
+  }
+  let pins: typeof import('../lib/pinnedBuild.svelte')
+  beforeEach(async () => {
+    localStorage.clear()
+    reloadVoiceChat()
+    reloadColumns()
+    pins = await import('../lib/pinnedBuild.svelte')
+    pins.forgetPinnedBuild()
+    ;(await import('../lib/rightViews.svelte')).forgetRightViews()
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'search_messages' ? { hits: [], total: 0, next_cursor: null } : cmd === 'list_messages' ? [] : undefined))
+    app.state = applyReady(emptyState(), testReady(channels))
+    cmp = mount(Shell, { target: document.body, props: { user: testMe, onLogout: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Main'))!.click()
+    await settle()
+  })
+  afterEach(async () => {
+    pins.forgetPinnedBuild()
+    ;(await import('../lib/search.svelte')).closeSearch()
+  })
+
+  it('appears with a second view and hides again with one', async () => {
+    expect(q('.right-panel [role=tablist]')).toBeNull()
+    pins.pinBuild('B1', 'M001', build('M001'))
+    await settle()
+    expect(q('.right-panel [role=tablist]')).not.toBeNull()
+    expect(tabs().map((t) => t.getAttribute('aria-label') ?? t.textContent?.trim())).toEqual(['Pinned build', 'Members'])
+    expect(tab('Pinned build').getAttribute('aria-selected')).toBe('true')
+    const panel = q('.right-panel [role=tabpanel]')!
+    expect(panel.getAttribute('aria-labelledby')).toBe(tab('Pinned build').id)
+    expect(panel.querySelector('aside.pinned-build')).not.toBeNull()
+    pins.unpinBuild()
+    await settle()
+    expect(q('.right-panel [role=tablist]')).toBeNull()
+    expect(q('.right-panel [role=tabpanel]')).toBeNull()
+    expect(q('.right-panel aside.members')).not.toBeNull()
+  })
+
+  it('members show while the build stays pinned, and the build comes back', async () => {
+    pins.pinBuild('B1', 'M001', build('M001'))
+    await settle()
+    tab('Members').click()
+    await settle()
+    expect(q('.right-panel aside.members')).not.toBeNull()
+    expect(q('.right-panel aside.pinned-build')).toBeNull()
+    expect(pins.pinnedBuild.key).toEqual({ channelId: 'B1', messageId: 'M001' })
+    tab('Pinned build').click()
+    await settle()
+    expect(q('.right-panel aside.pinned-build')).not.toBeNull()
+  })
+
+  it('a view that arrives takes the column: a build pinned, a search run', async () => {
+    const { runSearch } = await import('../lib/search.svelte')
+    pins.pinBuild('B1', 'M001', build('M001'))
+    await settle()
+    tab('Members').click()
+    await settle()
+    pins.pinBuild('B1', 'M002', build('M002'))
+    await settle()
+    expect(q('.right-panel aside.pinned-build .title')?.textContent).toBe('Build M002')
+    await runSearch({ kind: 'server', serverId: 'S1' }, 'raven', [])
+    await settle()
+    expect(q('.right-panel .search-results')).not.toBeNull()
+    expect(tabs()).toHaveLength(3)
+    // a new search after picking another view takes the column back
+    tab('Members').click()
+    await settle()
+    await runSearch({ kind: 'server', serverId: 'S1' }, 'bunny', [])
+    await settle()
+    expect(q('.right-panel .search-results')).not.toBeNull()
+  })
+
+  it('closing the view showing goes back to the one before', async () => {
+    const { runSearch, closeSearch } = await import('../lib/search.svelte')
+    pins.pinBuild('B1', 'M001', build('M001'))
+    await settle()
+    tab('Members').click()
+    await settle()
+    await runSearch({ kind: 'server', serverId: 'S1' }, 'raven', [])
+    await settle()
+    closeSearch()
+    await settle()
+    expect(q('.right-panel aside.members'), 'back to Members, the choice before the search').not.toBeNull()
+    tab('Pinned build').click()
+    await settle()
+    q('.right-panel button[aria-label="Unpin"]')!.click()
+    await settle()
+    expect(q('.right-panel aside.members')).not.toBeNull()
+    expect(q('.right-panel [role=tablist]')).toBeNull()
   })
 })

@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 // Quick peek (#619, spec §4.4): resting on a card or row ~600 ms (or Space on it) shows its title and first lines of
 // notes with Open and Pin to side; leaving both, or Escape, closes it.
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushSync, mount, unmount } from 'svelte'
+import { compile } from 'svelte/compiler'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Build } from '../lib/protocol/Build'
 import type { Message } from '../lib/protocol/Message'
@@ -149,5 +152,62 @@ describe('BuildPeek', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     flushSync()
     expect(peek()).toBeNull()
+  })
+
+  // #636 review: the keyboard way in and out
+  it('Space moves the focus into the peek, Escape brings it back to the card; the card says it is expanded', () => {
+    card()
+    const open = document.querySelector<HTMLButtonElement>('.build-card button.open')!
+    expect(open.getAttribute('aria-expanded')).toBe('false')
+    open.focus()
+    open.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(peek()!.contains(document.activeElement)).toBe(true)
+    expect(open.getAttribute('aria-expanded')).toBe('true')
+    expect(open.getAttribute('aria-controls')).toBe(peek()!.id)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(peek()).toBeNull()
+    expect(document.activeElement).toBe(open)
+    expect(open.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('a held Space (repeats) never toggles it', () => {
+    card()
+    const open = document.querySelector<HTMLButtonElement>('.build-card button.open')!
+    open.focus()
+    open.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }))
+    flushSync()
+    const again = new KeyboardEvent('keydown', { key: ' ', repeat: true, bubbles: true, cancelable: true })
+    open.dispatchEvent(again)
+    flushSync()
+    expect(peek()).not.toBeNull()
+    expect(again.defaultPrevented, 'still not a button press').toBe(true)
+  })
+
+  it('a scroll or a resize closes it; a scroll inside it does not', () => {
+    card()
+    hover('.build-card', 'mouseenter')
+    wait(PEEK_OPEN_DELAY)
+    peek()!.dispatchEvent(new Event('scroll'))
+    flushSync()
+    expect(peek()).not.toBeNull()
+    document.dispatchEvent(new Event('scroll'))
+    flushSync()
+    expect(peek()).toBeNull()
+    hover('.build-card', 'mouseenter')
+    wait(PEEK_OPEN_DELAY)
+    window.dispatchEvent(new Event('resize'))
+    flushSync()
+    expect(peek()).toBeNull()
+  })
+
+  // #638: nothing spills out of the peek (jsdom doesn't lay out: the rules that keep it in)
+  it('its buttons shrink with an ellipsis rather than spill', () => {
+    const css = compile(readFileSync(resolve(__dirname, 'BuildPeek.svelte'), 'utf8'), { filename: 'BuildPeek.svelte', css: 'external', cssHash: () => 'x' }).css!.code
+    const rule = (sel: string) => css.match(new RegExp(`${sel}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+    expect(rule('\\.actions\\.x')).toMatch(/max-width:\s*100%/)
+    expect(rule('\\.actions\\.x \\.btn:where\\(\\.x\\)')).toMatch(/min-width:\s*0/)
+    expect(rule('\\.label\\.x')).toMatch(/text-overflow:\s*ellipsis/)
   })
 })
