@@ -157,6 +157,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::Build::export_all(&cfg)?;
     rest::BuildLink::export_all(&cfg)?;
     rest::CreateBuildRequest::export_all(&cfg)?;
+    rest::BuildGameEdit::export_all(&cfg)?;
     rest::UpdateBuildRequest::export_all(&cfg)?;
     rest::SetBuildArchivedRequest::export_all(&cfg)?;
     rest::BulkArchiveRequest::export_all(&cfg)?;

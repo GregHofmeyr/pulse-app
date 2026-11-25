@@ -99,6 +99,7 @@ merges. Each phase is its own PR to `main`.
   - `BuildLink { url: String, title: Option<String>, thumb: Option<EmbedThumb>, provider: EmbedProvider, provider_id: Option<String> }`
   - `CreateBuildRequest { title: Option<String>, game_id: Option<GameId>, link_url: Option<String>, notes: Option<String>, attachments: Vec<AttachmentId>, nonce: Option<String> }`
   - `UpdateBuildRequest { title: String, game_id: Option<GameId>, link_url: Option<String>, notes: Option<String>, attachments: Vec<AttachmentId>, mark_sorted: bool }` (`attachments` = the final order: kept ids and new uploads)
+    - follow-up: `game: Option<BuildGameEdit>` (`"unchanged"` | `{"set": id}` | `"clear"`); when present it replaces `game_id`, and `"unchanged"` keeps a guessed game a guess (and the quick drop)
   - `SetBuildArchivedRequest { archived: bool }`
   - `BulkArchiveRequest { game_id: Option<GameId>, before: String, dry_run: bool }` → `BulkArchiveResult { builds: Vec<BuildBrief>, archived: u32 }`, `BuildBrief { message_id: MessageId, title: String, game_id: Option<GameId>, created_at: String }`
   - `BuildFacets { total: u32, games: Vec<GameCount> }`

@@ -193,34 +193,50 @@ describe('BuildForm', () => {
     await flush()
     expect(calls('update_build')[0][1]).toEqual({
       messageId: 'M001', channelId: 'B1',
-      body: { title: 'Raven bunny v2', game_id: 'G1', link_url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', notes: 'Max crit', attachments: [], mark_sorted: false },
+      body: { title: 'Raven bunny v2', game_id: 'G1', game: { set: 'G1' }, link_url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', notes: 'Max crit', attachments: [], mark_sorted: false },
       order: ['id:A1'],
     })
     expect(document.querySelector('.build-form')).toBeNull()
   })
 
-  it('editing a build with a guessed game leaves the guess unconfirmed until it is kept', async () => {
+  it('editing a build with a guessed game sends it unchanged until it is kept', async () => {
     const guessed = build({ quick_drop: true, game_id: 'G1', game_guessed: true, notes: null })
+    type Body = { game_id: string | null; game?: unknown; mark_sorted: boolean }
+    const body = () => (calls('update_build')[0][1] as { body: Body }).body
     await form({ build: guessed })
-    expect(q<HTMLInputElement>('input[aria-label="Game"]').value).toBe('')
-    expect(q('.guess').textContent).toContain('The First Descendant')
+    // the guess shows in the box, marked as guessed, with Keep
+    expect(q<HTMLInputElement>('input[aria-label="Game"]').value).toBe('The First Descendant')
     expect(q('.guess').textContent).toContain('guessed')
+    expect(q('.guess button.keep')).not.toBeNull()
     // still a quick drop with only a guess: Mark as sorted is offered
     expect(document.querySelector('.build-form input[name=sorted]')).not.toBeNull()
     save().click()
     await flush()
-    expect((calls('update_build')[0][1] as { body: { game_id: string | null; mark_sorted: boolean } }).body).toMatchObject({ game_id: null, mark_sorted: false })
+    // an untouched guess is sent as "unchanged": the server keeps it a guess (and the quick drop)
+    expect(body()).toMatchObject({ game_id: 'G1', game: 'unchanged', mark_sorted: false })
     unmount(cmp!)
     invoke.mockClear()
+
     // Keep confirms it
     await form({ build: guessed })
     q<HTMLButtonElement>('.guess button.keep').click()
     flushSync()
     expect(document.querySelector('.build-form .guess')).toBeNull()
+    expect(document.querySelector('.build-form input[name=sorted]')).toBeNull()
     expect(q<HTMLInputElement>('input[aria-label="Game"]').value).toBe('The First Descendant')
     save().click()
     await flush()
-    expect((calls('update_build')[0][1] as { body: { game_id: string | null } }).body.game_id).toBe('G1')
+    expect(body()).toMatchObject({ game_id: 'G1', game: { set: 'G1' } })
+    unmount(cmp!)
+    invoke.mockClear()
+
+    // clearing the box clears it
+    await form({ build: guessed })
+    typeIn(q<HTMLInputElement>('input[aria-label="Game"]'), '')
+    expect(document.querySelector('.build-form .guess')).toBeNull()
+    save().click()
+    await flush()
+    expect(body()).toMatchObject({ game_id: null, game: 'clear' })
   })
 
   it('cancelling after a failed save gives up its uploads', async () => {
