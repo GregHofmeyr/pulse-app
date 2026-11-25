@@ -12,9 +12,10 @@
   import { buildGameName, buildRights, buildShots, isArchived, isQuickDrop, type BuildActionItem, type BuildScreenshot } from '../lib/builds'
   import { relativeTime } from '../lib/conversations'
   import { isPinned, pinBuild, unpinBuild } from '../lib/pinnedBuild.svelte'
+  import { popOutBuild } from '../lib/buildWindow.svelte'
   import { nameOfIn } from '../lib/selectors'
   import { app, clock } from '../lib/store.svelte'
-  import { api } from '../lib/tauri'
+  import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
   let { message, serverId, onBack }: {
@@ -43,9 +44,13 @@
   let viewing = $state<number | null>(null)
   let error = $state('')
   let editing = $state(false)
-  /** Pin to side (#619), or Unpin when it's the pinned one. Pop out (#620) joins here. */
-  function pinItem(it: BuildActionItem) {
-    if (it !== 'pin') return
+  /** Pin to side (#619), or Unpin when it's the pinned one; Pop out (#620): its own window, kept current and closed on
+   *  delete by lib/buildWindow.svelte.ts. */
+  function pickItem(it: BuildActionItem) {
+    if (it === 'popout') {
+      popOutBuild(message).catch((e) => (error = errorText(e)))
+      return
+    }
     if (isPinned(message.id)) unpinBuild()
     else pinBuild(message.channel_id, message.id, message)
   }
@@ -67,7 +72,7 @@
             <BuildVideo link={b.link!} messageId={message.id} onError={(t) => (error = t)} />
           {/snippet}
           {#snippet actions()}
-            <BuildActions {message} canEdit={rights.edit} canArchive={rights.archive} canDelete={rights.delete} items={['pin']} onItem={pinItem} onEdit={() => (editing = true)} onDeleted={onBack} />
+            <BuildActions {message} canEdit={rights.edit} canArchive={rights.archive} canDelete={rights.delete} items={['pin', 'popout']} onItem={pickItem} onEdit={() => (editing = true)} onDeleted={onBack} />
           {/snippet}
         </BuildView>
         {#if error}<p class="error" role="alert">{error}</p>{/if}

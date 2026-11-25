@@ -21,6 +21,7 @@ import type { ReportUi } from './report'
 import type { Server } from './protocol/Server'
 import type { Channel } from './protocol/Channel'
 import type { BuildFacets } from './protocol/BuildFacets'
+import type { BuildSnapshot } from './buildSnapshot'
 import type { CreateBuildRequest } from './protocol/CreateBuildRequest'
 import type { UpdateBuildRequest } from './protocol/UpdateBuildRequest'
 import type { BulkArchiveRequest } from './protocol/BulkArchiveRequest'
@@ -680,6 +681,13 @@ export const api = {
   bulkArchiveBuilds: (channelId: string, body: BulkArchiveRequest) =>
     invoke<BulkArchiveResult>('bulk_archive_builds', { channelId, body }),
   deleteBuild: (messageId: string) => invoke<void>('delete_build', { messageId }),
+  // the build pop-out (#620). The main window opens, updates and closes it; the pop-out itself may call only the last three
+  openBuildWindow: (snapshot: BuildSnapshot, onTop: boolean) => invoke<void>('open_build_window', { snapshot, onTop }),
+  updateBuildWindow: (snapshot: BuildSnapshot) => invoke<void>('update_build_window', { snapshot }),
+  closeBuildWindow: (messageId: string) => invoke<boolean>('close_build_window', { messageId }),
+  buildWindowSnapshot: () => invoke<BuildSnapshot | null>('build_window_snapshot'),
+  buildWindowImageUrls: (messageId: string) => invoke<AttachmentUrl[]>('build_window_image_urls', { messageId }),
+  setBuildWindowOnTop: (on: boolean) => invoke<void>('set_build_window_on_top', { on }),
   /** Save a new build (#618): the core uploads `staged` screenshots in order under `body.nonce` (after any ids
    *  `body.attachments` lists), then posts it. Retrying with the same nonce uploads nothing twice. */
   createBuild: (channelId: string, body: CreateBuildRequest, staged: string[] = []) =>
