@@ -6,13 +6,47 @@
 // by the shell's `settleRightViews` in the place it then shows. Nothing here knows any view by name.
 
 import { untrack } from 'svelte'
-import { onAppReset } from './store.svelte'
+import { onAppReady, onAppReset } from './store.svelte'
 
 /** How long a claim waits for its view to become available (the chat opens a tick after its jump asks for it). */
 const CLAIM_MS = 1000
 
-/** place -> the views chosen there, oldest first (each once; the last is the current choice). */
+/** place -> the views chosen there, oldest first (each once; the last is the current choice). Saved per account
+ *  (`pulse.rightViews.<user id>`), so the choices survive a restart. */
 const history = $state<Record<string, string[]>>({})
+const KEY = 'pulse.rightViews'
+/** The account the choices in memory are saved for. */
+let owner: string | null = null
+/** At most this many places are remembered (the most recently chosen in). */
+const PLACES_KEPT = 100
+
+/** The views available but not on screen (another tab chosen, or the column hidden), set by the shell: a view's own
+ *  controls go by it (the stage's chat toggle brings its chat forward; Esc in the search box leaves hidden results). */
+export const rightHidden = $state({ views: [] as string[] })
+export const isRightViewHidden = (id: string): boolean => rightHidden.views.includes(id)
+
+function load(userId: string) {
+  for (const k of Object.keys(history)) delete history[k]
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(`${KEY}.${userId}`) ?? '{}')
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return
+    for (const [place, list] of Object.entries(v as Record<string, unknown>)) {
+      if (Array.isArray(list)) history[place] = list.filter((x): x is string => typeof x === 'string')
+    }
+  } catch {
+    /* none kept */
+  }
+}
+
+function save() {
+  if (!owner) return
+  try {
+    const places = Object.keys(history).slice(-PLACES_KEPT)
+    localStorage.setItem(`${KEY}.${owner}`, JSON.stringify(Object.fromEntries(places.map((p) => [p, history[p]]))))
+  } catch {
+    /* kept until a restart */
+  }
+}
 /** Claims not yet settled: view id -> when claimed. `claims.n` is bumped by each, so the shell settles them. */
 const pending = new Map<string, number>()
 const claims = $state({ n: 0 })
@@ -25,8 +59,13 @@ export function claimRightView(id: string): void {
 
 /** The person picked `id` in `place` (the switcher). */
 export function chooseRightView(place: string, id: string): void {
-  const list = (history[place] ?? []).filter((v) => v !== id)
+  const was = history[place] ?? []
+  if (was[was.length - 1] === id) return
+  const list = was.filter((v) => v !== id)
+  // the place moves to the end (the most recent), so the oldest go first when trimmed
+  delete history[place]
   history[place] = [...list, id]
+  save()
 }
 
 /** Apply waiting claims whose view is available in `place` now (an older claim is dropped). */
@@ -58,10 +97,18 @@ const rankOf = (rank: readonly string[], id: string) => {
   return i < 0 ? rank.length : i
 }
 
-/** Signed out, and tests: no choices, no claims. */
+/** Signed out, and tests: no choices or claims in memory (what's saved stays the account's). */
 export function forgetRightViews(): void {
   for (const k of Object.keys(history)) delete history[k]
   pending.clear()
+  owner = null
+  rightHidden.views = []
 }
 
 onAppReset(forgetRightViews)
+// a Ready for another account than the one in memory reads that account's choices
+onAppReady((r) => {
+  if (owner === r.me.id) return
+  owner = r.me.id
+  load(r.me.id)
+})

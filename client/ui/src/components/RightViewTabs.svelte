@@ -5,7 +5,8 @@
   // tooltip).
   import Icon, { type IconName } from './Icon.svelte'
 
-  export type RightViewTab = { id: string; label: string; icon: IconName }
+  /** `badge`: something new in a view that isn't showing (a dot; `label` is added to its name, ", unread messages"). */
+  export type RightViewTab = { id: string; label: string; icon: IconName; badge?: { label: string } | null }
 
   let { views, current, width, panelId, onPick }: {
     views: RightViewTab[]
@@ -36,9 +37,10 @@
   {#each views as v, i (v.id)}
     {@const on = v.id === current}
     <button type="button" class="tab" role="tab" id="right-tab-{v.id}" aria-selected={on} aria-controls={panelId} tabindex={on ? 0 : -1}
-      aria-label={compact ? v.label : undefined} data-tip={compact ? v.label : undefined} onclick={() => onPick(v.id)} onkeydown={(e) => keys(e, i)}>
+      aria-label={`${v.label}${v.badge?.label ?? ''}`} data-tip={v.label} onclick={() => onPick(v.id)} onkeydown={(e) => keys(e, i)}>
       <Icon name={v.icon} size={14} />
       {#if !compact}<span class="label">{v.label}</span>{/if}
+      {#if v.badge}<span class="tab-dot" aria-hidden="true"></span>{/if}
     </button>
   {/each}
 </div>
@@ -51,5 +53,7 @@
   .tab[aria-selected='true'] { color: var(--text); background: var(--bg-3); }
   .tab :global(svg) { flex-shrink: 0; }
   .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .compact .tab { padding: 0; }
+  .compact .tab { padding: 0; position: relative; }
+  .tab-dot { flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--text); }
+  .compact .tab-dot { position: absolute; top: 5px; right: calc(50% - 12px); }
 </style>

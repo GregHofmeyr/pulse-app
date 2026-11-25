@@ -5,8 +5,9 @@ import type { SavedWidths, Side } from './columns'
 
 const KEY = 'pulse.columns'
 
-export type Column = Side | 'chat' | 'strip'
-export type StoredWidths = SavedWidths & { chat: number | null; strip: number | null }
+export type Column = Side | 'chat' | 'strip' | 'tabs'
+/** `tabs`: the right column while its view switcher shows (#638), one width for every tab. */
+export type StoredWidths = SavedWidths & { chat: number | null; strip: number | null; tabs: number | null }
 
 const width = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : null)
 
@@ -14,9 +15,9 @@ function saved(): StoredWidths {
   try {
     const v: unknown = JSON.parse(localStorage.getItem(KEY) ?? '{}')
     const o = v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
-    return { left: width(o.left), right: width(o.right), chat: width(o.chat), strip: width(o.strip) }
+    return { left: width(o.left), right: width(o.right), chat: width(o.chat), strip: width(o.strip), tabs: width(o.tabs) }
   } catch {
-    return { left: null, right: null, chat: null, strip: null }
+    return { left: null, right: null, chat: null, strip: null, tabs: null }
   }
 }
 

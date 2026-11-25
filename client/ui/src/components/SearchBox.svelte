@@ -6,6 +6,7 @@
   // The channel header's search field: words plus filter chips, with a suggestion list (a combobox)
   // that offers the filters, then who / which channel / what kind for the one being typed. Enter runs
   // the search; the results show in the right-hand panel (SearchResults).
+  import { isRightViewHidden } from '../lib/rightViews.svelte'
   import { tick, untrack } from 'svelte'
   import Avatar from './Avatar.svelte'
   import Icon from './Icon.svelte'
@@ -182,7 +183,8 @@
       e.stopPropagation()
       // One step back each time: the list, the results, what's typed, then the box itself.
       if (open) dismissedAt = here
-      else if (search.open) closeSearch()
+      // results hidden behind another right-panel tab (#638) aren't what Esc steps back from
+      else if (search.open && !isRightViewHidden('search')) closeSearch()
       else if (text || chips.length) {
         chips = []
         hint = false

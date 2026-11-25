@@ -9,12 +9,12 @@ beforeEach(() => {
 
 describe('saved column widths (#160)', () => {
   it('nothing stored: both default', () => {
-    expect({ ...columns }).toEqual({ left: null, right: null, chat: null, strip: null })
+    expect({ ...columns }).toEqual({ left: null, right: null, chat: null, strip: null, tabs: null })
   })
 
   it('a width is remembered on this device', () => {
     setColumn('right', 312.4)
-    expect(JSON.parse(localStorage.getItem('pulse.columns')!)).toEqual({ left: null, right: 312, chat: null, strip: null })
+    expect(JSON.parse(localStorage.getItem('pulse.columns')!)).toEqual({ left: null, right: 312, chat: null, strip: null, tabs: null })
     columns.right = null
     reloadColumns()
     expect(columns.right).toBe(312)
@@ -32,10 +32,10 @@ describe('saved column widths (#160)', () => {
     setColumn('right', 250)
     setColumn('chat', 420)
     reloadColumns()
-    expect({ ...columns }).toEqual({ left: null, right: 250, chat: 420, strip: null })
+    expect({ ...columns }).toEqual({ left: null, right: 250, chat: 420, strip: null, tabs: null })
     resetColumn('chat')
     reloadColumns()
-    expect({ ...columns }).toEqual({ left: null, right: 250, chat: null, strip: null })
+    expect({ ...columns }).toEqual({ left: null, right: 250, chat: null, strip: null, tabs: null })
   })
 
   it('reset puts the default back and remembers that', () => {
@@ -48,16 +48,16 @@ describe('saved column widths (#160)', () => {
   it('garbled or nonsense values are the defaults', () => {
     localStorage.setItem('pulse.columns', '{"left":"wide","right":-5}')
     reloadColumns()
-    expect({ ...columns }).toEqual({ left: null, right: null, chat: null, strip: null })
+    expect({ ...columns }).toEqual({ left: null, right: null, chat: null, strip: null, tabs: null })
     localStorage.setItem('pulse.columns', 'nope')
     reloadColumns()
-    expect({ ...columns }).toEqual({ left: null, right: null, chat: null, strip: null })
+    expect({ ...columns }).toEqual({ left: null, right: null, chat: null, strip: null, tabs: null })
   })
 
   it("the stream's chat strip (#63) keeps its own width, apart from the stage's chat", () => {
     setColumn('strip', 330)
     columns.strip = null
     reloadColumns()
-    expect({ ...columns }).toEqual({ left: null, right: null, chat: null, strip: 330 })
+    expect({ ...columns }).toEqual({ left: null, right: null, chat: null, strip: 330, tabs: null })
   })
 })

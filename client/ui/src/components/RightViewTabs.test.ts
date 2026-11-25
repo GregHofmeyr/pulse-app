@@ -55,6 +55,16 @@ describe('RightViewTabs', () => {
     expect(onPick).toHaveBeenLastCalledWith('members')
   })
 
+  // #638 review: a label cut short by its ellipsis can still be read
+  it('every tab has its name as a tooltip, wide too; a badge is a dot and part of its name', () => {
+    cmp = mount(RightViewTabs, { target: document.body, props: { views: [views[0], { id: 'chat', label: 'Chat', icon: 'message', badge: { label: ', unread messages' } }], current: 'search', width: 320, panelId: 'right-view', onPick: () => {} } })
+    flushSync()
+    expect(tabs().map((t) => t.dataset.tip)).toEqual(['Search results', 'Chat'])
+    expect(tabs()[1].querySelector('.tab-dot')).not.toBeNull()
+    expect(tabs()[1].getAttribute('aria-label')).toBe('Chat, unread messages')
+    expect(tabs()[0].querySelector('.tab-dot')).toBeNull()
+  })
+
   it('narrow (the column at its least): icons only, each named by aria-label and a tooltip', () => {
     show(180)
     expect(document.querySelector('.right-tabs')!.classList.contains('compact')).toBe(true)
