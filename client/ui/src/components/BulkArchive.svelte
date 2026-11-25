@@ -105,14 +105,19 @@
 
 <section class="bulk" aria-labelledby="bulk-h">
   <h3 id="bulk-h" class="menu-label">Archive old builds</h3>
-  <Select size="sm" label="Game to archive" value={game} onchange={(v) => (game = v)}
-    options={[{ value: null, label: 'All games' }, ...games.map((g) => ({ value: g.id, label: g.name }))]} />
-  <span class="sub">Saved before</span>
-  <div class="when" role="group" aria-label="Saved before">
-    <button type="button" class="toggle-chip" aria-pressed={'days' in before && before.days === 30} onclick={() => pickDays(30)}>30 days ago</button>
-    <button type="button" class="toggle-chip" aria-pressed={'days' in before && before.days === 90} onclick={() => pickDays(90)}>90 days ago</button>
+  <div class="field">
+    <span class="field-label" aria-hidden="true">Game</span>
+    <Select size="sm" label="Game to archive" value={game} onchange={(v) => (game = v)}
+      options={[{ value: null, label: 'All games' }, ...games.map((g) => ({ value: g.id, label: g.name }))]} />
   </div>
-  <input class="input input-sm" type="date" aria-label="Saved before this day" max={today} bind:value={day} oninput={pickDay} />
+  <div class="field">
+    <span class="field-label" aria-hidden="true">Saved before</span>
+    <div class="when" role="group" aria-label="Saved before">
+      <button type="button" class="toggle-chip" aria-pressed={'days' in before && before.days === 30} onclick={() => pickDays(30)}>30 days ago</button>
+      <button type="button" class="toggle-chip" aria-pressed={'days' in before && before.days === 90} onclick={() => pickDays(90)}>90 days ago</button>
+    </div>
+    <input class="input input-sm" type="date" aria-label="Saved before this day" max={today} bind:value={day} oninput={pickDay} />
+  </div>
   <button type="button" class="btn btn-secondary go" disabled={busy || none} onclick={ask}>{none ? 'No builds match' : 'Archive matching builds…'}</button>
   <p class="sr-only" role="status">{none ? 'No builds match. Try another game or an earlier day.' : ''}</p>
   {#if error && !preview}<p class="err" role="alert">{error}</p>{/if}
@@ -138,12 +143,16 @@
 {/if}
 
 <style>
-  .bulk { display: flex; flex-direction: column; gap: 8px; }
-  h3 { margin: 0; }
-  .sub { font-size: 12px; color: var(--text-3); }
-  .when { display: flex; gap: 6px; flex-wrap: wrap; }
-  .go { align-self: stretch; }
-  .err { margin: 0; font-size: 12px; color: var(--danger-text); }
+  /* spacing and the left edge come from BuildsPanel (its section rhythm and --inset); every control fills the
+     panel's content box, stacked */
+  h3 { margin: 0; padding: 0 var(--inset); }
+  .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .field-label { padding-inline: var(--inset); font-size: 12px; font-weight: 600; color: var(--text-3); }
+  .when { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .when .toggle-chip { justify-content: center; min-width: 0; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; }
+  .input { width: 100%; min-width: 0; box-sizing: border-box; }
+  .go { width: 100%; min-width: 0; }
+  .err { margin: 0; padding-inline: var(--inset); font-size: 12px; color: var(--danger-text); overflow-wrap: anywhere; }
   .overlay { position: fixed; inset: 0; z-index: 30; }
   .modal { width: min(420px, 100%); }
   .modal p { margin: 0; font-size: 14px; color: var(--text-2); }

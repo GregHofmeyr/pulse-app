@@ -130,6 +130,37 @@ describe('BuildsPanel', () => {
     expect(src).not.toMatch(/\.check input/)
   })
 
+  it('sections: shared headers, a divider between each, nothing loose', async () => {
+    await show()
+    const kids = [...panel()!.children]
+    // Games | Show archived | Archive old builds, each its own section, a separator between each
+    expect(kids.map((k) => (k.matches('[role=separator]') ? 'sep' : k.tagName.toLowerCase()))).toEqual(['section', 'sep', 'section', 'sep', 'section'])
+    for (const s of kids.filter((k) => k.matches('[role=separator]'))) expect(s.classList.contains('sep')).toBe(true)
+    // section headers are the app's shared .menu-label, the MemberList group-header look
+    expect([...panel()!.querySelectorAll('h3')].map((h) => [h.textContent, h.classList.contains('menu-label')])).toEqual([['Games', true], ['Archive old builds', true]])
+    expect(kids[2].querySelector('input.switch')).not.toBeNull()
+    // Archive old builds: each control labelled, stacked, full width
+    const bulk = kids[4]
+    expect([...bulk.querySelectorAll('.field-label')].map((l) => l.textContent)).toEqual(['Game', 'Saved before'])
+  })
+
+  it('panel CSS: one inset for every row and label, the settings divider token, full-width controls', () => {
+    const panelCss = readFileSync(resolve(__dirname, 'BuildsPanel.svelte'), 'utf8').split('<style>')[1]
+    const bulkCss = readFileSync(resolve(__dirname, 'BulkArchive.svelte'), 'utf8').split('<style>')[1]
+    const rule = (css: string, sel: string) => css.match(new RegExp(`(?:^|\\n)\\s*${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? ''
+    expect(rule(panelCss, '.builds-panel')).toMatch(/--inset: 10px/)
+    // headers, game rows, the switch row and the field labels all put their text on the same edge
+    for (const [css, sel] of [[panelCss, 'h3'], [panelCss, '.games button'], [panelCss, '.check'], [bulkCss, 'h3'], [bulkCss, '.field-label']] as const)
+      expect(rule(css, sel), sel).toMatch(/padding-inline: var\(--inset\)|padding: [^;]*var\(--inset\)/)
+    // the divider is Settings' row/sidebar rule
+    expect(rule(panelCss, '.sep')).toMatch(/background: var\(--line-soft\)/)
+    // the same vertical rhythm for every section
+    expect(rule(panelCss, '.builds-panel > :global(section)')).toMatch(/padding-block: 14px/)
+    expect(rule(bulkCss, '.bulk')).not.toMatch(/padding/) // takes the panel's section rule
+    expect(rule(bulkCss, '.when')).toMatch(/grid-template-columns: 1fr 1fr/)
+    expect(rule(bulkCss, '.go')).toMatch(/width: 100%/)
+  })
+
   it('counts follow Show archived', async () => {
     await show()
     showArchived().click()

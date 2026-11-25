@@ -38,23 +38,32 @@
       {/each}
     </div>
   </section>
-  <label class="check">
-    <input type="checkbox" role="switch" class="switch" checked={archived} onchange={(e) => onArchived(e.currentTarget.checked)} />
-    <span>Show archived</span>
-  </label>
+  <div class="sep" role="separator"></div>
+  <section>
+    <label class="check">
+      <input type="checkbox" role="switch" class="switch" checked={archived} onchange={(e) => onArchived(e.currentTarget.checked)} />
+      <span>Show archived</span>
+    </label>
+  </section>
+  <div class="sep" role="separator"></div>
   <BulkArchive {channelId} {games} selected={game} />
 </aside>
 
 <style>
-  .builds-panel { width: 260px; flex-shrink: 0; overflow-y: auto; padding: 14px 14px 18px; box-sizing: border-box; display: flex; flex-direction: column; gap: 18px; border-left: 1px solid var(--bg-3); background: var(--bg-1); }
-  section { display: flex; flex-direction: column; gap: 6px; }
-  h3 { margin: 0; }
-  .games { display: flex; flex-direction: column; gap: 1px; }
-  .games button { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); font: inherit; font-size: 14px; text-align: left; }
+  /* One left edge: section headers, game rows, the switch row and the field labels put their text --inset in from
+     the content box; the Archive old builds controls fill the content box, and their own padding (10px) lands their
+     text on the same edge. Sections share one vertical rhythm and are split by the settings/sidebar rule. */
+  .builds-panel { --inset: 10px; width: 260px; flex-shrink: 0; overflow-y: auto; padding: 0 12px 4px; box-sizing: border-box; display: flex; flex-direction: column; border-left: 1px solid var(--bg-3); background: var(--bg-1); }
+  .builds-panel > :global(section) { display: flex; flex-direction: column; gap: 8px; padding-block: 14px; min-width: 0; }
+  .sep { height: 1px; flex-shrink: 0; background: var(--line-soft); }
+  h3 { margin: 0; padding: 0 var(--inset); }
+  .games { display: flex; flex-direction: column; gap: 1px; margin-top: -2px; }
+  .games button { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px var(--inset); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); font: inherit; font-size: 14px; text-align: left; }
   .games button:hover { background: var(--bg-3); color: var(--text); }
   .games button[aria-pressed='true'] { background: var(--bg-4); color: var(--text); font-weight: 600; }
   .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .n { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .n { flex-shrink: 0; color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
   /* the app-wide on/off switch (app.css .switch), laid out like Inbox filters' "Only unread" */
-  .check { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text-2); cursor: pointer; }
+  .check { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-inline: var(--inset); font-size: 14px; color: var(--text-2); cursor: pointer; }
+  .check span { min-width: 0; }
 </style>
